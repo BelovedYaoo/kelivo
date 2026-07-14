@@ -10,6 +10,7 @@
 - 上游验收：独立 worktree `D:\Projects\Private\kelivo-upstream-build` 固定在 `c8c9ff37c644ab2e121b671fa2628eca1aa88b1e`，已成功构建 Windows Release 和 Android 三 ABI Release。
 - 签名基线：别名 `kelivo-release`，RSA 4096，证书 SHA-256 为 `60C9352840C2C2E3C66ECA19AF9D5C6DFE4A49E75EDB79535B05FE3CC1CC07F3`，有效期至 2053-11-29。
 - 签名材料：主密钥位于 `C:\Users\ovo\.kelivo\signing\kelivo-release.jks`；本地 `android/key.properties` 已被 Git 忽略并限制为当前用户访问，协作摘要不得记录密码。
-- 验证结果：`flutter doctor -v` 与 `flutter analyze` 通过；根测试共 770 项，仅 1 项因 Windows 路径分隔符断言失败；三个 APK 均通过单签名者、v2 签名、ZIP 对齐、版本和 ABI 校验。
+- 最新定制 APK：基于源码提交 `95fe9d5a` 构建通用 Release `1.1.17 (61)`，本地产物为 `build\app\outputs\flutter-apk\app-release.apk`，SHA-256 为 `FAE74BCC73239B1D81858564F66701BB2EC54A56C243CED1192ED504DDE7E72B`。
+- 验证结果：`flutter doctor -v` 与 `flutter analyze` 通过；根测试共 770 项，仅 1 项因 Windows 路径分隔符断言失败；既有三 ABI 与最新通用 APK 均通过单签名者、v2 签名、ZIP 对齐、版本和 ABI 校验。
 - 兼容边界：定制密钥无法覆盖安装官方签名的 `com.psyche.kelivo`；需先卸载官方版，或另行确认更换自有应用 ID。
 - 环境边界：用户级 `TEMP/TMP=R:\Temp` 仍需决定是否永久调整为 `%LOCALAPPDATA%\Temp`。
