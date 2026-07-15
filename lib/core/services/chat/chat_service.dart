@@ -13,6 +13,7 @@ class ChatService extends ChangeNotifier {
   static const String _toolEventsBoxName = 'tool_events_v1';
   static const String _activeStreamingKey = '_active_streaming_ids';
   static const String _turnIdentityMigrationKey = '_turn_identity_v1';
+  static const String _syncTurnMetadataPrefix = '_sync_turn_v1';
   static const int defaultInitialMessageMin = 2;
   static const int defaultInitialMessageMax = 240;
   static const int defaultInitialTextBudget = 20000;
@@ -377,8 +378,12 @@ class ChatService extends ChangeNotifier {
     final conversation = _conversationsBox.get(id);
     if (conversation == null) return false;
 
+    final turnIds = <String>{};
     for (final messageId in conversation.messageIds) {
       final msg = _messagesBox.get(messageId);
+      if (msg != null) {
+        turnIds.add(msg.turnId);
+      }
       if (msg != null && msg.role == 'assistant') {
         try {
           await _toolEventsBox.delete(msg.id);
@@ -388,6 +393,9 @@ class ChatService extends ChangeNotifier {
         } catch (_) {}
       }
       await _messagesBox.delete(messageId);
+    }
+    for (final turnId in turnIds) {
+      await _toolEventsBox.delete(_syncTurnMetadataKey(id, turnId));
     }
 
     await _conversationsBox.delete(id);
@@ -675,6 +683,315 @@ class ChatService extends ChangeNotifier {
     _messagesCache[restored.id] = List.of(normalizedMessages);
 
     notifyListeners();
+  }
+
+  Future<Conversation> upsertConversationFromSync(Conversation incoming) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(incoming.id, 'conversationId');
+
+    final wasCurrent = _currentConversationId == incoming.id;
+    Conversation? draft;
+    if (_temporaryConversationIds.contains(incoming.id)) {
+      _discardTemporaryConversation(incoming.id);
+    } else {
+      draft = _draftConversations.remove(incoming.id);
+    }
+    if (wasCurrent) {
+      _currentConversationId = incoming.id;
+    }
+
+    final existing = _conversationsBox.get(incoming.id);
+    final localProjection = existing ?? draft;
+    final synchronized = Conversation(
+      id: incoming.id,
+      title: incoming.title,
+      createdAt: incoming.createdAt,
+      updatedAt: incoming.updatedAt,
+      // 云端会话没有消息顺序真相，本地索引只能保留并由消息、轮次重新计算。
+      messageIds: List<String>.of(
+        localProjection?.messageIds ?? const <String>[],
+      ),
+      isPinned: incoming.isPinned,
+      mcpServerIds: List<String>.of(incoming.mcpServerIds),
+      assistantId: incoming.assistantId,
+      truncateIndex: incoming.truncateIndex,
+      versionSelections: Map<String, int>.from(
+        localProjection?.versionSelections ?? const <String, int>{},
+      ),
+      summary: incoming.summary,
+      lastSummarizedMessageCount: incoming.lastSummarizedMessageCount,
+      chatSuggestions: List<String>.of(incoming.chatSuggestions),
+    );
+    await _conversationsBox.put(synchronized.id, synchronized);
+    await _rebuildSyncedMessageOrder(synchronized.id);
+    notifyListeners();
+    return _conversationsBox.get(synchronized.id)!;
+  }
+
+  Future<ChatMessage> upsertMessageFromSync(ChatMessage incoming) async {
+    if (!_initialized) await init();
+    _validateSyncedMessage(incoming);
+
+    final existing = _messagesBox.get(incoming.id);
+    final previousConversationId = existing?.conversationId;
+    if (existing != null &&
+        existing.role == 'assistant' &&
+        incoming.role != 'assistant') {
+      await _toolEventsBox.delete(existing.id);
+      await _toolEventsBox.delete(_sigKey(existing.id));
+    }
+    await _messagesBox.put(incoming.id, incoming);
+    _untrackStreamingId(incoming.id);
+
+    if (previousConversationId != null &&
+        previousConversationId != incoming.conversationId) {
+      final previousConversation = _conversationsBox.get(
+        previousConversationId,
+      );
+      if (previousConversation != null &&
+          previousConversation.messageIds.remove(incoming.id)) {
+        await previousConversation.save();
+        await _rebuildSyncedMessageOrder(previousConversationId);
+      }
+    }
+
+    final conversation = await _ensureSyncedConversation(
+      incoming.conversationId,
+      incoming.timestamp,
+    );
+    if (!conversation.messageIds.contains(incoming.id)) {
+      conversation.messageIds.add(incoming.id);
+      await conversation.save();
+    }
+    await _rebuildSyncedMessageOrder(incoming.conversationId);
+    notifyListeners();
+    return _messagesBox.get(incoming.id)!;
+  }
+
+  Future<void> applyTurnFromSync({
+    required String conversationId,
+    required String turnId,
+    required DateTime createdAt,
+  }) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(conversationId, 'conversationId');
+    _requireSyncIdentifier(turnId, 'turnId');
+
+    await _ensureSyncedConversation(conversationId, createdAt);
+    await _toolEventsBox.put(
+      _syncTurnMetadataKey(conversationId, turnId),
+      createdAt.toUtc().toIso8601String(),
+    );
+    await _rebuildSyncedMessageOrder(conversationId);
+    notifyListeners();
+  }
+
+  Future<void> deleteTurnFromSync({
+    required String conversationId,
+    required String turnId,
+  }) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(conversationId, 'conversationId');
+    _requireSyncIdentifier(turnId, 'turnId');
+
+    final conversation = _conversationsBox.get(conversationId);
+    if (conversation == null) {
+      await _toolEventsBox.delete(_syncTurnMetadataKey(conversationId, turnId));
+      return;
+    }
+
+    final deletedMessages = <ChatMessage>[];
+    for (final messageId in conversation.messageIds) {
+      final message = _messagesBox.get(messageId);
+      if (message?.turnId == turnId) {
+        deletedMessages.add(message!);
+      }
+    }
+    final deletedIds = deletedMessages.map((message) => message.id).toSet();
+    final deletedGroups = deletedMessages
+        .map((message) => message.groupId ?? message.id)
+        .toSet();
+
+    if (deletedIds.isNotEmpty) {
+      for (final message in deletedMessages) {
+        _untrackStreamingId(message.id);
+        if (message.role == 'assistant') {
+          await _toolEventsBox.delete(message.id);
+          await _toolEventsBox.delete(_sigKey(message.id));
+        }
+      }
+      await _messagesBox.deleteAll(deletedIds);
+      conversation.messageIds.removeWhere(deletedIds.contains);
+
+      final remainingGroups = conversation.messageIds
+          .map(_messagesBox.get)
+          .whereType<ChatMessage>()
+          .map((message) => message.groupId ?? message.id)
+          .toSet();
+      for (final groupId in deletedGroups.difference(remainingGroups)) {
+        conversation.versionSelections.remove(groupId);
+      }
+      await conversation.save();
+    }
+
+    await _toolEventsBox.delete(_syncTurnMetadataKey(conversationId, turnId));
+    await _rebuildSyncedMessageOrder(conversationId);
+    if (deletedIds.isNotEmpty) {
+      await _cleanupOrphanUploads();
+    }
+    notifyListeners();
+  }
+
+  Future<void> deleteMessageFromSync(String messageId) async {
+    if (!_initialized) await init();
+    await deleteMessage(messageId);
+  }
+
+  Future<void> deleteConversationFromSync(String conversationId) async {
+    if (!_initialized) await init();
+    await deleteConversation(conversationId);
+  }
+
+  Future<Conversation> _ensureSyncedConversation(
+    String conversationId,
+    DateTime createdAt,
+  ) async {
+    final persisted = _conversationsBox.get(conversationId);
+    if (persisted != null) return persisted;
+
+    final wasCurrent = _currentConversationId == conversationId;
+    if (_temporaryConversationIds.contains(conversationId)) {
+      _discardTemporaryConversation(conversationId);
+    }
+    final draft = _draftConversations.remove(conversationId);
+    if (wasCurrent) {
+      _currentConversationId = conversationId;
+    }
+    if (draft != null) {
+      await _conversationsBox.put(draft.id, draft);
+      return draft;
+    }
+
+    final placeholder = Conversation(
+      id: conversationId,
+      title: _defaultConversationTitle,
+      createdAt: createdAt,
+      updatedAt: createdAt,
+    );
+    await _conversationsBox.put(placeholder.id, placeholder);
+    return placeholder;
+  }
+
+  Future<void> _rebuildSyncedMessageOrder(String conversationId) async {
+    final conversation = _conversationsBox.get(conversationId);
+    if (conversation == null) return;
+
+    final seen = <String>{};
+    final messages = <ChatMessage>[];
+    for (final messageId in conversation.messageIds) {
+      final message = _messagesBox.get(messageId);
+      if (message != null &&
+          message.conversationId == conversationId &&
+          seen.add(message.id)) {
+        messages.add(message);
+      }
+    }
+
+    final fallbackTurnTimes = <String, DateTime>{};
+    final groupTimes = <(String, String), DateTime>{};
+    for (final message in messages) {
+      fallbackTurnTimes.update(
+        message.turnId,
+        (value) =>
+            message.timestamp.isBefore(value) ? message.timestamp : value,
+        ifAbsent: () => message.timestamp,
+      );
+      final groupKey = (message.turnId, message.groupId ?? message.id);
+      groupTimes.update(
+        groupKey,
+        (value) =>
+            message.timestamp.isBefore(value) ? message.timestamp : value,
+        ifAbsent: () => message.timestamp,
+      );
+    }
+    final turnTimes = <String, DateTime>{};
+    for (final entry in fallbackTurnTimes.entries) {
+      turnTimes[entry.key] =
+          _syncedTurnCreatedAt(conversationId, entry.key) ?? entry.value;
+    }
+
+    messages.sort((left, right) {
+      var compared = turnTimes[left.turnId]!.compareTo(
+        turnTimes[right.turnId]!,
+      );
+      if (compared != 0) return compared;
+      compared = left.turnId.compareTo(right.turnId);
+      if (compared != 0) return compared;
+
+      final leftGroup = left.groupId ?? left.id;
+      final rightGroup = right.groupId ?? right.id;
+      compared = groupTimes[(left.turnId, leftGroup)]!.compareTo(
+        groupTimes[(right.turnId, rightGroup)]!,
+      );
+      if (compared != 0) return compared;
+      compared = _syncedRoleRank(
+        left.role,
+      ).compareTo(_syncedRoleRank(right.role));
+      if (compared != 0) return compared;
+      compared = leftGroup.compareTo(rightGroup);
+      if (compared != 0) return compared;
+      compared = left.version.compareTo(right.version);
+      if (compared != 0) return compared;
+      compared = left.timestamp.compareTo(right.timestamp);
+      return compared != 0 ? compared : left.id.compareTo(right.id);
+    });
+
+    final orderedIds = messages.map((message) => message.id).toList();
+    if (!listEquals(conversation.messageIds, orderedIds)) {
+      conversation.messageIds
+        ..clear()
+        ..addAll(orderedIds);
+      await conversation.save();
+    }
+    _messagesCache[conversationId] = messages;
+  }
+
+  String _syncTurnMetadataKey(String conversationId, String turnId) {
+    return '$_syncTurnMetadataPrefix:${Uri.encodeComponent(conversationId)}:'
+        '${Uri.encodeComponent(turnId)}';
+  }
+
+  DateTime? _syncedTurnCreatedAt(String conversationId, String turnId) {
+    final raw = _toolEventsBox.get(
+      _syncTurnMetadataKey(conversationId, turnId),
+    );
+    return raw is String ? DateTime.tryParse(raw) : null;
+  }
+
+  int _syncedRoleRank(String role) => role == 'user' ? 0 : 1;
+
+  void _validateSyncedMessage(ChatMessage message) {
+    _requireSyncIdentifier(message.id, 'messageId');
+    _requireSyncIdentifier(message.conversationId, 'conversationId');
+    _requireSyncIdentifier(message.turnId, 'turnId');
+    if (message.role != 'user' && message.role != 'assistant') {
+      throw ArgumentError.value(message.role, 'role', '不支持的消息角色');
+    }
+    if (message.isStreaming ||
+        message.generationStatus == ChatMessage.generationStatusDraft ||
+        !ChatMessage.generationStatuses.contains(message.generationStatus)) {
+      throw ArgumentError.value(
+        message.generationStatus,
+        'generationStatus',
+        '远端消息必须处于可同步终态',
+      );
+    }
+  }
+
+  void _requireSyncIdentifier(String value, String name) {
+    if (value.trim().isEmpty) {
+      throw ArgumentError.value(value, name, '同步标识不能为空');
+    }
   }
 
   // Add a message directly to an existing conversation (for merge mode)
@@ -1464,6 +1781,11 @@ class ChatService extends ChangeNotifier {
       conversation?.messageIds.remove(messageId);
       final messages = _messagesCache[message.conversationId];
       messages?.removeWhere((m) => m.id == messageId);
+      final groupId = message.groupId ?? message.id;
+      if (messages == null ||
+          !messages.any((m) => (m.groupId ?? m.id) == groupId)) {
+        conversation?.versionSelections.remove(groupId);
+      }
       _temporaryToolEvents.remove(messageId);
       _temporaryGeminiThoughtSigs.remove(messageId);
       notifyListeners();
@@ -1512,6 +1834,13 @@ class ChatService extends ChangeNotifier {
           final insertAt = anchorIndex <= ids.length ? anchorIndex : ids.length;
           ids.insert(insertAt, replacementId);
         }
+      }
+
+      final groupStillExists = ids.map(_messagesBox.get).any((candidate) {
+        return candidate != null && (candidate.groupId ?? candidate.id) == gid;
+      });
+      if (!groupStillExists) {
+        conversation.versionSelections.remove(gid);
       }
 
       await conversation.save();
