@@ -32,6 +32,7 @@ import 'core/providers/backup_provider.dart';
 import 'core/providers/s3_backup_provider.dart';
 import 'core/providers/backup_reminder_provider.dart';
 import 'core/providers/hotkey_provider.dart';
+import 'core/providers/cloud_sync_provider.dart';
 import 'core/services/chat/chat_service.dart';
 import 'core/services/mcp/mcp_tool_service.dart';
 import 'core/services/logging/flutter_logger.dart';
@@ -158,6 +159,25 @@ class MyApp extends StatelessWidget {
             chatService: ctx.read<ChatService>(),
             initialConfig: ctx.read<SettingsProvider>().s3Config,
           ),
+        ),
+        ChangeNotifierProvider(
+          lazy: false,
+          create: (ctx) {
+            final provider = CloudSyncProvider(
+              ctx.read<ChatService>(),
+              settingsProvider: ctx.read<SettingsProvider>(),
+              assistantProvider: ctx.read<AssistantProvider>(),
+              memoryProvider: ctx.read<MemoryProvider>(),
+              mcpProvider: ctx.read<McpProvider>(),
+              quickPhraseProvider: ctx.read<QuickPhraseProvider>(),
+              instructionInjectionProvider: ctx
+                  .read<InstructionInjectionProvider>(),
+              worldBookProvider: ctx.read<WorldBookProvider>(),
+              userProvider: ctx.read<UserProvider>(),
+            );
+            unawaited(provider.initialize());
+            return provider;
+          },
         ),
       ],
       child: Builder(

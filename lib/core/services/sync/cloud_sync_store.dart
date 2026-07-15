@@ -9,6 +9,7 @@ final class CloudSyncStore {
 
   static const defaultBoxName = 'cloud_sync_state_v1';
   static const _sessionKey = 'active-session';
+  static const _lastBaseUrlKey = 'last-base-url';
 
   final Box<String> _box;
 
@@ -28,6 +29,29 @@ final class CloudSyncStore {
   }
 
   Future<void> clearSession() => _box.delete(_sessionKey);
+
+  String? get lastBaseUrl {
+    final raw = _box.get(_lastBaseUrlKey);
+    return raw == null ? null : normalizeCloudSyncBaseUrl(raw);
+  }
+
+  Future<void> saveLastBaseUrl(String baseUrl) {
+    return _box.put(_lastBaseUrlKey, normalizeCloudSyncBaseUrl(baseUrl));
+  }
+
+  bool isPaused(CloudSyncAccountSession session) {
+    final raw = _box.get(_pausedKey(session));
+    if (raw == null || raw == 'false') return false;
+    if (raw == 'true') return true;
+    throw const FormatException('同步暂停状态无效');
+  }
+
+  Future<void> savePaused(
+    CloudSyncAccountSession session, {
+    required bool paused,
+  }) {
+    return _box.put(_pausedKey(session), paused.toString());
+  }
 
   CloudSyncCursorState cursorState(CloudSyncAccountSession session) {
     return _read(_cursorKey(session), CloudSyncCursorState.fromJson) ??
@@ -369,6 +393,10 @@ final class CloudSyncStore {
 
   String _cursorKey(CloudSyncAccountSession session) {
     return '${_accountPrefix(session, 'cursor')}state';
+  }
+
+  String _pausedKey(CloudSyncAccountSession session) {
+    return '${_accountPrefix(session, 'setting')}paused';
   }
 
   String _shadowKey(

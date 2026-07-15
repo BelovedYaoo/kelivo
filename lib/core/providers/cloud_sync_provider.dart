@@ -1,0 +1,572 @@
+import 'dart:async';
+
+import 'package:flutter/foundation.dart';
+import 'package:flutter/widgets.dart';
+import 'package:package_info_plus/package_info_plus.dart';
+
+import '../services/chat/chat_service.dart';
+import '../services/sync/cloud_sync_client.dart';
+import '../services/sync/cloud_sync_coordinator.dart';
+import '../services/sync/cloud_sync_store.dart';
+import '../services/sync/cloud_sync_types.dart';
+import '../services/sync/config_sync_adapter.dart';
+import 'assistant_provider.dart';
+import 'instruction_injection_provider.dart';
+import 'mcp_provider.dart';
+import 'memory_provider.dart';
+import 'quick_phrase_provider.dart';
+import 'settings_provider.dart';
+import 'user_provider.dart';
+import 'world_book_provider.dart';
+
+enum CloudSyncProviderStatus {
+  initializing,
+  signedOut,
+  signingIn,
+  signingOut,
+  idle,
+  syncing,
+  paused,
+  error,
+}
+
+final class CloudSyncProvider extends ChangeNotifier
+    with WidgetsBindingObserver {
+  CloudSyncProvider(
+    this._chatService, {
+    required SettingsProvider settingsProvider,
+    required AssistantProvider assistantProvider,
+    required MemoryProvider memoryProvider,
+    required McpProvider mcpProvider,
+    required QuickPhraseProvider quickPhraseProvider,
+    required InstructionInjectionProvider instructionInjectionProvider,
+    required WorldBookProvider worldBookProvider,
+    required UserProvider userProvider,
+  }) : _configAdapter = ConfigSyncAdapter(
+         settingsProvider: settingsProvider,
+         assistantProvider: assistantProvider,
+         memoryProvider: memoryProvider,
+         mcpProvider: mcpProvider,
+         quickPhraseProvider: quickPhraseProvider,
+         instructionInjectionProvider: instructionInjectionProvider,
+         worldBookProvider: worldBookProvider,
+         userProvider: userProvider,
+       );
+
+  static const Duration automaticSyncInterval = Duration(seconds: 30);
+
+  final ChatService _chatService;
+  final ConfigSyncAdapter _configAdapter;
+
+  CloudSyncProviderStatus _status = CloudSyncProviderStatus.initializing;
+  CloudSyncAccountSession? _session;
+  CloudSyncRunSummary? _lastRun;
+  CloudSyncException? _lastError;
+  CloudSyncException? _deviceError;
+  List<CloudSyncDeviceSession> _devices = const <CloudSyncDeviceSession>[];
+  CloudSyncStore? _store;
+  CloudSyncClient? _client;
+  CloudSyncCoordinator? _coordinator;
+  Future<void>? _initialization;
+  Future<bool>? _activeSync;
+  Timer? _timer;
+  String? _lastBaseUrl;
+  bool _ready = false;
+  bool _paused = false;
+  bool _devicesLoading = false;
+  bool _foreground = true;
+  bool _observingLifecycle = false;
+  bool _disposed = false;
+  bool _sessionMutationInProgress = false;
+  int _sessionEpoch = 0;
+
+  CloudSyncProviderStatus get status => _status;
+  CloudSyncAccountSession? get session => _session;
+  CloudSyncRunSummary? get lastRun => _lastRun;
+  CloudSyncException? get lastError => _lastError;
+  CloudSyncException? get deviceError => _deviceError;
+  List<CloudSyncDeviceSession> get devices =>
+      List<CloudSyncDeviceSession>.unmodifiable(_devices);
+  String? get lastBaseUrl => _lastBaseUrl;
+  bool get initialized => _ready;
+  bool get signedIn => _session != null;
+  bool get paused => _paused;
+  bool get devicesLoading => _devicesLoading;
+
+  Future<void> initialize() {
+    if (_ready) return Future<void>.value();
+    final active = _initialization;
+    if (active != null) return active;
+
+    final run = _initialize();
+    _initialization = run;
+    return run.whenComplete(() {
+      if (identical(_initialization, run)) {
+        _initialization = null;
+      }
+    });
+  }
+
+  Future<void> _initialize() async {
+    if (!_observingLifecycle) {
+      WidgetsBinding.instance.addObserver(this);
+      _observingLifecycle = true;
+    }
+    _lastError = null;
+    _setStatus(CloudSyncProviderStatus.initializing);
+
+    try {
+      await _chatService.init();
+      if (_disposed) return;
+      final store = _store ?? await CloudSyncStore.open();
+      if (_disposed) {
+        await store.close();
+        return;
+      }
+      _store = store;
+      await _configAdapter.ready;
+      if (_disposed) return;
+      _lastBaseUrl = store.lastBaseUrl;
+
+      final session = store.activeSession;
+      _session = session;
+      if (session == null) {
+        _paused = false;
+        _ready = true;
+        _setStatus(CloudSyncProviderStatus.signedOut);
+        return;
+      }
+
+      _paused = store.isPaused(session);
+      _connect(session);
+      _ready = true;
+      _setStatus(
+        _paused ? CloudSyncProviderStatus.paused : CloudSyncProviderStatus.idle,
+      );
+      if (!_paused) {
+        _startAutomaticSync();
+        unawaited(syncNow());
+      }
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '初始化云同步',
+        status: CloudSyncProviderStatus.error,
+      );
+    }
+  }
+
+  Future<bool> login({
+    required String baseUrl,
+    required String loginName,
+    required String password,
+    required String deviceName,
+  }) async {
+    await initialize();
+    final store = _store;
+    if (!_ready || store == null || _disposed) return false;
+    if (_session != null || _sessionMutationInProgress) {
+      _lastError = const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
+      );
+      _notify();
+      return false;
+    }
+
+    _sessionMutationInProgress = true;
+    _lastError = null;
+    _deviceError = null;
+    _devicesLoading = false;
+    _setStatus(CloudSyncProviderStatus.signingIn);
+    CloudSyncClient? loginClient;
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (_disposed) return false;
+      loginClient = CloudSyncClient(baseUrl: baseUrl);
+      final session = await loginClient.login(
+        loginName: loginName.trim(),
+        password: password,
+        deviceName: deviceName.trim(),
+        platform: _currentPlatform(),
+        clientVersion: packageInfo.version,
+      );
+      if (_disposed) return false;
+      await store.saveLastBaseUrl(session.baseUrl);
+      await store.savePaused(session, paused: false);
+      await store.saveSession(session);
+      if (_disposed) return false;
+
+      _lastBaseUrl = session.baseUrl;
+      _session = session;
+      _paused = false;
+      _connect(session, client: loginClient);
+      loginClient = null;
+      _setStatus(CloudSyncProviderStatus.idle);
+      _startAutomaticSync();
+      final connectedEpoch = _sessionEpoch;
+      await syncNow();
+      return !_disposed &&
+          connectedEpoch == _sessionEpoch &&
+          identical(_session, session);
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '登录云同步',
+        status: CloudSyncProviderStatus.signedOut,
+      );
+      return false;
+    } finally {
+      loginClient?.close(force: true);
+      _sessionMutationInProgress = false;
+    }
+  }
+
+  Future<bool> logout({bool clearSyncState = false}) async {
+    await initialize();
+    final store = _store;
+    if (store == null || _disposed || _sessionMutationInProgress) return false;
+    _sessionMutationInProgress = true;
+    final session = _session;
+    _session = null;
+    _devicesLoading = false;
+    _setStatus(CloudSyncProviderStatus.signingOut);
+
+    final activeSync = _activeSync;
+    _sessionEpoch++;
+    _stopAutomaticSync();
+    _client?.close(force: true);
+    _client = null;
+    _coordinator = null;
+    try {
+      if (activeSync != null) {
+        await activeSync;
+      }
+      if (session != null && clearSyncState) {
+        await store.clearAccountState(session);
+      }
+      await store.clearSession();
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '退出云同步',
+        status: CloudSyncProviderStatus.error,
+      );
+      if (session != null) {
+        _session = session;
+        _connect(session);
+        if (!_paused) _startAutomaticSync();
+      }
+      return false;
+    } finally {
+      _sessionMutationInProgress = false;
+    }
+
+    _stopAutomaticSync();
+    _paused = false;
+    _devices = const <CloudSyncDeviceSession>[];
+    _lastRun = null;
+    _lastError = null;
+    _deviceError = null;
+    _setStatus(CloudSyncProviderStatus.signedOut);
+    return true;
+  }
+
+  Future<bool> setPaused(bool value) async {
+    await initialize();
+    final store = _store;
+    final session = _session;
+    if (store == null ||
+        session == null ||
+        _disposed ||
+        _sessionMutationInProgress) {
+      return false;
+    }
+    _sessionMutationInProgress = true;
+    final epoch = _sessionEpoch;
+
+    try {
+      await store.savePaused(session, paused: value);
+      if (_disposed ||
+          epoch != _sessionEpoch ||
+          !identical(_session, session)) {
+        return false;
+      }
+
+      _paused = value;
+      _lastError = null;
+      if (value) {
+        _stopAutomaticSync();
+        _setStatus(CloudSyncProviderStatus.paused);
+      } else {
+        _setStatus(CloudSyncProviderStatus.idle);
+        _startAutomaticSync();
+        unawaited(syncNow());
+      }
+      return true;
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '保存云同步开关',
+        status: CloudSyncProviderStatus.error,
+      );
+      return false;
+    } finally {
+      _sessionMutationInProgress = false;
+    }
+  }
+
+  Future<bool> syncNow() {
+    final active = _activeSync;
+    if (active != null) return active;
+
+    final run = _runSync();
+    _activeSync = run;
+    return run.whenComplete(() {
+      if (identical(_activeSync, run)) {
+        _activeSync = null;
+      }
+    });
+  }
+
+  Future<bool> _runSync() async {
+    await initialize();
+    final coordinator = _coordinator;
+    if (!_ready || coordinator == null || _session == null || _paused) {
+      return false;
+    }
+
+    final epoch = _sessionEpoch;
+    _lastError = null;
+    _setStatus(CloudSyncProviderStatus.syncing);
+    try {
+      final result = await coordinator.synchronize();
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _lastRun = result;
+      _lastError = null;
+      _setStatus(
+        _paused ? CloudSyncProviderStatus.paused : CloudSyncProviderStatus.idle,
+      );
+      return true;
+    } catch (error, stackTrace) {
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '执行云同步',
+        status: CloudSyncProviderStatus.error,
+      );
+      return false;
+    }
+  }
+
+  Future<bool> refreshDevices() async {
+    await initialize();
+    final client = _client;
+    if (client == null || _session == null) return false;
+    final epoch = _sessionEpoch;
+    _devicesLoading = true;
+    _notify();
+    try {
+      final page = await client.listDevices(pageSize: 100);
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _devices = page.items;
+      _deviceError = null;
+      return true;
+    } catch (error, stackTrace) {
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _recordDeviceFailure(error, stackTrace, operation: '读取同步设备');
+      return false;
+    } finally {
+      if (epoch == _sessionEpoch && !_disposed) {
+        _devicesLoading = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<bool> revokeDevice(String deviceId) async {
+    await initialize();
+    final client = _client;
+    final session = _session;
+    if (client == null || session == null) return false;
+    final epoch = _sessionEpoch;
+
+    try {
+      final revoked = await client.revokeDevice(deviceId);
+      if (epoch != _sessionEpoch || _disposed) return false;
+      if (revoked.isCurrent) {
+        return logout();
+      }
+      await refreshDevices();
+      return true;
+    } catch (error, stackTrace) {
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _recordDeviceFailure(error, stackTrace, operation: '撤销同步设备');
+      return false;
+    }
+  }
+
+  void clearError() {
+    if (_lastError == null && _deviceError == null) return;
+    _lastError = null;
+    _deviceError = null;
+    if (_status == CloudSyncProviderStatus.error) {
+      _status = _session == null
+          ? CloudSyncProviderStatus.signedOut
+          : _paused
+          ? CloudSyncProviderStatus.paused
+          : CloudSyncProviderStatus.idle;
+    }
+    _notify();
+  }
+
+  void _connect(CloudSyncAccountSession session, {CloudSyncClient? client}) {
+    _sessionEpoch++;
+    _client?.close(force: true);
+    final nextClient =
+        client ??
+        CloudSyncClient(baseUrl: session.baseUrl, token: session.token);
+    nextClient.setToken(session.token);
+    _client = nextClient;
+    _coordinator = CloudSyncCoordinator(
+      session,
+      nextClient,
+      _store!,
+      adapters: <ConfigSyncAdapter>[_configAdapter],
+    );
+  }
+
+  void _startAutomaticSync() {
+    _stopAutomaticSync();
+    if (_disposed ||
+        !_foreground ||
+        _paused ||
+        _session == null ||
+        !_ready ||
+        _status == CloudSyncProviderStatus.signingOut) {
+      return;
+    }
+    _timer = Timer.periodic(automaticSyncInterval, (_) {
+      unawaited(syncNow());
+    });
+  }
+
+  void _stopAutomaticSync() {
+    _timer?.cancel();
+    _timer = null;
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    switch (state) {
+      case AppLifecycleState.resumed:
+        _foreground = true;
+        _startAutomaticSync();
+        if (_session != null && !_paused) {
+          unawaited(syncNow());
+        }
+      case AppLifecycleState.inactive:
+      case AppLifecycleState.hidden:
+      case AppLifecycleState.paused:
+      case AppLifecycleState.detached:
+        _foreground = false;
+        _stopAutomaticSync();
+    }
+  }
+
+  CloudSyncPlatform _currentPlatform() {
+    if (kIsWeb) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+        serverCode: 'SYNC_PLATFORM_UNSUPPORTED',
+      );
+    }
+    return switch (defaultTargetPlatform) {
+      TargetPlatform.android => CloudSyncPlatform.android,
+      TargetPlatform.iOS => CloudSyncPlatform.ios,
+      TargetPlatform.macOS => CloudSyncPlatform.macos,
+      TargetPlatform.windows => CloudSyncPlatform.windows,
+      TargetPlatform.linux => CloudSyncPlatform.linux,
+      TargetPlatform.fuchsia => throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+        serverCode: 'SYNC_PLATFORM_UNSUPPORTED',
+      ),
+    };
+  }
+
+  void _recordFailure(
+    Object error,
+    StackTrace stackTrace, {
+    required String operation,
+    CloudSyncProviderStatus? status,
+  }) {
+    _lastError = _normalizeFailure(error);
+    if (status != null) {
+      _status = status;
+    }
+    debugPrint('$operation失败：$error\n$stackTrace');
+    _notify();
+  }
+
+  void _recordDeviceFailure(
+    Object error,
+    StackTrace stackTrace, {
+    required String operation,
+  }) {
+    _deviceError = _normalizeFailure(error);
+    debugPrint('$operation失败：$error\n$stackTrace');
+    _notify();
+  }
+
+  CloudSyncException _normalizeFailure(Object error) {
+    if (error is CloudSyncException) return error;
+    if (error is FormatException) {
+      return const CloudSyncException(
+        kind: CloudSyncFailureKind.invalidResponse,
+        retryable: false,
+      );
+    }
+    return const CloudSyncException(
+      kind: CloudSyncFailureKind.unknown,
+      retryable: false,
+    );
+  }
+
+  void _setStatus(CloudSyncProviderStatus value) {
+    _status = value;
+    _notify();
+  }
+
+  void _notify() {
+    if (!_disposed) notifyListeners();
+  }
+
+  @override
+  void dispose() {
+    _disposed = true;
+    _sessionEpoch++;
+    _stopAutomaticSync();
+    if (_observingLifecycle) {
+      WidgetsBinding.instance.removeObserver(this);
+    }
+    _client?.close(force: true);
+    final store = _store;
+    if (store != null) {
+      final activeSync = _activeSync;
+      if (activeSync == null) {
+        unawaited(store.close());
+      } else {
+        unawaited(activeSync.whenComplete(store.close));
+      }
+    }
+    super.dispose();
+  }
+}
