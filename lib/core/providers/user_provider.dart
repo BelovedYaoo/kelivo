@@ -19,9 +19,10 @@ class UserProvider extends ChangeNotifier {
   String? _avatarValue;
   String? get avatarType => _avatarType;
   String? get avatarValue => _avatarValue;
+  late final Future<void> ready;
 
   UserProvider() {
-    _load();
+    ready = _load();
   }
 
   Future<void> _load() async {
@@ -158,5 +159,33 @@ class UserProvider extends ChangeNotifier {
     final prefs = await SharedPreferences.getInstance();
     await prefs.remove(_prefsAvatarTypeKey);
     await prefs.remove(_prefsAvatarValueKey);
+  }
+
+  Future<void> syncApplyProfile({
+    required String name,
+    required bool replaceAvatar,
+    String? avatarType,
+    String? avatarValue,
+  }) async {
+    await ready;
+    final normalizedName = name.trim();
+    if (normalizedName.isNotEmpty) {
+      _name = normalizedName;
+      _hasSavedName = true;
+    }
+    if (replaceAvatar) {
+      _avatarType = avatarType;
+      _avatarValue = avatarValue;
+    }
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_prefsUserNameKey, _name);
+    if (_avatarType == null || _avatarValue == null) {
+      await prefs.remove(_prefsAvatarTypeKey);
+      await prefs.remove(_prefsAvatarValueKey);
+    } else {
+      await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
+      await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
+    }
+    notifyListeners();
   }
 }

@@ -11,6 +11,12 @@ class WorldBookProvider with ChangeNotifier {
   Map<String, bool> _collapsedBooks = const <String, bool>{};
 
   List<WorldBook> get books => List<WorldBook>.unmodifiable(_books);
+  Map<String, List<String>> get activeIdsByAssistant =>
+      Map<String, List<String>>.unmodifiable(
+        _activeIdsByAssistant.map(
+          (key, value) => MapEntry(key, List<String>.unmodifiable(value)),
+        ),
+      );
 
   WorldBook? getById(String id) {
     try {
@@ -105,6 +111,33 @@ class WorldBookProvider with ChangeNotifier {
     _books = const <WorldBook>[];
     _activeIdsByAssistant = const <String, List<String>>{};
     _collapsedBooks = const <String, bool>{};
+    notifyListeners();
+  }
+
+  Future<void> syncUpsert(WorldBook book, {required int position}) async {
+    await initialize();
+    final books = List<WorldBook>.from(_books)
+      ..removeWhere((e) => e.id == book.id);
+    books.insert(position.clamp(0, books.length), book);
+    _books = List<WorldBook>.unmodifiable(books);
+    await WorldBookStore.save(_books);
+    notifyListeners();
+  }
+
+  Future<void> syncDelete(String id) async {
+    await initialize();
+    if (!_books.any((e) => e.id == id)) return;
+    await WorldBookStore.delete(id);
+    await loadAll();
+  }
+
+  Future<void> syncReplaceActiveIds(Map<String, List<String>> activeIds) async {
+    await initialize();
+    await WorldBookStore.setActiveIdsMap(activeIds);
+    _activeIdsByAssistant = <String, List<String>>{
+      for (final entry in activeIds.entries)
+        entry.key: List<String>.unmodifiable(entry.value),
+    };
     notifyListeners();
   }
 

@@ -256,9 +256,10 @@ class McpProvider extends ChangeNotifier {
   Duration _requestTimeout = const Duration(seconds: 30);
   final McpStdioCommandResolver _stdioCommandResolver =
       McpStdioCommandResolver();
+  late final Future<void> ready;
 
   McpProvider() {
-    _load();
+    ready = _load();
   }
 
   List<McpServerConfig> get servers => List.unmodifiable(_servers);
@@ -675,6 +676,46 @@ class McpProvider extends ChangeNotifier {
     _status.remove(id);
     await _persist();
     notifyListeners();
+  }
+
+  Future<void> syncUpsertServer(
+    McpServerConfig server, {
+    required int position,
+  }) async {
+    await ready;
+    _disconnectClientWithoutNotification(server.id);
+    final servers = List<McpServerConfig>.from(_servers)
+      ..removeWhere((e) => e.id == server.id);
+    servers.insert(position.clamp(0, servers.length), server);
+    _servers = servers;
+    _status[server.id] = McpStatus.idle;
+    _errors.remove(server.id);
+    await _persist();
+    notifyListeners();
+    if (server.enabled) {
+      unawaited(Future<void>.delayed(Duration.zero, () => connect(server.id)));
+    }
+  }
+
+  Future<void> syncDeleteServer(String id) async {
+    await ready;
+    if (!_servers.any((e) => e.id == id)) return;
+    _disconnectClientWithoutNotification(id);
+    _servers = _servers.where((e) => e.id != id).toList(growable: false);
+    _status.remove(id);
+    _errors.remove(id);
+    await _persist();
+    notifyListeners();
+  }
+
+  void _disconnectClientWithoutNotification(String id) {
+    final client = _clients.remove(id);
+    try {
+      client?.disconnect();
+    } catch (_) {}
+    _status[id] = McpStatus.idle;
+    _errors.remove(id);
+    _stopHeartbeat(id);
   }
 
   Future<void> reorderServers(int oldIndex, int newIndex) async {

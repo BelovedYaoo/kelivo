@@ -13,6 +13,12 @@ class InstructionInjectionProvider with ChangeNotifier {
 
   List<InstructionInjection> get items =>
       List<InstructionInjection>.unmodifiable(_items);
+  Map<String, List<String>> get activeIdsByAssistant =>
+      Map<String, List<String>>.unmodifiable(
+        _activeIdsByAssistant.map(
+          (key, value) => MapEntry(key, List<String>.unmodifiable(value)),
+        ),
+      );
   List<String> get activeIds => activeIdsFor(null);
 
   List<String> activeIdsFor(String? assistantId) {
@@ -94,6 +100,36 @@ class InstructionInjectionProvider with ChangeNotifier {
     await InstructionInjectionStore.clear();
     _items = const <InstructionInjection>[];
     _activeIdsByAssistant = const <String, List<String>>{};
+    notifyListeners();
+  }
+
+  Future<void> syncUpsert(
+    InstructionInjection item, {
+    required int position,
+  }) async {
+    await initialize();
+    final items = List<InstructionInjection>.from(_items)
+      ..removeWhere((e) => e.id == item.id);
+    items.insert(position.clamp(0, items.length), item);
+    _items = List<InstructionInjection>.unmodifiable(items);
+    await InstructionInjectionStore.save(_items);
+    notifyListeners();
+  }
+
+  Future<void> syncDelete(String id) async {
+    await initialize();
+    if (!_items.any((e) => e.id == id)) return;
+    await InstructionInjectionStore.delete(id);
+    await loadAll();
+  }
+
+  Future<void> syncReplaceActiveIds(Map<String, List<String>> activeIds) async {
+    await initialize();
+    await InstructionInjectionStore.setActiveIdsMap(activeIds);
+    _activeIdsByAssistant = <String, List<String>>{
+      for (final entry in activeIds.entries)
+        entry.key: List<String>.unmodifiable(entry.value),
+    };
     notifyListeners();
   }
 

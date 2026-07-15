@@ -53,6 +53,27 @@ class QuickPhraseProvider with ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> syncUpsert(QuickPhrase phrase, {required int position}) async {
+    await initialize();
+    final phrases = List<QuickPhrase>.from(_phrases)
+      ..removeWhere((e) => e.id == phrase.id);
+    phrases.insert(position.clamp(0, phrases.length), phrase);
+    _phrases = phrases;
+    await QuickPhraseStore.save(_phrases);
+    notifyListeners();
+  }
+
+  Future<void> syncDelete(String id) async {
+    await initialize();
+    final phrases = List<QuickPhrase>.from(_phrases);
+    final before = phrases.length;
+    phrases.removeWhere((e) => e.id == id);
+    if (phrases.length == before) return;
+    _phrases = phrases;
+    await QuickPhraseStore.save(_phrases);
+    notifyListeners();
+  }
+
   void _reorderInMemory({
     required int oldIndex,
     required int newIndex,

@@ -46,6 +46,7 @@ enum MobileMessageNavButtonsMode { always, scroll, never }
 enum _MigrationResult { noChange, applied, failed }
 
 class SettingsProvider extends ChangeNotifier {
+  late final Future<void> ready;
   static const String _providersOrderKey = 'providers_order_v1';
   static const String _providerGroupsKey =
       'provider_groups_v1'; // [{id,name,createdAt}]
@@ -321,6 +322,8 @@ class SettingsProvider extends ChangeNotifier {
   int _providerUngroupedPosition = 0;
 
   List<ProviderGroup> get providerGroups => List.unmodifiable(_providerGroups);
+  Map<String, String> get providerGroupAssignments =>
+      Map<String, String>.unmodifiable(_providerGroupMap);
   int get providerUngroupedDisplayIndex =>
       _providerUngroupedPosition.clamp(0, _providerGroups.length);
 
@@ -565,7 +568,185 @@ class SettingsProvider extends ChangeNotifier {
   int get appLaunchCount => _appLaunchCount;
 
   SettingsProvider() {
-    _load();
+    ready = _load();
+  }
+
+  Future<void> syncUpsertProviderConfig(
+    String key,
+    ProviderConfig config, {
+    required int position,
+  }) async {
+    await ready;
+    _providerConfigs[key] = config;
+    final order = List<String>.from(_providersOrder)..remove(key);
+    order.insert(position.clamp(0, order.length), key);
+    _providersOrder = List<String>.unmodifiable(order);
+    final prefs = await SharedPreferences.getInstance();
+    final map = _providerConfigs.map((k, v) => MapEntry(k, v.toJson()));
+    await prefs.setString(_providerConfigsKey, jsonEncode(map));
+    await prefs.setStringList(_providersOrderKey, _providersOrder);
+    notifyListeners();
+  }
+
+  Future<void> syncApplyProviderGrouping({
+    required List<ProviderGroup> groups,
+    required Map<String, String> assignments,
+    required int ungroupedPosition,
+  }) async {
+    await ready;
+    final groupIds = groups.map((e) => e.id).toSet();
+    _providerGroups = List<ProviderGroup>.unmodifiable(groups);
+    _providerGroupMap = <String, String>{
+      for (final entry in assignments.entries)
+        if (groupIds.contains(entry.value)) entry.key: entry.value,
+    };
+    _providerUngroupedPosition = ungroupedPosition.clamp(0, groups.length);
+    final prefs = await SharedPreferences.getInstance();
+    await _persistProviderGrouping(prefs);
+    notifyListeners();
+  }
+
+  Future<void> syncUpsertSearchService(
+    SearchServiceOptions service, {
+    required int position,
+  }) async {
+    await ready;
+    final selectedId =
+        _searchServiceSelected >= 0 &&
+            _searchServiceSelected < _searchServices.length
+        ? _searchServices[_searchServiceSelected].id
+        : null;
+    final services = List<SearchServiceOptions>.from(_searchServices)
+      ..removeWhere((e) => e.id == service.id);
+    services.insert(position.clamp(0, services.length), service);
+    _searchServices = List<SearchServiceOptions>.unmodifiable(services);
+    final selectedIndex = selectedId == null
+        ? -1
+        : _searchServices.indexWhere((e) => e.id == selectedId);
+    _searchServiceSelected = selectedIndex < 0 ? 0 : selectedIndex;
+    await _persistSyncSearchServices();
+    notifyListeners();
+  }
+
+  Future<void> syncDeleteSearchService(String id) async {
+    await ready;
+    final selectedId =
+        _searchServiceSelected >= 0 &&
+            _searchServiceSelected < _searchServices.length
+        ? _searchServices[_searchServiceSelected].id
+        : null;
+    final services = List<SearchServiceOptions>.from(_searchServices);
+    final before = services.length;
+    services.removeWhere((e) => e.id == id);
+    if (services.length == before) return;
+    _searchServices = List<SearchServiceOptions>.unmodifiable(services);
+    final selectedIndex = selectedId == null
+        ? -1
+        : _searchServices.indexWhere((e) => e.id == selectedId);
+    _searchServiceSelected = selectedIndex < 0 ? 0 : selectedIndex;
+    await _persistSyncSearchServices();
+    notifyListeners();
+  }
+
+  Future<void> syncApplySearchState({
+    required String? selectedServiceId,
+    required SearchCommonOptions commonOptions,
+    required bool enabled,
+    required bool autoTestOnLaunch,
+  }) async {
+    await ready;
+    _searchCommonOptions = commonOptions;
+    _searchEnabled = enabled;
+    _searchAutoTestOnLaunch = autoTestOnLaunch;
+    final selectedIndex = selectedServiceId == null
+        ? -1
+        : _searchServices.indexWhere((e) => e.id == selectedServiceId);
+    _searchServiceSelected = selectedIndex < 0 ? 0 : selectedIndex;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(_searchCommonKey, jsonEncode(commonOptions.toJson()));
+    await prefs.setInt(_searchSelectedKey, _searchServiceSelected);
+    await prefs.setBool(_searchEnabledKey, enabled);
+    await prefs.setBool(_searchAutoTestOnLaunchKey, autoTestOnLaunch);
+    notifyListeners();
+  }
+
+  Future<void> _persistSyncSearchServices() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _searchServicesKey,
+      jsonEncode(_searchServices.map((e) => e.toJson()).toList()),
+    );
+    await prefs.setInt(_searchSelectedKey, _searchServiceSelected);
+  }
+
+  Future<void> syncUpsertTtsService(
+    TtsServiceOptions service, {
+    required int position,
+  }) async {
+    await ready;
+    final selectedId =
+        _ttsServiceSelected >= 0 && _ttsServiceSelected < _ttsServices.length
+        ? _ttsServices[_ttsServiceSelected].id
+        : null;
+    final services = List<TtsServiceOptions>.from(_ttsServices)
+      ..removeWhere((e) => e.id == service.id);
+    services.insert(position.clamp(0, services.length), service);
+    _ttsServices = List<TtsServiceOptions>.unmodifiable(services);
+    final selectedIndex = selectedId == null
+        ? -1
+        : _ttsServices.indexWhere((e) => e.id == selectedId);
+    _ttsServiceSelected = selectedIndex;
+    await _persistSyncTtsServices();
+    notifyListeners();
+  }
+
+  Future<void> syncDeleteTtsService(String id) async {
+    await ready;
+    final selectedId =
+        _ttsServiceSelected >= 0 && _ttsServiceSelected < _ttsServices.length
+        ? _ttsServices[_ttsServiceSelected].id
+        : null;
+    final services = List<TtsServiceOptions>.from(_ttsServices);
+    final before = services.length;
+    services.removeWhere((e) => e.id == id);
+    if (services.length == before) return;
+    _ttsServices = List<TtsServiceOptions>.unmodifiable(services);
+    final selectedIndex = selectedId == null
+        ? -1
+        : _ttsServices.indexWhere((e) => e.id == selectedId);
+    _ttsServiceSelected = selectedIndex;
+    await _persistSyncTtsServices();
+    notifyListeners();
+  }
+
+  Future<void> syncApplyTtsState({
+    required String? selectedServiceId,
+    required bool autoPlayAssistantReplies,
+    required TtsTextSelectionMode textSelectionMode,
+  }) async {
+    await ready;
+    _ttsServiceSelected = selectedServiceId == null
+        ? -1
+        : _ttsServices.indexWhere((e) => e.id == selectedServiceId);
+    _ttsAutoPlayAssistantReplies = autoPlayAssistantReplies;
+    _ttsTextSelectionMode = textSelectionMode;
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
+    await prefs.setBool(
+      _ttsAutoPlayAssistantRepliesKey,
+      autoPlayAssistantReplies,
+    );
+    await prefs.setString(_ttsTextSelectionModeKey, textSelectionMode.name);
+    notifyListeners();
+  }
+
+  Future<void> _persistSyncTtsServices() async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString(
+      _ttsServicesKey,
+      jsonEncode(_ttsServices.map((e) => e.toJson()).toList()),
+    );
+    await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
   }
 
   Future<_MigrationResult> _migrateEmbeddingModelOverrides(

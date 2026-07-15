@@ -22,6 +22,7 @@ class AssistantProvider extends ChangeNotifier {
   final List<Assistant> _assistants = <Assistant>[];
   String? _currentAssistantId;
   final ChatService? chatService;
+  late final Future<void> ready;
 
   List<Assistant> get assistants => List.unmodifiable(_assistants);
   String? get currentAssistantId => _currentAssistantId;
@@ -35,7 +36,7 @@ class AssistantProvider extends ChangeNotifier {
   bool get currentSearchEnabled => currentAssistant?.searchEnabled ?? false;
 
   AssistantProvider({this.chatService}) {
-    _load();
+    ready = _load();
   }
 
   Future<void> _load() async {
@@ -303,6 +304,20 @@ class AssistantProvider extends ChangeNotifier {
     await prefs.setString(_currentAssistantKey, id);
   }
 
+  Future<void> syncSetCurrentAssistant(String? id) async {
+    await ready;
+    final next = id != null && _assistants.any((e) => e.id == id) ? id : null;
+    if (_currentAssistantId == next) return;
+    _currentAssistantId = next;
+    final prefs = await SharedPreferences.getInstance();
+    if (next == null) {
+      await prefs.remove(_currentAssistantKey);
+    } else {
+      await prefs.setString(_currentAssistantKey, next);
+    }
+    notifyListeners();
+  }
+
   Assistant? getById(String id) {
     final idx = _assistants.indexWhere((a) => a.id == id);
     if (idx == -1) return null;
@@ -472,6 +487,41 @@ class AssistantProvider extends ChangeNotifier {
 
     _assistants[idx] = next;
     await _persist();
+    notifyListeners();
+  }
+
+  Future<void> syncUpsertAssistant(
+    Assistant assistant, {
+    required int position,
+  }) async {
+    await ready;
+    final currentIndex = _assistants.indexWhere((e) => e.id == assistant.id);
+    if (currentIndex >= 0) {
+      _assistants.removeAt(currentIndex);
+    }
+    final target = position.clamp(0, _assistants.length);
+    _assistants.insert(target, assistant);
+    await _persist();
+    notifyListeners();
+  }
+
+  Future<void> syncDeleteAssistant(String id) async {
+    await ready;
+    final removedCurrent = _currentAssistantId == id;
+    final before = _assistants.length;
+    _assistants.removeWhere((e) => e.id == id);
+    if (_assistants.length == before) return;
+
+    if (removedCurrent) {
+      _currentAssistantId = _assistants.isEmpty ? null : _assistants.first.id;
+    }
+    await _persist();
+    final prefs = await SharedPreferences.getInstance();
+    if (_currentAssistantId == null) {
+      await prefs.remove(_currentAssistantKey);
+    } else {
+      await prefs.setString(_currentAssistantKey, _currentAssistantId!);
+    }
     notifyListeners();
   }
 

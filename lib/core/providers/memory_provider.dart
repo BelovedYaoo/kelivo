@@ -54,4 +54,17 @@ class MemoryProvider extends ChangeNotifier {
     await loadAll();
     return ok;
   }
+
+  Future<void> syncUpsert(AssistantMemory memory) async {
+    await initialize();
+    await MemoryStore.upsertBySyncId(memory);
+    await loadAll();
+  }
+
+  Future<void> syncDelete(String syncId) async {
+    await initialize();
+    if (await MemoryStore.deleteBySyncId(syncId)) {
+      await loadAll();
+    }
+  }
 }

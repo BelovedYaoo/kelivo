@@ -109,6 +109,30 @@ class MemoryStore {
     return changed;
   }
 
+  static Future<AssistantMemory> upsertBySyncId(AssistantMemory memory) async {
+    final all = await getAll();
+    final index = all.indexWhere((e) => e.syncId == memory.syncId);
+    final persisted = memory.copyWith(
+      id: index < 0 ? _nextId(all) : all[index].id,
+    );
+    if (index < 0) {
+      all.add(persisted);
+    } else {
+      all[index] = persisted;
+    }
+    await _saveAll(all);
+    return persisted;
+  }
+
+  static Future<bool> deleteBySyncId(String syncId) async {
+    final all = await getAll();
+    final before = all.length;
+    all.removeWhere((e) => e.syncId == syncId);
+    final changed = all.length != before;
+    if (changed) await _saveAll(all);
+    return changed;
+  }
+
   static Future<void> deleteForAssistant(String assistantId) async {
     final all = await getAll();
     all.removeWhere((m) => m.assistantId == assistantId);
