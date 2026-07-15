@@ -264,6 +264,7 @@ class MessageGenerationService {
     required String conversationId,
     required String modelId,
     required String providerKey,
+    required String turnId,
     String? groupId,
     int version = 0,
   }) async {
@@ -276,6 +277,7 @@ class MessageGenerationService {
       isStreaming: true,
       groupId: groupId,
       version: version,
+      turnId: turnId,
     );
   }
 
@@ -351,7 +353,7 @@ class MessageGenerationService {
   }
 
   /// Calculate version info for regeneration.
-  ({String? targetGroupId, int nextVersion, int lastKeep})
+  ({String? targetGroupId, String? targetTurnId, int nextVersion, int lastKeep})
   calculateRegenerationVersioning({
     required ChatMessage message,
     required List<ChatMessage> messages,
@@ -359,7 +361,12 @@ class MessageGenerationService {
   }) {
     final idx = messages.indexWhere((m) => m.id == message.id);
     if (idx < 0) {
-      return (targetGroupId: null, nextVersion: 0, lastKeep: -1);
+      return (
+        targetGroupId: null,
+        targetTurnId: null,
+        nextVersion: 0,
+        lastKeep: -1,
+      );
     }
 
     String? targetGroupId;
@@ -423,6 +430,7 @@ class MessageGenerationService {
 
     return (
       targetGroupId: targetGroupId,
+      targetTurnId: message.turnId,
       nextVersion: nextVersion,
       lastKeep: lastKeep,
     );

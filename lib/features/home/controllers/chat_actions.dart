@@ -505,43 +505,45 @@ class ChatActions {
     }
     onMessagesChanged?.call();
 
-    _setConversationLoading(conversation.id, true);
-
     // Create assistant message placeholder
     final assistantMessage = await messageGenerationService
         .createAssistantPlaceholder(
           conversationId: conversation.id,
           modelId: modelId,
           providerKey: providerKey,
+          turnId: userMessage.turnId,
         );
 
-    // Pre-create streaming notifier BEFORE adding message to list
-    // so that MessageListView can detect it's streaming on first render
-    streamController.markStreamingStarted(assistantMessage.id);
-
-    if (chatController.appendPersistedTailMessage(assistantMessage)) {
-      viewModel.restoreMessageUiState();
-    }
-    onMessagesChanged?.call();
-
-    // Reset tool parts and initialize reasoning
-    streamController.toolParts.remove(assistantMessage.id);
-    final supportsReasoning = _isReasoningModel(providerKey, modelId);
-    final enableReasoning =
-        supportsReasoning &&
-        _isReasoningEnabled(
-          assistant?.thinkingBudget ?? settings.thinkingBudget,
-        );
-    await messageGenerationService.initializeReasoningState(
-      messageId: assistantMessage.id,
-      enableReasoning: enableReasoning,
-    );
-
-    // Prepare API messages
-    messageGenerationService.onFileProcessingStarted = onFileProcessingStarted;
-    messageGenerationService.onFileProcessingFinished =
-        onFileProcessingFinished;
     try {
+      _setConversationLoading(conversation.id, true);
+
+      // Pre-create streaming notifier BEFORE adding message to list
+      // so that MessageListView can detect it's streaming on first render
+      streamController.markStreamingStarted(assistantMessage.id);
+
+      if (chatController.appendPersistedTailMessage(assistantMessage)) {
+        viewModel.restoreMessageUiState();
+      }
+      onMessagesChanged?.call();
+
+      // Reset tool parts and initialize reasoning
+      streamController.toolParts.remove(assistantMessage.id);
+      final supportsReasoning = _isReasoningModel(providerKey, modelId);
+      final enableReasoning =
+          supportsReasoning &&
+          _isReasoningEnabled(
+            assistant?.thinkingBudget ?? settings.thinkingBudget,
+          );
+      await messageGenerationService.initializeReasoningState(
+        messageId: assistantMessage.id,
+        enableReasoning: enableReasoning,
+      );
+
+      // Prepare API messages
+      messageGenerationService.onFileProcessingStarted =
+          onFileProcessingStarted;
+      messageGenerationService.onFileProcessingFinished =
+          onFileProcessingFinished;
       final apiContextMessages = chatController
           .messagesForCompleteHistoryContext(conversation);
       final prepared = await messageGenerationService
@@ -590,6 +592,7 @@ class ChatActions {
     } catch (e) {
       // Ensure file processing indicator is cleared on error
       onFileProcessingFinished?.call();
+      await _markAssistantGenerationFailed(assistantMessage, conversation.id);
       return ChatActionResult.error(e.toString());
     }
   }
@@ -642,7 +645,8 @@ class ChatActions {
       messages: completeMessages,
       assistantAsNewReply: assistantAsNewReply,
     );
-    if (versioning.lastKeep < 0) {
+    final targetTurnId = versioning.targetTurnId;
+    if (versioning.lastKeep < 0 || targetTurnId == null) {
       return ChatActionResult.error('invalid_versioning');
     }
 
@@ -694,94 +698,101 @@ class ChatActions {
           conversationId: conversation.id,
           modelId: modelId,
           providerKey: providerKey,
+          turnId: targetTurnId,
           groupId: versioning.targetGroupId,
           version: versioning.nextVersion,
         );
 
-    // Pre-create streaming notifier BEFORE adding message to list
-    // so that MessageListView can detect it's streaming on first render
-    streamController.markStreamingStarted(assistantMessage.id);
+    try {
+      // Pre-create streaming notifier BEFORE adding message to list
+      // so that MessageListView can detect it's streaming on first render
+      streamController.markStreamingStarted(assistantMessage.id);
 
-    // Persist version selection
-    final gid = assistantMessage.groupId ?? assistantMessage.id;
-    _versionSelections[gid] = assistantMessage.version;
-    await chatService.setSelectedVersion(
-      conversation.id,
-      gid,
-      assistantMessage.version,
-    );
+      // Persist version selection
+      final gid = assistantMessage.groupId ?? assistantMessage.id;
+      _versionSelections[gid] = assistantMessage.version;
+      await chatService.setSelectedVersion(
+        conversation.id,
+        gid,
+        assistantMessage.version,
+      );
 
-    final regenerationMessages = ChatActions.buildRegenerationMessages(
-      messages: completeMessages,
-      lastKeep: versioning.lastKeep,
-      targetGroupId: versioning.targetGroupId,
-      assistantPlaceholder: assistantMessage,
-    );
+      final regenerationMessages = ChatActions.buildRegenerationMessages(
+        messages: completeMessages,
+        lastKeep: versioning.lastKeep,
+        targetGroupId: versioning.targetGroupId,
+        assistantPlaceholder: assistantMessage,
+      );
 
-    if (chatController.appendPersistedTailMessage(assistantMessage)) {
-      viewModel.restoreMessageUiState();
+      if (chatController.appendPersistedTailMessage(assistantMessage)) {
+        viewModel.restoreMessageUiState();
+      }
+      onMessagesChanged?.call();
+
+      _setConversationLoading(conversation.id, true);
+
+      // Initialize reasoning
+      final supportsReasoning = _isReasoningModel(providerKey, modelId);
+      final enableReasoning =
+          supportsReasoning &&
+          _isReasoningEnabled(
+            assistant?.thinkingBudget ?? settings.thinkingBudget,
+          );
+      await messageGenerationService.initializeReasoningState(
+        messageId: assistantMessage.id,
+        enableReasoning: enableReasoning,
+      );
+
+      // Prepare API messages
+      final prepared = await messageGenerationService
+          .prepareApiMessagesWithInjections(
+            messages: regenerationMessages,
+            versionSelections: _versionSelections,
+            currentConversation: _conversationForMessageContext(
+              conversation,
+              regenerationMessages,
+              maxRawTruncateIndex: versioning.lastKeep,
+            ),
+            settings: settings,
+            assistant: assistant,
+            assistantId: assistantId,
+            providerKey: providerKey,
+            modelId: modelId,
+            approvalService: regenApprovalService,
+            askUserService: regenAskUserService,
+          );
+
+      // Build user image paths
+      final userImagePaths = messageGenerationService.buildUserImagePaths(
+        input: null,
+        lastUserImagePaths: prepared.lastUserImagePaths,
+        settings: settings,
+        providerKey: providerKey,
+        modelId: modelId,
+      );
+
+      // Execute generation
+      final ctx = messageGenerationService.buildGenerationContext(
+        assistantMessage: assistantMessage,
+        prepared: prepared,
+        userImagePaths: userImagePaths,
+        allowImagesApiRouting: allowImagesApiRouting,
+        providerKey: providerKey,
+        modelId: modelId,
+        assistant: assistant,
+        settings: settings,
+        supportsReasoning: supportsReasoning,
+        enableReasoning: enableReasoning,
+        generateTitleOnFinish: false,
+      );
+
+      await _executeGeneration(ctx);
+      return ChatActionResult.success(assistantMessage);
+    } catch (e) {
+      onFileProcessingFinished?.call();
+      await _markAssistantGenerationFailed(assistantMessage, conversation.id);
+      return ChatActionResult.error(e.toString());
     }
-    onMessagesChanged?.call();
-
-    _setConversationLoading(conversation.id, true);
-
-    // Initialize reasoning
-    final supportsReasoning = _isReasoningModel(providerKey, modelId);
-    final enableReasoning =
-        supportsReasoning &&
-        _isReasoningEnabled(
-          assistant?.thinkingBudget ?? settings.thinkingBudget,
-        );
-    await messageGenerationService.initializeReasoningState(
-      messageId: assistantMessage.id,
-      enableReasoning: enableReasoning,
-    );
-
-    // Prepare API messages
-    final prepared = await messageGenerationService
-        .prepareApiMessagesWithInjections(
-          messages: regenerationMessages,
-          versionSelections: _versionSelections,
-          currentConversation: _conversationForMessageContext(
-            conversation,
-            regenerationMessages,
-            maxRawTruncateIndex: versioning.lastKeep,
-          ),
-          settings: settings,
-          assistant: assistant,
-          assistantId: assistantId,
-          providerKey: providerKey,
-          modelId: modelId,
-          approvalService: regenApprovalService,
-          askUserService: regenAskUserService,
-        );
-
-    // Build user image paths
-    final userImagePaths = messageGenerationService.buildUserImagePaths(
-      input: null,
-      lastUserImagePaths: prepared.lastUserImagePaths,
-      settings: settings,
-      providerKey: providerKey,
-      modelId: modelId,
-    );
-
-    // Execute generation
-    final ctx = messageGenerationService.buildGenerationContext(
-      assistantMessage: assistantMessage,
-      prepared: prepared,
-      userImagePaths: userImagePaths,
-      allowImagesApiRouting: allowImagesApiRouting,
-      providerKey: providerKey,
-      modelId: modelId,
-      assistant: assistant,
-      settings: settings,
-      supportsReasoning: supportsReasoning,
-      enableReasoning: enableReasoning,
-      generateTitleOnFinish: false,
-    );
-
-    await _executeGeneration(ctx);
-    return ChatActionResult.success(assistantMessage);
   }
 
   Future<ChatActionResult> continueAssistantMessageAfterToolAnswer({
@@ -888,12 +899,40 @@ class ChatActions {
       await _executeGeneration(ctx);
       return ChatActionResult.success(streamingMessage);
     } catch (e) {
-      streamController.markStreamingEnded(streamingMessage.id);
-      _messages[visibleIndex] = streamingMessage.copyWith(isStreaming: false);
-      await chatService.updateMessage(streamingMessage.id, isStreaming: false);
-      _setConversationLoading(conversation.id, false);
+      await _markAssistantGenerationFailed(streamingMessage, conversation.id);
       return ChatActionResult.error(e.toString());
     }
+  }
+
+  Future<void> _markAssistantGenerationFailed(
+    ChatMessage message,
+    String conversationId,
+  ) async {
+    streamController.markStreamingEnded(message.id);
+    streamController.cleanupTimers(message.id);
+
+    final index = _messages.indexWhere(
+      (candidate) => candidate.id == message.id,
+    );
+    final latest = index == -1 ? message : _messages[index];
+    final failed = latest.copyWith(
+      isStreaming: false,
+      generationStatus: ChatMessage.generationStatusFailed,
+    );
+    await chatService.updateMessage(
+      failed.id,
+      content: failed.content,
+      totalTokens: failed.totalTokens,
+      isStreaming: false,
+      generationStatus: ChatMessage.generationStatusFailed,
+    );
+    if (index != -1) {
+      _messages[index] = failed;
+      onMessagesChanged?.call();
+    }
+
+    streamController.removeStreamingNotifier(message.id);
+    _setConversationLoading(conversationId, false);
   }
 
   // ============================================================================
@@ -947,10 +986,14 @@ class ChatActions {
         content: latestStreaming.content,
         isStreaming: false,
         totalTokens: latestStreaming.totalTokens,
+        generationStatus: ChatMessage.generationStatusInterrupted,
       );
 
       if (idx != -1) {
-        _messages[idx] = latestStreaming.copyWith(isStreaming: false);
+        _messages[idx] = latestStreaming.copyWith(
+          isStreaming: false,
+          generationStatus: ChatMessage.generationStatusInterrupted,
+        );
         onMessagesChanged?.call();
       }
 
@@ -1483,6 +1526,7 @@ class ChatActions {
       completionTokens: finalCompletionTokens,
       cachedTokens: finalCachedTokens,
       durationMs: finalDurationMs,
+      generationStatus: ChatMessage.generationStatusCompleted,
     );
 
     final finalizedMessage = state.ctx.assistantMessage.copyWith(
@@ -1493,6 +1537,7 @@ class ChatActions {
       completionTokens: finalCompletionTokens,
       cachedTokens: finalCachedTokens,
       durationMs: finalDurationMs,
+      generationStatus: ChatMessage.generationStatusCompleted,
     );
 
     final index = _messages.indexWhere((m) => m.id == messageId);
@@ -1566,6 +1611,7 @@ class ChatActions {
       content: displayContent,
       totalTokens: state.totalTokens,
       isStreaming: false,
+      generationStatus: ChatMessage.generationStatusFailed,
     );
 
     final index = _messages.indexWhere((m) => m.id == messageId);
@@ -1574,6 +1620,7 @@ class ChatActions {
         content: displayContent,
         isStreaming: false,
         totalTokens: state.totalTokens,
+        generationStatus: ChatMessage.generationStatusFailed,
       );
       onMessagesChanged?.call();
     }

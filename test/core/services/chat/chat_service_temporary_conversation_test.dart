@@ -5,7 +5,10 @@ import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 
+import 'package:Kelivo/core/models/chat_message.dart';
+import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/utils/app_directories.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this.path);
@@ -42,6 +45,120 @@ void main() {
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
+  });
+
+  group('ChatService turn identities', () {
+    test('message writes preserve turn and explicit terminal status', () async {
+      final service = ChatService();
+      await service.init();
+
+      final conversation = await service.createConversation(title: 'Chat');
+      final user = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: 'question',
+      );
+      final assistant = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: '',
+        isStreaming: true,
+        turnId: user.turnId,
+      );
+
+      await service.updateMessage(
+        assistant.id,
+        isStreaming: false,
+        generationStatus: ChatMessage.generationStatusFailed,
+      );
+      final stored = service
+          .getMessages(conversation.id)
+          .firstWhere((message) => message.id == assistant.id);
+      final edited = await service.appendMessageVersion(
+        messageId: stored.id,
+        content: 'edited',
+      );
+
+      expect(stored.turnId, user.turnId);
+      expect(stored.generationStatus, ChatMessage.generationStatusFailed);
+      expect(edited?.turnId, user.turnId);
+      expect(edited?.generationStatus, ChatMessage.generationStatusCompleted);
+    });
+
+    test(
+      'legacy groups migrate by logical order and stale drafts interrupt',
+      () async {
+        final appDataDir = await AppDirectories.getAppDataDirectory();
+        await Hive.initFlutter(appDataDir.path);
+        if (!Hive.isAdapterRegistered(0)) {
+          Hive.registerAdapter(ChatMessageAdapter());
+        }
+        if (!Hive.isAdapterRegistered(1)) {
+          Hive.registerAdapter(ConversationAdapter());
+        }
+
+        final conversations = await Hive.openBox<Conversation>('conversations');
+        final messages = await Hive.openBox<ChatMessage>('messages');
+        final toolEvents = await Hive.openBox('tool_events_v1');
+        final user = ChatMessage(
+          id: 'user-1',
+          role: 'user',
+          content: 'question',
+          conversationId: 'conversation-1',
+        );
+        final firstAnswer = ChatMessage(
+          id: 'answer-1',
+          role: 'assistant',
+          content: 'first',
+          conversationId: 'conversation-1',
+          groupId: 'answer-group',
+        );
+        final nextUser = ChatMessage(
+          id: 'user-2',
+          role: 'user',
+          content: 'next question',
+          conversationId: 'conversation-1',
+        );
+        final laterVersion = ChatMessage(
+          id: 'answer-2',
+          role: 'assistant',
+          content: 'later version',
+          conversationId: 'conversation-1',
+          isStreaming: true,
+          groupId: 'answer-group',
+          version: 1,
+        );
+        final conversation = Conversation(
+          id: 'conversation-1',
+          title: 'Legacy',
+          messageIds: [user.id, firstAnswer.id, nextUser.id, laterVersion.id],
+        );
+        await conversations.put(conversation.id, conversation);
+        await messages.putAll({
+          user.id: user,
+          firstAnswer.id: firstAnswer,
+          nextUser.id: nextUser,
+          laterVersion.id: laterVersion,
+        });
+        await toolEvents.put('_active_streaming_ids', [laterVersion.id]);
+        await Hive.close();
+
+        final service = ChatService();
+        await service.init();
+        final migrated = {
+          for (final message in service.getMessages(conversation.id))
+            message.id: message,
+        };
+
+        expect(migrated[firstAnswer.id]?.turnId, user.turnId);
+        expect(migrated[laterVersion.id]?.turnId, user.turnId);
+        expect(migrated[nextUser.id]?.turnId, nextUser.turnId);
+        expect(
+          migrated[laterVersion.id]?.generationStatus,
+          ChatMessage.generationStatusInterrupted,
+        );
+      },
+    );
   });
 
   group('ChatService temporary conversations', () {
@@ -179,10 +296,16 @@ void main() {
         await service.init();
 
         final source = await service.createConversation(title: 'Source');
+        final user = await service.addMessage(
+          conversationId: source.id,
+          role: 'user',
+          content: 'question',
+        );
         final original = await service.addMessage(
           conversationId: source.id,
           role: 'assistant',
           content: 'original answer',
+          turnId: user.turnId,
         );
         final edited = await service.appendMessageVersion(
           messageId: original.id,
@@ -193,18 +316,19 @@ void main() {
         final fork = await service.forkConversation(
           title: 'Fork',
           assistantId: null,
-          sourceMessages: [edited!],
+          sourceMessages: [user, edited!],
         );
 
         final forkMessages = service.getMessages(fork.id);
-        expect(forkMessages, hasLength(1));
-        expect(forkMessages.single.conversationId, fork.id);
-        expect(forkMessages.single.content, 'edited answer');
+        expect(forkMessages, hasLength(2));
+        expect(forkMessages.first.conversationId, fork.id);
+        expect(forkMessages.last.content, 'edited answer');
+        expect(forkMessages.last.turnId, forkMessages.first.turnId);
         expect(
-          forkMessages.single.groupId ?? forkMessages.single.id,
-          forkMessages.single.id,
+          forkMessages.last.groupId ?? forkMessages.last.id,
+          forkMessages.last.id,
         );
-        expect(forkMessages.single.version, 0);
+        expect(forkMessages.last.version, 0);
         expect(service.getVersionSelections(fork.id), isEmpty);
       },
     );

@@ -12,6 +12,7 @@ class ChatService extends ChangeNotifier {
   static const String _messagesBoxName = 'messages';
   static const String _toolEventsBoxName = 'tool_events_v1';
   static const String _activeStreamingKey = '_active_streaming_ids';
+  static const String _turnIdentityMigrationKey = '_turn_identity_v1';
   static const int defaultInitialMessageMin = 2;
   static const int defaultInitialMessageMax = 240;
   static const int defaultInitialTextBudget = 20000;
@@ -69,6 +70,9 @@ class ChatService extends ChangeNotifier {
 
     // Migrate any persisted message content that references old iOS sandbox paths
     await _migrateSandboxPaths();
+
+    // 旧消息没有轮次字段，必须在云同步读取前按逻辑消息组补齐一致身份。
+    await _migrateTurnIdentities();
 
     // Reset any stale isStreaming flags left over from a previous app crash or
     // force-quit.  After a fresh launch no message can be actively streaming.
@@ -490,6 +494,57 @@ class ChatService extends ChangeNotifier {
     }
   }
 
+  List<ChatMessage> _normalizeTurnIdentities(List<ChatMessage> messages) {
+    final groups = <String, List<ChatMessage>>{};
+    for (final message in messages) {
+      final groupId = message.groupId ?? message.id;
+      groups.putIfAbsent(groupId, () => <ChatMessage>[]).add(message);
+    }
+
+    final normalizedById = <String, ChatMessage>{};
+    String? currentTurnId;
+    for (final group in groups.values) {
+      final first = group.first;
+      if (first.role == 'user') {
+        currentTurnId = first.turnId;
+      } else {
+        currentTurnId ??= first.turnId;
+      }
+      for (final message in group) {
+        normalizedById[message.id] = message.turnId == currentTurnId
+            ? message
+            : message.copyWith(turnId: currentTurnId);
+      }
+    }
+
+    return messages
+        .map((message) => normalizedById[message.id] ?? message)
+        .toList(growable: false);
+  }
+
+  Future<void> _migrateTurnIdentities() async {
+    if (_toolEventsBox.get(_turnIdentityMigrationKey) == true) return;
+
+    for (final conversation in _conversationsBox.values) {
+      final updates = <String, ChatMessage>{};
+      final messages = conversation.messageIds
+          .map(_messagesBox.get)
+          .whereType<ChatMessage>()
+          .toList(growable: false);
+      final normalized = _normalizeTurnIdentities(messages);
+      for (final message in normalized) {
+        final stored = _messagesBox.get(message.id);
+        if (stored != null && stored.turnId != message.turnId) {
+          updates[message.id] = message;
+        }
+      }
+      if (updates.isNotEmpty) {
+        await _messagesBox.putAll(updates);
+      }
+    }
+    await _toolEventsBox.put(_turnIdentityMigrationKey, true);
+  }
+
   /// Reset stale isStreaming flags left over from a previous app crash or
   /// force-quit.  After a fresh launch no message can be actively streaming,
   /// so any persisted `isStreaming: true` is stale and must be cleared to
@@ -506,7 +561,13 @@ class ChatService extends ChangeNotifier {
       for (final id in ids) {
         final msg = _messagesBox.get(id);
         if (msg != null && msg.isStreaming) {
-          await _messagesBox.put(id, msg.copyWith(isStreaming: false));
+          await _messagesBox.put(
+            id,
+            msg.copyWith(
+              isStreaming: false,
+              generationStatus: ChatMessage.generationStatusInterrupted,
+            ),
+          );
         }
       }
       await _toolEventsBox.delete(_activeStreamingKey);
@@ -586,12 +647,13 @@ class ChatService extends ChangeNotifier {
     List<ChatMessage> messages,
   ) async {
     if (!_initialized) await init();
+    final normalizedMessages = _normalizeTurnIdentities(messages);
     // Restore messages first
-    for (final m in messages) {
+    for (final m in normalizedMessages) {
       await _messagesBox.put(m.id, m);
     }
     // Ensure messageIds are in the same order
-    final ids = messages.map((m) => m.id).toList();
+    final ids = normalizedMessages.map((m) => m.id).toList();
     final restored = Conversation(
       id: conversation.id,
       title: conversation.title,
@@ -610,7 +672,7 @@ class ChatService extends ChangeNotifier {
     await _conversationsBox.put(restored.id, restored);
 
     // Update caches
-    _messagesCache[restored.id] = List.of(messages);
+    _messagesCache[restored.id] = List.of(normalizedMessages);
 
     notifyListeners();
   }
@@ -845,6 +907,8 @@ class ChatService extends ChangeNotifier {
     DateTime? reasoningFinishedAt,
     String? groupId,
     int? version,
+    String? turnId,
+    String? generationStatus,
   }) async {
     if (!_initialized) await init();
 
@@ -887,6 +951,8 @@ class ChatService extends ChangeNotifier {
       reasoningFinishedAt: reasoningFinishedAt,
       groupId: groupId,
       version: version,
+      turnId: turnId,
+      generationStatus: generationStatus,
     );
 
     if (!temporary) {
@@ -952,6 +1018,7 @@ class ChatService extends ChangeNotifier {
     int? completionTokens,
     int? cachedTokens,
     int? durationMs,
+    String? generationStatus,
   }) async {
     if (!_initialized) return;
 
@@ -973,6 +1040,7 @@ class ChatService extends ChangeNotifier {
       completionTokens: completionTokens ?? message.completionTokens,
       cachedTokens: cachedTokens ?? message.cachedTokens,
       durationMs: durationMs ?? message.durationMs,
+      generationStatus: generationStatus,
     );
 
     if (isTemporaryConversation(message.conversationId)) {
@@ -1018,6 +1086,7 @@ class ChatService extends ChangeNotifier {
     int? completionTokens,
     int? cachedTokens,
     int? durationMs,
+    String? generationStatus,
   }) async {
     if (!_initialized) return;
 
@@ -1039,6 +1108,7 @@ class ChatService extends ChangeNotifier {
       completionTokens: completionTokens ?? message.completionTokens,
       cachedTokens: cachedTokens ?? message.cachedTokens,
       durationMs: durationMs ?? message.durationMs,
+      generationStatus: generationStatus,
     );
 
     if (isTemporaryConversation(message.conversationId)) {
@@ -1197,7 +1267,7 @@ class ChatService extends ChangeNotifier {
       title: title,
       assistantId: assistantId,
     );
-    final ids = <String>[];
+    final clones = <ChatMessage>[];
     for (final src in sourceMessages) {
       final clone = ChatMessage(
         role: src.role,
@@ -1213,7 +1283,15 @@ class ChatService extends ChangeNotifier {
         reasoningFinishedAt: src.reasoningFinishedAt,
         translation: src.translation,
         reasoningSegmentsJson: src.reasoningSegmentsJson,
+        generationStatus: src.isStreaming
+            ? ChatMessage.generationStatusInterrupted
+            : src.generationStatus,
       );
+      clones.add(clone);
+    }
+    final normalizedClones = _normalizeTurnIdentities(clones);
+    final ids = <String>[];
+    for (final clone in normalizedClones) {
       await _messagesBox.put(clone.id, clone);
       ids.add(clone.id);
     }
@@ -1268,6 +1346,8 @@ class ChatService extends ChangeNotifier {
       isStreaming: false,
       groupId: gid,
       version: nextVersion,
+      turnId: original.turnId,
+      generationStatus: ChatMessage.generationStatusCompleted,
     );
     await _messagesBox.put(newMsg.id, newMsg);
     // Append to conversation order at the end (we'll group when rendering)
