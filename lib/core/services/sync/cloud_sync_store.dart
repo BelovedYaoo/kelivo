@@ -76,6 +76,45 @@ final class CloudSyncStore {
     return _box.delete(_cursorKey(session));
   }
 
+  Future<void> beginSnapshot(CloudSyncAccountSession session) async {
+    final prefix = _accountPrefix(session, 'snapshot-seen');
+    final keys = _box.keys
+        .whereType<String>()
+        .where((key) => key.startsWith(prefix))
+        .toList(growable: false);
+    await _box.deleteAll(keys);
+  }
+
+  Future<void> markSnapshotRecordsSeen(
+    CloudSyncAccountSession session,
+    Iterable<CloudSyncRecord> records,
+  ) async {
+    final entries = <String, String>{
+      for (final record in records)
+        _snapshotSeenKey(session, record.entityType, record.entityId): '1',
+    };
+    if (entries.isNotEmpty) {
+      await _box.putAll(entries);
+    }
+  }
+
+  bool wasSeenInSnapshot(
+    CloudSyncAccountSession session, {
+    required CloudSyncEntityType entityType,
+    required String entityId,
+  }) {
+    return _box.containsKey(_snapshotSeenKey(session, entityType, entityId));
+  }
+
+  Future<void> finishSnapshot(CloudSyncAccountSession session) async {
+    final prefix = _accountPrefix(session, 'snapshot-seen');
+    final keys = _box.keys
+        .whereType<String>()
+        .where((key) => key.startsWith(prefix))
+        .toList(growable: false);
+    await _box.deleteAll(keys);
+  }
+
   CloudSyncShadow? shadow(
     CloudSyncAccountSession session, {
     required CloudSyncEntityType entityType,
@@ -235,6 +274,9 @@ final class CloudSyncStore {
     int? revision,
     int? lastChangeSeq,
     bool deleted = false,
+    String? parentId,
+    int? schemaVersion,
+    CloudSyncJsonMap? payload,
     DateTime? updatedAt,
   }) async {
     final existing = outboxById(session, mutationId);
@@ -243,14 +285,33 @@ final class CloudSyncStore {
       throw const FormatException('revision 与 lastChangeSeq 必须同时提供');
     }
     if (revision != null && lastChangeSeq != null) {
+      final currentShadow = shadow(
+        session,
+        entityType: existing.entityType,
+        entityId: existing.entityId,
+      );
+      final nextSchemaVersion =
+          schemaVersion ??
+          existing.schemaVersion ??
+          currentShadow?.schemaVersion;
+      if (nextSchemaVersion == null) {
+        throw const FormatException('确认 outbox 时缺少 schemaVersion');
+      }
+      final nextPayload = payload ?? currentShadow?.payload;
+      if (!deleted && nextPayload == null) {
+        throw const FormatException('确认有效实体时缺少 payload');
+      }
       await saveShadow(
         session,
         CloudSyncShadow(
           entityType: existing.entityType,
           entityId: existing.entityId,
+          parentId: parentId ?? existing.parentId ?? currentShadow?.parentId,
           revision: revision,
+          schemaVersion: nextSchemaVersion,
           lastChangeSeq: lastChangeSeq,
           deleted: deleted,
+          payload: nextPayload,
           updatedAt: updatedAt ?? DateTime.now(),
         ),
       );
@@ -321,6 +382,15 @@ final class CloudSyncStore {
 
   String _outboxKey(CloudSyncAccountSession session, String mutationId) {
     return '${_accountPrefix(session, 'outbox')}${Uri.encodeComponent(mutationId)}';
+  }
+
+  String _snapshotSeenKey(
+    CloudSyncAccountSession session,
+    CloudSyncEntityType entityType,
+    String entityId,
+  ) {
+    return '${_accountPrefix(session, 'snapshot-seen')}'
+        '${entityType.wireName}:${Uri.encodeComponent(entityId)}';
   }
 
   String _accountPrefix(CloudSyncAccountSession session, String area) {

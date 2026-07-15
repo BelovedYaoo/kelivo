@@ -402,8 +402,8 @@ final class CloudSyncOutboxMutation {
     if (baseRevision < 1 || (schemaVersion != null && schemaVersion < 1)) {
       throw const FormatException('同步版本号无效');
     }
-    if (patch.isEmpty || patch.length > 100) {
-      throw const FormatException('更新操作需要 1 到 100 个 patch');
+    if (patch.length > 100 || (patch.isEmpty && schemaVersion == null)) {
+      throw const FormatException('更新操作需要 patch 或 schemaVersion');
     }
     final now = (createdAt ?? DateTime.now()).toUtc();
     return CloudSyncOutboxMutation._(
@@ -677,31 +677,45 @@ final class CloudSyncShadow {
   CloudSyncShadow({
     required this.entityType,
     required String entityId,
+    required String? parentId,
     required this.revision,
+    required this.schemaVersion,
     required this.lastChangeSeq,
     required this.deleted,
+    required CloudSyncJsonMap? payload,
     required DateTime updatedAt,
   }) : entityId = _validatedId(entityId, 'entityId'),
+       parentId = _validatedOptionalId(parentId, 'parentId'),
+       payload = payload == null ? null : copyCloudSyncJsonMap(payload),
        updatedAt = updatedAt.toUtc() {
-    if (revision < 1 || lastChangeSeq < 1) {
+    if (revision < 1 || schemaVersion < 1 || lastChangeSeq < 1) {
       throw const FormatException('shadow 版本号必须大于 0');
+    }
+    if (!deleted && payload == null) {
+      throw const FormatException('有效 shadow 必须保留已确认 payload');
     }
   }
 
   final CloudSyncEntityType entityType;
   final String entityId;
+  final String? parentId;
   final int revision;
+  final int schemaVersion;
   final int lastChangeSeq;
   final bool deleted;
+  final CloudSyncJsonMap? payload;
   final DateTime updatedAt;
 
   CloudSyncJsonMap toJson() => <String, Object?>{
     'version': 1,
     'entityType': entityType.wireName,
     'entityId': entityId,
+    if (parentId != null) 'parentId': parentId,
     'revision': revision,
+    'schemaVersion': schemaVersion,
     'lastChangeSeq': lastChangeSeq,
     'deleted': deleted,
+    if (payload != null) 'payload': payload,
     'updatedAt': updatedAt.toIso8601String(),
   };
 
@@ -714,9 +728,14 @@ final class CloudSyncShadow {
     return CloudSyncShadow(
       entityType: CloudSyncEntityType.parse(_requireString(json, 'entityType')),
       entityId: _requireString(json, 'entityId'),
+      parentId: _optionalString(json, 'parentId'),
       revision: _requireInt(json, 'revision'),
+      schemaVersion: _requireInt(json, 'schemaVersion'),
       lastChangeSeq: _requireInt(json, 'lastChangeSeq'),
       deleted: deleted,
+      payload: json['payload'] == null
+          ? null
+          : copyCloudSyncJsonMap(json['payload']),
       updatedAt: _requireDateTime(json, 'updatedAt'),
     );
   }
