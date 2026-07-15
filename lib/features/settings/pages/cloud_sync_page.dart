@@ -128,7 +128,8 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final l10n = AppLocalizations.of(context)!;
     final busy =
         provider.status == CloudSyncProviderStatus.initializing ||
-        provider.status == CloudSyncProviderStatus.signingIn;
+        provider.status == CloudSyncProviderStatus.signingIn ||
+        provider.status == CloudSyncProviderStatus.signingOut;
     return _Section(
       title: l10n.cloudSyncSignInSection,
       children: [
