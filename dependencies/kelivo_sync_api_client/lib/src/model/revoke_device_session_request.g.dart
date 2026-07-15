@@ -1,0 +1,99 @@
+// GENERATED CODE - DO NOT MODIFY BY HAND
+
+part of 'revoke_device_session_request.dart';
+
+// **************************************************************************
+// BuiltValueGenerator
+// **************************************************************************
+
+class _$RevokeDeviceSessionRequest extends RevokeDeviceSessionRequest {
+  @override
+  final String deviceId;
+
+  factory _$RevokeDeviceSessionRequest([
+    void Function(RevokeDeviceSessionRequestBuilder)? updates,
+  ]) => (RevokeDeviceSessionRequestBuilder()..update(updates))._build();
+
+  _$RevokeDeviceSessionRequest._({required this.deviceId}) : super._();
+  @override
+  RevokeDeviceSessionRequest rebuild(
+    void Function(RevokeDeviceSessionRequestBuilder) updates,
+  ) => (toBuilder()..update(updates)).build();
+
+  @override
+  RevokeDeviceSessionRequestBuilder toBuilder() =>
+      RevokeDeviceSessionRequestBuilder()..replace(this);
+
+  @override
+  bool operator ==(Object other) {
+    if (identical(other, this)) return true;
+    return other is RevokeDeviceSessionRequest && deviceId == other.deviceId;
+  }
+
+  @override
+  int get hashCode {
+    var _$hash = 0;
+    _$hash = $jc(_$hash, deviceId.hashCode);
+    _$hash = $jf(_$hash);
+    return _$hash;
+  }
+
+  @override
+  String toString() {
+    return (newBuiltValueToStringHelper(
+      r'RevokeDeviceSessionRequest',
+    )..add('deviceId', deviceId)).toString();
+  }
+}
+
+class RevokeDeviceSessionRequestBuilder
+    implements
+        Builder<RevokeDeviceSessionRequest, RevokeDeviceSessionRequestBuilder> {
+  _$RevokeDeviceSessionRequest? _$v;
+
+  String? _deviceId;
+  String? get deviceId => _$this._deviceId;
+  set deviceId(String? deviceId) => _$this._deviceId = deviceId;
+
+  RevokeDeviceSessionRequestBuilder() {
+    RevokeDeviceSessionRequest._defaults(this);
+  }
+
+  RevokeDeviceSessionRequestBuilder get _$this {
+    final $v = _$v;
+    if ($v != null) {
+      _deviceId = $v.deviceId;
+      _$v = null;
+    }
+    return this;
+  }
+
+  @override
+  void replace(RevokeDeviceSessionRequest other) {
+    _$v = other as _$RevokeDeviceSessionRequest;
+  }
+
+  @override
+  void update(void Function(RevokeDeviceSessionRequestBuilder)? updates) {
+    if (updates != null) updates(this);
+  }
+
+  @override
+  RevokeDeviceSessionRequest build() => _build();
+
+  _$RevokeDeviceSessionRequest _build() {
+    final _$result =
+        _$v ??
+        _$RevokeDeviceSessionRequest._(
+          deviceId: BuiltValueNullFieldError.checkNotNull(
+            deviceId,
+            r'RevokeDeviceSessionRequest',
+            'deviceId',
+          ),
+        );
+    replace(_$result);
+    return _$result;
+  }
+}
+
+// ignore_for_file: deprecated_member_use_from_same_package,type=lint

@@ -54,6 +54,10 @@ dependencies:
   http: ^1.5.0
   crypto: ^3.0.3
   dio: ^5.9.0
+  built_value: '>=8.4.0 <9.0.0'
+  one_of: '>=1.5.0 <2.0.0'
+  kelivo_sync_api_client:
+    path: ./dependencies/kelivo_sync_api_client
   ddgs: ^0.3.2
   socks5_proxy: ^2.1.1
   jose: ^0.3.4

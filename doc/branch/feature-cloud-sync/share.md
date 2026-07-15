@@ -8,3 +8,4 @@
 - 协作注意：其他进程修改聊天模型、Hive 字段、Provider 初始化或附件 marker 前，请先在此记录，避免产生并行迁移冲突。
 - 已完成：ChatMessage 增加稳定 turnId 与生成状态，修复新消息 groupId 默认值；AssistantMemory 增加可确定性迁移的 syncId。
 - 已完成：发送与重生成共享 turnId，完成、取消、错误和崩溃恢复会写入准确终态；旧消息按逻辑组一次性迁移。
+- 客户端契约：固定 OpenAPI Generator 7.23.0，使用 `dart-dio + built_value` 保留判别联合；生成包位于 `dependencies/kelivo_sync_api_client`，禁止手改生成文件。
