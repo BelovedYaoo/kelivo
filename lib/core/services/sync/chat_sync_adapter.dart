@@ -1,4 +1,5 @@
 import '../chat/chat_service.dart';
+import '../chat/upload_directory_critical_section.dart';
 import 'chat_sync_codec.dart';
 import 'cloud_attachment_sync_service.dart';
 import 'sync_codec.dart';
@@ -57,10 +58,15 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           syncedContent: '',
         );
         if (syncable == null) continue;
-        final prepared = await _attachmentSyncService.prepareMessage(
-          messageId: message.id,
-          content: message.content,
-        );
+        final prepared = message.role == 'user'
+            ? await _attachmentSyncService.prepareMessage(
+                messageId: message.id,
+                content: message.content,
+              )
+            : PreparedChatSyncAttachments(
+                syncedContent: message.content,
+                references: const <ChatSyncAttachmentReference>[],
+              );
         final payload = ChatSyncCodec.encodeMessage(
           message,
           syncedContent: prepared.syncedContent,
@@ -94,14 +100,33 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           entity.entityId,
           entity.payload,
         );
-        final content = await _attachmentSyncService.restoreMessage(
-          messageId: entity.entityId,
-          syncedContent: record.message.content,
-          references: record.attachments,
-        );
-        await _chatService.upsertMessageFromSync(
-          record.message.copyWith(content: content),
-        );
+        if (record.attachments.isEmpty) {
+          if (record.message.role == 'user') {
+            await _attachmentSyncService.rememberRemoteOrdinaryUserMessage(
+              messageId: entity.entityId,
+              content: record.message.content,
+            );
+          } else {
+            await _attachmentSyncService.forgetRemoteOrdinaryUserMessage(
+              entity.entityId,
+            );
+          }
+          await _chatService.upsertMessageFromSync(record.message);
+        } else {
+          await UploadDirectoryCriticalSection.run(() async {
+            final content = await _attachmentSyncService.restoreMessage(
+              messageId: entity.entityId,
+              syncedContent: record.message.content,
+              references: record.attachments,
+            );
+            await _chatService.upsertMessageFromSync(
+              record.message.copyWith(content: content),
+            );
+            await _attachmentSyncService.forgetRemoteOrdinaryUserMessage(
+              entity.entityId,
+            );
+          });
+        }
         return;
       case turnType:
         final turn = ChatSyncCodec.decodeTurn(entity.entityId, entity.payload);
@@ -123,6 +148,9 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
         await _chatService.deleteConversationFromSync(key.entityId);
         return;
       case messageType:
+        await _attachmentSyncService.forgetRemoteOrdinaryUserMessage(
+          key.entityId,
+        );
         await _chatService.deleteMessageFromSync(key.entityId);
         return;
       case turnType:

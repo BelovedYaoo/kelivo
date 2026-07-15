@@ -1,3 +1,5 @@
+import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -8,10 +10,14 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/services/chat/upload_directory_critical_section.dart';
+import 'package:Kelivo/core/services/sync/chat_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/chat_sync_codec.dart';
 import 'package:Kelivo/core/services/sync/cloud_attachment_sync_service.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
@@ -30,6 +36,43 @@ class _FakePathProviderPlatform extends PathProviderPlatform {
 
   @override
   Future<String?> getTemporaryPath() async => '$path/tmp';
+}
+
+class _RealHttpOverrides extends HttpOverrides {
+  // 测试需要绕过 TestWidgetsFlutterBinding 注入的 HTTP 客户端。
+  @override
+  // ignore: unnecessary_overrides
+  HttpClient createHttpClient(SecurityContext? context) {
+    return super.createHttpClient(context);
+  }
+}
+
+Future<T> _withRealHttpClient<T>(Future<T> Function() action) {
+  final overrides = _RealHttpOverrides();
+  return HttpOverrides.runZoned(
+    action,
+    createHttpClient: overrides.createHttpClient,
+  );
+}
+
+CloudSyncAccountSession _cloudSession(
+  String baseUrl, {
+  String userId = 'sync-user',
+}) {
+  return CloudSyncAccountSession(
+    baseUrl: baseUrl,
+    token: 'token-$userId',
+    userId: userId,
+    loginName: userId,
+    displayName: userId,
+    role: CloudSyncUserRole.user,
+    attachmentQuotaBytes: maximumCloudSyncAttachmentSizeBytes,
+    deviceId: 'device-$userId',
+    deviceName: 'device',
+    platform: CloudSyncPlatform.windows,
+    clientVersion: '1.0.0',
+    deviceCreatedAt: DateTime.utc(2026, 7, 15),
+  );
 }
 
 void main() {
@@ -201,13 +244,17 @@ void main() {
       );
     });
 
-    test('attachment marker codec rejects malformed and duplicate order', () {
-      expect(
-        () => ChatAttachmentMarkerCodec.parse(
-          r'[file:C:\uploads\report.pdf||application/pdf]',
-        ),
-        throwsFormatException,
-      );
+    test('attachment marker codec preserves ordinary marker-like text', () {
+      const malformed = r'[file:C:\uploads\report.pdf||application/pdf]';
+      final malformedDocument = ChatAttachmentMarkerCodec.parse(malformed);
+      expect(malformedDocument.markers, isEmpty);
+      expect(malformedDocument.contentWithoutMarkers, malformed);
+
+      const inline =
+          'ordinary [file:C:\\uploads\\report.pdf|report.pdf|application/pdf]';
+      final inlineDocument = ChatAttachmentMarkerCodec.parse(inline);
+      expect(inlineDocument.markers, isEmpty);
+      expect(inlineDocument.contentWithoutMarkers, inline);
 
       final marker = ChatAttachmentMarkerCodec.parse(
         r'[image:C:\uploads\photo.png]',
@@ -230,6 +277,37 @@ void main() {
         () => CloudSyncAttachmentDownload(
           attachmentId: '../outside',
           downloadUrl: 'https://storage.example.com/object',
+          expiresAt: DateTime.utc(2026, 7, 15),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('cloud sync transport only permits secure or loopback URLs', () {
+      expect(
+        normalizeCloudSyncBaseUrl('https://sync.example.com/'),
+        'https://sync.example.com',
+      );
+      expect(
+        normalizeCloudSyncBaseUrl('http://localhost:8787'),
+        'http://localhost:8787',
+      );
+      expect(
+        normalizeCloudSyncBaseUrl('http://127.0.0.1:8787'),
+        'http://127.0.0.1:8787',
+      );
+      expect(
+        normalizeCloudSyncBaseUrl('http://[::1]:8787'),
+        'http://[::1]:8787',
+      );
+      expect(
+        () => normalizeCloudSyncBaseUrl('http://sync.example.com'),
+        throwsFormatException,
+      );
+      expect(
+        () => CloudSyncAttachmentDownload(
+          attachmentId: '11111111-1111-5111-8111-111111111111',
+          downloadUrl: 'http://storage.example.com/object',
           expiresAt: DateTime.utc(2026, 7, 15),
         ),
         throwsFormatException,
@@ -300,6 +378,330 @@ void main() {
       await store.close();
     });
 
+    test('chat adapter only extracts trailing user attachment markers', () async {
+      final chatService = ChatService();
+      await chatService.init();
+      final store = await CloudSyncStore.open(
+        boxName: 'cloud_sync_marker_authenticity_test',
+      );
+      final client = CloudSyncClient(baseUrl: 'http://127.0.0.1:1');
+      addTearDown(() async {
+        client.close(force: true);
+        await store.close();
+      });
+      final attachmentService = CloudAttachmentSyncService(
+        _cloudSession(client.baseUrl),
+        client,
+        store,
+      );
+      final adapter = ChatSyncAdapter(chatService, attachmentService);
+      final conversation = await chatService.createConversation(title: 'Chat');
+      final user = await chatService.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: r'ordinary [file:C:\outside\report.txt|report.txt|text/plain]',
+      );
+      final assistant = await chatService.addMessage(
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: r'[file:C:\outside\assistant.txt|assistant.txt|text/plain]',
+        turnId: user.turnId,
+      );
+
+      final entities = await adapter.exportLocalEntities();
+      final userPayload = entities
+          .singleWhere(
+            (entity) =>
+                entity.entityType == ChatSyncAdapter.messageType &&
+                entity.entityId == user.id,
+          )
+          .payload;
+      final assistantPayload = entities
+          .singleWhere(
+            (entity) =>
+                entity.entityType == ChatSyncAdapter.messageType &&
+                entity.entityId == assistant.id,
+          )
+          .payload;
+
+      expect(userPayload['content'], user.content);
+      expect(assistantPayload['content'], assistant.content);
+
+      final uploadDirectory = await AppDirectories.getUploadDirectory();
+      await uploadDirectory.create(recursive: true);
+      final managedFile = File(
+        '${uploadDirectory.path}${Platform.pathSeparator}remote-report.txt',
+      );
+      await managedFile.writeAsString('must-not-upload');
+      final remoteUser = ChatMessage(
+        id: 'remote-ordinary-marker',
+        role: 'user',
+        content:
+            'ordinary\n[file:${managedFile.path}|remote-report.txt|text/plain]',
+        timestamp: DateTime.utc(2026, 7, 15, 10),
+        conversationId: conversation.id,
+        turnId: 'remote-turn',
+        generationStatus: ChatMessage.generationStatusCompleted,
+      );
+      await adapter.applyRemoteUpsert(
+        RemoteSyncEntity(
+          entityType: ChatSyncAdapter.messageType,
+          entityId: remoteUser.id,
+          parentId: conversation.id,
+          revision: 1,
+          schemaVersion: 1,
+          payload: ChatSyncCodec.encodeMessage(remoteUser)!,
+          updatedAt: remoteUser.timestamp,
+        ),
+      );
+
+      final replayedEntities = await adapter.exportLocalEntities();
+      final replayedPayload = replayedEntities
+          .singleWhere(
+            (entity) =>
+                entity.entityType == ChatSyncAdapter.messageType &&
+                entity.entityId == remoteUser.id,
+          )
+          .payload;
+      expect(replayedPayload['content'], remoteUser.content);
+      expect(replayedPayload['attachments'], isEmpty);
+    });
+
+    test(
+      'local attachment markers cannot read outside managed uploads',
+      () async {
+        final store = await CloudSyncStore.open(
+          boxName: 'cloud_sync_untrusted_attachment_test',
+        );
+        final client = CloudSyncClient(baseUrl: 'http://127.0.0.1:1');
+        addTearDown(() async {
+          client.close(force: true);
+          await store.close();
+        });
+        final outsideFile = File(
+          '${tempDir.path}${Platform.pathSeparator}outside.txt',
+        );
+        await outsideFile.writeAsString('secret');
+        final service = CloudAttachmentSyncService(
+          _cloudSession(client.baseUrl),
+          client,
+          store,
+        );
+
+        await expectLater(
+          service.prepareMessage(
+            messageId: 'message-outside',
+            content:
+                'question\n[file:${outsideFile.path}|outside.txt|text/plain]',
+          ),
+          throwsA(isA<FileSystemException>()),
+        );
+      },
+    );
+
+    test('missing managed attachment heals from completed binding', () async {
+      final bytes = utf8.encode('hello');
+      const attachmentId = '11111111-1111-5111-8111-111111111111';
+      const blobId = '22222222-2222-5222-8222-222222222222';
+      const digest =
+          '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824';
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final baseUrl = 'http://127.0.0.1:${server.port}';
+      server.listen((request) async {
+        await request.drain<void>();
+        switch (request.uri.path) {
+          case '/api/attachment/info/list':
+            request.response.headers.contentType = ContentType.json;
+            request.response.write(
+              jsonEncode(<String, Object?>{
+                'data': <String, Object?>{
+                  'items': <Object?>[
+                    <String, Object?>{
+                      'id': attachmentId,
+                      'blobId': blobId,
+                      'entityType': 'message',
+                      'entityId': 'message-recover',
+                      'fileName': 'report.txt',
+                      'mimeType': 'text/plain',
+                      'sizeBytes': bytes.length,
+                      'sha256': digest,
+                      'createdAt': '2026-07-15T00:00:00.000Z',
+                    },
+                  ],
+                },
+              }),
+            );
+            break;
+          case '/api/attachment/download-url/get':
+            request.response.headers.contentType = ContentType.json;
+            request.response.write(
+              jsonEncode(<String, Object?>{
+                'data': <String, Object?>{
+                  'attachmentId': attachmentId,
+                  'downloadUrl': '$baseUrl/blob',
+                  'expiresAt': '2026-07-15T00:05:00.000Z',
+                },
+              }),
+            );
+            break;
+          case '/blob':
+            request.response.contentLength = bytes.length;
+            request.response.add(bytes);
+            break;
+          default:
+            request.response.statusCode = HttpStatus.notFound;
+        }
+        await request.response.close();
+      });
+
+      final store = await CloudSyncStore.open(
+        boxName: 'cloud_sync_missing_attachment_test',
+      );
+      final client = CloudSyncClient(baseUrl: baseUrl, token: 'token');
+      addTearDown(() async {
+        client.close(force: true);
+        await store.close();
+        await server.close(force: true);
+      });
+      final uploadDirectory = await AppDirectories.getUploadDirectory();
+      final missingFile = File(
+        '${uploadDirectory.path}${Platform.pathSeparator}'
+        'recovered${Platform.pathSeparator}report.txt',
+      );
+      final session = _cloudSession(baseUrl);
+      await store.saveAttachmentBinding(
+        session,
+        CloudSyncAttachmentBinding(
+          messageId: 'message-recover',
+          attachmentId: attachmentId,
+          kind: CloudSyncAttachmentKind.file,
+          order: 0,
+          localPath: missingFile.path,
+          modifiedAt: DateTime.utc(2026, 7, 15),
+          sizeBytes: bytes.length,
+          sha256: digest,
+          md5Base64: 'XUFAKrxLKna5cZ2REBfFkg==',
+          fileName: 'report.txt',
+          mimeType: 'text/plain',
+          completed: true,
+        ),
+      );
+      final service = CloudAttachmentSyncService(session, client, store);
+
+      final prepared = await _withRealHttpClient(
+        () => service.prepareMessage(
+          messageId: 'message-recover',
+          content: 'question\n[file:${missingFile.path}|report.txt|text/plain]',
+        ),
+      );
+
+      expect(prepared.syncedContent, 'question');
+      expect(prepared.references.single.attachmentId, attachmentId);
+      expect(await missingFile.readAsString(), 'hello');
+      expect(
+        store
+            .attachmentBinding(
+              session,
+              messageId: 'message-recover',
+              kind: CloudSyncAttachmentKind.file,
+              order: 0,
+            )
+            ?.completed,
+        isTrue,
+      );
+    });
+
+    test('signed download rejects redirects and bytes beyond limit', () async {
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      var redirectTargetRequests = 0;
+      server.listen((request) async {
+        await request.drain<void>();
+        if (request.uri.path == '/redirect') {
+          request.response.statusCode = HttpStatus.found;
+          request.response.headers.set(
+            HttpHeaders.locationHeader,
+            'http://127.0.0.1:${server.port}/redirect-target',
+          );
+        } else if (request.uri.path == '/redirect-target') {
+          redirectTargetRequests++;
+          request.response.contentLength = 0;
+        } else {
+          request.response.headers.chunkedTransferEncoding = true;
+          request.response.add(const <int>[1, 2, 3, 4, 5]);
+        }
+        await request.response.close();
+      });
+      final client = CloudSyncClient(
+        baseUrl: 'http://127.0.0.1:${server.port}',
+      );
+      addTearDown(() async {
+        client.close(force: true);
+        await server.close(force: true);
+      });
+      final destination = File(
+        '${tempDir.path}${Platform.pathSeparator}oversized-download.bin',
+      );
+
+      await _withRealHttpClient(
+        () => expectLater(
+          client.downloadSignedAttachment(
+            downloadUrl: 'http://127.0.0.1:${server.port}/blob',
+            destinationPath: destination.path,
+            expectedSizeBytes: 4,
+          ),
+          throwsA(
+            isA<CloudSyncException>().having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            ),
+          ),
+        ),
+      );
+      expect(await destination.exists(), isFalse);
+
+      final redirectedDestination = File(
+        '${tempDir.path}${Platform.pathSeparator}redirected-download.bin',
+      );
+      await _withRealHttpClient(
+        () => expectLater(
+          client.downloadSignedAttachment(
+            downloadUrl: 'http://127.0.0.1:${server.port}/redirect',
+            destinationPath: redirectedDestination.path,
+            expectedSizeBytes: 0,
+          ),
+          throwsA(isA<CloudSyncException>()),
+        ),
+      );
+      expect(redirectTargetRequests, 0);
+      expect(await redirectedDestination.exists(), isFalse);
+    });
+
+    test('upload directory critical section is FIFO and reentrant', () async {
+      final events = <String>[];
+      final firstEntered = Completer<void>();
+      final releaseFirst = Completer<void>();
+      final first = UploadDirectoryCriticalSection.run(() async {
+        events.add('first-start');
+        await UploadDirectoryCriticalSection.run(() async {
+          events.add('nested');
+        });
+        firstEntered.complete();
+        await releaseFirst.future;
+        events.add('first-end');
+      });
+      await firstEntered.future;
+      final second = UploadDirectoryCriticalSection.run(() async {
+        events.add('second');
+      });
+
+      await Future<void>.delayed(Duration.zero);
+      expect(events, <String>['first-start', 'nested']);
+      releaseFirst.complete();
+      await Future.wait(<Future<void>>[first, second]);
+      expect(events, <String>['first-start', 'nested', 'first-end', 'second']);
+    });
+
     test('conversation payload excludes local message projection', () {
       final conversation = Conversation(
         id: 'conversation-1',
@@ -368,8 +770,8 @@ void main() {
 
       expect(ChatSyncCodec.encodeMessage(draft), isNull);
       expect(
-        () => ChatSyncCodec.encodeMessage(terminal),
-        throwsFormatException,
+        ChatSyncCodec.encodeMessage(terminal)?['content'],
+        terminal.content,
       );
 
       final remoteImage = terminal.copyWith(

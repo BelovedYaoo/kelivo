@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:kelivo_sync_api_client/kelivo_sync_api_client.dart' as api;
@@ -396,7 +397,7 @@ final class CloudSyncClient {
       final response = await _signedUrlDio.put<Object?>(
         url,
         data: content,
-        options: Options(headers: safeHeaders),
+        options: Options(headers: safeHeaders, followRedirects: false),
       );
       final etag = response.headers.value('etag')?.trim();
       if (etag == null || etag.isEmpty) {
@@ -409,16 +410,74 @@ final class CloudSyncClient {
   Future<void> downloadSignedAttachment({
     required String downloadUrl,
     required String destinationPath,
+    required int expectedSizeBytes,
   }) {
     final url = _requireSignedUrl(downloadUrl);
     _requireNonEmpty(destinationPath);
-    return _guard(() async {
-      await _signedUrlDio.download(
-        url,
-        destinationPath,
-        deleteOnError: true,
-        options: Options(headers: const <String, String>{}),
+    if (expectedSizeBytes < 0 ||
+        expectedSizeBytes > maximumCloudSyncAttachmentSizeBytes) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
       );
+    }
+    return _guard(() async {
+      final response = await _signedUrlDio.get<ResponseBody>(
+        url,
+        options: Options(
+          headers: const <String, String>{},
+          followRedirects: false,
+          responseType: ResponseType.stream,
+        ),
+      );
+      final body = response.data;
+      if (body == null) {
+        throw const FormatException('签名下载响应缺少数据流');
+      }
+      final declaredSize = body.contentLength;
+      if (declaredSize > maximumCloudSyncAttachmentSizeBytes ||
+          (declaredSize >= 0 && declaredSize != expectedSizeBytes)) {
+        throw const FormatException('签名下载声明长度无效');
+      }
+
+      final file = File(destinationPath);
+      final sink = file.openWrite(mode: FileMode.writeOnly);
+      try {
+        var receivedBytes = 0;
+        await for (final chunk in body.stream) {
+          final nextSize = receivedBytes + chunk.length;
+          if (nextSize > maximumCloudSyncAttachmentSizeBytes ||
+              nextSize > expectedSizeBytes) {
+            throw const FormatException('签名下载实际长度超出限制');
+          }
+          sink.add(chunk);
+          receivedBytes = nextSize;
+        }
+        if (receivedBytes != expectedSizeBytes) {
+          throw const FormatException('签名下载实际长度不匹配');
+        }
+        await sink.flush();
+        await sink.close();
+      } catch (error, stackTrace) {
+        Object? cleanupError;
+        StackTrace? cleanupStackTrace;
+        try {
+          await sink.close();
+        } catch (error, stackTrace) {
+          cleanupError = error;
+          cleanupStackTrace = stackTrace;
+        }
+        try {
+          if (await file.exists()) await file.delete();
+        } catch (error, stackTrace) {
+          cleanupError ??= error;
+          cleanupStackTrace ??= stackTrace;
+        }
+        if (cleanupError != null && cleanupStackTrace != null) {
+          Error.throwWithStackTrace(cleanupError, cleanupStackTrace);
+        }
+        Error.throwWithStackTrace(error, stackTrace);
+      }
     });
   }
 
@@ -739,8 +798,7 @@ String _requireSignedUrl(String value) {
   final normalized = value.trim();
   final uri = Uri.tryParse(normalized);
   if (uri == null ||
-      (uri.scheme != 'https' && uri.scheme != 'http') ||
-      uri.host.isEmpty ||
+      !isAllowedCloudSyncTransportUri(uri) ||
       uri.userInfo.isNotEmpty) {
     throw const CloudSyncException(
       kind: CloudSyncFailureKind.validation,

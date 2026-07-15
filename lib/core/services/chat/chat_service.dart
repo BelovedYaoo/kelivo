@@ -6,6 +6,7 @@ import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../../utils/sandbox_path_resolver.dart';
 import '../../../utils/app_directories.dart';
+import 'upload_directory_critical_section.dart';
 
 class ChatService extends ChangeNotifier {
   static const String _conversationsBoxName = 'conversations';
@@ -622,40 +623,42 @@ class ChatService extends ChangeNotifier {
     } catch (_) {}
   }
 
-  Future<void> _cleanupOrphanUploads() async {
-    try {
-      final uploadDir = await AppDirectories.getUploadDirectory();
-      if (!await uploadDir.exists()) return;
+  Future<void> _cleanupOrphanUploads() {
+    return UploadDirectoryCriticalSection.run(() async {
+      try {
+        final uploadDir = await AppDirectories.getUploadDirectory();
+        if (!await uploadDir.exists()) return;
 
-      // Build the set of all referenced paths across all messages
-      String canon(String pth) {
-        // Normalize separators and resolve redundant segments to enable
-        // reliable equality checks across platforms (esp. Windows).
-        final normalized = p.normalize(pth);
-        // On Windows, paths are case-insensitive; compare in lowercase.
-        return Platform.isWindows ? normalized.toLowerCase() : normalized;
-      }
-
-      final referenced = <String>{};
-      for (final m in _messagesBox.values) {
-        for (final pth in _extractAttachmentPaths(m.content)) {
-          referenced.add(canon(pth));
+        // Build the set of all referenced paths across all messages
+        String canon(String pth) {
+          // Normalize separators and resolve redundant segments to enable
+          // reliable equality checks across platforms (esp. Windows).
+          final normalized = p.normalize(pth);
+          // On Windows, paths are case-insensitive; compare in lowercase.
+          return Platform.isWindows ? normalized.toLowerCase() : normalized;
         }
-      }
 
-      // Walk upload directory recursively to consider all files
-      final entries = uploadDir.listSync(recursive: true, followLinks: false);
-      for (final ent in entries) {
-        if (ent is File) {
-          final filePath = canon(ent.path);
-          if (!referenced.contains(filePath)) {
-            try {
-              await ent.delete();
-            } catch (_) {}
+        final referenced = <String>{};
+        for (final m in _messagesBox.values) {
+          for (final pth in _extractAttachmentPaths(m.content)) {
+            referenced.add(canon(pth));
           }
         }
-      }
-    } catch (_) {}
+
+        // Walk upload directory recursively to consider all files
+        final entries = uploadDir.listSync(recursive: true, followLinks: false);
+        for (final ent in entries) {
+          if (ent is File) {
+            final filePath = canon(ent.path);
+            if (!referenced.contains(filePath)) {
+              try {
+                await ent.delete();
+              } catch (_) {}
+            }
+          }
+        }
+      } catch (_) {}
+    });
   }
 
   Future<void> restoreConversation(
@@ -1883,26 +1886,28 @@ class ChatService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> clearAllData() async {
-    if (!_initialized) return;
+  Future<void> clearAllData() {
+    return UploadDirectoryCriticalSection.run(() async {
+      if (!_initialized) return;
 
-    await _messagesBox.clear();
-    await _conversationsBox.clear();
-    await _toolEventsBox.clear();
-    _messagesCache.clear();
-    _draftConversations.clear();
-    _temporaryConversationIds.clear();
-    _temporaryToolEvents.clear();
-    _temporaryGeminiThoughtSigs.clear();
-    _currentConversationId = null;
-    // Remove uploads directory completely
-    try {
-      final uploadDir = await AppDirectories.getUploadDirectory();
-      if (await uploadDir.exists()) {
-        await uploadDir.delete(recursive: true);
-      }
-    } catch (_) {}
-    notifyListeners();
+      await _messagesBox.clear();
+      await _conversationsBox.clear();
+      await _toolEventsBox.clear();
+      _messagesCache.clear();
+      _draftConversations.clear();
+      _temporaryConversationIds.clear();
+      _temporaryToolEvents.clear();
+      _temporaryGeminiThoughtSigs.clear();
+      _currentConversationId = null;
+      // Remove uploads directory completely
+      try {
+        final uploadDir = await AppDirectories.getUploadDirectory();
+        if (await uploadDir.exists()) {
+          await uploadDir.delete(recursive: true);
+        }
+      } catch (_) {}
+      notifyListeners();
+    });
   }
 
   // Uploads stats: count and total size of files under app documents/upload

@@ -406,6 +406,43 @@ final class CloudSyncStore {
     );
   }
 
+  String? remoteOrdinaryMessageContentSha256(
+    CloudSyncAccountSession session, {
+    required String messageId,
+  }) {
+    return _read(_remoteOrdinaryMessageKey(session, messageId), (json) {
+      if (json['version'] != 1) {
+        throw const FormatException('远端普通消息指纹版本无效');
+      }
+      final value = json['contentSha256'];
+      if (value is! String || !RegExp(r'^[0-9a-f]{64}$').hasMatch(value)) {
+        throw const FormatException('远端普通消息指纹无效');
+      }
+      return value;
+    });
+  }
+
+  Future<void> saveRemoteOrdinaryMessageContentSha256(
+    CloudSyncAccountSession session, {
+    required String messageId,
+    required String contentSha256,
+  }) {
+    if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(contentSha256)) {
+      throw const FormatException('远端普通消息指纹无效');
+    }
+    return _write(
+      _remoteOrdinaryMessageKey(session, messageId),
+      <String, Object?>{'version': 1, 'contentSha256': contentSha256},
+    );
+  }
+
+  Future<void> deleteRemoteOrdinaryMessageContentSha256(
+    CloudSyncAccountSession session, {
+    required String messageId,
+  }) {
+    return _box.delete(_remoteOrdinaryMessageKey(session, messageId));
+  }
+
   Future<void> clearAccountState(CloudSyncAccountSession session) async {
     final prefix = 'account:${session.accountScope}:';
     final keys = _box.keys
@@ -487,6 +524,17 @@ final class CloudSyncStore {
     }
     return '${_accountPrefix(session, 'attachment')}message:'
         '${Uri.encodeComponent(messageId)}:${kind.name}:$order';
+  }
+
+  String _remoteOrdinaryMessageKey(
+    CloudSyncAccountSession session,
+    String messageId,
+  ) {
+    if (messageId.trim().isEmpty || messageId.length > 128) {
+      throw const FormatException('远端普通消息索引无效');
+    }
+    return '${_accountPrefix(session, 'remote-ordinary-message')}'
+        '${Uri.encodeComponent(messageId)}';
   }
 
   String _accountPrefix(CloudSyncAccountSession session, String area) {

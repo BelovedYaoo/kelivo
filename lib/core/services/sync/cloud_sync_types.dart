@@ -2,6 +2,13 @@ typedef CloudSyncJsonMap = Map<String, Object?>;
 
 const maximumCloudSyncAttachmentSizeBytes = 100 * 1024 * 1024;
 
+bool isAllowedCloudSyncTransportUri(Uri uri) {
+  if (uri.scheme == 'https') return uri.host.isNotEmpty;
+  if (uri.scheme != 'http' || uri.host.isEmpty) return false;
+  final host = uri.host.toLowerCase();
+  return host == 'localhost' || host == '127.0.0.1' || host == '::1';
+}
+
 const _supportedEntityTypes = <String>{
   'conversation',
   'turn',
@@ -24,8 +31,7 @@ String normalizeCloudSyncBaseUrl(String value) {
   final trimmed = value.trim();
   final uri = Uri.tryParse(trimmed);
   if (uri == null ||
-      (uri.scheme != 'https' && uri.scheme != 'http') ||
-      uri.host.isEmpty ||
+      !isAllowedCloudSyncTransportUri(uri) ||
       uri.userInfo.isNotEmpty ||
       uri.hasQuery ||
       uri.hasFragment ||
@@ -1236,8 +1242,7 @@ String _validatedHttpUrl(String value, String field) {
   final normalized = value.trim();
   final uri = Uri.tryParse(normalized);
   if (uri == null ||
-      (uri.scheme != 'https' && uri.scheme != 'http') ||
-      uri.host.isEmpty ||
+      !isAllowedCloudSyncTransportUri(uri) ||
       uri.userInfo.isNotEmpty) {
     throw FormatException('$field 格式无效');
   }

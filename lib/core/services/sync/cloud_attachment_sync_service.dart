@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 
 import '../../../utils/app_directories.dart';
 import '../../../utils/sandbox_path_resolver.dart';
+import '../chat/upload_directory_critical_section.dart';
 import 'chat_sync_codec.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_store.dart';
@@ -39,85 +40,53 @@ final class ChatAttachmentMarkerDocument {
 }
 
 abstract final class ChatAttachmentMarkerCodec {
-  static final RegExp _markerPattern = RegExp(
-    r'\[image:([^\]\r\n]+)\]|\[file:([^\|\]\r\n]+)\|([^\|\]\r\n]+)\|([^\]\r\n]+)\]',
+  static final RegExp _imageMarkerLine = RegExp(r'^\[image:([^\]\r\n]+)\]$');
+  static final RegExp _fileMarkerLine = RegExp(
+    r'^\[file:([^\|\]\r\n]+)\|([^\|\]\r\n]+)\|([^\]\r\n]+)\]$',
   );
-  static final RegExp _markerPrefix = RegExp(r'\[(?:image|file):');
 
   static ChatAttachmentMarkerDocument parse(String content) {
-    final matches = _markerPattern
-        .allMatches(content)
-        .where((match) => !_isRemotePath(_pathFromMatch(match)))
-        .toList(growable: false);
-    final output = StringBuffer();
-    final markers = <ChatAttachmentMarker>[];
-    var cursor = 0;
-
-    for (final match in matches) {
-      var removalStart = match.start;
-      var removalEnd = match.end;
-      if (removalStart > cursor &&
-          content.codeUnitAt(removalStart - 1) == 0x0a) {
-        removalStart--;
-        if (removalStart > cursor &&
-            content.codeUnitAt(removalStart - 1) == 0x0d) {
-          removalStart--;
-        }
-      } else if (removalEnd < content.length) {
-        if (content.codeUnitAt(removalEnd) == 0x0d) {
-          removalEnd++;
-          if (removalEnd < content.length &&
-              content.codeUnitAt(removalEnd) == 0x0a) {
-            removalEnd++;
-          }
-        } else if (content.codeUnitAt(removalEnd) == 0x0a) {
-          removalEnd++;
-        }
-      }
-      output.write(content.substring(cursor, removalStart));
-      final imagePath = match.group(1)?.trim();
-      if (imagePath != null && imagePath.isNotEmpty) {
-        final fileName = _fileNameFromPath(imagePath);
-        markers.add(
-          ChatAttachmentMarker(
-            kind: CloudSyncAttachmentKind.image,
-            order: markers.length,
-            localPath: imagePath,
-            fileName: fileName,
-            mimeType: _imageMimeType(fileName),
-          ),
-        );
-      } else {
-        final filePath = match.group(2)?.trim() ?? '';
-        final fileName = match.group(3)?.trim() ?? '';
-        final mimeType = match.group(4)?.trim().toLowerCase() ?? '';
-        _validateMarkerMetadata(filePath, fileName, mimeType);
-        markers.add(
-          ChatAttachmentMarker(
-            kind: CloudSyncAttachmentKind.file,
-            order: markers.length,
-            localPath: filePath,
-            fileName: fileName,
-            mimeType: mimeType,
-          ),
-        );
-      }
-      cursor = removalEnd;
+    final lines = content.split('\n');
+    var blockEnd = lines.length;
+    while (blockEnd > 0 &&
+        _withoutCarriageReturn(lines[blockEnd - 1]).isEmpty) {
+      blockEnd--;
     }
-    output.write(content.substring(cursor));
 
-    final contentWithoutMarkers = markers.isEmpty
-        ? output.toString()
-        : output.toString().replaceFirst(RegExp(r'(?:\r?\n)+$'), '');
-    final unparsedContent = contentWithoutMarkers.replaceAll(
-      _markerPattern,
-      '',
-    );
-    if (_markerPrefix.hasMatch(unparsedContent)) {
-      throw const FormatException('消息包含无法解析的附件 marker');
+    var blockStart = blockEnd;
+    final reversed = <ChatAttachmentMarker>[];
+    while (blockStart > 0) {
+      final marker = _tryParseMarkerLine(
+        _withoutCarriageReturn(lines[blockStart - 1]),
+      );
+      if (marker == null || _isRemotePath(marker.localPath)) break;
+      reversed.add(marker);
+      blockStart--;
     }
+    if (reversed.isEmpty) {
+      return ChatAttachmentMarkerDocument(
+        contentWithoutMarkers: content,
+        markers: const <ChatAttachmentMarker>[],
+      );
+    }
+
+    final prefixLines = lines.sublist(0, blockStart);
+    while (prefixLines.isNotEmpty &&
+        _withoutCarriageReturn(prefixLines.last).isEmpty) {
+      prefixLines.removeLast();
+    }
+    final markers = <ChatAttachmentMarker>[
+      for (final (index, marker) in reversed.reversed.indexed)
+        ChatAttachmentMarker(
+          kind: marker.kind,
+          order: index,
+          localPath: marker.localPath,
+          fileName: marker.fileName,
+          mimeType: marker.mimeType,
+        ),
+    ];
     return ChatAttachmentMarkerDocument(
-      contentWithoutMarkers: contentWithoutMarkers,
+      contentWithoutMarkers: prefixLines.join('\n'),
       markers: markers,
     );
   }
@@ -172,8 +141,45 @@ abstract final class ChatAttachmentMarkerCodec {
     return fileName;
   }
 
-  static String _pathFromMatch(Match match) {
-    return (match.group(1) ?? match.group(2) ?? '').trim();
+  static ChatAttachmentMarker? _tryParseMarkerLine(String line) {
+    final imageMatch = _imageMarkerLine.firstMatch(line);
+    if (imageMatch != null) {
+      final localPath = imageMatch.group(1)?.trim() ?? '';
+      try {
+        final fileName = _fileNameFromPath(localPath);
+        return ChatAttachmentMarker(
+          kind: CloudSyncAttachmentKind.image,
+          order: 0,
+          localPath: localPath,
+          fileName: fileName,
+          mimeType: _imageMimeType(fileName),
+        );
+      } on FormatException {
+        return null;
+      }
+    }
+
+    final fileMatch = _fileMarkerLine.firstMatch(line);
+    if (fileMatch == null) return null;
+    final localPath = fileMatch.group(1)?.trim() ?? '';
+    final fileName = fileMatch.group(2)?.trim() ?? '';
+    final mimeType = fileMatch.group(3)?.trim().toLowerCase() ?? '';
+    try {
+      _validateMarkerMetadata(localPath, fileName, mimeType);
+      return ChatAttachmentMarker(
+        kind: CloudSyncAttachmentKind.file,
+        order: 0,
+        localPath: localPath,
+        fileName: fileName,
+        mimeType: mimeType,
+      );
+    } on FormatException {
+      return null;
+    }
+  }
+
+  static String _withoutCarriageReturn(String line) {
+    return line.endsWith('\r') ? line.substring(0, line.length - 1) : line;
   }
 
   static bool _isRemotePath(String value) {
@@ -215,10 +221,43 @@ final class CloudAttachmentSyncService {
   final CloudSyncClient _client;
   final CloudSyncStore _store;
 
+  Future<void> rememberRemoteOrdinaryUserMessage({
+    required String messageId,
+    required String content,
+  }) async {
+    if (ChatAttachmentMarkerCodec.parse(content).markers.isEmpty) {
+      await forgetRemoteOrdinaryUserMessage(messageId);
+      return;
+    }
+    await _store.saveRemoteOrdinaryMessageContentSha256(
+      _session,
+      messageId: messageId,
+      contentSha256: _contentSha256(content),
+    );
+  }
+
+  Future<void> forgetRemoteOrdinaryUserMessage(String messageId) {
+    return _store.deleteRemoteOrdinaryMessageContentSha256(
+      _session,
+      messageId: messageId,
+    );
+  }
+
   Future<PreparedChatSyncAttachments> prepareMessage({
     required String messageId,
     required String content,
   }) async {
+    final remoteOrdinaryContentSha256 = _store
+        .remoteOrdinaryMessageContentSha256(_session, messageId: messageId);
+    if (remoteOrdinaryContentSha256 != null) {
+      if (remoteOrdinaryContentSha256 == _contentSha256(content)) {
+        return PreparedChatSyncAttachments(
+          syncedContent: content,
+          references: const <ChatSyncAttachmentReference>[],
+        );
+      }
+      await forgetRemoteOrdinaryUserMessage(messageId);
+    }
     final document = ChatAttachmentMarkerCodec.parse(content);
     final references = <ChatSyncAttachmentReference>[];
     for (final marker in document.markers) {
@@ -297,16 +336,12 @@ final class CloudAttachmentSyncService {
     String messageId,
     ChatAttachmentMarker marker,
   ) async {
-    final resolvedPath = path.normalize(
-      SandboxPathResolver.fix(marker.localPath),
-    );
-    final file = File(resolvedPath);
-    final stat = await file.stat();
-    _validateFileStat(stat);
+    final target = await _resolveManagedUploadTarget(marker.localPath);
+    final localPath = target.path;
     final fileName = _safeMarkerField(marker.fileName);
     final mimeType = marker.mimeType.trim().toLowerCase();
     ChatAttachmentMarkerCodec._validateMarkerMetadata(
-      resolvedPath,
+      localPath,
       fileName,
       mimeType,
     );
@@ -317,10 +352,24 @@ final class CloudAttachmentSyncService {
       kind: marker.kind,
       order: marker.order,
     );
+    if (target.type == FileSystemEntityType.notFound) {
+      return _restoreMissingManagedFile(
+        messageId: messageId,
+        marker: marker,
+        target: target,
+        fileName: fileName,
+        mimeType: mimeType,
+        cached: cached,
+      );
+    }
+
+    final file = target.file;
+    final stat = await file.stat();
+    _validateFileStat(stat);
     final CloudSyncAttachmentBinding binding;
     if (_matchesLocalFile(
       cached,
-      localPath: resolvedPath,
+      localPath: localPath,
       stat: stat,
       fileName: fileName,
       mimeType: mimeType,
@@ -344,7 +393,7 @@ final class CloudAttachmentSyncService {
         ),
         kind: marker.kind,
         order: marker.order,
-        localPath: resolvedPath,
+        localPath: localPath,
         modifiedAt: stat.modified,
         sizeBytes: stat.size,
         sha256: digests.sha256Hex,
@@ -391,6 +440,46 @@ final class CloudAttachmentSyncService {
     return saved;
   }
 
+  Future<CloudSyncAttachmentBinding> _restoreMissingManagedFile({
+    required String messageId,
+    required ChatAttachmentMarker marker,
+    required _ManagedUploadTarget target,
+    required String fileName,
+    required String mimeType,
+    required CloudSyncAttachmentBinding? cached,
+  }) async {
+    if (!_matchesMissingCompletedBinding(
+      cached,
+      localPath: target.path,
+      fileName: fileName,
+      mimeType: mimeType,
+    )) {
+      throw const FileSystemException('受管附件文件缺失，且没有可信的已完成绑定');
+    }
+    final binding = cached!;
+    final serverAttachments = await _client.listAttachmentInfo(
+      entityType: 'message',
+      entityId: messageId,
+    );
+    final matches = serverAttachments
+        .where((attachment) => attachment.id == binding.attachmentId)
+        .toList(growable: false);
+    if (matches.length != 1) {
+      throw const FormatException('已完成附件绑定无法在服务端唯一核验');
+    }
+    final attachment = matches.single;
+    _validateCompletedAttachment(binding, attachment);
+
+    return _downloadAttachmentToPath(
+      messageId: messageId,
+      kind: marker.kind,
+      order: marker.order,
+      attachment: attachment,
+      destinationPath: target.path,
+      replaceInvalidExisting: false,
+    );
+  }
+
   Future<CloudSyncAttachmentBinding> _restoreAttachment({
     required String messageId,
     required CloudSyncAttachmentKind kind,
@@ -410,8 +499,8 @@ final class CloudAttachmentSyncService {
         cached.sizeBytes == attachment.sizeBytes &&
         cached.fileName == attachment.fileName &&
         cached.mimeType == attachment.mimeType) {
-      final file = File(cached.localPath);
-      final stat = await file.stat();
+      final cachedTarget = await _resolveManagedUploadTarget(cached.localPath);
+      final stat = await cachedTarget.file.stat();
       if (_matchesCachedDownload(cached, stat)) return cached;
     }
 
@@ -428,58 +517,130 @@ final class CloudAttachmentSyncService {
     if (!path.isWithin(cloudRootPath, directoryPath)) {
       throw const FileSystemException('附件账户目录越界');
     }
-    final directory = Directory(directoryPath);
-    await directory.create(recursive: true);
     final safeName = _safeFileName(attachment.fileName, attachment.id);
     final finalPath = path.normalize(path.join(directoryPath, safeName));
-    final partPath = path.normalize('$finalPath.part');
-    if (!path.isWithin(directoryPath, finalPath) ||
-        !path.isWithin(directoryPath, partPath)) {
+    if (!path.isWithin(directoryPath, finalPath)) {
       throw const FileSystemException('附件下载路径越界');
     }
+    return _downloadAttachmentToPath(
+      messageId: messageId,
+      kind: kind,
+      order: order,
+      attachment: attachment,
+      destinationPath: finalPath,
+      replaceInvalidExisting: true,
+    );
+  }
 
-    final finalFile = File(finalPath);
-    if (await finalFile.exists()) {
-      final existing = await _verifiedDownloadedBinding(
-        messageId: messageId,
-        kind: kind,
-        order: order,
-        attachment: attachment,
-        file: finalFile,
-      );
-      if (existing != null) return existing;
-    }
-
-    final partFile = File(partPath);
-    if (await partFile.exists()) await partFile.delete();
-    try {
-      final download = await _client.getAttachmentDownloadUrl(attachment.id);
-      if (download.attachmentId != attachment.id) {
-        throw const FormatException('附件下载地址与请求不匹配');
+  Future<CloudSyncAttachmentBinding> _downloadAttachmentToPath({
+    required String messageId,
+    required CloudSyncAttachmentKind kind,
+    required int order,
+    required CloudSyncAttachmentInfo attachment,
+    required String destinationPath,
+    required bool replaceInvalidExisting,
+  }) {
+    return UploadDirectoryCriticalSection.run(() async {
+      var target = await _resolveManagedUploadTarget(destinationPath);
+      if (target.type != FileSystemEntityType.notFound) {
+        final existing = await _verifiedDownloadedBinding(
+          messageId: messageId,
+          kind: kind,
+          order: order,
+          attachment: attachment,
+          file: target.file,
+          localPath: target.path,
+        );
+        if (existing != null) return existing;
+        if (!replaceInvalidExisting) {
+          throw const FileSystemException('受管附件恢复目标已被其他文件占用');
+        }
       }
-      await _client.downloadSignedAttachment(
-        downloadUrl: download.downloadUrl,
-        destinationPath: partPath,
-      );
-      final verified = await _buildDownloadedBinding(
-        messageId: messageId,
-        kind: kind,
-        order: order,
-        attachment: attachment,
-        file: partFile,
-      );
-      if (await finalFile.exists()) await finalFile.delete();
-      await partFile.rename(finalPath);
-      final finalStat = await finalFile.stat();
-      final saved = verified.copyWith(
-        localPath: finalPath,
-        modifiedAt: finalStat.modified,
-      );
-      await _store.saveAttachmentBinding(_session, saved);
-      return saved;
-    } finally {
-      if (await partFile.exists()) await partFile.delete();
-    }
+
+      await Directory(
+        path.dirname(target.resolvedPath),
+      ).create(recursive: true);
+      target = await _resolveManagedUploadTarget(target.path);
+      final partStoredPath = path.normalize('${target.path}.part');
+      final partTarget = await _resolveManagedUploadTarget(partStoredPath);
+      final partPath = partTarget.resolvedPath;
+      if (partTarget.type != FileSystemEntityType.notFound) {
+        final rawPartType = await FileSystemEntity.type(
+          partTarget.path,
+          followLinks: false,
+        );
+        if (rawPartType != FileSystemEntityType.file &&
+            rawPartType != FileSystemEntityType.link) {
+          throw const FileSystemException('附件临时下载路径被非文件占用');
+        }
+        await partTarget.file.delete();
+      }
+
+      var partFile = File(partPath);
+      try {
+        final download = await _client.getAttachmentDownloadUrl(attachment.id);
+        if (download.attachmentId != attachment.id) {
+          throw const FormatException('附件下载地址与请求不匹配');
+        }
+        await _client.downloadSignedAttachment(
+          downloadUrl: download.downloadUrl,
+          destinationPath: partPath,
+          expectedSizeBytes: attachment.sizeBytes,
+        );
+        final downloadedPartTarget = await _resolveManagedUploadTarget(
+          partStoredPath,
+        );
+        if (downloadedPartTarget.type != FileSystemEntityType.file) {
+          throw const FileSystemException('附件临时下载文件类型无效');
+        }
+        partFile = downloadedPartTarget.file;
+        final verified = await _buildDownloadedBinding(
+          messageId: messageId,
+          kind: kind,
+          order: order,
+          attachment: attachment,
+          file: partFile,
+          localPath: target.path,
+        );
+
+        final currentTarget = await _resolveManagedUploadTarget(target.path);
+        if (currentTarget.type != FileSystemEntityType.notFound) {
+          final existing = await _verifiedDownloadedBinding(
+            messageId: messageId,
+            kind: kind,
+            order: order,
+            attachment: attachment,
+            file: currentTarget.file,
+            localPath: currentTarget.path,
+          );
+          if (existing != null) return existing;
+          if (!replaceInvalidExisting) {
+            throw const FileSystemException('受管附件恢复目标已被其他文件占用');
+          }
+          final rawTargetType = await FileSystemEntity.type(
+            currentTarget.path,
+            followLinks: false,
+          );
+          if (rawTargetType != FileSystemEntityType.file &&
+              rawTargetType != FileSystemEntityType.link) {
+            throw const FileSystemException('附件下载目标被非文件占用');
+          }
+          await currentTarget.file.delete();
+        }
+
+        await partFile.rename(currentTarget.resolvedPath);
+        final finalFile = currentTarget.file;
+        final finalStat = await finalFile.stat();
+        final saved = verified.copyWith(
+          localPath: target.path,
+          modifiedAt: finalStat.modified,
+        );
+        await _store.saveAttachmentBinding(_session, saved);
+        return saved;
+      } finally {
+        if (await partFile.exists()) await partFile.delete();
+      }
+    });
   }
 
   Future<CloudSyncAttachmentBinding?> _verifiedDownloadedBinding({
@@ -488,6 +649,7 @@ final class CloudAttachmentSyncService {
     required int order,
     required CloudSyncAttachmentInfo attachment,
     required File file,
+    required String localPath,
   }) async {
     try {
       final binding = await _buildDownloadedBinding(
@@ -496,6 +658,7 @@ final class CloudAttachmentSyncService {
         order: order,
         attachment: attachment,
         file: file,
+        localPath: localPath,
       );
       await _store.saveAttachmentBinding(_session, binding);
       return binding;
@@ -510,6 +673,7 @@ final class CloudAttachmentSyncService {
     required int order,
     required CloudSyncAttachmentInfo attachment,
     required File file,
+    required String localPath,
   }) async {
     final stat = await file.stat();
     if (stat.type != FileSystemEntityType.file ||
@@ -529,7 +693,7 @@ final class CloudAttachmentSyncService {
       attachmentId: attachment.id,
       kind: kind,
       order: order,
-      localPath: file.path,
+      localPath: localPath,
       modifiedAt: stat.modified,
       sizeBytes: stat.size,
       sha256: digests.sha256Hex,
@@ -561,6 +725,111 @@ final class CloudAttachmentSyncService {
   }
 }
 
+String _contentSha256(String content) {
+  return sha256.convert(utf8.encode(content)).toString();
+}
+
+final class _ManagedUploadTarget {
+  const _ManagedUploadTarget({
+    required this.path,
+    required this.resolvedPath,
+    required this.type,
+  });
+
+  final String path;
+  final String resolvedPath;
+  final FileSystemEntityType type;
+
+  File get file => File(resolvedPath);
+}
+
+Future<_ManagedUploadTarget> _resolveManagedUploadTarget(
+  String storedPath,
+) async {
+  final uploadDirectory = await AppDirectories.getUploadDirectory();
+  await uploadDirectory.create(recursive: true);
+  final lexicalRoot = path.normalize(path.absolute(uploadDirectory.path));
+  final fixedPath = SandboxPathResolver.fix(storedPath);
+  if (!path.isAbsolute(fixedPath)) {
+    throw const FileSystemException('附件路径必须是受管目录内的绝对路径');
+  }
+  final candidate = path.normalize(fixedPath);
+  if (!_isWithinOrEqual(lexicalRoot, candidate) ||
+      path.equals(lexicalRoot, candidate)) {
+    throw const FileSystemException('附件路径不在受管上传目录内');
+  }
+
+  final canonicalRoot = path.normalize(
+    await Directory(lexicalRoot).resolveSymbolicLinks(),
+  );
+  final relativeCandidate = path.relative(candidate, from: lexicalRoot);
+  final expectedResolvedPath = path.normalize(
+    path.join(canonicalRoot, relativeCandidate),
+  );
+  final type = await FileSystemEntity.type(candidate, followLinks: false);
+  if (type != FileSystemEntityType.notFound) {
+    if (type == FileSystemEntityType.link) {
+      throw const FileSystemException('附件路径不能是符号链接');
+    }
+    final resolvedPath = path.normalize(
+      await File(candidate).resolveSymbolicLinks(),
+    );
+    if (!_isWithinOrEqual(canonicalRoot, resolvedPath) ||
+        path.equals(canonicalRoot, resolvedPath)) {
+      throw const FileSystemException('附件真实路径越出受管上传目录');
+    }
+    if (!path.equals(expectedResolvedPath, resolvedPath)) {
+      throw const FileSystemException('附件路径不能经过符号链接');
+    }
+    return _ManagedUploadTarget(
+      path: candidate,
+      resolvedPath: resolvedPath,
+      type: await FileSystemEntity.type(resolvedPath),
+    );
+  }
+
+  var ancestorPath = path.dirname(candidate);
+  var ancestorType = await FileSystemEntity.type(
+    ancestorPath,
+    followLinks: false,
+  );
+  while (ancestorType == FileSystemEntityType.notFound) {
+    final parentPath = path.dirname(ancestorPath);
+    if (path.equals(parentPath, ancestorPath)) {
+      throw const FileSystemException('无法定位附件路径的受管父目录');
+    }
+    ancestorPath = parentPath;
+    ancestorType = await FileSystemEntity.type(
+      ancestorPath,
+      followLinks: false,
+    );
+  }
+  if (ancestorType != FileSystemEntityType.directory) {
+    throw const FileSystemException('附件父路径不是普通目录');
+  }
+  final resolvedAncestor = path.normalize(
+    await Directory(ancestorPath).resolveSymbolicLinks(),
+  );
+  if (!_isWithinOrEqual(canonicalRoot, resolvedAncestor)) {
+    throw const FileSystemException('附件父目录越出受管上传目录');
+  }
+  final expectedResolvedAncestor = path.normalize(
+    path.join(canonicalRoot, path.relative(ancestorPath, from: lexicalRoot)),
+  );
+  if (!path.equals(expectedResolvedAncestor, resolvedAncestor)) {
+    throw const FileSystemException('附件父目录不能经过符号链接');
+  }
+  return _ManagedUploadTarget(
+    path: candidate,
+    resolvedPath: expectedResolvedPath,
+    type: FileSystemEntityType.notFound,
+  );
+}
+
+bool _isWithinOrEqual(String root, String candidate) {
+  return path.equals(root, candidate) || path.isWithin(root, candidate);
+}
+
 bool _matchesLocalFile(
   CloudSyncAttachmentBinding? binding, {
   required String localPath,
@@ -572,6 +841,19 @@ bool _matchesLocalFile(
       binding.localPath == localPath &&
       binding.modifiedAt == stat.modified.toUtc() &&
       binding.sizeBytes == stat.size &&
+      (binding.kind == CloudSyncAttachmentKind.image ||
+          (binding.fileName == fileName && binding.mimeType == mimeType));
+}
+
+bool _matchesMissingCompletedBinding(
+  CloudSyncAttachmentBinding? binding, {
+  required String localPath,
+  required String fileName,
+  required String mimeType,
+}) {
+  return binding != null &&
+      binding.completed &&
+      path.equals(path.normalize(binding.localPath), localPath) &&
       (binding.kind == CloudSyncAttachmentKind.image ||
           (binding.fileName == fileName && binding.mimeType == mimeType));
 }
