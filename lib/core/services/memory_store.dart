@@ -1,5 +1,8 @@
 import 'dart:convert';
+
+import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+
 import '../models/assistant_memory.dart';
 
 class MemoryStore {
@@ -13,13 +16,29 @@ class MemoryStore {
     if (raw == null || raw.isEmpty) return <AssistantMemory>[];
     try {
       final arr = jsonDecode(raw) as List<dynamic>;
-      return [
-        for (final e in arr)
-          if (e is Map<String, dynamic>)
-            AssistantMemory.fromJson(e)
-          else
-            AssistantMemory.fromJson((e as Map).cast<String, dynamic>()),
-      ];
+      var needsSyncIdMigration = false;
+      final memories = <AssistantMemory>[];
+      for (final entry in arr) {
+        final map = entry is Map<String, dynamic>
+            ? entry
+            : (entry as Map).cast<String, dynamic>();
+        final syncId = map['syncId'];
+        if (syncId is! String || syncId.trim().isEmpty) {
+          needsSyncIdMigration = true;
+        }
+        memories.add(AssistantMemory.fromJson(map));
+      }
+      if (needsSyncIdMigration) {
+        try {
+          await prefs.setString(
+            _memoriesKey,
+            jsonEncode(memories.map((e) => e.toJson()).toList()),
+          );
+        } catch (error) {
+          debugPrint('迁移记忆同步标识失败：$error');
+        }
+      }
+      return memories;
     } catch (_) {
       return <AssistantMemory>[];
     }

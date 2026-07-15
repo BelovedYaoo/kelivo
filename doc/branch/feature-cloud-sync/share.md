@@ -6,3 +6,4 @@
 - 本地专属数据：代理、窗口、热键、平台运行状态、STDIO MCP、备份凭据及设备同步凭据不上传。
 - 验收：代码生成、格式化、分析、现有测试、Android APK 构建和线上同步闭环均通过。
 - 协作注意：其他进程修改聊天模型、Hive 字段、Provider 初始化或附件 marker 前，请先在此记录，避免产生并行迁移冲突。
+- 已完成：ChatMessage 增加稳定 turnId 与生成状态，修复新消息 groupId 默认值；AssistantMemory 增加可确定性迁移的 syncId。

@@ -5,6 +5,18 @@ part 'chat_message.g.dart';
 
 @HiveType(typeId: 0)
 class ChatMessage extends HiveObject {
+  static const String generationStatusDraft = 'draft';
+  static const String generationStatusCompleted = 'completed';
+  static const String generationStatusInterrupted = 'interrupted';
+  static const String generationStatusFailed = 'failed';
+
+  static const Set<String> generationStatuses = <String>{
+    generationStatusDraft,
+    generationStatusCompleted,
+    generationStatusInterrupted,
+    generationStatusFailed,
+  };
+
   @HiveField(0)
   final String id;
 
@@ -70,31 +82,107 @@ class ChatMessage extends HiveObject {
   @HiveField(19)
   final int? durationMs;
 
-  ChatMessage({
+  @HiveField(20)
+  final String turnId;
+
+  @HiveField(21)
+  final String generationStatus;
+
+  factory ChatMessage({
     String? id,
-    required this.role,
-    required this.content,
+    required String role,
+    required String content,
     DateTime? timestamp,
-    this.modelId,
-    this.providerId,
-    this.totalTokens,
-    required this.conversationId,
-    this.isStreaming = false,
-    this.reasoningText,
-    this.reasoningStartAt,
-    this.reasoningFinishedAt,
-    this.translation,
-    this.reasoningSegmentsJson,
+    String? modelId,
+    String? providerId,
+    int? totalTokens,
+    required String conversationId,
+    bool isStreaming = false,
+    String? reasoningText,
+    DateTime? reasoningStartAt,
+    DateTime? reasoningFinishedAt,
+    String? translation,
+    String? reasoningSegmentsJson,
     String? groupId,
     int? version,
-    this.promptTokens,
-    this.completionTokens,
-    this.cachedTokens,
-    this.durationMs,
-  }) : id = id ?? const Uuid().v4(),
-       timestamp = timestamp ?? DateTime.now(),
-       groupId = groupId ?? id,
-       version = version ?? 0;
+    int? promptTokens,
+    int? completionTokens,
+    int? cachedTokens,
+    int? durationMs,
+    String? turnId,
+    String? generationStatus,
+  }) {
+    final resolvedId = _nonEmpty(id) ?? const Uuid().v4();
+    final resolvedGroupId = _nonEmpty(groupId) ?? resolvedId;
+    return ChatMessage._(
+      id: resolvedId,
+      role: role,
+      content: content,
+      timestamp: timestamp ?? DateTime.now(),
+      modelId: modelId,
+      providerId: providerId,
+      totalTokens: totalTokens,
+      conversationId: conversationId,
+      isStreaming: isStreaming,
+      reasoningText: reasoningText,
+      reasoningStartAt: reasoningStartAt,
+      reasoningFinishedAt: reasoningFinishedAt,
+      translation: translation,
+      reasoningSegmentsJson: reasoningSegmentsJson,
+      groupId: resolvedGroupId,
+      version: version ?? 0,
+      promptTokens: promptTokens,
+      completionTokens: completionTokens,
+      cachedTokens: cachedTokens,
+      durationMs: durationMs,
+      turnId: _nonEmpty(turnId) ?? resolvedGroupId,
+      generationStatus: _resolveGenerationStatus(
+        generationStatus,
+        isStreaming: isStreaming,
+      ),
+    );
+  }
+
+  ChatMessage._({
+    required this.id,
+    required this.role,
+    required this.content,
+    required this.timestamp,
+    required this.modelId,
+    required this.providerId,
+    required this.totalTokens,
+    required this.conversationId,
+    required this.isStreaming,
+    required this.reasoningText,
+    required this.reasoningStartAt,
+    required this.reasoningFinishedAt,
+    required this.translation,
+    required this.reasoningSegmentsJson,
+    required this.groupId,
+    required this.version,
+    required this.promptTokens,
+    required this.completionTokens,
+    required this.cachedTokens,
+    required this.durationMs,
+    required this.turnId,
+    required this.generationStatus,
+  });
+
+  static String? _nonEmpty(String? value) {
+    final normalized = value?.trim();
+    return normalized == null || normalized.isEmpty ? null : normalized;
+  }
+
+  static String _resolveGenerationStatus(
+    String? value, {
+    required bool isStreaming,
+  }) {
+    final normalized = value?.trim().toLowerCase();
+    if (normalized != null && generationStatuses.contains(normalized)) {
+      return normalized;
+    }
+    return isStreaming ? generationStatusDraft : generationStatusCompleted;
+  }
 
   ChatMessage copyWith({
     String? id,
@@ -117,7 +205,21 @@ class ChatMessage extends HiveObject {
     int? completionTokens,
     int? cachedTokens,
     int? durationMs,
+    String? turnId,
+    String? generationStatus,
   }) {
+    final nextIsStreaming = isStreaming ?? this.isStreaming;
+    final nextGenerationStatus = generationStatus != null
+        ? _resolveGenerationStatus(
+            generationStatus,
+            isStreaming: nextIsStreaming,
+          )
+        : nextIsStreaming
+        ? generationStatusDraft
+        : (this.isStreaming && this.generationStatus == generationStatusDraft)
+        ? generationStatusCompleted
+        : this.generationStatus;
+
     return ChatMessage(
       id: id ?? this.id,
       role: role ?? this.role,
@@ -127,7 +229,7 @@ class ChatMessage extends HiveObject {
       providerId: providerId ?? this.providerId,
       totalTokens: totalTokens ?? this.totalTokens,
       conversationId: conversationId ?? this.conversationId,
-      isStreaming: isStreaming ?? this.isStreaming,
+      isStreaming: nextIsStreaming,
       reasoningText: reasoningText ?? this.reasoningText,
       reasoningStartAt: reasoningStartAt ?? this.reasoningStartAt,
       reasoningFinishedAt: reasoningFinishedAt ?? this.reasoningFinishedAt,
@@ -140,6 +242,8 @@ class ChatMessage extends HiveObject {
       completionTokens: completionTokens ?? this.completionTokens,
       cachedTokens: cachedTokens ?? this.cachedTokens,
       durationMs: durationMs ?? this.durationMs,
+      turnId: turnId ?? this.turnId,
+      generationStatus: nextGenerationStatus,
     );
   }
 
@@ -165,6 +269,8 @@ class ChatMessage extends HiveObject {
       'completionTokens': completionTokens,
       'cachedTokens': cachedTokens,
       'durationMs': durationMs,
+      'turnId': turnId,
+      'generationStatus': generationStatus,
     };
   }
 
@@ -194,6 +300,8 @@ class ChatMessage extends HiveObject {
       completionTokens: json['completionTokens'] as int?,
       cachedTokens: json['cachedTokens'] as int?,
       durationMs: json['durationMs'] as int?,
+      turnId: json['turnId'] as String?,
+      generationStatus: json['generationStatus'] as String?,
     );
   }
 }
