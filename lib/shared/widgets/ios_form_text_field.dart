@@ -22,6 +22,9 @@ class IosFormTextField extends StatelessWidget {
     this.cursorToEndOnTap = false,
     this.textInputAction,
     this.textCapitalization = TextCapitalization.none,
+    this.obscureText = false,
+    this.autocorrect = true,
+    this.enableSuggestions = true,
   });
 
   final String label;
@@ -42,6 +45,9 @@ class IosFormTextField extends StatelessWidget {
   final bool cursorToEndOnTap;
   final TextInputAction? textInputAction;
   final TextCapitalization textCapitalization;
+  final bool obscureText;
+  final bool autocorrect;
+  final bool enableSuggestions;
 
   bool get _useInlineLabel => inlineLabel ?? (maxLines == 1);
 
@@ -91,6 +97,9 @@ class IosFormTextField extends StatelessWidget {
           : TextAlignVertical.top,
       textInputAction: textInputAction,
       textCapitalization: textCapitalization,
+      obscureText: obscureText,
+      autocorrect: autocorrect,
+      enableSuggestions: enableSuggestions,
       onChanged: onChanged,
       onTap: cursorToEndOnTap
           ? () {

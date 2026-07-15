@@ -52,6 +52,7 @@ import 'setting/quick_phrases_pane.dart';
 import 'setting/instruction_injection_pane.dart';
 import 'setting/world_book_pane.dart';
 import 'setting/backup_pane.dart';
+import 'setting/cloud_sync_pane.dart';
 import 'setting/hotkeys_pane.dart';
 import 'setting/network_proxy_pane.dart';
 import 'setting/about_pane.dart';
@@ -96,6 +97,7 @@ enum _SettingsMenuItem {
   worldBook,
   tts,
   networkProxy,
+  cloudSync,
   backup,
   hotkeys,
   stats,
@@ -209,6 +211,10 @@ class _DesktopSettingsPageState extends State<DesktopSettingsPage> {
                           return const DesktopNetworkProxyPane(
                             key: ValueKey('networkProxy'),
                           );
+                        case _SettingsMenuItem.cloudSync:
+                          return const DesktopCloudSyncPane(
+                            key: ValueKey('cloudSync'),
+                          );
                         case _SettingsMenuItem.backup:
                           return const DesktopBackupPane(
                             key: ValueKey('backup'),
@@ -306,6 +312,11 @@ class _SettingsMenu extends StatelessWidget {
         _SettingsMenuItem.networkProxy,
         lucide.Lucide.EthernetPort,
         l10n.settingsPageNetworkProxy,
+      ),
+      (
+        _SettingsMenuItem.cloudSync,
+        lucide.Lucide.cloudDownload,
+        l10n.settingsPageCloudSync,
       ),
       (
         _SettingsMenuItem.backup,

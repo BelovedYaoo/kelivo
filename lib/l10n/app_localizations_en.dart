@@ -80,7 +80,228 @@ class AppLocalizationsEn extends AppLocalizations {
   String get settingsPageDataSection => 'Data';
 
   @override
+  String get settingsPageCloudSync => 'Cloud Sync';
+
+  @override
   String get settingsPageBackup => 'Backup';
+
+  @override
+  String get cloudSyncTitle => 'Cloud Sync';
+
+  @override
+  String get cloudSyncSignInSection => 'Sign In';
+
+  @override
+  String get cloudSyncServiceUrl => 'Service URL';
+
+  @override
+  String get cloudSyncLoginName => 'Account';
+
+  @override
+  String get cloudSyncPassword => 'Password';
+
+  @override
+  String get cloudSyncDeviceName => 'Device Name';
+
+  @override
+  String cloudSyncDefaultDeviceName(String platform) {
+    return 'Kelivo · $platform';
+  }
+
+  @override
+  String get cloudSyncSignIn => 'Sign In';
+
+  @override
+  String get cloudSyncSigningIn => 'Signing In…';
+
+  @override
+  String get cloudSyncRequiredFields =>
+      'Complete the service URL, account, password, and device name.';
+
+  @override
+  String get cloudSyncAccountSection => 'Account & Sync';
+
+  @override
+  String get cloudSyncAccount => 'Account';
+
+  @override
+  String get cloudSyncService => 'Service';
+
+  @override
+  String get cloudSyncStatus => 'Status';
+
+  @override
+  String get cloudSyncPause => 'Pause Sync';
+
+  @override
+  String get cloudSyncPauseDescription =>
+      'Keep local data unchanged until sync is resumed.';
+
+  @override
+  String get cloudSyncSyncNow => 'Sync Now';
+
+  @override
+  String get cloudSyncSyncing => 'Syncing…';
+
+  @override
+  String get cloudSyncSyncCompleted => 'Sync completed';
+
+  @override
+  String get cloudSyncLastSync => 'Last Sync';
+
+  @override
+  String get cloudSyncNever => 'Never';
+
+  @override
+  String get cloudSyncDevicesSection => 'Devices';
+
+  @override
+  String get cloudSyncRefreshDevices => 'Refresh devices';
+
+  @override
+  String get cloudSyncNoDevices => 'No devices found';
+
+  @override
+  String get cloudSyncCurrentDevice => 'Current';
+
+  @override
+  String get cloudSyncRevokedDevice => 'Revoked';
+
+  @override
+  String get cloudSyncActiveDevice => 'Active';
+
+  @override
+  String get cloudSyncVersion => 'Version';
+
+  @override
+  String get cloudSyncLastSeen => 'Last Seen';
+
+  @override
+  String get cloudSyncRevoke => 'Revoke';
+
+  @override
+  String get cloudSyncRevokeTitle => 'Revoke this device?';
+
+  @override
+  String get cloudSyncRevokeMessage =>
+      'This device must sign in again before it can sync.';
+
+  @override
+  String get cloudSyncRevokeCurrentMessage =>
+      'This is the current device. Revoking it will sign you out.';
+
+  @override
+  String get cloudSyncCancel => 'Cancel';
+
+  @override
+  String get cloudSyncLogout => 'Sign Out';
+
+  @override
+  String get cloudSyncLogoutTitle => 'Sign out of Cloud Sync?';
+
+  @override
+  String get cloudSyncLogoutMessage =>
+      'You can keep local sync state for a faster next sign-in, or clear it from this device.';
+
+  @override
+  String get cloudSyncLogoutKeepState => 'Sign Out and Keep State';
+
+  @override
+  String get cloudSyncLogoutClearState => 'Sign Out and Clear State';
+
+  @override
+  String get cloudSyncErrorTitle => 'Cloud Sync Error';
+
+  @override
+  String get cloudSyncStatusInitializing => 'Initializing';
+
+  @override
+  String get cloudSyncStatusSignedOut => 'Signed Out';
+
+  @override
+  String get cloudSyncStatusSigningIn => 'Signing In';
+
+  @override
+  String get cloudSyncStatusSigningOut => 'Signing Out';
+
+  @override
+  String get cloudSyncStatusIdle => 'Synced';
+
+  @override
+  String get cloudSyncStatusSyncing => 'Syncing';
+
+  @override
+  String get cloudSyncStatusPaused => 'Paused';
+
+  @override
+  String get cloudSyncStatusError => 'Needs Attention';
+
+  @override
+  String get cloudSyncPlatformAndroid => 'Android';
+
+  @override
+  String get cloudSyncPlatformIos => 'iOS';
+
+  @override
+  String get cloudSyncPlatformMacos => 'macOS';
+
+  @override
+  String get cloudSyncPlatformWindows => 'Windows';
+
+  @override
+  String get cloudSyncPlatformLinux => 'Linux';
+
+  @override
+  String get cloudSyncPlatformUnknown => 'Current Device';
+
+  @override
+  String get cloudSyncFailureInvalidBaseUrl => 'The service URL is invalid.';
+
+  @override
+  String get cloudSyncFailureUnauthenticated =>
+      'The account or password is incorrect, or the session has expired.';
+
+  @override
+  String get cloudSyncFailureForbidden =>
+      'This account does not have permission for this operation.';
+
+  @override
+  String get cloudSyncFailureNotFound =>
+      'The requested sync resource no longer exists.';
+
+  @override
+  String get cloudSyncFailureConflict =>
+      'The data changed on another device. Sync again to reconcile it.';
+
+  @override
+  String get cloudSyncFailureValidation =>
+      'Some sync data or input is invalid.';
+
+  @override
+  String get cloudSyncFailureRateLimited =>
+      'Too many requests. Try again later.';
+
+  @override
+  String get cloudSyncFailureServer =>
+      'The sync service is temporarily unavailable.';
+
+  @override
+  String get cloudSyncFailureNetwork =>
+      'Unable to reach the sync service. Check your network.';
+
+  @override
+  String get cloudSyncFailureTimeout =>
+      'The sync request timed out. Try again.';
+
+  @override
+  String get cloudSyncFailureCancelled => 'The sync request was cancelled.';
+
+  @override
+  String get cloudSyncFailureInvalidResponse =>
+      'The sync service returned an invalid response.';
+
+  @override
+  String get cloudSyncFailureUnknown => 'Cloud Sync failed. Try again later.';
 
   @override
   String get settingsPageChatStorage => 'Chat Storage';

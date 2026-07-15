@@ -238,11 +238,419 @@ abstract class AppLocalizations {
   /// **'Data'**
   String get settingsPageDataSection;
 
+  /// No description provided for @settingsPageCloudSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud Sync'**
+  String get settingsPageCloudSync;
+
   /// No description provided for @settingsPageBackup.
   ///
   /// In en, this message translates to:
   /// **'Backup'**
   String get settingsPageBackup;
+
+  /// No description provided for @cloudSyncTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud Sync'**
+  String get cloudSyncTitle;
+
+  /// No description provided for @cloudSyncSignInSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign In'**
+  String get cloudSyncSignInSection;
+
+  /// No description provided for @cloudSyncServiceUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'Service URL'**
+  String get cloudSyncServiceUrl;
+
+  /// No description provided for @cloudSyncLoginName.
+  ///
+  /// In en, this message translates to:
+  /// **'Account'**
+  String get cloudSyncLoginName;
+
+  /// No description provided for @cloudSyncPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'Password'**
+  String get cloudSyncPassword;
+
+  /// No description provided for @cloudSyncDeviceName.
+  ///
+  /// In en, this message translates to:
+  /// **'Device Name'**
+  String get cloudSyncDeviceName;
+
+  /// No description provided for @cloudSyncDefaultDeviceName.
+  ///
+  /// In en, this message translates to:
+  /// **'Kelivo · {platform}'**
+  String cloudSyncDefaultDeviceName(String platform);
+
+  /// No description provided for @cloudSyncSignIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign In'**
+  String get cloudSyncSignIn;
+
+  /// No description provided for @cloudSyncSigningIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Signing In…'**
+  String get cloudSyncSigningIn;
+
+  /// No description provided for @cloudSyncRequiredFields.
+  ///
+  /// In en, this message translates to:
+  /// **'Complete the service URL, account, password, and device name.'**
+  String get cloudSyncRequiredFields;
+
+  /// No description provided for @cloudSyncAccountSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Account & Sync'**
+  String get cloudSyncAccountSection;
+
+  /// No description provided for @cloudSyncAccount.
+  ///
+  /// In en, this message translates to:
+  /// **'Account'**
+  String get cloudSyncAccount;
+
+  /// No description provided for @cloudSyncService.
+  ///
+  /// In en, this message translates to:
+  /// **'Service'**
+  String get cloudSyncService;
+
+  /// No description provided for @cloudSyncStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get cloudSyncStatus;
+
+  /// No description provided for @cloudSyncPause.
+  ///
+  /// In en, this message translates to:
+  /// **'Pause Sync'**
+  String get cloudSyncPause;
+
+  /// No description provided for @cloudSyncPauseDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Keep local data unchanged until sync is resumed.'**
+  String get cloudSyncPauseDescription;
+
+  /// No description provided for @cloudSyncSyncNow.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync Now'**
+  String get cloudSyncSyncNow;
+
+  /// No description provided for @cloudSyncSyncing.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing…'**
+  String get cloudSyncSyncing;
+
+  /// No description provided for @cloudSyncSyncCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync completed'**
+  String get cloudSyncSyncCompleted;
+
+  /// No description provided for @cloudSyncLastSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Last Sync'**
+  String get cloudSyncLastSync;
+
+  /// No description provided for @cloudSyncNever.
+  ///
+  /// In en, this message translates to:
+  /// **'Never'**
+  String get cloudSyncNever;
+
+  /// No description provided for @cloudSyncDevicesSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Devices'**
+  String get cloudSyncDevicesSection;
+
+  /// No description provided for @cloudSyncRefreshDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh devices'**
+  String get cloudSyncRefreshDevices;
+
+  /// No description provided for @cloudSyncNoDevices.
+  ///
+  /// In en, this message translates to:
+  /// **'No devices found'**
+  String get cloudSyncNoDevices;
+
+  /// No description provided for @cloudSyncCurrentDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Current'**
+  String get cloudSyncCurrentDevice;
+
+  /// No description provided for @cloudSyncRevokedDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoked'**
+  String get cloudSyncRevokedDevice;
+
+  /// No description provided for @cloudSyncActiveDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Active'**
+  String get cloudSyncActiveDevice;
+
+  /// No description provided for @cloudSyncVersion.
+  ///
+  /// In en, this message translates to:
+  /// **'Version'**
+  String get cloudSyncVersion;
+
+  /// No description provided for @cloudSyncLastSeen.
+  ///
+  /// In en, this message translates to:
+  /// **'Last Seen'**
+  String get cloudSyncLastSeen;
+
+  /// No description provided for @cloudSyncRevoke.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke'**
+  String get cloudSyncRevoke;
+
+  /// No description provided for @cloudSyncRevokeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke this device?'**
+  String get cloudSyncRevokeTitle;
+
+  /// No description provided for @cloudSyncRevokeMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This device must sign in again before it can sync.'**
+  String get cloudSyncRevokeMessage;
+
+  /// No description provided for @cloudSyncRevokeCurrentMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This is the current device. Revoking it will sign you out.'**
+  String get cloudSyncRevokeCurrentMessage;
+
+  /// No description provided for @cloudSyncCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel'**
+  String get cloudSyncCancel;
+
+  /// No description provided for @cloudSyncLogout.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign Out'**
+  String get cloudSyncLogout;
+
+  /// No description provided for @cloudSyncLogoutTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign out of Cloud Sync?'**
+  String get cloudSyncLogoutTitle;
+
+  /// No description provided for @cloudSyncLogoutMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'You can keep local sync state for a faster next sign-in, or clear it from this device.'**
+  String get cloudSyncLogoutMessage;
+
+  /// No description provided for @cloudSyncLogoutKeepState.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign Out and Keep State'**
+  String get cloudSyncLogoutKeepState;
+
+  /// No description provided for @cloudSyncLogoutClearState.
+  ///
+  /// In en, this message translates to:
+  /// **'Sign Out and Clear State'**
+  String get cloudSyncLogoutClearState;
+
+  /// No description provided for @cloudSyncErrorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud Sync Error'**
+  String get cloudSyncErrorTitle;
+
+  /// No description provided for @cloudSyncStatusInitializing.
+  ///
+  /// In en, this message translates to:
+  /// **'Initializing'**
+  String get cloudSyncStatusInitializing;
+
+  /// No description provided for @cloudSyncStatusSignedOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Signed Out'**
+  String get cloudSyncStatusSignedOut;
+
+  /// No description provided for @cloudSyncStatusSigningIn.
+  ///
+  /// In en, this message translates to:
+  /// **'Signing In'**
+  String get cloudSyncStatusSigningIn;
+
+  /// No description provided for @cloudSyncStatusSigningOut.
+  ///
+  /// In en, this message translates to:
+  /// **'Signing Out'**
+  String get cloudSyncStatusSigningOut;
+
+  /// No description provided for @cloudSyncStatusIdle.
+  ///
+  /// In en, this message translates to:
+  /// **'Synced'**
+  String get cloudSyncStatusIdle;
+
+  /// No description provided for @cloudSyncStatusSyncing.
+  ///
+  /// In en, this message translates to:
+  /// **'Syncing'**
+  String get cloudSyncStatusSyncing;
+
+  /// No description provided for @cloudSyncStatusPaused.
+  ///
+  /// In en, this message translates to:
+  /// **'Paused'**
+  String get cloudSyncStatusPaused;
+
+  /// No description provided for @cloudSyncStatusError.
+  ///
+  /// In en, this message translates to:
+  /// **'Needs Attention'**
+  String get cloudSyncStatusError;
+
+  /// No description provided for @cloudSyncPlatformAndroid.
+  ///
+  /// In en, this message translates to:
+  /// **'Android'**
+  String get cloudSyncPlatformAndroid;
+
+  /// No description provided for @cloudSyncPlatformIos.
+  ///
+  /// In en, this message translates to:
+  /// **'iOS'**
+  String get cloudSyncPlatformIos;
+
+  /// No description provided for @cloudSyncPlatformMacos.
+  ///
+  /// In en, this message translates to:
+  /// **'macOS'**
+  String get cloudSyncPlatformMacos;
+
+  /// No description provided for @cloudSyncPlatformWindows.
+  ///
+  /// In en, this message translates to:
+  /// **'Windows'**
+  String get cloudSyncPlatformWindows;
+
+  /// No description provided for @cloudSyncPlatformLinux.
+  ///
+  /// In en, this message translates to:
+  /// **'Linux'**
+  String get cloudSyncPlatformLinux;
+
+  /// No description provided for @cloudSyncPlatformUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Current Device'**
+  String get cloudSyncPlatformUnknown;
+
+  /// No description provided for @cloudSyncFailureInvalidBaseUrl.
+  ///
+  /// In en, this message translates to:
+  /// **'The service URL is invalid.'**
+  String get cloudSyncFailureInvalidBaseUrl;
+
+  /// No description provided for @cloudSyncFailureUnauthenticated.
+  ///
+  /// In en, this message translates to:
+  /// **'The account or password is incorrect, or the session has expired.'**
+  String get cloudSyncFailureUnauthenticated;
+
+  /// No description provided for @cloudSyncFailureForbidden.
+  ///
+  /// In en, this message translates to:
+  /// **'This account does not have permission for this operation.'**
+  String get cloudSyncFailureForbidden;
+
+  /// No description provided for @cloudSyncFailureNotFound.
+  ///
+  /// In en, this message translates to:
+  /// **'The requested sync resource no longer exists.'**
+  String get cloudSyncFailureNotFound;
+
+  /// No description provided for @cloudSyncFailureConflict.
+  ///
+  /// In en, this message translates to:
+  /// **'The data changed on another device. Sync again to reconcile it.'**
+  String get cloudSyncFailureConflict;
+
+  /// No description provided for @cloudSyncFailureValidation.
+  ///
+  /// In en, this message translates to:
+  /// **'Some sync data or input is invalid.'**
+  String get cloudSyncFailureValidation;
+
+  /// No description provided for @cloudSyncFailureRateLimited.
+  ///
+  /// In en, this message translates to:
+  /// **'Too many requests. Try again later.'**
+  String get cloudSyncFailureRateLimited;
+
+  /// No description provided for @cloudSyncFailureServer.
+  ///
+  /// In en, this message translates to:
+  /// **'The sync service is temporarily unavailable.'**
+  String get cloudSyncFailureServer;
+
+  /// No description provided for @cloudSyncFailureNetwork.
+  ///
+  /// In en, this message translates to:
+  /// **'Unable to reach the sync service. Check your network.'**
+  String get cloudSyncFailureNetwork;
+
+  /// No description provided for @cloudSyncFailureTimeout.
+  ///
+  /// In en, this message translates to:
+  /// **'The sync request timed out. Try again.'**
+  String get cloudSyncFailureTimeout;
+
+  /// No description provided for @cloudSyncFailureCancelled.
+  ///
+  /// In en, this message translates to:
+  /// **'The sync request was cancelled.'**
+  String get cloudSyncFailureCancelled;
+
+  /// No description provided for @cloudSyncFailureInvalidResponse.
+  ///
+  /// In en, this message translates to:
+  /// **'The sync service returned an invalid response.'**
+  String get cloudSyncFailureInvalidResponse;
+
+  /// No description provided for @cloudSyncFailureUnknown.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud Sync failed. Try again later.'**
+  String get cloudSyncFailureUnknown;
 
   /// No description provided for @settingsPageChatStorage.
   ///

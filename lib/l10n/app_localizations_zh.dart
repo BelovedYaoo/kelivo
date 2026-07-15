@@ -78,7 +78,213 @@ class AppLocalizationsZh extends AppLocalizations {
   String get settingsPageDataSection => '数据设置';
 
   @override
+  String get settingsPageCloudSync => '云同步';
+
+  @override
   String get settingsPageBackup => '数据备份';
+
+  @override
+  String get cloudSyncTitle => '云同步';
+
+  @override
+  String get cloudSyncSignInSection => '登录';
+
+  @override
+  String get cloudSyncServiceUrl => '服务地址';
+
+  @override
+  String get cloudSyncLoginName => '账号';
+
+  @override
+  String get cloudSyncPassword => '密码';
+
+  @override
+  String get cloudSyncDeviceName => '设备名称';
+
+  @override
+  String cloudSyncDefaultDeviceName(String platform) {
+    return 'Kelivo · $platform';
+  }
+
+  @override
+  String get cloudSyncSignIn => '登录';
+
+  @override
+  String get cloudSyncSigningIn => '正在登录…';
+
+  @override
+  String get cloudSyncRequiredFields => '请填写服务地址、账号、密码和设备名称。';
+
+  @override
+  String get cloudSyncAccountSection => '账户与同步';
+
+  @override
+  String get cloudSyncAccount => '账户';
+
+  @override
+  String get cloudSyncService => '服务';
+
+  @override
+  String get cloudSyncStatus => '状态';
+
+  @override
+  String get cloudSyncPause => '暂停同步';
+
+  @override
+  String get cloudSyncPauseDescription => '恢复同步前，仅保留本机数据变更。';
+
+  @override
+  String get cloudSyncSyncNow => '立即同步';
+
+  @override
+  String get cloudSyncSyncing => '正在同步…';
+
+  @override
+  String get cloudSyncSyncCompleted => '同步完成';
+
+  @override
+  String get cloudSyncLastSync => '上次同步';
+
+  @override
+  String get cloudSyncNever => '从未同步';
+
+  @override
+  String get cloudSyncDevicesSection => '设备';
+
+  @override
+  String get cloudSyncRefreshDevices => '刷新设备';
+
+  @override
+  String get cloudSyncNoDevices => '暂无设备';
+
+  @override
+  String get cloudSyncCurrentDevice => '当前设备';
+
+  @override
+  String get cloudSyncRevokedDevice => '已撤销';
+
+  @override
+  String get cloudSyncActiveDevice => '正常';
+
+  @override
+  String get cloudSyncVersion => '版本';
+
+  @override
+  String get cloudSyncLastSeen => '最近活动';
+
+  @override
+  String get cloudSyncRevoke => '撤销';
+
+  @override
+  String get cloudSyncRevokeTitle => '撤销此设备？';
+
+  @override
+  String get cloudSyncRevokeMessage => '此设备需要重新登录后才能继续同步。';
+
+  @override
+  String get cloudSyncRevokeCurrentMessage => '这是当前设备，撤销后将退出登录。';
+
+  @override
+  String get cloudSyncCancel => '取消';
+
+  @override
+  String get cloudSyncLogout => '退出登录';
+
+  @override
+  String get cloudSyncLogoutTitle => '退出云同步？';
+
+  @override
+  String get cloudSyncLogoutMessage => '可以保留本机同步状态以便下次快速继续，也可以从本机清除。';
+
+  @override
+  String get cloudSyncLogoutKeepState => '退出并保留状态';
+
+  @override
+  String get cloudSyncLogoutClearState => '退出并清除状态';
+
+  @override
+  String get cloudSyncErrorTitle => '云同步错误';
+
+  @override
+  String get cloudSyncStatusInitializing => '正在初始化';
+
+  @override
+  String get cloudSyncStatusSignedOut => '未登录';
+
+  @override
+  String get cloudSyncStatusSigningIn => '正在登录';
+
+  @override
+  String get cloudSyncStatusSigningOut => '正在退出';
+
+  @override
+  String get cloudSyncStatusIdle => '同步正常';
+
+  @override
+  String get cloudSyncStatusSyncing => '正在同步';
+
+  @override
+  String get cloudSyncStatusPaused => '已暂停';
+
+  @override
+  String get cloudSyncStatusError => '需要处理';
+
+  @override
+  String get cloudSyncPlatformAndroid => 'Android';
+
+  @override
+  String get cloudSyncPlatformIos => 'iOS';
+
+  @override
+  String get cloudSyncPlatformMacos => 'macOS';
+
+  @override
+  String get cloudSyncPlatformWindows => 'Windows';
+
+  @override
+  String get cloudSyncPlatformLinux => 'Linux';
+
+  @override
+  String get cloudSyncPlatformUnknown => '当前设备';
+
+  @override
+  String get cloudSyncFailureInvalidBaseUrl => '服务地址格式不正确。';
+
+  @override
+  String get cloudSyncFailureUnauthenticated => '账号或密码错误，或者登录状态已失效。';
+
+  @override
+  String get cloudSyncFailureForbidden => '当前账户无权执行此操作。';
+
+  @override
+  String get cloudSyncFailureNotFound => '请求的同步数据已不存在。';
+
+  @override
+  String get cloudSyncFailureConflict => '数据已在其他设备发生变化，请重新同步。';
+
+  @override
+  String get cloudSyncFailureValidation => '部分同步数据或输入不符合要求。';
+
+  @override
+  String get cloudSyncFailureRateLimited => '请求过于频繁，请稍后重试。';
+
+  @override
+  String get cloudSyncFailureServer => '同步服务暂时不可用。';
+
+  @override
+  String get cloudSyncFailureNetwork => '无法连接同步服务，请检查网络。';
+
+  @override
+  String get cloudSyncFailureTimeout => '同步请求超时，请重试。';
+
+  @override
+  String get cloudSyncFailureCancelled => '同步请求已取消。';
+
+  @override
+  String get cloudSyncFailureInvalidResponse => '同步服务返回了无法识别的数据。';
+
+  @override
+  String get cloudSyncFailureUnknown => '云同步失败，请稍后重试。';
 
   @override
   String get settingsPageChatStorage => '聊天记录存储';
@@ -5396,7 +5602,213 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get settingsPageDataSection => '数据设置';
 
   @override
+  String get settingsPageCloudSync => '云同步';
+
+  @override
   String get settingsPageBackup => '数据备份';
+
+  @override
+  String get cloudSyncTitle => '云同步';
+
+  @override
+  String get cloudSyncSignInSection => '登录';
+
+  @override
+  String get cloudSyncServiceUrl => '服务地址';
+
+  @override
+  String get cloudSyncLoginName => '账号';
+
+  @override
+  String get cloudSyncPassword => '密码';
+
+  @override
+  String get cloudSyncDeviceName => '设备名称';
+
+  @override
+  String cloudSyncDefaultDeviceName(String platform) {
+    return 'Kelivo · $platform';
+  }
+
+  @override
+  String get cloudSyncSignIn => '登录';
+
+  @override
+  String get cloudSyncSigningIn => '正在登录…';
+
+  @override
+  String get cloudSyncRequiredFields => '请填写服务地址、账号、密码和设备名称。';
+
+  @override
+  String get cloudSyncAccountSection => '账户与同步';
+
+  @override
+  String get cloudSyncAccount => '账户';
+
+  @override
+  String get cloudSyncService => '服务';
+
+  @override
+  String get cloudSyncStatus => '状态';
+
+  @override
+  String get cloudSyncPause => '暂停同步';
+
+  @override
+  String get cloudSyncPauseDescription => '恢复同步前，仅保留本机数据变更。';
+
+  @override
+  String get cloudSyncSyncNow => '立即同步';
+
+  @override
+  String get cloudSyncSyncing => '正在同步…';
+
+  @override
+  String get cloudSyncSyncCompleted => '同步完成';
+
+  @override
+  String get cloudSyncLastSync => '上次同步';
+
+  @override
+  String get cloudSyncNever => '从未同步';
+
+  @override
+  String get cloudSyncDevicesSection => '设备';
+
+  @override
+  String get cloudSyncRefreshDevices => '刷新设备';
+
+  @override
+  String get cloudSyncNoDevices => '暂无设备';
+
+  @override
+  String get cloudSyncCurrentDevice => '当前设备';
+
+  @override
+  String get cloudSyncRevokedDevice => '已撤销';
+
+  @override
+  String get cloudSyncActiveDevice => '正常';
+
+  @override
+  String get cloudSyncVersion => '版本';
+
+  @override
+  String get cloudSyncLastSeen => '最近活动';
+
+  @override
+  String get cloudSyncRevoke => '撤销';
+
+  @override
+  String get cloudSyncRevokeTitle => '撤销此设备？';
+
+  @override
+  String get cloudSyncRevokeMessage => '此设备需要重新登录后才能继续同步。';
+
+  @override
+  String get cloudSyncRevokeCurrentMessage => '这是当前设备，撤销后将退出登录。';
+
+  @override
+  String get cloudSyncCancel => '取消';
+
+  @override
+  String get cloudSyncLogout => '退出登录';
+
+  @override
+  String get cloudSyncLogoutTitle => '退出云同步？';
+
+  @override
+  String get cloudSyncLogoutMessage => '可以保留本机同步状态以便下次快速继续，也可以从本机清除。';
+
+  @override
+  String get cloudSyncLogoutKeepState => '退出并保留状态';
+
+  @override
+  String get cloudSyncLogoutClearState => '退出并清除状态';
+
+  @override
+  String get cloudSyncErrorTitle => '云同步错误';
+
+  @override
+  String get cloudSyncStatusInitializing => '正在初始化';
+
+  @override
+  String get cloudSyncStatusSignedOut => '未登录';
+
+  @override
+  String get cloudSyncStatusSigningIn => '正在登录';
+
+  @override
+  String get cloudSyncStatusSigningOut => '正在退出';
+
+  @override
+  String get cloudSyncStatusIdle => '同步正常';
+
+  @override
+  String get cloudSyncStatusSyncing => '正在同步';
+
+  @override
+  String get cloudSyncStatusPaused => '已暂停';
+
+  @override
+  String get cloudSyncStatusError => '需要处理';
+
+  @override
+  String get cloudSyncPlatformAndroid => 'Android';
+
+  @override
+  String get cloudSyncPlatformIos => 'iOS';
+
+  @override
+  String get cloudSyncPlatformMacos => 'macOS';
+
+  @override
+  String get cloudSyncPlatformWindows => 'Windows';
+
+  @override
+  String get cloudSyncPlatformLinux => 'Linux';
+
+  @override
+  String get cloudSyncPlatformUnknown => '当前设备';
+
+  @override
+  String get cloudSyncFailureInvalidBaseUrl => '服务地址格式不正确。';
+
+  @override
+  String get cloudSyncFailureUnauthenticated => '账号或密码错误，或者登录状态已失效。';
+
+  @override
+  String get cloudSyncFailureForbidden => '当前账户无权执行此操作。';
+
+  @override
+  String get cloudSyncFailureNotFound => '请求的同步数据已不存在。';
+
+  @override
+  String get cloudSyncFailureConflict => '数据已在其他设备发生变化，请重新同步。';
+
+  @override
+  String get cloudSyncFailureValidation => '部分同步数据或输入不符合要求。';
+
+  @override
+  String get cloudSyncFailureRateLimited => '请求过于频繁，请稍后重试。';
+
+  @override
+  String get cloudSyncFailureServer => '同步服务暂时不可用。';
+
+  @override
+  String get cloudSyncFailureNetwork => '无法连接同步服务，请检查网络。';
+
+  @override
+  String get cloudSyncFailureTimeout => '同步请求超时，请重试。';
+
+  @override
+  String get cloudSyncFailureCancelled => '同步请求已取消。';
+
+  @override
+  String get cloudSyncFailureInvalidResponse => '同步服务返回了无法识别的数据。';
+
+  @override
+  String get cloudSyncFailureUnknown => '云同步失败，请稍后重试。';
 
   @override
   String get settingsPageChatStorage => '聊天记录存储';
@@ -10714,7 +11126,213 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get settingsPageDataSection => '資料設定';
 
   @override
+  String get settingsPageCloudSync => '雲端同步';
+
+  @override
   String get settingsPageBackup => '資料備份';
+
+  @override
+  String get cloudSyncTitle => '雲端同步';
+
+  @override
+  String get cloudSyncSignInSection => '登入';
+
+  @override
+  String get cloudSyncServiceUrl => '服務位址';
+
+  @override
+  String get cloudSyncLoginName => '帳號';
+
+  @override
+  String get cloudSyncPassword => '密碼';
+
+  @override
+  String get cloudSyncDeviceName => '裝置名稱';
+
+  @override
+  String cloudSyncDefaultDeviceName(String platform) {
+    return 'Kelivo · $platform';
+  }
+
+  @override
+  String get cloudSyncSignIn => '登入';
+
+  @override
+  String get cloudSyncSigningIn => '正在登入…';
+
+  @override
+  String get cloudSyncRequiredFields => '請填寫服務位址、帳號、密碼和裝置名稱。';
+
+  @override
+  String get cloudSyncAccountSection => '帳戶與同步';
+
+  @override
+  String get cloudSyncAccount => '帳戶';
+
+  @override
+  String get cloudSyncService => '服務';
+
+  @override
+  String get cloudSyncStatus => '狀態';
+
+  @override
+  String get cloudSyncPause => '暫停同步';
+
+  @override
+  String get cloudSyncPauseDescription => '恢復同步前，僅保留本機資料變更。';
+
+  @override
+  String get cloudSyncSyncNow => '立即同步';
+
+  @override
+  String get cloudSyncSyncing => '正在同步…';
+
+  @override
+  String get cloudSyncSyncCompleted => '同步完成';
+
+  @override
+  String get cloudSyncLastSync => '上次同步';
+
+  @override
+  String get cloudSyncNever => '從未同步';
+
+  @override
+  String get cloudSyncDevicesSection => '裝置';
+
+  @override
+  String get cloudSyncRefreshDevices => '重新整理裝置';
+
+  @override
+  String get cloudSyncNoDevices => '暫無裝置';
+
+  @override
+  String get cloudSyncCurrentDevice => '目前裝置';
+
+  @override
+  String get cloudSyncRevokedDevice => '已撤銷';
+
+  @override
+  String get cloudSyncActiveDevice => '正常';
+
+  @override
+  String get cloudSyncVersion => '版本';
+
+  @override
+  String get cloudSyncLastSeen => '最近活動';
+
+  @override
+  String get cloudSyncRevoke => '撤銷';
+
+  @override
+  String get cloudSyncRevokeTitle => '撤銷此裝置？';
+
+  @override
+  String get cloudSyncRevokeMessage => '此裝置需要重新登入後才能繼續同步。';
+
+  @override
+  String get cloudSyncRevokeCurrentMessage => '這是目前裝置，撤銷後將退出登入。';
+
+  @override
+  String get cloudSyncCancel => '取消';
+
+  @override
+  String get cloudSyncLogout => '退出登入';
+
+  @override
+  String get cloudSyncLogoutTitle => '退出雲端同步？';
+
+  @override
+  String get cloudSyncLogoutMessage => '可以保留本機同步狀態以便下次快速繼續，也可以從本機清除。';
+
+  @override
+  String get cloudSyncLogoutKeepState => '退出並保留狀態';
+
+  @override
+  String get cloudSyncLogoutClearState => '退出並清除狀態';
+
+  @override
+  String get cloudSyncErrorTitle => '雲端同步錯誤';
+
+  @override
+  String get cloudSyncStatusInitializing => '正在初始化';
+
+  @override
+  String get cloudSyncStatusSignedOut => '未登入';
+
+  @override
+  String get cloudSyncStatusSigningIn => '正在登入';
+
+  @override
+  String get cloudSyncStatusSigningOut => '正在退出';
+
+  @override
+  String get cloudSyncStatusIdle => '同步正常';
+
+  @override
+  String get cloudSyncStatusSyncing => '正在同步';
+
+  @override
+  String get cloudSyncStatusPaused => '已暫停';
+
+  @override
+  String get cloudSyncStatusError => '需要處理';
+
+  @override
+  String get cloudSyncPlatformAndroid => 'Android';
+
+  @override
+  String get cloudSyncPlatformIos => 'iOS';
+
+  @override
+  String get cloudSyncPlatformMacos => 'macOS';
+
+  @override
+  String get cloudSyncPlatformWindows => 'Windows';
+
+  @override
+  String get cloudSyncPlatformLinux => 'Linux';
+
+  @override
+  String get cloudSyncPlatformUnknown => '目前裝置';
+
+  @override
+  String get cloudSyncFailureInvalidBaseUrl => '服務位址格式不正確。';
+
+  @override
+  String get cloudSyncFailureUnauthenticated => '帳號或密碼錯誤，或者登入狀態已失效。';
+
+  @override
+  String get cloudSyncFailureForbidden => '目前帳戶無權執行此操作。';
+
+  @override
+  String get cloudSyncFailureNotFound => '請求的同步資料已不存在。';
+
+  @override
+  String get cloudSyncFailureConflict => '資料已在其他裝置發生變化，請重新同步。';
+
+  @override
+  String get cloudSyncFailureValidation => '部分同步資料或輸入不符合要求。';
+
+  @override
+  String get cloudSyncFailureRateLimited => '請求過於頻繁，請稍後重試。';
+
+  @override
+  String get cloudSyncFailureServer => '同步服務暫時不可用。';
+
+  @override
+  String get cloudSyncFailureNetwork => '無法連線同步服務，請檢查網路。';
+
+  @override
+  String get cloudSyncFailureTimeout => '同步請求逾時，請重試。';
+
+  @override
+  String get cloudSyncFailureCancelled => '同步請求已取消。';
+
+  @override
+  String get cloudSyncFailureInvalidResponse => '同步服務傳回了無法識別的資料。';
+
+  @override
+  String get cloudSyncFailureUnknown => '雲端同步失敗，請稍後重試。';
 
   @override
   String get settingsPageChatStorage => '聊天記錄儲存';

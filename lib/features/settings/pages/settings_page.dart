@@ -17,6 +17,7 @@ import '../../quick_phrase/pages/quick_phrases_page.dart';
 import '../../instruction_injection/pages/instruction_injection_page.dart';
 import '../../world_book/pages/world_book_page.dart';
 import 'network_proxy_page.dart';
+import 'cloud_sync_page.dart';
 import 'storage_space_page.dart';
 import '../../stats/pages/stats_page.dart';
 import '../../../core/services/storage/storage_usage_service.dart';
@@ -299,6 +300,17 @@ class SettingsPage extends StatelessWidget {
           header(l10n.settingsPageDataSection),
           _iosSectionCard(
             children: [
+              _iosNavRow(
+                context,
+                icon: Lucide.cloudDownload,
+                label: l10n.settingsPageCloudSync,
+                onTap: () {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(builder: (_) => const CloudSyncPage()),
+                  );
+                },
+              ),
+              _iosDivider(context),
               _iosNavRow(
                 context,
                 icon: Lucide.Database,
