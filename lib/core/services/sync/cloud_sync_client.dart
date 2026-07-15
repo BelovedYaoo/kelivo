@@ -9,6 +9,7 @@ final class CloudSyncClient {
   CloudSyncClient._({
     required this.baseUrl,
     required this._dio,
+    required this._signedUrlDio,
     required this._client,
   });
 
@@ -33,9 +34,17 @@ final class CloudSyncClient {
       ),
     );
     final generatedClient = api.KelivoSyncApiClient(dio: dio);
+    final signedUrlDio = Dio(
+      BaseOptions(
+        connectTimeout: const Duration(seconds: 10),
+        sendTimeout: const Duration(minutes: 5),
+        receiveTimeout: const Duration(minutes: 5),
+      ),
+    );
     final client = CloudSyncClient._(
       baseUrl: normalized,
       dio: dio,
+      signedUrlDio: signedUrlDio,
       client: generatedClient,
     );
     client.setToken(token);
@@ -46,6 +55,7 @@ final class CloudSyncClient {
 
   final String baseUrl;
   final Dio _dio;
+  final Dio _signedUrlDio;
   final api.KelivoSyncApiClient _client;
 
   void setToken(String? token) {
@@ -56,7 +66,10 @@ final class CloudSyncClient {
     _client.setBearerAuth(_bearerAuthName, token);
   }
 
-  void close({bool force = false}) => _dio.close(force: force);
+  void close({bool force = false}) {
+    _dio.close(force: force);
+    _signedUrlDio.close(force: force);
+  }
 
   Future<CloudSyncHealth> health() {
     return _guard(() async {
@@ -237,6 +250,178 @@ final class CloudSyncClient {
     });
   }
 
+  Future<CloudSyncAttachmentUploadPreparation> prepareAttachmentUpload({
+    required String sha256,
+    required String md5Base64,
+    required int sizeBytes,
+  }) {
+    _requireNonEmpty(sha256);
+    _requireNonEmpty(md5Base64);
+    if (sizeBytes < 0 || sizeBytes > maximumCloudSyncAttachmentSizeBytes) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      );
+    }
+    return _guard(() async {
+      final request = api.PrepareAttachmentUploadRequest(
+        (builder) => builder
+          ..sha256 = sha256
+          ..md5 = md5Base64
+          ..sizeBytes = sizeBytes,
+      );
+      final response = await _client.getAttachmentApi().prepareAttachmentUpload(
+        prepareAttachmentUploadRequest: request,
+      );
+      final data = _requireResponseData(response.data?.data);
+      return CloudSyncAttachmentUploadPreparation(
+        blobId: data.blobId,
+        alreadyExists: data.alreadyExists,
+        uploadUrl: data.uploadUrl,
+        uploadHeaders: <String, String>{
+          for (final entry in data.uploadHeaders.entries)
+            entry.key: entry.value,
+        },
+        etag: data.etag,
+      );
+    });
+  }
+
+  Future<CloudSyncAttachmentInfo> completeAttachmentUpload({
+    required String attachmentId,
+    required String blobId,
+    required String entityType,
+    required String entityId,
+    required String fileName,
+    required String mimeType,
+    required String etag,
+  }) {
+    for (final value in <String>[
+      attachmentId,
+      blobId,
+      entityType,
+      entityId,
+      fileName,
+      mimeType,
+      etag,
+    ]) {
+      _requireNonEmpty(value);
+    }
+    return _guard(() async {
+      final request = api.CompleteAttachmentUploadRequest(
+        (builder) => builder
+          ..attachmentId = attachmentId
+          ..blobId = blobId
+          ..entityType = entityType
+          ..entityId = entityId
+          ..fileName = fileName
+          ..mimeType = mimeType
+          ..etag = etag,
+      );
+      final response = await _client
+          .getAttachmentApi()
+          .completeAttachmentUpload(completeAttachmentUploadRequest: request);
+      return _fromAttachmentInfo(
+        _requireResponseData(response.data?.data).attachment,
+      );
+    });
+  }
+
+  Future<List<CloudSyncAttachmentInfo>> listAttachmentInfo({
+    required String entityType,
+    required String entityId,
+  }) {
+    _requireNonEmpty(entityType);
+    _requireNonEmpty(entityId);
+    return _guard(() async {
+      final request = api.ListAttachmentInfoRequest(
+        (builder) => builder
+          ..entityType = entityType
+          ..entityId = entityId,
+      );
+      final response = await _client.getAttachmentApi().listAttachmentInfo(
+        listAttachmentInfoRequest: request,
+      );
+      final data = _requireResponseData(response.data?.data);
+      return List<CloudSyncAttachmentInfo>.unmodifiable(
+        data.items.map(_fromAttachmentInfo),
+      );
+    });
+  }
+
+  Future<CloudSyncAttachmentDownload> getAttachmentDownloadUrl(
+    String attachmentId,
+  ) {
+    _requireNonEmpty(attachmentId);
+    return _guard(() async {
+      final request = api.GetAttachmentDownloadUrlRequest(
+        (builder) => builder.attachmentId = attachmentId,
+      );
+      final response = await _client
+          .getAttachmentApi()
+          .getAttachmentDownloadUrl(getAttachmentDownloadUrlRequest: request);
+      final data = _requireResponseData(response.data?.data);
+      return CloudSyncAttachmentDownload(
+        attachmentId: data.attachmentId,
+        downloadUrl: data.downloadUrl,
+        expiresAt: data.expiresAt,
+      );
+    });
+  }
+
+  Future<void> deleteAttachmentInfo(String attachmentId) {
+    _requireNonEmpty(attachmentId);
+    return _guard(() async {
+      final request = api.DeleteAttachmentInfoRequest(
+        (builder) => builder.attachmentId = attachmentId,
+      );
+      final response = await _client.getAttachmentApi().deleteAttachmentInfo(
+        deleteAttachmentInfoRequest: request,
+      );
+      final data = _requireResponseData(response.data?.data);
+      if (!data.deleted || data.attachmentId != attachmentId) {
+        throw const FormatException('附件删除结果不匹配');
+      }
+    });
+  }
+
+  Future<String> putSignedAttachment({
+    required String uploadUrl,
+    required Map<String, String> headers,
+    required Stream<List<int>> content,
+  }) {
+    final url = _requireSignedUrl(uploadUrl);
+    final safeHeaders = _validatedSignedHeaders(headers);
+    return _guard(() async {
+      final response = await _signedUrlDio.put<Object?>(
+        url,
+        data: content,
+        options: Options(headers: safeHeaders),
+      );
+      final etag = response.headers.value('etag')?.trim();
+      if (etag == null || etag.isEmpty) {
+        throw const FormatException('签名上传响应缺少 ETag');
+      }
+      return etag;
+    });
+  }
+
+  Future<void> downloadSignedAttachment({
+    required String downloadUrl,
+    required String destinationPath,
+  }) {
+    final url = _requireSignedUrl(downloadUrl);
+    _requireNonEmpty(destinationPath);
+    return _guard(() async {
+      await _signedUrlDio.download(
+        url,
+        destinationPath,
+        deleteOnError: true,
+        options: Options(headers: const <String, String>{}),
+      );
+    });
+  }
+
   Future<T> _guard<T>(Future<T> Function() action) async {
     try {
       return await action();
@@ -379,6 +564,20 @@ CloudSyncDeviceSession _fromDevice(api.DeviceSessionSummary device) {
     lastSeenAt: device.lastSeenAt?.toUtc(),
     revokedAt: device.revokedAt?.toUtc(),
     isCurrent: device.isCurrent,
+  );
+}
+
+CloudSyncAttachmentInfo _fromAttachmentInfo(api.AttachmentInfo attachment) {
+  return CloudSyncAttachmentInfo(
+    id: attachment.id,
+    blobId: attachment.blobId,
+    entityType: attachment.entityType,
+    entityId: attachment.entityId,
+    fileName: attachment.fileName,
+    mimeType: attachment.mimeType,
+    sizeBytes: attachment.sizeBytes,
+    sha256: attachment.sha256,
+    createdAt: attachment.createdAt,
   );
 }
 
@@ -534,6 +733,39 @@ void _requireNonEmpty(String value) {
       retryable: false,
     );
   }
+}
+
+String _requireSignedUrl(String value) {
+  final normalized = value.trim();
+  final uri = Uri.tryParse(normalized);
+  if (uri == null ||
+      (uri.scheme != 'https' && uri.scheme != 'http') ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.validation,
+      retryable: false,
+    );
+  }
+  return normalized;
+}
+
+Map<String, String> _validatedSignedHeaders(Map<String, String> headers) {
+  final result = <String, String>{};
+  for (final entry in headers.entries) {
+    final name = entry.key.trim();
+    final value = entry.value.trim();
+    if (name.isEmpty ||
+        value.isEmpty ||
+        name.toLowerCase() == 'authorization') {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      );
+    }
+    result[name] = value;
+  }
+  return Map<String, String>.unmodifiable(result);
 }
 
 void _requirePageLimit(int limit) {

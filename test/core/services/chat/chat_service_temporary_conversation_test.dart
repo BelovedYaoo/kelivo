@@ -9,6 +9,9 @@ import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/chat_sync_codec.dart';
+import 'package:Kelivo/core/services/sync/cloud_attachment_sync_service.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
@@ -163,6 +166,140 @@ void main() {
   });
 
   group('Chat sync boundary', () {
+    test('attachment markers strip local paths and restore stable order', () {
+      final document = ChatAttachmentMarkerCodec.parse(
+        'question\n'
+        r'[image:C:\uploads\photo.JPG]'
+        '\n'
+        r'[file:C:\uploads\report.pdf|报告.pdf|application/pdf]',
+      );
+
+      expect(document.contentWithoutMarkers, 'question');
+      expect(document.markers, hasLength(2));
+      expect(document.markers.first.order, 0);
+      expect(document.markers.first.fileName, 'photo.JPG');
+      expect(document.markers.first.mimeType, 'image/jpeg');
+      expect(document.markers.last.order, 1);
+      expect(document.markers.last.fileName, '报告.pdf');
+      expect(document.markers.last.mimeType, 'application/pdf');
+      expect(document.contentWithoutMarkers, isNot(contains('C:\\uploads')));
+
+      final restored = ChatAttachmentMarkerCodec.restore(
+        document.contentWithoutMarkers,
+        document.markers,
+      );
+      expect(
+        restored,
+        'question\n'
+        r'[image:C:\uploads\photo.JPG]'
+        '\n'
+        r'[file:C:\uploads\report.pdf|报告.pdf|application/pdf]',
+      );
+      expect(
+        ChatAttachmentMarkerCodec.parse(restored).contentWithoutMarkers,
+        document.contentWithoutMarkers,
+      );
+    });
+
+    test('attachment marker codec rejects malformed and duplicate order', () {
+      expect(
+        () => ChatAttachmentMarkerCodec.parse(
+          r'[file:C:\uploads\report.pdf||application/pdf]',
+        ),
+        throwsFormatException,
+      );
+
+      final marker = ChatAttachmentMarkerCodec.parse(
+        r'[image:C:\uploads\photo.png]',
+      ).markers.single;
+      expect(
+        () => ChatAttachmentMarkerCodec.restore('', <ChatAttachmentMarker>[
+          marker,
+          marker,
+        ]),
+        throwsFormatException,
+      );
+
+      const remoteMarkers =
+          '[image:https://cdn.example.com/photo.png]\n'
+          '[file:https://cdn.example.com/report.pdf|report.pdf|application/pdf]';
+      final remoteDocument = ChatAttachmentMarkerCodec.parse(remoteMarkers);
+      expect(remoteDocument.markers, isEmpty);
+      expect(remoteDocument.contentWithoutMarkers, remoteMarkers);
+      expect(
+        () => CloudSyncAttachmentDownload(
+          attachmentId: '../outside',
+          downloadUrl: 'https://storage.example.com/object',
+          expiresAt: DateTime.utc(2026, 7, 15),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('attachment bindings persist within their account scope', () async {
+      final chatService = ChatService();
+      await chatService.init();
+      final store = await CloudSyncStore.open(
+        boxName: 'cloud_sync_attachment_test',
+      );
+      CloudSyncAccountSession session(String userId) {
+        return CloudSyncAccountSession(
+          baseUrl: 'https://sync.example.com',
+          token: 'token-$userId',
+          userId: userId,
+          loginName: userId,
+          displayName: userId,
+          role: CloudSyncUserRole.user,
+          attachmentQuotaBytes: 1024,
+          deviceId: 'device-$userId',
+          deviceName: 'device',
+          platform: CloudSyncPlatform.windows,
+          clientVersion: '1.0.0',
+          deviceCreatedAt: DateTime.utc(2026, 7, 15),
+        );
+      }
+
+      final firstAccount = session('first-user');
+      final secondAccount = session('second-user');
+      final binding = CloudSyncAttachmentBinding(
+        messageId: 'message-1',
+        attachmentId: '11111111-1111-5111-8111-111111111111',
+        kind: CloudSyncAttachmentKind.file,
+        order: 0,
+        localPath: r'C:\uploads\report.pdf',
+        modifiedAt: DateTime.utc(2026, 7, 15, 12),
+        sizeBytes: 1,
+        sha256: List<String>.filled(64, 'a').join(),
+        md5Base64: '1B2M2Y8AsgTpgAmY7PhCfg==',
+        fileName: 'report.pdf',
+        mimeType: 'application/pdf',
+        completed: true,
+      );
+      await store.saveAttachmentBinding(firstAccount, binding);
+
+      expect(
+        store
+            .attachmentBinding(
+              firstAccount,
+              messageId: binding.messageId,
+              kind: binding.kind,
+              order: binding.order,
+            )
+            ?.completed,
+        isTrue,
+      );
+      expect(
+        store.attachmentBinding(
+          secondAccount,
+          messageId: binding.messageId,
+          kind: binding.kind,
+          order: binding.order,
+        ),
+        isNull,
+      );
+      await store.close();
+    });
+
     test('conversation payload excludes local message projection', () {
       final conversation = Conversation(
         id: 'conversation-1',
@@ -235,12 +372,20 @@ void main() {
         throwsFormatException,
       );
 
+      final remoteImage = terminal.copyWith(
+        content: '[image:https://cdn.example.com/photo.png]answer',
+      );
+      expect(
+        ChatSyncCodec.encodeMessage(remoteImage)?['content'],
+        remoteImage.content,
+      );
+
       final payload = ChatSyncCodec.encodeMessage(
         terminal,
         syncedContent: 'answer',
         attachments: const <ChatSyncAttachmentReference>[
           ChatSyncAttachmentReference(
-            attachmentId: 'attachment-1',
+            attachmentId: '11111111-1111-5111-8111-111111111111',
             kind: ChatSyncAttachmentReference.imageKind,
             order: 0,
           ),
@@ -253,7 +398,10 @@ void main() {
       expect(decoded.message.groupId, terminal.groupId);
       expect(decoded.message.generationStatus, terminal.generationStatus);
       expect(decoded.message.isStreaming, isFalse);
-      expect(decoded.attachments.single.attachmentId, 'attachment-1');
+      expect(
+        decoded.attachments.single.attachmentId,
+        '11111111-1111-5111-8111-111111111111',
+      );
       expect(decoded.attachments.single.order, 0);
 
       final malformed = Map<String, Object?>.of(payload)..remove('status');

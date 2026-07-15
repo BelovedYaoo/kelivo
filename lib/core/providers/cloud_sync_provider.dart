@@ -5,11 +5,14 @@ import 'package:flutter/widgets.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/chat/chat_service.dart';
+import '../services/sync/chat_sync_adapter.dart';
+import '../services/sync/cloud_attachment_sync_service.dart';
 import '../services/sync/cloud_sync_client.dart';
 import '../services/sync/cloud_sync_coordinator.dart';
 import '../services/sync/cloud_sync_store.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/sync/config_sync_adapter.dart';
+import '../services/sync/sync_codec.dart';
 import 'assistant_provider.dart';
 import 'instruction_injection_provider.dart';
 import 'mcp_provider.dart';
@@ -286,6 +289,7 @@ final class CloudSyncProvider extends ChangeNotifier
         _sessionMutationInProgress) {
       return false;
     }
+    if (value == _paused) return true;
     _sessionMutationInProgress = true;
     final epoch = _sessionEpoch;
 
@@ -300,7 +304,17 @@ final class CloudSyncProvider extends ChangeNotifier
       _paused = value;
       _lastError = null;
       if (value) {
+        final activeSync = _activeSync;
+        _sessionEpoch++;
         _stopAutomaticSync();
+        _devicesLoading = false;
+        _client?.close(force: true);
+        _client = null;
+        _coordinator = null;
+        _setStatus(CloudSyncProviderStatus.paused);
+        if (activeSync != null) await activeSync;
+        if (_disposed || !identical(_session, session)) return false;
+        _connect(session);
         _setStatus(CloudSyncProviderStatus.paused);
       } else {
         _setStatus(CloudSyncProviderStatus.idle);
@@ -434,11 +448,19 @@ final class CloudSyncProvider extends ChangeNotifier
         CloudSyncClient(baseUrl: session.baseUrl, token: session.token);
     nextClient.setToken(session.token);
     _client = nextClient;
+    final attachmentSyncService = CloudAttachmentSyncService(
+      session,
+      nextClient,
+      _store!,
+    );
     _coordinator = CloudSyncCoordinator(
       session,
       nextClient,
       _store!,
-      adapters: <ConfigSyncAdapter>[_configAdapter],
+      adapters: <SyncEntityAdapter>[
+        _configAdapter,
+        ChatSyncAdapter(_chatService, attachmentSyncService),
+      ],
     );
   }
 

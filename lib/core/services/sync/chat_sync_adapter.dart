@@ -1,15 +1,17 @@
 import '../chat/chat_service.dart';
 import 'chat_sync_codec.dart';
+import 'cloud_attachment_sync_service.dart';
 import 'sync_codec.dart';
 
 final class ChatSyncAdapter implements SyncEntityAdapter {
-  ChatSyncAdapter(this._chatService);
+  ChatSyncAdapter(this._chatService, this._attachmentSyncService);
 
   static const String conversationType = 'conversation';
   static const String turnType = 'turn';
   static const String messageType = 'message';
 
   final ChatService _chatService;
+  final CloudAttachmentSyncService _attachmentSyncService;
 
   @override
   Set<String> get entityTypes => const <String>{
@@ -50,8 +52,20 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
       }
 
       for (final message in messages) {
-        final payload = ChatSyncCodec.encodeMessage(message);
-        if (payload == null) continue;
+        final syncable = ChatSyncCodec.encodeMessage(
+          message,
+          syncedContent: '',
+        );
+        if (syncable == null) continue;
+        final prepared = await _attachmentSyncService.prepareMessage(
+          messageId: message.id,
+          content: message.content,
+        );
+        final payload = ChatSyncCodec.encodeMessage(
+          message,
+          syncedContent: prepared.syncedContent,
+          attachments: prepared.references,
+        )!;
         entities.add(
           LocalSyncEntity(
             entityType: messageType,
@@ -80,10 +94,14 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           entity.entityId,
           entity.payload,
         );
-        if (record.attachments.isNotEmpty) {
-          throw const FormatException('远端消息附件尚未完成本地文件解析');
-        }
-        await _chatService.upsertMessageFromSync(record.message);
+        final content = await _attachmentSyncService.restoreMessage(
+          messageId: entity.entityId,
+          syncedContent: record.message.content,
+          references: record.attachments,
+        );
+        await _chatService.upsertMessageFromSync(
+          record.message.copyWith(content: content),
+        );
         return;
       case turnType:
         final turn = ChatSyncCodec.decodeTurn(entity.entityId, entity.payload);

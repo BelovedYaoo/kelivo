@@ -1,5 +1,7 @@
 typedef CloudSyncJsonMap = Map<String, Object?>;
 
+const maximumCloudSyncAttachmentSizeBytes = 100 * 1024 * 1024;
+
 const _supportedEntityTypes = <String>{
   'conversation',
   'turn',
@@ -81,6 +83,8 @@ enum CloudSyncPatchOperation { add, replace, remove }
 enum CloudSyncMutationStatus { applied, conflict, rejected, retry }
 
 enum CloudSyncChangeOperation { upsert, delete }
+
+enum CloudSyncAttachmentKind { image, file }
 
 enum CloudSyncFailureKind {
   invalidBaseUrl,
@@ -245,6 +249,196 @@ final class CloudSyncHealth {
   final String service;
   final String status;
   final DateTime timestamp;
+}
+
+final class CloudSyncAttachmentInfo {
+  CloudSyncAttachmentInfo({
+    required String id,
+    required String blobId,
+    required String entityType,
+    required String entityId,
+    required String fileName,
+    required String mimeType,
+    required this.sizeBytes,
+    required String sha256,
+    required DateTime createdAt,
+  }) : id = _validatedUuid(id, 'attachmentId'),
+       blobId = _validatedUuid(blobId, 'blobId'),
+       entityType = _validatedAttachmentEntityType(entityType),
+       entityId = _validatedId(entityId, 'entityId'),
+       fileName = _validatedAttachmentFileName(fileName),
+       mimeType = _validatedAttachmentMimeType(mimeType),
+       sha256 = _validatedSha256(sha256),
+       createdAt = createdAt.toUtc() {
+    _validateAttachmentSize(sizeBytes);
+  }
+
+  final String id;
+  final String blobId;
+  final String entityType;
+  final String entityId;
+  final String fileName;
+  final String mimeType;
+  final int sizeBytes;
+  final String sha256;
+  final DateTime createdAt;
+}
+
+final class CloudSyncAttachmentUploadPreparation {
+  CloudSyncAttachmentUploadPreparation({
+    required String blobId,
+    required this.alreadyExists,
+    required String? uploadUrl,
+    required Map<String, String> uploadHeaders,
+    required String? etag,
+  }) : blobId = _validatedUuid(blobId, 'blobId'),
+       uploadUrl = _validatedOptionalHttpUrl(uploadUrl, 'uploadUrl'),
+       uploadHeaders = Map<String, String>.unmodifiable(uploadHeaders),
+       etag = _validatedOptionalNonEmpty(etag, 'etag') {
+    for (final entry in uploadHeaders.entries) {
+      _requireNonEmpty(entry.key, 'uploadHeaders key');
+      _requireNonEmpty(entry.value, 'uploadHeaders value');
+    }
+    if (alreadyExists) {
+      if (this.uploadUrl != null ||
+          this.uploadHeaders.isNotEmpty ||
+          this.etag == null) {
+        throw const FormatException('已存在附件的上传准备结果无效');
+      }
+    } else if (this.uploadUrl == null || this.etag != null) {
+      throw const FormatException('待上传附件的上传准备结果无效');
+    }
+  }
+
+  final String blobId;
+  final bool alreadyExists;
+  final String? uploadUrl;
+  final Map<String, String> uploadHeaders;
+  final String? etag;
+}
+
+final class CloudSyncAttachmentDownload {
+  CloudSyncAttachmentDownload({
+    required String attachmentId,
+    required String downloadUrl,
+    required DateTime expiresAt,
+  }) : attachmentId = _validatedUuid(attachmentId, 'attachmentId'),
+       downloadUrl = _validatedHttpUrl(downloadUrl, 'downloadUrl'),
+       expiresAt = expiresAt.toUtc();
+
+  final String attachmentId;
+  final String downloadUrl;
+  final DateTime expiresAt;
+}
+
+final class CloudSyncAttachmentBinding {
+  CloudSyncAttachmentBinding({
+    required String messageId,
+    required String attachmentId,
+    required this.kind,
+    required this.order,
+    required String localPath,
+    required DateTime modifiedAt,
+    required this.sizeBytes,
+    required String sha256,
+    required String md5Base64,
+    required String fileName,
+    required String mimeType,
+    required this.completed,
+  }) : messageId = _validatedId(messageId, 'messageId'),
+       attachmentId = _validatedUuid(attachmentId, 'attachmentId'),
+       localPath = _validatedLocalPath(localPath),
+       modifiedAt = modifiedAt.toUtc(),
+       sha256 = _validatedSha256(sha256),
+       md5Base64 = _validatedMd5Base64(md5Base64),
+       fileName = _validatedAttachmentFileName(fileName),
+       mimeType = _validatedAttachmentMimeType(mimeType) {
+    if (order < 0) {
+      throw const FormatException('附件顺序不能为负数');
+    }
+    _validateAttachmentSize(sizeBytes);
+  }
+
+  final String messageId;
+  final String attachmentId;
+  final CloudSyncAttachmentKind kind;
+  final int order;
+  final String localPath;
+  final DateTime modifiedAt;
+  final int sizeBytes;
+  final String sha256;
+  final String md5Base64;
+  final String fileName;
+  final String mimeType;
+  final bool completed;
+
+  CloudSyncAttachmentBinding copyWith({
+    String? localPath,
+    DateTime? modifiedAt,
+    int? sizeBytes,
+    String? sha256,
+    String? md5Base64,
+    String? fileName,
+    String? mimeType,
+    bool? completed,
+  }) {
+    return CloudSyncAttachmentBinding(
+      messageId: messageId,
+      attachmentId: attachmentId,
+      kind: kind,
+      order: order,
+      localPath: localPath ?? this.localPath,
+      modifiedAt: modifiedAt ?? this.modifiedAt,
+      sizeBytes: sizeBytes ?? this.sizeBytes,
+      sha256: sha256 ?? this.sha256,
+      md5Base64: md5Base64 ?? this.md5Base64,
+      fileName: fileName ?? this.fileName,
+      mimeType: mimeType ?? this.mimeType,
+      completed: completed ?? this.completed,
+    );
+  }
+
+  CloudSyncJsonMap toJson() => <String, Object?>{
+    'version': 1,
+    'messageId': messageId,
+    'attachmentId': attachmentId,
+    'kind': kind.name,
+    'order': order,
+    'localPath': localPath,
+    'modifiedAt': modifiedAt.toIso8601String(),
+    'sizeBytes': sizeBytes,
+    'sha256': sha256,
+    'md5Base64': md5Base64,
+    'fileName': fileName,
+    'mimeType': mimeType,
+    'completed': completed,
+  };
+
+  factory CloudSyncAttachmentBinding.fromJson(CloudSyncJsonMap json) {
+    _requireVersion(json);
+    final completed = json['completed'];
+    if (completed is! bool) {
+      throw const FormatException('completed 必须为布尔值');
+    }
+    return CloudSyncAttachmentBinding(
+      messageId: _requireString(json, 'messageId'),
+      attachmentId: _requireString(json, 'attachmentId'),
+      kind: _parseEnum(
+        CloudSyncAttachmentKind.values,
+        _requireString(json, 'kind'),
+        'kind',
+      ),
+      order: _requireInt(json, 'order'),
+      localPath: _requireString(json, 'localPath'),
+      modifiedAt: _requireDateTime(json, 'modifiedAt'),
+      sizeBytes: _requireInt(json, 'sizeBytes'),
+      sha256: _requireString(json, 'sha256'),
+      md5Base64: _requireString(json, 'md5Base64'),
+      fileName: _requireString(json, 'fileName'),
+      mimeType: _requireString(json, 'mimeType'),
+      completed: completed,
+    );
+  }
 }
 
 final class CloudSyncDeviceSession {
@@ -966,9 +1160,99 @@ String _validatedId(String value, String field) {
   return value;
 }
 
+String _validatedUuid(String value, String field) {
+  final normalized = value.trim().toLowerCase();
+  if (!RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+  ).hasMatch(normalized)) {
+    throw FormatException('$field 必须为 UUID');
+  }
+  return normalized;
+}
+
 String? _validatedOptionalId(String? value, String field) {
   if (value == null) return null;
   return _validatedId(value, field);
+}
+
+String _validatedAttachmentEntityType(String value) {
+  final normalized = value.trim();
+  if (normalized.length > 64 ||
+      !RegExp(r'^[a-z][a-z0-9-]*$').hasMatch(normalized)) {
+    throw const FormatException('附件实体类型无效');
+  }
+  return normalized;
+}
+
+String _validatedAttachmentFileName(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty || normalized.length > 255) {
+    throw const FormatException('附件文件名无效');
+  }
+  return normalized;
+}
+
+String _validatedAttachmentMimeType(String value) {
+  final normalized = value.trim().toLowerCase();
+  if (normalized.length < 3 ||
+      normalized.length > 255 ||
+      !RegExp(r'^[^\s/\[\]\|]+/[^\s/\[\]\|]+$').hasMatch(normalized)) {
+    throw const FormatException('附件 MIME 类型无效');
+  }
+  return normalized;
+}
+
+String _validatedSha256(String value) {
+  final normalized = value.trim().toLowerCase();
+  if (!RegExp(r'^[a-f0-9]{64}$').hasMatch(normalized)) {
+    throw const FormatException('附件 SHA-256 摘要无效');
+  }
+  return normalized;
+}
+
+String _validatedMd5Base64(String value) {
+  final normalized = value.trim();
+  if (!RegExp(r'^[A-Za-z0-9+/]{22}==$').hasMatch(normalized)) {
+    throw const FormatException('附件 MD5 摘要无效');
+  }
+  return normalized;
+}
+
+String _validatedLocalPath(String value) {
+  final normalized = value.trim();
+  if (normalized.isEmpty) {
+    throw const FormatException('附件本地路径不能为空');
+  }
+  return normalized;
+}
+
+void _validateAttachmentSize(int value) {
+  if (value < 0 || value > maximumCloudSyncAttachmentSizeBytes) {
+    throw const FormatException('附件大小超出允许范围');
+  }
+}
+
+String _validatedHttpUrl(String value, String field) {
+  final normalized = value.trim();
+  final uri = Uri.tryParse(normalized);
+  if (uri == null ||
+      (uri.scheme != 'https' && uri.scheme != 'http') ||
+      uri.host.isEmpty ||
+      uri.userInfo.isNotEmpty) {
+    throw FormatException('$field 格式无效');
+  }
+  return normalized;
+}
+
+String? _validatedOptionalHttpUrl(String? value, String field) {
+  return value == null ? null : _validatedHttpUrl(value, field);
+}
+
+String? _validatedOptionalNonEmpty(String? value, String field) {
+  if (value == null) return null;
+  final normalized = value.trim();
+  _requireNonEmpty(normalized, field);
+  return normalized;
 }
 
 void _requireNonEmpty(String value, String field) {

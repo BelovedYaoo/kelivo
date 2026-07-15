@@ -48,7 +48,13 @@ final class ChatSyncMessageRecord {
 }
 
 abstract final class ChatSyncCodec {
-  static final RegExp _localAttachmentMarker = RegExp(r'\[(?:image|file):');
+  static final RegExp _attachmentMarker = RegExp(
+    r'\[image:([^\]\r\n]+)\]|\[file:([^\|\]\r\n]+)\|([^\|\]\r\n]+)\|([^\]\r\n]+)\]',
+  );
+  static final RegExp _attachmentMarkerPrefix = RegExp(r'\[(?:image|file):');
+  static final RegExp _uuidPattern = RegExp(
+    r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+  );
 
   static const Set<String> _conversationKeys = <String>{
     'title',
@@ -217,7 +223,7 @@ abstract final class ChatSyncCodec {
     }
 
     final content = syncedContent ?? message.content;
-    if (_localAttachmentMarker.hasMatch(content)) {
+    if (_containsUnsafeAttachmentMarker(content)) {
       throw const FormatException('同步消息正文不能包含本地附件路径，请先转换为附件引用');
     }
     _validateAttachments(attachments);
@@ -271,7 +277,7 @@ abstract final class ChatSyncCodec {
       throw const FormatException('message.version 不能为负数');
     }
     final content = _requiredString(payload, 'content', allowEmpty: true);
-    if (_localAttachmentMarker.hasMatch(content)) {
+    if (_containsUnsafeAttachmentMarker(content)) {
       throw const FormatException('远端消息正文包含非法的本地附件路径');
     }
 
@@ -312,6 +318,22 @@ abstract final class ChatSyncCodec {
     return message.role == 'assistant' &&
         (message.isStreaming ||
             message.generationStatus == ChatMessage.generationStatusDraft);
+  }
+
+  static bool _containsUnsafeAttachmentMarker(String content) {
+    final unmatched = StringBuffer();
+    var cursor = 0;
+    for (final match in _attachmentMarker.allMatches(content)) {
+      unmatched.write(content.substring(cursor, match.start));
+      final attachmentPath = (match.group(1) ?? match.group(2) ?? '').trim();
+      final scheme = Uri.tryParse(attachmentPath)?.scheme.toLowerCase();
+      if (scheme != 'http' && scheme != 'https' && scheme != 'data') {
+        return true;
+      }
+      cursor = match.end;
+    }
+    unmatched.write(content.substring(cursor));
+    return _attachmentMarkerPrefix.hasMatch(unmatched.toString());
   }
 
   static List<ChatSyncAttachmentReference> _decodeAttachments(
@@ -363,7 +385,9 @@ abstract final class ChatSyncCodec {
     final attachmentIds = <String>{};
     final orders = <int>{};
     for (final attachment in attachments) {
-      _requireIdentifier(attachment.attachmentId, 'attachment.attachmentId');
+      if (!_uuidPattern.hasMatch(attachment.attachmentId)) {
+        throw const FormatException('attachment.attachmentId 必须为 UUID');
+      }
       if (!ChatSyncAttachmentReference.kinds.contains(attachment.kind)) {
         throw FormatException('不支持的附件类型：${attachment.kind}');
       }

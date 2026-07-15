@@ -351,6 +351,61 @@ final class CloudSyncStore {
     return _box.delete(_outboxKey(session, mutationId));
   }
 
+  CloudSyncAttachmentBinding? attachmentBinding(
+    CloudSyncAccountSession session, {
+    required String messageId,
+    required CloudSyncAttachmentKind kind,
+    required int order,
+  }) {
+    final binding = _read(
+      _attachmentBindingKey(
+        session,
+        messageId: messageId,
+        kind: kind,
+        order: order,
+      ),
+      CloudSyncAttachmentBinding.fromJson,
+    );
+    if (binding != null &&
+        (binding.messageId != messageId ||
+            binding.kind != kind ||
+            binding.order != order)) {
+      throw const FormatException('附件绑定索引与内容不一致');
+    }
+    return binding;
+  }
+
+  Future<void> saveAttachmentBinding(
+    CloudSyncAccountSession session,
+    CloudSyncAttachmentBinding binding,
+  ) {
+    return _write(
+      _attachmentBindingKey(
+        session,
+        messageId: binding.messageId,
+        kind: binding.kind,
+        order: binding.order,
+      ),
+      binding.toJson(),
+    );
+  }
+
+  Future<void> deleteAttachmentBinding(
+    CloudSyncAccountSession session, {
+    required String messageId,
+    required CloudSyncAttachmentKind kind,
+    required int order,
+  }) {
+    return _box.delete(
+      _attachmentBindingKey(
+        session,
+        messageId: messageId,
+        kind: kind,
+        order: order,
+      ),
+    );
+  }
+
   Future<void> clearAccountState(CloudSyncAccountSession session) async {
     final prefix = 'account:${session.accountScope}:';
     final keys = _box.keys
@@ -419,6 +474,19 @@ final class CloudSyncStore {
   ) {
     return '${_accountPrefix(session, 'snapshot-seen')}'
         '${entityType.wireName}:${Uri.encodeComponent(entityId)}';
+  }
+
+  String _attachmentBindingKey(
+    CloudSyncAccountSession session, {
+    required String messageId,
+    required CloudSyncAttachmentKind kind,
+    required int order,
+  }) {
+    if (messageId.trim().isEmpty || order < 0) {
+      throw const FormatException('附件绑定索引无效');
+    }
+    return '${_accountPrefix(session, 'attachment')}message:'
+        '${Uri.encodeComponent(messageId)}:${kind.name}:$order';
   }
 
   String _accountPrefix(CloudSyncAccountSession session, String area) {
