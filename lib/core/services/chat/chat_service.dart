@@ -42,6 +42,7 @@ class ChatService extends ChangeNotifier {
   }
 
   bool _initialized = false;
+  Future<void>? _initialization;
   bool get initialized => _initialized;
 
   String? get currentConversationId => _currentConversationId;
@@ -50,9 +51,16 @@ class ChatService extends ChangeNotifier {
     return id != null && _temporaryConversationIds.contains(id);
   }
 
-  Future<void> init() async {
-    if (_initialized) return;
+  Future<void> init() {
+    if (_initialized) return Future<void>.value();
+    return _initialization ??= _initialize().whenComplete(() {
+      if (!_initialized) {
+        _initialization = null;
+      }
+    });
+  }
 
+  Future<void> _initialize() async {
     // Initialize Hive with platform-specific directory
     final appDataDir = await AppDirectories.getAppDataDirectory();
     await Hive.initFlutter(appDataDir.path);
