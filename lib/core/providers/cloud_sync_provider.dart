@@ -129,7 +129,7 @@ final class CloudSyncProvider extends ChangeNotifier
       _store = store;
       await _configAdapter.ready;
       if (_disposed) return;
-      _lastBaseUrl = store.lastBaseUrl;
+      _lastBaseUrl = store.lastBaseUrl ?? defaultCloudSyncBaseUrl;
 
       final session = store.activeSession;
       _session = session;
