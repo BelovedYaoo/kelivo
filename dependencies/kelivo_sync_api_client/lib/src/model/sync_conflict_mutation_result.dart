@@ -32,7 +32,7 @@ abstract class SyncConflictMutationResult
 
   @BuiltValueField(wireName: r'reason')
   SyncConflictMutationResultReasonEnum get reason;
-  // enum reasonEnum {  entity-exists,  entity-missing,  entity-deleted,  entity-active,  restore-required,  revision-ahead,  revision-stale,  };
+  // enum reasonEnum {  entity-exists,  entity-missing,  entity-deleted,  entity-active,  parent-missing,  parent-deleted,  restore-required,  revision-ahead,  revision-stale,  };
 
   SyncConflictMutationResult._();
 
@@ -212,6 +212,12 @@ class SyncConflictMutationResultReasonEnum extends EnumClass {
   @BuiltValueEnumConst(wireName: r'entity-active')
   static const SyncConflictMutationResultReasonEnum entityActive =
       _$syncConflictMutationResultReasonEnum_entityActive;
+  @BuiltValueEnumConst(wireName: r'parent-missing')
+  static const SyncConflictMutationResultReasonEnum parentMissing =
+      _$syncConflictMutationResultReasonEnum_parentMissing;
+  @BuiltValueEnumConst(wireName: r'parent-deleted')
+  static const SyncConflictMutationResultReasonEnum parentDeleted =
+      _$syncConflictMutationResultReasonEnum_parentDeleted;
   @BuiltValueEnumConst(wireName: r'restore-required')
   static const SyncConflictMutationResultReasonEnum restoreRequired =
       _$syncConflictMutationResultReasonEnum_restoreRequired;

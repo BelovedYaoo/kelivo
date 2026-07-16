@@ -41,6 +41,12 @@ const SyncConflictMutationResultReasonEnum
 _$syncConflictMutationResultReasonEnum_entityActive =
     const SyncConflictMutationResultReasonEnum._('entityActive');
 const SyncConflictMutationResultReasonEnum
+_$syncConflictMutationResultReasonEnum_parentMissing =
+    const SyncConflictMutationResultReasonEnum._('parentMissing');
+const SyncConflictMutationResultReasonEnum
+_$syncConflictMutationResultReasonEnum_parentDeleted =
+    const SyncConflictMutationResultReasonEnum._('parentDeleted');
+const SyncConflictMutationResultReasonEnum
 _$syncConflictMutationResultReasonEnum_restoreRequired =
     const SyncConflictMutationResultReasonEnum._('restoreRequired');
 const SyncConflictMutationResultReasonEnum
@@ -61,6 +67,10 @@ _$syncConflictMutationResultReasonEnumValueOf(String name) {
       return _$syncConflictMutationResultReasonEnum_entityDeleted;
     case 'entityActive':
       return _$syncConflictMutationResultReasonEnum_entityActive;
+    case 'parentMissing':
+      return _$syncConflictMutationResultReasonEnum_parentMissing;
+    case 'parentDeleted':
+      return _$syncConflictMutationResultReasonEnum_parentDeleted;
     case 'restoreRequired':
       return _$syncConflictMutationResultReasonEnum_restoreRequired;
     case 'revisionAhead':
@@ -80,6 +90,8 @@ _$syncConflictMutationResultReasonEnumValues =
         _$syncConflictMutationResultReasonEnum_entityMissing,
         _$syncConflictMutationResultReasonEnum_entityDeleted,
         _$syncConflictMutationResultReasonEnum_entityActive,
+        _$syncConflictMutationResultReasonEnum_parentMissing,
+        _$syncConflictMutationResultReasonEnum_parentDeleted,
         _$syncConflictMutationResultReasonEnum_restoreRequired,
         _$syncConflictMutationResultReasonEnum_revisionAhead,
         _$syncConflictMutationResultReasonEnum_revisionStale,
@@ -133,6 +145,8 @@ class _$SyncConflictMutationResultReasonEnumSerializer
     'entityMissing': 'entity-missing',
     'entityDeleted': 'entity-deleted',
     'entityActive': 'entity-active',
+    'parentMissing': 'parent-missing',
+    'parentDeleted': 'parent-deleted',
     'restoreRequired': 'restore-required',
     'revisionAhead': 'revision-ahead',
     'revisionStale': 'revision-stale',
@@ -142,6 +156,8 @@ class _$SyncConflictMutationResultReasonEnumSerializer
     'entity-missing': 'entityMissing',
     'entity-deleted': 'entityDeleted',
     'entity-active': 'entityActive',
+    'parent-missing': 'parentMissing',
+    'parent-deleted': 'parentDeleted',
     'restore-required': 'restoreRequired',
     'revision-ahead': 'revisionAhead',
     'revision-stale': 'revisionStale',

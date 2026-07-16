@@ -901,6 +901,15 @@ String _conflictReason(api.SyncConflictMutationResultReasonEnum value) {
   if (value == api.SyncConflictMutationResultReasonEnum.entityActive) {
     return 'entity-active';
   }
+  if (value == api.SyncConflictMutationResultReasonEnum.parentMissing) {
+    return 'parent-missing';
+  }
+  if (value == api.SyncConflictMutationResultReasonEnum.parentDeleted) {
+    return 'parent-deleted';
+  }
+  if (value == api.SyncConflictMutationResultReasonEnum.restoreRequired) {
+    return 'restore-required';
+  }
   if (value == api.SyncConflictMutationResultReasonEnum.revisionAhead) {
     return 'revision-ahead';
   }

@@ -113,6 +113,49 @@ void main() {
     await server.close(force: true);
   });
 
+  test('父级删除冲突原因能够传回协调器', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: 'token',
+    );
+
+    final pushFuture = client.push(<CloudSyncOutboxMutation>[
+      CloudSyncOutboxMutation.delete(
+        mutationId: 'mutation-parent',
+        entityType: CloudSyncEntityType.turn,
+        entityId: 'turn-1',
+        baseRevision: 1,
+      ),
+    ]);
+
+    final request = await requestFuture;
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'results': <Object?>[
+            <String, Object?>{
+              'mutationId': 'mutation-parent',
+              'status': 'conflict',
+              'currentRevision': 1,
+              'reason': 'parent-deleted',
+            },
+          ],
+        },
+      }),
+    );
+    await request.response.close();
+
+    final result = (await pushFuture).single;
+    expect(result.status, CloudSyncMutationStatus.conflict);
+    expect(result.reason, 'parent-deleted');
+
+    client.close(force: true);
+    await server.close(force: true);
+  });
+
   test('字段冲突可以列出并标记为已解决', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
