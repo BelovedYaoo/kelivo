@@ -71,6 +71,8 @@ abstract interface class SyncEntityAdapter {
 
   int get applyPriority;
 
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply);
+
   Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key);
 
   Future<Map<SyncEntityKey, LocalSyncEntity>> exportLocalEntitiesForKeys(

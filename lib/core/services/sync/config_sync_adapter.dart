@@ -89,6 +89,9 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
   @override
   int get applyPriority => 20;
 
+  @override
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) => apply();
+
   Future<void> _initialize() async {
     await Future.wait<void>(<Future<void>>[
       _settings.ready,

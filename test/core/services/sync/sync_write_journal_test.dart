@@ -432,6 +432,78 @@ void main() {
     expect(secondStarted.isCompleted, isTrue);
   });
 
+  test('嵌套本地写复用外层已声明 key 且只导出一次', () async {
+    final session = _session(userId: 'user-1');
+    var nextIntent = 0;
+    var exportCount = 0;
+    var nestedWriteCount = 0;
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-nested-${nextIntent++}',
+      exportAndEnqueue: (intents) async {
+        exportCount++;
+        return <SyncEntityKey, SyncWriteDisposition>{
+          for (final intent in intents)
+            SyncEntityKey(
+              entityType: intent.entityType.wireName,
+              entityId: intent.entityId,
+            ): SyncWriteDisposition.completed,
+        };
+      },
+    );
+    const key = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-1',
+    );
+
+    await journal
+        .runLocal<void>(
+          key: key,
+          write: () => journal.runLocal<void>(
+            key: key,
+            write: () async => nestedWriteCount++,
+          ),
+        )
+        .timeout(const Duration(seconds: 2));
+
+    expect(nestedWriteCount, 1);
+    expect(nextIntent, 1);
+    expect(exportCount, 1);
+  });
+
+  test('嵌套写入未由外层声明的新 key 时立即拒绝', () async {
+    final session = _session(userId: 'user-1');
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+    );
+    const declaredKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-1',
+    );
+    const missingKey = SyncEntityKey(entityType: 'turn', entityId: 'turn-1');
+
+    await expectLater(
+      journal
+          .runLocal<void>(
+            key: declaredKey,
+            write: () =>
+                journal.runLocal<void>(key: missingKey, write: () async {}),
+          )
+          .timeout(const Duration(seconds: 2)),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          contains('外层批次'),
+        ),
+      ),
+    );
+  });
+
   test('远端应用与同实体本地写串行且不生成 intent 或 outbox', () async {
     final session = _session(userId: 'user-1');
     final localStarted = Completer<void>();

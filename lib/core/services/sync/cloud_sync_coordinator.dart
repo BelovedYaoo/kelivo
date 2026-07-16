@@ -432,19 +432,49 @@ final class CloudSyncCoordinator {
     }
   }
 
-  Future<int> _reconcileSnapshotAbsences(
+  Future<int> _reconcileSnapshotAbsences(Set<SyncEntityKey> forceRemoteKeys) {
+    final missing = _store
+        .shadows(_session)
+        .where(
+          (shadow) => !_store.wasSeenInSnapshot(
+            _session,
+            entityType: shadow.entityType,
+            entityId: shadow.entityId,
+          ),
+        )
+        .toList(growable: false);
+    if (missing.isEmpty) return Future<int>.value(0);
+    final keys = <SyncEntityKey>{
+      for (final shadow in missing)
+        SyncEntityKey(
+          entityType: shadow.entityType.wireName,
+          entityId: shadow.entityId,
+        ),
+    };
+    final adapters =
+        keys
+            .map((key) => _requiredAdapter(key.entityType))
+            .toSet()
+            .toList(growable: false)
+          ..sort(
+            (left, right) => left.applyPriority.compareTo(right.applyPriority),
+          );
+    return _writeJournal.runRemoteBatch<int>(
+      keys: keys,
+      write: () => _runAdapterRemoteBatches<int>(
+        adapters,
+        0,
+        () => _reconcileSnapshotAbsencesLocked(missing, forceRemoteKeys),
+      ),
+    );
+  }
+
+  Future<int> _reconcileSnapshotAbsencesLocked(
+    List<CloudSyncShadow> missing,
     Set<SyncEntityKey> forceRemoteKeys,
   ) async {
     var deletedCount = 0;
-    for (final shadow in _store.shadows(_session)) {
-      if (_store.wasSeenInSnapshot(
-        _session,
-        entityType: shadow.entityType,
-        entityId: shadow.entityId,
-      )) {
-        continue;
-      }
-
+    for (final shadow in missing) {
       final key = SyncEntityKey(
         entityType: shadow.entityType.wireName,
         entityId: shadow.entityId,
@@ -529,6 +559,54 @@ final class CloudSyncCoordinator {
   }
 
   Future<int> _applyChanges(
+    List<CloudSyncChange> changes, {
+    List<CloudSyncRecord> snapshotRecords = const <CloudSyncRecord>[],
+    bool authoritative = false,
+    Set<SyncEntityKey> forceRemoteKeys = const <SyncEntityKey>{},
+  }) {
+    final keys = <SyncEntityKey>{
+      for (final change in changes)
+        SyncEntityKey(
+          entityType: change.entityType.wireName,
+          entityId: change.entityId,
+        ),
+    };
+    if (keys.isEmpty) return Future<int>.value(0);
+    final adapters =
+        keys
+            .map((key) => _requiredAdapter(key.entityType))
+            .toSet()
+            .toList(growable: false)
+          ..sort(
+            (left, right) => left.applyPriority.compareTo(right.applyPriority),
+          );
+    return _writeJournal.runRemoteBatch<int>(
+      keys: keys,
+      write: () => _runAdapterRemoteBatches<int>(
+        adapters,
+        0,
+        () => _applyChangesLocked(
+          changes,
+          snapshotRecords: snapshotRecords,
+          authoritative: authoritative,
+          forceRemoteKeys: forceRemoteKeys,
+        ),
+      ),
+    );
+  }
+
+  Future<T> _runAdapterRemoteBatches<T>(
+    List<SyncEntityAdapter> adapters,
+    int index,
+    Future<T> Function() apply,
+  ) {
+    if (index >= adapters.length) return apply();
+    return adapters[index].runRemoteBatch<T>(
+      () => _runAdapterRemoteBatches<T>(adapters, index + 1, apply),
+    );
+  }
+
+  Future<int> _applyChangesLocked(
     List<CloudSyncChange> changes, {
     List<CloudSyncRecord> snapshotRecords = const <CloudSyncRecord>[],
     bool authoritative = false,

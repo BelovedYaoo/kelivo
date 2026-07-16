@@ -33,6 +33,9 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
   int get applyPriority => 100;
 
   @override
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) => apply();
+
+  @override
   Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key) async {
     if (!_chatService.initialized) {
       await _chatService.init();

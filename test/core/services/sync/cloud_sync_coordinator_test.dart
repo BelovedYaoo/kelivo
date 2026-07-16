@@ -429,6 +429,7 @@ void main() {
       throwsA(isA<_StopAfterSnapshot>()),
     );
 
+    expect(adapter.remoteBatchCount, 1);
     expect(adapter.remoteDeletes, <SyncEntityKey>[key]);
     expect(
       store.shadow(
@@ -487,6 +488,7 @@ void main() {
     await local;
     final summary = await synchronizing;
     expect(summary.downloadedCount, 1);
+    expect(adapter.remoteBatchCount, 1);
     expect(adapter.remoteUpserts, hasLength(1));
     expect(adapter.entities[key]?.payload['value'], 'server-current');
   });
@@ -722,12 +724,19 @@ final class _StatefulMessageAdapter implements SyncEntityAdapter {
   final Map<SyncEntityKey, LocalSyncEntity> entities;
   final List<RemoteSyncEntity> remoteUpserts = <RemoteSyncEntity>[];
   final List<SyncEntityKey> remoteDeletes = <SyncEntityKey>[];
+  int remoteBatchCount = 0;
 
   @override
   int get applyPriority => 0;
 
   @override
   Set<String> get entityTypes => const <String>{'message'};
+
+  @override
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) {
+    remoteBatchCount++;
+    return apply();
+  }
 
   @override
   Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key) async {
@@ -813,6 +822,9 @@ final class _MessageAdapter implements SyncEntityAdapter {
 
   @override
   Set<String> get entityTypes => const <String>{'message'};
+
+  @override
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) => apply();
 
   @override
   Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key) async {

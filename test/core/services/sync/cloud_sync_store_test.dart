@@ -848,6 +848,9 @@ final class _TargetAdapter implements SyncEntityAdapter {
   Set<String> get entityTypes => const <String>{'assistant'};
 
   @override
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) => apply();
+
+  @override
   Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key) async {
     targetedKeys.add(key);
     return entities[key];

@@ -59,6 +59,7 @@ final class SyncWriteJournal {
   SyncWriteExportAndEnqueue? _exportAndEnqueue;
   final String Function() _createIntentId;
   final DateTime Function() _now;
+  final Object _batchScopeZoneKey = Object();
   final Map<String, Future<void>> _keyTails = <String, Future<void>>{};
   int _activeOperations = 0;
   bool _transitioning = false;
@@ -88,36 +89,43 @@ final class SyncWriteJournal {
     required Future<T> Function() write,
   }) {
     final orderedKeys = _normalizeBatchKeys(keys);
+    final inheritedScope = _activeBatchScope;
+    if (inheritedScope != null) {
+      _requireNestedKeysDeclared(inheritedScope, orderedKeys);
+      return write();
+    }
     return _withSessionLease((accountScope) {
       return _withKeyLocks(orderedKeys, () async {
-        final intents = <SyncWriteIntent>[];
-        for (final key in orderedKeys) {
-          intents.add(
-            await _store.beginWriteIntent(
-              SyncWriteIntent(
-                intentId: _createIntentId(),
-                entityType: CloudSyncEntityType.parse(key.entityType),
-                entityId: key.entityId,
-                journalScopeId: _journalScopeId,
-                accountScope: accountScope,
-                createdAt: _now(),
+        return _runInBatchScope(orderedKeys, () async {
+          final intents = <SyncWriteIntent>[];
+          for (final key in orderedKeys) {
+            intents.add(
+              await _store.beginWriteIntent(
+                SyncWriteIntent(
+                  intentId: _createIntentId(),
+                  entityType: CloudSyncEntityType.parse(key.entityType),
+                  entityId: key.entityId,
+                  journalScopeId: _journalScopeId,
+                  accountScope: accountScope,
+                  createdAt: _now(),
+                ),
               ),
-            ),
-          );
-        }
-        final result = await write();
-        final dispositions = await _dispatchBatch(intents);
-        for (final intent in intents) {
-          final key = SyncEntityKey(
-            entityType: intent.entityType.wireName,
-            entityId: intent.entityId,
-          );
-          final disposition = dispositions[key]!;
-          if (disposition == SyncWriteDisposition.completed) {
-            await _store.completeWriteIntent(intent);
+            );
           }
-        }
-        return result;
+          final result = await write();
+          final dispositions = await _dispatchBatch(intents);
+          for (final intent in intents) {
+            final key = SyncEntityKey(
+              entityType: intent.entityType.wireName,
+              entityId: intent.entityId,
+            );
+            final disposition = dispositions[key]!;
+            if (disposition == SyncWriteDisposition.completed) {
+              await _store.completeWriteIntent(intent);
+            }
+          }
+          return result;
+        });
       });
     });
   }
@@ -134,7 +142,59 @@ final class SyncWriteJournal {
     required Future<T> Function() write,
   }) {
     final orderedKeys = _normalizeBatchKeys(keys);
-    return _withSessionLease((_) => _withKeyLocks(orderedKeys, write));
+    final inheritedScope = _activeBatchScope;
+    if (inheritedScope != null) {
+      _requireNestedKeysDeclared(inheritedScope, orderedKeys);
+      return write();
+    }
+    return _withSessionLease(
+      (_) => _withKeyLocks(
+        orderedKeys,
+        () => _runInBatchScope(orderedKeys, write),
+      ),
+    );
+  }
+
+  _SyncWriteBatchScope? get _activeBatchScope {
+    final value = Zone.current[_batchScopeZoneKey];
+    if (value is! _SyncWriteBatchScope ||
+        !identical(value.owner, this) ||
+        !value.active) {
+      return null;
+    }
+    return value;
+  }
+
+  Future<T> _runInBatchScope<T>(
+    List<SyncEntityKey> keys,
+    Future<T> Function() action,
+  ) async {
+    final scope = _SyncWriteBatchScope(
+      owner: this,
+      storageKeys: keys.map((key) => key.storageKey).toSet(),
+    );
+    try {
+      return await runZoned(
+        action,
+        zoneValues: <Object, Object>{_batchScopeZoneKey: scope},
+      );
+    } finally {
+      // 未等待的异步回调会继承 Zone；失效标记可避免它越过批次后绕过写前日志。
+      scope.active = false;
+    }
+  }
+
+  void _requireNestedKeysDeclared(
+    _SyncWriteBatchScope scope,
+    List<SyncEntityKey> keys,
+  ) {
+    final missing = keys
+        .where((key) => !scope.storageKeys.contains(key.storageKey))
+        .map((key) => key.storageKey)
+        .toList(growable: false);
+    if (missing.isNotEmpty) {
+      throw StateError('嵌套同步写包含外层批次未声明的实体：${missing.join(', ')}');
+    }
   }
 
   List<SyncEntityKey> _normalizeBatchKeys(Iterable<SyncEntityKey> keys) {
@@ -339,4 +399,12 @@ final class SyncWriteJournal {
       }
     }
   }
+}
+
+final class _SyncWriteBatchScope {
+  _SyncWriteBatchScope({required this.owner, required this.storageKeys});
+
+  final SyncWriteJournal owner;
+  final Set<String> storageKeys;
+  bool active = true;
 }
