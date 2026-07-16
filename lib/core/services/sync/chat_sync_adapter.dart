@@ -76,7 +76,7 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           LocalSyncEntity(
             entityType: messageType,
             entityId: message.id,
-            parentId: message.conversationId,
+            parentId: message.turnId,
             payload: payload,
           ),
         );

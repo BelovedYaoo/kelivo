@@ -6,9 +6,23 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:Kelivo/core/models/assistant.dart';
+import 'package:Kelivo/core/models/assistant_memory.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
+import 'package:Kelivo/core/models/instruction_injection.dart';
+import 'package:Kelivo/core/models/quick_phrase.dart';
+import 'package:Kelivo/core/models/world_book.dart';
+import 'package:Kelivo/core/providers/assistant_provider.dart';
+import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
+import 'package:Kelivo/core/providers/mcp_provider.dart';
+import 'package:Kelivo/core/providers/memory_provider.dart';
+import 'package:Kelivo/core/providers/quick_phrase_provider.dart';
+import 'package:Kelivo/core/providers/settings_provider.dart';
+import 'package:Kelivo/core/providers/user_provider.dart';
+import 'package:Kelivo/core/providers/world_book_provider.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/chat/upload_directory_critical_section.dart';
 import 'package:Kelivo/core/services/sync/chat_sync_adapter.dart';
@@ -17,7 +31,10 @@ import 'package:Kelivo/core/services/sync/cloud_attachment_sync_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
+import 'package:Kelivo/core/services/search/search_service.dart';
+import 'package:Kelivo/core/services/tts/network_tts.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
@@ -73,6 +90,100 @@ CloudSyncAccountSession _cloudSession(
     clientVersion: '1.0.0',
     deviceCreatedAt: DateTime.utc(2026, 7, 15),
   );
+}
+
+Future<ConfigSyncAdapter> _createPopulatedConfigSyncAdapter() async {
+  SharedPreferences.setMockInitialValues(const <String, Object>{});
+  final settings = SettingsProvider();
+  final assistants = AssistantProvider();
+  final memories = MemoryProvider();
+  final mcp = McpProvider();
+  final quickPhrases = QuickPhraseProvider();
+  final injections = InstructionInjectionProvider();
+  final worldBooks = WorldBookProvider();
+  final user = UserProvider();
+  await Future.wait<void>(<Future<void>>[
+    settings.ready,
+    assistants.ready,
+    mcp.ready,
+    user.ready,
+    memories.initialize(),
+    quickPhrases.initialize(),
+    injections.initialize(),
+    worldBooks.initialize(),
+  ]);
+  await assistants.syncUpsertAssistant(
+    const Assistant(id: 'assistant-wire', name: 'Assistant'),
+    position: 0,
+  );
+  await memories.syncUpsert(
+    AssistantMemory(
+      id: 1,
+      syncId: 'memory-wire',
+      assistantId: 'assistant-wire',
+      content: 'Memory',
+    ),
+  );
+  await worldBooks.syncUpsert(
+    const WorldBook(id: 'world-book-wire', name: 'World Book'),
+    position: 0,
+  );
+  await quickPhrases.syncUpsert(
+    const QuickPhrase(
+      id: 'quick-phrase-wire',
+      title: 'Phrase',
+      content: 'Content',
+      isGlobal: false,
+      assistantId: 'assistant-wire',
+    ),
+    position: 0,
+  );
+  await settings.syncUpsertSearchService(
+    JinaOptions(id: 'search-wire', apiKey: 'search-key'),
+    position: 0,
+  );
+  await settings.syncUpsertTtsService(
+    OpenAiTtsOptions(
+      id: 'tts-wire',
+      enabled: false,
+      name: 'TTS',
+      apiKey: 'tts-key',
+      baseUrl: 'https://example.com/v1',
+      model: 'tts-model',
+      voice: 'voice',
+    ),
+    position: 0,
+  );
+  await mcp.syncUpsertServer(
+    McpServerConfig(
+      id: 'mcp-wire',
+      enabled: false,
+      name: 'MCP',
+      transport: McpTransportType.http,
+      url: 'https://example.com/mcp',
+    ),
+    position: 0,
+  );
+  await injections.syncUpsert(
+    const InstructionInjection(
+      id: 'instruction-wire',
+      title: 'Instruction',
+      prompt: 'Prompt',
+    ),
+    position: 0,
+  );
+  final adapter = ConfigSyncAdapter(
+    settingsProvider: settings,
+    assistantProvider: assistants,
+    memoryProvider: memories,
+    mcpProvider: mcp,
+    quickPhraseProvider: quickPhrases,
+    instructionInjectionProvider: injections,
+    worldBookProvider: worldBooks,
+    userProvider: user,
+  );
+  await adapter.ready;
+  return adapter;
 }
 
 void main() {
@@ -209,6 +320,240 @@ void main() {
   });
 
   group('Chat sync boundary', () {
+    test('local sync entities use protocol schema version 2 by default', () {
+      final entity = LocalSyncEntity(
+        entityType: 'conversation',
+        entityId: 'conversation-1',
+        payload: const <String, Object?>{'title': 'Chat'},
+      );
+
+      expect(entity.schemaVersion, 2);
+    });
+
+    test('message sync entities belong to their turn', () async {
+      final chatService = ChatService();
+      await chatService.init();
+      final store = await CloudSyncStore.open(
+        boxName: 'cloud_sync_message_parent_test',
+      );
+      final client = CloudSyncClient(baseUrl: 'http://127.0.0.1:1');
+      addTearDown(() async {
+        client.close(force: true);
+        await store.close();
+      });
+      final adapter = ChatSyncAdapter(
+        chatService,
+        CloudAttachmentSyncService(
+          _cloudSession(client.baseUrl),
+          client,
+          store,
+        ),
+      );
+      final conversation = await chatService.createConversation(title: 'Chat');
+      final message = await chatService.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: 'question',
+      );
+
+      final entity = (await adapter.exportLocalEntities()).singleWhere(
+        (candidate) =>
+            candidate.entityType == ChatSyncAdapter.messageType &&
+            candidate.entityId == message.id,
+      );
+
+      expect(entity.parentId, message.turnId);
+    });
+
+    test(
+      'instruction injections export as standalone ordered entities',
+      () async {
+        final adapter = await _createPopulatedConfigSyncAdapter();
+
+        final entity = (await adapter.exportLocalEntities()).singleWhere(
+          (candidate) => candidate.payload['prompt'] == 'Prompt',
+        );
+
+        expect(entity.entityType, 'instruction-injection');
+        expect(entity.entityId, 'instruction-wire');
+        expect(entity.payload, isNot(contains('id')));
+        expect(entity.payload['_position'], 0);
+      },
+    );
+
+    test(
+      'configuration wire payloads use envelope identity and explicit order',
+      () async {
+        final adapter = await _createPopulatedConfigSyncAdapter();
+        final entities = await adapter.exportLocalEntities();
+        final ordered = <LocalSyncEntity>[
+          entities.firstWhere((entity) => entity.entityType == 'provider'),
+          entities.singleWhere(
+            (entity) =>
+                entity.entityType == 'assistant' &&
+                entity.entityId == 'assistant-wire',
+          ),
+          entities.singleWhere(
+            (entity) =>
+                entity.entityType == 'world-book' &&
+                entity.entityId == 'world-book-wire',
+          ),
+          entities.singleWhere(
+            (entity) =>
+                entity.entityType == 'quick-phrase' &&
+                entity.entityId == 'quick-phrase-wire',
+          ),
+          entities.singleWhere(
+            (entity) =>
+                entity.entityType == 'search-service' &&
+                entity.entityId == 'search-wire',
+          ),
+          entities.singleWhere(
+            (entity) =>
+                entity.entityType == 'network-tts' &&
+                entity.entityId == 'tts-wire',
+          ),
+          entities.singleWhere(
+            (entity) =>
+                entity.entityType == 'mcp-server' &&
+                entity.entityId == 'mcp-wire',
+          ),
+          entities.singleWhere(
+            (entity) =>
+                entity.entityType == 'instruction-injection' &&
+                entity.entityId == 'instruction-wire',
+          ),
+        ];
+        for (final entity in ordered) {
+          expect(entity.schemaVersion, 2, reason: entity.entityType);
+          expect(
+            entity.payload,
+            isNot(contains('id')),
+            reason: entity.entityType,
+          );
+          expect(
+            entity.payload['_position'],
+            isA<int>().having(
+              (value) => value,
+              'value',
+              greaterThanOrEqualTo(0),
+            ),
+            reason: entity.entityType,
+          );
+        }
+
+        final memory = entities.singleWhere(
+          (entity) =>
+              entity.entityType == 'memory' && entity.entityId == 'memory-wire',
+        );
+        expect(memory.parentId, 'assistant-wire');
+        expect(memory.payload, isNot(contains('id')));
+        expect(memory.payload, isNot(contains('syncId')));
+
+        final quickPhrase = entities.singleWhere(
+          (entity) =>
+              entity.entityType == 'quick-phrase' &&
+              entity.entityId == 'quick-phrase-wire',
+        );
+        expect(quickPhrase.parentId, 'assistant-wire');
+
+        final profile = entities.singleWhere(
+          (entity) =>
+              entity.entityType == 'user-preference' &&
+              entity.entityId == 'profile:default',
+        );
+        expect(profile.payload['name'], 'User');
+        expect(profile.payload, isNot(contains('key')));
+        expect(profile.payload, isNot(contains('value')));
+      },
+    );
+
+    test(
+      'configuration adapters restore local identity from the envelope',
+      () async {
+        final adapter = await _createPopulatedConfigSyncAdapter();
+        final exported = await adapter.exportLocalEntities();
+        const replayTypes = <String>{
+          'provider',
+          'assistant',
+          'memory',
+          'world-book',
+          'quick-phrase',
+          'search-service',
+          'network-tts',
+          'mcp-server',
+          'instruction-injection',
+        };
+        final replayed = exported
+            .where((entity) => replayTypes.contains(entity.entityType))
+            .toList(growable: false);
+
+        for (final entity in replayed) {
+          await adapter.applyRemoteUpsert(
+            RemoteSyncEntity(
+              entityType: entity.entityType,
+              entityId: entity.entityId,
+              parentId: entity.parentId,
+              revision: 1,
+              schemaVersion: entity.schemaVersion,
+              payload: entity.payload,
+              updatedAt: DateTime.utc(2026, 7, 16),
+            ),
+          );
+        }
+
+        final after = <SyncEntityKey, LocalSyncEntity>{
+          for (final entity in await adapter.exportLocalEntities())
+            entity.key: entity,
+        };
+        for (final entity in replayed) {
+          expect(after, contains(entity.key), reason: entity.entityType);
+          expect(
+            canonicalSyncJson(after[entity.key]!.payload),
+            canonicalSyncJson(entity.payload),
+            reason: entity.entityType,
+          );
+        }
+      },
+    );
+
+    test('ordered configuration payloads reject a missing position', () async {
+      final adapter = await _createPopulatedConfigSyncAdapter();
+      const orderedTypes = <String>{
+        'provider',
+        'assistant',
+        'world-book',
+        'quick-phrase',
+        'search-service',
+        'network-tts',
+        'mcp-server',
+        'instruction-injection',
+      };
+      final entities = (await adapter.exportLocalEntities())
+          .where((entity) => orderedTypes.contains(entity.entityType))
+          .toList(growable: false);
+
+      for (final entity in entities) {
+        final payload = Map<String, Object?>.from(entity.payload)
+          ..remove('_position');
+        await expectLater(
+          adapter.applyRemoteUpsert(
+            RemoteSyncEntity(
+              entityType: entity.entityType,
+              entityId: entity.entityId,
+              parentId: entity.parentId,
+              revision: 1,
+              schemaVersion: entity.schemaVersion,
+              payload: payload,
+              updatedAt: DateTime.utc(2026, 7, 16),
+            ),
+          ),
+          throwsFormatException,
+          reason: entity.entityType,
+        );
+      }
+    });
+
     test('attachment markers strip local paths and restore stable order', () {
       final document = ChatAttachmentMarkerCodec.parse(
         'question\n'

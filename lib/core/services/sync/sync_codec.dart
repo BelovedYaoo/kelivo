@@ -29,7 +29,7 @@ class LocalSyncEntity {
     required this.entityId,
     required Map<String, Object?> payload,
     this.parentId,
-    this.schemaVersion = 1,
+    this.schemaVersion = 2,
   }) : payload = validateSyncJsonObject(payload);
 
   final String entityType;

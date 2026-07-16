@@ -47,6 +47,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
   static const String _searchServiceType = 'search-service';
   static const String _networkTtsType = 'network-tts';
   static const String _mcpServerType = 'mcp-server';
+  static const String _instructionInjectionType = 'instruction-injection';
   static const String _preferenceType = 'user-preference';
 
   static const String _profilePreference = 'profile:default';
@@ -60,8 +61,6 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
   static const String _searchStatePreference = 'search-state:default';
   static const String _ttsStatePreference = 'tts-state:default';
   static const String _mcpStatePreference = 'mcp-state:default';
-  static const String _injectionPrefix = 'instruction:';
-
   final SettingsProvider _settings;
   final AssistantProvider _assistants;
   final MemoryProvider _memories;
@@ -83,6 +82,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     _searchServiceType,
     _networkTtsType,
     _mcpServerType,
+    _instructionInjectionType,
     _preferenceType,
   };
 
@@ -114,6 +114,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       ..._exportSearchServices(),
       ..._exportTtsServices(),
       ..._exportMcpServers(),
+      ..._exportInstructionInjections(),
       ..._exportPreferences(),
     ];
   }
@@ -137,6 +138,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     for (var index = 0; index < _assistants.assistants.length; index++) {
       final assistant = _assistants.assistants[index];
       final payload = _mutableJsonObject(assistant.toJson());
+      payload.remove('id');
       payload['_position'] = index;
       if (_isLocalPath(assistant.avatar)) payload.remove('avatar');
       if (_isLocalPath(assistant.background)) payload.remove('background');
@@ -150,7 +152,9 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
 
   Iterable<LocalSyncEntity> _exportMemories() sync* {
     for (final memory in _memories.memories) {
-      final payload = _mutableJsonObject(memory.toJson())..remove('id');
+      final payload = _mutableJsonObject(memory.toJson())
+        ..remove('id')
+        ..remove('syncId');
       yield LocalSyncEntity(
         entityType: _memoryType,
         entityId: memory.syncId,
@@ -166,7 +170,9 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       yield LocalSyncEntity(
         entityType: _worldBookType,
         entityId: book.id,
-        payload: _mutableJsonObject(book.toJson())..['_position'] = index,
+        payload: _mutableJsonObject(book.toJson())
+          ..remove('id')
+          ..['_position'] = index,
       );
     }
   }
@@ -178,7 +184,9 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
         entityType: _quickPhraseType,
         entityId: phrase.id,
         parentId: phrase.assistantId,
-        payload: _mutableJsonObject(phrase.toJson())..['_position'] = index,
+        payload: _mutableJsonObject(phrase.toJson())
+          ..remove('id')
+          ..['_position'] = index,
       );
     }
   }
@@ -189,7 +197,9 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       yield LocalSyncEntity(
         entityType: _searchServiceType,
         entityId: service.id,
-        payload: _mutableJsonObject(service.toJson())..['_position'] = index,
+        payload: _mutableJsonObject(service.toJson())
+          ..remove('id')
+          ..['_position'] = index,
       );
     }
   }
@@ -200,7 +210,9 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       yield LocalSyncEntity(
         entityType: _networkTtsType,
         entityId: service.id,
-        payload: _mutableJsonObject(service.toJson())..['_position'] = index,
+        payload: _mutableJsonObject(service.toJson())
+          ..remove('id')
+          ..['_position'] = index,
       );
     }
   }
@@ -216,21 +228,26 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
         entityType: _mcpServerType,
         entityId: server.id,
         payload: _mutableJsonObject(server.toJson())
+          ..remove('id')
           ..['_position'] = position++,
       );
     }
   }
 
-  Iterable<LocalSyncEntity> _exportPreferences() sync* {
+  Iterable<LocalSyncEntity> _exportInstructionInjections() sync* {
     for (var index = 0; index < _injections.items.length; index++) {
       final item = _injections.items[index];
       yield LocalSyncEntity(
-        entityType: _preferenceType,
-        entityId: '$_injectionPrefix${item.id}',
-        payload: _mutableJsonObject(item.toJson())..['_position'] = index,
+        entityType: _instructionInjectionType,
+        entityId: item.id,
+        payload: _mutableJsonObject(item.toJson())
+          ..remove('id')
+          ..['_position'] = index,
       );
     }
+  }
 
+  Iterable<LocalSyncEntity> _exportPreferences() sync* {
     final profile = <String, Object?>{'name': _user.name};
     if (_user.avatarType != 'file' &&
         !_isLocalPath(_user.avatarValue) &&
@@ -331,32 +348,47 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       case _memoryType:
         await _applyMemory(entity.entityId, payload);
       case _worldBookType:
-        _requireMatchingId(entity.entityId, payload);
         await _worldBooks.syncUpsert(
-          WorldBook.fromJson(payload),
+          WorldBook.fromJson(<String, Object?>{
+            ...payload,
+            'id': entity.entityId,
+          }),
           position: _position(payload),
         );
       case _quickPhraseType:
-        _requireMatchingId(entity.entityId, payload);
         await _quickPhrases.syncUpsert(
-          QuickPhrase.fromJson(payload),
+          QuickPhrase.fromJson(<String, Object?>{
+            ...payload,
+            'id': entity.entityId,
+          }),
           position: _position(payload),
         );
       case _searchServiceType:
-        _requireMatchingId(entity.entityId, payload);
         await _settings.syncUpsertSearchService(
-          SearchServiceOptions.fromJson(payload),
+          SearchServiceOptions.fromJson(<String, Object?>{
+            ...payload,
+            'id': entity.entityId,
+          }),
           position: _position(payload),
         );
       case _networkTtsType:
-        _requireMatchingId(entity.entityId, payload);
         await _settings.syncUpsertTtsService(
-          TtsServiceOptions.fromJson(payload),
+          TtsServiceOptions.fromJson(<String, Object?>{
+            ...payload,
+            'id': entity.entityId,
+          }),
           position: _position(payload),
         );
       case _mcpServerType:
-        _requireMatchingId(entity.entityId, payload);
-        await _applyMcpServer(payload);
+        await _applyMcpServer(entity.entityId, payload);
+      case _instructionInjectionType:
+        await _injections.syncUpsert(
+          InstructionInjection.fromJson(<String, Object?>{
+            ...payload,
+            'id': entity.entityId,
+          }),
+          position: _position(payload),
+        );
       case _preferenceType:
         await _applyPreference(entity.entityId, payload);
       default:
@@ -368,10 +400,12 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     String entityId,
     Map<String, Object?> payload,
   ) async {
-    _requireMatchingId(entityId, payload);
     final sanitized = _sanitizeProviderPayload(payload);
     final current = _settings.providerConfigs[entityId];
-    var config = ProviderConfig.fromJson(sanitized);
+    var config = ProviderConfig.fromJson(<String, Object?>{
+      ...sanitized,
+      'id': entityId,
+    });
     final currentKeys = <String, ApiKeyConfig>{
       for (final key in current?.apiKeys ?? const <ApiKeyConfig>[]) key.id: key,
     };
@@ -419,7 +453,6 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     String entityId,
     Map<String, Object?> payload,
   ) async {
-    _requireMatchingId(entityId, payload);
     final sanitized = _mutableJsonObject(payload);
     if (_isLocalPath(_optionalString(sanitized, 'avatar'))) {
       sanitized.remove('avatar');
@@ -450,7 +483,6 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     String entityId,
     Map<String, Object?> payload,
   ) async {
-    _requireMatchingId(entityId, payload, field: 'syncId');
     final memory = AssistantMemory.fromJson(<String, Object?>{
       ...payload,
       'syncId': entityId,
@@ -458,8 +490,14 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     await _memories.syncUpsert(memory);
   }
 
-  Future<void> _applyMcpServer(Map<String, Object?> payload) async {
-    final server = McpServerConfig.fromJson(payload);
+  Future<void> _applyMcpServer(
+    String entityId,
+    Map<String, Object?> payload,
+  ) async {
+    final server = McpServerConfig.fromJson(<String, Object?>{
+      ...payload,
+      'id': entityId,
+    });
     if (server.transport != McpTransportType.http &&
         server.transport != McpTransportType.sse) {
       throw const FormatException('云同步仅接受 HTTP 或 SSE MCP 服务');
@@ -471,16 +509,6 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     String entityId,
     Map<String, Object?> payload,
   ) async {
-    if (entityId.startsWith(_injectionPrefix)) {
-      final id = entityId.substring(_injectionPrefix.length);
-      _requireMatchingId(id, payload);
-      await _injections.syncUpsert(
-        InstructionInjection.fromJson(<String, Object?>{...payload, 'id': id}),
-        position: _position(payload),
-      );
-      return;
-    }
-
     switch (entityId) {
       case _profilePreference:
         final avatarType = _optionalString(payload, 'avatarType');
@@ -589,6 +617,8 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
         await _settings.syncDeleteTtsService(key.entityId);
       case _mcpServerType:
         await _mcp.syncDeleteServer(key.entityId);
+      case _instructionInjectionType:
+        await _injections.syncDelete(key.entityId);
       case _preferenceType:
         await _deletePreference(key.entityId);
       default:
@@ -597,10 +627,6 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
   }
 
   Future<void> _deletePreference(String entityId) async {
-    if (entityId.startsWith(_injectionPrefix)) {
-      await _injections.syncDelete(entityId.substring(_injectionPrefix.length));
-      return;
-    }
     switch (entityId) {
       case _profilePreference:
         await _user.syncApplyProfile(
@@ -647,6 +673,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     required int position,
   }) {
     final payload = _mutableJsonObject(config.toJson());
+    payload.remove('id');
     payload['_position'] = position;
     payload.remove('proxyEnabled');
     payload.remove('proxyType');
@@ -736,19 +763,8 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
 
   static int _position(Map<String, Object?> payload) {
     final value = payload['_position'];
-    if (value is num && value.isFinite && value >= 0) return value.toInt();
-    return 1 << 30;
-  }
-
-  static void _requireMatchingId(
-    String entityId,
-    Map<String, Object?> payload, {
-    String field = 'id',
-  }) {
-    final payloadId = payload[field];
-    if (payloadId is! String || payloadId != entityId) {
-      throw const FormatException('同步配置的实体标识不一致');
-    }
+    if (value is int && value >= 0) return value;
+    throw const FormatException('有序同步配置必须包含非负整数位置');
   }
 
   static bool _isLocalPath(String? value) {
