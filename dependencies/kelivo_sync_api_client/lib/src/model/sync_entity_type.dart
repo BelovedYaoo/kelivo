@@ -38,6 +38,8 @@ class SyncEntityType extends EnumClass {
   static const SyncEntityType networkTts = _$networkTts;
   @BuiltValueEnumConst(wireName: r'mcp-server')
   static const SyncEntityType mcpServer = _$mcpServer;
+  @BuiltValueEnumConst(wireName: r'instruction-injection')
+  static const SyncEntityType instructionInjection = _$instructionInjection;
   @BuiltValueEnumConst(wireName: r'user-preference')
   static const SyncEntityType userPreference = _$userPreference;
 

@@ -3,27 +3,31 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/sync_patch_operation.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_conflict_details.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_entity_type.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'sync_update_mutation.g.dart';
+part 'sync_conflict.g.dart';
 
-/// SyncUpdateMutation
+/// SyncConflict
 ///
 /// Properties:
+/// * [conflictId]
 /// * [mutationId]
 /// * [entityType]
 /// * [entityId]
-/// * [operation]
-/// * [baseRevision]
-/// * [schemaVersion]
-/// * [patch_]
+/// * [details]
+/// * [state]
+/// * [createdAt]
+/// * [resolvedAt]
 @BuiltValue()
-abstract class SyncUpdateMutation
-    implements Built<SyncUpdateMutation, SyncUpdateMutationBuilder> {
+abstract class SyncConflict
+    implements Built<SyncConflict, SyncConflictBuilder> {
+  @BuiltValueField(wireName: r'conflictId')
+  String get conflictId;
+
   @BuiltValueField(wireName: r'mutationId')
   String get mutationId;
 
@@ -34,45 +38,47 @@ abstract class SyncUpdateMutation
   @BuiltValueField(wireName: r'entityId')
   String get entityId;
 
-  @BuiltValueField(wireName: r'operation')
-  SyncUpdateMutationOperationEnum get operation;
-  // enum operationEnum {  update,  };
+  @BuiltValueField(wireName: r'details')
+  SyncConflictDetails get details;
 
-  @BuiltValueField(wireName: r'baseRevision')
-  int get baseRevision;
+  @BuiltValueField(wireName: r'state')
+  SyncConflictStateEnum get state;
+  // enum stateEnum {  open,  resolved,  };
 
-  @BuiltValueField(wireName: r'schemaVersion')
-  int? get schemaVersion;
+  @BuiltValueField(wireName: r'createdAt')
+  DateTime get createdAt;
 
-  @BuiltValueField(wireName: r'patch')
-  BuiltList<SyncPatchOperation> get patch_;
+  @BuiltValueField(wireName: r'resolvedAt')
+  DateTime? get resolvedAt;
 
-  SyncUpdateMutation._();
+  SyncConflict._();
 
-  factory SyncUpdateMutation([void updates(SyncUpdateMutationBuilder b)]) =
-      _$SyncUpdateMutation;
+  factory SyncConflict([void updates(SyncConflictBuilder b)]) = _$SyncConflict;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(SyncUpdateMutationBuilder b) => b;
+  static void _defaults(SyncConflictBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<SyncUpdateMutation> get serializer =>
-      _$SyncUpdateMutationSerializer();
+  static Serializer<SyncConflict> get serializer => _$SyncConflictSerializer();
 }
 
-class _$SyncUpdateMutationSerializer
-    implements PrimitiveSerializer<SyncUpdateMutation> {
+class _$SyncConflictSerializer implements PrimitiveSerializer<SyncConflict> {
   @override
-  final Iterable<Type> types = const [SyncUpdateMutation, _$SyncUpdateMutation];
+  final Iterable<Type> types = const [SyncConflict, _$SyncConflict];
 
   @override
-  final String wireName = r'SyncUpdateMutation';
+  final String wireName = r'SyncConflict';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    SyncUpdateMutation object, {
+    SyncConflict object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'conflictId';
+    yield serializers.serialize(
+      object.conflictId,
+      specifiedType: const FullType(String),
+    );
     yield r'mutationId';
     yield serializers.serialize(
       object.mutationId,
@@ -88,34 +94,34 @@ class _$SyncUpdateMutationSerializer
       object.entityId,
       specifiedType: const FullType(String),
     );
-    yield r'operation';
+    yield r'details';
     yield serializers.serialize(
-      object.operation,
-      specifiedType: const FullType(SyncUpdateMutationOperationEnum),
+      object.details,
+      specifiedType: const FullType(SyncConflictDetails),
     );
-    yield r'baseRevision';
+    yield r'state';
     yield serializers.serialize(
-      object.baseRevision,
-      specifiedType: const FullType(int),
+      object.state,
+      specifiedType: const FullType(SyncConflictStateEnum),
     );
-    if (object.schemaVersion != null) {
-      yield r'schemaVersion';
-      yield serializers.serialize(
-        object.schemaVersion,
-        specifiedType: const FullType(int),
-      );
-    }
-    yield r'patch';
+    yield r'createdAt';
     yield serializers.serialize(
-      object.patch_,
-      specifiedType: const FullType(BuiltList, [FullType(SyncPatchOperation)]),
+      object.createdAt,
+      specifiedType: const FullType(DateTime),
     );
+    yield r'resolvedAt';
+    yield object.resolvedAt == null
+        ? null
+        : serializers.serialize(
+            object.resolvedAt,
+            specifiedType: const FullType.nullable(DateTime),
+          );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    SyncUpdateMutation object, {
+    SyncConflict object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -130,13 +136,22 @@ class _$SyncUpdateMutationSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required SyncUpdateMutationBuilder result,
+    required SyncConflictBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'conflictId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.conflictId = valueDes;
+          break;
         case r'mutationId':
           final valueDes =
               serializers.deserialize(
@@ -164,39 +179,42 @@ class _$SyncUpdateMutationSerializer
                   as String;
           result.entityId = valueDes;
           break;
-        case r'operation':
+        case r'details':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(
-                      SyncUpdateMutationOperationEnum,
-                    ),
+                    specifiedType: const FullType(SyncConflictDetails),
                   )
-                  as SyncUpdateMutationOperationEnum;
-          result.operation = valueDes;
+                  as SyncConflictDetails;
+          result.details.replace(valueDes);
           break;
-        case r'baseRevision':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.baseRevision = valueDes;
-          break;
-        case r'schemaVersion':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.schemaVersion = valueDes;
-          break;
-        case r'patch':
+        case r'state':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(BuiltList, [
-                      FullType(SyncPatchOperation),
-                    ]),
+                    specifiedType: const FullType(SyncConflictStateEnum),
                   )
-                  as BuiltList<SyncPatchOperation>;
-          result.patch_.replace(valueDes);
+                  as SyncConflictStateEnum;
+          result.state = valueDes;
+          break;
+        case r'createdAt':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(DateTime),
+                  )
+                  as DateTime;
+          result.createdAt = valueDes;
+          break;
+        case r'resolvedAt':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(DateTime),
+                  )
+                  as DateTime?;
+          if (valueDes == null) continue;
+          result.resolvedAt = valueDes;
           break;
         default:
           unhandled.add(key);
@@ -207,12 +225,12 @@ class _$SyncUpdateMutationSerializer
   }
 
   @override
-  SyncUpdateMutation deserialize(
+  SyncConflict deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = SyncUpdateMutationBuilder();
+    final result = SyncConflictBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(
@@ -227,18 +245,20 @@ class _$SyncUpdateMutationSerializer
   }
 }
 
-class SyncUpdateMutationOperationEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'update')
-  static const SyncUpdateMutationOperationEnum update =
-      _$syncUpdateMutationOperationEnum_update;
+class SyncConflictStateEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'open')
+  static const SyncConflictStateEnum open = _$syncConflictStateEnum_open;
+  @BuiltValueEnumConst(wireName: r'resolved')
+  static const SyncConflictStateEnum resolved =
+      _$syncConflictStateEnum_resolved;
 
-  static Serializer<SyncUpdateMutationOperationEnum> get serializer =>
-      _$syncUpdateMutationOperationEnumSerializer;
+  static Serializer<SyncConflictStateEnum> get serializer =>
+      _$syncConflictStateEnumSerializer;
 
-  const SyncUpdateMutationOperationEnum._(String name) : super(name);
+  const SyncConflictStateEnum._(String name) : super(name);
 
-  static BuiltSet<SyncUpdateMutationOperationEnum> get values =>
-      _$syncUpdateMutationOperationEnumValues;
-  static SyncUpdateMutationOperationEnum valueOf(String name) =>
-      _$syncUpdateMutationOperationEnumValueOf(name);
+  static BuiltSet<SyncConflictStateEnum> get values =>
+      _$syncConflictStateEnumValues;
+  static SyncConflictStateEnum valueOf(String name) =>
+      _$syncConflictStateEnumValueOf(name);
 }

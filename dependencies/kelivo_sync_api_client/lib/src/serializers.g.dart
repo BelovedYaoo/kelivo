@@ -60,6 +60,10 @@ Serializers _$serializers =
           ..add(ListDeviceSessionsRequest.serializer)
           ..add(ListDeviceSessionsRequestStatusEnum.serializer)
           ..add(ListDeviceSessionsResponse.serializer)
+          ..add(ListSyncConflictsRequest.serializer)
+          ..add(ListSyncConflictsRequestStateEnum.serializer)
+          ..add(ListSyncConflictsResponse.serializer)
+          ..add(ListSyncConflictsResponseData.serializer)
           ..add(PrepareAttachmentUploadData.serializer)
           ..add(PrepareAttachmentUploadDataUploadMethodEnum.serializer)
           ..add(PrepareAttachmentUploadRequest.serializer)
@@ -70,6 +74,9 @@ Serializers _$serializers =
           ..add(ResetAdminUserPasswordData.serializer)
           ..add(ResetAdminUserPasswordRequest.serializer)
           ..add(ResetAdminUserPasswordResponse.serializer)
+          ..add(ResolveSyncConflictRequest.serializer)
+          ..add(ResolveSyncConflictResponse.serializer)
+          ..add(ResolveSyncConflictResponseData.serializer)
           ..add(RevokeAdminDeviceData.serializer)
           ..add(RevokeAdminDeviceRequest.serializer)
           ..add(RevokeAdminDeviceResponse.serializer)
@@ -79,9 +86,14 @@ Serializers _$serializers =
           ..add(SyncAppliedMutationResult.serializer)
           ..add(SyncAppliedMutationResultStatusEnum.serializer)
           ..add(SyncChange.serializer)
+          ..add(SyncConflict.serializer)
+          ..add(SyncConflictDetails.serializer)
+          ..add(SyncConflictDetailsFieldsInner.serializer)
+          ..add(SyncConflictDetailsFieldsInnerCurrent.serializer)
           ..add(SyncConflictMutationResult.serializer)
           ..add(SyncConflictMutationResultReasonEnum.serializer)
           ..add(SyncConflictMutationResultStatusEnum.serializer)
+          ..add(SyncConflictStateEnum.serializer)
           ..add(SyncCreateMutation.serializer)
           ..add(SyncCreateMutationOperationEnum.serializer)
           ..add(SyncDeleteChange.serializer)
@@ -89,6 +101,9 @@ Serializers _$serializers =
           ..add(SyncDeleteMutation.serializer)
           ..add(SyncDeleteMutationOperationEnum.serializer)
           ..add(SyncEntityType.serializer)
+          ..add(SyncFieldConflictMutationResult.serializer)
+          ..add(SyncFieldConflictMutationResultReasonEnum.serializer)
+          ..add(SyncFieldConflictMutationResultStatusEnum.serializer)
           ..add(SyncMutation.serializer)
           ..add(SyncMutationResult.serializer)
           ..add(SyncPatchOperation.serializer)
@@ -149,8 +164,22 @@ Serializers _$serializers =
             () => ListBuilder<DeviceSessionSummary>(),
           )
           ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(String)]),
+            () => ListBuilder<String>(),
+          )
+          ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncChange)]),
             () => ListBuilder<SyncChange>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(SyncConflict)]),
+            () => ListBuilder<SyncConflict>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(SyncConflictDetailsFieldsInner),
+            ]),
+            () => ListBuilder<SyncConflictDetailsFieldsInner>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncMutation)]),

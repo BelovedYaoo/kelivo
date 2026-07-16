@@ -52,6 +52,9 @@ import 'package:kelivo_sync_api_client/src/model/list_attachment_info_response.d
 import 'package:kelivo_sync_api_client/src/model/list_device_sessions_data.dart';
 import 'package:kelivo_sync_api_client/src/model/list_device_sessions_request.dart';
 import 'package:kelivo_sync_api_client/src/model/list_device_sessions_response.dart';
+import 'package:kelivo_sync_api_client/src/model/list_sync_conflicts_request.dart';
+import 'package:kelivo_sync_api_client/src/model/list_sync_conflicts_response.dart';
+import 'package:kelivo_sync_api_client/src/model/list_sync_conflicts_response_data.dart';
 import 'package:kelivo_sync_api_client/src/model/prepare_attachment_upload_data.dart';
 import 'package:kelivo_sync_api_client/src/model/prepare_attachment_upload_request.dart';
 import 'package:kelivo_sync_api_client/src/model/prepare_attachment_upload_response.dart';
@@ -61,6 +64,9 @@ import 'package:kelivo_sync_api_client/src/model/push_sync_changes_response.dart
 import 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_data.dart';
 import 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_request.dart';
 import 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_response.dart';
+import 'package:kelivo_sync_api_client/src/model/resolve_sync_conflict_request.dart';
+import 'package:kelivo_sync_api_client/src/model/resolve_sync_conflict_response.dart';
+import 'package:kelivo_sync_api_client/src/model/resolve_sync_conflict_response_data.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_data.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_request.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_response.dart';
@@ -69,11 +75,16 @@ import 'package:kelivo_sync_api_client/src/model/revoke_device_session_request.d
 import 'package:kelivo_sync_api_client/src/model/revoke_device_session_response.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_applied_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_change.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_conflict.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_conflict_details.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_conflict_details_fields_inner.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_conflict_details_fields_inner_current.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_conflict_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_create_mutation.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_delete_change.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_delete_mutation.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_entity_type.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_field_conflict_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_mutation.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_patch_operation.dart';
@@ -144,6 +155,9 @@ part 'serializers.g.dart';
   ListDeviceSessionsData,
   ListDeviceSessionsRequest,
   ListDeviceSessionsResponse,
+  ListSyncConflictsRequest,
+  ListSyncConflictsResponse,
+  ListSyncConflictsResponseData,
   PrepareAttachmentUploadData,
   PrepareAttachmentUploadRequest,
   PrepareAttachmentUploadResponse,
@@ -153,6 +167,9 @@ part 'serializers.g.dart';
   ResetAdminUserPasswordData,
   ResetAdminUserPasswordRequest,
   ResetAdminUserPasswordResponse,
+  ResolveSyncConflictRequest,
+  ResolveSyncConflictResponse,
+  ResolveSyncConflictResponseData,
   RevokeAdminDeviceData,
   RevokeAdminDeviceRequest,
   RevokeAdminDeviceResponse,
@@ -161,11 +178,16 @@ part 'serializers.g.dart';
   RevokeDeviceSessionResponse,
   SyncAppliedMutationResult,
   SyncChange,
+  SyncConflict,
+  SyncConflictDetails,
+  SyncConflictDetailsFieldsInner,
+  SyncConflictDetailsFieldsInnerCurrent,
   SyncConflictMutationResult,
   SyncCreateMutation,
   SyncDeleteChange,
   SyncDeleteMutation,
   SyncEntityType,
+  SyncFieldConflictMutationResult,
   SyncMutation,
   SyncMutationResult,
   SyncPatchOperation,

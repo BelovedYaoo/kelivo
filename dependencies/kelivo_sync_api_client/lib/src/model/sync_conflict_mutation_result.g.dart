@@ -41,6 +41,9 @@ const SyncConflictMutationResultReasonEnum
 _$syncConflictMutationResultReasonEnum_entityActive =
     const SyncConflictMutationResultReasonEnum._('entityActive');
 const SyncConflictMutationResultReasonEnum
+_$syncConflictMutationResultReasonEnum_restoreRequired =
+    const SyncConflictMutationResultReasonEnum._('restoreRequired');
+const SyncConflictMutationResultReasonEnum
 _$syncConflictMutationResultReasonEnum_revisionAhead =
     const SyncConflictMutationResultReasonEnum._('revisionAhead');
 const SyncConflictMutationResultReasonEnum
@@ -58,6 +61,8 @@ _$syncConflictMutationResultReasonEnumValueOf(String name) {
       return _$syncConflictMutationResultReasonEnum_entityDeleted;
     case 'entityActive':
       return _$syncConflictMutationResultReasonEnum_entityActive;
+    case 'restoreRequired':
+      return _$syncConflictMutationResultReasonEnum_restoreRequired;
     case 'revisionAhead':
       return _$syncConflictMutationResultReasonEnum_revisionAhead;
     case 'revisionStale':
@@ -75,6 +80,7 @@ _$syncConflictMutationResultReasonEnumValues =
         _$syncConflictMutationResultReasonEnum_entityMissing,
         _$syncConflictMutationResultReasonEnum_entityDeleted,
         _$syncConflictMutationResultReasonEnum_entityActive,
+        _$syncConflictMutationResultReasonEnum_restoreRequired,
         _$syncConflictMutationResultReasonEnum_revisionAhead,
         _$syncConflictMutationResultReasonEnum_revisionStale,
       ],
@@ -127,6 +133,7 @@ class _$SyncConflictMutationResultReasonEnumSerializer
     'entityMissing': 'entity-missing',
     'entityDeleted': 'entity-deleted',
     'entityActive': 'entity-active',
+    'restoreRequired': 'restore-required',
     'revisionAhead': 'revision-ahead',
     'revisionStale': 'revision-stale',
   };
@@ -135,6 +142,7 @@ class _$SyncConflictMutationResultReasonEnumSerializer
     'entity-missing': 'entityMissing',
     'entity-deleted': 'entityDeleted',
     'entity-active': 'entityActive',
+    'restore-required': 'restoreRequired',
     'revision-ahead': 'revisionAhead',
     'revision-stale': 'revisionStale',
   };

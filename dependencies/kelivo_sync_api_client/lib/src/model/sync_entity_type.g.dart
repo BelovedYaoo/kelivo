@@ -24,6 +24,9 @@ const SyncEntityType _$quickPhrase = const SyncEntityType._('quickPhrase');
 const SyncEntityType _$searchService = const SyncEntityType._('searchService');
 const SyncEntityType _$networkTts = const SyncEntityType._('networkTts');
 const SyncEntityType _$mcpServer = const SyncEntityType._('mcpServer');
+const SyncEntityType _$instructionInjection = const SyncEntityType._(
+  'instructionInjection',
+);
 const SyncEntityType _$userPreference = const SyncEntityType._(
   'userPreference',
 );
@@ -58,6 +61,8 @@ SyncEntityType _$valueOf(String name) {
       return _$networkTts;
     case 'mcpServer':
       return _$mcpServer;
+    case 'instructionInjection':
+      return _$instructionInjection;
     case 'userPreference':
       return _$userPreference;
     default:
@@ -81,6 +86,7 @@ final BuiltSet<SyncEntityType> _$values =
       _$searchService,
       _$networkTts,
       _$mcpServer,
+      _$instructionInjection,
       _$userPreference,
     ]);
 
@@ -100,6 +106,7 @@ class _$SyncEntityTypeMeta {
   SyncEntityType get searchService => _$searchService;
   SyncEntityType get networkTts => _$networkTts;
   SyncEntityType get mcpServer => _$mcpServer;
+  SyncEntityType get instructionInjection => _$instructionInjection;
   SyncEntityType get userPreference => _$userPreference;
   SyncEntityType valueOf(String name) => _$valueOf(name);
   BuiltSet<SyncEntityType> get values => _$values;
@@ -130,6 +137,7 @@ class _$SyncEntityTypeSerializer
     'searchService': 'search-service',
     'networkTts': 'network-tts',
     'mcpServer': 'mcp-server',
+    'instructionInjection': 'instruction-injection',
     'userPreference': 'user-preference',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
@@ -147,6 +155,7 @@ class _$SyncEntityTypeSerializer
     'search-service': 'searchService',
     'network-tts': 'networkTts',
     'mcp-server': 'mcpServer',
+    'instruction-injection': 'instructionInjection',
     'user-preference': 'userPreference',
   };
 

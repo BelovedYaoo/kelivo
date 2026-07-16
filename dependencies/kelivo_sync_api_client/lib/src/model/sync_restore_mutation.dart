@@ -26,7 +26,7 @@ abstract class SyncRestoreMutation
 
   @BuiltValueField(wireName: r'entityType')
   SyncEntityType get entityType;
-  // enum entityTypeEnum {  conversation,  turn,  message,  message-selection,  tool-event,  thought-signature,  provider,  assistant,  memory,  world-book,  quick-phrase,  search-service,  network-tts,  mcp-server,  user-preference,  };
+  // enum entityTypeEnum {  conversation,  turn,  message,  message-selection,  tool-event,  thought-signature,  provider,  assistant,  memory,  world-book,  quick-phrase,  search-service,  network-tts,  mcp-server,  instruction-injection,  user-preference,  };
 
   @BuiltValueField(wireName: r'entityId')
   String get entityId;

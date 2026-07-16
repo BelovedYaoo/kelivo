@@ -66,9 +66,7 @@ final class CloudSyncClient implements CloudSyncTransport {
   }
 
   static const _bearerAuthName = 'BearerAuth';
-  static const _syncProtocolHeaders = <String, String>{
-    'X-Kelivo-Sync-Protocol-Version': '2',
-  };
+  static const _syncProtocolVersion = '2';
 
   final String baseUrl;
   final Dio _dio;
@@ -162,8 +160,8 @@ final class CloudSyncClient implements CloudSyncTransport {
         (builder) => builder.mutations.replace(generated),
       );
       final response = await _client.getSyncApi().pushSyncChanges(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncPushRequest: request,
-        headers: _syncProtocolHeaders,
       );
       final data = _requireResponseData(response.data?.data);
       return List<CloudSyncMutationResult>.unmodifiable(
@@ -182,8 +180,8 @@ final class CloudSyncClient implements CloudSyncTransport {
           ..limit = limit,
       );
       final response = await _client.getSyncApi().pullSyncChanges(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncPullRequest: request,
-        headers: _syncProtocolHeaders,
       );
       final data = _requireResponseData(response.data?.data);
       return CloudSyncPullResult(
@@ -210,8 +208,8 @@ final class CloudSyncClient implements CloudSyncTransport {
           ..limit = limit,
       );
       final response = await _client.getSyncApi().pullSyncSnapshot(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncSnapshotRequest: request,
-        headers: _syncProtocolHeaders,
       );
       final data = _requireResponseData(response.data?.data);
       return CloudSyncSnapshotResult(
@@ -222,6 +220,54 @@ final class CloudSyncClient implements CloudSyncTransport {
         syncCursor: data.syncCursor,
         hasMore: data.hasMore,
       );
+    });
+  }
+
+  Future<List<CloudSyncConflict>> listConflicts({
+    CloudSyncConflictState state = CloudSyncConflictState.open,
+    int limit = 100,
+  }) {
+    if (limit < 1 || limit > 100) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      );
+    }
+    return _guard(() async {
+      final request = api.ListSyncConflictsRequest(
+        (builder) => builder
+          ..state = _toConflictListState(state)
+          ..limit = limit,
+      );
+      final response = await _client.getSyncApi().listSyncConflicts(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
+        listSyncConflictsRequest: request,
+      );
+      final data = _requireResponseData(response.data?.data);
+      return List<CloudSyncConflict>.unmodifiable(
+        data.conflicts.map(_fromConflict),
+      );
+    });
+  }
+
+  Future<CloudSyncConflict> resolveConflict(String conflictId) {
+    final normalizedId = conflictId.trim();
+    if (normalizedId.isEmpty) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      );
+    }
+    return _guard(() async {
+      final request = api.ResolveSyncConflictRequest(
+        (builder) => builder.conflictId = normalizedId,
+      );
+      final response = await _client.getSyncApi().resolveSyncConflict(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
+        resolveSyncConflictRequest: request,
+      );
+      final data = _requireResponseData(response.data?.data);
+      return _fromConflict(data.conflict);
     });
   }
 
@@ -555,7 +601,11 @@ api.SyncMutation _toGeneratedMutation(CloudSyncOutboxMutation mutation) {
 }
 
 CloudSyncMutationResult _fromMutationResult(api.SyncMutationResult result) {
-  final value = result.oneOf.value;
+  final values = result.anyOf.values.values.whereType<Object>().toList();
+  if (values.length != 1) {
+    throw const FormatException('mutation 结果类型不唯一');
+  }
+  final value = values.single;
   if (value is api.SyncAppliedMutationResult) {
     return CloudSyncMutationResult(
       mutationId: value.mutationId,
@@ -574,6 +624,18 @@ CloudSyncMutationResult _fromMutationResult(api.SyncMutationResult result) {
       reason: _conflictReason(value.reason),
     );
   }
+  if (value is api.SyncFieldConflictMutationResult) {
+    return CloudSyncMutationResult(
+      mutationId: value.mutationId,
+      status: CloudSyncMutationStatus.conflict,
+      retryable: false,
+      currentRevision: value.currentRevision,
+      reason: 'field-conflict',
+      conflictId: value.conflictId,
+      conflictingPaths: List<String>.unmodifiable(value.conflictingPaths),
+      changeSeq: value.changeSeq,
+    );
+  }
   if (value is api.SyncRejectedMutationResult) {
     return CloudSyncMutationResult(
       mutationId: value.mutationId,
@@ -590,6 +652,57 @@ CloudSyncMutationResult _fromMutationResult(api.SyncMutationResult result) {
     );
   }
   throw const FormatException('未知的 mutation 结果');
+}
+
+CloudSyncConflict _fromConflict(api.SyncConflict conflict) {
+  return CloudSyncConflict(
+    conflictId: conflict.conflictId,
+    mutationId: conflict.mutationId,
+    entityType: _fromEntityType(conflict.entityType),
+    entityId: conflict.entityId,
+    baseRevision: conflict.details.baseRevision,
+    fields: conflict.details.fields
+        .map(
+          (field) => CloudSyncConflictField(
+            path: field.path,
+            current: _fromConflictFieldState(field.current),
+            desired: _fromConflictFieldState(field.desired),
+          ),
+        )
+        .toList(growable: false),
+    state: _fromConflictState(conflict.state),
+    createdAt: conflict.createdAt,
+    resolvedAt: conflict.resolvedAt,
+  );
+}
+
+CloudSyncConflictFieldState _fromConflictFieldState(
+  api.SyncConflictDetailsFieldsInnerCurrent state,
+) {
+  return CloudSyncConflictFieldState(
+    exists: state.exists,
+    value: state.exists ? copyCloudSyncJsonValue(state.value?.value) : null,
+  );
+}
+
+CloudSyncConflictState _fromConflictState(api.SyncConflictStateEnum state) {
+  if (state == api.SyncConflictStateEnum.open) {
+    return CloudSyncConflictState.open;
+  }
+  if (state == api.SyncConflictStateEnum.resolved) {
+    return CloudSyncConflictState.resolved;
+  }
+  throw const FormatException('未知的同步冲突状态');
+}
+
+api.ListSyncConflictsRequestStateEnum _toConflictListState(
+  CloudSyncConflictState state,
+) {
+  return switch (state) {
+    CloudSyncConflictState.open => api.ListSyncConflictsRequestStateEnum.open,
+    CloudSyncConflictState.resolved =>
+      api.ListSyncConflictsRequestStateEnum.resolved,
+  };
 }
 
 CloudSyncChange _fromChange(api.SyncChange change) {

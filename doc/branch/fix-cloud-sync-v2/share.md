@@ -13,3 +13,4 @@
 - 已完成：Chat Adapter 覆盖 `message-selection`、`tool-event`、`thought-signature` 三类 v2 实体；稳定 identity/parent、严格 Payload、专用 `FromSync` 写入及墓碑清理均已闭环，空工具事件保留实体语义。
 - Chat v2 验证：新增目标测试 6 项、既有 ChatService 回归测试 26 项及定向静态分析均通过；批处理明确留到后续切片。
 - 已完成：`instruction-injection` 补入 Flutter 同步实体枚举与支持集合，所有枚举/支持集合一致性测试通过。
+- 已完成：Dart OpenAPI 客户端按服务端 v2 契约重新生成；手写传输层适配强制协议版本与 `AnyOf` mutation 结果，并补齐字段冲突列表、详情和解决接口。字段状态契约已改为生成器稳定支持的单对象结构；5 项相关测试与定向静态分析通过。

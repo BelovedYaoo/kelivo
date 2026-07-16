@@ -90,6 +90,8 @@ enum CloudSyncPatchOperation { add, replace, remove }
 
 enum CloudSyncMutationStatus { applied, conflict, rejected, retry }
 
+enum CloudSyncConflictState { open, resolved }
+
 enum CloudSyncChangeOperation { upsert, delete }
 
 enum CloudSyncAttachmentKind { image, file }
@@ -1079,6 +1081,8 @@ final class CloudSyncMutationResult {
     this.changeSeq,
     this.currentRevision,
     this.reason,
+    this.conflictId,
+    this.conflictingPaths = const <String>[],
     this.errorCode,
   });
 
@@ -1089,7 +1093,70 @@ final class CloudSyncMutationResult {
   final int? changeSeq;
   final int? currentRevision;
   final String? reason;
+  final String? conflictId;
+  final List<String> conflictingPaths;
   final String? errorCode;
+}
+
+final class CloudSyncConflictFieldState {
+  CloudSyncConflictFieldState({required this.exists, Object? value})
+    : value = exists ? copyCloudSyncJsonValue(value) : null {
+    if (!exists && value != null) {
+      throw const FormatException('不存在的冲突字段不能携带值');
+    }
+  }
+
+  final bool exists;
+  final Object? value;
+}
+
+final class CloudSyncConflictField {
+  CloudSyncConflictField({
+    required String path,
+    required this.current,
+    required this.desired,
+  }) : path = _validatedPatchPath(path);
+
+  final String path;
+  final CloudSyncConflictFieldState current;
+  final CloudSyncConflictFieldState desired;
+}
+
+final class CloudSyncConflict {
+  CloudSyncConflict({
+    required String conflictId,
+    required String mutationId,
+    required this.entityType,
+    required String entityId,
+    required this.baseRevision,
+    required List<CloudSyncConflictField> fields,
+    required this.state,
+    required DateTime createdAt,
+    required DateTime? resolvedAt,
+  }) : conflictId = _validatedId(conflictId, 'conflictId'),
+       mutationId = _validatedId(mutationId, 'mutationId'),
+       entityId = _validatedId(entityId, 'entityId'),
+       fields = List<CloudSyncConflictField>.unmodifiable(fields),
+       createdAt = createdAt.toUtc(),
+       resolvedAt = resolvedAt?.toUtc() {
+    if (baseRevision < 1 || fields.isEmpty || fields.length > 100) {
+      throw const FormatException('同步冲突详情无效');
+    }
+    if ((state == CloudSyncConflictState.open && resolvedAt != null) ||
+        (state == CloudSyncConflictState.resolved && resolvedAt == null)) {
+      throw const FormatException('同步冲突状态与解决时间不一致');
+    }
+  }
+
+  final String conflictId;
+  final String mutationId;
+  final CloudSyncEntityType entityType;
+  final String entityId;
+  final int baseRevision;
+  final List<CloudSyncConflictField> fields;
+  final CloudSyncConflictState state;
+  final DateTime createdAt;
+  final DateTime? resolvedAt;
 }
 
 final class CloudSyncRecord {

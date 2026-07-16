@@ -55,6 +55,9 @@ export 'package:kelivo_sync_api_client/src/model/list_attachment_info_response.d
 export 'package:kelivo_sync_api_client/src/model/list_device_sessions_data.dart';
 export 'package:kelivo_sync_api_client/src/model/list_device_sessions_request.dart';
 export 'package:kelivo_sync_api_client/src/model/list_device_sessions_response.dart';
+export 'package:kelivo_sync_api_client/src/model/list_sync_conflicts_request.dart';
+export 'package:kelivo_sync_api_client/src/model/list_sync_conflicts_response.dart';
+export 'package:kelivo_sync_api_client/src/model/list_sync_conflicts_response_data.dart';
 export 'package:kelivo_sync_api_client/src/model/prepare_attachment_upload_data.dart';
 export 'package:kelivo_sync_api_client/src/model/prepare_attachment_upload_request.dart';
 export 'package:kelivo_sync_api_client/src/model/prepare_attachment_upload_response.dart';
@@ -64,6 +67,9 @@ export 'package:kelivo_sync_api_client/src/model/push_sync_changes_response.dart
 export 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_data.dart';
 export 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_request.dart';
 export 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_response.dart';
+export 'package:kelivo_sync_api_client/src/model/resolve_sync_conflict_request.dart';
+export 'package:kelivo_sync_api_client/src/model/resolve_sync_conflict_response.dart';
+export 'package:kelivo_sync_api_client/src/model/resolve_sync_conflict_response_data.dart';
 export 'package:kelivo_sync_api_client/src/model/revoke_admin_device_data.dart';
 export 'package:kelivo_sync_api_client/src/model/revoke_admin_device_request.dart';
 export 'package:kelivo_sync_api_client/src/model/revoke_admin_device_response.dart';
@@ -72,11 +78,16 @@ export 'package:kelivo_sync_api_client/src/model/revoke_device_session_request.d
 export 'package:kelivo_sync_api_client/src/model/revoke_device_session_response.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_applied_mutation_result.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_change.dart';
+export 'package:kelivo_sync_api_client/src/model/sync_conflict.dart';
+export 'package:kelivo_sync_api_client/src/model/sync_conflict_details.dart';
+export 'package:kelivo_sync_api_client/src/model/sync_conflict_details_fields_inner.dart';
+export 'package:kelivo_sync_api_client/src/model/sync_conflict_details_fields_inner_current.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_conflict_mutation_result.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_create_mutation.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_delete_change.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_delete_mutation.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_entity_type.dart';
+export 'package:kelivo_sync_api_client/src/model/sync_field_conflict_mutation_result.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_mutation.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_mutation_result.dart';
 export 'package:kelivo_sync_api_client/src/model/sync_patch_operation.dart';
