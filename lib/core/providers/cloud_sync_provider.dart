@@ -8,6 +8,7 @@ import '../services/chat/chat_service.dart';
 import '../services/sync/chat_sync_adapter.dart';
 import '../services/sync/cloud_attachment_sync_service.dart';
 import '../services/sync/cloud_sync_client.dart';
+import '../services/sync/cloud_sync_conflict_resolver.dart';
 import '../services/sync/cloud_sync_coordinator.dart';
 import '../services/sync/cloud_sync_mutation_planner.dart';
 import '../services/sync/cloud_sync_store.dart';
@@ -31,6 +32,7 @@ enum CloudSyncProviderStatus {
   signingOut,
   idle,
   syncing,
+  needsAttention,
   paused,
   error,
 }
@@ -77,14 +79,19 @@ final class CloudSyncProvider extends ChangeNotifier
   List<CloudSyncDeviceSession> _devices = const <CloudSyncDeviceSession>[];
   CloudSyncClient? _client;
   CloudSyncCoordinator? _coordinator;
+  CloudSyncConflictResolver? _conflictResolver;
   CloudSyncMutationPlanner? _mutationPlanner;
   Future<void>? _initialization;
   Future<bool>? _activeSync;
+  Future<bool>? _activeConflictRefresh;
+  Future<bool>? _activeConflictResolution;
   Timer? _timer;
   String? _lastBaseUrl;
   bool _ready = false;
   bool _paused = false;
   bool _devicesLoading = false;
+  bool _conflictsLoading = false;
+  bool _conflictListTruncated = false;
   bool _foreground = true;
   bool _observingLifecycle = false;
   bool _disposed = false;
@@ -93,6 +100,10 @@ final class CloudSyncProvider extends ChangeNotifier
   bool _storeCloseScheduled = false;
   int _sessionEpoch = 0;
   String? _startupConfigRescanGeneration;
+  List<CloudSyncConflict> _conflicts = const <CloudSyncConflict>[];
+  CloudSyncException? _conflictError;
+  CloudSyncConflictResolutionFailureReason? _conflictResolutionFailure;
+  String? _resolvingConflictId;
 
   CloudSyncProviderStatus get status => _status;
   CloudSyncAccountSession? get session => _session;
@@ -106,6 +117,14 @@ final class CloudSyncProvider extends ChangeNotifier
   bool get signedIn => _session != null;
   bool get paused => _paused;
   bool get devicesLoading => _devicesLoading;
+  List<CloudSyncConflict> get conflicts =>
+      List<CloudSyncConflict>.unmodifiable(_conflicts);
+  CloudSyncException? get conflictError => _conflictError;
+  CloudSyncConflictResolutionFailureReason? get conflictResolutionFailure =>
+      _conflictResolutionFailure;
+  bool get conflictsLoading => _conflictsLoading;
+  bool get conflictListTruncated => _conflictListTruncated;
+  String? get resolvingConflictId => _resolvingConflictId;
   bool get _sessionMutationInProgress => _sessionMutation != null;
 
   Future<void> initialize() {
@@ -156,7 +175,9 @@ final class CloudSyncProvider extends ChangeNotifier
       _setStatus(
         _paused ? CloudSyncProviderStatus.paused : CloudSyncProviderStatus.idle,
       );
-      if (!_paused) {
+      if (_paused) {
+        unawaited(refreshConflicts());
+      } else {
         _startAutomaticSync();
         unawaited(syncNow());
       }
@@ -193,6 +214,11 @@ final class CloudSyncProvider extends ChangeNotifier
     _lastError = null;
     _deviceError = null;
     _devicesLoading = false;
+    _conflicts = const <CloudSyncConflict>[];
+    _conflictError = null;
+    _conflictResolutionFailure = null;
+    _conflictListTruncated = false;
+    _conflictsLoading = false;
     _setStatus(CloudSyncProviderStatus.signingIn);
     CloudSyncClient? loginClient;
     try {
@@ -266,15 +292,24 @@ final class CloudSyncProvider extends ChangeNotifier
     _setStatus(CloudSyncProviderStatus.signingOut);
 
     final activeSync = _activeSync;
+    final activeConflictRefresh = _activeConflictRefresh;
+    final activeConflictResolution = _activeConflictResolution;
     _sessionEpoch++;
     _stopAutomaticSync();
     _client?.close(force: true);
     _client = null;
     _coordinator = null;
+    _conflictResolver = null;
     _mutationPlanner = null;
     try {
       if (activeSync != null) {
         await activeSync;
+      }
+      if (activeConflictRefresh != null) {
+        await activeConflictRefresh;
+      }
+      if (activeConflictResolution != null) {
+        await activeConflictResolution;
       }
       await _writeJournal.transitionSession(null);
       if (session != null && clearSyncState) {
@@ -307,6 +342,12 @@ final class CloudSyncProvider extends ChangeNotifier
     _lastRun = null;
     _lastError = null;
     _deviceError = null;
+    _conflicts = const <CloudSyncConflict>[];
+    _conflictError = null;
+    _conflictResolutionFailure = null;
+    _conflictListTruncated = false;
+    _conflictsLoading = false;
+    _resolvingConflictId = null;
     _setStatus(CloudSyncProviderStatus.signedOut);
     return true;
   }
@@ -334,15 +375,24 @@ final class CloudSyncProvider extends ChangeNotifier
       _lastError = null;
       if (value) {
         final activeSync = _activeSync;
+        final activeConflictRefresh = _activeConflictRefresh;
+        final activeConflictResolution = _activeConflictResolution;
         _sessionEpoch++;
         _stopAutomaticSync();
         _devicesLoading = false;
         _client?.close(force: true);
         _client = null;
         _coordinator = null;
+        _conflictResolver = null;
         _mutationPlanner = null;
         _setStatus(CloudSyncProviderStatus.paused);
         if (activeSync != null) await activeSync;
+        if (activeConflictRefresh != null) {
+          await activeConflictRefresh;
+        }
+        if (activeConflictResolution != null) {
+          await activeConflictResolution;
+        }
         if (_disposed || !identical(_session, session)) return false;
         _connect(session);
         _setStatus(CloudSyncProviderStatus.paused);
@@ -366,6 +416,16 @@ final class CloudSyncProvider extends ChangeNotifier
   }
 
   Future<bool> syncNow() {
+    if (_activeConflictResolution != null) {
+      return Future<bool>.value(false);
+    }
+    final activeConflictRefresh = _activeConflictRefresh;
+    if (activeConflictRefresh != null) {
+      return activeConflictRefresh.then((refreshed) {
+        if (!refreshed || _disposed) return false;
+        return syncNow();
+      });
+    }
     final active = _activeSync;
     if (active != null) return active;
 
@@ -381,10 +441,13 @@ final class CloudSyncProvider extends ChangeNotifier
   Future<bool> _runSync() async {
     await initialize();
     final coordinator = _coordinator;
+    final client = _client;
+    final session = _session;
     if (_disposed ||
         !_ready ||
         coordinator == null ||
-        _session == null ||
+        client == null ||
+        session == null ||
         _paused) {
       return false;
     }
@@ -401,9 +464,19 @@ final class CloudSyncProvider extends ChangeNotifier
       );
       final recovery = await _writeJournal.recover();
       if (epoch != _sessionEpoch || _disposed) return false;
-      if (configRescanGeneration != null &&
-          result.conflictCount == 0 &&
-          recovery.deferredCount == 0) {
+      final conflicts = await client.listConflicts(
+        state: CloudSyncConflictState.open,
+        limit: 100,
+      );
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _conflicts = List<CloudSyncConflict>.unmodifiable(conflicts);
+      _conflictListTruncated = conflicts.length >= 100;
+      _conflictError = null;
+      final complete =
+          recovery.deferredCount == 0 &&
+          _store.outboxCount(session) == 0 &&
+          conflicts.isEmpty;
+      if (configRescanGeneration != null && complete) {
         await _store.consumeConfigRescanGeneration(configRescanGeneration);
         if (epoch != _sessionEpoch || _disposed) return false;
         if (_startupConfigRescanGeneration == configRescanGeneration) {
@@ -413,9 +486,13 @@ final class CloudSyncProvider extends ChangeNotifier
       _lastRun = result.copyWith(deferredWriteCount: recovery.deferredCount);
       _lastError = null;
       _setStatus(
-        _paused ? CloudSyncProviderStatus.paused : CloudSyncProviderStatus.idle,
+        _paused
+            ? CloudSyncProviderStatus.paused
+            : complete
+            ? CloudSyncProviderStatus.idle
+            : CloudSyncProviderStatus.needsAttention,
       );
-      return true;
+      return complete;
     } catch (error, stackTrace) {
       if (epoch != _sessionEpoch || _disposed) return false;
       _recordFailure(
@@ -426,6 +503,144 @@ final class CloudSyncProvider extends ChangeNotifier
       );
       return false;
     }
+  }
+
+  Future<bool> refreshConflicts() {
+    final active = _activeConflictRefresh;
+    if (active != null) return active;
+    final activeSync = _activeSync;
+    if (activeSync != null) return activeSync;
+    final activeResolution = _activeConflictResolution;
+    if (activeResolution != null) return activeResolution;
+
+    final run = _runRefreshConflicts();
+    _activeConflictRefresh = run;
+    return run.whenComplete(() {
+      if (identical(_activeConflictRefresh, run)) {
+        _activeConflictRefresh = null;
+      }
+    });
+  }
+
+  Future<bool> _runRefreshConflicts() async {
+    await initialize();
+    final client = _client;
+    if (client == null || _session == null || _disposed) return false;
+    if (_activeConflictResolution != null) return false;
+    final epoch = _sessionEpoch;
+    _conflictsLoading = true;
+    _conflictError = null;
+    _notify();
+    try {
+      await _refreshConflicts(client, epoch);
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _updateAttentionStatus();
+      return true;
+    } catch (error, stackTrace) {
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _conflictError = _normalizeFailure(error);
+      debugPrint('读取同步冲突失败：$error\n$stackTrace');
+      return false;
+    } finally {
+      if (epoch == _sessionEpoch && !_disposed) {
+        _conflictsLoading = false;
+        _notify();
+      }
+    }
+  }
+
+  Future<bool> resolveConflict(
+    CloudSyncConflict conflict,
+    Set<String> localPaths,
+  ) {
+    if (_activeConflictRefresh != null) {
+      return Future<bool>.value(false);
+    }
+    final active = _activeConflictResolution;
+    if (active != null) return active;
+
+    final run = _runConflictResolution(conflict, localPaths);
+    _activeConflictResolution = run;
+    return run.whenComplete(() {
+      if (identical(_activeConflictResolution, run)) {
+        _activeConflictResolution = null;
+      }
+    });
+  }
+
+  Future<bool> _runConflictResolution(
+    CloudSyncConflict conflict,
+    Set<String> localPaths,
+  ) async {
+    await initialize();
+    final activeSync = _activeSync;
+    if (activeSync != null) {
+      await activeSync;
+    }
+    final resolver = _conflictResolver;
+    final client = _client;
+    if (_disposed ||
+        _paused ||
+        _session == null ||
+        resolver == null ||
+        client == null) {
+      return false;
+    }
+    final epoch = _sessionEpoch;
+    _resolvingConflictId = conflict.conflictId;
+    _conflictResolutionFailure = null;
+    _conflictError = null;
+    _notify();
+    try {
+      await resolver.resolve(conflict, Set<String>.unmodifiable(localPaths));
+      if (epoch != _sessionEpoch || _disposed) return false;
+      await _refreshConflicts(client, epoch);
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _updateAttentionStatus();
+      return true;
+    } on CloudSyncConflictResolutionException catch (error, stackTrace) {
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _conflictResolutionFailure = error.reason;
+      debugPrint('解决同步冲突失败：$error\n$stackTrace');
+      return false;
+    } catch (error, stackTrace) {
+      if (epoch != _sessionEpoch || _disposed) return false;
+      _conflictError = _normalizeFailure(error);
+      debugPrint('解决同步冲突失败：$error\n$stackTrace');
+      return false;
+    } finally {
+      if (epoch == _sessionEpoch && !_disposed) {
+        _resolvingConflictId = null;
+        _notify();
+      }
+    }
+  }
+
+  Future<void> _refreshConflicts(CloudSyncClient client, int epoch) async {
+    final conflicts = await client.listConflicts(
+      state: CloudSyncConflictState.open,
+      limit: 100,
+    );
+    if (epoch != _sessionEpoch || _disposed) return;
+    _conflicts = List<CloudSyncConflict>.unmodifiable(conflicts);
+    _conflictListTruncated = conflicts.length >= 100;
+    _conflictError = null;
+  }
+
+  void _updateAttentionStatus() {
+    final session = _session;
+    if (session == null || _disposed) return;
+    if (_paused) {
+      _status = CloudSyncProviderStatus.paused;
+      return;
+    }
+    final hasDeferredWrites = (_lastRun?.deferredWriteCount ?? 0) > 0;
+    _status =
+        _conflicts.isNotEmpty ||
+            _store.outboxCount(session) > 0 ||
+            hasDeferredWrites
+        ? CloudSyncProviderStatus.needsAttention
+        : CloudSyncProviderStatus.idle;
   }
 
   Future<bool> refreshDevices() async {
@@ -476,15 +691,22 @@ final class CloudSyncProvider extends ChangeNotifier
   }
 
   void clearError() {
-    if (_lastError == null && _deviceError == null) return;
+    if (_lastError == null &&
+        _deviceError == null &&
+        _conflictError == null &&
+        _conflictResolutionFailure == null) {
+      return;
+    }
     _lastError = null;
     _deviceError = null;
+    _conflictError = null;
+    _conflictResolutionFailure = null;
     if (_status == CloudSyncProviderStatus.error) {
-      _status = _session == null
-          ? CloudSyncProviderStatus.signedOut
-          : _paused
-          ? CloudSyncProviderStatus.paused
-          : CloudSyncProviderStatus.idle;
+      if (_session == null) {
+        _status = CloudSyncProviderStatus.signedOut;
+      } else {
+        _updateAttentionStatus();
+      }
     }
     _notify();
   }
@@ -511,13 +733,30 @@ final class CloudSyncProvider extends ChangeNotifier
       adapters: adapters,
     );
     _mutationPlanner = mutationPlanner;
-    _coordinator = CloudSyncCoordinator(
+    final coordinator = CloudSyncCoordinator(
       session,
       nextClient,
       _store,
       _writeJournal,
       adapters: adapters,
       mutationPlanner: mutationPlanner,
+    );
+    _coordinator = coordinator;
+    _conflictResolver = CloudSyncConflictResolver(
+      session: session,
+      client: nextClient,
+      store: _store,
+      writeJournal: _writeJournal,
+      adapters: adapters,
+      synchronize: () async {
+        final result = await coordinator.synchronize();
+        final recovery = await _writeJournal.recover();
+        if (!_disposed && identical(_session, session)) {
+          _lastRun = result.copyWith(
+            deferredWriteCount: recovery.deferredCount,
+          );
+        }
+      },
     );
     if (!_journalExporterBound) {
       _writeJournal.bindExporter(_captureLocalIntents);
@@ -698,6 +937,16 @@ final class CloudSyncProvider extends ChangeNotifier
       await _activeSync;
     } catch (error, stackTrace) {
       debugPrint('关闭同步存储前等待同步失败：$error\n$stackTrace');
+    }
+    try {
+      await _activeConflictRefresh;
+    } catch (error, stackTrace) {
+      debugPrint('关闭同步存储前等待冲突刷新失败：$error\n$stackTrace');
+    }
+    try {
+      await _activeConflictResolution;
+    } catch (error, stackTrace) {
+      debugPrint('关闭同步存储前等待冲突处理失败：$error\n$stackTrace');
     }
     await _writeJournal.close();
     await _store.close();

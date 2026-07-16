@@ -924,6 +924,7 @@ String cloudSyncStatusText(
     CloudSyncProviderStatus.signingOut => l10n.cloudSyncStatusSigningOut,
     CloudSyncProviderStatus.idle => l10n.cloudSyncStatusIdle,
     CloudSyncProviderStatus.syncing => l10n.cloudSyncStatusSyncing,
+    CloudSyncProviderStatus.needsAttention => l10n.cloudSyncStatusError,
     CloudSyncProviderStatus.paused => l10n.cloudSyncStatusPaused,
     CloudSyncProviderStatus.error => l10n.cloudSyncStatusError,
   };
