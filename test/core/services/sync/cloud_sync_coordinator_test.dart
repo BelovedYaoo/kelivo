@@ -95,6 +95,85 @@ void main() {
     expect(retained.blockedAt, isNotNull);
   });
 
+  test('稳态同步不再全量导出本地实体', () async {
+    final session = _session();
+    await store.savePullCursor(session, 'cursor-0');
+    final adapter = _CountingAdapter(
+      entityType: 'message',
+      entityId: 'message-1',
+    );
+    final transport = _ApplyingTransport();
+    final coordinator = CloudSyncCoordinator(
+      session,
+      transport,
+      store,
+      writeJournal,
+      adapters: <SyncEntityAdapter>[adapter],
+    );
+
+    await coordinator.synchronize();
+
+    expect(adapter.fullExportCount, 0);
+    expect(transport.pushedEntityTypes, isEmpty);
+  });
+
+  test('导入重扫只导出指定配置域并在拉取后推送', () async {
+    final session = _session();
+    await store.savePullCursor(session, 'cursor-0');
+    final configAdapter = _CountingAdapter(
+      entityType: 'assistant',
+      entityId: 'assistant-1',
+    );
+    final chatAdapter = _CountingAdapter(
+      entityType: 'message',
+      entityId: 'message-1',
+    );
+    final transport = _ApplyingTransport();
+    final coordinator = CloudSyncCoordinator(
+      session,
+      transport,
+      store,
+      writeJournal,
+      adapters: <SyncEntityAdapter>[configAdapter, chatAdapter],
+    );
+
+    await coordinator.synchronize(
+      rescanEntityTypes: const <String>{'assistant'},
+    );
+
+    expect(configAdapter.fullExportCount, 1);
+    expect(chatAdapter.fullExportCount, 0);
+    expect(transport.pushedEntityTypes, <String>['assistant']);
+    expect(
+      transport.events.indexOf('pull'),
+      lessThan(transport.events.indexOf('push')),
+    );
+  });
+
+  test('导入重扫拒绝未注册的实体类型且不发起网络请求', () async {
+    final session = _session();
+    await store.savePullCursor(session, 'cursor-0');
+    final transport = _ApplyingTransport();
+    final coordinator = CloudSyncCoordinator(
+      session,
+      transport,
+      store,
+      writeJournal,
+      adapters: <SyncEntityAdapter>[
+        _CountingAdapter(entityType: 'assistant', entityId: 'assistant-1'),
+      ],
+    );
+
+    expect(
+      () => coordinator.synchronize(
+        rescanEntityTypes: const <String>{'unknown-entity'},
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(transport.events, isEmpty);
+  });
+
   test('首次快照记录不会覆盖本地修改并按远端版本重建更新', () async {
     final session = _session();
     final key = const SyncEntityKey(
@@ -501,6 +580,18 @@ void main() {
     });
     await store.savePullCursor(session, 'cursor-0');
     await store.saveShadow(session, _messageShadow(value: 'server-old'));
+    await store.enqueueOutbox(
+      session,
+      CloudSyncOutboxMutation.update(
+        mutationId: 'field-conflict-source',
+        entityType: CloudSyncEntityType.message,
+        entityId: key.entityId,
+        baseRevision: 1,
+        patch: <CloudSyncPatch>[
+          CloudSyncPatch.replace('/value', 'local-desired'),
+        ],
+      ),
+    );
     var mutationIndex = 0;
     final coordinator = CloudSyncCoordinator(
       session,
@@ -550,6 +641,18 @@ void main() {
     });
     await store.savePullCursor(session, 'cursor-0');
     await store.saveShadow(session, _messageShadow(value: 'server-old'));
+    await store.enqueueOutbox(
+      session,
+      CloudSyncOutboxMutation.update(
+        mutationId: 'structural-conflict-source',
+        entityType: CloudSyncEntityType.message,
+        entityId: key.entityId,
+        baseRevision: 1,
+        patch: <CloudSyncPatch>[
+          CloudSyncPatch.replace('/value', 'local-desired'),
+        ],
+      ),
+    );
     var mutationIndex = 0;
     final coordinator = CloudSyncCoordinator(
       session,
@@ -814,6 +917,101 @@ final class _RejectingTransport implements CloudSyncTransport {
   }) {
     throw StateError('已有游标时不应请求全量快照');
   }
+}
+
+final class _ApplyingTransport implements CloudSyncTransport {
+  final List<String> events = <String>[];
+  final List<String> pushedEntityTypes = <String>[];
+  int _changeSeq = 0;
+
+  @override
+  Future<CloudSyncPullResult> pull({String? cursor, int limit = 100}) async {
+    events.add('pull');
+    return CloudSyncPullResult(
+      changes: const <CloudSyncChange>[],
+      nextCursor: 'cursor-${events.length}',
+      hasMore: false,
+      resetRequired: false,
+    );
+  }
+
+  @override
+  Future<List<CloudSyncMutationResult>> push(
+    List<CloudSyncOutboxMutation> mutations,
+  ) async {
+    events.add('push');
+    pushedEntityTypes.addAll(
+      mutations.map((mutation) => mutation.entityType.wireName),
+    );
+    return <CloudSyncMutationResult>[
+      for (final mutation in mutations)
+        CloudSyncMutationResult(
+          mutationId: mutation.mutationId,
+          status: CloudSyncMutationStatus.applied,
+          retryable: false,
+          revision: 1,
+          changeSeq: ++_changeSeq,
+        ),
+    ];
+  }
+
+  @override
+  Future<CloudSyncSnapshotResult> snapshot({
+    String? snapshotCursor,
+    int limit = 100,
+  }) {
+    throw StateError('已有游标时不应请求全量快照');
+  }
+}
+
+final class _CountingAdapter implements SyncEntityAdapter {
+  _CountingAdapter({required this.entityType, required this.entityId});
+
+  final String entityType;
+  final String entityId;
+  int fullExportCount = 0;
+
+  LocalSyncEntity get _entity => LocalSyncEntity(
+    entityType: entityType,
+    entityId: entityId,
+    payload: <String, Object?>{'name': entityId},
+  );
+
+  @override
+  int get applyPriority => 0;
+
+  @override
+  Set<String> get entityTypes => <String>{entityType};
+
+  @override
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) => apply();
+
+  @override
+  Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key) async {
+    return key == _entity.key ? _entity : null;
+  }
+
+  @override
+  Future<Map<SyncEntityKey, LocalSyncEntity>> exportLocalEntitiesForKeys(
+    Set<SyncEntityKey> keys,
+  ) async {
+    final entity = _entity;
+    return keys.contains(entity.key)
+        ? <SyncEntityKey, LocalSyncEntity>{entity.key: entity}
+        : <SyncEntityKey, LocalSyncEntity>{};
+  }
+
+  @override
+  Future<List<LocalSyncEntity>> exportLocalEntities() async {
+    fullExportCount++;
+    return <LocalSyncEntity>[_entity];
+  }
+
+  @override
+  Future<void> applyRemoteDelete(SyncEntityKey key) async {}
+
+  @override
+  Future<void> applyRemoteUpsert(RemoteSyncEntity entity) async {}
 }
 
 final class _MessageAdapter implements SyncEntityAdapter {

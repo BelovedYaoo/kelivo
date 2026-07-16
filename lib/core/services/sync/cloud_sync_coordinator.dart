@@ -75,11 +75,25 @@ final class CloudSyncCoordinator {
   late final CloudSyncMutationPlanner _mutationPlanner;
   Future<CloudSyncRunSummary>? _activeRun;
 
-  Future<CloudSyncRunSummary> synchronize() {
+  Future<CloudSyncRunSummary> synchronize({
+    Set<String> rescanEntityTypes = const <String>{},
+  }) {
     final active = _activeRun;
-    if (active != null) return active;
+    if (active != null) {
+      if (rescanEntityTypes.isNotEmpty) {
+        throw StateError('同步运行期间不能追加配置重扫');
+      }
+      return active;
+    }
 
-    final run = _synchronize();
+    final requestedRescanTypes = Set<String>.unmodifiable(rescanEntityTypes);
+    for (final entityType in requestedRescanTypes) {
+      if (!_adapterByType.containsKey(entityType)) {
+        throw StateError('配置重扫包含未注册的实体类型：$entityType');
+      }
+    }
+
+    final run = _synchronize(requestedRescanTypes);
     _activeRun = run;
     return run.whenComplete(() {
       if (identical(_activeRun, run)) {
@@ -88,22 +102,27 @@ final class CloudSyncCoordinator {
     });
   }
 
-  Future<CloudSyncRunSummary> _synchronize() async {
+  Future<CloudSyncRunSummary> _synchronize(
+    Set<String> rescanEntityTypes,
+  ) async {
     var uploadedCount = 0;
     var downloadedCount = 0;
     var conflictCount = 0;
 
     var cursorState = _store.cursorState(_session);
-    if (cursorState.pullCursor == null) {
+    final isInitialSync = cursorState.pullCursor == null;
+    if (isInitialSync) {
       downloadedCount += await _pullSnapshot();
-    } else {
-      await _scanLocalChanges();
+    } else if (rescanEntityTypes.isNotEmpty) {
+      await _scanLocalChanges(entityTypes: rescanEntityTypes);
     }
 
     cursorState = _store.cursorState(_session);
     downloadedCount += await _pullChanges(cursorState.pullCursor);
 
-    await _scanLocalChanges();
+    if (isInitialSync) {
+      await _scanLocalChanges();
+    }
     final pushResult = await _pushPendingChanges();
     uploadedCount += pushResult.uploadedCount;
     conflictCount += pushResult.conflictCount;
@@ -118,7 +137,6 @@ final class CloudSyncCoordinator {
     final failure = pushResult.failure;
     if (failure != null) throw failure;
 
-    await _scanLocalChanges();
     cursorState = _store.cursorState(_session);
     downloadedCount += await _pullChanges(cursorState.pullCursor);
 
@@ -130,13 +148,22 @@ final class CloudSyncCoordinator {
     );
   }
 
-  Future<Map<SyncEntityKey, LocalSyncEntity>> _exportLocalEntities() async {
+  Future<Map<SyncEntityKey, LocalSyncEntity>> _exportLocalEntities({
+    Set<String>? entityTypes,
+  }) async {
     final result = <SyncEntityKey, LocalSyncEntity>{};
     for (final adapter in _adapters) {
+      if (entityTypes != null &&
+          !adapter.entityTypes.any(entityTypes.contains)) {
+        continue;
+      }
       final entities = await adapter.exportLocalEntities();
       for (final entity in entities) {
         if (!adapter.entityTypes.contains(entity.entityType)) {
           throw StateError('适配器导出了未声明的实体类型：${entity.entityType}');
+        }
+        if (entityTypes != null && !entityTypes.contains(entity.entityType)) {
+          continue;
         }
         final previous = result[entity.key];
         if (previous != null) {
@@ -148,14 +175,16 @@ final class CloudSyncCoordinator {
     return result;
   }
 
-  Future<void> _scanLocalChanges() async {
-    final localByKey = await _exportLocalEntities();
+  Future<void> _scanLocalChanges({Set<String>? entityTypes}) async {
+    final localByKey = await _exportLocalEntities(entityTypes: entityTypes);
     final shadows = <SyncEntityKey, CloudSyncShadow>{
       for (final shadow in _store.shadows(_session))
-        SyncEntityKey(
-          entityType: shadow.entityType.wireName,
-          entityId: shadow.entityId,
-        ): shadow,
+        if (entityTypes == null ||
+            entityTypes.contains(shadow.entityType.wireName))
+          SyncEntityKey(
+            entityType: shadow.entityType.wireName,
+            entityId: shadow.entityId,
+          ): shadow,
     };
 
     final keys = <SyncEntityKey>{...localByKey.keys, ...shadows.keys}.toList()
@@ -417,8 +446,6 @@ final class CloudSyncCoordinator {
     var appliedCount = 0;
     while (true) {
       final page = await _client.pull(cursor: cursor, limit: _pageSize);
-      // 网络等待期间产生的本地编辑必须先进入 outbox，避免被返回的远端页面覆盖。
-      await _scanLocalChanges();
       if (page.resetRequired) {
         await _store.clearSyncProgress(_session);
         appliedCount += await _pullSnapshot();
