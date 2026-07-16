@@ -696,28 +696,33 @@ class HomeViewModel extends ChangeNotifier {
     );
     if (plan.isEmpty) return;
 
-    for (final id in plan.deletedMessageIds) {
-      _streamController.clearMessageState(id);
-    }
-
+    final selectionUpdates = <String, int?>{};
     for (final groupId in plan.clearedVersionSelectionGroupIds) {
-      _chatController.versionSelections.remove(groupId);
-      await _chatService.clearSelectedVersion(conversation.id, groupId);
+      selectionUpdates[groupId] = null;
     }
     for (final entry in plan.nextVersionSelections.entries) {
-      _chatController.versionSelections[entry.key] = entry.value;
-      await _chatService.setSelectedVersion(
-        conversation.id,
-        entry.key,
-        entry.value,
-      );
+      selectionUpdates[entry.key] = entry.value;
     }
 
     final messagesToDelete = allMessages
         .where((message) => plan.deletedMessageIds.contains(message.id))
         .toList();
-    for (final message in messagesToDelete) {
-      await _chatService.deleteMessage(message.id);
+    await _chatService.deleteMessagesWithSelections(
+      conversationId: conversation.id,
+      messageIds: messagesToDelete.map((message) => message.id),
+      versionSelections: selectionUpdates,
+    );
+
+    for (final id in plan.deletedMessageIds) {
+      _streamController.clearMessageState(id);
+    }
+    for (final entry in selectionUpdates.entries) {
+      final version = entry.value;
+      if (version == null) {
+        _chatController.versionSelections.remove(entry.key);
+      } else {
+        _chatController.versionSelections[entry.key] = version;
+      }
     }
 
     _chatController.reloadMessages();
@@ -731,10 +736,11 @@ class HomeViewModel extends ChangeNotifier {
   }) async {
     if (deletedMessageIds.isEmpty) return;
 
-    final cid = currentConversation?.id;
-    if (cid != null) {
-      await _clearSuggestionsFor(cid);
-    }
+    final conversationId =
+        currentConversation?.id ??
+        (versionsBefore.isEmpty ? null : versionsBefore.first.conversationId);
+    if (conversationId == null) return;
+    await _clearSuggestionsFor(conversationId);
 
     final oldSel =
         versionSelections[gid] ??
@@ -745,37 +751,22 @@ class HomeViewModel extends ChangeNotifier {
       oldSelection: oldSel,
     );
 
-    // Clean up message UI state
+    final messagesToDelete = versionsBefore
+        .where((message) => deletedMessageIds.contains(message.id))
+        .toList();
+    await _chatService.deleteMessagesWithSelections(
+      conversationId: conversationId,
+      messageIds: messagesToDelete.map((message) => message.id),
+      versionSelections: <String, int?>{gid: newSel},
+    );
+
     for (final id in deletedMessageIds) {
       _streamController.clearMessageState(id);
     }
-
-    // Adjust selected version index for this group
     if (newSel == null) {
       _chatController.versionSelections.remove(gid);
     } else {
       _chatController.versionSelections[gid] = newSel;
-    }
-
-    if (currentConversation != null) {
-      try {
-        if (newSel == null) {
-          await _chatService.clearSelectedVersion(currentConversation!.id, gid);
-        } else {
-          await _chatService.setSelectedVersion(
-            currentConversation!.id,
-            gid,
-            newSel,
-          );
-        }
-      } catch (_) {}
-    }
-
-    final messagesToDelete = versionsBefore
-        .where((message) => deletedMessageIds.contains(message.id))
-        .toList();
-    for (final message in messagesToDelete) {
-      await _chatService.deleteMessage(message.id);
     }
 
     // Reload messages

@@ -306,9 +306,6 @@ class ChatboxImporter {
 
     // Prepare chat service for conversation restore.
     if (!chatService.initialized) await chatService.init();
-    if (mode == RestoreMode.overwrite) {
-      await chatService.clearAllData();
-    }
 
     final existingConvs = chatService.getAllConversations();
     final existingConvIds = existingConvs.map((c) => c.id).toSet();
@@ -324,6 +321,10 @@ class ChatboxImporter {
 
     int convCount = 0;
     int msgCount = 0;
+    final pendingWrites =
+        <
+          ({Conversation conversation, List<ChatMessage> messages, bool append})
+        >[];
 
     // `__exported_at` is a good fallback timestamp base when message timestamps are missing.
     final exportedAt =
@@ -610,17 +611,49 @@ class ChatboxImporter {
         );
 
         if (mode == RestoreMode.merge && existingConvIds.contains(tid)) {
-          for (final m in messages) {
-            await chatService.addMessageDirectly(tid, m);
-            msgCount += 1;
-          }
+          pendingWrites.add((
+            conversation: conv,
+            messages: messages,
+            append: true,
+          ));
+          msgCount += messages.length;
         } else {
-          await chatService.restoreConversation(conv, messages);
+          pendingWrites.add((
+            conversation: conv,
+            messages: messages,
+            append: false,
+          ));
           convCount += 1;
           msgCount += messages.length;
         }
       }
     }
+
+    await chatService.runImportBatch<void>(
+      overwrite: mode == RestoreMode.overwrite,
+      conversations: pendingWrites.map((entry) => entry.conversation),
+      messages: pendingWrites.expand((entry) => entry.messages),
+      write: () async {
+        if (mode == RestoreMode.overwrite) {
+          await chatService.clearAllData();
+        }
+        for (final entry in pendingWrites) {
+          if (entry.append) {
+            for (final message in entry.messages) {
+              await chatService.addMessageDirectly(
+                entry.conversation.id,
+                message,
+              );
+            }
+          } else {
+            await chatService.restoreConversation(
+              entry.conversation,
+              entry.messages,
+            );
+          }
+        }
+      },
+    );
 
     if (mode == RestoreMode.overwrite) {
       await prefs.setString(_assistantsKey, jsonEncode(importedAssistants));

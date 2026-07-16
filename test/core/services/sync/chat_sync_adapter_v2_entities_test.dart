@@ -7,12 +7,16 @@ import 'package:path_provider_platform_interface/path_provider_platform_interfac
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/models/chat_message.dart';
+import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/sync/chat_sync_adapter.dart';
+import 'package:Kelivo/core/services/sync/chat_sync_codec.dart';
 import 'package:Kelivo/core/services/sync/cloud_attachment_sync_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 final class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this.path);
@@ -32,6 +36,18 @@ final class _FakePathProviderPlatform extends PathProviderPlatform {
   Future<String?> getTemporaryPath() async => '$path/tmp';
 }
 
+final class _NoFullScanChatService extends ChatService {
+  _NoFullScanChatService() : super(const UntrackedSyncWriteExecutor.forTests());
+
+  int fullScanCount = 0;
+
+  @override
+  List<Conversation> getAllConversations() {
+    fullScanCount++;
+    return super.getAllConversations();
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -49,7 +65,7 @@ void main() {
       tempDirectory.path,
     );
     SharedPreferences.setMockInitialValues(const <String, Object>{});
-    chatService = ChatService();
+    chatService = _NoFullScanChatService();
     await chatService.init();
     store = await CloudSyncStore.open(boxName: 'chat-sync-v2-entities-test');
     client = CloudSyncClient(baseUrl: 'http://127.0.0.1:1');
@@ -208,6 +224,43 @@ void main() {
     );
   });
 
+  test('按 key 导出不扫描会话全量列表', () async {
+    final conversation = await chatService.createConversation(title: 'Chat');
+    final message = await chatService.addMessage(
+      conversationId: conversation.id,
+      role: 'assistant',
+      content: 'answer',
+      turnId: 'turn-targeted',
+      groupId: 'group-targeted',
+      generationStatus: ChatMessage.generationStatusCompleted,
+    );
+    await chatService.setSelectedVersion(conversation.id, 'group-targeted', 0);
+    final indexedService = chatService as _NoFullScanChatService;
+    indexedService.fullScanCount = 0;
+
+    final entities = await adapter.exportLocalEntitiesForKeys(<SyncEntityKey>{
+      SyncEntityKey(
+        entityType: ChatSyncAdapter.conversationType,
+        entityId: conversation.id,
+      ),
+      const SyncEntityKey(
+        entityType: ChatSyncAdapter.turnType,
+        entityId: 'turn-targeted',
+      ),
+      SyncEntityKey(
+        entityType: ChatSyncAdapter.messageType,
+        entityId: message.id,
+      ),
+      const SyncEntityKey(
+        entityType: ChatSyncAdapter.messageSelectionType,
+        entityId: 'group-targeted',
+      ),
+    });
+
+    expect(entities, hasLength(4));
+    expect(indexedService.fullScanCount, 0);
+  });
+
   test('远端三类实体通过专用同步入口恢复', () async {
     final conversation = await chatService.createConversation(title: 'Chat');
     final message = await chatService.addMessage(
@@ -286,6 +339,118 @@ void main() {
       chatService.getGeminiThoughtSignature(message.id),
       'remote-signature',
     );
+  });
+
+  test('远端反序批次只通知一次并按轮次重建顺序', () async {
+    final conversation = Conversation(
+      id: 'remote-batch-conversation',
+      title: 'Remote',
+      createdAt: DateTime.utc(2026, 7, 16, 8),
+      updatedAt: DateTime.utc(2026, 7, 16, 8),
+    );
+    final user = ChatMessage(
+      id: 'remote-batch-user',
+      role: 'user',
+      content: 'question',
+      conversationId: conversation.id,
+      turnId: 'remote-batch-turn',
+      timestamp: DateTime.utc(2026, 7, 16, 8, 1),
+    );
+    final assistant = ChatMessage(
+      id: 'remote-batch-assistant',
+      role: 'assistant',
+      content: 'answer',
+      conversationId: conversation.id,
+      turnId: user.turnId,
+      timestamp: DateTime.utc(2026, 7, 16, 8, 2),
+    );
+    final updatedAt = DateTime.utc(2026, 7, 16, 9);
+    var notificationCount = 0;
+    chatService.addListener(() => notificationCount++);
+
+    await adapter.runRemoteBatch<void>(() async {
+      await adapter.applyRemoteUpsert(
+        RemoteSyncEntity(
+          entityType: ChatSyncAdapter.conversationType,
+          entityId: conversation.id,
+          revision: 1,
+          schemaVersion: 2,
+          payload: ChatSyncCodec.encodeConversation(conversation),
+          updatedAt: updatedAt,
+        ),
+      );
+      for (final message in <ChatMessage>[assistant, user]) {
+        await adapter.applyRemoteUpsert(
+          RemoteSyncEntity(
+            entityType: ChatSyncAdapter.messageType,
+            entityId: message.id,
+            parentId: message.turnId,
+            revision: 1,
+            schemaVersion: 2,
+            payload: ChatSyncCodec.encodeMessage(
+              message,
+              syncedContent: message.content,
+            )!,
+            updatedAt: updatedAt,
+          ),
+        );
+      }
+      await adapter.applyRemoteUpsert(
+        RemoteSyncEntity(
+          entityType: ChatSyncAdapter.turnType,
+          entityId: user.turnId,
+          parentId: conversation.id,
+          revision: 1,
+          schemaVersion: 2,
+          payload: ChatSyncCodec.encodeTurn(
+            ChatSyncTurnRecord(
+              id: user.turnId,
+              conversationId: conversation.id,
+              createdAt: DateTime.utc(2026, 7, 16, 8),
+            ),
+          ),
+          updatedAt: updatedAt,
+        ),
+      );
+    });
+
+    expect(notificationCount, 1);
+    expect(
+      chatService.getMessages(conversation.id).map((message) => message.id),
+      <String>[user.id, assistant.id],
+    );
+  });
+
+  test('远端批次失败仍释放通知边界', () async {
+    final conversation = Conversation(
+      id: 'remote-failed-conversation',
+      title: 'Remote',
+      createdAt: DateTime.utc(2026, 7, 16, 8),
+      updatedAt: DateTime.utc(2026, 7, 16, 8),
+    );
+    var notificationCount = 0;
+    chatService.addListener(() => notificationCount++);
+
+    await expectLater(
+      adapter.runRemoteBatch<void>(() async {
+        await adapter.applyRemoteUpsert(
+          RemoteSyncEntity(
+            entityType: ChatSyncAdapter.conversationType,
+            entityId: conversation.id,
+            revision: 1,
+            schemaVersion: 2,
+            payload: ChatSyncCodec.encodeConversation(conversation),
+            updatedAt: DateTime.utc(2026, 7, 16, 9),
+          ),
+        );
+        throw StateError('模拟远端批次失败');
+      }),
+      throwsStateError,
+    );
+
+    expect(notificationCount, 1);
+    await chatService.renameConversation(conversation.id, 'Recovered');
+    expect(notificationCount, 2);
   });
 
   test('远端墓碑按稳定实体身份清理三类状态', () async {

@@ -919,6 +919,7 @@ class ChatActions {
       isStreaming: false,
       generationStatus: ChatMessage.generationStatusFailed,
     );
+    await _finishReasoningBeforeTerminal(message.id);
     await chatService.updateMessage(
       failed.id,
       content: failed.content,
@@ -927,7 +928,7 @@ class ChatActions {
       generationStatus: ChatMessage.generationStatusFailed,
     );
     if (index != -1) {
-      _messages[index] = failed;
+      _messages[index] = chatService.getMessageById(failed.id) ?? failed;
       onMessagesChanged?.call();
     }
 
@@ -981,6 +982,7 @@ class ChatActions {
       final idx = _messages.indexWhere((m) => m.id == streaming!.id);
       final latestStreaming = idx == -1 ? streaming : _messages[idx];
 
+      await _finishReasoningBeforeTerminal(streaming.id);
       await chatService.updateMessage(
         latestStreaming.id,
         content: latestStreaming.content,
@@ -990,34 +992,17 @@ class ChatActions {
       );
 
       if (idx != -1) {
-        _messages[idx] = latestStreaming.copyWith(
-          isStreaming: false,
-          generationStatus: ChatMessage.generationStatusInterrupted,
-        );
+        _messages[idx] =
+            chatService.getMessageById(latestStreaming.id) ??
+            latestStreaming.copyWith(
+              isStreaming: false,
+              generationStatus: ChatMessage.generationStatusInterrupted,
+            );
         onMessagesChanged?.call();
       }
 
       streamController.removeStreamingNotifier(streaming.id);
       _setConversationLoading(cid, false);
-
-      // Use unified reasoning completion method
-      await streamController.finishReasoningAndPersist(
-        streaming.id,
-        updateReasoningInDb:
-            (
-              String messageId, {
-              String? reasoningText,
-              DateTime? reasoningFinishedAt,
-              String? reasoningSegmentsJson,
-            }) async {
-              await chatService.updateMessage(
-                messageId,
-                reasoningText: reasoningText,
-                reasoningFinishedAt: reasoningFinishedAt,
-                reasoningSegmentsJson: reasoningSegmentsJson,
-              );
-            },
-      );
 
       // If streaming output included inline base64 images, sanitize them even on manual cancel
       onScheduleImageSanitize?.call(
@@ -1413,24 +1398,11 @@ class ChatActions {
       state.totalTokens = state.usage!.totalTokens;
     }
 
-    // Track the _finishStreaming future so _handleStreamDone can await it
-    // if it fires concurrently (stream.onDone can fire while we're still
-    // awaiting async work inside _finishStreaming).
-    final finishFuture = _finishStreaming(state);
-    _finishStreamingFutures[messageId] = finishFuture;
-    await finishFuture;
-    _finishStreamingFutures.remove(messageId);
-
-    // Notify for background notification if needed
-    if (!state.finishHandled) {
-      onStreamFinished?.call();
-    }
-
     // Handle buffered reasoning for non-streaming mode
     if (!state.ctx.streamOutput && state.bufferedReasoning.isNotEmpty) {
       final now = DateTime.now();
       final startAt = state.reasoningStartAt ?? now;
-      await chatService.updateMessage(
+      await chatService.updateMessageSilent(
         messageId,
         reasoningText: state.bufferedReasoning,
         reasoningStartAt: startAt,
@@ -1443,18 +1415,18 @@ class ChatActions {
         ..expanded = !(autoCollapseThinking ?? false);
     }
 
-    await _conversationStreams.remove(conversationId)?.cancel();
+    // 记录终态写入任务，确保并发 onDone 会等待同一次收尾完成。
+    final finishFuture = _finishStreaming(state);
+    _finishStreamingFutures[messageId] = finishFuture;
+    await finishFuture;
+    _finishStreamingFutures.remove(messageId);
 
-    // Ensure reasoning is finished
-    final r = streamController.reasoning[messageId];
-    if (r != null && r.finishedAt == null) {
-      r.finishedAt = DateTime.now();
-      await chatService.updateMessage(
-        messageId,
-        reasoningText: r.text,
-        reasoningFinishedAt: r.finishedAt,
-      );
+    // 按需触发后台完成通知。
+    if (!state.finishHandled) {
+      onStreamFinished?.call();
     }
+
+    await _conversationStreams.remove(conversationId)?.cancel();
   }
 
   /// Finish streaming and persist final state.
@@ -1517,6 +1489,7 @@ class ChatActions {
         await MarkdownMediaSanitizer.replaceInlineBase64Images(
           processedContent,
         );
+    await _finishReasoningBeforeTerminal(messageId);
     await chatService.updateMessage(
       messageId,
       content: sanitizedContent,
@@ -1529,16 +1502,18 @@ class ChatActions {
       generationStatus: ChatMessage.generationStatusCompleted,
     );
 
-    final finalizedMessage = state.ctx.assistantMessage.copyWith(
-      content: sanitizedContent,
-      totalTokens: state.totalTokens,
-      isStreaming: false,
-      promptTokens: finalPromptTokens,
-      completionTokens: finalCompletionTokens,
-      cachedTokens: finalCachedTokens,
-      durationMs: finalDurationMs,
-      generationStatus: ChatMessage.generationStatusCompleted,
-    );
+    final finalizedMessage =
+        chatService.getMessageById(messageId) ??
+        state.ctx.assistantMessage.copyWith(
+          content: sanitizedContent,
+          totalTokens: state.totalTokens,
+          isStreaming: false,
+          promptTokens: finalPromptTokens,
+          completionTokens: finalCompletionTokens,
+          cachedTokens: finalCachedTokens,
+          durationMs: finalDurationMs,
+          generationStatus: ChatMessage.generationStatusCompleted,
+        );
 
     final index = _messages.indexWhere((m) => m.id == messageId);
     if (index != -1) {
@@ -1551,25 +1526,6 @@ class ChatActions {
 
     _setConversationLoading(conversationId, false);
     onAssistantMessageFinished?.call(finalizedMessage);
-
-    // Use unified reasoning completion method
-    await streamController.finishReasoningAndPersist(
-      messageId,
-      updateReasoningInDb:
-          (
-            String messageId, {
-            String? reasoningText,
-            DateTime? reasoningFinishedAt,
-            String? reasoningSegmentsJson,
-          }) async {
-            await chatService.updateMessage(
-              messageId,
-              reasoningText: reasoningText,
-              reasoningFinishedAt: reasoningFinishedAt,
-              reasoningSegmentsJson: reasoningSegmentsJson,
-            );
-          },
-    );
 
     if (shouldGenerateTitle) {
       onMaybeGenerateTitle?.call(conversationId);
@@ -1606,6 +1562,7 @@ class ChatActions {
     final processed = _transformAssistantContent(state, rawContent);
     // Let UI provide the localized error message
     final displayContent = processed.isNotEmpty ? processed : errorText;
+    await _finishReasoningBeforeTerminal(messageId);
     await chatService.updateMessage(
       messageId,
       content: displayContent,
@@ -1616,12 +1573,14 @@ class ChatActions {
 
     final index = _messages.indexWhere((m) => m.id == messageId);
     if (index != -1) {
-      _messages[index] = _messages[index].copyWith(
-        content: displayContent,
-        isStreaming: false,
-        totalTokens: state.totalTokens,
-        generationStatus: ChatMessage.generationStatusFailed,
-      );
+      _messages[index] =
+          chatService.getMessageById(messageId) ??
+          _messages[index].copyWith(
+            content: displayContent,
+            isStreaming: false,
+            totalTokens: state.totalTokens,
+            generationStatus: ChatMessage.generationStatusFailed,
+          );
       onMessagesChanged?.call();
     }
 
@@ -1630,29 +1589,30 @@ class ChatActions {
 
     _setConversationLoading(conversationId, false);
 
-    // Use unified reasoning completion method on error
-    await streamController.finishReasoningAndPersist(
+    await _conversationStreams.remove(conversationId)?.cancel();
+    onStreamError?.call(errorText);
+    onStreamFinished?.call();
+    await _finishIosBackgroundGeneration(success: false, detail: errorText);
+  }
+
+  Future<void> _finishReasoningBeforeTerminal(String messageId) {
+    return streamController.finishReasoningAndPersist(
       messageId,
       updateReasoningInDb:
           (
-            String messageId, {
+            String id, {
             String? reasoningText,
             DateTime? reasoningFinishedAt,
             String? reasoningSegmentsJson,
-          }) async {
-            await chatService.updateMessage(
-              messageId,
+          }) {
+            return chatService.updateMessageSilent(
+              id,
               reasoningText: reasoningText,
               reasoningFinishedAt: reasoningFinishedAt,
               reasoningSegmentsJson: reasoningSegmentsJson,
             );
           },
     );
-
-    await _conversationStreams.remove(conversationId)?.cancel();
-    onStreamError?.call(errorText);
-    onStreamFinished?.call();
-    await _finishIosBackgroundGeneration(success: false, detail: errorText);
   }
 
   /// Handle stream done callback.

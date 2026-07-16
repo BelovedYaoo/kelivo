@@ -4,17 +4,28 @@ import 'package:path/path.dart' as p;
 import 'package:hive_flutter/hive_flutter.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
+import '../../utils/batched_change_notifier.dart';
+import '../sync/sync_codec.dart';
+import '../sync/sync_write_executor.dart';
 import '../../../utils/sandbox_path_resolver.dart';
 import '../../../utils/app_directories.dart';
 import 'upload_directory_critical_section.dart';
 
-class ChatService extends ChangeNotifier {
+class ChatService extends ChangeNotifier with BatchedChangeNotifier {
+  ChatService(this._syncWriteExecutor);
+
   static const String _conversationsBoxName = 'conversations';
   static const String _messagesBoxName = 'messages';
   static const String _toolEventsBoxName = 'tool_events_v1';
   static const String _activeStreamingKey = '_active_streaming_ids';
   static const String _turnIdentityMigrationKey = '_turn_identity_v1';
   static const String _syncTurnMetadataPrefix = '_sync_turn_v1';
+  static const String _conversationEntityType = 'conversation';
+  static const String _turnEntityType = 'turn';
+  static const String _messageEntityType = 'message';
+  static const String _messageSelectionEntityType = 'message-selection';
+  static const String _toolEventEntityType = 'tool-event';
+  static const String _thoughtSignatureEntityType = 'thought-signature';
   static const int defaultInitialMessageMin = 2;
   static const int defaultInitialMessageMax = 240;
   static const int defaultInitialTextBudget = 20000;
@@ -25,6 +36,13 @@ class ChatService extends ChangeNotifier {
   late Box<ChatMessage> _messagesBox;
   late Box
   _toolEventsBox; // key: assistantMessageId, value: List<Map<String,dynamic>>
+  final SyncWriteExecutor _syncWriteExecutor;
+  final Map<String, String> _messageConversationIds = <String, String>{};
+  final Map<String, String> _turnConversationIds = <String, String>{};
+  final Map<String, String> _selectionConversationIds = <String, String>{};
+  int _remoteBatchDepth = 0;
+  final Set<String> _remoteRebuildConversationIds = <String>{};
+  bool _remoteNeedsOrphanCleanup = false;
   String _sigKey(String id) => 'sig_$id';
 
   String? _currentConversationId;
@@ -84,11 +102,16 @@ class ChatService extends ChangeNotifier {
     // 旧消息没有轮次字段，必须在云同步读取前按逻辑消息组补齐一致身份。
     await _migrateTurnIdentities();
 
-    // Reset any stale isStreaming flags left over from a previous app crash or
-    // force-quit.  After a fresh launch no message can be actively streaming.
-    await _resetStaleStreamingFlags();
+    _rebuildSyncIndexes();
 
+    // 崩溃恢复会立即导出写前批次；此时存储与索引已就绪，避免导出器递归等待本次初始化。
     _initialized = true;
+    try {
+      await _resetStaleStreamingFlags();
+    } catch (_) {
+      _initialized = false;
+      rethrow;
+    }
     notifyListeners();
   }
 
@@ -106,6 +129,252 @@ class ChatService extends ChangeNotifier {
   Conversation? getConversation(String id) {
     if (!_initialized) return null;
     return _conversationsBox.get(id) ?? _draftConversations[id];
+  }
+
+  Conversation? getConversationForSync(String id) {
+    if (!_initialized) return null;
+    return _conversationsBox.get(id);
+  }
+
+  ChatMessage? getMessageById(String messageId) {
+    if (!_initialized) return null;
+    if (_messageConversationIds.containsKey(messageId)) {
+      return _messagesBox.get(messageId);
+    }
+    return _cachedTemporaryMessage(messageId);
+  }
+
+  String? getConversationIdForMessage(String messageId) {
+    if (!_initialized) return null;
+    return _messageConversationIds[messageId];
+  }
+
+  String? getConversationIdForTurn(String turnId) {
+    if (!_initialized) return null;
+    return _turnConversationIds[turnId];
+  }
+
+  String? getConversationIdForSelection(String groupId) {
+    if (!_initialized) return null;
+    return _selectionConversationIds[groupId];
+  }
+
+  List<ChatMessage> getMessagesForTurn(String turnId) {
+    final conversationId = getConversationIdForTurn(turnId);
+    if (conversationId == null) return const <ChatMessage>[];
+    final conversation = _conversationsBox.get(conversationId);
+    if (conversation == null) return const <ChatMessage>[];
+    return conversation.messageIds
+        .map(_messagesBox.get)
+        .whereType<ChatMessage>()
+        .where(
+          (message) =>
+              message.conversationId == conversationId &&
+              message.turnId == turnId,
+        )
+        .toList(growable: false);
+  }
+
+  void _rebuildSyncIndexes() {
+    _messageConversationIds.clear();
+    _turnConversationIds.clear();
+    _selectionConversationIds.clear();
+    for (final conversation in _conversationsBox.values) {
+      _indexConversation(conversation);
+    }
+  }
+
+  void _indexConversation(Conversation conversation) {
+    for (final groupId in conversation.versionSelections.keys) {
+      _selectionConversationIds[groupId] = conversation.id;
+    }
+    for (final messageId in conversation.messageIds) {
+      final message = _messagesBox.get(messageId);
+      if (message == null || message.conversationId != conversation.id) {
+        continue;
+      }
+      _messageConversationIds[message.id] = conversation.id;
+      _turnConversationIds[message.turnId] = conversation.id;
+    }
+  }
+
+  SyncEntityKey _conversationKey(String conversationId) => SyncEntityKey(
+    entityType: _conversationEntityType,
+    entityId: conversationId,
+  );
+
+  SyncEntityKey _turnKey(String turnId) =>
+      SyncEntityKey(entityType: _turnEntityType, entityId: turnId);
+
+  SyncEntityKey _messageKey(String messageId) =>
+      SyncEntityKey(entityType: _messageEntityType, entityId: messageId);
+
+  SyncEntityKey _messageSelectionKey(String groupId) =>
+      SyncEntityKey(entityType: _messageSelectionEntityType, entityId: groupId);
+
+  SyncEntityKey _toolEventKey(String messageId) =>
+      SyncEntityKey(entityType: _toolEventEntityType, entityId: messageId);
+
+  SyncEntityKey _thoughtSignatureKey(String messageId) => SyncEntityKey(
+    entityType: _thoughtSignatureEntityType,
+    entityId: messageId,
+  );
+
+  Set<SyncEntityKey> _messageGraphKeys(
+    ChatMessage message, {
+    bool includeConversation = true,
+    bool includeSelectionWhenPresent = true,
+  }) {
+    final keys = <SyncEntityKey>{
+      if (includeConversation) _conversationKey(message.conversationId),
+      _turnKey(message.turnId),
+      _messageKey(message.id),
+      _toolEventKey(message.id),
+      _thoughtSignatureKey(message.id),
+    };
+    final groupId = message.groupId ?? message.id;
+    final conversation = _conversationsBox.get(message.conversationId);
+    if (includeSelectionWhenPresent &&
+        conversation?.versionSelections.containsKey(groupId) == true) {
+      keys.add(_messageSelectionKey(groupId));
+    }
+    return keys;
+  }
+
+  bool _isTerminalMessage(ChatMessage message) {
+    return !message.isStreaming &&
+        message.generationStatus != ChatMessage.generationStatusDraft;
+  }
+
+  void _removeConversationFromSyncIndexes(String conversationId) {
+    _messageConversationIds.removeWhere(
+      (messageId, indexedConversationId) =>
+          indexedConversationId == conversationId,
+    );
+    _turnConversationIds.removeWhere(
+      (turnId, indexedConversationId) =>
+          indexedConversationId == conversationId,
+    );
+    _selectionConversationIds.removeWhere(
+      (groupId, indexedConversationId) =>
+          indexedConversationId == conversationId,
+    );
+  }
+
+  void _refreshConversationSyncIndexes(String conversationId) {
+    _removeConversationFromSyncIndexes(conversationId);
+    final conversation = _conversationsBox.get(conversationId);
+    if (conversation != null) _indexConversation(conversation);
+  }
+
+  Set<SyncEntityKey> _allActiveSyncKeys() {
+    final keys = <SyncEntityKey>{};
+    for (final conversation in _conversationsBox.values) {
+      keys.add(_conversationKey(conversation.id));
+      keys.addAll(
+        conversation.versionSelections.keys.map(_messageSelectionKey),
+      );
+      for (final messageId in conversation.messageIds) {
+        final message = _messagesBox.get(messageId);
+        if (message == null || message.conversationId != conversation.id) {
+          continue;
+        }
+        keys
+          ..add(_turnKey(message.turnId))
+          ..add(_messageKey(message.id));
+        if (message.role == 'assistant') {
+          keys
+            ..add(_toolEventKey(message.id))
+            ..add(_thoughtSignatureKey(message.id));
+        }
+      }
+    }
+    return keys;
+  }
+
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) {
+    return runNotificationBatch<T>(() async {
+      _remoteBatchDepth++;
+      try {
+        return await apply();
+      } finally {
+        _remoteBatchDepth--;
+        if (_remoteBatchDepth == 0) {
+          final conversationIds = _remoteRebuildConversationIds.toList()
+            ..sort();
+          _remoteRebuildConversationIds.clear();
+          for (final conversationId in conversationIds) {
+            await _rebuildSyncedMessageOrder(conversationId);
+          }
+          if (_remoteNeedsOrphanCleanup) {
+            _remoteNeedsOrphanCleanup = false;
+            await _cleanupOrphanUploads();
+          }
+        }
+      }
+    });
+  }
+
+  Future<T> runImportBatch<T>({
+    required bool overwrite,
+    required Iterable<Conversation> conversations,
+    required Iterable<ChatMessage> messages,
+    Iterable<String> toolEventMessageIds = const <String>[],
+    Iterable<String> thoughtSignatureMessageIds = const <String>[],
+    required Future<T> Function() write,
+  }) async {
+    if (!_initialized) await init();
+    final keys = overwrite ? _allActiveSyncKeys() : <SyncEntityKey>{};
+    final incomingConversations = conversations.toList(growable: false);
+    final incomingMessages = messages.toList(growable: false);
+    for (final conversation in incomingConversations) {
+      keys.add(_conversationKey(conversation.id));
+      keys.addAll(
+        conversation.versionSelections.keys.map(_messageSelectionKey),
+      );
+    }
+    final messagesByConversation = <String, List<ChatMessage>>{};
+    for (final message in incomingMessages) {
+      (messagesByConversation[message.conversationId] ??= <ChatMessage>[]).add(
+        message,
+      );
+      keys
+        ..add(_conversationKey(message.conversationId))
+        ..add(_turnKey(message.turnId))
+        ..add(_messageKey(message.id));
+      if (message.role == 'assistant') {
+        keys
+          ..add(_toolEventKey(message.id))
+          ..add(_thoughtSignatureKey(message.id));
+      }
+    }
+    for (final conversationMessages in messagesByConversation.values) {
+      for (final normalized in _normalizeTurnIdentities(conversationMessages)) {
+        keys.add(_turnKey(normalized.turnId));
+      }
+    }
+    keys.addAll(toolEventMessageIds.map(_toolEventKey));
+    keys.addAll(thoughtSignatureMessageIds.map(_thoughtSignatureKey));
+
+    Future<T> apply() => runNotificationBatch(write);
+    if (keys.isEmpty) return apply();
+    return _syncWriteExecutor.runLocalBatch<T>(keys: keys, write: apply);
+  }
+
+  Future<void> _rebuildSyncedMessageOrderOrDefer(String conversationId) async {
+    if (_remoteBatchDepth > 0) {
+      _remoteRebuildConversationIds.add(conversationId);
+      return;
+    }
+    await _rebuildSyncedMessageOrder(conversationId);
+  }
+
+  Future<void> _cleanupOrphanUploadsOrDefer() async {
+    if (_remoteBatchDepth > 0) {
+      _remoteNeedsOrphanCleanup = true;
+      return;
+    }
+    await _cleanupOrphanUploads();
   }
 
   Conversation? _conversationForMessages(String conversationId) {
@@ -310,10 +579,16 @@ class ChatService extends ChangeNotifier {
       assistantId: assistantId,
     );
 
-    await _conversationsBox.put(conversation.id, conversation);
-    _currentConversationId = conversation.id;
-    notifyListeners();
-    return conversation;
+    return _syncWriteExecutor.runLocal<Conversation>(
+      key: _conversationKey(conversation.id),
+      write: () async {
+        await _conversationsBox.put(conversation.id, conversation);
+        _indexConversation(conversation);
+        _currentConversationId = conversation.id;
+        notifyListeners();
+        return conversation;
+      },
+    );
   }
 
   // Create a draft conversation that is not persisted until first message arrives.
@@ -355,13 +630,32 @@ class ChatService extends ChangeNotifier {
   Future<void> deleteConversation(String id) async {
     if (!_initialized) return;
 
+    if (_draftConversations.containsKey(id)) {
+      await _deleteConversationRaw(id);
+      return;
+    }
+    if (!_conversationsBox.containsKey(id)) return;
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(id),
+      write: () => _deleteConversationRaw(id),
+    );
+  }
+
+  Future<void> _deleteConversationRaw(
+    String id, {
+    bool deferRemoteCleanup = false,
+  }) async {
     final deleted =
         await _deleteDraftConversation(id) ||
         await _deletePersistedConversation(id);
     if (!deleted) return;
 
     // Delete orphaned files (not referenced by any remaining conversation)
-    await _cleanupOrphanUploads();
+    if (deferRemoteCleanup) {
+      await _cleanupOrphanUploadsOrDefer();
+    } else {
+      await _cleanupOrphanUploads();
+    }
 
     notifyListeners();
   }
@@ -394,12 +688,8 @@ class ChatService extends ChangeNotifier {
         turnIds.add(msg.turnId);
       }
       if (msg != null && msg.role == 'assistant') {
-        try {
-          await _toolEventsBox.delete(msg.id);
-        } catch (_) {}
-        try {
-          await _toolEventsBox.delete(_sigKey(msg.id));
-        } catch (_) {}
+        await _toolEventsBox.delete(msg.id);
+        await _toolEventsBox.delete(_sigKey(msg.id));
       }
       await _messagesBox.delete(messageId);
     }
@@ -409,6 +699,7 @@ class ChatService extends ChangeNotifier {
 
     await _conversationsBox.delete(id);
     _messagesCache.remove(id);
+    _removeConversationFromSyncIndexes(id);
 
     if (_currentConversationId == id) {
       _currentConversationId = null;
@@ -431,17 +722,27 @@ class ChatService extends ChangeNotifier {
         .map((conversation) => conversation.id)
         .toList(growable: false);
 
-    var deleted = false;
-    for (final conversationId in draftConversationIds) {
-      deleted = await _deleteDraftConversation(conversationId) || deleted;
-    }
-    for (final conversationId in persistedConversationIds) {
-      deleted = await _deletePersistedConversation(conversationId) || deleted;
+    Future<void> write() async {
+      var deleted = false;
+      for (final conversationId in draftConversationIds) {
+        deleted = await _deleteDraftConversation(conversationId) || deleted;
+      }
+      for (final conversationId in persistedConversationIds) {
+        deleted = await _deletePersistedConversation(conversationId) || deleted;
+      }
+      if (!deleted) return;
+      await _cleanupOrphanUploads();
+      notifyListeners();
     }
 
-    if (!deleted) return;
-    await _cleanupOrphanUploads();
-    notifyListeners();
+    if (persistedConversationIds.isEmpty) {
+      await write();
+      return;
+    }
+    await _syncWriteExecutor.runLocalBatch<void>(
+      keys: persistedConversationIds.map(_conversationKey),
+      write: write,
+    );
   }
 
   Set<String> _extractAttachmentPaths(String content) {
@@ -570,57 +871,63 @@ class ChatService extends ChangeNotifier {
   /// Uses a tracked set of streaming message IDs for O(1) lookup instead of
   /// scanning every message in the box.
   Future<void> _resetStaleStreamingFlags() async {
-    try {
-      final raw = _toolEventsBox.get(_activeStreamingKey);
-      if (raw == null) return;
-      final ids = (raw as List).cast<String>();
-      if (ids.isEmpty) return;
-      for (final id in ids) {
-        final msg = _messagesBox.get(id);
-        if (msg != null && msg.isStreaming) {
-          await _messagesBox.put(
-            id,
-            msg.copyWith(
-              isStreaming: false,
-              generationStatus: ChatMessage.generationStatusInterrupted,
-            ),
-          );
+    final raw = _toolEventsBox.get(_activeStreamingKey);
+    if (raw == null) return;
+    final ids = (raw as List).cast<String>();
+    if (ids.isEmpty) return;
+    final updates = <String, ChatMessage>{};
+    final keys = <SyncEntityKey>{};
+    for (final id in ids) {
+      final message = _messagesBox.get(id);
+      if (message == null || !message.isStreaming) continue;
+      final interrupted = message.copyWith(
+        isStreaming: false,
+        generationStatus: ChatMessage.generationStatusInterrupted,
+      );
+      updates[id] = interrupted;
+      keys.addAll(_messageGraphKeys(interrupted));
+    }
+    Future<void> write() async {
+      if (updates.isNotEmpty) {
+        await _messagesBox.putAll(updates);
+        for (final message in updates.values) {
+          _replaceCachedMessage(message);
         }
       }
       await _toolEventsBox.delete(_activeStreamingKey);
-    } catch (_) {
-      // best-effort; ignore errors
     }
+
+    if (keys.isEmpty) {
+      await write();
+      return;
+    }
+    await _syncWriteExecutor.runLocalBatch<void>(keys: keys, write: write);
   }
 
   /// Record a message ID as actively streaming.
-  void _trackStreamingId(String messageId) {
-    try {
-      final raw = _toolEventsBox.get(_activeStreamingKey);
-      final ids = raw != null
-          ? (raw as List).cast<String>().toList()
-          : <String>[];
-      if (!ids.contains(messageId)) {
-        ids.add(messageId);
-        _toolEventsBox.put(_activeStreamingKey, ids);
-      }
-    } catch (_) {}
+  Future<void> _trackStreamingId(String messageId) async {
+    final raw = _toolEventsBox.get(_activeStreamingKey);
+    final ids = raw != null
+        ? (raw as List).cast<String>().toList()
+        : <String>[];
+    if (!ids.contains(messageId)) {
+      ids.add(messageId);
+      await _toolEventsBox.put(_activeStreamingKey, ids);
+    }
   }
 
   /// Remove a message ID from the active streaming set.
-  void _untrackStreamingId(String messageId) {
-    try {
-      final raw = _toolEventsBox.get(_activeStreamingKey);
-      if (raw == null) return;
-      final ids = (raw as List).cast<String>().toList();
-      if (ids.remove(messageId)) {
-        if (ids.isEmpty) {
-          _toolEventsBox.delete(_activeStreamingKey);
-        } else {
-          _toolEventsBox.put(_activeStreamingKey, ids);
-        }
+  Future<void> _untrackStreamingId(String messageId) async {
+    final raw = _toolEventsBox.get(_activeStreamingKey);
+    if (raw == null) return;
+    final ids = (raw as List).cast<String>().toList();
+    if (ids.remove(messageId)) {
+      if (ids.isEmpty) {
+        await _toolEventsBox.delete(_activeStreamingKey);
+      } else {
+        await _toolEventsBox.put(_activeStreamingKey, ids);
       }
-    } catch (_) {}
+    }
   }
 
   Future<void> _cleanupOrphanUploads() {
@@ -667,33 +974,49 @@ class ChatService extends ChangeNotifier {
   ) async {
     if (!_initialized) await init();
     final normalizedMessages = _normalizeTurnIdentities(messages);
-    // Restore messages first
-    for (final m in normalizedMessages) {
-      await _messagesBox.put(m.id, m);
+    final keys = <SyncEntityKey>{_conversationKey(conversation.id)};
+    for (final message in normalizedMessages) {
+      keys
+        ..add(_turnKey(message.turnId))
+        ..add(_messageKey(message.id));
+      if (message.role == 'assistant') {
+        keys
+          ..add(_toolEventKey(message.id))
+          ..add(_thoughtSignatureKey(message.id));
+      }
     }
-    // Ensure messageIds are in the same order
-    final ids = normalizedMessages.map((m) => m.id).toList();
-    final restored = Conversation(
-      id: conversation.id,
-      title: conversation.title,
-      createdAt: conversation.createdAt,
-      updatedAt: conversation.updatedAt,
-      messageIds: ids,
-      isPinned: conversation.isPinned,
-      mcpServerIds: List.of(conversation.mcpServerIds),
-      truncateIndex: conversation.truncateIndex,
-      assistantId: conversation.assistantId,
-      versionSelections: Map<String, int>.from(conversation.versionSelections),
-      summary: conversation.summary,
-      lastSummarizedMessageCount: conversation.lastSummarizedMessageCount,
-      chatSuggestions: List<String>.of(conversation.chatSuggestions),
+    keys.addAll(conversation.versionSelections.keys.map(_messageSelectionKey));
+
+    await _syncWriteExecutor.runLocalBatch<void>(
+      keys: keys,
+      write: () async {
+        for (final message in normalizedMessages) {
+          await _messagesBox.put(message.id, message);
+        }
+        final ids = normalizedMessages.map((message) => message.id).toList();
+        final restored = Conversation(
+          id: conversation.id,
+          title: conversation.title,
+          createdAt: conversation.createdAt,
+          updatedAt: conversation.updatedAt,
+          messageIds: ids,
+          isPinned: conversation.isPinned,
+          mcpServerIds: List.of(conversation.mcpServerIds),
+          truncateIndex: conversation.truncateIndex,
+          assistantId: conversation.assistantId,
+          versionSelections: Map<String, int>.from(
+            conversation.versionSelections,
+          ),
+          summary: conversation.summary,
+          lastSummarizedMessageCount: conversation.lastSummarizedMessageCount,
+          chatSuggestions: List<String>.of(conversation.chatSuggestions),
+        );
+        await _conversationsBox.put(restored.id, restored);
+        _messagesCache[restored.id] = List.of(normalizedMessages);
+        _refreshConversationSyncIndexes(restored.id);
+        notifyListeners();
+      },
     );
-    await _conversationsBox.put(restored.id, restored);
-
-    // Update caches
-    _messagesCache[restored.id] = List.of(normalizedMessages);
-
-    notifyListeners();
   }
 
   Future<Conversation> upsertConversationFromSync(Conversation incoming) async {
@@ -734,7 +1057,7 @@ class ChatService extends ChangeNotifier {
       chatSuggestions: List<String>.of(incoming.chatSuggestions),
     );
     await _conversationsBox.put(synchronized.id, synchronized);
-    await _rebuildSyncedMessageOrder(synchronized.id);
+    await _rebuildSyncedMessageOrderOrDefer(synchronized.id);
     notifyListeners();
     return _conversationsBox.get(synchronized.id)!;
   }
@@ -752,7 +1075,9 @@ class ChatService extends ChangeNotifier {
       await _toolEventsBox.delete(_sigKey(existing.id));
     }
     await _messagesBox.put(incoming.id, incoming);
-    _untrackStreamingId(incoming.id);
+    _messageConversationIds[incoming.id] = incoming.conversationId;
+    _turnConversationIds[incoming.turnId] = incoming.conversationId;
+    await _untrackStreamingId(incoming.id);
 
     if (previousConversationId != null &&
         previousConversationId != incoming.conversationId) {
@@ -762,7 +1087,7 @@ class ChatService extends ChangeNotifier {
       if (previousConversation != null &&
           previousConversation.messageIds.remove(incoming.id)) {
         await previousConversation.save();
-        await _rebuildSyncedMessageOrder(previousConversationId);
+        await _rebuildSyncedMessageOrderOrDefer(previousConversationId);
       }
     }
 
@@ -774,7 +1099,7 @@ class ChatService extends ChangeNotifier {
       conversation.messageIds.add(incoming.id);
       await conversation.save();
     }
-    await _rebuildSyncedMessageOrder(incoming.conversationId);
+    await _rebuildSyncedMessageOrderOrDefer(incoming.conversationId);
     notifyListeners();
     return _messagesBox.get(incoming.id)!;
   }
@@ -793,7 +1118,7 @@ class ChatService extends ChangeNotifier {
       _syncTurnMetadataKey(conversationId, turnId),
       createdAt.toUtc().toIso8601String(),
     );
-    await _rebuildSyncedMessageOrder(conversationId);
+    await _rebuildSyncedMessageOrderOrDefer(conversationId);
     notifyListeners();
   }
 
@@ -815,6 +1140,7 @@ class ChatService extends ChangeNotifier {
     if (conversation.versionSelections[groupId] == selectedVersion) return;
     conversation.versionSelections[groupId] = selectedVersion;
     await conversation.save();
+    _selectionConversationIds[groupId] = conversationId;
     notifyListeners();
   }
 
@@ -854,13 +1180,17 @@ class ChatService extends ChangeNotifier {
   Future<void> deleteMessageSelectionFromSync(String groupId) async {
     if (!_initialized) await init();
     _requireSyncIdentifier(groupId, 'groupId');
-    var changed = false;
-    for (final conversation in _conversationsBox.values) {
-      if (conversation.versionSelections.remove(groupId) == null) continue;
-      await conversation.save();
-      changed = true;
+    final conversationId = _selectionConversationIds[groupId];
+    if (conversationId == null) return;
+    final conversation = _conversationsBox.get(conversationId);
+    if (conversation == null ||
+        conversation.versionSelections.remove(groupId) == null) {
+      _selectionConversationIds.remove(groupId);
+      return;
     }
-    if (changed) notifyListeners();
+    await conversation.save();
+    _selectionConversationIds.remove(groupId);
+    notifyListeners();
   }
 
   Future<void> deleteToolEventsFromSync(String messageId) async {
@@ -915,7 +1245,7 @@ class ChatService extends ChangeNotifier {
 
     if (deletedIds.isNotEmpty) {
       for (final message in deletedMessages) {
-        _untrackStreamingId(message.id);
+        await _untrackStreamingId(message.id);
         if (message.role == 'assistant') {
           await _toolEventsBox.delete(message.id);
           await _toolEventsBox.delete(_sigKey(message.id));
@@ -936,21 +1266,23 @@ class ChatService extends ChangeNotifier {
     }
 
     await _toolEventsBox.delete(_syncTurnMetadataKey(conversationId, turnId));
-    await _rebuildSyncedMessageOrder(conversationId);
+    await _rebuildSyncedMessageOrderOrDefer(conversationId);
     if (deletedIds.isNotEmpty) {
-      await _cleanupOrphanUploads();
+      await _cleanupOrphanUploadsOrDefer();
     }
     notifyListeners();
   }
 
   Future<void> deleteMessageFromSync(String messageId) async {
     if (!_initialized) await init();
-    await deleteMessage(messageId);
+    final message = getMessageById(messageId);
+    if (message == null) return;
+    await _deleteMessageRaw(message, deferRemoteCleanup: true);
   }
 
   Future<void> deleteConversationFromSync(String conversationId) async {
     if (!_initialized) await init();
-    await deleteConversation(conversationId);
+    await _deleteConversationRaw(conversationId, deferRemoteCleanup: true);
   }
 
   Future<Conversation> _ensureSyncedConversation(
@@ -1055,6 +1387,7 @@ class ChatService extends ChangeNotifier {
       await conversation.save();
     }
     _messagesCache[conversationId] = messages;
+    _refreshConversationSyncIndexes(conversationId);
   }
 
   String _syncTurnMetadataKey(String conversationId, String turnId) {
@@ -1101,18 +1434,42 @@ class ChatService extends ChangeNotifier {
     ChatMessage message,
   ) async {
     if (!_initialized) await init();
+    if (message.conversationId != conversationId) {
+      throw ArgumentError.value(
+        message.conversationId,
+        'message.conversationId',
+        '消息与目标会话不一致',
+      );
+    }
+    final keys = <SyncEntityKey>{
+      _conversationKey(conversationId),
+      _turnKey(message.turnId),
+      _messageKey(message.id),
+      if (message.role == 'assistant') _toolEventKey(message.id),
+      if (message.role == 'assistant') _thoughtSignatureKey(message.id),
+    };
+    await _syncWriteExecutor.runLocalBatch<void>(
+      keys: keys,
+      write: () => _addMessageDirectlyRaw(conversationId, message),
+    );
+  }
 
+  Future<void> _addMessageDirectlyRaw(
+    String conversationId,
+    ChatMessage message,
+  ) async {
+    final conversation = _conversationsBox.get(conversationId);
+    if (conversation == null) {
+      throw ArgumentError.value(conversationId, 'conversationId', '目标会话不存在');
+    }
     // Add message to box
     await _messagesBox.put(message.id, message);
 
     // Update conversation
-    final conversation = _conversationsBox.get(conversationId);
-    if (conversation != null) {
-      if (!conversation.messageIds.contains(message.id)) {
-        conversation.messageIds.add(message.id);
-        // Keep original updatedAt during restore
-        await conversation.save();
-      }
+    if (!conversation.messageIds.contains(message.id)) {
+      conversation.messageIds.add(message.id);
+      // 恢复时保留原始更新时间。
+      await conversation.save();
     }
 
     // Update cache
@@ -1122,6 +1479,7 @@ class ChatService extends ChangeNotifier {
       }
     }
 
+    _refreshConversationSyncIndexes(conversationId);
     notifyListeners();
   }
 
@@ -1148,10 +1506,15 @@ class ChatService extends ChangeNotifier {
     }
     final c = _conversationsBox.get(conversationId);
     if (c == null) return;
-    c.mcpServerIds = List.of(serverIds);
-    c.updatedAt = DateTime.now();
-    await c.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(conversationId),
+      write: () async {
+        c.mcpServerIds = List.of(serverIds);
+        c.updatedAt = DateTime.now();
+        await c.save();
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> toggleConversationMcpServer(
@@ -1182,10 +1545,15 @@ class ChatService extends ChangeNotifier {
     final conversation = _conversationsBox.get(id);
     if (conversation == null) return;
 
-    conversation.title = newTitle;
-    conversation.updatedAt = DateTime.now();
-    await conversation.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(id),
+      write: () async {
+        conversation.title = newTitle;
+        conversation.updatedAt = DateTime.now();
+        await conversation.save();
+        notifyListeners();
+      },
+    );
   }
 
   /// Updates the conversation summary generated by LLM.
@@ -1207,10 +1575,15 @@ class ChatService extends ChangeNotifier {
     final conversation = _conversationsBox.get(id);
     if (conversation == null) return;
 
-    conversation.summary = summary;
-    conversation.lastSummarizedMessageCount = messageCount;
-    await conversation.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(id),
+      write: () async {
+        conversation.summary = summary;
+        conversation.lastSummarizedMessageCount = messageCount;
+        await conversation.save();
+        notifyListeners();
+      },
+    );
   }
 
   /// Gets all conversations with non-empty summaries for a specific assistant.
@@ -1243,10 +1616,15 @@ class ChatService extends ChangeNotifier {
     final conversation = _conversationsBox.get(conversationId);
     if (conversation == null) return;
 
-    conversation.summary = null;
-    conversation.lastSummarizedMessageCount = 0;
-    await conversation.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(conversationId),
+      write: () async {
+        conversation.summary = null;
+        conversation.lastSummarizedMessageCount = 0;
+        await conversation.save();
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> updateConversationSuggestions(
@@ -1271,9 +1649,14 @@ class ChatService extends ChangeNotifier {
     final conversation = _conversationsBox.get(conversationId);
     if (conversation == null) return;
 
-    conversation.chatSuggestions = clean;
-    await conversation.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(conversationId),
+      write: () async {
+        conversation.chatSuggestions = clean;
+        await conversation.save();
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> clearConversationSuggestions(String conversationId) async {
@@ -1290,9 +1673,14 @@ class ChatService extends ChangeNotifier {
     final conversation = _conversationsBox.get(conversationId);
     if (conversation == null || conversation.chatSuggestions.isEmpty) return;
 
-    conversation.chatSuggestions = <String>[];
-    await conversation.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(conversationId),
+      write: () async {
+        conversation.chatSuggestions = <String>[];
+        await conversation.save();
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> togglePinConversation(String id) async {
@@ -1307,9 +1695,14 @@ class ChatService extends ChangeNotifier {
     final conversation = _conversationsBox.get(id);
     if (conversation == null) return;
 
-    conversation.isPinned = !conversation.isPinned;
-    await conversation.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(id),
+      write: () async {
+        conversation.isPinned = !conversation.isPinned;
+        await conversation.save();
+        notifyListeners();
+      },
+    );
   }
 
   Future<ChatMessage> addMessage({
@@ -1330,8 +1723,45 @@ class ChatService extends ChangeNotifier {
   }) async {
     if (!_initialized) await init();
 
-    var conversation = _conversationsBox.get(conversationId);
+    final message = ChatMessage(
+      role: role,
+      content: content,
+      conversationId: conversationId,
+      modelId: modelId,
+      providerId: providerId,
+      totalTokens: totalTokens,
+      isStreaming: isStreaming,
+      reasoningText: reasoningText,
+      reasoningStartAt: reasoningStartAt,
+      reasoningFinishedAt: reasoningFinishedAt,
+      groupId: groupId,
+      version: version,
+      turnId: turnId,
+      generationStatus: generationStatus,
+    );
     final temporary = _temporaryConversationIds.contains(conversationId);
+    if (temporary || !_isTerminalMessage(message)) {
+      return _addMessageRaw(message, temporary: temporary);
+    }
+    final keys = message.role == 'assistant'
+        ? _messageGraphKeys(message)
+        : <SyncEntityKey>{
+            _conversationKey(conversationId),
+            _turnKey(message.turnId),
+            _messageKey(message.id),
+          };
+    return _syncWriteExecutor.runLocalBatch<ChatMessage>(
+      keys: keys,
+      write: () => _addMessageRaw(message, temporary: false),
+    );
+  }
+
+  Future<ChatMessage> _addMessageRaw(
+    ChatMessage message, {
+    required bool temporary,
+  }) async {
+    final conversationId = message.conversationId;
+    var conversation = _conversationsBox.get(conversationId);
     // If conversation doesn't exist yet, persist draft (if any)
     if (conversation == null) {
       final draft = temporary
@@ -1356,30 +1786,13 @@ class ChatService extends ChangeNotifier {
       }
     }
 
-    final message = ChatMessage(
-      role: role,
-      content: content,
-      conversationId: conversationId,
-      modelId: modelId,
-      providerId: providerId,
-      totalTokens: totalTokens,
-      isStreaming: isStreaming,
-      reasoningText: reasoningText,
-      reasoningStartAt: reasoningStartAt,
-      reasoningFinishedAt: reasoningFinishedAt,
-      groupId: groupId,
-      version: version,
-      turnId: turnId,
-      generationStatus: generationStatus,
-    );
-
     if (!temporary) {
       await _messagesBox.put(message.id, message);
     }
 
     // Track streaming state for crash-recovery cleanup
-    if (isStreaming && !temporary) {
-      _trackStreamingId(message.id);
+    if (message.isStreaming && !temporary) {
+      await _trackStreamingId(message.id);
     }
 
     conversation.messageIds.add(message.id);
@@ -1395,6 +1808,11 @@ class ChatService extends ChangeNotifier {
       _messagesCache[conversationId]!.add(message);
     }
 
+    if (!temporary) {
+      _messageConversationIds[message.id] = conversationId;
+      _turnConversationIds[message.turnId] = conversationId;
+    }
+
     notifyListeners();
     return message;
   }
@@ -1406,6 +1824,7 @@ class ChatService extends ChangeNotifier {
         if (message.id == messageId) return message;
       }
     }
+
     return null;
   }
 
@@ -1437,54 +1856,24 @@ class ChatService extends ChangeNotifier {
     int? cachedTokens,
     int? durationMs,
     String? generationStatus,
-  }) async {
-    if (!_initialized) return;
-
-    final message =
-        _messagesBox.get(messageId) ?? _cachedTemporaryMessage(messageId);
-    if (message == null) return;
-
-    final updatedMessage = message.copyWith(
-      content: content ?? message.content,
-      totalTokens: totalTokens ?? message.totalTokens,
-      isStreaming: isStreaming ?? message.isStreaming,
-      reasoningText: reasoningText ?? message.reasoningText,
-      reasoningStartAt: reasoningStartAt ?? message.reasoningStartAt,
-      reasoningFinishedAt: reasoningFinishedAt ?? message.reasoningFinishedAt,
+  }) {
+    return _updateMessage(
+      messageId,
+      content: content,
+      totalTokens: totalTokens,
+      isStreaming: isStreaming,
+      reasoningText: reasoningText,
+      reasoningStartAt: reasoningStartAt,
+      reasoningFinishedAt: reasoningFinishedAt,
       translation: translation,
-      reasoningSegmentsJson:
-          reasoningSegmentsJson ?? message.reasoningSegmentsJson,
-      promptTokens: promptTokens ?? message.promptTokens,
-      completionTokens: completionTokens ?? message.completionTokens,
-      cachedTokens: cachedTokens ?? message.cachedTokens,
-      durationMs: durationMs ?? message.durationMs,
+      reasoningSegmentsJson: reasoningSegmentsJson,
+      promptTokens: promptTokens,
+      completionTokens: completionTokens,
+      cachedTokens: cachedTokens,
+      durationMs: durationMs,
       generationStatus: generationStatus,
+      notify: true,
     );
-
-    if (isTemporaryConversation(message.conversationId)) {
-      _replaceCachedMessage(updatedMessage);
-      notifyListeners();
-      return;
-    }
-
-    await _messagesBox.put(messageId, updatedMessage);
-
-    // Update streaming tracking for crash-recovery
-    if (isStreaming == false) {
-      _untrackStreamingId(messageId);
-    }
-
-    // Update cache
-    final conversationId = message.conversationId;
-    if (_messagesCache.containsKey(conversationId)) {
-      final messages = _messagesCache[conversationId]!;
-      final index = messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        messages[index] = updatedMessage;
-      }
-    }
-
-    notifyListeners();
   }
 
   /// Update message content during streaming without triggering notifyListeners.
@@ -1505,6 +1894,42 @@ class ChatService extends ChangeNotifier {
     int? cachedTokens,
     int? durationMs,
     String? generationStatus,
+  }) {
+    return _updateMessage(
+      messageId,
+      content: content,
+      totalTokens: totalTokens,
+      isStreaming: isStreaming,
+      reasoningText: reasoningText,
+      reasoningStartAt: reasoningStartAt,
+      reasoningFinishedAt: reasoningFinishedAt,
+      translation: translation,
+      reasoningSegmentsJson: reasoningSegmentsJson,
+      promptTokens: promptTokens,
+      completionTokens: completionTokens,
+      cachedTokens: cachedTokens,
+      durationMs: durationMs,
+      generationStatus: generationStatus,
+      notify: false,
+    );
+  }
+
+  Future<void> _updateMessage(
+    String messageId, {
+    String? content,
+    int? totalTokens,
+    bool? isStreaming,
+    String? reasoningText,
+    DateTime? reasoningStartAt,
+    DateTime? reasoningFinishedAt,
+    String? translation,
+    String? reasoningSegmentsJson,
+    int? promptTokens,
+    int? completionTokens,
+    int? cachedTokens,
+    int? durationMs,
+    String? generationStatus,
+    required bool notify,
   }) async {
     if (!_initialized) return;
 
@@ -1531,26 +1956,44 @@ class ChatService extends ChangeNotifier {
 
     if (isTemporaryConversation(message.conversationId)) {
       _replaceCachedMessage(updatedMessage);
+      if (notify) notifyListeners();
       return;
     }
 
-    await _messagesBox.put(messageId, updatedMessage);
+    Future<void> write() async {
+      await _messagesBox.put(messageId, updatedMessage);
 
-    // Update streaming tracking for crash-recovery
-    if (isStreaming == false) {
-      _untrackStreamingId(messageId);
-    }
-
-    // Update cache
-    final conversationId = message.conversationId;
-    if (_messagesCache.containsKey(conversationId)) {
-      final messages = _messagesCache[conversationId]!;
-      final index = messages.indexWhere((m) => m.id == messageId);
-      if (index != -1) {
-        messages[index] = updatedMessage;
+      if (isStreaming == false) {
+        await _untrackStreamingId(messageId);
       }
+
+      final messages = _messagesCache[message.conversationId];
+      if (messages != null) {
+        final index = messages.indexWhere(
+          (candidate) => candidate.id == messageId,
+        );
+        if (index != -1) messages[index] = updatedMessage;
+      }
+      if (notify) notifyListeners();
     }
-    // NOTE: Do NOT call notifyListeners() here to avoid UI rebuilds during streaming
+
+    final wasTerminal = _isTerminalMessage(message);
+    final isTerminal = _isTerminalMessage(updatedMessage);
+    if (!isTerminal) {
+      await write();
+      return;
+    }
+    if (message.role == 'assistant' && !wasTerminal) {
+      await _syncWriteExecutor.runLocalBatch<void>(
+        keys: _messageGraphKeys(updatedMessage),
+        write: write,
+      );
+      return;
+    }
+    await _syncWriteExecutor.runLocal<void>(
+      key: _messageKey(messageId),
+      write: write,
+    );
   }
 
   // Tool events persistence (per assistant message)
@@ -1586,8 +2029,27 @@ class ChatService extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    await _toolEventsBox.put(assistantMessageId, events);
-    notifyListeners();
+    final message = getMessageById(assistantMessageId);
+    if (message == null) {
+      throw ArgumentError.value(
+        assistantMessageId,
+        'assistantMessageId',
+        '工具事件所属消息不存在',
+      );
+    }
+    Future<void> write() async {
+      await _toolEventsBox.put(assistantMessageId, events);
+      notifyListeners();
+    }
+
+    if (!_isTerminalMessage(message)) {
+      await write();
+      return;
+    }
+    await _syncWriteExecutor.runLocal<void>(
+      key: _toolEventKey(assistantMessageId),
+      write: write,
+    );
   }
 
   Future<void> upsertToolEvent(
@@ -1641,8 +2103,27 @@ class ChatService extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    await _toolEventsBox.put(assistantMessageId, list);
-    notifyListeners();
+    final message = getMessageById(assistantMessageId);
+    if (message == null) {
+      throw ArgumentError.value(
+        assistantMessageId,
+        'assistantMessageId',
+        '工具事件所属消息不存在',
+      );
+    }
+    Future<void> write() async {
+      await _toolEventsBox.put(assistantMessageId, list);
+      notifyListeners();
+    }
+
+    if (!_isTerminalMessage(message)) {
+      await write();
+      return;
+    }
+    await _syncWriteExecutor.runLocal<void>(
+      key: _toolEventKey(assistantMessageId),
+      write: write,
+    );
   }
 
   // Gemini thought signature persistence (per assistant message)
@@ -1665,8 +2146,27 @@ class ChatService extends ChangeNotifier {
       notifyListeners();
       return;
     }
-    await _toolEventsBox.put(_sigKey(assistantMessageId), signature);
-    notifyListeners();
+    final message = getMessageById(assistantMessageId);
+    if (message == null) {
+      throw ArgumentError.value(
+        assistantMessageId,
+        'assistantMessageId',
+        '思维签名所属消息不存在',
+      );
+    }
+    Future<void> write() async {
+      await _toolEventsBox.put(_sigKey(assistantMessageId), signature);
+      notifyListeners();
+    }
+
+    if (!_isTerminalMessage(message)) {
+      await write();
+      return;
+    }
+    await _syncWriteExecutor.runLocal<void>(
+      key: _thoughtSignatureKey(assistantMessageId),
+      write: write,
+    );
   }
 
   Future<void> removeGeminiThoughtSignature(String assistantMessageId) async {
@@ -1675,9 +2175,17 @@ class ChatService extends ChangeNotifier {
       _temporaryGeminiThoughtSigs.remove(assistantMessageId);
       return;
     }
-    try {
-      await _toolEventsBox.delete(_sigKey(assistantMessageId));
-    } catch (_) {}
+    final message = getMessageById(assistantMessageId);
+    if (message == null) return;
+    Future<void> write() => _toolEventsBox.delete(_sigKey(assistantMessageId));
+    if (!_isTerminalMessage(message)) {
+      await write();
+      return;
+    }
+    await _syncWriteExecutor.runLocal<void>(
+      key: _thoughtSignatureKey(assistantMessageId),
+      write: write,
+    );
   }
 
   Future<Conversation> forkConversation({
@@ -1686,11 +2194,7 @@ class ChatService extends ChangeNotifier {
     required List<ChatMessage> sourceMessages,
   }) async {
     if (!_initialized) await init();
-    // Create new conversation first
-    final convo = await createConversation(
-      title: title,
-      assistantId: assistantId,
-    );
+    final convo = Conversation(title: title, assistantId: assistantId);
     final clones = <ChatMessage>[];
     for (final src in sourceMessages) {
       final clone = ChatMessage(
@@ -1714,25 +2218,40 @@ class ChatService extends ChangeNotifier {
       clones.add(clone);
     }
     final normalizedClones = _normalizeTurnIdentities(clones);
-    final ids = <String>[];
+    final keys = <SyncEntityKey>{_conversationKey(convo.id)};
     for (final clone in normalizedClones) {
-      await _messagesBox.put(clone.id, clone);
-      ids.add(clone.id);
+      keys
+        ..add(_turnKey(clone.turnId))
+        ..add(_messageKey(clone.id));
+      if (clone.role == 'assistant') {
+        keys
+          ..add(_toolEventKey(clone.id))
+          ..add(_thoughtSignatureKey(clone.id));
+      }
     }
-    // Attach to conversation in storage
-    final c = _conversationsBox.get(convo.id);
-    if (c != null) {
-      c.messageIds
-        ..clear()
-        ..addAll(ids);
-      c.versionSelections = <String, int>{};
-      c.updatedAt = DateTime.now();
-      await c.save();
-    }
-    // Cache
-    _messagesCache[convo.id] = [for (final id in ids) _messagesBox.get(id)!];
-    notifyListeners();
-    return _conversationsBox.get(convo.id)!;
+    return _syncWriteExecutor.runLocalBatch<Conversation>(
+      keys: keys,
+      write: () async {
+        _discardTemporaryConversation(_currentConversationId);
+        await _conversationsBox.put(convo.id, convo);
+        _currentConversationId = convo.id;
+        final ids = <String>[];
+        for (final clone in normalizedClones) {
+          await _messagesBox.put(clone.id, clone);
+          ids.add(clone.id);
+        }
+        convo.messageIds
+          ..clear()
+          ..addAll(ids);
+        convo.versionSelections = <String, int>{};
+        convo.updatedAt = DateTime.now();
+        await convo.save();
+        _messagesCache[convo.id] = List<ChatMessage>.of(normalizedClones);
+        _refreshConversationSyncIndexes(convo.id);
+        notifyListeners();
+        return _conversationsBox.get(convo.id)!;
+      },
+    );
   }
 
   Future<ChatMessage?> appendMessageVersion({
@@ -1773,28 +2292,39 @@ class ChatService extends ChangeNotifier {
       turnId: original.turnId,
       generationStatus: ChatMessage.generationStatusCompleted,
     );
-    await _messagesBox.put(newMsg.id, newMsg);
-    // Append to conversation order at the end (we'll group when rendering)
-    if (_draftConversations.containsKey(cid)) {
-      final draft = _draftConversations[cid]!;
-      draft.messageIds.add(newMsg.id);
-      draft.updatedAt = DateTime.now();
-      draft.versionSelections[gid] = nextVersion;
-    } else {
-      final c = _conversationsBox.get(cid);
-      if (c != null) {
-        c.messageIds.add(newMsg.id);
-        c.updatedAt = DateTime.now();
-        // Persist selection of latest version for this group
-        c.versionSelections[gid] = nextVersion;
-        await c.save();
-      }
-    }
-    // Update caches
-    final arr = _messagesCache[cid];
-    if (arr != null) arr.add(newMsg);
-    notifyListeners();
-    return newMsg;
+    final keys = <SyncEntityKey>{
+      _conversationKey(cid),
+      _turnKey(newMsg.turnId),
+      _messageKey(newMsg.id),
+      _messageSelectionKey(gid),
+      if (newMsg.role == 'assistant') _toolEventKey(newMsg.id),
+      if (newMsg.role == 'assistant') _thoughtSignatureKey(newMsg.id),
+    };
+    return _syncWriteExecutor.runLocalBatch<ChatMessage>(
+      keys: keys,
+      write: () async {
+        await _messagesBox.put(newMsg.id, newMsg);
+        if (_draftConversations.containsKey(cid)) {
+          final draft = _draftConversations[cid]!;
+          draft.messageIds.add(newMsg.id);
+          draft.updatedAt = DateTime.now();
+          draft.versionSelections[gid] = nextVersion;
+        } else {
+          final c = _conversationsBox.get(cid);
+          if (c != null) {
+            c.messageIds.add(newMsg.id);
+            c.updatedAt = DateTime.now();
+            c.versionSelections[gid] = nextVersion;
+            await c.save();
+          }
+        }
+        final arr = _messagesCache[cid];
+        if (arr != null) arr.add(newMsg);
+        _refreshConversationSyncIndexes(cid);
+        notifyListeners();
+        return newMsg;
+      },
+    );
   }
 
   Map<String, int> getVersionSelections(String conversationId) {
@@ -1818,10 +2348,16 @@ class ChatService extends ChangeNotifier {
     }
     final c = _conversationsBox.get(conversationId);
     if (c == null) return;
-    c.versionSelections[groupId] = version;
-    c.updatedAt = DateTime.now();
-    await c.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _messageSelectionKey(groupId),
+      write: () async {
+        c.versionSelections[groupId] = version;
+        c.updatedAt = DateTime.now();
+        await c.save();
+        _selectionConversationIds[groupId] = conversationId;
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> clearSelectedVersion(
@@ -1837,10 +2373,16 @@ class ChatService extends ChangeNotifier {
     }
     final c = _conversationsBox.get(conversationId);
     if (c == null) return;
-    c.versionSelections.remove(groupId);
-    c.updatedAt = DateTime.now();
-    await c.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _messageSelectionKey(groupId),
+      write: () async {
+        c.versionSelections.remove(groupId);
+        c.updatedAt = DateTime.now();
+        await c.save();
+        _selectionConversationIds.remove(groupId);
+        notifyListeners();
+      },
+    );
   }
 
   Future<Conversation?> toggleTruncateAtTail(
@@ -1864,16 +2406,21 @@ class ChatService extends ChangeNotifier {
     // Persisted case
     final c = _conversationsBox.get(conversationId);
     if (c == null) return null;
-    final lastIndexPlusOne = c.messageIds.length;
-    final newValue = (c.truncateIndex == lastIndexPlusOne)
-        ? -1
-        : lastIndexPlusOne;
-    c.truncateIndex = newValue;
-    if ((defaultTitle ?? '').isNotEmpty) c.title = defaultTitle!;
-    c.updatedAt = DateTime.now();
-    await c.save();
-    notifyListeners();
-    return c;
+    return _syncWriteExecutor.runLocal<Conversation>(
+      key: _conversationKey(conversationId),
+      write: () async {
+        final lastIndexPlusOne = c.messageIds.length;
+        final newValue = (c.truncateIndex == lastIndexPlusOne)
+            ? -1
+            : lastIndexPlusOne;
+        c.truncateIndex = newValue;
+        if ((defaultTitle ?? '').isNotEmpty) c.title = defaultTitle!;
+        c.updatedAt = DateTime.now();
+        await c.save();
+        notifyListeners();
+        return c;
+      },
+    );
   }
 
   Future<void> deleteMessage(String messageId) async {
@@ -1882,19 +2429,40 @@ class ChatService extends ChangeNotifier {
     final message =
         _messagesBox.get(messageId) ?? _cachedTemporaryMessage(messageId);
     if (message == null) return;
+    if (isTemporaryConversation(message.conversationId)) {
+      await _deleteMessageRaw(message);
+      return;
+    }
+    final groupId = message.groupId ?? message.id;
+    await _syncWriteExecutor.runLocalBatch<void>(
+      keys: <SyncEntityKey>{
+        _messageKey(message.id),
+        _turnKey(message.turnId),
+        _messageSelectionKey(groupId),
+        _toolEventKey(message.id),
+        _thoughtSignatureKey(message.id),
+      },
+      write: () => _deleteMessageRaw(message),
+    );
+  }
 
+  Future<void> _deleteMessageRaw(
+    ChatMessage message, {
+    bool deferRemoteCleanup = false,
+    bool skipCleanup = false,
+  }) async {
     if (isTemporaryConversation(message.conversationId)) {
       final conversation = _draftConversations[message.conversationId];
-      conversation?.messageIds.remove(messageId);
+      conversation?.messageIds.remove(message.id);
       final messages = _messagesCache[message.conversationId];
-      messages?.removeWhere((m) => m.id == messageId);
+      messages?.removeWhere((m) => m.id == message.id);
       final groupId = message.groupId ?? message.id;
       if (messages == null ||
           !messages.any((m) => (m.groupId ?? m.id) == groupId)) {
         conversation?.versionSelections.remove(groupId);
       }
-      _temporaryToolEvents.remove(messageId);
-      _temporaryGeminiThoughtSigs.remove(messageId);
+      _temporaryToolEvents.remove(message.id);
+      _temporaryGeminiThoughtSigs.remove(message.id);
       notifyListeners();
       return;
     }
@@ -1918,7 +2486,7 @@ class ChatService extends ChangeNotifier {
         }
       }
 
-      ids.remove(messageId);
+      ids.remove(message.id);
 
       // If we removed the earliest version but other versions remain, move the
       // earliest remaining one back to the original anchor index to preserve
@@ -1953,25 +2521,93 @@ class ChatService extends ChangeNotifier {
       await conversation.save();
     }
 
-    await _messagesBox.delete(messageId);
+    await _messagesBox.delete(message.id);
     // Remove any tool events linked to this assistant message
     if (message.role == 'assistant') {
-      try {
-        await _toolEventsBox.delete(message.id);
-      } catch (_) {}
-      try {
-        await _toolEventsBox.delete(_sigKey(message.id));
-      } catch (_) {}
+      await _toolEventsBox.delete(message.id);
+      await _toolEventsBox.delete(_sigKey(message.id));
     }
 
     // Update cache: clear this conversation so that next getMessages()
     // reloads messages in the updated order from conversation.messageIds.
     _messagesCache.remove(message.conversationId);
+    if (deferRemoteCleanup && _remoteBatchDepth > 0) {
+      // 远端批次统一重建索引，避免每条删除都遍历同一会话。
+      _remoteRebuildConversationIds.add(message.conversationId);
+    } else {
+      _refreshConversationSyncIndexes(message.conversationId);
+    }
 
     // Clean up orphaned upload files that are no longer referenced by any message
-    await _cleanupOrphanUploads();
+    if (!skipCleanup) {
+      if (deferRemoteCleanup) {
+        await _cleanupOrphanUploadsOrDefer();
+      } else {
+        await _cleanupOrphanUploads();
+      }
+    }
 
     notifyListeners();
+  }
+
+  Future<void> deleteMessagesWithSelections({
+    required String conversationId,
+    required Iterable<String> messageIds,
+    required Map<String, int?> versionSelections,
+  }) async {
+    if (!_initialized) return;
+    final temporary = isTemporaryConversation(conversationId);
+    final messages = messageIds
+        .toSet()
+        .map(getMessageById)
+        .whereType<ChatMessage>()
+        .where((message) => message.conversationId == conversationId)
+        .toList(growable: false);
+    if (messages.isEmpty && versionSelections.isEmpty) return;
+
+    final keys = <SyncEntityKey>{
+      for (final groupId in versionSelections.keys)
+        _messageSelectionKey(groupId),
+    };
+    for (final message in messages) {
+      keys
+        ..add(_messageKey(message.id))
+        ..add(_turnKey(message.turnId))
+        ..add(_messageSelectionKey(message.groupId ?? message.id))
+        ..add(_toolEventKey(message.id))
+        ..add(_thoughtSignatureKey(message.id));
+    }
+
+    Future<void> write() => runNotificationBatch<void>(() async {
+      final conversation = temporary
+          ? _draftConversations[conversationId]
+          : _conversationsBox.get(conversationId);
+      if (conversation != null && versionSelections.isNotEmpty) {
+        for (final entry in versionSelections.entries) {
+          final version = entry.value;
+          if (version == null) {
+            conversation.versionSelections.remove(entry.key);
+          } else {
+            conversation.versionSelections[entry.key] = version;
+          }
+        }
+        if (!temporary) {
+          await conversation.save();
+          _refreshConversationSyncIndexes(conversationId);
+        }
+        notifyListeners();
+      }
+      for (final message in messages) {
+        await _deleteMessageRaw(message, skipCleanup: true);
+      }
+      if (!temporary && messages.isNotEmpty) await _cleanupOrphanUploads();
+    });
+
+    if (temporary || keys.isEmpty) {
+      await write();
+      return;
+    }
+    await _syncWriteExecutor.runLocalBatch<void>(keys: keys, write: write);
   }
 
   void setCurrentConversation(String? id) {
@@ -1982,10 +2618,10 @@ class ChatService extends ChangeNotifier {
     notifyListeners();
   }
 
-  Future<void> clearAllData() {
-    return UploadDirectoryCriticalSection.run(() async {
-      if (!_initialized) return;
-
+  Future<void> clearAllData({bool preserveUploads = false}) {
+    if (!_initialized) return Future<void>.value();
+    final keys = _allActiveSyncKeys();
+    Future<void> write() => UploadDirectoryCriticalSection.run(() async {
       await _messagesBox.clear();
       await _conversationsBox.clear();
       await _toolEventsBox.clear();
@@ -1994,16 +2630,20 @@ class ChatService extends ChangeNotifier {
       _temporaryConversationIds.clear();
       _temporaryToolEvents.clear();
       _temporaryGeminiThoughtSigs.clear();
+      _messageConversationIds.clear();
+      _turnConversationIds.clear();
+      _selectionConversationIds.clear();
       _currentConversationId = null;
-      // Remove uploads directory completely
-      try {
+      if (!preserveUploads) {
         final uploadDir = await AppDirectories.getUploadDirectory();
         if (await uploadDir.exists()) {
           await uploadDir.delete(recursive: true);
         }
-      } catch (_) {}
+      }
       notifyListeners();
     });
+    if (keys.isEmpty) return write();
+    return _syncWriteExecutor.runLocalBatch<void>(keys: keys, write: write);
   }
 
   // Uploads stats: count and total size of files under app documents/upload
@@ -2050,10 +2690,15 @@ class ChatService extends ChangeNotifier {
 
     final c = _conversationsBox.get(conversationId);
     if (c == null) return;
-    c.assistantId = assistantId;
-    c.updatedAt = DateTime.now();
-    await c.save();
-    notifyListeners();
+    await _syncWriteExecutor.runLocal<void>(
+      key: _conversationKey(conversationId),
+      write: () async {
+        c.assistantId = assistantId;
+        c.updatedAt = DateTime.now();
+        await c.save();
+        notifyListeners();
+      },
+    );
   }
 }
 

@@ -15,6 +15,7 @@ import '../../models/backup.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../chat/chat_service.dart';
+import '../chat/upload_directory_critical_section.dart';
 import '../sync/cloud_sync_store.dart';
 import '../../../utils/app_directories.dart';
 
@@ -602,6 +603,30 @@ class DataSync {
     return await AppDirectories.getFontsDirectory();
   }
 
+  Future<void> _restoreUploadDirectory(Directory extractDir, RestoreMode mode) {
+    return UploadDirectoryCriticalSection.run(() async {
+      final source = Directory(p.join(extractDir.path, 'upload'));
+      if (!await source.exists()) return;
+
+      final destination = await _getUploadDir();
+      if (mode == RestoreMode.overwrite && await destination.exists()) {
+        await destination.delete(recursive: true);
+      }
+      await destination.create(recursive: true);
+      for (final entity in source.listSync(recursive: true)) {
+        if (entity is! File) continue;
+        final relativePath = p.relative(entity.path, from: source.path);
+        final target = File(p.join(destination.path, relativePath));
+        if (mode == RestoreMode.merge && await target.exists()) continue;
+        await target.parent.create(recursive: true);
+        await entity.copy(target.path);
+        try {
+          await target.setLastModified(await entity.lastModified());
+        } catch (_) {}
+      }
+    });
+  }
+
   Future<String> _exportSettingsJson() async {
     final prefs = await SharedPreferencesAsync.instance;
     final map = await prefs.snapshot();
@@ -1032,6 +1057,8 @@ class DataSync {
         } catch (_) {}
       }
 
+      var uploadFilesRestoredWithChats = false;
+
       // Restore chats
       final chatsFile = File(p.join(extractDir.path, 'chats.json'));
       if (cfg.includeChats && await chatsFile.exists()) {
@@ -1071,118 +1098,136 @@ class DataSync {
               ((obj['geminiThoughtSigs'] as Map?) ?? const <String, dynamic>{})
                   .map((k, v) => MapEntry(k.toString(), v.toString()));
 
-          if (mode == RestoreMode.overwrite) {
-            // Clear and restore via ChatService
-            await chatService.clearAllData();
-            final byConv = <String, List<ChatMessage>>{};
-            for (final m in msgs) {
-              (byConv[m.conversationId] ??= <ChatMessage>[]).add(m);
-            }
-            for (final c in convs) {
-              final list = byConv[c.id] ?? const <ChatMessage>[];
-              await chatService.restoreConversation(c, list);
-            }
-            // Tool events
-            for (final entry in toolEvents.entries) {
-              try {
-                await chatService.setToolEvents(entry.key, entry.value);
-              } catch (_) {}
-            }
-            for (final entry in geminiThoughtSigs.entries) {
-              try {
-                await chatService.setGeminiThoughtSignature(
-                  entry.key,
-                  entry.value,
-                );
-              } catch (_) {}
-            }
-          } else {
-            // Merge mode: Add only non-existing conversations and messages
-            final existingConvs = chatService.getAllConversations();
-            final existingConvIds = existingConvs.map((c) => c.id).toSet();
+          final existingConversations = mode == RestoreMode.merge
+              ? chatService.getAllConversations()
+              : const <Conversation>[];
+          final existingConversationIds = existingConversations
+              .map((conversation) => conversation.id)
+              .toSet();
+          final existingMessageIds = <String>{};
+          for (final conversation in existingConversations) {
+            existingMessageIds.addAll(
+              chatService
+                  .getMessages(conversation.id)
+                  .map((message) => message.id),
+            );
+          }
+          final importedConversationIds = convs
+              .map((conversation) => conversation.id)
+              .toSet();
+          final importedMessages = msgs
+              .where(
+                (message) =>
+                    importedConversationIds.contains(message.conversationId) &&
+                    !existingMessageIds.contains(message.id),
+              )
+              .toList(growable: false);
+          final messagesByConversation = <String, List<ChatMessage>>{};
+          for (final message in importedMessages) {
+            (messagesByConversation[message.conversationId] ??= <ChatMessage>[])
+                .add(message);
+          }
+          final finalMessageIds = <String>{
+            if (mode == RestoreMode.merge) ...existingMessageIds,
+            ...importedMessages.map((message) => message.id),
+          };
+          final importedToolEvents =
+              Map<String, List<Map<String, dynamic>>>.fromEntries(
+                toolEvents.entries.where(
+                  (entry) => finalMessageIds.contains(entry.key),
+                ),
+              );
+          final importedThoughtSignatures = Map<String, String>.fromEntries(
+            geminiThoughtSigs.entries.where(
+              (entry) => finalMessageIds.contains(entry.key),
+            ),
+          );
 
-            // Create a map of message IDs to avoid duplicates
-            final existingMsgIds = <String>{};
-            for (final conv in existingConvs) {
-              final messages = chatService.getMessages(conv.id);
-              existingMsgIds.addAll(messages.map((m) => m.id));
-            }
+          await chatService.runImportBatch<void>(
+            overwrite: mode == RestoreMode.overwrite,
+            conversations: convs,
+            messages: importedMessages,
+            toolEventMessageIds: importedToolEvents.keys,
+            thoughtSignatureMessageIds: importedThoughtSignatures.keys,
+            write: () async {
+              if (mode == RestoreMode.overwrite) {
+                // 通过 ChatService 清空并恢复。
+                await chatService.clearAllData();
+                for (final c in convs) {
+                  final list =
+                      messagesByConversation[c.id] ?? const <ChatMessage>[];
+                  await chatService.restoreConversation(c, list);
+                }
+                // 恢复工具事件。
+                for (final entry in importedToolEvents.entries) {
+                  try {
+                    await chatService.setToolEvents(entry.key, entry.value);
+                  } catch (_) {}
+                }
+                for (final entry in importedThoughtSignatures.entries) {
+                  try {
+                    await chatService.setGeminiThoughtSignature(
+                      entry.key,
+                      entry.value,
+                    );
+                  } catch (_) {}
+                }
+              } else {
+                // 合并模式只添加不存在的会话和消息。
+                // 恢复不存在的会话及其消息。
+                for (final c in convs) {
+                  if (!existingConversationIds.contains(c.id)) {
+                    final list =
+                        messagesByConversation[c.id] ?? const <ChatMessage>[];
+                    await chatService.restoreConversation(c, list);
+                  } else if (messagesByConversation.containsKey(c.id)) {
+                    // 会话已存在时只追加新消息。
+                    final newMessages = messagesByConversation[c.id]!;
+                    for (final msg in newMessages) {
+                      await chatService.addMessageDirectly(c.id, msg);
+                    }
+                  }
+                }
 
-            // Group messages by conversation
-            final byConv = <String, List<ChatMessage>>{};
-            for (final m in msgs) {
-              if (!existingMsgIds.contains(m.id)) {
-                (byConv[m.conversationId] ??= <ChatMessage>[]).add(m);
-              }
-            }
-
-            // Restore non-existing conversations and their messages
-            for (final c in convs) {
-              if (!existingConvIds.contains(c.id)) {
-                final list = byConv[c.id] ?? const <ChatMessage>[];
-                await chatService.restoreConversation(c, list);
-              } else if (byConv.containsKey(c.id)) {
-                // Conversation exists but has new messages
-                final newMessages = byConv[c.id]!;
-                for (final msg in newMessages) {
-                  await chatService.addMessageDirectly(c.id, msg);
+                // 合并工具事件。
+                for (final entry in importedToolEvents.entries) {
+                  final existing = chatService.getToolEvents(entry.key);
+                  if (existing.isEmpty) {
+                    try {
+                      await chatService.setToolEvents(entry.key, entry.value);
+                    } catch (_) {}
+                  }
+                }
+                for (final entry in importedThoughtSignatures.entries) {
+                  final existingSig = chatService.getGeminiThoughtSignature(
+                    entry.key,
+                  );
+                  if (existingSig == null || existingSig.isEmpty) {
+                    try {
+                      await chatService.setGeminiThoughtSignature(
+                        entry.key,
+                        entry.value,
+                      );
+                    } catch (_) {}
+                  }
                 }
               }
-            }
-
-            // Merge tool events
-            for (final entry in toolEvents.entries) {
-              final existing = chatService.getToolEvents(entry.key);
-              if (existing.isEmpty) {
-                try {
-                  await chatService.setToolEvents(entry.key, entry.value);
-                } catch (_) {}
+              if (cfg.includeFiles) {
+                await _restoreUploadDirectory(extractDir, mode);
+                uploadFilesRestoredWithChats = true;
               }
-            }
-            for (final entry in geminiThoughtSigs.entries) {
-              final existingSig = chatService.getGeminiThoughtSignature(
-                entry.key,
-              );
-              if (existingSig == null || existingSig.isEmpty) {
-                try {
-                  await chatService.setGeminiThoughtSignature(
-                    entry.key,
-                    entry.value,
-                  );
-                } catch (_) {}
-              }
-            }
-          }
+            },
+          );
         } catch (_) {}
       }
 
       // Restore files
       if (cfg.includeFiles) {
+        if (!uploadFilesRestoredWithChats) {
+          await _restoreUploadDirectory(extractDir, mode);
+        }
         if (mode == RestoreMode.overwrite) {
           // Overwrite mode: Delete existing directories and copy all
-          // Restore upload directory
-          final uploadSrc = Directory(p.join(extractDir.path, 'upload'));
-          if (await uploadSrc.exists()) {
-            final dst = await _getUploadDir();
-            if (await dst.exists()) {
-              try {
-                await dst.delete(recursive: true);
-              } catch (_) {}
-            }
-            await dst.create(recursive: true);
-            for (final ent in uploadSrc.listSync(recursive: true)) {
-              if (ent is File) {
-                final rel = p.relative(ent.path, from: uploadSrc.path);
-                final target = File(p.join(dst.path, rel));
-                await target.parent.create(recursive: true);
-                await ent.copy(target.path);
-                try {
-                  await target.setLastModified(await ent.lastModified());
-                } catch (_) {}
-              }
-            }
-          }
-
           // Restore images directory
           final imagesSrc = Directory(p.join(extractDir.path, 'images'));
           if (await imagesSrc.exists()) {
@@ -1253,28 +1298,6 @@ class DataSync {
           }
         } else {
           // Merge mode: Only copy non-existing files
-          // Merge upload directory
-          final uploadSrc = Directory(p.join(extractDir.path, 'upload'));
-          if (await uploadSrc.exists()) {
-            final dst = await _getUploadDir();
-            if (!await dst.exists()) {
-              await dst.create(recursive: true);
-            }
-            for (final ent in uploadSrc.listSync(recursive: true)) {
-              if (ent is File) {
-                final rel = p.relative(ent.path, from: uploadSrc.path);
-                final target = File(p.join(dst.path, rel));
-                if (!await target.exists()) {
-                  await target.parent.create(recursive: true);
-                  await ent.copy(target.path);
-                  try {
-                    await target.setLastModified(await ent.lastModified());
-                  } catch (_) {}
-                }
-              }
-            }
-          }
-
           // Merge images directory
           final imagesSrc = Directory(p.join(extractDir.path, 'images'));
           if (await imagesSrc.exists()) {

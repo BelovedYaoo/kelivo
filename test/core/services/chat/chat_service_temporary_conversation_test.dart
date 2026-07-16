@@ -33,6 +33,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/core/services/search/search_service.dart';
 import 'package:Kelivo/core/services/tts/network_tts.dart';
 import 'package:Kelivo/utils/app_directories.dart';
@@ -72,6 +73,37 @@ Future<T> _withRealHttpClient<T>(Future<T> Function() action) {
   );
 }
 
+final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
+  final List<Set<SyncEntityKey>> batches = <Set<SyncEntityKey>>[];
+  Future<void> Function()? onBatchWritten;
+  int _batchDepth = 0;
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) {
+    return runLocalBatch(keys: <SyncEntityKey>[key], write: write);
+  }
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) async {
+    if (_batchDepth > 0) return write();
+    batches.add(Set<SyncEntityKey>.from(keys));
+    _batchDepth++;
+    try {
+      final result = await write();
+      await onBatchWritten?.call();
+      return result;
+    } finally {
+      _batchDepth--;
+    }
+  }
+}
+
 CloudSyncAccountSession _cloudSession(
   String baseUrl, {
   String userId = 'sync-user',
@@ -94,14 +126,19 @@ CloudSyncAccountSession _cloudSession(
 
 Future<ConfigSyncAdapter> _createPopulatedConfigSyncAdapter() async {
   SharedPreferences.setMockInitialValues(const <String, Object>{});
-  final settings = SettingsProvider();
-  final assistants = AssistantProvider();
-  final memories = MemoryProvider();
-  final mcp = McpProvider();
-  final quickPhrases = QuickPhraseProvider();
-  final injections = InstructionInjectionProvider();
-  final worldBooks = WorldBookProvider();
-  final user = UserProvider();
+  const syncWriteExecutor = UntrackedSyncWriteExecutor.forTests();
+  final settings = SettingsProvider(syncWriteExecutor: syncWriteExecutor);
+  final assistants = AssistantProvider(syncWriteExecutor: syncWriteExecutor);
+  final memories = MemoryProvider(syncWriteExecutor: syncWriteExecutor);
+  final mcp = McpProvider(syncWriteExecutor: syncWriteExecutor);
+  final quickPhrases = QuickPhraseProvider(
+    syncWriteExecutor: syncWriteExecutor,
+  );
+  final injections = InstructionInjectionProvider(
+    syncWriteExecutor: syncWriteExecutor,
+  );
+  final worldBooks = WorldBookProvider(syncWriteExecutor: syncWriteExecutor);
+  final user = UserProvider(syncWriteExecutor: syncWriteExecutor);
   await Future.wait<void>(<Future<void>>[
     settings.ready,
     assistants.ready,
@@ -206,8 +243,230 @@ void main() {
   });
 
   group('ChatService turn identities', () {
+    test('流式更新不记日志且终态只提交一个完整批次', () async {
+      final writes = _RecordingSyncWriteExecutor();
+      final service = ChatService(writes);
+      await service.init();
+
+      final conversation = await service.createConversation(title: 'Chat');
+      final user = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: 'question',
+      );
+      final assistant = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: '',
+        isStreaming: true,
+        turnId: user.turnId,
+      );
+      writes.batches.clear();
+
+      await service.updateMessageSilent(assistant.id, content: 'partial');
+      await service.setToolEvents(assistant.id, <Map<String, dynamic>>[
+        <String, dynamic>{'id': 'tool-1', 'name': 'search'},
+      ]);
+      await service.setGeminiThoughtSignature(assistant.id, 'signature');
+
+      expect(writes.batches, isEmpty);
+
+      await service.updateMessageSilent(
+        assistant.id,
+        content: 'answer',
+        reasoningText: 'final reasoning',
+        isStreaming: false,
+        generationStatus: ChatMessage.generationStatusCompleted,
+      );
+
+      expect(writes.batches, hasLength(1));
+      expect(writes.batches.single, <SyncEntityKey>{
+        SyncEntityKey(entityType: 'conversation', entityId: conversation.id),
+        SyncEntityKey(entityType: 'turn', entityId: user.turnId),
+        SyncEntityKey(entityType: 'message', entityId: assistant.id),
+        SyncEntityKey(entityType: 'tool-event', entityId: assistant.id),
+        SyncEntityKey(entityType: 'thought-signature', entityId: assistant.id),
+      });
+      final stored = service.getMessageById(assistant.id);
+      expect(stored?.content, 'answer');
+      expect(stored?.reasoningText, 'final reasoning');
+    });
+
+    test('失败终态也只提交一个完整批次', () async {
+      final writes = _RecordingSyncWriteExecutor();
+      final service = ChatService(writes);
+      await service.init();
+      final conversation = await service.createConversation(title: 'Chat');
+      final user = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: 'question',
+      );
+      final assistant = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: '',
+        isStreaming: true,
+        turnId: user.turnId,
+      );
+      writes.batches.clear();
+
+      await service.updateMessage(
+        assistant.id,
+        content: 'partial error',
+        isStreaming: false,
+        generationStatus: ChatMessage.generationStatusFailed,
+      );
+
+      expect(writes.batches, hasLength(1));
+      expect(
+        service.getMessageById(assistant.id)?.generationStatus,
+        ChatMessage.generationStatusFailed,
+      );
+    });
+
+    test('删除消息在一个批次中声明全部派生实体', () async {
+      final writes = _RecordingSyncWriteExecutor();
+      final service = ChatService(writes);
+      await service.init();
+      final conversation = await service.createConversation(title: 'Chat');
+      final message = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: 'answer',
+        turnId: 'turn-delete',
+        groupId: 'group-delete',
+        generationStatus: ChatMessage.generationStatusCompleted,
+      );
+      await service.setSelectedVersion(conversation.id, 'group-delete', 0);
+      await service.setToolEvents(message.id, const <Map<String, dynamic>>[]);
+      await service.setGeminiThoughtSignature(message.id, 'signature');
+      writes.batches.clear();
+
+      await service.deleteMessage(message.id);
+
+      expect(writes.batches, hasLength(1));
+      expect(writes.batches.single, <SyncEntityKey>{
+        SyncEntityKey(entityType: 'message', entityId: message.id),
+        const SyncEntityKey(entityType: 'turn', entityId: 'turn-delete'),
+        const SyncEntityKey(
+          entityType: 'message-selection',
+          entityId: 'group-delete',
+        ),
+        SyncEntityKey(entityType: 'tool-event', entityId: message.id),
+        SyncEntityKey(entityType: 'thought-signature', entityId: message.id),
+      });
+      expect(service.getMessageById(message.id), isNull);
+    });
+
+    test('多消息删除去重实体键并只提交一次', () async {
+      final writes = _RecordingSyncWriteExecutor();
+      final service = ChatService(writes);
+      await service.init();
+      final conversation = await service.createConversation(title: 'Chat');
+      final first = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: 'first',
+        turnId: 'shared-turn',
+        groupId: 'shared-group',
+        version: 0,
+      );
+      final second = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: 'second',
+        turnId: 'shared-turn',
+        groupId: 'shared-group',
+        version: 1,
+      );
+      await service.setSelectedVersion(conversation.id, 'shared-group', 1);
+      writes.batches.clear();
+
+      await service.deleteMessagesWithSelections(
+        conversationId: conversation.id,
+        messageIds: <String>[second.id, first.id, second.id],
+        versionSelections: const <String, int?>{'shared-group': null},
+      );
+
+      expect(writes.batches, hasLength(1));
+      expect(writes.batches.single, hasLength(8));
+      expect(service.getMessages(conversation.id), isEmpty);
+      expect(service.getVersionSelections(conversation.id), isEmpty);
+    });
+
+    test('临时会话批量删除保持内存态且不写日志', () async {
+      final writes = _RecordingSyncWriteExecutor();
+      final service = ChatService(writes);
+      await service.init();
+      final conversation = await service.createDraftConversation(
+        title: 'Temporary',
+        temporary: true,
+      );
+      final message = await service.addMessage(
+        conversationId: conversation.id,
+        role: 'assistant',
+        content: 'answer',
+        groupId: 'temporary-group',
+      );
+      writes.batches.clear();
+
+      await service.deleteMessagesWithSelections(
+        conversationId: conversation.id,
+        messageIds: <String>[message.id],
+        versionSelections: const <String, int?>{'temporary-group': null},
+      );
+
+      expect(writes.batches, isEmpty);
+      expect(service.getMessageById(message.id), isNull);
+      expect(service.getMessages(conversation.id), isEmpty);
+    });
+
+    test('覆盖导入清空与恢复只提交最终状态批次', () async {
+      final writes = _RecordingSyncWriteExecutor();
+      final service = ChatService(writes);
+      await service.init();
+      final oldConversation = await service.createConversation(title: 'Old');
+      await service.addMessage(
+        conversationId: oldConversation.id,
+        role: 'user',
+        content: 'old',
+      );
+      final incomingConversation = Conversation(
+        id: 'imported-conversation',
+        title: 'Imported',
+      );
+      final incomingMessage = ChatMessage(
+        id: 'imported-message',
+        role: 'user',
+        content: 'new',
+        conversationId: incomingConversation.id,
+      );
+      writes.batches.clear();
+      var notificationCount = 0;
+      service.addListener(() => notificationCount++);
+
+      await service.runImportBatch<void>(
+        overwrite: true,
+        conversations: <Conversation>[incomingConversation],
+        messages: <ChatMessage>[incomingMessage],
+        write: () async {
+          await service.clearAllData();
+          await service.restoreConversation(incomingConversation, <ChatMessage>[
+            incomingMessage,
+          ]);
+        },
+      );
+
+      expect(writes.batches, hasLength(1));
+      expect(writes.batches.single.length, 6);
+      expect(notificationCount, 1);
+      expect(service.getConversation(oldConversation.id), isNull);
+      expect(service.getMessageById(incomingMessage.id), isNotNull);
+    });
+
     test('message writes preserve turn and explicit terminal status', () async {
-      final service = ChatService();
+      final service = ChatService(const UntrackedSyncWriteExecutor.forTests());
       await service.init();
 
       final conversation = await service.createConversation(title: 'Chat');
@@ -301,7 +560,12 @@ void main() {
         await toolEvents.put('_active_streaming_ids', [laterVersion.id]);
         await Hive.close();
 
-        final service = ChatService();
+        final writes = _RecordingSyncWriteExecutor();
+        late ChatService service;
+        writes.onBatchWritten = () async {
+          expect(service.initialized, isTrue);
+        };
+        service = ChatService(writes);
         await service.init();
         final migrated = {
           for (final message in service.getMessages(conversation.id))
@@ -314,6 +578,13 @@ void main() {
         expect(
           migrated[laterVersion.id]?.generationStatus,
           ChatMessage.generationStatusInterrupted,
+        );
+        expect(writes.batches, hasLength(1));
+        expect(
+          writes.batches.single,
+          contains(
+            SyncEntityKey(entityType: 'message', entityId: laterVersion.id),
+          ),
         );
       },
     );
@@ -331,7 +602,9 @@ void main() {
     });
 
     test('message sync entities belong to their turn', () async {
-      final chatService = ChatService();
+      final chatService = ChatService(
+        const UntrackedSyncWriteExecutor.forTests(),
+      );
       await chatService.init();
       final store = await CloudSyncStore.open(
         boxName: 'cloud_sync_message_parent_test',
@@ -688,7 +961,9 @@ void main() {
     });
 
     test('attachment bindings persist within their account scope', () async {
-      final chatService = ChatService();
+      final chatService = ChatService(
+        const UntrackedSyncWriteExecutor.forTests(),
+      );
       await chatService.init();
       final store = await CloudSyncStore.open(
         boxName: 'cloud_sync_attachment_test',
@@ -752,7 +1027,9 @@ void main() {
     });
 
     test('chat adapter only extracts trailing user attachment markers', () async {
-      final chatService = ChatService();
+      final chatService = ChatService(
+        const UntrackedSyncWriteExecutor.forTests(),
+      );
       await chatService.init();
       final store = await CloudSyncStore.open(
         boxName: 'cloud_sync_marker_authenticity_test',
@@ -1189,7 +1466,9 @@ void main() {
     test(
       'remote turns deterministically rebuild and delete local order',
       () async {
-        final service = ChatService();
+        final service = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await service.init();
 
         final incomingConversation = Conversation(
@@ -1320,7 +1599,7 @@ void main() {
 
   group('ChatService temporary conversations', () {
     test('ordinary draft persists when its first message is added', () async {
-      final service = ChatService();
+      final service = ChatService(const UntrackedSyncWriteExecutor.forTests());
       await service.init();
 
       final conversation = await service.createDraftConversation(title: 'Chat');
@@ -1337,7 +1616,9 @@ void main() {
     test(
       'temporary draft keeps messages in memory without entering history',
       () async {
-        final service = ChatService();
+        final service = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await service.init();
 
         final conversation = await service.createDraftConversation(
@@ -1360,7 +1641,9 @@ void main() {
     test(
       'temporary conversation supports range and recent message reads',
       () async {
-        final service = ChatService();
+        final service = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await service.init();
 
         final conversation = await service.createDraftConversation(
@@ -1401,7 +1684,9 @@ void main() {
     test(
       'temporary conversation is discarded when current conversation changes',
       () async {
-        final service = ChatService();
+        final service = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await service.init();
 
         final temporary = await service.createDraftConversation(
@@ -1424,7 +1709,7 @@ void main() {
     );
 
     test('temporary message deletion only affects memory', () async {
-      final service = ChatService();
+      final service = ChatService(const UntrackedSyncWriteExecutor.forTests());
       await service.init();
 
       final conversation = await service.createDraftConversation(
@@ -1449,7 +1734,9 @@ void main() {
     test(
       'fork copies selected path as plain single-version messages',
       () async {
-        final service = ChatService();
+        final service = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await service.init();
 
         final source = await service.createConversation(title: 'Source');

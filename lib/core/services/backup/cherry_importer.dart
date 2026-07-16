@@ -9,6 +9,7 @@ import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../providers/settings_provider.dart';
 import '../chat/chat_service.dart';
+import '../chat/upload_directory_critical_section.dart';
 import '../sync/cloud_sync_store.dart';
 import '../../../utils/app_directories.dart';
 import 'cherry_direct_backup_reader.dart';
@@ -202,12 +203,17 @@ class CherryImporter {
     // 6) Import assistants (persist to SharedPreferences, restart recommended)
     final importedAssistants = await _importAssistants(cherryAssistants, mode);
 
-    // If overwrite, clear chats/files BEFORE writing any uploads to avoid deletion later
+    // 覆盖导入先清理旧附件，聊天数据等最终实体就绪后在同一写前批次内替换。
     if (!chatService.initialized) {
       await chatService.init();
     }
     if (mode == RestoreMode.overwrite) {
-      await chatService.clearAllData();
+      await UploadDirectoryCriticalSection.run(() async {
+        final uploadDir = await AppDirectories.getUploadDirectory();
+        if (await uploadDir.exists()) {
+          await uploadDir.delete(recursive: true);
+        }
+      });
     }
 
     // 7) Prepare files (only if referenced by messages)
@@ -978,6 +984,10 @@ class CherryImporter {
     int convCount = 0;
     int msgCount = 0;
     int extraSaved = 0; // number of files saved from base64/data urls
+    final pendingWrites =
+        <
+          ({Conversation conversation, List<ChatMessage> messages, bool append})
+        >[];
 
     final topicIds = <String>{...topicMeta.keys, ...topicMessages.keys};
     for (final topicId in topicIds) {
@@ -1229,27 +1239,57 @@ class CherryImporter {
         updatedAt = times.last;
       }
 
-      // Persist
+      final conversation = Conversation(
+        id: topicId,
+        title: title,
+        createdAt: createdAt,
+        updatedAt: updatedAt,
+        isPinned: pinned,
+        assistantId: assistantId,
+      );
       if (mode == RestoreMode.merge && existingConvIds.contains(topicId)) {
-        // Only add new messages
-        for (final m in messages) {
-          await chatService.addMessageDirectly(topicId, m);
-          msgCount += 1;
-        }
+        pendingWrites.add((
+          conversation: conversation,
+          messages: messages,
+          append: true,
+        ));
+        msgCount += messages.length;
       } else {
-        final conv = Conversation(
-          id: topicId,
-          title: title,
-          createdAt: createdAt,
-          updatedAt: updatedAt,
-          isPinned: pinned,
-          assistantId: assistantId,
-        );
-        await chatService.restoreConversation(conv, messages);
+        pendingWrites.add((
+          conversation: conversation,
+          messages: messages,
+          append: false,
+        ));
         convCount += 1;
         msgCount += messages.length;
       }
     }
+
+    await chatService.runImportBatch<void>(
+      overwrite: mode == RestoreMode.overwrite,
+      conversations: pendingWrites.map((entry) => entry.conversation),
+      messages: pendingWrites.expand((entry) => entry.messages),
+      write: () async {
+        if (mode == RestoreMode.overwrite) {
+          await chatService.clearAllData(preserveUploads: true);
+        }
+        for (final entry in pendingWrites) {
+          if (entry.append) {
+            for (final message in entry.messages) {
+              await chatService.addMessageDirectly(
+                entry.conversation.id,
+                message,
+              );
+            }
+          } else {
+            await chatService.restoreConversation(
+              entry.conversation,
+              entry.messages,
+            );
+          }
+        }
+      },
+    );
 
     return (convCount, msgCount, extraSaved);
   }

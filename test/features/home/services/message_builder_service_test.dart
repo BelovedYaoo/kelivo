@@ -5,6 +5,7 @@ import 'package:Kelivo/core/models/assistant.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/features/home/services/message_builder_service.dart';
 
 class _FakeBuildContext implements BuildContext {
@@ -16,7 +17,7 @@ class _FakeChatService extends ChatService {
   _FakeChatService(
     this._toolEventsByMessageId, {
     this.persistedMessages = const [],
-  });
+  }) : super(const UntrackedSyncWriteExecutor.forTests());
 
   final Map<String, List<Map<String, dynamic>>> _toolEventsByMessageId;
   final List<ChatMessage> persistedMessages;

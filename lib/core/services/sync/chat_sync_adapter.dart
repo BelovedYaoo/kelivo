@@ -33,7 +33,9 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
   int get applyPriority => 100;
 
   @override
-  Future<T> runRemoteBatch<T>(Future<T> Function() apply) => apply();
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) {
+    return _chatService.runRemoteBatch(apply);
+  }
 
   @override
   Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key) async {
@@ -64,12 +66,10 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
         throw FormatException('不支持的聊天同步实体：${key.entityType}');
       }
     }
-    final requested = Set<SyncEntityKey>.unmodifiable(keys);
     final result = <SyncEntityKey, LocalSyncEntity>{};
-    for (final entity in await exportLocalEntities()) {
-      if (requested.contains(entity.key)) {
-        result[entity.key] = entity;
-      }
+    for (final key in keys) {
+      final entity = await exportLocalEntity(key);
+      if (entity != null) result[key] = entity;
     }
     return Map<SyncEntityKey, LocalSyncEntity>.unmodifiable(result);
   }
@@ -192,21 +192,15 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
   }
 
   LocalSyncEntity? _exportTurn(String turnId) {
-    for (final conversation in _chatService.getAllConversations()) {
-      final matching = _chatService
-          .getMessages(conversation.id)
-          .where((message) => message.turnId == turnId)
-          .toList(growable: false);
-      if (matching.isEmpty) continue;
-      final turn = ChatSyncCodec.deriveTurns(matching).single;
-      return LocalSyncEntity(
-        entityType: turnType,
-        entityId: turn.id,
-        parentId: turn.conversationId,
-        payload: ChatSyncCodec.encodeTurn(turn),
-      );
-    }
-    return null;
+    final matching = _chatService.getMessagesForTurn(turnId);
+    if (matching.isEmpty) return null;
+    final turn = ChatSyncCodec.deriveTurns(matching).single;
+    return LocalSyncEntity(
+      entityType: turnType,
+      entityId: turn.id,
+      parentId: turn.conversationId,
+      payload: ChatSyncCodec.encodeTurn(turn),
+    );
   }
 
   Future<LocalSyncEntity?> _exportMessage(String messageId) async {
@@ -237,23 +231,23 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
   }
 
   LocalSyncEntity? _exportMessageSelection(String groupId) {
-    for (final conversation in _chatService.getAllConversations()) {
-      final selectedVersion = conversation.versionSelections[groupId];
-      if (selectedVersion == null) continue;
-      return LocalSyncEntity(
-        entityType: messageSelectionType,
-        entityId: groupId,
-        parentId: conversation.id,
-        payload: ChatSyncCodec.encodeMessageSelection(
-          ChatSyncMessageSelectionRecord(
-            conversationId: conversation.id,
-            groupId: groupId,
-            selectedVersion: selectedVersion,
-          ),
+    final conversationId = _chatService.getConversationIdForSelection(groupId);
+    if (conversationId == null) return null;
+    final conversation = _chatService.getConversationForSync(conversationId);
+    final selectedVersion = conversation?.versionSelections[groupId];
+    if (conversation == null || selectedVersion == null) return null;
+    return LocalSyncEntity(
+      entityType: messageSelectionType,
+      entityId: groupId,
+      parentId: conversation.id,
+      payload: ChatSyncCodec.encodeMessageSelection(
+        ChatSyncMessageSelectionRecord(
+          conversationId: conversation.id,
+          groupId: groupId,
+          selectedVersion: selectedVersion,
         ),
-      );
-    }
-    return null;
+      ),
+    );
   }
 
   LocalSyncEntity? _exportToolEvent(String messageId) {
@@ -291,26 +285,11 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
   }
 
   Conversation? _findConversation(String conversationId) {
-    for (final conversation in _chatService.getAllConversations()) {
-      if (conversation.id == conversationId) return conversation;
-    }
-    return null;
+    return _chatService.getConversationForSync(conversationId);
   }
 
   ChatMessage? _findMessage(String messageId) {
-    for (final conversation in _chatService.getAllConversations()) {
-      final index = conversation.messageIds.indexOf(messageId);
-      if (index < 0) continue;
-      final messages = _chatService.getMessagesRange(
-        conversation.id,
-        start: index,
-        limit: 1,
-      );
-      if (messages.isNotEmpty && messages.single.id == messageId) {
-        return messages.single;
-      }
-    }
-    return null;
+    return _chatService.getMessageById(messageId);
   }
 
   @override
@@ -416,17 +395,14 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
         await _chatService.deleteMessageFromSync(key.entityId);
         return;
       case turnType:
-        for (final conversation in _chatService.getAllConversations()) {
-          final hasTurn = _chatService
-              .getMessages(conversation.id)
-              .any((message) => message.turnId == key.entityId);
-          if (!hasTurn) continue;
-          await _chatService.deleteTurnFromSync(
-            conversationId: conversation.id,
-            turnId: key.entityId,
-          );
-          return;
-        }
+        final conversationId = _chatService.getConversationIdForTurn(
+          key.entityId,
+        );
+        if (conversationId == null) return;
+        await _chatService.deleteTurnFromSync(
+          conversationId: conversationId,
+          turnId: key.entityId,
+        );
         return;
       case messageSelectionType:
         await _chatService.deleteMessageSelectionFromSync(key.entityId);

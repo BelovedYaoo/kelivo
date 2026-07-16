@@ -3,10 +3,12 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/features/home/controllers/chat_controller.dart';
 
 class _FakeLazyChatService extends ChatService {
-  _FakeLazyChatService(this._messages);
+  _FakeLazyChatService(this._messages)
+    : super(const UntrackedSyncWriteExecutor.forTests());
 
   final List<ChatMessage> _messages;
   Map<String, int> versionSelections = const <String, int>{};
