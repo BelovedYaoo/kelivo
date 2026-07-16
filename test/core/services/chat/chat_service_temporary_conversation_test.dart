@@ -77,7 +77,7 @@ Future<T> _withRealHttpClient<T>(Future<T> Function() action) {
 }
 
 final class _CloudSyncProviderFixture {
-  const _CloudSyncProviderFixture({
+  _CloudSyncProviderFixture({
     required this.provider,
     required this.chatService,
     required this.store,
@@ -86,12 +86,23 @@ final class _CloudSyncProviderFixture {
   final CloudSyncProvider provider;
   final ChatService chatService;
   final CloudSyncStore store;
+  bool _disposed = false;
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    provider.dispose();
+  }
 
   Future<void> close() async {
-    provider.dispose();
-    for (var attempt = 0; attempt < 50; attempt++) {
+    dispose();
+    await waitUntilClosed();
+  }
+
+  Future<void> waitUntilClosed() async {
+    for (var attempt = 0; attempt < 100; attempt++) {
       if (!Hive.isBoxOpen('cloud-sync-provider-login-test')) return;
-      await Future<void>.delayed(const Duration(milliseconds: 2));
+      await Future<void>.delayed(const Duration(milliseconds: 5));
     }
     throw StateError('CloudSyncProvider 未及时关闭同步存储');
   }
@@ -140,12 +151,23 @@ Future<_CloudSyncProviderFixture> _createCloudSyncProviderFixture(
   );
 }
 
-Future<HttpServer> _startCloudSyncLoginServer() async {
+Future<HttpServer> _startCloudSyncLoginServer({
+  List<String>? requestPaths,
+  Completer<void>? loginRequestReceived,
+  Future<void>? releaseLoginResponse,
+}) async {
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   server.listen((request) async {
+    requestPaths?.add(request.uri.path);
     await request.drain<void>();
     request.response.headers.contentType = ContentType.json;
     if (request.uri.path == '/api/auth/session/create') {
+      if (loginRequestReceived != null && !loginRequestReceived.isCompleted) {
+        loginRequestReceived.complete();
+      }
+      if (releaseLoginResponse != null) {
+        await releaseLoginResponse;
+      }
       request.response.write(
         jsonEncode(<String, Object?>{
           'data': <String, Object?>{
@@ -426,6 +448,105 @@ void main() {
       expect(fixture.provider.signedIn, isTrue);
       expect(fixture.provider.status, CloudSyncProviderStatus.error);
       expect(fixture.provider.lastError, isNotNull);
+    });
+  });
+
+  group('CloudSyncProvider 生命周期', () {
+    test('首次同步失败后退出仍清除认证会话和本地同步状态', () async {
+      final server = await _startCloudSyncLoginServer();
+      final fixture = await _createCloudSyncProviderFixture(tempDir.path);
+      addTearDown(() async {
+        await server.close(force: true);
+        await fixture.close();
+      });
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+
+      final loginSuccess = await _withRealHttpClient(
+        () => fixture.provider.login(
+          baseUrl: baseUrl,
+          loginName: 'sync-user',
+          password: 'password',
+          deviceName: 'device',
+        ),
+      );
+      final logoutSuccess = await fixture.provider.logout(clearSyncState: true);
+
+      expect(loginSuccess, isFalse);
+      expect(logoutSuccess, isTrue);
+      expect(fixture.provider.signedIn, isFalse);
+      expect(fixture.provider.paused, isFalse);
+      expect(fixture.provider.status, CloudSyncProviderStatus.signedOut);
+      expect(fixture.store.activeSession, isNull);
+    });
+
+    test('暂停时拒绝手动同步且恢复后重新发起同步', () async {
+      final requestPaths = <String>[];
+      final server = await _startCloudSyncLoginServer(
+        requestPaths: requestPaths,
+      );
+      final fixture = await _createCloudSyncProviderFixture(tempDir.path);
+      addTearDown(() async {
+        await server.close(force: true);
+        await fixture.close();
+      });
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+
+      await _withRealHttpClient(() async {
+        await fixture.provider.login(
+          baseUrl: baseUrl,
+          loginName: 'sync-user',
+          password: 'password',
+          deviceName: 'device',
+        );
+        expect(await fixture.provider.setPaused(true), isTrue);
+        final requestCountWhilePaused = requestPaths.length;
+
+        expect(await fixture.provider.syncNow(), isFalse);
+        expect(requestPaths, hasLength(requestCountWhilePaused));
+        expect(fixture.provider.paused, isTrue);
+        expect(fixture.provider.status, CloudSyncProviderStatus.paused);
+
+        expect(await fixture.provider.setPaused(false), isTrue);
+        expect(await fixture.provider.syncNow(), isFalse);
+        expect(requestPaths.length, greaterThan(requestCountWhilePaused));
+        expect(fixture.provider.paused, isFalse);
+        expect(fixture.provider.status, CloudSyncProviderStatus.error);
+      });
+    });
+
+    test('登录请求进行中销毁会等待会话变更完成后关闭存储', () async {
+      final loginRequestReceived = Completer<void>();
+      final releaseLoginResponse = Completer<void>();
+      final server = await _startCloudSyncLoginServer(
+        loginRequestReceived: loginRequestReceived,
+        releaseLoginResponse: releaseLoginResponse.future,
+      );
+      final fixture = await _createCloudSyncProviderFixture(tempDir.path);
+      addTearDown(() async {
+        if (!releaseLoginResponse.isCompleted) {
+          releaseLoginResponse.complete();
+        }
+        await server.close(force: true);
+        await fixture.close();
+      });
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+
+      final login = _withRealHttpClient(
+        () => fixture.provider.login(
+          baseUrl: baseUrl,
+          loginName: 'sync-user',
+          password: 'password',
+          deviceName: 'device',
+        ),
+      );
+      await loginRequestReceived.future.timeout(const Duration(seconds: 2));
+
+      fixture.dispose();
+      releaseLoginResponse.complete();
+
+      expect(await login, isFalse);
+      await fixture.waitUntilClosed();
+      expect(Hive.isBoxOpen('cloud-sync-provider-login-test'), isFalse);
     });
   });
 
