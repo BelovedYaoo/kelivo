@@ -559,6 +559,7 @@ final class CloudSyncOutboxMutation {
     required this.createdAt,
     required this.nextAttemptAt,
     required this.lastErrorCode,
+    required this.blockedAt,
   });
 
   factory CloudSyncOutboxMutation.create({
@@ -588,6 +589,7 @@ final class CloudSyncOutboxMutation {
       createdAt: now,
       nextAttemptAt: now,
       lastErrorCode: null,
+      blockedAt: null,
     );
   }
 
@@ -621,6 +623,7 @@ final class CloudSyncOutboxMutation {
       createdAt: now,
       nextAttemptAt: now,
       lastErrorCode: null,
+      blockedAt: null,
     );
   }
 
@@ -671,10 +674,13 @@ final class CloudSyncOutboxMutation {
   final DateTime createdAt;
   final DateTime nextAttemptAt;
   final String? lastErrorCode;
+  final DateTime? blockedAt;
 
   bool canMergeWith(CloudSyncOutboxMutation newer) {
     if (attemptCount != 0 ||
+        blockedAt != null ||
         newer.attemptCount != 0 ||
+        newer.blockedAt != null ||
         entityType != newer.entityType ||
         entityId != newer.entityId ||
         operation != newer.operation) {
@@ -710,6 +716,7 @@ final class CloudSyncOutboxMutation {
         createdAt: createdAt,
         nextAttemptAt: newer.nextAttemptAt,
         lastErrorCode: null,
+        blockedAt: null,
       );
     }
     return CloudSyncOutboxMutation._(
@@ -726,10 +733,14 @@ final class CloudSyncOutboxMutation {
       createdAt: createdAt,
       nextAttemptAt: newer.nextAttemptAt,
       lastErrorCode: null,
+      blockedAt: null,
     );
   }
 
   CloudSyncOutboxMutation attempted() {
+    if (blockedAt != null) {
+      throw StateError('被永久拒绝的 mutation 不能再次发送');
+    }
     return CloudSyncOutboxMutation._(
       mutationId: mutationId,
       entityType: entityType,
@@ -744,6 +755,7 @@ final class CloudSyncOutboxMutation {
       createdAt: createdAt,
       nextAttemptAt: nextAttemptAt,
       lastErrorCode: lastErrorCode,
+      blockedAt: null,
     );
   }
 
@@ -751,6 +763,9 @@ final class CloudSyncOutboxMutation {
     required DateTime nextAttemptAt,
     String? errorCode,
   }) {
+    if (blockedAt != null) {
+      throw StateError('被永久拒绝的 mutation 不能进入自动重试');
+    }
     return CloudSyncOutboxMutation._(
       mutationId: mutationId,
       entityType: entityType,
@@ -765,6 +780,32 @@ final class CloudSyncOutboxMutation {
       createdAt: createdAt,
       nextAttemptAt: nextAttemptAt.toUtc(),
       lastErrorCode: errorCode,
+      blockedAt: null,
+    );
+  }
+
+  CloudSyncOutboxMutation blocked({
+    required DateTime blockedAt,
+    required String errorCode,
+  }) {
+    if (errorCode.trim().isEmpty) {
+      throw const FormatException('永久拒绝原因不能为空');
+    }
+    return CloudSyncOutboxMutation._(
+      mutationId: mutationId,
+      entityType: entityType,
+      entityId: entityId,
+      operation: operation,
+      parentId: parentId,
+      baseRevision: baseRevision,
+      schemaVersion: schemaVersion,
+      payload: payload,
+      patch: patch,
+      attemptCount: attemptCount,
+      createdAt: createdAt,
+      nextAttemptAt: nextAttemptAt,
+      lastErrorCode: errorCode,
+      blockedAt: blockedAt.toUtc(),
     );
   }
 
@@ -783,6 +824,7 @@ final class CloudSyncOutboxMutation {
     'createdAt': createdAt.toIso8601String(),
     'nextAttemptAt': nextAttemptAt.toIso8601String(),
     if (lastErrorCode != null) 'lastErrorCode': lastErrorCode,
+    if (blockedAt != null) 'blockedAt': blockedAt!.toIso8601String(),
   };
 
   factory CloudSyncOutboxMutation.fromJson(CloudSyncJsonMap json) {
@@ -870,6 +912,7 @@ final class CloudSyncOutboxMutation {
       createdAt: decoded.createdAt,
       nextAttemptAt: _requireDateTime(json, 'nextAttemptAt'),
       lastErrorCode: _optionalString(json, 'lastErrorCode'),
+      blockedAt: _optionalDateTime(json, 'blockedAt'),
     );
   }
 }
@@ -1139,6 +1182,7 @@ CloudSyncOutboxMutation _revisionMutation({
     createdAt: now,
     nextAttemptAt: now,
     lastErrorCode: null,
+    blockedAt: null,
   );
 }
 
@@ -1314,6 +1358,11 @@ DateTime _requireDateTime(CloudSyncJsonMap json, String key) {
     throw FormatException('$key 必须为 ISO 8601 时间');
   }
   return parsed.toUtc();
+}
+
+DateTime? _optionalDateTime(CloudSyncJsonMap json, String key) {
+  if (json[key] == null) return null;
+  return _requireDateTime(json, key);
 }
 
 T _parseEnum<T extends Enum>(List<T> values, String name, String field) {

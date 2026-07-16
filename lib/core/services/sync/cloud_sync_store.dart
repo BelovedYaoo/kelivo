@@ -255,10 +255,31 @@ final class CloudSyncStore {
     }
     final deadline = (readyAt ?? DateTime.now()).toUtc();
     return List<CloudSyncOutboxMutation>.unmodifiable(
-      _allOutbox(
-        session,
-      ).where((item) => !item.nextAttemptAt.isAfter(deadline)).take(limit),
+      _allOutbox(session)
+          .where(
+            (item) =>
+                item.blockedAt == null && !item.nextAttemptAt.isAfter(deadline),
+          )
+          .take(limit),
     );
+  }
+
+  Future<CloudSyncOutboxMutation> markOutboxBlocked(
+    CloudSyncAccountSession session, {
+    required String mutationId,
+    required String errorCode,
+    DateTime? blockedAt,
+  }) async {
+    final existing = outboxById(session, mutationId);
+    if (existing == null) {
+      throw StateError('找不到被永久拒绝的 mutation：$mutationId');
+    }
+    final blocked = existing.blocked(
+      blockedAt: blockedAt ?? DateTime.now(),
+      errorCode: errorCode,
+    );
+    await _write(_outboxKey(session, mutationId), blocked.toJson());
+    return blocked;
   }
 
   Future<CloudSyncOutboxMutation> markOutboxRetry(
