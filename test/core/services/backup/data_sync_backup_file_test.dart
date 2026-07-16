@@ -10,6 +10,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:Kelivo/core/models/backup.dart';
 import 'package:Kelivo/core/services/backup/data_sync.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this.root);
@@ -64,7 +65,9 @@ void main() {
         await File('${tmpDir.path}/kelivo_backup_old.zip').writeAsString('old');
         await File('${tmpDir.path}/_bk_chats.json').writeAsString('{}');
 
-        final sync = DataSync(chatService: ChatService());
+        final sync = DataSync(
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+        );
         final backupFile = await sync.prepareBackupFile(
           const WebDavConfig(includeChats: false, includeFiles: true),
         );
@@ -126,7 +129,9 @@ void main() {
       final existingFile = File('${fontsDir.path}/existing.ttf');
       await existingFile.writeAsBytes(List<int>.filled(64, 3));
 
-      final sync = DataSync(chatService: ChatService());
+      final sync = DataSync(
+        chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+      );
       await sync.restoreFromLocalFile(
         zipFile,
         const WebDavConfig(includeChats: false, includeFiles: true),
@@ -215,7 +220,13 @@ void main() {
         encoder.addFileSync(settingsFile, 'settings.json');
         encoder.closeSync();
 
-        final sync = DataSync(chatService: ChatService());
+        var configRescanMarks = 0;
+        final sync = DataSync(
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+          markConfigRescanRequired: () async {
+            configRescanMarks++;
+          },
+        );
         await sync.restoreFromLocalFile(
           zipFile,
           const WebDavConfig(includeChats: false, includeFiles: false),
@@ -269,8 +280,38 @@ void main() {
           ),
           isTrue,
         );
+        expect(configRescanMarks, 1);
       },
     );
+
+    test('配置重扫标记失败时不写入导入设置', () async {
+      final settingsFile = File('${root.path}/settings.json');
+      await settingsFile.writeAsString(
+        jsonEncode(<String, Object?>{'imported_setting': 'value'}),
+      );
+      final zipFile = File('${root.path}/settings_marker_failure.zip');
+      final encoder = ZipFileEncoder();
+      encoder.create(zipFile.path);
+      encoder.addFileSync(settingsFile, 'settings.json');
+      encoder.closeSync();
+      final sync = DataSync(
+        chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+        markConfigRescanRequired: () async {
+          throw StateError('marker failed');
+        },
+      );
+
+      await expectLater(
+        sync.restoreFromLocalFile(
+          zipFile,
+          const WebDavConfig(includeChats: false, includeFiles: false),
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      final prefs = await SharedPreferences.getInstance();
+      expect(prefs.getString('imported_setting'), isNull);
+    });
 
     test('cleans temporary restore files when WebDAV restore fails', () async {
       final sourceDir = Directory('${root.path}/source_upload');
@@ -297,7 +338,9 @@ void main() {
         await request.response.close();
       });
 
-      final sync = DataSync(chatService: ChatService());
+      final sync = DataSync(
+        chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+      );
       final tmpDir = Directory('${root.path}/tmp');
       final item = BackupFileItem(
         href: Uri.parse('http://127.0.0.1:${server.port}/restore_source.zip'),

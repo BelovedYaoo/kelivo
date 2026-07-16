@@ -15,11 +15,19 @@ import '../../models/backup.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../chat/chat_service.dart';
+import '../sync/cloud_sync_store.dart';
 import '../../../utils/app_directories.dart';
 
 class DataSync {
   final ChatService chatService;
-  DataSync({required this.chatService});
+  final Future<void> Function() _markConfigRescanRequired;
+
+  DataSync({
+    required this.chatService,
+    Future<void> Function()? markConfigRescanRequired,
+  }) : _markConfigRescanRequired =
+           markConfigRescanRequired ??
+           CloudSyncStore.markDefaultConfigRescanRequired;
 
   // ===== WebDAV helpers =====
   Uri _collectionUri(WebDavConfig cfg) {
@@ -687,6 +695,7 @@ class DataSync {
       // Restore settings
       final settingsFile = File(p.join(extractDir.path, 'settings.json'));
       if (await settingsFile.exists()) {
+        await _markConfigRescanRequired();
         try {
           final txt = await settingsFile.readAsString();
           final map = jsonDecode(txt) as Map<String, dynamic>;

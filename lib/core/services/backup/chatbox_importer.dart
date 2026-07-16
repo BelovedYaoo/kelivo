@@ -9,6 +9,7 @@ import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../providers/settings_provider.dart';
 import '../chat/chat_service.dart';
+import '../sync/cloud_sync_store.dart';
 
 class ChatboxImportException implements Exception {
   final String message;
@@ -48,6 +49,7 @@ class ChatboxImporter {
     required RestoreMode mode,
     required SettingsProvider settings,
     required ChatService chatService,
+    Future<void> Function()? markConfigRescanRequired,
   }) async {
     final root = await _readChatboxBackupFile(file);
 
@@ -75,6 +77,9 @@ class ChatboxImporter {
         );
       }
     }
+
+    await (markConfigRescanRequired ??
+        CloudSyncStore.markDefaultConfigRescanRequired)();
 
     final importedProviders = await _importProviders(root, mode);
     final assistantConvRes = await _importAssistantsAndConversations(

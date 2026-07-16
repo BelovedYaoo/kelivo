@@ -9,6 +9,7 @@ import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../providers/settings_provider.dart';
 import '../chat/chat_service.dart';
+import '../sync/cloud_sync_store.dart';
 import '../../../utils/app_directories.dart';
 import 'cherry_direct_backup_reader.dart';
 
@@ -40,6 +41,7 @@ class CherryImporter {
     required RestoreMode mode,
     required SettingsProvider settings,
     required ChatService chatService,
+    Future<void> Function()? markConfigRescanRequired,
   }) async {
     // 1) Load JSON from ZIP/BAK (best-effort)
     final Map<String, dynamic> root = await _readCherryBackupFile(file);
@@ -186,6 +188,9 @@ class CherryImporter {
         }
       }
     }
+
+    await (markConfigRescanRequired ??
+        CloudSyncStore.markDefaultConfigRescanRequired)();
 
     // 5) Import providers into Settings (SharedPreferences)
     final importedProviders = await _importProviders(

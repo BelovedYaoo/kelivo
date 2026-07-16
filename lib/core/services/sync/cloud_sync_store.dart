@@ -33,13 +33,13 @@ final class CloudSyncStore {
     }
   }
 
-  static Future<String> markDefaultConfigRescanRequired() async {
+  static Future<void> markDefaultConfigRescanRequired() async {
     final wasOpen = Hive.isBoxOpen(defaultBoxName);
     final box = wasOpen
         ? Hive.box<String>(defaultBoxName)
         : await Hive.openBox<String>(defaultBoxName);
     try {
-      return await CloudSyncStore._(box).createConfigRescanGeneration();
+      await CloudSyncStore._(box).createConfigRescanGeneration();
     } finally {
       if (!wasOpen) {
         await box.close();
