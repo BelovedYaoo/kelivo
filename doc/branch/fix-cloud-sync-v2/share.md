@@ -1,44 +1,11 @@
-# fix/cloud-sync-v2 协作记录
+# fix/cloud-sync-v2 协作摘要
 
-- 目标：将云同步协议升级到 v2，修复契约拒绝、重复重投、冲突丢数据和 Android UI 卡顿。
-- 分支：`fix/cloud-sync-v2`，基于 `main@783bb62a`；完成后合并回 `main` 并清理 worktree。
-- 测试 seam：同步 journal/outbox 模块、批量 Adapter 接口、生成客户端传输闭环。
-- 当前阶段：v2 Worker 已部署、迁移与同步域重建已完成；正在重建修复后的签名 APK 并继续双设备验收。
-- 协作约束：不要修改平台生成文件；同步协议、Hive 状态和 Provider 写入口变更需先在此记录。
-- 已完成：永久拒绝的 outbox 项持久化 `blockedAt` 与错误码，保留原请求但排除自动发送、重试和合并；目标测试已通过。
-- 已完成：同步协调器通过最小传输接口处理 push/pull/snapshot；服务端返回 `rejected` 时保留并阻塞原 mutation，后续同步不会重投；目标测试与静态分析已通过。
-- 已完成：Flutter 本地实体默认使用 schema v2；消息父级改为轮次；配置 Payload 以 envelope 为唯一身份、有序实体强制 `_position`；指令注入升级为独立实体；相关 26 项测试与定向静态分析通过。
-- 已完成：push、pull、snapshot 统一发送 `X-Kelivo-Sync-Protocol-Version: 2`；真实本地 HTTP 传输测试与定向静态分析通过。
-- 已完成：新增持久写前 `SyncWriteJournal` 深模块；支持稳定本地作用域、失败/延迟恢复、同实体串行、异实体并发、远端应用隔离及会话切换门闩；9 项目标测试与定向静态分析通过，尚未接入领域写入口。
-- 已完成：Chat Adapter 覆盖 `message-selection`、`tool-event`、`thought-signature` 三类 v2 实体；稳定 identity/parent、严格 Payload、专用 `FromSync` 写入及墓碑清理均已闭环，空工具事件保留实体语义。
-- Chat v2 验证：新增目标测试 6 项、既有 ChatService 回归测试 26 项及定向静态分析均通过；批处理明确留到后续切片。
-- 已完成：`instruction-injection` 补入 Flutter 同步实体枚举与支持集合，所有枚举/支持集合一致性测试通过。
-- 已完成：应用启动在 `runApp` 前以与 `ChatService.init` 相同目录初始化 Hive，打开唯一 `CloudSyncStore`，持久生成安装级 `journalScopeId` 并创建未绑定 exporter 的应用级 `SyncWriteJournal`；Store 仅由 `CloudSyncProvider.dispose` 在等待初始化、会话变更、同步与 journal 在途操作后关闭一次。
-- 已完成：协调器抽出 `CloudSyncMutationPlanner`；写前 intent 仅调用 Adapter 的 `exportLocalEntity(key)`，依据 shadow 生成 create/update/delete/restore，并用 intentId 保证恢复重放不重复入队；现有全量扫描作为领域入口接入前的临时兜底保留且复用同一 planner。
-- 已完成：登录、已有会话初始化与退出接入 journal 会话门闩和串行 recover；暂停状态不阻断 intent 恢复，恢复失败不伪装登录失败；尚未接入 9 个领域写入口。
-- 已完成：本地同步协议升级到 v2；首次或旧版本删除 `account:*` 与 `journal:*` 状态但保留登录、服务地址和安装身份，高于当前版本时关闭 box 并拒绝启动且不改写数据。
-- 已完成：authoritative snapshot 覆盖前定向捕获本地状态；未尝试 outbox 基于新远端 shadow 重规划，attempted/blocked 请求和旧 shadow 保持不可变；快照缺席按服务端同步域重建处理，本地存在时重建唯一 create。
-- 已完成：outbox 发送按依赖深度稳定排序，保证 conversation → turn/message-selection → message → tool-event/thought-signature，以及 assistant → memory/quick-phrase。
-- 已完成：journal 新增 `runLocalBatch` / `runRemoteBatch`；批次按 `storageKey` 去重并稳定加锁，本地批次在业务写入前持久化全部 intent，写入失败时全部保留，成功后仅调用一次批量 exporter 并按实体分别完成或延迟。
-- 已完成：Planner 按 Adapter 分组调用 `exportLocalEntitiesForKeys`，Config 每个目标实体类型只导出一次；Chat 当前一次全量导出后过滤目标 key，已消除同一批次的 N 次全扫描，但仍需下一切片增加 ChatService 只读索引以避免单次全量遍历和无关附件准备。
-- 已完成：协调器注入应用级同一个 `SyncWriteJournal`，所有远端 upsert/delete（含快照缺席和字段冲突强制远端）均经过远端同键锁；字段冲突强制采用远端 current，结构冲突保留本地 desired 并重规划。
-- 后续接写入口时，所有携带 `_position` 的列表删除或重排必须为每个位置受影响的实体记录 intent，不能只记录用户直接操作的单个 key。
-- 本切片最新定向验证覆盖 Store/Planner、Coordinator、Journal、生成客户端协议、两个生产 Adapter 与 ChatService 共 79 项测试；15 个目标文件静态分析无问题。ChatService 附件恢复用例需将 TEMP/TMP 从不支持符号链接解析的 `R:\Temp` 指向本机用户临时目录。此前完整 `flutter test` 为 844 项通过、1 项既有失败，失败来自本地字体测试对 Windows 路径分隔符的断言，与本切片无关。
-- 已完成：Dart OpenAPI 客户端按服务端 v2 契约重新生成；手写传输层适配强制协议版本与 `AnyOf` mutation 结果，并补齐字段冲突列表、详情和解决接口。字段状态契约已改为生成器稳定支持的单对象结构；5 项相关测试与定向静态分析通过。
-- 已完成：写前 Journal 支持可验证的嵌套批次；内层只能复用外层已声明实体，漏报 key 会立即失败，避免组合领域方法同键死锁。协调器按远端页统一持有全部实体锁，并通过 Adapter 批次边界应用常规变化和快照缺席；50 项相关测试与定向静态分析通过。
-- 已完成：领域写入口统一依赖 `SyncWriteExecutor`；生产使用持久 Journal，测试必须显式使用 `UntrackedSyncWriteExecutor.forTests()`，不保留静默的生产降级路径。
-- 已完成：服务端五个附件接口增加 v2 协议门禁后重新生成 Dart 客户端，Flutter 附件上传准备、上传完成、列表、下载地址和删除请求均显式携带协议版本；五条真实本地 HTTP 请求验证通过。
-- 已完成：`CloudSyncStore` 增加进程间持久的配置重扫代次；每次导入生成新 UUID，旧同步只能比较删除自己捕获的代次，避免覆盖同步期间再次导入产生的新标记。
-- 已完成：协调器移除稳态同步中的全量本地扫描；首次同步保留一次完整基线扫描，导入恢复只扫描明确指定的配置实体类型，聊天 Adapter 不参与；14 项协调器测试通过。
-- 已完成：Kelivo、Cherry Studio 与 Chatbox 三条导入路径在直接写入 SharedPreferences 前生成配置重扫代次；标记失败会阻止设置写入，成功/失败路径与三个实现文件静态分析通过。
-- 已完成：应用启动时只捕获进程开始前已有的配置重扫代次；同步成功且无本轮冲突/延迟写入后比较删除，运行中产生的新代次保留到下次启动。`main.dart` 已把同一个应用级 Journal 注入聊天与 8 个配置 Provider。
-- 已完成：Store 提供账号级完整 outbox 计数，统计永久阻塞、未来重试和当前待发送项，不再用会漏项的 `pendingOutbox` 判断同步完全成功。
-- 已完成：新增字段冲突解析深模块；云端选择直接解决，本地/混合选择严格执行同步→确认开放冲突与最新 shadow→Journal 本地写回→再次同步→shadow/outbox/新冲突验证→最后服务端 resolve。空值、删除字段、嵌套路径拒绝与伪成功均有测试，协调器相关共 21 项通过。
-- 已完成：新增冲突展示纯描述器；实体、字段和值均转换为强类型用户展示类别，descriptor 不保存内部 ID、mutation/conflict 标识或原始路径；敏感字段、ID 引用、Map/List、absent/null 等 8 类安全边界共 16 项测试通过。
-- 已完成：Provider 装配冲突解析器并持有开放冲突状态；同步仅在无延迟写入、无任何 outbox 且无开放冲突时报告完整成功。冲突刷新、同步与解决操作已串行化，退出、暂停和销毁会等待相关任务，避免旧列表覆盖新状态。
-- 已完成：设置页新增安全的同步冲突列表与可滚动处理面板；默认保留云端，支持逐字段或整项选择本机，冲突列表截断时禁止本机/混合选择。所有实体、字段、值和失败原因均转为四语言用户文案，内部 ID 与原始路径不进入界面。
-- 已完成：聊天域所有生产写入口接入应用级写前 Journal；流式过程不逐 token 记录，只在完成、中断或失败终态提交完整实体图。Chat Adapter 增加定向索引与批量远端通知，批量删除、覆盖/合并导入和附件落盘均纳入一致批次。
-- 审查修复：首次同步与 journal 恢复失败不再误报成功；聊天远端父级严格校验；版本选择与会话更新时间同批记录；Journal 在本地写成功后后台导出且保留失败 intent；首次同步 outbox 改为单轮内存快照，消除重复 Hive 全表扫描。
-- 最新验证：`flutter analyze lib test` 通过；云同步、聊天和备份相关 137 项测试全部通过；全仓测试 903 项通过、1 项既有 Windows 字体路径分隔符断言失败，单文件复跑稳定复现且与本分支无关。
-- 生产预备：已导出 D1 全库并备份 2 个 R2 对象到本机与 APAC 备份桶，回读 SHA-256 一致；线上身份数据为 1 用户、1 设备、1 令牌，迁移时保留身份数据并重建同步域。
-- 生产验收修复：Android 登录成功并上传本地基线后，增量回拉在 `instruction-injection` 实体处被客户端遗漏映射判为无效响应；已先复现失败测试，再补齐生成枚举到领域枚举的映射，协议客户端 6 项测试与定向静态分析通过。
+- 结果：Flutter 云同步协议已升级到 v2；修复首次同步无效响应、重复全量扫描、写入竞态、冲突伪成功、附件恢复与 Android UI 阻塞风险。
+- 写入一致性：聊天与配置生产写入口统一经过持久化写前 Journal；远端批次按实体锁串行，失败 intent 可恢复且不会重复入队。
+- 同步契约：实体 Payload、父子关系、游标、协议头、附件接口和冲突处理均按 v2 严格校验；补齐 `instruction-injection` 增量映射。
+- 验证：`flutter analyze lib test` 通过；云同步、聊天和备份相关 137 项测试通过；全仓 903 项通过，唯一既有失败是 Windows 字体路径分隔符断言。
+- Android 验收：两台独立模拟器完成设备 1 上传会话和图片、设备 2 拉取并渲染、设备 2 修改昵称、设备 1 反向拉取；最终状态为 Synced，开放冲突为 0，交互持续响应。
+- 附件验收：设备源文件、R2 回读与 D1 SHA-256 一致，均为 `230f05bc62d55c5e672ad25e79b39ab6ff97d165d05ae354c720628f74afffbd`。
+- 发布包：`Kelivo-1.1.17+61-cloud-sync-v2.apk`，SHA-256 为 `5c96db4a6dc619ef37d658560116c8b22f6a890a4605ab48f21ce23ca15d7659`，V2 签名校验通过。
+- 生产清理：临时验收用户及其设备、令牌、同步记录、冲突和附件元数据已删除；R2 验收对象删除后回读确认不存在。
+- 分支状态：功能、部署和双设备验收已完成，可合并回 `main` 并清理 worktree。
