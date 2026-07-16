@@ -5,6 +5,8 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/providers/cloud_sync_provider.dart';
+import '../../../core/services/sync/cloud_sync_conflict_presentation.dart';
+import '../../../core/services/sync/cloud_sync_conflict_resolver.dart';
 import '../../../core/services/sync/cloud_sync_types.dart';
 import '../../../icons/lucide_adapter.dart';
 import '../../../l10n/app_localizations.dart';
@@ -12,6 +14,7 @@ import '../../../shared/widgets/ios_form_text_field.dart';
 import '../../../shared/widgets/ios_switch.dart';
 import '../../../shared/widgets/ios_tactile.dart';
 import '../../../shared/widgets/ios_tile_button.dart';
+import '../../../shared/widgets/custom_bottom_sheet.dart';
 import '../../../shared/widgets/snackbar.dart';
 import '../../../theme/app_font_weights.dart';
 
@@ -118,6 +121,8 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
         else ...[
           _buildAccountSection(context, provider, session),
           const SizedBox(height: 14),
+          _buildConflictsSection(context, provider),
+          const SizedBox(height: 14),
           _buildDevicesSection(context, provider),
         ],
       ],
@@ -203,7 +208,9 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final status = provider.status;
     final busy =
         status == CloudSyncProviderStatus.signingOut ||
-        status == CloudSyncProviderStatus.signingIn;
+        status == CloudSyncProviderStatus.signingIn ||
+        provider.conflictsLoading ||
+        provider.resolvingConflictId != null;
     final syncing = status == CloudSyncProviderStatus.syncing;
     return _Section(
       title: l10n.cloudSyncAccountSection,
@@ -267,6 +274,127 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
           ),
         ),
       ],
+    );
+  }
+
+  Widget _buildConflictsSection(
+    BuildContext context,
+    CloudSyncProvider provider,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final busy =
+        provider.conflictsLoading ||
+        provider.resolvingConflictId != null ||
+        provider.status == CloudSyncProviderStatus.syncing ||
+        provider.status == CloudSyncProviderStatus.signingOut;
+    final failureReason = provider.conflictResolutionFailure;
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Expanded(child: _SectionHeader(l10n.cloudSyncConflictsSection)),
+            IosIconButton(
+              icon: Lucide.RefreshCw,
+              semanticLabel: l10n.cloudSyncRefreshConflicts,
+              enabled: !busy && !provider.paused,
+              onTap: () => unawaited(provider.refreshConflicts()),
+            ),
+          ],
+        ),
+        if (provider.conflictError case final error?) ...[
+          const SizedBox(height: 6),
+          _ErrorCard(
+            title: l10n.cloudSyncConflictErrorTitle,
+            message: cloudSyncFailureText(l10n, error),
+          ),
+          const SizedBox(height: 10),
+        ] else if (failureReason != null) ...[
+          const SizedBox(height: 6),
+          _ErrorCard(
+            title: l10n.cloudSyncConflictErrorTitle,
+            message: cloudSyncConflictResolutionFailureText(
+              l10n,
+              failureReason,
+            ),
+          ),
+          const SizedBox(height: 10),
+        ],
+        if (provider.conflictListTruncated) ...[
+          const SizedBox(height: 6),
+          _ConflictNoticeCard(message: l10n.cloudSyncConflictsTruncated),
+          const SizedBox(height: 10),
+        ],
+        _SectionCard(
+          children: [
+            if (provider.conflictsLoading && provider.conflicts.isEmpty)
+              const Padding(
+                padding: EdgeInsets.all(24),
+                child: Center(child: CircularProgressIndicator()),
+              )
+            else if (provider.conflicts.isEmpty)
+              Padding(
+                padding: const EdgeInsets.all(18),
+                child: Text(
+                  l10n.cloudSyncNoConflicts,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: 0.62),
+                  ),
+                ),
+              )
+            else
+              for (
+                int index = 0;
+                index < provider.conflicts.length;
+                index++
+              ) ...[
+                _ConflictRow(
+                  descriptor: describeCloudSyncConflict(
+                    provider.conflicts[index],
+                  ),
+                  enabled: !busy && !provider.paused,
+                  resolving:
+                      provider.resolvingConflictId ==
+                      provider.conflicts[index].conflictId,
+                  onTap: () => _showConflictResolutionSheet(
+                    provider.conflicts[index],
+                    provider.conflictListTruncated,
+                  ),
+                ),
+                if (index != provider.conflicts.length - 1)
+                  const _SectionDivider(),
+              ],
+          ],
+        ),
+      ],
+    );
+  }
+
+  Future<void> _showConflictResolutionSheet(
+    CloudSyncConflict conflict,
+    bool conflictListTruncated,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final descriptor = describeCloudSyncConflict(conflict);
+    return showCustomBottomSheet<void>(
+      context: context,
+      title: l10n.cloudSyncConflictResolveTitle,
+      count: descriptor.fields.length,
+      closeSemanticLabel: l10n.cloudSyncConflictClose,
+      partialHeightFactor: 0.72,
+      expandedHeightFactor: 0.94,
+      builder: (sheetContext, scrollController) {
+        return _CloudSyncConflictResolutionSheet(
+          conflict: conflict,
+          descriptor: descriptor,
+          conflictListTruncated: conflictListTruncated,
+          scrollController: scrollController,
+        );
+      },
     );
   }
 
@@ -399,10 +527,16 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final success = await provider.syncNow();
     if (!mounted) return;
     final l10n = AppLocalizations.of(context)!;
+    final needsAttention =
+        !success &&
+        provider.lastError == null &&
+        provider.status == CloudSyncProviderStatus.needsAttention;
     showAppSnackBar(
       context,
       message: success
           ? l10n.cloudSyncSyncCompleted
+          : needsAttention
+          ? l10n.cloudSyncSyncNeedsAttention
           : cloudSyncFailureText(
               l10n,
               provider.lastError ??
@@ -411,7 +545,11 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
                     retryable: false,
                   ),
             ),
-      type: success ? NotificationType.success : NotificationType.error,
+      type: success
+          ? NotificationType.success
+          : needsAttention
+          ? NotificationType.warning
+          : NotificationType.error,
     );
   }
 
@@ -602,6 +740,474 @@ class _SectionDivider extends StatelessWidget {
       color: Theme.of(
         context,
       ).colorScheme.outlineVariant.withValues(alpha: 0.32),
+    );
+  }
+}
+
+class _ConflictRow extends StatelessWidget {
+  const _ConflictRow({
+    required this.descriptor,
+    required this.enabled,
+    required this.resolving,
+    required this.onTap,
+  });
+
+  final CloudSyncConflictPresentationDescriptor descriptor;
+  final bool enabled;
+  final bool resolving;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+    final previewFields = descriptor.fields.take(2).toList(growable: false);
+    final entityText = cloudSyncConflictEntityText(
+      l10n,
+      descriptor.entityCategory,
+    );
+    final fieldCountText = l10n.cloudSyncConflictFieldCount(
+      descriptor.fields.length,
+    );
+    return Semantics(
+      button: true,
+      enabled: enabled,
+      label: '$entityText. $fieldCountText',
+      excludeSemantics: true,
+      child: IosCardPress(
+        onTap: enabled ? onTap : null,
+        baseColor: Colors.transparent,
+        borderRadius: BorderRadius.zero,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              width: 38,
+              height: 38,
+              alignment: Alignment.center,
+              decoration: BoxDecoration(
+                color: cs.tertiary.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(10),
+              ),
+              child: Icon(
+                Lucide.MessageCircleWarning,
+                size: 19,
+                color: cs.tertiary,
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    entityText,
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: AppFontWeights.semibold,
+                      color: cs.onSurface,
+                    ),
+                  ),
+                  const SizedBox(height: 2),
+                  Text(
+                    fieldCountText,
+                    style: TextStyle(
+                      fontSize: 12,
+                      color: cs.onSurface.withValues(alpha: 0.58),
+                    ),
+                  ),
+                  for (final field in previewFields) ...[
+                    const SizedBox(height: 5),
+                    Text(
+                      cloudSyncConflictFieldText(l10n, field.category),
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: AppFontWeights.medium,
+                        color: cs.onSurface.withValues(alpha: 0.78),
+                      ),
+                    ),
+                    const SizedBox(height: 1),
+                    Text(
+                      l10n.cloudSyncConflictValueComparison(
+                        cloudSyncConflictValueText(l10n, field.current),
+                        cloudSyncConflictValueText(l10n, field.desired),
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: TextStyle(
+                        fontSize: 12,
+                        height: 1.25,
+                        color: cs.onSurface.withValues(alpha: 0.58),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 8),
+            Padding(
+              padding: const EdgeInsets.only(top: 10),
+              child: resolving
+                  ? const SizedBox.square(
+                      dimension: 18,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : Icon(
+                      Lucide.ChevronRight,
+                      size: 18,
+                      color: cs.onSurface.withValues(
+                        alpha: enabled ? 0.42 : 0.2,
+                      ),
+                    ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ConflictNoticeCard extends StatelessWidget {
+  const _ConflictNoticeCard({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.tertiaryContainer.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cs.tertiary.withValues(alpha: 0.18)),
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Icon(Lucide.MessageCircleWarning, size: 19, color: cs.tertiary),
+          const SizedBox(width: 9),
+          Expanded(
+            child: Text(
+              message,
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.35,
+                color: cs.onTertiaryContainer.withValues(alpha: 0.88),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _CloudSyncConflictResolutionSheet extends StatefulWidget {
+  const _CloudSyncConflictResolutionSheet({
+    required this.conflict,
+    required this.descriptor,
+    required this.conflictListTruncated,
+    required this.scrollController,
+  });
+
+  final CloudSyncConflict conflict;
+  final CloudSyncConflictPresentationDescriptor descriptor;
+  final bool conflictListTruncated;
+  final ScrollController scrollController;
+
+  @override
+  State<_CloudSyncConflictResolutionSheet> createState() =>
+      _CloudSyncConflictResolutionSheetState();
+}
+
+class _CloudSyncConflictResolutionSheetState
+    extends State<_CloudSyncConflictResolutionSheet> {
+  final Set<int> _selectedLocalFieldIndexes = <int>{};
+  bool _resolving = false;
+  String? _errorMessage;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+    final allCloud = _selectedLocalFieldIndexes.isEmpty;
+    final allLocal =
+        _selectedLocalFieldIndexes.length == widget.descriptor.fields.length;
+
+    return ListView(
+      controller: widget.scrollController,
+      padding: const EdgeInsets.fromLTRB(16, 12, 16, 32),
+      children: [
+        Text(
+          l10n.cloudSyncConflictResolveDescription(
+            cloudSyncConflictEntityText(l10n, widget.descriptor.entityCategory),
+          ),
+          style: TextStyle(
+            fontSize: 14,
+            height: 1.4,
+            color: cs.onSurface.withValues(alpha: 0.72),
+          ),
+        ),
+        if (widget.conflictListTruncated) ...[
+          const SizedBox(height: 12),
+          _ConflictNoticeCard(
+            message: l10n.cloudSyncConflictTruncatedLocalBlocked,
+          ),
+        ],
+        const SizedBox(height: 14),
+        Row(
+          children: [
+            Expanded(
+              child: IosTileButton(
+                label: l10n.cloudSyncConflictUseAllCloud,
+                icon: allCloud ? Lucide.Check : Lucide.Database,
+                enabled: !_resolving,
+                backgroundColor: allCloud ? cs.primary : null,
+                foregroundColor: allCloud ? cs.primary : null,
+                onTap: () {
+                  setState(() {
+                    _selectedLocalFieldIndexes.clear();
+                    _errorMessage = null;
+                  });
+                },
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: IosTileButton(
+                label: l10n.cloudSyncConflictUseAllLocal,
+                icon: allLocal ? Lucide.Check : Lucide.Monitor,
+                enabled: !_resolving && !widget.conflictListTruncated,
+                backgroundColor: allLocal ? cs.primary : null,
+                foregroundColor: allLocal ? cs.primary : null,
+                onTap: () {
+                  setState(() {
+                    _selectedLocalFieldIndexes
+                      ..clear()
+                      ..addAll(
+                        List<int>.generate(
+                          widget.descriptor.fields.length,
+                          (index) => index,
+                        ),
+                      );
+                    _errorMessage = null;
+                  });
+                },
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 14),
+        for (
+          int index = 0;
+          index < widget.descriptor.fields.length;
+          index++
+        ) ...[
+          _ConflictFieldChoiceCard(
+            descriptor: widget.descriptor.fields[index],
+            useLocal: _selectedLocalFieldIndexes.contains(index),
+            enabled: !_resolving,
+            localEnabled: !widget.conflictListTruncated,
+            onUseCloud: () {
+              setState(() {
+                _selectedLocalFieldIndexes.remove(index);
+                _errorMessage = null;
+              });
+            },
+            onUseLocal: () {
+              setState(() {
+                _selectedLocalFieldIndexes.add(index);
+                _errorMessage = null;
+              });
+            },
+          ),
+          if (index != widget.descriptor.fields.length - 1)
+            const SizedBox(height: 10),
+        ],
+        if (_errorMessage case final error?) ...[
+          const SizedBox(height: 12),
+          _ErrorCard(title: l10n.cloudSyncConflictErrorTitle, message: error),
+        ],
+        const SizedBox(height: 16),
+        IosTileButton(
+          label: _resolving
+              ? l10n.cloudSyncConflictResolving
+              : l10n.cloudSyncConflictConfirm,
+          icon: Lucide.Check,
+          enabled: !_resolving,
+          backgroundColor: cs.primary,
+          foregroundColor: cs.primary,
+          onTap: () => unawaited(_resolve()),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _resolve() async {
+    if (_resolving) return;
+    setState(() {
+      _resolving = true;
+      _errorMessage = null;
+    });
+
+    final localPaths = <String>{
+      for (final index in _selectedLocalFieldIndexes)
+        widget.conflict.fields[index].path,
+    };
+    final provider = context.read<CloudSyncProvider>();
+    final success = await provider.resolveConflict(widget.conflict, localPaths);
+    if (!mounted) return;
+    if (success) {
+      showAppSnackBar(
+        context,
+        message: AppLocalizations.of(context)!.cloudSyncConflictResolved,
+        type: NotificationType.success,
+      );
+      Navigator.of(context).maybePop();
+      return;
+    }
+
+    final l10n = AppLocalizations.of(context)!;
+    final failureReason = provider.conflictResolutionFailure;
+    final conflictError = provider.conflictError;
+    setState(() {
+      _resolving = false;
+      _errorMessage = failureReason != null
+          ? cloudSyncConflictResolutionFailureText(l10n, failureReason)
+          : conflictError != null
+          ? cloudSyncFailureText(l10n, conflictError)
+          : l10n.cloudSyncConflictResolveFailed;
+    });
+  }
+}
+
+class _ConflictFieldChoiceCard extends StatelessWidget {
+  const _ConflictFieldChoiceCard({
+    required this.descriptor,
+    required this.useLocal,
+    required this.enabled,
+    required this.localEnabled,
+    required this.onUseCloud,
+    required this.onUseLocal,
+  });
+
+  final CloudSyncConflictFieldDescriptor descriptor;
+  final bool useLocal;
+  final bool enabled;
+  final bool localEnabled;
+  final VoidCallback onUseCloud;
+  final VoidCallback onUseLocal;
+
+  @override
+  Widget build(BuildContext context) {
+    final l10n = AppLocalizations.of(context)!;
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: cs.surfaceContainerHighest.withValues(alpha: 0.38),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.35)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Text(
+            cloudSyncConflictFieldText(l10n, descriptor.category),
+            style: TextStyle(
+              fontSize: 14,
+              fontWeight: AppFontWeights.semibold,
+              color: cs.onSurface,
+            ),
+          ),
+          const SizedBox(height: 10),
+          Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Expanded(
+                child: _ConflictValuePanel(
+                  label: l10n.cloudSyncConflictCloudValue,
+                  value: cloudSyncConflictValueText(l10n, descriptor.current),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: _ConflictValuePanel(
+                  label: l10n.cloudSyncConflictLocalValue,
+                  value: cloudSyncConflictValueText(l10n, descriptor.desired),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Row(
+            children: [
+              Expanded(
+                child: IosTileButton(
+                  label: l10n.cloudSyncConflictUseCloud,
+                  icon: useLocal ? Lucide.Database : Lucide.Check,
+                  enabled: enabled,
+                  backgroundColor: useLocal ? null : cs.primary,
+                  foregroundColor: useLocal ? null : cs.primary,
+                  onTap: onUseCloud,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: IosTileButton(
+                  label: l10n.cloudSyncConflictUseLocal,
+                  icon: useLocal ? Lucide.Check : Lucide.Monitor,
+                  enabled: enabled && localEnabled,
+                  backgroundColor: useLocal ? cs.primary : null,
+                  foregroundColor: useLocal ? cs.primary : null,
+                  onTap: onUseLocal,
+                ),
+              ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ConflictValuePanel extends StatelessWidget {
+  const _ConflictValuePanel({required this.label, required this.value});
+
+  final String label;
+  final String value;
+
+  @override
+  Widget build(BuildContext context) {
+    final cs = Theme.of(context).colorScheme;
+    return Container(
+      padding: const EdgeInsets.all(10),
+      decoration: BoxDecoration(
+        color: cs.surface.withValues(alpha: 0.82),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text(
+            label,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: AppFontWeights.semibold,
+              color: cs.onSurface.withValues(alpha: 0.52),
+            ),
+          ),
+          const SizedBox(height: 4),
+          Text(
+            value,
+            maxLines: 4,
+            overflow: TextOverflow.ellipsis,
+            style: TextStyle(fontSize: 13, height: 1.3, color: cs.onSurface),
+          ),
+        ],
+      ),
     );
   }
 }
@@ -924,9 +1530,129 @@ String cloudSyncStatusText(
     CloudSyncProviderStatus.signingOut => l10n.cloudSyncStatusSigningOut,
     CloudSyncProviderStatus.idle => l10n.cloudSyncStatusIdle,
     CloudSyncProviderStatus.syncing => l10n.cloudSyncStatusSyncing,
-    CloudSyncProviderStatus.needsAttention => l10n.cloudSyncStatusError,
+    CloudSyncProviderStatus.needsAttention =>
+      l10n.cloudSyncStatusNeedsAttention,
     CloudSyncProviderStatus.paused => l10n.cloudSyncStatusPaused,
     CloudSyncProviderStatus.error => l10n.cloudSyncStatusError,
+  };
+}
+
+String cloudSyncConflictEntityText(
+  AppLocalizations l10n,
+  CloudSyncConflictEntityCategory category,
+) {
+  return switch (category) {
+    CloudSyncConflictEntityCategory.conversation =>
+      l10n.cloudSyncConflictEntityConversation,
+    CloudSyncConflictEntityCategory.turn => l10n.cloudSyncConflictEntityTurn,
+    CloudSyncConflictEntityCategory.message =>
+      l10n.cloudSyncConflictEntityMessage,
+    CloudSyncConflictEntityCategory.messageSelection =>
+      l10n.cloudSyncConflictEntityMessageSelection,
+    CloudSyncConflictEntityCategory.toolEvent =>
+      l10n.cloudSyncConflictEntityToolEvent,
+    CloudSyncConflictEntityCategory.thoughtSignature =>
+      l10n.cloudSyncConflictEntityThoughtSignature,
+    CloudSyncConflictEntityCategory.provider =>
+      l10n.cloudSyncConflictEntityProvider,
+    CloudSyncConflictEntityCategory.assistant =>
+      l10n.cloudSyncConflictEntityAssistant,
+    CloudSyncConflictEntityCategory.memory =>
+      l10n.cloudSyncConflictEntityMemory,
+    CloudSyncConflictEntityCategory.worldBook =>
+      l10n.cloudSyncConflictEntityWorldBook,
+    CloudSyncConflictEntityCategory.quickPhrase =>
+      l10n.cloudSyncConflictEntityQuickPhrase,
+    CloudSyncConflictEntityCategory.searchService =>
+      l10n.cloudSyncConflictEntitySearchService,
+    CloudSyncConflictEntityCategory.networkTts =>
+      l10n.cloudSyncConflictEntityNetworkTts,
+    CloudSyncConflictEntityCategory.mcpServer =>
+      l10n.cloudSyncConflictEntityMcpServer,
+    CloudSyncConflictEntityCategory.instructionInjection =>
+      l10n.cloudSyncConflictEntityInstructionInjection,
+    CloudSyncConflictEntityCategory.userPreference =>
+      l10n.cloudSyncConflictEntityUserPreference,
+  };
+}
+
+String cloudSyncConflictFieldText(
+  AppLocalizations l10n,
+  CloudSyncConflictFieldCategory category,
+) {
+  return switch (category) {
+    CloudSyncConflictFieldCategory.title => l10n.cloudSyncConflictFieldTitle,
+    CloudSyncConflictFieldCategory.content =>
+      l10n.cloudSyncConflictFieldContent,
+    CloudSyncConflictFieldCategory.summary =>
+      l10n.cloudSyncConflictFieldSummary,
+    CloudSyncConflictFieldCategory.name => l10n.cloudSyncConflictFieldName,
+    CloudSyncConflictFieldCategory.status => l10n.cloudSyncConflictFieldStatus,
+    CloudSyncConflictFieldCategory.time => l10n.cloudSyncConflictFieldTime,
+    CloudSyncConflictFieldCategory.settings =>
+      l10n.cloudSyncConflictFieldSettings,
+    CloudSyncConflictFieldCategory.security =>
+      l10n.cloudSyncConflictFieldSecurity,
+    CloudSyncConflictFieldCategory.reference =>
+      l10n.cloudSyncConflictFieldReference,
+    CloudSyncConflictFieldCategory.attachments =>
+      l10n.cloudSyncConflictFieldAttachments,
+    CloudSyncConflictFieldCategory.selection =>
+      l10n.cloudSyncConflictFieldSelection,
+    CloudSyncConflictFieldCategory.other => l10n.cloudSyncConflictFieldOther,
+  };
+}
+
+String cloudSyncConflictValueText(
+  AppLocalizations l10n,
+  CloudSyncConflictValueDescriptor descriptor,
+) {
+  return switch (descriptor) {
+    CloudSyncAbsentValueDescriptor() => l10n.cloudSyncConflictValueAbsent,
+    CloudSyncNullValueDescriptor() => l10n.cloudSyncConflictValueEmpty,
+    CloudSyncHiddenValueDescriptor(state: final state) => switch (state) {
+      CloudSyncHiddenValueState.set => l10n.cloudSyncConflictValueSet,
+      CloudSyncHiddenValueState.missing => l10n.cloudSyncConflictValueNotSet,
+    },
+    CloudSyncReferenceValueDescriptor() => l10n.cloudSyncConflictValueReference,
+    CloudSyncItemCountValueDescriptor(itemCount: final itemCount) =>
+      l10n.cloudSyncConflictValueItems(itemCount),
+    CloudSyncBooleanValueDescriptor(value: final value) =>
+      value
+          ? l10n.cloudSyncConflictValueEnabled
+          : l10n.cloudSyncConflictValueDisabled,
+    CloudSyncNumberValueDescriptor(value: final value) =>
+      l10n.cloudSyncConflictValueNumber(value),
+    CloudSyncTextValueDescriptor(value: final value) =>
+      value.trim().isEmpty ? l10n.cloudSyncConflictValueBlank : value,
+  };
+}
+
+String cloudSyncConflictResolutionFailureText(
+  AppLocalizations l10n,
+  CloudSyncConflictResolutionFailureReason reason,
+) {
+  return switch (reason) {
+    CloudSyncConflictResolutionFailureReason.conflictNotOpen ||
+    CloudSyncConflictResolutionFailureReason.conflictIdentityChanged ||
+    CloudSyncConflictResolutionFailureReason.conflictDetailsChanged ||
+    CloudSyncConflictResolutionFailureReason.entityHasAnotherConflict =>
+      l10n.cloudSyncConflictFailureChanged,
+    CloudSyncConflictResolutionFailureReason.invalidLocalPath ||
+    CloudSyncConflictResolutionFailureReason.unsupportedNestedPath ||
+    CloudSyncConflictResolutionFailureReason.duplicateConflictPath =>
+      l10n.cloudSyncConflictFailureSelection,
+    CloudSyncConflictResolutionFailureReason.duplicateAdapterEntityType ||
+    CloudSyncConflictResolutionFailureReason.unsupportedEntityType =>
+      l10n.cloudSyncConflictFailureUnsupported,
+    CloudSyncConflictResolutionFailureReason.incompleteConflictList =>
+      l10n.cloudSyncConflictFailureIncomplete,
+    CloudSyncConflictResolutionFailureReason.invalidShadow ||
+    CloudSyncConflictResolutionFailureReason.entityHasOutbox =>
+      l10n.cloudSyncConflictFailurePendingWrites,
+    CloudSyncConflictResolutionFailureReason.verificationMismatch ||
+    CloudSyncConflictResolutionFailureReason.invalidResolveResult =>
+      l10n.cloudSyncConflictFailureVerification,
   };
 }
 

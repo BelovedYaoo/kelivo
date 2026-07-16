@@ -237,6 +237,231 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudSyncStatusError => 'Needs Attention';
 
   @override
+  String get cloudSyncStatusNeedsAttention => 'Review Needed';
+
+  @override
+  String get cloudSyncSyncNeedsAttention =>
+      'Sync finished, but some items need your review.';
+
+  @override
+  String get cloudSyncConflictsSection => 'Sync Conflicts';
+
+  @override
+  String get cloudSyncRefreshConflicts => 'Refresh conflicts';
+
+  @override
+  String get cloudSyncNoConflicts => 'No conflicts to review';
+
+  @override
+  String get cloudSyncConflictsTruncated =>
+      'Only the first 100 conflicts are shown. Refresh after resolving them to see the rest.';
+
+  @override
+  String get cloudSyncConflictErrorTitle =>
+      'Couldn\'t load or resolve conflicts';
+
+  @override
+  String cloudSyncConflictFieldCount(int count) {
+    return '$count fields need review';
+  }
+
+  @override
+  String cloudSyncConflictValueComparison(
+    String cloudValue,
+    String localValue,
+  ) {
+    return 'Cloud: $cloudValue · This device: $localValue';
+  }
+
+  @override
+  String get cloudSyncConflictResolveTitle => 'Resolve Sync Conflict';
+
+  @override
+  String cloudSyncConflictResolveDescription(String entity) {
+    return 'Choose which version of each $entity field to keep. The cloud version is selected by default.';
+  }
+
+  @override
+  String get cloudSyncConflictClose => 'Close conflict resolver';
+
+  @override
+  String get cloudSyncConflictCloudValue => 'Cloud';
+
+  @override
+  String get cloudSyncConflictLocalValue => 'This Device';
+
+  @override
+  String get cloudSyncConflictUseCloud => 'Cloud (Default)';
+
+  @override
+  String get cloudSyncConflictUseLocal => 'This Device';
+
+  @override
+  String get cloudSyncConflictUseAllCloud => 'All Cloud';
+
+  @override
+  String get cloudSyncConflictUseAllLocal => 'All This Device';
+
+  @override
+  String get cloudSyncConflictConfirm => 'Resolve Conflict';
+
+  @override
+  String get cloudSyncConflictResolving => 'Resolving…';
+
+  @override
+  String get cloudSyncConflictResolved => 'Conflict resolved';
+
+  @override
+  String get cloudSyncConflictTruncatedLocalBlocked =>
+      'The conflict list is incomplete, so local and mixed choices are disabled to avoid overwriting unseen changes. You can still keep all cloud values.';
+
+  @override
+  String get cloudSyncConflictResolveFailed =>
+      'The conflict couldn\'t be resolved. Refresh it and try again.';
+
+  @override
+  String get cloudSyncConflictEntityConversation => 'Chat';
+
+  @override
+  String get cloudSyncConflictEntityTurn => 'Conversation Turn';
+
+  @override
+  String get cloudSyncConflictEntityMessage => 'Message';
+
+  @override
+  String get cloudSyncConflictEntityMessageSelection => 'Message Choice';
+
+  @override
+  String get cloudSyncConflictEntityToolEvent => 'Tool Result';
+
+  @override
+  String get cloudSyncConflictEntityThoughtSignature => 'Reasoning State';
+
+  @override
+  String get cloudSyncConflictEntityProvider => 'Model Provider';
+
+  @override
+  String get cloudSyncConflictEntityAssistant => 'Assistant';
+
+  @override
+  String get cloudSyncConflictEntityMemory => 'Memory';
+
+  @override
+  String get cloudSyncConflictEntityWorldBook => 'World Book Entry';
+
+  @override
+  String get cloudSyncConflictEntityQuickPhrase => 'Quick Phrase';
+
+  @override
+  String get cloudSyncConflictEntitySearchService => 'Search Service';
+
+  @override
+  String get cloudSyncConflictEntityNetworkTts => 'Voice Service';
+
+  @override
+  String get cloudSyncConflictEntityMcpServer => 'MCP Service';
+
+  @override
+  String get cloudSyncConflictEntityInstructionInjection => 'Instruction Rule';
+
+  @override
+  String get cloudSyncConflictEntityUserPreference => 'App Setting';
+
+  @override
+  String get cloudSyncConflictFieldTitle => 'Title';
+
+  @override
+  String get cloudSyncConflictFieldContent => 'Content';
+
+  @override
+  String get cloudSyncConflictFieldSummary => 'Summary';
+
+  @override
+  String get cloudSyncConflictFieldName => 'Name';
+
+  @override
+  String get cloudSyncConflictFieldStatus => 'Status';
+
+  @override
+  String get cloudSyncConflictFieldTime => 'Time';
+
+  @override
+  String get cloudSyncConflictFieldSettings => 'Settings';
+
+  @override
+  String get cloudSyncConflictFieldSecurity => 'Credential';
+
+  @override
+  String get cloudSyncConflictFieldReference => 'Linked Item';
+
+  @override
+  String get cloudSyncConflictFieldAttachments => 'Attachments';
+
+  @override
+  String get cloudSyncConflictFieldSelection => 'Selection';
+
+  @override
+  String get cloudSyncConflictFieldOther => 'Other Setting';
+
+  @override
+  String get cloudSyncConflictValueAbsent => 'No value';
+
+  @override
+  String get cloudSyncConflictValueEmpty => 'Empty';
+
+  @override
+  String get cloudSyncConflictValueSet => 'Set';
+
+  @override
+  String get cloudSyncConflictValueNotSet => 'Not set';
+
+  @override
+  String get cloudSyncConflictValueReference => 'Linked item';
+
+  @override
+  String cloudSyncConflictValueItems(int count) {
+    return '$count items';
+  }
+
+  @override
+  String get cloudSyncConflictValueEnabled => 'Enabled';
+
+  @override
+  String get cloudSyncConflictValueDisabled => 'Disabled';
+
+  @override
+  String cloudSyncConflictValueNumber(num value) {
+    return '$value';
+  }
+
+  @override
+  String get cloudSyncConflictValueBlank => 'Blank text';
+
+  @override
+  String get cloudSyncConflictFailureChanged =>
+      'This conflict changed or was already resolved. Refresh the list before trying again.';
+
+  @override
+  String get cloudSyncConflictFailureSelection =>
+      'This field choice can\'t be applied safely. Keep the cloud value or refresh and choose again.';
+
+  @override
+  String get cloudSyncConflictFailureUnsupported =>
+      'This data type can\'t be resolved by this app version. Update the app or keep the cloud values.';
+
+  @override
+  String get cloudSyncConflictFailureIncomplete =>
+      'The conflict list is incomplete. Refresh it, or keep all cloud values.';
+
+  @override
+  String get cloudSyncConflictFailurePendingWrites =>
+      'This item still has local changes waiting to sync. Sync and refresh before trying again.';
+
+  @override
+  String get cloudSyncConflictFailureVerification =>
+      'The result couldn\'t be verified, so the conflict wasn\'t finalized. Refresh and try again.';
+
+  @override
   String get cloudSyncPlatformAndroid => 'Android';
 
   @override

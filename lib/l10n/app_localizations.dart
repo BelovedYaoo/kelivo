@@ -538,6 +538,408 @@ abstract class AppLocalizations {
   /// **'Needs Attention'**
   String get cloudSyncStatusError;
 
+  /// No description provided for @cloudSyncStatusNeedsAttention.
+  ///
+  /// In en, this message translates to:
+  /// **'Review Needed'**
+  String get cloudSyncStatusNeedsAttention;
+
+  /// No description provided for @cloudSyncSyncNeedsAttention.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync finished, but some items need your review.'**
+  String get cloudSyncSyncNeedsAttention;
+
+  /// No description provided for @cloudSyncConflictsSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Sync Conflicts'**
+  String get cloudSyncConflictsSection;
+
+  /// No description provided for @cloudSyncRefreshConflicts.
+  ///
+  /// In en, this message translates to:
+  /// **'Refresh conflicts'**
+  String get cloudSyncRefreshConflicts;
+
+  /// No description provided for @cloudSyncNoConflicts.
+  ///
+  /// In en, this message translates to:
+  /// **'No conflicts to review'**
+  String get cloudSyncNoConflicts;
+
+  /// No description provided for @cloudSyncConflictsTruncated.
+  ///
+  /// In en, this message translates to:
+  /// **'Only the first 100 conflicts are shown. Refresh after resolving them to see the rest.'**
+  String get cloudSyncConflictsTruncated;
+
+  /// No description provided for @cloudSyncConflictErrorTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Couldn\'t load or resolve conflicts'**
+  String get cloudSyncConflictErrorTitle;
+
+  /// No description provided for @cloudSyncConflictFieldCount.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} fields need review'**
+  String cloudSyncConflictFieldCount(int count);
+
+  /// No description provided for @cloudSyncConflictValueComparison.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud: {cloudValue} · This device: {localValue}'**
+  String cloudSyncConflictValueComparison(String cloudValue, String localValue);
+
+  /// No description provided for @cloudSyncConflictResolveTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Resolve Sync Conflict'**
+  String get cloudSyncConflictResolveTitle;
+
+  /// No description provided for @cloudSyncConflictResolveDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose which version of each {entity} field to keep. The cloud version is selected by default.'**
+  String cloudSyncConflictResolveDescription(String entity);
+
+  /// No description provided for @cloudSyncConflictClose.
+  ///
+  /// In en, this message translates to:
+  /// **'Close conflict resolver'**
+  String get cloudSyncConflictClose;
+
+  /// No description provided for @cloudSyncConflictCloudValue.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud'**
+  String get cloudSyncConflictCloudValue;
+
+  /// No description provided for @cloudSyncConflictLocalValue.
+  ///
+  /// In en, this message translates to:
+  /// **'This Device'**
+  String get cloudSyncConflictLocalValue;
+
+  /// No description provided for @cloudSyncConflictUseCloud.
+  ///
+  /// In en, this message translates to:
+  /// **'Cloud (Default)'**
+  String get cloudSyncConflictUseCloud;
+
+  /// No description provided for @cloudSyncConflictUseLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'This Device'**
+  String get cloudSyncConflictUseLocal;
+
+  /// No description provided for @cloudSyncConflictUseAllCloud.
+  ///
+  /// In en, this message translates to:
+  /// **'All Cloud'**
+  String get cloudSyncConflictUseAllCloud;
+
+  /// No description provided for @cloudSyncConflictUseAllLocal.
+  ///
+  /// In en, this message translates to:
+  /// **'All This Device'**
+  String get cloudSyncConflictUseAllLocal;
+
+  /// No description provided for @cloudSyncConflictConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Resolve Conflict'**
+  String get cloudSyncConflictConfirm;
+
+  /// No description provided for @cloudSyncConflictResolving.
+  ///
+  /// In en, this message translates to:
+  /// **'Resolving…'**
+  String get cloudSyncConflictResolving;
+
+  /// No description provided for @cloudSyncConflictResolved.
+  ///
+  /// In en, this message translates to:
+  /// **'Conflict resolved'**
+  String get cloudSyncConflictResolved;
+
+  /// No description provided for @cloudSyncConflictTruncatedLocalBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'The conflict list is incomplete, so local and mixed choices are disabled to avoid overwriting unseen changes. You can still keep all cloud values.'**
+  String get cloudSyncConflictTruncatedLocalBlocked;
+
+  /// No description provided for @cloudSyncConflictResolveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The conflict couldn\'t be resolved. Refresh it and try again.'**
+  String get cloudSyncConflictResolveFailed;
+
+  /// No description provided for @cloudSyncConflictEntityConversation.
+  ///
+  /// In en, this message translates to:
+  /// **'Chat'**
+  String get cloudSyncConflictEntityConversation;
+
+  /// No description provided for @cloudSyncConflictEntityTurn.
+  ///
+  /// In en, this message translates to:
+  /// **'Conversation Turn'**
+  String get cloudSyncConflictEntityTurn;
+
+  /// No description provided for @cloudSyncConflictEntityMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Message'**
+  String get cloudSyncConflictEntityMessage;
+
+  /// No description provided for @cloudSyncConflictEntityMessageSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Message Choice'**
+  String get cloudSyncConflictEntityMessageSelection;
+
+  /// No description provided for @cloudSyncConflictEntityToolEvent.
+  ///
+  /// In en, this message translates to:
+  /// **'Tool Result'**
+  String get cloudSyncConflictEntityToolEvent;
+
+  /// No description provided for @cloudSyncConflictEntityThoughtSignature.
+  ///
+  /// In en, this message translates to:
+  /// **'Reasoning State'**
+  String get cloudSyncConflictEntityThoughtSignature;
+
+  /// No description provided for @cloudSyncConflictEntityProvider.
+  ///
+  /// In en, this message translates to:
+  /// **'Model Provider'**
+  String get cloudSyncConflictEntityProvider;
+
+  /// No description provided for @cloudSyncConflictEntityAssistant.
+  ///
+  /// In en, this message translates to:
+  /// **'Assistant'**
+  String get cloudSyncConflictEntityAssistant;
+
+  /// No description provided for @cloudSyncConflictEntityMemory.
+  ///
+  /// In en, this message translates to:
+  /// **'Memory'**
+  String get cloudSyncConflictEntityMemory;
+
+  /// No description provided for @cloudSyncConflictEntityWorldBook.
+  ///
+  /// In en, this message translates to:
+  /// **'World Book Entry'**
+  String get cloudSyncConflictEntityWorldBook;
+
+  /// No description provided for @cloudSyncConflictEntityQuickPhrase.
+  ///
+  /// In en, this message translates to:
+  /// **'Quick Phrase'**
+  String get cloudSyncConflictEntityQuickPhrase;
+
+  /// No description provided for @cloudSyncConflictEntitySearchService.
+  ///
+  /// In en, this message translates to:
+  /// **'Search Service'**
+  String get cloudSyncConflictEntitySearchService;
+
+  /// No description provided for @cloudSyncConflictEntityNetworkTts.
+  ///
+  /// In en, this message translates to:
+  /// **'Voice Service'**
+  String get cloudSyncConflictEntityNetworkTts;
+
+  /// No description provided for @cloudSyncConflictEntityMcpServer.
+  ///
+  /// In en, this message translates to:
+  /// **'MCP Service'**
+  String get cloudSyncConflictEntityMcpServer;
+
+  /// No description provided for @cloudSyncConflictEntityInstructionInjection.
+  ///
+  /// In en, this message translates to:
+  /// **'Instruction Rule'**
+  String get cloudSyncConflictEntityInstructionInjection;
+
+  /// No description provided for @cloudSyncConflictEntityUserPreference.
+  ///
+  /// In en, this message translates to:
+  /// **'App Setting'**
+  String get cloudSyncConflictEntityUserPreference;
+
+  /// No description provided for @cloudSyncConflictFieldTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Title'**
+  String get cloudSyncConflictFieldTitle;
+
+  /// No description provided for @cloudSyncConflictFieldContent.
+  ///
+  /// In en, this message translates to:
+  /// **'Content'**
+  String get cloudSyncConflictFieldContent;
+
+  /// No description provided for @cloudSyncConflictFieldSummary.
+  ///
+  /// In en, this message translates to:
+  /// **'Summary'**
+  String get cloudSyncConflictFieldSummary;
+
+  /// No description provided for @cloudSyncConflictFieldName.
+  ///
+  /// In en, this message translates to:
+  /// **'Name'**
+  String get cloudSyncConflictFieldName;
+
+  /// No description provided for @cloudSyncConflictFieldStatus.
+  ///
+  /// In en, this message translates to:
+  /// **'Status'**
+  String get cloudSyncConflictFieldStatus;
+
+  /// No description provided for @cloudSyncConflictFieldTime.
+  ///
+  /// In en, this message translates to:
+  /// **'Time'**
+  String get cloudSyncConflictFieldTime;
+
+  /// No description provided for @cloudSyncConflictFieldSettings.
+  ///
+  /// In en, this message translates to:
+  /// **'Settings'**
+  String get cloudSyncConflictFieldSettings;
+
+  /// No description provided for @cloudSyncConflictFieldSecurity.
+  ///
+  /// In en, this message translates to:
+  /// **'Credential'**
+  String get cloudSyncConflictFieldSecurity;
+
+  /// No description provided for @cloudSyncConflictFieldReference.
+  ///
+  /// In en, this message translates to:
+  /// **'Linked Item'**
+  String get cloudSyncConflictFieldReference;
+
+  /// No description provided for @cloudSyncConflictFieldAttachments.
+  ///
+  /// In en, this message translates to:
+  /// **'Attachments'**
+  String get cloudSyncConflictFieldAttachments;
+
+  /// No description provided for @cloudSyncConflictFieldSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'Selection'**
+  String get cloudSyncConflictFieldSelection;
+
+  /// No description provided for @cloudSyncConflictFieldOther.
+  ///
+  /// In en, this message translates to:
+  /// **'Other Setting'**
+  String get cloudSyncConflictFieldOther;
+
+  /// No description provided for @cloudSyncConflictValueAbsent.
+  ///
+  /// In en, this message translates to:
+  /// **'No value'**
+  String get cloudSyncConflictValueAbsent;
+
+  /// No description provided for @cloudSyncConflictValueEmpty.
+  ///
+  /// In en, this message translates to:
+  /// **'Empty'**
+  String get cloudSyncConflictValueEmpty;
+
+  /// No description provided for @cloudSyncConflictValueSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Set'**
+  String get cloudSyncConflictValueSet;
+
+  /// No description provided for @cloudSyncConflictValueNotSet.
+  ///
+  /// In en, this message translates to:
+  /// **'Not set'**
+  String get cloudSyncConflictValueNotSet;
+
+  /// No description provided for @cloudSyncConflictValueReference.
+  ///
+  /// In en, this message translates to:
+  /// **'Linked item'**
+  String get cloudSyncConflictValueReference;
+
+  /// No description provided for @cloudSyncConflictValueItems.
+  ///
+  /// In en, this message translates to:
+  /// **'{count} items'**
+  String cloudSyncConflictValueItems(int count);
+
+  /// No description provided for @cloudSyncConflictValueEnabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Enabled'**
+  String get cloudSyncConflictValueEnabled;
+
+  /// No description provided for @cloudSyncConflictValueDisabled.
+  ///
+  /// In en, this message translates to:
+  /// **'Disabled'**
+  String get cloudSyncConflictValueDisabled;
+
+  /// No description provided for @cloudSyncConflictValueNumber.
+  ///
+  /// In en, this message translates to:
+  /// **'{value}'**
+  String cloudSyncConflictValueNumber(num value);
+
+  /// No description provided for @cloudSyncConflictValueBlank.
+  ///
+  /// In en, this message translates to:
+  /// **'Blank text'**
+  String get cloudSyncConflictValueBlank;
+
+  /// No description provided for @cloudSyncConflictFailureChanged.
+  ///
+  /// In en, this message translates to:
+  /// **'This conflict changed or was already resolved. Refresh the list before trying again.'**
+  String get cloudSyncConflictFailureChanged;
+
+  /// No description provided for @cloudSyncConflictFailureSelection.
+  ///
+  /// In en, this message translates to:
+  /// **'This field choice can\'t be applied safely. Keep the cloud value or refresh and choose again.'**
+  String get cloudSyncConflictFailureSelection;
+
+  /// No description provided for @cloudSyncConflictFailureUnsupported.
+  ///
+  /// In en, this message translates to:
+  /// **'This data type can\'t be resolved by this app version. Update the app or keep the cloud values.'**
+  String get cloudSyncConflictFailureUnsupported;
+
+  /// No description provided for @cloudSyncConflictFailureIncomplete.
+  ///
+  /// In en, this message translates to:
+  /// **'The conflict list is incomplete. Refresh it, or keep all cloud values.'**
+  String get cloudSyncConflictFailureIncomplete;
+
+  /// No description provided for @cloudSyncConflictFailurePendingWrites.
+  ///
+  /// In en, this message translates to:
+  /// **'This item still has local changes waiting to sync. Sync and refresh before trying again.'**
+  String get cloudSyncConflictFailurePendingWrites;
+
+  /// No description provided for @cloudSyncConflictFailureVerification.
+  ///
+  /// In en, this message translates to:
+  /// **'The result couldn\'t be verified, so the conflict wasn\'t finalized. Refresh and try again.'**
+  String get cloudSyncConflictFailureVerification;
+
   /// No description provided for @cloudSyncPlatformAndroid.
   ///
   /// In en, this message translates to:

@@ -79,6 +79,111 @@
   "cloudSyncStatusSyncing": "Syncing",
   "cloudSyncStatusPaused": "Paused",
   "cloudSyncStatusError": "Needs Attention",
+  "cloudSyncStatusNeedsAttention": "Review Needed",
+  "cloudSyncSyncNeedsAttention": "Sync finished, but some items need your review.",
+  "cloudSyncConflictsSection": "Sync Conflicts",
+  "cloudSyncRefreshConflicts": "Refresh conflicts",
+  "cloudSyncNoConflicts": "No conflicts to review",
+  "cloudSyncConflictsTruncated": "Only the first 100 conflicts are shown. Refresh after resolving them to see the rest.",
+  "cloudSyncConflictErrorTitle": "Couldn't load or resolve conflicts",
+  "cloudSyncConflictFieldCount": "{count} fields need review",
+  "@cloudSyncConflictFieldCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cloudSyncConflictValueComparison": "Cloud: {cloudValue} · This device: {localValue}",
+  "@cloudSyncConflictValueComparison": {
+    "placeholders": {
+      "cloudValue": {
+        "type": "String"
+      },
+      "localValue": {
+        "type": "String"
+      }
+    }
+  },
+  "cloudSyncConflictResolveTitle": "Resolve Sync Conflict",
+  "cloudSyncConflictResolveDescription": "Choose which version of each {entity} field to keep. The cloud version is selected by default.",
+  "@cloudSyncConflictResolveDescription": {
+    "placeholders": {
+      "entity": {
+        "type": "String"
+      }
+    }
+  },
+  "cloudSyncConflictClose": "Close conflict resolver",
+  "cloudSyncConflictCloudValue": "Cloud",
+  "cloudSyncConflictLocalValue": "This Device",
+  "cloudSyncConflictUseCloud": "Cloud (Default)",
+  "cloudSyncConflictUseLocal": "This Device",
+  "cloudSyncConflictUseAllCloud": "All Cloud",
+  "cloudSyncConflictUseAllLocal": "All This Device",
+  "cloudSyncConflictConfirm": "Resolve Conflict",
+  "cloudSyncConflictResolving": "Resolving…",
+  "cloudSyncConflictResolved": "Conflict resolved",
+  "cloudSyncConflictTruncatedLocalBlocked": "The conflict list is incomplete, so local and mixed choices are disabled to avoid overwriting unseen changes. You can still keep all cloud values.",
+  "cloudSyncConflictResolveFailed": "The conflict couldn't be resolved. Refresh it and try again.",
+  "cloudSyncConflictEntityConversation": "Chat",
+  "cloudSyncConflictEntityTurn": "Conversation Turn",
+  "cloudSyncConflictEntityMessage": "Message",
+  "cloudSyncConflictEntityMessageSelection": "Message Choice",
+  "cloudSyncConflictEntityToolEvent": "Tool Result",
+  "cloudSyncConflictEntityThoughtSignature": "Reasoning State",
+  "cloudSyncConflictEntityProvider": "Model Provider",
+  "cloudSyncConflictEntityAssistant": "Assistant",
+  "cloudSyncConflictEntityMemory": "Memory",
+  "cloudSyncConflictEntityWorldBook": "World Book Entry",
+  "cloudSyncConflictEntityQuickPhrase": "Quick Phrase",
+  "cloudSyncConflictEntitySearchService": "Search Service",
+  "cloudSyncConflictEntityNetworkTts": "Voice Service",
+  "cloudSyncConflictEntityMcpServer": "MCP Service",
+  "cloudSyncConflictEntityInstructionInjection": "Instruction Rule",
+  "cloudSyncConflictEntityUserPreference": "App Setting",
+  "cloudSyncConflictFieldTitle": "Title",
+  "cloudSyncConflictFieldContent": "Content",
+  "cloudSyncConflictFieldSummary": "Summary",
+  "cloudSyncConflictFieldName": "Name",
+  "cloudSyncConflictFieldStatus": "Status",
+  "cloudSyncConflictFieldTime": "Time",
+  "cloudSyncConflictFieldSettings": "Settings",
+  "cloudSyncConflictFieldSecurity": "Credential",
+  "cloudSyncConflictFieldReference": "Linked Item",
+  "cloudSyncConflictFieldAttachments": "Attachments",
+  "cloudSyncConflictFieldSelection": "Selection",
+  "cloudSyncConflictFieldOther": "Other Setting",
+  "cloudSyncConflictValueAbsent": "No value",
+  "cloudSyncConflictValueEmpty": "Empty",
+  "cloudSyncConflictValueSet": "Set",
+  "cloudSyncConflictValueNotSet": "Not set",
+  "cloudSyncConflictValueReference": "Linked item",
+  "cloudSyncConflictValueItems": "{count} items",
+  "@cloudSyncConflictValueItems": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "cloudSyncConflictValueEnabled": "Enabled",
+  "cloudSyncConflictValueDisabled": "Disabled",
+  "cloudSyncConflictValueNumber": "{value}",
+  "@cloudSyncConflictValueNumber": {
+    "placeholders": {
+      "value": {
+        "type": "num"
+      }
+    }
+  },
+  "cloudSyncConflictValueBlank": "Blank text",
+  "cloudSyncConflictFailureChanged": "This conflict changed or was already resolved. Refresh the list before trying again.",
+  "cloudSyncConflictFailureSelection": "This field choice can't be applied safely. Keep the cloud value or refresh and choose again.",
+  "cloudSyncConflictFailureUnsupported": "This data type can't be resolved by this app version. Update the app or keep the cloud values.",
+  "cloudSyncConflictFailureIncomplete": "The conflict list is incomplete. Refresh it, or keep all cloud values.",
+  "cloudSyncConflictFailurePendingWrites": "This item still has local changes waiting to sync. Sync and refresh before trying again.",
+  "cloudSyncConflictFailureVerification": "The result couldn't be verified, so the conflict wasn't finalized. Refresh and try again.",
   "cloudSyncPlatformAndroid": "Android",
   "cloudSyncPlatformIos": "iOS",
   "cloudSyncPlatformMacos": "macOS",
