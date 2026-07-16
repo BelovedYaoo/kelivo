@@ -307,6 +307,7 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           entity.entityId,
           entity.payload,
         );
+        _requireParent(entity, record.message.turnId);
         if (record.attachments.isEmpty) {
           if (record.message.role == 'user') {
             await _attachmentSyncService.rememberRemoteOrdinaryUserMessage(
@@ -337,6 +338,7 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
         return;
       case turnType:
         final turn = ChatSyncCodec.decodeTurn(entity.entityId, entity.payload);
+        _requireParent(entity, turn.conversationId);
         await _chatService.applyTurnFromSync(
           conversationId: turn.conversationId,
           turnId: turn.id,

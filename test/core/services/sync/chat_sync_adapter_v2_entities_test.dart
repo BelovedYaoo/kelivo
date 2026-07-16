@@ -523,6 +523,33 @@ void main() {
     final updatedAt = DateTime.utc(2026, 7, 16);
     final invalidEntities = <RemoteSyncEntity>[
       RemoteSyncEntity(
+        entityType: ChatSyncAdapter.turnType,
+        entityId: 'turn-parent-mismatch',
+        parentId: 'wrong-conversation',
+        revision: 1,
+        schemaVersion: 2,
+        payload: ChatSyncCodec.encodeTurn(
+          ChatSyncTurnRecord(
+            id: 'turn-parent-mismatch',
+            conversationId: conversation.id,
+            createdAt: updatedAt,
+          ),
+        ),
+        updatedAt: updatedAt,
+      ),
+      RemoteSyncEntity(
+        entityType: ChatSyncAdapter.messageType,
+        entityId: message.id,
+        parentId: 'wrong-turn',
+        revision: 1,
+        schemaVersion: 2,
+        payload: ChatSyncCodec.encodeMessage(
+          message,
+          syncedContent: message.content,
+        )!,
+        updatedAt: updatedAt,
+      ),
+      RemoteSyncEntity(
         entityType: 'message-selection',
         entityId: 'group-1',
         parentId: conversation.id,

@@ -2348,8 +2348,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     }
     final c = _conversationsBox.get(conversationId);
     if (c == null) return;
-    await _syncWriteExecutor.runLocal<void>(
-      key: _messageSelectionKey(groupId),
+    await _syncWriteExecutor.runLocalBatch<void>(
+      keys: <SyncEntityKey>{
+        _conversationKey(conversationId),
+        _messageSelectionKey(groupId),
+      },
       write: () async {
         c.versionSelections[groupId] = version;
         c.updatedAt = DateTime.now();
@@ -2373,8 +2376,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     }
     final c = _conversationsBox.get(conversationId);
     if (c == null) return;
-    await _syncWriteExecutor.runLocal<void>(
-      key: _messageSelectionKey(groupId),
+    await _syncWriteExecutor.runLocalBatch<void>(
+      keys: <SyncEntityKey>{
+        _conversationKey(conversationId),
+        _messageSelectionKey(groupId),
+      },
       write: () async {
         c.versionSelections.remove(groupId);
         c.updatedAt = DateTime.now();

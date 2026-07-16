@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
+import 'package:package_info_plus/package_info_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:Kelivo/core/models/assistant.dart';
@@ -16,6 +17,7 @@ import 'package:Kelivo/core/models/instruction_injection.dart';
 import 'package:Kelivo/core/models/quick_phrase.dart';
 import 'package:Kelivo/core/models/world_book.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
+import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
 import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
 import 'package:Kelivo/core/providers/mcp_provider.dart';
 import 'package:Kelivo/core/providers/memory_provider.dart';
@@ -34,6 +36,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
+import 'package:Kelivo/core/services/sync/sync_write_journal.dart';
 import 'package:Kelivo/core/services/search/search_service.dart';
 import 'package:Kelivo/core/services/tts/network_tts.dart';
 import 'package:Kelivo/utils/app_directories.dart';
@@ -71,6 +74,114 @@ Future<T> _withRealHttpClient<T>(Future<T> Function() action) {
     action,
     createHttpClient: overrides.createHttpClient,
   );
+}
+
+final class _CloudSyncProviderFixture {
+  const _CloudSyncProviderFixture({
+    required this.provider,
+    required this.chatService,
+    required this.store,
+  });
+
+  final CloudSyncProvider provider;
+  final ChatService chatService;
+  final CloudSyncStore store;
+
+  Future<void> close() async {
+    provider.dispose();
+    for (var attempt = 0; attempt < 50; attempt++) {
+      if (!Hive.isBoxOpen('cloud-sync-provider-login-test')) return;
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+    }
+    throw StateError('CloudSyncProvider 未及时关闭同步存储');
+  }
+}
+
+Future<_CloudSyncProviderFixture> _createCloudSyncProviderFixture(
+  String hivePath,
+) async {
+  SharedPreferences.setMockInitialValues(const <String, Object>{});
+  Hive.init(hivePath);
+  PackageInfo.setMockInitialValues(
+    appName: 'Kelivo',
+    packageName: 'com.kelivo.test',
+    version: '1.0.0',
+    buildNumber: '1',
+    buildSignature: '',
+  );
+  final store = await CloudSyncStore.open(
+    boxName: 'cloud-sync-provider-login-test',
+  );
+  final journal = SyncWriteJournal(
+    store: store,
+    journalScopeId: 'provider-login-test',
+  );
+  final chatService = ChatService(journal);
+  final provider = CloudSyncProvider(
+    chatService,
+    store,
+    journal,
+    settingsProvider: SettingsProvider(syncWriteExecutor: journal),
+    assistantProvider: AssistantProvider(syncWriteExecutor: journal),
+    memoryProvider: MemoryProvider(syncWriteExecutor: journal),
+    mcpProvider: McpProvider(syncWriteExecutor: journal),
+    quickPhraseProvider: QuickPhraseProvider(syncWriteExecutor: journal),
+    instructionInjectionProvider: InstructionInjectionProvider(
+      syncWriteExecutor: journal,
+    ),
+    worldBookProvider: WorldBookProvider(syncWriteExecutor: journal),
+    userProvider: UserProvider(syncWriteExecutor: journal),
+    capturedConfigRescanGeneration: null,
+  );
+  return _CloudSyncProviderFixture(
+    provider: provider,
+    chatService: chatService,
+    store: store,
+  );
+}
+
+Future<HttpServer> _startCloudSyncLoginServer() async {
+  final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+  server.listen((request) async {
+    await request.drain<void>();
+    request.response.headers.contentType = ContentType.json;
+    if (request.uri.path == '/api/auth/session/create') {
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'data': <String, Object?>{
+            'token': 'token-sync-user',
+            'user': <String, Object?>{
+              'id': 'sync-user',
+              'loginName': 'sync-user',
+              'displayName': 'sync-user',
+              'role': 'user',
+              'attachmentQuotaBytes': maximumCloudSyncAttachmentSizeBytes,
+            },
+            'device': <String, Object?>{
+              'id': 'device-sync-user',
+              'name': 'device',
+              'platform': 'windows',
+              'clientVersion': '1.0.0',
+              'createdAt': '2026-07-15T00:00:00.000Z',
+            },
+          },
+        }),
+      );
+    } else {
+      request.response
+        ..statusCode = HttpStatus.serviceUnavailable
+        ..write(
+          jsonEncode(<String, Object?>{
+            'error': <String, Object?>{
+              'code': 'SYNC_TEMPORARILY_UNAVAILABLE',
+              'message': '暂时不可用',
+            },
+          }),
+        );
+    }
+    await request.response.close();
+  });
+  return server;
 }
 
 final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
@@ -242,6 +353,82 @@ void main() {
     }
   });
 
+  group('CloudSyncProvider 登录', () {
+    test('首次同步失败时保留认证会话并返回失败状态', () async {
+      final server = await _startCloudSyncLoginServer();
+      final fixture = await _createCloudSyncProviderFixture(tempDir.path);
+      addTearDown(() async {
+        await server.close(force: true);
+        await fixture.close();
+      });
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+
+      final success = await _withRealHttpClient(
+        () => fixture.provider.login(
+          baseUrl: baseUrl,
+          loginName: 'sync-user',
+          password: 'password',
+          deviceName: 'device',
+        ),
+      );
+
+      expect(success, isFalse);
+      expect(fixture.provider.signedIn, isTrue);
+      expect(fixture.provider.status, CloudSyncProviderStatus.error);
+      expect(fixture.provider.lastError, isNotNull);
+    });
+
+    test('写前日志恢复失败时保留认证会话并返回失败状态', () async {
+      final server = await _startCloudSyncLoginServer();
+      final fixture = await _createCloudSyncProviderFixture(tempDir.path);
+      addTearDown(() async {
+        await server.close(force: true);
+        await fixture.close();
+      });
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+      await fixture.provider.initialize();
+      final conversation = await fixture.chatService.createConversation(
+        title: 'Chat',
+      );
+      final message = await fixture.chatService.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: 'hello',
+      );
+      await fixture.store.saveShadow(
+        _cloudSession(baseUrl),
+        CloudSyncShadow(
+          entityType: CloudSyncEntityType.message,
+          entityId: message.id,
+          parentId: 'wrong-turn',
+          revision: 1,
+          schemaVersion: 2,
+          lastChangeSeq: 1,
+          deleted: false,
+          payload: ChatSyncCodec.encodeMessage(
+            message,
+            syncedContent: message.content,
+          ),
+          updatedAt: DateTime.utc(2026, 7, 15),
+        ),
+      );
+
+      final success = await _withRealHttpClient(
+        () => fixture.provider.login(
+          baseUrl: baseUrl,
+          loginName: 'sync-user',
+          password: 'password',
+          deviceName: 'device',
+        ),
+      );
+
+      expect(success, isFalse);
+      expect(fixture.provider.signedIn, isTrue);
+      expect(fixture.provider.status, CloudSyncProviderStatus.error);
+      expect(fixture.provider.lastError, isNotNull);
+    });
+  });
+
   group('ChatService turn identities', () {
     test('流式更新不记日志且终态只提交一个完整批次', () async {
       final writes = _RecordingSyncWriteExecutor();
@@ -357,6 +544,46 @@ void main() {
         SyncEntityKey(entityType: 'thought-signature', entityId: message.id),
       });
       expect(service.getMessageById(message.id), isNull);
+    });
+
+    test('版本选择与会话更新时间在同一批次提交', () async {
+      final writes = _RecordingSyncWriteExecutor();
+      final service = ChatService(writes);
+      await service.init();
+      final conversation = await service.createConversation(title: 'Chat');
+      final beforeSet = conversation.updatedAt;
+      writes.batches.clear();
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+
+      await service.setSelectedVersion(conversation.id, 'group-select', 1);
+
+      final afterSet = service.getConversation(conversation.id)!.updatedAt;
+      expect(afterSet.isAfter(beforeSet), isTrue);
+      expect(writes.batches, hasLength(1));
+      expect(writes.batches.single, <SyncEntityKey>{
+        SyncEntityKey(entityType: 'conversation', entityId: conversation.id),
+        const SyncEntityKey(
+          entityType: 'message-selection',
+          entityId: 'group-select',
+        ),
+      });
+
+      writes.batches.clear();
+      await Future<void>.delayed(const Duration(milliseconds: 2));
+      await service.clearSelectedVersion(conversation.id, 'group-select');
+
+      expect(
+        service.getConversation(conversation.id)!.updatedAt.isAfter(afterSet),
+        isTrue,
+      );
+      expect(writes.batches, hasLength(1));
+      expect(writes.batches.single, <SyncEntityKey>{
+        SyncEntityKey(entityType: 'conversation', entityId: conversation.id),
+        const SyncEntityKey(
+          entityType: 'message-selection',
+          entityId: 'group-select',
+        ),
+      });
     });
 
     test('多消息删除去重实体键并只提交一次', () async {
@@ -1097,7 +1324,7 @@ void main() {
         RemoteSyncEntity(
           entityType: ChatSyncAdapter.messageType,
           entityId: remoteUser.id,
-          parentId: conversation.id,
+          parentId: remoteUser.turnId,
           revision: 1,
           schemaVersion: 1,
           payload: ChatSyncCodec.encodeMessage(remoteUser)!,

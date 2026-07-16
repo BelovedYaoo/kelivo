@@ -255,14 +255,15 @@ final class CloudSyncProvider extends ChangeNotifier
           status: CloudSyncProviderStatus.error,
         );
         _startAutomaticSync();
-        return true;
+        return false;
       }
       if (_disposed) return false;
       _setStatus(CloudSyncProviderStatus.idle);
       _startAutomaticSync();
       final connectedEpoch = _sessionEpoch;
-      await syncNow();
-      return !_disposed &&
+      final synchronized = await syncNow();
+      return synchronized &&
+          !_disposed &&
           connectedEpoch == _sessionEpoch &&
           identical(_session, session);
     } catch (error, stackTrace) {

@@ -487,21 +487,29 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       deviceName: deviceName,
     );
     if (!mounted) return;
-    if (success) {
+    final authenticatedButIncomplete =
+        provider.signedIn && provider.lastError == null;
+    if (provider.signedIn) {
       _passwordController.clear();
+    }
+    if (success) {
       return;
     }
     showAppSnackBar(
       context,
-      message: cloudSyncFailureText(
-        l10n,
-        provider.lastError ??
-            const CloudSyncException(
-              kind: CloudSyncFailureKind.unknown,
-              retryable: false,
+      message: authenticatedButIncomplete
+          ? l10n.cloudSyncSyncNeedsAttention
+          : cloudSyncFailureText(
+              l10n,
+              provider.lastError ??
+                  const CloudSyncException(
+                    kind: CloudSyncFailureKind.unknown,
+                    retryable: false,
+                  ),
             ),
-      ),
-      type: NotificationType.error,
+      type: authenticatedButIncomplete
+          ? NotificationType.warning
+          : NotificationType.error,
     );
   }
 
