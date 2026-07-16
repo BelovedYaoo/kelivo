@@ -2,6 +2,7 @@ import 'dart:async';
 
 import 'package:uuid/uuid.dart';
 
+import '../logging/flutter_logger.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_types.dart';
 import 'sync_codec.dart';
@@ -97,40 +98,83 @@ final class SyncWriteJournal implements SyncWriteExecutor {
       _requireNestedKeysDeclared(inheritedScope, orderedKeys);
       return write();
     }
-    return _withSessionLease((accountScope) {
-      return _withKeyLocks(orderedKeys, () async {
-        return _runInBatchScope(orderedKeys, () async {
-          final intents = <SyncWriteIntent>[];
-          for (final key in orderedKeys) {
-            intents.add(
-              await _store.beginWriteIntent(
-                SyncWriteIntent(
-                  intentId: _createIntentId(),
-                  entityType: CloudSyncEntityType.parse(key.entityType),
-                  entityId: key.entityId,
-                  journalScopeId: _journalScopeId,
-                  accountScope: accountScope,
-                  createdAt: _now(),
+    final result = Completer<T>();
+    // 调用方只等待本地结果；任务生命周期仍由 session lease 和实体锁跟踪。
+    unawaited(
+      _runLocalBatchInBackground(
+        orderedKeys: orderedKeys,
+        write: write,
+        result: result,
+      ),
+    );
+    return result.future;
+  }
+
+  Future<void> _runLocalBatchInBackground<T>({
+    required List<SyncEntityKey> orderedKeys,
+    required Future<T> Function() write,
+    required Completer<T> result,
+  }) async {
+    try {
+      await _withSessionLease((accountScope) async {
+        try {
+          await _withKeyLocks(orderedKeys, () async {
+            final intents = <SyncWriteIntent>[];
+            for (final key in orderedKeys) {
+              intents.add(
+                await _store.beginWriteIntent(
+                  SyncWriteIntent(
+                    intentId: _createIntentId(),
+                    entityType: CloudSyncEntityType.parse(key.entityType),
+                    entityId: key.entityId,
+                    journalScopeId: _journalScopeId,
+                    accountScope: accountScope,
+                    createdAt: _now(),
+                  ),
                 ),
-              ),
-            );
-          }
-          final result = await write();
-          final dispositions = await _dispatchBatch(intents);
-          for (final intent in intents) {
-            final key = SyncEntityKey(
-              entityType: intent.entityType.wireName,
-              entityId: intent.entityId,
-            );
-            final disposition = dispositions[key]!;
-            if (disposition == SyncWriteDisposition.completed) {
-              await _store.completeWriteIntent(intent);
+              );
             }
-          }
-          return result;
-        });
+
+            final localResult = await _runInBatchScope(orderedKeys, write);
+            result.complete(localResult);
+
+            // 先让业务调用方继续刷新 UI，摘要、附件上传和入队留在持锁的后台收尾中。
+            await Future<void>.delayed(Duration.zero);
+            final dispositions = await _dispatchBatch(intents);
+            for (final intent in intents) {
+              final key = SyncEntityKey(
+                entityType: intent.entityType.wireName,
+                entityId: intent.entityId,
+              );
+              final disposition = dispositions[key]!;
+              if (disposition == SyncWriteDisposition.completed) {
+                await _store.completeWriteIntent(intent);
+              }
+            }
+          });
+        } catch (error, stackTrace) {
+          _handleLocalBatchFailure(result, error, stackTrace);
+        }
       });
-    });
+    } catch (error, stackTrace) {
+      _handleLocalBatchFailure(result, error, stackTrace);
+    }
+  }
+
+  void _handleLocalBatchFailure<T>(
+    Completer<T> result,
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    if (!result.isCompleted) {
+      result.completeError(error, stackTrace);
+      return;
+    }
+    FlutterLogger.log(
+      '本地同步写已成功，但后台导出入队未完成，未清理的 intent 将等待恢复。\n'
+      '$error\n$stackTrace',
+      tag: 'SyncWriteJournal',
+    );
   }
 
   Future<T> runRemote<T>({
@@ -246,10 +290,30 @@ final class SyncWriteJournal implements SyncWriteExecutor {
         ),
       );
       return _withKeyLocks(keys, () async {
-        final dispositions = await _dispatchBatch(intents);
+        final lockedStorageKeys = keys.map((key) => key.storageKey).toSet();
+        final currentIntents = _store
+            .writeIntents(
+              journalScopeId: _journalScopeId,
+              accountScope: accountScope,
+            )
+            .where((intent) {
+              final key = SyncEntityKey(
+                entityType: intent.entityType.wireName,
+                entityId: intent.entityId,
+              );
+              return lockedStorageKeys.contains(key.storageKey);
+            })
+            .toList(growable: false);
+        if (currentIntents.isEmpty) {
+          return const SyncWriteRecoverySummary(
+            completedCount: 0,
+            deferredCount: 0,
+          );
+        }
+        final dispositions = await _dispatchBatch(currentIntents);
         var completedCount = 0;
         var deferredCount = 0;
-        for (final intent in intents) {
+        for (final intent in currentIntents) {
           final key = SyncEntityKey(
             entityType: intent.entityType.wireName,
             entityId: intent.entityId,

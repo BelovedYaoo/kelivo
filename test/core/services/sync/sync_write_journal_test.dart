@@ -83,6 +83,7 @@ void main() {
       }),
     );
     final recoveredSummary = await journal.recover();
+    await journal.close();
 
     expect(exported.single.intentId, 'intent-before-bind');
     expect(recoveredSummary.completedCount, 1);
@@ -171,6 +172,7 @@ void main() {
       },
     );
 
+    await journal.close();
     expect(result, 'done');
     expect(events, <String>['write', 'export']);
     expect(
@@ -182,7 +184,109 @@ void main() {
     );
   });
 
-  test('回调失败保留 intent，重启后可定向恢复并清理', () async {
+  test('本地写入成功后不等待后台导出即返回结果', () async {
+    final session = _session(userId: 'user-1');
+    final exportStarted = Completer<void>();
+    final releaseExport = Completer<void>();
+    final events = <String>[];
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-background-export',
+      exportAndEnqueue: _perIntentExporter((_) async {
+        events.add('export');
+        exportStarted.complete();
+        await releaseExport.future;
+        return SyncWriteDisposition.completed;
+      }),
+    );
+
+    final localResult = journal
+        .runLocal<String>(
+          key: const SyncEntityKey(
+            entityType: 'message',
+            entityId: 'message-background-export',
+          ),
+          write: () async => 'done',
+        )
+        .then((value) {
+          events.add('local');
+          return value;
+        });
+    await exportStarted.future;
+
+    final returnedBeforeExportStarted =
+        events.isNotEmpty && events.first == 'local';
+    var closed = false;
+    final closing = journal.close().then((_) => closed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(
+      store.writeIntents(
+        journalScopeId: _journalScopeId,
+        accountScope: session.accountScope,
+      ),
+      hasLength(1),
+    );
+    expect(closed, isFalse);
+
+    releaseExport.complete();
+    expect(await localResult, 'done');
+    await closing;
+    expect(returnedBeforeExportStarted, isTrue);
+    expect(events, <String>['local', 'export']);
+    expect(
+      store.writeIntents(
+        journalScopeId: _journalScopeId,
+        accountScope: session.accountScope,
+      ),
+      isEmpty,
+    );
+  });
+
+  test('后台导出期间同实体远端写不能插队', () async {
+    final session = _session(userId: 'user-1');
+    final exportStarted = Completer<void>();
+    final releaseExport = Completer<void>();
+    final remoteStarted = Completer<void>();
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-locked-background-export',
+      exportAndEnqueue: _perIntentExporter((_) async {
+        exportStarted.complete();
+        await releaseExport.future;
+        return SyncWriteDisposition.completed;
+      }),
+    );
+    const key = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-locked-background-export',
+    );
+
+    final local = journal.runLocal<String>(
+      key: key,
+      write: () async => 'saved',
+    );
+    await exportStarted.future;
+    final remote = journal.runRemote<void>(
+      key: key,
+      write: () async => remoteStarted.complete(),
+    );
+    await Future<void>.delayed(Duration.zero);
+    final remoteWaitedForExport = !remoteStarted.isCompleted;
+
+    releaseExport.complete();
+    expect(await local, 'saved');
+    await remote;
+    await journal.close();
+
+    expect(remoteWaitedForExport, isTrue);
+    expect(remoteStarted.isCompleted, isTrue);
+  });
+
+  test('后台导出失败不反抛本地写且重启后可恢复', () async {
     final session = _session(userId: 'user-1');
     final failingJournal = SyncWriteJournal(
       store: store,
@@ -194,15 +298,22 @@ void main() {
       ),
     );
 
-    await expectLater(
-      failingJournal.runLocal<void>(
-        key: const SyncEntityKey(
-          entityType: 'assistant',
-          entityId: 'assistant-1',
-        ),
-        write: () async {},
+    final result = await failingJournal.runLocal<String>(
+      key: const SyncEntityKey(
+        entityType: 'assistant',
+        entityId: 'assistant-1',
       ),
-      throwsStateError,
+      write: () async => 'saved',
+    );
+    await failingJournal.close();
+
+    expect(result, 'saved');
+    expect(
+      store.writeIntents(
+        journalScopeId: _journalScopeId,
+        accountScope: session.accountScope,
+      ),
+      hasLength(1),
     );
     await store.close();
     store = await CloudSyncStore.open(boxName: 'sync-write-journal-test');
@@ -231,6 +342,49 @@ void main() {
       ),
       isEmpty,
     );
+  });
+
+  test('recover 不会重复处理后台导出中的同一 intent', () async {
+    final session = _session(userId: 'user-1');
+    final exportStarted = Completer<void>();
+    final releaseExport = Completer<void>();
+    var exportCount = 0;
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-recover-background-race',
+      exportAndEnqueue: _perIntentExporter((_) async {
+        exportCount++;
+        if (exportCount == 1) {
+          exportStarted.complete();
+          await releaseExport.future;
+        }
+        return SyncWriteDisposition.completed;
+      }),
+    );
+
+    final local = journal.runLocal<String>(
+      key: const SyncEntityKey(
+        entityType: 'message',
+        entityId: 'message-recover-background-race',
+      ),
+      write: () async => 'saved',
+    );
+    await exportStarted.future;
+    final recovery = journal.recover();
+    await Future<void>.delayed(Duration.zero);
+    final recoverWaitedForExport = exportCount == 1;
+
+    releaseExport.complete();
+    expect(await local, 'saved');
+    final summary = await recovery;
+    await journal.close();
+
+    expect(recoverWaitedForExport, isTrue);
+    expect(exportCount, 1);
+    expect(summary.completedCount, 0);
+    expect(summary.deferredCount, 0);
   });
 
   test('同一实体写入串行，不同实体可以并发', () async {
@@ -286,6 +440,7 @@ void main() {
       2,
       3,
     ]);
+    await journal.close();
     expect(wasSerialized, isTrue);
     expect(secondStarted.isCompleted, isTrue);
   });
@@ -339,6 +494,7 @@ void main() {
         return 'saved';
       },
     );
+    await journal.close();
 
     expect(result, 'saved');
     expect(batchExportCount, 1);
@@ -377,6 +533,7 @@ void main() {
       ),
       throwsStateError,
     );
+    await journal.close();
 
     expect(exportCount, 0);
     expect(
@@ -429,6 +586,7 @@ void main() {
       remote,
       local,
     ]).timeout(const Duration(seconds: 2));
+    await journal.close();
     expect(secondStarted.isCompleted, isTrue);
   });
 
@@ -467,6 +625,7 @@ void main() {
           ),
         )
         .timeout(const Duration(seconds: 2));
+    await journal.close();
 
     expect(nestedWriteCount, 1);
     expect(nextIntent, 1);
@@ -502,6 +661,7 @@ void main() {
         ),
       ),
     );
+    await journal.close();
   });
 
   test('远端应用与同实体本地写串行且不生成 intent 或 outbox', () async {
@@ -539,6 +699,7 @@ void main() {
     final remoteWaited = !remoteStarted.isCompleted;
     releaseLocal.complete();
     await Future.wait<void>(<Future<void>>[local, remote]);
+    await journal.close();
 
     expect(remoteWaited, isTrue);
     expect(exportCount, 1);
@@ -593,6 +754,7 @@ void main() {
       hasLength(1),
     );
     await journal.recover();
+    await journal.close();
 
     expect(recovered.single.intentId, 'intent-device-global');
     expect(recovered.single.accountScope, session.accountScope);
@@ -605,7 +767,7 @@ void main() {
     );
   });
 
-  test('会话切换独占等待在途写且写入固定使用开始时账号', () async {
+  test('会话切换等待后台导出并保持写入开始时账号', () async {
     final firstSession = _session(
       userId: 'user-1',
       deviceId: 'server-device-1',
@@ -616,6 +778,8 @@ void main() {
     );
     final writeStarted = Completer<void>();
     final releaseWrite = Completer<void>();
+    final exportStarted = Completer<void>();
+    final releaseExport = Completer<void>();
     final exportedScopes = <String?>[];
     var transitioned = false;
     var nextIntent = 0;
@@ -626,6 +790,10 @@ void main() {
       createIntentId: () => 'intent-transition-${nextIntent++}',
       exportAndEnqueue: _perIntentExporter((intent) async {
         exportedScopes.add(intent.accountScope);
+        if (exportedScopes.length == 1) {
+          exportStarted.complete();
+          await releaseExport.future;
+        }
         return SyncWriteDisposition.completed;
       }),
     );
@@ -654,6 +822,10 @@ void main() {
       hasLength(1),
     );
     releaseWrite.complete();
+    await exportStarted.future;
+    await Future<void>.delayed(Duration.zero);
+    final transitionWaitedForExport = !transitioned;
+    releaseExport.complete();
     await Future.wait<void>(<Future<void>>[local, transition]);
 
     await journal.runLocal<void>(
@@ -663,7 +835,9 @@ void main() {
       ),
       write: () async {},
     );
+    await journal.close();
     expect(transitionWaited, isTrue);
+    expect(transitionWaitedForExport, isTrue);
     expect(exportedScopes, <String?>[
       firstSession.accountScope,
       secondSession.accountScope,
@@ -694,6 +868,7 @@ void main() {
       ),
       throwsStateError,
     );
+    await journal.close();
 
     expect(exportCount, 0);
     expect(
@@ -706,6 +881,33 @@ void main() {
           .intentId,
       'intent-write-failed',
     );
+  });
+
+  test('intent 持久化失败时不执行业务写并将错误返回调用方', () async {
+    final session = _session(userId: 'user-1');
+    var writeCalled = false;
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-persist-failed',
+    );
+    await store.close();
+
+    await expectLater(
+      journal.runLocal<void>(
+        key: const SyncEntityKey(
+          entityType: 'assistant',
+          entityId: 'assistant-intent-persist-failed',
+        ),
+        write: () async => writeCalled = true,
+      ),
+      throwsA(isA<HiveError>()),
+    );
+    await journal.close();
+
+    expect(writeCalled, isFalse);
+    store = await CloudSyncStore.open(boxName: 'sync-write-journal-test');
   });
 
   test('暂停自动同步不影响本地写前记录和入队', () async {
@@ -729,6 +931,7 @@ void main() {
       ),
       write: () async {},
     );
+    await journal.close();
 
     expect(store.isPaused(session), isTrue);
     expect(exported, isTrue);
@@ -766,14 +969,9 @@ void main() {
       ),
     );
 
-    await expectLater(
-      first.runLocal<void>(key: key, write: () async {}),
-      throwsStateError,
-    );
-    await expectLater(
-      second.runLocal<void>(key: key, write: () async {}),
-      throwsStateError,
-    );
+    await first.runLocal<void>(key: key, write: () async {});
+    await second.runLocal<void>(key: key, write: () async {});
+    await Future.wait<void>(<Future<void>>[first.close(), second.close()]);
 
     expect(
       store
