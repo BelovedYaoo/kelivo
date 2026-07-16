@@ -12,6 +12,7 @@ final class CloudSyncStore {
   static const _sessionKey = 'active-session';
   static const _lastBaseUrlKey = 'last-base-url';
   static const _journalScopeIdKey = 'journal-scope-id';
+  static const _configRescanGenerationKey = 'config-rescan-generation';
   static const _localProtocolVersionKey = 'local-sync-protocol-version';
   static const _localProtocolVersion = 2;
 
@@ -29,6 +30,20 @@ final class CloudSyncStore {
     } catch (_) {
       await box.close();
       rethrow;
+    }
+  }
+
+  static Future<String> markDefaultConfigRescanRequired() async {
+    final wasOpen = Hive.isBoxOpen(defaultBoxName);
+    final box = wasOpen
+        ? Hive.box<String>(defaultBoxName)
+        : await Hive.openBox<String>(defaultBoxName);
+    try {
+      return await CloudSyncStore._(box).createConfigRescanGeneration();
+    } finally {
+      if (!wasOpen) {
+        await box.close();
+      }
     }
   }
 
@@ -60,6 +75,37 @@ final class CloudSyncStore {
   }
 
   Future<void> clearSession() => _box.delete(_sessionKey);
+
+  String? get configRescanGeneration {
+    final persisted = _box.get(_configRescanGenerationKey);
+    if (persisted == null) return null;
+    if (persisted.trim().isEmpty) {
+      throw const FormatException('配置重扫代次无效');
+    }
+    return persisted;
+  }
+
+  Future<String> createConfigRescanGeneration({
+    String Function()? createGeneration,
+  }) async {
+    final generation = (createGeneration ?? const Uuid().v4)().trim();
+    if (generation.isEmpty) {
+      throw const FormatException('配置重扫代次不能为空');
+    }
+    await _box.put(_configRescanGenerationKey, generation);
+    return generation;
+  }
+
+  Future<bool> consumeConfigRescanGeneration(String expected) async {
+    final normalized = expected.trim();
+    if (normalized.isEmpty) {
+      throw const FormatException('待消费的配置重扫代次不能为空');
+    }
+    if (configRescanGeneration != normalized) return false;
+    // 同步期间可能再次导入，比较删除可避免旧任务清掉更新后的代次。
+    await _box.delete(_configRescanGenerationKey);
+    return true;
+  }
 
   Future<String> loadOrCreateJournalScopeId({
     String Function()? createId,

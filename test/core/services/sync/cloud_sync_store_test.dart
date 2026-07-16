@@ -56,6 +56,36 @@ void main() {
     expect(reopened, first);
   });
 
+  test('配置重扫代次随机生成且只能比较删除当前值', () async {
+    final first = await store.createConfigRescanGeneration(
+      createGeneration: () => 'generation-1',
+    );
+    final second = await store.createConfigRescanGeneration(
+      createGeneration: () => 'generation-2',
+    );
+
+    expect(first, 'generation-1');
+    expect(second, 'generation-2');
+    expect(store.configRescanGeneration, 'generation-2');
+    expect(await store.consumeConfigRescanGeneration('generation-1'), isFalse);
+    expect(store.configRescanGeneration, 'generation-2');
+    expect(await store.consumeConfigRescanGeneration('generation-2'), isTrue);
+    expect(store.configRescanGeneration, isNull);
+  });
+
+  test('配置重扫代次生成失败时保留已有值', () async {
+    await store.createConfigRescanGeneration(
+      createGeneration: () => 'generation-stable',
+    );
+
+    await expectLater(
+      store.createConfigRescanGeneration(createGeneration: () => '  '),
+      throwsA(isA<FormatException>()),
+    );
+
+    expect(store.configRescanGeneration, 'generation-stable');
+  });
+
   test('同目录重复初始化 Hive 时已打开的同步 Store 保持可用', () async {
     await store.saveLastBaseUrl('https://sync.example.com');
 
