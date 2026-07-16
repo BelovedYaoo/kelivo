@@ -26,3 +26,4 @@
 - 本切片最新定向验证覆盖 Store/Planner、Coordinator、Journal、生成客户端协议、两个生产 Adapter 与 ChatService 共 79 项测试；15 个目标文件静态分析无问题。ChatService 附件恢复用例需将 TEMP/TMP 从不支持符号链接解析的 `R:\Temp` 指向本机用户临时目录。此前完整 `flutter test` 为 844 项通过、1 项既有失败，失败来自本地字体测试对 Windows 路径分隔符的断言，与本切片无关。
 - 已完成：Dart OpenAPI 客户端按服务端 v2 契约重新生成；手写传输层适配强制协议版本与 `AnyOf` mutation 结果，并补齐字段冲突列表、详情和解决接口。字段状态契约已改为生成器稳定支持的单对象结构；5 项相关测试与定向静态分析通过。
 - 已完成：写前 Journal 支持可验证的嵌套批次；内层只能复用外层已声明实体，漏报 key 会立即失败，避免组合领域方法同键死锁。协调器按远端页统一持有全部实体锁，并通过 Adapter 批次边界应用常规变化和快照缺席；50 项相关测试与定向静态分析通过。
+- 已完成：领域写入口统一依赖 `SyncWriteExecutor`；生产使用持久 Journal，测试必须显式使用 `UntrackedSyncWriteExecutor.forTests()`，不保留静默的生产降级路径。

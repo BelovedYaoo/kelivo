@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import 'cloud_sync_store.dart';
 import 'cloud_sync_types.dart';
 import 'sync_codec.dart';
+import 'sync_write_executor.dart';
 
 enum SyncWriteDisposition { completed, deferred }
 
@@ -23,7 +24,7 @@ typedef SyncWriteExportAndEnqueue =
       List<SyncWriteIntent> intents,
     );
 
-final class SyncWriteJournal {
+final class SyncWriteJournal implements SyncWriteExecutor {
   factory SyncWriteJournal({
     required CloudSyncStore store,
     required String journalScopeId,
@@ -77,6 +78,7 @@ final class SyncWriteJournal {
     _exportAndEnqueue = exporter;
   }
 
+  @override
   Future<T> runLocal<T>({
     required SyncEntityKey key,
     required Future<T> Function() write,
@@ -84,6 +86,7 @@ final class SyncWriteJournal {
     return runLocalBatch(keys: <SyncEntityKey>[key], write: write);
   }
 
+  @override
   Future<T> runLocalBatch<T>({
     required Iterable<SyncEntityKey> keys,
     required Future<T> Function() write,
