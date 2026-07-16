@@ -11,6 +11,7 @@ import 'package:Kelivo/core/providers/quick_phrase_provider.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/providers/user_provider.dart';
 import 'package:Kelivo/core/providers/world_book_provider.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_conflict_presentation.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
@@ -97,6 +98,103 @@ RemoteSyncEntity _profileEntity(Map<String, Object?> payload) {
     payload: payload,
     updatedAt: DateTime.utc(2026, 7, 16),
   );
+}
+
+CloudSyncConflictField _conflictField({
+  required String path,
+  bool currentExists = true,
+  Object? currentValue,
+  bool desiredExists = true,
+  Object? desiredValue,
+}) {
+  return CloudSyncConflictField(
+    path: path,
+    current: CloudSyncConflictFieldState(
+      exists: currentExists,
+      value: currentValue,
+    ),
+    desired: CloudSyncConflictFieldState(
+      exists: desiredExists,
+      value: desiredValue,
+    ),
+  );
+}
+
+CloudSyncConflict _conflict({
+  CloudSyncEntityType entityType = CloudSyncEntityType.assistant,
+  required List<CloudSyncConflictField> fields,
+}) {
+  return CloudSyncConflict(
+    conflictId: 'internal-conflict-id',
+    mutationId: 'internal-mutation-id',
+    entityType: entityType,
+    entityId: 'internal-entity-id',
+    baseRevision: 1,
+    fields: fields,
+    state: CloudSyncConflictState.open,
+    createdAt: DateTime.utc(2026, 7, 16),
+    resolvedAt: null,
+  );
+}
+
+Object _valueDescriptorTree(CloudSyncConflictValueDescriptor descriptor) {
+  return switch (descriptor) {
+    CloudSyncAbsentValueDescriptor() => 'absent',
+    CloudSyncNullValueDescriptor() => 'null',
+    CloudSyncHiddenValueDescriptor(:final state) => <String, Object>{
+      'kind': 'hidden',
+      'state': state.name,
+    },
+    CloudSyncReferenceValueDescriptor() => 'reference',
+    CloudSyncItemCountValueDescriptor(:final itemCount) => <String, Object>{
+      'kind': 'itemCount',
+      'value': itemCount,
+    },
+    CloudSyncBooleanValueDescriptor(:final value) => <String, Object>{
+      'kind': 'boolean',
+      'value': value,
+    },
+    CloudSyncNumberValueDescriptor(:final value) => <String, Object>{
+      'kind': 'number',
+      'value': value,
+    },
+    CloudSyncTextValueDescriptor(:final value) => <String, Object>{
+      'kind': 'text',
+      'value': value,
+    },
+  };
+}
+
+Object _presentationDescriptorTree(
+  CloudSyncConflictPresentationDescriptor descriptor,
+) {
+  return <String, Object>{
+    'entity': descriptor.entityCategory.name,
+    'fields': descriptor.fields
+        .map(
+          (field) => <String, Object>{
+            'category': field.category.name,
+            'current': _valueDescriptorTree(field.current),
+            'desired': _valueDescriptorTree(field.desired),
+          },
+        )
+        .toList(growable: false),
+  };
+}
+
+bool _containsRecursively(Object? value, Object? forbidden) {
+  if (value == forbidden) return true;
+  if (value is Iterable<Object?>) {
+    return value.any((item) => _containsRecursively(item, forbidden));
+  }
+  if (value is Map<Object?, Object?>) {
+    return value.entries.any(
+      (entry) =>
+          _containsRecursively(entry.key, forbidden) ||
+          _containsRecursively(entry.value, forbidden),
+    );
+  }
+  return false;
 }
 
 void main() {
@@ -286,5 +384,306 @@ void main() {
     expect(writes.batches.single, contains(ConfigSyncKeys.searchState));
     expect(current.searchEnabled, isTrue);
     expect(current.searchAutoTestOnLaunch, isTrue);
+  });
+
+  group('云同步冲突展示描述', () {
+    test('将冲突转换为实体、字段和值的强类型描述', () {
+      final descriptor = describeCloudSyncConflict(
+        _conflict(
+          fields: <CloudSyncConflictField>[
+            _conflictField(
+              path: '/displayName',
+              currentValue: '旧助手',
+              desiredValue: '新助手',
+            ),
+          ],
+        ),
+      );
+
+      expect(
+        descriptor.entityCategory,
+        CloudSyncConflictEntityCategory.assistant,
+      );
+      expect(descriptor.fields, hasLength(1));
+      expect(
+        descriptor.fields.single.category,
+        CloudSyncConflictFieldCategory.name,
+      );
+      expect(
+        descriptor.fields.single.current,
+        isA<CloudSyncTextValueDescriptor>().having(
+          (value) => value.value,
+          'value',
+          '旧助手',
+        ),
+      );
+      expect(
+        descriptor.fields.single.desired,
+        isA<CloudSyncTextValueDescriptor>().having(
+          (value) => value.value,
+          'value',
+          '新助手',
+        ),
+      );
+    });
+
+    test('全部实体枚举都有稳定的展示类别', () {
+      const expected = <CloudSyncEntityType, CloudSyncConflictEntityCategory>{
+        CloudSyncEntityType.conversation:
+            CloudSyncConflictEntityCategory.conversation,
+        CloudSyncEntityType.turn: CloudSyncConflictEntityCategory.turn,
+        CloudSyncEntityType.message: CloudSyncConflictEntityCategory.message,
+        CloudSyncEntityType.messageSelection:
+            CloudSyncConflictEntityCategory.messageSelection,
+        CloudSyncEntityType.toolEvent:
+            CloudSyncConflictEntityCategory.toolEvent,
+        CloudSyncEntityType.thoughtSignature:
+            CloudSyncConflictEntityCategory.thoughtSignature,
+        CloudSyncEntityType.provider: CloudSyncConflictEntityCategory.provider,
+        CloudSyncEntityType.assistant:
+            CloudSyncConflictEntityCategory.assistant,
+        CloudSyncEntityType.memory: CloudSyncConflictEntityCategory.memory,
+        CloudSyncEntityType.worldBook:
+            CloudSyncConflictEntityCategory.worldBook,
+        CloudSyncEntityType.quickPhrase:
+            CloudSyncConflictEntityCategory.quickPhrase,
+        CloudSyncEntityType.searchService:
+            CloudSyncConflictEntityCategory.searchService,
+        CloudSyncEntityType.networkTts:
+            CloudSyncConflictEntityCategory.networkTts,
+        CloudSyncEntityType.mcpServer:
+            CloudSyncConflictEntityCategory.mcpServer,
+        CloudSyncEntityType.instructionInjection:
+            CloudSyncConflictEntityCategory.instructionInjection,
+        CloudSyncEntityType.userPreference:
+            CloudSyncConflictEntityCategory.userPreference,
+      };
+
+      for (final entry in expected.entries) {
+        final descriptor = describeCloudSyncConflict(
+          _conflict(
+            entityType: entry.key,
+            fields: <CloudSyncConflictField>[
+              _conflictField(path: '/title', currentValue: 'a'),
+            ],
+          ),
+        );
+        expect(descriptor.entityCategory, entry.value);
+      }
+      expect(expected, hasLength(CloudSyncEntityType.values.length));
+    });
+
+    test('所有字段展示类别均由顶层 JSON Pointer 得出', () {
+      const expected = <String, CloudSyncConflictFieldCategory>{
+        '/title': CloudSyncConflictFieldCategory.title,
+        '/content': CloudSyncConflictFieldCategory.content,
+        '/summary': CloudSyncConflictFieldCategory.summary,
+        '/displayName': CloudSyncConflictFieldCategory.name,
+        '/status': CloudSyncConflictFieldCategory.status,
+        '/updatedAt': CloudSyncConflictFieldCategory.time,
+        '/settings': CloudSyncConflictFieldCategory.settings,
+        '/apiKey': CloudSyncConflictFieldCategory.security,
+        '/providerId': CloudSyncConflictFieldCategory.reference,
+        '/attachments': CloudSyncConflictFieldCategory.attachments,
+        '/selection': CloudSyncConflictFieldCategory.selection,
+        '/customColor': CloudSyncConflictFieldCategory.other,
+      };
+
+      for (final entry in expected.entries) {
+        final descriptor = describeCloudSyncConflictField(
+          _conflictField(path: entry.key, currentValue: 'value'),
+        );
+        expect(descriptor.category, entry.value, reason: entry.key);
+      }
+    });
+
+    test('大小写与 camelCase 敏感关键词只生成隐藏状态且不保留原值', () {
+      const paths = <String>[
+        '/apiKey',
+        '/ACCESS_TOKEN',
+        '/clientSecret',
+        '/userPassword',
+        '/Authorization',
+        '/customHeaders',
+        '/accessCredential',
+        '/thoughtSignature',
+      ];
+
+      for (final path in paths) {
+        final secret = 'secret-value-for-$path';
+        final descriptor = describeCloudSyncConflictField(
+          _conflictField(
+            path: path,
+            currentValue: secret,
+            desiredExists: false,
+          ),
+        );
+        final current = descriptor.current;
+        final desired = descriptor.desired;
+
+        expect(descriptor.category, CloudSyncConflictFieldCategory.security);
+        expect(
+          current,
+          isA<CloudSyncHiddenValueDescriptor>().having(
+            (value) => value.state,
+            'state',
+            CloudSyncHiddenValueState.set,
+          ),
+        );
+        expect(
+          desired,
+          isA<CloudSyncHiddenValueDescriptor>().having(
+            (value) => value.state,
+            'state',
+            CloudSyncHiddenValueState.missing,
+          ),
+        );
+        final tree = <String, Object>{
+          'current': _valueDescriptorTree(current),
+          'desired': _valueDescriptorTree(desired),
+        };
+        expect(_containsRecursively(tree, secret), isFalse, reason: path);
+        expect(descriptor.toString(), isNot(contains(secret)), reason: path);
+      }
+    });
+
+    test('引用字段不暴露 ID，引用集合仅给出项目数量', () {
+      const currentId = 'provider-sensitive-id';
+      const desiredIds = <Object?>['first-sensitive-id', 'second-sensitive-id'];
+      final scalar = describeCloudSyncConflictField(
+        _conflictField(
+          path: '/providerId',
+          currentValue: currentId,
+          desiredValue: 'next-sensitive-id',
+        ),
+      );
+      final collection = describeCloudSyncConflictField(
+        _conflictField(
+          path: '/providerIds',
+          currentValue: desiredIds,
+          desiredValue: const <String, Object?>{
+            'primary': 'third-sensitive-id',
+          },
+        ),
+      );
+
+      expect(scalar.current, isA<CloudSyncReferenceValueDescriptor>());
+      expect(scalar.desired, isA<CloudSyncReferenceValueDescriptor>());
+      expect(
+        collection.current,
+        isA<CloudSyncItemCountValueDescriptor>().having(
+          (value) => value.itemCount,
+          'itemCount',
+          2,
+        ),
+      );
+      expect(
+        collection.desired,
+        isA<CloudSyncItemCountValueDescriptor>().having(
+          (value) => value.itemCount,
+          'itemCount',
+          1,
+        ),
+      );
+      final tree = <Object>[
+        _valueDescriptorTree(scalar.current),
+        _valueDescriptorTree(scalar.desired),
+        _valueDescriptorTree(collection.current),
+        _valueDescriptorTree(collection.desired),
+      ];
+      for (final id in <String>[
+        currentId,
+        'next-sensitive-id',
+        'first-sensitive-id',
+        'second-sensitive-id',
+        'third-sensitive-id',
+      ]) {
+        expect(_containsRecursively(tree, id), isFalse);
+      }
+    });
+
+    test('对象与数组只给数量，布尔、缺失、null、数字分别描述', () {
+      final descriptors = <CloudSyncConflictFieldDescriptor>[
+        describeCloudSyncConflictField(
+          _conflictField(
+            path: '/settings',
+            currentValue: const <String, Object?>{'a': 1, 'b': 2},
+            desiredValue: const <Object?>['a', 'b', 'c'],
+          ),
+        ),
+        describeCloudSyncConflictField(
+          _conflictField(
+            path: '/enabled',
+            currentValue: true,
+            desiredExists: false,
+          ),
+        ),
+        describeCloudSyncConflictField(
+          _conflictField(
+            path: '/temperature',
+            currentValue: null,
+            desiredValue: 0.7,
+          ),
+        ),
+      ];
+
+      expect(
+        descriptors[0].current,
+        isA<CloudSyncItemCountValueDescriptor>().having(
+          (value) => value.itemCount,
+          'itemCount',
+          2,
+        ),
+      );
+      expect(
+        descriptors[0].desired,
+        isA<CloudSyncItemCountValueDescriptor>().having(
+          (value) => value.itemCount,
+          'itemCount',
+          3,
+        ),
+      );
+      expect(descriptors[1].current, isA<CloudSyncBooleanValueDescriptor>());
+      expect(descriptors[1].desired, isA<CloudSyncAbsentValueDescriptor>());
+      expect(descriptors[2].current, isA<CloudSyncNullValueDescriptor>());
+      expect(
+        descriptors[2].desired,
+        isA<CloudSyncNumberValueDescriptor>().having(
+          (value) => value.value,
+          'value',
+          0.7,
+        ),
+      );
+    });
+
+    test('嵌套和无法安全解释的路径归入其他且不回显路径或内部标识', () {
+      const originalPaths = <String>['/settings/apiKey', '/bad~1path'];
+      final descriptor = describeCloudSyncConflict(
+        _conflict(
+          fields: <CloudSyncConflictField>[
+            for (final path in originalPaths)
+              _conflictField(
+                path: path,
+                currentValue: 'nested-sensitive-value',
+              ),
+          ],
+        ),
+      );
+      final tree = _presentationDescriptorTree(descriptor);
+
+      for (final field in descriptor.fields) {
+        expect(field.category, CloudSyncConflictFieldCategory.other);
+      }
+      for (final forbidden in <String>[
+        ...originalPaths,
+        'internal-conflict-id',
+        'internal-mutation-id',
+        'internal-entity-id',
+        'nested-sensitive-value',
+      ]) {
+        expect(_containsRecursively(tree, forbidden), isFalse);
+        expect(descriptor.toString(), isNot(contains(forbidden)));
+      }
+    });
   });
 }
