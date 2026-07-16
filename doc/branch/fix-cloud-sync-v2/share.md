@@ -10,3 +10,5 @@
 - 已完成：Flutter 本地实体默认使用 schema v2；消息父级改为轮次；配置 Payload 以 envelope 为唯一身份、有序实体强制 `_position`；指令注入升级为独立实体；相关 26 项测试与定向静态分析通过。
 - 已完成：push、pull、snapshot 统一发送 `X-Kelivo-Sync-Protocol-Version: 2`；真实本地 HTTP 传输测试与定向静态分析通过。
 - 已完成：新增持久写前 `SyncWriteJournal` 深模块；支持稳定本地作用域、失败/延迟恢复、同实体串行、异实体并发、远端应用隔离及会话切换门闩；9 项目标测试与定向静态分析通过，尚未接入领域写入口。
+- 已完成：Chat Adapter 覆盖 `message-selection`、`tool-event`、`thought-signature` 三类 v2 实体；稳定 identity/parent、严格 Payload、专用 `FromSync` 写入及墓碑清理均已闭环，空工具事件保留实体语义。
+- Chat v2 验证：新增目标测试 6 项、既有 ChatService 回归测试 26 项及定向静态分析均通过；批处理明确留到后续切片。

@@ -10,6 +10,9 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
   static const String conversationType = 'conversation';
   static const String turnType = 'turn';
   static const String messageType = 'message';
+  static const String messageSelectionType = 'message-selection';
+  static const String toolEventType = 'tool-event';
+  static const String thoughtSignatureType = 'thought-signature';
 
   final ChatService _chatService;
   final CloudAttachmentSyncService _attachmentSyncService;
@@ -19,6 +22,9 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
     conversationType,
     turnType,
     messageType,
+    messageSelectionType,
+    toolEventType,
+    thoughtSignatureType,
   };
 
   @override
@@ -39,6 +45,25 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           payload: ChatSyncCodec.encodeConversation(conversation),
         ),
       );
+
+      final selections = conversation.versionSelections.entries.toList()
+        ..sort((left, right) => left.key.compareTo(right.key));
+      for (final selection in selections) {
+        entities.add(
+          LocalSyncEntity(
+            entityType: messageSelectionType,
+            entityId: selection.key,
+            parentId: conversation.id,
+            payload: ChatSyncCodec.encodeMessageSelection(
+              ChatSyncMessageSelectionRecord(
+                conversationId: conversation.id,
+                groupId: selection.key,
+                selectedVersion: selection.value,
+              ),
+            ),
+          ),
+        );
+      }
 
       final messages = _chatService.getMessages(conversation.id);
       for (final turn in ChatSyncCodec.deriveTurns(messages)) {
@@ -80,6 +105,33 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
             payload: payload,
           ),
         );
+        final toolEvents = _chatService.getToolEvents(message.id);
+        if (_chatService.hasToolEvents(message.id)) {
+          entities.add(
+            LocalSyncEntity(
+              entityType: toolEventType,
+              entityId: message.id,
+              parentId: message.id,
+              payload: ChatSyncCodec.encodeToolEvent(message.id, toolEvents),
+            ),
+          );
+        }
+        final thoughtSignature = _chatService.getGeminiThoughtSignature(
+          message.id,
+        );
+        if (thoughtSignature != null) {
+          entities.add(
+            LocalSyncEntity(
+              entityType: thoughtSignatureType,
+              entityId: message.id,
+              parentId: message.id,
+              payload: ChatSyncCodec.encodeThoughtSignature(
+                message.id,
+                thoughtSignature,
+              ),
+            ),
+          );
+        }
       }
     }
     return entities;
@@ -136,6 +188,40 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           createdAt: turn.createdAt,
         );
         return;
+      case messageSelectionType:
+        final selection = ChatSyncCodec.decodeMessageSelection(
+          entity.entityId,
+          entity.payload,
+        );
+        _requireParent(entity, selection.conversationId);
+        await _chatService.upsertMessageSelectionFromSync(
+          conversationId: selection.conversationId,
+          groupId: selection.groupId,
+          selectedVersion: selection.selectedVersion,
+        );
+        return;
+      case toolEventType:
+        final toolEvent = ChatSyncCodec.decodeToolEvent(
+          entity.entityId,
+          entity.payload,
+        );
+        _requireParent(entity, toolEvent.messageId);
+        await _chatService.upsertToolEventsFromSync(
+          messageId: toolEvent.messageId,
+          events: toolEvent.events,
+        );
+        return;
+      case thoughtSignatureType:
+        final thoughtSignature = ChatSyncCodec.decodeThoughtSignature(
+          entity.entityId,
+          entity.payload,
+        );
+        _requireParent(entity, thoughtSignature.messageId);
+        await _chatService.upsertThoughtSignatureFromSync(
+          messageId: thoughtSignature.messageId,
+          signature: thoughtSignature.signature,
+        );
+        return;
       default:
         throw FormatException('聊天同步不支持实体类型：${entity.entityType}');
     }
@@ -166,8 +252,23 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           return;
         }
         return;
+      case messageSelectionType:
+        await _chatService.deleteMessageSelectionFromSync(key.entityId);
+        return;
+      case toolEventType:
+        await _chatService.deleteToolEventsFromSync(key.entityId);
+        return;
+      case thoughtSignatureType:
+        await _chatService.deleteThoughtSignatureFromSync(key.entityId);
+        return;
       default:
         throw FormatException('聊天同步不支持实体类型：${key.entityType}');
+    }
+  }
+
+  void _requireParent(RemoteSyncEntity entity, String expectedParentId) {
+    if (entity.parentId != expectedParentId) {
+      throw FormatException('${entity.entityType}.parentId 与 Payload 父级不一致');
     }
   }
 }

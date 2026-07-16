@@ -1,5 +1,6 @@
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
+import 'sync_codec.dart';
 
 final class ChatSyncAttachmentReference {
   const ChatSyncAttachmentReference({
@@ -45,6 +46,38 @@ final class ChatSyncMessageRecord {
 
   final ChatMessage message;
   final List<ChatSyncAttachmentReference> attachments;
+}
+
+final class ChatSyncMessageSelectionRecord {
+  const ChatSyncMessageSelectionRecord({
+    required this.conversationId,
+    required this.groupId,
+    required this.selectedVersion,
+  });
+
+  final String conversationId;
+  final String groupId;
+  final int selectedVersion;
+}
+
+final class ChatSyncToolEventRecord {
+  ChatSyncToolEventRecord({
+    required this.messageId,
+    required List<Map<String, Object?>> events,
+  }) : events = List<Map<String, Object?>>.unmodifiable(events);
+
+  final String messageId;
+  final List<Map<String, Object?>> events;
+}
+
+final class ChatSyncThoughtSignatureRecord {
+  const ChatSyncThoughtSignatureRecord({
+    required this.messageId,
+    required this.signature,
+  });
+
+  final String messageId;
+  final String signature;
 }
 
 abstract final class ChatSyncCodec {
@@ -93,6 +126,123 @@ abstract final class ChatSyncCodec {
     'kind',
     'order',
   };
+  static const Set<String> _messageSelectionKeys = <String>{
+    'conversationId',
+    'groupId',
+    'selectedVersion',
+  };
+  static const Set<String> _toolEventKeys = <String>{'messageId', 'events'};
+  static const Set<String> _thoughtSignatureKeys = <String>{
+    'messageId',
+    'signature',
+  };
+
+  static Map<String, Object?> encodeMessageSelection(
+    ChatSyncMessageSelectionRecord selection,
+  ) {
+    _requireIdentifier(selection.conversationId, 'selection.conversationId');
+    _requireIdentifier(selection.groupId, 'selection.groupId');
+    if (selection.selectedVersion < 0) {
+      throw const FormatException('selection.selectedVersion 不能为负数');
+    }
+    return <String, Object?>{
+      'conversationId': selection.conversationId,
+      'groupId': selection.groupId,
+      'selectedVersion': selection.selectedVersion,
+    };
+  }
+
+  static ChatSyncMessageSelectionRecord decodeMessageSelection(
+    String groupId,
+    Map<String, Object?> payload,
+  ) {
+    _requireIdentifier(groupId, 'groupId');
+    _expectExactKeys(payload, _messageSelectionKeys, 'message-selection');
+    final payloadGroupId = _requiredIdentifier(payload, 'groupId');
+    if (payloadGroupId != groupId) {
+      throw const FormatException('message-selection.groupId 与实体身份不一致');
+    }
+    final selectedVersion = _requiredInteger(payload, 'selectedVersion');
+    if (selectedVersion < 0) {
+      throw const FormatException('message-selection.selectedVersion 不能为负数');
+    }
+    return ChatSyncMessageSelectionRecord(
+      conversationId: _requiredIdentifier(payload, 'conversationId'),
+      groupId: payloadGroupId,
+      selectedVersion: selectedVersion,
+    );
+  }
+
+  static Map<String, Object?> encodeToolEvent(
+    String messageId,
+    List<Map<String, dynamic>> events,
+  ) {
+    _requireIdentifier(messageId, 'toolEvent.messageId');
+    return <String, Object?>{
+      'messageId': messageId,
+      'events': <Map<String, Object?>>[
+        for (final event in events)
+          validateSyncJsonObject(Map<String, Object?>.from(event)),
+      ],
+    };
+  }
+
+  static ChatSyncToolEventRecord decodeToolEvent(
+    String messageId,
+    Map<String, Object?> payload,
+  ) {
+    _requireIdentifier(messageId, 'messageId');
+    _expectExactKeys(payload, _toolEventKeys, 'tool-event');
+    final payloadMessageId = _requiredIdentifier(payload, 'messageId');
+    if (payloadMessageId != messageId) {
+      throw const FormatException('tool-event.messageId 与实体身份不一致');
+    }
+    final rawEvents = _requiredList(payload, 'events');
+    final events = <Map<String, Object?>>[];
+    for (var index = 0; index < rawEvents.length; index++) {
+      final event = rawEvents[index];
+      if (event is! Map<Object?, Object?>) {
+        throw FormatException('tool-event.events[$index] 必须是对象');
+      }
+      final normalized = <String, Object?>{};
+      for (final entry in event.entries) {
+        final key = entry.key;
+        if (key is! String) {
+          throw FormatException('tool-event.events[$index] 包含非字符串字段名');
+        }
+        normalized[key] = entry.value;
+      }
+      events.add(validateSyncJsonObject(normalized));
+    }
+    return ChatSyncToolEventRecord(messageId: payloadMessageId, events: events);
+  }
+
+  static Map<String, Object?> encodeThoughtSignature(
+    String messageId,
+    String signature,
+  ) {
+    _requireIdentifier(messageId, 'thoughtSignature.messageId');
+    if (signature.trim().isEmpty) {
+      throw const FormatException('thoughtSignature.signature 不能为空');
+    }
+    return <String, Object?>{'messageId': messageId, 'signature': signature};
+  }
+
+  static ChatSyncThoughtSignatureRecord decodeThoughtSignature(
+    String messageId,
+    Map<String, Object?> payload,
+  ) {
+    _requireIdentifier(messageId, 'messageId');
+    _expectExactKeys(payload, _thoughtSignatureKeys, 'thought-signature');
+    final payloadMessageId = _requiredIdentifier(payload, 'messageId');
+    if (payloadMessageId != messageId) {
+      throw const FormatException('thought-signature.messageId 与实体身份不一致');
+    }
+    return ChatSyncThoughtSignatureRecord(
+      messageId: payloadMessageId,
+      signature: _requiredString(payload, 'signature'),
+    );
+  }
 
   static Map<String, Object?> encodeConversation(Conversation conversation) {
     _requireIdentifier(conversation.id, 'conversation.id');

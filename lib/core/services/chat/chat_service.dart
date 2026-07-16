@@ -797,6 +797,96 @@ class ChatService extends ChangeNotifier {
     notifyListeners();
   }
 
+  Future<void> upsertMessageSelectionFromSync({
+    required String conversationId,
+    required String groupId,
+    required int selectedVersion,
+  }) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(conversationId, 'conversationId');
+    _requireSyncIdentifier(groupId, 'groupId');
+    if (selectedVersion < 0) {
+      throw const FormatException('selectedVersion 不能为负数');
+    }
+    final conversation = _conversationsBox.get(conversationId);
+    if (conversation == null) {
+      throw FormatException('版本选择所属会话不存在：$conversationId');
+    }
+    if (conversation.versionSelections[groupId] == selectedVersion) return;
+    conversation.versionSelections[groupId] = selectedVersion;
+    await conversation.save();
+    notifyListeners();
+  }
+
+  Future<void> upsertToolEventsFromSync({
+    required String messageId,
+    required List<Map<String, Object?>> events,
+  }) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(messageId, 'messageId');
+    if (!_messagesBox.containsKey(messageId)) {
+      throw FormatException('工具事件所属消息不存在：$messageId');
+    }
+    _temporaryToolEvents.remove(messageId);
+    await _toolEventsBox.put(messageId, <Map<String, Object?>>[
+      for (final event in events) Map<String, Object?>.from(event),
+    ]);
+    notifyListeners();
+  }
+
+  Future<void> upsertThoughtSignatureFromSync({
+    required String messageId,
+    required String signature,
+  }) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(messageId, 'messageId');
+    if (signature.trim().isEmpty) {
+      throw const FormatException('signature 不能为空');
+    }
+    if (!_messagesBox.containsKey(messageId)) {
+      throw FormatException('思维签名所属消息不存在：$messageId');
+    }
+    _temporaryGeminiThoughtSigs.remove(messageId);
+    await _toolEventsBox.put(_sigKey(messageId), signature);
+    notifyListeners();
+  }
+
+  Future<void> deleteMessageSelectionFromSync(String groupId) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(groupId, 'groupId');
+    var changed = false;
+    for (final conversation in _conversationsBox.values) {
+      if (conversation.versionSelections.remove(groupId) == null) continue;
+      await conversation.save();
+      changed = true;
+    }
+    if (changed) notifyListeners();
+  }
+
+  Future<void> deleteToolEventsFromSync(String messageId) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(messageId, 'messageId');
+    final temporaryRemoved = _temporaryToolEvents.remove(messageId) != null;
+    final persisted = _toolEventsBox.containsKey(messageId);
+    if (persisted) {
+      await _toolEventsBox.delete(messageId);
+    }
+    if (temporaryRemoved || persisted) notifyListeners();
+  }
+
+  Future<void> deleteThoughtSignatureFromSync(String messageId) async {
+    if (!_initialized) await init();
+    _requireSyncIdentifier(messageId, 'messageId');
+    final temporaryRemoved =
+        _temporaryGeminiThoughtSigs.remove(messageId) != null;
+    final key = _sigKey(messageId);
+    final persisted = _toolEventsBox.containsKey(key);
+    if (persisted) {
+      await _toolEventsBox.delete(key);
+    }
+    if (temporaryRemoved || persisted) notifyListeners();
+  }
+
   Future<void> deleteTurnFromSync({
     required String conversationId,
     required String turnId,
@@ -1476,6 +1566,12 @@ class ChatService extends ChangeNotifier {
           .toList();
     }
     return const <Map<String, dynamic>>[];
+  }
+
+  bool hasToolEvents(String assistantMessageId) {
+    if (!_initialized) return false;
+    return _temporaryToolEvents.containsKey(assistantMessageId) ||
+        _toolEventsBox.containsKey(assistantMessageId);
   }
 
   Future<void> setToolEvents(
