@@ -51,6 +51,7 @@ void main() {
 
   group('CherryImporter', () {
     test('imports Cherry Studio v6 direct backup zip', () async {
+      var configRescanCount = 0;
       final backup = await _createZip(tempDir, <String, List<int>>{
         'metadata.json': utf8.encode(
           jsonEncode(<String, dynamic>{
@@ -79,18 +80,24 @@ void main() {
             ], compressed: true),
       });
 
-      final chatService = ChatService();
+      final chatService = ChatService(
+        const UntrackedSyncWriteExecutor.forTests(),
+      );
       final result = await CherryImporter.importFromCherryStudio(
         file: backup,
         mode: RestoreMode.overwrite,
-        settings: SettingsProvider(),
+        settings: SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
         chatService: chatService,
+        markConfigRescanRequired: () async => configRescanCount++,
       );
 
       expect(result.providers, 1);
       expect(result.assistants, 1);
       expect(result.conversations, 4);
       expect(result.messages, 3);
+      expect(configRescanCount, 1);
 
       final conversations = <String, dynamic>{
         for (final conversation in chatService.getAllConversations())
@@ -138,6 +145,7 @@ void main() {
     });
 
     test('keeps legacy data.json zip import working', () async {
+      var configRescanCount = 0;
       final backup = await _createZip(tempDir, <String, List<int>>{
         'data.json': utf8.encode(
           jsonEncode(<String, dynamic>{
@@ -178,16 +186,22 @@ void main() {
         ),
       });
 
-      final chatService = ChatService();
+      final chatService = ChatService(
+        const UntrackedSyncWriteExecutor.forTests(),
+      );
       final result = await CherryImporter.importFromCherryStudio(
         file: backup,
         mode: RestoreMode.overwrite,
-        settings: SettingsProvider(),
+        settings: SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
         chatService: chatService,
+        markConfigRescanRequired: () async => configRescanCount++,
       );
 
       expect(result.conversations, 1);
       expect(result.messages, 1);
+      expect(configRescanCount, 1);
       expect(
         chatService.getMessages('topic-1').single.content,
         'hello from legacy',
@@ -195,6 +209,7 @@ void main() {
     });
 
     test('rejects v6 direct backup without persisted Cherry state', () async {
+      var configRescanAttempted = false;
       final backup = await _createZip(tempDir, <String, List<int>>{
         'metadata.json': utf8.encode(
           jsonEncode(<String, dynamic>{
@@ -209,11 +224,18 @@ void main() {
         CherryImporter.importFromCherryStudio(
           file: backup,
           mode: RestoreMode.overwrite,
-          settings: SettingsProvider(),
-          chatService: ChatService(),
+          settings: SettingsProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          ),
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
+          markConfigRescanRequired: () async {
+            configRescanAttempted = true;
+            throw StateError('校验失败时不应标记配置重扫');
+          },
         ),
-        throwsA(anything),
+        throwsA(isA<Exception>()),
       );
+      expect(configRescanAttempted, isFalse);
     });
   });
 }

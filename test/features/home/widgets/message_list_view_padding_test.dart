@@ -257,8 +257,16 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider.value(value: SettingsProvider()),
-          ChangeNotifierProvider.value(value: AssistantProvider()),
+          ChangeNotifierProvider.value(
+            value: SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
+          ChangeNotifierProvider.value(
+            value: AssistantProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
           ChangeNotifierProvider.value(value: TtsProvider()),
           ChangeNotifierProvider.value(value: AskUserInteractionService()),
           ChangeNotifierProvider.value(value: ToolApprovalService()),
@@ -332,8 +340,16 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider.value(value: SettingsProvider()),
-          ChangeNotifierProvider.value(value: AssistantProvider()),
+          ChangeNotifierProvider.value(
+            value: SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
+          ChangeNotifierProvider.value(
+            value: AssistantProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
           ChangeNotifierProvider.value(value: TtsProvider()),
           ChangeNotifierProvider.value(value: AskUserInteractionService()),
           ChangeNotifierProvider.value(value: ToolApprovalService()),
@@ -413,8 +429,16 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider.value(value: SettingsProvider()),
-          ChangeNotifierProvider.value(value: AssistantProvider()),
+          ChangeNotifierProvider.value(
+            value: SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
+          ChangeNotifierProvider.value(
+            value: AssistantProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
           ChangeNotifierProvider.value(value: TtsProvider()),
           ChangeNotifierProvider.value(value: AskUserInteractionService()),
           ChangeNotifierProvider.value(value: ToolApprovalService()),
@@ -503,8 +527,16 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider.value(value: SettingsProvider()),
-          ChangeNotifierProvider.value(value: AssistantProvider()),
+          ChangeNotifierProvider.value(
+            value: SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
+          ChangeNotifierProvider.value(
+            value: AssistantProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
           ChangeNotifierProvider.value(value: TtsProvider()),
           ChangeNotifierProvider.value(value: AskUserInteractionService()),
           ChangeNotifierProvider.value(value: ToolApprovalService()),
@@ -589,8 +621,16 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider.value(value: SettingsProvider()),
-          ChangeNotifierProvider.value(value: AssistantProvider()),
+          ChangeNotifierProvider.value(
+            value: SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
+          ChangeNotifierProvider.value(
+            value: AssistantProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
           ChangeNotifierProvider.value(value: TtsProvider()),
           ChangeNotifierProvider.value(value: AskUserInteractionService()),
           ChangeNotifierProvider.value(value: ToolApprovalService()),

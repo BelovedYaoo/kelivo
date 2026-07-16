@@ -15,7 +15,11 @@ Widget _buildHarness({required Widget child}) {
   SharedPreferences.setMockInitialValues(const {});
   return MultiProvider(
     providers: [
-      ChangeNotifierProvider(create: (_) => SettingsProvider()),
+      ChangeNotifierProvider(
+        create: (_) => SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
+      ),
       ChangeNotifierProvider(create: (_) => TtsProvider()),
       ChangeNotifierProvider(create: (_) => ToolApprovalService()),
       ChangeNotifierProvider(create: (_) => AskUserInteractionService()),

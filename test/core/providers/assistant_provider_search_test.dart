@@ -16,7 +16,9 @@ Future<AssistantProvider> _createLoadedAssistantProvider({
     if (legacySearchEnabled != null) 'search_enabled_v1': legacySearchEnabled,
   });
 
-  final provider = AssistantProvider();
+  final provider = AssistantProvider(
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
   for (var i = 0; i < 25; i++) {
     if (provider.assistants.length == assistants.length) return provider;
     await Future<void>.delayed(const Duration(milliseconds: 10));

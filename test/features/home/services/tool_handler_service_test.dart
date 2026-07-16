@@ -48,9 +48,13 @@ void main() {
         assistantId: assistant.id,
         content: 'old memory',
       );
-      final handler = ToolHandlerService(
-        contextProvider: context,
-      ).buildToolCallHandler(SettingsProvider(), assistant)!;
+      final handler = ToolHandlerService(contextProvider: context)
+          .buildToolCallHandler(
+            SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+            assistant,
+          )!;
 
       result = await handler('edit_memory', {
         'id': memory.id,
@@ -80,9 +84,13 @@ void main() {
       );
 
       final context = tester.element(find.byType(SizedBox));
-      final handler = ToolHandlerService(
-        contextProvider: context,
-      ).buildToolCallHandler(SettingsProvider(), assistant)!;
+      final handler = ToolHandlerService(contextProvider: context)
+          .buildToolCallHandler(
+            SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+            assistant,
+          )!;
 
       final result = await handler('edit_memory', {
         'id': 410,
@@ -117,9 +125,13 @@ void main() {
       );
 
       final context = tester.element(find.byType(SizedBox));
-      final handler = ToolHandlerService(
-        contextProvider: context,
-      ).buildToolCallHandler(SettingsProvider(), assistant)!;
+      final handler = ToolHandlerService(contextProvider: context)
+          .buildToolCallHandler(
+            SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+            assistant,
+          )!;
 
       final result = await handler('edit_memory', {
         'id': 410,
@@ -146,12 +158,22 @@ class _ToolHandlerTestScope extends StatelessWidget {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider<AssistantProvider>(
-          create: (_) => AssistantProvider(),
+          create: (_) => AssistantProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          ),
         ),
-        ChangeNotifierProvider<McpProvider>(create: (_) => McpProvider()),
+        ChangeNotifierProvider<McpProvider>(
+          create: (_) => McpProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          ),
+        ),
         ChangeNotifierProvider<McpToolService>(create: (_) => McpToolService()),
         ChangeNotifierProvider<MemoryProvider>(
-          create: (_) => memoryProvider ?? MemoryProvider(),
+          create: (_) =>
+              memoryProvider ??
+              MemoryProvider(
+                syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+              ),
         ),
       ],
       child: child,
@@ -160,6 +182,9 @@ class _ToolHandlerTestScope extends StatelessWidget {
 }
 
 class _ThrowingMemoryProvider extends MemoryProvider {
+  _ThrowingMemoryProvider()
+    : super(syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests());
+
   @override
   Future<AssistantMemory?> update({required int id, required String content}) {
     throw StateError('storage offline');

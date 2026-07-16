@@ -65,7 +65,9 @@ void main() {
 
     test('local font import stores managed copy path', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       await _waitForSettingsLoad();
 
       final sourceFile = await _fixtureFontFile();
@@ -83,7 +85,9 @@ void main() {
 
     test('replacing local font removes previous managed copy', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       await _waitForSettingsLoad();
       final sourceFile = await _fixtureFontFile();
 
@@ -105,7 +109,9 @@ void main() {
       'clearing one font keeps managed copy still referenced by code font',
       () async {
         SharedPreferences.setMockInitialValues({});
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
         await _waitForSettingsLoad();
         final sourceFile = await _fixtureFontFile();
 
@@ -127,7 +133,9 @@ void main() {
           'display_code_font_local_path_v1': sharedPath,
           'display_code_font_local_alias_v1': 'kelivo_local_code_123',
         });
-        final sharedSettings = SettingsProvider();
+        final sharedSettings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
         await _waitForSettingsLoad();
 
         await sharedSettings.clearAppFont();
@@ -138,7 +146,9 @@ void main() {
 
     test('failed local font registration removes imported copy', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       await _waitForSettingsLoad();
       final invalidFont = File('${tempDir.path}/invalid.ttf');
       await invalidFont.writeAsString('not a font');
@@ -163,7 +173,9 @@ void main() {
         'display_app_font_local_alias_v1': 'kelivo_local_app_123',
       });
 
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       await _waitForSettingsLoad();
 
       expect(settings.appFontLocalAlias, isNull);
@@ -190,7 +202,9 @@ void main() {
         'display_app_font_local_alias_v1': 'kelivo_local_app_123',
       });
 
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       await _waitForSettingsLoad();
 
       expect(settings.appFontLocalAlias, isNotEmpty);

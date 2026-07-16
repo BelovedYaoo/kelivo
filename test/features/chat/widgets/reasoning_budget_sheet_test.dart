@@ -13,7 +13,9 @@ Future<SettingsProvider> _settingsForClaudeModel(
   String modelId,
 ) async {
   SharedPreferences.setMockInitialValues({});
-  final settings = SettingsProvider();
+  final settings = SettingsProvider(
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
   await tester.pump(const Duration(milliseconds: 300));
   await tester.pump();
 
@@ -42,7 +44,9 @@ Future<void> _pumpSheetLauncher(
       providers: [
         ChangeNotifierProvider<SettingsProvider>.value(value: settings),
         ChangeNotifierProvider<AssistantProvider>(
-          create: (_) => AssistantProvider(),
+          create: (_) => AssistantProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          ),
         ),
       ],
       child: MaterialApp(

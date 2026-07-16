@@ -15,7 +15,9 @@ void main() {
   group('SettingsProvider desktop message navigation buttons mode', () {
     test('defaults to scroll visibility', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -38,7 +40,9 @@ void main() {
         SharedPreferences.setMockInitialValues({
           'display_desktop_message_nav_buttons_mode_v1': entry.key,
         });
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
 
         await _waitForSettingsLoad();
 
@@ -52,7 +56,9 @@ void main() {
         SharedPreferences.setMockInitialValues({
           'display_show_message_nav_v1': false,
         });
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
 
         await _waitForSettingsLoad();
 
@@ -65,7 +71,9 @@ void main() {
 
     test('persists mode changes to preferences', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setDesktopMessageNavButtonsMode(

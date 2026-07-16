@@ -41,7 +41,9 @@ Widget _harness(
     providers: [
       ChangeNotifierProvider<SettingsProvider>.value(value: settings),
       ChangeNotifierProvider<AssistantProvider>(
-        create: (_) => AssistantProvider(),
+        create: (_) => AssistantProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
       ),
     ],
     child: MaterialApp(
@@ -56,7 +58,9 @@ Widget _harness(
 
 Future<SettingsProvider> _buildSettings(WidgetTester tester) async {
   SharedPreferences.setMockInitialValues(const {});
-  final settings = SettingsProvider();
+  final settings = SettingsProvider(
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
   await tester.runAsync(_waitForSettingsLoad);
   await settings.setProviderConfig('ProviderA', _providerConfig('ProviderA'));
   await settings.setProviderConfig('ProviderB', _providerConfig('ProviderB'));

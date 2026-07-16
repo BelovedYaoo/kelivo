@@ -74,6 +74,7 @@ class MemoryStore {
   static Future<AssistantMemory> add({
     required String assistantId,
     required String content,
+    required String syncId,
   }) async {
     final all = await getAll();
     final id = _nextId(all);
@@ -81,6 +82,7 @@ class MemoryStore {
       id: id,
       assistantId: assistantId,
       content: content,
+      syncId: syncId,
     );
     all.add(mem);
     await _saveAll(all);

@@ -11,7 +11,9 @@ import 'package:Kelivo/l10n/app_localizations.dart';
 
 Future<SettingsProvider> _createSettings(WidgetTester tester) async {
   SharedPreferences.setMockInitialValues({});
-  final settings = SettingsProvider();
+  final settings = SettingsProvider(
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
   await tester.pump(const Duration(milliseconds: 300));
   await tester.pump();
   await settings.setProviderConfig(
@@ -39,7 +41,9 @@ Widget _buildHarness({
     providers: [
       ChangeNotifierProvider<SettingsProvider>.value(value: settings),
       ChangeNotifierProvider<AssistantProvider>(
-        create: (_) => AssistantProvider(),
+        create: (_) => AssistantProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
       ),
     ],
     child: MaterialApp(

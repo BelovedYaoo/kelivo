@@ -17,7 +17,9 @@ void main() {
   testWidgets('input background opacity sheet shows light and dark controls', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     addTearDown(settings.dispose);
 
     await tester.pumpWidget(

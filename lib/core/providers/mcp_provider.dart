@@ -6,6 +6,12 @@ import '../services/mcp/kelivo_fetch/kelivo_fetch_server.dart';
 import '../services/mcp/stdio_command_resolver.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:uuid/uuid.dart';
+import '../services/sync/config_sync_keys.dart';
+import '../services/sync/sync_codec.dart';
+import '../services/sync/sync_write_executor.dart';
+import '../utils/batched_change_notifier.dart';
+export '../services/sync/sync_write_executor.dart'
+    show UntrackedSyncWriteExecutor;
 
 /// Transport type: SSE, Streamable HTTP, and STDIO (desktop-only).
 enum McpTransportType { sse, http, stdio, inmemory }
@@ -241,7 +247,7 @@ class McpServerConfig {
   }
 }
 
-class McpProvider extends ChangeNotifier {
+class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   static const String _prefsKey = 'mcp_servers_v1';
   static const String _prefsTimeoutKey = 'mcp_request_timeout_ms_v1';
 
@@ -257,9 +263,34 @@ class McpProvider extends ChangeNotifier {
   final McpStdioCommandResolver _stdioCommandResolver =
       McpStdioCommandResolver();
   late final Future<void> ready;
+  final SyncWriteExecutor _syncWrites;
 
-  McpProvider() {
+  McpProvider({required SyncWriteExecutor syncWriteExecutor})
+    : _syncWrites = syncWriteExecutor {
     ready = _load();
+  }
+
+  bool _isPortable(McpServerConfig server) =>
+      server.transport == McpTransportType.http ||
+      server.transport == McpTransportType.sse;
+
+  List<SyncEntityKey> _portableServerKeys({
+    Iterable<McpServerConfig> extraServers = const [],
+  }) {
+    final ids = <String>{
+      ..._servers.where(_isPortable).map((server) => server.id),
+      ...extraServers.where(_isPortable).map((server) => server.id),
+    };
+    return ids.map(ConfigSyncKeys.mcpServer).toList(growable: false);
+  }
+
+  Future<T> _runPortableServerWrite<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) {
+    final declared = keys.toList(growable: false);
+    if (declared.isEmpty) return write();
+    return _syncWrites.runLocalBatch(keys: declared, write: write);
   }
 
   List<McpServerConfig> get servers => List.unmodifiable(_servers);
@@ -587,29 +618,30 @@ class McpProvider extends ChangeNotifier {
       throw FormatException('No valid MCP servers found in JSON');
     }
 
-    // Disconnect all current
-    for (final s in _servers) {
-      try {
-        await disconnect(s.id);
-      } catch (_) {}
-    }
+    await _runPortableServerWrite(
+      keys: _portableServerKeys(extraServers: next),
+      write: () async {
+        for (final server in _servers) {
+          try {
+            await disconnect(server.id);
+          } catch (_) {}
+        }
 
-    // Replace and reset statuses
-    _servers = next;
-    _status.clear();
-    _errors.clear();
-    for (final s in _servers) {
-      _status[s.id] = McpStatus.idle;
-    }
+        _servers = next;
+        _status.clear();
+        _errors.clear();
+        for (final server in _servers) {
+          _status[server.id] = McpStatus.idle;
+        }
 
-    await _persist();
-    notifyListeners();
+        await _persist();
+        notifyListeners();
 
-    // Auto-connect enabled servers
-    for (final s in _servers.where((e) => e.enabled)) {
-      // fire and forget
-      unawaited(connect(s.id));
-    }
+        for (final server in _servers.where((server) => server.enabled)) {
+          unawaited(connect(server.id));
+        }
+      },
+    );
   }
 
   McpServerConfig? getById(String id) {
@@ -645,37 +677,61 @@ class McpProvider extends ChangeNotifier {
           ? workingDirectory!.trim()
           : null,
     );
-    _servers = [..._servers, cfg];
-    _status[id] = McpStatus.idle;
-    await _persist();
-    notifyListeners();
-    if (enabled) {
-      unawaited(connect(id));
-    }
-    return id;
+    return _runPortableServerWrite(
+      keys: _isPortable(cfg)
+          ? <SyncEntityKey>[ConfigSyncKeys.mcpServer(id)]
+          : const <SyncEntityKey>[],
+      write: () async {
+        _servers = [..._servers, cfg];
+        _status[id] = McpStatus.idle;
+        await _persist();
+        notifyListeners();
+        if (enabled) {
+          unawaited(connect(id));
+        }
+        return id;
+      },
+    );
   }
 
   Future<void> updateServer(McpServerConfig updated) async {
     final idx = _servers.indexWhere((e) => e.id == updated.id);
     if (idx < 0) return;
-    _servers = List<McpServerConfig>.of(_servers)..[idx] = updated;
-    await _persist();
-    notifyListeners();
-    if (!updated.enabled) {
-      await disconnect(updated.id);
-    } else {
-      // Always reconnect after saving to apply changes (url/transport/name)
-      await disconnect(updated.id);
-      unawaited(connect(updated.id));
-    }
+    final current = _servers[idx];
+    await _runPortableServerWrite(
+      keys: _portableServerKeys(extraServers: <McpServerConfig>[updated]).where(
+        (key) =>
+            key.entityId == updated.id ||
+            (_isPortable(current) && key.entityId == current.id),
+      ),
+      write: () async {
+        _servers = List<McpServerConfig>.of(_servers)..[idx] = updated;
+        await _persist();
+        notifyListeners();
+        if (!updated.enabled) {
+          await disconnect(updated.id);
+        } else {
+          await disconnect(updated.id);
+          unawaited(connect(updated.id));
+        }
+      },
+    );
   }
 
   Future<void> removeServer(String id) async {
-    await disconnect(id);
-    _servers = _servers.where((e) => e.id != id).toList(growable: false);
-    _status.remove(id);
-    await _persist();
-    notifyListeners();
+    if (!_servers.any((server) => server.id == id)) return;
+    await _runPortableServerWrite(
+      keys: _portableServerKeys(),
+      write: () async {
+        await disconnect(id);
+        _servers = _servers
+            .where((server) => server.id != id)
+            .toList(growable: false);
+        _status.remove(id);
+        await _persist();
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> syncUpsertServer(
@@ -722,10 +778,15 @@ class McpProvider extends ChangeNotifier {
     if (oldIndex == newIndex) return;
     if (oldIndex < 0 || oldIndex >= _servers.length) return;
     if (newIndex < 0 || newIndex >= _servers.length) return;
-    final moved = _servers.removeAt(oldIndex);
-    _servers.insert(newIndex, moved);
-    notifyListeners();
-    await _persist();
+    await _runPortableServerWrite(
+      keys: _portableServerKeys(),
+      write: () async {
+        final moved = _servers.removeAt(oldIndex);
+        _servers.insert(newIndex, moved);
+        notifyListeners();
+        await _persist();
+      },
+    );
   }
 
   Future<void> setToolEnabled(
@@ -736,12 +797,23 @@ class McpProvider extends ChangeNotifier {
     final idx = _servers.indexWhere((e) => e.id == serverId);
     if (idx < 0) return;
     final server = _servers[idx];
-    final tools = server.tools
-        .map((t) => t.name == toolName ? t.copyWith(enabled: enabled) : t)
-        .toList();
-    _servers[idx] = server.copyWith(tools: tools);
-    await _persist();
-    notifyListeners();
+    await _runPortableServerWrite(
+      keys: _isPortable(server)
+          ? <SyncEntityKey>[ConfigSyncKeys.mcpServer(serverId)]
+          : const <SyncEntityKey>[],
+      write: () async {
+        final tools = server.tools
+            .map(
+              (tool) => tool.name == toolName
+                  ? tool.copyWith(enabled: enabled)
+                  : tool,
+            )
+            .toList();
+        _servers[idx] = server.copyWith(tools: tools);
+        await _persist();
+        notifyListeners();
+      },
+    );
   }
 
   /// Set whether a tool requires user approval before execution.
@@ -753,15 +825,23 @@ class McpProvider extends ChangeNotifier {
     final idx = _servers.indexWhere((e) => e.id == serverId);
     if (idx < 0) return;
     final server = _servers[idx];
-    final tools = server.tools
-        .map(
-          (t) =>
-              t.name == toolName ? t.copyWith(needsApproval: needsApproval) : t,
-        )
-        .toList();
-    _servers[idx] = server.copyWith(tools: tools);
-    await _persist();
-    notifyListeners();
+    await _runPortableServerWrite(
+      keys: _isPortable(server)
+          ? <SyncEntityKey>[ConfigSyncKeys.mcpServer(serverId)]
+          : const <SyncEntityKey>[],
+      write: () async {
+        final tools = server.tools
+            .map(
+              (tool) => tool.name == toolName
+                  ? tool.copyWith(needsApproval: needsApproval)
+                  : tool,
+            )
+            .toList();
+        _servers[idx] = server.copyWith(tools: tools);
+        await _persist();
+        notifyListeners();
+      },
+    );
   }
 
   /// Check if a tool (by name) requires approval across all connected servers.
@@ -909,14 +989,30 @@ class McpProvider extends ChangeNotifier {
   }) async {
     if (duration.inMilliseconds <= 0) return;
     if (duration == _requestTimeout) return;
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.mcpState,
+      write: () =>
+          _updateRequestTimeout(duration, reconnectActive: reconnectActive),
+    );
+  }
+
+  Future<void> syncUpdateRequestTimeout(Duration duration) async {
+    if (duration.inMilliseconds <= 0) return;
+    if (duration == _requestTimeout) return;
+    await _updateRequestTimeout(duration, reconnectActive: false);
+  }
+
+  Future<void> _updateRequestTimeout(
+    Duration duration, {
+    required bool reconnectActive,
+  }) async {
     _requestTimeout = duration;
     await _persistTimeout();
     notifyListeners();
-    if (reconnectActive) {
-      for (final id in _clients.keys.toList()) {
-        if (_servers.any((s) => s.id == id && s.enabled)) {
-          unawaited(reconnect(id));
-        }
+    if (!reconnectActive) return;
+    for (final id in _clients.keys.toList()) {
+      if (_servers.any((server) => server.id == id && server.enabled)) {
+        unawaited(reconnect(id));
       }
     }
   }
@@ -1282,74 +1378,91 @@ class McpProvider extends ChangeNotifier {
   Future<void> refreshTools(String id) async {
     final client = _clients[id];
     if (client == null) return;
+    final List<mcp.Tool> tools;
     try {
-      // debugPrint('[MCP/Tools] listTools() ...');
-      final tools = await client.listTools();
-      // debugPrint('[MCP/Tools] listTools() returned ${tools.length} tools');
-      // Preserve enabled state from existing config
-      final idx = _servers.indexWhere((e) => e.id == id);
-      if (idx < 0) return;
-      final existing = _servers[idx].tools;
-      final existingMap = {for (final t in existing) t.name: t};
-
-      List<McpToolConfig> merged = [];
-      for (final t in tools) {
-        final prior = existingMap[t.name];
-        // Extract params from inputSchema if present
-        final params = <McpParamSpec>[];
-        Map<String, dynamic>? schemaJson;
-        try {
-          final js = t.inputSchema;
-          schemaJson = js;
-          final props =
-              (js['properties'] as Map?)?.cast<String, dynamic>() ??
-              const <String, dynamic>{};
-          final req =
-              (js['required'] as List?)?.map((e) => e.toString()).toSet() ??
-              const <String>{};
-          props.forEach((key, val) {
-            String? ty;
-            dynamic defVal;
-            try {
-              final v = (val as Map).cast<String, dynamic>();
-              final ttype = v['type'];
-              if (ttype is String) {
-                ty = ttype;
-              } else if (ttype is List) {
-                ty = ttype.map((e) => e.toString()).join('|');
-              }
-              defVal = v['default'];
-            } catch (_) {}
-            params.add(
-              McpParamSpec(
-                name: key,
-                required: req.contains(key),
-                type: ty,
-                defaultValue: defVal,
-              ),
-            );
-          });
-        } catch (_) {}
-
-        merged.add(
-          McpToolConfig(
-            enabled: prior?.enabled ?? true,
-            name: t.name,
-            description: t.description,
-            params: params,
-            schema: schemaJson,
-            needsApproval: prior?.needsApproval ?? false,
-          ),
-        );
-      }
-
-      _servers[idx] = _servers[idx].copyWith(tools: merged);
-      await _persist();
-      notifyListeners();
-    } catch (e) {
-      // debugPrint('[MCP/Tools] listTools() failed for id=$id');
-      // ignore tool refresh errors; status stays connected
+      tools = await client.listTools();
+    } catch (_) {
+      return;
     }
+
+    final idx = _servers.indexWhere((server) => server.id == id);
+    if (idx < 0) return;
+    final server = _servers[idx];
+    final existingMap = <String, McpToolConfig>{
+      for (final tool in server.tools) tool.name: tool,
+    };
+    final merged = <McpToolConfig>[];
+    for (final tool in tools) {
+      final prior = existingMap[tool.name];
+      final params = <McpParamSpec>[];
+      Map<String, dynamic>? schemaJson;
+      try {
+        final schema = tool.inputSchema;
+        schemaJson = schema;
+        final properties =
+            (schema['properties'] as Map?)?.cast<String, dynamic>() ??
+            const <String, dynamic>{};
+        final requiredNames =
+            (schema['required'] as List?)
+                ?.map((value) => value.toString())
+                .toSet() ??
+            const <String>{};
+        properties.forEach((name, value) {
+          String? type;
+          dynamic defaultValue;
+          try {
+            final specification = (value as Map).cast<String, dynamic>();
+            final rawType = specification['type'];
+            if (rawType is String) {
+              type = rawType;
+            } else if (rawType is List) {
+              type = rawType.map((entry) => entry.toString()).join('|');
+            }
+            defaultValue = specification['default'];
+          } catch (_) {}
+          params.add(
+            McpParamSpec(
+              name: name,
+              required: requiredNames.contains(name),
+              type: type,
+              defaultValue: defaultValue,
+            ),
+          );
+        });
+      } catch (_) {}
+
+      merged.add(
+        McpToolConfig(
+          enabled: prior?.enabled ?? true,
+          name: tool.name,
+          description: tool.description,
+          params: params,
+          schema: schemaJson,
+          needsApproval: prior?.needsApproval ?? false,
+        ),
+      );
+    }
+
+    final previousJson = jsonEncode(
+      server.tools.map((tool) => tool.toJson()).toList(growable: false),
+    );
+    final nextJson = jsonEncode(
+      merged.map((tool) => tool.toJson()).toList(growable: false),
+    );
+    if (previousJson == nextJson) return;
+
+    await _runPortableServerWrite(
+      keys: _isPortable(server)
+          ? <SyncEntityKey>[ConfigSyncKeys.mcpServer(id)]
+          : const <SyncEntityKey>[],
+      write: () async {
+        final currentIndex = _servers.indexWhere((current) => current.id == id);
+        if (currentIndex < 0) return;
+        _servers[currentIndex] = _servers[currentIndex].copyWith(tools: merged);
+        await _persist();
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> ensureConnected(String id) async {

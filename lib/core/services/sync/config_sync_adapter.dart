@@ -16,6 +16,7 @@ import '../../providers/world_book_provider.dart';
 import '../search/search_service.dart';
 import '../tts/network_tts.dart';
 import '../tts/tts_text_selection.dart';
+import 'config_sync_keys.dart';
 import 'sync_codec.dart';
 
 class ConfigSyncAdapter implements SyncEntityAdapter {
@@ -39,16 +40,17 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     ready = _initialize();
   }
 
-  static const String _providerType = 'provider';
-  static const String _assistantType = 'assistant';
-  static const String _memoryType = 'memory';
-  static const String _worldBookType = 'world-book';
-  static const String _quickPhraseType = 'quick-phrase';
-  static const String _searchServiceType = 'search-service';
-  static const String _networkTtsType = 'network-tts';
-  static const String _mcpServerType = 'mcp-server';
-  static const String _instructionInjectionType = 'instruction-injection';
-  static const String _preferenceType = 'user-preference';
+  static const String _providerType = ConfigSyncKeys.providerType;
+  static const String _assistantType = ConfigSyncKeys.assistantType;
+  static const String _memoryType = ConfigSyncKeys.memoryType;
+  static const String _worldBookType = ConfigSyncKeys.worldBookType;
+  static const String _quickPhraseType = ConfigSyncKeys.quickPhraseType;
+  static const String _searchServiceType = ConfigSyncKeys.searchServiceType;
+  static const String _networkTtsType = ConfigSyncKeys.networkTtsType;
+  static const String _mcpServerType = ConfigSyncKeys.mcpServerType;
+  static const String _instructionInjectionType =
+      ConfigSyncKeys.instructionInjectionType;
+  static const String _preferenceType = ConfigSyncKeys.preferenceType;
 
   static const String _profilePreference = 'profile:default';
   static const String _providerGroupingPreference = 'provider-grouping:default';
@@ -90,7 +92,23 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
   int get applyPriority => 20;
 
   @override
-  Future<T> runRemoteBatch<T>(Future<T> Function() apply) => apply();
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) {
+    return _settings.runNotificationBatch(
+      () => _assistants.runNotificationBatch(
+        () => _memories.runNotificationBatch(
+          () => _mcp.runNotificationBatch(
+            () => _quickPhrases.runNotificationBatch(
+              () => _injections.runNotificationBatch(
+                () => _worldBooks.runNotificationBatch(
+                  () => _user.runNotificationBatch(apply),
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Future<void> _initialize() async {
     await Future.wait<void>(<Future<void>>[
@@ -563,18 +581,28 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
   ) async {
     switch (entityId) {
       case _profilePreference:
+        final hasAvatarType = payload.containsKey('avatarType');
+        final hasAvatarValue = payload.containsKey('avatarValue');
+        if (hasAvatarType != hasAvatarValue) {
+          throw const FormatException('资料头像类型和值必须同时出现');
+        }
         final avatarType = _optionalString(payload, 'avatarType');
         final avatarValue = _optionalString(payload, 'avatarValue');
-        final portableAvatar =
-            avatarType != 'file' && !_isLocalPath(avatarValue);
+        final hasPortableAvatar = hasAvatarType && avatarType != null;
+        if (hasPortableAvatar &&
+            (avatarValue == null ||
+                avatarValue.trim().isEmpty ||
+                avatarType == 'file' ||
+                _isLocalPath(avatarValue))) {
+          throw const FormatException('云端资料头像必须是可跨设备使用的值');
+        }
+        final localAvatarIsFile =
+            _user.avatarType == 'file' || _isLocalPath(_user.avatarValue);
         await _user.syncApplyProfile(
           name: _requiredString(payload, 'name'),
-          replaceAvatar:
-              portableAvatar &&
-              payload.containsKey('avatarType') &&
-              payload.containsKey('avatarValue'),
-          avatarType: portableAvatar ? avatarType : null,
-          avatarValue: portableAvatar ? avatarValue : null,
+          replaceAvatar: hasAvatarType || !localAvatarIsFile,
+          avatarType: hasPortableAvatar ? avatarType : null,
+          avatarValue: hasPortableAvatar ? avatarValue : null,
         );
       case _providerGroupingPreference:
         await _applyProviderGrouping(payload);
@@ -615,10 +643,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
         if (seconds <= 0) {
           throw const FormatException('MCP 请求超时时间必须大于零');
         }
-        await _mcp.updateRequestTimeout(
-          Duration(seconds: seconds),
-          reconnectActive: false,
-        );
+        await _mcp.syncUpdateRequestTimeout(Duration(seconds: seconds));
       default:
         throw FormatException('不支持的配置同步偏好：$entityId');
     }
@@ -654,7 +679,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     await ready;
     switch (key.entityType) {
       case _providerType:
-        await _settings.removeProviderConfig(key.entityId);
+        await _settings.syncDeleteProviderConfig(key.entityId);
       case _assistantType:
         await _assistants.syncDeleteAssistant(key.entityId);
       case _memoryType:
@@ -711,10 +736,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
           textSelectionMode: TtsTextSelectionMode.fullText,
         );
       case _mcpStatePreference:
-        await _mcp.updateRequestTimeout(
-          const Duration(seconds: 30),
-          reconnectActive: false,
-        );
+        await _mcp.syncUpdateRequestTimeout(const Duration(seconds: 30));
       default:
         throw FormatException('不支持的配置同步偏好：$entityId');
     }

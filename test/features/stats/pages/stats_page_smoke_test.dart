@@ -10,7 +10,9 @@ import 'package:Kelivo/l10n/app_localizations.dart';
 
 Widget _harness(StatsSnapshot snapshot) {
   return ChangeNotifierProvider(
-    create: (_) => SettingsProvider(),
+    create: (_) => SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    ),
     child: MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,

@@ -22,9 +22,13 @@ void main() {
     SettingsProvider? settings,
     String? currentConversationId,
   }) {
-    final settingsProvider = settings ?? SettingsProvider();
+    final settingsProvider =
+        settings ??
+        SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
     return StreamController(
-      chatService: ChatService(),
+      chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       onStateChanged: () {},
       getSettingsProvider: () => settingsProvider,
       getCurrentConversationId: () => currentConversationId,
@@ -139,7 +143,9 @@ void main() {
   });
 
   test('StreamingState resumes from existing assistant content', () {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final state = buildStreamingStateWithContent(settings, '先确认一下。');
 
     expect(state.fullContentRaw, '先确认一下。');
@@ -186,7 +192,9 @@ void main() {
     SharedPreferences.setMockInitialValues({
       'display_auto_collapse_thinking_v1': false,
     });
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     await _waitForSettingsLoad();
     final controller = buildController(settings: settings);
     final state = buildStreamingState(settings);
@@ -382,7 +390,9 @@ void main() {
   test(
     'handleToolResultsChunk keeps latest completed result for the same non-empty id',
     () async {
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       final controller = buildController(
         settings: settings,
         currentConversationId: 'conversation-1',
@@ -497,12 +507,14 @@ void main() {
   testWidgets('stream UI output is buffered until the smooth ticker fires', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final updates = <String>[];
     var listUpdateCount = 0;
     var tickCount = 0;
     final smoothController = StreamController(
-      chatService: ChatService(),
+      chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       onStateChanged: () {},
       getSettingsProvider: () => settings,
       getCurrentConversationId: () => 'conversation-1',
@@ -545,9 +557,11 @@ void main() {
   testWidgets('stream UI output adapts pick count to large backlog', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final smoothController = StreamController(
-      chatService: ChatService(),
+      chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       onStateChanged: () {},
       getSettingsProvider: () => settings,
       getCurrentConversationId: () => 'conversation-1',
@@ -585,9 +599,11 @@ void main() {
   testWidgets('stream UI output does not repeat an unchanged full frame', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final smoothController = StreamController(
-      chatService: ChatService(),
+      chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       onStateChanged: () {},
       getSettingsProvider: () => settings,
       getCurrentConversationId: () => 'conversation-1',
@@ -624,9 +640,11 @@ void main() {
   testWidgets('stream UI output handles a one-character final backlog', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final smoothController = StreamController(
-      chatService: ChatService(),
+      chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       onStateChanged: () {},
       getSettingsProvider: () => settings,
       getCurrentConversationId: () => 'conversation-1',
@@ -664,9 +682,11 @@ void main() {
   testWidgets('cleanup flushes final stream content immediately', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final smoothController = StreamController(
-      chatService: ChatService(),
+      chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       onStateChanged: () {},
       getSettingsProvider: () => settings,
       getCurrentConversationId: () => 'conversation-1',
@@ -707,9 +727,11 @@ void main() {
   testWidgets('cleanup flushes pending content into the list callback', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final smoothController = StreamController(
-      chatService: ChatService(),
+      chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       onStateChanged: () {},
       getSettingsProvider: () => settings,
       getCurrentConversationId: () => 'conversation-1',

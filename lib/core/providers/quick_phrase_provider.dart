@@ -1,10 +1,19 @@
 import 'package:flutter/foundation.dart';
 import '../models/quick_phrase.dart';
 import '../services/quick_phrase_store.dart';
+import '../services/sync/config_sync_keys.dart';
+import '../services/sync/sync_write_executor.dart';
+import '../utils/batched_change_notifier.dart';
+export '../services/sync/sync_write_executor.dart'
+    show UntrackedSyncWriteExecutor;
 
-class QuickPhraseProvider with ChangeNotifier {
+class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
   List<QuickPhrase> _phrases = [];
   bool _initialized = false;
+  final SyncWriteExecutor _syncWrites;
+
+  QuickPhraseProvider({required SyncWriteExecutor syncWriteExecutor})
+    : _syncWrites = syncWriteExecutor;
 
   List<QuickPhrase> get phrases => List.unmodifiable(_phrases);
 
@@ -33,24 +42,51 @@ class QuickPhraseProvider with ChangeNotifier {
   }
 
   Future<void> add(QuickPhrase phrase) async {
-    await QuickPhraseStore.add(phrase);
-    await loadAll();
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.quickPhrase(phrase.id),
+      write: () async {
+        await QuickPhraseStore.add(phrase);
+        await loadAll();
+      },
+    );
   }
 
   Future<void> update(QuickPhrase phrase) async {
-    await QuickPhraseStore.update(phrase);
-    await loadAll();
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.quickPhrase(phrase.id),
+      write: () async {
+        await QuickPhraseStore.update(phrase);
+        await loadAll();
+      },
+    );
   }
 
   Future<void> delete(String id) async {
-    await QuickPhraseStore.delete(id);
-    await loadAll();
+    await initialize();
+    final index = _phrases.indexWhere((phrase) => phrase.id == id);
+    if (index < 0) return;
+    await _syncWrites.runLocalBatch(
+      keys: _phrases
+          .skip(index)
+          .map((phrase) => ConfigSyncKeys.quickPhrase(phrase.id)),
+      write: () async {
+        await QuickPhraseStore.delete(id);
+        await loadAll();
+      },
+    );
   }
 
   Future<void> clear() async {
-    await QuickPhraseStore.clear();
-    _phrases = [];
-    notifyListeners();
+    await initialize();
+    if (_phrases.isEmpty) return;
+    await _syncWrites.runLocalBatch(
+      keys: _phrases.map((phrase) => ConfigSyncKeys.quickPhrase(phrase.id)),
+      write: () async {
+        await QuickPhraseStore.clear();
+        _phrases = [];
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> syncUpsert(QuickPhrase phrase, {required int position}) async {
@@ -125,13 +161,29 @@ class QuickPhraseProvider with ChangeNotifier {
     required int newIndex,
     String? assistantId,
   }) async {
-    _reorderInMemory(
-      oldIndex: oldIndex,
-      newIndex: newIndex,
-      assistantId: assistantId,
+    await initialize();
+    final subset = assistantId == null
+        ? globalPhrases
+        : getForAssistant(assistantId);
+    if (oldIndex < 0 || oldIndex >= subset.length) return;
+    if (newIndex < 0 || newIndex >= subset.length) return;
+    if (oldIndex == newIndex) return;
+    final start = oldIndex < newIndex ? oldIndex : newIndex;
+    final end = oldIndex > newIndex ? oldIndex : newIndex;
+    await _syncWrites.runLocalBatch(
+      keys: subset
+          .sublist(start, end + 1)
+          .map((phrase) => ConfigSyncKeys.quickPhrase(phrase.id)),
+      write: () async {
+        _reorderInMemory(
+          oldIndex: oldIndex,
+          newIndex: newIndex,
+          assistantId: assistantId,
+        );
+        notifyListeners();
+        await QuickPhraseStore.save(_phrases);
+      },
     );
-    notifyListeners();
-    await QuickPhraseStore.save(_phrases);
   }
 
   // Backward/alternate API name for clarity
@@ -140,13 +192,10 @@ class QuickPhraseProvider with ChangeNotifier {
     required int newIndex,
     String? assistantId,
   }) async {
-    // Immediate UI update, then persist
-    _reorderInMemory(
+    await reorder(
       oldIndex: oldIndex,
       newIndex: newIndex,
       assistantId: assistantId,
     );
-    notifyListeners();
-    await QuickPhraseStore.save(_phrases);
   }
 }

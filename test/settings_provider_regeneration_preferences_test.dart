@@ -15,7 +15,9 @@ void main() {
   group('SettingsProvider regeneration preferences', () {
     test('defaults preserve current regeneration behavior', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -28,7 +30,9 @@ void main() {
         'display_regenerate_delete_trailing_messages_v1': true,
         'display_show_regenerate_confirm_dialog_v1': false,
       });
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -38,7 +42,9 @@ void main() {
 
     test('persists regeneration behavior changes', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setRegenerateDeleteTrailingMessages(true);

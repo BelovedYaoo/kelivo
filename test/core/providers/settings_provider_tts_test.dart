@@ -12,7 +12,9 @@ void main() {
       'tts_text_selection_mode_v1': 'quotedOnly',
     });
 
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     await _waitUntil(() => settings.ttsAutoPlayAssistantReplies);
 
     expect(settings.ttsAutoPlayAssistantReplies, isTrue);
@@ -32,7 +34,9 @@ void main() {
       'tts_text_selection_mode_v1': 'unknown-mode',
     });
 
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     await _waitUntil(() => settings.ttsAutoPlayAssistantReplies);
 
     expect(settings.ttsTextSelectionMode, TtsTextSelectionMode.fullText);

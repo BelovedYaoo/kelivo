@@ -15,7 +15,9 @@ void main() {
   group('SettingsProvider assistant detail outline toggle', () {
     test('defaults to disabled to preserve the current tab layout', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -26,7 +28,9 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'mobile_assistant_detail_outline_enabled_v1': true,
       });
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -35,7 +39,9 @@ void main() {
 
     test('persists mode changes to preferences', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setMobileAssistantDetailOutlineEnabled(true);

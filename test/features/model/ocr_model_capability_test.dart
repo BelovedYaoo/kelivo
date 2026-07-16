@@ -46,7 +46,9 @@ void main() {
   group('modelSupportsOcrImageInput', () {
     test('accepts models tagged with image input', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setProviderConfig(
@@ -62,7 +64,9 @@ void main() {
 
     test('rejects models tagged as text-only', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setProviderConfig(
@@ -78,7 +82,9 @@ void main() {
 
     test('accepts models whose current inferred tag has image input', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setProviderConfig(
@@ -94,7 +100,9 @@ void main() {
 
     test('honors text-only tag overrides over inferred vision tags', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setProviderConfig(

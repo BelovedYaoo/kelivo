@@ -4,8 +4,13 @@ import 'dart:io';
 import '../../utils/sandbox_path_resolver.dart';
 import '../../utils/avatar_cache.dart';
 import '../../utils/app_directories.dart';
+import '../services/sync/config_sync_keys.dart';
+import '../services/sync/sync_write_executor.dart';
+import '../utils/batched_change_notifier.dart';
+export '../services/sync/sync_write_executor.dart'
+    show UntrackedSyncWriteExecutor;
 
-class UserProvider extends ChangeNotifier {
+class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
   static const String _prefsUserNameKey = 'user_name';
   static const String _prefsAvatarTypeKey =
       'avatar_type'; // emoji | url | file | null
@@ -20,8 +25,10 @@ class UserProvider extends ChangeNotifier {
   String? get avatarType => _avatarType;
   String? get avatarValue => _avatarValue;
   late final Future<void> ready;
+  final SyncWriteExecutor _syncWrites;
 
-  UserProvider() {
+  UserProvider({required SyncWriteExecutor syncWriteExecutor})
+    : _syncWrites = syncWriteExecutor {
     ready = _load();
   }
 
@@ -66,32 +73,48 @@ class UserProvider extends ChangeNotifier {
   Future<void> setName(String name) async {
     final trimmed = name.trim();
     if (trimmed.isEmpty || trimmed == _name) return;
-    _name = trimmed;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsUserNameKey, _name);
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.profile,
+      write: () async {
+        _name = trimmed;
+        _hasSavedName = true;
+        notifyListeners();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_prefsUserNameKey, _name);
+      },
+    );
   }
 
   Future<void> setAvatarEmoji(String emoji) async {
     final e = emoji.trim();
     if (e.isEmpty) return;
-    _avatarType = 'emoji';
-    _avatarValue = e;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
-    await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.profile,
+      write: () async {
+        _avatarType = 'emoji';
+        _avatarValue = e;
+        notifyListeners();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
+        await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
+      },
+    );
   }
 
   Future<void> setAvatarUrl(String url) async {
     final u = url.trim();
     if (u.isEmpty) return;
-    _avatarType = 'url';
-    _avatarValue = u;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
-    await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.profile,
+      write: () async {
+        _avatarType = 'url';
+        _avatarValue = u;
+        notifyListeners();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
+        await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
+      },
+    );
     // Prefetch to enable offline display later
     try {
       await AvatarCache.getPath(u);
@@ -101,64 +124,73 @@ class UserProvider extends ChangeNotifier {
   Future<void> setAvatarFilePath(String path) async {
     final p = path.trim();
     if (p.isEmpty) return;
-    final fixedInput = SandboxPathResolver.fix(p);
-    // Copy the picked image into app persistent storage so it survives reinstall/update
-    try {
-      final src = File(fixedInput);
-      if (!await src.exists()) return;
-      final avatars = await AppDirectories.getAvatarsDirectory();
-      if (!await avatars.exists()) {
-        await avatars.create(recursive: true);
-      }
-      String ext = '';
-      final dot = fixedInput.lastIndexOf('.');
-      if (dot != -1 && dot < p.length - 1) {
-        ext = fixedInput.substring(dot + 1).toLowerCase();
-        // Basic sanitize
-        if (ext.length > 6) ext = 'jpg';
-      } else {
-        ext = 'jpg';
-      }
-      final filename = 'avatar_${DateTime.now().millisecondsSinceEpoch}.$ext';
-      final dest = File('${avatars.path}/$filename');
-      await src.copy(dest.path);
-
-      // Optionally clean old local avatar if it was stored inside our avatars folder
-      if (_avatarType == 'file' && _avatarValue != null) {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.profile,
+      write: () async {
+        final fixedInput = SandboxPathResolver.fix(p);
+        // 头像文件和资料索引必须处于同一个写前保护区，避免文件落盘后资料写入失踪。
         try {
-          final old = File(_avatarValue!);
-          if ((old.path.contains('/avatars/') ||
-                  old.path.contains('\\avatars\\')) &&
-              await old.exists()) {
-            await old.delete();
+          final src = File(fixedInput);
+          if (!await src.exists()) return;
+          final avatars = await AppDirectories.getAvatarsDirectory();
+          if (!await avatars.exists()) {
+            await avatars.create(recursive: true);
           }
-        } catch (_) {}
-      }
+          String ext = '';
+          final dot = fixedInput.lastIndexOf('.');
+          if (dot != -1 && dot < p.length - 1) {
+            ext = fixedInput.substring(dot + 1).toLowerCase();
+            if (ext.length > 6) ext = 'jpg';
+          } else {
+            ext = 'jpg';
+          }
+          final filename =
+              'avatar_${DateTime.now().millisecondsSinceEpoch}.$ext';
+          final dest = File('${avatars.path}/$filename');
+          await src.copy(dest.path);
 
-      _avatarType = 'file';
-      _avatarValue = dest.path;
-      notifyListeners();
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
-      await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
-    } catch (_) {
-      // Fallback to original path if copy fails (may still be temporary)
-      _avatarType = 'file';
-      _avatarValue = fixedInput;
-      notifyListeners();
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
-      await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
-    }
+          if (_avatarType == 'file' && _avatarValue != null) {
+            try {
+              final old = File(_avatarValue!);
+              if ((old.path.contains('/avatars/') ||
+                      old.path.contains('\\avatars\\')) &&
+                  await old.exists()) {
+                await old.delete();
+              }
+            } catch (_) {}
+          }
+
+          _avatarType = 'file';
+          _avatarValue = dest.path;
+          notifyListeners();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
+          await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
+        } catch (_) {
+          _avatarType = 'file';
+          _avatarValue = fixedInput;
+          notifyListeners();
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_prefsAvatarTypeKey, _avatarType!);
+          await prefs.setString(_prefsAvatarValueKey, _avatarValue!);
+        }
+      },
+    );
   }
 
   Future<void> resetAvatar() async {
-    _avatarType = null;
-    _avatarValue = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_prefsAvatarTypeKey);
-    await prefs.remove(_prefsAvatarValueKey);
+    if (_avatarType == null && _avatarValue == null) return;
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.profile,
+      write: () async {
+        _avatarType = null;
+        _avatarValue = null;
+        notifyListeners();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.remove(_prefsAvatarTypeKey);
+        await prefs.remove(_prefsAvatarValueKey);
+      },
+    );
   }
 
   Future<void> syncApplyProfile({

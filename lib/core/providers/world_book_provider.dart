@@ -2,13 +2,23 @@ import 'package:flutter/foundation.dart';
 
 import '../models/world_book.dart';
 import '../services/world_book_store.dart';
+import '../services/sync/config_sync_keys.dart';
+import '../services/sync/sync_codec.dart';
+import '../services/sync/sync_write_executor.dart';
+import '../utils/batched_change_notifier.dart';
+export '../services/sync/sync_write_executor.dart'
+    show UntrackedSyncWriteExecutor;
 
-class WorldBookProvider with ChangeNotifier {
+class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
   List<WorldBook> _books = const <WorldBook>[];
   bool _initialized = false;
   Map<String, List<String>> _activeIdsByAssistant =
       const <String, List<String>>{};
   Map<String, bool> _collapsedBooks = const <String, bool>{};
+  final SyncWriteExecutor _syncWrites;
+
+  WorldBookProvider({required SyncWriteExecutor syncWriteExecutor})
+    : _syncWrites = syncWriteExecutor;
 
   List<WorldBook> get books => List<WorldBook>.unmodifiable(_books);
   Map<String, List<String>> get activeIdsByAssistant =>
@@ -75,43 +85,76 @@ class WorldBookProvider with ChangeNotifier {
   }
 
   Future<void> addBook(WorldBook book) async {
-    await WorldBookStore.add(book);
-    await loadAll();
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.worldBook(book.id),
+      write: () async {
+        await WorldBookStore.add(book);
+        await loadAll();
+      },
+    );
   }
 
   Future<void> updateBook(WorldBook book) async {
-    if (!book.enabled) {
-      try {
-        final map = await WorldBookStore.getActiveIdsByAssistant();
-        final next = <String, List<String>>{};
-        bool changed = false;
-        for (final entry in map.entries) {
-          final filtered = entry.value
-              .where((e) => e != book.id)
-              .toList(growable: false);
-          if (filtered.length != entry.value.length) changed = true;
-          next[entry.key] = filtered;
+    await _syncWrites.runLocalBatch(
+      keys: <SyncEntityKey>[
+        ConfigSyncKeys.worldBook(book.id),
+        ConfigSyncKeys.worldBookActivity,
+      ],
+      write: () async {
+        if (!book.enabled) {
+          try {
+            final map = await WorldBookStore.getActiveIdsByAssistant();
+            final next = <String, List<String>>{};
+            bool changed = false;
+            for (final entry in map.entries) {
+              final filtered = entry.value
+                  .where((e) => e != book.id)
+                  .toList(growable: false);
+              if (filtered.length != entry.value.length) changed = true;
+              next[entry.key] = filtered;
+            }
+            if (changed) {
+              await WorldBookStore.setActiveIdsMap(next);
+            }
+          } catch (_) {}
         }
-        if (changed) {
-          await WorldBookStore.setActiveIdsMap(next);
-        }
-      } catch (_) {}
-    }
-    await WorldBookStore.update(book);
-    await loadAll();
+        await WorldBookStore.update(book);
+        await loadAll();
+      },
+    );
   }
 
   Future<void> deleteBook(String id) async {
-    await WorldBookStore.delete(id);
-    await loadAll();
+    await initialize();
+    final index = _books.indexWhere((book) => book.id == id);
+    if (index < 0) return;
+    await _syncWrites.runLocalBatch(
+      keys: <SyncEntityKey>[
+        ..._books.skip(index).map((book) => ConfigSyncKeys.worldBook(book.id)),
+        ConfigSyncKeys.worldBookActivity,
+      ],
+      write: () async {
+        await WorldBookStore.delete(id);
+        await loadAll();
+      },
+    );
   }
 
   Future<void> clear() async {
-    await WorldBookStore.clear();
-    _books = const <WorldBook>[];
-    _activeIdsByAssistant = const <String, List<String>>{};
-    _collapsedBooks = const <String, bool>{};
-    notifyListeners();
+    await initialize();
+    await _syncWrites.runLocalBatch(
+      keys: <SyncEntityKey>[
+        ..._books.map((book) => ConfigSyncKeys.worldBook(book.id)),
+        ConfigSyncKeys.worldBookActivity,
+      ],
+      write: () async {
+        await WorldBookStore.clear();
+        _books = const <WorldBook>[];
+        _activeIdsByAssistant = const <String, List<String>>{};
+        _collapsedBooks = const <String, bool>{};
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> syncUpsert(WorldBook book, {required int position}) async {
@@ -148,12 +191,22 @@ class WorldBookProvider with ChangeNotifier {
     if (_books.isEmpty) return;
     if (oldIndex < 0 || oldIndex >= _books.length) return;
     if (newIndex < 0 || newIndex >= _books.length) return;
-    final list = List<WorldBook>.from(_books);
-    final item = list.removeAt(oldIndex);
-    list.insert(newIndex, item);
-    _books = list;
-    notifyListeners();
-    await WorldBookStore.save(_books);
+    if (oldIndex == newIndex) return;
+    final start = oldIndex < newIndex ? oldIndex : newIndex;
+    final end = oldIndex > newIndex ? oldIndex : newIndex;
+    await _syncWrites.runLocalBatch(
+      keys: _books
+          .sublist(start, end + 1)
+          .map((book) => ConfigSyncKeys.worldBook(book.id)),
+      write: () async {
+        final list = List<WorldBook>.from(_books);
+        final item = list.removeAt(oldIndex);
+        list.insert(newIndex, item);
+        _books = list;
+        notifyListeners();
+        await WorldBookStore.save(_books);
+      },
+    );
   }
 
   Future<void> reorderEntries({
@@ -168,14 +221,20 @@ class WorldBookProvider with ChangeNotifier {
     if (entries.isEmpty) return;
     if (oldIndex < 0 || oldIndex >= entries.length) return;
     if (newIndex < 0 || newIndex >= entries.length) return;
-    final item = entries.removeAt(oldIndex);
-    entries.insert(newIndex, item);
-    final nextBook = book.copyWith(entries: entries);
-    final nextBooks = List<WorldBook>.from(_books);
-    nextBooks[bookIndex] = nextBook;
-    _books = nextBooks;
-    notifyListeners();
-    await WorldBookStore.save(_books);
+    if (oldIndex == newIndex) return;
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.worldBook(bookId),
+      write: () async {
+        final item = entries.removeAt(oldIndex);
+        entries.insert(newIndex, item);
+        final nextBook = book.copyWith(entries: entries);
+        final nextBooks = List<WorldBook>.from(_books);
+        nextBooks[bookIndex] = nextBook;
+        _books = nextBooks;
+        notifyListeners();
+        await WorldBookStore.save(_books);
+      },
+    );
   }
 
   Future<void> setBookCollapsed(String id, bool collapsed) async {
@@ -194,12 +253,17 @@ class WorldBookProvider with ChangeNotifier {
   }
 
   Future<void> setActiveBookIds(List<String> ids, {String? assistantId}) async {
-    final key = WorldBookStore.assistantKey(assistantId);
-    final nextMap = Map<String, List<String>>.from(_activeIdsByAssistant);
-    nextMap[key] = ids.toSet().toList(growable: false);
-    _activeIdsByAssistant = nextMap;
-    notifyListeners();
-    await WorldBookStore.setActiveIds(ids, assistantId: assistantId);
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.worldBookActivity,
+      write: () async {
+        final key = WorldBookStore.assistantKey(assistantId);
+        final nextMap = Map<String, List<String>>.from(_activeIdsByAssistant);
+        nextMap[key] = ids.toSet().toList(growable: false);
+        _activeIdsByAssistant = nextMap;
+        notifyListeners();
+        await WorldBookStore.setActiveIds(ids, assistantId: assistantId);
+      },
+    );
   }
 
   Future<void> toggleActiveBookId(String id, {String? assistantId}) async {

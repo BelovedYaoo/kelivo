@@ -24,6 +24,12 @@ import '../../utils/avatar_cache.dart';
 import '../utils/openai_model_compat.dart';
 import '../../utils/provider_grouping_logic.dart';
 import '../../utils/brand_assets.dart';
+import '../services/sync/config_sync_keys.dart';
+import '../services/sync/sync_codec.dart';
+import '../services/sync/sync_write_executor.dart';
+import '../utils/batched_change_notifier.dart';
+export '../services/sync/sync_write_executor.dart'
+    show UntrackedSyncWriteExecutor;
 
 // Desktop: topic list position
 enum DesktopTopicPosition { left, right }
@@ -45,8 +51,9 @@ enum MobileMessageNavButtonsMode { always, scroll, never }
 
 enum _MigrationResult { noChange, applied, failed }
 
-class SettingsProvider extends ChangeNotifier {
+class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   late final Future<void> ready;
+  final SyncWriteExecutor _syncWrites;
   static const String _providersOrderKey = 'providers_order_v1';
   static const String _providerGroupsKey =
       'provider_groups_v1'; // [{id,name,createdAt}]
@@ -567,8 +574,41 @@ class SettingsProvider extends ChangeNotifier {
   int _appLaunchCount = 0;
   int get appLaunchCount => _appLaunchCount;
 
-  SettingsProvider() {
+  SettingsProvider({required SyncWriteExecutor syncWriteExecutor})
+    : _syncWrites = syncWriteExecutor {
     ready = _load();
+  }
+
+  List<SyncEntityKey> _providerListKeys({
+    Iterable<String> extraIds = const [],
+  }) {
+    final ids = <String>{..._providerConfigs.keys, ...extraIds};
+    return <SyncEntityKey>[
+      ...ids.map(ConfigSyncKeys.provider),
+      ConfigSyncKeys.providerGrouping,
+    ];
+  }
+
+  List<SyncEntityKey> _searchListKeys({Iterable<String> extraIds = const []}) {
+    final ids = <String>{
+      ..._searchServices.map((service) => service.id),
+      ...extraIds,
+    };
+    return <SyncEntityKey>[
+      ...ids.map(ConfigSyncKeys.searchService),
+      ConfigSyncKeys.searchState,
+    ];
+  }
+
+  List<SyncEntityKey> _ttsListKeys({Iterable<String> extraIds = const []}) {
+    final ids = <String>{
+      ..._ttsServices.map((service) => service.id),
+      ...extraIds,
+    };
+    return <SyncEntityKey>[
+      ...ids.map(ConfigSyncKeys.networkTts),
+      ConfigSyncKeys.ttsState,
+    ];
   }
 
   Future<void> syncUpsertProviderConfig(
@@ -1556,6 +1596,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setTtsServices(List<TtsServiceOptions> v) async {
+    await _syncWrites.runLocalBatch(
+      keys: _ttsListKeys(extraIds: v.map((service) => service.id)),
+      write: () => _setTtsServices(v),
+    );
+  }
+
+  Future<void> _setTtsServices(List<TtsServiceOptions> v) async {
     _ttsServices = List.unmodifiable(v);
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -1568,6 +1615,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setTtsServiceSelected(int index) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.ttsState,
+      write: () => _setTtsServiceSelected(index),
+    );
+  }
+
+  Future<void> _setTtsServiceSelected(int index) async {
     _ttsServiceSelected = index;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -1575,6 +1629,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setTtsAutoPlayAssistantReplies(bool value) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.ttsState,
+      write: () => _setTtsAutoPlayAssistantReplies(value),
+    );
+  }
+
+  Future<void> _setTtsAutoPlayAssistantReplies(bool value) async {
     if (_ttsAutoPlayAssistantReplies == value) return;
     _ttsAutoPlayAssistantReplies = value;
     notifyListeners();
@@ -1583,6 +1644,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setTtsTextSelectionMode(TtsTextSelectionMode mode) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.ttsState,
+      write: () => _setTtsTextSelectionMode(mode),
+    );
+  }
+
+  Future<void> _setTtsTextSelectionMode(TtsTextSelectionMode mode) async {
     if (_ttsTextSelectionMode == mode) return;
     _ttsTextSelectionMode = mode;
     notifyListeners();
@@ -2098,6 +2166,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setProvidersOrder(List<String> order) async {
+    await _syncWrites.runLocalBatch(
+      keys: _providerListKeys(),
+      write: () => _setProvidersOrder(order),
+    );
+  }
+
+  Future<void> _setProvidersOrder(List<String> order) async {
     _providersOrder = List.unmodifiable(order);
     _cleanupProviderOrderAndGrouping();
     notifyListeners();
@@ -2211,6 +2286,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<String> createGroup(String name) async {
+    return _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _createGroup(name),
+    );
+  }
+
+  Future<String> _createGroup(String name) async {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return '';
     final key = trimmed.toLowerCase();
@@ -2234,6 +2316,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> renameGroup(String groupId, String name) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _renameGroup(groupId, name),
+    );
+  }
+
+  Future<void> _renameGroup(String groupId, String name) async {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
     final idx = _providerGroups.indexWhere((g) => g.id == groupId);
@@ -2256,6 +2345,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> reorderProviderGroups(int oldIndex, int newIndex) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _reorderProviderGroups(oldIndex, newIndex),
+    );
+  }
+
+  Future<void> _reorderProviderGroups(int oldIndex, int newIndex) async {
     if (_providerGroups.isEmpty) return;
     if (oldIndex < 0 || oldIndex >= _providerGroups.length) return;
     if (newIndex < 0 || newIndex > _providerGroups.length) return;
@@ -2273,6 +2369,16 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> reorderProviderGroupsWithUngrouped(
+    int oldIndex,
+    int newIndex,
+  ) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _reorderProviderGroupsWithUngrouped(oldIndex, newIndex),
+    );
+  }
+
+  Future<void> _reorderProviderGroupsWithUngrouped(
     int oldIndex,
     int newIndex,
   ) async {
@@ -2297,6 +2403,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> deleteGroup(String groupId) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _deleteGroup(groupId),
+    );
+  }
+
+  Future<void> _deleteGroup(String groupId) async {
     if (groupById(groupId) == null) return;
     final res = deleteProviderGroup(
       groups: _providerGroups,
@@ -2318,6 +2431,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setProviderGroup(String providerKey, String? groupId) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _setProviderGroup(providerKey, groupId),
+    );
+  }
+
+  Future<void> _setProviderGroup(String providerKey, String? groupId) async {
     final known = _knownProviderKeys();
     if (!known.contains(providerKey)) return;
     final target = (groupId != null && groupById(groupId) != null)
@@ -2338,6 +2458,16 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> moveProvidersToGroup(
+    Iterable<String> providerKeys,
+    String? targetGroupId,
+  ) async {
+    await _syncWrites.runLocalBatch(
+      keys: _providerListKeys(),
+      write: () => _moveProvidersToGroup(providerKeys, targetGroupId),
+    );
+  }
+
+  Future<void> _moveProvidersToGroup(
     Iterable<String> providerKeys,
     String? targetGroupId,
   ) async {
@@ -2395,6 +2525,13 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> setGroupCollapsed(String groupIdOrUngrouped, bool value) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _setGroupCollapsed(groupIdOrUngrouped, value),
+    );
+  }
+
+  Future<void> _setGroupCollapsed(String groupIdOrUngrouped, bool value) async {
     if (groupIdOrUngrouped != providerUngroupedGroupKey &&
         groupById(groupIdOrUngrouped) == null) {
       return;
@@ -2413,6 +2550,17 @@ class SettingsProvider extends ChangeNotifier {
       );
 
   Future<void> moveProvider(
+    String providerKey,
+    String? targetGroupId,
+    int targetPos,
+  ) async {
+    await _syncWrites.runLocalBatch(
+      keys: _providerListKeys(),
+      write: () => _moveProvider(providerKey, targetGroupId, targetPos),
+    );
+  }
+
+  Future<void> _moveProvider(
     String providerKey,
     String? targetGroupId,
     int targetPos,
@@ -2645,6 +2793,13 @@ class SettingsProvider extends ChangeNotifier {
   Future<void> followSystem() => setThemeMode(ThemeMode.system);
 
   Future<void> setProviderConfig(String key, ProviderConfig config) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.provider(key),
+      write: () => _setProviderConfig(key, config),
+    );
+  }
+
+  Future<void> _setProviderConfig(String key, ProviderConfig config) async {
     _providerConfigs[key] = config;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -2924,7 +3079,21 @@ class SettingsProvider extends ChangeNotifier {
   }
 
   Future<void> removeProviderConfig(String key) async {
+    await ready;
     if (!_providerConfigs.containsKey(key)) return;
+    await _syncWrites.runLocalBatch(
+      keys: _providerListKeys(extraIds: <String>[key]),
+      write: () => _deleteProviderConfig(key),
+    );
+  }
+
+  Future<void> syncDeleteProviderConfig(String key) async {
+    await ready;
+    if (!_providerConfigs.containsKey(key)) return;
+    await _deleteProviderConfig(key);
+  }
+
+  Future<void> _deleteProviderConfig(String key) async {
     _providerConfigs.remove(key);
     // Remove from order
     _providersOrder = List<String>.from(_providersOrder.where((k) => k != key));
@@ -4292,6 +4461,13 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
 
   // Search service settings
   Future<void> setSearchServices(List<SearchServiceOptions> services) async {
+    await _syncWrites.runLocalBatch(
+      keys: _searchListKeys(extraIds: services.map((service) => service.id)),
+      write: () => _setSearchServices(services),
+    );
+  }
+
+  Future<void> _setSearchServices(List<SearchServiceOptions> services) async {
     _searchServices = List.from(services);
     if (_searchServiceSelected >= _searchServices.length) {
       _searchServiceSelected = _searchServices.isNotEmpty
@@ -4308,6 +4484,13 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
   }
 
   Future<void> setSearchCommonOptions(SearchCommonOptions options) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.searchState,
+      write: () => _setSearchCommonOptions(options),
+    );
+  }
+
+  Future<void> _setSearchCommonOptions(SearchCommonOptions options) async {
     _searchCommonOptions = options;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -4315,6 +4498,13 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
   }
 
   Future<void> setSearchServiceSelected(int index) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.searchState,
+      write: () => _setSearchServiceSelected(index),
+    );
+  }
+
+  Future<void> _setSearchServiceSelected(int index) async {
     _searchServiceSelected = index.clamp(
       0,
       _searchServices.isNotEmpty ? _searchServices.length - 1 : 0,
@@ -4325,6 +4515,13 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
   }
 
   Future<void> setSearchEnabled(bool enabled) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.searchState,
+      write: () => _setSearchEnabled(enabled),
+    );
+  }
+
+  Future<void> _setSearchEnabled(bool enabled) async {
     _searchEnabled = enabled;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -4332,6 +4529,13 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
   }
 
   Future<void> setSearchAutoTestOnLaunch(bool enabled) async {
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.searchState,
+      write: () => _setSearchAutoTestOnLaunch(enabled),
+    );
+  }
+
+  Future<void> _setSearchAutoTestOnLaunch(bool enabled) async {
     _searchAutoTestOnLaunch = enabled;
     notifyListeners();
     final prefs = await SharedPreferences.getInstance();
@@ -4340,6 +4544,15 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
 
   // Combined update for settings
   Future<void> updateSettings(SettingsProvider newSettings) async {
+    await _syncWrites.runLocalBatch(
+      keys: _searchListKeys(
+        extraIds: newSettings._searchServices.map((service) => service.id),
+      ),
+      write: () => _updateSettings(newSettings),
+    );
+  }
+
+  Future<void> _updateSettings(SettingsProvider newSettings) async {
     if (!listEquals(_searchServices, newSettings._searchServices)) {
       await setSearchServices(newSettings._searchServices);
     }
@@ -4364,7 +4577,7 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
     bool? searchEnabled,
     bool? searchAutoTestOnLaunch,
   }) {
-    final copy = SettingsProvider();
+    final copy = SettingsProvider(syncWriteExecutor: _syncWrites);
     copy._searchServices = searchServices ?? _searchServices;
     copy._searchCommonOptions = searchCommonOptions ?? _searchCommonOptions;
     copy._searchServiceSelected =

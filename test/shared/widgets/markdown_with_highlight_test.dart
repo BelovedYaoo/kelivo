@@ -275,7 +275,9 @@ Widget _markdownHarness(
 }) {
   SharedPreferences.setMockInitialValues(preferences ?? {});
   return ChangeNotifierProvider(
-    create: (_) => SettingsProvider(),
+    create: (_) => SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    ),
     child: MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -317,7 +319,9 @@ Widget _streamingMarkdownHarness(
 }) {
   SharedPreferences.setMockInitialValues(preferences ?? {});
   return ChangeNotifierProvider(
-    create: (_) => SettingsProvider(),
+    create: (_) => SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    ),
     child: MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
@@ -350,7 +354,9 @@ Widget _settingsHarness({
   SharedPreferences.setMockInitialValues(preferences ?? {});
   return ChangeNotifierProvider(
     create: (_) {
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       onSettingsReady(settings);
       return settings;
     },

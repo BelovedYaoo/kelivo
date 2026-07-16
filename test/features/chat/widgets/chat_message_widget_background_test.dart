@@ -28,7 +28,9 @@ SettingsProvider _createSettings(ChatMessageBackgroundStyle style) {
   SharedPreferences.setMockInitialValues({
     'display_chat_message_background_style_v1': rawStyle,
   });
-  return SettingsProvider();
+  return SettingsProvider(
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
 }
 
 Widget _buildHarness({
@@ -216,7 +218,7 @@ void main() {
           ChatMessageBackgroundStyle.defaultStyle,
         );
         final controller = home_stream.StreamController(
-          chatService: ChatService(),
+          chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
           onStateChanged: () {},
           getSettingsProvider: () => settings,
           getCurrentConversationId: () => 'conversation-search-same-id',

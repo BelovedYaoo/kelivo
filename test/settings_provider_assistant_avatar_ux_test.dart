@@ -15,7 +15,9 @@ void main() {
   group('SettingsProvider assistant avatar UX toggle', () {
     test('defaults to legacy mode (disabled)', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -26,7 +28,9 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'display_use_new_assistant_avatar_ux_v1': true,
       });
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -35,7 +39,9 @@ void main() {
 
     test('persists mode changes to preferences', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setUseNewAssistantAvatarUx(true);

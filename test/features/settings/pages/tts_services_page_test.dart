@@ -49,7 +49,9 @@ void main() {
   testWidgets('mobile add network TTS opens a full page editor', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final tts = TtsProvider();
     addTearDown(tts.dispose);
 
@@ -90,7 +92,9 @@ void main() {
   testWidgets('mobile TTS settings button opens playback settings', (
     tester,
   ) async {
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     final tts = TtsProvider();
     addTearDown(tts.dispose);
 

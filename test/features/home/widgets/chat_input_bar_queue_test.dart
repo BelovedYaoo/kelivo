@@ -36,10 +36,18 @@ void main() {
     return MultiProvider(
       providers: [
         ChangeNotifierProvider.value(
-          value: settingsProvider ?? SettingsProvider(),
+          value:
+              settingsProvider ??
+              SettingsProvider(
+                syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+              ),
         ),
         ChangeNotifierProvider.value(
-          value: assistantProvider ?? AssistantProvider(),
+          value:
+              assistantProvider ??
+              AssistantProvider(
+                syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+              ),
         ),
       ],
       child: MaterialApp(
@@ -177,7 +185,9 @@ void main() {
     final controller = TextEditingController(text: 'draw a cat');
     final focusNode = FocusNode();
     final mediaController = ChatInputBarController();
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     await settings.setProviderConfig(
       'OpenAITest',
       ProviderConfig(
@@ -225,7 +235,9 @@ void main() {
   testWidgets('绘图模式关闭后切换对话会重新显示', (tester) async {
     final controller = TextEditingController(text: 'draw a cat');
     final focusNode = FocusNode();
-    final settings = SettingsProvider();
+    final settings = SettingsProvider(
+      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+    );
     await settings.setProviderConfig(
       'OpenAITest',
       ProviderConfig(

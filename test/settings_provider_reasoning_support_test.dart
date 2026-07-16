@@ -44,7 +44,9 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'providers_order_v1': <String>['OpenAI', 'Zhipu AI', 'Grok'],
       });
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -95,7 +97,9 @@ void main() {
       'Claude provider resolves apiModelId before DeepSeek xhigh check',
       () async {
         SharedPreferences.setMockInitialValues({});
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
 
         await _waitForSettingsLoad();
         await settings.setProviderConfig(
@@ -132,7 +136,9 @@ void main() {
         'defaults to enabled and preserves existing budget fallback',
         () async {
           SharedPreferences.setMockInitialValues({'thinking_budget_v1': 16000});
-          final settings = SettingsProvider();
+          final settings = SettingsProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          );
 
           await _waitForSettingsLoad();
 
@@ -146,7 +152,9 @@ void main() {
         'disabled title generation thinking resolves to off budget',
         () async {
           SharedPreferences.setMockInitialValues({});
-          final settings = SettingsProvider();
+          final settings = SettingsProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          );
 
           await _waitForSettingsLoad();
           await settings.setThinkingBudget(16000);
@@ -168,7 +176,9 @@ void main() {
         SharedPreferences.setMockInitialValues({
           'title_generation_thinking_enabled_v1': false,
         });
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
 
         await _waitForSettingsLoad();
 
@@ -181,7 +191,9 @@ void main() {
           'title_generation_thinking_enabled_v1': false,
           'thinking_budget_v1': 64000,
         });
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
 
         await _waitForSettingsLoad();
         await settings.resetTitleGenerationThinkingEnabled();
@@ -198,7 +210,9 @@ void main() {
       'Claude latest models expose xhigh and max reasoning without presets',
       () async {
         SharedPreferences.setMockInitialValues({});
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
 
         await _waitForSettingsLoad();
         await settings.setProviderConfig(
@@ -227,7 +241,9 @@ void main() {
 
     test('OpenRouter Anthropic format exposes Claude max reasoning', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setProviderConfig(

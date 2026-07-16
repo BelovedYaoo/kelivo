@@ -23,7 +23,9 @@ void _seedPreferences() {
 }
 
 Future<AssistantProvider> _createAssistantProvider(WidgetTester tester) async {
-  final provider = AssistantProvider();
+  final provider = AssistantProvider(
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
   for (var i = 0; i < 25; i++) {
     if (provider.getById(_assistantId) != null) return provider;
     await tester.pump(const Duration(milliseconds: 10));
@@ -37,10 +39,22 @@ Widget _buildHarness({
 }) {
   return MultiProvider(
     providers: [
-      ChangeNotifierProvider(create: (_) => SettingsProvider()),
+      ChangeNotifierProvider(
+        create: (_) => SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
+      ),
       ChangeNotifierProvider.value(value: assistantProvider),
-      ChangeNotifierProvider(create: (_) => MemoryProvider()),
-      ChangeNotifierProvider(create: (_) => QuickPhraseProvider()),
+      ChangeNotifierProvider(
+        create: (_) => MemoryProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
+      ),
+      ChangeNotifierProvider(
+        create: (_) => QuickPhraseProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
+      ),
     ],
     child: MaterialApp(
       localizationsDelegates: AppLocalizations.localizationsDelegates,

@@ -26,7 +26,9 @@ ProviderConfig _providerConfig(String key, String name, List<String> models) {
 
 Future<SettingsProvider> _settingsWithProviders(WidgetTester tester) async {
   SharedPreferences.setMockInitialValues({});
-  final settings = SettingsProvider();
+  final settings = SettingsProvider(
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
   await tester.pump(const Duration(milliseconds: 300));
   await tester.pump();
 
@@ -64,7 +66,9 @@ Future<SettingsProvider> _settingsWithLongSingleProvider(
   WidgetTester tester,
 ) async {
   SharedPreferences.setMockInitialValues({});
-  final settings = SettingsProvider();
+  final settings = SettingsProvider(
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
   await tester.pump(const Duration(milliseconds: 300));
   await tester.pump();
 
@@ -94,7 +98,9 @@ Future<void> _pumpModelSelector(
       providers: [
         ChangeNotifierProvider<SettingsProvider>.value(value: settings),
         ChangeNotifierProvider<AssistantProvider>(
-          create: (_) => AssistantProvider(),
+          create: (_) => AssistantProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          ),
         ),
       ],
       child: MaterialApp(

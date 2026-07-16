@@ -25,7 +25,9 @@ Widget _buildHarness({
   return MultiProvider(
     providers: [
       ChangeNotifierProvider<SettingsProvider>.value(value: settings),
-      ChangeNotifierProvider<ChatService>(create: (_) => ChatService()),
+      ChangeNotifierProvider<ChatService>(
+        create: (_) => ChatService(const UntrackedSyncWriteExecutor.forTests()),
+      ),
       ChangeNotifierProvider<BackupReminderProvider>.value(value: reminder),
     ],
     child: MaterialApp(
@@ -40,7 +42,7 @@ Widget _buildDesktopHarness({
   required SettingsProvider settings,
   required BackupReminderProvider reminder,
 }) {
-  final chatService = ChatService();
+  final chatService = ChatService(const UntrackedSyncWriteExecutor.forTests());
 
   return MultiProvider(
     providers: [
@@ -122,7 +124,9 @@ void main() {
     testWidgets('opens WebDAV settings as a full page and saves config', (
       tester,
     ) async {
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _pumpBackupPage(tester, settings: settings);
 
@@ -153,7 +157,9 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(900, 1200));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _pumpBackupPage(tester, settings: settings);
 
@@ -169,7 +175,9 @@ void main() {
     testWidgets('opens S3 settings as a full page and saves config', (
       tester,
     ) async {
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _pumpBackupPage(tester, settings: settings);
 
@@ -197,7 +205,9 @@ void main() {
       await tester.binding.setSurfaceSize(const Size(1100, 1300));
       addTearDown(() => tester.binding.setSurfaceSize(null));
 
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _pumpDesktopBackupPane(tester, settings: settings);
 

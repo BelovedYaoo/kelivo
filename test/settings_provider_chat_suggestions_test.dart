@@ -15,7 +15,9 @@ void main() {
   group('SettingsProvider chat suggestions', () {
     test('defaults suggestion model to disabled', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -30,7 +32,9 @@ void main() {
 
     test('persists selected suggestion model and prompt', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setSuggestionModel('OpenAI', 'gpt-test');
@@ -51,7 +55,9 @@ void main() {
 
     test('defaults suggestion tap to auto-send', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -62,7 +68,9 @@ void main() {
       SharedPreferences.setMockInitialValues({
         'suggestion_insert_on_tap_only_v1': true,
       });
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -81,7 +89,9 @@ void main() {
         SharedPreferences.setMockInitialValues({
           'suggestion_model_v1': 'OpenAI::gpt-test',
         });
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
 
         await _waitForSettingsLoad();
         await settings.clearSelectionsForProvider('OpenAI');

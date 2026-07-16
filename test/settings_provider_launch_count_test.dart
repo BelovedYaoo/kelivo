@@ -15,7 +15,9 @@ void main() {
   group('SettingsProvider app launch count', () {
     test('defaults to zero', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -24,7 +26,9 @@ void main() {
 
     test('loads persisted count', () async {
       SharedPreferences.setMockInitialValues({'app_launch_count_v1': 7});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
 
@@ -33,7 +37,9 @@ void main() {
 
     test('increments and persists count once per explicit call', () async {
       SharedPreferences.setMockInitialValues({'app_launch_count_v1': 2});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.incrementAppLaunchCount();

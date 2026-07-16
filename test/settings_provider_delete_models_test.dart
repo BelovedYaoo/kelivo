@@ -31,7 +31,9 @@ void main() {
   group('SettingsProvider model deletion', () {
     test('deleteModels removes selected models and their overrides', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setProviderConfig('TestProvider', _configWithModels());
@@ -49,7 +51,9 @@ void main() {
 
     test('deleteModels does nothing for empty selection', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setProviderConfig('TestProvider', _configWithModels());
@@ -67,7 +71,9 @@ void main() {
 
     test('deleteModels clears selections for deleted models only', () async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       await _waitForSettingsLoad();
       await settings.setProviderConfig('TestProvider', _configWithModels());
@@ -89,7 +95,9 @@ void main() {
       'deleteModels clears orphan overrides when every model is removed',
       () async {
         SharedPreferences.setMockInitialValues({});
-        final settings = SettingsProvider();
+        final settings = SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
 
         await _waitForSettingsLoad();
         await settings.setProviderConfig(

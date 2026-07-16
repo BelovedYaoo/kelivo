@@ -32,7 +32,9 @@ Widget _buildHarness({
   return MultiProvider(
     providers: [
       ChangeNotifierProvider<SettingsProvider>.value(value: settings),
-      ChangeNotifierProvider<ChatService>(create: (_) => ChatService()),
+      ChangeNotifierProvider<ChatService>(
+        create: (_) => ChatService(const UntrackedSyncWriteExecutor.forTests()),
+      ),
       ChangeNotifierProvider<BackupReminderProvider>.value(value: reminder),
     ],
     child: MaterialApp(
@@ -49,7 +51,9 @@ void main() {
   group('BackupPage reminder settings', () {
     testWidgets('shows reminder switch while disabled', (tester) async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       final reminder = await _createReminderProvider();
 
       await tester.pumpWidget(
@@ -66,7 +70,9 @@ void main() {
       tester,
     ) async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
       final reminder = await _createReminderProvider(enabled: true);
 
       await tester.pumpWidget(

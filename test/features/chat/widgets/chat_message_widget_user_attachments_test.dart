@@ -19,8 +19,16 @@ void main() {
     await tester.pumpWidget(
       MultiProvider(
         providers: [
-          ChangeNotifierProvider(create: (_) => SettingsProvider()),
-          ChangeNotifierProvider(create: (_) => UserProvider()),
+          ChangeNotifierProvider(
+            create: (_) => SettingsProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
+          ChangeNotifierProvider(
+            create: (_) => UserProvider(
+              syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+            ),
+          ),
         ],
         child: MaterialApp(
           localizationsDelegates: AppLocalizations.localizationsDelegates,

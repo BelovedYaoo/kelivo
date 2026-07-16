@@ -42,7 +42,10 @@ Future<AssistantProvider> _createLoadedAssistantProvider({
     'current_assistant_id_v1': currentAssistantId,
   });
 
-  final provider = AssistantProvider(chatService: chatService);
+  final provider = AssistantProvider(
+    chatService: chatService,
+    syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+  );
   for (var i = 0; i < 25; i++) {
     if (provider.assistants.length == assistants.length) return provider;
     await Future<void>.delayed(const Duration(milliseconds: 10));
@@ -73,7 +76,9 @@ void main() {
     test(
       'deletes conversations and messages owned by the deleted assistant',
       () async {
-        final chatService = ChatService();
+        final chatService = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await chatService.init();
         final provider = await _createLoadedAssistantProvider(
           chatService: chatService,
@@ -131,7 +136,9 @@ void main() {
     test(
       'deletes draft conversations owned by the deleted assistant',
       () async {
-        final chatService = ChatService();
+        final chatService = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await chatService.init();
         final provider = await _createLoadedAssistantProvider(
           chatService: chatService,
@@ -158,7 +165,9 @@ void main() {
     test(
       'notifies once when deleting multiple assistant conversations',
       () async {
-        final chatService = ChatService();
+        final chatService = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await chatService.init();
 
         final first = await chatService.createConversation(
@@ -201,7 +210,9 @@ void main() {
     test(
       'keeps conversations when deleting the last assistant is rejected',
       () async {
-        final chatService = ChatService();
+        final chatService = ChatService(
+          const UntrackedSyncWriteExecutor.forTests(),
+        );
         await chatService.init();
         final provider = await _createLoadedAssistantProvider(
           chatService: chatService,

@@ -15,7 +15,9 @@ Future<void> _pumpBar(WidgetTester tester, Widget child) async {
   SharedPreferences.setMockInitialValues({});
   await tester.pumpWidget(
     ChangeNotifierProvider(
-      create: (_) => SettingsProvider(),
+      create: (_) => SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      ),
       child: MaterialApp(
         localizationsDelegates: const [
           AppLocalizations.delegate,

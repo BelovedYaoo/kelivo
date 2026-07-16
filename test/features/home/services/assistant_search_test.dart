@@ -25,7 +25,7 @@ void main() {
     test('injects search prompt only when the assistant enables search', () {
       SharedPreferences.setMockInitialValues({});
       final service = MessageBuilderService(
-        chatService: ChatService(),
+        chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
         contextProvider: _FakeBuildContext(),
       );
 
@@ -34,7 +34,9 @@ void main() {
       ];
       service.injectSearchPrompt(
         disabledMessages,
-        SettingsProvider(),
+        SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
         const Assistant(id: 'assistant-a', name: 'A'),
         false,
       );
@@ -44,7 +46,9 @@ void main() {
       ];
       service.injectSearchPrompt(
         enabledMessages,
-        SettingsProvider(),
+        SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
         const Assistant(id: 'assistant-b', name: 'B', searchEnabled: true),
         false,
       );
@@ -61,7 +65,9 @@ void main() {
       tester,
     ) async {
       SharedPreferences.setMockInitialValues({});
-      final settings = SettingsProvider();
+      final settings = SettingsProvider(
+        syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+      );
 
       late List<Map<String, dynamic>> disabledTools;
       late List<Map<String, dynamic>> enabledTools;
@@ -69,9 +75,15 @@ void main() {
         MultiProvider(
           providers: [
             ChangeNotifierProvider<AssistantProvider>(
-              create: (_) => AssistantProvider(),
+              create: (_) => AssistantProvider(
+                syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+              ),
             ),
-            ChangeNotifierProvider<McpProvider>(create: (_) => McpProvider()),
+            ChangeNotifierProvider<McpProvider>(
+              create: (_) => McpProvider(
+                syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+              ),
+            ),
             ChangeNotifierProvider<McpToolService>(
               create: (_) => McpToolService(),
             ),

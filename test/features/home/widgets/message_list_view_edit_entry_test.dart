@@ -112,9 +112,21 @@ class _MessageListHarnessState extends State<_MessageListHarness> {
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
-        ChangeNotifierProvider(create: (_) => SettingsProvider()),
-        ChangeNotifierProvider(create: (_) => AssistantProvider()),
-        ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider(
+          create: (_) => SettingsProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => AssistantProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          ),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => UserProvider(
+            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+          ),
+        ),
         ChangeNotifierProvider(create: (_) => TtsProvider()),
         ChangeNotifierProvider(create: (_) => AskUserInteractionService()),
         ChangeNotifierProvider(create: (_) => ToolApprovalService()),

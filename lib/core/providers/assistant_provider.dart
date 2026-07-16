@@ -13,8 +13,14 @@ import '../services/chat/chat_service.dart';
 import '../../l10n/app_localizations.dart';
 import '../../utils/avatar_cache.dart';
 import '../../utils/app_directories.dart';
+import '../services/sync/config_sync_keys.dart';
+import '../services/sync/sync_codec.dart';
+import '../services/sync/sync_write_executor.dart';
+import '../utils/batched_change_notifier.dart';
+export '../services/sync/sync_write_executor.dart'
+    show UntrackedSyncWriteExecutor;
 
-class AssistantProvider extends ChangeNotifier {
+class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
   static const String _assistantsKey = 'assistants_v1';
   static const String _currentAssistantKey = 'current_assistant_id_v1';
   static const String _legacySearchEnabledKey = 'search_enabled_v1';
@@ -22,6 +28,7 @@ class AssistantProvider extends ChangeNotifier {
   final List<Assistant> _assistants = <Assistant>[];
   String? _currentAssistantId;
   final ChatService? chatService;
+  final SyncWriteExecutor _syncWrites;
   late final Future<void> ready;
 
   List<Assistant> get assistants => List.unmodifiable(_assistants);
@@ -35,7 +42,10 @@ class AssistantProvider extends ChangeNotifier {
 
   bool get currentSearchEnabled => currentAssistant?.searchEnabled ?? false;
 
-  AssistantProvider({this.chatService}) {
+  AssistantProvider({
+    this.chatService,
+    required SyncWriteExecutor syncWriteExecutor,
+  }) : _syncWrites = syncWriteExecutor {
     ready = _load();
   }
 
@@ -146,10 +156,8 @@ class AssistantProvider extends ChangeNotifier {
   Future<void> ensureDefaults(dynamic context) async {
     if (_assistants.isNotEmpty) return;
     final l10n = AppLocalizations.of(context)!;
-    // 1) 默认助手
-    _assistants.add(_defaultAssistant(l10n));
-    // 2) 示例助手（带提示词模板）
-    _assistants.add(
+    final defaults = <Assistant>[
+      _defaultAssistant(l10n),
       Assistant(
         id: const Uuid().v4(),
         name: l10n.assistantProviderSampleAssistantName,
@@ -164,15 +172,23 @@ class AssistantProvider extends ChangeNotifier {
         temperature: 0.6,
         topP: null,
       ),
+    ];
+    await _syncWrites.runLocalBatch(
+      keys: <SyncEntityKey>[
+        ...defaults.map((assistant) => ConfigSyncKeys.assistant(assistant.id)),
+        ConfigSyncKeys.assistantSelection,
+      ],
+      write: () async {
+        _assistants.addAll(defaults);
+        await _persist();
+        if (_currentAssistantId == null) {
+          _currentAssistantId = _assistants.first.id;
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString(_currentAssistantKey, _currentAssistantId!);
+        }
+        notifyListeners();
+      },
     );
-    await _persist();
-    // Set current assistant if not set
-    if (_currentAssistantId == null && _assistants.isNotEmpty) {
-      _currentAssistantId = _assistants.first.id;
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setString(_currentAssistantKey, _currentAssistantId!);
-    }
-    notifyListeners();
   }
 
   String _buildCopyName(Assistant source, AppLocalizations? l10n) {
@@ -298,10 +314,15 @@ class AssistantProvider extends ChangeNotifier {
 
   Future<void> setCurrentAssistant(String id) async {
     if (_currentAssistantId == id) return;
-    _currentAssistantId = id;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_currentAssistantKey, id);
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.assistantSelection,
+      write: () async {
+        _currentAssistantId = id;
+        notifyListeners();
+        final prefs = await SharedPreferences.getInstance();
+        await prefs.setString(_currentAssistantKey, id);
+      },
+    );
   }
 
   Future<void> syncSetCurrentAssistant(String? id) async {
@@ -349,10 +370,15 @@ class AssistantProvider extends ChangeNotifier {
       temperature: 0.6,
       topP: null,
     );
-    _assistants.add(a);
-    await _persist();
-    notifyListeners();
-    return a.id;
+    return _syncWrites.runLocal(
+      key: ConfigSyncKeys.assistant(a.id),
+      write: () async {
+        _assistants.add(a);
+        await _persist();
+        notifyListeners();
+        return a.id;
+      },
+    );
   }
 
   Future<String?> duplicateAssistant(
@@ -363,131 +389,144 @@ class AssistantProvider extends ChangeNotifier {
     if (idx == -1) return null;
     final source = _assistants[idx];
     final newId = const Uuid().v4();
+    return _syncWrites.runLocalBatch(
+      keys: <SyncEntityKey>[
+        ConfigSyncKeys.assistant(newId),
+        ..._assistants
+            .skip(idx + 1)
+            .map((assistant) => ConfigSyncKeys.assistant(assistant.id)),
+      ],
+      write: () async {
+        final avatarCopy = await _duplicateLocalFile(
+          source.avatar,
+          isAvatar: true,
+          newId: newId,
+        );
+        final backgroundCopy = await _duplicateLocalFile(
+          source.background,
+          isAvatar: false,
+          newId: newId,
+        );
 
-    final avatarCopy = await _duplicateLocalFile(
-      source.avatar,
-      isAvatar: true,
-      newId: newId,
-    );
-    final backgroundCopy = await _duplicateLocalFile(
-      source.background,
-      isAvatar: false,
-      newId: newId,
-    );
+        final copy = source.copyWith(
+          id: newId,
+          name: _buildCopyName(source, l10n),
+          avatar: avatarCopy,
+          background: backgroundCopy,
+          mcpServerIds: List<String>.of(source.mcpServerIds),
+          localToolIds: List<String>.of(source.localToolIds),
+          customHeaders: source.customHeaders
+              .map((e) => Map<String, String>.from(e))
+              .toList(),
+          customBody: source.customBody
+              .map((e) => Map<String, String>.from(e))
+              .toList(),
+          presetMessages: source.presetMessages
+              .map((m) => PresetMessage(role: m.role, content: m.content))
+              .toList(),
+          regexRules: source.regexRules
+              .map(
+                (r) => AssistantRegex(
+                  id: const Uuid().v4(),
+                  name: r.name,
+                  pattern: r.pattern,
+                  replacement: r.replacement,
+                  scopes: List<AssistantRegexScope>.of(r.scopes),
+                  visualOnly: r.visualOnly,
+                  replaceOnly: r.replaceOnly,
+                  enabled: r.enabled,
+                ),
+              )
+              .toList(),
+        );
 
-    final copy = source.copyWith(
-      id: newId,
-      name: _buildCopyName(source, l10n),
-      avatar: avatarCopy,
-      background: backgroundCopy,
-      mcpServerIds: List<String>.of(source.mcpServerIds),
-      localToolIds: List<String>.of(source.localToolIds),
-      customHeaders: source.customHeaders
-          .map((e) => Map<String, String>.from(e))
-          .toList(),
-      customBody: source.customBody
-          .map((e) => Map<String, String>.from(e))
-          .toList(),
-      presetMessages: source.presetMessages
-          .map((m) => PresetMessage(role: m.role, content: m.content))
-          .toList(),
-      regexRules: source.regexRules
-          .map(
-            (r) => AssistantRegex(
-              id: const Uuid().v4(),
-              name: r.name,
-              pattern: r.pattern,
-              replacement: r.replacement,
-              scopes: List<AssistantRegexScope>.of(r.scopes),
-              visualOnly: r.visualOnly,
-              replaceOnly: r.replaceOnly,
-              enabled: r.enabled,
-            ),
-          )
-          .toList(),
+        _assistants.insert(idx + 1, copy);
+        await _persist();
+        notifyListeners();
+        return copy.id;
+      },
     );
-
-    _assistants.insert(idx + 1, copy);
-    await _persist();
-    notifyListeners();
-    return copy.id;
   }
 
   Future<void> updateAssistant(Assistant updated) async {
     final idx = _assistants.indexWhere((a) => a.id == updated.id);
     if (idx == -1) return;
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.assistant(updated.id),
+      write: () async {
+        var next = updated;
 
-    var next = updated;
-
-    try {
-      final prev = _assistants[idx];
-      final raw = (updated.avatar ?? '').trim();
-      final prevRaw = (prev.avatar ?? '').trim();
-      final changed = raw != prevRaw;
-
-      if (changed) {
-        final avatarPath = await _copyLocalAssetToManagedDirectory(
-          raw,
-          directoryAsync: AppDirectories.getAvatarsDirectory,
-          filenamePrefix: 'assistant',
-          id: updated.id,
-        );
-        if (avatarPath != updated.avatar) {
-          await _deleteManagedFileIfOwned(
-            prevRaw,
-            directoryAsync: AppDirectories.getAvatarsDirectory,
-            replacementPath: avatarPath,
-          );
-          next = updated.copyWith(avatar: avatarPath);
-        } else if (raw.isEmpty) {
-          await _deleteManagedFileIfOwned(
-            prevRaw,
-            directoryAsync: AppDirectories.getAvatarsDirectory,
-            replacementPath: null,
-          );
-        }
-      }
-
-      // Prefetch URL avatar to allow offline display later
-      if (changed && raw.startsWith('http')) {
         try {
-          await AvatarCache.getPath(raw);
-        } catch (_) {}
-      }
+          final prev = _assistants[idx];
+          final raw = (updated.avatar ?? '').trim();
+          final prevRaw = (prev.avatar ?? '').trim();
+          final changed = raw != prevRaw;
 
-      // Handle background persistence similar to avatar, but under images/
-      final bgRaw = (updated.background ?? '').trim();
-      final prevBgRaw = (prev.background ?? '').trim();
-      final bgChanged = bgRaw != prevBgRaw;
-      if (bgChanged) {
-        final backgroundPath = await _copyLocalAssetToManagedDirectory(
-          bgRaw,
-          directoryAsync: AppDirectories.getImagesDirectory,
-          filenamePrefix: 'background',
-          id: updated.id,
-        );
-        if (backgroundPath != updated.background) {
-          await _deleteManagedFileIfOwned(
-            prevBgRaw,
-            directoryAsync: AppDirectories.getImagesDirectory,
-            replacementPath: backgroundPath,
-          );
-          next = next.copyWith(background: backgroundPath);
-        } else if (bgRaw.isEmpty) {
-          await _deleteManagedFileIfOwned(
-            prevBgRaw,
-            directoryAsync: AppDirectories.getImagesDirectory,
-            replacementPath: null,
-          );
+          if (changed) {
+            final avatarPath = await _copyLocalAssetToManagedDirectory(
+              raw,
+              directoryAsync: AppDirectories.getAvatarsDirectory,
+              filenamePrefix: 'assistant',
+              id: updated.id,
+            );
+            if (avatarPath != updated.avatar) {
+              await _deleteManagedFileIfOwned(
+                prevRaw,
+                directoryAsync: AppDirectories.getAvatarsDirectory,
+                replacementPath: avatarPath,
+              );
+              next = updated.copyWith(avatar: avatarPath);
+            } else if (raw.isEmpty) {
+              await _deleteManagedFileIfOwned(
+                prevRaw,
+                directoryAsync: AppDirectories.getAvatarsDirectory,
+                replacementPath: null,
+              );
+            }
+          }
+
+          // Prefetch URL avatar to allow offline display later
+          if (changed && raw.startsWith('http')) {
+            try {
+              await AvatarCache.getPath(raw);
+            } catch (_) {}
+          }
+
+          // Handle background persistence similar to avatar, but under images/
+          final bgRaw = (updated.background ?? '').trim();
+          final prevBgRaw = (prev.background ?? '').trim();
+          final bgChanged = bgRaw != prevBgRaw;
+          if (bgChanged) {
+            final backgroundPath = await _copyLocalAssetToManagedDirectory(
+              bgRaw,
+              directoryAsync: AppDirectories.getImagesDirectory,
+              filenamePrefix: 'background',
+              id: updated.id,
+            );
+            if (backgroundPath != updated.background) {
+              await _deleteManagedFileIfOwned(
+                prevBgRaw,
+                directoryAsync: AppDirectories.getImagesDirectory,
+                replacementPath: backgroundPath,
+              );
+              next = next.copyWith(background: backgroundPath);
+            } else if (bgRaw.isEmpty) {
+              await _deleteManagedFileIfOwned(
+                prevBgRaw,
+                directoryAsync: AppDirectories.getImagesDirectory,
+                replacementPath: null,
+              );
+            }
+          }
+        } catch (_) {
+          // 资源复制失败时仍保留调用方给出的可用值，避免一次外设错误丢失其余配置。
         }
-      }
-    } catch (_) {
-      // On any failure, fall back to the provided value unchanged.
-    }
 
-    _assistants[idx] = next;
-    await _persist();
-    notifyListeners();
+        _assistants[idx] = next;
+        await _persist();
+        notifyListeners();
+      },
+    );
   }
 
   Future<void> syncUpsertAssistant(
@@ -541,11 +580,17 @@ class AssistantProvider extends ChangeNotifier {
     final list = List<AssistantRegex>.of(_assistants[idx].regexRules);
     if (oldIndex < 0 || oldIndex >= list.length) return;
     if (newIndex < 0 || newIndex >= list.length) return;
-    final item = list.removeAt(oldIndex);
-    list.insert(newIndex, item);
-    _assistants[idx] = _assistants[idx].copyWith(regexRules: list);
-    notifyListeners();
-    await _persist();
+    if (oldIndex == newIndex) return;
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.assistant(assistantId),
+      write: () async {
+        final item = list.removeAt(oldIndex);
+        list.insert(newIndex, item);
+        _assistants[idx] = _assistants[idx].copyWith(regexRules: list);
+        notifyListeners();
+        await _persist();
+      },
+    );
   }
 
   Future<bool> deleteAssistant(String id) async {
@@ -555,23 +600,32 @@ class AssistantProvider extends ChangeNotifier {
     if (_assistants.length <= 1) return false;
 
     await chatService?.deleteConversationsForAssistant(id);
-
     final removingCurrent = _assistants[idx].id == _currentAssistantId;
-    _assistants.removeAt(idx);
-    if (removingCurrent) {
-      _currentAssistantId = _assistants.isNotEmpty
-          ? _assistants.first.id
-          : null;
-    }
-    await _persist();
-    final prefs = await SharedPreferences.getInstance();
-    if (_currentAssistantId != null) {
-      await prefs.setString(_currentAssistantKey, _currentAssistantId!);
-    } else {
-      await prefs.remove(_currentAssistantKey);
-    }
-    notifyListeners();
-    return true;
+    return _syncWrites.runLocalBatch(
+      keys: <SyncEntityKey>[
+        ..._assistants
+            .skip(idx)
+            .map((assistant) => ConfigSyncKeys.assistant(assistant.id)),
+        ConfigSyncKeys.assistantSelection,
+      ],
+      write: () async {
+        _assistants.removeAt(idx);
+        if (removingCurrent) {
+          _currentAssistantId = _assistants.isNotEmpty
+              ? _assistants.first.id
+              : null;
+        }
+        await _persist();
+        final prefs = await SharedPreferences.getInstance();
+        if (_currentAssistantId != null) {
+          await prefs.setString(_currentAssistantKey, _currentAssistantId!);
+        } else {
+          await prefs.remove(_currentAssistantKey);
+        }
+        notifyListeners();
+        return true;
+      },
+    );
   }
 
   Future<void> reorderAssistants(int oldIndex, int newIndex) async {
@@ -579,14 +633,19 @@ class AssistantProvider extends ChangeNotifier {
     if (oldIndex < 0 || oldIndex >= _assistants.length) return;
     if (newIndex < 0 || newIndex >= _assistants.length) return;
 
-    final assistant = _assistants.removeAt(oldIndex);
-    _assistants.insert(newIndex, assistant);
-
-    // Notify listeners immediately for smooth UI update
-    notifyListeners();
-
-    // Then persist the changes
-    await _persist();
+    final start = oldIndex < newIndex ? oldIndex : newIndex;
+    final end = oldIndex > newIndex ? oldIndex : newIndex;
+    await _syncWrites.runLocalBatch(
+      keys: _assistants
+          .sublist(start, end + 1)
+          .map((assistant) => ConfigSyncKeys.assistant(assistant.id)),
+      write: () async {
+        final assistant = _assistants.removeAt(oldIndex);
+        _assistants.insert(newIndex, assistant);
+        notifyListeners();
+        await _persist();
+      },
+    );
   }
 
   // Reorder only within a subset (e.g., assistants belonging to a tag group or ungrouped).
@@ -613,26 +672,34 @@ class AssistantProvider extends ChangeNotifier {
     final subset = subsetIndices
         .map((i) => _assistants[i])
         .toList(growable: true);
-    final moved = subset.removeAt(oldIndex);
-    subset.insert(newIndex, moved);
+    final start = oldIndex < newIndex ? oldIndex : newIndex;
+    final end = oldIndex > newIndex ? oldIndex : newIndex;
+    await _syncWrites.runLocalBatch(
+      keys: subset
+          .sublist(start, end + 1)
+          .map((assistant) => ConfigSyncKeys.assistant(assistant.id)),
+      write: () async {
+        final moved = subset.removeAt(oldIndex);
+        subset.insert(newIndex, moved);
 
-    // Merge back into master list
-    final merged = <Assistant>[];
-    int take = 0;
-    for (int i = 0; i < _assistants.length; i++) {
-      final a = _assistants[i];
-      if (idSet.contains(a.id)) {
-        merged.add(subset[take++]);
-      } else {
-        merged.add(a);
-      }
-    }
-    _assistants
-      ..clear()
-      ..addAll(merged);
+        final merged = <Assistant>[];
+        int take = 0;
+        for (int i = 0; i < _assistants.length; i++) {
+          final assistant = _assistants[i];
+          if (idSet.contains(assistant.id)) {
+            merged.add(subset[take++]);
+          } else {
+            merged.add(assistant);
+          }
+        }
+        _assistants
+          ..clear()
+          ..addAll(merged);
 
-    notifyListeners();
-    await _persist();
+        notifyListeners();
+        await _persist();
+      },
+    );
   }
 }
 
