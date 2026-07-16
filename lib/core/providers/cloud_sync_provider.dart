@@ -49,6 +49,7 @@ final class CloudSyncProvider extends ChangeNotifier
     required InstructionInjectionProvider instructionInjectionProvider,
     required WorldBookProvider worldBookProvider,
     required UserProvider userProvider,
+    required String? capturedConfigRescanGeneration,
   }) : _configAdapter = ConfigSyncAdapter(
          settingsProvider: settingsProvider,
          assistantProvider: assistantProvider,
@@ -58,7 +59,8 @@ final class CloudSyncProvider extends ChangeNotifier
          instructionInjectionProvider: instructionInjectionProvider,
          worldBookProvider: worldBookProvider,
          userProvider: userProvider,
-       );
+       ),
+       _startupConfigRescanGeneration = capturedConfigRescanGeneration;
 
   static const Duration automaticSyncInterval = Duration(seconds: 30);
 
@@ -90,6 +92,7 @@ final class CloudSyncProvider extends ChangeNotifier
   bool _journalExporterBound = false;
   bool _storeCloseScheduled = false;
   int _sessionEpoch = 0;
+  String? _startupConfigRescanGeneration;
 
   CloudSyncProviderStatus get status => _status;
   CloudSyncAccountSession? get session => _session;
@@ -390,9 +393,23 @@ final class CloudSyncProvider extends ChangeNotifier
     _lastError = null;
     _setStatus(CloudSyncProviderStatus.syncing);
     try {
-      final result = await coordinator.synchronize();
+      final configRescanGeneration = _startupConfigRescanGeneration;
+      final result = await coordinator.synchronize(
+        rescanEntityTypes: configRescanGeneration == null
+            ? const <String>{}
+            : _configAdapter.entityTypes,
+      );
       final recovery = await _writeJournal.recover();
       if (epoch != _sessionEpoch || _disposed) return false;
+      if (configRescanGeneration != null &&
+          result.conflictCount == 0 &&
+          recovery.deferredCount == 0) {
+        await _store.consumeConfigRescanGeneration(configRescanGeneration);
+        if (epoch != _sessionEpoch || _disposed) return false;
+        if (_startupConfigRescanGeneration == configRescanGeneration) {
+          _startupConfigRescanGeneration = null;
+        }
+      }
       _lastRun = result.copyWith(deferredWriteCount: recovery.deferredCount);
       _lastError = null;
       _setStatus(

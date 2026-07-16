@@ -88,6 +88,8 @@ Future<void> main() async {
       final appDataDirectory = await AppDirectories.getAppDataDirectory();
       await Hive.initFlutter(appDataDirectory.path);
       final cloudSyncStore = await CloudSyncStore.open();
+      final startupConfigRescanGeneration =
+          cloudSyncStore.configRescanGeneration;
       final journalScopeId = await cloudSyncStore.loadOrCreateJournalScopeId();
       final syncWriteJournal = SyncWriteJournal(
         store: cloudSyncStore,
@@ -101,6 +103,7 @@ Future<void> main() async {
         MyApp(
           cloudSyncStore: cloudSyncStore,
           syncWriteJournal: syncWriteJournal,
+          startupConfigRescanGeneration: startupConfigRescanGeneration,
         ),
       );
     },
@@ -133,11 +136,13 @@ class MyApp extends StatelessWidget {
   const MyApp({
     required this.cloudSyncStore,
     required this.syncWriteJournal,
+    required this.startupConfigRescanGeneration,
     super.key,
   });
 
   final CloudSyncStore cloudSyncStore;
   final SyncWriteJournal syncWriteJournal;
+  final String? startupConfigRescanGeneration;
 
   @override
   Widget build(BuildContext context) {
@@ -145,33 +150,51 @@ class MyApp extends StatelessWidget {
       providers: [
         Provider<SyncWriteJournal>.value(value: syncWriteJournal),
         ChangeNotifierProvider(create: (_) => ChatProvider()),
-        ChangeNotifierProvider(create: (_) => UserProvider()),
+        ChangeNotifierProvider(
+          create: (_) => UserProvider(syncWriteExecutor: syncWriteJournal),
+        ),
         ChangeNotifierProvider(
           create: (_) {
-            final settings = SettingsProvider();
+            final settings = SettingsProvider(
+              syncWriteExecutor: syncWriteJournal,
+            );
             unawaited(settings.incrementAppLaunchCount());
             return settings;
           },
         ),
-        ChangeNotifierProvider(create: (_) => ChatService()),
+        ChangeNotifierProvider(create: (_) => ChatService(syncWriteJournal)),
         ChangeNotifierProvider(create: (_) => McpToolService()),
-        ChangeNotifierProvider(create: (_) => McpProvider()),
+        ChangeNotifierProvider(
+          create: (_) => McpProvider(syncWriteExecutor: syncWriteJournal),
+        ),
         ChangeNotifierProvider(create: (_) => ToolApprovalService()),
         ChangeNotifierProvider(create: (_) => AskUserInteractionService()),
         ChangeNotifierProvider(
-          create: (ctx) =>
-              AssistantProvider(chatService: ctx.read<ChatService>()),
+          create: (ctx) => AssistantProvider(
+            chatService: ctx.read<ChatService>(),
+            syncWriteExecutor: syncWriteJournal,
+          ),
         ),
         ChangeNotifierProvider(create: (_) => TagProvider()),
         ChangeNotifierProvider(create: (_) => TtsProvider()),
         ChangeNotifierProvider(create: (_) => UpdateProvider()),
-        ChangeNotifierProvider(create: (_) => QuickPhraseProvider()),
-        ChangeNotifierProvider(create: (_) => InstructionInjectionProvider()),
+        ChangeNotifierProvider(
+          create: (_) =>
+              QuickPhraseProvider(syncWriteExecutor: syncWriteJournal),
+        ),
+        ChangeNotifierProvider(
+          create: (_) =>
+              InstructionInjectionProvider(syncWriteExecutor: syncWriteJournal),
+        ),
         ChangeNotifierProvider(
           create: (_) => InstructionInjectionGroupProvider(),
         ),
-        ChangeNotifierProvider(create: (_) => WorldBookProvider()),
-        ChangeNotifierProvider(create: (_) => MemoryProvider()),
+        ChangeNotifierProvider(
+          create: (_) => WorldBookProvider(syncWriteExecutor: syncWriteJournal),
+        ),
+        ChangeNotifierProvider(
+          create: (_) => MemoryProvider(syncWriteExecutor: syncWriteJournal),
+        ),
         ChangeNotifierProvider(create: (_) => BackupReminderProvider()),
         // Desktop hotkeys provider
         ChangeNotifierProvider(create: (_) => HotkeyProvider()),
@@ -203,6 +226,7 @@ class MyApp extends StatelessWidget {
                   .read<InstructionInjectionProvider>(),
               worldBookProvider: ctx.read<WorldBookProvider>(),
               userProvider: ctx.read<UserProvider>(),
+              capturedConfigRescanGeneration: startupConfigRescanGeneration,
             );
             unawaited(provider.initialize());
             return provider;
