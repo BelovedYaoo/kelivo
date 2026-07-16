@@ -12,3 +12,4 @@
 - 已完成：新增持久写前 `SyncWriteJournal` 深模块；支持稳定本地作用域、失败/延迟恢复、同实体串行、异实体并发、远端应用隔离及会话切换门闩；9 项目标测试与定向静态分析通过，尚未接入领域写入口。
 - 已完成：Chat Adapter 覆盖 `message-selection`、`tool-event`、`thought-signature` 三类 v2 实体；稳定 identity/parent、严格 Payload、专用 `FromSync` 写入及墓碑清理均已闭环，空工具事件保留实体语义。
 - Chat v2 验证：新增目标测试 6 项、既有 ChatService 回归测试 26 项及定向静态分析均通过；批处理明确留到后续切片。
+- 已完成：`instruction-injection` 补入 Flutter 同步实体枚举与支持集合，所有枚举/支持集合一致性测试通过。

@@ -25,6 +25,7 @@ const _supportedEntityTypes = <String>{
   'search-service',
   'network-tts',
   'mcp-server',
+  'instruction-injection',
   'user-preference',
 };
 
@@ -124,6 +125,7 @@ enum CloudSyncEntityType {
   searchService('search-service'),
   networkTts('network-tts'),
   mcpServer('mcp-server'),
+  instructionInjection('instruction-injection'),
   userPreference('user-preference');
 
   const CloudSyncEntityType(this.wireName);
