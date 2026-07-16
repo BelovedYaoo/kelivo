@@ -17,6 +17,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:scrollview_observer/scrollview_observer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 void main() {
   setUp(() {

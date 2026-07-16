@@ -10,6 +10,7 @@ import 'package:Kelivo/shared/widgets/ios_tactile.dart';
 import 'package:Kelivo/theme/app_font_weights.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 Future<void> _pumpBar(WidgetTester tester, Widget child) async {
   SharedPreferences.setMockInitialValues({});

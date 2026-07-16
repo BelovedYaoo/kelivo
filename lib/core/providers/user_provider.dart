@@ -7,8 +7,6 @@ import '../../utils/app_directories.dart';
 import '../services/sync/config_sync_keys.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
-export '../services/sync/sync_write_executor.dart'
-    show UntrackedSyncWriteExecutor;
 
 class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
   static const String _prefsUserNameKey = 'user_name';

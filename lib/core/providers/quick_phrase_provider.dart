@@ -4,8 +4,6 @@ import '../services/quick_phrase_store.dart';
 import '../services/sync/config_sync_keys.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
-export '../services/sync/sync_write_executor.dart'
-    show UntrackedSyncWriteExecutor;
 
 class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
   List<QuickPhrase> _phrases = [];

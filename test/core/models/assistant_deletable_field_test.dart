@@ -5,6 +5,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:Kelivo/core/models/assistant.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 const _assistantsKey = 'assistants_v1';
 const _currentAssistantKey = 'current_assistant_id_v1';

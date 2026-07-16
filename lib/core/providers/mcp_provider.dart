@@ -10,8 +10,6 @@ import '../services/sync/config_sync_keys.dart';
 import '../services/sync/sync_codec.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
-export '../services/sync/sync_write_executor.dart'
-    show UntrackedSyncWriteExecutor;
 
 /// Transport type: SSE, Streamable HTTP, and STDIO (desktop-only).
 enum McpTransportType { sse, http, stdio, inmemory }

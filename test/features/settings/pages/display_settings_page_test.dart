@@ -6,6 +6,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:syncfusion_flutter_sliders/sliders.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

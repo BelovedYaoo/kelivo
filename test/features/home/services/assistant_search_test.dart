@@ -12,6 +12,7 @@ import 'package:Kelivo/core/services/mcp/mcp_tool_service.dart';
 import 'package:Kelivo/core/services/search/search_tool_service.dart';
 import 'package:Kelivo/features/home/services/message_builder_service.dart';
 import 'package:Kelivo/features/home/services/tool_handler_service.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 class _FakeBuildContext implements BuildContext {
   @override

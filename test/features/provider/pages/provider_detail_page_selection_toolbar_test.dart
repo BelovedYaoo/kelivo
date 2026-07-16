@@ -8,6 +8,7 @@ import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/features/provider/pages/provider_detail_page.dart';
 import 'package:Kelivo/icons/lucide_adapter.dart';
 import 'package:Kelivo/l10n/app_localizations.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 Future<SettingsProvider> _createSettings(WidgetTester tester) async {
   SharedPreferences.setMockInitialValues({});

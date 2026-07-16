@@ -13,6 +13,7 @@ import 'package:Kelivo/core/providers/memory_provider.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/services/mcp/mcp_tool_service.dart';
 import 'package:Kelivo/features/home/services/tool_handler_service.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();

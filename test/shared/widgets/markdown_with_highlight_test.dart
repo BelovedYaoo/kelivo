@@ -18,6 +18,7 @@ import 'package:flutter_math_fork/tex.dart' show TexEncoderExt;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 Finder _findMathWidget() {
   return find.byType(Math);

@@ -7,6 +7,7 @@ import 'package:Kelivo/features/stats/models/stats_models.dart';
 import 'package:Kelivo/features/stats/pages/stats_page.dart';
 import 'package:Kelivo/features/stats/widgets/stats_heatmap.dart';
 import 'package:Kelivo/l10n/app_localizations.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 Widget _harness(StatsSnapshot snapshot) {
   return ChangeNotifierProvider(

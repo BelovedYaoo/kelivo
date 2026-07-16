@@ -18,6 +18,7 @@ import 'package:Kelivo/icons/lucide_adapter.dart';
 import 'package:Kelivo/features/home/services/tool_approval_service.dart';
 import 'package:Kelivo/l10n/app_localizations.dart';
 import 'package:Kelivo/shared/widgets/ios_tactile.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 SettingsProvider _createSettings(ChatMessageBackgroundStyle style) {
   final rawStyle = switch (style) {

@@ -28,8 +28,6 @@ import '../services/sync/config_sync_keys.dart';
 import '../services/sync/sync_codec.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
-export '../services/sync/sync_write_executor.dart'
-    show UntrackedSyncWriteExecutor;
 
 // Desktop: topic list position
 enum DesktopTopicPosition { left, right }

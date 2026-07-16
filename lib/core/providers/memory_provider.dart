@@ -4,8 +4,6 @@ import '../services/memory_store.dart';
 import '../services/sync/config_sync_keys.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
-export '../services/sync/sync_write_executor.dart'
-    show UntrackedSyncWriteExecutor;
 
 class MemoryProvider extends ChangeNotifier with BatchedChangeNotifier {
   List<AssistantMemory> _memories = <AssistantMemory>[];

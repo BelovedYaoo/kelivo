@@ -7,6 +7,7 @@ import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/features/chat/widgets/reasoning_budget_sheet.dart';
 import 'package:Kelivo/l10n/app_localizations.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 Future<SettingsProvider> _settingsForClaudeModel(
   WidgetTester tester,
