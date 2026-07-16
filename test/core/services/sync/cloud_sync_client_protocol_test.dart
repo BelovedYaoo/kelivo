@@ -63,6 +63,75 @@ void main() {
     await server.close(force: true);
   });
 
+  test('附件传输全部携带独立协议版本', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: 'token',
+    );
+
+    Future<void> expectProtocolHeader(
+      String path,
+      Future<void> Function() send,
+    ) async {
+      final operation = send();
+      expect(await requests.moveNext(), isTrue);
+      final request = requests.current;
+      expect(request.uri.path, path);
+      expect(request.headers.value('x-kelivo-sync-protocol-version'), '2');
+      await request.drain<void>();
+      request.response
+        ..statusCode = HttpStatus.unauthorized
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode(<String, Object?>{
+            'error': <String, Object?>{
+              'code': 'unauthorized',
+              'message': 'unauthorized',
+            },
+          }),
+        );
+      await request.response.close();
+      await expectLater(operation, throwsA(isA<CloudSyncException>()));
+    }
+
+    await expectProtocolHeader('/api/attachment/upload/prepare', () async {
+      await client.prepareAttachmentUpload(
+        sha256: 'sha256',
+        md5Base64: 'md5',
+        sizeBytes: 1,
+      );
+    });
+    await expectProtocolHeader('/api/attachment/upload/complete', () async {
+      await client.completeAttachmentUpload(
+        attachmentId: 'attachment-1',
+        blobId: 'blob-1',
+        entityType: 'message',
+        entityId: 'message-1',
+        fileName: 'image.png',
+        mimeType: 'image/png',
+        etag: 'etag',
+      );
+    });
+    await expectProtocolHeader('/api/attachment/info/list', () async {
+      await client.listAttachmentInfo(
+        entityType: 'message',
+        entityId: 'message-1',
+      );
+    });
+    await expectProtocolHeader('/api/attachment/download-url/get', () async {
+      await client.getAttachmentDownloadUrl('attachment-1');
+    });
+    await expectProtocolHeader('/api/attachment/info/delete', () async {
+      await client.deleteAttachmentInfo('attachment-1');
+    });
+
+    await requests.cancel();
+    client.close(force: true);
+    await server.close(force: true);
+  });
+
   test('字段冲突结果保留冲突标识和冲突路径', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;

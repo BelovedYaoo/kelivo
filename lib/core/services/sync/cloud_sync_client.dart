@@ -340,6 +340,7 @@ final class CloudSyncClient implements CloudSyncTransport {
           ..sizeBytes = sizeBytes,
       );
       final response = await _client.getAttachmentApi().prepareAttachmentUpload(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
         prepareAttachmentUploadRequest: request,
       );
       final data = _requireResponseData(response.data?.data);
@@ -389,7 +390,10 @@ final class CloudSyncClient implements CloudSyncTransport {
       );
       final response = await _client
           .getAttachmentApi()
-          .completeAttachmentUpload(completeAttachmentUploadRequest: request);
+          .completeAttachmentUpload(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            completeAttachmentUploadRequest: request,
+          );
       return _fromAttachmentInfo(
         _requireResponseData(response.data?.data).attachment,
       );
@@ -409,6 +413,7 @@ final class CloudSyncClient implements CloudSyncTransport {
           ..entityId = entityId,
       );
       final response = await _client.getAttachmentApi().listAttachmentInfo(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
         listAttachmentInfoRequest: request,
       );
       final data = _requireResponseData(response.data?.data);
@@ -428,7 +433,10 @@ final class CloudSyncClient implements CloudSyncTransport {
       );
       final response = await _client
           .getAttachmentApi()
-          .getAttachmentDownloadUrl(getAttachmentDownloadUrlRequest: request);
+          .getAttachmentDownloadUrl(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            getAttachmentDownloadUrlRequest: request,
+          );
       final data = _requireResponseData(response.data?.data);
       return CloudSyncAttachmentDownload(
         attachmentId: data.attachmentId,
@@ -445,6 +453,7 @@ final class CloudSyncClient implements CloudSyncTransport {
         (builder) => builder.attachmentId = attachmentId,
       );
       final response = await _client.getAttachmentApi().deleteAttachmentInfo(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
         deleteAttachmentInfoRequest: request,
       );
       final data = _requireResponseData(response.data?.data);

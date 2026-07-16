@@ -31,6 +31,7 @@ class AttachmentApi {
   ///
   ///
   /// Parameters:
+  /// * [xKelivoSyncProtocolVersion]
   /// * [completeAttachmentUploadRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
@@ -42,6 +43,7 @@ class AttachmentApi {
   /// Returns a [Future] containing a [Response] with a [CompleteAttachmentUploadResponse] as data
   /// Throws [DioException] if API call or serialization fails
   Future<Response<CompleteAttachmentUploadResponse>> completeAttachmentUpload({
+    required String xKelivoSyncProtocolVersion,
     required CompleteAttachmentUploadRequest completeAttachmentUploadRequest,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -53,7 +55,10 @@ class AttachmentApi {
     final _path = r'/api/attachment/upload/complete';
     final _options = Options(
       method: r'POST',
-      headers: <String, dynamic>{...?headers},
+      headers: <String, dynamic>{
+        r'x-kelivo-sync-protocol-version': xKelivoSyncProtocolVersion,
+        ...?headers,
+      },
       extra: <String, dynamic>{
         'secure': <Map<String, String>>[
           {'type': 'http', 'scheme': 'bearer', 'name': 'BearerAuth'},
@@ -129,6 +134,7 @@ class AttachmentApi {
   ///
   ///
   /// Parameters:
+  /// * [xKelivoSyncProtocolVersion]
   /// * [deleteAttachmentInfoRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
@@ -140,6 +146,7 @@ class AttachmentApi {
   /// Returns a [Future] containing a [Response] with a [DeleteAttachmentInfoResponse] as data
   /// Throws [DioException] if API call or serialization fails
   Future<Response<DeleteAttachmentInfoResponse>> deleteAttachmentInfo({
+    required String xKelivoSyncProtocolVersion,
     required DeleteAttachmentInfoRequest deleteAttachmentInfoRequest,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -151,7 +158,10 @@ class AttachmentApi {
     final _path = r'/api/attachment/info/delete';
     final _options = Options(
       method: r'POST',
-      headers: <String, dynamic>{...?headers},
+      headers: <String, dynamic>{
+        r'x-kelivo-sync-protocol-version': xKelivoSyncProtocolVersion,
+        ...?headers,
+      },
       extra: <String, dynamic>{
         'secure': <Map<String, String>>[
           {'type': 'http', 'scheme': 'bearer', 'name': 'BearerAuth'},
@@ -225,6 +235,7 @@ class AttachmentApi {
   ///
   ///
   /// Parameters:
+  /// * [xKelivoSyncProtocolVersion]
   /// * [getAttachmentDownloadUrlRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
@@ -236,6 +247,7 @@ class AttachmentApi {
   /// Returns a [Future] containing a [Response] with a [GetAttachmentDownloadUrlResponse] as data
   /// Throws [DioException] if API call or serialization fails
   Future<Response<GetAttachmentDownloadUrlResponse>> getAttachmentDownloadUrl({
+    required String xKelivoSyncProtocolVersion,
     required GetAttachmentDownloadUrlRequest getAttachmentDownloadUrlRequest,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -247,7 +259,10 @@ class AttachmentApi {
     final _path = r'/api/attachment/download-url/get';
     final _options = Options(
       method: r'POST',
-      headers: <String, dynamic>{...?headers},
+      headers: <String, dynamic>{
+        r'x-kelivo-sync-protocol-version': xKelivoSyncProtocolVersion,
+        ...?headers,
+      },
       extra: <String, dynamic>{
         'secure': <Map<String, String>>[
           {'type': 'http', 'scheme': 'bearer', 'name': 'BearerAuth'},
@@ -323,6 +338,7 @@ class AttachmentApi {
   ///
   ///
   /// Parameters:
+  /// * [xKelivoSyncProtocolVersion]
   /// * [listAttachmentInfoRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
@@ -334,6 +350,7 @@ class AttachmentApi {
   /// Returns a [Future] containing a [Response] with a [ListAttachmentInfoResponse] as data
   /// Throws [DioException] if API call or serialization fails
   Future<Response<ListAttachmentInfoResponse>> listAttachmentInfo({
+    required String xKelivoSyncProtocolVersion,
     required ListAttachmentInfoRequest listAttachmentInfoRequest,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -345,7 +362,10 @@ class AttachmentApi {
     final _path = r'/api/attachment/info/list';
     final _options = Options(
       method: r'POST',
-      headers: <String, dynamic>{...?headers},
+      headers: <String, dynamic>{
+        r'x-kelivo-sync-protocol-version': xKelivoSyncProtocolVersion,
+        ...?headers,
+      },
       extra: <String, dynamic>{
         'secure': <Map<String, String>>[
           {'type': 'http', 'scheme': 'bearer', 'name': 'BearerAuth'},
@@ -419,6 +439,7 @@ class AttachmentApi {
   ///
   ///
   /// Parameters:
+  /// * [xKelivoSyncProtocolVersion]
   /// * [prepareAttachmentUploadRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
@@ -430,6 +451,7 @@ class AttachmentApi {
   /// Returns a [Future] containing a [Response] with a [PrepareAttachmentUploadResponse] as data
   /// Throws [DioException] if API call or serialization fails
   Future<Response<PrepareAttachmentUploadResponse>> prepareAttachmentUpload({
+    required String xKelivoSyncProtocolVersion,
     required PrepareAttachmentUploadRequest prepareAttachmentUploadRequest,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
@@ -441,7 +463,10 @@ class AttachmentApi {
     final _path = r'/api/attachment/upload/prepare';
     final _options = Options(
       method: r'POST',
-      headers: <String, dynamic>{...?headers},
+      headers: <String, dynamic>{
+        r'x-kelivo-sync-protocol-version': xKelivoSyncProtocolVersion,
+        ...?headers,
+      },
       extra: <String, dynamic>{
         'secure': <Map<String, String>>[
           {'type': 'http', 'scheme': 'bearer', 'name': 'BearerAuth'},
