@@ -203,6 +203,38 @@ void main() {
     expect(persisted.payload?['turnId'], 'turn-1');
   });
 
+  test('outbox 总数包含永久阻塞、未来重试与当前待发送项', () async {
+    final session = _session();
+    for (final index in <int>[1, 2, 3]) {
+      await store.enqueueOutbox(
+        session,
+        CloudSyncOutboxMutation.create(
+          mutationId: 'mutation-$index',
+          entityType: CloudSyncEntityType.conversation,
+          entityId: 'conversation-$index',
+          schemaVersion: 2,
+          payload: <String, Object?>{'title': '会话 $index'},
+        ),
+      );
+    }
+    await store.markOutboxBlocked(
+      session,
+      mutationId: 'mutation-1',
+      errorCode: 'SYNC_PAYLOAD_INVALID',
+    );
+    await store.markOutboxRetry(
+      session,
+      mutationId: 'mutation-2',
+      nextAttemptAt: DateTime.now().toUtc().add(const Duration(days: 1)),
+    );
+
+    expect(store.pendingOutbox(session), hasLength(1));
+    expect(store.outboxCount(session), 3);
+
+    await store.removeOutbox(session, 'mutation-3');
+    expect(store.outboxCount(session), 2);
+  });
+
   test('待发送实体按父级先于子级排序且不依赖创建时间', () async {
     final session = _session();
     final createdAt = DateTime.utc(2026, 7, 16, 8);

@@ -409,6 +409,10 @@ final class CloudSyncStore {
     );
   }
 
+  int outboxCount(CloudSyncAccountSession session) {
+    return _allOutbox(session).length;
+  }
+
   List<CloudSyncOutboxMutation> pendingOutbox(
     CloudSyncAccountSession session, {
     DateTime? readyAt,
