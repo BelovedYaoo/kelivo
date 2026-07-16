@@ -19,7 +19,17 @@ abstract interface class CloudSyncTransport {
   });
 }
 
-final class CloudSyncClient implements CloudSyncTransport {
+abstract interface class CloudSyncConflictTransport {
+  Future<List<CloudSyncConflict>> listConflicts({
+    CloudSyncConflictState state = CloudSyncConflictState.open,
+    int limit = 100,
+  });
+
+  Future<CloudSyncConflict> resolveConflict(String conflictId);
+}
+
+final class CloudSyncClient
+    implements CloudSyncTransport, CloudSyncConflictTransport {
   CloudSyncClient._({
     required this.baseUrl,
     required this._dio,
@@ -223,6 +233,7 @@ final class CloudSyncClient implements CloudSyncTransport {
     });
   }
 
+  @override
   Future<List<CloudSyncConflict>> listConflicts({
     CloudSyncConflictState state = CloudSyncConflictState.open,
     int limit = 100,
@@ -250,6 +261,7 @@ final class CloudSyncClient implements CloudSyncTransport {
     });
   }
 
+  @override
   Future<CloudSyncConflict> resolveConflict(String conflictId) {
     final normalizedId = conflictId.trim();
     if (normalizedId.isEmpty) {

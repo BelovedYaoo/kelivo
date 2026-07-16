@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_conflict_resolver.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_coordinator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
@@ -684,9 +685,328 @@ void main() {
     expect(pending.operation, CloudSyncMutationOperation.update);
     expect(pending.baseRevision, 2);
   });
+
+  test('字段冲突混合选择只写回所选本地值并最后解决', () async {
+    final session = _session();
+    const key = SyncEntityKey(entityType: 'message', entityId: 'message-1');
+    final initialPayload = <String, Object?>{
+      'title': '云端标题',
+      'summary': '云端摘要',
+      'nullable': '云端值',
+      'removeMe': '云端值',
+    };
+    await store.saveShadow(session, _conflictShadow(initialPayload));
+    final events = <String>[];
+    final adapter = _StatefulMessageAdapter(<SyncEntityKey, LocalSyncEntity>{
+      key: LocalSyncEntity(
+        entityType: key.entityType,
+        entityId: key.entityId,
+        payload: initialPayload,
+      ),
+    }, events: events);
+    final conflict = _fieldConflict();
+    final transport = _ConflictTransport(
+      events: events,
+      listResponses: <List<CloudSyncConflict>>[
+        <CloudSyncConflict>[conflict],
+        <CloudSyncConflict>[conflict],
+      ],
+      resolveResult: _resolvedConflict(conflict),
+    );
+    _bindCompletedExporter(writeJournal);
+    var syncCount = 0;
+    final resolver = CloudSyncConflictResolver(
+      session: session,
+      client: transport,
+      store: store,
+      writeJournal: writeJournal,
+      adapters: <SyncEntityAdapter>[adapter],
+      synchronize: () async {
+        events.add('sync');
+        syncCount++;
+        if (syncCount == 2) {
+          await store.saveShadow(
+            session,
+            _conflictShadow(adapter.entities[key]!.payload, revision: 2),
+          );
+        }
+      },
+    );
+
+    final resolved = await resolver.resolve(conflict, const <String>{
+      '/title',
+      '/nullable',
+      '/removeMe',
+    });
+
+    expect(resolved.state, CloudSyncConflictState.resolved);
+    expect(adapter.entities[key]!.payload, <String, Object?>{
+      'title': '本地标题',
+      'summary': '云端摘要',
+      'nullable': null,
+    });
+    expect(events, <String>[
+      'sync',
+      'list',
+      'apply',
+      'sync',
+      'list',
+      'resolve',
+    ]);
+  });
+
+  test('字段冲突全选云端不改本地并直接解决', () async {
+    final conflict = _fieldConflict();
+    final events = <String>[];
+    final transport = _ConflictTransport(
+      events: events,
+      listResponses: const <List<CloudSyncConflict>>[],
+      resolveResult: _resolvedConflict(conflict),
+    );
+    final resolver = CloudSyncConflictResolver(
+      session: _session(),
+      client: transport,
+      store: store,
+      writeJournal: writeJournal,
+      adapters: const <SyncEntityAdapter>[],
+      synchronize: () async => events.add('sync'),
+    );
+
+    final resolved = await resolver.resolve(conflict, const <String>{});
+
+    expect(resolved.state, CloudSyncConflictState.resolved);
+    expect(events, <String>['resolve']);
+  });
+
+  test('字段冲突服务端未返回已解决状态时拒绝伪成功', () async {
+    final conflict = _fieldConflict();
+    final events = <String>[];
+    final resolver = CloudSyncConflictResolver(
+      session: _session(),
+      client: _ConflictTransport(
+        events: events,
+        listResponses: const <List<CloudSyncConflict>>[],
+        resolveResult: conflict,
+      ),
+      store: store,
+      writeJournal: writeJournal,
+      adapters: const <SyncEntityAdapter>[],
+      synchronize: () async => events.add('sync'),
+    );
+
+    await expectLater(
+      resolver.resolve(conflict, const <String>{}),
+      throwsA(
+        isA<CloudSyncConflictResolutionException>().having(
+          (error) => error.reason,
+          'reason',
+          CloudSyncConflictResolutionFailureReason.invalidResolveResult,
+        ),
+      ),
+    );
+
+    expect(events, <String>['resolve']);
+  });
+
+  test('字段冲突缺少有效 shadow 时保留开放状态', () async {
+    final conflict = _fieldConflict();
+    final events = <String>[];
+    final transport = _ConflictTransport(
+      events: events,
+      listResponses: <List<CloudSyncConflict>>[
+        <CloudSyncConflict>[conflict],
+      ],
+      resolveResult: _resolvedConflict(conflict),
+    );
+    final resolver = CloudSyncConflictResolver(
+      session: _session(),
+      client: transport,
+      store: store,
+      writeJournal: writeJournal,
+      adapters: <SyncEntityAdapter>[
+        _StatefulMessageAdapter(const <SyncEntityKey, LocalSyncEntity>{}),
+      ],
+      synchronize: () async => events.add('sync'),
+    );
+
+    await expectLater(
+      resolver.resolve(conflict, const <String>{'/title'}),
+      throwsA(
+        isA<CloudSyncConflictResolutionException>().having(
+          (error) => error.reason,
+          'reason',
+          CloudSyncConflictResolutionFailureReason.invalidShadow,
+        ),
+      ),
+    );
+
+    expect(events, <String>['sync', 'list']);
+  });
+
+  test('字段冲突二次同步产生同实体新冲突时不提前解决', () async {
+    final session = _session();
+    const key = SyncEntityKey(entityType: 'message', entityId: 'message-1');
+    final initialPayload = <String, Object?>{'title': '云端标题'};
+    await store.saveShadow(session, _conflictShadow(initialPayload));
+    final events = <String>[];
+    final adapter = _StatefulMessageAdapter(<SyncEntityKey, LocalSyncEntity>{
+      key: LocalSyncEntity(
+        entityType: key.entityType,
+        entityId: key.entityId,
+        payload: initialPayload,
+      ),
+    }, events: events);
+    final conflict = _fieldConflict();
+    final nextConflict = _fieldConflict(
+      conflictId: 'conflict-2',
+      mutationId: 'mutation-2',
+    );
+    final transport = _ConflictTransport(
+      events: events,
+      listResponses: <List<CloudSyncConflict>>[
+        <CloudSyncConflict>[conflict],
+        <CloudSyncConflict>[conflict, nextConflict],
+      ],
+      resolveResult: _resolvedConflict(conflict),
+    );
+    _bindCompletedExporter(writeJournal);
+    final resolver = CloudSyncConflictResolver(
+      session: session,
+      client: transport,
+      store: store,
+      writeJournal: writeJournal,
+      adapters: <SyncEntityAdapter>[adapter],
+      synchronize: () async => events.add('sync'),
+    );
+
+    await expectLater(
+      resolver.resolve(conflict, const <String>{'/title'}),
+      throwsA(
+        isA<CloudSyncConflictResolutionException>().having(
+          (error) => error.reason,
+          'reason',
+          CloudSyncConflictResolutionFailureReason.entityHasAnotherConflict,
+        ),
+      ),
+    );
+
+    expect(events, <String>['sync', 'list', 'apply', 'sync', 'list']);
+  });
+
+  test('字段冲突写回后校验不一致时不提前解决', () async {
+    final session = _session();
+    const key = SyncEntityKey(entityType: 'message', entityId: 'message-1');
+    final initialPayload = <String, Object?>{'title': '云端标题'};
+    await store.saveShadow(session, _conflictShadow(initialPayload));
+    final events = <String>[];
+    final adapter = _StatefulMessageAdapter(<SyncEntityKey, LocalSyncEntity>{
+      key: LocalSyncEntity(
+        entityType: key.entityType,
+        entityId: key.entityId,
+        payload: initialPayload,
+      ),
+    }, events: events);
+    final conflict = _fieldConflict();
+    final transport = _ConflictTransport(
+      events: events,
+      listResponses: <List<CloudSyncConflict>>[
+        <CloudSyncConflict>[conflict],
+        <CloudSyncConflict>[conflict],
+      ],
+      resolveResult: _resolvedConflict(conflict),
+    );
+    _bindCompletedExporter(writeJournal);
+    final resolver = CloudSyncConflictResolver(
+      session: session,
+      client: transport,
+      store: store,
+      writeJournal: writeJournal,
+      adapters: <SyncEntityAdapter>[adapter],
+      synchronize: () async => events.add('sync'),
+    );
+
+    await expectLater(
+      resolver.resolve(conflict, const <String>{'/title'}),
+      throwsA(
+        isA<CloudSyncConflictResolutionException>().having(
+          (error) => error.reason,
+          'reason',
+          CloudSyncConflictResolutionFailureReason.verificationMismatch,
+        ),
+      ),
+    );
+
+    expect(events, <String>['sync', 'list', 'apply', 'sync', 'list']);
+  });
+
+  test('字段冲突拒绝嵌套路径且不发起网络请求', () async {
+    final events = <String>[];
+    final conflict = _fieldConflict(
+      fields: <CloudSyncConflictField>[
+        _conflictField('/settings/theme', desired: 'dark'),
+      ],
+    );
+    final resolver = CloudSyncConflictResolver(
+      session: _session(),
+      client: _ConflictTransport(
+        events: events,
+        listResponses: const <List<CloudSyncConflict>>[],
+        resolveResult: _resolvedConflict(conflict),
+      ),
+      store: store,
+      writeJournal: writeJournal,
+      adapters: <SyncEntityAdapter>[
+        _StatefulMessageAdapter(const <SyncEntityKey, LocalSyncEntity>{}),
+      ],
+      synchronize: () async => events.add('sync'),
+    );
+
+    await expectLater(
+      resolver.resolve(conflict, const <String>{'/settings/theme'}),
+      throwsA(
+        isA<CloudSyncConflictResolutionException>().having(
+          (error) => error.reason,
+          'reason',
+          CloudSyncConflictResolutionFailureReason.unsupportedNestedPath,
+        ),
+      ),
+    );
+
+    expect(events, isEmpty);
+  });
 }
 
 final class _StopAfterSnapshot implements Exception {}
+
+final class _ConflictTransport implements CloudSyncConflictTransport {
+  _ConflictTransport({
+    required this.events,
+    required List<List<CloudSyncConflict>> listResponses,
+    required this.resolveResult,
+  }) : _listResponses = List<List<CloudSyncConflict>>.from(listResponses);
+
+  final List<String> events;
+  final List<List<CloudSyncConflict>> _listResponses;
+  final CloudSyncConflict resolveResult;
+
+  @override
+  Future<List<CloudSyncConflict>> listConflicts({
+    CloudSyncConflictState state = CloudSyncConflictState.open,
+    int limit = 100,
+  }) async {
+    events.add('list');
+    if (_listResponses.isEmpty) {
+      throw StateError('冲突列表响应不足');
+    }
+    return List<CloudSyncConflict>.unmodifiable(_listResponses.removeAt(0));
+  }
+
+  @override
+  Future<CloudSyncConflict> resolveConflict(String conflictId) async {
+    events.add('resolve');
+    return resolveResult;
+  }
+}
 
 final class _SnapshotThenStopTransport implements CloudSyncTransport {
   _SnapshotThenStopTransport(this.records);
@@ -821,10 +1141,13 @@ final class _RemoteChangeTransport implements CloudSyncTransport {
 }
 
 final class _StatefulMessageAdapter implements SyncEntityAdapter {
-  _StatefulMessageAdapter(Map<SyncEntityKey, LocalSyncEntity> entities)
-    : entities = Map<SyncEntityKey, LocalSyncEntity>.from(entities);
+  _StatefulMessageAdapter(
+    Map<SyncEntityKey, LocalSyncEntity> entities, {
+    this.events,
+  }) : entities = Map<SyncEntityKey, LocalSyncEntity>.from(entities);
 
   final Map<SyncEntityKey, LocalSyncEntity> entities;
+  final List<String>? events;
   final List<RemoteSyncEntity> remoteUpserts = <RemoteSyncEntity>[];
   final List<SyncEntityKey> remoteDeletes = <SyncEntityKey>[];
   int remoteBatchCount = 0;
@@ -869,6 +1192,7 @@ final class _StatefulMessageAdapter implements SyncEntityAdapter {
 
   @override
   Future<void> applyRemoteUpsert(RemoteSyncEntity entity) async {
+    events?.add('apply');
     remoteUpserts.add(entity);
     entities[entity.key] = LocalSyncEntity(
       entityType: entity.entityType,
@@ -1117,6 +1441,89 @@ CloudSyncShadow _messageShadow({required String value}) {
       'value': value,
     },
     updatedAt: DateTime.utc(2026, 7, 16, 7),
+  );
+}
+
+void _bindCompletedExporter(SyncWriteJournal journal) {
+  journal.bindExporter((intents) async {
+    return <SyncEntityKey, SyncWriteDisposition>{
+      for (final intent in intents)
+        SyncEntityKey(
+          entityType: intent.entityType.wireName,
+          entityId: intent.entityId,
+        ): SyncWriteDisposition.completed,
+    };
+  });
+}
+
+CloudSyncShadow _conflictShadow(
+  Map<String, Object?> payload, {
+  int revision = 1,
+}) {
+  return CloudSyncShadow(
+    entityType: CloudSyncEntityType.message,
+    entityId: 'message-1',
+    parentId: null,
+    revision: revision,
+    schemaVersion: 2,
+    lastChangeSeq: revision,
+    deleted: false,
+    payload: payload,
+    updatedAt: DateTime.utc(2026, 7, 16, 8, revision),
+  );
+}
+
+CloudSyncConflict _fieldConflict({
+  String conflictId = 'conflict-1',
+  String mutationId = 'mutation-1',
+  List<CloudSyncConflictField>? fields,
+}) {
+  return CloudSyncConflict(
+    conflictId: conflictId,
+    mutationId: mutationId,
+    entityType: CloudSyncEntityType.message,
+    entityId: 'message-1',
+    baseRevision: 1,
+    fields:
+        fields ??
+        <CloudSyncConflictField>[
+          _conflictField('/title', desired: '本地标题'),
+          _conflictField('/summary', desired: '本地摘要'),
+          _conflictField('/nullable', desired: null),
+          _conflictField('/removeMe', desiredExists: false),
+        ],
+    state: CloudSyncConflictState.open,
+    createdAt: DateTime.utc(2026, 7, 16, 8),
+    resolvedAt: null,
+  );
+}
+
+CloudSyncConflictField _conflictField(
+  String path, {
+  Object? desired,
+  bool desiredExists = true,
+}) {
+  return CloudSyncConflictField(
+    path: path,
+    current: CloudSyncConflictFieldState(exists: true, value: '云端值'),
+    desired: CloudSyncConflictFieldState(
+      exists: desiredExists,
+      value: desiredExists ? desired : null,
+    ),
+  );
+}
+
+CloudSyncConflict _resolvedConflict(CloudSyncConflict conflict) {
+  return CloudSyncConflict(
+    conflictId: conflict.conflictId,
+    mutationId: conflict.mutationId,
+    entityType: conflict.entityType,
+    entityId: conflict.entityId,
+    baseRevision: conflict.baseRevision,
+    fields: conflict.fields,
+    state: CloudSyncConflictState.resolved,
+    createdAt: conflict.createdAt,
+    resolvedAt: DateTime.utc(2026, 7, 16, 9),
   );
 }
 
