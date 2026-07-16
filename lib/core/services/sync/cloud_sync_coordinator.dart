@@ -46,7 +46,7 @@ final class CloudSyncCoordinator {
   static const int _pageSize = 100;
 
   final CloudSyncAccountSession _session;
-  final CloudSyncClient _client;
+  final CloudSyncTransport _client;
   final CloudSyncStore _store;
   final List<SyncEntityAdapter> _adapters;
   final String Function() _createMutationId;
@@ -294,7 +294,11 @@ final class CloudSyncCoordinator {
             requiresSnapshot = true;
             continue;
           case CloudSyncMutationStatus.rejected:
-            await _store.removeOutbox(_session, mutation.mutationId);
+            await _store.markOutboxBlocked(
+              _session,
+              mutationId: mutation.mutationId,
+              errorCode: result.errorCode ?? 'SYNC_MUTATION_REJECTED',
+            );
             failure ??= CloudSyncException(
               kind: CloudSyncFailureKind.validation,
               retryable: false,

@@ -6,7 +6,20 @@ import 'package:kelivo_sync_api_client/kelivo_sync_api_client.dart' as api;
 
 import 'cloud_sync_types.dart';
 
-final class CloudSyncClient {
+abstract interface class CloudSyncTransport {
+  Future<List<CloudSyncMutationResult>> push(
+    List<CloudSyncOutboxMutation> mutations,
+  );
+
+  Future<CloudSyncPullResult> pull({String? cursor, int limit = 100});
+
+  Future<CloudSyncSnapshotResult> snapshot({
+    String? snapshotCursor,
+    int limit = 100,
+  });
+}
+
+final class CloudSyncClient implements CloudSyncTransport {
   CloudSyncClient._({
     required this.baseUrl,
     required this._dio,
@@ -130,6 +143,7 @@ final class CloudSyncClient {
     });
   }
 
+  @override
   Future<List<CloudSyncMutationResult>> push(
     List<CloudSyncOutboxMutation> mutations,
   ) {
@@ -154,6 +168,7 @@ final class CloudSyncClient {
     });
   }
 
+  @override
   Future<CloudSyncPullResult> pull({String? cursor, int limit = 100}) {
     _requirePageLimit(limit);
     return _guard(() async {
@@ -177,6 +192,7 @@ final class CloudSyncClient {
     });
   }
 
+  @override
   Future<CloudSyncSnapshotResult> snapshot({
     String? snapshotCursor,
     int limit = 100,
