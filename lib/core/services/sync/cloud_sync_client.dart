@@ -831,6 +831,9 @@ CloudSyncEntityType _fromEntityType(api.SyncEntityType value) {
   if (value == api.SyncEntityType.mcpServer) {
     return CloudSyncEntityType.mcpServer;
   }
+  if (value == api.SyncEntityType.instructionInjection) {
+    return CloudSyncEntityType.instructionInjection;
+  }
   if (value == api.SyncEntityType.userPreference) {
     return CloudSyncEntityType.userPreference;
   }

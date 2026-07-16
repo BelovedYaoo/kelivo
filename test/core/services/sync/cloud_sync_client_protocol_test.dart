@@ -63,6 +63,62 @@ void main() {
     await server.close(force: true);
   });
 
+  test('增量拉取能够识别指令注入实体', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: 'token',
+    );
+
+    final pullFuture = client.pull();
+    final request = await requestFuture;
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'changes': <Object?>[
+            <String, Object?>{
+              'changeSeq': 1,
+              'operation': 'upsert',
+              'record': <String, Object?>{
+                'entityType': 'instruction-injection',
+                'entityId': 'instruction-1',
+                'parentId': null,
+                'revision': 1,
+                'schemaVersion': 2,
+                'sortSeq': null,
+                'payload': <String, Object?>{
+                  'title': '学习模式',
+                  'prompt': '请逐步引导。',
+                  'group': '',
+                  '_position': 0,
+                },
+                'deletedAt': null,
+                'updatedAt': '2026-07-16T08:00:00.000Z',
+                'updatedByDeviceId': null,
+                'lastChangeSeq': 1,
+              },
+            },
+          ],
+          'nextCursor': 'cursor-1',
+          'hasMore': false,
+          'resetRequired': false,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final result = await pullFuture;
+    expect(
+      result.changes.single.record?.entityType,
+      CloudSyncEntityType.instructionInjection,
+    );
+
+    client.close(force: true);
+    await server.close(force: true);
+  });
+
   test('附件传输全部携带独立协议版本', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
