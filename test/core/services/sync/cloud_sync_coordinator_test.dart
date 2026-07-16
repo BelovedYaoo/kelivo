@@ -118,6 +118,64 @@ void main() {
     expect(transport.pushedEntityTypes, isEmpty);
   });
 
+  test('首次同步批量查询实体时保留全部非就绪 outbox', () async {
+    final session = _session();
+    final entities = <SyncEntityKey, LocalSyncEntity>{};
+    for (var index = 0; index < 40; index++) {
+      final key = SyncEntityKey(
+        entityType: 'message',
+        entityId: 'message-$index',
+      );
+      final entity = LocalSyncEntity(
+        entityType: key.entityType,
+        entityId: key.entityId,
+        parentId: 'turn-$index',
+        payload: <String, Object?>{
+          'conversationId': 'conversation-$index',
+          'turnId': 'turn-$index',
+        },
+      );
+      entities[key] = entity;
+      await store.enqueueOutbox(
+        session,
+        CloudSyncOutboxMutation.create(
+          mutationId: 'mutation-$index',
+          entityType: CloudSyncEntityType.message,
+          entityId: entity.entityId,
+          parentId: entity.parentId,
+          schemaVersion: 2,
+          payload: entity.payload,
+        ),
+        merge: false,
+      );
+      if (index.isEven) {
+        await store.markOutboxBlocked(
+          session,
+          mutationId: 'mutation-$index',
+          errorCode: 'SYNC_PAYLOAD_INVALID',
+        );
+      } else {
+        await store.markOutboxAttempted(session, mutationId: 'mutation-$index');
+        await store.markOutboxRetry(
+          session,
+          mutationId: 'mutation-$index',
+          nextAttemptAt: DateTime.utc(2099),
+        );
+      }
+    }
+    final coordinator = CloudSyncCoordinator(
+      session,
+      _EmptyInitialTransport(),
+      store,
+      writeJournal,
+      adapters: <SyncEntityAdapter>[_StatefulMessageAdapter(entities)],
+    );
+
+    await coordinator.synchronize();
+
+    expect(store.outboxCount(session), 40);
+  });
+
   test('导入重扫只导出指定配置域并在拉取后推送', () async {
     final session = _session();
     await store.savePullCursor(session, 'cursor-0');
@@ -1285,6 +1343,38 @@ final class _ApplyingTransport implements CloudSyncTransport {
     int limit = 100,
   }) {
     throw StateError('已有游标时不应请求全量快照');
+  }
+}
+
+final class _EmptyInitialTransport implements CloudSyncTransport {
+  @override
+  Future<CloudSyncPullResult> pull({String? cursor, int limit = 100}) async {
+    return const CloudSyncPullResult(
+      changes: <CloudSyncChange>[],
+      nextCursor: 'cursor-1',
+      hasMore: false,
+      resetRequired: false,
+    );
+  }
+
+  @override
+  Future<List<CloudSyncMutationResult>> push(
+    List<CloudSyncOutboxMutation> mutations,
+  ) {
+    throw StateError('阻塞与未来重试项不应进入推送');
+  }
+
+  @override
+  Future<CloudSyncSnapshotResult> snapshot({
+    String? snapshotCursor,
+    int limit = 100,
+  }) async {
+    return const CloudSyncSnapshotResult(
+      records: <CloudSyncRecord>[],
+      nextSnapshotCursor: null,
+      syncCursor: 'snapshot-cursor',
+      hasMore: false,
+    );
   }
 }
 

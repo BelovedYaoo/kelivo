@@ -235,6 +235,66 @@ void main() {
     expect(store.outboxCount(session), 2);
   });
 
+  test('outbox 快照按实体保留阻塞、已尝试与未来重试状态', () async {
+    final session = _session();
+    final createdAt = DateTime.utc(2026, 7, 16, 8);
+    for (final index in <int>[1, 2, 3]) {
+      await store.enqueueOutbox(
+        session,
+        _createMutation(
+          mutationId: 'mutation-$index',
+          entityType: CloudSyncEntityType.assistant,
+          entityId: 'assistant-$index',
+          createdAt: createdAt.add(Duration(seconds: index)),
+        ),
+        merge: false,
+      );
+    }
+    final retryAt = DateTime.utc(2099);
+    await store.runWithOutboxSnapshot(session, () async {
+      await store.markOutboxBlocked(
+        session,
+        mutationId: 'mutation-1',
+        errorCode: 'SYNC_PAYLOAD_INVALID',
+      );
+      await store.markOutboxAttempted(session, mutationId: 'mutation-2');
+      await store.markOutboxRetry(
+        session,
+        mutationId: 'mutation-2',
+        nextAttemptAt: retryAt,
+      );
+
+      final blocked = store
+          .outboxForEntity(
+            session,
+            entityType: CloudSyncEntityType.assistant,
+            entityId: 'assistant-1',
+          )
+          .single;
+      final attempted = store
+          .outboxForEntity(
+            session,
+            entityType: CloudSyncEntityType.assistant,
+            entityId: 'assistant-2',
+          )
+          .single;
+      final pending = store
+          .outboxForEntity(
+            session,
+            entityType: CloudSyncEntityType.assistant,
+            entityId: 'assistant-3',
+          )
+          .single;
+      expect(store.outboxCount(session), 3);
+      expect(store.pendingOutbox(session).single.mutationId, 'mutation-3');
+      expect(blocked.blockedAt, isNotNull);
+      expect(attempted.attemptCount, 1);
+      expect(attempted.nextAttemptAt, retryAt);
+      expect(pending.blockedAt, isNull);
+      expect(pending.attemptCount, 0);
+    });
+  });
+
   test('待发送实体按父级先于子级排序且不依赖创建时间', () async {
     final session = _session();
     final createdAt = DateTime.utc(2026, 7, 16, 8);

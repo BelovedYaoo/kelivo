@@ -102,7 +102,15 @@ final class CloudSyncCoordinator {
     });
   }
 
-  Future<CloudSyncRunSummary> _synchronize(
+  Future<CloudSyncRunSummary> _synchronize(Set<String> rescanEntityTypes) {
+    // 快照只在单轮同步内存活，Hive 始终是 outbox 的唯一持久化真相。
+    return _store.runWithOutboxSnapshot(
+      _session,
+      () => _synchronizeWithOutboxSnapshot(rescanEntityTypes),
+    );
+  }
+
+  Future<CloudSyncRunSummary> _synchronizeWithOutboxSnapshot(
     Set<String> rescanEntityTypes,
   ) async {
     var uploadedCount = 0;

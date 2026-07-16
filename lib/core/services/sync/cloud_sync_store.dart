@@ -5,6 +5,100 @@ import 'package:uuid/uuid.dart';
 
 import 'cloud_sync_types.dart';
 
+final class _CloudSyncOutboxSnapshot {
+  _CloudSyncOutboxSnapshot(Iterable<CloudSyncOutboxMutation> mutations) {
+    final grouped =
+        <(CloudSyncEntityType, String), List<CloudSyncOutboxMutation>>{};
+    for (final mutation in mutations) {
+      _byMutationId[mutation.mutationId] = mutation;
+      (grouped[(mutation.entityType, mutation.entityId)] ??=
+              <CloudSyncOutboxMutation>[])
+          .add(mutation);
+    }
+    for (final entry in grouped.entries) {
+      entry.value.sort(_compareOutboxByCreation);
+      _byEntity[entry.key] = List<CloudSyncOutboxMutation>.unmodifiable(
+        entry.value,
+      );
+    }
+  }
+
+  final Map<String, CloudSyncOutboxMutation> _byMutationId =
+      <String, CloudSyncOutboxMutation>{};
+  final Map<(CloudSyncEntityType, String), List<CloudSyncOutboxMutation>>
+  _byEntity = <(CloudSyncEntityType, String), List<CloudSyncOutboxMutation>>{};
+
+  int get length => _byMutationId.length;
+
+  List<CloudSyncOutboxMutation> forEntity({
+    required CloudSyncEntityType entityType,
+    required String entityId,
+  }) {
+    return _byEntity[(entityType, entityId)] ??
+        const <CloudSyncOutboxMutation>[];
+  }
+
+  List<CloudSyncOutboxMutation> _pending({
+    required DateTime readyAt,
+    required int limit,
+  }) {
+    final ready =
+        _byMutationId.values
+            .where(
+              (item) =>
+                  item.blockedAt == null &&
+                  !item.nextAttemptAt.isAfter(readyAt),
+            )
+            .toList(growable: false)
+          ..sort((left, right) {
+            final byDependency = _pushDependencyDepth(
+              left.entityType,
+            ).compareTo(_pushDependencyDepth(right.entityType));
+            if (byDependency != 0) return byDependency;
+            return _compareOutboxByCreation(left, right);
+          });
+    return List<CloudSyncOutboxMutation>.unmodifiable(ready.take(limit));
+  }
+
+  void _upsert(CloudSyncOutboxMutation mutation) {
+    final previous = _byMutationId[mutation.mutationId];
+    if (previous != null) {
+      _removeFromEntity(previous);
+    }
+    _byMutationId[mutation.mutationId] = mutation;
+    final key = (mutation.entityType, mutation.entityId);
+    final next = <CloudSyncOutboxMutation>[...?_byEntity[key], mutation]
+      ..sort(_compareOutboxByCreation);
+    _byEntity[key] = List<CloudSyncOutboxMutation>.unmodifiable(next);
+  }
+
+  void _remove(String mutationId) {
+    final previous = _byMutationId.remove(mutationId);
+    if (previous != null) {
+      _removeFromEntity(previous);
+    }
+  }
+
+  void _removeFromEntity(CloudSyncOutboxMutation mutation) {
+    final key = (mutation.entityType, mutation.entityId);
+    final current = _byEntity[key];
+    if (current == null) return;
+    final next = current
+        .where((item) => item.mutationId != mutation.mutationId)
+        .toList(growable: false);
+    if (next.isEmpty) {
+      _byEntity.remove(key);
+    } else {
+      _byEntity[key] = List<CloudSyncOutboxMutation>.unmodifiable(next);
+    }
+  }
+
+  void _clear() {
+    _byMutationId.clear();
+    _byEntity.clear();
+  }
+}
+
 final class CloudSyncStore {
   CloudSyncStore._(this._box);
 
@@ -17,6 +111,8 @@ final class CloudSyncStore {
   static const _localProtocolVersion = 2;
 
   final Box<String> _box;
+  final Map<String, _CloudSyncOutboxSnapshot> _activeOutboxSnapshots =
+      <String, _CloudSyncOutboxSnapshot>{};
 
   static Future<CloudSyncStore> open({String boxName = defaultBoxName}) async {
     if (boxName.trim().isEmpty) {
@@ -362,6 +458,7 @@ final class CloudSyncStore {
       if (_requestFingerprint(sameId) != _requestFingerprint(mutation)) {
         throw StateError('mutationId 已用于另一份不可变请求');
       }
+      _activeOutboxSnapshot(session)?._upsert(sameId);
       return sameId;
     }
 
@@ -378,12 +475,14 @@ final class CloudSyncStore {
             _outboxKey(session, existing.mutationId),
             merged.toJson(),
           );
+          _activeOutboxSnapshot(session)?._upsert(merged);
           return merged;
         }
       }
     }
 
     await _write(_outboxKey(session, mutation.mutationId), mutation.toJson());
+    _activeOutboxSnapshot(session)?._upsert(mutation);
     return mutation;
   }
 
@@ -402,15 +501,37 @@ final class CloudSyncStore {
     required CloudSyncEntityType entityType,
     required String entityId,
   }) {
-    return List<CloudSyncOutboxMutation>.unmodifiable(
-      _allOutbox(session).where(
-        (item) => item.entityType == entityType && item.entityId == entityId,
-      ),
-    );
+    return _outboxSnapshot(
+      session,
+    ).forEntity(entityType: entityType, entityId: entityId);
   }
 
   int outboxCount(CloudSyncAccountSession session) {
-    return _allOutbox(session).length;
+    return _outboxSnapshot(session).length;
+  }
+
+  _CloudSyncOutboxSnapshot _outboxSnapshot(CloudSyncAccountSession session) {
+    return _activeOutboxSnapshot(session) ??
+        _CloudSyncOutboxSnapshot(_scanAllOutbox(session));
+  }
+
+  Future<T> runWithOutboxSnapshot<T>(
+    CloudSyncAccountSession session,
+    Future<T> Function() run,
+  ) async {
+    final scope = session.accountScope;
+    if (_activeOutboxSnapshots.containsKey(scope)) {
+      throw StateError('同一账号的 outbox 快照作用域不能重叠');
+    }
+    final snapshot = _CloudSyncOutboxSnapshot(_scanAllOutbox(session));
+    _activeOutboxSnapshots[scope] = snapshot;
+    try {
+      return await run();
+    } finally {
+      if (identical(_activeOutboxSnapshots[scope], snapshot)) {
+        _activeOutboxSnapshots.remove(scope);
+      }
+    }
   }
 
   List<CloudSyncOutboxMutation> pendingOutbox(
@@ -422,26 +543,7 @@ final class CloudSyncStore {
       throw const FormatException('单次 outbox 查询数量必须为 1 到 10');
     }
     final deadline = (readyAt ?? DateTime.now()).toUtc();
-    final ready =
-        _allOutbox(session)
-            .where(
-              (item) =>
-                  item.blockedAt == null &&
-                  !item.nextAttemptAt.isAfter(deadline),
-            )
-            .toList(growable: false)
-          ..sort((left, right) {
-            // 服务端按批处理请求，稳定的依赖深度可避免 UUID 或写入时间让子实体抢先。
-            final byDependency = _pushDependencyDepth(
-              left.entityType,
-            ).compareTo(_pushDependencyDepth(right.entityType));
-            if (byDependency != 0) return byDependency;
-            final byTime = left.createdAt.compareTo(right.createdAt);
-            return byTime != 0
-                ? byTime
-                : left.mutationId.compareTo(right.mutationId);
-          });
-    return List<CloudSyncOutboxMutation>.unmodifiable(ready.take(limit));
+    return _outboxSnapshot(session)._pending(readyAt: deadline, limit: limit);
   }
 
   Future<CloudSyncOutboxMutation> markOutboxBlocked(
@@ -459,6 +561,7 @@ final class CloudSyncStore {
       errorCode: errorCode,
     );
     await _write(_outboxKey(session, mutationId), blocked.toJson());
+    _activeOutboxSnapshot(session)?._upsert(blocked);
     return blocked;
   }
 
@@ -477,6 +580,7 @@ final class CloudSyncStore {
       errorCode: errorCode,
     );
     await _write(_outboxKey(session, mutationId), retried.toJson());
+    _activeOutboxSnapshot(session)?._upsert(retried);
     return retried;
   }
 
@@ -490,6 +594,7 @@ final class CloudSyncStore {
     }
     final attempted = existing.attempted();
     await _write(_outboxKey(session, mutationId), attempted.toJson());
+    _activeOutboxSnapshot(session)?._upsert(attempted);
     return attempted;
   }
 
@@ -543,13 +648,15 @@ final class CloudSyncStore {
     }
     // 先保存 revision shadow；若随后崩溃，固定 mutationId 会让重放保持幂等。
     await _box.delete(_outboxKey(session, mutationId));
+    _activeOutboxSnapshot(session)?._remove(mutationId);
   }
 
   Future<void> removeOutbox(
     CloudSyncAccountSession session,
     String mutationId,
-  ) {
-    return _box.delete(_outboxKey(session, mutationId));
+  ) async {
+    await _box.delete(_outboxKey(session, mutationId));
+    _activeOutboxSnapshot(session)?._remove(mutationId);
   }
 
   CloudSyncAttachmentBinding? attachmentBinding(
@@ -651,11 +758,23 @@ final class CloudSyncStore {
         .where((key) => key.startsWith(prefix))
         .toList(growable: false);
     await _box.deleteAll(keys);
+    _activeOutboxSnapshot(session)?._clear();
   }
 
-  Future<void> close() => _box.close();
+  Future<void> close() async {
+    _activeOutboxSnapshots.clear();
+    await _box.close();
+  }
 
-  List<CloudSyncOutboxMutation> _allOutbox(CloudSyncAccountSession session) {
+  _CloudSyncOutboxSnapshot? _activeOutboxSnapshot(
+    CloudSyncAccountSession session,
+  ) {
+    return _activeOutboxSnapshots[session.accountScope];
+  }
+
+  List<CloudSyncOutboxMutation> _scanAllOutbox(
+    CloudSyncAccountSession session,
+  ) {
     final prefix = _accountPrefix(session, 'outbox');
     final result = <CloudSyncOutboxMutation>[];
     for (final key in _box.keys.whereType<String>()) {
@@ -666,10 +785,6 @@ final class CloudSyncStore {
       }
       result.add(item);
     }
-    result.sort((left, right) {
-      final byTime = left.createdAt.compareTo(right.createdAt);
-      return byTime != 0 ? byTime : left.mutationId.compareTo(right.mutationId);
-    });
     return result;
   }
 
@@ -758,6 +873,14 @@ final class CloudSyncStore {
         ? 'journal:$encodedJournalScope:write-intent:'
         : 'account:$accountScope:write-intent:$encodedJournalScope:';
   }
+}
+
+int _compareOutboxByCreation(
+  CloudSyncOutboxMutation left,
+  CloudSyncOutboxMutation right,
+) {
+  final byTime = left.createdAt.compareTo(right.createdAt);
+  return byTime != 0 ? byTime : left.mutationId.compareTo(right.mutationId);
 }
 
 int _pushDependencyDepth(CloudSyncEntityType entityType) {
