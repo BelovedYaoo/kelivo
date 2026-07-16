@@ -66,6 +66,9 @@ final class CloudSyncClient implements CloudSyncTransport {
   }
 
   static const _bearerAuthName = 'BearerAuth';
+  static const _syncProtocolHeaders = <String, String>{
+    'X-Kelivo-Sync-Protocol-Version': '2',
+  };
 
   final String baseUrl;
   final Dio _dio;
@@ -160,6 +163,7 @@ final class CloudSyncClient implements CloudSyncTransport {
       );
       final response = await _client.getSyncApi().pushSyncChanges(
         syncPushRequest: request,
+        headers: _syncProtocolHeaders,
       );
       final data = _requireResponseData(response.data?.data);
       return List<CloudSyncMutationResult>.unmodifiable(
@@ -179,6 +183,7 @@ final class CloudSyncClient implements CloudSyncTransport {
       );
       final response = await _client.getSyncApi().pullSyncChanges(
         syncPullRequest: request,
+        headers: _syncProtocolHeaders,
       );
       final data = _requireResponseData(response.data?.data);
       return CloudSyncPullResult(
@@ -206,6 +211,7 @@ final class CloudSyncClient implements CloudSyncTransport {
       );
       final response = await _client.getSyncApi().pullSyncSnapshot(
         syncSnapshotRequest: request,
+        headers: _syncProtocolHeaders,
       );
       final data = _requireResponseData(response.data?.data);
       return CloudSyncSnapshotResult(
