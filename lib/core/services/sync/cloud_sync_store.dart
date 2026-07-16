@@ -30,6 +30,74 @@ final class CloudSyncStore {
 
   Future<void> clearSession() => _box.delete(_sessionKey);
 
+  Future<SyncWriteIntent> beginWriteIntent(SyncWriteIntent intent) async {
+    final key = _writeIntentKey(intent);
+    final existing = _read(key, SyncWriteIntent.fromJson);
+    if (existing != null) return existing;
+    await _write(key, intent.toJson());
+    return intent;
+  }
+
+  List<SyncWriteIntent> writeIntents({
+    required String journalScopeId,
+    required String? accountScope,
+  }) {
+    final prefix = _writeIntentPrefix(
+      journalScopeId: journalScopeId,
+      accountScope: accountScope,
+    );
+    final result = <SyncWriteIntent>[];
+    for (final key in _box.keys.whereType<String>()) {
+      if (!key.startsWith(prefix)) continue;
+      final intent = _read(key, SyncWriteIntent.fromJson);
+      if (intent == null) {
+        throw StateError('写前 intent 索引存在但内容缺失：$key');
+      }
+      if (intent.journalScopeId != journalScopeId ||
+          intent.accountScope != accountScope) {
+        throw StateError('写前 intent 索引与作用域不一致：$key');
+      }
+      result.add(intent);
+    }
+    result.sort((left, right) {
+      final byTime = left.createdAt.compareTo(right.createdAt);
+      return byTime != 0 ? byTime : left.intentId.compareTo(right.intentId);
+    });
+    return List<SyncWriteIntent>.unmodifiable(result);
+  }
+
+  Future<void> completeWriteIntent(SyncWriteIntent intent) async {
+    final key = _writeIntentKey(intent);
+    final current = _read(key, SyncWriteIntent.fromJson);
+    if (current == null) return;
+    if (current.intentId != intent.intentId) {
+      throw StateError('不能用旧 intent 清理更新后的写入标记');
+    }
+    await _box.delete(key);
+  }
+
+  Future<void> bindJournalScopeWriteIntents({
+    required String journalScopeId,
+    required String accountScope,
+  }) async {
+    if (accountScope.trim().isEmpty) {
+      throw const FormatException('绑定写前 intent 的账号作用域不能为空');
+    }
+    final intents = writeIntents(
+      journalScopeId: journalScopeId,
+      accountScope: null,
+    );
+    for (final intent in intents) {
+      final bound = intent.bindToAccount(accountScope);
+      final accountKey = _writeIntentKey(bound);
+      final existing = _read(accountKey, SyncWriteIntent.fromJson);
+      if (existing == null) {
+        await _write(accountKey, bound.toJson());
+      }
+      await _box.delete(_writeIntentKey(intent));
+    }
+  }
+
   String? get lastBaseUrl {
     final raw = _box.get(_lastBaseUrlKey);
     return raw == null ? null : normalizeCloudSyncBaseUrl(raw);
@@ -560,6 +628,23 @@ final class CloudSyncStore {
 
   String _accountPrefix(CloudSyncAccountSession session, String area) {
     return 'account:${session.accountScope}:$area:';
+  }
+
+  String _writeIntentKey(SyncWriteIntent intent) {
+    return '${_writeIntentPrefix(journalScopeId: intent.journalScopeId, accountScope: intent.accountScope)}${intent.entityType.wireName}:${Uri.encodeComponent(intent.entityId)}';
+  }
+
+  String _writeIntentPrefix({
+    required String journalScopeId,
+    required String? accountScope,
+  }) {
+    if (journalScopeId.trim().isEmpty) {
+      throw const FormatException('写前 intent 的本地作用域不能为空');
+    }
+    final encodedJournalScope = Uri.encodeComponent(journalScopeId);
+    return accountScope == null
+        ? 'journal:$encodedJournalScope:write-intent:'
+        : 'account:$accountScope:write-intent:$encodedJournalScope:';
   }
 }
 

@@ -246,6 +246,61 @@ final class CloudSyncAccountSession {
   }
 }
 
+final class SyncWriteIntent {
+  SyncWriteIntent({
+    required String intentId,
+    required this.entityType,
+    required String entityId,
+    required String journalScopeId,
+    required String? accountScope,
+    required DateTime createdAt,
+  }) : intentId = _validatedId(intentId, 'intentId'),
+       entityId = _validatedId(entityId, 'entityId'),
+       journalScopeId = _validatedId(journalScopeId, 'journalScopeId'),
+       accountScope = _validatedOptionalNonEmpty(accountScope, 'accountScope'),
+       createdAt = createdAt.toUtc();
+
+  final String intentId;
+  final CloudSyncEntityType entityType;
+  final String entityId;
+  final String journalScopeId;
+  final String? accountScope;
+  final DateTime createdAt;
+
+  SyncWriteIntent bindToAccount(String value) {
+    return SyncWriteIntent(
+      intentId: intentId,
+      entityType: entityType,
+      entityId: entityId,
+      journalScopeId: journalScopeId,
+      accountScope: value,
+      createdAt: createdAt,
+    );
+  }
+
+  CloudSyncJsonMap toJson() => <String, Object?>{
+    'version': 1,
+    'intentId': intentId,
+    'entityType': entityType.wireName,
+    'entityId': entityId,
+    'journalScopeId': journalScopeId,
+    if (accountScope != null) 'accountScope': accountScope,
+    'createdAt': createdAt.toIso8601String(),
+  };
+
+  factory SyncWriteIntent.fromJson(CloudSyncJsonMap json) {
+    _requireVersion(json);
+    return SyncWriteIntent(
+      intentId: _requireString(json, 'intentId'),
+      entityType: CloudSyncEntityType.parse(_requireString(json, 'entityType')),
+      entityId: _requireString(json, 'entityId'),
+      journalScopeId: _requireString(json, 'journalScopeId'),
+      accountScope: _optionalString(json, 'accountScope'),
+      createdAt: _requireDateTime(json, 'createdAt'),
+    );
+  }
+}
+
 final class CloudSyncHealth {
   const CloudSyncHealth({
     required this.service,
