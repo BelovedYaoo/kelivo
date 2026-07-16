@@ -71,6 +71,12 @@ abstract interface class SyncEntityAdapter {
 
   int get applyPriority;
 
+  Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key);
+
+  Future<Map<SyncEntityKey, LocalSyncEntity>> exportLocalEntitiesForKeys(
+    Set<SyncEntityKey> keys,
+  );
+
   Future<List<LocalSyncEntity>> exportLocalEntities();
 
   Future<void> applyRemoteUpsert(RemoteSyncEntity entity);

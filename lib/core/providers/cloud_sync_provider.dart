@@ -9,10 +9,12 @@ import '../services/sync/chat_sync_adapter.dart';
 import '../services/sync/cloud_attachment_sync_service.dart';
 import '../services/sync/cloud_sync_client.dart';
 import '../services/sync/cloud_sync_coordinator.dart';
+import '../services/sync/cloud_sync_mutation_planner.dart';
 import '../services/sync/cloud_sync_store.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/sync/config_sync_adapter.dart';
 import '../services/sync/sync_codec.dart';
+import '../services/sync/sync_write_journal.dart';
 import 'assistant_provider.dart';
 import 'instruction_injection_provider.dart';
 import 'mcp_provider.dart';
@@ -36,7 +38,9 @@ enum CloudSyncProviderStatus {
 final class CloudSyncProvider extends ChangeNotifier
     with WidgetsBindingObserver {
   CloudSyncProvider(
-    this._chatService, {
+    this._chatService,
+    this._store,
+    this._writeJournal, {
     required SettingsProvider settingsProvider,
     required AssistantProvider assistantProvider,
     required MemoryProvider memoryProvider,
@@ -60,6 +64,8 @@ final class CloudSyncProvider extends ChangeNotifier
 
   final ChatService _chatService;
   final ConfigSyncAdapter _configAdapter;
+  final CloudSyncStore _store;
+  final SyncWriteJournal _writeJournal;
 
   CloudSyncProviderStatus _status = CloudSyncProviderStatus.initializing;
   CloudSyncAccountSession? _session;
@@ -67,9 +73,9 @@ final class CloudSyncProvider extends ChangeNotifier
   CloudSyncException? _lastError;
   CloudSyncException? _deviceError;
   List<CloudSyncDeviceSession> _devices = const <CloudSyncDeviceSession>[];
-  CloudSyncStore? _store;
   CloudSyncClient? _client;
   CloudSyncCoordinator? _coordinator;
+  CloudSyncMutationPlanner? _mutationPlanner;
   Future<void>? _initialization;
   Future<bool>? _activeSync;
   Timer? _timer;
@@ -80,7 +86,9 @@ final class CloudSyncProvider extends ChangeNotifier
   bool _foreground = true;
   bool _observingLifecycle = false;
   bool _disposed = false;
-  bool _sessionMutationInProgress = false;
+  Completer<void>? _sessionMutation;
+  bool _journalExporterBound = false;
+  bool _storeCloseScheduled = false;
   int _sessionEpoch = 0;
 
   CloudSyncProviderStatus get status => _status;
@@ -95,6 +103,7 @@ final class CloudSyncProvider extends ChangeNotifier
   bool get signedIn => _session != null;
   bool get paused => _paused;
   bool get devicesLoading => _devicesLoading;
+  bool get _sessionMutationInProgress => _sessionMutation != null;
 
   Future<void> initialize() {
     if (_ready) return Future<void>.value();
@@ -121,12 +130,7 @@ final class CloudSyncProvider extends ChangeNotifier
     try {
       await _chatService.init();
       if (_disposed) return;
-      final store = _store ?? await CloudSyncStore.open();
-      if (_disposed) {
-        await store.close();
-        return;
-      }
-      _store = store;
+      final store = _store;
       await _configAdapter.ready;
       if (_disposed) return;
       _lastBaseUrl = store.lastBaseUrl ?? defaultCloudSyncBaseUrl;
@@ -142,6 +146,9 @@ final class CloudSyncProvider extends ChangeNotifier
 
       _paused = store.isPaused(session);
       _connect(session);
+      await _writeJournal.transitionSession(session);
+      await _writeJournal.recover();
+      if (_disposed) return;
       _ready = true;
       _setStatus(
         _paused ? CloudSyncProviderStatus.paused : CloudSyncProviderStatus.idle,
@@ -168,7 +175,7 @@ final class CloudSyncProvider extends ChangeNotifier
   }) async {
     await initialize();
     final store = _store;
-    if (!_ready || store == null || _disposed) return false;
+    if (!_ready || _disposed) return false;
     if (_session != null || _sessionMutationInProgress) {
       _lastError = const CloudSyncException(
         kind: CloudSyncFailureKind.conflict,
@@ -179,7 +186,7 @@ final class CloudSyncProvider extends ChangeNotifier
       return false;
     }
 
-    _sessionMutationInProgress = true;
+    _beginSessionMutation();
     _lastError = null;
     _deviceError = null;
     _devicesLoading = false;
@@ -207,6 +214,21 @@ final class CloudSyncProvider extends ChangeNotifier
       _paused = false;
       _connect(session, client: loginClient);
       loginClient = null;
+      try {
+        await _writeJournal.transitionSession(session);
+        await _writeJournal.recover();
+      } catch (error, stackTrace) {
+        if (_disposed) return false;
+        _recordFailure(
+          error,
+          stackTrace,
+          operation: '恢复云同步写入',
+          status: CloudSyncProviderStatus.error,
+        );
+        _startAutomaticSync();
+        return true;
+      }
+      if (_disposed) return false;
       _setStatus(CloudSyncProviderStatus.idle);
       _startAutomaticSync();
       final connectedEpoch = _sessionEpoch;
@@ -219,20 +241,22 @@ final class CloudSyncProvider extends ChangeNotifier
         error,
         stackTrace,
         operation: '登录云同步',
-        status: CloudSyncProviderStatus.signedOut,
+        status: _session == null
+            ? CloudSyncProviderStatus.signedOut
+            : CloudSyncProviderStatus.error,
       );
       return false;
     } finally {
       loginClient?.close(force: true);
-      _sessionMutationInProgress = false;
+      _endSessionMutation();
     }
   }
 
   Future<bool> logout({bool clearSyncState = false}) async {
     await initialize();
     final store = _store;
-    if (store == null || _disposed || _sessionMutationInProgress) return false;
-    _sessionMutationInProgress = true;
+    if (_disposed || _sessionMutationInProgress) return false;
+    _beginSessionMutation();
     final session = _session;
     _session = null;
     _devicesLoading = false;
@@ -244,10 +268,12 @@ final class CloudSyncProvider extends ChangeNotifier
     _client?.close(force: true);
     _client = null;
     _coordinator = null;
+    _mutationPlanner = null;
     try {
       if (activeSync != null) {
         await activeSync;
       }
+      await _writeJournal.transitionSession(null);
       if (session != null && clearSyncState) {
         await store.clearAccountState(session);
       }
@@ -259,14 +285,17 @@ final class CloudSyncProvider extends ChangeNotifier
         operation: '退出云同步',
         status: CloudSyncProviderStatus.error,
       );
+      if (_disposed) return false;
       if (session != null) {
         _session = session;
         _connect(session);
+        await _writeJournal.transitionSession(session);
+        await _writeJournal.recover();
         if (!_paused) _startAutomaticSync();
       }
       return false;
     } finally {
-      _sessionMutationInProgress = false;
+      _endSessionMutation();
     }
 
     _stopAutomaticSync();
@@ -283,14 +312,11 @@ final class CloudSyncProvider extends ChangeNotifier
     await initialize();
     final store = _store;
     final session = _session;
-    if (store == null ||
-        session == null ||
-        _disposed ||
-        _sessionMutationInProgress) {
+    if (session == null || _disposed || _sessionMutationInProgress) {
       return false;
     }
     if (value == _paused) return true;
-    _sessionMutationInProgress = true;
+    _beginSessionMutation();
     final epoch = _sessionEpoch;
 
     try {
@@ -311,6 +337,7 @@ final class CloudSyncProvider extends ChangeNotifier
         _client?.close(force: true);
         _client = null;
         _coordinator = null;
+        _mutationPlanner = null;
         _setStatus(CloudSyncProviderStatus.paused);
         if (activeSync != null) await activeSync;
         if (_disposed || !identical(_session, session)) return false;
@@ -331,7 +358,7 @@ final class CloudSyncProvider extends ChangeNotifier
       );
       return false;
     } finally {
-      _sessionMutationInProgress = false;
+      _endSessionMutation();
     }
   }
 
@@ -351,7 +378,11 @@ final class CloudSyncProvider extends ChangeNotifier
   Future<bool> _runSync() async {
     await initialize();
     final coordinator = _coordinator;
-    if (!_ready || coordinator == null || _session == null || _paused) {
+    if (_disposed ||
+        !_ready ||
+        coordinator == null ||
+        _session == null ||
+        _paused) {
       return false;
     }
 
@@ -360,8 +391,9 @@ final class CloudSyncProvider extends ChangeNotifier
     _setStatus(CloudSyncProviderStatus.syncing);
     try {
       final result = await coordinator.synchronize();
+      final recovery = await _writeJournal.recover();
       if (epoch != _sessionEpoch || _disposed) return false;
-      _lastRun = result;
+      _lastRun = result.copyWith(deferredWriteCount: recovery.deferredCount);
       _lastError = null;
       _setStatus(
         _paused ? CloudSyncProviderStatus.paused : CloudSyncProviderStatus.idle,
@@ -451,17 +483,48 @@ final class CloudSyncProvider extends ChangeNotifier
     final attachmentSyncService = CloudAttachmentSyncService(
       session,
       nextClient,
-      _store!,
+      _store,
     );
+    final adapters = <SyncEntityAdapter>[
+      _configAdapter,
+      ChatSyncAdapter(_chatService, attachmentSyncService),
+    ];
+    final mutationPlanner = CloudSyncMutationPlanner(
+      _store,
+      adapters: adapters,
+    );
+    _mutationPlanner = mutationPlanner;
     _coordinator = CloudSyncCoordinator(
       session,
       nextClient,
-      _store!,
-      adapters: <SyncEntityAdapter>[
-        _configAdapter,
-        ChatSyncAdapter(_chatService, attachmentSyncService),
-      ],
+      _store,
+      _writeJournal,
+      adapters: adapters,
+      mutationPlanner: mutationPlanner,
     );
+    if (!_journalExporterBound) {
+      _writeJournal.bindExporter(_captureLocalIntents);
+      _journalExporterBound = true;
+    }
+  }
+
+  Future<Map<SyncEntityKey, SyncWriteDisposition>> _captureLocalIntents(
+    List<SyncWriteIntent> intents,
+  ) {
+    final session = _session;
+    final mutationPlanner = _mutationPlanner;
+    if (session == null || mutationPlanner == null) {
+      return Future<Map<SyncEntityKey, SyncWriteDisposition>>.value(
+        <SyncEntityKey, SyncWriteDisposition>{
+          for (final intent in intents)
+            SyncEntityKey(
+              entityType: intent.entityType.wireName,
+              entityId: intent.entityId,
+            ): SyncWriteDisposition.deferred,
+        },
+      );
+    }
+    return mutationPlanner.captureLocalIntents(session, intents);
   }
 
   void _startAutomaticSync() {
@@ -571,6 +634,19 @@ final class CloudSyncProvider extends ChangeNotifier
     if (!_disposed) notifyListeners();
   }
 
+  void _beginSessionMutation() {
+    if (_sessionMutation != null) {
+      throw StateError('云同步会话变更已在执行');
+    }
+    _sessionMutation = Completer<void>();
+  }
+
+  void _endSessionMutation() {
+    final mutation = _sessionMutation;
+    _sessionMutation = null;
+    mutation?.complete();
+  }
+
   @override
   void dispose() {
     _disposed = true;
@@ -580,15 +656,33 @@ final class CloudSyncProvider extends ChangeNotifier
       WidgetsBinding.instance.removeObserver(this);
     }
     _client?.close(force: true);
-    final store = _store;
-    if (store != null) {
-      final activeSync = _activeSync;
-      if (activeSync == null) {
-        unawaited(store.close());
-      } else {
-        unawaited(activeSync.whenComplete(store.close));
-      }
+    if (!_storeCloseScheduled) {
+      _storeCloseScheduled = true;
+      unawaited(_closeStoreAfterOperations());
     }
     super.dispose();
+  }
+
+  Future<void> _closeStoreAfterOperations() async {
+    try {
+      await _initialization;
+    } catch (error, stackTrace) {
+      debugPrint('关闭同步存储前等待初始化失败：$error\n$stackTrace');
+    }
+    final sessionMutation = _sessionMutation?.future;
+    if (sessionMutation != null) {
+      try {
+        await sessionMutation;
+      } catch (error, stackTrace) {
+        debugPrint('关闭同步存储前等待会话变更失败：$error\n$stackTrace');
+      }
+    }
+    try {
+      await _activeSync;
+    } catch (error, stackTrace) {
+      debugPrint('关闭同步存储前等待同步失败：$error\n$stackTrace');
+    }
+    await _writeJournal.close();
+    await _store.close();
   }
 }

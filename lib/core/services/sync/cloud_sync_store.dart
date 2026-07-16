@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'package:hive/hive.dart';
+import 'package:uuid/uuid.dart';
 
 import 'cloud_sync_types.dart';
 
@@ -10,6 +11,9 @@ final class CloudSyncStore {
   static const defaultBoxName = 'cloud_sync_state_v1';
   static const _sessionKey = 'active-session';
   static const _lastBaseUrlKey = 'last-base-url';
+  static const _journalScopeIdKey = 'journal-scope-id';
+  static const _localProtocolVersionKey = 'local-sync-protocol-version';
+  static const _localProtocolVersion = 2;
 
   final Box<String> _box;
 
@@ -17,7 +21,34 @@ final class CloudSyncStore {
     if (boxName.trim().isEmpty) {
       throw const FormatException('同步状态 box 名称不能为空');
     }
-    return CloudSyncStore._(await Hive.openBox<String>(boxName));
+    final box = await Hive.openBox<String>(boxName);
+    final store = CloudSyncStore._(box);
+    try {
+      await store._migrateLocalProtocolState();
+      return store;
+    } catch (_) {
+      await box.close();
+      rethrow;
+    }
+  }
+
+  Future<void> _migrateLocalProtocolState() async {
+    final persisted = int.tryParse(_box.get(_localProtocolVersionKey) ?? '');
+    if (persisted != null && persisted > _localProtocolVersion) {
+      throw StateError('本地同步协议版本高于当前客户端支持范围：$persisted');
+    }
+    if (persisted == _localProtocolVersion) return;
+
+    final staleKeys = _box.keys
+        .whereType<String>()
+        .where(
+          (key) => key.startsWith('account:') || key.startsWith('journal:'),
+        )
+        .toList(growable: false);
+    if (staleKeys.isNotEmpty) {
+      await _box.deleteAll(staleKeys);
+    }
+    await _box.put(_localProtocolVersionKey, _localProtocolVersion.toString());
   }
 
   CloudSyncAccountSession? get activeSession {
@@ -29,6 +60,25 @@ final class CloudSyncStore {
   }
 
   Future<void> clearSession() => _box.delete(_sessionKey);
+
+  Future<String> loadOrCreateJournalScopeId({
+    String Function()? createId,
+  }) async {
+    final persisted = _box.get(_journalScopeIdKey);
+    if (persisted != null) {
+      if (persisted.trim().isEmpty) {
+        throw const FormatException('写前 journal 的本地作用域无效');
+      }
+      return persisted;
+    }
+
+    final created = (createId ?? const Uuid().v4)().trim();
+    if (created.isEmpty) {
+      throw const FormatException('写前 journal 的本地作用域不能为空');
+    }
+    await _box.put(_journalScopeIdKey, created);
+    return created;
+  }
 
   Future<SyncWriteIntent> beginWriteIntent(SyncWriteIntent intent) async {
     final key = _writeIntentKey(intent);
@@ -322,14 +372,26 @@ final class CloudSyncStore {
       throw const FormatException('单次 outbox 查询数量必须为 1 到 10');
     }
     final deadline = (readyAt ?? DateTime.now()).toUtc();
-    return List<CloudSyncOutboxMutation>.unmodifiable(
-      _allOutbox(session)
-          .where(
-            (item) =>
-                item.blockedAt == null && !item.nextAttemptAt.isAfter(deadline),
-          )
-          .take(limit),
-    );
+    final ready =
+        _allOutbox(session)
+            .where(
+              (item) =>
+                  item.blockedAt == null &&
+                  !item.nextAttemptAt.isAfter(deadline),
+            )
+            .toList(growable: false)
+          ..sort((left, right) {
+            // 服务端按批处理请求，稳定的依赖深度可避免 UUID 或写入时间让子实体抢先。
+            final byDependency = _pushDependencyDepth(
+              left.entityType,
+            ).compareTo(_pushDependencyDepth(right.entityType));
+            if (byDependency != 0) return byDependency;
+            final byTime = left.createdAt.compareTo(right.createdAt);
+            return byTime != 0
+                ? byTime
+                : left.mutationId.compareTo(right.mutationId);
+          });
+    return List<CloudSyncOutboxMutation>.unmodifiable(ready.take(limit));
   }
 
   Future<CloudSyncOutboxMutation> markOutboxBlocked(
@@ -646,6 +708,18 @@ final class CloudSyncStore {
         ? 'journal:$encodedJournalScope:write-intent:'
         : 'account:$accountScope:write-intent:$encodedJournalScope:';
   }
+}
+
+int _pushDependencyDepth(CloudSyncEntityType entityType) {
+  return switch (entityType) {
+    CloudSyncEntityType.turn ||
+    CloudSyncEntityType.messageSelection ||
+    CloudSyncEntityType.memory ||
+    CloudSyncEntityType.quickPhrase => 1,
+    CloudSyncEntityType.message => 2,
+    CloudSyncEntityType.toolEvent || CloudSyncEntityType.thoughtSignature => 3,
+    _ => 0,
+  };
 }
 
 String _requestFingerprint(CloudSyncOutboxMutation mutation) {

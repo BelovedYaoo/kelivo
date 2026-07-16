@@ -381,6 +381,34 @@ void main() {
       },
     );
 
+    test('configuration adapter exports one requested key', () async {
+      final adapter = await _createPopulatedConfigSyncAdapter();
+      const key = SyncEntityKey(
+        entityType: 'assistant',
+        entityId: 'assistant-wire',
+      );
+
+      final entity = await adapter.exportLocalEntity(key);
+
+      expect(entity?.key, key);
+      expect(entity?.payload['name'], 'Assistant');
+      expect(
+        await adapter.exportLocalEntity(
+          const SyncEntityKey(
+            entityType: 'assistant',
+            entityId: 'assistant-missing',
+          ),
+        ),
+        isNull,
+      );
+      final batch = await adapter.exportLocalEntitiesForKeys(<SyncEntityKey>{
+        key,
+        SyncEntityKey(entityType: 'assistant', entityId: 'assistant-missing'),
+      });
+      expect(batch.keys, <SyncEntityKey>{key});
+      expect(batch[key]?.payload['name'], 'Assistant');
+    });
+
     test(
       'configuration wire payloads use envelope identity and explicit order',
       () async {

@@ -103,6 +103,55 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
   }
 
   @override
+  Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key) async {
+    await ready;
+    for (final entity in _exportEntitiesForType(key.entityType)) {
+      if (entity.entityId == key.entityId) return entity;
+    }
+    return null;
+  }
+
+  @override
+  Future<Map<SyncEntityKey, LocalSyncEntity>> exportLocalEntitiesForKeys(
+    Set<SyncEntityKey> keys,
+  ) async {
+    await ready;
+    final keysByType = <String, Set<SyncEntityKey>>{};
+    for (final key in keys) {
+      if (!entityTypes.contains(key.entityType)) {
+        throw FormatException('不支持的配置同步实体：${key.entityType}');
+      }
+      (keysByType[key.entityType] ??= <SyncEntityKey>{}).add(key);
+    }
+
+    final result = <SyncEntityKey, LocalSyncEntity>{};
+    for (final entry in keysByType.entries) {
+      for (final entity in _exportEntitiesForType(entry.key)) {
+        if (entry.value.contains(entity.key)) {
+          result[entity.key] = entity;
+        }
+      }
+    }
+    return Map<SyncEntityKey, LocalSyncEntity>.unmodifiable(result);
+  }
+
+  Iterable<LocalSyncEntity> _exportEntitiesForType(String entityType) {
+    return switch (entityType) {
+      _providerType => _exportProviders(),
+      _assistantType => _exportAssistants(),
+      _memoryType => _exportMemories(),
+      _worldBookType => _exportWorldBooks(),
+      _quickPhraseType => _exportQuickPhrases(),
+      _searchServiceType => _exportSearchServices(),
+      _networkTtsType => _exportTtsServices(),
+      _mcpServerType => _exportMcpServers(),
+      _instructionInjectionType => _exportInstructionInjections(),
+      _preferenceType => _exportPreferences(),
+      _ => throw FormatException('不支持的配置同步实体：$entityType'),
+    };
+  }
+
+  @override
   Future<List<LocalSyncEntity>> exportLocalEntities() async {
     await ready;
     return <LocalSyncEntity>[

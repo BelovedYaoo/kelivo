@@ -6,6 +6,7 @@ import 'l10n/app_localizations.dart';
 import 'features/home/pages/home_page.dart';
 import 'desktop/desktop_home_page.dart';
 import 'package:flutter/services.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 import 'desktop/desktop_window_controller.dart';
 import 'desktop/desktop_tray_controller.dart';
@@ -34,11 +35,14 @@ import 'core/providers/backup_reminder_provider.dart';
 import 'core/providers/hotkey_provider.dart';
 import 'core/providers/cloud_sync_provider.dart';
 import 'core/services/chat/chat_service.dart';
+import 'core/services/sync/cloud_sync_store.dart';
+import 'core/services/sync/sync_write_journal.dart';
 import 'core/services/mcp/mcp_tool_service.dart';
 import 'core/services/logging/flutter_logger.dart';
 import 'features/home/services/ask_user_interaction_service.dart';
 import 'features/home/services/tool_approval_service.dart';
 import 'utils/sandbox_path_resolver.dart';
+import 'utils/app_directories.dart';
 import 'shared/widgets/app_overlays.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:system_fonts/system_fonts.dart';
@@ -80,10 +84,25 @@ Future<void> main() async {
       // logging.Logger.root.onRecord.listen((rec) { ... });
       // Cache current Documents directory to fix sandboxed absolute paths on iOS
       await SandboxPathResolver.init();
+      // 写前日志必须早于 runApp 建立，才能覆盖 Provider 初始化前发生的本地写入。
+      final appDataDirectory = await AppDirectories.getAppDataDirectory();
+      await Hive.initFlutter(appDataDirectory.path);
+      final cloudSyncStore = await CloudSyncStore.open();
+      final journalScopeId = await cloudSyncStore.loadOrCreateJournalScopeId();
+      final syncWriteJournal = SyncWriteJournal(
+        store: cloudSyncStore,
+        journalScopeId: journalScopeId,
+        initialSession: cloudSyncStore.activeSession,
+      );
       // Enable edge-to-edge to allow content under system bars (Android)
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       // Start app (Flutter log capture is toggleable and off by default)
-      runApp(const MyApp());
+      runApp(
+        MyApp(
+          cloudSyncStore: cloudSyncStore,
+          syncWriteJournal: syncWriteJournal,
+        ),
+      );
     },
     zoneSpecification: ZoneSpecification(
       print: (self, parent, zone, line) {
@@ -111,12 +130,20 @@ Future<void> _initDesktopWindow() async {
 // Removed eager system font preloading to reduce memory footprint at launch.
 
 class MyApp extends StatelessWidget {
-  const MyApp({super.key});
+  const MyApp({
+    required this.cloudSyncStore,
+    required this.syncWriteJournal,
+    super.key,
+  });
+
+  final CloudSyncStore cloudSyncStore;
+  final SyncWriteJournal syncWriteJournal;
 
   @override
   Widget build(BuildContext context) {
     return MultiProvider(
       providers: [
+        Provider<SyncWriteJournal>.value(value: syncWriteJournal),
         ChangeNotifierProvider(create: (_) => ChatProvider()),
         ChangeNotifierProvider(create: (_) => UserProvider()),
         ChangeNotifierProvider(
@@ -165,6 +192,8 @@ class MyApp extends StatelessWidget {
           create: (ctx) {
             final provider = CloudSyncProvider(
               ctx.read<ChatService>(),
+              cloudSyncStore,
+              syncWriteJournal,
               settingsProvider: ctx.read<SettingsProvider>(),
               assistantProvider: ctx.read<AssistantProvider>(),
               memoryProvider: ctx.read<MemoryProvider>(),

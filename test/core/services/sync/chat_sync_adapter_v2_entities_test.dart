@@ -143,6 +143,71 @@ void main() {
     });
   });
 
+  test('按 key 定向导出六类聊天实体', () async {
+    final conversation = await chatService.createConversation(title: 'Chat');
+    final message = await chatService.addMessage(
+      conversationId: conversation.id,
+      role: 'assistant',
+      content: 'answer',
+      turnId: 'turn-target',
+      groupId: 'group-target',
+      version: 1,
+      generationStatus: 'completed',
+    );
+    await chatService.setSelectedVersion(conversation.id, 'group-target', 1);
+    await chatService.setToolEvents(message.id, const <Map<String, dynamic>>[]);
+    await chatService.setGeminiThoughtSignature(message.id, 'signature-target');
+
+    final keys = <SyncEntityKey>[
+      SyncEntityKey(
+        entityType: ChatSyncAdapter.conversationType,
+        entityId: conversation.id,
+      ),
+      const SyncEntityKey(
+        entityType: ChatSyncAdapter.turnType,
+        entityId: 'turn-target',
+      ),
+      SyncEntityKey(
+        entityType: ChatSyncAdapter.messageType,
+        entityId: message.id,
+      ),
+      const SyncEntityKey(
+        entityType: ChatSyncAdapter.messageSelectionType,
+        entityId: 'group-target',
+      ),
+      SyncEntityKey(
+        entityType: ChatSyncAdapter.toolEventType,
+        entityId: message.id,
+      ),
+      SyncEntityKey(
+        entityType: ChatSyncAdapter.thoughtSignatureType,
+        entityId: message.id,
+      ),
+    ];
+
+    for (final key in keys) {
+      final entity = await adapter.exportLocalEntity(key);
+      expect(entity?.key, key, reason: key.entityType);
+    }
+    final batch = await adapter.exportLocalEntitiesForKeys(<SyncEntityKey>{
+      ...keys,
+      const SyncEntityKey(
+        entityType: ChatSyncAdapter.messageType,
+        entityId: 'missing-message',
+      ),
+    });
+    expect(batch.keys.toSet(), keys.toSet());
+    expect(
+      await adapter.exportLocalEntity(
+        const SyncEntityKey(
+          entityType: ChatSyncAdapter.messageType,
+          entityId: 'missing-message',
+        ),
+      ),
+      isNull,
+    );
+  });
+
   test('远端三类实体通过专用同步入口恢复', () async {
     final conversation = await chatService.createConversation(title: 'Chat');
     final message = await chatService.addMessage(

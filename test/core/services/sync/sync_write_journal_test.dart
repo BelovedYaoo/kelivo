@@ -11,6 +11,23 @@ import 'package:Kelivo/core/services/sync/sync_write_journal.dart';
 
 const _journalScopeId = 'installation-1';
 
+SyncWriteExportAndEnqueue _perIntentExporter(
+  Future<SyncWriteDisposition> Function(SyncWriteIntent intent) exporter,
+) {
+  return (intents) async {
+    final dispositions = <SyncEntityKey, SyncWriteDisposition>{};
+    for (final intent in intents) {
+      dispositions[SyncEntityKey(
+        entityType: intent.entityType.wireName,
+        entityId: intent.entityId,
+      )] = await exporter(
+        intent,
+      );
+    }
+    return dispositions;
+  };
+}
+
 void main() {
   late Directory tempDirectory;
   late CloudSyncStore store;
@@ -31,6 +48,94 @@ void main() {
     }
   });
 
+  test('exporter 尚未绑定时保留 intent，绑定后恢复并清理', () async {
+    final session = _session(userId: 'user-1');
+    final exported = <SyncWriteIntent>[];
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-before-bind',
+    );
+
+    await journal.runLocal<void>(
+      key: const SyncEntityKey(
+        entityType: 'assistant',
+        entityId: 'assistant-before-bind',
+      ),
+      write: () async {},
+    );
+    expect(
+      store.writeIntents(
+        journalScopeId: _journalScopeId,
+        accountScope: session.accountScope,
+      ),
+      hasLength(1),
+    );
+    final deferredSummary = await journal.recover();
+    expect(deferredSummary.completedCount, 0);
+    expect(deferredSummary.deferredCount, 1);
+
+    journal.bindExporter(
+      _perIntentExporter((intent) async {
+        exported.add(intent);
+        return SyncWriteDisposition.completed;
+      }),
+    );
+    final recoveredSummary = await journal.recover();
+
+    expect(exported.single.intentId, 'intent-before-bind');
+    expect(recoveredSummary.completedCount, 1);
+    expect(recoveredSummary.deferredCount, 0);
+    expect(
+      store.writeIntents(
+        journalScopeId: _journalScopeId,
+        accountScope: session.accountScope,
+      ),
+      isEmpty,
+    );
+  });
+
+  test('关闭等待在途操作结束并拒绝后续访问 Store', () async {
+    final writeStarted = Completer<void>();
+    final releaseWrite = Completer<void>();
+    var closed = false;
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+    );
+
+    final running = journal.runRemote<void>(
+      key: const SyncEntityKey(
+        entityType: 'assistant',
+        entityId: 'assistant-closing',
+      ),
+      write: () async {
+        writeStarted.complete();
+        await releaseWrite.future;
+      },
+    );
+    await writeStarted.future;
+    final closing = journal.close().then((_) => closed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isFalse);
+
+    releaseWrite.complete();
+    await running;
+    await closing;
+
+    await expectLater(
+      journal.runRemote<void>(
+        key: const SyncEntityKey(
+          entityType: 'assistant',
+          entityId: 'assistant-after-close',
+        ),
+        write: () async {},
+      ),
+      throwsStateError,
+    );
+  });
+
   test('本地写入先持久化 intent，导出入队成功后才清理', () async {
     final session = _session(userId: 'user-1');
     final events = <String>[];
@@ -40,7 +145,7 @@ void main() {
       initialSession: session,
       createIntentId: () => 'intent-1',
       now: () => DateTime.utc(2026, 7, 16, 9),
-      exportAndEnqueue: (intent) async {
+      exportAndEnqueue: _perIntentExporter((intent) async {
         events.add('export');
         final persisted = store.writeIntents(
           journalScopeId: _journalScopeId,
@@ -48,7 +153,7 @@ void main() {
         );
         expect(persisted.single.intentId, intent.intentId);
         return SyncWriteDisposition.completed;
-      },
+      }),
     );
 
     final result = await journal.runLocal<String>(
@@ -84,7 +189,9 @@ void main() {
       journalScopeId: _journalScopeId,
       initialSession: session,
       createIntentId: () => 'intent-recover',
-      exportAndEnqueue: (_) async => throw StateError('enqueue failed'),
+      exportAndEnqueue: _perIntentExporter(
+        (_) async => throw StateError('enqueue failed'),
+      ),
     );
 
     await expectLater(
@@ -105,10 +212,10 @@ void main() {
       store: store,
       journalScopeId: _journalScopeId,
       initialSession: session,
-      exportAndEnqueue: (intent) async {
+      exportAndEnqueue: _perIntentExporter((intent) async {
         recovered.add(intent);
         return SyncWriteDisposition.completed;
-      },
+      }),
     );
     await recoveringJournal.recover();
 
@@ -138,7 +245,9 @@ void main() {
       journalScopeId: _journalScopeId,
       initialSession: session,
       createIntentId: () => 'intent-${nextIntent++}',
-      exportAndEnqueue: (_) async => SyncWriteDisposition.completed,
+      exportAndEnqueue: _perIntentExporter(
+        (_) async => SyncWriteDisposition.completed,
+      ),
     );
     const firstKey = SyncEntityKey(
       entityType: 'message',
@@ -181,6 +290,148 @@ void main() {
     expect(secondStarted.isCompleted, isTrue);
   });
 
+  test('批量本地写在动作前持久化全部去重 intent 并按稳定顺序导出', () async {
+    final session = _session(userId: 'user-1');
+    var nextIntent = 0;
+    var batchExportCount = 0;
+    final exportedEntityIds = <String>[];
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-batch-${nextIntent++}',
+      now: () => DateTime.utc(2026, 7, 16, 9),
+      exportAndEnqueue: (intents) async {
+        batchExportCount++;
+        final dispositions = <SyncEntityKey, SyncWriteDisposition>{};
+        for (final intent in intents) {
+          exportedEntityIds.add(intent.entityId);
+          dispositions[SyncEntityKey(
+                entityType: intent.entityType.wireName,
+                entityId: intent.entityId,
+              )] =
+              SyncWriteDisposition.completed;
+        }
+        return dispositions;
+      },
+    );
+    const firstKey = SyncEntityKey(
+      entityType: 'message',
+      entityId: 'message-1',
+    );
+    const secondKey = SyncEntityKey(
+      entityType: 'message',
+      entityId: 'message-2',
+    );
+
+    final result = await journal.runLocalBatch<String>(
+      keys: const <SyncEntityKey>[secondKey, firstKey, secondKey],
+      write: () async {
+        final persisted = store.writeIntents(
+          journalScopeId: _journalScopeId,
+          accountScope: session.accountScope,
+        );
+        expect(persisted, hasLength(2));
+        expect(persisted.map((intent) => intent.entityId), <String>[
+          'message-1',
+          'message-2',
+        ]);
+        return 'saved';
+      },
+    );
+
+    expect(result, 'saved');
+    expect(batchExportCount, 1);
+    expect(exportedEntityIds, <String>['message-1', 'message-2']);
+    expect(
+      store.writeIntents(
+        journalScopeId: _journalScopeId,
+        accountScope: session.accountScope,
+      ),
+      isEmpty,
+    );
+  });
+
+  test('批量本地动作失败时保留所有 intent 且不触发导出', () async {
+    final session = _session(userId: 'user-1');
+    var nextIntent = 0;
+    var exportCount = 0;
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-failed-batch-${nextIntent++}',
+      exportAndEnqueue: _perIntentExporter((_) async {
+        exportCount++;
+        return SyncWriteDisposition.completed;
+      }),
+    );
+
+    await expectLater(
+      journal.runLocalBatch<void>(
+        keys: const <SyncEntityKey>[
+          SyncEntityKey(entityType: 'assistant', entityId: 'assistant-1'),
+          SyncEntityKey(entityType: 'memory', entityId: 'memory-1'),
+        ],
+        write: () async => throw StateError('write failed'),
+      ),
+      throwsStateError,
+    );
+
+    expect(exportCount, 0);
+    expect(
+      store.writeIntents(
+        journalScopeId: _journalScopeId,
+        accountScope: session.accountScope,
+      ),
+      hasLength(2),
+    );
+  });
+
+  test('反序的本地与远端批次按统一锁顺序执行且不会死锁', () async {
+    final session = _session(userId: 'user-1');
+    final firstStarted = Completer<void>();
+    final releaseFirst = Completer<void>();
+    final secondStarted = Completer<void>();
+    var nextIntent = 0;
+    final journal = SyncWriteJournal(
+      store: store,
+      journalScopeId: _journalScopeId,
+      initialSession: session,
+      createIntentId: () => 'intent-cross-order-${nextIntent++}',
+      exportAndEnqueue: _perIntentExporter(
+        (_) async => SyncWriteDisposition.completed,
+      ),
+    );
+    const firstKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-1',
+    );
+    const secondKey = SyncEntityKey(entityType: 'turn', entityId: 'turn-1');
+
+    final remote = journal.runRemoteBatch<void>(
+      keys: const <SyncEntityKey>[secondKey, firstKey],
+      write: () async {
+        firstStarted.complete();
+        await releaseFirst.future;
+      },
+    );
+    await firstStarted.future;
+    final local = journal.runLocalBatch<void>(
+      keys: const <SyncEntityKey>[firstKey, secondKey],
+      write: () async => secondStarted.complete(),
+    );
+    await Future<void>.delayed(Duration.zero);
+    expect(secondStarted.isCompleted, isFalse);
+
+    releaseFirst.complete();
+    await Future.wait<void>(<Future<void>>[
+      remote,
+      local,
+    ]).timeout(const Duration(seconds: 2));
+    expect(secondStarted.isCompleted, isTrue);
+  });
+
   test('远端应用与同实体本地写串行且不生成 intent 或 outbox', () async {
     final session = _session(userId: 'user-1');
     final localStarted = Completer<void>();
@@ -191,10 +442,10 @@ void main() {
       store: store,
       journalScopeId: _journalScopeId,
       initialSession: session,
-      exportAndEnqueue: (_) async {
+      exportAndEnqueue: _perIntentExporter((_) async {
         exportCount++;
         return SyncWriteDisposition.completed;
-      },
+      }),
     );
     const key = SyncEntityKey(
       entityType: 'conversation',
@@ -235,13 +486,13 @@ void main() {
       store: store,
       journalScopeId: _journalScopeId,
       createIntentId: () => 'intent-device-global',
-      exportAndEnqueue: (intent) async {
+      exportAndEnqueue: _perIntentExporter((intent) async {
         if (intent.accountScope == null) {
           return SyncWriteDisposition.deferred;
         }
         recovered.add(intent);
         return SyncWriteDisposition.completed;
-      },
+      }),
     );
 
     final result = await journal.runLocal<String>(
@@ -301,10 +552,10 @@ void main() {
       journalScopeId: _journalScopeId,
       initialSession: firstSession,
       createIntentId: () => 'intent-transition-${nextIntent++}',
-      exportAndEnqueue: (intent) async {
+      exportAndEnqueue: _perIntentExporter((intent) async {
         exportedScopes.add(intent.accountScope);
         return SyncWriteDisposition.completed;
-      },
+      }),
     );
 
     final local = journal.runLocal<void>(
@@ -355,10 +606,10 @@ void main() {
       journalScopeId: _journalScopeId,
       initialSession: session,
       createIntentId: () => 'intent-write-failed',
-      exportAndEnqueue: (_) async {
+      exportAndEnqueue: _perIntentExporter((_) async {
         exportCount++;
         return SyncWriteDisposition.completed;
-      },
+      }),
     );
 
     await expectLater(
@@ -393,10 +644,10 @@ void main() {
       store: store,
       journalScopeId: _journalScopeId,
       initialSession: session,
-      exportAndEnqueue: (_) async {
+      exportAndEnqueue: _perIntentExporter((_) async {
         exported = true;
         return SyncWriteDisposition.completed;
-      },
+      }),
     );
 
     await journal.runLocal<void>(
@@ -429,14 +680,18 @@ void main() {
       journalScopeId: 'installation-a',
       initialSession: session,
       createIntentId: () => 'intent-installation-a',
-      exportAndEnqueue: (_) async => throw StateError('offline'),
+      exportAndEnqueue: _perIntentExporter(
+        (_) async => throw StateError('offline'),
+      ),
     );
     final second = SyncWriteJournal(
       store: store,
       journalScopeId: 'installation-b',
       initialSession: session,
       createIntentId: () => 'intent-installation-b',
-      exportAndEnqueue: (_) async => throw StateError('offline'),
+      exportAndEnqueue: _perIntentExporter(
+        (_) async => throw StateError('offline'),
+      ),
     );
 
     await expectLater(

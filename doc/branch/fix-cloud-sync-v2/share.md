@@ -13,4 +13,15 @@
 - 已完成：Chat Adapter 覆盖 `message-selection`、`tool-event`、`thought-signature` 三类 v2 实体；稳定 identity/parent、严格 Payload、专用 `FromSync` 写入及墓碑清理均已闭环，空工具事件保留实体语义。
 - Chat v2 验证：新增目标测试 6 项、既有 ChatService 回归测试 26 项及定向静态分析均通过；批处理明确留到后续切片。
 - 已完成：`instruction-injection` 补入 Flutter 同步实体枚举与支持集合，所有枚举/支持集合一致性测试通过。
+- 已完成：应用启动在 `runApp` 前以与 `ChatService.init` 相同目录初始化 Hive，打开唯一 `CloudSyncStore`，持久生成安装级 `journalScopeId` 并创建未绑定 exporter 的应用级 `SyncWriteJournal`；Store 仅由 `CloudSyncProvider.dispose` 在等待初始化、会话变更、同步与 journal 在途操作后关闭一次。
+- 已完成：协调器抽出 `CloudSyncMutationPlanner`；写前 intent 仅调用 Adapter 的 `exportLocalEntity(key)`，依据 shadow 生成 create/update/delete/restore，并用 intentId 保证恢复重放不重复入队；现有全量扫描作为领域入口接入前的临时兜底保留且复用同一 planner。
+- 已完成：登录、已有会话初始化与退出接入 journal 会话门闩和串行 recover；暂停状态不阻断 intent 恢复，恢复失败不伪装登录失败；尚未接入 9 个领域写入口。
+- 已完成：本地同步协议升级到 v2；首次或旧版本删除 `account:*` 与 `journal:*` 状态但保留登录、服务地址和安装身份，高于当前版本时关闭 box 并拒绝启动且不改写数据。
+- 已完成：authoritative snapshot 覆盖前定向捕获本地状态；未尝试 outbox 基于新远端 shadow 重规划，attempted/blocked 请求和旧 shadow 保持不可变；快照缺席按服务端同步域重建处理，本地存在时重建唯一 create。
+- 已完成：outbox 发送按依赖深度稳定排序，保证 conversation → turn/message-selection → message → tool-event/thought-signature，以及 assistant → memory/quick-phrase。
+- 已完成：journal 新增 `runLocalBatch` / `runRemoteBatch`；批次按 `storageKey` 去重并稳定加锁，本地批次在业务写入前持久化全部 intent，写入失败时全部保留，成功后仅调用一次批量 exporter 并按实体分别完成或延迟。
+- 已完成：Planner 按 Adapter 分组调用 `exportLocalEntitiesForKeys`，Config 每个目标实体类型只导出一次；Chat 当前一次全量导出后过滤目标 key，已消除同一批次的 N 次全扫描，但仍需下一切片增加 ChatService 只读索引以避免单次全量遍历和无关附件准备。
+- 已完成：协调器注入应用级同一个 `SyncWriteJournal`，所有远端 upsert/delete（含快照缺席和字段冲突强制远端）均经过远端同键锁；字段冲突强制采用远端 current，结构冲突保留本地 desired 并重规划。
+- 后续接写入口时，所有携带 `_position` 的列表删除或重排必须为每个位置受影响的实体记录 intent，不能只记录用户直接操作的单个 key。
+- 本切片最新定向验证覆盖 Store/Planner、Coordinator、Journal、生成客户端协议、两个生产 Adapter 与 ChatService 共 79 项测试；15 个目标文件静态分析无问题。ChatService 附件恢复用例需将 TEMP/TMP 从不支持符号链接解析的 `R:\Temp` 指向本机用户临时目录。此前完整 `flutter test` 为 844 项通过、1 项既有失败，失败来自本地字体测试对 Windows 路径分隔符的断言，与本切片无关。
 - 已完成：Dart OpenAPI 客户端按服务端 v2 契约重新生成；手写传输层适配强制协议版本与 `AnyOf` mutation 结果，并补齐字段冲突列表、详情和解决接口。字段状态契约已改为生成器稳定支持的单对象结构；5 项相关测试与定向静态分析通过。
