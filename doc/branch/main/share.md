@@ -4,6 +4,7 @@
 - 上游：`upstream` 指向 `Chevey339/kelivo`，其默认分支为 `master`。
 - 镜像：`upstream-main` 仅用于对齐 `upstream/master`，不得提交定制内容。
 - 当前进度：已完成定制界面、私有云同步客户端与生产 API 接入，并建立 Windows、Android 构建及 Android 长期签名基线。
+- 云同步域名：客户端默认服务地址已硬切换为 `https://kelivo.bemylover.top`；不保留旧域兼容或作用域迁移，已有登录会话需退出云同步后使用新地址重新登录。
 - 定制界面：设置页“关于”分组已移除使用文档与赞助入口；关于详情页仅保留应用信息、版本和系统信息，移动端与桌面端保持一致。
 - 同步方式：先更新 `upstream-main`，再通过独立同步分支合并到 `main` 并完成验证。
 - 构建基线：Flutter `3.44.1`、Dart `3.12.1`、JDK `17.0.16`、Gradle `8.14`、Android SDK `36.1`、NDK `28.2.13676358`、Build Tools `36.1.0`。

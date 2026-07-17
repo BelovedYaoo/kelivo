@@ -1,6 +1,6 @@
 typedef CloudSyncJsonMap = Map<String, Object?>;
 
-const defaultCloudSyncBaseUrl = 'https://kelivo-api.ovo-a1f.workers.dev';
+const defaultCloudSyncBaseUrl = 'https://kelivo.bemylover.top';
 const maximumCloudSyncAttachmentSizeBytes = 100 * 1024 * 1024;
 
 bool isAllowedCloudSyncTransportUri(Uri uri) {
