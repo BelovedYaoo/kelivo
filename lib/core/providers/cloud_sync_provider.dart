@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/widgets.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:uuid/uuid.dart';
 
 import '../services/chat/chat_service.dart';
 import '../services/sync/chat_sync_adapter.dart';
@@ -32,9 +33,24 @@ enum CloudSyncProviderStatus {
   signingOut,
   idle,
   syncing,
+  pendingSync,
+  syncBlocked,
   needsAttention,
   paused,
   error,
+}
+
+CloudSyncProviderStatus _resolveCloudSyncProviderStatus({
+  required bool paused,
+  required bool hasOpenConflicts,
+  required bool hasBlockedWrites,
+  required bool hasPendingWrites,
+}) {
+  if (paused) return CloudSyncProviderStatus.paused;
+  if (hasOpenConflicts) return CloudSyncProviderStatus.needsAttention;
+  if (hasBlockedWrites) return CloudSyncProviderStatus.syncBlocked;
+  if (hasPendingWrites) return CloudSyncProviderStatus.pendingSync;
+  return CloudSyncProviderStatus.idle;
 }
 
 final class CloudSyncProvider extends ChangeNotifier
@@ -166,6 +182,8 @@ final class CloudSyncProvider extends ChangeNotifier
         return;
       }
 
+      await _repairBlockedAssistantPayloadMutations(session);
+      if (_disposed) return;
       _paused = store.isPaused(session);
       _connect(session);
       await _writeJournal.transitionSession(session);
@@ -188,6 +206,89 @@ final class CloudSyncProvider extends ChangeNotifier
         operation: '初始化云同步',
         status: CloudSyncProviderStatus.error,
       );
+    }
+  }
+
+  Future<void> _repairBlockedAssistantPayloadMutations(
+    CloudSyncAccountSession session,
+  ) async {
+    for (final mutation in _store.blockedOutbox(session)) {
+      final replacement = _repairLegacyAssistantMediaMutation(
+        session,
+        mutation,
+      );
+      if (replacement == null) continue;
+
+      // 新 mutation 先落盘，再移除服务端已记住结果的旧 mutationId；中途退出时，
+      // 确定性的替代 ID 可让下次启动安全续做而不会丢失账号级恢复状态。
+      await _store.enqueueOutbox(session, replacement, merge: false);
+      await _store.removeOutbox(session, mutation.mutationId);
+    }
+  }
+
+  CloudSyncOutboxMutation? _repairLegacyAssistantMediaMutation(
+    CloudSyncAccountSession session,
+    CloudSyncOutboxMutation mutation,
+  ) {
+    if (mutation.entityType != CloudSyncEntityType.assistant ||
+        mutation.lastErrorCode != 'SYNC_PAYLOAD_INVALID') {
+      return null;
+    }
+    final replacementId = const Uuid().v5(
+      Namespace.url.value,
+      'kelivo://cloud-sync/assistant-media-repair/'
+      '${session.accountScope}/${mutation.mutationId}',
+    );
+    switch (mutation.operation) {
+      case CloudSyncMutationOperation.create:
+        final payload = mutation.payload;
+        final schemaVersion = mutation.schemaVersion;
+        if (payload == null ||
+            schemaVersion == null ||
+            (payload.containsKey('avatar') &&
+                payload.containsKey('background'))) {
+          return null;
+        }
+        return CloudSyncOutboxMutation.create(
+          mutationId: replacementId,
+          entityType: mutation.entityType,
+          entityId: mutation.entityId,
+          parentId: mutation.parentId,
+          schemaVersion: schemaVersion,
+          payload: <String, Object?>{
+            ...payload,
+            if (!payload.containsKey('avatar')) 'avatar': null,
+            if (!payload.containsKey('background')) 'background': null,
+          },
+          createdAt: mutation.createdAt,
+        );
+      case CloudSyncMutationOperation.update:
+        final repairsMediaRemoval = mutation.patch.any(
+          (patch) =>
+              patch.operation == CloudSyncPatchOperation.remove &&
+              (patch.path == '/avatar' || patch.path == '/background'),
+        );
+        if (!repairsMediaRemoval) return null;
+        return CloudSyncOutboxMutation.update(
+          mutationId: replacementId,
+          entityType: mutation.entityType,
+          entityId: mutation.entityId,
+          baseRevision: mutation.baseRevision,
+          schemaVersion: mutation.schemaVersion,
+          patch: mutation.patch
+              .map(
+                (patch) =>
+                    patch.operation == CloudSyncPatchOperation.remove &&
+                        (patch.path == '/avatar' || patch.path == '/background')
+                    ? CloudSyncPatch.replace(patch.path, null)
+                    : patch,
+              )
+              .toList(growable: false),
+          createdAt: mutation.createdAt,
+        );
+      case CloudSyncMutationOperation.delete ||
+          CloudSyncMutationOperation.restore:
+        return null;
     }
   }
 
@@ -241,6 +342,8 @@ final class CloudSyncProvider extends ChangeNotifier
       _lastBaseUrl = session.baseUrl;
       _session = session;
       _paused = false;
+      await _repairBlockedAssistantPayloadMutations(session);
+      if (_disposed) return false;
       _connect(session, client: loginClient);
       loginClient = null;
       try {
@@ -473,10 +576,13 @@ final class CloudSyncProvider extends ChangeNotifier
       _conflicts = List<CloudSyncConflict>.unmodifiable(conflicts);
       _conflictListTruncated = conflicts.length >= 100;
       _conflictError = null;
+      final outboxCounts = _store.outboxCounts(session);
+      final hasBlockedWrites = outboxCounts.blocked > 0;
+      final hasPendingWrites =
+          recovery.deferredCount > 0 ||
+          outboxCounts.total > outboxCounts.blocked;
       final complete =
-          recovery.deferredCount == 0 &&
-          _store.outboxCount(session) == 0 &&
-          conflicts.isEmpty;
+          !hasBlockedWrites && !hasPendingWrites && conflicts.isEmpty;
       if (configRescanGeneration != null && complete) {
         await _store.consumeConfigRescanGeneration(configRescanGeneration);
         if (epoch != _sessionEpoch || _disposed) return false;
@@ -487,11 +593,12 @@ final class CloudSyncProvider extends ChangeNotifier
       _lastRun = result.copyWith(deferredWriteCount: recovery.deferredCount);
       _lastError = null;
       _setStatus(
-        _paused
-            ? CloudSyncProviderStatus.paused
-            : complete
-            ? CloudSyncProviderStatus.idle
-            : CloudSyncProviderStatus.needsAttention,
+        _resolveCloudSyncProviderStatus(
+          paused: _paused,
+          hasOpenConflicts: conflicts.isNotEmpty,
+          hasBlockedWrites: hasBlockedWrites,
+          hasPendingWrites: hasPendingWrites,
+        ),
       );
       return complete;
     } catch (error, stackTrace) {
@@ -636,12 +743,14 @@ final class CloudSyncProvider extends ChangeNotifier
       return;
     }
     final hasDeferredWrites = (_lastRun?.deferredWriteCount ?? 0) > 0;
-    _status =
-        _conflicts.isNotEmpty ||
-            _store.outboxCount(session) > 0 ||
-            hasDeferredWrites
-        ? CloudSyncProviderStatus.needsAttention
-        : CloudSyncProviderStatus.idle;
+    final outboxCounts = _store.outboxCounts(session);
+    _status = _resolveCloudSyncProviderStatus(
+      paused: false,
+      hasOpenConflicts: _conflicts.isNotEmpty,
+      hasBlockedWrites: outboxCounts.blocked > 0,
+      hasPendingWrites:
+          outboxCounts.total > outboxCounts.blocked || hasDeferredWrites,
+    );
   }
 
   Future<bool> refreshDevices() async {

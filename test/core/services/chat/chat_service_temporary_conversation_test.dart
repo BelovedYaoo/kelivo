@@ -155,6 +155,7 @@ Future<HttpServer> _startCloudSyncLoginServer({
   List<String>? requestPaths,
   Completer<void>? loginRequestReceived,
   Future<void>? releaseLoginResponse,
+  bool serveSuccessfulSync = false,
 }) async {
   final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
   server.listen((request) async {
@@ -187,6 +188,25 @@ Future<HttpServer> _startCloudSyncLoginServer({
               'createdAt': '2026-07-15T00:00:00.000Z',
             },
           },
+        }),
+      );
+    } else if (serveSuccessfulSync &&
+        request.uri.path == '/api/sync/change/pull') {
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'data': <String, Object?>{
+            'changes': const <Object?>[],
+            'nextCursor': 'cursor-0',
+            'hasMore': false,
+            'resetRequired': false,
+          },
+        }),
+      );
+    } else if (serveSuccessfulSync &&
+        request.uri.path == '/api/sync/conflict/list') {
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'data': <String, Object?>{'conflicts': const <Object?>[]},
         }),
       );
     } else {
@@ -376,6 +396,223 @@ void main() {
   });
 
   group('CloudSyncProvider 登录', () {
+    test('空冲突且只有未来重试项时真实同步状态为待同步', () async {
+      final server = await _startCloudSyncLoginServer(
+        serveSuccessfulSync: true,
+      );
+      final fixture = await _createCloudSyncProviderFixture(tempDir.path);
+      addTearDown(() async {
+        await server.close(force: true);
+        await fixture.close();
+      });
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+      final session = _cloudSession(baseUrl);
+      await fixture.store.savePullCursor(session, 'cursor-0');
+      await fixture.store.enqueueOutbox(
+        session,
+        CloudSyncOutboxMutation.create(
+          mutationId: 'future-retry',
+          entityType: CloudSyncEntityType.conversation,
+          entityId: 'conversation-1',
+          schemaVersion: 2,
+          payload: const <String, Object?>{'title': '待同步会话'},
+        ),
+      );
+      await fixture.store.markOutboxRetry(
+        session,
+        mutationId: 'future-retry',
+        nextAttemptAt: DateTime.utc(2099),
+      );
+
+      final success = await _withRealHttpClient(
+        () => fixture.provider.login(
+          baseUrl: baseUrl,
+          loginName: 'sync-user',
+          password: 'password',
+          deviceName: 'device',
+        ),
+      );
+
+      expect(success, isFalse);
+      expect(fixture.provider.lastError, isNull);
+      expect(fixture.provider.conflicts, isEmpty);
+      expect(fixture.provider.status, CloudSyncProviderStatus.pendingSync);
+    });
+
+    test('空冲突且存在永久阻塞项时真实同步状态为同步失败', () async {
+      final server = await _startCloudSyncLoginServer(
+        serveSuccessfulSync: true,
+      );
+      final fixture = await _createCloudSyncProviderFixture(tempDir.path);
+      addTearDown(() async {
+        await server.close(force: true);
+        await fixture.close();
+      });
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+      final session = _cloudSession(baseUrl);
+      await fixture.store.savePullCursor(session, 'cursor-0');
+      await fixture.store.enqueueOutbox(
+        session,
+        CloudSyncOutboxMutation.create(
+          mutationId: 'blocked-mutation',
+          entityType: CloudSyncEntityType.conversation,
+          entityId: 'conversation-1',
+          schemaVersion: 2,
+          payload: const <String, Object?>{'title': '失败会话'},
+        ),
+      );
+      await fixture.store.markOutboxBlocked(
+        session,
+        mutationId: 'blocked-mutation',
+        errorCode: 'SYNC_PAYLOAD_INVALID',
+      );
+
+      final success = await _withRealHttpClient(
+        () => fixture.provider.login(
+          baseUrl: baseUrl,
+          loginName: 'sync-user',
+          password: 'password',
+          deviceName: 'device',
+        ),
+      );
+
+      expect(success, isFalse);
+      expect(fixture.provider.lastError, isNull);
+      expect(fixture.provider.conflicts, isEmpty);
+      expect(fixture.provider.status, CloudSyncProviderStatus.syncBlocked);
+    });
+
+    test('登录时替换旧版助手媒体缺键载荷但保留其他阻塞项', () async {
+      final server = await _startCloudSyncLoginServer();
+      final fixture = await _createCloudSyncProviderFixture(tempDir.path);
+      addTearDown(() async {
+        await server.close(force: true);
+        await fixture.close();
+      });
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+      final session = _cloudSession(baseUrl);
+      await fixture.store.enqueueOutbox(
+        session,
+        CloudSyncOutboxMutation.create(
+          mutationId: 'assistant-invalid-payload',
+          entityType: CloudSyncEntityType.assistant,
+          entityId: 'assistant-1',
+          schemaVersion: 2,
+          payload: const <String, Object?>{'name': '助手'},
+        ),
+      );
+      await fixture.store.markOutboxBlocked(
+        session,
+        mutationId: 'assistant-invalid-payload',
+        errorCode: 'SYNC_PAYLOAD_INVALID',
+      );
+      await fixture.store.enqueueOutbox(
+        session,
+        CloudSyncOutboxMutation.create(
+          mutationId: 'assistant-other-invalid-payload',
+          entityType: CloudSyncEntityType.assistant,
+          entityId: 'assistant-2',
+          schemaVersion: 2,
+          payload: const <String, Object?>{
+            'name': '其他无效助手',
+            'avatar': null,
+            'background': null,
+          },
+        ),
+      );
+      await fixture.store.markOutboxBlocked(
+        session,
+        mutationId: 'assistant-other-invalid-payload',
+        errorCode: 'SYNC_PAYLOAD_INVALID',
+      );
+      await fixture.store.enqueueOutbox(
+        session,
+        CloudSyncOutboxMutation.update(
+          mutationId: 'assistant-invalid-patch',
+          entityType: CloudSyncEntityType.assistant,
+          entityId: 'assistant-3',
+          baseRevision: 1,
+          schemaVersion: 2,
+          patch: <CloudSyncPatch>[
+            CloudSyncPatch.remove('/avatar'),
+            CloudSyncPatch.remove('/background'),
+          ],
+        ),
+      );
+      await fixture.store.markOutboxBlocked(
+        session,
+        mutationId: 'assistant-invalid-patch',
+        errorCode: 'SYNC_PAYLOAD_INVALID',
+      );
+      await fixture.store.enqueueOutbox(
+        session,
+        CloudSyncOutboxMutation.create(
+          mutationId: 'message-invalid-payload',
+          entityType: CloudSyncEntityType.message,
+          entityId: 'message-1',
+          parentId: 'turn-1',
+          schemaVersion: 2,
+          payload: const <String, Object?>{},
+        ),
+      );
+      await fixture.store.markOutboxBlocked(
+        session,
+        mutationId: 'message-invalid-payload',
+        errorCode: 'SYNC_PAYLOAD_INVALID',
+      );
+
+      await _withRealHttpClient(
+        () => fixture.provider.login(
+          baseUrl: baseUrl,
+          loginName: 'sync-user',
+          password: 'password',
+          deviceName: 'device',
+        ),
+      );
+
+      expect(
+        fixture.store
+            .blockedOutbox(session)
+            .map((mutation) => mutation.mutationId),
+        unorderedEquals(<String>[
+          'assistant-other-invalid-payload',
+          'message-invalid-payload',
+        ]),
+      );
+      final replacement = fixture.store
+          .outboxForEntity(
+            session,
+            entityType: CloudSyncEntityType.assistant,
+            entityId: 'assistant-1',
+          )
+          .single;
+      expect(replacement.mutationId, isNot('assistant-invalid-payload'));
+      expect(replacement.blockedAt, isNull);
+      expect(replacement.payload, containsPair('avatar', null));
+      expect(replacement.payload, containsPair('background', null));
+      final updateReplacement = fixture.store
+          .outboxForEntity(
+            session,
+            entityType: CloudSyncEntityType.assistant,
+            entityId: 'assistant-3',
+          )
+          .single;
+      expect(updateReplacement.mutationId, isNot('assistant-invalid-patch'));
+      expect(updateReplacement.blockedAt, isNull);
+      expect(
+        updateReplacement.patch.map((patch) => patch.toJson()),
+        <Map<String, Object?>>[
+          <String, Object?>{'op': 'replace', 'path': '/avatar', 'value': null},
+          <String, Object?>{
+            'op': 'replace',
+            'path': '/background',
+            'value': null,
+          },
+        ],
+      );
+      expect(fixture.store.configRescanGeneration, isNull);
+    });
+
     test('首次同步失败时保留认证会话并返回失败状态', () async {
       final server = await _startCloudSyncLoginServer();
       final fixture = await _createCloudSyncProviderFixture(tempDir.path);

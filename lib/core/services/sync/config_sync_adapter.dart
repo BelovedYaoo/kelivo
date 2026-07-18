@@ -210,8 +210,8 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       final payload = _mutableJsonObject(assistant.toJson());
       payload.remove('id');
       payload['_position'] = index;
-      if (_isLocalPath(assistant.avatar)) payload.remove('avatar');
-      if (_isLocalPath(assistant.background)) payload.remove('background');
+      if (_isLocalPath(assistant.avatar)) payload['avatar'] = null;
+      if (_isLocalPath(assistant.background)) payload['background'] = null;
       yield LocalSyncEntity(
         entityType: _assistantType,
         entityId: assistant.id,
@@ -537,10 +537,12 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     final current = _assistants.getById(entityId);
     final assistant = decoded.copyWith(
       avatar: sanitized.containsKey('avatar')
-          ? decoded.avatar
+          ? decoded.avatar ??
+                (_isLocalPath(current?.avatar) ? current?.avatar : null)
           : current?.avatar,
       background: sanitized.containsKey('background')
-          ? decoded.background
+          ? decoded.background ??
+                (_isLocalPath(current?.background) ? current?.background : null)
           : current?.background,
     );
     await _assistants.syncUpsertAssistant(

@@ -240,8 +240,20 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudSyncStatusNeedsAttention => 'Review Needed';
 
   @override
+  String get cloudSyncStatusPendingSync => 'Data Not Fully Synced';
+
+  @override
+  String get cloudSyncStatusBlocked => 'Some Data Failed to Sync';
+
+  @override
   String get cloudSyncSyncNeedsAttention =>
       'Sync finished, but some items need your review.';
+
+  @override
+  String get cloudSyncSyncPending => 'Some data has not synced yet.';
+
+  @override
+  String get cloudSyncSyncBlocked => 'Some data could not be synced.';
 
   @override
   String get cloudSyncConflictsSection => 'Sync Conflicts';

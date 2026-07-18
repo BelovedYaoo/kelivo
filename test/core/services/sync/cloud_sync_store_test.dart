@@ -230,6 +230,11 @@ void main() {
 
     expect(store.pendingOutbox(session), hasLength(1));
     expect(store.outboxCount(session), 3);
+    expect(store.outboxCounts(session), (total: 3, blocked: 1));
+    expect(
+      store.blockedOutbox(session).map((mutation) => mutation.mutationId),
+      <String>['mutation-1'],
+    );
 
     await store.removeOutbox(session, 'mutation-3');
     expect(store.outboxCount(session), 2);

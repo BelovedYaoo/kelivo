@@ -233,7 +233,19 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncStatusNeedsAttention => '有待确认项';
 
   @override
+  String get cloudSyncStatusPendingSync => '仍有数据未同步';
+
+  @override
+  String get cloudSyncStatusBlocked => '部分数据同步失败';
+
+  @override
   String get cloudSyncSyncNeedsAttention => '同步已完成，但仍有内容需要确认。';
+
+  @override
+  String get cloudSyncSyncPending => '部分数据尚未同步。';
+
+  @override
+  String get cloudSyncSyncBlocked => '部分数据无法同步。';
 
   @override
   String get cloudSyncConflictsSection => '同步冲突';
@@ -5976,7 +5988,19 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncStatusNeedsAttention => '有待确认项';
 
   @override
+  String get cloudSyncStatusPendingSync => '仍有数据未同步';
+
+  @override
+  String get cloudSyncStatusBlocked => '部分数据同步失败';
+
+  @override
   String get cloudSyncSyncNeedsAttention => '同步已完成，但仍有内容需要确认。';
+
+  @override
+  String get cloudSyncSyncPending => '部分数据尚未同步。';
+
+  @override
+  String get cloudSyncSyncBlocked => '部分数据无法同步。';
 
   @override
   String get cloudSyncConflictsSection => '同步冲突';
@@ -11719,7 +11743,19 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncStatusNeedsAttention => '有待確認項';
 
   @override
+  String get cloudSyncStatusPendingSync => '仍有資料未同步';
+
+  @override
+  String get cloudSyncStatusBlocked => '部分資料同步失敗';
+
+  @override
   String get cloudSyncSyncNeedsAttention => '同步已完成，但仍有內容需要確認。';
+
+  @override
+  String get cloudSyncSyncPending => '部分資料尚未同步。';
+
+  @override
+  String get cloudSyncSyncBlocked => '部分資料無法同步。';
 
   @override
   String get cloudSyncConflictsSection => '同步衝突';

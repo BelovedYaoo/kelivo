@@ -489,6 +489,11 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     if (!mounted) return;
     final authenticatedButIncomplete =
         provider.signedIn && provider.lastError == null;
+    final incompleteMessage = switch (provider.status) {
+      CloudSyncProviderStatus.pendingSync => l10n.cloudSyncSyncPending,
+      CloudSyncProviderStatus.syncBlocked => l10n.cloudSyncSyncBlocked,
+      _ => l10n.cloudSyncSyncNeedsAttention,
+    };
     if (provider.signedIn) {
       _passwordController.clear();
     }
@@ -498,7 +503,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     showAppSnackBar(
       context,
       message: authenticatedButIncomplete
-          ? l10n.cloudSyncSyncNeedsAttention
+          ? incompleteMessage
           : cloudSyncFailureText(
               l10n,
               provider.lastError ??
@@ -535,16 +540,23 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final success = await provider.syncNow();
     if (!mounted) return;
     final l10n = AppLocalizations.of(context)!;
-    final needsAttention =
+    final incomplete =
         !success &&
         provider.lastError == null &&
-        provider.status == CloudSyncProviderStatus.needsAttention;
+        (provider.status == CloudSyncProviderStatus.pendingSync ||
+            provider.status == CloudSyncProviderStatus.syncBlocked ||
+            provider.status == CloudSyncProviderStatus.needsAttention);
+    final incompleteMessage = switch (provider.status) {
+      CloudSyncProviderStatus.pendingSync => l10n.cloudSyncSyncPending,
+      CloudSyncProviderStatus.syncBlocked => l10n.cloudSyncSyncBlocked,
+      _ => l10n.cloudSyncSyncNeedsAttention,
+    };
     showAppSnackBar(
       context,
       message: success
           ? l10n.cloudSyncSyncCompleted
-          : needsAttention
-          ? l10n.cloudSyncSyncNeedsAttention
+          : incomplete
+          ? incompleteMessage
           : cloudSyncFailureText(
               l10n,
               provider.lastError ??
@@ -555,7 +567,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
             ),
       type: success
           ? NotificationType.success
-          : needsAttention
+          : incomplete
           ? NotificationType.warning
           : NotificationType.error,
     );
@@ -1538,6 +1550,8 @@ String cloudSyncStatusText(
     CloudSyncProviderStatus.signingOut => l10n.cloudSyncStatusSigningOut,
     CloudSyncProviderStatus.idle => l10n.cloudSyncStatusIdle,
     CloudSyncProviderStatus.syncing => l10n.cloudSyncStatusSyncing,
+    CloudSyncProviderStatus.pendingSync => l10n.cloudSyncStatusPendingSync,
+    CloudSyncProviderStatus.syncBlocked => l10n.cloudSyncStatusBlocked,
     CloudSyncProviderStatus.needsAttention =>
       l10n.cloudSyncStatusNeedsAttention,
     CloudSyncProviderStatus.paused => l10n.cloudSyncStatusPaused,

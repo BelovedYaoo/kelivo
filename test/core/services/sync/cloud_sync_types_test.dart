@@ -1,9 +1,11 @@
+import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:Kelivo/core/models/assistant.dart';
 import 'package:Kelivo/core/models/quick_phrase.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
+import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
 import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
 import 'package:Kelivo/core/providers/mcp_provider.dart';
 import 'package:Kelivo/core/providers/memory_provider.dart';
@@ -17,6 +19,9 @@ import 'package:Kelivo/core/services/sync/config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
+import 'package:Kelivo/features/settings/pages/cloud_sync_page.dart'
+    show cloudSyncStatusText;
+import 'package:Kelivo/l10n/app_localizations.dart';
 
 final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
   final List<List<SyncEntityKey>> batches = <List<SyncEntityKey>>[];
@@ -61,6 +66,7 @@ final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
 Future<
   ({
     ConfigSyncAdapter adapter,
+    AssistantProvider assistants,
     McpProvider mcp,
     SettingsProvider settings,
     UserProvider user,
@@ -86,7 +92,13 @@ _createConfigFixture(_RecordingSyncWriteExecutor writes) async {
     userProvider: user,
   );
   await adapter.ready;
-  return (adapter: adapter, mcp: mcp, settings: settings, user: user);
+  return (
+    adapter: adapter,
+    assistants: assistants,
+    mcp: mcp,
+    settings: settings,
+    user: user,
+  );
 }
 
 RemoteSyncEntity _profileEntity(Map<String, Object?> payload) {
@@ -96,6 +108,20 @@ RemoteSyncEntity _profileEntity(Map<String, Object?> payload) {
     revision: 1,
     schemaVersion: 2,
     payload: payload,
+    updatedAt: DateTime.utc(2026, 7, 16),
+  );
+}
+
+RemoteSyncEntity _assistantEntity(
+  String entityId,
+  Map<String, Object?> payload,
+) {
+  return RemoteSyncEntity(
+    entityType: ConfigSyncKeys.assistantType,
+    entityId: entityId,
+    revision: 1,
+    schemaVersion: 2,
+    payload: <String, Object?>{'_position': 0, ...payload},
     updatedAt: DateTime.utc(2026, 7, 16),
   );
 }
@@ -341,6 +367,73 @@ void main() {
       ConfigSyncKeys.assistantSelection,
     ]);
     expect(provider.currentAssistantId, 'b');
+  });
+
+  test('助手本地媒体路径导出为显式空值以满足同步契约', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'assistants_v1': Assistant.encodeList(const <Assistant>[
+        Assistant(
+          id: 'assistant-local-media',
+          name: '本地媒体助手',
+          avatar: r'C:\private\avatar.png',
+          background: r'C:\private\background.png',
+        ),
+      ]),
+    });
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+
+    final entities = await fixture.adapter.exportLocalEntities();
+    final assistant = entities.singleWhere(
+      (entity) =>
+          entity.key == ConfigSyncKeys.assistant('assistant-local-media'),
+    );
+
+    expect(assistant.payload, containsPair('avatar', null));
+    expect(assistant.payload, containsPair('background', null));
+  });
+
+  test('远端空媒体保留本地助手文件但清除可移植地址', () async {
+    SharedPreferences.setMockInitialValues(<String, Object>{
+      'assistants_v1': Assistant.encodeList(const <Assistant>[
+        Assistant(
+          id: 'assistant-local-media',
+          name: '本地媒体助手',
+          avatar: r'C:\private\avatar.png',
+          background: r'C:\private\background.png',
+        ),
+        Assistant(
+          id: 'assistant-portable-media',
+          name: '可移植媒体助手',
+          avatar: 'https://example.com/avatar.png',
+          background: 'https://example.com/background.png',
+        ),
+      ]),
+    });
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+
+    for (final entityId in const <String>[
+      'assistant-local-media',
+      'assistant-portable-media',
+    ]) {
+      await fixture.adapter.applyRemoteUpsert(
+        _assistantEntity(entityId, const <String, Object?>{
+          'name': '云端助手',
+          'avatar': null,
+          'background': null,
+        }),
+      );
+    }
+
+    final local = fixture.assistants.getById('assistant-local-media');
+    expect(local?.avatar, 'C:/private/avatar.png');
+    expect(local?.background, 'C:/private/background.png');
+    final portable = fixture.assistants.getById('assistant-portable-media');
+    expect(portable?.avatar, isNull);
+    expect(portable?.background, isNull);
   });
 
   test('远端供应商删除与 MCP 超时应用不反向创建本地 intent', () async {
@@ -684,6 +777,27 @@ void main() {
         expect(_containsRecursively(tree, forbidden), isFalse);
         expect(descriptor.toString(), isNot(contains(forbidden)));
       }
+    });
+  });
+
+  group('云同步状态文案', () {
+    test('待同步和待确认使用不同的用户文案', () {
+      final l10n = lookupAppLocalizations(
+        const Locale.fromSubtags(languageCode: 'zh', scriptCode: 'Hans'),
+      );
+
+      expect(
+        cloudSyncStatusText(l10n, CloudSyncProviderStatus.pendingSync),
+        '仍有数据未同步',
+      );
+      expect(
+        cloudSyncStatusText(l10n, CloudSyncProviderStatus.needsAttention),
+        '有待确认项',
+      );
+      expect(
+        cloudSyncStatusText(l10n, CloudSyncProviderStatus.syncBlocked),
+        '部分数据同步失败',
+      );
     });
   });
 }

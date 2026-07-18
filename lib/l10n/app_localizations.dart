@@ -544,11 +544,35 @@ abstract class AppLocalizations {
   /// **'Review Needed'**
   String get cloudSyncStatusNeedsAttention;
 
+  /// No description provided for @cloudSyncStatusPendingSync.
+  ///
+  /// In en, this message translates to:
+  /// **'Data Not Fully Synced'**
+  String get cloudSyncStatusPendingSync;
+
+  /// No description provided for @cloudSyncStatusBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Some Data Failed to Sync'**
+  String get cloudSyncStatusBlocked;
+
   /// No description provided for @cloudSyncSyncNeedsAttention.
   ///
   /// In en, this message translates to:
   /// **'Sync finished, but some items need your review.'**
   String get cloudSyncSyncNeedsAttention;
+
+  /// No description provided for @cloudSyncSyncPending.
+  ///
+  /// In en, this message translates to:
+  /// **'Some data has not synced yet.'**
+  String get cloudSyncSyncPending;
+
+  /// No description provided for @cloudSyncSyncBlocked.
+  ///
+  /// In en, this message translates to:
+  /// **'Some data could not be synced.'**
+  String get cloudSyncSyncBlocked;
 
   /// No description provided for @cloudSyncConflictsSection.
   ///

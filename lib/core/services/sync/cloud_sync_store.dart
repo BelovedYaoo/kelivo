@@ -29,6 +29,18 @@ final class _CloudSyncOutboxSnapshot {
   _byEntity = <(CloudSyncEntityType, String), List<CloudSyncOutboxMutation>>{};
 
   int get length => _byMutationId.length;
+  int get blockedCount => _byMutationId.values
+      .where((mutation) => mutation.blockedAt != null)
+      .length;
+
+  List<CloudSyncOutboxMutation> get blocked {
+    final mutations =
+        _byMutationId.values
+            .where((mutation) => mutation.blockedAt != null)
+            .toList(growable: false)
+          ..sort(_compareOutboxByCreation);
+    return List<CloudSyncOutboxMutation>.unmodifiable(mutations);
+  }
 
   List<CloudSyncOutboxMutation> forEntity({
     required CloudSyncEntityType entityType,
@@ -508,6 +520,15 @@ final class CloudSyncStore {
 
   int outboxCount(CloudSyncAccountSession session) {
     return _outboxSnapshot(session).length;
+  }
+
+  ({int total, int blocked}) outboxCounts(CloudSyncAccountSession session) {
+    final snapshot = _outboxSnapshot(session);
+    return (total: snapshot.length, blocked: snapshot.blockedCount);
+  }
+
+  List<CloudSyncOutboxMutation> blockedOutbox(CloudSyncAccountSession session) {
+    return _outboxSnapshot(session).blocked;
   }
 
   _CloudSyncOutboxSnapshot _outboxSnapshot(CloudSyncAccountSession session) {
