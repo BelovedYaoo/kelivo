@@ -10,6 +10,11 @@ import 'package:integration_test/integration_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
+const _sqlCipherTestKey =
+    '7f4f771e734b28981b5b786ac0f281f684253a0e72128d6466ed1d49b0f38a27';
+const _sqlCipherWrongTestKey =
+    '83361ed49fd0df3da820687f3630c3907c6b8b987d7c7ce2e3a3364933aa22ac';
+
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
@@ -22,6 +27,7 @@ void main() {
     });
 
     final schemaVersion = await _verifySchemaContract(root);
+    final sqlCipherCapabilities = await _verifySqlCipherRoundTrip(root);
     final sqliteCapabilities = await _verifySqliteCapabilities(root);
     await _verifyDurableFileOperations(root);
 
@@ -35,6 +41,7 @@ void main() {
       'sqliteVersionNumber': version.versionNumber,
       'sqliteSourceId': version.sourceId,
       'schemaVersion': schemaVersion,
+      ...sqlCipherCapabilities,
       ...sqliteCapabilities,
       'fileLock': true,
       'fullBarrierRename': true,
@@ -90,10 +97,104 @@ Future<int> _verifySchemaContract(Directory root) async {
   return currentInfo.schemaVersion;
 }
 
+Future<Map<String, Object>> _verifySqlCipherRoundTrip(Directory root) async {
+  const sentinel = 'kelivo-sqlcipher-round-trip-sentinel';
+  final databaseFile = File(p.join(root.path, 'sqlcipher-round-trip.sqlite'));
+
+  expect(
+    () => _openSqlCipher(databaseFile, _sqlCipherTestKey.substring(1)),
+    throwsArgumentError,
+  );
+
+  final database = _openSqlCipher(databaseFile, _sqlCipherTestKey);
+  late final String cipherVersion;
+  try {
+    cipherVersion = _readCipherVersion(database);
+    database.execute('PRAGMA journal_mode = WAL;');
+    database.execute('PRAGMA wal_autocheckpoint = 0;');
+    database.execute('CREATE TABLE encrypted_rows(value TEXT NOT NULL);');
+    database.execute('INSERT INTO encrypted_rows(value) VALUES (?);', [
+      sentinel,
+    ]);
+
+    final wal = File('${databaseFile.path}-wal');
+    expect(await wal.exists(), isTrue);
+    expect(
+      _containsBytes(await wal.readAsBytes(), utf8.encode(sentinel)),
+      isFalse,
+    );
+  } finally {
+    database.close();
+  }
+
+  final encryptedHeader = await databaseFile.openRead(0, 16).first;
+  expect(encryptedHeader, isNot(equals(utf8.encode('SQLite format 3\u0000'))));
+  expect(
+    _containsBytes(await databaseFile.readAsBytes(), utf8.encode(sentinel)),
+    isFalse,
+  );
+
+  final reopened = _openSqlCipher(
+    databaseFile,
+    _sqlCipherTestKey,
+    mode: sqlite.OpenMode.readOnly,
+  );
+  try {
+    expect(
+      reopened.select('SELECT value FROM encrypted_rows;').single['value'],
+      sentinel,
+    );
+  } finally {
+    reopened.close();
+  }
+
+  final beforeWrongKey = await _readDatabaseFamily(databaseFile);
+  expect(
+    () => _openSqlCipher(
+      databaseFile,
+      _sqlCipherWrongTestKey,
+      mode: sqlite.OpenMode.readWrite,
+    ),
+    throwsA(
+      isA<sqlite.SqliteException>().having(
+        (error) => error.resultCode,
+        'resultCode',
+        26,
+      ),
+    ),
+  );
+  expect(await _readDatabaseFamily(databaseFile), beforeWrongKey);
+
+  final unkeyed = sqlite.sqlite3.open(
+    databaseFile.path,
+    mode: sqlite.OpenMode.readOnly,
+  );
+  try {
+    expect(
+      () => unkeyed.select('SELECT count(*) FROM sqlite_master;'),
+      throwsA(isA<sqlite.SqliteException>()),
+    );
+  } finally {
+    unkeyed.close();
+  }
+
+  return {
+    'sqlCipherVersion': cipherVersion,
+    'encryptedDatabaseHeader': true,
+    'encryptedWal': true,
+    'sameKeyReopen': true,
+    'wrongKeyRejected': true,
+    'wrongKeyPreservesFile': true,
+    'unkeyedOpenRejected': true,
+    'invalidKeyLengthRejected': true,
+  };
+}
+
 Future<Map<String, Object>> _verifySqliteCapabilities(Directory root) async {
+  const backupSentinel = 'kelivo-sqlcipher-backup-sentinel';
   final sourceFile = File(p.join(root.path, 'source.sqlite'));
   final backupFile = File(p.join(root.path, 'backup.sqlite'));
-  final source = sqlite.sqlite3.open(sourceFile.path);
+  final source = _openSqlCipher(sourceFile, _sqlCipherTestKey);
   sqlite.Database? backup;
   sqlite.Database? contender;
   try {
@@ -143,18 +244,83 @@ Future<Map<String, Object>> _verifySqliteCapabilities(Directory root) async {
 
     source.execute('CREATE TABLE capability_rows(value TEXT NOT NULL);');
     source.execute('INSERT INTO capability_rows(value) VALUES (?);', [
-      'backup-sentinel',
+      backupSentinel,
     ]);
-    backup = sqlite.sqlite3.open(backupFile.path);
+    backup = _openSqlCipher(backupFile, _sqlCipherTestKey);
     await source.backup(backup, nPage: 1).drain<void>();
     expect(
       backup.select('SELECT value FROM capability_rows;').single['value'],
-      'backup-sentinel',
+      backupSentinel,
     );
     expect(backup.select('PRAGMA integrity_check;').single.values.single, 'ok');
+    backup.close();
+    backup = null;
+
+    final encryptedBackupHeader = await backupFile.openRead(0, 16).first;
+    expect(
+      encryptedBackupHeader,
+      isNot(equals(utf8.encode('SQLite format 3\u0000'))),
+    );
+    expect(
+      _containsBytes(
+        await backupFile.readAsBytes(),
+        utf8.encode(backupSentinel),
+      ),
+      isFalse,
+    );
+
+    final reopenedBackup = _openSqlCipher(
+      backupFile,
+      _sqlCipherTestKey,
+      mode: sqlite.OpenMode.readOnly,
+    );
+    try {
+      expect(
+        reopenedBackup
+            .select('SELECT value FROM capability_rows;')
+            .single['value'],
+        backupSentinel,
+      );
+      expect(
+        reopenedBackup.select('PRAGMA integrity_check;').single.values.single,
+        'ok',
+      );
+    } finally {
+      reopenedBackup.close();
+    }
+
+    final beforeWrongBackupKey = await _readDatabaseFamily(backupFile);
+    expect(
+      () => _openSqlCipher(
+        backupFile,
+        _sqlCipherWrongTestKey,
+        mode: sqlite.OpenMode.readWrite,
+      ),
+      throwsA(
+        isA<sqlite.SqliteException>().having(
+          (error) => error.resultCode,
+          'resultCode',
+          26,
+        ),
+      ),
+    );
+    expect(await _readDatabaseFamily(backupFile), beforeWrongBackupKey);
+
+    final unkeyedBackup = sqlite.sqlite3.open(
+      backupFile.path,
+      mode: sqlite.OpenMode.readOnly,
+    );
+    try {
+      expect(
+        () => unkeyedBackup.select('SELECT count(*) FROM sqlite_master;'),
+        throwsA(isA<sqlite.SqliteException>()),
+      );
+    } finally {
+      unkeyedBackup.close();
+    }
 
     source.execute('BEGIN IMMEDIATE;');
-    contender = sqlite.sqlite3.open(sourceFile.path);
+    contender = _openSqlCipher(sourceFile, _sqlCipherTestKey);
     contender.execute('PRAGMA busy_timeout = 1;');
     expect(
       () => contender!.execute('BEGIN IMMEDIATE;'),
@@ -176,6 +342,59 @@ Future<Map<String, Object>> _verifySqliteCapabilities(Directory root) async {
     backup?.close();
     source.close();
   }
+}
+
+sqlite.Database _openSqlCipher(
+  File file,
+  String rawKeyHex, {
+  sqlite.OpenMode mode = sqlite.OpenMode.readWriteCreate,
+}) {
+  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(rawKeyHex)) {
+    throw ArgumentError.value(rawKeyHex.length, 'rawKeyHex');
+  }
+  final database = sqlite.sqlite3.open(file.path, mode: mode);
+  try {
+    // 测试密钥只用于验证原生 SQLCipher 资产，产品密钥不得经此 Dart 接口传递。
+    database.execute('PRAGMA key = "x\'$rawKeyHex\'";');
+    _readCipherVersion(database);
+    database.select('SELECT count(*) FROM sqlite_master;');
+    return database;
+  } catch (_) {
+    database.close();
+    rethrow;
+  }
+}
+
+String _readCipherVersion(sqlite.Database database) {
+  final rows = database.select('PRAGMA cipher_version;');
+  if (rows.length != 1) throw StateError('sqlcipher_unavailable');
+  final version = rows.single.values.single.toString().trim();
+  if (version.isEmpty) throw StateError('sqlcipher_unavailable');
+  return version;
+}
+
+bool _containsBytes(List<int> source, List<int> pattern) {
+  if (pattern.isEmpty) return true;
+  for (var offset = 0; offset <= source.length - pattern.length; offset++) {
+    var matches = true;
+    for (var index = 0; index < pattern.length; index++) {
+      if (source[offset + index] != pattern[index]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
+}
+
+Future<Map<String, List<int>?>> _readDatabaseFamily(File databaseFile) async {
+  final contents = <String, List<int>?>{};
+  for (final suffix in const ['', '-wal', '-shm']) {
+    final file = File('${databaseFile.path}$suffix');
+    contents[suffix] = await file.exists() ? await file.readAsBytes() : null;
+  }
+  return contents;
 }
 
 Future<void> _verifyDurableFileOperations(Directory root) async {

@@ -120,7 +120,7 @@ dependencies:
   restart_app: ^1.8.3
   flutter_native_splash: ^2.4.6
   drift: ^2.34.0
-  sqlite3: ^3.3.3
+  sqlite3: 3.4.0
   reel_text: ^0.4.0
 
 dev_dependencies:
@@ -144,6 +144,12 @@ dependency_overrides:
   # Prevent the location from being accessed continuously on Windows
   permission_handler_windows:
     path: ./dependencies/flutter-permission-handler/permission_handler_windows
+
+hooks:
+  user_defines:
+    sqlite3:
+      # 安全构建必须显式选择 SQLCipher，禁止按平台回退到普通 SQLite。
+      source: sqlcipher
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
