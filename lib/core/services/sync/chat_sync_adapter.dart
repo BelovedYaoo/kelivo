@@ -1,12 +1,10 @@
 import '../chat/chat_service.dart';
-import '../chat/upload_directory_critical_section.dart';
-import '../../models/chat_message.dart';
-import '../../models/conversation.dart';
 import 'chat_sync_codec.dart';
 import 'cloud_attachment_sync_service.dart';
 import 'sync_codec.dart';
 
-final class ChatSyncAdapter implements SyncEntityAdapter {
+final class ChatSyncAdapter
+    implements SyncEntityAdapter, RemoteSyncUpsertPreparer {
   ChatSyncAdapter(this._chatService, this._attachmentSyncService);
 
   static const String conversationType = 'conversation';
@@ -47,12 +45,12 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
     }
 
     return switch (key.entityType) {
-      conversationType => _exportConversation(key.entityId),
-      turnType => _exportTurn(key.entityId),
+      conversationType => await _exportConversation(key.entityId),
+      turnType => await _exportTurn(key.entityId),
       messageType => await _exportMessage(key.entityId),
-      messageSelectionType => _exportMessageSelection(key.entityId),
-      toolEventType => _exportToolEvent(key.entityId),
-      thoughtSignatureType => _exportThoughtSignature(key.entityId),
+      messageSelectionType => await _exportMessageSelection(key.entityId),
+      toolEventType => await _exportToolEvent(key.entityId),
+      thoughtSignatureType => await _exportThoughtSignature(key.entityId),
       _ => null,
     };
   }
@@ -81,7 +79,8 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
     }
 
     final entities = <LocalSyncEntity>[];
-    for (final conversation in _chatService.getAllConversations()) {
+    final conversations = await _chatService.loadConversationsForSync();
+    for (final conversation in conversations) {
       entities.add(
         LocalSyncEntity(
           entityType: conversationType,
@@ -109,8 +108,16 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
         );
       }
 
-      final messages = _chatService.getMessages(conversation.id);
-      for (final turn in ChatSyncCodec.deriveTurns(messages)) {
+      final messages = await _chatService.loadMessagesForSync(conversation.id);
+      final turnCreatedAts = await _chatService.loadTurnCreatedAtsForSync(
+        conversation.id,
+      );
+      for (final derived in ChatSyncCodec.deriveTurns(messages)) {
+        final turn = ChatSyncTurnRecord(
+          id: derived.id,
+          conversationId: derived.conversationId,
+          createdAt: turnCreatedAts[derived.id] ?? derived.createdAt,
+        );
         entities.add(
           LocalSyncEntity(
             entityType: turnType,
@@ -120,6 +127,12 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           ),
         );
       }
+
+      final messageIds = messages.map((message) => message.id).toList();
+      final toolEventsByMessageId = await _chatService
+          .loadToolEventsForMessagesForSync(messageIds);
+      final thoughtSignaturesByMessageId = await _chatService
+          .loadThoughtSignaturesForMessagesForSync(messageIds);
 
       for (final message in messages) {
         final syncable = ChatSyncCodec.encodeMessage(
@@ -149,8 +162,8 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
             payload: payload,
           ),
         );
-        final toolEvents = _chatService.getToolEvents(message.id);
-        if (_chatService.hasToolEvents(message.id)) {
+        final toolEvents = toolEventsByMessageId[message.id];
+        if (toolEvents != null) {
           entities.add(
             LocalSyncEntity(
               entityType: toolEventType,
@@ -160,9 +173,7 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
             ),
           );
         }
-        final thoughtSignature = _chatService.getGeminiThoughtSignature(
-          message.id,
-        );
+        final thoughtSignature = thoughtSignaturesByMessageId[message.id];
         if (thoughtSignature != null) {
           entities.add(
             LocalSyncEntity(
@@ -181,8 +192,10 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
     return entities;
   }
 
-  LocalSyncEntity? _exportConversation(String conversationId) {
-    final conversation = _findConversation(conversationId);
+  Future<LocalSyncEntity?> _exportConversation(String conversationId) async {
+    final conversation = await _chatService.loadConversationForSync(
+      conversationId,
+    );
     if (conversation == null) return null;
     return LocalSyncEntity(
       entityType: conversationType,
@@ -191,10 +204,18 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
     );
   }
 
-  LocalSyncEntity? _exportTurn(String turnId) {
-    final matching = _chatService.getMessagesForTurn(turnId);
+  Future<LocalSyncEntity?> _exportTurn(String turnId) async {
+    final matching = await _chatService.loadMessagesForTurn(turnId);
     if (matching.isEmpty) return null;
-    final turn = ChatSyncCodec.deriveTurns(matching).single;
+    final derived = ChatSyncCodec.deriveTurns(matching).single;
+    final createdAts = await _chatService.loadTurnCreatedAtsForSync(
+      derived.conversationId,
+    );
+    final turn = ChatSyncTurnRecord(
+      id: derived.id,
+      conversationId: derived.conversationId,
+      createdAt: createdAts[derived.id] ?? derived.createdAt,
+    );
     return LocalSyncEntity(
       entityType: turnType,
       entityId: turn.id,
@@ -204,7 +225,7 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
   }
 
   Future<LocalSyncEntity?> _exportMessage(String messageId) async {
-    final message = _findMessage(messageId);
+    final message = await _chatService.loadMessageForSync(messageId);
     if (message == null ||
         ChatSyncCodec.encodeMessage(message, syncedContent: '') == null) {
       return null;
@@ -230,10 +251,14 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
     );
   }
 
-  LocalSyncEntity? _exportMessageSelection(String groupId) {
-    final conversationId = _chatService.getConversationIdForSelection(groupId);
+  Future<LocalSyncEntity?> _exportMessageSelection(String groupId) async {
+    final conversationId = await _chatService.loadConversationIdForSelection(
+      groupId,
+    );
     if (conversationId == null) return null;
-    final conversation = _chatService.getConversationForSync(conversationId);
+    final conversation = await _chatService.loadConversationForSync(
+      conversationId,
+    );
     final selectedVersion = conversation?.versionSelections[groupId];
     if (conversation == null || selectedVersion == null) return null;
     return LocalSyncEntity(
@@ -250,31 +275,29 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
     );
   }
 
-  LocalSyncEntity? _exportToolEvent(String messageId) {
-    final message = _findMessage(messageId);
+  Future<LocalSyncEntity?> _exportToolEvent(String messageId) async {
+    final message = await _chatService.loadMessageForSync(messageId);
     if (message == null ||
         ChatSyncCodec.encodeMessage(message, syncedContent: '') == null ||
-        !_chatService.hasToolEvents(messageId)) {
+        !await _chatService.hasToolEventsForSync(messageId)) {
       return null;
     }
+    final toolEvents = await _chatService.loadToolEventsForSync(messageId);
     return LocalSyncEntity(
       entityType: toolEventType,
       entityId: messageId,
       parentId: messageId,
-      payload: ChatSyncCodec.encodeToolEvent(
-        messageId,
-        _chatService.getToolEvents(messageId),
-      ),
+      payload: ChatSyncCodec.encodeToolEvent(messageId, toolEvents),
     );
   }
 
-  LocalSyncEntity? _exportThoughtSignature(String messageId) {
-    final message = _findMessage(messageId);
+  Future<LocalSyncEntity?> _exportThoughtSignature(String messageId) async {
+    final message = await _chatService.loadMessageForSync(messageId);
     if (message == null ||
         ChatSyncCodec.encodeMessage(message, syncedContent: '') == null) {
       return null;
     }
-    final signature = _chatService.getGeminiThoughtSignature(messageId);
+    final signature = await _chatService.loadThoughtSignatureForSync(messageId);
     if (signature == null) return null;
     return LocalSyncEntity(
       entityType: thoughtSignatureType,
@@ -284,16 +307,19 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
     );
   }
 
-  Conversation? _findConversation(String conversationId) {
-    return _chatService.getConversationForSync(conversationId);
-  }
-
-  ChatMessage? _findMessage(String messageId) {
-    return _chatService.getMessageById(messageId);
-  }
-
   @override
   Future<void> applyRemoteUpsert(RemoteSyncEntity entity) async {
+    final prepared = await prepareRemoteUpsert(entity);
+    if (prepared != null) {
+      try {
+        await prepared.apply();
+        await prepared.commit();
+      } catch (_) {
+        await prepared.discard();
+        rethrow;
+      }
+      return;
+    }
     switch (entity.entityType) {
       case conversationType:
         final conversation = ChatSyncCodec.decodeConversation(
@@ -321,19 +347,7 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
           }
           await _chatService.upsertMessageFromSync(record.message);
         } else {
-          await UploadDirectoryCriticalSection.run(() async {
-            final content = await _attachmentSyncService.restoreMessage(
-              messageId: entity.entityId,
-              syncedContent: record.message.content,
-              references: record.attachments,
-            );
-            await _chatService.upsertMessageFromSync(
-              record.message.copyWith(content: content),
-            );
-            await _attachmentSyncService.forgetRemoteOrdinaryUserMessage(
-              entity.entityId,
-            );
-          });
+          throw StateError('带附件的远端消息必须先完成资源准备');
         }
         return;
       case turnType:
@@ -385,6 +399,34 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
   }
 
   @override
+  Future<PreparedRemoteSyncUpsert?> prepareRemoteUpsert(
+    RemoteSyncEntity entity,
+  ) async {
+    if (entity.entityType != messageType) return null;
+    final record = ChatSyncCodec.decodeMessage(entity.entityId, entity.payload);
+    _requireParent(entity, record.message.turnId);
+    if (record.attachments.isEmpty) return null;
+    final preparedRestore = await _attachmentSyncService.prepareRestoreMessage(
+      messageId: entity.entityId,
+      syncedContent: record.message.content,
+      references: record.attachments,
+    );
+    return _PreparedChatRemoteUpsert(
+      key: entity.key,
+      applyAction: () => _chatService.upsertMessageFromSync(
+        record.message.copyWith(content: preparedRestore.content),
+      ),
+      commitAction: () async {
+        await preparedRestore.commit();
+        await _attachmentSyncService.forgetRemoteOrdinaryUserMessage(
+          entity.entityId,
+        );
+      },
+      discardAction: preparedRestore.discard,
+    );
+  }
+
+  @override
   Future<void> applyRemoteDelete(SyncEntityKey key) async {
     switch (key.entityType) {
       case conversationType:
@@ -397,7 +439,7 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
         await _chatService.deleteMessageFromSync(key.entityId);
         return;
       case turnType:
-        final conversationId = _chatService.getConversationIdForTurn(
+        final conversationId = await _chatService.loadConversationIdForTurn(
           key.entityId,
         );
         if (conversationId == null) return;
@@ -425,4 +467,28 @@ final class ChatSyncAdapter implements SyncEntityAdapter {
       throw FormatException('${entity.entityType}.parentId 与 Payload 父级不一致');
     }
   }
+}
+
+final class _PreparedChatRemoteUpsert implements PreparedRemoteSyncUpsert {
+  _PreparedChatRemoteUpsert({
+    required this.key,
+    required this.applyAction,
+    required this.commitAction,
+    required this.discardAction,
+  });
+
+  @override
+  final SyncEntityKey key;
+  final Future<void> Function() applyAction;
+  final Future<void> Function() commitAction;
+  final Future<void> Function() discardAction;
+
+  @override
+  Future<void> apply() => applyAction();
+
+  @override
+  Future<void> commit() => commitAction();
+
+  @override
+  Future<void> discard() => discardAction();
 }

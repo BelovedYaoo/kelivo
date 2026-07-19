@@ -29,6 +29,16 @@ import '../services/sync/sync_codec.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
 
+typedef _ManagedFileCopy = Future<void> Function(File source, File destination);
+typedef _ManagedFileWrite =
+    Future<void> Function(File destination, List<int> bytes);
+
+const String _userAvatarValuePreferenceKey = 'avatar_value';
+
+final RegExp _managedProviderAvatarFileName = RegExp(
+  r'^provider_[A-Za-z0-9_-]*_[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}\.[a-z0-9]{1,6}$',
+);
+
 // Desktop: topic list position
 enum DesktopTopicPosition { left, right }
 
@@ -49,9 +59,28 @@ enum MobileMessageNavButtonsMode { always, scroll, never }
 
 enum _MigrationResult { noChange, applied, failed }
 
+final class _AsyncOperationLock {
+  Future<void> _tail = Future<void>.value();
+
+  Future<T> run<T>(Future<T> Function() action) async {
+    final previous = _tail;
+    final completed = Completer<void>();
+    _tail = completed.future;
+    await previous;
+    try {
+      return await action();
+    } finally {
+      completed.complete();
+    }
+  }
+}
+
 class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   late final Future<void> ready;
   final SyncWriteExecutor _syncWrites;
+  final _ManagedFileCopy _managedFileCopy;
+  final _ManagedFileWrite _managedFileWrite;
+  final _providerMutationLock = _AsyncOperationLock();
   static const String _providersOrderKey = 'providers_order_v1';
   static const String _providerGroupsKey =
       'provider_groups_v1'; // [{id,name,createdAt}]
@@ -573,17 +602,35 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   int get appLaunchCount => _appLaunchCount;
 
   SettingsProvider({required SyncWriteExecutor syncWriteExecutor})
-    : _syncWrites = syncWriteExecutor {
+    : this._(syncWriteExecutor: syncWriteExecutor);
+
+  @visibleForTesting
+  factory SettingsProvider.forTesting({
+    required SyncWriteExecutor syncWriteExecutor,
+    Future<void> Function(File source, File destination)? managedFileCopy,
+    Future<void> Function(File destination, List<int> bytes)? managedFileWrite,
+  }) {
+    return SettingsProvider._(
+      syncWriteExecutor: syncWriteExecutor,
+      managedFileCopy: managedFileCopy,
+      managedFileWrite: managedFileWrite,
+    );
+  }
+
+  SettingsProvider._({
+    required SyncWriteExecutor syncWriteExecutor,
+    _ManagedFileCopy? managedFileCopy,
+    _ManagedFileWrite? managedFileWrite,
+  }) : _syncWrites = syncWriteExecutor,
+       _managedFileCopy = managedFileCopy ?? _copyManagedFile,
+       _managedFileWrite = managedFileWrite ?? _writeManagedFile {
     ready = _load();
   }
 
-  List<SyncEntityKey> _providerListKeys({
-    Iterable<String> extraIds = const [],
-  }) {
-    final ids = <String>{..._providerConfigs.keys, ...extraIds};
+  List<SyncEntityKey> _providerMutationKeys(String providerId) {
     return <SyncEntityKey>[
-      ...ids.map(ConfigSyncKeys.provider),
       ConfigSyncKeys.providerGrouping,
+      ConfigSyncKeys.provider(providerId),
     ];
   }
 
@@ -615,33 +662,64 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     required int position,
   }) async {
     await ready;
-    _providerConfigs[key] = config;
+    await _providerMutationLock.run(
+      () => _syncUpsertProviderConfigLocked(key, config, position: position),
+    );
+  }
+
+  Future<void> _syncUpsertProviderConfigLocked(
+    String key,
+    ProviderConfig config, {
+    required int position,
+  }) async {
+    final previous = _providerConfigs[key];
+    final nextConfigs = Map<String, ProviderConfig>.from(_providerConfigs)
+      ..[key] = config;
     final order = List<String>.from(_providersOrder)..remove(key);
     order.insert(position.clamp(0, order.length), key);
-    _providersOrder = List<String>.unmodifiable(order);
+    final nextGrouping = _normalizeProviderGroupingSnapshot(
+      order: order,
+      groups: _providerGroups,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+      providerConfigs: nextConfigs,
+    );
     final prefs = await SharedPreferences.getInstance();
-    final map = _providerConfigs.map((k, v) => MapEntry(k, v.toJson()));
-    await prefs.setString(_providerConfigsKey, jsonEncode(map));
-    await prefs.setStringList(_providersOrderKey, _providersOrder);
-    notifyListeners();
+    await _persistProviderCollection(
+      prefs,
+      providerConfigs: nextConfigs,
+      grouping: nextGrouping,
+      operation: '同步供应商配置',
+    );
+    _publishProviderCollection(nextConfigs, nextGrouping);
+    await _deleteManagedProviderAvatarIfUnused(
+      previous?.avatarType == 'file' ? previous?.avatarValue : null,
+      context: '同步后清理旧供应商头像失败',
+    );
   }
 
   Future<void> syncApplyProviderGrouping({
+    required List<String> order,
     required List<ProviderGroup> groups,
     required Map<String, String> assignments,
     required int ungroupedPosition,
   }) async {
     await ready;
-    final groupIds = groups.map((e) => e.id).toSet();
-    _providerGroups = List<ProviderGroup>.unmodifiable(groups);
-    _providerGroupMap = <String, String>{
-      for (final entry in assignments.entries)
-        if (groupIds.contains(entry.value)) entry.key: entry.value,
-    };
-    _providerUngroupedPosition = ungroupedPosition.clamp(0, groups.length);
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
-    notifyListeners();
+    await _providerMutationLock.run(() async {
+      final groupIds = groups.map((e) => e.id).toSet();
+      final next = _normalizeProviderGroupingSnapshot(
+        order: order,
+        groups: groups,
+        assignments: <String, String>{
+          for (final entry in assignments.entries)
+            if (groupIds.contains(entry.value)) entry.key: entry.value,
+        },
+        collapsed: _providerGroupCollapsed,
+        ungroupedPosition: ungroupedPosition,
+      );
+      await _commitProviderGroupingSnapshot(next, operation: '同步供应商分组');
+    });
   }
 
   Future<void> syncUpsertSearchService(
@@ -839,8 +917,8 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     try {
       final map = nextProviderConfigs.map((k, v) => MapEntry(k, v.toJson()));
       final encoded = jsonEncode(map);
-      final ok = await prefs.setString(_providerConfigsKey, encoded);
-      if (!ok) return _MigrationResult.failed;
+      final persisted = await prefs.setString(_providerConfigsKey, encoded);
+      if (!persisted) return _MigrationResult.failed;
     } catch (e, st) {
       assert(() {
         debugPrint(
@@ -973,7 +1051,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
         return true;
       }());
     }
-
     // load provider grouping
     try {
       final groupsStr = prefs.getString(_providerGroupsKey) ?? '';
@@ -1485,19 +1562,23 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     // Attempt to reload any user-installed local fonts (mobile platforms)
     await _reloadLocalFontsIfAny();
 
-    // Final cleanup pass for provider order + grouping state (best-effort).
-    if (_cleanupProviderOrderAndGrouping()) {
-      try {
-        await prefs.setStringList(_providersOrderKey, _providersOrder);
-        await prefs.setString(
-          _providerGroupMapKey,
-          jsonEncode(_providerGroupMap),
-        );
-        await prefs.setString(
-          _providerGroupCollapsedKey,
-          jsonEncode(_providerGroupCollapsed),
-        );
-      } catch (_) {}
+    final normalizedProviderGrouping = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: _providerGroups,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+    );
+    if (!_providerGroupingSnapshotEqualsCurrent(normalizedProviderGrouping)) {
+      await _persistProviderGroupingSnapshot(
+        prefs,
+        normalizedProviderGrouping,
+        operation: '修正供应商顺序与分组',
+      );
+      _publishProviderGroupingSnapshot(
+        normalizedProviderGrouping,
+        notify: false,
+      );
     }
 
     notifyListeners();
@@ -1539,10 +1620,12 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> setGlobalProxyPassword(String v) async {
+    final prefs = await SharedPreferences.getInstance();
+    await _writePreferencesAtomically(prefs, <String, Object?>{
+      _globalProxyPasswordKey: v.isEmpty ? null : v,
+    }, operation: '保存全局代理密码');
     _globalProxyPassword = v;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_globalProxyPasswordKey, _globalProxyPassword);
   }
 
   Future<void> setGlobalProxyBypass(String v) async {
@@ -1669,6 +1752,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   // The alias family name registered via FontLoader for local fonts
   String? _appFontLocalAlias;
   String? _codeFontLocalAlias;
+  final _fontMutationLock = _AsyncOperationLock();
 
   String? get appFontFamily => _effectiveAppFontAlias ?? _appFontFamily;
   String? get codeFontFamily => _effectiveCodeFontAlias ?? _codeFontFamily;
@@ -1684,146 +1768,207 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       (_codeFontLocalAlias?.isNotEmpty == true) ? _codeFontLocalAlias : null;
 
   Future<void> setAppFontSystemFamily(String? family) async {
-    _appFontIsGoogle = false;
-    _appFontFamily = (family == null || family.trim().isEmpty)
-        ? null
-        : family.trim();
-    // Clear local alias for system/google switch
-    _appFontLocalAlias = null;
-    _appFontLocalPath = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_displayAppFontFamilyKey, _appFontFamily ?? '');
-    await prefs.setBool(_displayAppFontIsGoogleKey, _appFontIsGoogle);
-    await prefs.remove(_displayAppFontLocalAliasKey);
-    await prefs.remove(_displayAppFontLocalPathKey);
+    await ready;
+    await _fontMutationLock.run(() async {
+      final nextFamily = (family == null || family.trim().isEmpty)
+          ? null
+          : family.trim();
+      final previousPath = _appFontLocalPath;
+      final prefs = await SharedPreferences.getInstance();
+      await _writePreferencesAtomically(prefs, <String, Object?>{
+        _displayAppFontFamilyKey: nextFamily,
+        _displayAppFontIsGoogleKey: false,
+        _displayAppFontLocalAliasKey: null,
+        _displayAppFontLocalPathKey: null,
+      }, operation: '保存应用系统字体');
+      _appFontIsGoogle = false;
+      _appFontFamily = nextFamily;
+      _appFontLocalAlias = null;
+      _appFontLocalPath = null;
+      notifyListeners();
+      await _deleteManagedFontFileIfUnused(previousPath);
+    });
   }
 
   Future<void> setCodeFontSystemFamily(String? family) async {
-    _codeFontIsGoogle = false;
-    _codeFontFamily = (family == null || family.trim().isEmpty)
-        ? null
-        : family.trim();
-    _codeFontLocalAlias = null;
-    _codeFontLocalPath = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_displayCodeFontFamilyKey, _codeFontFamily ?? '');
-    await prefs.setBool(_displayCodeFontIsGoogleKey, _codeFontIsGoogle);
-    await prefs.remove(_displayCodeFontLocalAliasKey);
-    await prefs.remove(_displayCodeFontLocalPathKey);
+    await ready;
+    await _fontMutationLock.run(() async {
+      final nextFamily = (family == null || family.trim().isEmpty)
+          ? null
+          : family.trim();
+      final previousPath = _codeFontLocalPath;
+      final prefs = await SharedPreferences.getInstance();
+      await _writePreferencesAtomically(prefs, <String, Object?>{
+        _displayCodeFontFamilyKey: nextFamily,
+        _displayCodeFontIsGoogleKey: false,
+        _displayCodeFontLocalAliasKey: null,
+        _displayCodeFontLocalPathKey: null,
+      }, operation: '保存代码系统字体');
+      _codeFontIsGoogle = false;
+      _codeFontFamily = nextFamily;
+      _codeFontLocalAlias = null;
+      _codeFontLocalPath = null;
+      notifyListeners();
+      await _deleteManagedFontFileIfUnused(previousPath);
+    });
   }
 
   Future<void> setAppFontFromGoogle(String family) async {
-    _appFontIsGoogle = true;
-    _appFontFamily = family.trim();
-    _appFontLocalAlias = null;
-    _appFontLocalPath = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_displayAppFontFamilyKey, _appFontFamily!);
-    await prefs.setBool(_displayAppFontIsGoogleKey, true);
-    await prefs.remove(_displayAppFontLocalAliasKey);
-    await prefs.remove(_displayAppFontLocalPathKey);
+    await ready;
+    final nextFamily = family.trim();
+    if (nextFamily.isEmpty) return;
+    await _fontMutationLock.run(() async {
+      final previousPath = _appFontLocalPath;
+      final prefs = await SharedPreferences.getInstance();
+      await _writePreferencesAtomically(prefs, <String, Object?>{
+        _displayAppFontFamilyKey: nextFamily,
+        _displayAppFontIsGoogleKey: true,
+        _displayAppFontLocalAliasKey: null,
+        _displayAppFontLocalPathKey: null,
+      }, operation: '保存应用 Google 字体');
+      _appFontIsGoogle = true;
+      _appFontFamily = nextFamily;
+      _appFontLocalAlias = null;
+      _appFontLocalPath = null;
+      notifyListeners();
+      await _deleteManagedFontFileIfUnused(previousPath);
+    });
   }
 
   Future<void> setCodeFontFromGoogle(String family) async {
-    _codeFontIsGoogle = true;
-    _codeFontFamily = family.trim();
-    _codeFontLocalAlias = null;
-    _codeFontLocalPath = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_displayCodeFontFamilyKey, _codeFontFamily!);
-    await prefs.setBool(_displayCodeFontIsGoogleKey, true);
-    await prefs.remove(_displayCodeFontLocalAliasKey);
-    await prefs.remove(_displayCodeFontLocalPathKey);
+    await ready;
+    final nextFamily = family.trim();
+    if (nextFamily.isEmpty) return;
+    await _fontMutationLock.run(() async {
+      final previousPath = _codeFontLocalPath;
+      final prefs = await SharedPreferences.getInstance();
+      await _writePreferencesAtomically(prefs, <String, Object?>{
+        _displayCodeFontFamilyKey: nextFamily,
+        _displayCodeFontIsGoogleKey: true,
+        _displayCodeFontLocalAliasKey: null,
+        _displayCodeFontLocalPathKey: null,
+      }, operation: '保存代码 Google 字体');
+      _codeFontIsGoogle = true;
+      _codeFontFamily = nextFamily;
+      _codeFontLocalAlias = null;
+      _codeFontLocalPath = null;
+      notifyListeners();
+      await _deleteManagedFontFileIfUnused(previousPath);
+    });
   }
 
   Future<void> setAppFontFromLocal({
     required String path,
     String? alias,
   }) async {
-    final previousPath = _appFontLocalPath;
-    final localPath = await _importLocalFontFile(path);
-    if (localPath == null) return;
-    final fam = await _registerLocalFont(
-      path: localPath,
-      aliasPrefix: alias ?? 'kelivo_local_app',
-    );
-    if (fam == null) {
-      await _deleteManagedFontFileIfUnused(localPath);
-      return;
-    }
-    _appFontIsGoogle = false;
-    _appFontFamily = fam;
-    _appFontLocalAlias = fam;
-    _appFontLocalPath = localPath;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_displayAppFontFamilyKey, _appFontFamily!);
-    await prefs.setBool(_displayAppFontIsGoogleKey, false);
-    await prefs.setString(_displayAppFontLocalAliasKey, _appFontLocalAlias!);
-    await prefs.setString(_displayAppFontLocalPathKey, _appFontLocalPath!);
-    await _deleteManagedFontFileIfUnused(previousPath);
+    await ready;
+    await _fontMutationLock.run(() async {
+      final previousPath = _appFontLocalPath;
+      final localPath = await _importLocalFontFile(path);
+      final fam = await _registerLocalFont(
+        path: localPath,
+        aliasPrefix: alias ?? 'kelivo_local_app',
+      );
+      if (fam == null) {
+        await _deleteManagedFontFileIfUnused(localPath);
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      try {
+        await _writePreferencesAtomically(prefs, <String, Object?>{
+          _displayAppFontFamilyKey: fam,
+          _displayAppFontIsGoogleKey: false,
+          _displayAppFontLocalAliasKey: fam,
+          _displayAppFontLocalPathKey: localPath,
+        }, operation: '保存应用本地字体');
+      } catch (error, stackTrace) {
+        await _deleteManagedFontFileIfUnused(localPath);
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      _appFontIsGoogle = false;
+      _appFontFamily = fam;
+      _appFontLocalAlias = fam;
+      _appFontLocalPath = localPath;
+      notifyListeners();
+      await _deleteManagedFontFileIfUnused(previousPath);
+    });
   }
 
   Future<void> setCodeFontFromLocal({
     required String path,
     String? alias,
   }) async {
-    final previousPath = _codeFontLocalPath;
-    final localPath = await _importLocalFontFile(path);
-    if (localPath == null) return;
-    final fam = await _registerLocalFont(
-      path: localPath,
-      aliasPrefix: alias ?? 'kelivo_local_code',
-    );
-    if (fam == null) {
-      await _deleteManagedFontFileIfUnused(localPath);
-      return;
-    }
-    _codeFontIsGoogle = false;
-    _codeFontFamily = fam;
-    _codeFontLocalAlias = fam;
-    _codeFontLocalPath = localPath;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_displayCodeFontFamilyKey, _codeFontFamily!);
-    await prefs.setBool(_displayCodeFontIsGoogleKey, false);
-    await prefs.setString(_displayCodeFontLocalAliasKey, _codeFontLocalAlias!);
-    await prefs.setString(_displayCodeFontLocalPathKey, _codeFontLocalPath!);
-    await _deleteManagedFontFileIfUnused(previousPath);
+    await ready;
+    await _fontMutationLock.run(() async {
+      final previousPath = _codeFontLocalPath;
+      final localPath = await _importLocalFontFile(path);
+      final fam = await _registerLocalFont(
+        path: localPath,
+        aliasPrefix: alias ?? 'kelivo_local_code',
+      );
+      if (fam == null) {
+        await _deleteManagedFontFileIfUnused(localPath);
+        return;
+      }
+      final prefs = await SharedPreferences.getInstance();
+      try {
+        await _writePreferencesAtomically(prefs, <String, Object?>{
+          _displayCodeFontFamilyKey: fam,
+          _displayCodeFontIsGoogleKey: false,
+          _displayCodeFontLocalAliasKey: fam,
+          _displayCodeFontLocalPathKey: localPath,
+        }, operation: '保存代码本地字体');
+      } catch (error, stackTrace) {
+        await _deleteManagedFontFileIfUnused(localPath);
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      _codeFontIsGoogle = false;
+      _codeFontFamily = fam;
+      _codeFontLocalAlias = fam;
+      _codeFontLocalPath = localPath;
+      notifyListeners();
+      await _deleteManagedFontFileIfUnused(previousPath);
+    });
   }
 
   Future<void> clearAppFont() async {
-    final previousPath = _appFontLocalPath;
-    _appFontFamily = null;
-    _appFontIsGoogle = false;
-    _appFontLocalAlias = null;
-    _appFontLocalPath = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_displayAppFontFamilyKey);
-    await prefs.remove(_displayAppFontIsGoogleKey);
-    await prefs.remove(_displayAppFontLocalAliasKey);
-    await prefs.remove(_displayAppFontLocalPathKey);
-    await _deleteManagedFontFileIfUnused(previousPath);
+    await ready;
+    await _fontMutationLock.run(() async {
+      final previousPath = _appFontLocalPath;
+      final prefs = await SharedPreferences.getInstance();
+      await _writePreferencesAtomically(prefs, <String, Object?>{
+        _displayAppFontFamilyKey: null,
+        _displayAppFontIsGoogleKey: null,
+        _displayAppFontLocalAliasKey: null,
+        _displayAppFontLocalPathKey: null,
+      }, operation: '清除应用字体');
+      _appFontFamily = null;
+      _appFontIsGoogle = false;
+      _appFontLocalAlias = null;
+      _appFontLocalPath = null;
+      notifyListeners();
+      await _deleteManagedFontFileIfUnused(previousPath);
+    });
   }
 
   Future<void> clearCodeFont() async {
-    final previousPath = _codeFontLocalPath;
-    _codeFontFamily = null;
-    _codeFontIsGoogle = false;
-    _codeFontLocalAlias = null;
-    _codeFontLocalPath = null;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_displayCodeFontFamilyKey);
-    await prefs.remove(_displayCodeFontIsGoogleKey);
-    await prefs.remove(_displayCodeFontLocalAliasKey);
-    await prefs.remove(_displayCodeFontLocalPathKey);
-    await _deleteManagedFontFileIfUnused(previousPath);
+    await ready;
+    await _fontMutationLock.run(() async {
+      final previousPath = _codeFontLocalPath;
+      final prefs = await SharedPreferences.getInstance();
+      await _writePreferencesAtomically(prefs, <String, Object?>{
+        _displayCodeFontFamilyKey: null,
+        _displayCodeFontIsGoogleKey: null,
+        _displayCodeFontLocalAliasKey: null,
+        _displayCodeFontLocalPathKey: null,
+      }, operation: '清除代码字体');
+      _codeFontFamily = null;
+      _codeFontIsGoogle = false;
+      _codeFontLocalAlias = null;
+      _codeFontLocalPath = null;
+      notifyListeners();
+      await _deleteManagedFontFileIfUnused(previousPath);
+    });
   }
 
   Future<void> _reloadLocalFontsIfAny() async {
@@ -1900,86 +2045,77 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   String? _nonEmpty(String? s) => (s == null || s.isEmpty) ? null : s;
 
   Future<void> _persistFontSettings(SharedPreferences prefs) async {
-    if (_appFontFamily == null || _appFontFamily!.isEmpty) {
-      await prefs.remove(_displayAppFontFamilyKey);
-    } else {
-      await prefs.setString(_displayAppFontFamilyKey, _appFontFamily!);
-    }
-    await prefs.setBool(_displayAppFontIsGoogleKey, _appFontIsGoogle);
-    if (_appFontLocalAlias == null || _appFontLocalAlias!.isEmpty) {
-      await prefs.remove(_displayAppFontLocalAliasKey);
-    } else {
-      await prefs.setString(_displayAppFontLocalAliasKey, _appFontLocalAlias!);
-    }
-    if (_appFontLocalPath == null || _appFontLocalPath!.isEmpty) {
-      await prefs.remove(_displayAppFontLocalPathKey);
-    } else {
-      await prefs.setString(_displayAppFontLocalPathKey, _appFontLocalPath!);
-    }
-
-    if (_codeFontFamily == null || _codeFontFamily!.isEmpty) {
-      await prefs.remove(_displayCodeFontFamilyKey);
-    } else {
-      await prefs.setString(_displayCodeFontFamilyKey, _codeFontFamily!);
-    }
-    await prefs.setBool(_displayCodeFontIsGoogleKey, _codeFontIsGoogle);
-    if (_codeFontLocalAlias == null || _codeFontLocalAlias!.isEmpty) {
-      await prefs.remove(_displayCodeFontLocalAliasKey);
-    } else {
-      await prefs.setString(
-        _displayCodeFontLocalAliasKey,
-        _codeFontLocalAlias!,
-      );
-    }
-    if (_codeFontLocalPath == null || _codeFontLocalPath!.isEmpty) {
-      await prefs.remove(_displayCodeFontLocalPathKey);
-    } else {
-      await prefs.setString(_displayCodeFontLocalPathKey, _codeFontLocalPath!);
-    }
+    await _writePreferencesAtomically(prefs, <String, Object?>{
+      _displayAppFontFamilyKey: _nonEmpty(_appFontFamily),
+      _displayAppFontIsGoogleKey: _appFontIsGoogle,
+      _displayAppFontLocalAliasKey: _nonEmpty(_appFontLocalAlias),
+      _displayAppFontLocalPathKey: _nonEmpty(_appFontLocalPath),
+      _displayCodeFontFamilyKey: _nonEmpty(_codeFontFamily),
+      _displayCodeFontIsGoogleKey: _codeFontIsGoogle,
+      _displayCodeFontLocalAliasKey: _nonEmpty(_codeFontLocalAlias),
+      _displayCodeFontLocalPathKey: _nonEmpty(_codeFontLocalPath),
+    }, operation: '修复本地字体配置');
   }
 
-  Future<String?> _importLocalFontFile(String sourcePath) async {
-    try {
-      final source = File(sourcePath);
-      if (!await source.exists()) return null;
-      final dir = await AppDirectories.getFontsDirectory();
-      if (!await dir.exists()) {
-        await dir.create(recursive: true);
-      }
+  Future<String> _importLocalFontFile(String sourcePath) async {
+    final selectedPath = SandboxPathResolver.resolveUserSelectedSource(
+      sourcePath,
+    );
+    final source = File(selectedPath);
+    if (!await source.exists()) {
+      throw FileSystemException('选择的字体文件不存在', selectedPath);
+    }
+    final dir = await AppDirectories.getFontsDirectory();
 
-      final sourceName = p.basename(source.path);
-      final safeBase = p
-          .basenameWithoutExtension(sourceName)
-          .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
-      final base = safeBase.isEmpty ? 'font' : safeBase;
-      final ext = p.extension(sourceName).toLowerCase();
-      final safeExt = (ext == '.ttf' || ext == '.otf') ? ext : '.ttf';
-      final dest = File(
-        p.join(
-          dir.path,
-          '${base}_${DateTime.now().microsecondsSinceEpoch}$safeExt',
-        ),
-      );
-      await dest.writeAsBytes(await source.readAsBytes(), flush: true);
+    final sourceName = p.basename(source.path);
+    final safeBase = p
+        .basenameWithoutExtension(sourceName)
+        .replaceAll(RegExp(r'[^A-Za-z0-9._-]+'), '_');
+    final base = safeBase.isEmpty ? 'font' : safeBase;
+    final ext = p.extension(sourceName).toLowerCase();
+    final safeExt = (ext == '.ttf' || ext == '.otf') ? ext : '.ttf';
+    final dest = File(p.join(dir.path, '${base}_${const Uuid().v4()}$safeExt'));
+    try {
+      await _managedFileWrite(dest, await source.readAsBytes());
       return dest.path;
-    } catch (_) {
-      return null;
+    } catch (error, stackTrace) {
+      await _deleteManagedFontFileIfUnused(dest.path);
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 
   Future<void> _deleteManagedFontFileIfUnused(String? path) async {
     if (path == null || path.isEmpty) return;
-    if (path == _appFontLocalPath || path == _codeFontLocalPath) return;
+    final normalizedPath = p.normalize(p.absolute(path));
+    final isStillReferenced = <String?>[_appFontLocalPath, _codeFontLocalPath]
+        .whereType<String>()
+        .any(
+          (candidate) =>
+              p.equals(p.normalize(p.absolute(candidate)), normalizedPath),
+        );
+    if (isStillReferenced) return;
     try {
       final fontsDir = await AppDirectories.getFontsDirectory();
-      final root = p.normalize(Directory(fontsDir.path).absolute.path);
       final file = File(path);
-      final target = p.normalize(file.absolute.path);
-      if (!(p.isWithin(root, target) || target == root)) return;
+      if (!SandboxPathResolver.isOwnedManagedPath(
+        path: file.path,
+        managedDirectory: fontsDir,
+      )) {
+        return;
+      }
       if (await file.exists()) {
         await file.delete();
       }
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'settings_provider',
+          context: ErrorDescription('清理旧字体文件失败'),
+        ),
+      );
+    }
   }
 
   Future<String?> _registerLocalFont({
@@ -1987,9 +2123,8 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     required String aliasPrefix,
   }) async {
     try {
-      // Use a stable alias derived from file name to reduce duplicates
-      final ts = DateTime.now().millisecondsSinceEpoch;
-      final alias = '${aliasPrefix}_$ts';
+      final suffix = const Uuid().v4().replaceAll('-', '');
+      final alias = '${aliasPrefix}_$suffix';
       final file = File(path);
       if (!await file.exists()) return null;
       final bytes = await file.readAsBytes();
@@ -1999,7 +2134,15 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       loader.addFont(Future.value(bd));
       await loader.load();
       return alias;
-    } catch (_) {
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'settings_provider',
+          context: ErrorDescription('注册本地字体失败'),
+        ),
+      );
       return null;
     }
   }
@@ -2164,18 +2307,23 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> setProvidersOrder(List<String> order) async {
-    await _syncWrites.runLocalBatch(
-      keys: _providerListKeys(),
-      write: () => _setProvidersOrder(order),
+    await ready;
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _providerMutationLock.run(() => _setProvidersOrder(order)),
     );
   }
 
   Future<void> _setProvidersOrder(List<String> order) async {
-    _providersOrder = List.unmodifiable(order);
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setStringList(_providersOrderKey, _providersOrder);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: order,
+      groups: _providerGroups,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+    );
+    if (_providerGroupingSnapshotEqualsCurrent(next)) return;
+    await _commitProviderGroupingSnapshot(next, operation: '保存供应商顺序');
   }
 
   Set<String> _knownProviderKeys() => <String>{
@@ -2183,110 +2331,152 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     ..._providerConfigs.keys,
   };
 
-  bool _cleanupProviderOrderAndGrouping() {
-    bool changed = false;
-    final knownKeys = _knownProviderKeys();
-
-    // Clean providers order: remove non-existing and dedupe, append new at end.
-    final nextOrder = <String>[];
-    final seen = <String>{};
-    for (final k in _providersOrder) {
-      if (!knownKeys.contains(k)) {
-        changed = true;
-        continue;
-      }
-      if (!seen.add(k)) {
-        changed = true;
-        continue;
-      }
-      nextOrder.add(k);
-    }
-    final mergedDefault = <String>[
-      ..._builtInProviderKeysInOrder,
-      ..._providerConfigs.keys.where((k) => !_builtInProviderKeys.contains(k)),
-    ];
-    for (final k in mergedDefault) {
-      if (knownKeys.contains(k) && seen.add(k)) {
-        nextOrder.add(k);
-        changed = true;
-      }
-    }
-    if (!listEquals(_providersOrder, nextOrder)) {
-      _providersOrder = List.unmodifiable(nextOrder);
-      changed = true;
-    }
-
-    // Clean group map: remove invalid groupIds or non-existing provider keys.
-    final validGroupIds = {for (final g in _providerGroups) g.id};
-    final nextMap = <String, String>{};
-    for (final entry in _providerGroupMap.entries) {
-      final providerKey = entry.key;
-      final groupId = entry.value;
-      if (!knownKeys.contains(providerKey)) {
-        changed = true;
-        continue;
-      }
-      if (!validGroupIds.contains(groupId)) {
-        changed = true;
-        continue;
-      }
-      nextMap[providerKey] = groupId;
-    }
-    if (!mapEquals(_providerGroupMap, nextMap)) {
-      _providerGroupMap = nextMap;
-      changed = true;
-    }
-
-    // Clean collapsed state: remove unknown group ids (except ungrouped).
-    final nextCollapsed = <String, bool>{};
-    for (final entry in _providerGroupCollapsed.entries) {
-      final key = entry.key;
-      if (key == providerUngroupedGroupKey || validGroupIds.contains(key)) {
-        nextCollapsed[key] = entry.value;
-      } else {
-        changed = true;
-      }
-    }
-    if (!mapEquals(_providerGroupCollapsed, nextCollapsed)) {
-      _providerGroupCollapsed
-        ..clear()
-        ..addAll(nextCollapsed);
-      changed = true;
-    }
-
-    final normalizedUngroupedPosition = _providerUngroupedPosition.clamp(
-      0,
-      _providerGroups.length,
-    );
-    if (_providerUngroupedPosition != normalizedUngroupedPosition) {
-      _providerUngroupedPosition = normalizedUngroupedPosition;
-      changed = true;
-    }
-
-    return changed;
+  bool _providerGroupingSnapshotEqualsCurrent(
+    _ProviderGroupingSnapshot snapshot,
+  ) {
+    return listEquals(_providersOrder, snapshot.order) &&
+        listEquals(_providerGroups, snapshot.groups) &&
+        mapEquals(_providerGroupMap, snapshot.assignments) &&
+        mapEquals(_providerGroupCollapsed, snapshot.collapsed) &&
+        _providerUngroupedPosition == snapshot.ungroupedPosition;
   }
 
-  Future<void> _persistProviderGrouping(SharedPreferences prefs) async {
-    await prefs.setString(
-      _providerGroupsKey,
-      ProviderGroup.encodeList(_providerGroups),
+  _ProviderGroupingSnapshot _normalizeProviderGroupingSnapshot({
+    required List<String> order,
+    required List<ProviderGroup> groups,
+    required Map<String, String> assignments,
+    required Map<String, bool> collapsed,
+    required int ungroupedPosition,
+    Map<String, ProviderConfig>? providerConfigs,
+  }) {
+    final knownKeys = <String>{
+      ..._builtInProviderKeys,
+      ...(providerConfigs ?? _providerConfigs).keys,
+    };
+    final normalizedOrder = <String>[];
+    final seen = <String>{};
+    for (final key in order) {
+      if (knownKeys.contains(key) && seen.add(key)) {
+        normalizedOrder.add(key);
+      }
+    }
+    for (final key in <String>[
+      ..._builtInProviderKeysInOrder,
+      ...(providerConfigs ?? _providerConfigs).keys.where(
+        (item) => !_builtInProviderKeys.contains(item),
+      ),
+    ]) {
+      if (knownKeys.contains(key) && seen.add(key)) {
+        normalizedOrder.add(key);
+      }
+    }
+
+    final normalizedGroups = List<ProviderGroup>.unmodifiable(groups);
+    final validGroupIds = normalizedGroups.map((group) => group.id).toSet();
+    final normalizedAssignments = <String, String>{
+      for (final entry in assignments.entries)
+        if (knownKeys.contains(entry.key) &&
+            validGroupIds.contains(entry.value))
+          entry.key: entry.value,
+    };
+    final normalizedCollapsed = <String, bool>{
+      for (final entry in collapsed.entries)
+        if (entry.key == providerUngroupedGroupKey ||
+            validGroupIds.contains(entry.key))
+          entry.key: entry.value,
+    };
+    return _ProviderGroupingSnapshot(
+      order: normalizedOrder,
+      groups: normalizedGroups,
+      assignments: normalizedAssignments,
+      collapsed: normalizedCollapsed,
+      ungroupedPosition: ungroupedPosition.clamp(0, normalizedGroups.length),
     );
-    await prefs.setString(_providerGroupMapKey, jsonEncode(_providerGroupMap));
-    await prefs.setString(
-      _providerGroupCollapsedKey,
-      jsonEncode(_providerGroupCollapsed),
+  }
+
+  Map<String, Object?> _providerGroupingPreferenceValues(
+    _ProviderGroupingSnapshot snapshot,
+  ) {
+    return <String, Object?>{
+      _providerGroupsKey: ProviderGroup.encodeList(snapshot.groups),
+      _providerGroupMapKey: jsonEncode(snapshot.assignments),
+      _providerGroupCollapsedKey: jsonEncode(snapshot.collapsed),
+      _providerUngroupedPositionKey: snapshot.ungroupedPosition,
+      _providersOrderKey: snapshot.order,
+    };
+  }
+
+  Future<void> _persistProviderGroupingSnapshot(
+    SharedPreferences prefs,
+    _ProviderGroupingSnapshot snapshot, {
+    required String operation,
+  }) {
+    return _writePreferencesAtomically(
+      prefs,
+      _providerGroupingPreferenceValues(snapshot),
+      operation: operation,
     );
-    await prefs.setInt(
-      _providerUngroupedPositionKey,
-      providerUngroupedDisplayIndex,
+  }
+
+  Future<void> _persistProviderCollection(
+    SharedPreferences prefs, {
+    required Map<String, ProviderConfig> providerConfigs,
+    required _ProviderGroupingSnapshot grouping,
+    Map<String, Object?> additionalValues = const <String, Object?>{},
+    required String operation,
+  }) {
+    final encodedConfigs = providerConfigs.map(
+      (key, value) => MapEntry(key, value.toJson()),
     );
-    await prefs.setStringList(_providersOrderKey, _providersOrder);
+    return _writePreferencesAtomically(prefs, <String, Object?>{
+      ...additionalValues,
+      _providerConfigsKey: jsonEncode(encodedConfigs),
+      ..._providerGroupingPreferenceValues(grouping),
+    }, operation: operation);
+  }
+
+  Future<void> _commitProviderGroupingSnapshot(
+    _ProviderGroupingSnapshot snapshot, {
+    required String operation,
+  }) async {
+    final prefs = await SharedPreferences.getInstance();
+    await _persistProviderGroupingSnapshot(
+      prefs,
+      snapshot,
+      operation: operation,
+    );
+    _publishProviderGroupingSnapshot(snapshot);
+  }
+
+  void _publishProviderGroupingSnapshot(
+    _ProviderGroupingSnapshot snapshot, {
+    bool notify = true,
+  }) {
+    _providersOrder = snapshot.order;
+    _providerGroups = snapshot.groups;
+    _providerGroupMap = snapshot.assignments;
+    _providerGroupCollapsed
+      ..clear()
+      ..addAll(snapshot.collapsed);
+    _providerUngroupedPosition = snapshot.ungroupedPosition;
+    if (notify) notifyListeners();
+  }
+
+  void _publishProviderCollection(
+    Map<String, ProviderConfig> providerConfigs,
+    _ProviderGroupingSnapshot grouping, {
+    bool notify = true,
+  }) {
+    _providerConfigs = Map<String, ProviderConfig>.from(providerConfigs);
+    _publishProviderGroupingSnapshot(grouping, notify: false);
+    if (notify) notifyListeners();
   }
 
   Future<String> createGroup(String name) async {
+    await ready;
     return _syncWrites.runLocal(
       key: ConfigSyncKeys.providerGrouping,
-      write: () => _createGroup(name),
+      write: () => _providerMutationLock.run(() => _createGroup(name)),
     );
   }
 
@@ -2304,19 +2494,22 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       ungroupedIndex: providerUngroupedDisplayIndex,
       group: ProviderGroup(id: id, name: trimmed, createdAt: now),
     );
-    _providerGroups = List<ProviderGroup>.of(res.groups);
-    _providerUngroupedPosition = res.ungroupedIndex;
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: res.groups,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: res.ungroupedIndex,
+    );
+    await _commitProviderGroupingSnapshot(next, operation: '创建供应商分组');
     return id;
   }
 
   Future<void> renameGroup(String groupId, String name) async {
+    await ready;
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.providerGrouping,
-      write: () => _renameGroup(groupId, name),
+      write: () => _providerMutationLock.run(() => _renameGroup(groupId, name)),
     );
   }
 
@@ -2335,17 +2528,23 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     if (current.name == trimmed) return;
     final mut = List<ProviderGroup>.of(_providerGroups);
     mut[idx] = current.copyWith(name: trimmed);
-    _providerGroups = List.unmodifiable(mut);
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: mut,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+    );
+    await _commitProviderGroupingSnapshot(next, operation: '重命名供应商分组');
   }
 
   Future<void> reorderProviderGroups(int oldIndex, int newIndex) async {
+    await ready;
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.providerGrouping,
-      write: () => _reorderProviderGroups(oldIndex, newIndex),
+      write: () => _providerMutationLock.run(
+        () => _reorderProviderGroups(oldIndex, newIndex),
+      ),
     );
   }
 
@@ -2359,20 +2558,26 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     final item = mut.removeAt(oldIndex);
     final insertIndex = newIndex.clamp(0, mut.length);
     mut.insert(insertIndex, item);
-    _providerGroups = List.unmodifiable(mut);
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: mut,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+    );
+    await _commitProviderGroupingSnapshot(next, operation: '重排供应商分组');
   }
 
   Future<void> reorderProviderGroupsWithUngrouped(
     int oldIndex,
     int newIndex,
   ) async {
+    await ready;
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.providerGrouping,
-      write: () => _reorderProviderGroupsWithUngrouped(oldIndex, newIndex),
+      write: () => _providerMutationLock.run(
+        () => _reorderProviderGroupsWithUngrouped(oldIndex, newIndex),
+      ),
     );
   }
 
@@ -2392,18 +2597,21 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       oldIndex: oldIndex,
       newIndex: newIndex,
     );
-    _providerGroups = List<ProviderGroup>.of(res.groups);
-    _providerUngroupedPosition = res.ungroupedIndex;
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: res.groups,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: res.ungroupedIndex,
+    );
+    await _commitProviderGroupingSnapshot(next, operation: '重排供应商分组与未分组项');
   }
 
   Future<void> deleteGroup(String groupId) async {
+    await ready;
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.providerGrouping,
-      write: () => _deleteGroup(groupId),
+      write: () => _providerMutationLock.run(() => _deleteGroup(groupId)),
     );
   }
 
@@ -2416,22 +2624,23 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       collapsed: _providerGroupCollapsed,
       groupId: groupId,
     );
-    _providerGroups = List<ProviderGroup>.of(res.groups);
-    _providerUngroupedPosition = res.ungroupedIndex;
-    _providerGroupMap = Map<String, String>.from(res.providerGroupMap);
-    _providerGroupCollapsed
-      ..clear()
-      ..addAll(res.collapsed);
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: res.groups,
+      assignments: res.providerGroupMap,
+      collapsed: res.collapsed,
+      ungroupedPosition: res.ungroupedIndex,
+    );
+    await _commitProviderGroupingSnapshot(next, operation: '删除供应商分组');
   }
 
   Future<void> setProviderGroup(String providerKey, String? groupId) async {
+    await ready;
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.providerGrouping,
-      write: () => _setProviderGroup(providerKey, groupId),
+      write: () => _providerMutationLock.run(
+        () => _setProviderGroup(providerKey, groupId),
+      ),
     );
   }
 
@@ -2444,24 +2653,32 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     final current = groupIdForProvider(providerKey);
     if (current == target) return;
 
+    final assignments = Map<String, String>.from(_providerGroupMap);
     if (target == null) {
-      _providerGroupMap.remove(providerKey);
+      assignments.remove(providerKey);
     } else {
-      _providerGroupMap[providerKey] = target;
+      assignments[providerKey] = target;
     }
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: _providerGroups,
+      assignments: assignments,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+    );
+    await _commitProviderGroupingSnapshot(next, operation: '设置供应商所属分组');
   }
 
   Future<void> moveProvidersToGroup(
     Iterable<String> providerKeys,
     String? targetGroupId,
   ) async {
-    await _syncWrites.runLocalBatch(
-      keys: _providerListKeys(),
-      write: () => _moveProvidersToGroup(providerKeys, targetGroupId),
+    await ready;
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _providerMutationLock.run(
+        () => _moveProvidersToGroup(providerKeys, targetGroupId),
+      ),
     );
   }
 
@@ -2514,18 +2731,23 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     }
 
     if (!changed) return;
-    _providersOrder = order;
-    _providerGroupMap = Map<String, String>.from(groupMap);
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: order,
+      groups: _providerGroups,
+      assignments: groupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+    );
+    await _commitProviderGroupingSnapshot(next, operation: '批量移动供应商分组');
   }
 
   Future<void> setGroupCollapsed(String groupIdOrUngrouped, bool value) async {
+    await ready;
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.providerGrouping,
-      write: () => _setGroupCollapsed(groupIdOrUngrouped, value),
+      write: () => _providerMutationLock.run(
+        () => _setGroupCollapsed(groupIdOrUngrouped, value),
+      ),
     );
   }
 
@@ -2534,11 +2756,17 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
         groupById(groupIdOrUngrouped) == null) {
       return;
     }
-    _providerGroupCollapsed[groupIdOrUngrouped] = value;
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    if (isGroupCollapsed(groupIdOrUngrouped) == value) return;
+    final collapsed = Map<String, bool>.from(_providerGroupCollapsed)
+      ..[groupIdOrUngrouped] = value;
+    final next = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: _providerGroups,
+      assignments: _providerGroupMap,
+      collapsed: collapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+    );
+    await _commitProviderGroupingSnapshot(next, operation: '保存供应商分组折叠状态');
   }
 
   Future<void> toggleGroupCollapsed(String groupIdOrUngrouped) async =>
@@ -2552,9 +2780,12 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     String? targetGroupId,
     int targetPos,
   ) async {
-    await _syncWrites.runLocalBatch(
-      keys: _providerListKeys(),
-      write: () => _moveProvider(providerKey, targetGroupId, targetPos),
+    await ready;
+    await _syncWrites.runLocal(
+      key: ConfigSyncKeys.providerGrouping,
+      write: () => _providerMutationLock.run(
+        () => _moveProvider(providerKey, targetGroupId, targetPos),
+      ),
     );
   }
 
@@ -2576,12 +2807,15 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       targetGroupId: targetGroupId,
       targetPos: targetPos,
     );
-    _providersOrder = res.providersOrder;
-    _providerGroupMap = Map<String, String>.from(res.providerGroupMap);
-    _cleanupProviderOrderAndGrouping();
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGrouping(prefs);
+    final next = _normalizeProviderGroupingSnapshot(
+      order: res.providersOrder,
+      groups: _providerGroups,
+      assignments: res.providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+    );
+    if (_providerGroupingSnapshotEqualsCurrent(next)) return;
+    await _commitProviderGroupingSnapshot(next, operation: '移动供应商');
   }
 
   Future<void> setThemeMode(ThemeMode mode) async {
@@ -2791,22 +3025,63 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   Future<void> followSystem() => setThemeMode(ThemeMode.system);
 
   Future<void> setProviderConfig(String key, ProviderConfig config) async {
-    await _syncWrites.runLocal(
-      key: ConfigSyncKeys.provider(key),
-      write: () => _setProviderConfig(key, config),
+    await ready;
+    await _syncWrites.runLocalBatch(
+      keys: _providerMutationKeys(key),
+      write: () => _setProviderConfigLocked(key, config),
     );
   }
 
-  Future<void> _setProviderConfig(String key, ProviderConfig config) async {
-    _providerConfigs[key] = config;
-    notifyListeners();
+  Future<void> _setProviderConfigLocked(String key, ProviderConfig config) {
+    return _providerMutationLock.run(
+      () => _setProviderConfigTransaction(key, config),
+    );
+  }
+
+  Future<void> _setProviderConfigTransaction(
+    String key,
+    ProviderConfig config,
+  ) async {
+    final previous = _providerConfigs[key];
+    final nextConfigs = Map<String, ProviderConfig>.from(_providerConfigs)
+      ..[key] = config;
+    final nextGrouping = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: _providerGroups,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+      providerConfigs: nextConfigs,
+    );
     final prefs = await SharedPreferences.getInstance();
-    final map = _providerConfigs.map((k, v) => MapEntry(k, v.toJson()));
-    await prefs.setString(_providerConfigsKey, jsonEncode(map));
+    await _persistProviderCollection(
+      prefs,
+      providerConfigs: nextConfigs,
+      grouping: nextGrouping,
+      operation: '保存供应商配置',
+    );
+    _publishProviderCollection(nextConfigs, nextGrouping);
+    await _deleteManagedProviderAvatarIfUnused(
+      previous?.avatarType == 'file' ? previous?.avatarValue : null,
+      context: '清理旧供应商头像失败',
+    );
   }
 
   Future<int> deleteModels(String providerKey, Set<String> modelIds) async {
     if (modelIds.isEmpty) return 0;
+    await ready;
+    return _syncWrites.runLocalBatch(
+      keys: _providerMutationKeys(providerKey),
+      write: () => _providerMutationLock.run(
+        () => _deleteModelsLocked(providerKey, modelIds),
+      ),
+    );
+  }
+
+  Future<int> _deleteModelsLocked(
+    String providerKey,
+    Set<String> modelIds,
+  ) async {
     final old = _providerConfigs[providerKey];
     if (old == null) return 0;
     final deletedModelIds = old.models
@@ -2827,13 +3102,100 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       }
     }
 
-    await setProviderConfig(
-      providerKey,
-      old.copyWith(models: nextModels, modelOverrides: nextOverrides),
+    final nextConfig = old.copyWith(
+      models: nextModels,
+      modelOverrides: nextOverrides,
     );
-    for (final modelId in deletedModelIds) {
-      await clearSelectionsForModel(providerKey, modelId);
+    final nextConfigs = Map<String, ProviderConfig>.from(_providerConfigs)
+      ..[providerKey] = nextConfig;
+    final nextGrouping = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: _providerGroups,
+      assignments: _providerGroupMap,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+      providerConfigs: nextConfigs,
+    );
+    final removesCurrent =
+        _currentModelProvider == providerKey &&
+        deletedModelIds.contains(_currentModelId);
+    final removesTitle =
+        _titleModelProvider == providerKey &&
+        deletedModelIds.contains(_titleModelId);
+    final removesTranslate =
+        _translateModelProvider == providerKey &&
+        deletedModelIds.contains(_translateModelId);
+    final removesOcr =
+        _ocrModelProvider == providerKey &&
+        deletedModelIds.contains(_ocrModelId);
+    final removesSummary =
+        _summaryModelProvider == providerKey &&
+        deletedModelIds.contains(_summaryModelId);
+    final removesSuggestion =
+        _suggestionModelProvider == providerKey &&
+        deletedModelIds.contains(_suggestionModelId);
+    final removesCompress =
+        _compressModelProvider == providerKey &&
+        deletedModelIds.contains(_compressModelId);
+    final nextPinned = Set<String>.from(_pinnedModels)
+      ..removeWhere(
+        (entry) =>
+            deletedModelIds.any((modelId) => entry == '$providerKey::$modelId'),
+      );
+    final prefs = await SharedPreferences.getInstance();
+    await _persistProviderCollection(
+      prefs,
+      providerConfigs: nextConfigs,
+      grouping: nextGrouping,
+      additionalValues: <String, Object?>{
+        if (removesCurrent) _selectedModelKey: null,
+        if (removesTitle) _titleModelKey: null,
+        if (removesTranslate) _translateModelKey: null,
+        if (removesOcr) _ocrModelKey: null,
+        if (removesOcr) _ocrEnabledKey: false,
+        if (removesSummary) _summaryModelKey: null,
+        if (removesSuggestion) _suggestionModelKey: null,
+        if (removesCompress) _compressModelKey: null,
+        if (!setEquals(nextPinned, _pinnedModels))
+          _pinnedModelsKey: nextPinned.toList(growable: false),
+      },
+      operation: '删除供应商模型',
+    );
+
+    _publishProviderCollection(nextConfigs, nextGrouping, notify: false);
+    if (removesCurrent) {
+      _currentModelProvider = null;
+      _currentModelId = null;
     }
+    if (removesTitle) {
+      _titleModelProvider = null;
+      _titleModelId = null;
+    }
+    if (removesTranslate) {
+      _translateModelProvider = null;
+      _translateModelId = null;
+    }
+    if (removesOcr) {
+      _ocrModelProvider = null;
+      _ocrModelId = null;
+      _ocrEnabled = false;
+    }
+    if (removesSummary) {
+      _summaryModelProvider = null;
+      _summaryModelId = null;
+    }
+    if (removesSuggestion) {
+      _suggestionModelProvider = null;
+      _suggestionModelId = null;
+    }
+    if (removesCompress) {
+      _compressModelProvider = null;
+      _compressModelId = null;
+    }
+    _pinnedModels
+      ..clear()
+      ..addAll(nextPinned);
+    notifyListeners();
     return deletedCount;
   }
 
@@ -2841,122 +3203,203 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   Future<void> setProviderAvatarEmoji(String key, String emoji) async {
     final e = emoji.trim();
     if (e.isEmpty) return;
-    final old = getProviderConfig(key);
-    await setProviderConfig(
-      key,
-      old.copyWith(avatarType: 'emoji', avatarValue: e),
+    await ready;
+    await _syncWrites.runLocalBatch(
+      keys: _providerMutationKeys(key),
+      write: () async {
+        final old = getProviderConfig(key);
+        await _setProviderConfigLocked(
+          key,
+          old.copyWith(avatarType: 'emoji', avatarValue: e),
+        );
+      },
     );
   }
 
   Future<void> setProviderAvatarUrl(String key, String url) async {
     final u = url.trim();
     if (u.isEmpty) return;
-    final old = getProviderConfig(key);
-    await setProviderConfig(
-      key,
-      old.copyWith(avatarType: 'url', avatarValue: u),
+    await ready;
+    await _syncWrites.runLocalBatch(
+      keys: _providerMutationKeys(key),
+      write: () async {
+        final old = getProviderConfig(key);
+        await _setProviderConfigLocked(
+          key,
+          old.copyWith(avatarType: 'url', avatarValue: u),
+        );
+      },
     );
     // Prefetch for offline
     try {
       await AvatarCache.getPath(u);
-    } catch (_) {}
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'settings_provider',
+          context: ErrorDescription('预取供应商头像失败'),
+        ),
+      );
+    }
   }
 
   Future<void> setProviderAvatarFilePath(String key, String path) async {
-    final p = path.trim();
-    if (p.isEmpty) return;
-    final fixedInput = SandboxPathResolver.fix(p);
-    try {
-      final src = File(fixedInput);
-      if (!await src.exists()) return;
-      final avatarsDir = await AppDirectories.getAvatarsDirectory();
-      if (!await avatarsDir.exists()) {
-        await avatarsDir.create(recursive: true);
-      }
-      String ext = '';
-      final dot = fixedInput.lastIndexOf('.');
-      if (dot != -1 && dot < fixedInput.length - 1) {
-        ext = fixedInput.substring(dot + 1).toLowerCase();
-        if (ext.length > 6) ext = 'jpg';
-      } else {
-        ext = 'jpg';
-      }
-      final safeKey = key.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
-      final filename =
-          'provider_${safeKey}_${DateTime.now().millisecondsSinceEpoch}.$ext';
-      final dest = File('${avatarsDir.path}/$filename');
-      await src.copy(dest.path);
-
-      // Clean old stored avatar file if under managed avatars folder
-      final old = getProviderConfig(key);
-      if (old.avatarType == 'file' && (old.avatarValue ?? '').isNotEmpty) {
+    final selectedPath = path.trim();
+    if (selectedPath.isEmpty) return;
+    await ready;
+    await _syncWrites.runLocalBatch(
+      keys: _providerMutationKeys(key),
+      write: () async {
+        final fixedInput = SandboxPathResolver.resolveUserSelectedSource(
+          selectedPath,
+        );
+        final source = File(fixedInput);
+        if (!await source.exists()) {
+          throw FileSystemException('选择的供应商头像文件不存在', fixedInput);
+        }
+        final avatarsDir = await AppDirectories.getAvatarsDirectory();
+        final selectedExtension = p
+            .extension(p.basename(fixedInput))
+            .replaceFirst('.', '')
+            .toLowerCase();
+        final extension =
+            selectedExtension.isNotEmpty &&
+                selectedExtension.length <= 6 &&
+                RegExp(r'^[a-z0-9]+$').hasMatch(selectedExtension)
+            ? selectedExtension
+            : 'jpg';
+        final safeKey = key.replaceAll(RegExp(r'[^a-zA-Z0-9_-]'), '_');
+        final filename = 'provider_${safeKey}_${const Uuid().v4()}.$extension';
+        final destination = File(p.join(avatarsDir.path, filename));
         try {
-          final oldFile = File(old.avatarValue!);
-          if ((oldFile.path.contains('/avatars/') ||
-                  oldFile.path.contains('\\\\avatars\\\\')) &&
-              await oldFile.exists()) {
-            await oldFile.delete();
-          }
-        } catch (_) {}
-      }
-
-      await setProviderConfig(
-        key,
-        old.copyWith(avatarType: 'file', avatarValue: dest.path),
-      );
-    } catch (_) {
-      // Fallback: still save original path
-      final old = getProviderConfig(key);
-      await setProviderConfig(
-        key,
-        old.copyWith(avatarType: 'file', avatarValue: fixedInput),
-      );
-    }
+          await _managedFileCopy(source, destination);
+          final old = getProviderConfig(key);
+          await _setProviderConfigLocked(
+            key,
+            old.copyWith(avatarType: 'file', avatarValue: destination.path),
+          );
+        } catch (error, stackTrace) {
+          await _deleteManagedProviderAvatarIfUnused(
+            destination.path,
+            context: '清理未提交的供应商头像副本失败',
+          );
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+      },
+    );
   }
 
   Future<void> setProviderAvatarIcon(String key, String asset) async {
     final normalized = BrandAssets.selectableAssetOrNull(asset.trim());
     if (normalized == null) return;
-    final old = getProviderConfig(key);
-    await setProviderConfig(
-      key,
-      old.copyWith(avatarType: 'icon', avatarValue: normalized),
+    await ready;
+    await _syncWrites.runLocalBatch(
+      keys: _providerMutationKeys(key),
+      write: () async {
+        final old = getProviderConfig(key);
+        await _setProviderConfigLocked(
+          key,
+          old.copyWith(avatarType: 'icon', avatarValue: normalized),
+        );
+      },
     );
   }
 
-  // Store a LobeHub icon name (not the full URL); URL is built at render time.
   Future<void> setProviderAvatarLobehub(String key, String name) async {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
-    final old = getProviderConfig(key);
-    await setProviderConfig(
-      key,
-      old.copyWith(avatarType: 'lobehub', avatarValue: trimmed),
+    await ready;
+    await _syncWrites.runLocalBatch(
+      keys: _providerMutationKeys(key),
+      write: () async {
+        final old = getProviderConfig(key);
+        await _setProviderConfigLocked(
+          key,
+          old.copyWith(avatarType: 'lobehub', avatarValue: trimmed),
+        );
+      },
     );
   }
 
   Future<void> resetProviderAvatar(String key) async {
-    final old = getProviderConfig(key);
-    // Attempt to remove old local file if we managed it
-    if (old.avatarType == 'file' && (old.avatarValue ?? '').isNotEmpty) {
+    String? evictedUrl;
+    await ready;
+    await _syncWrites.runLocalBatch(
+      keys: _providerMutationKeys(key),
+      write: () async {
+        final old = getProviderConfig(key);
+        evictedUrl = old.avatarType == 'url' ? old.avatarValue : null;
+        await _setProviderConfigLocked(
+          key,
+          old.copyWith(avatarType: null, avatarValue: null),
+        );
+      },
+    );
+    if (evictedUrl != null && evictedUrl!.isNotEmpty) {
       try {
-        final f = File(old.avatarValue!);
-        if ((f.path.contains('/avatars/') ||
-                f.path.contains('\\\\avatars\\\\')) &&
-            await f.exists()) {
-          await f.delete();
-        }
-      } catch (_) {}
+        await AvatarCache.evict(evictedUrl!);
+      } catch (error, stackTrace) {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'settings_provider',
+            context: ErrorDescription('重置时清理供应商头像缓存失败'),
+          ),
+        );
+      }
     }
-    // Best-effort: evict cached URL avatar
-    if (old.avatarType == 'url' && (old.avatarValue ?? '').isNotEmpty) {
-      try {
-        await AvatarCache.evict(old.avatarValue!);
-      } catch (_) {}
+  }
+
+  Future<void> _deleteManagedProviderAvatarIfUnused(
+    String? path, {
+    required String context,
+  }) async {
+    if (path == null || path.isEmpty) return;
+    final normalizedPath = p.normalize(p.absolute(path));
+    final stillReferenced = _providerConfigs.values.any(
+      (config) =>
+          config.avatarType == 'file' &&
+          config.avatarValue != null &&
+          p.equals(
+            p.normalize(p.absolute(config.avatarValue!)),
+            normalizedPath,
+          ),
+    );
+    if (stillReferenced) return;
+    try {
+      final avatarsDir = await AppDirectories.getAvatarsDirectory();
+      final file = File(path);
+      if (_managedProviderAvatarFileName.hasMatch(p.basename(file.path)) &&
+          SandboxPathResolver.isOwnedManagedPath(
+            path: file.path,
+            managedDirectory: avatarsDir,
+          )) {
+        if (await _isReferencedByUserAvatar(file.path)) return;
+        if (!await file.exists()) return;
+        await file.delete();
+      }
+    } catch (error, stackTrace) {
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'settings_provider',
+          context: ErrorDescription(context),
+        ),
+      );
     }
-    await setProviderConfig(
-      key,
-      old.copyWith(avatarType: null, avatarValue: null),
+  }
+
+  Future<bool> _isReferencedByUserAvatar(String path) async {
+    final preferences = await SharedPreferences.getInstance();
+    final avatarValue = preferences.getString(_userAvatarValuePreferenceKey);
+    if (avatarValue == null || avatarValue.isEmpty) return false;
+    return p.equals(
+      p.normalize(p.absolute(avatarValue)),
+      p.normalize(p.absolute(path)),
     );
   }
 
@@ -3080,7 +3523,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     await ready;
     if (!_providerConfigs.containsKey(key)) return;
     await _syncWrites.runLocalBatch(
-      keys: _providerListKeys(extraIds: <String>[key]),
+      keys: _providerMutationKeys(key),
       write: () => _deleteProviderConfig(key),
     );
   }
@@ -3092,66 +3535,91 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> _deleteProviderConfig(String key) async {
-    _providerConfigs.remove(key);
-    // Remove from order
-    _providersOrder = List<String>.from(_providersOrder.where((k) => k != key));
-    // Also remove from grouping map
-    _providerGroupMap.remove(key);
-    _cleanupProviderOrderAndGrouping();
+    await _providerMutationLock.run(() => _deleteProviderConfigLocked(key));
+  }
 
-    // Clear selections referencing this provider to avoid re-creating defaults
+  Future<void> _deleteProviderConfigLocked(String key) async {
+    final deletedConfig = _providerConfigs[key];
+    if (deletedConfig == null) return;
+    final nextConfigs = Map<String, ProviderConfig>.from(_providerConfigs)
+      ..remove(key);
+    final assignments = Map<String, String>.from(_providerGroupMap)
+      ..remove(key);
+    final nextGrouping = _normalizeProviderGroupingSnapshot(
+      order: _providersOrder,
+      groups: _providerGroups,
+      assignments: assignments,
+      collapsed: _providerGroupCollapsed,
+      ungroupedPosition: _providerUngroupedPosition,
+      providerConfigs: nextConfigs,
+    );
+    final removesCurrent = _currentModelProvider == key;
+    final removesTitle = _titleModelProvider == key;
+    final removesTranslate = _translateModelProvider == key;
+    final removesOcr = _ocrModelProvider == key;
+    final removesSummary = _summaryModelProvider == key;
+    final removesSuggestion = _suggestionModelProvider == key;
+    final removesCompress = _compressModelProvider == key;
+    final nextPinned = Set<String>.from(_pinnedModels)
+      ..removeWhere((entry) => entry.startsWith('$key::'));
     final prefs = await SharedPreferences.getInstance();
-    if (_currentModelProvider == key) {
+    await _persistProviderCollection(
+      prefs,
+      providerConfigs: nextConfigs,
+      grouping: nextGrouping,
+      additionalValues: <String, Object?>{
+        if (removesCurrent) _selectedModelKey: null,
+        if (removesTitle) _titleModelKey: null,
+        if (removesTranslate) _translateModelKey: null,
+        if (removesOcr) _ocrModelKey: null,
+        if (removesOcr) _ocrEnabledKey: false,
+        if (removesSummary) _summaryModelKey: null,
+        if (removesSuggestion) _suggestionModelKey: null,
+        if (removesCompress) _compressModelKey: null,
+        if (!setEquals(nextPinned, _pinnedModels))
+          _pinnedModelsKey: nextPinned.toList(growable: false),
+      },
+      operation: '删除供应商配置',
+    );
+
+    _publishProviderCollection(nextConfigs, nextGrouping, notify: false);
+    if (removesCurrent) {
       _currentModelProvider = null;
       _currentModelId = null;
-      await prefs.remove(_selectedModelKey);
     }
-    if (_titleModelProvider == key) {
+    if (removesTitle) {
       _titleModelProvider = null;
       _titleModelId = null;
-      await prefs.remove(_titleModelKey);
     }
-    if (_translateModelProvider == key) {
+    if (removesTranslate) {
       _translateModelProvider = null;
       _translateModelId = null;
-      await prefs.remove(_translateModelKey);
     }
-    if (_ocrModelProvider == key) {
+    if (removesOcr) {
       _ocrModelProvider = null;
       _ocrModelId = null;
       _ocrEnabled = false;
-      await prefs.remove(_ocrModelKey);
-      await prefs.setBool(_ocrEnabledKey, false);
     }
-    if (_summaryModelProvider == key) {
+    if (removesSummary) {
       _summaryModelProvider = null;
       _summaryModelId = null;
-      await prefs.remove(_summaryModelKey);
     }
-    if (_suggestionModelProvider == key) {
+    if (removesSuggestion) {
       _suggestionModelProvider = null;
       _suggestionModelId = null;
-      await prefs.remove(_suggestionModelKey);
     }
-    if (_compressModelProvider == key) {
+    if (removesCompress) {
       _compressModelProvider = null;
       _compressModelId = null;
-      await prefs.remove(_compressModelKey);
     }
-
-    // Remove pinned models for this provider
-    final beforePinned = _pinnedModels.length;
-    _pinnedModels.removeWhere((entry) => entry.startsWith('$key::'));
-    if (_pinnedModels.length != beforePinned) {
-      await prefs.setStringList(_pinnedModelsKey, _pinnedModels.toList());
-    }
-
-    // Persist updates
-    final map = _providerConfigs.map((k, v) => MapEntry(k, v.toJson()));
-    await prefs.setString(_providerConfigsKey, jsonEncode(map));
-    await prefs.setStringList(_providersOrderKey, _providersOrder);
-    await prefs.setString(_providerGroupMapKey, jsonEncode(_providerGroupMap));
+    _pinnedModels
+      ..clear()
+      ..addAll(nextPinned);
     notifyListeners();
+    await _deleteManagedProviderAvatarIfUnused(
+      deletedConfig.avatarType == 'file' ? deletedConfig.avatarValue : null,
+      context: '删除供应商后清理头像失败',
+    );
   }
 
   // Favorites (pinned models)
@@ -4575,7 +5043,11 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
     bool? searchEnabled,
     bool? searchAutoTestOnLaunch,
   }) {
-    final copy = SettingsProvider(syncWriteExecutor: _syncWrites);
+    final copy = SettingsProvider._(
+      syncWriteExecutor: _syncWrites,
+      managedFileCopy: _managedFileCopy,
+      managedFileWrite: _managedFileWrite,
+    );
     copy._searchServices = searchServices ?? _searchServices;
     copy._searchCommonOptions = searchCommonOptions ?? _searchCommonOptions;
     copy._searchServiceSelected =
@@ -4686,6 +5158,96 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
         _mobileAssistantDetailOutlineEnabled;
     return copy;
   }
+}
+
+final class _ProviderGroupingSnapshot {
+  _ProviderGroupingSnapshot({
+    required List<String> order,
+    required List<ProviderGroup> groups,
+    required Map<String, String> assignments,
+    required Map<String, bool> collapsed,
+    required this.ungroupedPosition,
+  }) : order = List<String>.unmodifiable(order),
+       groups = List<ProviderGroup>.unmodifiable(groups),
+       assignments = Map<String, String>.unmodifiable(assignments),
+       collapsed = Map<String, bool>.unmodifiable(collapsed);
+
+  final List<String> order;
+  final List<ProviderGroup> groups;
+  final Map<String, String> assignments;
+  final Map<String, bool> collapsed;
+  final int ungroupedPosition;
+}
+
+Future<void> _copyManagedFile(File source, File destination) async {
+  await source.copy(destination.path);
+}
+
+Future<void> _writeManagedFile(File destination, List<int> bytes) async {
+  await destination.writeAsBytes(bytes, flush: true);
+}
+
+Future<void> _writePreferencesAtomically(
+  SharedPreferences preferences,
+  Map<String, Object?> values, {
+  required String operation,
+}) async {
+  final previousValues = <String, Object?>{
+    for (final key in values.keys) key: preferences.get(key),
+  };
+  try {
+    for (final entry in values.entries) {
+      final succeeded = await _writePreferenceValue(
+        preferences,
+        entry.key,
+        entry.value,
+      );
+      if (!succeeded) {
+        throw StateError('$operation失败：${entry.key} 未写入');
+      }
+    }
+  } catch (error, stackTrace) {
+    Object? rollbackError;
+    for (final entry in previousValues.entries) {
+      try {
+        final succeeded = await _writePreferenceValue(
+          preferences,
+          entry.key,
+          entry.value,
+        );
+        if (!succeeded) {
+          rollbackError ??= StateError('$operation回滚失败：${entry.key}');
+        }
+      } catch (error) {
+        rollbackError ??= error;
+      }
+    }
+    try {
+      await preferences.reload();
+    } catch (error) {
+      rollbackError ??= error;
+    }
+    if (rollbackError != null) {
+      throw StateError('$operation失败且偏好回滚未完成：$rollbackError');
+    }
+    Error.throwWithStackTrace(error, stackTrace);
+  }
+}
+
+Future<bool> _writePreferenceValue(
+  SharedPreferences preferences,
+  String key,
+  Object? value,
+) {
+  if (value == null) return preferences.remove(key);
+  if (value is String) return preferences.setString(key, value);
+  if (value is bool) return preferences.setBool(key, value);
+  if (value is int) return preferences.setInt(key, value);
+  if (value is double) return preferences.setDouble(key, value);
+  if (value is List<String>) {
+    return preferences.setStringList(key, value);
+  }
+  throw ArgumentError.value(value, key, '不支持的偏好值类型');
 }
 
 String _normalizeProxyHost(String host) {
@@ -4902,6 +5464,8 @@ enum ChatMessageBackgroundStyle { defaultStyle, frosted, solid }
 enum AndroidBackgroundChatMode { off, on, onNotify }
 
 class ProviderConfig {
+  static const _kelivoInPublicApiKey = 'kelivo';
+
   final String id;
   final bool enabled;
   final String name;
@@ -5127,7 +5691,7 @@ class ProviderConfig {
     id: json['id'] as String? ?? (json['name'] as String? ?? ''),
     enabled: json['enabled'] as bool? ?? true,
     name: json['name'] as String? ?? '',
-    apiKey: json['apiKey'] as String? ?? '',
+    apiKey: _apiKeyFromJson(json),
     baseUrl: json['baseUrl'] as String? ?? '',
     providerType: json['providerType'] != null
         ? ProviderKind.values.firstWhere(
@@ -5175,6 +5739,13 @@ class ProviderConfig {
       json['claudePromptCachingTtl'] as String?,
     ),
   );
+
+  static String _apiKeyFromJson(Map<String, dynamic> json) {
+    final stored = json['apiKey'] as String? ?? '';
+    if (stored.isNotEmpty) return stored;
+    final id = json['id'] as String? ?? json['name'] as String? ?? '';
+    return id.trim().toLowerCase() == 'kelivoin' ? _kelivoInPublicApiKey : '';
+  }
 
   static ProviderKind classify(String key, {ProviderKind? explicitType}) {
     // If an explicit type is provided, use it
@@ -5297,7 +5868,7 @@ class ProviderConfig {
             id: key,
             enabled: defaultEnabled(key),
             name: displayName ?? key,
-            apiKey: 'kelivo',
+            apiKey: _kelivoInPublicApiKey,
             baseUrl: _defaultBase(key),
             providerType: ProviderKind.openai,
             chatPath:

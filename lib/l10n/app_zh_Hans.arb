@@ -66,14 +66,17 @@
   "cloudSyncCancel": "取消",
   "cloudSyncLogout": "退出登录",
   "cloudSyncLogoutTitle": "退出云同步？",
-  "cloudSyncLogoutMessage": "可以保留本机同步状态以便下次快速继续，也可以从本机清除。",
-  "cloudSyncLogoutKeepState": "退出并保留状态",
-  "cloudSyncLogoutClearState": "退出并清除状态",
+  "cloudSyncLogoutMessage": "退出后将切回本地工作区。当前账号的聊天、配置、附件和同步状态都会保留在本机。",
+  "cloudSyncLogoutKeepState": "退出并重启",
+  "cloudSyncWorkspaceRestartTitle": "重启以切换工作区",
+  "cloudSyncWorkspaceRestartMessage": "工作区选择已安全保存。重启前，Kelivo 不会连接新的工作区。",
+  "cloudSyncWorkspaceRestartButton": "重启 Kelivo",
   "cloudSyncErrorTitle": "云同步错误",
   "cloudSyncStatusInitializing": "正在初始化",
   "cloudSyncStatusSignedOut": "未登录",
   "cloudSyncStatusSigningIn": "正在登录",
   "cloudSyncStatusSigningOut": "正在退出",
+  "cloudSyncStatusWorkspaceChangePending": "需要重启",
   "cloudSyncStatusIdle": "同步正常",
   "cloudSyncStatusSyncing": "正在同步",
   "cloudSyncStatusPaused": "已暂停",
@@ -90,9 +93,33 @@
   "cloudSyncConflictsTruncated": "当前仅显示前 100 项冲突。处理后请刷新，以继续查看其余冲突。",
   "cloudSyncConflictErrorTitle": "无法读取或处理同步冲突",
   "cloudSyncConflictFieldCount": "有 {count} 个字段需要确认",
+  "@cloudSyncConflictFieldCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "cloudSyncConflictValueComparison": "云端：{cloudValue} · 本机：{localValue}",
+  "@cloudSyncConflictValueComparison": {
+    "placeholders": {
+      "cloudValue": {
+        "type": "String"
+      },
+      "localValue": {
+        "type": "String"
+      }
+    }
+  },
   "cloudSyncConflictResolveTitle": "处理同步冲突",
   "cloudSyncConflictResolveDescription": "请选择“{entity}”每个字段要保留的版本，默认保留云端版本。",
+  "@cloudSyncConflictResolveDescription": {
+    "placeholders": {
+      "entity": {
+        "type": "String"
+      }
+    }
+  },
   "cloudSyncConflictClose": "关闭冲突处理面板",
   "cloudSyncConflictCloudValue": "云端",
   "cloudSyncConflictLocalValue": "本机",
@@ -139,9 +166,23 @@
   "cloudSyncConflictValueNotSet": "未设置",
   "cloudSyncConflictValueReference": "关联项",
   "cloudSyncConflictValueItems": "共 {count} 项",
+  "@cloudSyncConflictValueItems": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "cloudSyncConflictValueEnabled": "已启用",
   "cloudSyncConflictValueDisabled": "已停用",
   "cloudSyncConflictValueNumber": "{value}",
+  "@cloudSyncConflictValueNumber": {
+    "placeholders": {
+      "value": {
+        "type": "num"
+      }
+    }
+  },
   "cloudSyncConflictValueBlank": "空白文本",
   "cloudSyncConflictFailureChanged": "此冲突已变化或已被处理，请刷新列表后重试。",
   "cloudSyncConflictFailureSelection": "当前字段选择无法安全应用，请保留云端版本，或刷新后重新选择。",
@@ -172,26 +213,67 @@
   "settingsPageChatStorage": "聊天记录存储",
   "settingsPageCalculating": "统计中…",
   "settingsPageFilesCount": "共 {count} 个文件 · {size}",
+  "@settingsPageFilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpacePageTitle": "存储空间",
   "storageSpaceRefreshTooltip": "刷新",
   "storageSpaceLoadFailed": "加载失败",
   "storageSpaceTotalLabel": "已用空间",
   "storageSpaceClearableLabel": "可清理：{size}",
+  "@storageSpaceClearableLabel": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceClearableHint": "共发现可清理空间 {size}",
+  "@storageSpaceClearableHint": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceCategoryImages": "图片",
   "storageSpaceCategoryFiles": "文件",
   "storageSpaceCategoryChatData": "聊天记录",
+  "storageSpaceCategoryLegacyChatData": "聊天记录（旧）",
+  "storageSpaceCategoryRestoreTraces": "恢复痕迹",
+  "storageSpaceRestoreTracesHint": "恢复完成后保留的旧数据快照。清理不会影响当前应用数据。",
+  "storageSpaceClearRestoreTracesButton": "清理恢复痕迹",
+  "storageSpaceClearRestoreTracesConfirmMessage": "确定清理已完成恢复留下的旧数据快照吗？当前数据库、设置和文件不会受到影响。",
+  "storageSpaceSubCompletedRestoreRuns": "已完成的恢复快照",
   "storageSpaceCategoryAssistantData": "助手",
   "storageSpaceCategoryCache": "缓存",
   "storageSpaceCategoryLogs": "日志",
   "storageSpaceCategoryOther": "应用",
   "storageSpaceFilesCount": "{count} 个文件",
+  "@storageSpaceFilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "storageSpaceSafeToClearHint": "可安全清理，不影响聊天记录。",
+  "storageSpaceLegacyChatDataHint": "这是迁移到 SQLite 前保留的 Hive 旧文件。清理后不会删除当前聊天记录。",
   "storageSpaceNotSafeToClearHint": "可能影响聊天记录，请谨慎删除。",
   "storageSpaceBreakdownTitle": "明细",
   "storageSpaceSubChatMessages": "消息",
   "storageSpaceSubChatConversations": "会话",
   "storageSpaceSubChatToolEvents": "工具事件",
+  "storageSpaceSubChatDatabase": "聊天数据库",
+  "storageSpaceSubChatWriteAheadLog": "写入日志",
+  "storageSpaceSubChatSharedMemory": "共享内存索引",
   "storageSpaceSubAssistantAvatars": "头像",
   "storageSpaceSubAssistantImages": "图片",
   "storageSpaceSubCacheAvatars": "头像缓存",
@@ -202,21 +284,72 @@
   "storageSpaceSubLogsOther": "其他日志",
   "storageSpaceClearConfirmTitle": "确认清理",
   "storageSpaceClearConfirmMessage": "确定要清理 {targetName} 吗？",
+  "@storageSpaceClearConfirmMessage": {
+    "placeholders": {
+      "targetName": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceClearButton": "清理",
   "storageSpaceClearDone": "已清理 {targetName}",
+  "@storageSpaceClearDone": {
+    "placeholders": {
+      "targetName": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceClearFailed": "清理失败：{error}",
+  "@storageSpaceClearFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceClearAvatarCacheButton": "清理头像缓存",
   "storageSpaceClearCacheButton": "清理缓存",
   "storageSpaceClearLogsButton": "清理日志",
+  "storageSpaceClearLegacyChatDataButton": "清理旧聊天记录",
+  "storageSpaceClearLegacyChatDataConfirmMessage": "确定清理保留的旧聊天文件吗？当前 SQLite 聊天记录不会受到影响。",
   "storageSpaceViewLogsButton": "查看日志",
   "storageSpaceDeleteConfirmTitle": "确认删除",
   "storageSpaceDeleteUploadsConfirmMessage": "删除 {count} 个项目？删除后聊天记录中的附件可能无法打开。",
+  "@storageSpaceDeleteUploadsConfirmMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "storageSpaceDeletedUploadsDone": "已删除 {count} 个项目",
+  "@storageSpaceDeletedUploadsDone": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "storageSpaceNoUploads": "暂无内容",
   "storageSpaceSelectAll": "全选",
   "storageSpaceClearSelection": "清空选择",
   "storageSpaceSelectedCount": "已选 {count} 项",
+  "@storageSpaceSelectedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "storageSpaceUploadsCount": "共 {count} 项",
+  "@storageSpaceUploadsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsPageAboutSection": "关于",
   "settingsPageAbout": "关于",
   "settingsPageStatistics": "统计",
@@ -282,6 +415,13 @@
   "languageDisplaySpanish": "Español",
   "fileUploadDuplicateTitle": "文件已存在",
   "fileUploadDuplicateContent": "检测到同名文件 {fileName}，是否使用现有文件？",
+  "@fileUploadDuplicateContent": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
   "fileUploadDuplicateUseExisting": "使用现有",
   "fileUploadDuplicateUploadNew": "重新上传",
   "languageSelectSheetTitle": "选择翻译语言",
@@ -546,6 +686,16 @@
   "assistantEditMcpNoServersMessage": "暂无已启动的 MCP 服务器",
   "assistantEditMcpConnectedTag": "已连接",
   "assistantEditMcpToolsCountTag": "工具: {enabled}/{total}",
+  "@assistantEditMcpToolsCountTag": {
+    "placeholders": {
+      "enabled": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
   "assistantEditModelUseGlobalDefault": "使用全局默认",
   "assistantSettingsPageTitle": "助手设置",
   "assistantSettingsCopyButton": "复制",
@@ -682,15 +832,44 @@
   "backupPageTestDone": "测试完成",
   "backupPageTestConnection": "测试连接",
   "backupPageRestartRequired": "需要重启应用",
-  "backupPageRestartContent": "恢复完成，需要重启以完全生效。",
+  "backupPageRestartContent": "导入成功。重启 Kelivo 后将安全应用。",
+  "restartAppFailedMessage": "Kelivo 无法自动重启，请完全关闭后重新打开。",
+  "backupRestoreColdRestartTitle": "还需要再重启一次",
+  "backupRestoreColdRestartContent": "恢复已进入可恢复终态。请再重启一次 Kelivo，以便从新进程复验设置；确认前不会打开聊天数据。",
+  "backupRestoreColdRestartButton": "重启 Kelivo",
+  "backupRestoreRolledBackTitle": "恢复已回滚",
+  "backupRestoreRolledBackContent": "恢复未能完成。Kelivo 已验证并保留原有数据。",
+  "backupRestoreFailureTitle": "恢复需要处理",
+  "backupRestoreFailureContent": "Kelivo 无法验证完整的原有或新数据，因此未打开聊天数据。请关闭 Kelivo 后重试；若问题反复出现，请保留诊断码以便支持人员排查。",
+  "backupRestoreBusinessLeaseUnavailableTitle": "Kelivo 已在运行",
+  "backupRestoreBusinessLeaseUnavailableContent": "Kelivo 的数据仍被另一个应用进程占用。请关闭其他 Kelivo 窗口后重新启动；当前进程尚未打开聊天数据。",
+  "backupRestoreFailureRestartButton": "重启 Kelivo",
+  "backupRestoreFailureCopyButton": "复制诊断码",
+  "backupRestoreFailureCopied": "已复制诊断码",
+  "backupRestoreFailureDiagnostic": "诊断码：{code}",
+  "@backupRestoreFailureDiagnostic": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "backupPageRestoreFailedMessage": "恢复失败：{error}",
+  "@backupPageRestoreFailedMessage": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "backupPageOK": "好的",
   "backupPageCancel": "取消",
   "backupPageSelectImportMode": "选择导入模式",
-  "backupPageSelectImportModeDescription": "请选择如何导入备份数据：",
+  "backupPageSelectImportModeDescription": "请选择恢复方式。聊天和文件开关决定本次恢复的组件。",
   "backupPageOverwriteMode": "完全覆盖",
-  "backupPageOverwriteModeDescription": "清空本地所有数据后恢复",
-  "backupPageMergeMode": "智能合并",
-  "backupPageMergeModeDescription": "仅添加不存在的数据（智能去重）",
+  "backupPageOverwriteModeDescription": "仅替换已选组件；保留未选组件及无关本地设置",
+  "backupPageMergeMode": "合并",
+  "backupPageMergeModeDescription": "保留本地数据并加入备份数据；相同会话会跳过，冲突会话会重新分配 ID。",
   "backupPageRestore": "恢复",
   "backupPageBackupUploaded": "已上传备份",
   "backupPageBackup": "立即备份",
@@ -761,6 +940,16 @@
   "backupReminderSnoozeTooltip": "稍后提醒",
   "homePageClearContext": "清空上下文",
   "homePageClearContextWithCount": "清空上下文 ({actual}/{configured})",
+  "@homePageClearContextWithCount": {
+    "placeholders": {
+      "actual": {
+        "type": "String"
+      },
+      "configured": {
+        "type": "String"
+      }
+    }
+  },
   "homePageDefaultAssistant": "默认助手",
   "mermaidExportPng": "导出 PNG",
   "mermaidExportFailed": "导出失败",
@@ -854,6 +1043,13 @@
   "reasoningBudgetSheetMax": "全力推理",
   "reasoningBudgetSheetTitle": "思维链强度",
   "reasoningBudgetSheetCurrentLevel": "当前档位：{level}",
+  "@reasoningBudgetSheetCurrentLevel": {
+    "placeholders": {
+      "level": {
+        "type": "String"
+      }
+    }
+  },
   "reasoningBudgetSheetOffSubtitle": "关闭推理功能，直接回答",
   "reasoningBudgetSheetAutoSubtitle": "由模型自动决定推理级别",
   "reasoningBudgetSheetLightSubtitle": "使用少量推理来回答问题",
@@ -863,8 +1059,29 @@
   "reasoningBudgetSheetCustomLabel": "自定义推理预算",
   "reasoningBudgetSheetCustomHint": "例如：2048 (-1 自动，0 关闭)",
   "chatMessageWidgetFileNotFound": "文件不存在: {fileName}",
+  "@chatMessageWidgetFileNotFound": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetCannotOpenFile": "无法打开文件: {message}",
+  "@chatMessageWidgetCannotOpenFile": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetOpenFileError": "打开文件失败: {error}",
+  "@chatMessageWidgetOpenFileError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetCopiedToClipboard": "已复制到剪贴板",
   "chatMessageWidgetResendTooltip": "重新发送",
   "chatMessageWidgetMoreTooltip": "更多",
@@ -873,8 +1090,22 @@
   "chatMessageWidgetTranslating": "翻译中...",
   "chatMessageWidgetCitationNotFound": "未找到引用来源",
   "chatMessageWidgetCannotOpenUrl": "无法打开链接: {url}",
+  "@chatMessageWidgetCannotOpenUrl": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetOpenLinkError": "打开链接失败",
   "chatMessageWidgetCitationsTitle": "引用（共{count}条）",
+  "@chatMessageWidgetCitationsTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chatMessageWidgetSearchResultsTitle": "搜索结果",
   "chatMessageWidgetCitationSourcesTitle": "引用来源",
   "chatMessageWidgetRegenerateTooltip": "重新生成",
@@ -892,6 +1123,13 @@
   "chatMessageWidgetEditMemory": "编辑记忆",
   "chatMessageWidgetDeleteMemory": "删除记忆",
   "chatMessageWidgetWebSearch": "联网检索: {query}",
+  "@chatMessageWidgetWebSearch": {
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetBuiltinSearch": "模型内置搜索",
   "chatMessageWidgetReadClipboard": "读取剪切板",
   "chatMessageWidgetWriteClipboard": "写入剪切板",
@@ -905,13 +1143,41 @@
     }
   },
   "chatMessageWidgetToolCall": "调用工具: {name}",
+  "@chatMessageWidgetToolCall": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetToolResult": "调用工具: {name}",
+  "@chatMessageWidgetToolResult": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetNoResultYet": "（暂无结果）",
   "chatMessageWidgetArguments": "参数",
   "chatMessageWidgetResult": "结果",
   "chatMessageWidgetImages": "图片",
   "chatMessageWidgetCitationsCount": "{count}个引用",
+  "@chatMessageWidgetCitationsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chatSelectionSelectedCountTitle": "已选择{count}条消息",
+  "@chatSelectionSelectedCountTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chatSelectionExportTxt": "TXT",
   "chatSelectionExportMd": "MD",
   "chatSelectionExportImage": "图片",
@@ -920,12 +1186,40 @@
   "chatSelectionDeleteSelected": "删除所选",
   "chatSelectionSelectMessagesToDelete": "请选择要删除的消息",
   "chatSelectionDeleteSelectedConfirm": "确定要删除已选择的{count}个版本吗？此操作不可撤销。",
+  "@chatSelectionDeleteSelectedConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chatSelectionDeleteSelectedAllVersionsConfirm": "确定要删除已选择{count}条消息的全部版本吗？此操作不可撤销。",
+  "@chatSelectionDeleteSelectedAllVersionsConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "messageExportSheetAssistant": "助手",
   "messageExportSheetDefaultTitle": "新对话",
   "messageExportSheetExporting": "正在导出…",
   "messageExportSheetExportFailed": "导出失败: {error}",
+  "@messageExportSheetExportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "messageExportSheetExportedAs": "已导出为 {filename}",
+  "@messageExportSheetExportedAs": {
+    "placeholders": {
+      "filename": {
+        "type": "String"
+      }
+    }
+  },
   "messageExportSheetFormatTitle": "导出格式",
   "messageExportSheetMarkdown": "Markdown",
   "messageExportSheetSingleMarkdownSubtitle": "将该消息导出为 Markdown 文件",
@@ -948,6 +1242,13 @@
   "sideDrawerMenuMoveTo": "移动到",
   "sideDrawerMenuDelete": "删除",
   "sideDrawerDeleteSnackbar": "已删除“{title}”",
+  "@sideDrawerDeleteSnackbar": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
   "sideDrawerRenameHint": "输入新名称",
   "sideDrawerCancel": "取消",
   "sideDrawerOK": "确定",
@@ -978,7 +1279,24 @@
     }
   },
   "sideDrawerUpdateTitle": "发现新版本：{version}",
+  "@sideDrawerUpdateTitle": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
   "sideDrawerUpdateTitleWithBuild": "发现新版本：{version} ({build})",
+  "@sideDrawerUpdateTitleWithBuild": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "build": {
+        "type": "int"
+      }
+    }
+  },
   "sideDrawerLinkCopied": "已复制下载链接",
   "sideDrawerPinnedLabel": "置顶",
   "sideDrawerHistory": "聊天历史",
@@ -1036,6 +1354,16 @@
   "mcpPageStatusDisconnected": "未连接",
   "mcpPageStatusDisabled": "已禁用",
   "mcpPageToolsCount": "工具: {enabled}/{total}",
+  "@mcpPageToolsCount": {
+    "placeholders": {
+      "enabled": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "mcpPageConnectionFailed": "连接失败",
   "mcpPageDetails": "详情",
   "mcpPageDelete": "删除",
@@ -1051,6 +1379,16 @@
   "mcpConversationSheetNoRunning": "暂无已启动的 MCP 服务器",
   "mcpConversationSheetConnected": "已连接",
   "mcpConversationSheetToolsCount": "工具: {enabled}/{total}",
+  "@mcpConversationSheetToolsCount": {
+    "placeholders": {
+      "enabled": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "mcpServerEditSheetEnabledLabel": "是否启用",
   "mcpServerEditSheetNameLabel": "名称",
   "mcpServerEditSheetTransportLabel": "传输类型",
@@ -1113,13 +1451,63 @@
   "defaultModelPageResetDefault": "重置为默认",
   "defaultModelPageSave": "保存",
   "defaultModelPageTitleVars": "变量: 对话内容: {contentVar}, 语言: {localeVar}",
+  "@defaultModelPageTitleVars": {
+    "placeholders": {
+      "contentVar": {
+        "type": "String"
+      },
+      "localeVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageTranslateVars": "变量：原始文本：{sourceVar}，目标语言：{targetVar}",
+  "@defaultModelPageTranslateVars": {
+    "placeholders": {
+      "sourceVar": {
+        "type": "String"
+      },
+      "targetVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageSummaryVars": "变量：旧摘要：{previousSummaryVar}，新消息：{userMessagesVar}",
+  "@defaultModelPageSummaryVars": {
+    "placeholders": {
+      "previousSummaryVar": {
+        "type": "String"
+      },
+      "userMessagesVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageSuggestionVars": "变量：对话内容：{contentVar}，语言：{localeVar}",
+  "@defaultModelPageSuggestionVars": {
+    "placeholders": {
+      "contentVar": {
+        "type": "String"
+      },
+      "localeVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageCompressModelTitle": "压缩模型",
   "defaultModelPageCompressModelSubtitle": "用于压缩对话上下文的模型，推荐使用快速模型",
   "defaultModelPageCompressPromptHint": "输入用于上下文压缩的提示词模板",
   "defaultModelPageCompressVars": "变量：对话内容：{contentVar}，语言：{localeVar}",
+  "@defaultModelPageCompressVars": {
+    "placeholders": {
+      "contentVar": {
+        "type": "String"
+      },
+      "localeVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageUseCurrentModel": "使用当前对话模型",
   "defaultModelPageNotEnabled": "未启用",
   "translatePagePasteButton": "粘贴",
@@ -1135,6 +1523,13 @@
   "modelDetailSheetModelIdLabel": "模型 ID",
   "modelDetailSheetModelIdHint": "必填，建议小写字母、数字、连字符",
   "modelDetailSheetModelIdDisabledHint": "{modelId}",
+  "@modelDetailSheetModelIdDisabledHint": {
+    "placeholders": {
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
   "modelDetailSheetModelNameLabel": "模型名称",
   "modelDetailSheetModelTypeLabel": "模型类型",
   "modelDetailSheetChatType": "聊天",
@@ -1314,7 +1709,21 @@
   "importProviderSheetScanQrTooltip": "扫码导入",
   "importProviderSheetFromGalleryTooltip": "从相册导入",
   "importProviderSheetImportSuccessMessage": "已导入{count}个供应商",
+  "@importProviderSheetImportSuccessMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "importProviderSheetImportFailedMessage": "导入失败: {error}",
+  "@importProviderSheetImportFailedMessage": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "importProviderSheetDescription": "粘贴分享字符串（可多行，每行一个）或 ChatBox JSON",
   "importProviderSheetInputHint": "ai-provider:v1:...",
   "importProviderSheetCancelButton": "取消",
@@ -1546,6 +1955,13 @@
   "ttsServicesPageSystemTtsTitle": "系统TTS",
   "ttsServicesPageSystemTtsAvailableSubtitle": "使用系统内置语音合成",
   "ttsServicesPageSystemTtsUnavailableSubtitle": "不可用：{error}",
+  "@ttsServicesPageSystemTtsUnavailableSubtitle": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "ttsServicesPageSystemTtsUnavailableNotInitialized": "未初始化",
   "ttsServicesPageTestSpeechText": "你好，这是一次测试语音。",
   "ttsServicesPageConfigureTooltip": "配置",
@@ -1609,7 +2025,21 @@
   "ttsFloatingExpandTooltip": "展开播放控制",
   "ttsFloatingCollapseTooltip": "收起播放控制",
   "imageViewerPageShareFailedOpenFile": "无法分享，已尝试打开文件: {message}",
+  "@imageViewerPageShareFailedOpenFile": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
   "imageViewerPageShareFailed": "分享失败: {error}",
+  "@imageViewerPageShareFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "imageViewerPageShareButton": "分享图片",
   "imageViewerPageCloseButton": "关闭预览",
   "imageViewerPageSaveButton": "保存图片",
@@ -1720,7 +2150,9 @@
   "displaySettingsPageEnableAssistantMarkdownTitle": "助手消息 Markdown 渲染",
   "displaySettingsPageEnableMathSubtitle": "渲染 LaTeX 数学公式（行内与块级）",
   "displaySettingsPageEnableImageCropperTitle": "启用图片裁剪",
+  "@displaySettingsPageEnableImageCropperTitle": {},
   "displaySettingsPageEnableImageCropperSubtitle": "从相册或相机选择图片后，允许裁剪图片",
+  "@displaySettingsPageEnableImageCropperSubtitle": {},
   "displaySettingsPageMobileCodeBlockWrapTitle": "移动端代码块自动换行",
   "displaySettingsPageAutoCollapseCodeBlockTitle": "自动折叠代码块",
   "displaySettingsPageAutoCollapseCodeBlockLinesTitle": "超过多少行自动折叠",
@@ -1907,6 +2339,13 @@
   "logViewerExport": "导出",
   "logViewerOpenFolder": "打开日志目录",
   "logViewerRequestsCount": "{count} 条请求",
+  "@logViewerRequestsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "logViewerFieldId": "ID",
   "logViewerFieldMethod": "方法",
   "logViewerFieldStatus": "状态",
@@ -1922,6 +2361,13 @@
   "logViewerSectionWarnings": "警告",
   "logViewerErrorTitle": "错误",
   "logViewerMoreCount": "+{count} 条更多",
+  "@logViewerMoreCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "logSettingsTitle": "日志设置",
   "logSettingsSaveOutput": "保存响应输出",
   "logSettingsSaveOutputSubtitle": "记录响应体内容（可能占用较多存储空间）",
@@ -1929,6 +2375,13 @@
   "logSettingsAutoDeleteSubtitle": "删除超过指定天数的日志",
   "logSettingsAutoDeleteDisabled": "不启用",
   "logSettingsAutoDeleteDays": "{count} 天",
+  "@logSettingsAutoDeleteDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "logSettingsMaxSize": "日志大小上限",
   "logSettingsMaxSizeSubtitle": "超出后将删除最早的日志",
   "logSettingsMaxSizeUnlimited": "不限制",
@@ -2024,12 +2477,64 @@
   "askUserCardInactive": "这个问题已不再活动。请重新生成或继续对话。",
   "askUserCardCancelled": "问题已取消",
   "askUserCardQuestionCount": "{count, plural, other{询问 {count} 个问题}}",
+  "@askUserCardQuestionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "tokenDetailPromptTokens": "{count} tokens",
+  "@tokenDetailPromptTokens": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "tokenDetailPromptTokensWithCache": "{count} tokens ({cached} cached)",
+  "@tokenDetailPromptTokensWithCache": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "cached": {
+        "type": "int"
+      }
+    }
+  },
   "tokenDetailCompletionTokens": "{count} tokens",
+  "@tokenDetailCompletionTokens": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "tokenDetailSpeed": "{value} tok/s",
+  "@tokenDetailSpeed": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "tokenDetailDuration": "{value}s",
+  "@tokenDetailDuration": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "tokenDetailTotalTokens": "{count} tokens",
+  "@tokenDetailTotalTokens": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "debugPageTitle": "Debug",
   "debugPageConversationToolsTitle": "对话工具",
   "debugPageCreateOversizedConversationButton": "创建超大对话（30 MB）",
@@ -2101,5 +2606,61 @@
         "type": "int"
       }
     }
-  }
+  },
+  "migrationIntroTitle": "升级聊天记录存储",
+  "migrationIntroSubtitle": "Kelivo 将聊天记录迁移到更快的 SQLite 数据库。升级会在应用打开前完成，避免新旧数据同时写入。",
+  "migrationBackupNote": "迁移开始前，会先导出包含设置、聊天记录和本地文件的 ZIP 备份。",
+  "migrationPerformanceNote": "迁移后，启动、历史加载和搜索都会使用 SQLite 索引，长对话会更流畅。",
+  "migrationSourceDatabaseLabel": "Hive",
+  "migrationTargetDatabaseLabel": "SQLite",
+  "migrationChooseFolderButton": "选择文件夹并备份",
+  "migrationSaveBackupButton": "保存备份 ZIP",
+  "migrationBackingUpTitle": "正在备份",
+  "migrationBackingUpSubtitle": "正在导出设置、聊天记录、上传文件、图片和字体。请保持 Kelivo 开启，等待备份完成。",
+  "migrationMigratingTitle": "正在迁移到 SQLite",
+  "migrationMigratingSubtitle": "正在分批写入会话和消息，避免超大聊天记录占满内存。请保持 Kelivo 在前台，等待迁移完成。",
+  "migrationBackingUpDetail": "正在备份 {fileName}",
+  "@migrationBackingUpDetail": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "migrationMigratingDetail": "已迁移 {count} 条消息",
+  "@migrationMigratingDetail": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "migrationMigratingPrepareDetail": "正在准备 SQLite 数据库",
+  "migrationMigratingToolEventsDetail": "正在迁移工具调用记录",
+  "migrationMigratingValidateDetail": "正在校验迁移数据",
+  "migrationBackupReadyDetail": "备份 ZIP 已准备好",
+  "migrationSavingBackupZipDetail": "正在保存备份 ZIP",
+  "migrationBackupFileSavedTitle": "备份 ZIP 已保存",
+  "migrationChecklistBackupFiles": "导出 Hive 备份 ZIP",
+  "migrationChecklistPrepareSqlite": "准备 SQLite 数据库",
+  "migrationChecklistMigrateMessages": "迁移会话和消息",
+  "migrationChecklistMigrateToolEvents": "迁移工具调用记录",
+  "migrationChecklistValidate": "校验迁移数据",
+  "migrationStepBackup": "备份",
+  "migrationStepMigrate": "迁移",
+  "migrationStepComplete": "完成",
+  "migrationCompleteTitle": "升级完成",
+  "migrationCompleteSubtitle": "你的聊天记录已迁移到 SQLite。请重启 Kelivo 进入升级后的应用。",
+  "migrationConversationCount": "对话",
+  "migrationMessageCount": "消息",
+  "migrationRestartButton": "重启 Kelivo",
+  "migrationFailedTitle": "迁移失败",
+  "migrationFailedSubtitle": "原始 Hive 数据和备份都仍然保留。查看下方原因后可以重试。",
+  "migrationUnknownError": "未知迁移错误。",
+  "migrationFailureLogTitle": "失败日志",
+  "migrationRetryButton": "重试迁移",
+  "timelineJumpToLatest": "跳到最新",
+  "largeContentShowMore": "再显示 {count} 项",
+  "@largeContentShowMore": {"placeholders": {"count": {"type": "int"}}},
+  "largeContentCollapse": "收起"
 }

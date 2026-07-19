@@ -1,4 +1,4 @@
-import 'package:flutter/widgets.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -105,6 +105,32 @@ RemoteSyncEntity _profileEntity(Map<String, Object?> payload) {
   return RemoteSyncEntity(
     entityType: ConfigSyncKeys.preferenceType,
     entityId: ConfigSyncKeys.profile.entityId,
+    revision: 1,
+    schemaVersion: 2,
+    payload: payload,
+    updatedAt: DateTime.utc(2026, 7, 16),
+  );
+}
+
+RemoteSyncEntity _providerGroupingEntity(Map<String, Object?> payload) {
+  return RemoteSyncEntity(
+    entityType: ConfigSyncKeys.preferenceType,
+    entityId: ConfigSyncKeys.providerGrouping.entityId,
+    revision: 1,
+    schemaVersion: 2,
+    payload: payload,
+    updatedAt: DateTime.utc(2026, 7, 16),
+  );
+}
+
+RemoteSyncEntity _providerEntity(String entityId, {required int position}) {
+  final payload =
+      Map<String, Object?>.from(ProviderConfig.defaultsFor(entityId).toJson())
+        ..remove('id')
+        ..['_position'] = position;
+  return RemoteSyncEntity(
+    entityType: ConfigSyncKeys.providerType,
+    entityId: entityId,
     revision: 1,
     schemaVersion: 2,
     payload: payload,
@@ -225,6 +251,10 @@ bool _containsRecursively(Object? value, Object? forbidden) {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('官方云同步服务只使用自定义域名', () {
+    expect(defaultCloudSyncBaseUrl, 'https://kelivo.bemylover.top');
+  });
 
   test('指令注入实体同时被类型解析器和支持集合识别', () {
     expect(
@@ -456,6 +486,254 @@ void main() {
 
     expect(settings.providerConfigs.containsKey('custom'), isFalse);
     expect(mcp.requestTimeout, const Duration(seconds: 60));
+    expect(writes.batches, isEmpty);
+  });
+
+  test('供应商实体变更始终声明稳定分组键且导出完整顺序', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{});
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+    writes.batches.clear();
+
+    await fixture.settings.setProviderConfig(
+      'custom-a',
+      ProviderConfig.defaultsFor('custom-a'),
+    );
+    await fixture.settings.setProviderConfig(
+      'custom-b',
+      ProviderConfig.defaultsFor('custom-b'),
+    );
+    await fixture.settings.setProvidersOrder(<String>[
+      'custom-b',
+      'custom-a',
+      ...fixture.settings.providersOrder,
+    ]);
+
+    expect(
+      writes.batches,
+      everyElement(contains(ConfigSyncKeys.providerGrouping)),
+    );
+    expect(
+      writes.batches.first,
+      containsAll(<SyncEntityKey>[
+        ConfigSyncKeys.providerGrouping,
+        ConfigSyncKeys.provider('custom-a'),
+      ]),
+    );
+    final grouping = await fixture.adapter.exportLocalEntity(
+      ConfigSyncKeys.providerGrouping,
+    );
+    expect(grouping, isNotNull);
+    expect(grouping!.payload['order'], fixture.settings.providersOrder);
+  });
+
+  test('远端供应商完整顺序应用不反向创建本地 intent', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{});
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+    await fixture.settings.setProviderConfig(
+      'custom-a',
+      ProviderConfig.defaultsFor('custom-a'),
+    );
+    final reversedOrder = fixture.settings.providersOrder.reversed.toList();
+    writes.batches.clear();
+
+    await fixture.adapter.applyRemoteUpsert(
+      _providerGroupingEntity(<String, Object?>{
+        'order': reversedOrder,
+        'groups': const <Object?>[],
+        'assignments': const <String, Object?>{},
+        'ungroupedPosition': 0,
+      }),
+    );
+
+    expect(fixture.settings.providersOrder, reversedOrder);
+    expect(writes.batches, isEmpty);
+  });
+
+  test('旧版供应商分组缺少完整顺序时保留当前顺序并应用可推导分组', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{});
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+    await fixture.settings.setProviderConfig(
+      'custom-a',
+      ProviderConfig.defaultsFor('custom-a'),
+    );
+    final originalOrder = List<String>.of(fixture.settings.providersOrder);
+    writes.batches.clear();
+
+    await fixture.adapter.applyRemoteUpsert(
+      _providerGroupingEntity(<String, Object?>{
+        'groups': const <Object?>[
+          <String, Object?>{
+            'id': 'legacy-group',
+            'name': '旧版分组',
+            'createdAt': 1,
+          },
+        ],
+        'assignments': const <String, Object?>{'custom-a': 'legacy-group'},
+        'ungroupedPosition': 0,
+      }),
+    );
+
+    expect(fixture.settings.providersOrder, originalOrder);
+    expect(fixture.settings.groupIdForProvider('custom-a'), 'legacy-group');
+    expect(writes.batches, isEmpty);
+  });
+
+  test('远端批次先到完整顺序时仍在供应商实体之后提交', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{});
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+    final expectedOrder = <String>[
+      'remote-a',
+      'remote-b',
+      ...fixture.settings.providersOrder,
+    ];
+    writes.batches.clear();
+
+    await fixture.adapter.runRemoteBatch(() async {
+      await fixture.adapter.applyRemoteUpsert(
+        _providerGroupingEntity(<String, Object?>{
+          'order': expectedOrder,
+          'groups': const <Object?>[],
+          'assignments': const <String, Object?>{},
+          'ungroupedPosition': 0,
+        }),
+      );
+      await fixture.adapter.applyRemoteUpsert(
+        _providerEntity('remote-b', position: 1),
+      );
+      await fixture.adapter.applyRemoteUpsert(
+        _providerEntity('remote-a', position: 0),
+      );
+    });
+
+    expect(fixture.settings.providersOrder, expectedOrder);
+    expect(writes.batches, isEmpty);
+  });
+
+  test('完整远端事务跨分页暂存分组直至相关供应商到齐', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{});
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+    final expectedOrder = <String>[
+      'remote-a',
+      ...fixture.settings.providersOrder,
+    ];
+    final committedKeys = <SyncEntityKey>[];
+
+    await fixture.adapter.runRemoteTransaction(
+      () async {
+        await fixture.adapter.runRemoteBatch(() async {
+          await fixture.adapter.applyRemoteUpsert(
+            _providerGroupingEntity(<String, Object?>{
+              'order': expectedOrder,
+              'groups': const <Object?>[
+                <String, Object?>{
+                  'id': 'remote-group',
+                  'name': '远端分组',
+                  'createdAt': 1,
+                },
+              ],
+              'assignments': const <String, Object?>{
+                'remote-a': 'remote-group',
+              },
+              'ungroupedPosition': 0,
+            }),
+          );
+        });
+        expect(fixture.settings.providerGroups, isEmpty);
+
+        await fixture.adapter.runRemoteBatch(() async {
+          await fixture.adapter.applyRemoteUpsert(
+            _providerEntity('remote-a', position: 0),
+          );
+        });
+      },
+      commit: (keys, write) async {
+        committedKeys.addAll(keys);
+        await write();
+      },
+    );
+
+    expect(committedKeys, <SyncEntityKey>[ConfigSyncKeys.providerGrouping]);
+    expect(fixture.settings.providersOrder, expectedOrder);
+    expect(fixture.settings.groupIdForProvider('remote-a'), 'remote-group');
+  });
+
+  test('完整远端事务失败会丢弃跨分页暂存分组', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{});
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+    final originalOrder = List<String>.of(fixture.settings.providersOrder);
+    var commitCount = 0;
+
+    await expectLater(
+      fixture.adapter.runRemoteTransaction<void>(
+        () async {
+          await fixture.adapter.runRemoteBatch(() async {
+            await fixture.adapter.applyRemoteUpsert(
+              _providerGroupingEntity(<String, Object?>{
+                'order': originalOrder.reversed.toList(),
+                'groups': const <Object?>[],
+                'assignments': const <String, Object?>{},
+                'ungroupedPosition': 0,
+              }),
+            );
+          });
+          throw StateError('模拟完整远端事务失败');
+        },
+        commit: (keys, write) async {
+          commitCount++;
+          await write();
+        },
+      ),
+      throwsStateError,
+    );
+    await fixture.adapter.runRemoteTransaction<void>(
+      () async {},
+      commit: (keys, write) async {
+        commitCount++;
+        await write();
+      },
+    );
+
+    expect(commitCount, 0);
+    expect(fixture.settings.providersOrder, originalOrder);
+  });
+
+  test('远端供应商批次失败会丢弃尚未提交的完整顺序', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{});
+    final writes = _RecordingSyncWriteExecutor();
+    final fixture = await _createConfigFixture(writes);
+    addTearDown(fixture.mcp.dispose);
+    final originalOrder = List<String>.of(fixture.settings.providersOrder);
+    writes.batches.clear();
+
+    await expectLater(
+      fixture.adapter.runRemoteBatch<void>(() async {
+        await fixture.adapter.applyRemoteUpsert(
+          _providerGroupingEntity(<String, Object?>{
+            'order': originalOrder.reversed.toList(),
+            'groups': const <Object?>[],
+            'assignments': const <String, Object?>{},
+            'ungroupedPosition': 0,
+          }),
+        );
+        throw StateError('模拟远端批次失败');
+      }),
+      throwsStateError,
+    );
+    await fixture.adapter.runRemoteBatch<void>(() async {});
+
+    expect(fixture.settings.providersOrder, originalOrder);
     expect(writes.batches, isEmpty);
   });
 
@@ -798,6 +1076,73 @@ void main() {
         cloudSyncStatusText(l10n, CloudSyncProviderStatus.syncBlocked),
         '部分数据同步失败',
       );
+    });
+  });
+
+  group('云账号首次 hydration 门禁', () {
+    test('本地工作区无需云端 hydration 即可初始化默认助手', () {
+      expect(
+        CloudSyncInitialHydrationState.initialForWorkspace(
+          isLocalWorkspace: true,
+        ).allowsAssistantDefaults,
+        isTrue,
+      );
+    });
+
+    test('云账号工作区在 hydration 成功前始终阻止默认助手初始化', () {
+      expect(
+        CloudSyncInitialHydrationState.initialForWorkspace(
+          isLocalWorkspace: false,
+        ).allowsAssistantDefaults,
+        isFalse,
+      );
+    });
+
+    test('云账号工作区仅在 hydration 完成后允许初始化默认助手', () {
+      expect(
+        CloudSyncInitialHydrationState.completed.allowsAssistantDefaults,
+        isTrue,
+      );
+    });
+
+    testWidgets('两个空工作区生成相同的保留默认助手身份', (tester) async {
+      Future<Set<String>> createDefaultIds() async {
+        SharedPreferences.setMockInitialValues(const <String, Object>{});
+        final provider = AssistantProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        );
+        await provider.ready;
+        late BuildContext localizedContext;
+        await tester.pumpWidget(
+          MaterialApp(
+            locale: const Locale('zh'),
+            supportedLocales: AppLocalizations.supportedLocales,
+            localizationsDelegates: AppLocalizations.localizationsDelegates,
+            home: Builder(
+              builder: (context) {
+                localizedContext = context;
+                return const SizedBox.shrink();
+              },
+            ),
+          ),
+        );
+        await provider.ensureDefaults(localizedContext);
+        final ids = provider.assistants
+            .map((assistant) => assistant.id)
+            .toSet();
+        provider.dispose();
+        return ids;
+      }
+
+      final first = await createDefaultIds();
+      final second = await createDefaultIds();
+
+      const reservedIds = <String>{
+        'c4f7b8e1-8f7b-4d2a-9c31-0e7d6a5b4001',
+        'c4f7b8e1-8f7b-4d2a-9c31-0e7d6a5b4002',
+      };
+      expect(first, reservedIds);
+      expect(second, reservedIds);
     });
   });
 }

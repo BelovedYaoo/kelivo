@@ -7,8 +7,8 @@ const scrollNavHoverRegionKey = ValueKey('scroll-nav-hover-region');
 ///
 /// Buttons (from top to bottom):
 /// - Scroll to top (chevrons-up)
-/// - Previous user message (chevron-up)
-/// - Next user message (chevron-down)
+/// - 上一条消息（chevron-up）
+/// - 下一条消息（chevron-down）
 /// - Scroll to bottom (chevrons-down)
 ///
 /// Shows with slide-in animation from right when user scrolls,

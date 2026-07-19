@@ -2,6 +2,10 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 
+import '../../database/app_database.dart';
+import '../database_v2_rollout_ledger.dart';
+import '../legacy_data_retirement_service.dart';
+import '../backup/restore_trace_service.dart';
 import '../../../utils/app_directories.dart';
 import '../../../utils/avatar_cache.dart';
 import '../logging/flutter_logger.dart';
@@ -11,6 +15,8 @@ enum StorageUsageCategoryKey {
   images,
   files,
   chatData,
+  legacyChatData,
+  restoreTraces,
   assistantData,
   cache,
   logs,
@@ -94,24 +100,80 @@ abstract final class StorageUsageService {
         lower.endsWith('.ico');
   }
 
-  static String _basenameNoExt(String name) {
-    final base = p.basename(name);
-    final dot = base.lastIndexOf('.');
-    if (dot <= 0) return base;
-    return base.substring(0, dot);
+  static String? _chatDatabaseSubcategoryId(String name) {
+    switch (name.toLowerCase()) {
+      case AppDatabase.databaseFileName:
+        return 'sqlite_database';
+      case '${AppDatabase.databaseFileName}-wal':
+        return 'sqlite_wal';
+      case '${AppDatabase.databaseFileName}-shm':
+        return 'sqlite_shm';
+      default:
+        return null;
+    }
+  }
+
+  static String _chatDatabaseFileName(String subcategoryId) {
+    switch (subcategoryId) {
+      case 'sqlite_wal':
+        return '${AppDatabase.databaseFileName}-wal';
+      case 'sqlite_shm':
+        return '${AppDatabase.databaseFileName}-shm';
+      case 'sqlite_database':
+      default:
+        return AppDatabase.databaseFileName;
+    }
+  }
+
+  static Stream<File> _listDataFiles(
+    Directory directory, {
+    bool skipAccountWorkspaceRoot = false,
+  }) async* {
+    await for (final entity in directory.list(
+      recursive: false,
+      followLinks: false,
+    )) {
+      if (skipAccountWorkspaceRoot &&
+          entity is Directory &&
+          p.basename(entity.path).toLowerCase() == '.kelivo-workspaces') {
+        // 本地工作区不能通过容量统计越界遍历账号工作区。
+        continue;
+      }
+      if (entity is File) {
+        yield entity;
+      } else if (entity is Directory) {
+        yield* _listDataFiles(entity);
+      }
+    }
   }
 
   static Future<StorageUsageReport> computeReport() async {
     final root = await AppDirectories.getAppDataDirectory();
+    var migrationCompleted = false;
+    try {
+      migrationCompleted = await DatabaseV2RolloutLedger(root).read() != null;
+    } catch (_) {
+      // 格式错误的推出回执不得让旧文件变为可清理。
+    }
+    var restoreTraces = RestoreTraceSnapshot.empty;
+    try {
+      restoreTraces = await RestoreTraceService(root).inspect();
+    } catch (_) {
+      // 格式错误或仍活动的恢复工作区保持隐藏且不可清理。
+    }
 
     final byCat = <StorageUsageCategoryKey, _MutableStats>{
       for (final k in StorageUsageCategoryKey.values) k: _MutableStats(),
     };
 
     final chatSubs = <String, _MutableStats>{
-      'messages': _MutableStats(),
-      'conversations': _MutableStats(),
-      'tool_events_v1': _MutableStats(),
+      'sqlite_database': _MutableStats(),
+      'sqlite_wal': _MutableStats(),
+      'sqlite_shm': _MutableStats(),
+    };
+    final legacyChatSubs = <String, _MutableStats>{
+      for (final name in LegacyDataRetirementService.hiveArtifactNames)
+        name: _MutableStats(),
     };
 
     final assistantSubs = <String, _MutableStats>{'avatars': _MutableStats()};
@@ -147,8 +209,12 @@ abstract final class StorageUsageService {
     }
 
     try {
-      await for (final ent in root.list(recursive: true, followLinks: false)) {
-        if (ent is! File) continue;
+      await for (final ent in _listDataFiles(
+        root,
+        skipAccountWorkspaceRoot: !AppDirectories.isAccountWorkspace,
+      )) {
+        final rel = p.relative(ent.path, from: root.path);
+        final parts = p.split(rel);
         int bytes = 0;
         try {
           bytes = await ent.length();
@@ -158,23 +224,23 @@ abstract final class StorageUsageService {
         totalFiles += 1;
         totalBytes += bytes;
 
-        final rel = p.relative(ent.path, from: root.path);
-        final parts = p.split(rel);
         if (parts.isEmpty) {
           byCat[StorageUsageCategoryKey.other]!.add(bytes);
           continue;
         }
 
-        // Root-level files are mostly Hive boxes / preferences.
+        // 根级聊天数据由 Drift 存在 SQLite 数据库文件族中。
+        // 旧 Hive box 仅作为迁移输入，不应影响稳定状态下的聊天记录大小。
         if (parts.length == 1) {
           final name = parts.first;
-          final lower = name.toLowerCase();
-          final isHive = lower.endsWith('.hive') || lower.endsWith('.lock');
-          if (isHive) {
+          final chatSubId = _chatDatabaseSubcategoryId(name);
+          if (chatSubId != null) {
             byCat[StorageUsageCategoryKey.chatData]!.add(bytes);
-            final box = _basenameNoExt(name);
-            final sub = chatSubs[box];
-            if (sub != null) sub.add(bytes);
+            chatSubs[chatSubId]!.add(bytes);
+          } else if (migrationCompleted &&
+              LegacyDataRetirementService.hiveArtifactNames.contains(name)) {
+            byCat[StorageUsageCategoryKey.legacyChatData]!.add(bytes);
+            legacyChatSubs[name]!.add(bytes);
           } else {
             byCat[StorageUsageCategoryKey.other]!.add(bytes);
           }
@@ -182,6 +248,14 @@ abstract final class StorageUsageService {
         }
 
         final top = parts.first.toLowerCase();
+        if (restoreTraces.visible &&
+            top == '.kelivo_restore' &&
+            parts.length >= 4 &&
+            parts[1] == 'completed' &&
+            RegExp(r'^run_[a-f0-9]{32}$').hasMatch(parts[2])) {
+          byCat[StorageUsageCategoryKey.restoreTraces]!.add(bytes);
+          continue;
+        }
         switch (top) {
           case 'upload':
             final name = parts.last;
@@ -204,6 +278,9 @@ abstract final class StorageUsageService {
             byCat[StorageUsageCategoryKey.cache]!.add(bytes);
             if (parts.length >= 2 && parts[1].toLowerCase() == 'avatars') {
               cacheSubs['avatar_cache']!.add(bytes);
+            } else if (parts.length >= 2 &&
+                parts[1].toLowerCase() == 'system') {
+              cacheSubs['system_cache']!.add(bytes);
             } else {
               cacheSubs['other_cache']!.add(bytes);
             }
@@ -236,7 +313,7 @@ abstract final class StorageUsageService {
 
     // Platform cache directory (e.g. Android /data/user/0/<package>/cache).
     try {
-      if (await systemCacheDir.exists()) {
+      if (!AppDirectories.isAccountWorkspace && await systemCacheDir.exists()) {
         await for (final ent in systemCacheDir.list(
           recursive: true,
           followLinks: false,
@@ -259,10 +336,14 @@ abstract final class StorageUsageService {
     final clearable = StorageUsageStats(
       fileCount:
           byCat[StorageUsageCategoryKey.cache]!.fileCount +
-          byCat[StorageUsageCategoryKey.logs]!.fileCount,
+          byCat[StorageUsageCategoryKey.logs]!.fileCount +
+          byCat[StorageUsageCategoryKey.legacyChatData]!.fileCount +
+          byCat[StorageUsageCategoryKey.restoreTraces]!.fileCount,
       bytes:
           byCat[StorageUsageCategoryKey.cache]!.bytes +
-          byCat[StorageUsageCategoryKey.logs]!.bytes,
+          byCat[StorageUsageCategoryKey.logs]!.bytes +
+          byCat[StorageUsageCategoryKey.legacyChatData]!.bytes +
+          byCat[StorageUsageCategoryKey.restoreTraces]!.bytes,
     );
 
     final categories = <StorageUsageCategory>[
@@ -283,10 +364,36 @@ abstract final class StorageUsageService {
               StorageUsageSubcategory(
                 id: e.key,
                 stats: e.value.toStats(),
-                path: p.join(root.path, '${e.key}.hive'),
+                path: p.join(root.path, _chatDatabaseFileName(e.key)),
               ),
         ],
       ),
+      if (byCat[StorageUsageCategoryKey.legacyChatData]!.fileCount > 0)
+        StorageUsageCategory(
+          key: StorageUsageCategoryKey.legacyChatData,
+          stats: byCat[StorageUsageCategoryKey.legacyChatData]!.toStats(),
+          subcategories: [
+            for (final entry in legacyChatSubs.entries)
+              if (entry.value.fileCount > 0)
+                StorageUsageSubcategory(
+                  id: entry.key,
+                  stats: entry.value.toStats(),
+                  path: p.join(root.path, entry.key),
+                ),
+          ],
+        ),
+      if (byCat[StorageUsageCategoryKey.restoreTraces]!.fileCount > 0)
+        StorageUsageCategory(
+          key: StorageUsageCategoryKey.restoreTraces,
+          stats: byCat[StorageUsageCategoryKey.restoreTraces]!.toStats(),
+          subcategories: [
+            StorageUsageSubcategory(
+              id: 'completed_restore_runs',
+              stats: byCat[StorageUsageCategoryKey.restoreTraces]!.toStats(),
+              path: p.join(root.path, '.kelivo_restore', 'completed'),
+            ),
+          ],
+        ),
       StorageUsageCategory(
         key: StorageUsageCategoryKey.assistantData,
         stats: byCat[StorageUsageCategoryKey.assistantData]!.toStats(),
@@ -382,9 +489,10 @@ abstract final class StorageUsageService {
     final avatarCacheDir = await AppDirectories.getAvatarCacheDirectory();
     if (!await cacheDir.exists()) return;
 
-    final String avatarAbs = p.normalize(
-      Directory(avatarCacheDir.path).absolute.path,
-    );
+    final protectedPaths = <String>{
+      p.normalize(Directory(avatarCacheDir.path).absolute.path),
+      p.normalize(Directory(p.join(cacheDir.path, 'system')).absolute.path),
+    };
     try {
       await for (final ent in cacheDir.list(
         recursive: false,
@@ -392,7 +500,7 @@ abstract final class StorageUsageService {
       )) {
         try {
           final entAbs = p.normalize(p.absolute(ent.path));
-          if (p.equals(entAbs, avatarAbs)) continue;
+          if (protectedPaths.any((path) => p.equals(entAbs, path))) continue;
           await ent.delete(recursive: true);
         } catch (_) {}
       }
@@ -429,6 +537,20 @@ abstract final class StorageUsageService {
         if (requestOn) await RequestLogger.setEnabled(true);
       } catch (_) {}
     }
+  }
+
+  static Future<void> clearLegacyChatData() async {
+    final root = await AppDirectories.getAppDataDirectory();
+    final migration = await DatabaseV2RolloutLedger(root).read();
+    if (migration == null) {
+      throw StateError('legacy_retirement_untracked');
+    }
+    await LegacyDataRetirementService(root).retireHiveArtifacts();
+  }
+
+  static Future<void> clearRestoreTraces() async {
+    final root = await AppDirectories.getAppDataDirectory();
+    await RestoreTraceService(root).clear();
   }
 
   static Future<List<StorageFileEntry>> listUploadEntries({
@@ -569,6 +691,8 @@ const List<StorageUsageCategoryKey> _categoryOrder = <StorageUsageCategoryKey>[
   StorageUsageCategoryKey.images,
   StorageUsageCategoryKey.files,
   StorageUsageCategoryKey.chatData,
+  StorageUsageCategoryKey.legacyChatData,
+  StorageUsageCategoryKey.restoreTraces,
   StorageUsageCategoryKey.assistantData,
   StorageUsageCategoryKey.cache,
   StorageUsageCategoryKey.logs,

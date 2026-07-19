@@ -86,6 +86,37 @@ abstract interface class SyncEntityAdapter {
   Future<void> applyRemoteDelete(SyncEntityKey key);
 }
 
+typedef RemoteSyncTransactionCommit =
+    Future<void> Function(
+      Iterable<SyncEntityKey> keys,
+      Future<void> Function() write,
+    );
+
+abstract interface class RemoteSyncTransactionAdapter {
+  Set<SyncEntityKey> get remoteTransactionKeys;
+
+  Future<T> runRemoteTransaction<T>(
+    Future<T> Function() apply, {
+    required RemoteSyncTransactionCommit commit,
+  });
+}
+
+abstract interface class RemoteSyncUpsertPreparer {
+  Future<PreparedRemoteSyncUpsert?> prepareRemoteUpsert(
+    RemoteSyncEntity entity,
+  );
+}
+
+abstract interface class PreparedRemoteSyncUpsert {
+  SyncEntityKey get key;
+
+  Future<void> apply();
+
+  Future<void> commit();
+
+  Future<void> discard();
+}
+
 Map<String, Object?> validateSyncJsonObject(Map<String, Object?> value) {
   final normalized = _normalizeJsonValue(value);
   if (normalized is! Map<String, Object?>) {

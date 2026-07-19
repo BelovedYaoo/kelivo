@@ -43,6 +43,10 @@ class ChatboxImporter {
       'assistant_tag_map_v1'; // assistantId -> tagId
   static const String _collapsedKey =
       'assistant_tag_collapsed_v1'; // tagId -> bool
+  static const Set<String> _overwriteAuthoritativeEntityTypes = <String>{
+    ...CloudSyncStore.chatRescanEntityTypes,
+    'assistant',
+  };
 
   static Future<ChatboxImportResult> importFromChatbox({
     required File file,
@@ -52,6 +56,7 @@ class ChatboxImporter {
     Future<void> Function()? markConfigRescanRequired,
   }) async {
     final root = await _readChatboxBackupFile(file);
+    final importableProviderConfigs = _readImportableProviderConfigs(root);
 
     // Safety: avoid destructive overwrite when the export is incomplete.
     if (mode == RestoreMode.overwrite) {
@@ -78,22 +83,54 @@ class ChatboxImporter {
       }
     }
 
-    await (markConfigRescanRequired ??
-        CloudSyncStore.markDefaultConfigRescanRequired)();
+    return _runImportWrite<ChatboxImportResult>(
+      mode: mode,
+      overwritesProviders: importableProviderConfigs.isNotEmpty,
+      markConfigRescanRequired: markConfigRescanRequired,
+      write: () async {
+        final importedProviders = await _importProviders(
+          importableProviderConfigs,
+          mode,
+        );
+        final assistantConvRes = await _importAssistantsAndConversations(
+          root,
+          mode,
+          chatService,
+        );
+        await _tagImportedAssistants(assistantConvRes.assistantIds, mode);
 
-    final importedProviders = await _importProviders(root, mode);
-    final assistantConvRes = await _importAssistantsAndConversations(
-      root,
-      mode,
-      chatService,
+        return ChatboxImportResult(
+          providers: importedProviders,
+          assistants: assistantConvRes.assistants,
+          conversations: assistantConvRes.conversations,
+          messages: assistantConvRes.messages,
+        );
+      },
     );
-    await _tagImportedAssistants(assistantConvRes.assistantIds, mode);
+  }
 
-    return ChatboxImportResult(
-      providers: importedProviders,
-      assistants: assistantConvRes.assistants,
-      conversations: assistantConvRes.conversations,
-      messages: assistantConvRes.messages,
+  static Future<T> _runImportWrite<T>({
+    required RestoreMode mode,
+    required bool overwritesProviders,
+    required Future<T> Function() write,
+    Future<void> Function()? markConfigRescanRequired,
+  }) async {
+    if (markConfigRescanRequired != null) {
+      // 测试注入必须先于任何落盘执行，避免单元测试依赖默认 Hive。
+      await markConfigRescanRequired();
+      return write();
+    }
+    // 配置 Provider 要到强制重启后才会重载，期间保持租约以阻止旧内存态消费重扫请求。
+    return CloudSyncStore.runWithDefaultRescanWrite<T>(
+      entityTypes: CloudSyncStore.allRescanEntityTypes,
+      localAuthoritativeEntityTypes: mode == RestoreMode.overwrite
+          ? <String>{
+              ..._overwriteAuthoritativeEntityTypes,
+              if (overwritesProviders) 'provider',
+            }
+          : const <String>{},
+      write: write,
+      keepActiveOnSuccess: true,
     );
   }
 
@@ -143,22 +180,33 @@ class ChatboxImporter {
 
   // ---------- providers ----------
 
-  static Future<int> _importProviders(
+  static Map<String, Map<String, dynamic>> _readImportableProviderConfigs(
     Map<String, dynamic> root,
-    RestoreMode mode,
-  ) async {
+  ) {
     final rawSettings = root['settings'];
-    if (rawSettings is! Map) return 0;
+    if (rawSettings is! Map) return const <String, Map<String, dynamic>>{};
     final providers = rawSettings['providers'];
-    if (providers is! Map) return 0;
+    if (providers is! Map) return const <String, Map<String, dynamic>>{};
 
-    final imported = <String, Map<String, dynamic>>{};
+    final result = <String, Map<String, dynamic>>{};
     for (final entry in providers.entries) {
       final key = entry.key.toString().trim();
-      if (key.isEmpty) continue;
-      if (key == 'chatbox-ai') continue; // not supported in this app
+      if (key.isEmpty || key == 'chatbox-ai') continue;
+      final config = entry.value;
+      if (config is! Map) continue;
+      result[key] = config.map((key, value) => MapEntry(key.toString(), value));
+    }
+    return result;
+  }
+
+  static Future<int> _importProviders(
+    Map<String, Map<String, dynamic>> providerConfigs,
+    RestoreMode mode,
+  ) async {
+    final imported = <String, Map<String, dynamic>>{};
+    for (final entry in providerConfigs.entries) {
+      final key = entry.key;
       final cfg = entry.value;
-      if (cfg is! Map) continue;
 
       final apiKey = (cfg['apiKey'] ?? '').toString();
       final apiHost = (cfg['apiHost'] ?? '').toString();
@@ -307,12 +355,12 @@ class ChatboxImporter {
     // Prepare chat service for conversation restore.
     if (!chatService.initialized) await chatService.init();
 
-    final existingConvs = chatService.getAllConversations();
+    final existingConvs = chatService.getAllCompleteConversations();
     final existingConvIds = existingConvs.map((c) => c.id).toSet();
     final existingMsgIds = <String>{};
     if (mode == RestoreMode.merge) {
       for (final c in existingConvs) {
-        final msgs = chatService.getMessages(c.id);
+        final msgs = await chatService.loadMessages(c.id);
         for (final m in msgs) {
           existingMsgIds.add(m.id);
         }

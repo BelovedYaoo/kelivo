@@ -80,6 +80,13 @@ void main() {
       await settings.setProviderConfig('TestProvider', _configWithModels());
       await settings.setCurrentModel('TestProvider', 'remove-a');
       await settings.setTitleModel('TestProvider', 'keep');
+      await settings.setTranslateModel('TestProvider', 'remove-a');
+      await settings.setOcrModel('TestProvider', 'remove-a');
+      await settings.setOcrEnabled(true);
+      await settings.setSummaryModel('TestProvider', 'remove-a');
+      await settings.setSuggestionModel('TestProvider', 'remove-a');
+      await settings.setCompressModel('TestProvider', 'remove-a');
+      await settings.togglePinModel('TestProvider', 'remove-a');
 
       final deleted = await settings.deleteModels('TestProvider', const {
         'remove-a',
@@ -90,6 +97,18 @@ void main() {
       expect(settings.currentModelId, isNull);
       expect(settings.titleModelProvider, 'TestProvider');
       expect(settings.titleModelId, 'keep');
+      expect(settings.translateModelProvider, isNull);
+      expect(settings.translateModelId, isNull);
+      expect(settings.ocrModelProvider, isNull);
+      expect(settings.ocrModelId, isNull);
+      expect(settings.ocrEnabled, isFalse);
+      expect(settings.summaryModelProvider, isNull);
+      expect(settings.summaryModelId, isNull);
+      expect(settings.suggestionModelProvider, isNull);
+      expect(settings.suggestionModelId, isNull);
+      expect(settings.compressModelProvider, isNull);
+      expect(settings.compressModelId, isNull);
+      expect(settings.isModelPinned('TestProvider', 'remove-a'), isFalse);
     });
 
     test(

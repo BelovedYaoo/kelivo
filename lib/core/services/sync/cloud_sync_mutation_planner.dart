@@ -105,6 +105,52 @@ final class CloudSyncMutationPlanner {
       entityType: entityType,
       entityId: key.entityId,
     );
+    return _planLocalEntityAgainstShadow(
+      session,
+      key,
+      local,
+      entityType: entityType,
+      shadow: shadow,
+      mutationId: mutationId,
+    );
+  }
+
+  Future<SyncWriteDisposition> planLocalEntityAgainstBaseline(
+    CloudSyncAccountSession session,
+    SyncEntityKey key,
+    LocalSyncEntity? local, {
+    required CloudSyncShadow baseline,
+    required String mutationId,
+  }) async {
+    final entityType = CloudSyncEntityType.parse(key.entityType);
+    if (baseline.entityType != entityType ||
+        baseline.entityId != key.entityId) {
+      throw StateError('显式同步基线与请求实体不一致：${key.storageKey}');
+    }
+    if (local != null && local.key != key) {
+      throw StateError('定向导出的实体身份与请求不一致：${key.storageKey}');
+    }
+    return _planLocalEntityAgainstShadow(
+      session,
+      key,
+      local,
+      entityType: entityType,
+      shadow: baseline,
+      mutationId: mutationId,
+    );
+  }
+
+  Future<SyncWriteDisposition> _planLocalEntityAgainstShadow(
+    CloudSyncAccountSession session,
+    SyncEntityKey key,
+    LocalSyncEntity? local, {
+    required CloudSyncEntityType entityType,
+    required CloudSyncShadow? shadow,
+    required String mutationId,
+  }) async {
+    if (_hasPendingOutbox(session, key)) {
+      return SyncWriteDisposition.deferred;
+    }
     final mutation = _buildMutation(
       key: key,
       entityType: entityType,

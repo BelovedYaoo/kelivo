@@ -66,14 +66,17 @@
   "cloudSyncCancel": "取消",
   "cloudSyncLogout": "退出登入",
   "cloudSyncLogoutTitle": "退出雲端同步？",
-  "cloudSyncLogoutMessage": "可以保留本機同步狀態以便下次快速繼續，也可以從本機清除。",
-  "cloudSyncLogoutKeepState": "退出並保留狀態",
-  "cloudSyncLogoutClearState": "退出並清除狀態",
+  "cloudSyncLogoutMessage": "退出後將切回本機工作區。目前帳號的聊天、設定、附件和同步狀態都會保留在本機。",
+  "cloudSyncLogoutKeepState": "退出並重新啟動",
+  "cloudSyncWorkspaceRestartTitle": "重新啟動以切換工作區",
+  "cloudSyncWorkspaceRestartMessage": "工作區選擇已安全儲存。重新啟動前，Kelivo 不會連線新的工作區。",
+  "cloudSyncWorkspaceRestartButton": "重新啟動 Kelivo",
   "cloudSyncErrorTitle": "雲端同步錯誤",
   "cloudSyncStatusInitializing": "正在初始化",
   "cloudSyncStatusSignedOut": "未登入",
   "cloudSyncStatusSigningIn": "正在登入",
   "cloudSyncStatusSigningOut": "正在退出",
+  "cloudSyncStatusWorkspaceChangePending": "需要重新啟動",
   "cloudSyncStatusIdle": "同步正常",
   "cloudSyncStatusSyncing": "正在同步",
   "cloudSyncStatusPaused": "已暫停",
@@ -90,9 +93,33 @@
   "cloudSyncConflictsTruncated": "目前僅顯示前 100 項衝突。處理後請重新整理，以繼續查看其餘衝突。",
   "cloudSyncConflictErrorTitle": "無法讀取或處理同步衝突",
   "cloudSyncConflictFieldCount": "有 {count} 個欄位需要確認",
+  "@cloudSyncConflictFieldCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "cloudSyncConflictValueComparison": "雲端：{cloudValue} · 本機：{localValue}",
+  "@cloudSyncConflictValueComparison": {
+    "placeholders": {
+      "cloudValue": {
+        "type": "String"
+      },
+      "localValue": {
+        "type": "String"
+      }
+    }
+  },
   "cloudSyncConflictResolveTitle": "處理同步衝突",
   "cloudSyncConflictResolveDescription": "請選擇「{entity}」每個欄位要保留的版本，預設保留雲端版本。",
+  "@cloudSyncConflictResolveDescription": {
+    "placeholders": {
+      "entity": {
+        "type": "String"
+      }
+    }
+  },
   "cloudSyncConflictClose": "關閉衝突處理面板",
   "cloudSyncConflictCloudValue": "雲端",
   "cloudSyncConflictLocalValue": "本機",
@@ -139,9 +166,23 @@
   "cloudSyncConflictValueNotSet": "未設定",
   "cloudSyncConflictValueReference": "關聯項",
   "cloudSyncConflictValueItems": "共 {count} 項",
+  "@cloudSyncConflictValueItems": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "cloudSyncConflictValueEnabled": "已啟用",
   "cloudSyncConflictValueDisabled": "已停用",
   "cloudSyncConflictValueNumber": "{value}",
+  "@cloudSyncConflictValueNumber": {
+    "placeholders": {
+      "value": {
+        "type": "num"
+      }
+    }
+  },
   "cloudSyncConflictValueBlank": "空白文字",
   "cloudSyncConflictFailureChanged": "此衝突已變更或已被處理，請重新整理清單後重試。",
   "cloudSyncConflictFailureSelection": "目前欄位選擇無法安全套用，請保留雲端版本，或重新整理後再次選擇。",
@@ -172,26 +213,67 @@
   "settingsPageChatStorage": "聊天記錄儲存",
   "settingsPageCalculating": "統計中…",
   "settingsPageFilesCount": "共 {count} 個檔案 · {size}",
+  "@settingsPageFilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpacePageTitle": "儲存空間",
   "storageSpaceRefreshTooltip": "重新整理",
   "storageSpaceLoadFailed": "載入失敗",
   "storageSpaceTotalLabel": "已用空間",
   "storageSpaceClearableLabel": "可清理：{size}",
+  "@storageSpaceClearableLabel": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceClearableHint": "共發現可清理空間 {size}",
+  "@storageSpaceClearableHint": {
+    "placeholders": {
+      "size": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceCategoryImages": "圖片",
   "storageSpaceCategoryFiles": "檔案",
   "storageSpaceCategoryChatData": "聊天記錄",
+  "storageSpaceCategoryLegacyChatData": "聊天記錄（舊）",
+  "storageSpaceCategoryRestoreTraces": "還原痕跡",
+  "storageSpaceRestoreTracesHint": "還原完成後保留的舊資料快照。清理不會影響目前的應用程式資料。",
+  "storageSpaceClearRestoreTracesButton": "清理還原痕跡",
+  "storageSpaceClearRestoreTracesConfirmMessage": "確定清理已完成還原留下的舊資料快照嗎？目前的資料庫、設定和檔案不會受到影響。",
+  "storageSpaceSubCompletedRestoreRuns": "已完成的還原快照",
   "storageSpaceCategoryAssistantData": "助理",
   "storageSpaceCategoryCache": "快取",
   "storageSpaceCategoryLogs": "日誌",
   "storageSpaceCategoryOther": "應用",
   "storageSpaceFilesCount": "{count} 個檔案",
+  "@storageSpaceFilesCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "storageSpaceSafeToClearHint": "可安全清理，不影響聊天記錄。",
+  "storageSpaceLegacyChatDataHint": "這是遷移到 SQLite 前保留的 Hive 舊檔案。清理後不會刪除目前的聊天記錄。",
   "storageSpaceNotSafeToClearHint": "可能影響聊天記錄，請謹慎刪除。",
   "storageSpaceBreakdownTitle": "明細",
   "storageSpaceSubChatMessages": "訊息",
   "storageSpaceSubChatConversations": "對話",
   "storageSpaceSubChatToolEvents": "工具事件",
+  "storageSpaceSubChatDatabase": "聊天資料庫",
+  "storageSpaceSubChatWriteAheadLog": "寫入日誌",
+  "storageSpaceSubChatSharedMemory": "共享記憶體索引",
   "storageSpaceSubAssistantAvatars": "頭像",
   "storageSpaceSubAssistantImages": "圖片",
   "storageSpaceSubCacheAvatars": "頭像快取",
@@ -202,21 +284,72 @@
   "storageSpaceSubLogsOther": "其他日誌",
   "storageSpaceClearConfirmTitle": "確認清理",
   "storageSpaceClearConfirmMessage": "確定要清理 {targetName} 嗎？",
+  "@storageSpaceClearConfirmMessage": {
+    "placeholders": {
+      "targetName": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceClearButton": "清理",
   "storageSpaceClearDone": "已清理 {targetName}",
+  "@storageSpaceClearDone": {
+    "placeholders": {
+      "targetName": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceClearFailed": "清理失敗：{error}",
+  "@storageSpaceClearFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "storageSpaceClearAvatarCacheButton": "清理頭像快取",
   "storageSpaceClearCacheButton": "清理快取",
   "storageSpaceClearLogsButton": "清理日誌",
+  "storageSpaceClearLegacyChatDataButton": "清理舊聊天記錄",
+  "storageSpaceClearLegacyChatDataConfirmMessage": "確定清理保留的舊聊天檔案嗎？目前的 SQLite 聊天記錄不會受到影響。",
   "storageSpaceViewLogsButton": "查看日誌",
   "storageSpaceDeleteConfirmTitle": "確認刪除",
   "storageSpaceDeleteUploadsConfirmMessage": "刪除 {count} 個項目？刪除後聊天記錄中的附件可能無法開啟。",
+  "@storageSpaceDeleteUploadsConfirmMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "storageSpaceDeletedUploadsDone": "已刪除 {count} 個項目",
+  "@storageSpaceDeletedUploadsDone": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "storageSpaceNoUploads": "暫無內容",
   "storageSpaceSelectAll": "全選",
   "storageSpaceClearSelection": "清除選取",
   "storageSpaceSelectedCount": "已選 {count} 項",
+  "@storageSpaceSelectedCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "storageSpaceUploadsCount": "共 {count} 項",
+  "@storageSpaceUploadsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "settingsPageAboutSection": "關於",
   "settingsPageAbout": "關於",
   "settingsPageStatistics": "統計",
@@ -534,6 +667,16 @@
   "assistantEditMcpNoServersMessage": "暫無已啟動的 MCP 伺服器",
   "assistantEditMcpConnectedTag": "已連線",
   "assistantEditMcpToolsCountTag": "工具: {enabled}/{total}",
+  "@assistantEditMcpToolsCountTag": {
+    "placeholders": {
+      "enabled": {
+        "type": "String"
+      },
+      "total": {
+        "type": "String"
+      }
+    }
+  },
   "assistantEditModelUseGlobalDefault": "使用全域預設",
   "assistantSettingsPageTitle": "助理設定",
   "assistantSettingsCopyButton": "複製",
@@ -649,15 +792,44 @@
   "backupPageTestDone": "測試完成",
   "backupPageTestConnection": "測試連線",
   "backupPageRestartRequired": "需要重啟應用程式",
-  "backupPageRestartContent": "還原完成，需要重啟以完全生效。",
+  "backupPageRestartContent": "匯入成功。重新啟動 Kelivo 後將安全套用。",
+  "restartAppFailedMessage": "Kelivo 無法自動重新啟動，請完全關閉後再重新開啟。",
+  "backupRestoreColdRestartTitle": "還需要再重新啟動一次",
+  "backupRestoreColdRestartContent": "還原已進入可恢復終態。請再重新啟動一次 Kelivo，以便從新程序重新驗證設定；確認前不會開啟聊天資料。",
+  "backupRestoreColdRestartButton": "重新啟動 Kelivo",
+  "backupRestoreRolledBackTitle": "已保留原有資料",
+  "backupRestoreRolledBackContent": "還原未能完成。Kelivo 已驗證並保留先前的資料。",
+  "backupRestoreFailureTitle": "還原需要處理",
+  "backupRestoreFailureContent": "Kelivo 無法驗證完整的原有或新資料，因此未開啟聊天資料。請關閉 Kelivo 後重試；若問題持續發生，請保留診斷碼以供支援人員排查。",
+  "backupRestoreBusinessLeaseUnavailableTitle": "Kelivo 已在執行",
+  "backupRestoreBusinessLeaseUnavailableContent": "Kelivo 的資料仍由另一個應用程式程序使用。請關閉其他 Kelivo 視窗後重新啟動；目前程序尚未開啟聊天資料。",
+  "backupRestoreFailureRestartButton": "重新啟動 Kelivo",
+  "backupRestoreFailureCopyButton": "複製診斷碼",
+  "backupRestoreFailureCopied": "已複製診斷碼",
+  "backupRestoreFailureDiagnostic": "診斷碼：{code}",
+  "@backupRestoreFailureDiagnostic": {
+    "placeholders": {
+      "code": {
+        "type": "String"
+      }
+    }
+  },
+  "backupPageRestoreFailedMessage": "還原失敗：{error}",
+  "@backupPageRestoreFailedMessage": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "backupPageOK": "好的",
   "backupPageCancel": "取消",
   "backupPageSelectImportMode": "選擇匯入模式",
-  "backupPageSelectImportModeDescription": "請選擇如何匯入備份資料：",
+  "backupPageSelectImportModeDescription": "請選擇還原方式。聊天與檔案開關決定本次還原的元件。",
   "backupPageOverwriteMode": "完全覆蓋",
-  "backupPageOverwriteModeDescription": "清空本地所有資料後恢復",
-  "backupPageMergeMode": "智能合併",
-  "backupPageMergeModeDescription": "僅添加不存在的資料（智能去重）",
+  "backupPageOverwriteModeDescription": "僅替換已選元件；保留未選元件及無關的本機設定",
+  "backupPageMergeMode": "合併",
+  "backupPageMergeModeDescription": "保留本機資料並加入備份資料；相同對話會略過，衝突對話會重新分配 ID。",
   "backupPageRestore": "還原",
   "backupPageBackupUploaded": "已上傳備份",
   "backupPageBackup": "立即備份",
@@ -728,6 +900,16 @@
   "backupReminderSnoozeTooltip": "稍後提醒",
   "homePageClearContext": "清空上下文",
   "homePageClearContextWithCount": "清空上下文 ({actual}/{configured})",
+  "@homePageClearContextWithCount": {
+    "placeholders": {
+      "actual": {
+        "type": "String"
+      },
+      "configured": {
+        "type": "String"
+      }
+    }
+  },
   "homePageDefaultAssistant": "預設助理",
   "homePageDeleteMessage": "刪除本版本",
   "homePageDeleteMessageConfirm": "確定要刪除目前版本嗎？此操作不可撤銷。",
@@ -812,6 +994,13 @@
   "reasoningBudgetSheetMax": "全力推理",
   "reasoningBudgetSheetTitle": "思維鏈強度",
   "reasoningBudgetSheetCurrentLevel": "目前檔位：{level}",
+  "@reasoningBudgetSheetCurrentLevel": {
+    "placeholders": {
+      "level": {
+        "type": "String"
+      }
+    }
+  },
   "reasoningBudgetSheetOffSubtitle": "關閉推理功能，直接回答",
   "reasoningBudgetSheetAutoSubtitle": "由模型自動決定推理級別",
   "reasoningBudgetSheetLightSubtitle": "使用少量推理來回答問題",
@@ -821,8 +1010,29 @@
   "reasoningBudgetSheetCustomLabel": "自訂推理預算",
   "reasoningBudgetSheetCustomHint": "例如：2048 (-1 自動，0 關閉)",
   "chatMessageWidgetFileNotFound": "檔案不存在: {fileName}",
+  "@chatMessageWidgetFileNotFound": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetCannotOpenFile": "無法開啟檔案: {message}",
+  "@chatMessageWidgetCannotOpenFile": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetOpenFileError": "開啟檔案失敗: {error}",
+  "@chatMessageWidgetOpenFileError": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetCopiedToClipboard": "已複製到剪貼簿",
   "chatMessageWidgetResendTooltip": "重新傳送",
   "chatMessageWidgetMoreTooltip": "更多",
@@ -831,8 +1041,22 @@
   "chatMessageWidgetTranslating": "翻譯中...",
   "chatMessageWidgetCitationNotFound": "未找到引用來源",
   "chatMessageWidgetCannotOpenUrl": "無法開啟連結: {url}",
+  "@chatMessageWidgetCannotOpenUrl": {
+    "placeholders": {
+      "url": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetOpenLinkError": "開啟連結失敗",
   "chatMessageWidgetCitationsTitle": "引用（共{count}條）",
+  "@chatMessageWidgetCitationsTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chatMessageWidgetSearchResultsTitle": "搜尋結果",
   "chatMessageWidgetCitationSourcesTitle": "引用來源",
   "chatMessageWidgetRegenerateTooltip": "重新生成",
@@ -850,6 +1074,13 @@
   "chatMessageWidgetEditMemory": "編輯記憶",
   "chatMessageWidgetDeleteMemory": "刪除記憶",
   "chatMessageWidgetWebSearch": "聯網檢索: {query}",
+  "@chatMessageWidgetWebSearch": {
+    "placeholders": {
+      "query": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetBuiltinSearch": "模型內建搜尋",
   "chatMessageWidgetReadClipboard": "讀取剪貼簿",
   "chatMessageWidgetWriteClipboard": "寫入剪貼簿",
@@ -863,13 +1094,41 @@
     }
   },
   "chatMessageWidgetToolCall": "呼叫工具: {name}",
+  "@chatMessageWidgetToolCall": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetToolResult": "呼叫工具: {name}",
+  "@chatMessageWidgetToolResult": {
+    "placeholders": {
+      "name": {
+        "type": "String"
+      }
+    }
+  },
   "chatMessageWidgetNoResultYet": "（暫無結果）",
   "chatMessageWidgetArguments": "參數",
   "chatMessageWidgetResult": "結果",
   "chatMessageWidgetImages": "圖片",
   "chatMessageWidgetCitationsCount": "{count}個引用",
+  "@chatMessageWidgetCitationsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chatSelectionSelectedCountTitle": "已選擇{count}條訊息",
+  "@chatSelectionSelectedCountTitle": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chatSelectionExportTxt": "TXT",
   "chatSelectionExportMd": "MD",
   "chatSelectionExportImage": "圖片",
@@ -878,12 +1137,40 @@
   "chatSelectionDeleteSelected": "刪除所選",
   "chatSelectionSelectMessagesToDelete": "請選擇要刪除的訊息",
   "chatSelectionDeleteSelectedConfirm": "確定要刪除已選擇的{count}個版本嗎？此操作不可撤銷。",
+  "@chatSelectionDeleteSelectedConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "chatSelectionDeleteSelectedAllVersionsConfirm": "確定要刪除已選擇{count}條訊息的全部版本嗎？此操作不可撤銷。",
+  "@chatSelectionDeleteSelectedAllVersionsConfirm": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "messageExportSheetAssistant": "助理",
   "messageExportSheetDefaultTitle": "新對話",
   "messageExportSheetExporting": "正在匯出…",
   "messageExportSheetExportFailed": "匯出失敗: {error}",
+  "@messageExportSheetExportFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "messageExportSheetExportedAs": "已匯出為 {filename}",
+  "@messageExportSheetExportedAs": {
+    "placeholders": {
+      "filename": {
+        "type": "String"
+      }
+    }
+  },
   "messageExportSheetFormatTitle": "匯出格式",
   "messageExportSheetMarkdown": "Markdown",
   "messageExportSheetSingleMarkdownSubtitle": "將該訊息匯出為 Markdown 檔案",
@@ -906,6 +1193,13 @@
   "sideDrawerMenuMoveTo": "移動到",
   "sideDrawerMenuDelete": "刪除",
   "sideDrawerDeleteSnackbar": "已刪除「{title}」",
+  "@sideDrawerDeleteSnackbar": {
+    "placeholders": {
+      "title": {
+        "type": "String"
+      }
+    }
+  },
   "sideDrawerRenameHint": "輸入新名稱",
   "sideDrawerCancel": "取消",
   "sideDrawerOK": "確定",
@@ -936,7 +1230,24 @@
     }
   },
   "sideDrawerUpdateTitle": "發現新版本：{version}",
+  "@sideDrawerUpdateTitle": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      }
+    }
+  },
   "sideDrawerUpdateTitleWithBuild": "發現新版本：{version} ({build})",
+  "@sideDrawerUpdateTitleWithBuild": {
+    "placeholders": {
+      "version": {
+        "type": "String"
+      },
+      "build": {
+        "type": "int"
+      }
+    }
+  },
   "sideDrawerLinkCopied": "已複製下載連結",
   "sideDrawerPinnedLabel": "置頂",
   "sideDrawerHistory": "聊天歷史",
@@ -994,6 +1305,16 @@
   "mcpPageStatusDisconnected": "未連線",
   "mcpPageStatusDisabled": "已停用",
   "mcpPageToolsCount": "工具: {enabled}/{total}",
+  "@mcpPageToolsCount": {
+    "placeholders": {
+      "enabled": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "mcpPageConnectionFailed": "連線失敗",
   "mcpPageDetails": "詳情",
   "mcpPageDelete": "刪除",
@@ -1009,6 +1330,16 @@
   "mcpConversationSheetNoRunning": "暫無已啟動的 MCP 伺服器",
   "mcpConversationSheetConnected": "已連線",
   "mcpConversationSheetToolsCount": "工具: {enabled}/{total}",
+  "@mcpConversationSheetToolsCount": {
+    "placeholders": {
+      "enabled": {
+        "type": "int"
+      },
+      "total": {
+        "type": "int"
+      }
+    }
+  },
   "mcpServerEditSheetEnabledLabel": "是否啟用",
   "mcpServerEditSheetNameLabel": "名稱",
   "mcpServerEditSheetTransportLabel": "傳輸類型",
@@ -1071,13 +1402,63 @@
   "defaultModelPageResetDefault": "重設為預設",
   "defaultModelPageSave": "儲存",
   "defaultModelPageTitleVars": "變數: 對話內容: {contentVar}, 語言: {localeVar}",
+  "@defaultModelPageTitleVars": {
+    "placeholders": {
+      "contentVar": {
+        "type": "String"
+      },
+      "localeVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageTranslateVars": "變數：原始文本：{sourceVar}，目標語言：{targetVar}",
+  "@defaultModelPageTranslateVars": {
+    "placeholders": {
+      "sourceVar": {
+        "type": "String"
+      },
+      "targetVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageSummaryVars": "變數：舊摘要：{previousSummaryVar}，新訊息：{userMessagesVar}",
+  "@defaultModelPageSummaryVars": {
+    "placeholders": {
+      "previousSummaryVar": {
+        "type": "String"
+      },
+      "userMessagesVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageSuggestionVars": "變數：對話內容：{contentVar}，語言：{localeVar}",
+  "@defaultModelPageSuggestionVars": {
+    "placeholders": {
+      "contentVar": {
+        "type": "String"
+      },
+      "localeVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageCompressModelTitle": "壓縮模型",
   "defaultModelPageCompressModelSubtitle": "用於壓縮對話上下文的模型，建議使用快速模型",
   "defaultModelPageCompressPromptHint": "輸入用於上下文壓縮的提示詞範本",
   "defaultModelPageCompressVars": "變數：對話內容：{contentVar}，語言：{localeVar}",
+  "@defaultModelPageCompressVars": {
+    "placeholders": {
+      "contentVar": {
+        "type": "String"
+      },
+      "localeVar": {
+        "type": "String"
+      }
+    }
+  },
   "defaultModelPageUseCurrentModel": "使用目前對話模型",
   "defaultModelPageNotEnabled": "未啟用",
   "translatePagePasteButton": "貼上",
@@ -1093,6 +1474,13 @@
   "modelDetailSheetModelIdLabel": "模型 ID",
   "modelDetailSheetModelIdHint": "必填，建議小寫字母、數字、連字號",
   "modelDetailSheetModelIdDisabledHint": "{modelId}",
+  "@modelDetailSheetModelIdDisabledHint": {
+    "placeholders": {
+      "modelId": {
+        "type": "String"
+      }
+    }
+  },
   "modelDetailSheetModelNameLabel": "模型名稱",
   "modelDetailSheetModelTypeLabel": "模型類型",
   "modelDetailSheetChatType": "聊天",
@@ -1272,7 +1660,21 @@
   "importProviderSheetScanQrTooltip": "掃碼匯入",
   "importProviderSheetFromGalleryTooltip": "從相簿匯入",
   "importProviderSheetImportSuccessMessage": "已匯入{count}個供應商",
+  "@importProviderSheetImportSuccessMessage": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "importProviderSheetImportFailedMessage": "匯入失敗: {error}",
+  "@importProviderSheetImportFailedMessage": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "importProviderSheetDescription": "貼上分享字串（可多行，每行一個）或 ChatBox JSON",
   "importProviderSheetInputHint": "ai-provider:v1:...",
   "importProviderSheetCancelButton": "取消",
@@ -1504,6 +1906,13 @@
   "ttsServicesPageSystemTtsTitle": "系統TTS",
   "ttsServicesPageSystemTtsAvailableSubtitle": "使用系統內建語音合成",
   "ttsServicesPageSystemTtsUnavailableSubtitle": "不可用：{error}",
+  "@ttsServicesPageSystemTtsUnavailableSubtitle": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "ttsServicesPageSystemTtsUnavailableNotInitialized": "未初始化",
   "ttsServicesPageTestSpeechText": "你好，這是一次測試語音。",
   "ttsServicesPageConfigureTooltip": "設定",
@@ -1567,7 +1976,21 @@
   "ttsFloatingExpandTooltip": "展開播放控制",
   "ttsFloatingCollapseTooltip": "收起播放控制",
   "imageViewerPageShareFailedOpenFile": "無法分享，已嘗試開啟檔案: {message}",
+  "@imageViewerPageShareFailedOpenFile": {
+    "placeholders": {
+      "message": {
+        "type": "String"
+      }
+    }
+  },
   "imageViewerPageShareFailed": "分享失敗: {error}",
+  "@imageViewerPageShareFailed": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "imageViewerPageShareButton": "分享圖片",
   "imageViewerPageCloseButton": "關閉預覽",
   "imageViewerPageSaveButton": "儲存圖片",
@@ -1678,7 +2101,9 @@
   "displaySettingsPageEnableAssistantMarkdownTitle": "助手訊息 Markdown 渲染",
   "displaySettingsPageEnableMathSubtitle": "渲染 LaTeX 數學公式（行內與區塊）",
   "displaySettingsPageEnableImageCropperTitle": "啟用圖片裁剪",
+  "@displaySettingsPageEnableImageCropperTitle": {},
   "displaySettingsPageEnableImageCropperSubtitle": "從相簿或相機選擇圖片後，允許裁剪圖片",
+  "@displaySettingsPageEnableImageCropperSubtitle": {},
   "displaySettingsPageMobileCodeBlockWrapTitle": "行動端程式碼區塊自動換行",
   "displaySettingsPageAutoCollapseCodeBlockTitle": "自動摺疊程式碼區塊",
   "displaySettingsPageAutoCollapseCodeBlockLinesTitle": "超過多少行自動摺疊",
@@ -1903,6 +2328,13 @@
   "logViewerExport": "匯出",
   "logViewerOpenFolder": "開啟日誌目錄",
   "logViewerRequestsCount": "{count} 個請求",
+  "@logViewerRequestsCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "logViewerFieldId": "ID",
   "logViewerFieldMethod": "方法",
   "logViewerFieldStatus": "狀態",
@@ -1918,6 +2350,13 @@
   "logViewerSectionWarnings": "警告",
   "logViewerErrorTitle": "錯誤",
   "logViewerMoreCount": "+{count} 條更多",
+  "@logViewerMoreCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "logSettingsTitle": "日誌設定",
   "logSettingsSaveOutput": "保存回應輸出",
   "logSettingsSaveOutputSubtitle": "記錄回應本文內容（可能佔用較多儲存空間）",
@@ -1925,6 +2364,13 @@
   "logSettingsAutoDeleteSubtitle": "刪除超過指定天數的日誌",
   "logSettingsAutoDeleteDisabled": "不啟用",
   "logSettingsAutoDeleteDays": "{count} 天",
+  "@logSettingsAutoDeleteDays": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "logSettingsMaxSize": "日誌大小上限",
   "logSettingsMaxSizeSubtitle": "超出後將刪除最早的日誌",
   "logSettingsMaxSizeUnlimited": "不限制",
@@ -1936,6 +2382,13 @@
   "assistantEditDeleteSummaryContent": "確定要清除此摘要嗎？",
   "fileUploadDuplicateTitle": "檔案已存在",
   "fileUploadDuplicateContent": "偵測到同名檔案 {fileName}，是否使用現有檔案？",
+  "@fileUploadDuplicateContent": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
   "fileUploadDuplicateUseExisting": "使用現有",
   "fileUploadDuplicateUploadNew": "重新上傳",
   "backupPageDeleteConfirmTitle": "確認刪除",
@@ -2024,12 +2477,64 @@
   "askUserCardInactive": "這個問題已不再活動。請重新生成或繼續對話。",
   "askUserCardCancelled": "問題已取消",
   "askUserCardQuestionCount": "{count, plural, other{詢問 {count} 個問題}}",
+  "@askUserCardQuestionCount": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "tokenDetailPromptTokens": "{count} tokens",
+  "@tokenDetailPromptTokens": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "tokenDetailPromptTokensWithCache": "{count} tokens ({cached} cached)",
+  "@tokenDetailPromptTokensWithCache": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      },
+      "cached": {
+        "type": "int"
+      }
+    }
+  },
   "tokenDetailCompletionTokens": "{count} tokens",
+  "@tokenDetailCompletionTokens": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "tokenDetailSpeed": "{value} tok/s",
+  "@tokenDetailSpeed": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "tokenDetailDuration": "{value}s",
+  "@tokenDetailDuration": {
+    "placeholders": {
+      "value": {
+        "type": "String"
+      }
+    }
+  },
   "tokenDetailTotalTokens": "{count} tokens",
+  "@tokenDetailTotalTokens": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
   "debugPageTitle": "Debug",
   "debugPageConversationToolsTitle": "對話工具",
   "debugPageCreateOversizedConversationButton": "建立超大對話（30 MB）",
@@ -2101,5 +2606,61 @@
         "type": "int"
       }
     }
-  }
+  },
+  "migrationIntroTitle": "升級聊天記錄儲存",
+  "migrationIntroSubtitle": "Kelivo 將聊天記錄遷移到更快的 SQLite 資料庫。升級會在應用程式開啟前完成，避免新舊資料同時寫入。",
+  "migrationBackupNote": "遷移開始前，會先匯出包含設定、聊天記錄和本地檔案的 ZIP 備份。",
+  "migrationPerformanceNote": "遷移後，啟動、歷史載入和搜尋都會使用 SQLite 索引，長對話會更流暢。",
+  "migrationSourceDatabaseLabel": "Hive",
+  "migrationTargetDatabaseLabel": "SQLite",
+  "migrationChooseFolderButton": "選擇資料夾並備份",
+  "migrationSaveBackupButton": "儲存備份 ZIP",
+  "migrationBackingUpTitle": "正在備份",
+  "migrationBackingUpSubtitle": "正在匯出設定、聊天記錄、上傳檔案、圖片和字體。請保持 Kelivo 開啟，等待備份完成。",
+  "migrationMigratingTitle": "正在遷移到 SQLite",
+  "migrationMigratingSubtitle": "正在分批寫入對話和訊息，避免超大聊天記錄占滿記憶體。請保持 Kelivo 在前台，等待遷移完成。",
+  "migrationBackingUpDetail": "正在備份 {fileName}",
+  "@migrationBackingUpDetail": {
+    "placeholders": {
+      "fileName": {
+        "type": "String"
+      }
+    }
+  },
+  "migrationMigratingDetail": "已遷移 {count} 條訊息",
+  "@migrationMigratingDetail": {
+    "placeholders": {
+      "count": {
+        "type": "int"
+      }
+    }
+  },
+  "migrationMigratingPrepareDetail": "正在準備 SQLite 資料庫",
+  "migrationMigratingToolEventsDetail": "正在遷移工具呼叫記錄",
+  "migrationMigratingValidateDetail": "正在校驗遷移資料",
+  "migrationBackupReadyDetail": "備份 ZIP 已準備好",
+  "migrationSavingBackupZipDetail": "正在儲存備份 ZIP",
+  "migrationBackupFileSavedTitle": "備份 ZIP 已保存",
+  "migrationChecklistBackupFiles": "匯出 Hive 備份 ZIP",
+  "migrationChecklistPrepareSqlite": "準備 SQLite 資料庫",
+  "migrationChecklistMigrateMessages": "遷移對話和訊息",
+  "migrationChecklistMigrateToolEvents": "遷移工具呼叫記錄",
+  "migrationChecklistValidate": "校驗遷移資料",
+  "migrationStepBackup": "備份",
+  "migrationStepMigrate": "遷移",
+  "migrationStepComplete": "完成",
+  "migrationCompleteTitle": "升級完成",
+  "migrationCompleteSubtitle": "你的聊天記錄已遷移到 SQLite。請重啟 Kelivo 進入升級後的應用程式。",
+  "migrationConversationCount": "對話",
+  "migrationMessageCount": "訊息",
+  "migrationRestartButton": "重啟 Kelivo",
+  "migrationFailedTitle": "遷移失敗",
+  "migrationFailedSubtitle": "原始 Hive 資料和備份都仍然保留。查看下方原因後可以重試。",
+  "migrationUnknownError": "未知遷移錯誤。",
+  "migrationFailureLogTitle": "失敗日誌",
+  "migrationRetryButton": "重試遷移",
+  "timelineJumpToLatest": "跳到最新",
+  "largeContentShowMore": "再顯示 {count} 項",
+  "@largeContentShowMore": {"placeholders": {"count": {"type": "int"}}},
+  "largeContentCollapse": "收起"
 }

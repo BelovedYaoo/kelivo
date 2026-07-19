@@ -17,6 +17,7 @@ import '../services/sync/cloud_sync_types.dart';
 import '../services/sync/config_sync_adapter.dart';
 import '../services/sync/sync_codec.dart';
 import '../services/sync/sync_write_journal.dart';
+import '../services/workspace/account_workspace_runtime.dart';
 import 'assistant_provider.dart';
 import 'instruction_injection_provider.dart';
 import 'mcp_provider.dart';
@@ -31,6 +32,7 @@ enum CloudSyncProviderStatus {
   signedOut,
   signingIn,
   signingOut,
+  workspaceChangePending,
   idle,
   syncing,
   pendingSync,
@@ -38,6 +40,21 @@ enum CloudSyncProviderStatus {
   needsAttention,
   paused,
   error,
+}
+
+enum CloudSyncInitialHydrationState {
+  notRequired,
+  pending,
+  completed;
+
+  static CloudSyncInitialHydrationState initialForWorkspace({
+    required bool isLocalWorkspace,
+  }) => isLocalWorkspace ? notRequired : pending;
+
+  bool get allowsAssistantDefaults => switch (this) {
+    notRequired || completed => true,
+    pending => false,
+  };
 }
 
 CloudSyncProviderStatus _resolveCloudSyncProviderStatus({
@@ -58,7 +75,8 @@ final class CloudSyncProvider extends ChangeNotifier
   CloudSyncProvider(
     this._chatService,
     this._store,
-    this._writeJournal, {
+    this._writeJournal,
+    this._workspaceRuntime, {
     required SettingsProvider settingsProvider,
     required AssistantProvider assistantProvider,
     required MemoryProvider memoryProvider,
@@ -67,8 +85,11 @@ final class CloudSyncProvider extends ChangeNotifier
     required InstructionInjectionProvider instructionInjectionProvider,
     required WorldBookProvider worldBookProvider,
     required UserProvider userProvider,
-    required String? capturedConfigRescanGeneration,
-  }) : _configAdapter = ConfigSyncAdapter(
+  }) : _initialHydrationState =
+           CloudSyncInitialHydrationState.initialForWorkspace(
+             isLocalWorkspace: _workspaceRuntime.current.isLocal,
+           ),
+       _configAdapter = ConfigSyncAdapter(
          settingsProvider: settingsProvider,
          assistantProvider: assistantProvider,
          memoryProvider: memoryProvider,
@@ -77,8 +98,7 @@ final class CloudSyncProvider extends ChangeNotifier
          instructionInjectionProvider: instructionInjectionProvider,
          worldBookProvider: worldBookProvider,
          userProvider: userProvider,
-       ),
-       _startupConfigRescanGeneration = capturedConfigRescanGeneration;
+       );
 
   static const Duration automaticSyncInterval = Duration(seconds: 30);
 
@@ -86,6 +106,7 @@ final class CloudSyncProvider extends ChangeNotifier
   final ConfigSyncAdapter _configAdapter;
   final CloudSyncStore _store;
   final SyncWriteJournal _writeJournal;
+  final AccountWorkspaceRuntime _workspaceRuntime;
 
   CloudSyncProviderStatus _status = CloudSyncProviderStatus.initializing;
   CloudSyncAccountSession? _session;
@@ -102,7 +123,6 @@ final class CloudSyncProvider extends ChangeNotifier
   Future<bool>? _activeConflictRefresh;
   Future<bool>? _activeConflictResolution;
   Timer? _timer;
-  String? _lastBaseUrl;
   bool _ready = false;
   bool _paused = false;
   bool _devicesLoading = false;
@@ -114,8 +134,9 @@ final class CloudSyncProvider extends ChangeNotifier
   Completer<void>? _sessionMutation;
   bool _journalExporterBound = false;
   bool _storeCloseScheduled = false;
+  bool _workspaceRestartRequired = false;
+  CloudSyncInitialHydrationState _initialHydrationState;
   int _sessionEpoch = 0;
-  String? _startupConfigRescanGeneration;
   List<CloudSyncConflict> _conflicts = const <CloudSyncConflict>[];
   CloudSyncException? _conflictError;
   CloudSyncConflictResolutionFailureReason? _conflictResolutionFailure;
@@ -128,9 +149,11 @@ final class CloudSyncProvider extends ChangeNotifier
   CloudSyncException? get deviceError => _deviceError;
   List<CloudSyncDeviceSession> get devices =>
       List<CloudSyncDeviceSession>.unmodifiable(_devices);
-  String? get lastBaseUrl => _lastBaseUrl;
   bool get initialized => _ready;
   bool get signedIn => _session != null;
+  bool get workspaceRestartRequired => _workspaceRestartRequired;
+  CloudSyncInitialHydrationState get initialHydrationState =>
+      _initialHydrationState;
   bool get paused => _paused;
   bool get devicesLoading => _devicesLoading;
   List<CloudSyncConflict> get conflicts =>
@@ -171,9 +194,16 @@ final class CloudSyncProvider extends ChangeNotifier
       final store = _store;
       await _configAdapter.ready;
       if (_disposed) return;
-      _lastBaseUrl = store.lastBaseUrl ?? defaultCloudSyncBaseUrl;
-
-      final session = store.activeSession;
+      final session = _workspaceRuntime.current.session;
+      if (session != null && session.baseUrl != defaultCloudSyncBaseUrl) {
+        await _workspaceRuntime.signOut();
+        await _writeJournal.transitionSession(null);
+        _workspaceRestartRequired = true;
+        _initialHydrationState = CloudSyncInitialHydrationState.pending;
+        _setStatus(CloudSyncProviderStatus.workspaceChangePending);
+        _ready = true;
+        return;
+      }
       _session = session;
       if (session == null) {
         _paused = false;
@@ -293,7 +323,6 @@ final class CloudSyncProvider extends ChangeNotifier
   }
 
   Future<bool> login({
-    required String baseUrl,
     required String loginName,
     required String password,
     required String deviceName,
@@ -325,7 +354,7 @@ final class CloudSyncProvider extends ChangeNotifier
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       if (_disposed) return false;
-      loginClient = CloudSyncClient(baseUrl: baseUrl);
+      loginClient = CloudSyncClient();
       final session = await loginClient.login(
         loginName: loginName.trim(),
         password: password,
@@ -334,12 +363,17 @@ final class CloudSyncProvider extends ChangeNotifier
         clientVersion: packageInfo.version,
       );
       if (_disposed) return false;
-      await store.saveLastBaseUrl(session.baseUrl);
+      final workspaceBinding = await _workspaceRuntime.bindAccount(session);
+      if (workspaceBinding is AccountWorkspaceRestartRequired) {
+        _workspaceRestartRequired = true;
+        _setStatus(CloudSyncProviderStatus.workspaceChangePending);
+        return true;
+      }
       await store.savePaused(session, paused: false);
-      await store.saveSession(session);
       if (_disposed) return false;
 
-      _lastBaseUrl = session.baseUrl;
+      _workspaceRestartRequired = false;
+      _initialHydrationState = CloudSyncInitialHydrationState.pending;
       _session = session;
       _paused = false;
       await _repairBlockedAssistantPayloadMutations(session);
@@ -385,12 +419,10 @@ final class CloudSyncProvider extends ChangeNotifier
     }
   }
 
-  Future<bool> logout({bool clearSyncState = false}) async {
+  Future<bool> logout() async {
     await initialize();
-    final store = _store;
     if (_disposed || _sessionMutationInProgress) return false;
     _beginSessionMutation();
-    final session = _session;
     _session = null;
     _devicesLoading = false;
     _setStatus(CloudSyncProviderStatus.signingOut);
@@ -416,10 +448,7 @@ final class CloudSyncProvider extends ChangeNotifier
         await activeConflictResolution;
       }
       await _writeJournal.transitionSession(null);
-      if (session != null && clearSyncState) {
-        await store.clearAccountState(session);
-      }
-      await store.clearSession();
+      await _workspaceRuntime.signOut();
     } catch (error, stackTrace) {
       _recordFailure(
         error,
@@ -428,13 +457,11 @@ final class CloudSyncProvider extends ChangeNotifier
         status: CloudSyncProviderStatus.error,
       );
       if (_disposed) return false;
-      if (session != null) {
-        _session = session;
-        _connect(session);
-        await _writeJournal.transitionSession(session);
-        await _writeJournal.recover();
-        if (!_paused) _startAutomaticSync();
-      }
+      // 退出失败后不得重新启用旧 token；持久层会在下次冷启动时
+      // 根据 tombstone 或仍有效的会话记录收敛到唯一状态。
+      _workspaceRestartRequired = true;
+      _initialHydrationState = CloudSyncInitialHydrationState.pending;
+      _setStatus(CloudSyncProviderStatus.workspaceChangePending);
       return false;
     } finally {
       _endSessionMutation();
@@ -452,7 +479,9 @@ final class CloudSyncProvider extends ChangeNotifier
     _conflictListTruncated = false;
     _conflictsLoading = false;
     _resolvingConflictId = null;
-    _setStatus(CloudSyncProviderStatus.signedOut);
+    _workspaceRestartRequired = true;
+    _initialHydrationState = CloudSyncInitialHydrationState.pending;
+    _setStatus(CloudSyncProviderStatus.workspaceChangePending);
     return true;
   }
 
@@ -519,6 +548,84 @@ final class CloudSyncProvider extends ChangeNotifier
     }
   }
 
+  Future<void> prepareWorkspaceRestart() async {
+    if (!_workspaceRestartRequired) {
+      throw StateError('account_workspace_restart_not_required');
+    }
+    _stopAutomaticSync();
+    _client?.close(force: true);
+    _client = null;
+    _coordinator = null;
+    _conflictResolver = null;
+    _mutationPlanner = null;
+    await _workspaceRuntime.prepareRestartHandoff();
+  }
+
+  Future<bool> syncAfterLocalWrites() async {
+    await initialize();
+    final session = _session;
+    if (_disposed ||
+        !_ready ||
+        session == null ||
+        _paused ||
+        _workspaceRestartRequired ||
+        _sessionMutationInProgress) {
+      return false;
+    }
+    final epoch = _sessionEpoch;
+
+    final syncBeforeBarrier = _activeSync;
+    if (syncBeforeBarrier != null) {
+      await syncBeforeBarrier;
+    }
+    if (_disposed ||
+        epoch != _sessionEpoch ||
+        !identical(_session, session) ||
+        _workspaceRestartRequired ||
+        _sessionMutationInProgress) {
+      return false;
+    }
+
+    try {
+      // 本地 API 会在业务写完成后提前返回；同会话 transition 用作 journal
+      // 屏障，确保后台导出与入队结束后才触发下一轮同步。
+      await _writeJournal.transitionSession(session);
+    } catch (error, stackTrace) {
+      if (_disposed ||
+          epoch != _sessionEpoch ||
+          !identical(_session, session)) {
+        return false;
+      }
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '等待本地同步写入完成',
+        status: CloudSyncProviderStatus.error,
+      );
+      return false;
+    }
+    if (_disposed ||
+        epoch != _sessionEpoch ||
+        !identical(_session, session) ||
+        _workspaceRestartRequired ||
+        _sessionMutationInProgress) {
+      return false;
+    }
+
+    final syncAfterBarrier = _activeSync;
+    if (syncAfterBarrier != null) {
+      await syncAfterBarrier;
+      if (_disposed ||
+          epoch != _sessionEpoch ||
+          !identical(_session, session) ||
+          _workspaceRestartRequired ||
+          _sessionMutationInProgress) {
+        return false;
+      }
+    }
+    return syncNow();
+  }
+
   Future<bool> syncNow() {
     if (_activeConflictResolution != null) {
       return Future<bool>.value(false);
@@ -560,47 +667,55 @@ final class CloudSyncProvider extends ChangeNotifier
     _lastError = null;
     _setStatus(CloudSyncProviderStatus.syncing);
     try {
-      final configRescanGeneration = _startupConfigRescanGeneration;
-      final result = await coordinator.synchronize(
-        rescanEntityTypes: configRescanGeneration == null
-            ? const <String>{}
-            : _configAdapter.entityTypes,
-      );
-      final recovery = await _writeJournal.recover();
-      if (epoch != _sessionEpoch || _disposed) return false;
-      final conflicts = await client.listConflicts(
-        state: CloudSyncConflictState.open,
-        limit: 100,
-      );
-      if (epoch != _sessionEpoch || _disposed) return false;
-      _conflicts = List<CloudSyncConflict>.unmodifiable(conflicts);
-      _conflictListTruncated = conflicts.length >= 100;
-      _conflictError = null;
-      final outboxCounts = _store.outboxCounts(session);
-      final hasBlockedWrites = outboxCounts.blocked > 0;
-      final hasPendingWrites =
-          recovery.deferredCount > 0 ||
-          outboxCounts.total > outboxCounts.blocked;
-      final complete =
-          !hasBlockedWrites && !hasPendingWrites && conflicts.isEmpty;
-      if (configRescanGeneration != null && complete) {
-        await _store.consumeConfigRescanGeneration(configRescanGeneration);
-        if (epoch != _sessionEpoch || _disposed) return false;
-        if (_startupConfigRescanGeneration == configRescanGeneration) {
-          _startupConfigRescanGeneration = null;
+      return await _store.runWithRescanStable(() async {
+        final rescanRequest = _store.rescanRequest;
+        if (rescanRequest?.hasActiveWrites == true) {
+          _setStatus(CloudSyncProviderStatus.pendingSync);
+          return false;
         }
-      }
-      _lastRun = result.copyWith(deferredWriteCount: recovery.deferredCount);
-      _lastError = null;
-      _setStatus(
-        _resolveCloudSyncProviderStatus(
-          paused: _paused,
-          hasOpenConflicts: conflicts.isNotEmpty,
-          hasBlockedWrites: hasBlockedWrites,
-          hasPendingWrites: hasPendingWrites,
-        ),
-      );
-      return complete;
+        final result = await coordinator.synchronize(
+          rescanEntityTypes: rescanRequest?.entityTypes ?? const <String>{},
+          localAuthoritativeEntityTypes:
+              rescanRequest?.localAuthoritativeEntityTypes ?? const <String>{},
+        );
+        final recovery = await _writeJournal.recover();
+        if (epoch != _sessionEpoch || _disposed) return false;
+        final conflicts = await client.listConflicts(
+          state: CloudSyncConflictState.open,
+          limit: 100,
+        );
+        if (epoch != _sessionEpoch || _disposed) return false;
+        _conflicts = List<CloudSyncConflict>.unmodifiable(conflicts);
+        _conflictListTruncated = conflicts.length >= 100;
+        _conflictError = null;
+        final outboxCounts = _store.outboxCounts(session);
+        final hasBlockedWrites = outboxCounts.blocked > 0;
+        final hasPendingWrites =
+            recovery.deferredCount > 0 ||
+            outboxCounts.total > outboxCounts.blocked;
+        var complete =
+            !hasBlockedWrites && !hasPendingWrites && conflicts.isEmpty;
+        if (rescanRequest != null && complete) {
+          complete = await _store.consumeRescanRequest(
+            rescanRequest.generation,
+          );
+          if (epoch != _sessionEpoch || _disposed) return false;
+        }
+        _lastRun = result.copyWith(deferredWriteCount: recovery.deferredCount);
+        _lastError = null;
+        if (_initialHydrationState == CloudSyncInitialHydrationState.pending) {
+          _initialHydrationState = CloudSyncInitialHydrationState.completed;
+        }
+        _setStatus(
+          _resolveCloudSyncProviderStatus(
+            paused: _paused,
+            hasOpenConflicts: conflicts.isNotEmpty,
+            hasBlockedWrites: hasBlockedWrites,
+            hasPendingWrites: hasPendingWrites || !complete,
+          ),
+        );
+        return complete;
+      });
     } catch (error, stackTrace) {
       if (epoch != _sessionEpoch || _disposed) return false;
       _recordFailure(
@@ -700,7 +815,15 @@ final class CloudSyncProvider extends ChangeNotifier
     _conflictError = null;
     _notify();
     try {
-      await resolver.resolve(conflict, Set<String>.unmodifiable(localPaths));
+      final resolved = await _store.runWithRescanStable(() async {
+        if (_store.rescanRequest?.hasActiveWrites == true) return false;
+        await resolver.resolve(conflict, Set<String>.unmodifiable(localPaths));
+        return true;
+      });
+      if (!resolved) {
+        _setStatus(CloudSyncProviderStatus.pendingSync);
+        return false;
+      }
       if (epoch != _sessionEpoch || _disposed) return false;
       await _refreshConflicts(client, epoch);
       if (epoch != _sessionEpoch || _disposed) return false;
@@ -749,7 +872,9 @@ final class CloudSyncProvider extends ChangeNotifier
       hasOpenConflicts: _conflicts.isNotEmpty,
       hasBlockedWrites: outboxCounts.blocked > 0,
       hasPendingWrites:
-          outboxCounts.total > outboxCounts.blocked || hasDeferredWrites,
+          outboxCounts.total > outboxCounts.blocked ||
+          hasDeferredWrites ||
+          _store.rescanRequest != null,
     );
   }
 
@@ -824,9 +949,7 @@ final class CloudSyncProvider extends ChangeNotifier
   void _connect(CloudSyncAccountSession session, {CloudSyncClient? client}) {
     _sessionEpoch++;
     _client?.close(force: true);
-    final nextClient =
-        client ??
-        CloudSyncClient(baseUrl: session.baseUrl, token: session.token);
+    final nextClient = client ?? CloudSyncClient(token: session.token);
     nextClient.setToken(session.token);
     _client = nextClient;
     final attachmentSyncService = CloudAttachmentSyncService(
@@ -859,12 +982,25 @@ final class CloudSyncProvider extends ChangeNotifier
       writeJournal: _writeJournal,
       adapters: adapters,
       synchronize: () async {
-        final result = await coordinator.synchronize();
+        final rescanRequest = _store.rescanRequest;
+        if (rescanRequest?.hasActiveWrites == true) {
+          throw StateError('本地批量写入尚未完成，不能解决同步冲突');
+        }
+        final result = await coordinator.synchronize(
+          rescanEntityTypes: rescanRequest?.entityTypes ?? const <String>{},
+          localAuthoritativeEntityTypes:
+              rescanRequest?.localAuthoritativeEntityTypes ?? const <String>{},
+        );
         final recovery = await _writeJournal.recover();
         if (!_disposed && identical(_session, session)) {
           _lastRun = result.copyWith(
             deferredWriteCount: recovery.deferredCount,
           );
+          if (_initialHydrationState ==
+              CloudSyncInitialHydrationState.pending) {
+            _initialHydrationState = CloudSyncInitialHydrationState.completed;
+            _notify();
+          }
         }
       },
     );

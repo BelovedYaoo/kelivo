@@ -56,58 +56,317 @@ void main() {
     expect(reopened, first);
   });
 
-  test('配置重扫代次随机生成且只能比较删除当前值', () async {
-    final first = await store.createConfigRescanGeneration(
+  test('重扫请求跨重启持久化、合并实体类型且只能比较删除当前代次', () async {
+    final first = await store.markRescanRequired(
+      entityTypes: const <String>{'assistant'},
       createGeneration: () => 'generation-1',
     );
-    final second = await store.createConfigRescanGeneration(
+
+    await store.close();
+    store = await CloudSyncStore.open(boxName: 'cloud-sync-store-test');
+    final second = await store.markRescanRequired(
+      entityTypes: const <String>{'message'},
       createGeneration: () => 'generation-2',
     );
 
-    expect(first, 'generation-1');
-    expect(second, 'generation-2');
-    expect(store.configRescanGeneration, 'generation-2');
-    expect(await store.consumeConfigRescanGeneration('generation-1'), isFalse);
-    expect(store.configRescanGeneration, 'generation-2');
-    expect(await store.consumeConfigRescanGeneration('generation-2'), isTrue);
-    expect(store.configRescanGeneration, isNull);
+    expect(first.generation, 'generation-1');
+    expect(first.entityTypes, const <String>{'assistant'});
+    expect(second.generation, 'generation-2');
+    expect(second.entityTypes, const <String>{'assistant', 'message'});
+    expect(store.rescanRequest, second);
+    expect(await store.consumeRescanRequest('generation-1'), isFalse);
+    expect(store.rescanRequest, second);
+    expect(await store.consumeRescanRequest('generation-2'), isTrue);
+    expect(store.rescanRequest, isNull);
   });
 
-  test('配置重扫代次生成失败时保留已有值', () async {
-    await store.createConfigRescanGeneration(
+  test('默认 Store 首次普通标记先完成协议初始化并保留请求', () async {
+    expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+
+    await CloudSyncStore.markDefaultRescanRequired(const <String>{'assistant'});
+
+    expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+    final reopened = await CloudSyncStore.open();
+    try {
+      expect(reopened.rescanRequest?.entityTypes, const <String>{'assistant'});
+      expect(reopened.rescanRequest?.localAuthoritativeEntityTypes, isEmpty);
+      expect(reopened.rescanRequest?.activeWriteIds, isEmpty);
+    } finally {
+      await reopened.close();
+    }
+  });
+
+  test('默认 Store 首次权威写入经重启恢复后保留权威请求', () async {
+    expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+    var writeCount = 0;
+
+    final result = await CloudSyncStore.runWithDefaultRescanWrite<String>(
+      entityTypes: const <String>{'conversation', 'message'},
+      localAuthoritativeEntityTypes: const <String>{'message'},
+      keepActiveOnSuccess: true,
+      write: () async {
+        writeCount++;
+        return 'written';
+      },
+    );
+
+    expect(result, 'written');
+    expect(writeCount, 1);
+    expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+    final reopened = await CloudSyncStore.open();
+    try {
+      expect(reopened.rescanRequest?.entityTypes, const <String>{
+        'conversation',
+        'message',
+      });
+      expect(
+        reopened.rescanRequest?.localAuthoritativeEntityTypes,
+        const <String>{'message'},
+      );
+      expect(reopened.rescanRequest?.activeWriteIds, isEmpty);
+    } finally {
+      await reopened.close();
+    }
+  });
+
+  test('活动重扫写入期间不能消费请求且保留原请求', () async {
+    await store.beginRescanWrite(
+      entityTypes: const <String>{'message'},
+      createId: () => 'write-active',
+    );
+    final active = store.rescanRequest!;
+
+    expect(await store.consumeRescanRequest(active.generation), isFalse);
+    expect(store.rescanRequest, active);
+    expect(active.activeWriteIds, const <String>{'write-active'});
+  });
+
+  test('完成重扫写入后旋转代次并保留待扫描请求', () async {
+    final lease = await store.beginRescanWrite(
+      entityTypes: const <String>{'assistant', 'message'},
+      createId: () => 'write-finished',
+    );
+    final active = store.rescanRequest!;
+
+    expect(await store.completeRescanWrite(lease), isTrue);
+    final pending = store.rescanRequest!;
+    expect(pending.generation, isNot(active.generation));
+    expect(pending.entityTypes, active.entityTypes);
+    expect(pending.activeWriteIds, isEmpty);
+    expect(await store.consumeRescanRequest(active.generation), isFalse);
+    expect(store.rescanRequest, pending);
+  });
+
+  test('重启时将中断的重扫写入恢复为待扫描请求', () async {
+    await store.beginRescanWrite(
+      entityTypes: const <String>{'conversation', 'message'},
+      createId: () => 'write-interrupted',
+    );
+    final interrupted = store.rescanRequest!;
+
+    await store.close();
+    store = await CloudSyncStore.open(boxName: 'cloud-sync-store-test');
+
+    final recovered = store.rescanRequest!;
+    expect(recovered.generation, isNot(interrupted.generation));
+    expect(recovered.entityTypes, interrupted.entityTypes);
+    expect(recovered.activeWriteIds, isEmpty);
+  });
+
+  test('重扫请求参数无效时保留已有请求', () async {
+    final stable = await store.markRescanRequired(
+      entityTypes: const <String>{'assistant'},
       createGeneration: () => 'generation-stable',
     );
 
     await expectLater(
-      store.createConfigRescanGeneration(createGeneration: () => '  '),
+      store.markRescanRequired(
+        entityTypes: const <String>{'message'},
+        createGeneration: () => '  ',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      store.markRescanRequired(
+        entityTypes: const <String>{'unsupported'},
+        createGeneration: () => 'generation-invalid-type',
+      ),
       throwsA(isA<FormatException>()),
     );
 
-    expect(store.configRescanGeneration, 'generation-stable');
+    expect(store.rescanRequest, stable);
+  });
+
+  test('本地权威范围必须属于本次写入而不能借用历史重扫范围', () async {
+    final stable = await store.markRescanRequired(
+      entityTypes: const <String>{'assistant'},
+      createGeneration: () => 'generation-stable-authority',
+    );
+
+    await expectLater(
+      store.markRescanRequired(
+        entityTypes: const <String>{'message'},
+        localAuthoritativeEntityTypes: const <String>{'assistant'},
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      store.beginRescanWrite(
+        entityTypes: const <String>{'message'},
+        localAuthoritativeEntityTypes: const <String>{'assistant'},
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    expect(store.rescanRequest, stable);
+  });
+
+  test('不同账号 Store 的重扫请求相互隔离且只能消费各自代次', () async {
+    final accountBStore = await CloudSyncStore.open(
+      boxName: 'cloud-sync-store-account-b-test',
+    );
+    try {
+      final accountARequest = await store.markRescanRequired(
+        entityTypes: const <String>{'assistant'},
+        localAuthoritativeEntityTypes: const <String>{'assistant'},
+        createGeneration: () => 'account-a-generation',
+      );
+      final accountBRequest = await accountBStore.markRescanRequired(
+        entityTypes: const <String>{'message'},
+        createGeneration: () => 'account-b-generation',
+      );
+
+      expect(store.rescanRequest, accountARequest);
+      expect(accountBStore.rescanRequest, accountBRequest);
+      expect(accountARequest.localAuthoritativeEntityTypes, const <String>{
+        'assistant',
+      });
+      expect(accountBRequest.localAuthoritativeEntityTypes, isEmpty);
+      expect(
+        await store.consumeRescanRequest(accountBRequest.generation),
+        isFalse,
+      );
+      expect(
+        await accountBStore.consumeRescanRequest(accountARequest.generation),
+        isFalse,
+      );
+      expect(
+        await store.consumeRescanRequest(accountARequest.generation),
+        isTrue,
+      );
+      expect(store.rescanRequest, isNull);
+      expect(accountBStore.rescanRequest, accountBRequest);
+      expect(
+        await accountBStore.consumeRescanRequest(accountBRequest.generation),
+        isTrue,
+      );
+    } finally {
+      await accountBStore.close();
+    }
+  });
+
+  test('普通重扫不提升本地权威集合而成功权威写入才提升', () async {
+    final ordinary = await store.markRescanRequired(
+      entityTypes: const <String>{'assistant'},
+      createGeneration: () => 'ordinary-generation',
+    );
+
+    expect(ordinary.localAuthoritativeEntityTypes, isEmpty);
+
+    final lease = await store.beginRescanWrite(
+      entityTypes: const <String>{'message'},
+      localAuthoritativeEntityTypes: const <String>{'message'},
+      createId: () => 'authoritative-write',
+    );
+    expect(store.rescanRequest!.localAuthoritativeEntityTypes, isEmpty);
+
+    expect(await store.completeRescanWrite(lease), isTrue);
+    expect(store.rescanRequest!.localAuthoritativeEntityTypes, const <String>{
+      'message',
+    });
+  });
+
+  test('取消或中断权威写入只恢复普通重扫而不提升权威集合', () async {
+    await store.markRescanRequired(
+      entityTypes: const <String>{'assistant'},
+      createGeneration: () => 'ordinary-before-abort',
+    );
+    final abortedLease = await store.beginRescanWrite(
+      entityTypes: const <String>{'message'},
+      localAuthoritativeEntityTypes: const <String>{'message'},
+      createId: () => 'authoritative-aborted',
+    );
+
+    expect(await store.abortRescanWrite(abortedLease), isTrue);
+    final afterAbort = store.rescanRequest!;
+    expect(afterAbort.activeWriteIds, isEmpty);
+    expect(afterAbort.localAuthoritativeEntityTypes, isEmpty);
+
+    await store.beginRescanWrite(
+      entityTypes: const <String>{'conversation'},
+      localAuthoritativeEntityTypes: const <String>{'conversation'},
+      createId: () => 'authoritative-interrupted',
+    );
+    await store.close();
+    store = await CloudSyncStore.open(boxName: 'cloud-sync-store-test');
+
+    final recovered = store.rescanRequest!;
+    expect(recovered.entityTypes, const <String>{
+      'assistant',
+      'conversation',
+      'message',
+    });
+    expect(recovered.activeWriteIds, isEmpty);
+    expect(recovered.localAuthoritativeEntityTypes, isEmpty);
+  });
+
+  test('keepActiveOnSuccess 在重启恢复后保留已成功的本地权威集合', () async {
+    final lease = await store.beginRescanWrite(
+      entityTypes: const <String>{'conversation', 'message'},
+      localAuthoritativeEntityTypes: const <String>{'conversation', 'message'},
+      createId: () => 'authoritative-kept-active',
+    );
+
+    expect(await store.completeRescanWrite(lease, keepActive: true), isTrue);
+    final keptActive = store.rescanRequest!;
+    expect(keptActive.activeWriteIds, <String>{lease.writeId});
+    expect(keptActive.localAuthoritativeEntityTypes, const <String>{
+      'conversation',
+      'message',
+    });
+
+    await store.close();
+    store = await CloudSyncStore.open(boxName: 'cloud-sync-store-test');
+
+    final recovered = store.rescanRequest!;
+    expect(recovered.activeWriteIds, isEmpty);
+    expect(recovered.localAuthoritativeEntityTypes, const <String>{
+      'conversation',
+      'message',
+    });
   });
 
   test('同目录重复初始化 Hive 时已打开的同步 Store 保持可用', () async {
-    await store.saveLastBaseUrl('https://sync.example.com');
+    final journalScopeId = await store.loadOrCreateJournalScopeId(
+      createId: () => 'duplicate-init-installation',
+    );
 
     await Hive.initFlutter(tempDirectory.path);
 
     await store.close();
     store = await CloudSyncStore.open(boxName: 'cloud-sync-store-test');
-    expect(store.lastBaseUrl, 'https://sync.example.com');
-    await store.saveLastBaseUrl('https://sync-2.example.com');
-    expect(store.lastBaseUrl, 'https://sync-2.example.com');
+    expect(await store.loadOrCreateJournalScopeId(), journalScopeId);
   });
 
-  test('本地协议首次或旧版启动清理同步状态并保留登录与安装身份', () async {
-    final session = _session();
-    await store.saveSession(session);
-    await store.saveLastBaseUrl('https://sync.example.com');
+  test('本地协议首次或旧版启动清理同步状态并保留安装身份', () async {
     final journalScopeId = await store.loadOrCreateJournalScopeId(
       createId: () => 'installation-stable',
     );
     await store.close();
 
     final raw = await Hive.openBox<String>('cloud-sync-store-test');
+    await raw.put('active-session', 'legacy-session');
+    await raw.put('last-base-url', 'https://legacy.invalid');
     await raw.delete('local-sync-protocol-version');
     await raw.put('account:legacy:cursor:state', 'legacy-account-state');
     await raw.put('journal:legacy:write-intent:item', 'legacy-journal-state');
@@ -115,15 +374,29 @@ void main() {
 
     store = await CloudSyncStore.open(boxName: 'cloud-sync-store-test');
     final migrated = Hive.box<String>('cloud-sync-store-test');
-    expect(store.activeSession?.userId, session.userId);
-    expect(store.lastBaseUrl, 'https://sync.example.com');
+    expect(migrated.containsKey('active-session'), isFalse);
+    expect(migrated.containsKey('last-base-url'), isFalse);
     expect(await store.loadOrCreateJournalScopeId(), journalScopeId);
-    expect(migrated.get('local-sync-protocol-version'), '2');
+    expect(migrated.get('local-sync-protocol-version'), '3');
     expect(
       migrated.keys.whereType<String>().where(
         (key) => key.startsWith('account:') || key.startsWith('journal:'),
       ),
       isEmpty,
+    );
+  });
+
+  test('当前协议启动仍清除废弃的服务地址状态', () async {
+    await store.close();
+    final raw = await Hive.openBox<String>('cloud-sync-store-test');
+    await raw.put('local-sync-protocol-version', '3');
+    await raw.put('last-base-url', 'https://legacy.invalid');
+    await raw.close();
+
+    store = await CloudSyncStore.open(boxName: 'cloud-sync-store-test');
+    expect(
+      Hive.box<String>('cloud-sync-store-test').containsKey('last-base-url'),
+      isFalse,
     );
   });
 
@@ -137,7 +410,7 @@ void main() {
 
     store = await CloudSyncStore.open(boxName: 'cloud-sync-store-test');
     final migrated = Hive.box<String>('cloud-sync-store-test');
-    expect(migrated.get('local-sync-protocol-version'), '2');
+    expect(migrated.get('local-sync-protocol-version'), '3');
     expect(migrated.get('account:legacy:shadow:item'), isNull);
     expect(migrated.get('journal:legacy:write-intent:item'), isNull);
   });
@@ -145,7 +418,7 @@ void main() {
   test('高于当前的本地协议版本拒绝打开且不清理未知状态', () async {
     await store.close();
     final raw = await Hive.openBox<String>('cloud-sync-store-test');
-    await raw.put('local-sync-protocol-version', '3');
+    await raw.put('local-sync-protocol-version', '4');
     await raw.put('account:future:state', 'future-state');
     await raw.put('journal:future:state', 'future-journal-state');
     await raw.close();
@@ -156,7 +429,7 @@ void main() {
     );
 
     final reopened = await Hive.openBox<String>('cloud-sync-store-test');
-    expect(reopened.get('local-sync-protocol-version'), '3');
+    expect(reopened.get('local-sync-protocol-version'), '4');
     expect(reopened.get('account:future:state'), 'future-state');
     expect(reopened.get('journal:future:state'), 'future-journal-state');
     await reopened.close();
@@ -1059,9 +1332,11 @@ CloudSyncOutboxMutation _createMutation({
   );
 }
 
-CloudSyncAccountSession _session() {
+CloudSyncAccountSession _session({
+  String baseUrl = 'https://sync.example.com',
+}) {
   return CloudSyncAccountSession(
-    baseUrl: 'https://sync.example.com',
+    baseUrl: baseUrl,
     token: 'token',
     userId: 'user-1',
     loginName: 'user',

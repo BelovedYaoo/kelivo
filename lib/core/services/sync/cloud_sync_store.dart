@@ -1,9 +1,188 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:hive/hive.dart';
 import 'package:uuid/uuid.dart';
 
 import 'cloud_sync_types.dart';
+
+final class CloudSyncRescanRequest {
+  CloudSyncRescanRequest({
+    required String generation,
+    required Iterable<String> entityTypes,
+    Iterable<String> localAuthoritativeEntityTypes = const <String>[],
+    Iterable<String> activeWriteIds = const <String>[],
+  }) : generation = generation.trim(),
+       entityTypes = Set<String>.unmodifiable(
+         entityTypes.map((type) => type.trim()),
+       ),
+       localAuthoritativeEntityTypes = Set<String>.unmodifiable(
+         localAuthoritativeEntityTypes.map((type) => type.trim()),
+       ),
+       activeWriteIds = Set<String>.unmodifiable(
+         activeWriteIds.map((id) => id.trim()),
+       ) {
+    if (this.generation.isEmpty) {
+      throw const FormatException('重扫请求代次不能为空');
+    }
+    if (this.entityTypes.isEmpty || this.entityTypes.contains('')) {
+      throw const FormatException('重扫请求实体类型不能为空');
+    }
+    if (this.activeWriteIds.contains('')) {
+      throw const FormatException('重扫写入标识不能为空');
+    }
+    if (!this.entityTypes.containsAll(this.localAuthoritativeEntityTypes)) {
+      throw const FormatException('本地权威实体类型必须属于重扫范围');
+    }
+    final unsupported = this.entityTypes
+        .where((type) => !isSupportedCloudSyncEntityType(type))
+        .toList(growable: false);
+    if (unsupported.isNotEmpty) {
+      throw FormatException('重扫请求包含不支持的实体类型：${unsupported.join(', ')}');
+    }
+  }
+
+  factory CloudSyncRescanRequest.fromJson(CloudSyncJsonMap json) {
+    final version = json['version'];
+    if (version != 1 && version != 2 && version != 3) {
+      throw const FormatException('重扫请求版本无效');
+    }
+    final generation = json['generation'];
+    final rawEntityTypes = json['entityTypes'];
+    if (generation is! String || rawEntityTypes is! List<Object?>) {
+      throw const FormatException('重扫请求内容无效');
+    }
+    final entityTypes = <String>[];
+    for (final value in rawEntityTypes) {
+      if (value is! String) {
+        throw const FormatException('重扫请求实体类型无效');
+      }
+      entityTypes.add(value);
+    }
+    final rawActiveWriteIds = version == 2 || version == 3
+        ? json['activeWriteIds']
+        : const <Object?>[];
+    if (rawActiveWriteIds is! List<Object?>) {
+      throw const FormatException('重扫写入状态无效');
+    }
+    final activeWriteIds = <String>[];
+    for (final value in rawActiveWriteIds) {
+      if (value is! String) {
+        throw const FormatException('重扫写入标识无效');
+      }
+      activeWriteIds.add(value);
+    }
+    final rawLocalAuthoritativeEntityTypes = version == 3
+        ? json['localAuthoritativeEntityTypes']
+        : const <Object?>[];
+    if (rawLocalAuthoritativeEntityTypes is! List<Object?>) {
+      throw const FormatException('本地权威实体类型状态无效');
+    }
+    final localAuthoritativeEntityTypes = <String>[];
+    for (final value in rawLocalAuthoritativeEntityTypes) {
+      if (value is! String) {
+        throw const FormatException('本地权威实体类型无效');
+      }
+      localAuthoritativeEntityTypes.add(value);
+    }
+    return CloudSyncRescanRequest(
+      generation: generation,
+      entityTypes: entityTypes,
+      localAuthoritativeEntityTypes: localAuthoritativeEntityTypes,
+      activeWriteIds: activeWriteIds,
+    );
+  }
+
+  final String generation;
+  final Set<String> entityTypes;
+  final Set<String> localAuthoritativeEntityTypes;
+  final Set<String> activeWriteIds;
+
+  bool get hasActiveWrites => activeWriteIds.isNotEmpty;
+
+  CloudSyncJsonMap toJson() {
+    final sortedEntityTypes = entityTypes.toList(growable: false)..sort();
+    final sortedLocalAuthoritativeEntityTypes =
+        localAuthoritativeEntityTypes.toList(growable: false)..sort();
+    return <String, Object?>{
+      'version': 3,
+      'generation': generation,
+      'entityTypes': sortedEntityTypes,
+      'localAuthoritativeEntityTypes': sortedLocalAuthoritativeEntityTypes,
+      'activeWriteIds': activeWriteIds.toList(growable: false)..sort(),
+    };
+  }
+
+  @override
+  bool operator ==(Object other) {
+    return other is CloudSyncRescanRequest &&
+        generation == other.generation &&
+        entityTypes.length == other.entityTypes.length &&
+        entityTypes.every(other.entityTypes.contains) &&
+        localAuthoritativeEntityTypes.length ==
+            other.localAuthoritativeEntityTypes.length &&
+        localAuthoritativeEntityTypes.every(
+          other.localAuthoritativeEntityTypes.contains,
+        ) &&
+        activeWriteIds.length == other.activeWriteIds.length &&
+        activeWriteIds.every(other.activeWriteIds.contains);
+  }
+
+  @override
+  int get hashCode {
+    final sortedEntityTypes = entityTypes.toList(growable: false)..sort();
+    final sortedLocalAuthoritativeEntityTypes =
+        localAuthoritativeEntityTypes.toList(growable: false)..sort();
+    final sortedActiveWriteIds = activeWriteIds.toList(growable: false)..sort();
+    return Object.hash(
+      generation,
+      Object.hashAll(sortedEntityTypes),
+      Object.hashAll(sortedLocalAuthoritativeEntityTypes),
+      Object.hashAll(sortedActiveWriteIds),
+    );
+  }
+}
+
+final class CloudSyncRescanWriteLease {
+  CloudSyncRescanWriteLease(
+    String writeId, {
+    Iterable<String> localAuthoritativeEntityTypes = const <String>[],
+  }) : writeId = writeId.trim(),
+       localAuthoritativeEntityTypes = Set<String>.unmodifiable(
+         localAuthoritativeEntityTypes.map((type) => type.trim()),
+       ) {
+    if (this.writeId.isEmpty) {
+      throw const FormatException('重扫写入标识不能为空');
+    }
+    if (this.localAuthoritativeEntityTypes.contains('')) {
+      throw const FormatException('本地权威实体类型不能为空');
+    }
+  }
+
+  final String writeId;
+  final Set<String> localAuthoritativeEntityTypes;
+}
+
+final class _AsyncMutex {
+  final Object _zoneKey = Object();
+  Future<void> _tail = Future<void>.value();
+
+  Future<T> run<T>(Future<T> Function() action) async {
+    if (identical(Zone.current[_zoneKey], this)) return action();
+    final previous = _tail;
+    final released = Completer<void>();
+    _tail = released.future;
+    await previous;
+    try {
+      return await runZoned(
+        action,
+        zoneValues: <Object, Object>{_zoneKey: this},
+      );
+    } finally {
+      released.complete();
+    }
+  }
+}
 
 final class _CloudSyncOutboxSnapshot {
   _CloudSyncOutboxSnapshot(Iterable<CloudSyncOutboxMutation> mutations) {
@@ -115,16 +294,63 @@ final class CloudSyncStore {
   CloudSyncStore._(this._box);
 
   static const defaultBoxName = 'cloud_sync_state_v1';
-  static const _sessionKey = 'active-session';
-  static const _lastBaseUrlKey = 'last-base-url';
+  static const Set<String> chatRescanEntityTypes = <String>{
+    'conversation',
+    'turn',
+    'message',
+    'message-selection',
+    'tool-event',
+    'thought-signature',
+  };
+  static const Set<String> configRescanEntityTypes = <String>{
+    'provider',
+    'assistant',
+    'memory',
+    'world-book',
+    'quick-phrase',
+    'search-service',
+    'network-tts',
+    'mcp-server',
+    'instruction-injection',
+    'user-preference',
+  };
+  static const Set<String> allRescanEntityTypes = <String>{
+    ...chatRescanEntityTypes,
+    ...configRescanEntityTypes,
+  };
+  static const _legacySessionKey = 'active-session';
+  static const _legacyLastBaseUrlKey = 'last-base-url';
   static const _journalScopeIdKey = 'journal-scope-id';
+  static const _rescanRequestKey = 'rescan-request';
   static const _configRescanGenerationKey = 'config-rescan-generation';
   static const _localProtocolVersionKey = 'local-sync-protocol-version';
-  static const _localProtocolVersion = 2;
+  static const _localProtocolVersion = 3;
+
+  static void _validateLocalAuthoritativeScope({
+    required Set<String> entityTypes,
+    required Set<String> localAuthoritativeEntityTypes,
+  }) {
+    final normalizedEntityTypes = entityTypes
+        .map((type) => type.trim())
+        .toSet();
+    final normalizedAuthoritativeTypes = localAuthoritativeEntityTypes
+        .map((type) => type.trim())
+        .toSet();
+    if (!normalizedEntityTypes.containsAll(normalizedAuthoritativeTypes)) {
+      throw const FormatException('本地权威实体类型必须属于本次重扫范围');
+    }
+  }
 
   final Box<String> _box;
+  static final Expando<_AsyncMutex> _rescanLocks = Expando<_AsyncMutex>();
+  static final Expando<_AsyncMutex> _rescanOperationGates =
+      Expando<_AsyncMutex>();
   final Map<String, _CloudSyncOutboxSnapshot> _activeOutboxSnapshots =
       <String, _CloudSyncOutboxSnapshot>{};
+
+  _AsyncMutex get _rescanLock => _rescanLocks[_box] ??= _AsyncMutex();
+  _AsyncMutex get _rescanOperationGate =>
+      _rescanOperationGates[_box] ??= _AsyncMutex();
 
   static Future<CloudSyncStore> open({String boxName = defaultBoxName}) async {
     if (boxName.trim().isEmpty) {
@@ -134,6 +360,9 @@ final class CloudSyncStore {
     final store = CloudSyncStore._(box);
     try {
       await store._migrateLocalProtocolState();
+      await store._removeLegacySessionState();
+      await store._migrateLegacyConfigRescan();
+      await store._recoverInterruptedRescanWrites();
       return store;
     } catch (_) {
       await box.close();
@@ -141,18 +370,58 @@ final class CloudSyncStore {
     }
   }
 
-  static Future<void> markDefaultConfigRescanRequired() async {
+  static Future<void> markDefaultRescanRequired(Set<String> entityTypes) async {
     final wasOpen = Hive.isBoxOpen(defaultBoxName);
-    final box = wasOpen
-        ? Hive.box<String>(defaultBoxName)
-        : await Hive.openBox<String>(defaultBoxName);
+    final store = wasOpen
+        ? CloudSyncStore._(Hive.box<String>(defaultBoxName))
+        : await CloudSyncStore.open();
     try {
-      await CloudSyncStore._(box).createConfigRescanGeneration();
+      await store.markRescanRequired(entityTypes: entityTypes);
     } finally {
       if (!wasOpen) {
-        await box.close();
+        await store.close();
       }
     }
+  }
+
+  static Future<T> runWithDefaultRescanWrite<T>({
+    required Set<String> entityTypes,
+    Set<String> localAuthoritativeEntityTypes = const <String>{},
+    required Future<T> Function() write,
+    bool keepActiveOnSuccess = false,
+  }) async {
+    final wasOpen = Hive.isBoxOpen(defaultBoxName);
+    final store = wasOpen
+        ? CloudSyncStore._(Hive.box<String>(defaultBoxName))
+        : await CloudSyncStore.open();
+    try {
+      return await store._rescanOperationGate.run(() async {
+        final lease = await store.beginRescanWrite(
+          entityTypes: entityTypes,
+          localAuthoritativeEntityTypes: localAuthoritativeEntityTypes,
+        );
+        try {
+          final result = await write();
+          final completed = await store.completeRescanWrite(
+            lease,
+            keepActive: keepActiveOnSuccess,
+          );
+          if (!completed) {
+            throw StateError('重扫写入租约在提交前失效');
+          }
+          return result;
+        } catch (_) {
+          await store.abortRescanWrite(lease);
+          rethrow;
+        }
+      });
+    } finally {
+      if (!wasOpen) await store.close();
+    }
+  }
+
+  Future<T> runWithRescanStable<T>(Future<T> Function() action) {
+    return _rescanOperationGate.run(action);
   }
 
   Future<void> _migrateLocalProtocolState() async {
@@ -171,48 +440,180 @@ final class CloudSyncStore {
     if (staleKeys.isNotEmpty) {
       await _box.deleteAll(staleKeys);
     }
+    await _box.delete(_rescanRequestKey);
     await _box.put(_localProtocolVersionKey, _localProtocolVersion.toString());
   }
 
-  CloudSyncAccountSession? get activeSession {
-    return _read(_sessionKey, CloudSyncAccountSession.fromJson);
+  Future<void> _removeLegacySessionState() async {
+    final legacyKeys = <String>[
+      if (_box.containsKey(_legacySessionKey)) _legacySessionKey,
+      if (_box.containsKey(_legacyLastBaseUrlKey)) _legacyLastBaseUrlKey,
+    ];
+    if (legacyKeys.isNotEmpty) {
+      await _box.deleteAll(legacyKeys);
+    }
   }
 
-  Future<void> saveSession(CloudSyncAccountSession session) {
-    return _write(_sessionKey, session.toJson());
+  CloudSyncRescanRequest? get rescanRequest {
+    return _read(_rescanRequestKey, CloudSyncRescanRequest.fromJson);
   }
 
-  Future<void> clearSession() => _box.delete(_sessionKey);
+  Future<CloudSyncRescanRequest> markRescanRequired({
+    required Set<String> entityTypes,
+    Set<String> localAuthoritativeEntityTypes = const <String>{},
+    String Function()? createGeneration,
+  }) {
+    return _rescanLock.run(() async {
+      _validateLocalAuthoritativeScope(
+        entityTypes: entityTypes,
+        localAuthoritativeEntityTypes: localAuthoritativeEntityTypes,
+      );
+      final generation = (createGeneration ?? const Uuid().v4)().trim();
+      if (generation.isEmpty) {
+        throw const FormatException('重扫请求代次不能为空');
+      }
+      final current = rescanRequest;
+      final request = CloudSyncRescanRequest(
+        generation: generation,
+        entityTypes: <String>{...?current?.entityTypes, ...entityTypes},
+        localAuthoritativeEntityTypes: <String>{
+          ...?current?.localAuthoritativeEntityTypes,
+          ...localAuthoritativeEntityTypes,
+        },
+        activeWriteIds: current?.activeWriteIds ?? const <String>{},
+      );
+      await _write(_rescanRequestKey, request.toJson());
+      return request;
+    });
+  }
 
-  String? get configRescanGeneration {
-    final persisted = _box.get(_configRescanGenerationKey);
-    if (persisted == null) return null;
-    if (persisted.trim().isEmpty) {
+  Future<CloudSyncRescanWriteLease> beginRescanWrite({
+    required Set<String> entityTypes,
+    Set<String> localAuthoritativeEntityTypes = const <String>{},
+    String Function()? createId,
+  }) {
+    return _rescanLock.run(() async {
+      _validateLocalAuthoritativeScope(
+        entityTypes: entityTypes,
+        localAuthoritativeEntityTypes: localAuthoritativeEntityTypes,
+      );
+      final writeId = (createId ?? const Uuid().v4)().trim();
+      if (writeId.isEmpty) {
+        throw const FormatException('重扫写入标识不能为空');
+      }
+      final current = rescanRequest;
+      if (current?.activeWriteIds.contains(writeId) == true) {
+        throw StateError('重扫写入标识重复：$writeId');
+      }
+      final request = CloudSyncRescanRequest(
+        generation: const Uuid().v4(),
+        entityTypes: <String>{...?current?.entityTypes, ...entityTypes},
+        localAuthoritativeEntityTypes:
+            current?.localAuthoritativeEntityTypes ?? const <String>{},
+        activeWriteIds: <String>{...?current?.activeWriteIds, writeId},
+      );
+      await _write(_rescanRequestKey, request.toJson());
+      return CloudSyncRescanWriteLease(
+        writeId,
+        localAuthoritativeEntityTypes: localAuthoritativeEntityTypes,
+      );
+    });
+  }
+
+  Future<bool> completeRescanWrite(
+    CloudSyncRescanWriteLease lease, {
+    bool keepActive = false,
+  }) {
+    return _rescanLock.run(() async {
+      final current = rescanRequest;
+      if (current == null || !current.activeWriteIds.contains(lease.writeId)) {
+        return false;
+      }
+      final request = CloudSyncRescanRequest(
+        // 完成时旋转代次，让任何与本次写入重叠的旧扫描都无法消费请求。
+        generation: const Uuid().v4(),
+        entityTypes: current.entityTypes,
+        localAuthoritativeEntityTypes: <String>{
+          ...current.localAuthoritativeEntityTypes,
+          ...lease.localAuthoritativeEntityTypes,
+        },
+        activeWriteIds: keepActive
+            ? current.activeWriteIds
+            : current.activeWriteIds.where((id) => id != lease.writeId),
+      );
+      await _write(_rescanRequestKey, request.toJson());
+      return true;
+    });
+  }
+
+  Future<bool> abortRescanWrite(CloudSyncRescanWriteLease lease) {
+    return _rescanLock.run(() async {
+      final current = rescanRequest;
+      if (current == null || !current.activeWriteIds.contains(lease.writeId)) {
+        return false;
+      }
+      await _write(
+        _rescanRequestKey,
+        CloudSyncRescanRequest(
+          generation: const Uuid().v4(),
+          entityTypes: current.entityTypes,
+          localAuthoritativeEntityTypes: current.localAuthoritativeEntityTypes,
+          activeWriteIds: current.activeWriteIds.where(
+            (id) => id != lease.writeId,
+          ),
+        ).toJson(),
+      );
+      return true;
+    });
+  }
+
+  Future<bool> consumeRescanRequest(String expectedGeneration) {
+    return _rescanLock.run(() async {
+      final normalized = expectedGeneration.trim();
+      if (normalized.isEmpty) {
+        throw const FormatException('待消费的重扫请求代次不能为空');
+      }
+      final current = rescanRequest;
+      if (current?.generation != normalized || current!.hasActiveWrites) {
+        return false;
+      }
+      // 同步期间可能再次导入，比较删除可避免旧任务清掉更新后的代次。
+      await _box.delete(_rescanRequestKey);
+      return true;
+    });
+  }
+
+  Future<void> _migrateLegacyConfigRescan() async {
+    final generation = _box.get(_configRescanGenerationKey)?.trim();
+    if (generation == null) return;
+    if (generation.isEmpty) {
       throw const FormatException('配置重扫代次无效');
     }
-    return persisted;
-  }
-
-  Future<String> createConfigRescanGeneration({
-    String Function()? createGeneration,
-  }) async {
-    final generation = (createGeneration ?? const Uuid().v4)().trim();
-    if (generation.isEmpty) {
-      throw const FormatException('配置重扫代次不能为空');
+    if (rescanRequest == null) {
+      final request = CloudSyncRescanRequest(
+        generation: generation,
+        entityTypes: configRescanEntityTypes,
+      );
+      await _write(_rescanRequestKey, request.toJson());
     }
-    await _box.put(_configRescanGenerationKey, generation);
-    return generation;
-  }
-
-  Future<bool> consumeConfigRescanGeneration(String expected) async {
-    final normalized = expected.trim();
-    if (normalized.isEmpty) {
-      throw const FormatException('待消费的配置重扫代次不能为空');
-    }
-    if (configRescanGeneration != normalized) return false;
-    // 同步期间可能再次导入，比较删除可避免旧任务清掉更新后的代次。
     await _box.delete(_configRescanGenerationKey);
-    return true;
+  }
+
+  Future<void> _recoverInterruptedRescanWrites() async {
+    final current = rescanRequest;
+    if (current == null || !current.hasActiveWrites) return;
+    await _write(
+      _rescanRequestKey,
+      CloudSyncRescanRequest(
+        generation: const Uuid().v4(),
+        entityTypes: current.entityTypes,
+        localAuthoritativeEntityTypes: current.localAuthoritativeEntityTypes,
+      ).toJson(),
+    );
+  }
+
+  static Future<void> markDefaultConfigRescanRequired() {
+    return markDefaultRescanRequired(configRescanEntityTypes);
   }
 
   Future<String> loadOrCreateJournalScopeId({
@@ -300,15 +701,6 @@ final class CloudSyncStore {
       }
       await _box.delete(_writeIntentKey(intent));
     }
-  }
-
-  String? get lastBaseUrl {
-    final raw = _box.get(_lastBaseUrlKey);
-    return raw == null ? null : normalizeCloudSyncBaseUrl(raw);
-  }
-
-  Future<void> saveLastBaseUrl(String baseUrl) {
-    return _box.put(_lastBaseUrlKey, normalizeCloudSyncBaseUrl(baseUrl));
   }
 
   bool isPaused(CloudSyncAccountSession session) {

@@ -19,7 +19,8 @@ import '../tts/tts_text_selection.dart';
 import 'config_sync_keys.dart';
 import 'sync_codec.dart';
 
-class ConfigSyncAdapter implements SyncEntityAdapter {
+class ConfigSyncAdapter
+    implements SyncEntityAdapter, RemoteSyncTransactionAdapter {
   ConfigSyncAdapter({
     required SettingsProvider settingsProvider,
     required AssistantProvider assistantProvider,
@@ -54,6 +55,10 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
 
   static const String _profilePreference = 'profile:default';
   static const String _providerGroupingPreference = 'provider-grouping:default';
+  static final Set<SyncEntityKey> _remoteTransactionKeys =
+      Set<SyncEntityKey>.unmodifiable(<SyncEntityKey>[
+        ConfigSyncKeys.providerGrouping,
+      ]);
   static const String _assistantSelectionPreference =
       'assistant-selection:default';
   static const String _worldBookActivityPreference =
@@ -71,6 +76,9 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
   final InstructionInjectionProvider _injections;
   final WorldBookProvider _worldBooks;
   final UserProvider _user;
+  int _remoteBatchDepth = 0;
+  int _remoteTransactionDepth = 0;
+  _ProviderGroupingMutation? _stagedProviderGrouping;
 
   late final Future<void> ready;
 
@@ -93,21 +101,70 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
 
   @override
   Future<T> runRemoteBatch<T>(Future<T> Function() apply) {
-    return _settings.runNotificationBatch(
-      () => _assistants.runNotificationBatch(
-        () => _memories.runNotificationBatch(
-          () => _mcp.runNotificationBatch(
-            () => _quickPhrases.runNotificationBatch(
-              () => _injections.runNotificationBatch(
-                () => _worldBooks.runNotificationBatch(
-                  () => _user.runNotificationBatch(apply),
+    return _settings.runNotificationBatch(() async {
+      final groupingBeforeBatch = _stagedProviderGrouping;
+      _remoteBatchDepth++;
+      try {
+        final result = await _assistants.runNotificationBatch(
+          () => _memories.runNotificationBatch(
+            () => _mcp.runNotificationBatch(
+              () => _quickPhrases.runNotificationBatch(
+                () => _injections.runNotificationBatch(
+                  () => _worldBooks.runNotificationBatch(
+                    () => _user.runNotificationBatch(apply),
+                  ),
                 ),
               ),
             ),
           ),
-        ),
-      ),
-    );
+        );
+        if (_remoteBatchDepth == 1 && _remoteTransactionDepth == 0) {
+          final grouping = _stagedProviderGrouping;
+          _stagedProviderGrouping = null;
+          if (grouping != null) {
+            await grouping.apply(_settings);
+          }
+        }
+        return result;
+      } catch (_) {
+        if (_remoteBatchDepth == 1) {
+          _stagedProviderGrouping = _remoteTransactionDepth == 0
+              ? null
+              : groupingBeforeBatch;
+        }
+        rethrow;
+      } finally {
+        _remoteBatchDepth--;
+      }
+    });
+  }
+
+  @override
+  Set<SyncEntityKey> get remoteTransactionKeys => _remoteTransactionKeys;
+
+  @override
+  Future<T> runRemoteTransaction<T>(
+    Future<T> Function() apply, {
+    required RemoteSyncTransactionCommit commit,
+  }) async {
+    final groupingBeforeTransaction = _stagedProviderGrouping;
+    _remoteTransactionDepth++;
+    try {
+      final result = await apply();
+      if (_remoteTransactionDepth == 1) {
+        final grouping = _stagedProviderGrouping;
+        _stagedProviderGrouping = null;
+        if (grouping != null) {
+          await commit(remoteTransactionKeys, () => grouping.apply(_settings));
+        }
+      }
+      return result;
+    } catch (_) {
+      _stagedProviderGrouping = groupingBeforeTransaction;
+      rethrow;
+    } finally {
+      _remoteTransactionDepth--;
+    }
   }
 
   Future<void> _initialize() async {
@@ -336,6 +393,7 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       entityType: _preferenceType,
       entityId: _providerGroupingPreference,
       payload: <String, Object?>{
+        'order': List<String>.of(_settings.providersOrder),
         'groups': _settings.providerGroups
             .map((e) => _mutableJsonObject(e.toJson()))
             .toList(growable: false),
@@ -669,11 +727,26 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       }
       assignments[entry.key] = groupId;
     }
-    await _settings.syncApplyProviderGrouping(
-      groups: groups,
-      assignments: assignments,
-      ungroupedPosition: _requiredInt(payload, 'ungroupedPosition'),
+    await _applyOrStageProviderGrouping(
+      _ProviderGroupingMutation(
+        order: payload.containsKey('order')
+            ? _requiredStringList(payload, 'order')
+            : null,
+        groups: groups,
+        assignments: assignments,
+        ungroupedPosition: _requiredInt(payload, 'ungroupedPosition'),
+      ),
     );
+  }
+
+  Future<void> _applyOrStageProviderGrouping(
+    _ProviderGroupingMutation grouping,
+  ) async {
+    if (_remoteBatchDepth > 0 || _remoteTransactionDepth > 0) {
+      _stagedProviderGrouping = grouping;
+      return;
+    }
+    await grouping.apply(_settings);
   }
 
   @override
@@ -713,10 +786,12 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
           replaceAvatar: _user.avatarType != 'file',
         );
       case _providerGroupingPreference:
-        await _settings.syncApplyProviderGrouping(
-          groups: const <ProviderGroup>[],
-          assignments: const <String, String>{},
-          ungroupedPosition: 0,
+        await _applyOrStageProviderGrouping(
+          _ProviderGroupingMutation(
+            groups: const <ProviderGroup>[],
+            assignments: const <String, String>{},
+            ungroupedPosition: 0,
+          ),
         );
       case _assistantSelectionPreference:
         await _assistants.syncSetCurrentAssistant(null);
@@ -875,6 +950,17 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
     return result;
   }
 
+  static List<String> _requiredStringList(
+    Map<String, Object?> payload,
+    String key,
+  ) {
+    final value = payload[key];
+    if (value is! List<Object?> || value.any((item) => item is! String)) {
+      throw FormatException('$key 必须是字符串数组');
+    }
+    return value.cast<String>();
+  }
+
   static Map<String, Object?> _strictJsonObject(Object? value) {
     if (value is! Map) throw const FormatException('同步配置必须是 JSON 对象');
     final result = <String, Object?>{};
@@ -926,5 +1012,30 @@ class ConfigSyncAdapter implements SyncEntityAdapter {
       throw FormatException('$key 必须是整数');
     }
     return value.toInt();
+  }
+}
+
+final class _ProviderGroupingMutation {
+  _ProviderGroupingMutation({
+    List<String>? order,
+    required List<ProviderGroup> groups,
+    required Map<String, String> assignments,
+    required this.ungroupedPosition,
+  }) : order = order == null ? null : List<String>.unmodifiable(order),
+       groups = List<ProviderGroup>.unmodifiable(groups),
+       assignments = Map<String, String>.unmodifiable(assignments);
+
+  final List<String>? order;
+  final List<ProviderGroup> groups;
+  final Map<String, String> assignments;
+  final int ungroupedPosition;
+
+  Future<void> apply(SettingsProvider settings) {
+    return settings.syncApplyProviderGrouping(
+      order: order ?? List<String>.of(settings.providersOrder),
+      groups: groups,
+      assignments: assignments,
+      ungroupedPosition: ungroupedPosition,
+    );
   }
 }

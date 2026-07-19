@@ -4,6 +4,8 @@ import 'package:flutter/foundation.dart'
 import 'dart:async';
 import 'l10n/app_localizations.dart';
 import 'features/home/pages/home_page.dart';
+import 'features/migration/hive_to_sqlite_migration_page.dart';
+import 'features/migration/hive_to_sqlite_migration_service.dart';
 import 'desktop/desktop_home_page.dart';
 import 'package:flutter/services.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -34,20 +36,34 @@ import 'core/providers/s3_backup_provider.dart';
 import 'core/providers/backup_reminder_provider.dart';
 import 'core/providers/hotkey_provider.dart';
 import 'core/providers/cloud_sync_provider.dart';
+import 'core/database/database_installation_gate.dart';
 import 'core/services/chat/chat_service.dart';
 import 'core/services/sync/cloud_sync_store.dart';
 import 'core/services/sync/sync_write_journal.dart';
+import 'core/services/workspace/account_workspace_runtime.dart';
+import 'core/services/database_v2_rollout_ledger.dart';
+import 'core/services/backup/restore_business_lease.dart';
+import 'core/services/backup/restore_startup_gate.dart';
+import 'core/services/backup/restore_receipt.dart';
 import 'core/services/mcp/mcp_tool_service.dart';
 import 'core/services/logging/flutter_logger.dart';
 import 'features/home/services/ask_user_interaction_service.dart';
 import 'features/home/services/tool_approval_service.dart';
+import 'utils/platform_utils.dart';
 import 'utils/sandbox_path_resolver.dart';
-import 'utils/app_directories.dart';
 import 'shared/widgets/app_overlays.dart';
+import 'shared/widgets/snackbar.dart';
+import 'shared/widgets/restore_failure_screen.dart';
+import 'shared/widgets/restore_cold_restart_screen.dart';
+import 'shared/widgets/restore_outcome_notice.dart';
+import 'shared/widgets/restart_app_action.dart';
 import 'package:google_fonts/google_fonts.dart';
 import 'package:system_fonts/system_fonts.dart';
 import 'dart:io'
-    show Platform; // kept for global override usage inside provider
+    show
+        Platform,
+        pid,
+        stderr; // kept for global override usage inside provider
 import 'core/services/android_background.dart';
 import 'core/services/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -55,13 +71,108 @@ import 'package:shared_preferences/shared_preferences.dart';
 final RouteObserver<ModalRoute<dynamic>> routeObserver =
     RouteObserver<ModalRoute<dynamic>>();
 bool _didCheckUpdates = false; // one-time update check flag
-bool _didEnsureAssistants = false; // ensure defaults after l10n ready
+final AssistantDefaultsBootstrap _assistantDefaultsBootstrap =
+    AssistantDefaultsBootstrap();
+bool _didInitializeLocalizedDefaults = false;
+
+final class AssistantDefaultsBootstrap {
+  AssistantDefaultsBootstrap({this.retryDelay = const Duration(seconds: 2)})
+    : assert(!retryDelay.isNegative);
+
+  final Duration retryDelay;
+  bool _completed = false;
+  bool _inFlight = false;
+  Timer? _retryTimer;
+  Future<bool> Function()? _latestInitialization;
+
+  void schedule(Future<bool> Function() initialize) {
+    if (_completed) return;
+    _latestInitialization = initialize;
+    if (_inFlight || _retryTimer != null) return;
+    _inFlight = true;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_inFlight || _completed) return;
+      unawaited(_runLatest());
+    });
+  }
+
+  Future<void> _runLatest() async {
+    final initialize = _latestInitialization;
+    if (initialize == null) {
+      _inFlight = false;
+      return;
+    }
+    try {
+      _completed = await initialize();
+      _inFlight = false;
+      if (_completed) _latestInitialization = null;
+    } catch (error, stackTrace) {
+      _inFlight = false;
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'Kelivo startup',
+          context: ErrorDescription('while ensuring default assistants'),
+        ),
+      );
+      if (_completed || _retryTimer != null) return;
+      // 持续失败时限制为单个延迟重试，避免构建循环形成并发写入风暴。
+      _retryTimer = Timer(retryDelay, () {
+        _retryTimer = null;
+        if (_completed || _inFlight || _latestInitialization == null) return;
+        _inFlight = true;
+        unawaited(_runLatest());
+      });
+    }
+  }
+}
 
 Future<void> main() async {
   await runZoned(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      final AccountWorkspaceRuntime workspaceRuntime;
+      try {
+        workspaceRuntime = await AccountWorkspaceRuntime.bootstrap();
+      } catch (error, stackTrace) {
+        stderr.writeln('[AccountWorkspace] $error\n$stackTrace');
+        await _initRestoreFailureWindow();
+        runApp(
+          _RestoreFailureApp(
+            diagnosticCode: restoreFailureDiagnosticCode(error),
+          ),
+        );
+        return;
+      }
       FlutterLogger.installGlobalHandlers();
+      final appDataDirectory = workspaceRuntime.current.dataDirectory;
+      final RestoreReceipt? restoreOutcome;
+      try {
+        // 租约通过内部注册表在整个进程期间保持归属，直到进程退出，
+        // 防止另一个实例与业务 I/O 发生竞争。
+        final businessLease = await RestoreBusinessLease.acquire(
+          appDataDirectory: appDataDirectory,
+        );
+        restoreOutcome =
+            await RestoreStartupGate.recoverAndRequireBusinessReady(
+              appDataDirectory: appDataDirectory,
+              businessLease: businessLease,
+            );
+      } on RestoreColdRestartRequired {
+        await _initRestoreFailureWindow();
+        runApp(const _RestoreColdRestartApp());
+        return;
+      } catch (error, stackTrace) {
+        stderr.writeln('[RestoreStartupGate] $error\n$stackTrace');
+        await _initRestoreFailureWindow();
+        runApp(
+          _RestoreFailureApp(
+            diagnosticCode: restoreFailureDiagnosticCode(error),
+          ),
+        );
+        return;
+      }
       try {
         final prefs = await SharedPreferences.getInstance();
         final enabled = prefs.getBool('flutter_log_enabled_v1') ?? false;
@@ -84,17 +195,65 @@ Future<void> main() async {
       // logging.Logger.root.onRecord.listen((rec) { ... });
       // Cache current Documents directory to fix sandboxed absolute paths on iOS
       await SandboxPathResolver.init();
-      // 写前日志必须早于 runApp 建立，才能覆盖 Provider 初始化前发生的本地写入。
-      final appDataDirectory = await AppDirectories.getAppDataDirectory();
+      try {
+        final migrationDecision = await HiveToSqliteMigrationService.check();
+        if (migrationDecision.needsMigration) {
+          runApp(
+            MigrationApp(
+              service: HiveToSqliteMigrationService(migrationDecision),
+              restoreOutcome: restoreOutcome?.state,
+            ),
+          );
+          return;
+        }
+        final installationReceipt = await DatabaseInstallationGate.ensureReady(
+          appDataDirectory: appDataDirectory,
+          allowDatabaseIdentityChange:
+              restoreOutcome?.selectedComponents.contains(
+                RestoreComponent.database,
+              ) ??
+              false,
+        );
+        try {
+          final rollout = DatabaseV2RolloutLedger.rolloutDecision(
+            installationId: installationReceipt.installationId,
+            enabledBasisPoints: const int.fromEnvironment(
+              'KELIVO_DATABASE_V2_ROLLOUT_BASIS_POINTS',
+              defaultValue: 10000,
+            ),
+          );
+          if (rollout.enabled) {
+            await DatabaseV2RolloutLedger(
+              appDataDirectory,
+            ).recordSuccessfulColdStart(
+              coldStartId:
+                  '$pid:${DateTime.now().toUtc().microsecondsSinceEpoch}',
+              atUtc: DateTime.now().toUtc(),
+            );
+          }
+        } catch (error) {
+          // 本地推出证据仅用于支持和退役元数据。数据库准入结果仍是权威；
+          // 台账失败只会禁用旧数据清理，不会阻塞用户。
+          stderr.writeln('[DatabaseV2Rollout] $error');
+        }
+      } catch (error, stackTrace) {
+        stderr.writeln('[DatabaseAdmission] $error\n$stackTrace');
+        await _initRestoreFailureWindow();
+        runApp(
+          _RestoreFailureApp(
+            diagnosticCode: restoreFailureDiagnosticCode(error),
+          ),
+        );
+        return;
+      }
+      // 同步写前日志必须在领域 Provider 创建前就绪，避免启动阶段本地写入漏记。
       await Hive.initFlutter(appDataDirectory.path);
       final cloudSyncStore = await CloudSyncStore.open();
-      final startupConfigRescanGeneration =
-          cloudSyncStore.configRescanGeneration;
       final journalScopeId = await cloudSyncStore.loadOrCreateJournalScopeId();
       final syncWriteJournal = SyncWriteJournal(
         store: cloudSyncStore,
         journalScopeId: journalScopeId,
-        initialSession: cloudSyncStore.activeSession,
+        initialSession: workspaceRuntime.current.session,
       );
       // Enable edge-to-edge to allow content under system bars (Android)
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
@@ -103,7 +262,8 @@ Future<void> main() async {
         MyApp(
           cloudSyncStore: cloudSyncStore,
           syncWriteJournal: syncWriteJournal,
-          startupConfigRescanGeneration: startupConfigRescanGeneration,
+          workspaceRuntime: workspaceRuntime,
+          restoreOutcome: restoreOutcome?.state,
         ),
       );
     },
@@ -114,6 +274,74 @@ Future<void> main() async {
       },
     ),
   );
+}
+
+Future<void> _initRestoreFailureWindow() async {
+  if (kIsWeb) return;
+  final isDesktop =
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.linux;
+  if (!isDesktop) return;
+  try {
+    await windowManager.ensureInitialized();
+    if (defaultTargetPlatform == TargetPlatform.windows) {
+      await windowManager.setTitleBarStyle(TitleBarStyle.hidden);
+      await windowManager.show();
+      await windowManager.focus();
+      return;
+    }
+    await windowManager.waitUntilReadyToShow(
+      const WindowOptions(title: 'Kelivo'),
+      () async {
+        await windowManager.show();
+        await windowManager.focus();
+      },
+    );
+  } catch (error) {
+    stderr.writeln('[RestoreFailureWindow] $error');
+  }
+}
+
+class _RestoreFailureApp extends StatelessWidget {
+  const _RestoreFailureApp({required this.diagnosticCode});
+
+  final String diagnosticCode;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ThemePalettes.defaultPalette;
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Kelivo',
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: buildLightThemeForScheme(palette.light),
+      darkTheme: buildDarkThemeForScheme(palette.dark),
+      home: RestoreFailureScreen(
+        diagnosticCode: diagnosticCode,
+        restart: PlatformUtils.restartApp,
+      ),
+    );
+  }
+}
+
+class _RestoreColdRestartApp extends StatelessWidget {
+  const _RestoreColdRestartApp();
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ThemePalettes.defaultPalette;
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Kelivo',
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: buildLightThemeForScheme(palette.light),
+      darkTheme: buildDarkThemeForScheme(palette.dark),
+      home: const RestoreColdRestartScreen(restart: PlatformUtils.restartApp),
+    );
+  }
 }
 
 Future<void> _initDesktopWindow() async {
@@ -132,17 +360,45 @@ Future<void> _initDesktopWindow() async {
 
 // Removed eager system font preloading to reduce memory footprint at launch.
 
+class MigrationApp extends StatelessWidget {
+  const MigrationApp({super.key, required this.service, this.restoreOutcome});
+
+  final HiveToSqliteMigrationService service;
+  final RestoreReceiptState? restoreOutcome;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ThemePalettes.defaultPalette;
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Kelivo',
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: buildLightThemeForScheme(palette.light),
+      darkTheme: buildDarkThemeForScheme(palette.dark),
+      builder: (context, child) =>
+          AppSnackBarOverlay(child: child ?? const SizedBox.shrink()),
+      home: RestoreOutcomeNotice(
+        outcome: restoreOutcome,
+        child: HiveToSqliteMigrationPage(service: service),
+      ),
+    );
+  }
+}
+
 class MyApp extends StatelessWidget {
   const MyApp({
     required this.cloudSyncStore,
     required this.syncWriteJournal,
-    required this.startupConfigRescanGeneration,
+    required this.workspaceRuntime,
     super.key,
+    this.restoreOutcome,
   });
 
   final CloudSyncStore cloudSyncStore;
   final SyncWriteJournal syncWriteJournal;
-  final String? startupConfigRescanGeneration;
+  final AccountWorkspaceRuntime workspaceRuntime;
+  final RestoreReceiptState? restoreOutcome;
 
   @override
   Widget build(BuildContext context) {
@@ -217,6 +473,7 @@ class MyApp extends StatelessWidget {
               ctx.read<ChatService>(),
               cloudSyncStore,
               syncWriteJournal,
+              workspaceRuntime,
               settingsProvider: ctx.read<SettingsProvider>(),
               assistantProvider: ctx.read<AssistantProvider>(),
               memoryProvider: ctx.read<MemoryProvider>(),
@@ -226,7 +483,6 @@ class MyApp extends StatelessWidget {
                   .read<InstructionInjectionProvider>(),
               worldBookProvider: ctx.read<WorldBookProvider>(),
               userProvider: ctx.read<UserProvider>(),
-              capturedConfigRescanGeneration: startupConfigRescanGeneration,
             );
             unawaited(provider.initialize());
             return provider;
@@ -236,6 +492,15 @@ class MyApp extends StatelessWidget {
       child: Builder(
         builder: (context) {
           final settings = context.watch<SettingsProvider>();
+          final allowsAssistantDefaults = context
+              .select<CloudSyncProvider, bool>(
+                (provider) =>
+                    provider.initialHydrationState.allowsAssistantDefaults,
+              );
+          final workspaceRestartRequired = context
+              .select<CloudSyncProvider, bool>(
+                (provider) => provider.workspaceRestartRequired,
+              );
           // Apply global proxy overrides when settings change
           settings.applyGlobalProxyOverridesIfNeeded();
           // Lazily ensure system fonts only if user selected a system family (desktop only)
@@ -438,7 +703,10 @@ class MyApp extends StatelessWidget {
                 darkTheme: themedDark,
                 themeMode: settings.themeMode,
                 navigatorObservers: <NavigatorObserver>[routeObserver],
-                home: _selectHome(),
+                home: RestoreOutcomeNotice(
+                  outcome: restoreOutcome,
+                  child: _selectHome(),
+                ),
                 builder: (ctx, child) {
                   final bright = Theme.of(ctx).brightness;
                   final overlay = bright == Brightness.dark
@@ -460,13 +728,9 @@ class MyApp extends StatelessWidget {
                           systemNavigationBarDividerColor: Colors.transparent,
                           systemNavigationBarContrastEnforced: false,
                         );
-                  // Ensure localized defaults (assistants and chat default title) after first frame
-                  if (!_didEnsureAssistants) {
-                    _didEnsureAssistants = true;
+                  if (!_didInitializeLocalizedDefaults) {
+                    _didInitializeLocalizedDefaults = true;
                     WidgetsBinding.instance.addPostFrameCallback((_) {
-                      try {
-                        ctx.read<AssistantProvider>().ensureDefaults(ctx);
-                      } catch (_) {}
                       try {
                         ctx.read<ChatService>().setDefaultConversationTitle(
                           AppLocalizations.of(
@@ -479,6 +743,21 @@ class MyApp extends StatelessWidget {
                           AppLocalizations.of(ctx)!.userProviderDefaultUserName,
                         );
                       } catch (_) {}
+                    });
+                  }
+                  // 云账号必须先接收服务端真值，避免本地随机默认助手覆盖已有配置。
+                  if (allowsAssistantDefaults) {
+                    _assistantDefaultsBootstrap.schedule(() async {
+                      if (!ctx.mounted) return false;
+                      final cloudSync = ctx.read<CloudSyncProvider>();
+                      if (!cloudSync
+                          .initialHydrationState
+                          .allowsAssistantDefaults) {
+                        return false;
+                      }
+                      await ctx.read<AssistantProvider>().ensureDefaults(ctx);
+                      await cloudSync.syncAfterLocalWrites();
+                      return true;
                     });
                   }
 
@@ -505,8 +784,15 @@ class MyApp extends StatelessWidget {
                   }
 
                   // Enforce app font as a default across the tree for Texts without explicit family
-                  final appWithOverlays = AppOverlays(
-                    child: child ?? const SizedBox.shrink(),
+                  final appWithOverlays = WorkspaceRestartGate(
+                    restartRequired: workspaceRestartRequired,
+                    restart: () async {
+                      await ctx
+                          .read<CloudSyncProvider>()
+                          .prepareWorkspaceRestart();
+                      await PlatformUtils.restartApp();
+                    },
+                    child: AppOverlays(child: child ?? const SizedBox.shrink()),
                   );
                   return AnnotatedRegion<SystemUiOverlayStyle>(
                     value: overlay,

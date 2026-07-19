@@ -50,12 +50,10 @@ class CloudSyncSettingsContent extends StatefulWidget {
 }
 
 class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
-  final TextEditingController _serviceUrlController = TextEditingController();
   final TextEditingController _loginNameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _deviceNameController = TextEditingController();
 
-  bool _serviceUrlEdited = false;
   bool _deviceNameInitialized = false;
   String? _requestedDeviceScope;
 
@@ -72,7 +70,6 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
 
   @override
   void dispose() {
-    _serviceUrlController.dispose();
     _loginNameController.dispose();
     _passwordController.dispose();
     _deviceNameController.dispose();
@@ -83,13 +80,6 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   Widget build(BuildContext context) {
     final provider = context.watch<CloudSyncProvider>();
     final session = provider.session;
-    final rememberedUrl = provider.lastBaseUrl;
-    if (!_serviceUrlEdited &&
-        _serviceUrlController.text.isEmpty &&
-        rememberedUrl != null) {
-      _serviceUrlController.text = rememberedUrl;
-    }
-
     if (session == null) {
       _requestedDeviceScope = null;
     } else if (_requestedDeviceScope != session.accountScope) {
@@ -134,22 +124,11 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final busy =
         provider.status == CloudSyncProviderStatus.initializing ||
         provider.status == CloudSyncProviderStatus.signingIn ||
-        provider.status == CloudSyncProviderStatus.signingOut;
+        provider.status == CloudSyncProviderStatus.signingOut ||
+        provider.status == CloudSyncProviderStatus.workspaceChangePending;
     return _Section(
       title: l10n.cloudSyncSignInSection,
       children: [
-        IosFormTextField(
-          label: l10n.cloudSyncServiceUrl,
-          controller: _serviceUrlController,
-          inlineLabel: widget.desktop,
-          keyboardType: TextInputType.url,
-          textInputAction: TextInputAction.next,
-          enabled: !busy,
-          autocorrect: false,
-          enableSuggestions: false,
-          onChanged: (_) => _serviceUrlEdited = true,
-        ),
-        const _SectionDivider(),
         IosFormTextField(
           label: l10n.cloudSyncLoginName,
           controller: _loginNameController,
@@ -209,6 +188,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final busy =
         status == CloudSyncProviderStatus.signingOut ||
         status == CloudSyncProviderStatus.signingIn ||
+        status == CloudSyncProviderStatus.workspaceChangePending ||
         provider.conflictsLoading ||
         provider.resolvingConflictId != null;
     final syncing = status == CloudSyncProviderStatus.syncing;
@@ -463,14 +443,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
 
   Future<void> _signIn() async {
     final l10n = AppLocalizations.of(context)!;
-    final serviceUrl = _serviceUrlController.text.trim();
     final loginName = _loginNameController.text.trim();
     final password = _passwordController.text;
     final deviceName = _deviceNameController.text.trim();
-    if (serviceUrl.isEmpty ||
-        loginName.isEmpty ||
-        password.isEmpty ||
-        deviceName.isEmpty) {
+    if (loginName.isEmpty || password.isEmpty || deviceName.isEmpty) {
       showAppSnackBar(
         context,
         message: l10n.cloudSyncRequiredFields,
@@ -481,7 +457,6 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
 
     final provider = context.read<CloudSyncProvider>();
     final success = await provider.login(
-      baseUrl: serviceUrl,
       loginName: loginName,
       password: password,
       deviceName: deviceName,
@@ -498,6 +473,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       _passwordController.clear();
     }
     if (success) {
+      _passwordController.clear();
       return;
     }
     showAppSnackBar(
@@ -578,7 +554,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     if (confirmed != true || !mounted) return;
     final provider = context.read<CloudSyncProvider>();
     final success = await provider.revokeDevice(device.id);
-    if (!mounted || success) return;
+    if (!mounted) return;
+    if (success) {
+      return;
+    }
     showAppSnackBar(
       context,
       message: cloudSyncFailureText(
@@ -621,13 +600,14 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   }
 
   Future<void> _signOut() async {
-    final choice = await _showLogoutDialog();
-    if (choice == null || !mounted) return;
+    final confirmed = await _showLogoutDialog();
+    if (confirmed != true || !mounted) return;
     final provider = context.read<CloudSyncProvider>();
-    final success = await provider.logout(
-      clearSyncState: choice == _LogoutChoice.clearState,
-    );
-    if (!mounted || success) return;
+    final success = await provider.logout();
+    if (!mounted) return;
+    if (success) {
+      return;
+    }
     showAppSnackBar(
       context,
       message: cloudSyncFailureText(
@@ -642,9 +622,9 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     );
   }
 
-  Future<_LogoutChoice?> _showLogoutDialog() {
+  Future<bool?> _showLogoutDialog() {
     final l10n = AppLocalizations.of(context)!;
-    return showDialog<_LogoutChoice>(
+    return showDialog<bool>(
       context: context,
       builder: (dialogContext) => _CloudSyncDialog(
         title: l10n.cloudSyncLogoutTitle,
@@ -655,18 +635,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
             icon: Lucide.Check,
             backgroundColor: Theme.of(dialogContext).colorScheme.primary,
             foregroundColor: Theme.of(dialogContext).colorScheme.primary,
-            onTap: () =>
-                Navigator.of(dialogContext).pop(_LogoutChoice.keepState),
-          ),
-          IosTileButton(
-            label: l10n.cloudSyncLogoutClearState,
-            icon: Lucide.Trash,
-            foregroundColor: Theme.of(dialogContext).colorScheme.error,
-            borderColor: Theme.of(
-              dialogContext,
-            ).colorScheme.error.withValues(alpha: 0.35),
-            onTap: () =>
-                Navigator.of(dialogContext).pop(_LogoutChoice.clearState),
+            onTap: () => Navigator.of(dialogContext).pop(true),
           ),
           IosTileButton(
             label: l10n.cloudSyncCancel,
@@ -678,8 +647,6 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     );
   }
 }
-
-enum _LogoutChoice { keepState, clearState }
 
 class _Section extends StatelessWidget {
   const _Section({required this.title, required this.children});
@@ -1548,6 +1515,8 @@ String cloudSyncStatusText(
     CloudSyncProviderStatus.signedOut => l10n.cloudSyncStatusSignedOut,
     CloudSyncProviderStatus.signingIn => l10n.cloudSyncStatusSigningIn,
     CloudSyncProviderStatus.signingOut => l10n.cloudSyncStatusSigningOut,
+    CloudSyncProviderStatus.workspaceChangePending =>
+      l10n.cloudSyncStatusWorkspaceChangePending,
     CloudSyncProviderStatus.idle => l10n.cloudSyncStatusIdle,
     CloudSyncProviderStatus.syncing => l10n.cloudSyncStatusSyncing,
     CloudSyncProviderStatus.pendingSync => l10n.cloudSyncStatusPendingSync,

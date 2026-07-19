@@ -36,6 +36,11 @@ class CherryImporter {
   static const String _providersKey = 'provider_configs_v1';
   static const String _providersOrderKey = 'providers_order_v1';
   static const String _assistantsKey = 'assistants_v1';
+  static const Set<String> _overwriteAuthoritativeEntityTypes = <String>{
+    ...CloudSyncStore.chatRescanEntityTypes,
+    'provider',
+    'assistant',
+  };
 
   static Future<CherryImportResult> importFromCherryStudio({
     required File file,
@@ -190,124 +195,154 @@ class CherryImporter {
       }
     }
 
-    await (markConfigRescanRequired ??
-        CloudSyncStore.markDefaultConfigRescanRequired)();
+    return _runImportWrite<CherryImportResult>(
+      mode: mode,
+      markConfigRescanRequired: markConfigRescanRequired,
+      write: () async {
+        // 5) 将供应商导入设置并持久化到 SharedPreferences
+        final importedProviders = await _importProviders(
+          cherryProviders,
+          settings,
+          mode,
+        );
 
-    // 5) Import providers into Settings (SharedPreferences)
-    final importedProviders = await _importProviders(
-      cherryProviders,
-      settings,
-      mode,
-    );
+        // 6) 导入助手并持久化到 SharedPreferences，随后需要重启
+        final importedAssistants = await _importAssistants(
+          cherryAssistants,
+          mode,
+        );
 
-    // 6) Import assistants (persist to SharedPreferences, restart recommended)
-    final importedAssistants = await _importAssistants(cherryAssistants, mode);
-
-    // 覆盖导入先清理旧附件，聊天数据等最终实体就绪后在同一写前批次内替换。
-    if (!chatService.initialized) {
-      await chatService.init();
-    }
-    if (mode == RestoreMode.overwrite) {
-      await UploadDirectoryCriticalSection.run(() async {
-        final uploadDir = await AppDirectories.getUploadDirectory();
-        if (await uploadDir.exists()) {
-          await uploadDir.delete(recursive: true);
+        // 覆盖导入先清理旧附件，聊天数据等最终实体就绪后在同一写前批次内替换。
+        if (!chatService.initialized) {
+          await chatService.init();
         }
-      });
-    }
+        if (mode == RestoreMode.overwrite) {
+          await UploadDirectoryCriticalSection.run(() async {
+            final uploadDir = await AppDirectories.getUploadDirectory();
+            if (await uploadDir.exists()) {
+              await uploadDir.delete(recursive: true);
+            }
+          });
+        }
 
-    // 7) Prepare files (only if referenced by messages)
-    final filesById = <String, Map<String, dynamic>>{
-      for (final f in cherryFiles)
-        if (f is Map && f['id'] != null)
-          f['id'].toString(): f.map((k, v) => MapEntry(k.toString(), v)),
-    };
+        // 7) 仅准备消息实际引用的文件
+        final filesById = <String, Map<String, dynamic>>{
+          for (final f in cherryFiles)
+            if (f is Map && f['id'] != null)
+              f['id'].toString(): f.map((k, v) => MapEntry(k.toString(), v)),
+        };
 
-    // Precompute used file ids
-    final usedFileIds = <String>{};
-    for (final entry in topicMessages.entries) {
-      for (final m in entry.value) {
-        final files = (m['files'] as List?) ?? const <dynamic>[];
-        for (final rf in files) {
-          if (rf is Map && rf['id'] != null) {
-            usedFileIds.add(rf['id'].toString());
+        // 预先汇总被引用的文件 ID
+        final usedFileIds = <String>{};
+        for (final entry in topicMessages.entries) {
+          for (final m in entry.value) {
+            final files = (m['files'] as List?) ?? const <dynamic>[];
+            for (final rf in files) {
+              if (rf is Map && rf['id'] != null) {
+                usedFileIds.add(rf['id'].toString());
+              }
+            }
           }
         }
-      }
-    }
 
-    // Also include files referenced by message_blocks when a 'file' object is present
-    for (final b in cherryMessageBlocks) {
-      if (b is! Map) continue;
-      final fileObj = (b['file'] as Map?)?.map(
-        (k, v) => MapEntry(k.toString(), v),
-      );
-      final fid = (fileObj?['id'] ?? '').toString();
-      if (fid.isNotEmpty) usedFileIds.add(fid);
-    }
-
-    // Write referenced files into Documents/upload and build path map
-    final pathsByFileId = await _materializeFiles(
-      filesById,
-      usedFileIds,
-      backupArchive: file,
-    );
-
-    // Build mapping of extra attachments (images/files) in message_blocks (not represented in message.files)
-    final Map<String, List<_PendingAttachmentRef>> pendingAttachmentsByMessage =
-        <String, List<_PendingAttachmentRef>>{};
-    for (final b in cherryMessageBlocks) {
-      if (b is! Map) continue;
-      final type = (b['type'] ?? '').toString();
-      final messageId = (b['messageId'] ?? '').toString();
-      if (messageId.isEmpty) continue;
-      final fileObj = (b['file'] as Map?)?.map(
-        (k, v) => MapEntry(k.toString(), v),
-      );
-      final url = (b['url'] ?? '').toString();
-      final isImageType =
-          type.toLowerCase().contains('image') ||
-          (fileObj?['type']?.toString().toLowerCase().startsWith('image') ??
-              false);
-      if (fileObj != null && (fileObj['id'] ?? '').toString().isNotEmpty) {
-        (pendingAttachmentsByMessage[messageId] ??= <_PendingAttachmentRef>[])
-            .add(
-              _PendingAttachmentRef(
-                fileId: (fileObj['id'] ?? '').toString(),
-                name: (fileObj['origin_name'] ?? fileObj['name'] ?? '')
-                    .toString(),
-                mime: (fileObj['type'] ?? '').toString(),
-                isImage: isImageType,
-              ),
-            );
-      } else if (url.isNotEmpty) {
-        if (url.startsWith('data:image')) {
-          (pendingAttachmentsByMessage[messageId] ??= <_PendingAttachmentRef>[])
-              .add(_PendingAttachmentRef(dataUrl: url, isImage: true));
-        } else {
-          (pendingAttachmentsByMessage[messageId] ??= <_PendingAttachmentRef>[])
-              .add(_PendingAttachmentRef(url: url, isImage: isImageType));
+        // 同时纳入 message_blocks 中 file 对象引用的文件
+        for (final b in cherryMessageBlocks) {
+          if (b is! Map) continue;
+          final fileObj = (b['file'] as Map?)?.map(
+            (k, v) => MapEntry(k.toString(), v),
+          );
+          final fid = (fileObj?['id'] ?? '').toString();
+          if (fid.isNotEmpty) usedFileIds.add(fid);
         }
-      }
-    }
 
-    // 8) Import topics & messages into ChatService
-    final convCountAndMsgCount = await _importConversations(
-      topicMeta: topicMeta,
-      topicMessages: topicMessages,
-      filePaths: pathsByFileId,
-      chatService: chatService,
-      mode: mode,
-      blockTexts: blockTextByMessageId,
-      pendingAttachmentsByMessage: pendingAttachmentsByMessage,
+        // 将引用文件写入 Documents/upload，并建立文件 ID 到路径的映射
+        final pathsByFileId = await _materializeFiles(
+          filesById,
+          usedFileIds,
+          backupArchive: file,
+        );
+
+        // 建立 message_blocks 附加附件的映射；这些图像或文件不在 message.files 中
+        final Map<String, List<_PendingAttachmentRef>>
+        pendingAttachmentsByMessage = <String, List<_PendingAttachmentRef>>{};
+        for (final b in cherryMessageBlocks) {
+          if (b is! Map) continue;
+          final type = (b['type'] ?? '').toString();
+          final messageId = (b['messageId'] ?? '').toString();
+          if (messageId.isEmpty) continue;
+          final fileObj = (b['file'] as Map?)?.map(
+            (k, v) => MapEntry(k.toString(), v),
+          );
+          final url = (b['url'] ?? '').toString();
+          final isImageType =
+              type.toLowerCase().contains('image') ||
+              (fileObj?['type']?.toString().toLowerCase().startsWith('image') ??
+                  false);
+          if (fileObj != null && (fileObj['id'] ?? '').toString().isNotEmpty) {
+            (pendingAttachmentsByMessage[messageId] ??=
+                    <_PendingAttachmentRef>[])
+                .add(
+                  _PendingAttachmentRef(
+                    fileId: (fileObj['id'] ?? '').toString(),
+                    name: (fileObj['origin_name'] ?? fileObj['name'] ?? '')
+                        .toString(),
+                    mime: (fileObj['type'] ?? '').toString(),
+                    isImage: isImageType,
+                  ),
+                );
+          } else if (url.isNotEmpty) {
+            if (url.startsWith('data:image')) {
+              (pendingAttachmentsByMessage[messageId] ??=
+                      <_PendingAttachmentRef>[])
+                  .add(_PendingAttachmentRef(dataUrl: url, isImage: true));
+            } else {
+              (pendingAttachmentsByMessage[messageId] ??=
+                      <_PendingAttachmentRef>[])
+                  .add(_PendingAttachmentRef(url: url, isImage: isImageType));
+            }
+          }
+        }
+
+        // 8) 将主题和消息导入 ChatService
+        final convCountAndMsgCount = await _importConversations(
+          topicMeta: topicMeta,
+          topicMessages: topicMessages,
+          filePaths: pathsByFileId,
+          chatService: chatService,
+          mode: mode,
+          blockTexts: blockTextByMessageId,
+          pendingAttachmentsByMessage: pendingAttachmentsByMessage,
+        );
+
+        return CherryImportResult(
+          providers: importedProviders,
+          assistants: importedAssistants,
+          conversations: convCountAndMsgCount.$1,
+          messages: convCountAndMsgCount.$2,
+          files: pathsByFileId.length + convCountAndMsgCount.$3,
+        );
+      },
     );
+  }
 
-    return CherryImportResult(
-      providers: importedProviders,
-      assistants: importedAssistants,
-      conversations: convCountAndMsgCount.$1,
-      messages: convCountAndMsgCount.$2,
-      files: pathsByFileId.length + convCountAndMsgCount.$3,
+  static Future<T> _runImportWrite<T>({
+    required RestoreMode mode,
+    required Future<T> Function() write,
+    Future<void> Function()? markConfigRescanRequired,
+  }) async {
+    if (markConfigRescanRequired != null) {
+      // 测试注入必须先于任何落盘执行，避免单元测试依赖默认 Hive。
+      await markConfigRescanRequired();
+      return write();
+    }
+    // 配置 Provider 要到强制重启后才会重载，期间保持租约以阻止旧内存态消费重扫请求。
+    return CloudSyncStore.runWithDefaultRescanWrite<T>(
+      entityTypes: CloudSyncStore.allRescanEntityTypes,
+      localAuthoritativeEntityTypes: mode == RestoreMode.overwrite
+          ? _overwriteAuthoritativeEntityTypes
+          : const <String>{},
+      write: write,
+      keepActiveOnSuccess: true,
     );
   }
 
@@ -969,12 +1004,12 @@ class CherryImporter {
     if (!chatService.initialized) await chatService.init();
 
     // Build map of existing conv ids for merge
-    final existingConvs = chatService.getAllConversations();
+    final existingConvs = chatService.getAllCompleteConversations();
     final existingConvIds = existingConvs.map((c) => c.id).toSet();
     final existingMsgIds = <String>{};
     if (mode == RestoreMode.merge) {
       for (final c in existingConvs) {
-        final msgs = chatService.getMessages(c.id);
+        final msgs = await chatService.loadMessages(c.id);
         for (final m in msgs) {
           existingMsgIds.add(m.id);
         }
@@ -1271,7 +1306,7 @@ class CherryImporter {
       messages: pendingWrites.expand((entry) => entry.messages),
       write: () async {
         if (mode == RestoreMode.overwrite) {
-          await chatService.clearAllData(preserveUploads: true);
+          await chatService.clearAllData(deleteUploads: false);
         }
         for (final entry in pendingWrites) {
           if (entry.append) {

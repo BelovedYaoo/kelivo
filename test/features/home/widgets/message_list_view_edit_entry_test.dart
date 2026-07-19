@@ -3,6 +3,7 @@ import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/providers/tts_provider.dart';
 import 'package:Kelivo/core/providers/user_provider.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/features/home/controllers/stream_controller.dart'
     as stream_ctrl;
 import 'package:Kelivo/features/home/services/ask_user_interaction_service.dart';
@@ -13,9 +14,8 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:provider/provider.dart';
-import 'package:scrollview_observer/scrollview_observer.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
+import 'package:super_sliver_list/super_sliver_list.dart';
 
 void main() {
   setUp(() {
@@ -91,20 +91,21 @@ class _MessageListHarness extends StatefulWidget {
 
 class _MessageListHarnessState extends State<_MessageListHarness> {
   late final ScrollController scrollController;
-  late final ListObserverController observerController;
+  late final ListController listController;
   late final ValueNotifier<bool> isProcessingFiles;
 
   @override
   void initState() {
     super.initState();
     scrollController = ScrollController();
-    observerController = ListObserverController(controller: scrollController);
+    listController = ListController();
     isProcessingFiles = ValueNotifier<bool>(false);
   }
 
   @override
   void dispose() {
     scrollController.dispose();
+    listController.dispose();
     isProcessingFiles.dispose();
     super.dispose();
   }
@@ -138,7 +139,7 @@ class _MessageListHarnessState extends State<_MessageListHarness> {
         home: Scaffold(
           body: MessageListView(
             scrollController: scrollController,
-            observerController: observerController,
+            listController: listController,
             messages: widget.messages,
             byGroup: const {},
             versionSelections: const {},

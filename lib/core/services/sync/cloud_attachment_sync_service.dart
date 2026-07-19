@@ -212,6 +212,47 @@ final class PreparedChatSyncAttachments {
   final List<ChatSyncAttachmentReference> references;
 }
 
+final class PreparedCloudSyncMessageRestore {
+  PreparedCloudSyncMessageRestore._({
+    required this.content,
+    required List<_PreparedRemoteAttachment> attachments,
+  }) : _attachments = List<_PreparedRemoteAttachment>.unmodifiable(attachments);
+
+  final String content;
+  final List<_PreparedRemoteAttachment> _attachments;
+  _PreparedRestoreState _state = _PreparedRestoreState.pending;
+
+  Future<void> commit() async {
+    if (_state == _PreparedRestoreState.committed) return;
+    if (_state == _PreparedRestoreState.discarded) {
+      throw StateError('已丢弃的附件准备结果不能提交');
+    }
+    try {
+      await UploadDirectoryCriticalSection.run(() async {
+        for (final attachment in _attachments) {
+          await attachment.commit();
+        }
+      });
+      _state = _PreparedRestoreState.committed;
+    } catch (_) {
+      await discard();
+      rethrow;
+    }
+  }
+
+  Future<void> discard() async {
+    if (_state != _PreparedRestoreState.pending) return;
+    await UploadDirectoryCriticalSection.run(() async {
+      for (final attachment in _attachments.reversed) {
+        await attachment.discard();
+      }
+    });
+    _state = _PreparedRestoreState.discarded;
+  }
+}
+
+enum _PreparedRestoreState { pending, committed, discarded }
+
 final class CloudAttachmentSyncService {
   CloudAttachmentSyncService(this._session, this._client, this._store);
 
@@ -281,7 +322,31 @@ final class CloudAttachmentSyncService {
     required String syncedContent,
     required List<ChatSyncAttachmentReference> references,
   }) async {
-    if (references.isEmpty) return syncedContent;
+    final prepared = await prepareRestoreMessage(
+      messageId: messageId,
+      syncedContent: syncedContent,
+      references: references,
+    );
+    try {
+      await prepared.commit();
+      return prepared.content;
+    } catch (_) {
+      await prepared.discard();
+      rethrow;
+    }
+  }
+
+  Future<PreparedCloudSyncMessageRestore> prepareRestoreMessage({
+    required String messageId,
+    required String syncedContent,
+    required List<ChatSyncAttachmentReference> references,
+  }) async {
+    if (references.isEmpty) {
+      return PreparedCloudSyncMessageRestore._(
+        content: syncedContent,
+        attachments: const <_PreparedRemoteAttachment>[],
+      );
+    }
 
     final serverAttachments = await _client.listAttachmentInfo(
       entityType: 'message',
@@ -293,43 +358,52 @@ final class CloudAttachmentSyncService {
     if (byId.length != serverAttachments.length) {
       throw const FormatException('服务端附件列表包含重复标识');
     }
-    final markers = <ChatAttachmentMarker>[];
+    final preparedAttachments = <_PreparedRemoteAttachment>[];
     final attachmentIds = <String>{};
     final orders = <int>{};
-    for (final reference in references) {
-      if (!attachmentIds.add(reference.attachmentId) ||
-          reference.order < 0 ||
-          !orders.add(reference.order)) {
-        throw const FormatException('消息附件引用重复或顺序无效');
+    try {
+      for (final reference in references) {
+        if (!attachmentIds.add(reference.attachmentId) ||
+            reference.order < 0 ||
+            !orders.add(reference.order)) {
+          throw const FormatException('消息附件引用重复或顺序无效');
+        }
+        final attachment = byId[reference.attachmentId];
+        if (attachment == null ||
+            attachment.entityType != 'message' ||
+            attachment.entityId != messageId) {
+          throw const FormatException('消息附件引用与服务端附件列表不一致');
+        }
+        final kind = switch (reference.kind) {
+          ChatSyncAttachmentReference.imageKind =>
+            CloudSyncAttachmentKind.image,
+          ChatSyncAttachmentReference.fileKind => CloudSyncAttachmentKind.file,
+          _ => throw const FormatException('消息附件类型无效'),
+        };
+        preparedAttachments.add(
+          await _prepareRestoreAttachment(
+            messageId: messageId,
+            kind: kind,
+            order: reference.order,
+            attachment: attachment,
+          ),
+        );
       }
-      final attachment = byId[reference.attachmentId];
-      if (attachment == null ||
-          attachment.entityType != 'message' ||
-          attachment.entityId != messageId) {
-        throw const FormatException('消息附件引用与服务端附件列表不一致');
-      }
-      final kind = switch (reference.kind) {
-        ChatSyncAttachmentReference.imageKind => CloudSyncAttachmentKind.image,
-        ChatSyncAttachmentReference.fileKind => CloudSyncAttachmentKind.file,
-        _ => throw const FormatException('消息附件类型无效'),
-      };
-      final binding = await _restoreAttachment(
-        messageId: messageId,
-        kind: kind,
-        order: reference.order,
-        attachment: attachment,
-      );
-      markers.add(
-        ChatAttachmentMarker(
-          kind: kind,
-          order: reference.order,
-          localPath: binding.localPath,
-          fileName: _safeMarkerField(attachment.fileName),
-          mimeType: attachment.mimeType,
-        ),
-      );
+    } catch (_) {
+      await UploadDirectoryCriticalSection.run(() async {
+        for (final prepared in preparedAttachments.reversed) {
+          await prepared.discard();
+        }
+      });
+      rethrow;
     }
-    return ChatAttachmentMarkerCodec.restore(syncedContent, markers);
+    return PreparedCloudSyncMessageRestore._(
+      content: ChatAttachmentMarkerCodec.restore(
+        syncedContent,
+        preparedAttachments.map((prepared) => prepared.marker),
+      ),
+      attachments: preparedAttachments,
+    );
   }
 
   Future<CloudSyncAttachmentBinding> _prepareMarker(
@@ -480,7 +554,7 @@ final class CloudAttachmentSyncService {
     );
   }
 
-  Future<CloudSyncAttachmentBinding> _restoreAttachment({
+  Future<_PreparedRemoteAttachment> _prepareRestoreAttachment({
     required String messageId,
     required CloudSyncAttachmentKind kind,
     required int order,
@@ -501,7 +575,28 @@ final class CloudAttachmentSyncService {
         cached.mimeType == attachment.mimeType) {
       final cachedTarget = await _resolveManagedUploadTarget(cached.localPath);
       final stat = await cachedTarget.file.stat();
-      if (_matchesCachedDownload(cached, stat)) return cached;
+      if (_matchesCachedDownload(cached, stat)) {
+        return _PreparedRemoteAttachment(
+          marker: _remoteAttachmentMarker(
+            kind: kind,
+            order: order,
+            localPath: cached.localPath,
+            attachment: attachment,
+          ),
+          commitAction: () async {
+            final verified = await _verifyRemoteAttachmentFile(
+              messageId: messageId,
+              kind: kind,
+              order: order,
+              attachment: attachment,
+              storedPath: cached.localPath,
+              bindingLocalPath: cached.localPath,
+            );
+            await _store.saveAttachmentBinding(_session, verified);
+          },
+          discardAction: () async {},
+        );
+      }
     }
 
     final uploadDirectory = await AppDirectories.getUploadDirectory();
@@ -522,14 +617,196 @@ final class CloudAttachmentSyncService {
     if (!path.isWithin(directoryPath, finalPath)) {
       throw const FileSystemException('附件下载路径越界');
     }
-    return _downloadAttachmentToPath(
+    return _prepareAttachmentDownloadToPath(
       messageId: messageId,
       kind: kind,
       order: order,
       attachment: attachment,
       destinationPath: finalPath,
-      replaceInvalidExisting: true,
     );
+  }
+
+  Future<_PreparedRemoteAttachment> _prepareAttachmentDownloadToPath({
+    required String messageId,
+    required CloudSyncAttachmentKind kind,
+    required int order,
+    required CloudSyncAttachmentInfo attachment,
+    required String destinationPath,
+  }) {
+    return UploadDirectoryCriticalSection.run(() async {
+      final target = await _resolveManagedUploadTarget(destinationPath);
+      if (target.type != FileSystemEntityType.notFound) {
+        final existing = await _tryBuildDownloadedBinding(
+          messageId: messageId,
+          kind: kind,
+          order: order,
+          attachment: attachment,
+          file: target.file,
+          localPath: target.path,
+        );
+        if (existing != null) {
+          return _PreparedRemoteAttachment(
+            marker: _remoteAttachmentMarker(
+              kind: kind,
+              order: order,
+              localPath: existing.localPath,
+              attachment: attachment,
+            ),
+            commitAction: () async {
+              final verified = await _verifyRemoteAttachmentFile(
+                messageId: messageId,
+                kind: kind,
+                order: order,
+                attachment: attachment,
+                storedPath: existing.localPath,
+                bindingLocalPath: existing.localPath,
+              );
+              await _store.saveAttachmentBinding(_session, verified);
+            },
+            discardAction: () async {},
+          );
+        }
+      }
+
+      await Directory(
+        path.dirname(target.resolvedPath),
+      ).create(recursive: true);
+      // 数据库批次确认前只保留独立暂存文件，避免回滚留下已应用的附件状态。
+      final stagingStoredPath = path.normalize(
+        '${target.path}.kelivo-sync-${_uuid.v4()}.part',
+      );
+      final stagingTarget = await _resolveManagedUploadTarget(
+        stagingStoredPath,
+      );
+      if (stagingTarget.type != FileSystemEntityType.notFound) {
+        throw const FileSystemException('附件暂存路径已被占用');
+      }
+      try {
+        final download = await _client.getAttachmentDownloadUrl(attachment.id);
+        if (download.attachmentId != attachment.id) {
+          throw const FormatException('附件下载地址与请求不匹配');
+        }
+        await _client.downloadSignedAttachment(
+          downloadUrl: download.downloadUrl,
+          destinationPath: stagingTarget.resolvedPath,
+          expectedSizeBytes: attachment.sizeBytes,
+        );
+        final downloadedTarget = await _resolveManagedUploadTarget(
+          stagingStoredPath,
+        );
+        if (downloadedTarget.type != FileSystemEntityType.file) {
+          throw const FileSystemException('附件暂存文件类型无效');
+        }
+        final stagingFile = downloadedTarget.file;
+        await _buildDownloadedBinding(
+          messageId: messageId,
+          kind: kind,
+          order: order,
+          attachment: attachment,
+          file: stagingFile,
+          localPath: target.path,
+        );
+        return _PreparedRemoteAttachment(
+          marker: _remoteAttachmentMarker(
+            kind: kind,
+            order: order,
+            localPath: target.path,
+            attachment: attachment,
+          ),
+          commitAction: () async {
+            final currentStagingTarget = await _resolveManagedUploadTarget(
+              stagingStoredPath,
+            );
+            if (currentStagingTarget.type != FileSystemEntityType.file) {
+              throw const FileSystemException('附件暂存文件在提交前丢失');
+            }
+            // 复验使用 commit 时的实际字节，不能沿用 prepare 阶段的摘要。
+            final stagedBinding = await _verifyRemoteAttachmentFile(
+              messageId: messageId,
+              kind: kind,
+              order: order,
+              attachment: attachment,
+              storedPath: stagingStoredPath,
+              bindingLocalPath: target.path,
+            );
+            final currentTarget = await _resolveManagedUploadTarget(
+              target.path,
+            );
+            if (currentTarget.type != FileSystemEntityType.notFound) {
+              final existing = await _tryBuildDownloadedBinding(
+                messageId: messageId,
+                kind: kind,
+                order: order,
+                attachment: attachment,
+                file: currentTarget.file,
+                localPath: currentTarget.path,
+              );
+              if (existing != null) {
+                await currentStagingTarget.file.delete();
+                await _store.saveAttachmentBinding(_session, existing);
+                return;
+              }
+              final rawTargetType = await FileSystemEntity.type(
+                currentTarget.path,
+                followLinks: false,
+              );
+              if (rawTargetType != FileSystemEntityType.file &&
+                  rawTargetType != FileSystemEntityType.link) {
+                throw const FileSystemException('附件下载目标被非文件占用');
+              }
+              await currentTarget.file.delete();
+            }
+            await currentStagingTarget.file.rename(currentTarget.resolvedPath);
+            final finalStat = await currentTarget.file.stat();
+            if (finalStat.type != FileSystemEntityType.file ||
+                finalStat.size != stagedBinding.sizeBytes) {
+              throw const FormatException('附件提交后的文件状态无效');
+            }
+            await _store.saveAttachmentBinding(
+              _session,
+              stagedBinding.copyWith(modifiedAt: finalStat.modified),
+            );
+          },
+          discardAction: () => _deletePreparedStagingFile(stagingStoredPath),
+        );
+      } catch (_) {
+        await _deletePreparedStagingFile(stagingStoredPath);
+        rethrow;
+      }
+    });
+  }
+
+  Future<CloudSyncAttachmentBinding> _verifyRemoteAttachmentFile({
+    required String messageId,
+    required CloudSyncAttachmentKind kind,
+    required int order,
+    required CloudSyncAttachmentInfo attachment,
+    required String storedPath,
+    required String bindingLocalPath,
+  }) async {
+    final target = await _resolveManagedUploadTarget(storedPath);
+    if (target.type != FileSystemEntityType.file) {
+      throw const FormatException('附件提交前文件不存在或类型无效');
+    }
+    return _buildDownloadedBinding(
+      messageId: messageId,
+      kind: kind,
+      order: order,
+      attachment: attachment,
+      file: target.file,
+      localPath: bindingLocalPath,
+    );
+  }
+
+  Future<void> _deletePreparedStagingFile(String stagingStoredPath) async {
+    final stagingTarget = await _resolveManagedUploadTarget(stagingStoredPath);
+    if (stagingTarget.type == FileSystemEntityType.file) {
+      await stagingTarget.file.delete();
+      return;
+    }
+    if (stagingTarget.type != FileSystemEntityType.notFound) {
+      throw const FileSystemException('附件暂存路径被非文件占用');
+    }
   }
 
   Future<CloudSyncAttachmentBinding> _downloadAttachmentToPath({
@@ -651,8 +928,30 @@ final class CloudAttachmentSyncService {
     required File file,
     required String localPath,
   }) async {
+    final binding = await _tryBuildDownloadedBinding(
+      messageId: messageId,
+      kind: kind,
+      order: order,
+      attachment: attachment,
+      file: file,
+      localPath: localPath,
+    );
+    if (binding != null) {
+      await _store.saveAttachmentBinding(_session, binding);
+    }
+    return binding;
+  }
+
+  Future<CloudSyncAttachmentBinding?> _tryBuildDownloadedBinding({
+    required String messageId,
+    required CloudSyncAttachmentKind kind,
+    required int order,
+    required CloudSyncAttachmentInfo attachment,
+    required File file,
+    required String localPath,
+  }) async {
     try {
-      final binding = await _buildDownloadedBinding(
+      return await _buildDownloadedBinding(
         messageId: messageId,
         kind: kind,
         order: order,
@@ -660,8 +959,6 @@ final class CloudAttachmentSyncService {
         file: file,
         localPath: localPath,
       );
-      await _store.saveAttachmentBinding(_session, binding);
-      return binding;
     } on FormatException {
       return null;
     }
@@ -704,6 +1001,21 @@ final class CloudAttachmentSyncService {
     );
   }
 
+  ChatAttachmentMarker _remoteAttachmentMarker({
+    required CloudSyncAttachmentKind kind,
+    required int order,
+    required String localPath,
+    required CloudSyncAttachmentInfo attachment,
+  }) {
+    return ChatAttachmentMarker(
+      kind: kind,
+      order: order,
+      localPath: localPath,
+      fileName: _safeMarkerField(attachment.fileName),
+      mimeType: attachment.mimeType,
+    );
+  }
+
   String _attachmentId({
     required String messageId,
     required CloudSyncAttachmentKind kind,
@@ -723,6 +1035,22 @@ final class CloudAttachmentSyncService {
     ]);
     return _uuid.v5(Namespace.url.value, seed);
   }
+}
+
+final class _PreparedRemoteAttachment {
+  _PreparedRemoteAttachment({
+    required this.marker,
+    required this.commitAction,
+    required this.discardAction,
+  });
+
+  final ChatAttachmentMarker marker;
+  final Future<void> Function() commitAction;
+  final Future<void> Function() discardAction;
+
+  Future<void> commit() => commitAction();
+
+  Future<void> discard() => discardAction();
 }
 
 String _contentSha256(String content) {

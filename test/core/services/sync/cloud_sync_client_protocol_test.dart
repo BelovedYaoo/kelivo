@@ -8,10 +8,133 @@ import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 
 void main() {
+  test('生产客户端固定使用官方服务地址', () {
+    final client = CloudSyncClient();
+    addTearDown(() => client.close(force: true));
+
+    expect(client.baseUrl, 'https://kelivo.bemylover.top');
+    expect(client.baseUrl, defaultCloudSyncBaseUrl);
+  });
+
+  test('同步服务响应重定向时拒绝访问目标地址', () async {
+    final target = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var targetRequestCount = 0;
+    final targetSubscription = target.listen((request) async {
+      targetRequestCount++;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'data': <String, Object?>{
+            'service': 'kelivo-api',
+            'status': 'ok',
+            'timestamp': '2026-07-19T05:00:00.000Z',
+          },
+        }),
+      );
+      await request.response.close();
+    });
+
+    final origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final originSubscription = origin.listen((request) async {
+      request.response
+        ..statusCode = HttpStatus.found
+        ..headers.set(
+          HttpHeaders.locationHeader,
+          'http://${target.address.address}:${target.port}'
+          '/api/system/health/get',
+        );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${origin.address.address}:${origin.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await originSubscription.cancel();
+      await targetSubscription.cancel();
+      await origin.close(force: true);
+      await target.close(force: true);
+    });
+
+    await expectLater(
+      client.health(),
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            )
+            .having(
+              (error) => error.statusCode,
+              'statusCode',
+              HttpStatus.found,
+            ),
+      ),
+    );
+    expect(targetRequestCount, 0);
+  });
+
+  test('签名附件响应重定向时拒绝访问目标地址', () async {
+    final target = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var targetRequestCount = 0;
+    final targetSubscription = target.listen((request) async {
+      targetRequestCount++;
+      await request.drain<void>();
+      request.response.headers.set(HttpHeaders.etagHeader, 'unexpected-target');
+      await request.response.close();
+    });
+
+    final origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final originSubscription = origin.listen((request) async {
+      await request.drain<void>();
+      request.response
+        ..statusCode = HttpStatus.temporaryRedirect
+        ..headers.set(
+          HttpHeaders.locationHeader,
+          'http://${target.address.address}:${target.port}/signed-target',
+        );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${origin.address.address}:${origin.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await originSubscription.cancel();
+      await targetSubscription.cancel();
+      await origin.close(force: true);
+      await target.close(force: true);
+    });
+
+    await expectLater(
+      client.putSignedAttachment(
+        uploadUrl:
+            'http://${origin.address.address}:${origin.port}/signed-origin',
+        headers: const <String, String>{},
+        content: Stream<List<int>>.value(<int>[1, 2, 3]),
+      ),
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            )
+            .having(
+              (error) => error.statusCode,
+              'statusCode',
+              HttpStatus.temporaryRedirect,
+            ),
+      ),
+    );
+    expect(targetRequestCount, 0);
+  });
+
   test('同步传输始终携带独立协议版本', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
-    final client = CloudSyncClient(
+    final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
@@ -66,7 +189,7 @@ void main() {
   test('增量拉取能够识别指令注入实体', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
-    final client = CloudSyncClient(
+    final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
@@ -122,7 +245,7 @@ void main() {
   test('附件传输全部携带独立协议版本', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
-    final client = CloudSyncClient(
+    final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
@@ -191,7 +314,7 @@ void main() {
   test('字段冲突结果保留冲突标识和冲突路径', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
-    final client = CloudSyncClient(
+    final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
@@ -241,7 +364,7 @@ void main() {
   test('父级删除冲突原因能够传回协调器', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
-    final client = CloudSyncClient(
+    final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
@@ -284,7 +407,7 @@ void main() {
   test('字段冲突可以列出并标记为已解决', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
-    final client = CloudSyncClient(
+    final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );

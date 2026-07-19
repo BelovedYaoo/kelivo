@@ -1,0 +1,4 @@
+#include "AppInfo.xcconfig"
+
+// 将破坏性恢复进程测试与生产应用的偏好和应用容器隔离。
+PRODUCT_BUNDLE_IDENTIFIER = com.psyche.kelivo.restoreharness

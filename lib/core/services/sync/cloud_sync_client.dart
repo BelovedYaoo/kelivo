@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:kelivo_sync_api_client/kelivo_sync_api_client.dart' as api;
 
 import 'cloud_sync_types.dart';
@@ -37,7 +38,22 @@ final class CloudSyncClient
     required this._client,
   });
 
-  factory CloudSyncClient({required String baseUrl, String? token}) {
+  factory CloudSyncClient({String? token}) {
+    return CloudSyncClient._forBaseUrl(
+      baseUrl: defaultCloudSyncBaseUrl,
+      token: token,
+    );
+  }
+
+  @visibleForTesting
+  factory CloudSyncClient.forTesting({required String baseUrl, String? token}) {
+    return CloudSyncClient._forBaseUrl(baseUrl: baseUrl, token: token);
+  }
+
+  factory CloudSyncClient._forBaseUrl({
+    required String baseUrl,
+    String? token,
+  }) {
     final String normalized;
     try {
       normalized = normalizeCloudSyncBaseUrl(baseUrl);
@@ -54,6 +70,7 @@ final class CloudSyncClient
         connectTimeout: const Duration(seconds: 10),
         sendTimeout: const Duration(seconds: 30),
         receiveTimeout: const Duration(seconds: 30),
+        followRedirects: false,
         headers: const <String, String>{'accept': 'application/json'},
       ),
     );
@@ -63,6 +80,7 @@ final class CloudSyncClient
         connectTimeout: const Duration(seconds: 10),
         sendTimeout: const Duration(minutes: 5),
         receiveTimeout: const Duration(minutes: 5),
+        followRedirects: false,
       ),
     );
     final client = CloudSyncClient._(

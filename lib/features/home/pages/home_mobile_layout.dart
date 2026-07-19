@@ -393,7 +393,7 @@ class MobileBackgroundLayer extends StatelessWidget {
   }
 }
 
-/// Scroll navigation buttons (scroll to bottom + scroll to previous question)
+/// 滚动导航按钮（滚到底部和上一条消息）
 class ScrollNavigationButtons extends StatelessWidget {
   const ScrollNavigationButtons({
     super.key,
@@ -449,7 +449,7 @@ class ScrollNavigationButtons extends StatelessWidget {
             ),
           ),
         ),
-        // Scroll to previous question button
+        // 滚动到上一条消息按钮
         Align(
           alignment: Alignment.bottomRight,
           child: SafeArea(

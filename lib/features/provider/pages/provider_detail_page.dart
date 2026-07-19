@@ -1470,33 +1470,17 @@ class _ProviderDetailPageState extends State<ProviderDetailPage> {
                               ),
                             );
                             if (ok != true) return;
-                            final old = settings.getProviderConfig(
+                            final previous = settings.getProviderConfig(
                               widget.keyName,
                               defaultName: widget.displayName,
                             );
-                            final prevList = List<String>.from(old.models);
+                            final removeIndex = previous.models.indexOf(id);
                             final prevOverrides = Map<String, dynamic>.from(
-                              old.modelOverrides,
+                              previous.modelOverrides,
                             );
-                            final removeIndex = prevList.indexOf(id);
-                            final newList = prevList
-                                .where((e) => e != id)
-                                .toList();
-                            final newOverrides = Map<String, dynamic>.from(
-                              prevOverrides,
-                            )..remove(id);
-                            await settings.setProviderConfig(
+                            await settings.deleteModels(
                               widget.keyName,
-                              old.copyWith(
-                                models: newList,
-                                modelOverrides: newOverrides,
-                              ),
-                            );
-
-                            // Clear global and assistant-level model selections that reference the deleted model
-                            await settings.clearSelectionsForModel(
-                              widget.keyName,
-                              id,
+                              <String>{id},
                             );
                             try {
                               for (final a in assistantProvider.assistants) {

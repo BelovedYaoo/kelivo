@@ -6896,15 +6896,7 @@ class _ModelRow extends StatelessWidget {
                 onTap: () async {
                   final sp = context.read<SettingsProvider>();
                   final ap = context.read<AssistantProvider>();
-                  final old = sp.getProviderConfig(providerKey);
-                  final list = List<String>.from(old.models)
-                    ..removeWhere((e) => e == modelId);
-                  await sp.setProviderConfig(
-                    providerKey,
-                    old.copyWith(models: list),
-                  );
-                  // Clear global and assistant-level model selections that reference the deleted model
-                  await sp.clearSelectionsForModel(providerKey, modelId);
+                  await sp.deleteModels(providerKey, <String>{modelId});
                   try {
                     for (final a in ap.assistants) {
                       if (a.chatModelProvider == providerKey &&
