@@ -1,0 +1,15 @@
+[package]
+name = "kelivo_secure_core_native"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+name = "kelivo_secure_core"
+crate-type = ["cdylib"]
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"

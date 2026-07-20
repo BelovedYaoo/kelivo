@@ -1,12 +1,14 @@
 import 'dart:convert';
 import 'dart:ffi';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
@@ -27,6 +29,7 @@ void main() {
     });
 
     final schemaVersion = await _verifySchemaContract(root);
+    final secureCoreCapabilities = await _verifySecureCoreCapabilities();
     final sqlCipherCapabilities = await _verifySqlCipherRoundTrip(root);
     final sqliteCapabilities = await _verifySqliteCapabilities(root);
     await _verifyDurableFileOperations(root);
@@ -41,6 +44,7 @@ void main() {
       'sqliteVersionNumber': version.versionNumber,
       'sqliteSourceId': version.sourceId,
       'schemaVersion': schemaVersion,
+      ...secureCoreCapabilities,
       ...sqlCipherCapabilities,
       ...sqliteCapabilities,
       'fileLock': true,
@@ -50,6 +54,45 @@ void main() {
     // ignore: avoid_print
     print('DB2_CAPABILITY_RESULT:${jsonEncode(report)}');
   });
+}
+
+Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
+  const secureCore = KelivoSecureCore();
+  final capabilities = await secureCore.getCapabilities();
+  expect(capabilities.abiVersion, 1);
+  expect(capabilities.backend, KelivoSecureStorageBackend.none);
+  expect(capabilities.supportsKeySlots, isFalse);
+  expect(capabilities.supportsBackgroundAccess, isFalse);
+
+  await expectLater(secureCore.createSlot(Uint8List(15)), throwsArgumentError);
+  await expectLater(
+    secureCore.createSlot(Uint8List(16)),
+    throwsA(
+      isA<KelivoSecureCoreException>().having(
+        (error) => error.status,
+        'status',
+        KelivoSecureCoreStatus.unsupportedPlatform,
+      ),
+    ),
+  );
+  await expectLater(
+    secureCore.openSlot(Uint8List(16)),
+    throwsA(
+      isA<KelivoSecureCoreException>().having(
+        (error) => error.status,
+        'status',
+        KelivoSecureCoreStatus.unsupportedPlatform,
+      ),
+    ),
+  );
+
+  return {
+    'secureCoreAbiVersion': capabilities.abiVersion,
+    'secureStorageBackend': capabilities.backend.name,
+    'secureCoreKeySlots': capabilities.supportsKeySlots,
+    'secureCoreBackgroundAccess': capabilities.supportsBackgroundAccess,
+    'secureCoreFailClosed': true,
+  };
 }
 
 Future<int> _verifySchemaContract(Directory root) async {

@@ -1,0 +1,23 @@
+name: KelivoSecureCoreBindings
+description: Kelivo 安全核心 C ABI 的 Dart Native 绑定。
+output: lib/kelivo_secure_core_bindings_generated.dart
+ffi-native:
+comments: false
+headers:
+  entry-points:
+    - native/include/kelivo_secure_core.h
+functions:
+  include:
+    - kelivo_.*
+structs:
+  include:
+    - KelivoCoreCapabilities
+typedefs:
+  include:
+    - KelivoStatus
+macros:
+  include:
+    - KELIVO_.*
+globals:
+  exclude:
+    - .*
