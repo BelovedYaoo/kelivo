@@ -66,7 +66,18 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.backend, KelivoSecureStorageBackend.windowsDpapi);
     expect(capabilities.supportsKeySlots, isTrue);
     expect(capabilities.supportsBackgroundAccess, isTrue);
-    await _verifyWindowsDpapiSlot(secureCore);
+    await _verifyPersistentSecureCoreSlot(
+      secureCore,
+      slotId: Uint8List.fromList('kelivo-dpapi-v01'.codeUnits),
+    );
+  } else if (Platform.isAndroid) {
+    expect(capabilities.backend, KelivoSecureStorageBackend.androidKeystore);
+    expect(capabilities.supportsKeySlots, isTrue);
+    expect(capabilities.supportsBackgroundAccess, isTrue);
+    await _verifyPersistentSecureCoreSlot(
+      secureCore,
+      slotId: Uint8List.fromList('kelivo-keystore1'.codeUnits),
+    );
   } else {
     expect(capabilities.backend, KelivoSecureStorageBackend.none);
     expect(capabilities.supportsKeySlots, isFalse);
@@ -108,25 +119,20 @@ Future<void> _verifyUnsupportedSecureCoreSlots(
   );
 }
 
-Future<void> _verifyWindowsDpapiSlot(KelivoSecureCore secureCore) async {
-  final slotId = Uint8List.fromList([
-    0x6b,
-    0x65,
-    0x6c,
-    0x69,
-    0x76,
-    0x6f,
-    0x2d,
-    0x64,
-    0x70,
-    0x61,
-    0x70,
-    0x69,
-    0x2d,
-    0x76,
-    0x30,
-    0x31,
-  ]);
+Future<void> _verifyPersistentSecureCoreSlot(
+  KelivoSecureCore secureCore, {
+  required Uint8List slotId,
+}) async {
+  await expectLater(
+    secureCore.openSlot(Uint8List.fromList('kelivo-absent-v1'.codeUnits)),
+    throwsA(
+      isA<KelivoSecureCoreException>().having(
+        (error) => error.status,
+        'status',
+        KelivoSecureCoreStatus.slotNotFound,
+      ),
+    ),
+  );
 
   KelivoKeyHandle handle;
   try {
@@ -135,6 +141,16 @@ Future<void> _verifyWindowsDpapiSlot(KelivoSecureCore secureCore) async {
     expect(error.status, KelivoSecureCoreStatus.slotAlreadyExists);
     handle = await secureCore.openSlot(slotId);
   }
+  await expectLater(
+    secureCore.createSlot(slotId),
+    throwsA(
+      isA<KelivoSecureCoreException>().having(
+        (error) => error.status,
+        'status',
+        KelivoSecureCoreStatus.slotAlreadyExists,
+      ),
+    ),
+  );
   await secureCore.close(handle);
   await expectLater(secureCore.close(handle), throwsStateError);
 

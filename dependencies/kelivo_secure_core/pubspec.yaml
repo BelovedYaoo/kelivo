@@ -5,11 +5,15 @@ publish_to: none
 
 environment:
   sdk: ^3.12.1
+  flutter: ">=3.44.1"
 
 dependencies:
   code_assets: 1.2.1
   ffi: 2.2.0
+  flutter:
+    sdk: flutter
   hooks: 2.0.2
+  irondash_engine_context: 0.5.5
 
 dev_dependencies:
   ffigen: 20.1.1

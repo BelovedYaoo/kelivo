@@ -11,22 +11,26 @@ use zeroize::Zeroizing;
 mod windows;
 #[cfg(target_os = "windows")]
 use windows as platform;
+#[cfg(target_os = "android")]
+mod android;
+#[cfg(target_os = "android")]
+use android as platform;
 
 const ABI_VERSION: u32 = 1;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
 const INVALID_KEY_HANDLE: u64 = 0;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "android", target_os = "windows"))]
 const KEY_SLOTS_CAPABILITY: u64 = 1 << 0;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "android", target_os = "windows"))]
 const BACKGROUND_ACCESS_CAPABILITY: u64 = 1 << 1;
-#[cfg(target_os = "windows")]
+#[cfg(any(target_os = "android", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
 type LocalKey = Zeroizing<Box<[u8]>>;
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(not(any(target_os = "android", target_os = "windows")))]
 mod platform {
     use super::{KelivoStatus, LocalKey};
 
