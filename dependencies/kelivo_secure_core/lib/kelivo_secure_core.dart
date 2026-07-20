@@ -40,6 +40,14 @@ enum KelivoSecureCoreStatus {
   unsupportedPolicy(3),
   invalidKeyHandle(4),
   outputBufferTooSmall(5),
+  slotNotFound(6),
+  slotAlreadyExists(7),
+  slotDataInvalid(8),
+  slotUnwrapFailed(9),
+  secureStorageUnavailable(10),
+  randomSourceFailure(11),
+  ioFailure(12),
+  internalState(13),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);

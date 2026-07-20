@@ -60,11 +60,32 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
   const secureCore = KelivoSecureCore();
   final capabilities = await secureCore.getCapabilities();
   expect(capabilities.abiVersion, 1);
-  expect(capabilities.backend, KelivoSecureStorageBackend.none);
-  expect(capabilities.supportsKeySlots, isFalse);
-  expect(capabilities.supportsBackgroundAccess, isFalse);
-
   await expectLater(secureCore.createSlot(Uint8List(15)), throwsArgumentError);
+
+  if (Platform.isWindows) {
+    expect(capabilities.backend, KelivoSecureStorageBackend.windowsDpapi);
+    expect(capabilities.supportsKeySlots, isTrue);
+    expect(capabilities.supportsBackgroundAccess, isTrue);
+    await _verifyWindowsDpapiSlot(secureCore);
+  } else {
+    expect(capabilities.backend, KelivoSecureStorageBackend.none);
+    expect(capabilities.supportsKeySlots, isFalse);
+    expect(capabilities.supportsBackgroundAccess, isFalse);
+    await _verifyUnsupportedSecureCoreSlots(secureCore);
+  }
+
+  return {
+    'secureCoreAbiVersion': capabilities.abiVersion,
+    'secureStorageBackend': capabilities.backend.name,
+    'secureCoreKeySlots': capabilities.supportsKeySlots,
+    'secureCoreBackgroundAccess': capabilities.supportsBackgroundAccess,
+    'secureCoreFailClosed': true,
+  };
+}
+
+Future<void> _verifyUnsupportedSecureCoreSlots(
+  KelivoSecureCore secureCore,
+) async {
   await expectLater(
     secureCore.createSlot(Uint8List(16)),
     throwsA(
@@ -85,14 +106,40 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
       ),
     ),
   );
+}
 
-  return {
-    'secureCoreAbiVersion': capabilities.abiVersion,
-    'secureStorageBackend': capabilities.backend.name,
-    'secureCoreKeySlots': capabilities.supportsKeySlots,
-    'secureCoreBackgroundAccess': capabilities.supportsBackgroundAccess,
-    'secureCoreFailClosed': true,
-  };
+Future<void> _verifyWindowsDpapiSlot(KelivoSecureCore secureCore) async {
+  final slotId = Uint8List.fromList([
+    0x6b,
+    0x65,
+    0x6c,
+    0x69,
+    0x76,
+    0x6f,
+    0x2d,
+    0x64,
+    0x70,
+    0x61,
+    0x70,
+    0x69,
+    0x2d,
+    0x76,
+    0x30,
+    0x31,
+  ]);
+
+  KelivoKeyHandle handle;
+  try {
+    handle = await secureCore.createSlot(slotId);
+  } on KelivoSecureCoreException catch (error) {
+    expect(error.status, KelivoSecureCoreStatus.slotAlreadyExists);
+    handle = await secureCore.openSlot(slotId);
+  }
+  await secureCore.close(handle);
+  await expectLater(secureCore.close(handle), throwsStateError);
+
+  final reopened = await secureCore.openSlot(slotId);
+  await secureCore.close(reopened);
 }
 
 Future<int> _verifySchemaContract(Directory root) async {
