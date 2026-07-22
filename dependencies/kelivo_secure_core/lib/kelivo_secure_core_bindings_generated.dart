@@ -54,6 +54,25 @@ external int kelivo_key_handle_close(int handle);
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
     ffi.Uint64,
+    ffi.Pointer<ffi.Void>,
+    KelivoSqlCipherKeyCallback,
+  )
+>()
+external int kelivo_sqlcipher_key_apply(
+  int handle,
+  ffi.Pointer<ffi.Uint8> database_id,
+  int database_id_length,
+  int epoch,
+  ffi.Pointer<ffi.Void> database,
+  KelivoSqlCipherKeyCallback key_callback,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
     ffi.Pointer<ffi.Uint8>,
@@ -108,6 +127,20 @@ external int kelivo_record_open(
 
 typedef KelivoStatus = ffi.Int32;
 typedef DartKelivoStatus = int;
+typedef KelivoSqlCipherKeyCallbackFunction =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void> database,
+      ffi.Pointer<ffi.Void> key,
+      ffi.Int32 key_length,
+    );
+typedef DartKelivoSqlCipherKeyCallbackFunction =
+    int Function(
+      ffi.Pointer<ffi.Void> database,
+      ffi.Pointer<ffi.Void> key,
+      int key_length,
+    );
+typedef KelivoSqlCipherKeyCallback =
+    ffi.Pointer<ffi.NativeFunction<KelivoSqlCipherKeyCallbackFunction>>;
 
 final class KelivoCoreCapabilities extends ffi.Struct {
   @ffi.Uint32()
@@ -174,6 +207,8 @@ const int KELIVO_STATUS_RECORD_AUTHENTICATION_FAILED = 17;
 
 const int KELIVO_STATUS_INPUT_TOO_LARGE = 18;
 
+const int KELIVO_STATUS_SQLCIPHER_KEY_FAILED = 19;
+
 const int KELIVO_STATUS_UNSUPPORTED_PLATFORM = 100;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_NONE = 0;
@@ -192,6 +227,8 @@ const int KELIVO_CAPABILITY_BACKGROUND_ACCESS = 2;
 
 const int KELIVO_CAPABILITY_RECORD_ENVELOPES = 4;
 
+const int KELIVO_CAPABILITY_SQLCIPHER_KEY_APPLICATION = 8;
+
 const int KELIVO_RECORD_ID_SIZE = 16;
 
 const int KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE = 65536;
@@ -199,3 +236,5 @@ const int KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE = 65536;
 const int KELIVO_RECORD_MAX_PLAINTEXT_SIZE = 16777216;
 
 const int KELIVO_RECORD_MAX_ENVELOPE_SIZE = 16777296;
+
+const int KELIVO_DATABASE_ID_SIZE = 16;

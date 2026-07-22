@@ -32,4 +32,8 @@
 - 云同步 bearer token 已从账号工作区 JSON 移出：`session-v2` 只保存非敏感会话元数据和版本化引用，令牌使用记录信封加密后写入双槽 `token-v1-*.bin`；主密钥只由 Windows DPAPI 或 Android Keystore 保护。
 - 旧 `session-v1` 明文记录不迁移、不读取，启动时直接删除并退出账号；令牌密文缺失、损坏或认证失败均 fail-closed。退出登录先发布 tombstone 再删除密文，删除中断时下次启动会继续清理。
 - 账号工作区目标测试 44 项、全仓 1552 项测试与 `flutter analyze` 均通过；Windows 与 Android 模拟器的平台能力报告均确认令牌静态加密、轮换、篡改拒绝与删除。
-- Android 三 ABI Release 均通过 APK v2 签名与 16 KiB ZIP 对齐校验；Windows Release 构建通过。Issue #23 已具备关闭条件，下一阶段继续生产 SQLCipher 连接收口。
+- Android 三 ABI Release 均通过 APK v2 签名与 16 KiB ZIP 对齐校验；Windows Release 构建通过。Issue #23 已关闭，下一阶段继续生产 SQLCipher 连接收口。
+- 生产 SQLCipher 连接收口由 BelovedYaoo/kelivo#24 跟踪；范围包含主连接、执行 isolate、在线快照、恢复校验与切换，禁止无密钥或错误密钥回退到明文 SQLite。
+- SQLCipher 原生设键桥接已完成底层验证：安全核心用独立 HKDF 域、16 字节数据库上下文和 epoch 派生 32 字节子密钥，并同步调用同一 SQLite Native Asset 的 `sqlite3_key`；密钥不进入 Dart 缓冲区。
+- 安全核心能力新增 SQLCipher 设键位，C ABI 白名单由七个扩为八个导出。Windows DPAPI 与 Android 模拟器 Keystore 均通过正确键重开、错误工作区拒绝、无键拒绝和磁盘明文哨兵检查；生产 `AppDatabase` 尚未接线，不得提前宣称本地数据库已全面加密。
+- SQLCipher 官方语义确认：`ATTACH` 不带 `KEY` 会复用主库的原始键与 salt，不适合打开具有独立 salt 的既有加密快照；命名库设键与恢复路径必须单独收口。

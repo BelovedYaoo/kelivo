@@ -47,6 +47,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_RECORD_ENVELOPE_INVALID INT32_C(16)
 #define KELIVO_STATUS_RECORD_AUTHENTICATION_FAILED INT32_C(17)
 #define KELIVO_STATUS_INPUT_TOO_LARGE INT32_C(18)
+#define KELIVO_STATUS_SQLCIPHER_KEY_FAILED INT32_C(19)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
@@ -57,11 +58,18 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_KEY_SLOTS (UINT64_C(1) << 0)
 #define KELIVO_CAPABILITY_BACKGROUND_ACCESS (UINT64_C(1) << 1)
 #define KELIVO_CAPABILITY_RECORD_ENVELOPES (UINT64_C(1) << 2)
+#define KELIVO_CAPABILITY_SQLCIPHER_KEY_APPLICATION (UINT64_C(1) << 3)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE ((size_t)(64 * 1024))
 #define KELIVO_RECORD_MAX_PLAINTEXT_SIZE ((size_t)(16 * 1024 * 1024))
 #define KELIVO_RECORD_MAX_ENVELOPE_SIZE ((size_t)(KELIVO_RECORD_MAX_PLAINTEXT_SIZE + 80))
+#define KELIVO_DATABASE_ID_SIZE ((size_t)16)
+
+typedef int32_t (*KelivoSqlCipherKeyCallback)(
+    void *database,
+    const void *key,
+    int32_t key_length);
 
 /*
  * 固定为 32 字节的 ABI v1 能力结构。reserved 字段必须忽略；
@@ -112,6 +120,19 @@ KELIVO_CORE_API KelivoStatus kelivo_key_slot_open(
  * 在同一进程内复用；成功关闭必须先从句柄表移除并清零对应密钥材料。
  */
 KELIVO_CORE_API KelivoStatus kelivo_key_handle_close(uint64_t handle);
+
+/*
+ * 从句柄主密钥按 database_id 与 epoch 派生独立的 32 字节 SQLCipher 密钥，
+ * 并在本库内同步交给 SQLite 原生设键函数。database_id 必须恰好 16 字节，
+ * epoch 必须非零。回调不得保存 key 指针；密钥不会通过 ABI 输出给调用方。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_sqlcipher_key_apply(
+    uint64_t handle,
+    const uint8_t *database_id,
+    size_t database_id_length,
+    uint64_t epoch,
+    void *database,
+    KelivoSqlCipherKeyCallback key_callback);
 
 /*
  * 使用句柄中的 epoch 主密钥密封一条记录。record_id 必须恰好 16 字节，

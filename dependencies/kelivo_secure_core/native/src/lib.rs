@@ -1,12 +1,13 @@
 #![forbid(unsafe_op_in_unsafe_fn)]
 
-use core::{mem::size_of, slice};
+use core::{ffi::c_void, mem::size_of, slice};
 use std::{
     collections::{HashMap, HashSet},
     sync::{Arc, Mutex, OnceLock},
 };
 use zeroize::Zeroizing;
 
+mod database;
 mod record;
 
 #[cfg(target_os = "windows")]
@@ -29,6 +30,8 @@ const KEY_SLOTS_CAPABILITY: u64 = 1 << 0;
 const BACKGROUND_ACCESS_CAPABILITY: u64 = 1 << 1;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 const RECORD_ENVELOPES_CAPABILITY: u64 = 1 << 2;
+#[cfg(any(target_os = "android", target_os = "windows"))]
+const SQLCIPHER_KEY_APPLICATION_CAPABILITY: u64 = 1 << 3;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
@@ -91,6 +94,7 @@ pub(crate) enum KelivoStatus {
     RecordEnvelopeInvalid = 16,
     RecordAuthenticationFailed = 17,
     InputTooLarge = 18,
+    SqlCipherKeyFailed = 19,
     UnsupportedPlatform = 100,
 }
 
@@ -134,6 +138,22 @@ unsafe fn read_record_id(
     }
     let source = unsafe { slice::from_raw_parts(record_id, record::RECORD_ID_SIZE) };
     let mut validated = [0_u8; record::RECORD_ID_SIZE];
+    validated.copy_from_slice(source);
+    Ok(validated)
+}
+
+unsafe fn read_database_id(
+    database_id: *const u8,
+    database_id_length: usize,
+) -> Result<[u8; database::DATABASE_ID_SIZE], KelivoStatus> {
+    if database_id.is_null() {
+        return Err(KelivoStatus::NullPointer);
+    }
+    if database_id_length != database::DATABASE_ID_SIZE {
+        return Err(KelivoStatus::InvalidArgument);
+    }
+    let source = unsafe { slice::from_raw_parts(database_id, database::DATABASE_ID_SIZE) };
+    let mut validated = [0_u8; database::DATABASE_ID_SIZE];
     validated.copy_from_slice(source);
     Ok(validated)
 }
@@ -368,6 +388,53 @@ fn master_key(key: &LocalKey) -> Result<&[u8; LOCAL_KEY_SIZE], KelivoStatus> {
     <&[u8; LOCAL_KEY_SIZE]>::try_from(&key[..]).map_err(|_| KelivoStatus::InternalState)
 }
 
+fn database_error_status(error: database::DatabaseKeyError) -> KelivoStatus {
+    match error {
+        database::DatabaseKeyError::Crypto => KelivoStatus::InternalState,
+        database::DatabaseKeyError::InvalidInput => KelivoStatus::InvalidArgument,
+        database::DatabaseKeyError::KeyCallbackFailed => KelivoStatus::SqlCipherKeyFailed,
+    }
+}
+
+/// # Safety
+///
+/// `database_id` 必须覆盖声明的可读长度；`database` 必须是仍打开的 SQLite
+/// 连接，`key_callback` 必须与该连接来自同一原生 SQLite 资产。回调只在本次
+/// 调用内同步使用派生密钥，不得保存密钥指针。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_sqlcipher_key_apply(
+    handle: u64,
+    database_id: *const u8,
+    database_id_length: usize,
+    epoch: u64,
+    database: *mut c_void,
+    key_callback: Option<database::SqlCipherKeyCallback>,
+) -> i32 {
+    let database_id = match unsafe { read_database_id(database_id, database_id_length) } {
+        Ok(database_id) => database_id,
+        Err(status) => return status.code(),
+    };
+    if database.is_null() {
+        return KelivoStatus::NullPointer.code();
+    }
+    let key_callback = match key_callback {
+        Some(key_callback) => key_callback,
+        None => return KelivoStatus::NullPointer.code(),
+    };
+    let key = match key_for_handle(handle) {
+        Ok(key) => key,
+        Err(status) => return status.code(),
+    };
+    let master_key = match master_key(&key) {
+        Ok(master_key) => master_key,
+        Err(status) => return status.code(),
+    };
+    match database::apply_database_key(master_key, &database_id, epoch, database, key_callback) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(error) => database_error_status(error).code(),
+    }
+}
+
 /// # Safety
 ///
 /// 所有输入指针必须覆盖声明的可读长度；输出指针必须覆盖声明的可写容量。
@@ -597,7 +664,10 @@ mod tests {
         assert_eq!(output.secure_storage_backend, 1);
         assert_eq!(
             output.flags,
-            KEY_SLOTS_CAPABILITY | BACKGROUND_ACCESS_CAPABILITY | RECORD_ENVELOPES_CAPABILITY
+            KEY_SLOTS_CAPABILITY
+                | BACKGROUND_ACCESS_CAPABILITY
+                | RECORD_ENVELOPES_CAPABILITY
+                | SQLCIPHER_KEY_APPLICATION_CAPABILITY
         );
     }
 
@@ -693,6 +763,144 @@ mod tests {
             .expect("第二个密钥句柄应注册成功");
         assert_ne!(second, first);
         assert_eq!(kelivo_key_handle_close(second), KelivoStatus::Ok.code());
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe extern "C" fn accept_sqlcipher_key(
+        database: *mut c_void,
+        key: *const c_void,
+        key_length: i32,
+    ) -> i32 {
+        i32::from(database.is_null() || key.is_null() || key_length != LOCAL_KEY_SIZE as i32)
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe extern "C" fn reject_sqlcipher_key(
+        _database: *mut c_void,
+        _key: *const c_void,
+        _key_length: i32,
+    ) -> i32 {
+        26
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn opaque_handle_applies_sqlcipher_key_through_callback() {
+        let handle = register_key(Zeroizing::new(
+            (0_u8..LOCAL_KEY_SIZE as u8)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        ))
+        .expect("测试密钥句柄应注册成功");
+        let database_id = [0x42_u8; database::DATABASE_ID_SIZE];
+        let mut database_marker = 0_u8;
+        let database = (&mut database_marker as *mut u8).cast::<c_void>();
+
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_key_apply(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    Some(accept_sqlcipher_key),
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_key_apply(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    0,
+                    database,
+                    Some(accept_sqlcipher_key),
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_key_apply(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    Some(reject_sqlcipher_key),
+                )
+            },
+            KelivoStatus::SqlCipherKeyFailed.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_key_apply(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    ptr::null_mut(),
+                    Some(accept_sqlcipher_key),
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_key_apply(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    None,
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_key_apply(
+                    handle,
+                    ptr::null(),
+                    database_id.len(),
+                    1,
+                    database,
+                    Some(accept_sqlcipher_key),
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_key_apply(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len() - 1,
+                    1,
+                    database,
+                    Some(accept_sqlcipher_key),
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(kelivo_key_handle_close(handle), KelivoStatus::Ok.code());
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_key_apply(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    Some(accept_sqlcipher_key),
+                )
+            },
+            KelivoStatus::InvalidKeyHandle.code()
+        );
     }
 
     #[cfg(target_os = "windows")]

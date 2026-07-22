@@ -14,15 +14,18 @@ const _keyPolicyVersion = 1;
 const _keySlotsCapability = 1 << 0;
 const _backgroundAccessCapability = 1 << 1;
 const _recordEnvelopesCapability = 1 << 2;
+const _sqlCipherKeyApplicationCapability = 1 << 3;
 const _knownCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
-    _recordEnvelopesCapability;
+    _recordEnvelopesCapability |
+    _sqlCipherKeyApplicationCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
 const _recordMaxPlaintextSize = native.KELIVO_RECORD_MAX_PLAINTEXT_SIZE;
 const _recordMaxEnvelopeSize = native.KELIVO_RECORD_MAX_ENVELOPE_SIZE;
+const _databaseIdLength = native.KELIVO_DATABASE_ID_SIZE;
 // Dart FFI 用有符号 int 传递 Uint64；保留正数域可避免跨平台符号歧义。
 const _recordMaxEpoch = 0x7fffffffffffffff;
 
@@ -64,6 +67,7 @@ enum KelivoSecureCoreStatus {
   recordEnvelopeInvalid(16),
   recordAuthenticationFailed(17),
   inputTooLarge(18),
+  sqlCipherKeyFailed(19),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);
@@ -85,6 +89,7 @@ final class KelivoCoreCapabilities {
     required this.supportsKeySlots,
     required this.supportsBackgroundAccess,
     required this.supportsRecordEnvelopes,
+    required this.supportsSqlCipherKeyApplication,
   });
 
   final int abiVersion;
@@ -92,7 +97,15 @@ final class KelivoCoreCapabilities {
   final bool supportsKeySlots;
   final bool supportsBackgroundAccess;
   final bool supportsRecordEnvelopes;
+  final bool supportsSqlCipherKeyApplication;
 }
+
+typedef KelivoSqlCipherKeyNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void> database,
+      ffi.Pointer<ffi.Void> key,
+      ffi.Int32 keyLength,
+    );
 
 final class KelivoKeyHandle {
   KelivoKeyHandle._(this._value);
@@ -244,6 +257,60 @@ final class KelivoSecureCore {
       rethrow;
     }
   }
+
+  /// Drift 已把数据库 setup 放在工作 isolate；同步设键可让派生密钥始终
+  /// 留在 Rust 与 SQLCipher 的原生调用栈，避免为跨 isolate 传参而复制密钥。
+  void applySqlCipherKeySync({
+    required Uint8List slotId,
+    required Uint8List databaseId,
+    required int epoch,
+    required bool createSlotIfMissing,
+    required ffi.Pointer<ffi.Void> database,
+    required ffi.Pointer<ffi.NativeFunction<KelivoSqlCipherKeyNative>>
+    keyCallback,
+  }) {
+    if (databaseId.length != _databaseIdLength) {
+      throw ArgumentError.value(
+        databaseId.length,
+        'databaseId',
+        '数据库标识必须为 $_databaseIdLength 字节',
+      );
+    }
+    if (epoch <= 0 || epoch > _recordMaxEpoch) {
+      throw ArgumentError.value(epoch, 'epoch', '密钥世代必须在正 63 位整数范围内');
+    }
+    if (database.address == 0) {
+      throw ArgumentError.value(database, 'database', '数据库指针不得为空');
+    }
+    if (keyCallback.address == 0) {
+      throw ArgumentError.value(keyCallback, 'keyCallback', '设键函数指针不得为空');
+    }
+
+    final copiedSlotId = Uint8List.fromList(slotId);
+    final copiedDatabaseId = Uint8List.fromList(databaseId);
+    final handle = createSlotIfMissing
+        ? _openOrCreateKeySlot(copiedSlotId)
+        : _openKeySlot(copiedSlotId, create: false);
+    _runWithSynchronousKeyHandle(handle, (opaqueValue) {
+      final databaseIdPointer = _copyToNative(copiedDatabaseId);
+      try {
+        _throwOnError(
+          operation: 'sqlcipher_key_apply',
+          statusCode: native.kelivo_sqlcipher_key_apply(
+            opaqueValue,
+            databaseIdPointer,
+            copiedDatabaseId.length,
+            epoch,
+            database,
+            keyCallback,
+          ),
+        );
+      } finally {
+        _clearAndFree(databaseIdPointer, copiedDatabaseId.length);
+        copiedDatabaseId.fillRange(0, copiedDatabaseId.length, 0);
+      }
+    });
+  }
 }
 
 KelivoCoreCapabilities _readCapabilities() {
@@ -292,6 +359,11 @@ KelivoCoreCapabilities _readCapabilities() {
         capabilities.flags & _keySlotsCapability == 0) {
       throw StateError('安全核心在不支持密钥槽位时声明了记录信封能力');
     }
+    if (capabilities.flags & _sqlCipherKeyApplicationCapability != 0 &&
+        (capabilities.flags & _keySlotsCapability == 0 ||
+            capabilities.flags & _backgroundAccessCapability == 0)) {
+      throw StateError('安全核心在缺少后台密钥槽位时声明了 SQLCipher 设键能力');
+    }
 
     return KelivoCoreCapabilities(
       abiVersion: capabilities.abi_version,
@@ -301,10 +373,50 @@ KelivoCoreCapabilities _readCapabilities() {
           capabilities.flags & _backgroundAccessCapability != 0,
       supportsRecordEnvelopes:
           capabilities.flags & _recordEnvelopesCapability != 0,
+      supportsSqlCipherKeyApplication:
+          capabilities.flags & _sqlCipherKeyApplicationCapability != 0,
     );
   } finally {
     calloc.free(output);
   }
+}
+
+KelivoKeyHandle _openOrCreateKeySlot(Uint8List slotId) {
+  try {
+    return _openKeySlot(slotId, create: true);
+  } on KelivoSecureCoreException catch (error) {
+    if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
+    return _openKeySlot(slotId, create: false);
+  }
+}
+
+void _runWithSynchronousKeyHandle(
+  KelivoKeyHandle handle,
+  void Function(int opaqueValue) action,
+) {
+  final opaqueValue = handle._requireOpen();
+  try {
+    action(opaqueValue);
+  } catch (error, stackTrace) {
+    try {
+      _throwOnError(
+        operation: 'key_handle_close',
+        statusCode: native.kelivo_key_handle_close(opaqueValue),
+      );
+      handle._completeClose();
+    } catch (closeError, closeStackTrace) {
+      Error.throwWithStackTrace(
+        StateError('同步密钥操作失败且句柄关闭失败：$error；$closeError'),
+        closeStackTrace,
+      );
+    }
+    Error.throwWithStackTrace(error, stackTrace);
+  }
+  _throwOnError(
+    operation: 'key_handle_close',
+    statusCode: native.kelivo_key_handle_close(opaqueValue),
+  );
+  handle._completeClose();
 }
 
 KelivoKeyHandle _openKeySlot(Uint8List slotId, {required bool create}) {

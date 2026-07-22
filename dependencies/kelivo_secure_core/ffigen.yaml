@@ -14,7 +14,7 @@ structs:
     - KelivoCoreCapabilities
 typedefs:
   include:
-    - KelivoStatus
+    - Kelivo.*
 macros:
   include:
     - KELIVO_.*

@@ -5,6 +5,7 @@ import 'dart:typed_data';
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
+import 'package:Kelivo/core/database/sqlcipher_database_key.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -34,6 +35,8 @@ void main() {
     final secureSessionTokenCapabilities = await _verifySecureSessionTokenStore(
       root,
     );
+    final secureSqlCipherKeyCapabilities =
+        await _verifySecureSqlCipherKeyBridge(root);
     final sqlCipherCapabilities = await _verifySqlCipherRoundTrip(root);
     final sqliteCapabilities = await _verifySqliteCapabilities(root);
     await _verifyDurableFileOperations(root);
@@ -50,6 +53,7 @@ void main() {
       'schemaVersion': schemaVersion,
       ...secureCoreCapabilities,
       ...secureSessionTokenCapabilities,
+      ...secureSqlCipherKeyCapabilities,
       ...sqlCipherCapabilities,
       ...sqliteCapabilities,
       'fileLock': true,
@@ -59,6 +63,87 @@ void main() {
     // ignore: avoid_print
     print('DB2_CAPABILITY_RESULT:${jsonEncode(report)}');
   });
+}
+
+Future<Map<String, Object>> _verifySecureSqlCipherKeyBridge(
+  Directory root,
+) async {
+  if (!Platform.isWindows && !Platform.isAndroid) {
+    return const <String, Object>{'secureSqlCipherKeyBridge': false};
+  }
+
+  const sentinel = 'secure-core-sqlcipher-key-sentinel';
+  const workspaceKey =
+      '13579bdf2468ace013579bdf2468ace013579bdf2468ace013579bdf2468ace0';
+  const wrongWorkspaceKey =
+      '02468ace13579bdf02468ace13579bdf02468ace13579bdf02468ace13579bdf';
+  final databaseFile = File(
+    p.join(root.path, 'secure-core-sqlcipher-key.sqlite'),
+  );
+  final key = SqlCipherDatabaseKey.forWorkspace(workspaceKey);
+  final database = sqlite.sqlite3.open(databaseFile.path);
+  try {
+    key.apply(database, createSlotIfMissing: true);
+    database.execute('CREATE TABLE protected_rows(value TEXT NOT NULL);');
+    database.execute('INSERT INTO protected_rows(value) VALUES (?);', [
+      sentinel,
+    ]);
+  } finally {
+    database.close();
+  }
+
+  expect(
+    await databaseFile.openRead(0, 16).first,
+    isNot(equals(utf8.encode('SQLite format 3\u0000'))),
+  );
+  expect(
+    _containsBytes(await databaseFile.readAsBytes(), utf8.encode(sentinel)),
+    isFalse,
+  );
+
+  final reopened = sqlite.sqlite3.open(
+    databaseFile.path,
+    mode: sqlite.OpenMode.readOnly,
+  );
+  try {
+    key.apply(reopened, createSlotIfMissing: false);
+    expect(
+      reopened.select('SELECT value FROM protected_rows;').single['value'],
+      sentinel,
+    );
+  } finally {
+    reopened.close();
+  }
+
+  final wrongKeyDatabase = sqlite.sqlite3.open(
+    databaseFile.path,
+    mode: sqlite.OpenMode.readOnly,
+  );
+  try {
+    expect(
+      () => SqlCipherDatabaseKey.forWorkspace(
+        wrongWorkspaceKey,
+      ).apply(wrongKeyDatabase, createSlotIfMissing: true),
+      throwsA(isA<sqlite.SqliteException>()),
+    );
+  } finally {
+    wrongKeyDatabase.close();
+  }
+
+  final unkeyed = sqlite.sqlite3.open(
+    databaseFile.path,
+    mode: sqlite.OpenMode.readOnly,
+  );
+  try {
+    expect(
+      () => unkeyed.select('SELECT count(*) FROM sqlite_master;'),
+      throwsA(isA<sqlite.SqliteException>()),
+    );
+  } finally {
+    unkeyed.close();
+  }
+
+  return const <String, Object>{'secureSqlCipherKeyBridge': true};
 }
 
 Future<Map<String, Object>> _verifySecureSessionTokenStore(
@@ -192,6 +277,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.supportsKeySlots, isTrue);
     expect(capabilities.supportsBackgroundAccess, isTrue);
     expect(capabilities.supportsRecordEnvelopes, isTrue);
+    expect(capabilities.supportsSqlCipherKeyApplication, isTrue);
     await _verifyPersistentSecureCoreSlot(
       secureCore,
       slotId: Uint8List.fromList('kelivo-dpapi-v01'.codeUnits),
@@ -201,6 +287,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.supportsKeySlots, isTrue);
     expect(capabilities.supportsBackgroundAccess, isTrue);
     expect(capabilities.supportsRecordEnvelopes, isTrue);
+    expect(capabilities.supportsSqlCipherKeyApplication, isTrue);
     await _verifyPersistentSecureCoreSlot(
       secureCore,
       slotId: Uint8List.fromList('kelivo-keystore1'.codeUnits),
@@ -210,6 +297,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.supportsKeySlots, isFalse);
     expect(capabilities.supportsBackgroundAccess, isFalse);
     expect(capabilities.supportsRecordEnvelopes, isFalse);
+    expect(capabilities.supportsSqlCipherKeyApplication, isFalse);
     await _verifyUnsupportedSecureCoreSlots(secureCore);
   }
 
@@ -219,6 +307,8 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     'secureCoreKeySlots': capabilities.supportsKeySlots,
     'secureCoreBackgroundAccess': capabilities.supportsBackgroundAccess,
     'secureCoreRecordEnvelopes': capabilities.supportsRecordEnvelopes,
+    'secureCoreSqlCipherKeyApplication':
+        capabilities.supportsSqlCipherKeyApplication,
     'secureCoreFailClosed': true,
   };
 }
