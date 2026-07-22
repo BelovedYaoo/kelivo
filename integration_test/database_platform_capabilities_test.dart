@@ -66,6 +66,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.backend, KelivoSecureStorageBackend.windowsDpapi);
     expect(capabilities.supportsKeySlots, isTrue);
     expect(capabilities.supportsBackgroundAccess, isTrue);
+    expect(capabilities.supportsRecordEnvelopes, isTrue);
     await _verifyPersistentSecureCoreSlot(
       secureCore,
       slotId: Uint8List.fromList('kelivo-dpapi-v01'.codeUnits),
@@ -74,6 +75,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.backend, KelivoSecureStorageBackend.androidKeystore);
     expect(capabilities.supportsKeySlots, isTrue);
     expect(capabilities.supportsBackgroundAccess, isTrue);
+    expect(capabilities.supportsRecordEnvelopes, isTrue);
     await _verifyPersistentSecureCoreSlot(
       secureCore,
       slotId: Uint8List.fromList('kelivo-keystore1'.codeUnits),
@@ -82,6 +84,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.backend, KelivoSecureStorageBackend.none);
     expect(capabilities.supportsKeySlots, isFalse);
     expect(capabilities.supportsBackgroundAccess, isFalse);
+    expect(capabilities.supportsRecordEnvelopes, isFalse);
     await _verifyUnsupportedSecureCoreSlots(secureCore);
   }
 
@@ -90,6 +93,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     'secureStorageBackend': capabilities.backend.name,
     'secureCoreKeySlots': capabilities.supportsKeySlots,
     'secureCoreBackgroundAccess': capabilities.supportsBackgroundAccess,
+    'secureCoreRecordEnvelopes': capabilities.supportsRecordEnvelopes,
     'secureCoreFailClosed': true,
   };
 }
@@ -153,9 +157,155 @@ Future<void> _verifyPersistentSecureCoreSlot(
   );
   await secureCore.close(handle);
   await expectLater(secureCore.close(handle), throwsStateError);
+  expect(
+    () => secureCore.sealRecord(
+      handle,
+      recordId: Uint8List.fromList('record-envelope1'.codeUnits),
+      epoch: 1,
+      associatedData: Uint8List(0),
+      plaintext: Uint8List(0),
+    ),
+    throwsStateError,
+  );
 
   final reopened = await secureCore.openSlot(slotId);
+  await _verifyRecordEnvelope(secureCore, reopened);
   await secureCore.close(reopened);
+}
+
+Future<void> _verifyRecordEnvelope(
+  KelivoSecureCore secureCore,
+  KelivoKeyHandle handle,
+) async {
+  final recordId = Uint8List.fromList('record-envelope1'.codeUnits);
+  final associatedData = Uint8List.fromList('account/vault/record'.codeUnits);
+  final plaintext = Uint8List.fromList('encrypted record payload'.codeUnits);
+
+  final envelope = await secureCore.sealRecord(
+    handle,
+    recordId: recordId,
+    epoch: 1,
+    associatedData: associatedData,
+    plaintext: plaintext,
+  );
+  final opened = await secureCore.openRecord(
+    handle,
+    recordId: recordId,
+    epoch: 1,
+    associatedData: associatedData,
+    envelope: envelope,
+  );
+
+  expect(opened, orderedEquals(plaintext));
+
+  final emptyEnvelope = await secureCore.sealRecord(
+    handle,
+    recordId: recordId,
+    epoch: 1,
+    associatedData: associatedData,
+    plaintext: Uint8List(0),
+  );
+  final emptyPlaintext = await secureCore.openRecord(
+    handle,
+    recordId: recordId,
+    epoch: 1,
+    associatedData: associatedData,
+    envelope: emptyEnvelope,
+  );
+  expect(emptyPlaintext, isEmpty);
+
+  final tamperedEnvelope = Uint8List.fromList(envelope);
+  tamperedEnvelope[tamperedEnvelope.length - 1] ^= 1;
+  await expectLater(
+    secureCore.openRecord(
+      handle,
+      recordId: recordId,
+      epoch: 1,
+      associatedData: associatedData,
+      envelope: tamperedEnvelope,
+    ),
+    _throwsSecureCoreStatus(KelivoSecureCoreStatus.recordAuthenticationFailed),
+  );
+
+  final wrongAssociatedData = Uint8List.fromList(associatedData);
+  wrongAssociatedData[0] ^= 1;
+  await expectLater(
+    secureCore.openRecord(
+      handle,
+      recordId: recordId,
+      epoch: 1,
+      associatedData: wrongAssociatedData,
+      envelope: envelope,
+    ),
+    _throwsSecureCoreStatus(KelivoSecureCoreStatus.recordAuthenticationFailed),
+  );
+
+  final wrongRecordId = Uint8List.fromList(recordId);
+  wrongRecordId[0] ^= 1;
+  await expectLater(
+    secureCore.openRecord(
+      handle,
+      recordId: wrongRecordId,
+      epoch: 1,
+      associatedData: associatedData,
+      envelope: envelope,
+    ),
+    _throwsSecureCoreStatus(KelivoSecureCoreStatus.recordAuthenticationFailed),
+  );
+
+  final unsupportedVersionEnvelope = Uint8List.fromList(envelope);
+  unsupportedVersionEnvelope[1] = 2;
+  await expectLater(
+    secureCore.openRecord(
+      handle,
+      recordId: recordId,
+      epoch: 1,
+      associatedData: associatedData,
+      envelope: unsupportedVersionEnvelope,
+    ),
+    _throwsSecureCoreStatus(KelivoSecureCoreStatus.recordEnvelopeInvalid),
+  );
+
+  expect(
+    () => secureCore.sealRecord(
+      handle,
+      recordId: Uint8List(15),
+      epoch: 1,
+      associatedData: associatedData,
+      plaintext: plaintext,
+    ),
+    throwsArgumentError,
+  );
+  expect(
+    () => secureCore.sealRecord(
+      handle,
+      recordId: recordId,
+      epoch: 0,
+      associatedData: associatedData,
+      plaintext: plaintext,
+    ),
+    throwsArgumentError,
+  );
+  expect(
+    () => secureCore.sealRecord(
+      handle,
+      recordId: recordId,
+      epoch: 1,
+      associatedData: Uint8List(64 * 1024 + 1),
+      plaintext: plaintext,
+    ),
+    throwsArgumentError,
+  );
+}
+
+Matcher _throwsSecureCoreStatus(KelivoSecureCoreStatus status) {
+  return throwsA(
+    isA<KelivoSecureCoreException>().having(
+      (error) => error.status,
+      'status',
+      status,
+    ),
+  );
 }
 
 Future<int> _verifySchemaContract(Directory root) async {

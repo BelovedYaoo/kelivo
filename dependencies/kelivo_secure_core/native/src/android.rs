@@ -1,5 +1,6 @@
 use super::{
     BACKGROUND_ACCESS_CAPABILITY, KEY_SLOTS_CAPABILITY, KelivoStatus, LOCAL_KEY_SIZE, LocalKey,
+    RECORD_ENVELOPES_CAPABILITY,
 };
 use jni::{
     JNIEnv, JavaVM,
@@ -22,7 +23,8 @@ use std::{
 use zeroize::Zeroizing;
 
 pub(super) const SECURE_STORAGE_BACKEND: u32 = 2;
-pub(super) const CAPABILITY_FLAGS: u64 = KEY_SLOTS_CAPABILITY | BACKGROUND_ACCESS_CAPABILITY;
+pub(super) const CAPABILITY_FLAGS: u64 =
+    KEY_SLOTS_CAPABILITY | BACKGROUND_ACCESS_CAPABILITY | RECORD_ENVELOPES_CAPABILITY;
 
 const SLOT_MAGIC: [u8; 8] = *b"KELVKA01";
 const SLOT_HEADER_SIZE: usize = SLOT_MAGIC.len() + size_of::<u32>();

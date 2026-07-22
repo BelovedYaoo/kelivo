@@ -3,9 +3,11 @@
 use core::{mem::size_of, slice};
 use std::{
     collections::{HashMap, HashSet},
-    sync::{Mutex, OnceLock},
+    sync::{Arc, Mutex, OnceLock},
 };
 use zeroize::Zeroizing;
+
+mod record;
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -25,6 +27,8 @@ const INVALID_KEY_HANDLE: u64 = 0;
 const KEY_SLOTS_CAPABILITY: u64 = 1 << 0;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 const BACKGROUND_ACCESS_CAPABILITY: u64 = 1 << 1;
+#[cfg(any(target_os = "android", target_os = "windows"))]
+const RECORD_ENVELOPES_CAPABILITY: u64 = 1 << 2;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
@@ -82,6 +86,11 @@ pub(crate) enum KelivoStatus {
     RandomSourceFailure = 11,
     IoFailure = 12,
     InternalState = 13,
+    InvalidRecordIdLength = 14,
+    InvalidArgument = 15,
+    RecordEnvelopeInvalid = 16,
+    RecordAuthenticationFailed = 17,
+    InputTooLarge = 18,
     UnsupportedPlatform = 100,
 }
 
@@ -99,6 +108,58 @@ unsafe fn write_output<T>(output: *mut T, value: T) -> Result<(), KelivoStatus> 
     // 调用方持有输出缓冲区；这里只在完成空指针检查后执行一次定点写入。
     unsafe {
         output.write(value);
+    }
+    Ok(())
+}
+
+unsafe fn read_input<'a>(input: *const u8, length: usize) -> Result<&'a [u8], KelivoStatus> {
+    if length == 0 {
+        return Ok(&[]);
+    }
+    if input.is_null() {
+        return Err(KelivoStatus::NullPointer);
+    }
+    Ok(unsafe { slice::from_raw_parts(input, length) })
+}
+
+unsafe fn read_record_id(
+    record_id: *const u8,
+    record_id_length: usize,
+) -> Result<[u8; record::RECORD_ID_SIZE], KelivoStatus> {
+    if record_id.is_null() {
+        return Err(KelivoStatus::NullPointer);
+    }
+    if record_id_length != record::RECORD_ID_SIZE {
+        return Err(KelivoStatus::InvalidRecordIdLength);
+    }
+    let source = unsafe { slice::from_raw_parts(record_id, record::RECORD_ID_SIZE) };
+    let mut validated = [0_u8; record::RECORD_ID_SIZE];
+    validated.copy_from_slice(source);
+    Ok(validated)
+}
+
+unsafe fn write_bytes(
+    output: *mut u8,
+    output_capacity: usize,
+    value: &[u8],
+    out_length: *mut usize,
+) -> Result<(), KelivoStatus> {
+    if output_capacity < value.len() {
+        unsafe {
+            write_output(out_length, value.len())?;
+        }
+        return Err(KelivoStatus::OutputBufferTooSmall);
+    }
+    if !value.is_empty() && output.is_null() {
+        return Err(KelivoStatus::NullPointer);
+    }
+    if !value.is_empty() {
+        unsafe {
+            core::ptr::copy_nonoverlapping(value.as_ptr(), output, value.len());
+        }
+    }
+    unsafe {
+        write_output(out_length, value.len())?;
     }
     Ok(())
 }
@@ -131,7 +192,7 @@ unsafe fn validate_key_slot_request(
 
 #[derive(Default)]
 struct KeyRegistry {
-    active: HashMap<u64, LocalKey>,
+    active: HashMap<u64, Arc<LocalKey>>,
     issued: HashSet<u64>,
 }
 
@@ -154,12 +215,25 @@ fn register_key(key: LocalKey) -> Result<u64, KelivoStatus> {
         }
 
         registry.issued.insert(candidate);
-        let replaced = registry.active.insert(candidate, key);
+        let replaced = registry.active.insert(candidate, Arc::new(key));
         debug_assert!(replaced.is_none());
         return Ok(candidate);
     }
 
     Err(KelivoStatus::InternalState)
+}
+
+fn key_for_handle(handle: u64) -> Result<Arc<LocalKey>, KelivoStatus> {
+    if handle == INVALID_KEY_HANDLE {
+        return Err(KelivoStatus::InvalidKeyHandle);
+    }
+    key_registry()
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?
+        .active
+        .get(&handle)
+        .cloned()
+        .ok_or(KelivoStatus::InvalidKeyHandle)
 }
 
 fn close_key_handle(handle: u64) -> Result<(), KelivoStatus> {
@@ -278,6 +352,181 @@ pub extern "C" fn kelivo_key_handle_close(handle: u64) -> i32 {
     }
 }
 
+fn record_error_status(error: record::RecordError) -> KelivoStatus {
+    match error {
+        record::RecordError::AuthenticationFailed | record::RecordError::ContextMismatch => {
+            KelivoStatus::RecordAuthenticationFailed
+        }
+        record::RecordError::Crypto => KelivoStatus::InternalState,
+        record::RecordError::InputTooLarge => KelivoStatus::InputTooLarge,
+        record::RecordError::InvalidInput => KelivoStatus::InvalidArgument,
+        record::RecordError::InvalidEnvelope => KelivoStatus::RecordEnvelopeInvalid,
+    }
+}
+
+fn master_key(key: &LocalKey) -> Result<&[u8; LOCAL_KEY_SIZE], KelivoStatus> {
+    <&[u8; LOCAL_KEY_SIZE]>::try_from(&key[..]).map_err(|_| KelivoStatus::InternalState)
+}
+
+/// # Safety
+///
+/// 所有输入指针必须覆盖声明的可读长度；输出指针必须覆盖声明的可写容量。
+/// `out_envelope_length` 必须始终可写。输出容量不足时不会生成 nonce 或写入输出缓冲区。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_record_seal(
+    handle: u64,
+    record_id: *const u8,
+    record_id_length: usize,
+    epoch: u64,
+    associated_data: *const u8,
+    associated_data_length: usize,
+    plaintext: *const u8,
+    plaintext_length: usize,
+    out_envelope: *mut u8,
+    out_envelope_capacity: usize,
+    out_envelope_length: *mut usize,
+) -> i32 {
+    if let Err(status) = unsafe { write_output(out_envelope_length, 0) } {
+        return status.code();
+    }
+    if associated_data_length > record::MAX_EXTERNAL_AAD_SIZE
+        || plaintext_length > record::MAX_PLAINTEXT_SIZE
+    {
+        return KelivoStatus::InputTooLarge.code();
+    }
+    let record_id = match unsafe { read_record_id(record_id, record_id_length) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let associated_data = match unsafe { read_input(associated_data, associated_data_length) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let plaintext = match unsafe { read_input(plaintext, plaintext_length) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let key = match key_for_handle(handle) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let required = match record::envelope_size(epoch, plaintext.len()) {
+        Ok(value) => value,
+        Err(error) => return record_error_status(error).code(),
+    };
+    if out_envelope_capacity < required {
+        return match unsafe { write_output(out_envelope_length, required) } {
+            Ok(()) => KelivoStatus::OutputBufferTooSmall.code(),
+            Err(status) => status.code(),
+        };
+    }
+    if out_envelope.is_null() {
+        return KelivoStatus::NullPointer.code();
+    }
+
+    let mut nonce = [0_u8; record::RECORD_NONCE_SIZE];
+    if let Err(status) = platform::fill_random(&mut nonce) {
+        return status.code();
+    }
+    let key = match master_key(&key) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let envelope =
+        match record::seal_with_nonce(key, &record_id, epoch, associated_data, plaintext, &nonce) {
+            Ok(value) => value,
+            Err(error) => return record_error_status(error).code(),
+        };
+    match unsafe {
+        write_bytes(
+            out_envelope,
+            out_envelope_capacity,
+            &envelope,
+            out_envelope_length,
+        )
+    } {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
+/// # Safety
+///
+/// 所有输入指针必须覆盖声明的可读长度；输出指针必须覆盖声明的可写容量。
+/// `out_plaintext_length` 必须始终可写；认证失败不得写出任何明文字节。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_record_open(
+    handle: u64,
+    record_id: *const u8,
+    record_id_length: usize,
+    epoch: u64,
+    associated_data: *const u8,
+    associated_data_length: usize,
+    envelope: *const u8,
+    envelope_length: usize,
+    out_plaintext: *mut u8,
+    out_plaintext_capacity: usize,
+    out_plaintext_length: *mut usize,
+) -> i32 {
+    if let Err(status) = unsafe { write_output(out_plaintext_length, 0) } {
+        return status.code();
+    }
+    if associated_data_length > record::MAX_EXTERNAL_AAD_SIZE
+        || envelope_length > record::MAX_ENVELOPE_SIZE
+    {
+        return KelivoStatus::InputTooLarge.code();
+    }
+    let record_id = match unsafe { read_record_id(record_id, record_id_length) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let associated_data = match unsafe { read_input(associated_data, associated_data_length) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let envelope = match unsafe { read_input(envelope, envelope_length) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let key = match key_for_handle(handle) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let required = match record::opened_size(&record_id, epoch, envelope) {
+        Ok(value) => value,
+        Err(error) => return record_error_status(error).code(),
+    };
+    if out_plaintext_capacity < required {
+        return match unsafe { write_output(out_plaintext_length, required) } {
+            Ok(()) => KelivoStatus::OutputBufferTooSmall.code(),
+            Err(status) => status.code(),
+        };
+    }
+    if required > 0 && out_plaintext.is_null() {
+        return KelivoStatus::NullPointer.code();
+    }
+
+    let key = match master_key(&key) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let plaintext = match record::open(key, &record_id, epoch, associated_data, envelope) {
+        Ok(value) => value,
+        Err(error) => return record_error_status(error).code(),
+    };
+    match unsafe {
+        write_bytes(
+            out_plaintext,
+            out_plaintext_capacity,
+            &plaintext,
+            out_plaintext_length,
+        )
+    } {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -348,7 +597,7 @@ mod tests {
         assert_eq!(output.secure_storage_backend, 1);
         assert_eq!(
             output.flags,
-            KEY_SLOTS_CAPABILITY | BACKGROUND_ACCESS_CAPABILITY
+            KEY_SLOTS_CAPABILITY | BACKGROUND_ACCESS_CAPABILITY | RECORD_ENVELOPES_CAPABILITY
         );
     }
 
@@ -444,5 +693,175 @@ mod tests {
             .expect("第二个密钥句柄应注册成功");
         assert_ne!(second, first);
         assert_eq!(kelivo_key_handle_close(second), KelivoStatus::Ok.code());
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn opaque_handle_seals_and_opens_record_through_c_abi() {
+        let handle = register_key(Zeroizing::new(
+            (0_u8..LOCAL_KEY_SIZE as u8)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        ))
+        .expect("测试密钥句柄应注册成功");
+        let record_id = [0x41_u8; 16];
+        let aad = b"account/vault/record";
+        let plaintext = b"record payload";
+
+        let mut envelope_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_record_seal(
+                    handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    1,
+                    aad.as_ptr(),
+                    aad.len(),
+                    plaintext.as_ptr(),
+                    plaintext.len(),
+                    ptr::null_mut(),
+                    0,
+                    &mut envelope_length,
+                )
+            },
+            KelivoStatus::OutputBufferTooSmall.code()
+        );
+        assert!(envelope_length > plaintext.len());
+
+        let mut envelope = vec![0_u8; envelope_length];
+        assert_eq!(
+            unsafe {
+                kelivo_record_seal(
+                    handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    1,
+                    aad.as_ptr(),
+                    aad.len(),
+                    plaintext.as_ptr(),
+                    plaintext.len(),
+                    envelope.as_mut_ptr(),
+                    envelope.len(),
+                    &mut envelope_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        envelope.truncate(envelope_length);
+
+        let mut opened_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_record_open(
+                    handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    1,
+                    aad.as_ptr(),
+                    aad.len(),
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    ptr::null_mut(),
+                    0,
+                    &mut opened_length,
+                )
+            },
+            KelivoStatus::OutputBufferTooSmall.code()
+        );
+        assert_eq!(opened_length, plaintext.len());
+
+        let mut opened = vec![0_u8; opened_length];
+        assert_eq!(
+            unsafe {
+                kelivo_record_open(
+                    handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    1,
+                    aad.as_ptr(),
+                    aad.len(),
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    opened.as_mut_ptr(),
+                    opened.len(),
+                    &mut opened_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        opened.truncate(opened_length);
+        assert_eq!(opened, plaintext);
+
+        let mut tampered_envelope = envelope.clone();
+        let last_index = tampered_envelope.len() - 1;
+        tampered_envelope[last_index] ^= 1;
+        let mut rejected_output = vec![0xa5_u8; plaintext.len()];
+        let mut rejected_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_record_open(
+                    handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    1,
+                    aad.as_ptr(),
+                    aad.len(),
+                    tampered_envelope.as_ptr(),
+                    tampered_envelope.len(),
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::RecordAuthenticationFailed.code()
+        );
+        assert_eq!(rejected_length, 0);
+        assert!(rejected_output.iter().all(|value| *value == 0xa5));
+
+        let mut unsupported_version = envelope.clone();
+        unsupported_version[1] = 2;
+        assert_eq!(
+            unsafe {
+                kelivo_record_open(
+                    handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    1,
+                    aad.as_ptr(),
+                    aad.len(),
+                    unsupported_version.as_ptr(),
+                    unsupported_version.len(),
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::RecordEnvelopeInvalid.code()
+        );
+        assert_eq!(rejected_length, 0);
+        assert!(rejected_output.iter().all(|value| *value == 0xa5));
+
+        assert_eq!(kelivo_key_handle_close(handle), KelivoStatus::Ok.code());
+        assert_eq!(
+            unsafe {
+                kelivo_record_open(
+                    handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    1,
+                    aad.as_ptr(),
+                    aad.len(),
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::InvalidKeyHandle.code()
+        );
+        assert_eq!(rejected_length, 0);
+        assert!(rejected_output.iter().all(|value| *value == 0xa5));
     }
 }

@@ -42,13 +42,26 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_RANDOM_SOURCE_FAILURE INT32_C(11)
 #define KELIVO_STATUS_IO_FAILURE INT32_C(12)
 #define KELIVO_STATUS_INTERNAL_STATE INT32_C(13)
+#define KELIVO_STATUS_INVALID_RECORD_ID_LENGTH INT32_C(14)
+#define KELIVO_STATUS_INVALID_ARGUMENT INT32_C(15)
+#define KELIVO_STATUS_RECORD_ENVELOPE_INVALID INT32_C(16)
+#define KELIVO_STATUS_RECORD_AUTHENTICATION_FAILED INT32_C(17)
+#define KELIVO_STATUS_INPUT_TOO_LARGE INT32_C(18)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
 #define KELIVO_SECURE_STORAGE_BACKEND_WINDOWS_DPAPI UINT32_C(1)
+#define KELIVO_SECURE_STORAGE_BACKEND_ANDROID_KEYSTORE UINT32_C(2)
+#define KELIVO_SECURE_STORAGE_BACKEND_LINUX_SECRET_SERVICE UINT32_C(3)
 #define KELIVO_CAPABILITY_FLAGS_NONE UINT64_C(0)
 #define KELIVO_CAPABILITY_KEY_SLOTS (UINT64_C(1) << 0)
 #define KELIVO_CAPABILITY_BACKGROUND_ACCESS (UINT64_C(1) << 1)
+#define KELIVO_CAPABILITY_RECORD_ENVELOPES (UINT64_C(1) << 2)
+
+#define KELIVO_RECORD_ID_SIZE ((size_t)16)
+#define KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE ((size_t)(64 * 1024))
+#define KELIVO_RECORD_MAX_PLAINTEXT_SIZE ((size_t)(16 * 1024 * 1024))
+#define KELIVO_RECORD_MAX_ENVELOPE_SIZE ((size_t)(KELIVO_RECORD_MAX_PLAINTEXT_SIZE + 80))
 
 /*
  * 固定为 32 字节的 ABI v1 能力结构。reserved 字段必须忽略；
@@ -99,6 +112,43 @@ KELIVO_CORE_API KelivoStatus kelivo_key_slot_open(
  * 在同一进程内复用；成功关闭必须先从句柄表移除并清零对应密钥材料。
  */
 KELIVO_CORE_API KelivoStatus kelivo_key_handle_close(uint64_t handle);
+
+/*
+ * 使用句柄中的 epoch 主密钥密封一条记录。record_id 必须恰好 16 字节，
+ * epoch 必须非零；算法套件、HKDF 域分离、随机 nonce 与确定性 CBOR 信封
+ * 均由本库控制。输出容量不足时只写 required length，不消耗随机数且不写
+ * out_envelope。associated_data 与 plaintext 长度为零时允许传入空指针。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_record_seal(
+    uint64_t handle,
+    const uint8_t *record_id,
+    size_t record_id_length,
+    uint64_t epoch,
+    const uint8_t *associated_data,
+    size_t associated_data_length,
+    const uint8_t *plaintext,
+    size_t plaintext_length,
+    uint8_t *out_envelope,
+    size_t out_envelope_capacity,
+    size_t *out_envelope_length);
+
+/*
+ * 开启 v1 记录信封。调用方必须提供预期 record_id、epoch 与关联数据；
+ * 任一不匹配、密文篡改或认证失败均不得写出明文。输出容量查询只解析
+ * 有界的规范 CBOR 结构，实际开启时再次完成 AEAD 认证。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_record_open(
+    uint64_t handle,
+    const uint8_t *record_id,
+    size_t record_id_length,
+    uint64_t epoch,
+    const uint8_t *associated_data,
+    size_t associated_data_length,
+    const uint8_t *envelope,
+    size_t envelope_length,
+    uint8_t *out_plaintext,
+    size_t out_plaintext_capacity,
+    size_t *out_plaintext_length);
 
 #ifdef __cplusplus
 }

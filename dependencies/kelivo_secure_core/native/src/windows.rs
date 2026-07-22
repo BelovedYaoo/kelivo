@@ -1,6 +1,6 @@
 use super::{
     BACKGROUND_ACCESS_CAPABILITY, KEY_SLOT_ID_SIZE, KEY_SLOTS_CAPABILITY, KelivoStatus,
-    LOCAL_KEY_SIZE, LocalKey,
+    LOCAL_KEY_SIZE, LocalKey, RECORD_ENVELOPES_CAPABILITY,
 };
 use core::mem::size_of;
 use std::{
@@ -23,7 +23,8 @@ use windows_sys::Win32::{
 use zeroize::{Zeroize, Zeroizing};
 
 pub(super) const SECURE_STORAGE_BACKEND: u32 = 1;
-pub(super) const CAPABILITY_FLAGS: u64 = KEY_SLOTS_CAPABILITY | BACKGROUND_ACCESS_CAPABILITY;
+pub(super) const CAPABILITY_FLAGS: u64 =
+    KEY_SLOTS_CAPABILITY | BACKGROUND_ACCESS_CAPABILITY | RECORD_ENVELOPES_CAPABILITY;
 
 const SLOT_MAGIC: [u8; 8] = *b"KELVKS01";
 const SLOT_HEADER_SIZE: usize = SLOT_MAGIC.len() + size_of::<u32>();

@@ -48,6 +48,64 @@ external int kelivo_key_slot_open(
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_key_handle_close(int handle);
 
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_record_seal(
+  int handle,
+  ffi.Pointer<ffi.Uint8> record_id,
+  int record_id_length,
+  int epoch,
+  ffi.Pointer<ffi.Uint8> associated_data,
+  int associated_data_length,
+  ffi.Pointer<ffi.Uint8> plaintext,
+  int plaintext_length,
+  ffi.Pointer<ffi.Uint8> out_envelope,
+  int out_envelope_capacity,
+  ffi.Pointer<ffi.Size> out_envelope_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_record_open(
+  int handle,
+  ffi.Pointer<ffi.Uint8> record_id,
+  int record_id_length,
+  int epoch,
+  ffi.Pointer<ffi.Uint8> associated_data,
+  int associated_data_length,
+  ffi.Pointer<ffi.Uint8> envelope,
+  int envelope_length,
+  ffi.Pointer<ffi.Uint8> out_plaintext,
+  int out_plaintext_capacity,
+  ffi.Pointer<ffi.Size> out_plaintext_length,
+);
+
 typedef KelivoStatus = ffi.Int32;
 typedef DartKelivoStatus = int;
 
@@ -106,14 +164,38 @@ const int KELIVO_STATUS_IO_FAILURE = 12;
 
 const int KELIVO_STATUS_INTERNAL_STATE = 13;
 
+const int KELIVO_STATUS_INVALID_RECORD_ID_LENGTH = 14;
+
+const int KELIVO_STATUS_INVALID_ARGUMENT = 15;
+
+const int KELIVO_STATUS_RECORD_ENVELOPE_INVALID = 16;
+
+const int KELIVO_STATUS_RECORD_AUTHENTICATION_FAILED = 17;
+
+const int KELIVO_STATUS_INPUT_TOO_LARGE = 18;
+
 const int KELIVO_STATUS_UNSUPPORTED_PLATFORM = 100;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_NONE = 0;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_WINDOWS_DPAPI = 1;
 
+const int KELIVO_SECURE_STORAGE_BACKEND_ANDROID_KEYSTORE = 2;
+
+const int KELIVO_SECURE_STORAGE_BACKEND_LINUX_SECRET_SERVICE = 3;
+
 const int KELIVO_CAPABILITY_FLAGS_NONE = 0;
 
 const int KELIVO_CAPABILITY_KEY_SLOTS = 1;
 
 const int KELIVO_CAPABILITY_BACKGROUND_ACCESS = 2;
+
+const int KELIVO_CAPABILITY_RECORD_ENVELOPES = 4;
+
+const int KELIVO_RECORD_ID_SIZE = 16;
+
+const int KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE = 65536;
+
+const int KELIVO_RECORD_MAX_PLAINTEXT_SIZE = 16777216;
+
+const int KELIVO_RECORD_MAX_ENVELOPE_SIZE = 16777296;
