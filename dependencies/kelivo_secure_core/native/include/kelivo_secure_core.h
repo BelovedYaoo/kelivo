@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(1)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(2)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -48,6 +48,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_RECORD_AUTHENTICATION_FAILED INT32_C(17)
 #define KELIVO_STATUS_INPUT_TOO_LARGE INT32_C(18)
 #define KELIVO_STATUS_SQLCIPHER_KEY_FAILED INT32_C(19)
+#define KELIVO_STATUS_SQLCIPHER_ATTACH_FAILED INT32_C(20)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
@@ -59,17 +60,42 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_BACKGROUND_ACCESS (UINT64_C(1) << 1)
 #define KELIVO_CAPABILITY_RECORD_ENVELOPES (UINT64_C(1) << 2)
 #define KELIVO_CAPABILITY_SQLCIPHER_KEY_APPLICATION (UINT64_C(1) << 3)
+#define KELIVO_CAPABILITY_SQLCIPHER_DATABASE_ATTACH (UINT64_C(1) << 4)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE ((size_t)(64 * 1024))
 #define KELIVO_RECORD_MAX_PLAINTEXT_SIZE ((size_t)(16 * 1024 * 1024))
 #define KELIVO_RECORD_MAX_ENVELOPE_SIZE ((size_t)(KELIVO_RECORD_MAX_PLAINTEXT_SIZE + 80))
 #define KELIVO_DATABASE_ID_SIZE ((size_t)16)
+#define KELIVO_DATABASE_NAME_MAX_SIZE ((size_t)64)
+#define KELIVO_DATABASE_PATH_MAX_SIZE ((size_t)(64 * 1024))
 
 typedef int32_t (*KelivoSqlCipherKeyCallback)(
     void *database,
     const void *key,
     int32_t key_length);
+
+typedef int32_t (*KelivoSqlitePrepareCallback)(
+    void *database,
+    const char *sql,
+    int32_t sql_length,
+    void **out_statement,
+    const char **sql_tail);
+typedef void (*KelivoSqliteDestructor)(void *value);
+typedef int32_t (*KelivoSqliteBindTextCallback)(
+    void *statement,
+    int32_t index,
+    const char *value,
+    int32_t value_length,
+    KelivoSqliteDestructor destructor);
+typedef int32_t (*KelivoSqliteBindBlobCallback)(
+    void *statement,
+    int32_t index,
+    const void *value,
+    int32_t value_length,
+    KelivoSqliteDestructor destructor);
+typedef int32_t (*KelivoSqliteStepCallback)(void *statement);
+typedef int32_t (*KelivoSqliteFinalizeCallback)(void *statement);
 
 /*
  * 固定为 32 字节的 ABI v1 能力结构。reserved 字段必须忽略；
@@ -133,6 +159,28 @@ KELIVO_CORE_API KelivoStatus kelivo_sqlcipher_key_apply(
     uint64_t epoch,
     void *database,
     KelivoSqlCipherKeyCallback key_callback);
+
+/*
+ * 在本库内派生密钥，并通过同一 SQLite 资产的预编译、绑定、执行回调完成
+ * ATTACH。database_path 必须指向既有普通文件，并且是无 NUL 的 UTF-8 路径；
+ * database_name 必须是 1 到 64 字节的 ASCII 标识符且不得为 main 或 temp。
+ * 密钥只会绑定为 BLOB，不会写入 SQL 文本或通过 ABI 输出给调用方。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_sqlcipher_database_attach(
+    uint64_t handle,
+    const uint8_t *database_id,
+    size_t database_id_length,
+    uint64_t epoch,
+    void *database,
+    const uint8_t *database_path,
+    size_t database_path_length,
+    const uint8_t *database_name,
+    size_t database_name_length,
+    KelivoSqlitePrepareCallback prepare_callback,
+    KelivoSqliteBindTextCallback bind_text_callback,
+    KelivoSqliteBindBlobCallback bind_blob_callback,
+    KelivoSqliteStepCallback step_callback,
+    KelivoSqliteFinalizeCallback finalize_callback);
 
 /*
  * 使用句柄中的 epoch 主密钥密封一条记录。record_id 必须恰好 16 字节，

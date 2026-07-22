@@ -1,5 +1,6 @@
 library;
 
+import 'dart:convert';
 import 'dart:ffi' as ffi;
 import 'dart:isolate';
 import 'dart:typed_data';
@@ -8,24 +9,28 @@ import 'package:ffi/ffi.dart';
 
 import 'kelivo_secure_core_bindings_generated.dart' as native;
 
-const _expectedAbiVersion = 1;
+const _expectedAbiVersion = 2;
 const _keySlotIdLength = 16;
 const _keyPolicyVersion = 1;
 const _keySlotsCapability = 1 << 0;
 const _backgroundAccessCapability = 1 << 1;
 const _recordEnvelopesCapability = 1 << 2;
 const _sqlCipherKeyApplicationCapability = 1 << 3;
+const _sqlCipherDatabaseAttachCapability = 1 << 4;
 const _knownCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
     _recordEnvelopesCapability |
-    _sqlCipherKeyApplicationCapability;
+    _sqlCipherKeyApplicationCapability |
+    _sqlCipherDatabaseAttachCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
 const _recordMaxPlaintextSize = native.KELIVO_RECORD_MAX_PLAINTEXT_SIZE;
 const _recordMaxEnvelopeSize = native.KELIVO_RECORD_MAX_ENVELOPE_SIZE;
 const _databaseIdLength = native.KELIVO_DATABASE_ID_SIZE;
+const _databaseNameMaxLength = native.KELIVO_DATABASE_NAME_MAX_SIZE;
+const _databasePathMaxLength = native.KELIVO_DATABASE_PATH_MAX_SIZE;
 // Dart FFI 用有符号 int 传递 Uint64；保留正数域可避免跨平台符号歧义。
 const _recordMaxEpoch = 0x7fffffffffffffff;
 
@@ -68,6 +73,7 @@ enum KelivoSecureCoreStatus {
   recordAuthenticationFailed(17),
   inputTooLarge(18),
   sqlCipherKeyFailed(19),
+  sqlCipherAttachFailed(20),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);
@@ -90,6 +96,7 @@ final class KelivoCoreCapabilities {
     required this.supportsBackgroundAccess,
     required this.supportsRecordEnvelopes,
     required this.supportsSqlCipherKeyApplication,
+    required this.supportsSqlCipherDatabaseAttach,
   });
 
   final int abiVersion;
@@ -98,6 +105,7 @@ final class KelivoCoreCapabilities {
   final bool supportsBackgroundAccess;
   final bool supportsRecordEnvelopes;
   final bool supportsSqlCipherKeyApplication;
+  final bool supportsSqlCipherDatabaseAttach;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -106,6 +114,37 @@ typedef KelivoSqlCipherKeyNative =
       ffi.Pointer<ffi.Void> key,
       ffi.Int32 keyLength,
     );
+
+typedef KelivoSqlitePrepareNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void> database,
+      ffi.Pointer<ffi.Char> sql,
+      ffi.Int32 sqlLength,
+      ffi.Pointer<ffi.Pointer<ffi.Void>> outStatement,
+      ffi.Pointer<ffi.Pointer<ffi.Char>> sqlTail,
+    );
+typedef KelivoSqliteDestructorNative =
+    ffi.Void Function(ffi.Pointer<ffi.Void> value);
+typedef KelivoSqliteBindTextNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void> statement,
+      ffi.Int32 index,
+      ffi.Pointer<ffi.Char> value,
+      ffi.Int32 valueLength,
+      ffi.Pointer<ffi.NativeFunction<KelivoSqliteDestructorNative>> destructor,
+    );
+typedef KelivoSqliteBindBlobNative =
+    ffi.Int32 Function(
+      ffi.Pointer<ffi.Void> statement,
+      ffi.Int32 index,
+      ffi.Pointer<ffi.Void> value,
+      ffi.Int32 valueLength,
+      ffi.Pointer<ffi.NativeFunction<KelivoSqliteDestructorNative>> destructor,
+    );
+typedef KelivoSqliteStepNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void> statement);
+typedef KelivoSqliteFinalizeNative =
+    ffi.Int32 Function(ffi.Pointer<ffi.Void> statement);
 
 final class KelivoKeyHandle {
   KelivoKeyHandle._(this._value);
@@ -311,6 +350,110 @@ final class KelivoSecureCore {
       }
     });
   }
+
+  /// ATTACH 的预编译、密钥绑定、执行与清理必须保持在同一同步原生调用内。
+  void attachSqlCipherDatabaseSync({
+    required Uint8List slotId,
+    required Uint8List databaseId,
+    required int epoch,
+    required String databasePath,
+    required String databaseName,
+    required ffi.Pointer<ffi.Void> database,
+    required ffi.Pointer<ffi.NativeFunction<KelivoSqlitePrepareNative>>
+    prepareCallback,
+    required ffi.Pointer<ffi.NativeFunction<KelivoSqliteBindTextNative>>
+    bindTextCallback,
+    required ffi.Pointer<ffi.NativeFunction<KelivoSqliteBindBlobNative>>
+    bindBlobCallback,
+    required ffi.Pointer<ffi.NativeFunction<KelivoSqliteStepNative>>
+    stepCallback,
+    required ffi.Pointer<ffi.NativeFunction<KelivoSqliteFinalizeNative>>
+    finalizeCallback,
+  }) {
+    if (databaseId.length != _databaseIdLength) {
+      throw ArgumentError.value(
+        databaseId.length,
+        'databaseId',
+        '数据库标识必须为 $_databaseIdLength 字节',
+      );
+    }
+    if (epoch <= 0 || epoch > _recordMaxEpoch) {
+      throw ArgumentError.value(epoch, 'epoch', '密钥世代必须在正 63 位整数范围内');
+    }
+    final databasePathBytes = _validateDatabasePath(databasePath);
+    final databaseNameBytes = _validateDatabaseName(databaseName);
+    if (database.address == 0) {
+      throw ArgumentError.value(database, 'database', '数据库指针不得为空');
+    }
+    if (prepareCallback.address == 0 ||
+        bindTextCallback.address == 0 ||
+        bindBlobCallback.address == 0 ||
+        stepCallback.address == 0 ||
+        finalizeCallback.address == 0) {
+      throw ArgumentError('SQLite 回调指针不得为空');
+    }
+
+    final copiedSlotId = Uint8List.fromList(slotId);
+    final copiedDatabaseId = Uint8List.fromList(databaseId);
+    final handle = _openKeySlot(copiedSlotId, create: false);
+    _runWithSynchronousKeyHandle(handle, (opaqueValue) {
+      final databaseIdPointer = _copyToNative(copiedDatabaseId);
+      final databasePathPointer = _copyToNative(databasePathBytes);
+      final databaseNamePointer = _copyToNative(databaseNameBytes);
+      try {
+        _throwOnError(
+          operation: 'sqlcipher_database_attach',
+          statusCode: native.kelivo_sqlcipher_database_attach(
+            opaqueValue,
+            databaseIdPointer,
+            copiedDatabaseId.length,
+            epoch,
+            database,
+            databasePathPointer,
+            databasePathBytes.length,
+            databaseNamePointer,
+            databaseNameBytes.length,
+            prepareCallback,
+            bindTextCallback,
+            bindBlobCallback,
+            stepCallback,
+            finalizeCallback,
+          ),
+        );
+      } finally {
+        _clearAndFree(databaseIdPointer, copiedDatabaseId.length);
+        _clearAndFree(databasePathPointer, databasePathBytes.length);
+        _clearAndFree(databaseNamePointer, databaseNameBytes.length);
+        copiedDatabaseId.fillRange(0, copiedDatabaseId.length, 0);
+      }
+    });
+  }
+}
+
+Uint8List _validateDatabasePath(String databasePath) {
+  final bytes = utf8.encode(databasePath);
+  if (bytes.isEmpty ||
+      bytes.length > _databasePathMaxLength ||
+      databasePath.contains('\u0000')) {
+    throw ArgumentError.value(databasePath, 'databasePath', '数据库路径无效');
+  }
+  return Uint8List.fromList(bytes);
+}
+
+Uint8List _validateDatabaseName(String databaseName) {
+  final bytes = utf8.encode(databaseName);
+  final isIdentifier = RegExp(
+    r'^[A-Za-z_][A-Za-z0-9_]*$',
+  ).hasMatch(databaseName);
+  final normalized = databaseName.toLowerCase();
+  if (!isIdentifier ||
+      bytes.isEmpty ||
+      bytes.length > _databaseNameMaxLength ||
+      normalized == 'main' ||
+      normalized == 'temp') {
+    throw ArgumentError.value(databaseName, 'databaseName', '命名数据库别名无效');
+  }
+  return Uint8List.fromList(bytes);
 }
 
 KelivoCoreCapabilities _readCapabilities() {
@@ -375,6 +518,8 @@ KelivoCoreCapabilities _readCapabilities() {
           capabilities.flags & _recordEnvelopesCapability != 0,
       supportsSqlCipherKeyApplication:
           capabilities.flags & _sqlCipherKeyApplicationCapability != 0,
+      supportsSqlCipherDatabaseAttach:
+          capabilities.flags & _sqlCipherDatabaseAttachCapability != 0,
     );
   } finally {
     calloc.free(output);

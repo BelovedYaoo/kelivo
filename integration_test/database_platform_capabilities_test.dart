@@ -69,7 +69,10 @@ Future<Map<String, Object>> _verifySecureSqlCipherKeyBridge(
   Directory root,
 ) async {
   if (!Platform.isWindows && !Platform.isAndroid) {
-    return const <String, Object>{'secureSqlCipherKeyBridge': false};
+    return const <String, Object>{
+      'secureSqlCipherKeyBridge': false,
+      'secureSqlCipherAttachBridge': false,
+    };
   }
 
   const sentinel = 'secure-core-sqlcipher-key-sentinel';
@@ -80,6 +83,9 @@ Future<Map<String, Object>> _verifySecureSqlCipherKeyBridge(
   final databaseFile = File(
     p.join(root.path, 'secure-core-sqlcipher-key.sqlite'),
   );
+  final backupFile = File(
+    p.join(root.path, 'secure-core-sqlcipher-backup.sqlite'),
+  );
   final key = SqlCipherDatabaseKey.forWorkspace(workspaceKey);
   final database = sqlite.sqlite3.open(databaseFile.path);
   try {
@@ -88,6 +94,43 @@ Future<Map<String, Object>> _verifySecureSqlCipherKeyBridge(
     database.execute('INSERT INTO protected_rows(value) VALUES (?);', [
       sentinel,
     ]);
+    final backup = sqlite.sqlite3.open(backupFile.path);
+    try {
+      key.apply(backup, createSlotIfMissing: false);
+      await database.backup(backup, nPage: 1).drain<void>();
+      expect(_readCipherSalt(backup), isNot(_readCipherSalt(database)));
+    } finally {
+      backup.close();
+    }
+
+    final missingDatabaseFile = File(
+      p.join(root.path, 'missing-secure-core-sqlcipher.sqlite'),
+    );
+    expect(
+      () => key.attachExisting(
+        database,
+        databaseFile: missingDatabaseFile,
+        databaseName: 'missing_probe',
+      ),
+      throwsStateError,
+    );
+    expect(missingDatabaseFile.existsSync(), isFalse);
+
+    key.attachExisting(
+      database,
+      databaseFile: backupFile,
+      databaseName: 'backup_probe',
+    );
+    try {
+      expect(
+        database
+            .select('SELECT value FROM backup_probe.protected_rows;')
+            .single['value'],
+        sentinel,
+      );
+    } finally {
+      database.execute('DETACH DATABASE backup_probe;');
+    }
   } finally {
     database.close();
   }
@@ -130,6 +173,30 @@ Future<Map<String, Object>> _verifySecureSqlCipherKeyBridge(
     wrongKeyDatabase.close();
   }
 
+  final wrongAttachMain = sqlite.sqlite3.open(
+    p.join(root.path, 'wrong-key-attach-main.sqlite'),
+  );
+  try {
+    final wrongKey = SqlCipherDatabaseKey.forWorkspace(wrongWorkspaceKey);
+    wrongKey.apply(wrongAttachMain, createSlotIfMissing: true);
+    expect(
+      () => wrongKey.attachExisting(
+        wrongAttachMain,
+        databaseFile: backupFile,
+        databaseName: 'wrong_key_probe',
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.sqlCipherAttachFailed,
+        ),
+      ),
+    );
+  } finally {
+    wrongAttachMain.close();
+  }
+
   final unkeyed = sqlite.sqlite3.open(
     databaseFile.path,
     mode: sqlite.OpenMode.readOnly,
@@ -143,7 +210,10 @@ Future<Map<String, Object>> _verifySecureSqlCipherKeyBridge(
     unkeyed.close();
   }
 
-  return const <String, Object>{'secureSqlCipherKeyBridge': true};
+  return const <String, Object>{
+    'secureSqlCipherKeyBridge': true,
+    'secureSqlCipherAttachBridge': true,
+  };
 }
 
 Future<Map<String, Object>> _verifySecureSessionTokenStore(
@@ -269,7 +339,7 @@ Future<Map<String, Object>> _verifySecureSessionTokenStore(
 Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
   const secureCore = KelivoSecureCore();
   final capabilities = await secureCore.getCapabilities();
-  expect(capabilities.abiVersion, 1);
+  expect(capabilities.abiVersion, 2);
   await expectLater(secureCore.createSlot(Uint8List(15)), throwsArgumentError);
 
   if (Platform.isWindows) {
@@ -278,6 +348,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.supportsBackgroundAccess, isTrue);
     expect(capabilities.supportsRecordEnvelopes, isTrue);
     expect(capabilities.supportsSqlCipherKeyApplication, isTrue);
+    expect(capabilities.supportsSqlCipherDatabaseAttach, isTrue);
     await _verifyPersistentSecureCoreSlot(
       secureCore,
       slotId: Uint8List.fromList('kelivo-dpapi-v01'.codeUnits),
@@ -288,6 +359,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.supportsBackgroundAccess, isTrue);
     expect(capabilities.supportsRecordEnvelopes, isTrue);
     expect(capabilities.supportsSqlCipherKeyApplication, isTrue);
+    expect(capabilities.supportsSqlCipherDatabaseAttach, isTrue);
     await _verifyPersistentSecureCoreSlot(
       secureCore,
       slotId: Uint8List.fromList('kelivo-keystore1'.codeUnits),
@@ -298,6 +370,7 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     expect(capabilities.supportsBackgroundAccess, isFalse);
     expect(capabilities.supportsRecordEnvelopes, isFalse);
     expect(capabilities.supportsSqlCipherKeyApplication, isFalse);
+    expect(capabilities.supportsSqlCipherDatabaseAttach, isFalse);
     await _verifyUnsupportedSecureCoreSlots(secureCore);
   }
 
@@ -309,6 +382,8 @@ Future<Map<String, Object>> _verifySecureCoreCapabilities() async {
     'secureCoreRecordEnvelopes': capabilities.supportsRecordEnvelopes,
     'secureCoreSqlCipherKeyApplication':
         capabilities.supportsSqlCipherKeyApplication,
+    'secureCoreSqlCipherDatabaseAttach':
+        capabilities.supportsSqlCipherDatabaseAttach,
     'secureCoreFailClosed': true,
   };
 }
@@ -717,8 +792,11 @@ Future<Map<String, Object>> _verifySqliteCapabilities(Directory root) async {
     source.execute('INSERT INTO capability_rows(value) VALUES (?);', [
       backupSentinel,
     ]);
+    final sourceCipherSalt = _readCipherSalt(source);
     backup = _openSqlCipher(backupFile, _sqlCipherTestKey);
     await source.backup(backup, nPage: 1).drain<void>();
+    final backupCipherSalt = _readCipherSalt(backup);
+    expect(backupCipherSalt, isNot(sourceCipherSalt));
     expect(
       backup.select('SELECT value FROM capability_rows;').single['value'],
       backupSentinel,
@@ -759,6 +837,13 @@ Future<Map<String, Object>> _verifySqliteCapabilities(Directory root) async {
     } finally {
       reopenedBackup.close();
     }
+
+    expect(
+      () => source.execute('ATTACH DATABASE ? AS backup_probe;', [
+        backupFile.absolute.path,
+      ]),
+      throwsA(isA<sqlite.SqliteException>()),
+    );
 
     final beforeWrongBackupKey = await _readDatabaseFamily(backupFile);
     expect(
@@ -804,6 +889,8 @@ Future<Map<String, Object>> _verifySqliteCapabilities(Directory root) async {
       'unicode61': true,
       'shortChineseMatchCount': shortChineseMatchCount,
       'onlineBackup': true,
+      'onlineBackupUsesDistinctCipherSalt': true,
+      'onlineBackupRejectsInheritedAttachKey': true,
       'sqliteLockContention': true,
       'journalMode': journalMode,
       'synchronous': synchronous,
@@ -842,6 +929,19 @@ String _readCipherVersion(sqlite.Database database) {
   final version = rows.single.values.single.toString().trim();
   if (version.isEmpty) throw StateError('sqlcipher_unavailable');
   return version;
+}
+
+String _readCipherSalt(sqlite.Database database) {
+  final rows = database.select('PRAGMA cipher_salt;');
+  if (rows.length != 1) throw StateError('sqlcipher_salt_unavailable');
+  final value = rows.single.values.single;
+  if (value is Uint8List && value.length == 16) {
+    return value.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
+  }
+  final salt = value.toString().trim();
+  final match = RegExp(r"^(?:x')?([0-9a-fA-F]{32})(?:')?$").firstMatch(salt);
+  if (match == null) throw StateError('sqlcipher_salt_invalid');
+  return match.group(1)!.toLowerCase();
 }
 
 bool _containsBytes(List<int> source, List<int> pattern) {

@@ -19,7 +19,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 1;
+const ABI_VERSION: u32 = 2;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -32,6 +32,8 @@ const BACKGROUND_ACCESS_CAPABILITY: u64 = 1 << 1;
 const RECORD_ENVELOPES_CAPABILITY: u64 = 1 << 2;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 const SQLCIPHER_KEY_APPLICATION_CAPABILITY: u64 = 1 << 3;
+#[cfg(any(target_os = "android", target_os = "windows"))]
+const SQLCIPHER_DATABASE_ATTACH_CAPABILITY: u64 = 1 << 4;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
@@ -95,6 +97,7 @@ pub(crate) enum KelivoStatus {
     RecordAuthenticationFailed = 17,
     InputTooLarge = 18,
     SqlCipherKeyFailed = 19,
+    SqlCipherAttachFailed = 20,
     UnsupportedPlatform = 100,
 }
 
@@ -393,6 +396,7 @@ fn database_error_status(error: database::DatabaseKeyError) -> KelivoStatus {
         database::DatabaseKeyError::Crypto => KelivoStatus::InternalState,
         database::DatabaseKeyError::InvalidInput => KelivoStatus::InvalidArgument,
         database::DatabaseKeyError::KeyCallbackFailed => KelivoStatus::SqlCipherKeyFailed,
+        database::DatabaseKeyError::AttachCallbackFailed => KelivoStatus::SqlCipherAttachFailed,
     }
 }
 
@@ -430,6 +434,91 @@ pub unsafe extern "C" fn kelivo_sqlcipher_key_apply(
         Err(status) => return status.code(),
     };
     match database::apply_database_key(master_key, &database_id, epoch, database, key_callback) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(error) => database_error_status(error).code(),
+    }
+}
+
+/// # Safety
+///
+/// `database_id`、`database_path` 与 `database_name` 必须覆盖各自声明的可读
+/// 长度；`database` 必须是仍打开且已设主库密钥的 SQLite 连接。所有回调必须
+/// 与该连接来自同一原生 SQLite 资产，且只允许在本次同步调用内使用输入指针。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_sqlcipher_database_attach(
+    handle: u64,
+    database_id: *const u8,
+    database_id_length: usize,
+    epoch: u64,
+    database: *mut c_void,
+    database_path: *const u8,
+    database_path_length: usize,
+    database_name: *const u8,
+    database_name_length: usize,
+    prepare_callback: Option<database::SqlitePrepareCallback>,
+    bind_text_callback: Option<database::SqliteBindTextCallback>,
+    bind_blob_callback: Option<database::SqliteBindBlobCallback>,
+    step_callback: Option<database::SqliteStepCallback>,
+    finalize_callback: Option<database::SqliteFinalizeCallback>,
+) -> i32 {
+    let database_id = match unsafe { read_database_id(database_id, database_id_length) } {
+        Ok(database_id) => database_id,
+        Err(status) => return status.code(),
+    };
+    let database_path = match unsafe { read_input(database_path, database_path_length) } {
+        Ok(database_path) => database_path,
+        Err(status) => return status.code(),
+    };
+    let database_name = match unsafe { read_input(database_name, database_name_length) } {
+        Ok(database_name) => database_name,
+        Err(status) => return status.code(),
+    };
+    if database.is_null() {
+        return KelivoStatus::NullPointer.code();
+    }
+    let prepare = match prepare_callback {
+        Some(callback) => callback,
+        None => return KelivoStatus::NullPointer.code(),
+    };
+    let bind_text = match bind_text_callback {
+        Some(callback) => callback,
+        None => return KelivoStatus::NullPointer.code(),
+    };
+    let bind_blob = match bind_blob_callback {
+        Some(callback) => callback,
+        None => return KelivoStatus::NullPointer.code(),
+    };
+    let step = match step_callback {
+        Some(callback) => callback,
+        None => return KelivoStatus::NullPointer.code(),
+    };
+    let finalize = match finalize_callback {
+        Some(callback) => callback,
+        None => return KelivoStatus::NullPointer.code(),
+    };
+    let key = match key_for_handle(handle) {
+        Ok(key) => key,
+        Err(status) => return status.code(),
+    };
+    let master_key = match master_key(&key) {
+        Ok(master_key) => master_key,
+        Err(status) => return status.code(),
+    };
+    match database::attach_database(
+        master_key,
+        &database_id,
+        epoch,
+        database,
+        database_path,
+        database_name,
+        database::SqliteAttachCallbacks {
+            prepare,
+            bind_text,
+            bind_blob,
+            step,
+            finalize,
+        },
+    ) {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(error) => database_error_status(error).code(),
     }
@@ -597,7 +686,7 @@ pub unsafe extern "C" fn kelivo_record_open(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::ptr;
+    use core::{ffi::c_char, ptr, slice};
 
     fn empty_capabilities() -> KelivoCoreCapabilities {
         KelivoCoreCapabilities {
@@ -668,6 +757,7 @@ mod tests {
                 | BACKGROUND_ACCESS_CAPABILITY
                 | RECORD_ENVELOPES_CAPABILITY
                 | SQLCIPHER_KEY_APPLICATION_CAPABILITY
+                | SQLCIPHER_DATABASE_ATTACH_CAPABILITY
         );
     }
 
@@ -781,6 +871,81 @@ mod tests {
         _key_length: i32,
     ) -> i32 {
         26
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe extern "C" fn accept_sqlite_prepare(
+        database: *mut c_void,
+        sql: *const c_char,
+        sql_length: i32,
+        out_statement: *mut *mut c_void,
+        sql_tail: *mut *const c_char,
+    ) -> i32 {
+        if database.is_null()
+            || sql.is_null()
+            || sql_length <= 0
+            || out_statement.is_null()
+            || !sql_tail.is_null()
+        {
+            return 1;
+        }
+        let sql = unsafe { slice::from_raw_parts(sql.cast::<u8>(), sql_length as usize) };
+        if sql != b"ATTACH DATABASE ? AS \"backup_probe\" KEY ?;" {
+            return 1;
+        }
+        unsafe {
+            out_statement.write(database);
+        }
+        0
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe extern "C" fn accept_sqlite_bind_text(
+        statement: *mut c_void,
+        index: i32,
+        value: *const c_char,
+        value_length: i32,
+        destructor: Option<database::SqliteDestructor>,
+    ) -> i32 {
+        i32::from(
+            statement.is_null()
+                || index != 1
+                || value.is_null()
+                || value_length <= 0
+                || destructor.is_some(),
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe extern "C" fn accept_sqlite_bind_blob(
+        statement: *mut c_void,
+        index: i32,
+        value: *const c_void,
+        value_length: i32,
+        destructor: Option<database::SqliteDestructor>,
+    ) -> i32 {
+        i32::from(
+            statement.is_null()
+                || index != 2
+                || value.is_null()
+                || value_length != LOCAL_KEY_SIZE as i32
+                || destructor.is_some(),
+        )
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe extern "C" fn accept_sqlite_step(statement: *mut c_void) -> i32 {
+        if statement.is_null() { 1 } else { 101 }
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe extern "C" fn reject_sqlite_step(_statement: *mut c_void) -> i32 {
+        26
+    }
+
+    #[cfg(target_os = "windows")]
+    unsafe extern "C" fn accept_sqlite_finalize(statement: *mut c_void) -> i32 {
+        i32::from(statement.is_null())
     }
 
     #[cfg(target_os = "windows")]
@@ -901,6 +1066,130 @@ mod tests {
             },
             KelivoStatus::InvalidKeyHandle.code()
         );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn opaque_handle_attaches_sqlcipher_database_through_callbacks() {
+        let handle = register_key(Zeroizing::new(
+            (0_u8..LOCAL_KEY_SIZE as u8)
+                .collect::<Vec<_>>()
+                .into_boxed_slice(),
+        ))
+        .expect("测试密钥句柄应注册成功");
+        let database_id = [0x42_u8; database::DATABASE_ID_SIZE];
+        let database_path = b"Cargo.toml";
+        let database_name = b"backup_probe";
+        let mut database_marker = 0_u8;
+        let database = (&mut database_marker as *mut u8).cast::<c_void>();
+
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_database_attach(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    database_path.as_ptr(),
+                    database_path.len(),
+                    database_name.as_ptr(),
+                    database_name.len(),
+                    Some(accept_sqlite_prepare),
+                    Some(accept_sqlite_bind_text),
+                    Some(accept_sqlite_bind_blob),
+                    Some(accept_sqlite_step),
+                    Some(accept_sqlite_finalize),
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_database_attach(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    database_path.as_ptr(),
+                    database_path.len(),
+                    b"main".as_ptr(),
+                    b"main".len(),
+                    Some(accept_sqlite_prepare),
+                    Some(accept_sqlite_bind_text),
+                    Some(accept_sqlite_bind_blob),
+                    Some(accept_sqlite_step),
+                    Some(accept_sqlite_finalize),
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_database_attach(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    ptr::null(),
+                    database_path.len(),
+                    database_name.as_ptr(),
+                    database_name.len(),
+                    Some(accept_sqlite_prepare),
+                    Some(accept_sqlite_bind_text),
+                    Some(accept_sqlite_bind_blob),
+                    Some(accept_sqlite_step),
+                    Some(accept_sqlite_finalize),
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        let missing_database_path = b"missing-secure-core-database.sqlite";
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_database_attach(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    missing_database_path.as_ptr(),
+                    missing_database_path.len(),
+                    database_name.as_ptr(),
+                    database_name.len(),
+                    Some(accept_sqlite_prepare),
+                    Some(accept_sqlite_bind_text),
+                    Some(accept_sqlite_bind_blob),
+                    Some(accept_sqlite_step),
+                    Some(accept_sqlite_finalize),
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_sqlcipher_database_attach(
+                    handle,
+                    database_id.as_ptr(),
+                    database_id.len(),
+                    1,
+                    database,
+                    database_path.as_ptr(),
+                    database_path.len(),
+                    database_name.as_ptr(),
+                    database_name.len(),
+                    Some(accept_sqlite_prepare),
+                    Some(accept_sqlite_bind_text),
+                    Some(accept_sqlite_bind_blob),
+                    Some(reject_sqlite_step),
+                    Some(accept_sqlite_finalize),
+                )
+            },
+            KelivoStatus::SqlCipherAttachFailed.code()
+        );
+        assert_eq!(kelivo_key_handle_close(handle), KelivoStatus::Ok.code());
     }
 
     #[cfg(target_os = "windows")]

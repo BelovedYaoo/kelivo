@@ -14,15 +14,15 @@
 - 原型固定 `sqlite3 3.4.0`，由官方 Native Assets hook 选择 SQLCipher；生产接入仍须统一收口 Drift、raw sqlite、快照、恢复与 ATTACH 的密钥路径。
 - Windows 与 Android 实机门禁均确认 SQLCipher 4.17.0 community、SQLite 3.53.3；错误密钥、无密钥、明文头、WAL 明文、FTS5、在线备份和锁竞争均通过预期断言。
 - Windows Release 和已签名 Android Release 构建通过；Android 三个 ABI 的 SQLCipher LOAD 段均为 16 KiB 对齐。Linux 尚未实机验证，不得据此声称全平台完成。
-- 已新增 `dependencies/kelivo_secure_core`：官方 Native Assets Build Hook 直接调用锁定的 Rust 1.91.0/Cargo，不引入桥接层；C ABI v1 固定 32 字节能力结构并仅导出七个白名单函数，调用方必须提供输出缓冲区长度。
+- 已新增 `dependencies/kelivo_secure_core`：官方 Native Assets Build Hook 直接调用锁定的 Rust 1.91.0/Cargo，不引入第三方桥接层；能力结构仍保持 v1 固定 32 字节布局，当前 C ABI 为 v2 并仅导出九个白名单函数。
 - Dart 只暴露能力对象和不透明句柄；句柄关闭使用 open/closing/closed 状态机阻止重复或并发释放。Windows 报告 DPAPI 后端，Android 报告 Keystore 后端，两者均支持密钥槽位与后台访问；其他平台保持零能力并明确返回“不支持平台”，缺失后端时 fail-closed。
-- Windows Release 最终目录只有一个 x64 安全核心 DLL且恰好七个导出；Windows 与 Android x64 已实际加载并通过 ABI 门禁。
-- 已签名 Android Release 包含 arm64-v8a、armeabi-v7a、x86_64 三种正确架构，每个库恰好七个导出且所有 ELF LOAD 段均为 16 KiB 对齐，APK 也通过 16 KiB ZIP 对齐。Android arm/arm64 与 Linux 尚未运行验证。
+- ABI v2 的 Windows 与 Android x64 Debug 产物已实际加载并通过门禁，两个平台均恰好九个导出；Release、多 Android ABI 对齐与签名仍需在生产接线完成后重新验证。
+- 上一版已签名 Android Release 曾覆盖 arm64-v8a、armeabi-v7a、x86_64 及 16 KiB 对齐；该结果早于 ABI v2，不得替代当前版本的 Release 验证。Android arm/arm64 与 Linux 尚未运行验证。
 - Windows DPAPI 槽位 v1 已完成：固定 `%LOCALAPPDATA%/Kelivo/secure-core/v1/slots`，使用 CNG 随机数、当前用户作用域和禁止 UI 的 DPAPI、槽位 ID 熵绑定、原子不覆盖写入、堆上零化密钥与进程内永久不复用句柄；Rust 8 项测试、Windows 集成探针和 Release 原生门禁均通过。
 - Android Keystore 槽位 v1 已完成：安装级不可导出 AES-256-GCM 包装密钥，槽位 ID 作为 AAD，32 字节 DEK 只经 Rust 缓冲区与同步 DirectByteBuffer 传递；密钥缺失、认证失败和槽位帧损坏均 fail-closed。
 - Android 槽位密文固定写入 no-backup 目录，目录权限 0700、文件权限 0600；跨进程发布使用永久锁文件、`flock`、同目录 rename 与目录 fsync，避免 Android 禁止 hardlink 导致的写入失败。
 - Android 模拟器已通过公开 Dart API 生命周期、跨进程重开、密文不变、AAD 调包失败、截断帧失败和 SQLCipher 能力矩阵；Windows DPAPI 能力矩阵同步回归通过。
-- Android 三 ABI 签名 Release 均通过 v2 签名、4/16 KiB ZIP 对齐、恰好七个 C ABI 导出及全部 LOAD 段 0x4000 对齐；Windows Release DLL 同样恰好七个导出。
+- ABI v1 阶段的 Android 三 ABI 签名 Release 与 Windows Release 门禁均通过；ABI v2 的 Release 门禁尚待重跑。
 - 记录信封 v1 已完成：主密钥只存在于不透明句柄中，以记录 ID 为 HKDF-SHA256 salt、以世代为 info 派生记录密钥，使用 XChaCha20-Poly1305 和平台 CSPRNG 24 字节 nonce；信封采用有界、规范化 CBOR 六元数组，不允许调用方选择算法。
 - 记录正文上限 16 MiB、外部 AAD 上限 64 KiB、记录 ID 固定 16 字节；附件继续保留给后续独立分块协议。Dart FFI 的世代限制为正 63 位整数，避免 Uint64 的符号歧义。
 - Windows DPAPI 与 Android Keystore 已实际通过记录信封往返、空明文、密文/AAD/记录 ID 篡改、未知版本、无效参数和关闭句柄门禁；认证失败时原生输出长度归零且缓冲区不被写入。
@@ -35,5 +35,6 @@
 - Android 三 ABI Release 均通过 APK v2 签名与 16 KiB ZIP 对齐校验；Windows Release 构建通过。Issue #23 已关闭，下一阶段继续生产 SQLCipher 连接收口。
 - 生产 SQLCipher 连接收口由 BelovedYaoo/kelivo#24 跟踪；范围包含主连接、执行 isolate、在线快照、恢复校验与切换，禁止无密钥或错误密钥回退到明文 SQLite。
 - SQLCipher 原生设键桥接已完成底层验证：安全核心用独立 HKDF 域、16 字节数据库上下文和 epoch 派生 32 字节子密钥，并同步调用同一 SQLite Native Asset 的 `sqlite3_key`；密钥不进入 Dart 缓冲区。
-- 安全核心能力新增 SQLCipher 设键位，C ABI 白名单由七个扩为八个导出。Windows DPAPI 与 Android 模拟器 Keystore 均通过正确键重开、错误工作区拒绝、无键拒绝和磁盘明文哨兵检查；生产 `AppDatabase` 尚未接线，不得提前宣称本地数据库已全面加密。
-- SQLCipher 官方语义确认：`ATTACH` 不带 `KEY` 会复用主库的原始键与 salt，不适合打开具有独立 salt 的既有加密快照；命名库设键与恢复路径必须单独收口。
+- 安全核心能力现包含 SQLCipher 主库设键与安全 ATTACH 两个独立能力位，C ABI v2 恰好九个导出。Windows DPAPI 与 Android 模拟器 Keystore 均通过正确键重开、错误工作区拒绝、无键拒绝和磁盘明文哨兵检查；生产 `AppDatabase` 尚未接线，不得提前声称本地数据库已全面加密。
+- 在线备份会生成独立 salt；普通 `ATTACH` 会继承主库 salt 并在语句执行时立即失败。安全核心现于 Rust 内派生密钥，通过同一 SQLite Native Asset 预编译 `ATTACH ... KEY ?`，将 32 字节密钥作为 BLOB 绑定并在 finalize 后清零，Dart 只传数据库句柄、UTF-8 路径和受限内部别名。
+- 安全 ATTACH 已覆盖路径 NUL/UTF-8/长度边界、缺失源不创建空库、别名注入与保留名拒绝、错误工作区密钥、SQLite 回调失败及不同 salt 在线备份读取；Rust 18 项测试、Clippy 零警告、Windows/Android x64 设备矩阵、全仓 1552 项 Flutter 测试和 `flutter analyze` 均通过。
