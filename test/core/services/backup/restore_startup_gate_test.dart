@@ -11,17 +11,68 @@ import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/conversation.dart';
-import 'package:Kelivo/core/services/backup/restore_bundle_preparation.dart';
+import 'package:Kelivo/core/services/backup/restore_bundle_preparation.dart'
+    hide RestoreBundlePreparation;
+import 'package:Kelivo/core/services/backup/restore_bundle_preparation.dart'
+    as production_preparation;
 import 'package:Kelivo/core/services/backup/restore_business_lease.dart';
 import 'package:Kelivo/core/services/backup/restore_cutover_executor.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/backup/restore_previous_store.dart';
 import 'package:Kelivo/core/services/backup/restore_receipt.dart';
 import 'package:Kelivo/core/services/backup/restore_settings_cold_ack.dart';
-import 'package:Kelivo/core/services/backup/restore_startup_gate.dart';
+import 'package:Kelivo/core/services/backup/restore_startup_gate.dart'
+    hide RestoreStartupGate;
+import 'package:Kelivo/core/services/backup/restore_startup_gate.dart'
+    as production_startup;
 import 'package:Kelivo/core/services/backup/restore_workspace_lock.dart';
 
 import 'restore_cold_process_test_helper.dart';
+import '../../database/test_database_cipher.dart';
+
+final class RestoreBundlePreparation {
+  static Future<PreparedRestoreBundle> prepare({
+    required Directory appDataDirectory,
+    required Directory extractedDirectory,
+    required String sourceManifestSha256,
+    required bool bundleIncludesChats,
+    required bool bundleIncludesFiles,
+    required bool restoreChats,
+    required bool restoreFiles,
+    DateTime? createdAtUtc,
+  }) => production_preparation.RestoreBundlePreparation.prepare(
+    appDataDirectory: appDataDirectory,
+    extractedDirectory: extractedDirectory,
+    sourceManifestSha256: sourceManifestSha256,
+    bundleIncludesChats: bundleIncludesChats,
+    bundleIncludesFiles: bundleIncludesFiles,
+    restoreChats: restoreChats,
+    restoreFiles: restoreFiles,
+    cipher: testDatabaseCipher,
+    createdAtUtc: createdAtUtc,
+  );
+}
+
+final class RestoreStartupGate {
+  static Future<PendingRestoreRun?> inspect({
+    required Directory appDataDirectory,
+  }) => production_startup.RestoreStartupGate.inspect(
+    appDataDirectory: appDataDirectory,
+  );
+
+  static Future<RestoreReceipt?> recoverAndRequireBusinessReady({
+    required Directory appDataDirectory,
+    SharedPreferences? preferences,
+    RestoreBusinessLease? businessLease,
+    RestoreDurability? durability,
+  }) => production_startup.RestoreStartupGate.recoverAndRequireBusinessReady(
+    appDataDirectory: appDataDirectory,
+    cipher: testDatabaseCipher,
+    preferences: preferences,
+    businessLease: businessLease,
+    durability: durability,
+  );
+}
 
 final class _FailingNthSetPreferencesStore
     extends InMemorySharedPreferencesStore {
@@ -432,6 +483,7 @@ Future<_CompleteRollbackBundleFixture> _prepareCompleteRollbackBundle({
   await _createRollbackDatabase(candidateDatabase, conversationId: 'new');
   final databaseInfo = await ChatDatabaseRepository.prepareSnapshotForRestore(
     candidateDatabase,
+    cipher: testDatabaseCipher,
   );
   final candidateUpload = File(p.join(extracted.path, 'upload', 'new.txt'));
   await candidateUpload.parent.create();
@@ -484,7 +536,10 @@ Future<void> _createRollbackDatabase(
   File file, {
   required String conversationId,
 }) async {
-  final repository = ChatDatabaseRepository.open(file: file);
+  final repository = ChatDatabaseRepository.open(
+    file: file,
+    cipher: testDatabaseCipher,
+  );
   try {
     await repository.ensureReady();
     await repository.putMigrationBatch(
@@ -513,6 +568,7 @@ Future<List<String>> _rollbackConversationIds(File file) async {
     mode: sqlite.OpenMode.readOnly,
   );
   try {
+    testDatabaseCipher.apply(database, createSlotIfMissing: false);
     return database
         .select('SELECT id FROM conversation_rows ORDER BY id;')
         .map((row) => row['id'] as String)

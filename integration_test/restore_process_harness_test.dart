@@ -190,6 +190,7 @@ Future<void> _runSetup(
   final candidate = await RestoreBundleStaging.validateExistingCandidate(
     candidateDirectory: _candidateDirectory(receiptStore),
     expectedManifestSha256: state.candidateManifestSha256,
+    cipher: restoreHarnessDatabaseCipher,
   );
   expect(candidate.includeChats, isTrue);
   expect(candidate.includeFiles, isTrue);
@@ -287,6 +288,7 @@ Future<void> _runCutoverKill(
     }
     await RestoreStartupGate.recoverAndRequireBusinessReady(
       appDataDirectory: control.appDataDirectory,
+      cipher: restoreHarnessDatabaseCipher,
       preferences: preferences,
       businessLease: lease,
       durability: durability,
@@ -341,6 +343,7 @@ Future<void> _runResumeToColdAck(
     try {
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -429,6 +432,7 @@ Future<void> _runColdFinalize(
     try {
       final recovered = await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -602,6 +606,7 @@ Future<void> _runTerminalCommitToColdAck(
       );
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -618,6 +623,7 @@ Future<void> _runTerminalCommitToColdAck(
     try {
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: platformDurability,
@@ -679,6 +685,7 @@ Future<RestoreReceipt> _convergeCommittedWithoutColdAck({
       runId: state.runId,
       preferences: preferences,
       workspaceLock: workspaceLock,
+      cipher: restoreHarnessDatabaseCipher,
       durability: durability,
     );
     final result = await executor.executeWhileWorkspaceLocked(
@@ -760,6 +767,7 @@ Future<void> _recoverTerminalColdAck(
     try {
       gateResult = await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -902,6 +910,7 @@ Future<void> _runTerminalArchiveKill(
     SharedPreferencesStorePlatform.instance = mutationGuard;
     await RestoreStartupGate.recoverAndRequireBusinessReady(
       appDataDirectory: control.appDataDirectory,
+      cipher: restoreHarnessDatabaseCipher,
       preferences: preferences,
       businessLease: lease,
       durability: durability,
@@ -987,6 +996,7 @@ Future<void> _runTerminalVerify(
     try {
       gateResult = await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -1129,6 +1139,7 @@ Future<void> _runRollbackKill(
     SharedPreferencesStorePlatform.instance = settingsBlocker ?? trigger;
     await RestoreStartupGate.recoverAndRequireBusinessReady(
       appDataDirectory: control.appDataDirectory,
+      cipher: restoreHarnessDatabaseCipher,
       preferences: preferences,
       businessLease: lease,
       durability: durability,
@@ -1185,6 +1196,7 @@ Future<void> _runRollbackRecoverToColdAck(
     try {
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -1268,6 +1280,7 @@ Future<void> _runRollbackVerifyBusinessReady(
     try {
       final result = await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -1410,6 +1423,7 @@ Future<void> _runRolledBackTerminalToColdAck(
       SharedPreferencesStorePlatform.instance = mutationCounter;
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -1427,6 +1441,7 @@ Future<void> _runRolledBackTerminalToColdAck(
     try {
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: platformDurability,
@@ -1510,6 +1525,7 @@ Future<RestoreReceipt> _convergeRolledBackWithoutColdAck({
         runId: state.runId,
         preferences: preferences,
         workspaceLock: workspaceLock,
+        cipher: restoreHarnessDatabaseCipher,
         durability: durability,
       );
       final result = await executor.executeWhileWorkspaceLocked(
@@ -1597,6 +1613,7 @@ Future<void> _recoverRolledBackTerminalColdAck(
     try {
       gateResult = await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -1757,6 +1774,7 @@ Future<void> _runRolledBackTerminalArchiveKill(
     SharedPreferencesStorePlatform.instance = mutationGuard;
     await RestoreStartupGate.recoverAndRequireBusinessReady(
       appDataDirectory: control.appDataDirectory,
+      cipher: restoreHarnessDatabaseCipher,
       preferences: preferences,
       businessLease: lease,
       durability: durability,
@@ -1842,6 +1860,7 @@ Future<void> _runRolledBackTerminalVerify(
     try {
       gateResult = await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -1938,6 +1957,7 @@ Future<void> _runLegacyArchivingMarkerCommitToColdAck(
     try {
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -2081,6 +2101,7 @@ Future<void> _runLegacyArchivingMarkerKill(
     SharedPreferencesStorePlatform.instance = mutationGuard;
     await RestoreStartupGate.recoverAndRequireBusinessReady(
       appDataDirectory: control.appDataDirectory,
+      cipher: restoreHarnessDatabaseCipher,
       preferences: preferences,
       businessLease: lease,
       durability: durability,
@@ -2134,6 +2155,7 @@ Future<void> _runLegacyArchivingMarkerVerify(
     try {
       final result = await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -2247,6 +2269,7 @@ Future<void> _runTerminalSettingsReadbackCreatePartial(
     try {
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -2349,6 +2372,7 @@ Future<void> _runTerminalSettingsReadbackRepairToColdAck(
     try {
       await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,
@@ -2456,6 +2480,7 @@ Future<void> _runTerminalSettingsReadbackVerify(
     try {
       final result = await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: control.appDataDirectory,
+        cipher: restoreHarnessDatabaseCipher,
         preferences: preferences,
         businessLease: lease,
         durability: durability,

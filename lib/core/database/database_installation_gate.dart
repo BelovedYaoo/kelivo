@@ -7,6 +7,7 @@ import 'package:uuid/uuid.dart';
 import '../services/backup/restore_durability.dart';
 import 'app_database.dart';
 import 'chat_database_repository.dart';
+import 'database_cipher.dart';
 
 final class DatabaseInstallationReceipt {
   const DatabaseInstallationReceipt({
@@ -54,6 +55,7 @@ final class DatabaseInstallationGate {
 
   static Future<DatabaseInstallationReceipt> ensureReady({
     required Directory appDataDirectory,
+    required DatabaseCipher cipher,
     bool allowDatabaseIdentityChange = false,
     RestoreDurability? durability,
   }) async {
@@ -78,17 +80,26 @@ final class DatabaseInstallationGate {
     late InstalledChatDatabaseInfo info;
     try {
       if (databaseType == FileSystemEntityType.notFound) {
-        final repository = ChatDatabaseRepository.open(file: databaseFile);
+        final repository = ChatDatabaseRepository.open(
+          file: databaseFile,
+          cipher: cipher,
+        );
         try {
           await repository.ensureReady();
         } finally {
           await repository.close();
         }
       } else {
-        await ChatDatabaseRepository.migrateInstalledDatabase(databaseFile);
+        await ChatDatabaseRepository.migrateInstalledDatabase(
+          databaseFile,
+          cipher: cipher,
+        );
       }
 
-      info = ChatDatabaseRepository.inspectInstalledDatabase(databaseFile);
+      info = ChatDatabaseRepository.inspectInstalledDatabase(
+        databaseFile,
+        cipher: cipher,
+      );
     } catch (_) {
       rethrow;
     }
@@ -102,8 +113,12 @@ final class DatabaseInstallationGate {
       ChatDatabaseRepository.assignInstalledDatabaseIdentity(
         databaseFile,
         databaseId,
+        cipher: cipher,
       );
-      info = ChatDatabaseRepository.inspectInstalledDatabase(databaseFile);
+      info = ChatDatabaseRepository.inspectInstalledDatabase(
+        databaseFile,
+        cipher: cipher,
+      );
     }
     final databaseId = info.databaseId!;
     final matching = receipts
@@ -147,6 +162,7 @@ final class DatabaseInstallationGate {
 
   static Future<DatabaseInstallationReceipt?> read({
     required Directory appDataDirectory,
+    required DatabaseCipher cipher,
   }) async {
     final receipts = await _readReceipts(appDataDirectory);
     if (receipts.isEmpty) return null;
@@ -156,6 +172,7 @@ final class DatabaseInstallationGate {
     if (!await databaseFile.exists()) throw StateError('database_missing');
     final databaseId = ChatDatabaseRepository.inspectInstalledDatabase(
       databaseFile,
+      cipher: cipher,
     ).databaseId;
     final matching = receipts
         .where((entry) => entry.receipt.databaseId == databaseId)
@@ -164,6 +181,32 @@ final class DatabaseInstallationGate {
       throw StateError('database_installation_receipt_match');
     }
     return matching.single.receipt;
+  }
+
+  static Future<void> discardReceiptsForEncryptionCutover({
+    required Directory appDataDirectory,
+    required RestoreDurability durability,
+  }) async {
+    final files = <File>[];
+    await for (final entity in appDataDirectory.list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      if (name != _temporaryFileName &&
+          (!name.startsWith(_receiptPrefix) ||
+              !name.endsWith(_receiptSuffix))) {
+        continue;
+      }
+      if (await FileSystemEntity.type(entity.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        throw StateError('database_installation_receipt_type');
+      }
+      files.add(File(entity.path));
+    }
+    for (final file in files) {
+      await file.delete();
+    }
+    if (files.isNotEmpty) {
+      await durability.syncDirectory(appDataDirectory, fullBarrier: true);
+    }
   }
 
   static Future<List<({File file, DatabaseInstallationReceipt receipt})>>

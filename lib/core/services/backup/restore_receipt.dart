@@ -509,10 +509,11 @@ final class RestoreReceiptStore {
     final candidateDirectory = Directory(
       p.join(runDirectory.path, 'candidate'),
     );
-    final candidate = await RestoreBundleStaging.validateExistingCandidate(
-      candidateDirectory: candidateDirectory,
-      expectedManifestSha256: receipt.candidateManifestSha256,
-    );
+    final candidate =
+        await RestoreBundleStaging.validateExistingCandidateControlPlane(
+          candidateDirectory: candidateDirectory,
+          expectedManifestSha256: receipt.candidateManifestSha256,
+        );
     if (receipt.selectedComponents.contains(RestoreComponent.database) !=
             candidate.includeChats ||
         receipt.selectedComponents.contains(RestoreComponent.assets) !=

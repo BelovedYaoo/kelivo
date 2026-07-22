@@ -6,6 +6,8 @@ import 'package:Kelivo/core/models/conversation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
+import 'test_database_cipher.dart';
+
 void main() {
   late Directory directory;
   late File databaseFile;
@@ -14,7 +16,10 @@ void main() {
   setUp(() async {
     directory = await Directory.systemTemp.createTemp('kelivo_commands_test_');
     databaseFile = File('${directory.path}/chat.sqlite');
-    repository = ChatDatabaseRepository.open(file: databaseFile);
+    repository = ChatDatabaseRepository.open(
+      file: databaseFile,
+      cipher: testDatabaseCipher,
+    );
     await repository.ensureReady();
   });
 
@@ -113,6 +118,7 @@ void main() {
     );
 
     final database = sqlite.sqlite3.open(databaseFile.path);
+    testDatabaseCipher.apply(database, createSlotIfMissing: false);
     addTearDown(database.close);
 
     database.execute(

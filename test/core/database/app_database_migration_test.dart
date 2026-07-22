@@ -7,6 +7,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
+import 'test_database_cipher.dart';
+
 void main() {
   test(
     'installation gate creates and validates only the current schema',
@@ -18,10 +20,16 @@ void main() {
         if (await directory.exists()) await directory.delete(recursive: true);
       });
 
-      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
+      await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+        cipher: testDatabaseCipher,
+      );
 
       final file = File(p.join(directory.path, AppDatabase.databaseFileName));
-      final installed = ChatDatabaseRepository.inspectInstalledDatabase(file);
+      final installed = ChatDatabaseRepository.inspectInstalledDatabase(
+        file,
+        cipher: testDatabaseCipher,
+      );
       expect(installed.schemaVersion, AppDatabase.currentSchemaVersion);
       expect(installed.databaseId, isNotEmpty);
     },
@@ -45,12 +53,16 @@ void main() {
         });
         final file = File(p.join(directory.path, AppDatabase.databaseFileName));
         final database = sqlite.sqlite3.open(file.path);
+        testDatabaseCipher.apply(database, createSlotIfMissing: true);
         database.execute('CREATE TABLE intermediate_only (value TEXT);');
         database.userVersion = schemaVersion;
         database.close();
 
         await expectLater(
-          DatabaseInstallationGate.ensureReady(appDataDirectory: directory),
+          DatabaseInstallationGate.ensureReady(
+            appDataDirectory: directory,
+            cipher: testDatabaseCipher,
+          ),
           throwsA(
             isA<StateError>().having(
               (error) => error.message,
@@ -65,6 +77,7 @@ void main() {
           mode: sqlite.OpenMode.readOnly,
         );
         try {
+          testDatabaseCipher.apply(after, createSlotIfMissing: false);
           expect(after.userVersion, schemaVersion);
           expect(
             after.select(

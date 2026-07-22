@@ -8,6 +8,8 @@ import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   group('Chat database observability', () {
     late Directory directory;
@@ -23,6 +25,7 @@ void main() {
       observer = ChatDatabaseObserver();
       repository = ChatDatabaseRepository.open(
         file: databaseFile,
+        cipher: testDatabaseCipher,
         observer: observer,
       );
       await repository.ensureReady();
@@ -182,6 +185,7 @@ void main() {
 
         repository = ChatDatabaseRepository.open(
           file: databaseFile,
+          cipher: testDatabaseCipher,
           observer: observer,
         );
         await repository.ensureReady();

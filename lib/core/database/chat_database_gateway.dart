@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'chat_database_observer.dart';
 import 'chat_database_repository.dart';
+import 'database_cipher.dart';
 
 final class ChatDatabaseLease {
   ChatDatabaseLease._(this.repository, this._gateway);
@@ -18,17 +19,18 @@ final class ChatDatabaseLease {
 }
 
 final class ChatDatabaseGateway {
-  ChatDatabaseGateway({ChatDatabaseObserver? observer})
+  ChatDatabaseGateway({required this.cipher, ChatDatabaseObserver? observer})
     : _observer = observer ?? ChatDatabaseObserver.instance;
-
-  static final ChatDatabaseGateway instance = ChatDatabaseGateway();
 
   ChatDatabaseRepository? _repository;
   Future<ChatDatabaseRepository>? _opening;
   Future<void>? _closing;
   String? _databasePath;
   int _leaseCount = 0;
+  final DatabaseCipher cipher;
   final ChatDatabaseObserver _observer;
+
+  DatabaseCipher get databaseCipher => cipher;
 
   Future<ChatDatabaseLease> acquire(File databaseFile) async {
     await _closing;
@@ -65,6 +67,7 @@ final class ChatDatabaseGateway {
     return _observer.measure(ChatDatabaseOperation.gatewayOpen, () async {
       final repository = ChatDatabaseRepository.open(
         file: databaseFile,
+        cipher: cipher,
         observer: _observer,
       );
       try {

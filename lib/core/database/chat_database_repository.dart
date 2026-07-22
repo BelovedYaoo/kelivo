@@ -8,6 +8,7 @@ import 'package:sqlite3/sqlite3.dart' as sqlite;
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import 'app_database.dart';
+import 'database_cipher.dart';
 import 'chat_database_observer.dart';
 import 'generation_run.dart';
 import 'generation_run_commands.dart';
@@ -100,6 +101,7 @@ class SandboxPathMigrationResult {
 class ChatDatabaseRepository {
   ChatDatabaseRepository(
     this._db, {
+    required this.databaseCipher,
     File? databaseFile,
     ChatDatabaseObserver? observer,
   }) : _databaseFile = databaseFile?.absolute,
@@ -107,16 +109,31 @@ class ChatDatabaseRepository {
 
   final AppDatabase _db;
   final File? _databaseFile;
+  final DatabaseCipher databaseCipher;
   final ChatDatabaseObserver _observer;
   bool _messageSearchFtsReady = false;
   bool _assetGcSchemaReady = false;
 
   static ChatDatabaseRepository open({
-    File? file,
+    required File file,
+    required DatabaseCipher cipher,
     ChatDatabaseObserver? observer,
   }) {
-    final db = AppDatabase.open(file: file);
-    return ChatDatabaseRepository(db, databaseFile: file, observer: observer);
+    final databaseType = FileSystemEntity.typeSync(
+      file.path,
+      followLinks: false,
+    );
+    if (databaseType != FileSystemEntityType.notFound &&
+        databaseType != FileSystemEntityType.file) {
+      throw StateError('database_type');
+    }
+    final db = AppDatabase.open(file: file, cipher: cipher);
+    return ChatDatabaseRepository(
+      db,
+      databaseCipher: cipher,
+      databaseFile: file,
+      observer: observer,
+    );
   }
 
   Future<T> runInTransaction<T>(Future<T> Function() action) {
@@ -205,13 +222,17 @@ class ChatDatabaseRepository {
     );
   }
 
-  static Future<bool> migrateInstalledDatabase(File file) async {
+  static Future<bool> migrateInstalledDatabase(
+    File file, {
+    required DatabaseCipher cipher,
+  }) async {
     final database = sqlite.sqlite3.open(
       file.absolute.path,
       mode: sqlite.OpenMode.readOnly,
     );
     late final int schemaVersion;
     try {
+      cipher.apply(database, createSlotIfMissing: false);
       schemaVersion = database.userVersion;
       if (schemaVersion != AppDatabase.currentSchemaVersion) {
         throw StateError('database_schema_version');
@@ -228,6 +249,7 @@ class ChatDatabaseRepository {
 
   static InstalledChatDatabaseInfo inspectInstalledDatabase(
     File file, {
+    required DatabaseCipher cipher,
     bool validateContents = false,
   }) {
     final database = sqlite.sqlite3.open(
@@ -235,6 +257,7 @@ class ChatDatabaseRepository {
       mode: sqlite.OpenMode.readOnly,
     );
     try {
+      cipher.apply(database, createSlotIfMissing: false);
       final schemaVersion = database.userVersion;
       if (schemaVersion > AppDatabase.currentSchemaVersion) {
         throw StateError('database_schema_too_new');
@@ -268,12 +291,16 @@ class ChatDatabaseRepository {
     }
   }
 
-  static InstalledChatDatabaseInfo inspectUncleanInstalledDatabase(File file) {
+  static InstalledChatDatabaseInfo inspectUncleanInstalledDatabase(
+    File file, {
+    required DatabaseCipher cipher,
+  }) {
     final database = sqlite.sqlite3.open(
       file.absolute.path,
       mode: sqlite.OpenMode.readOnly,
     );
     try {
+      cipher.apply(database, createSlotIfMissing: false);
       final quickCheckRows = database.select('PRAGMA quick_check;');
       if (quickCheckRows.length != 1 ||
           quickCheckRows.single.values.single != 'ok') {
@@ -307,10 +334,15 @@ class ChatDatabaseRepository {
     }
   }
 
-  static void assignInstalledDatabaseIdentity(File file, String databaseId) {
+  static void assignInstalledDatabaseIdentity(
+    File file,
+    String databaseId, {
+    required DatabaseCipher cipher,
+  }) {
     if (!_isUuid(databaseId)) throw StateError('database_identity_invalid');
     final database = sqlite.sqlite3.open(file.absolute.path);
     try {
+      cipher.apply(database, createSlotIfMissing: false);
       database.execute('PRAGMA foreign_keys = ON;');
       database.execute('PRAGMA synchronous = FULL;');
       _validateRawStructure(database);
@@ -344,6 +376,7 @@ class ChatDatabaseRepository {
   static Future<ChatDatabaseSnapshotInfo> createConsistentSnapshot({
     required File sourceFile,
     required File destinationFile,
+    required DatabaseCipher cipher,
   }) async {
     final sourcePath = sourceFile.absolute.path;
     final destinationPath = destinationFile.absolute.path;
@@ -365,11 +398,15 @@ class ChatDatabaseRepository {
       late final ChatDatabaseSnapshotInfo initialInfo;
       final source = sqlite.sqlite3.open(sourcePath);
       try {
+        cipher.apply(source, createSlotIfMissing: false);
         source.execute('PRAGMA query_only = ON;');
         final destination = sqlite.sqlite3.open(destinationPath);
         try {
+          cipher.apply(destination, createSlotIfMissing: false);
           final pageSizeRows = source.select('PRAGMA page_size;');
-          final pageSize = pageSizeRows.first.values.first as int;
+          final pageSize = int.parse(
+            pageSizeRows.first.values.first.toString(),
+          );
           final pagesPerStep = (8 * 1024 * 1024 ~/ pageSize).clamp(1, 1 << 20);
           await source.backup(destination, nPage: pagesPerStep).drain<void>();
           initialInfo = _validateRawSnapshot(destination);
@@ -385,6 +422,7 @@ class ChatDatabaseRepository {
       await _deleteDatabaseSidecars(destinationFile);
       final reopened = sqlite.sqlite3.open(destinationPath);
       try {
+        cipher.apply(reopened, createSlotIfMissing: false);
         final reopenedInfo = _validateRawSnapshot(reopened);
         if (reopenedInfo != initialInfo) {
           throw StateError('snapshot_reopen_mismatch');
@@ -401,8 +439,9 @@ class ChatDatabaseRepository {
   }
 
   static Future<ChatDatabaseSnapshotInfo> prepareSnapshotForRestore(
-    File snapshotFile,
-  ) async {
+    File snapshotFile, {
+    required DatabaseCipher cipher,
+  }) async {
     if (!await snapshotFile.exists()) {
       throw FileSystemException(
         'Snapshot database does not exist',
@@ -413,6 +452,7 @@ class ChatDatabaseRepository {
     final database = sqlite.sqlite3.open(snapshotFile.absolute.path);
     late final ChatDatabaseSnapshotInfo initialInfo;
     try {
+      cipher.apply(database, createSlotIfMissing: false);
       initialInfo = _validateRawSnapshot(database);
       if (initialInfo.schemaVersion != AppDatabase.currentSchemaVersion) {
         throw StateError('database_schema_version');
@@ -443,7 +483,10 @@ class ChatDatabaseRepository {
     }
 
     await _deleteDatabaseSidecars(snapshotFile);
-    final reopenedInfo = await inspectPreparedSnapshot(snapshotFile);
+    final reopenedInfo = await inspectPreparedSnapshot(
+      snapshotFile,
+      cipher: cipher,
+    );
     if (reopenedInfo != initialInfo) {
       throw StateError('snapshot_reopen_mismatch');
     }
@@ -451,8 +494,9 @@ class ChatDatabaseRepository {
   }
 
   static Future<ChatDatabaseSnapshotInfo> inspectPreparedSnapshot(
-    File snapshotFile,
-  ) async {
+    File snapshotFile, {
+    required DatabaseCipher cipher,
+  }) async {
     if (await FileSystemEntity.type(snapshotFile.path, followLinks: false) !=
         FileSystemEntityType.file) {
       throw FileSystemException(
@@ -468,6 +512,7 @@ class ChatDatabaseRepository {
     );
     var inspectionCompleted = false;
     try {
+      cipher.apply(database, createSlotIfMissing: false);
       final info = _validateRawSnapshot(database);
       if (info.schemaVersion != AppDatabase.currentSchemaVersion) {
         throw StateError('database_schema_version');
@@ -4005,9 +4050,10 @@ LIMIT 1;
 
     var attached = false;
     try {
-      await _db.customStatement('ATTACH DATABASE ? AS merge_source;', [
-        snapshotFile.absolute.path,
-      ]);
+      await _db.attachEncryptedDatabase(
+        databaseFile: snapshotFile,
+        databaseName: 'merge_source',
+      );
       attached = true;
       return await _db.transaction(() async {
         final sourceRows = await _db
@@ -4403,9 +4449,10 @@ LIMIT 1;
 
     var attached = false;
     try {
-      await _db.customStatement('ATTACH DATABASE ? AS restore_source;', [
-        snapshotFile.absolute.path,
-      ]);
+      await _db.attachEncryptedDatabase(
+        databaseFile: snapshotFile,
+        databaseName: 'restore_source',
+      );
       attached = true;
       await _db.transaction(() async {
         await _clearChatRows();

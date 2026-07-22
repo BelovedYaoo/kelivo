@@ -1,5 +1,6 @@
 import 'dart:io';
 
+import '../../database/database_cipher.dart';
 import 'restore_bundle_staging.dart';
 import 'restore_receipt.dart';
 
@@ -43,6 +44,7 @@ final class RestoreBundlePreparation {
     required bool bundleIncludesFiles,
     required bool restoreChats,
     required bool restoreFiles,
+    required DatabaseCipher cipher,
     DateTime? createdAtUtc,
   }) async {
     StagedRestoreBundle? staged;
@@ -58,6 +60,7 @@ final class RestoreBundlePreparation {
         sourceIncludesChats: bundleIncludesChats,
         sourceIncludesFiles: bundleIncludesFiles,
         sourceManifestSha256: sourceManifestSha256,
+        cipher: cipher,
       );
       final receipt = RestoreReceipt.prepared(
         runId: staged.runId,

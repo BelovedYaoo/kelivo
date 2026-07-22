@@ -7,8 +7,57 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
 
-import 'package:Kelivo/core/services/backup/restore_bundle_staging.dart';
+import 'package:Kelivo/core/services/backup/restore_bundle_staging.dart'
+    hide RestoreBundleStaging;
+import 'package:Kelivo/core/services/backup/restore_bundle_staging.dart'
+    as production;
+import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/backup/restore_workspace_lock.dart';
+
+import '../../database/test_database_cipher.dart';
+
+final class RestoreBundleStaging {
+  static const workspaceRootName =
+      production.RestoreBundleStaging.workspaceRootName;
+
+  static Future<StagedRestoreBundle> create({
+    required Directory appDataDirectory,
+    required Directory extractedDirectory,
+    required bool includeChats,
+    required bool includeFiles,
+    bool? sourceIncludesChats,
+    bool? sourceIncludesFiles,
+    required String sourceManifestSha256,
+    RestoreDurability? durability,
+  }) => production.RestoreBundleStaging.create(
+    appDataDirectory: appDataDirectory,
+    extractedDirectory: extractedDirectory,
+    includeChats: includeChats,
+    includeFiles: includeFiles,
+    sourceIncludesChats: sourceIncludesChats,
+    sourceIncludesFiles: sourceIncludesFiles,
+    sourceManifestSha256: sourceManifestSha256,
+    cipher: testDatabaseCipher,
+    durability: durability,
+  );
+
+  static Future<ValidatedRestoreCandidate> validateExistingCandidate({
+    required Directory candidateDirectory,
+    required String expectedManifestSha256,
+  }) => production.RestoreBundleStaging.validateExistingCandidate(
+    candidateDirectory: candidateDirectory,
+    expectedManifestSha256: expectedManifestSha256,
+    cipher: testDatabaseCipher,
+  );
+
+  static Future<void> discardUnpublished({
+    required Directory appDataDirectory,
+    required String runId,
+  }) => production.RestoreBundleStaging.discardUnpublished(
+    appDataDirectory: appDataDirectory,
+    runId: runId,
+  );
+}
 
 Future<String> _manifestSha256(Directory extracted) async {
   return (await sha256

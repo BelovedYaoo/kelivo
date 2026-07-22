@@ -15,6 +15,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 import 'package:Kelivo/core/database/app_database.dart';
+import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/backup.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
@@ -23,12 +24,24 @@ import 'package:Kelivo/core/providers/backup_provider.dart';
 import 'package:Kelivo/core/services/backup/data_sync.dart';
 import 'package:Kelivo/core/services/backup/restore_receipt.dart';
 import 'package:Kelivo/core/services/backup/restore_startup_gate.dart';
-import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/services/chat/chat_service.dart' as production_chat;
 import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 import 'restore_cold_process_test_helper.dart';
+import '../../database/test_database_cipher.dart';
+
+class ChatService extends production_chat.ChatService {
+  ChatService(
+    super.syncWriteExecutor, {
+    ChatDatabaseGateway? databaseGateway,
+    super.assetContentHash,
+  }) : super(
+         databaseGateway:
+             databaseGateway ?? ChatDatabaseGateway(cipher: testDatabaseCipher),
+       );
+}
 
 bool _containsContiguousBytes(List<int> source, List<int> pattern) {
   for (var start = 0; start <= source.length - pattern.length; start++) {
@@ -284,7 +297,10 @@ Future<File> _createSqliteBackupFixture({
   final databasePath = '${root.path}/${prefix}_database.sqlite';
   final snapshotInfo = await Isolate.run(() async {
     final databaseFile = File(databasePath);
-    final repository = ChatDatabaseRepository.open(file: databaseFile);
+    final repository = ChatDatabaseRepository.open(
+      file: databaseFile,
+      cipher: testDatabaseCipher,
+    );
     try {
       await repository.ensureReady();
       await repository.putMigrationBatch(
@@ -313,7 +329,10 @@ Future<File> _createSqliteBackupFixture({
     } finally {
       await repository.close();
     }
-    return ChatDatabaseRepository.prepareSnapshotForRestore(databaseFile);
+    return ChatDatabaseRepository.prepareSnapshotForRestore(
+      databaseFile,
+      cipher: testDatabaseCipher,
+    );
   });
   final databaseFile = File(databasePath);
   final settingsFile = File('${root.path}/${prefix}_settings.json');
@@ -379,6 +398,7 @@ Future<RestoreReceipt?> _recoverAcrossColdRestart({
     try {
       return await RestoreStartupGate.recoverAndRequireBusinessReady(
         appDataDirectory: appDataDirectory,
+        cipher: testDatabaseCipher,
         preferences: preferences,
       );
     } on RestoreColdRestartRequired {
@@ -862,7 +882,10 @@ void main() {
         await snapshotFile.writeAsBytes(databaseEntry!.readBytes()!);
         final archivedHash = await _fileSha256(snapshotFile);
         final archivedContent = await Isolate.run(() async {
-          final repository = ChatDatabaseRepository.open(file: snapshotFile);
+          final repository = ChatDatabaseRepository.open(
+            file: snapshotFile,
+            cipher: testDatabaseCipher,
+          );
           try {
             await repository.ensureReady();
             await repository.validateIntegrity();
@@ -901,7 +924,10 @@ void main() {
 
     test('restores a prepared SQLite snapshot on the next startup', () async {
       final sourceFile = File('${root.path}/source.sqlite');
-      final sourceRepository = ChatDatabaseRepository.open(file: sourceFile);
+      final sourceRepository = ChatDatabaseRepository.open(
+        file: sourceFile,
+        cipher: testDatabaseCipher,
+      );
       await sourceRepository.ensureReady();
       await sourceRepository.putMigrationBatch(
         conversations: [

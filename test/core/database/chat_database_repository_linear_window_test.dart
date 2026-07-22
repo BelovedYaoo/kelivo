@@ -6,6 +6,8 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   test(
     'linear window keeps a version group at its first row position',
@@ -13,6 +15,7 @@ void main() {
       final root = await Directory.systemTemp.createTemp('linear_window_test_');
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/chat.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();
@@ -110,6 +113,7 @@ void main() {
       final root = await Directory.systemTemp.createTemp('linear_edit_test_');
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/chat.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();
@@ -165,6 +169,7 @@ void main() {
       final root = await Directory.systemTemp.createTemp('context_tail_test_');
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/chat.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();

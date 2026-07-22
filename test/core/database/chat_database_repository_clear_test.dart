@@ -6,6 +6,8 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   group('ChatDatabaseRepository clearAllData', () {
     late Directory directory;
@@ -17,6 +19,7 @@ void main() {
       );
       repository = ChatDatabaseRepository.open(
         file: File('${directory.path}/chat.sqlite'),
+        cipher: testDatabaseCipher,
       );
       await repository.ensureReady();
     });

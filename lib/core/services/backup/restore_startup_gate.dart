@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../database/database_cipher.dart';
 import 'restore_bundle_staging.dart';
 import 'restore_business_lease.dart';
 import 'restore_cutover_executor.dart';
@@ -230,6 +231,7 @@ final class RestoreStartupGate {
 
   static Future<RestoreReceipt?> recoverAndRequireBusinessReady({
     required Directory appDataDirectory,
+    required DatabaseCipher cipher,
     SharedPreferences? preferences,
     RestoreBusinessLease? businessLease,
     RestoreDurability? durability,
@@ -292,6 +294,7 @@ final class RestoreStartupGate {
           runId: pending.runId,
           preferences: preferences ?? await SharedPreferences.getInstance(),
           workspaceLock: workspaceLock,
+          cipher: cipher,
           durability: resolvedDurability,
           archived: pending.runInCompletedDirectory,
         );
@@ -461,10 +464,11 @@ final class RestoreStartupGate {
     required Directory runDirectory,
     required RestoreReceipt receipt,
   }) async {
-    final candidate = await RestoreBundleStaging.validateExistingCandidate(
-      candidateDirectory: Directory(p.join(runDirectory.path, 'candidate')),
-      expectedManifestSha256: receipt.candidateManifestSha256,
-    );
+    final candidate =
+        await RestoreBundleStaging.validateExistingCandidateControlPlane(
+          candidateDirectory: Directory(p.join(runDirectory.path, 'candidate')),
+          expectedManifestSha256: receipt.candidateManifestSha256,
+        );
     if (receipt.selectedComponents.contains(RestoreComponent.database) !=
             candidate.includeChats ||
         receipt.selectedComponents.contains(RestoreComponent.assets) !=

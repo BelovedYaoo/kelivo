@@ -6,7 +6,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
-import 'package:Kelivo/core/services/backup/restore_bundle_mover.dart';
+import 'package:Kelivo/core/services/backup/restore_bundle_mover.dart'
+    as production;
 import 'package:Kelivo/core/services/backup/restore_bundle_staging.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/backup/restore_previous_builder.dart';
@@ -14,6 +15,21 @@ import 'package:Kelivo/core/services/backup/restore_previous_store.dart';
 import 'package:Kelivo/core/services/backup/restore_receipt.dart';
 import 'package:Kelivo/core/services/backup/restore_settings_store.dart';
 import 'package:Kelivo/core/services/backup/restore_settings_transition.dart';
+
+import '../../database/test_database_cipher.dart';
+
+production.RestoreBundleMover _restoreBundleMover({
+  required Directory appDataDirectory,
+  required Directory candidateDirectory,
+  required RestorePreviousStore previousStore,
+  RestoreDurability? durability,
+}) => production.RestoreBundleMover(
+  appDataDirectory: appDataDirectory,
+  candidateDirectory: candidateDirectory,
+  previousStore: previousStore,
+  cipher: testDatabaseCipher,
+  durability: durability,
+);
 
 const _runId = '0123456789abcdef0123456789abcdef';
 const _candidateHash =
@@ -52,7 +68,7 @@ void main() {
         databaseInfo: null,
       );
       final preferences = await SharedPreferences.getInstance();
-      final mover = RestoreBundleMover(
+      final mover = _restoreBundleMover(
         appDataDirectory: appData,
         candidateDirectory: candidateDirectory,
         previousStore: RestorePreviousStore(runDirectory: runDirectory),
@@ -98,7 +114,7 @@ void main() {
           bundle: bundle,
           preparedReceipt: receipt,
         );
-        final failingMover = RestoreBundleMover(
+        final failingMover = _restoreBundleMover(
           appDataDirectory: appData,
           candidateDirectory: candidateDirectory,
           previousStore: previousStore,
@@ -111,7 +127,7 @@ void main() {
         );
         expect(await database.exists(), isTrue);
         expect(await upload.parent.exists(), isFalse);
-        final resumedMover = RestoreBundleMover(
+        final resumedMover = _restoreBundleMover(
           appDataDirectory: appData,
           candidateDirectory: candidateDirectory,
           previousStore: previousStore,
@@ -147,7 +163,7 @@ void main() {
         root: appData,
         delegate: RestorePlatformDurability(),
       );
-      final mover = RestoreBundleMover(
+      final mover = _restoreBundleMover(
         appDataDirectory: appData,
         candidateDirectory: candidateDirectory,
         previousStore: previousStore,
@@ -196,7 +212,7 @@ void main() {
           bundle: bundle,
           preparedReceipt: receipt,
         );
-        final initialMover = RestoreBundleMover(
+        final initialMover = _restoreBundleMover(
           appDataDirectory: appData,
           candidateDirectory: candidateDirectory,
           previousStore: previousStore,
@@ -240,7 +256,7 @@ void main() {
           candidateSettings: candidate.settings,
           secretsIncluded: candidate.secretsIncluded,
         );
-        final failingMover = RestoreBundleMover(
+        final failingMover = _restoreBundleMover(
           appDataDirectory: appData,
           candidateDirectory: candidateDirectory,
           previousStore: previousStore,
@@ -256,7 +272,7 @@ void main() {
           ),
           throwsA(isA<StateError>()),
         );
-        final resumedMover = RestoreBundleMover(
+        final resumedMover = _restoreBundleMover(
           appDataDirectory: appData,
           candidateDirectory: candidateDirectory,
           previousStore: previousStore,
@@ -307,7 +323,7 @@ void main() {
         bundle: bundle,
         preparedReceipt: prepared,
       );
-      final mover = RestoreBundleMover(
+      final mover = _restoreBundleMover(
         appDataDirectory: appData,
         candidateDirectory: candidateDirectory,
         previousStore: previousStore,
@@ -361,7 +377,7 @@ void main() {
       );
       final rollingBack = oldRenamed.advance(RestoreReceiptState.rollingBack);
 
-      final failingMover = RestoreBundleMover(
+      final failingMover = _restoreBundleMover(
         appDataDirectory: appData,
         candidateDirectory: candidateDirectory,
         previousStore: previousStore,

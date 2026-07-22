@@ -2,10 +2,37 @@ import 'dart:io';
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
-import 'package:Kelivo/core/database/database_installation_gate.dart';
+import 'package:Kelivo/core/database/database_encryption_cutover.dart';
+import 'package:Kelivo/core/database/database_installation_gate.dart'
+    hide DatabaseInstallationGate;
+import 'package:Kelivo/core/database/database_installation_gate.dart'
+    as production;
+import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sqlite;
+
+import 'test_database_cipher.dart';
+
+final class DatabaseInstallationGate {
+  static Future<DatabaseInstallationReceipt> ensureReady({
+    required Directory appDataDirectory,
+    bool allowDatabaseIdentityChange = false,
+    RestoreDurability? durability,
+  }) => production.DatabaseInstallationGate.ensureReady(
+    appDataDirectory: appDataDirectory,
+    cipher: testDatabaseCipher,
+    allowDatabaseIdentityChange: allowDatabaseIdentityChange,
+    durability: durability,
+  );
+
+  static Future<DatabaseInstallationReceipt?> read({
+    required Directory appDataDirectory,
+  }) => production.DatabaseInstallationGate.read(
+    appDataDirectory: appDataDirectory,
+    cipher: testDatabaseCipher,
+  );
+}
 
 void main() {
   group('DatabaseInstallationGate', () {
@@ -32,6 +59,7 @@ void main() {
       expect(await databaseFile(directory).exists(), isTrue);
       final info = ChatDatabaseRepository.inspectInstalledDatabase(
         databaseFile(directory),
+        cipher: testDatabaseCipher,
       );
       expect(info.databaseId, receipt.databaseId);
       expect(
@@ -57,6 +85,7 @@ void main() {
     test('升级时 adoption 已有有效数据库且不清空数据', () async {
       final repository = ChatDatabaseRepository.open(
         file: databaseFile(directory),
+        cipher: testDatabaseCipher,
       );
       try {
         await repository.ensureReady();
@@ -64,6 +93,7 @@ void main() {
         await repository.close();
       }
       final before = sqlite.sqlite3.open(databaseFile(directory).path);
+      testDatabaseCipher.apply(before, createSlotIfMissing: false);
       before.execute(
         'INSERT INTO chat_storage_meta_rows (key, value) VALUES (?, ?);',
         ['upgrade_sentinel', 'keep'],
@@ -78,6 +108,7 @@ void main() {
       expect(
         ChatDatabaseRepository.inspectInstalledDatabase(
           databaseFile(directory),
+          cipher: testDatabaseCipher,
         ).databaseId,
         receipt.databaseId,
       );
@@ -85,6 +116,7 @@ void main() {
         databaseFile(directory).path,
         mode: sqlite.OpenMode.readOnly,
       );
+      testDatabaseCipher.apply(after, createSlotIfMissing: false);
       try {
         expect(
           after.select(
@@ -135,6 +167,7 @@ void main() {
     test('高于当前 schema 的数据库拒绝 down migration', () async {
       final file = databaseFile(directory);
       final raw = sqlite.sqlite3.open(file.path);
+      testDatabaseCipher.apply(raw, createSlotIfMissing: true);
       raw.userVersion = AppDatabase.currentSchemaVersion + 1;
       raw.close();
 
@@ -219,6 +252,7 @@ void main() {
       );
       final replacement = databaseFile(replacementRoot);
       final raw = sqlite.sqlite3.open(replacement.path);
+      testDatabaseCipher.apply(raw, createSlotIfMissing: false);
       raw.execute(
         'INSERT INTO tool_event_rows (message_id, events_json) VALUES (?, ?);',
         ['missing-message', '[]'],
@@ -281,5 +315,204 @@ void main() {
       expect(await databaseFile(directory).exists(), isTrue);
       expect(await sessionFile.readAsString(), '{broken');
     });
+
+    test('硬切删除主库与恢复工作区中的明文数据库后创建密文库', () async {
+      final mainFile = databaseFile(directory);
+      final plaintext = sqlite.sqlite3.open(mainFile.path);
+      plaintext.execute('CREATE TABLE legacy_rows (value TEXT);');
+      plaintext.close();
+      for (final suffix in const ['-wal', '-shm', '-journal']) {
+        await File('${mainFile.path}$suffix').writeAsBytes([1], flush: true);
+      }
+      final legacyReceipt = File(
+        p.join(directory.path, 'database_installation_receipt_legacy.json'),
+      );
+      await legacyReceipt.writeAsString('{legacy', flush: true);
+      final legacyHiveFiles = [
+        for (final name in const [
+          'conversations.hive',
+          'messages.hive',
+          'tool_events_v1.hive',
+        ])
+          await File(
+            p.join(directory.path, name),
+          ).writeAsBytes([1, 2, 3], flush: true),
+      ];
+      final pendingDatabase = File(
+        p.join(
+          directory.path,
+          '.kelivo_restore',
+          'run_0123456789abcdef0123456789abcdef',
+          'candidate',
+          'database',
+          AppDatabase.databaseFileName,
+        ),
+      );
+      await pendingDatabase.parent.create(recursive: true);
+      final pending = sqlite.sqlite3.open(pendingDatabase.path);
+      pending.execute('CREATE TABLE pending_rows (value TEXT);');
+      pending.close();
+
+      await DatabaseEncryptionCutover.discardPlaintextState(
+        appDataDirectory: directory,
+      );
+
+      for (final suffix in const ['', '-wal', '-shm', '-journal']) {
+        expect(await File('${mainFile.path}$suffix').exists(), isFalse);
+      }
+      expect(await legacyReceipt.exists(), isFalse);
+      for (final file in legacyHiveFiles) {
+        expect(await file.exists(), isFalse);
+      }
+      expect(await pendingDatabase.exists(), isFalse);
+
+      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
+      expect(await _hasPlaintextSqliteHeader(mainFile), isFalse);
+      final wrongKeyDatabase = sqlite.sqlite3.open(
+        mainFile.path,
+        mode: sqlite.OpenMode.readOnly,
+      );
+      try {
+        expect(
+          () => const TestDatabaseCipher(
+            rawKeyHex:
+                '0000000000000000000000000000000000000000000000000000000000000000',
+          ).apply(wrongKeyDatabase, createSlotIfMissing: false),
+          throwsA(isA<sqlite.SqliteException>()),
+        );
+      } finally {
+        wrongKeyDatabase.close();
+      }
+    });
+
+    test('硬切保留现有密文主库与密文恢复候选', () async {
+      final receipt = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+      );
+      final mainFile = databaseFile(directory);
+      final candidate = File(
+        p.join(
+          directory.path,
+          '.kelivo_restore',
+          'run_0123456789abcdef0123456789abcdef',
+          'candidate',
+          'database',
+          AppDatabase.databaseFileName,
+        ),
+      );
+      await candidate.parent.create(recursive: true);
+      await mainFile.copy(candidate.path);
+
+      await DatabaseEncryptionCutover.discardPlaintextState(
+        appDataDirectory: directory,
+      );
+
+      expect(await mainFile.exists(), isTrue);
+      expect(await candidate.exists(), isTrue);
+      expect(
+        (await DatabaseInstallationGate.read(
+          appDataDirectory: directory,
+        ))?.databaseId,
+        receipt.databaseId,
+      );
+    });
+
+    test('硬切会继续清理已经标记但尚未删除完的恢复工作区', () async {
+      final workspace = Directory(p.join(directory.path, '.kelivo_restore'));
+      final remainingFile = File(
+        p.join(
+          workspace.path,
+          'run_0123456789abcdef0123456789abcdef',
+          'candidate',
+          'remaining.bin',
+        ),
+      );
+      await remainingFile.parent.create(recursive: true);
+      await remainingFile.writeAsBytes([1, 2, 3], flush: true);
+      final marker = File(
+        p.join(workspace.path, '.database-encryption-cutover-v1'),
+      );
+      await marker.writeAsString('1\n', flush: true);
+
+      await DatabaseEncryptionCutover.discardPlaintextState(
+        appDataDirectory: directory,
+      );
+
+      expect(await remainingFile.exists(), isFalse);
+      expect(await marker.exists(), isFalse);
+    });
+
+    test('硬切会从主库清理标记恢复并删除孤立侧车与回执', () async {
+      final mainFile = databaseFile(directory);
+      final sidecar = File('${mainFile.path}-wal');
+      await sidecar.writeAsBytes([1, 2, 3], flush: true);
+      final receipt = File(
+        p.join(directory.path, 'database_installation_receipt_orphan.json'),
+      );
+      await receipt.writeAsString('{orphan', flush: true);
+      final marker = File(
+        p.join(directory.path, '.database-encryption-cutover-v1'),
+      );
+      await marker.writeAsString('1\n', flush: true);
+
+      await DatabaseEncryptionCutover.discardPlaintextState(
+        appDataDirectory: directory,
+      );
+
+      expect(await sidecar.exists(), isFalse);
+      expect(await receipt.exists(), isFalse);
+      expect(await marker.exists(), isFalse);
+      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
+      expect(await _hasPlaintextSqliteHeader(mainFile), isFalse);
+    });
+
+    test('硬切不会把未知或损坏文件误判成可删除的明文库', () async {
+      final mainFile = databaseFile(directory);
+      await mainFile.writeAsBytes([1, 2, 3, 4], flush: true);
+      final sidecar = File('${mainFile.path}-wal');
+      await sidecar.writeAsBytes([5, 6], flush: true);
+      final receipt = File(
+        p.join(directory.path, 'database_installation_receipt_unknown.json'),
+      );
+      await receipt.writeAsString('{unknown', flush: true);
+
+      await DatabaseEncryptionCutover.discardPlaintextState(
+        appDataDirectory: directory,
+      );
+
+      expect(await mainFile.readAsBytes(), [1, 2, 3, 4]);
+      expect(await sidecar.readAsBytes(), [5, 6]);
+      expect(await receipt.readAsString(), '{unknown');
+    });
   });
+}
+
+Future<bool> _hasPlaintextSqliteHeader(File file) async {
+  const expected = <int>[
+    0x53,
+    0x51,
+    0x4c,
+    0x69,
+    0x74,
+    0x65,
+    0x20,
+    0x66,
+    0x6f,
+    0x72,
+    0x6d,
+    0x61,
+    0x74,
+    0x20,
+    0x33,
+    0x00,
+  ];
+  if (await file.length() < expected.length) return false;
+  final input = await file.open();
+  try {
+    final actual = await input.read(expected.length);
+    return actual.length == expected.length &&
+        actual.indexed.every((entry) => entry.$2 == expected[entry.$1]);
+  } finally {
+    await input.close();
+  }
 }

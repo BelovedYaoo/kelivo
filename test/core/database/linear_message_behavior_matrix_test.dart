@@ -1,11 +1,15 @@
+import 'dart:io';
+
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
+  late Directory directory;
   late AppDatabase database;
   late ChatDatabaseRepository repository;
   late Conversation conversation;
@@ -72,13 +76,23 @@ void main() {
       )).slots.map((slot) => slot.revisionId).toList(growable: false);
 
   setUp(() async {
-    database = AppDatabase(NativeDatabase.memory());
-    repository = ChatDatabaseRepository(database);
+    directory = await Directory.systemTemp.createTemp('kelivo_linear_matrix_');
+    database = AppDatabase.open(
+      file: File('${directory.path}/linear.sqlite'),
+      cipher: testDatabaseCipher,
+    );
+    repository = ChatDatabaseRepository(
+      database,
+      databaseCipher: testDatabaseCipher,
+    );
     await repository.ensureReady();
     conversation = Conversation(id: 'conversation', title: 'Linear');
   });
 
-  tearDown(() => repository.close());
+  tearDown(() async {
+    await repository.close();
+    await directory.delete(recursive: true);
+  });
 
   test(
     'save-only appends and selects a version without changing the future',

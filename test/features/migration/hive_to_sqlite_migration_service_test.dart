@@ -15,6 +15,8 @@ import 'package:Kelivo/core/services/database_v2_rollout_ledger.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/features/migration/hive_to_sqlite_migration_service.dart';
 
+import '../../core/database/test_database_cipher.dart';
+
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this.path);
 
@@ -121,10 +123,15 @@ void main() {
     await Directory('${tempDir.path}/fonts').create(recursive: true);
     await File('${tempDir.path}/fonts/custom.ttf').writeAsBytes([7, 8, 9]);
 
-    final decision = await HiveToSqliteMigrationService.check();
+    final decision = await HiveToSqliteMigrationService.check(
+      cipher: testDatabaseCipher,
+    );
     expect(decision.needsMigration, isTrue);
 
-    final service = HiveToSqliteMigrationService(decision);
+    final service = HiveToSqliteMigrationService(
+      decision,
+      databaseCipher: testDatabaseCipher,
+    );
     final statuses = <HiveToSqliteMigrationStatus>[];
     final sub = service.statusStream.listen(statuses.add);
     addTearDown(sub.cancel);
@@ -223,7 +230,9 @@ void main() {
     expect(firstMigrationStatus.progress, 0);
     await service.dispose();
 
-    final afterMigration = await HiveToSqliteMigrationService.check();
+    final afterMigration = await HiveToSqliteMigrationService.check(
+      cipher: testDatabaseCipher,
+    );
     expect(afterMigration.needsMigration, isFalse);
     final rollout = await DatabaseV2RolloutLedger(tempDir).read();
     expect(rollout, isNotNull);
@@ -233,7 +242,7 @@ void main() {
 
     final chatService = ChatService(
       const UntrackedSyncWriteExecutor.forTests(),
-      databaseGateway: ChatDatabaseGateway(),
+      databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
     );
     await chatService.init();
     addTearDown(chatService.close);
@@ -331,10 +340,15 @@ void main() {
     await toolEvents.close();
     await Hive.close();
 
-    final decision = await HiveToSqliteMigrationService.check();
+    final decision = await HiveToSqliteMigrationService.check(
+      cipher: testDatabaseCipher,
+    );
     expect(decision.needsMigration, isTrue);
 
-    final service = HiveToSqliteMigrationService(decision);
+    final service = HiveToSqliteMigrationService(
+      decision,
+      databaseCipher: testDatabaseCipher,
+    );
     final statuses = <HiveToSqliteMigrationStatus>[];
     final sub = service.statusStream.listen(statuses.add);
     addTearDown(sub.cancel);
@@ -354,7 +368,7 @@ void main() {
 
     final chatService = ChatService(
       const UntrackedSyncWriteExecutor.forTests(),
-      databaseGateway: ChatDatabaseGateway(),
+      databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
     );
     await chatService.init();
     addTearDown(chatService.close);
@@ -406,6 +420,7 @@ void main() {
           sqliteFile: File('${tempDir.path}/kelivo.db'),
           hiveFiles: [hiveFile],
         ),
+        databaseCipher: testDatabaseCipher,
       );
 
       final itemNames = service.initialStatus().backupItems.map(

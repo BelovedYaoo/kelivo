@@ -36,7 +36,10 @@ import 'core/providers/s3_backup_provider.dart';
 import 'core/providers/backup_reminder_provider.dart';
 import 'core/providers/hotkey_provider.dart';
 import 'core/providers/cloud_sync_provider.dart';
+import 'core/database/chat_database_gateway.dart';
+import 'core/database/database_encryption_cutover.dart';
 import 'core/database/database_installation_gate.dart';
+import 'core/database/sqlcipher_database_key.dart';
 import 'core/services/chat/chat_service.dart';
 import 'core/services/sync/cloud_sync_store.dart';
 import 'core/services/sync/sync_write_journal.dart';
@@ -147,6 +150,10 @@ Future<void> main() async {
       }
       FlutterLogger.installGlobalHandlers();
       final appDataDirectory = workspaceRuntime.current.dataDirectory;
+      final databaseCipher = SqlCipherDatabaseKey.forWorkspace(
+        workspaceRuntime.current.workspaceKey,
+      );
+      final databaseGateway = ChatDatabaseGateway(cipher: databaseCipher);
       final RestoreReceipt? restoreOutcome;
       try {
         // 租约通过内部注册表在整个进程期间保持归属，直到进程退出，
@@ -154,9 +161,13 @@ Future<void> main() async {
         final businessLease = await RestoreBusinessLease.acquire(
           appDataDirectory: appDataDirectory,
         );
+        await DatabaseEncryptionCutover.discardPlaintextState(
+          appDataDirectory: appDataDirectory,
+        );
         restoreOutcome =
             await RestoreStartupGate.recoverAndRequireBusinessReady(
               appDataDirectory: appDataDirectory,
+              cipher: databaseCipher,
               businessLease: businessLease,
             );
       } on RestoreColdRestartRequired {
@@ -196,18 +207,9 @@ Future<void> main() async {
       // Cache current Documents directory to fix sandboxed absolute paths on iOS
       await SandboxPathResolver.init();
       try {
-        final migrationDecision = await HiveToSqliteMigrationService.check();
-        if (migrationDecision.needsMigration) {
-          runApp(
-            MigrationApp(
-              service: HiveToSqliteMigrationService(migrationDecision),
-              restoreOutcome: restoreOutcome?.state,
-            ),
-          );
-          return;
-        }
         final installationReceipt = await DatabaseInstallationGate.ensureReady(
           appDataDirectory: appDataDirectory,
+          cipher: databaseCipher,
           allowDatabaseIdentityChange:
               restoreOutcome?.selectedComponents.contains(
                 RestoreComponent.database,
@@ -263,6 +265,7 @@ Future<void> main() async {
           cloudSyncStore: cloudSyncStore,
           syncWriteJournal: syncWriteJournal,
           workspaceRuntime: workspaceRuntime,
+          databaseGateway: databaseGateway,
           restoreOutcome: restoreOutcome?.state,
         ),
       );
@@ -391,6 +394,7 @@ class MyApp extends StatelessWidget {
     required this.cloudSyncStore,
     required this.syncWriteJournal,
     required this.workspaceRuntime,
+    required this.databaseGateway,
     super.key,
     this.restoreOutcome,
   });
@@ -398,6 +402,7 @@ class MyApp extends StatelessWidget {
   final CloudSyncStore cloudSyncStore;
   final SyncWriteJournal syncWriteJournal;
   final AccountWorkspaceRuntime workspaceRuntime;
+  final ChatDatabaseGateway databaseGateway;
   final RestoreReceiptState? restoreOutcome;
 
   @override
@@ -418,7 +423,10 @@ class MyApp extends StatelessWidget {
             return settings;
           },
         ),
-        ChangeNotifierProvider(create: (_) => ChatService(syncWriteJournal)),
+        ChangeNotifierProvider(
+          create: (_) =>
+              ChatService(syncWriteJournal, databaseGateway: databaseGateway),
+        ),
         ChangeNotifierProvider(create: (_) => McpToolService()),
         ChangeNotifierProvider(
           create: (_) => McpProvider(syncWriteExecutor: syncWriteJournal),

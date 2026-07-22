@@ -6,6 +6,8 @@ import 'package:Kelivo/core/models/conversation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
+import 'test_database_cipher.dart';
+
 void main() {
   group('ChatDatabaseRepository merge snapshot', () {
     late Directory directory;
@@ -18,9 +20,13 @@ void main() {
       directory = await Directory.systemTemp.createTemp('kelivo_merge_test_');
       live = ChatDatabaseRepository.open(
         file: File('${directory.path}/live.sqlite'),
+        cipher: testDatabaseCipher,
       );
       sourceFile = File('${directory.path}/source.sqlite');
-      source = ChatDatabaseRepository.open(file: sourceFile);
+      source = ChatDatabaseRepository.open(
+        file: sourceFile,
+        cipher: testDatabaseCipher,
+      );
       sourceClosed = false;
       await live.ensureReady();
       await source.ensureReady();
@@ -230,6 +236,7 @@ void main() {
       sourceClosed = true;
       final raw = sqlite.sqlite3.open(sourceFile.path);
       try {
+        testDatabaseCipher.apply(raw, createSlotIfMissing: false);
         raw.execute(
           'UPDATE message_rows SET message_order = 2 '
           "WHERE id = 'invalid-message';",

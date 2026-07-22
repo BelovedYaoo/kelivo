@@ -5,6 +5,7 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../database/app_database.dart';
+import '../../database/database_cipher.dart';
 import 'restore_bundle_mover.dart';
 import 'restore_bundle_staging.dart';
 import 'restore_durability.dart';
@@ -55,6 +56,7 @@ final class RestoreCutoverExecutor {
     required String runId,
     required SharedPreferences preferences,
     required RestoreWorkspaceLock workspaceLock,
+    required DatabaseCipher cipher,
     RestoreDurability? durability,
     bool archived = false,
   }) {
@@ -64,6 +66,7 @@ final class RestoreCutoverExecutor {
       runId: runId,
       preferences: preferences,
       workspaceLock: workspaceLock,
+      cipher: cipher,
       durability: resolvedDurability,
       archived: archived,
     );
@@ -74,6 +77,7 @@ final class RestoreCutoverExecutor {
     required this.runId,
     required SharedPreferences preferences,
     required this.workspaceLock,
+    required this.cipher,
     required this.durability,
     required bool archived,
   }) : settingsStore = RestoreSettingsStore(preferences),
@@ -91,6 +95,7 @@ final class RestoreCutoverExecutor {
       appDataDirectory: appDataDirectory,
       candidateDirectory: candidateDirectory,
       previousStore: previousStore,
+      cipher: cipher,
       durability: durability,
     );
   }
@@ -98,6 +103,7 @@ final class RestoreCutoverExecutor {
   final Directory appDataDirectory;
   final String runId;
   final RestoreWorkspaceLock workspaceLock;
+  final DatabaseCipher cipher;
   final RestoreDurability durability;
   final RestoreSettingsStore settingsStore;
   final RestoreReceiptStore receiptStore;
@@ -134,6 +140,7 @@ final class RestoreCutoverExecutor {
               await RestoreBundleStaging.validateExistingCandidate(
                 candidateDirectory: candidateDirectory,
                 expectedManifestSha256: preparedReceipt.candidateManifestSha256,
+                cipher: cipher,
               );
           final previous = await _completePrevious(
             preparedReceipt: preparedReceipt,
@@ -457,6 +464,7 @@ final class RestoreCutoverExecutor {
           databaseFile: File(
             p.join(appDataDirectory.path, AppDatabase.databaseFileName),
           ),
+          cipher: cipher,
           durability: durability,
         );
       }

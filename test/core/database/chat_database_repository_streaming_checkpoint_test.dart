@@ -7,6 +7,8 @@ import 'package:Kelivo/core/models/conversation.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
+import 'test_database_cipher.dart';
+
 void main() {
   group('ChatDatabaseRepository streaming checkpoint', () {
     late Directory directory;
@@ -18,6 +20,7 @@ void main() {
       );
       repository = ChatDatabaseRepository.open(
         file: File('${directory.path}/chat.sqlite'),
+        cipher: testDatabaseCipher,
       );
       await repository.ensureReady();
       await repository.putMigrationBatch(
@@ -103,6 +106,7 @@ void main() {
 
       final raw = sqlite.sqlite3.open('${directory.path}/chat.sqlite');
       try {
+        testDatabaseCipher.apply(raw, createSlotIfMissing: false);
         final parts = raw.select(
           "SELECT kind FROM message_part_rows WHERE revision_id = "
           "'streaming' ORDER BY ordinal;",
@@ -135,6 +139,7 @@ void main() {
         );
         final raw = sqlite.sqlite3.open('${directory.path}/chat.sqlite');
         try {
+          testDatabaseCipher.apply(raw, createSlotIfMissing: false);
           raw.execute(
             "UPDATE gemini_thought_signature_rows SET signature = 'wrong' "
             "WHERE message_id = 'streaming';",
@@ -229,6 +234,7 @@ void main() {
       );
       final raw = sqlite.sqlite3.open('${directory.path}/chat.sqlite');
       try {
+        testDatabaseCipher.apply(raw, createSlotIfMissing: false);
         expect(
           raw.select(
             "SELECT value FROM chat_storage_meta_rows "

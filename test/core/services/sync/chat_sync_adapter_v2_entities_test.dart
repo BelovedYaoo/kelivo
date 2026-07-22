@@ -4,6 +4,8 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../database/test_database_cipher.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -48,7 +50,7 @@ final class _NoFullScanChatService extends ChatService {
   _NoFullScanChatService([SyncWriteExecutor? syncWriteExecutor])
     : super(
         syncWriteExecutor ?? const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
 
   int fullScanCount = 0;

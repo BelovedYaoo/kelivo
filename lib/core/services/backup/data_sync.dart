@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:xml/xml.dart';
 
 import '../../database/chat_database_repository.dart';
+import '../../database/database_cipher.dart';
 import '../../models/backup.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
@@ -47,11 +48,13 @@ Future<void> _extractBackupZipInIsolate(String zipPath, String extractDirPath) {
 Future<_VersionedBackupInfo> _preflightVersionedBackupInIsolate({
   required String manifestPath,
   required String extractDirPath,
+  required DatabaseCipher cipher,
 }) {
   return Isolate.run(
     () => DataSync._preflightVersionedBackup(
       manifestPath: manifestPath,
       extractDirPath: extractDirPath,
+      cipher: cipher,
     ),
   );
 }
@@ -64,6 +67,7 @@ Future<void> _prepareRestoreBundleInIsolate({
   required bool bundleIncludesFiles,
   required bool restoreChats,
   required bool restoreFiles,
+  required DatabaseCipher cipher,
 }) {
   return Isolate.run(
     () => RestoreBundlePreparation.prepare(
@@ -74,6 +78,7 @@ Future<void> _prepareRestoreBundleInIsolate({
       bundleIncludesFiles: bundleIncludesFiles,
       restoreChats: restoreChats,
       restoreFiles: restoreFiles,
+      cipher: cipher,
     ),
   );
 }
@@ -81,6 +86,7 @@ Future<void> _prepareRestoreBundleInIsolate({
 Future<void> _validateOverwriteChatCandidateInIsolate({
   required String candidatePath,
   required String chatsPath,
+  required DatabaseCipher cipher,
 }) {
   return Isolate.run(() async {
     final parsed = await DataSync._parseChatBackup(File(chatsPath));
@@ -96,6 +102,7 @@ Future<void> _validateOverwriteChatCandidateInIsolate({
       messages: parsed.messages,
       toolEvents: parsed.toolEvents,
       geminiThoughtSigs: parsed.geminiThoughtSigs,
+      cipher: cipher,
     );
   });
 }
@@ -303,6 +310,7 @@ class DataSync {
       final databasePath = databaseTmp?.path;
       final includeFiles = cfg.includeFiles;
       final verifyDirPath = p.join(workDir.path, '_verify');
+      final cipher = chatService.databaseCipher;
 
       // --- Step 2: Run CPU-heavy ZIP packing in a separate isolate ---
       await Isolate.run(() async {
@@ -327,6 +335,7 @@ class DataSync {
           await _preflightVersionedBackup(
             manifestPath: p.join(verifyDirPath, _manifestEntryName),
             extractDirPath: verifyDirPath,
+            cipher: cipher,
           );
         } finally {
           if (verifyDir.existsSync()) {
@@ -996,6 +1005,7 @@ class DataSync {
   static Future<_VersionedBackupInfo> _preflightVersionedBackup({
     required String manifestPath,
     required String extractDirPath,
+    required DatabaseCipher cipher,
   }) async {
     final manifestFile = File(manifestPath);
     if (!manifestFile.existsSync() ||
@@ -1104,7 +1114,10 @@ class DataSync {
         p.joinAll([extractDirPath, ..._databaseEntryName.split('/')]),
       );
       final databaseInfo =
-          await ChatDatabaseRepository.prepareSnapshotForRestore(databaseFile);
+          await ChatDatabaseRepository.prepareSnapshotForRestore(
+            databaseFile,
+            cipher: cipher,
+          );
       if (databaseInfo.schemaVersion != schemaVersion ||
           databaseInfo.conversationCount != conversationCount ||
           databaseInfo.messageCount != messageCount) {
@@ -1206,6 +1219,7 @@ class DataSync {
       await _validateOverwriteChatCandidateInIsolate(
         candidatePath: candidatePath,
         chatsPath: chatsPath,
+        cipher: chatService.databaseCipher,
       );
     } finally {
       await _deleteDatabaseFamily(candidatePath);
@@ -1330,6 +1344,7 @@ class DataSync {
     required List<ChatMessage> messages,
     required Map<String, List<Map<String, dynamic>>> toolEvents,
     required Map<String, String> geminiThoughtSigs,
+    required DatabaseCipher cipher,
   }) async {
     final nextOrderByConversation = <String, int>{};
     final orderedMessages = <({ChatMessage message, int messageOrder})>[];
@@ -1343,7 +1358,10 @@ class DataSync {
     }
 
     final candidateFile = File(candidatePath);
-    final repository = ChatDatabaseRepository.open(file: candidateFile);
+    final repository = ChatDatabaseRepository.open(
+      file: candidateFile,
+      cipher: cipher,
+    );
     try {
       await repository.ensureReady();
       await repository.putMigrationBatch(
@@ -1359,7 +1377,10 @@ class DataSync {
       await repository.close();
     }
 
-    final reopenedRepository = ChatDatabaseRepository.open(file: candidateFile);
+    final reopenedRepository = ChatDatabaseRepository.open(
+      file: candidateFile,
+      cipher: cipher,
+    );
     try {
       await reopenedRepository.ensureReady();
       await reopenedRepository.validateIntegrity();
@@ -1458,6 +1479,7 @@ class DataSync {
         versionedBackup = await _preflightVersionedBackupInIsolate(
           manifestPath: manifestPath,
           extractDirPath: extractDirPath,
+          cipher: chatService.databaseCipher,
         );
       } else {
         versionedBackup = null;
@@ -1504,6 +1526,7 @@ class DataSync {
               bundleIncludesFiles: includeFiles,
               restoreChats: restoreChats,
               restoreFiles: restoreFiles,
+              cipher: chatService.databaseCipher,
             ),
           );
           return;

@@ -4,6 +4,8 @@ import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_observer.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   group('ChatDatabaseGateway', () {
     late Directory directory;
@@ -13,7 +15,7 @@ void main() {
       directory = await Directory.systemTemp.createTemp(
         'kelivo_database_gateway_',
       );
-      gateway = ChatDatabaseGateway();
+      gateway = ChatDatabaseGateway(cipher: testDatabaseCipher);
     });
 
     tearDown(() async {
@@ -61,7 +63,10 @@ void main() {
       'failed initialization can be retried after preserving evidence',
       () async {
         final observer = ChatDatabaseObserver();
-        gateway = ChatDatabaseGateway(observer: observer);
+        gateway = ChatDatabaseGateway(
+          cipher: testDatabaseCipher,
+          observer: observer,
+        );
         final file = File('${directory.path}/chat.sqlite');
         await file.writeAsString('not sqlite');
 

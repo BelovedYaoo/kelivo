@@ -10,11 +10,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 
 import 'package:Kelivo/core/providers/assistant_provider.dart';
+import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/core/services/sync/sync_write_journal.dart';
 import 'package:Kelivo/features/search/services/global_session_search_service.dart';
+
+import '../database/test_database_cipher.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this.path);
@@ -139,8 +142,14 @@ void main() {
     }
   });
 
-  ChatService createService() {
-    final service = ChatService(const UntrackedSyncWriteExecutor.forTests());
+  ChatService createService([
+    SyncWriteExecutor syncWriteExecutor =
+        const UntrackedSyncWriteExecutor.forTests(),
+  ]) {
+    final service = ChatService(
+      syncWriteExecutor,
+      databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+    );
     services.add(service);
     return service;
   }
@@ -214,8 +223,7 @@ void main() {
         journalScopeId: 'assistant-cascade-test',
       );
       journals.add(journal);
-      final chatService = ChatService(journal);
-      services.add(chatService);
+      final chatService = createService(journal);
       await chatService.init();
       final provider = await _createLoadedAssistantProvider(
         chatService: chatService,
@@ -348,8 +356,7 @@ void main() {
         journalScopeId: 'assistant-cascade-retry-test',
       );
       journals.add(journal);
-      final chatService = ChatService(journal);
-      services.add(chatService);
+      final chatService = createService(journal);
       await chatService.init();
       final assistants = <Map<String, Object?>>[
         {'id': 'assistant-delete', 'name': 'Delete Me'},

@@ -5,7 +5,7 @@ import 'package:drift/drift.dart';
 import 'package:drift/native.dart';
 import 'package:sqlite3/common.dart' show AllowedArgumentCount;
 
-import '../../utils/app_directories.dart';
+import 'database_cipher.dart';
 
 part 'app_database.g.dart';
 
@@ -408,7 +408,7 @@ class GenerationRunRows extends Table {
   ],
 )
 class AppDatabase extends _$AppDatabase {
-  AppDatabase(super.executor);
+  AppDatabase._(super.executor);
 
   static const databaseFileName = 'kelivo.db';
 
@@ -425,29 +425,43 @@ class AppDatabase extends _$AppDatabase {
   static const synchronousFull = 2;
   static const _executionIsolateProbeFunction =
       'kelivo_sqlite_on_opening_isolate';
+  static const _attachEncryptedDatabaseFunction =
+      'kelivo_sqlite_attach_encrypted_database';
   static const _maxExecutionIsolateProbeSamples = 1000;
 
-  factory AppDatabase.open({File? file}) {
-    final databaseFile = file;
-    if (databaseFile != null) {
-      return AppDatabase(_openExecutor(databaseFile));
+  factory AppDatabase.open({
+    required File file,
+    required DatabaseCipher cipher,
+  }) {
+    final databaseType = FileSystemEntity.typeSync(
+      file.path,
+      followLinks: false,
+    );
+    if (databaseType != FileSystemEntityType.notFound &&
+        databaseType != FileSystemEntityType.file) {
+      throw StateError('database_type');
     }
-    return AppDatabase(
-      LazyDatabase(() async {
-        final dir = await AppDirectories.getAppDataDirectory();
-        if (!await dir.exists()) {
-          await dir.create(recursive: true);
-        }
-        return _openExecutor(File('${dir.path}/$databaseFileName'));
-      }),
+    return AppDatabase._(
+      _openExecutor(
+        file,
+        cipher: cipher,
+        createSlotIfMissing: databaseType == FileSystemEntityType.notFound,
+      ),
     );
   }
 
-  static QueryExecutor _openExecutor(File file) {
+  static QueryExecutor _openExecutor(
+    File file, {
+    required DatabaseCipher cipher,
+    required bool createSlotIfMissing,
+  }) {
     final openingIsolatePort = Isolate.current.controlPort;
     return NativeDatabase.createInBackground(
       file,
       setup: (database) {
+        // 设键必须早于版本、schema 或 PRAGMA 读取，否则 SQLCipher 会把密文库
+        // 当成损坏库，也可能在新库中留下未加密的第一页。
+        cipher.apply(database, createSlotIfMissing: createSlotIfMissing);
         final installedSchema = database.userVersion;
         if (installedSchema != 0 &&
             installedSchema != AppDatabase.currentSchemaVersion) {
@@ -463,6 +477,27 @@ class AppDatabase extends _$AppDatabase {
           function: (_) =>
               Isolate.current.controlPort == openingIsolatePort ? 1 : 0,
         );
+        database.createFunction(
+          functionName: _attachEncryptedDatabaseFunction,
+          argumentCount: const AllowedArgumentCount(2),
+          deterministic: false,
+          directOnly: true,
+          function: (arguments) {
+            final databasePath = arguments[0];
+            final databaseName = arguments[1];
+            if (databasePath is! String || databaseName is! String) {
+              throw StateError('database_cipher_attach_arguments');
+            }
+            // ATTACH 必须在 Drift 的数据库 isolate 和同一原生连接上完成，
+            // 因此只把非秘密路径与内部别名送入这个 direct-only 函数。
+            cipher.attachExisting(
+              database,
+              databaseFile: File(databasePath),
+              databaseName: databaseName,
+            );
+            return 1;
+          },
+        );
         database.execute('PRAGMA journal_mode = WAL;');
         database.execute('PRAGMA foreign_keys = ON;');
         database.execute('PRAGMA busy_timeout = $busyTimeoutMillis;');
@@ -473,6 +508,22 @@ class AppDatabase extends _$AppDatabase {
         database.execute('PRAGMA journal_size_limit = $journalSizeLimitBytes;');
       },
     );
+  }
+
+  Future<void> attachEncryptedDatabase({
+    required File databaseFile,
+    required String databaseName,
+  }) async {
+    final row = await customSelect(
+      'SELECT $_attachEncryptedDatabaseFunction(?, ?) AS attached;',
+      variables: [
+        Variable.withString(databaseFile.absolute.path),
+        Variable.withString(databaseName),
+      ],
+    ).getSingle();
+    if (row.read<int>('attached') != 1) {
+      throw StateError('database_cipher_attach_failed');
+    }
   }
 
   /// 采样活动 SQLite 连接执行回调所处的 isolate。

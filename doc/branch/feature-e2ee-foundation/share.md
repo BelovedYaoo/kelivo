@@ -5,7 +5,7 @@
 - 平台跟踪：BelovedYaoo/kelivo#15 补齐 Linux 运行门禁；BelovedYaoo/kelivo#16 处理既有插件的 Cargokit 依赖。
 - 发布跟踪：BelovedYaoo/kelivo#17 要求 Android Release 缺少签名配置时立即失败。
 - 环境与构建跟踪：BelovedYaoo/kelivo#19 清理已满的临时盘，#20 隔离集成测试插件注册表，#21 处理 `webview_windows` 的 CMake 策略警告；均不阻断当前安全核心提交。
-- 分支基线：`main@6bead2d2`；本分支不得改变当前 1.1.17 发布产物或明文同步兼容路径。
+- 分支基线：`main@6bead2d2`；用户已确认 E2EE 版本硬切，不保留本地明文数据库、明文快照或旧同步数据的迁移兼容路径。
 - 当前阶段只验证硬门槛：Windows/Android SQLCipher、Linux 边界、平台安全存储、Rust 安全核心 ABI、Workers/WASM OPAQUE、混合后量子算法和二维码容量。
 - 密码算法只允许由共享 Rust 安全核心实现；Dart、TypeScript 与平台壳层只负责版本化调用和密钥句柄，不得持久化长期明文密钥。
 - 任一平台或协议验证失败均 fail-closed，不得自动回退到明文 SQLite、弱算法或服务器可解密方案。
@@ -16,8 +16,7 @@
 - Windows Release 和已签名 Android Release 构建通过；Android 三个 ABI 的 SQLCipher LOAD 段均为 16 KiB 对齐。Linux 尚未实机验证，不得据此声称全平台完成。
 - 已新增 `dependencies/kelivo_secure_core`：官方 Native Assets Build Hook 直接调用锁定的 Rust 1.91.0/Cargo，不引入第三方桥接层；能力结构仍保持 v1 固定 32 字节布局，当前 C ABI 为 v2 并仅导出九个白名单函数。
 - Dart 只暴露能力对象和不透明句柄；句柄关闭使用 open/closing/closed 状态机阻止重复或并发释放。Windows 报告 DPAPI 后端，Android 报告 Keystore 后端，两者均支持密钥槽位与后台访问；其他平台保持零能力并明确返回“不支持平台”，缺失后端时 fail-closed。
-- ABI v2 的 Windows 与 Android x64 Debug 产物已实际加载并通过门禁，两个平台均恰好九个导出；Release、多 Android ABI 对齐与签名仍需在生产接线完成后重新验证。
-- 上一版已签名 Android Release 曾覆盖 arm64-v8a、armeabi-v7a、x86_64 及 16 KiB 对齐；该结果早于 ABI v2，不得替代当前版本的 Release 验证。Android arm/arm64 与 Linux 尚未运行验证。
+- ABI v2 的 Windows 与 Android x64 Debug 产物已实际加载并通过门禁，两个平台均恰好九个导出；Linux 尚未运行验证。
 - Windows DPAPI 槽位 v1 已完成：固定 `%LOCALAPPDATA%/Kelivo/secure-core/v1/slots`，使用 CNG 随机数、当前用户作用域和禁止 UI 的 DPAPI、槽位 ID 熵绑定、原子不覆盖写入、堆上零化密钥与进程内永久不复用句柄；Rust 8 项测试、Windows 集成探针和 Release 原生门禁均通过。
 - Android Keystore 槽位 v1 已完成：安装级不可导出 AES-256-GCM 包装密钥，槽位 ID 作为 AAD，32 字节 DEK 只经 Rust 缓冲区与同步 DirectByteBuffer 传递；密钥缺失、认证失败和槽位帧损坏均 fail-closed。
 - Android 槽位密文固定写入 no-backup 目录，目录权限 0700、文件权限 0600；跨进程发布使用永久锁文件、`flock`、同目录 rename 与目录 fsync，避免 Android 禁止 hardlink 导致的写入失败。
@@ -35,6 +34,12 @@
 - Android 三 ABI Release 均通过 APK v2 签名与 16 KiB ZIP 对齐校验；Windows Release 构建通过。Issue #23 已关闭，下一阶段继续生产 SQLCipher 连接收口。
 - 生产 SQLCipher 连接收口由 BelovedYaoo/kelivo#24 跟踪；范围包含主连接、执行 isolate、在线快照、恢复校验与切换，禁止无密钥或错误密钥回退到明文 SQLite。
 - SQLCipher 原生设键桥接已完成底层验证：安全核心用独立 HKDF 域、16 字节数据库上下文和 epoch 派生 32 字节子密钥，并同步调用同一 SQLite Native Asset 的 `sqlite3_key`；密钥不进入 Dart 缓冲区。
-- 安全核心能力现包含 SQLCipher 主库设键与安全 ATTACH 两个独立能力位，C ABI v2 恰好九个导出。Windows DPAPI 与 Android 模拟器 Keystore 均通过正确键重开、错误工作区拒绝、无键拒绝和磁盘明文哨兵检查；生产 `AppDatabase` 尚未接线，不得提前声称本地数据库已全面加密。
+- 安全核心能力现包含 SQLCipher 主库设键与安全 ATTACH 两个独立能力位，C ABI v2 恰好九个导出。生产 `AppDatabase`、raw SQLite、在线快照、恢复准入、恢复切换与合并 ATTACH 已统一强制注入密钥；无密钥入口已移除。
 - 在线备份会生成独立 salt；普通 `ATTACH` 会继承主库 salt 并在语句执行时立即失败。安全核心现于 Rust 内派生密钥，通过同一 SQLite Native Asset 预编译 `ATTACH ... KEY ?`，将 32 字节密钥作为 BLOB 绑定并在 finalize 后清零，Dart 只传数据库句柄、UTF-8 路径和受限内部别名。
 - 安全 ATTACH 已覆盖路径 NUL/UTF-8/长度边界、缺失源不创建空库、别名注入与保留名拒绝、错误工作区密钥、SQLite 回调失败及不同 salt 在线备份读取；Rust 18 项测试、Clippy 零警告、Windows/Android x64 设备矩阵、全仓 1552 项 Flutter 测试和 `flutter analyze` 均通过。
+- 当前生产接线决策：所有数据库入口强制显式注入加密策略；生产只使用平台密钥槽，测试使用显式固定测试密钥，禁止缺参时回退明文。首次发现 SQLite 明文头时删除主库及 WAL/SHM/journal、安装回执和含明文数据库的未完成恢复工作区，再创建全新加密库；仓库外的备份文件不主动删除，但明文备份必须拒绝导入。
+- 明文主库硬切使用先落盘并 fsync 的清理标记；即使主库先被删除后进程中断，下次启动仍会继续删除孤立 WAL/SHM/journal 与安装回执。未知、损坏或密文文件不按明文处理，保持 fail-closed。
+- 错误密钥 ATTACH 后使用同一别名重新挂载正确密钥的设备回归已通过，证明原生核心会清理失败挂载；不在 Dart 层增加重复卸载分支。
+- 当前 SQLCipher 接线通过 `flutter analyze --no-pub`、数据库门禁 16 项和全仓 1557 项测试（19 项既有平台跳过）。Android 16 / x86_64 能力矩阵通过，三 ABI Release APK 构建成功，均通过 v2 签名、同一证书 SHA-256 与 `zipalign -P 16`；首次 Maven 下载连接重置后使用本机 7890 代理重试成功。Windows 最终能力矩阵与 Release 构建正在以关闭 MSBuild 工具跟踪的环境重跑。
+- Android 三 ABI 中本项目安全核心与 SQLCipher 均满足 16 KiB ELF 对齐；三个仅存在于 armeabi-v7a 的第三方库仍为 4 KiB 对齐，由 BelovedYaoo/kelivo#25 跟踪，公开发布前必须处理或明确移除该 ABI。
+- 独立 P0：`cloud_sync_state_v1.hive` 的 shadow/outbox 仍会保存聊天正文、推理、翻译和供应商 API Key 原文，附件也仍直接上传明文；因此当前版本只能声明本地主库/快照已加密，绝不能声明完整 E2EE。下一切片必须硬切删除旧同步状态并关闭所有内容同步写入、连接、定时器与冲突操作，待密文同步协议完成后再启用。

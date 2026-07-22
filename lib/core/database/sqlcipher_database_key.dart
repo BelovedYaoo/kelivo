@@ -7,6 +7,8 @@ import 'package:crypto/crypto.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
+import 'database_cipher.dart';
+
 const _sqliteAssetId = 'package:sqlite3/src/ffi/libsqlite3.g.dart';
 
 @ffi.Native<KelivoSqlCipherKeyNative>(
@@ -67,7 +69,7 @@ external int _sqlite3Step(ffi.Pointer<ffi.Void> statement);
 )
 external int _sqlite3Finalize(ffi.Pointer<ffi.Void> statement);
 
-final class SqlCipherDatabaseKey {
+final class SqlCipherDatabaseKey implements DatabaseCipher {
   factory SqlCipherDatabaseKey.forWorkspace(String workspaceKey) {
     if (workspaceKey != 'local' &&
         !RegExp(r'^[0-9a-f]{64}$').hasMatch(workspaceKey)) {
@@ -101,6 +103,7 @@ final class SqlCipherDatabaseKey {
   final Uint8List _databaseId;
   final KelivoSecureCore _secureCore = const KelivoSecureCore();
 
+  @override
   void apply(sqlite.Database database, {required bool createSlotIfMissing}) {
     _secureCore.applySqlCipherKeySync(
       slotId: _slotId,
@@ -118,6 +121,7 @@ final class SqlCipherDatabaseKey {
     database.select('SELECT count(*) FROM sqlite_master;');
   }
 
+  @override
   void attachExisting(
     sqlite.Database database, {
     required File databaseFile,

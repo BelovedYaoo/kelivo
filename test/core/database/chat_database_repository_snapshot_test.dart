@@ -10,6 +10,8 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   group('ChatDatabaseRepository snapshot', () {
     late Directory directory;
@@ -22,7 +24,10 @@ void main() {
         'kelivo_repository_snapshot_test_',
       );
       sourceFile = File('${directory.path}/source.sqlite');
-      sourceRepository = ChatDatabaseRepository.open(file: sourceFile);
+      sourceRepository = ChatDatabaseRepository.open(
+        file: sourceFile,
+        cipher: testDatabaseCipher,
+      );
       await sourceRepository.ensureReady();
       sourceClosed = false;
     });
@@ -69,6 +74,7 @@ void main() {
       final info = await ChatDatabaseRepository.createConsistentSnapshot(
         sourceFile: sourceFile,
         destinationFile: snapshotFile,
+        cipher: testDatabaseCipher,
       );
 
       expect(info.schemaVersion, AppDatabase.currentSchemaVersion);
@@ -84,6 +90,7 @@ void main() {
 
       final snapshotRepository = ChatDatabaseRepository.open(
         file: snapshotFile,
+        cipher: testDatabaseCipher,
       );
       try {
         await snapshotRepository.ensureReady();
@@ -114,6 +121,7 @@ void main() {
         ChatDatabaseRepository.createConsistentSnapshot(
           sourceFile: sourceFile,
           destinationFile: sourceFile,
+          cipher: testDatabaseCipher,
         ),
         throwsA(isA<ArgumentError>()),
       );
@@ -140,6 +148,7 @@ void main() {
 
       final info = await ChatDatabaseRepository.prepareSnapshotForRestore(
         snapshotFile,
+        cipher: testDatabaseCipher,
       );
       expect(info.conversationCount, 1);
       await sourceRepository.replaceBackupSnapshot(snapshotFile);
@@ -171,7 +180,10 @@ void main() {
         );
 
         await expectLater(
-          ChatDatabaseRepository.inspectPreparedSnapshot(snapshotFile),
+          ChatDatabaseRepository.inspectPreparedSnapshot(
+            snapshotFile,
+            cipher: testDatabaseCipher,
+          ),
           throwsA(
             isA<StateError>().having(
               (error) => error.message,
@@ -181,12 +193,16 @@ void main() {
           ),
         );
 
-        await ChatDatabaseRepository.prepareSnapshotForRestore(snapshotFile);
+        await ChatDatabaseRepository.prepareSnapshotForRestore(
+          snapshotFile,
+          cipher: testDatabaseCipher,
+        );
         final before = (await sha256.bind(snapshotFile.openRead()).first)
             .toString();
 
         final info = await ChatDatabaseRepository.inspectPreparedSnapshot(
           snapshotFile,
+          cipher: testDatabaseCipher,
         );
 
         final after = (await sha256.bind(snapshotFile.openRead()).first)
@@ -204,11 +220,17 @@ void main() {
         conversationId: 'sidecar',
         title: 'Sidecar',
       );
-      await ChatDatabaseRepository.prepareSnapshotForRestore(snapshotFile);
+      await ChatDatabaseRepository.prepareSnapshotForRestore(
+        snapshotFile,
+        cipher: testDatabaseCipher,
+      );
       await File('${snapshotFile.path}-wal').writeAsBytes([1], flush: true);
 
       await expectLater(
-        ChatDatabaseRepository.inspectPreparedSnapshot(snapshotFile),
+        ChatDatabaseRepository.inspectPreparedSnapshot(
+          snapshotFile,
+          cipher: testDatabaseCipher,
+        ),
         throwsA(
           isA<StateError>().having(
             (error) => error.message,
@@ -224,6 +246,7 @@ void main() {
       sourceClosed = true;
       final raw = sqlite.sqlite3.open(sourceFile.path);
       try {
+        testDatabaseCipher.apply(raw, createSlotIfMissing: false);
         raw.execute('PRAGMA foreign_keys = OFF;');
         raw.execute('DROP TABLE generation_run_rows;');
       } finally {
@@ -233,6 +256,7 @@ void main() {
       expect(
         () => ChatDatabaseRepository.inspectInstalledDatabase(
           sourceFile,
+          cipher: testDatabaseCipher,
           validateContents: true,
         ),
         throwsA(
@@ -257,7 +281,10 @@ Future<void> _createSnapshotFixture({
 }) async {
   final databasePath = databaseFile.path;
   await Isolate.run(() async {
-    final repository = ChatDatabaseRepository.open(file: File(databasePath));
+    final repository = ChatDatabaseRepository.open(
+      file: File(databasePath),
+      cipher: testDatabaseCipher,
+    );
     try {
       await repository.ensureReady();
       await repository.putMigrationBatch(

@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 
 import '../../core/database/app_database.dart';
 import '../../core/database/chat_database_repository.dart';
+import '../../core/database/database_cipher.dart';
 import '../../core/models/chat_message.dart';
 import '../../core/models/conversation.dart';
 import '../../core/services/backup/data_sync.dart' as backup_sync;
@@ -121,7 +122,7 @@ class HiveToSqliteMigrationDecision {
 }
 
 class HiveToSqliteMigrationService {
-  HiveToSqliteMigrationService(this.decision);
+  HiveToSqliteMigrationService(this.decision, {required this.databaseCipher});
 
   static const _conversationBoxName = 'conversations';
   static const _messagesBoxName = 'messages';
@@ -140,13 +141,16 @@ class HiveToSqliteMigrationService {
       ];
 
   final HiveToSqliteMigrationDecision decision;
+  final DatabaseCipher databaseCipher;
   final _controller = StreamController<HiveToSqliteMigrationStatus>.broadcast();
   final _log = <String>[];
   var _lastBackupItems = const <HiveToSqliteBackupItem>[];
 
   Stream<HiveToSqliteMigrationStatus> get statusStream => _controller.stream;
 
-  static Future<HiveToSqliteMigrationDecision> check() async {
+  static Future<HiveToSqliteMigrationDecision> check({
+    required DatabaseCipher cipher,
+  }) async {
     final appDataDir = await AppDirectories.getAppDataDirectory();
     final sqliteFile = File(
       p.join(appDataDir.path, AppDatabase.databaseFileName),
@@ -166,7 +170,10 @@ class HiveToSqliteMigrationService {
       );
     }
     if (sqliteFile.existsSync()) {
-      final repo = ChatDatabaseRepository.open(file: sqliteFile);
+      final repo = ChatDatabaseRepository.open(
+        file: sqliteFile,
+        cipher: cipher,
+      );
       try {
         if (await repo.isMigrationComplete()) {
           return HiveToSqliteMigrationDecision(
@@ -376,7 +383,10 @@ class HiveToSqliteMigrationService {
 
       final tempFile = File('${decision.sqliteFile.path}.migrating');
       await _deleteSqliteFamily(tempFile);
-      repo = ChatDatabaseRepository.open(file: tempFile);
+      repo = ChatDatabaseRepository.open(
+        file: tempFile,
+        cipher: databaseCipher,
+      );
 
       final conversations = <Conversation>[];
       for (final key in conversationsBox.keys) {

@@ -2,6 +2,7 @@ import 'dart:io';
 
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
+import '../../database/database_cipher.dart';
 import 'restore_durability.dart';
 
 /// 在描述关闭的活动 SQLite 数据库，或将其重命名进上一版数据包前，
@@ -14,6 +15,7 @@ final class RestoreLiveDatabase {
   /// 完整数据库文件族不存在时返回 false。
   static Future<bool> normalize({
     required File databaseFile,
+    required DatabaseCipher cipher,
     RestoreDurability? durability,
   }) async {
     final resolvedDurability = durability ?? RestorePlatformDurability();
@@ -46,6 +48,7 @@ final class RestoreLiveDatabase {
 
     final database = sqlite.sqlite3.open(databaseFile.absolute.path);
     try {
+      cipher.apply(database, createSlotIfMissing: false);
       database.execute('PRAGMA busy_timeout = 5000;');
       final checkpoint = database.select('PRAGMA wal_checkpoint(TRUNCATE);');
       if (checkpoint.length != 1 ||

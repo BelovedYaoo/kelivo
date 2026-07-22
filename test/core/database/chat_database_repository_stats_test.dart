@@ -6,11 +6,14 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   test('SQL stats count every message version in one usage total', () async {
     final root = await Directory.systemTemp.createTemp('chat_stats_test_');
     final repository = ChatDatabaseRepository.open(
       file: File('${root.path}/stats.sqlite'),
+      cipher: testDatabaseCipher,
     );
     addTearDown(() async {
       await repository.close();

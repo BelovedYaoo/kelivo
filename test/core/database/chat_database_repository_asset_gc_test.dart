@@ -7,6 +7,8 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   test(
     'asset references cancel delayed GC and unreferenced assets are claimed',
@@ -14,6 +16,7 @@ void main() {
       final root = await Directory.systemTemp.createTemp('asset_gc_test_');
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/assets.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();
@@ -176,6 +179,7 @@ void main() {
       );
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/assets.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();
@@ -285,6 +289,7 @@ void main() {
       );
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/assets.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();
@@ -375,6 +380,7 @@ void main() {
       );
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/assets.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();
@@ -483,6 +489,7 @@ void main() {
       );
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/assets.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();
@@ -563,6 +570,7 @@ void main() {
       final databaseFile = File('${root.path}/assets.sqlite');
       ChatDatabaseRepository? repository = ChatDatabaseRepository.open(
         file: databaseFile,
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository?.close();
@@ -575,12 +583,16 @@ void main() {
       await initializedRepository.close();
       final database = sqlite.sqlite3.open(databaseFile.path);
       try {
+        testDatabaseCipher.apply(database, createSlotIfMissing: false);
         database.execute('DROP TABLE asset_gc_quarantine_rows;');
       } finally {
         database.close();
       }
 
-      repository = ChatDatabaseRepository.open(file: databaseFile);
+      repository = ChatDatabaseRepository.open(
+        file: databaseFile,
+        cipher: testDatabaseCipher,
+      );
       expect(await repository.listAssetGcQuarantines(), isEmpty);
     },
   );
@@ -592,8 +604,14 @@ void main() {
         'asset_gc_lease_test_',
       );
       final databaseFile = File('${root.path}/assets.sqlite');
-      final first = ChatDatabaseRepository.open(file: databaseFile);
-      final second = ChatDatabaseRepository.open(file: databaseFile);
+      final first = ChatDatabaseRepository.open(
+        file: databaseFile,
+        cipher: testDatabaseCipher,
+      );
+      final second = ChatDatabaseRepository.open(
+        file: databaseFile,
+        cipher: testDatabaseCipher,
+      );
       addTearDown(() async {
         await first.close();
         await second.close();

@@ -4,6 +4,7 @@ import 'package:path/path.dart' as p;
 
 import '../../database/app_database.dart';
 import '../../database/chat_database_repository.dart';
+import '../../database/database_cipher.dart';
 import 'restore_bundle_staging.dart';
 import 'restore_durability.dart';
 import 'restore_previous_builder.dart';
@@ -19,6 +20,7 @@ final class RestoreBundleMover {
     required this.appDataDirectory,
     required this.candidateDirectory,
     required this.previousStore,
+    required this.cipher,
     RestoreDurability? durability,
   }) : durability = durability ?? RestorePlatformDurability();
 
@@ -27,6 +29,7 @@ final class RestoreBundleMover {
   final Directory appDataDirectory;
   final Directory candidateDirectory;
   final RestorePreviousStore previousStore;
+  final DatabaseCipher cipher;
   final RestoreDurability durability;
 
   Future<void> moveLiveToPending(PersistedRestorePrevious previous) async {
@@ -123,6 +126,7 @@ final class RestoreBundleMover {
       }
       final actual = await ChatDatabaseRepository.inspectPreparedSnapshot(
         target,
+        cipher: cipher,
       );
       if (actual != candidate.databaseInfo) {
         throw StateError('restore_mover_database_metadata');
@@ -259,6 +263,7 @@ final class RestoreBundleMover {
         await RestoreBundleStaging.validateExistingCandidate(
           candidateDirectory: candidateDirectory,
           expectedManifestSha256: candidate.manifestSha256,
+          cipher: cipher,
         );
     _requireCandidateBinding(receipt, restoredCandidate);
     await previousStore.validateControlOnlyAfterRollback(previous);

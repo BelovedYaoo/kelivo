@@ -7,6 +7,7 @@ import 'package:crypto/crypto.dart';
 import 'package:path/path.dart' as p;
 
 import '../../database/chat_database_repository.dart';
+import '../../database/database_cipher.dart';
 import 'backup_settings_validator.dart';
 import 'restore_durability.dart';
 import 'restore_workspace_lock.dart';
@@ -79,6 +80,7 @@ final class RestoreBundleStaging {
     bool? sourceIncludesChats,
     bool? sourceIncludesFiles,
     required String sourceManifestSha256,
+    required DatabaseCipher cipher,
     RestoreDurability? durability,
   }) async {
     final declaredIncludeChats = sourceIncludesChats ?? includeChats;
@@ -228,6 +230,7 @@ final class RestoreBundleStaging {
       final validated = await validateExistingCandidate(
         candidateDirectory: payloadDirectory,
         expectedManifestSha256: sha256.convert(stagedManifestBytes).toString(),
+        cipher: cipher,
       );
       if (validated.includeChats != includeChats ||
           validated.includeFiles != includeFiles) {
@@ -253,8 +256,9 @@ final class RestoreBundleStaging {
   static Future<ValidatedRestoreCandidate> validateExistingCandidate({
     required Directory candidateDirectory,
     required String expectedManifestSha256,
+    required DatabaseCipher cipher,
   }) async {
-    final candidate = await readCandidateManifest(
+    final candidate = await validateExistingCandidateControlPlane(
       candidateDirectory: candidateDirectory,
       expectedManifestSha256: expectedManifestSha256,
     );
@@ -263,11 +267,24 @@ final class RestoreBundleStaging {
         File(
           p.joinAll([candidateDirectory.path, ..._databaseEntry.split('/')]),
         ),
+        cipher: cipher,
       );
       if (actual != candidate.databaseInfo) {
         throw const FormatException('restore_staging_database');
       }
     }
+    return candidate;
+  }
+
+  static Future<ValidatedRestoreCandidate>
+  validateExistingCandidateControlPlane({
+    required Directory candidateDirectory,
+    required String expectedManifestSha256,
+  }) async {
+    final candidate = await readCandidateManifest(
+      candidateDirectory: candidateDirectory,
+      expectedManifestSha256: expectedManifestSha256,
+    );
     await _validateCandidateTopology(
       candidateDirectory,
       expectedFiles: {...candidate.entries.keys, 'manifest.json'},

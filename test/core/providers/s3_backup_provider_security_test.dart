@@ -2,6 +2,8 @@ import 'dart:io';
 
 import 'package:archive/archive_io.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../database/test_database_cipher.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -75,7 +77,7 @@ void main() {
 
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
       addTearDown(chatService.close);
       final provider = S3BackupProvider(

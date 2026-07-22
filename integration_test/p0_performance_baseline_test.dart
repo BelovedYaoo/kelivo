@@ -2,6 +2,7 @@ import 'dart:io';
 import 'dart:ui';
 
 import 'package:Kelivo/core/database/app_database.dart';
+import 'package:Kelivo/core/database/sqlcipher_database_key.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/l10n/app_localizations.dart';
@@ -34,6 +35,7 @@ void main() {
     try {
       final database = AppDatabase.open(
         file: File('${databaseRoot.path}/${AppDatabase.databaseFileName}'),
+        cipher: SqlCipherDatabaseKey.forWorkspace('local'),
       );
       late final SqliteExecutionIsolateProbeResult executionProbe;
       try {

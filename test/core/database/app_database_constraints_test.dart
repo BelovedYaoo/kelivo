@@ -1,25 +1,42 @@
+import 'dart:io';
+
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:drift/drift.dart';
-import 'package:drift/native.dart';
+import 'package:drift/isolate.dart' show DriftRemoteException;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqlite3/sqlite3.dart' show SqliteException;
+
+import 'test_database_cipher.dart';
+
+Matcher throwsRemoteSqliteException() => throwsA(
+  isA<DriftRemoteException>().having(
+    (error) => error.remoteCause,
+    'remoteCause',
+    isA<SqliteException>(),
+  ),
+);
 
 void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
+  late Directory directory;
   late AppDatabase database;
 
   setUp(() async {
-    database = AppDatabase(
-      NativeDatabase.memory(
-        setup: (rawDatabase) {
-          rawDatabase.execute('PRAGMA foreign_keys = ON;');
-        },
-      ),
+    directory = await Directory.systemTemp.createTemp(
+      'kelivo_database_constraints_',
+    );
+    database = AppDatabase.open(
+      file: File('${directory.path}/constraints.sqlite'),
+      cipher: testDatabaseCipher,
     );
     await database.customSelect('SELECT 1;').getSingle();
   });
 
-  tearDown(() => database.close());
+  tearDown(() async {
+    await database.close();
+    await directory.delete(recursive: true);
+  });
 
   Future<void> insertConversation({
     String id = 'conversation-1',
@@ -89,7 +106,7 @@ void main() {
     });
 
     test('rejects orphan messages', () async {
-      await expectLater(insertMessage(), throwsA(isA<SqliteException>()));
+      await expectLater(insertMessage(), throwsRemoteSqliteException());
     });
 
     test('rejects duplicate order and duplicate group version', () async {
@@ -98,32 +115,29 @@ void main() {
 
       await expectLater(
         insertMessage(id: 'message-2', groupId: 'group-2', messageOrder: 0),
-        throwsA(isA<SqliteException>()),
+        throwsRemoteSqliteException(),
       );
       await expectLater(
         insertMessage(id: 'message-3', groupId: 'group-1', messageOrder: 1),
-        throwsA(isA<SqliteException>()),
+        throwsRemoteSqliteException(),
       );
     });
 
     test('rejects invalid role and negative numeric fields', () async {
       await insertConversation();
 
-      await expectLater(
-        insertMessage(role: ''),
-        throwsA(isA<SqliteException>()),
-      );
+      await expectLater(insertMessage(role: ''), throwsRemoteSqliteException());
       await expectLater(
         insertMessage(id: 'message-2', version: -1),
-        throwsA(isA<SqliteException>()),
+        throwsRemoteSqliteException(),
       );
       await expectLater(
         insertMessage(id: 'message-3', messageOrder: -1),
-        throwsA(isA<SqliteException>()),
+        throwsRemoteSqliteException(),
       );
       await expectLater(
         insertMessage(id: 'message-4', totalTokens: -1),
-        throwsA(isA<SqliteException>()),
+        throwsRemoteSqliteException(),
       );
     });
 
@@ -149,7 +163,7 @@ void main() {
                 ordinal: 0,
               ),
             ),
-        throwsA(isA<SqliteException>()),
+        throwsRemoteSqliteException(),
       );
     });
   });

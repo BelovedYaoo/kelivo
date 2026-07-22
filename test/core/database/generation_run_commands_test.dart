@@ -1,24 +1,31 @@
+import 'dart:io';
+
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/generation_run.dart';
 import 'package:drift/drift.dart' hide isNotNull, isNull;
-import 'package:drift/native.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import 'test_database_cipher.dart';
 
 void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
+  late Directory directory;
   late AppDatabase database;
   late ChatDatabaseRepository repository;
   final createdAt = DateTime.fromMicrosecondsSinceEpoch(1783784523123456);
 
   setUp(() async {
-    database = AppDatabase(
-      NativeDatabase.memory(
-        setup: (raw) => raw.execute('PRAGMA foreign_keys = ON;'),
-      ),
+    directory = await Directory.systemTemp.createTemp('kelivo_generation_run_');
+    database = AppDatabase.open(
+      file: File('${directory.path}/generation.sqlite'),
+      cipher: testDatabaseCipher,
     );
-    repository = ChatDatabaseRepository(database);
+    repository = ChatDatabaseRepository(
+      database,
+      databaseCipher: testDatabaseCipher,
+    );
     await repository.ensureReady();
     await database
         .into(database.conversationRows)
@@ -46,7 +53,10 @@ void main() {
         );
   });
 
-  tearDown(() => repository.close());
+  tearDown(() async {
+    await repository.close();
+    await directory.delete(recursive: true);
+  });
 
   Future<GenerationRun> createRun({String id = 'run-1'}) =>
       repository.createGenerationRun(

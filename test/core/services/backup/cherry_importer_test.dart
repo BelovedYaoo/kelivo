@@ -3,6 +3,8 @@ import 'dart:io';
 
 import 'package:archive/archive_io.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../database/test_database_cipher.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -87,7 +89,7 @@ void main() {
 
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
       addTearDown(() async {
         await chatService.close();
@@ -197,7 +199,7 @@ void main() {
 
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
       addTearDown(() async {
         await chatService.close();
@@ -234,7 +236,7 @@ void main() {
       });
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
       addTearDown(() async {
         await chatService.close();
@@ -281,7 +283,7 @@ void main() {
         });
         final chatService = ChatService(
           const UntrackedSyncWriteExecutor.forTests(),
-          databaseGateway: ChatDatabaseGateway(),
+          databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
         );
         addTearDown(chatService.close);
 
@@ -331,7 +333,7 @@ void main() {
       });
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
       addTearDown(chatService.close);
 
@@ -368,7 +370,7 @@ void main() {
       });
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
       addTearDown(chatService.close);
 
@@ -408,7 +410,7 @@ void main() {
         await prefs.setString('provider_configs_v1', localProviders);
         final chatService = ChatService(
           const UntrackedSyncWriteExecutor.forTests(),
-          databaseGateway: ChatDatabaseGateway(),
+          databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
         );
         addTearDown(chatService.close);
 
@@ -454,7 +456,7 @@ void main() {
         );
         final chatService = ChatService(
           const UntrackedSyncWriteExecutor.forTests(),
-          databaseGateway: ChatDatabaseGateway(),
+          databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
         );
         addTearDown(chatService.close);
 
@@ -488,7 +490,7 @@ void main() {
       final backup = await _createMinimalChatboxBackup(tempDir);
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
       addTearDown(chatService.close);
 
@@ -511,7 +513,7 @@ void main() {
       final backup = await _createMinimalChatboxBackup(tempDir);
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
       addTearDown(chatService.close);
 

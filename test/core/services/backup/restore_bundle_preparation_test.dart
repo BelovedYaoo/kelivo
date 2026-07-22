@@ -5,9 +5,37 @@ import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 
-import 'package:Kelivo/core/services/backup/restore_bundle_preparation.dart';
+import 'package:Kelivo/core/services/backup/restore_bundle_preparation.dart'
+    hide RestoreBundlePreparation;
+import 'package:Kelivo/core/services/backup/restore_bundle_preparation.dart'
+    as production;
 import 'package:Kelivo/core/services/backup/restore_receipt.dart';
 import 'package:Kelivo/core/services/backup/restore_workspace_lock.dart';
+
+import '../../database/test_database_cipher.dart';
+
+final class RestoreBundlePreparation {
+  static Future<PreparedRestoreBundle> prepare({
+    required Directory appDataDirectory,
+    required Directory extractedDirectory,
+    required String sourceManifestSha256,
+    required bool bundleIncludesChats,
+    required bool bundleIncludesFiles,
+    required bool restoreChats,
+    required bool restoreFiles,
+    DateTime? createdAtUtc,
+  }) => production.RestoreBundlePreparation.prepare(
+    appDataDirectory: appDataDirectory,
+    extractedDirectory: extractedDirectory,
+    sourceManifestSha256: sourceManifestSha256,
+    bundleIncludesChats: bundleIncludesChats,
+    bundleIncludesFiles: bundleIncludesFiles,
+    restoreChats: restoreChats,
+    restoreFiles: restoreFiles,
+    cipher: testDatabaseCipher,
+    createdAtUtc: createdAtUtc,
+  );
+}
 
 Future<({Directory directory, String manifestSha256})> _createBundle(
   Directory root, {

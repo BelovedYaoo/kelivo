@@ -8,6 +8,8 @@ import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/backup/portable_ndjson_v2.dart';
 
+import '../../database/test_database_cipher.dart';
+
 void main() {
   group('PortableNdjsonV2', () {
     late Directory root;
@@ -18,9 +20,11 @@ void main() {
       root = await Directory.systemTemp.createTemp('portable_ndjson_v2_test_');
       source = ChatDatabaseRepository.open(
         file: File('${root.path}/source.sqlite'),
+        cipher: testDatabaseCipher,
       );
       target = ChatDatabaseRepository.open(
         file: File('${root.path}/target.sqlite'),
+        cipher: testDatabaseCipher,
       );
       final conversation = Conversation(
         id: 'conversation-1',

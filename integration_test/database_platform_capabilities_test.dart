@@ -193,6 +193,21 @@ Future<Map<String, Object>> _verifySecureSqlCipherKeyBridge(
         ),
       ),
     );
+    key.attachExisting(
+      wrongAttachMain,
+      databaseFile: backupFile,
+      databaseName: 'wrong_key_probe',
+    );
+    try {
+      expect(
+        wrongAttachMain
+            .select('SELECT value FROM wrong_key_probe.protected_rows;')
+            .single['value'],
+        sentinel,
+      );
+    } finally {
+      wrongAttachMain.execute('DETACH DATABASE wrong_key_probe;');
+    }
   } finally {
     wrongAttachMain.close();
   }
@@ -599,8 +614,12 @@ Matcher _throwsSecureCoreStatus(KelivoSecureCoreStatus status) {
 }
 
 Future<int> _verifySchemaContract(Directory root) async {
+  final cipher = SqlCipherDatabaseKey.forWorkspace('local');
   final currentFile = File(p.join(root.path, 'current.sqlite'));
-  var repository = ChatDatabaseRepository.open(file: currentFile);
+  var repository = ChatDatabaseRepository.open(
+    file: currentFile,
+    cipher: cipher,
+  );
   try {
     await repository.ensureReady();
     await repository.validateConnectionContract();
@@ -611,16 +630,21 @@ Future<int> _verifySchemaContract(Directory root) async {
 
   final currentInfo = ChatDatabaseRepository.inspectInstalledDatabase(
     currentFile,
+    cipher: cipher,
     validateContents: true,
   );
   expect(currentInfo.schemaVersion, AppDatabase.currentSchemaVersion);
 
   final incompatibleFile = File(p.join(root.path, 'incompatible.sqlite'));
   final incompatible = sqlite.sqlite3.open(incompatibleFile.path);
+  cipher.apply(incompatible, createSlotIfMissing: false);
   incompatible.userVersion = AppDatabase.currentSchemaVersion - 1;
   incompatible.close();
 
-  repository = ChatDatabaseRepository.open(file: incompatibleFile);
+  repository = ChatDatabaseRepository.open(
+    file: incompatibleFile,
+    cipher: cipher,
+  );
   try {
     await expectLater(
       repository.ensureReady(),
@@ -636,6 +660,7 @@ Future<int> _verifySchemaContract(Directory root) async {
 
   final rejected = sqlite.sqlite3.open(incompatibleFile.path);
   try {
+    cipher.apply(rejected, createSlotIfMissing: false);
     expect(rejected.userVersion, AppDatabase.currentSchemaVersion - 1);
   } finally {
     rejected.close();

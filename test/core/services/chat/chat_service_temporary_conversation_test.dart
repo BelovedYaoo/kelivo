@@ -6,9 +6,10 @@ import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as p;
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
-import 'package:sqlite3/sqlite3.dart' as sqlite;
+import 'package:sqlite3/sqlite3.dart' as raw_sqlite;
 
 import 'package:Kelivo/core/database/app_database.dart';
+import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/generation_run.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
@@ -17,6 +18,25 @@ import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:Kelivo/utils/sandbox_path_resolver.dart';
+
+import '../../database/test_database_cipher.dart';
+
+const sqlite = _TestSqliteFacade();
+
+final class _TestSqliteFacade {
+  const _TestSqliteFacade();
+
+  _TestSqliteFacade get sqlite3 => this;
+
+  raw_sqlite.Database open(
+    String path, {
+    raw_sqlite.OpenMode mode = raw_sqlite.OpenMode.readWriteCreate,
+  }) {
+    final database = raw_sqlite.sqlite3.open(path, mode: mode);
+    testDatabaseCipher.apply(database, createSlotIfMissing: false);
+    return database;
+  }
+}
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
   _FakePathProviderPlatform(this.path);
@@ -95,6 +115,7 @@ void main() {
   }) {
     final service = ChatService(
       syncWriteExecutor,
+      databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       assetContentHash: assetContentHash,
     );
     services.add(service);
@@ -209,7 +230,10 @@ void main() {
     final databaseFile = File(
       '${tempDir.path}/${AppDatabase.databaseFileName}',
     );
-    final externalRepository = ChatDatabaseRepository.open(file: databaseFile);
+    final externalRepository = ChatDatabaseRepository.open(
+      file: databaseFile,
+      cipher: testDatabaseCipher,
+    );
     addTearDown(externalRepository.close);
     final lease = await externalRepository.tryAcquireAssetGcLease(
       ownerToken: 'external-owner',

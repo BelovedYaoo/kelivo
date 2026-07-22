@@ -5,6 +5,8 @@ import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   late Directory directory;
   late ChatDatabaseRepository repository;
@@ -13,6 +15,7 @@ void main() {
     directory = await Directory.systemTemp.createTemp('kelivo_order_test_');
     repository = ChatDatabaseRepository.open(
       file: File('${directory.path}/chat.sqlite'),
+      cipher: testDatabaseCipher,
     );
     await repository.ensureReady();
     await repository.putMigrationBatch(

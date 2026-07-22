@@ -4,7 +4,22 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:path/path.dart' as p;
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
-import 'package:Kelivo/core/services/backup/restore_live_database.dart';
+import 'package:Kelivo/core/services/backup/restore_durability.dart';
+import 'package:Kelivo/core/services/backup/restore_live_database.dart'
+    as production;
+
+import '../../database/test_database_cipher.dart';
+
+final class RestoreLiveDatabase {
+  static Future<bool> normalize({
+    required File databaseFile,
+    RestoreDurability? durability,
+  }) => production.RestoreLiveDatabase.normalize(
+    databaseFile: databaseFile,
+    cipher: testDatabaseCipher,
+    durability: durability,
+  );
+}
 
 void main() {
   group('RestoreLiveDatabase', () {
@@ -34,6 +49,7 @@ void main() {
       final source = File(p.join(root.path, 'source.sqlite'));
       final target = File(p.join(root.path, 'kelivo.db'));
       final open = sqlite.sqlite3.open(source.path);
+      testDatabaseCipher.apply(open, createSlotIfMissing: true);
       try {
         open.execute('PRAGMA journal_mode = WAL;');
         open.execute('PRAGMA wal_autocheckpoint = 0;');
@@ -55,6 +71,7 @@ void main() {
         mode: sqlite.OpenMode.readOnly,
       );
       try {
+        testDatabaseCipher.apply(reopened, createSlotIfMissing: false);
         expect(
           reopened.select('SELECT value FROM items;').single['value'],
           'from-wal',
@@ -67,6 +84,7 @@ void main() {
     test('normalizes WAL mode even after its sidecars disappeared', () async {
       final databaseFile = File(p.join(root.path, 'kelivo.db'));
       final database = sqlite.sqlite3.open(databaseFile.path);
+      testDatabaseCipher.apply(database, createSlotIfMissing: true);
       try {
         expect(
           database.select('PRAGMA journal_mode = WAL;').single.values.single,
@@ -90,6 +108,7 @@ void main() {
         mode: sqlite.OpenMode.readOnly,
       );
       try {
+        testDatabaseCipher.apply(reopened, createSlotIfMissing: false);
         expect(
           reopened.select('PRAGMA journal_mode;').single.values.single,
           'delete',

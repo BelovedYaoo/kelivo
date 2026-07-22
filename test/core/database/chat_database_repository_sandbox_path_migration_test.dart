@@ -5,6 +5,8 @@ import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   group('sandbox path migration version', () {
     late Directory directory;
@@ -16,6 +18,7 @@ void main() {
       );
       repository = ChatDatabaseRepository.open(
         file: File('${directory.path}/chat.sqlite'),
+        cipher: testDatabaseCipher,
       );
       await repository.ensureReady();
       await repository.putMigrationBatch(

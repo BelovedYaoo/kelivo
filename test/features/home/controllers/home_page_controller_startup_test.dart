@@ -8,6 +8,8 @@ import 'package:Kelivo/features/home/widgets/chat_input_bar.dart';
 import 'package:Kelivo/l10n/app_localizations.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/database/test_database_cipher.dart';
 import 'package:provider/provider.dart';
 
 void main() {
@@ -26,7 +28,7 @@ void main() {
           ChangeNotifierProvider(
             create: (_) => ChatService(
               const UntrackedSyncWriteExecutor.forTests(),
-              databaseGateway: ChatDatabaseGateway(),
+              databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
             ),
           ),
         ],

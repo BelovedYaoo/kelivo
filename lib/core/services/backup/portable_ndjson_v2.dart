@@ -136,7 +136,10 @@ final class PortableNdjsonV2 {
     }
     final temp = await Directory.systemTemp.createTemp('kelivo_ndjson_v2_');
     final candidateFile = File('${temp.path}/candidate.sqlite');
-    final candidate = ChatDatabaseRepository.open(file: candidateFile);
+    final candidate = ChatDatabaseRepository.open(
+      file: candidateFile,
+      cipher: target.databaseCipher,
+    );
     try {
       Conversation? conversation;
       final messages = <ChatMessage>[];

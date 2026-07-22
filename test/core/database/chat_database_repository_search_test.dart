@@ -7,6 +7,8 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 
+import 'test_database_cipher.dart';
+
 void main() {
   test(
     'search defaults to selected versions and can include every version',
@@ -16,6 +18,7 @@ void main() {
       );
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/search.sqlite'),
+        cipher: testDatabaseCipher,
       );
       addTearDown(() async {
         await repository.close();
@@ -74,6 +77,7 @@ void main() {
     final root = await Directory.systemTemp.createTemp('chat_search_test_');
     final repository = ChatDatabaseRepository.open(
       file: File('${root.path}/search.sqlite'),
+      cipher: testDatabaseCipher,
     );
     addTearDown(() async {
       await repository.close();
@@ -133,7 +137,10 @@ void main() {
     () async {
       final root = await Directory.systemTemp.createTemp('chat_search_fts_');
       final file = File('${root.path}/search.sqlite');
-      final repository = ChatDatabaseRepository.open(file: file);
+      final repository = ChatDatabaseRepository.open(
+        file: file,
+        cipher: testDatabaseCipher,
+      );
       final conversation = Conversation(
         id: 'conversation-1',
         title: 'Search',
@@ -162,6 +169,7 @@ void main() {
 
       final database = sqlite.sqlite3.open(file.path);
       try {
+        testDatabaseCipher.apply(database, createSlotIfMissing: false);
         final sql = database
             .select(
               "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'message_search_fts';",

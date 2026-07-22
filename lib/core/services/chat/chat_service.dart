@@ -9,6 +9,7 @@ import 'package:uuid/uuid.dart';
 import '../../database/app_database.dart';
 import '../../database/chat_database_gateway.dart';
 import '../../database/chat_database_repository.dart';
+import '../../database/database_cipher.dart';
 import '../../database/generation_run.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
@@ -65,10 +66,9 @@ typedef _AssetGcQuarantine = ({
 class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   ChatService(
     this._syncWriteExecutor, {
-    ChatDatabaseGateway? databaseGateway,
+    this.databaseGateway,
     AssetContentHash? assetContentHash,
-  }) : _databaseGateway = databaseGateway ?? ChatDatabaseGateway.instance,
-       _assetContentHash = assetContentHash ?? _hashAssetFile;
+  }) : _assetContentHash = assetContentHash ?? _hashAssetFile;
 
   static const String _conversationEntityType = 'conversation';
   static const String _turnEntityType = 'turn';
@@ -98,7 +98,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
 
   late ChatDatabaseRepository _repo;
   late File _databaseFile;
-  final ChatDatabaseGateway _databaseGateway;
+  final ChatDatabaseGateway? databaseGateway;
   final AssetContentHash _assetContentHash;
   final SyncWriteExecutor _syncWriteExecutor;
   final String _assetGcLeaseOwnerToken = const Uuid().v4();
@@ -140,6 +140,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   int _statisticsRevision = 0;
   int get statisticsRevision => _statisticsRevision;
 
+  DatabaseCipher get databaseCipher => _requiredDatabaseGateway.databaseCipher;
+
+  ChatDatabaseGateway get _requiredDatabaseGateway =>
+      databaseGateway ?? (throw StateError('database_gateway_required'));
+
   String? get currentConversationId => _currentConversationId;
 
   bool isTemporaryConversation(String? id) {
@@ -163,7 +168,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       await appDataDir.create(recursive: true);
     }
     _databaseFile = File(p.join(appDataDir.path, AppDatabase.databaseFileName));
-    final lease = await _databaseGateway.acquire(_databaseFile);
+    final lease = await _requiredDatabaseGateway.acquire(_databaseFile);
     _databaseLease = lease;
     _repo = lease.repository;
     try {
@@ -2611,10 +2616,12 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     if (!_initialized) await init();
     final sourcePath = _databaseFile.path;
     final destinationPath = destinationFile.path;
+    final cipher = databaseCipher;
     return Isolate.run(
       () => ChatDatabaseRepository.createConsistentSnapshot(
         sourceFile: File(sourcePath),
         destinationFile: File(destinationPath),
+        cipher: cipher,
       ),
     );
   }

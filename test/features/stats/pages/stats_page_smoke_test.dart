@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+
+import '../../../core/database/test_database_cipher.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -91,7 +93,7 @@ class _ControllableStatsChatService extends ChatService {
   _ControllableStatsChatService()
     : super(
         const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
       );
 
   var queryCount = 0;

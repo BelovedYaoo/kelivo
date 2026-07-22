@@ -7,12 +7,16 @@ import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
+import 'package:Kelivo/core/database/sqlcipher_database_key.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/backup/restore_bundle_preparation.dart';
 
 import 'restore_process_control.dart';
 
 const restoreHarnessAssetRoots = ['upload', 'images', 'avatars', 'fonts'];
+
+SqlCipherDatabaseKey get restoreHarnessDatabaseCipher =>
+    SqlCipherDatabaseKey.forWorkspace('local');
 
 final class RestoreCompleteBundleFixtureState {
   const RestoreCompleteBundleFixtureState({
@@ -210,6 +214,7 @@ Future<RestoreCompleteBundleFixtureState> prepareCompleteBundleFixture(
   );
   final databaseInfo = await ChatDatabaseRepository.prepareSnapshotForRestore(
     candidateDatabase,
+    cipher: restoreHarnessDatabaseCipher,
   );
 
   final entries = <String, Map<String, dynamic>>{
@@ -255,6 +260,7 @@ Future<RestoreCompleteBundleFixtureState> prepareCompleteBundleFixture(
     bundleIncludesFiles: true,
     restoreChats: true,
     restoreFiles: true,
+    cipher: restoreHarnessDatabaseCipher,
     createdAtUtc: DateTime.utc(2026, 7, 9, 12),
   );
   return RestoreCompleteBundleFixtureState(
@@ -282,7 +288,10 @@ Future<void> createHarnessDatabase(
   File file, {
   required String conversationId,
 }) async {
-  final repository = ChatDatabaseRepository.open(file: file);
+  final repository = ChatDatabaseRepository.open(
+    file: file,
+    cipher: restoreHarnessDatabaseCipher,
+  );
   try {
     await repository.ensureReady();
     await repository.putMigrationBatch(
@@ -304,6 +313,7 @@ Future<List<String>> harnessConversationIds(File file) async {
     mode: sqlite.OpenMode.readOnly,
   );
   try {
+    restoreHarnessDatabaseCipher.apply(database, createSlotIfMissing: false);
     return database
         .select('SELECT id FROM conversation_rows ORDER BY id;')
         .map((row) => row['id'] as String)

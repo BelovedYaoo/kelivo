@@ -12,6 +12,8 @@ import 'package:Kelivo/l10n/app_localizations.dart';
 import 'package:Kelivo/main.dart' show MigrationApp;
 import 'package:Kelivo/shared/widgets/snackbar.dart';
 
+import '../../core/database/test_database_cipher.dart';
+
 void main() {
   testWidgets('mobile retry does not export an already saved backup again', (
     tester,
@@ -170,7 +172,8 @@ HiveToSqliteMigrationService _completeService() {
 }
 
 final class _CompleteMigrationService extends HiveToSqliteMigrationService {
-  _CompleteMigrationService(super.decision);
+  _CompleteMigrationService(super.decision)
+    : super(databaseCipher: testDatabaseCipher);
 
   @override
   HiveToSqliteMigrationStatus initialStatus() {
@@ -185,7 +188,8 @@ final class _CompleteMigrationService extends HiveToSqliteMigrationService {
 
 final class _RetryMigrationService extends HiveToSqliteMigrationService {
   _RetryMigrationService(super.decision)
-    : temporaryBackup = File('${decision.appDataDir.path}/migration.zip');
+    : temporaryBackup = File('${decision.appDataDir.path}/migration.zip'),
+      super(databaseCipher: testDatabaseCipher);
 
   final File temporaryBackup;
   final List<String?> migrationBackupPaths = <String?>[];
