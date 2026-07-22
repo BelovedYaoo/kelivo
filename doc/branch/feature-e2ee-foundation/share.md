@@ -40,6 +40,6 @@
 - 当前生产接线决策：所有数据库入口强制显式注入加密策略；生产只使用平台密钥槽，测试使用显式固定测试密钥，禁止缺参时回退明文。首次发现 SQLite 明文头时删除主库及 WAL/SHM/journal、安装回执和含明文数据库的未完成恢复工作区，再创建全新加密库；仓库外的备份文件不主动删除，但明文备份必须拒绝导入。
 - 明文主库硬切使用先落盘并 fsync 的清理标记；即使主库先被删除后进程中断，下次启动仍会继续删除孤立 WAL/SHM/journal 与安装回执。未知、损坏或密文文件不按明文处理，保持 fail-closed。
 - 错误密钥 ATTACH 后使用同一别名重新挂载正确密钥的设备回归已通过，证明原生核心会清理失败挂载；不在 Dart 层增加重复卸载分支。
-- 当前 SQLCipher 接线通过 `flutter analyze --no-pub`、数据库门禁 16 项和全仓 1557 项测试（19 项既有平台跳过）。Android 16 / x86_64 能力矩阵通过，三 ABI Release APK 构建成功，均通过 v2 签名、同一证书 SHA-256 与 `zipalign -P 16`；首次 Maven 下载连接重置后使用本机 7890 代理重试成功。Windows 最终能力矩阵与 Release 构建正在以关闭 MSBuild 工具跟踪的环境重跑。
+- 当前 SQLCipher 接线通过 `flutter analyze --no-pub`、数据库门禁 16 项和全仓 1557 项测试（19 项既有平台跳过）。Android 16 / x86_64 与 Windows 能力矩阵均通过；Android 三 ABI Release APK 均通过 v2 签名、同一证书 SHA-256 与 `zipalign -P 16`，Windows Release 构建通过。首次 Maven 下载连接重置后使用本机 7890 代理重试成功；Windows 首次 MSBuild 静止后关闭工具跟踪等四项环境开关重试成功。
 - Android 三 ABI 中本项目安全核心与 SQLCipher 均满足 16 KiB ELF 对齐；三个仅存在于 armeabi-v7a 的第三方库仍为 4 KiB 对齐，由 BelovedYaoo/kelivo#25 跟踪，公开发布前必须处理或明确移除该 ABI。
 - 独立 P0：`cloud_sync_state_v1.hive` 的 shadow/outbox 仍会保存聊天正文、推理、翻译和供应商 API Key 原文，附件也仍直接上传明文；因此当前版本只能声明本地主库/快照已加密，绝不能声明完整 E2EE。下一切片必须硬切删除旧同步状态并关闭所有内容同步写入、连接、定时器与冲突操作，待密文同步协议完成后再启用。
