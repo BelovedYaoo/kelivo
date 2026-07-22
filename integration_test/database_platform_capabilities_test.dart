@@ -6,6 +6,7 @@ import 'dart:typed_data';
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
+import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
@@ -30,6 +31,9 @@ void main() {
 
     final schemaVersion = await _verifySchemaContract(root);
     final secureCoreCapabilities = await _verifySecureCoreCapabilities();
+    final secureSessionTokenCapabilities = await _verifySecureSessionTokenStore(
+      root,
+    );
     final sqlCipherCapabilities = await _verifySqlCipherRoundTrip(root);
     final sqliteCapabilities = await _verifySqliteCapabilities(root);
     await _verifyDurableFileOperations(root);
@@ -45,6 +49,7 @@ void main() {
       'sqliteSourceId': version.sourceId,
       'schemaVersion': schemaVersion,
       ...secureCoreCapabilities,
+      ...secureSessionTokenCapabilities,
       ...sqlCipherCapabilities,
       ...sqliteCapabilities,
       'fileLock': true,
@@ -54,6 +59,126 @@ void main() {
     // ignore: avoid_print
     print('DB2_CAPABILITY_RESULT:${jsonEncode(report)}');
   });
+}
+
+Future<Map<String, Object>> _verifySecureSessionTokenStore(
+  Directory root,
+) async {
+  if (!Platform.isWindows && !Platform.isAndroid) {
+    return const <String, Object>{
+      'secureSessionTokenAtRest': false,
+      'secureSessionTokenDeletion': false,
+    };
+  }
+
+  const store = SecureAccountSessionTokenStore();
+  const workspaceKey =
+      '0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef';
+  const firstToken = 'platform-session-token-first-sentinel';
+  const secondToken = 'platform-session-token-second-sentinel';
+  final accountDirectory = Directory(p.join(root.path, 'session-token-store'));
+  await accountDirectory.create(recursive: true);
+  final durability = RestorePlatformDurability();
+
+  final absentReference = AccountSessionTokenReference(
+    generation: 1,
+    slot: 'a',
+  );
+  await expectLater(
+    store.readToken(
+      accountDirectory: accountDirectory,
+      workspaceKey: workspaceKey,
+      reference: absentReference,
+    ),
+    throwsA(isA<StateError>()),
+  );
+
+  final firstReference = await store.writeToken(
+    accountDirectory: accountDirectory,
+    workspaceKey: workspaceKey,
+    token: firstToken,
+    currentReference: null,
+    durability: durability,
+  );
+  expect(firstReference.toJson(), <String, Object>{
+    'version': 1,
+    'generation': 1,
+    'slot': 'a',
+  });
+  final firstFile = File(
+    p.join(accountDirectory.path, 'token-v1-${firstReference.slot}.bin'),
+  );
+  expect(
+    _containsBytes(await firstFile.readAsBytes(), utf8.encode(firstToken)),
+    isFalse,
+  );
+  expect(
+    await store.readToken(
+      accountDirectory: accountDirectory,
+      workspaceKey: workspaceKey,
+      reference: firstReference,
+    ),
+    firstToken,
+  );
+
+  final secondReference = await store.writeToken(
+    accountDirectory: accountDirectory,
+    workspaceKey: workspaceKey,
+    token: secondToken,
+    currentReference: firstReference,
+    durability: durability,
+  );
+  expect(secondReference.generation, 2);
+  expect(secondReference.slot, 'b');
+  await store.deleteTokens(
+    accountDirectory: accountDirectory,
+    keep: secondReference,
+    durability: durability,
+  );
+  expect(await firstFile.exists(), isFalse);
+  expect(
+    await store.readToken(
+      accountDirectory: accountDirectory,
+      workspaceKey: workspaceKey,
+      reference: secondReference,
+    ),
+    secondToken,
+  );
+
+  final secondFile = File(
+    p.join(accountDirectory.path, 'token-v1-${secondReference.slot}.bin'),
+  );
+  final corruptedFrame = await secondFile.readAsBytes();
+  corruptedFrame[corruptedFrame.length - 1] ^= 1;
+  await secondFile.writeAsBytes(corruptedFrame, flush: true);
+  await expectLater(
+    store.readToken(
+      accountDirectory: accountDirectory,
+      workspaceKey: workspaceKey,
+      reference: secondReference,
+    ),
+    _throwsSecureCoreStatus(KelivoSecureCoreStatus.recordAuthenticationFailed),
+  );
+
+  await store.deleteTokens(
+    accountDirectory: accountDirectory,
+    keep: null,
+    durability: durability,
+  );
+  expect(await secondFile.exists(), isFalse);
+  await expectLater(
+    store.readToken(
+      accountDirectory: accountDirectory,
+      workspaceKey: workspaceKey,
+      reference: secondReference,
+    ),
+    throwsA(isA<StateError>()),
+  );
+
+  return const <String, Object>{
+    'secureSessionTokenAtRest': true,
+    'secureSessionTokenDeletion': true,
+  };
 }
 
 Future<Map<String, Object>> _verifySecureCoreCapabilities() async {

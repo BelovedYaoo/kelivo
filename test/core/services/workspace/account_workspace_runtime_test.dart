@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/providers/user_provider.dart';
 import 'package:Kelivo/core/models/provider_group.dart';
+import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_coordinator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
@@ -12,6 +13,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/core/services/sync/sync_write_journal.dart';
+import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:Kelivo/core/services/workspace/account_workspace_runtime.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:Kelivo/utils/sandbox_path_resolver.dart';
@@ -28,10 +30,12 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   late Directory installationRoot;
+  late _MemoryAccountSessionTokenStore sessionTokenStore;
   final runtimes = <AccountWorkspaceRuntime>[];
 
   setUp(() async {
     SharedPreferences.setMockInitialValues(const <String, Object>{});
+    sessionTokenStore = _MemoryAccountSessionTokenStore();
     installationRoot = Directory(
       p.join(
         Directory.current.path,
@@ -56,6 +60,7 @@ void main() {
   Future<AccountWorkspaceRuntime> bootstrap() async {
     final runtime = await AccountWorkspaceRuntime.bootstrap(
       installationRoot: installationRoot,
+      sessionTokenStore: sessionTokenStore,
     );
     runtimes.add(runtime);
     return runtime;
@@ -65,6 +70,117 @@ void main() {
     await runtime.close();
     runtimes.remove(runtime);
   }
+
+  test('账号工作区磁盘不得持久化 bearer token 明文', () async {
+    const token = 'disk-sentinel-bearer-token';
+    final runtime = await bootstrap();
+    await runtime.bindAccount(_session(userId: 'account-a', token: token));
+
+    final tokenBytes = utf8.encode(token);
+    final files = await installationRoot
+        .list(recursive: true, followLinks: false)
+        .where((entity) => entity is File)
+        .cast<File>()
+        .where((file) => !file.path.contains('.kelivo_business_lease'))
+        .toList();
+    expect(files, isNotEmpty);
+    for (final file in files) {
+      expect(
+        _containsBytes(await file.readAsBytes(), tokenBytes),
+        isFalse,
+        reason: file.path,
+      );
+    }
+
+    final sessionFiles = files
+        .where((file) => p.basename(file.path).startsWith('session-v2-'))
+        .toList();
+    expect(sessionFiles, hasLength(1));
+    final sessionRecord =
+        jsonDecode(await sessionFiles.single.readAsString())
+            as Map<String, Object?>;
+    final payload = sessionRecord['payload'] as Map<String, Object?>;
+    final sessionMetadata = payload['session'] as Map<String, Object?>;
+    expect(payload.keys, <String>{
+      'version',
+      'accountScope',
+      'session',
+      'tokenReference',
+    });
+    expect(sessionMetadata, isNot(contains('token')));
+    expect(payload['tokenReference'], <String, Object?>{
+      'version': 1,
+      'generation': 1,
+      'slot': 'a',
+    });
+  });
+
+  test('旧版明文会话启动时硬切并清除凭证', () async {
+    const legacyToken = 'legacy-plaintext-token-sentinel';
+    var runtime = await bootstrap();
+    final session = _session(userId: 'account-a', token: legacyToken);
+    await runtime.bindAccount(session);
+    await close(runtime);
+
+    final workspaceKey = sha256
+        .convert(utf8.encode(session.accountScope))
+        .toString();
+    final accountDirectory = Directory(
+      p.join(
+        installationRoot.path,
+        '.kelivo-workspaces',
+        'accounts',
+        workspaceKey,
+      ),
+    );
+    for (final slot in const <String>['a', 'b']) {
+      final current = File(
+        p.join(accountDirectory.path, 'session-v2-$slot.json'),
+      );
+      if (await current.exists()) await current.delete();
+    }
+    final legacy = File(p.join(accountDirectory.path, 'session-v1-a.json'));
+    await legacy.writeAsString(
+      jsonEncode(<String, Object?>{
+        'generation': 1,
+        'payload': <String, Object?>{
+          'version': 1,
+          'accountScope': session.accountScope,
+          'session': session.toJson(),
+        },
+      }),
+      flush: true,
+    );
+
+    runtime = await bootstrap();
+    expect(runtime.current.isLocal, isTrue);
+    expect(sessionTokenStore.tokenCount, 0);
+    expect(await legacy.exists(), isFalse);
+    final persistedFiles = await installationRoot
+        .list(recursive: true, followLinks: false)
+        .where((entity) => entity is File)
+        .cast<File>()
+        .where((file) => !file.path.contains('.kelivo_business_lease'))
+        .toList();
+    for (final file in persistedFiles) {
+      expect(
+        _containsBytes(await file.readAsBytes(), utf8.encode(legacyToken)),
+        isFalse,
+        reason: file.path,
+      );
+    }
+  });
+
+  test('会话令牌密文缺失时启动失败关闭', () async {
+    final runtime = await bootstrap();
+    await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'missing-token'),
+    );
+    await close(runtime);
+    sessionTokenStore.clear();
+
+    await expectLater(bootstrap(), throwsA(isA<StateError>()));
+  });
 
   test('匿名工作区保留既有根目录且账号 A/B 的路径与配置前缀互不重叠', () async {
     var runtime = await bootstrap();
@@ -253,6 +369,7 @@ void main() {
     await runtime.prepareRestartHandoff();
     final successor = await AccountWorkspaceRuntime.bootstrap(
       installationRoot: installationRoot,
+      sessionTokenStore: sessionTokenStore,
     );
     runtimes.add(successor);
 
@@ -272,6 +389,7 @@ void main() {
     final target = await runtime.signOut();
     expect(target.target.isLocal, isTrue);
     expect(runtime.current.isLocal, isFalse);
+    expect(sessionTokenStore.tokenCount, 0);
     await close(runtime);
 
     runtime = await bootstrap();
@@ -321,6 +439,22 @@ void main() {
 
     runtime = await bootstrap();
     expect(runtime.current.isLocal, isTrue);
+  });
+
+  test('退出令牌删除中断后启动依据 tombstone 清理残留密文', () async {
+    var runtime = await bootstrap();
+    await runtime.bindAccount(_session(userId: 'account-a', token: 'token-a'));
+    await close(runtime);
+
+    runtime = await bootstrap();
+    sessionTokenStore.failNextDelete = true;
+    await expectLater(runtime.signOut(), throwsA(isA<StateError>()));
+    expect(sessionTokenStore.tokenCount, 1);
+    await close(runtime);
+
+    runtime = await bootstrap();
+    expect(runtime.current.isLocal, isTrue);
+    expect(sessionTokenStore.tokenCount, 0);
   });
 
   test('退出在 tombstone 后发布注册表失败时不恢复旧凭证', () async {
@@ -386,7 +520,10 @@ void main() {
     await registryB.writeAsString('{corrupt', flush: true);
 
     await expectLater(
-      AccountWorkspaceRuntime.bootstrap(installationRoot: installationRoot),
+      AccountWorkspaceRuntime.bootstrap(
+        installationRoot: installationRoot,
+        sessionTokenStore: sessionTokenStore,
+      ),
       throwsA(isA<FormatException>()),
     );
   });
@@ -406,12 +543,15 @@ void main() {
     await close(runtime);
 
     final latestSession = File(
-      p.join(accountDirectory.path, 'session-v1-b.json'),
+      p.join(accountDirectory.path, 'session-v2-b.json'),
     );
     await latestSession.writeAsString('{corrupt', flush: true);
 
     await expectLater(
-      AccountWorkspaceRuntime.bootstrap(installationRoot: installationRoot),
+      AccountWorkspaceRuntime.bootstrap(
+        installationRoot: installationRoot,
+        sessionTokenStore: sessionTokenStore,
+      ),
       throwsA(isA<FormatException>()),
     );
   });
@@ -1887,6 +2027,63 @@ final class _BlockingFirstPreferenceSetStore
   }
 }
 
+final class _MemoryAccountSessionTokenStore
+    implements AccountSessionTokenStore {
+  final Map<String, String> _tokens = <String, String>{};
+  bool failNextDelete = false;
+
+  int get tokenCount => _tokens.length;
+
+  void clear() => _tokens.clear();
+
+  @override
+  Future<AccountSessionTokenReference> writeToken({
+    required Directory accountDirectory,
+    required String workspaceKey,
+    required String token,
+    required AccountSessionTokenReference? currentReference,
+    required RestoreDurability durability,
+  }) async {
+    final reference = AccountSessionTokenReference.next(currentReference);
+    _tokens[_key(accountDirectory, reference)] = token;
+    return reference;
+  }
+
+  @override
+  Future<String> readToken({
+    required Directory accountDirectory,
+    required String workspaceKey,
+    required AccountSessionTokenReference reference,
+  }) async {
+    final token = _tokens[_key(accountDirectory, reference)];
+    if (token == null) throw StateError('account_session_token_missing');
+    return token;
+  }
+
+  @override
+  Future<void> deleteTokens({
+    required Directory accountDirectory,
+    required AccountSessionTokenReference? keep,
+    required RestoreDurability durability,
+  }) async {
+    if (failNextDelete) {
+      failNextDelete = false;
+      throw StateError('account_session_token_delete_interrupted');
+    }
+    final prefix = '${p.normalize(accountDirectory.absolute.path)}|';
+    final keepKey = keep == null ? null : _key(accountDirectory, keep);
+    _tokens.removeWhere((key, _) => key.startsWith(prefix) && key != keepKey);
+  }
+
+  static String _key(
+    Directory accountDirectory,
+    AccountSessionTokenReference reference,
+  ) {
+    return '${p.normalize(accountDirectory.absolute.path)}|'
+        '${reference.slot}|${reference.generation}';
+  }
+}
+
 Map<String, Object> _physicalPreferenceData(
   SharedPreferences preferences, {
   required String prefix,
@@ -1922,6 +2119,21 @@ Future<void> _createDirectoryLink(String linkPath, String targetPath) async {
       'account_workspace_junction_setup_failed:${result.stderr}',
     );
   }
+}
+
+bool _containsBytes(List<int> haystack, List<int> needle) {
+  if (needle.isEmpty) return true;
+  for (var start = 0; start + needle.length <= haystack.length; start++) {
+    var matches = true;
+    for (var offset = 0; offset < needle.length; offset++) {
+      if (haystack[start + offset] != needle[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
 }
 
 CloudSyncAccountSession _session({

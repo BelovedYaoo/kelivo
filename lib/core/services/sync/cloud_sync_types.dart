@@ -223,6 +223,12 @@ final class CloudSyncAccountSession {
     'deviceCreatedAt': deviceCreatedAt.toIso8601String(),
   };
 
+  CloudSyncJsonMap toMetadataJson() {
+    final metadata = toJson();
+    metadata.remove('token');
+    return metadata;
+  }
+
   factory CloudSyncAccountSession.fromJson(CloudSyncJsonMap json) {
     _requireVersion(json);
     return CloudSyncAccountSession(
@@ -247,6 +253,19 @@ final class CloudSyncAccountSession {
       clientVersion: _requireString(json, 'clientVersion'),
       deviceCreatedAt: _requireDateTime(json, 'deviceCreatedAt'),
     );
+  }
+
+  factory CloudSyncAccountSession.fromMetadataJson(
+    CloudSyncJsonMap json, {
+    required String token,
+  }) {
+    if (json.containsKey('token')) {
+      throw const FormatException('session_metadata_token');
+    }
+    return CloudSyncAccountSession.fromJson(<String, Object?>{
+      ...json,
+      'token': token,
+    });
   }
 }
 

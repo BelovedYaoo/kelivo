@@ -29,3 +29,7 @@
 - Rust 已知向量由独立 libsodium/PyNaCl 生成；`cargo test --locked` 11 项、主机与 Android x64 `clippy -D warnings`、仓库 1548 项 Flutter 测试、Windows/Android 设备集成测试均通过。
 - 本机 MSBuild 17.14 的工具跟踪会让 `cl.exe` 停在 Suspended；验证时通过进程环境关闭 `TrackFileAccess`、结构化输出、资源管理器、CL Server 与 MultiToolTask 后构建通过，未改仓库配置。
 - 云同步会话令牌明文持久化风险由 BelovedYaoo/kelivo#23 跟踪；密码本身当前不落盘，Windows 旧会话文件位于 `%APPDATA%/com.psyche/kelivo/cloud_sync_state_v1.hive`。
+- 云同步 bearer token 已从账号工作区 JSON 移出：`session-v2` 只保存非敏感会话元数据和版本化引用，令牌使用记录信封加密后写入双槽 `token-v1-*.bin`；主密钥只由 Windows DPAPI 或 Android Keystore 保护。
+- 旧 `session-v1` 明文记录不迁移、不读取，启动时直接删除并退出账号；令牌密文缺失、损坏或认证失败均 fail-closed。退出登录先发布 tombstone 再删除密文，删除中断时下次启动会继续清理。
+- 账号工作区目标测试 44 项、全仓 1552 项测试与 `flutter analyze` 均通过；Windows 与 Android 模拟器的平台能力报告均确认令牌静态加密、轮换、篡改拒绝与删除。
+- Android 三 ABI Release 均通过 APK v2 签名与 16 KiB ZIP 对齐校验；Windows Release 构建通过。Issue #23 已具备关闭条件，下一阶段继续生产 SQLCipher 连接收口。

@@ -9,6 +9,7 @@ import '../../../utils/app_directories.dart';
 import '../backup/restore_business_lease.dart';
 import '../backup/restore_durability.dart';
 import '../sync/cloud_sync_types.dart';
+import 'account_session_token_store.dart';
 
 final class AccountWorkspaceContext {
   const AccountWorkspaceContext._({
@@ -69,6 +70,7 @@ final class AccountWorkspaceRuntime {
     this._canonicalWorkspaceRoot,
     this._lease,
     this._durability,
+    this._sessionTokenStore,
     this._current,
     this._registryGeneration,
     this._registrySlot,
@@ -79,7 +81,8 @@ final class AccountWorkspaceRuntime {
   static const _dataDirectoryName = 'data';
   static const _localWorkspaceKey = 'local';
   static const _registryRecordName = 'registry-v1';
-  static const _sessionRecordName = 'session-v1';
+  static const _legacySessionRecordName = 'session-v1';
+  static const _sessionRecordName = 'session-v2';
   static const _localPreferencesPrefix = 'flutter.';
   static const _accountPreferencesPrefix = 'kelivo.account.';
 
@@ -88,6 +91,7 @@ final class AccountWorkspaceRuntime {
   final String _canonicalWorkspaceRoot;
   final RestoreBusinessLease _lease;
   final RestoreDurability _durability;
+  final AccountSessionTokenStore _sessionTokenStore;
   AccountWorkspaceContext _current;
   int _registryGeneration;
   String? _registrySlot;
@@ -97,7 +101,10 @@ final class AccountWorkspaceRuntime {
 
   static Future<AccountWorkspaceRuntime> bootstrap({
     Directory? installationRoot,
+    AccountSessionTokenStore? sessionTokenStore,
   }) async {
+    final resolvedSessionTokenStore =
+        sessionTokenStore ?? const SecureAccountSessionTokenStore();
     final resolvedInstallationRoot = Directory(
       p.normalize(
         p.absolute(
@@ -133,14 +140,51 @@ final class AccountWorkspaceRuntime {
         directory: workspaceRoot,
         recordName: _registryRecordName,
       );
-      final activeWorkspaceKey = _parseRegistry(registry?.payload);
-      var current = activeWorkspaceKey == null
-          ? _localContext(resolvedInstallationRoot)
-          : await _readAccountContext(
-              workspaceRoot: workspaceRoot,
-              canonicalWorkspaceRoot: canonicalWorkspaceRoot,
-              workspaceKey: activeWorkspaceKey,
-            );
+      var activeWorkspaceKey = _parseRegistry(registry?.payload);
+      late AccountWorkspaceContext current;
+      if (activeWorkspaceKey == null) {
+        current = _localContext(resolvedInstallationRoot);
+      } else {
+        final accountDirectory = await _ensureAccountDirectoryPath(
+          workspaceRoot: workspaceRoot,
+          canonicalWorkspaceRoot: canonicalWorkspaceRoot,
+          workspaceKey: activeWorkspaceKey,
+          createMissing: false,
+        );
+        final removedLegacy = await _deleteLegacySessionRecords(
+          accountDirectory,
+          durability: durability,
+        );
+        final hasEncryptedSession = await _hasRecordFile(
+          directory: accountDirectory,
+          recordName: _sessionRecordName,
+        );
+        if (removedLegacy && !hasEncryptedSession) {
+          await resolvedSessionTokenStore.deleteTokens(
+            accountDirectory: accountDirectory,
+            keep: null,
+            durability: durability,
+          );
+          registry = await _writeNextRecord(
+            directory: workspaceRoot,
+            recordName: _registryRecordName,
+            currentGeneration: registry?.generation ?? 0,
+            currentSlot: registry?.slot,
+            payload: const <String, Object?>{'version': 1},
+            durability: durability,
+          );
+          activeWorkspaceKey = null;
+          current = _localContext(resolvedInstallationRoot);
+        } else {
+          current = await _readAccountContext(
+            workspaceRoot: workspaceRoot,
+            canonicalWorkspaceRoot: canonicalWorkspaceRoot,
+            workspaceKey: activeWorkspaceKey,
+            sessionTokenStore: resolvedSessionTokenStore,
+            durability: durability,
+          );
+        }
+      }
       final activeSession = current.session;
       if (activeWorkspaceKey != null &&
           activeSession != null &&
@@ -152,6 +196,7 @@ final class AccountWorkspaceRuntime {
           workspaceKey: activeWorkspaceKey,
           accountScope: current.accountScope!,
           durability: durability,
+          sessionTokenStore: resolvedSessionTokenStore,
         );
         current = current._withoutSession();
       }
@@ -194,6 +239,7 @@ final class AccountWorkspaceRuntime {
         canonicalWorkspaceRoot,
         lease,
         durability,
+        resolvedSessionTokenStore,
         current,
         registry?.generation ?? 0,
         registry?.slot,
@@ -295,9 +341,47 @@ final class AccountWorkspaceRuntime {
       workspaceKey,
       createMissing: true,
     );
+    await _deleteLegacySessionRecords(
+      accountDirectory,
+      durability: _durability,
+    );
     final current = await _readLatestRecord(
       directory: accountDirectory,
       recordName: _sessionRecordName,
+    );
+    final stored = current == null
+        ? null
+        : _parseStoredSession(
+            current.payload,
+            expectedWorkspaceKey: workspaceKey,
+          );
+    if (stored != null && stored.accountScope != accountScope) {
+      throw const FormatException('account_workspace_scope_mismatch');
+    }
+
+    if (session == null) {
+      await _writeNextRecord(
+        directory: accountDirectory,
+        recordName: _sessionRecordName,
+        currentGeneration: current?.generation ?? 0,
+        currentSlot: current?.slot,
+        payload: <String, Object?>{'version': 2, 'accountScope': accountScope},
+        durability: _durability,
+      );
+      await _sessionTokenStore.deleteTokens(
+        accountDirectory: accountDirectory,
+        keep: null,
+        durability: _durability,
+      );
+      return;
+    }
+
+    final tokenReference = await _sessionTokenStore.writeToken(
+      accountDirectory: accountDirectory,
+      workspaceKey: workspaceKey,
+      token: session.token,
+      currentReference: stored?.tokenReference,
+      durability: _durability,
     );
     await _writeNextRecord(
       directory: accountDirectory,
@@ -305,10 +389,16 @@ final class AccountWorkspaceRuntime {
       currentGeneration: current?.generation ?? 0,
       currentSlot: current?.slot,
       payload: <String, Object?>{
-        'version': 1,
+        'version': 2,
         'accountScope': accountScope,
-        if (session != null) 'session': session.toJson(),
+        'session': session.toMetadataJson(),
+        'tokenReference': tokenReference.toJson(),
       },
+      durability: _durability,
+    );
+    await _sessionTokenStore.deleteTokens(
+      accountDirectory: accountDirectory,
+      keep: tokenReference,
       durability: _durability,
     );
   }
@@ -331,6 +421,8 @@ final class AccountWorkspaceRuntime {
     required Directory workspaceRoot,
     required String canonicalWorkspaceRoot,
     required String workspaceKey,
+    required AccountSessionTokenStore sessionTokenStore,
+    required RestoreDurability durability,
   }) async {
     if (!_isWorkspaceKey(workspaceKey)) {
       throw const FormatException('account_workspace_key');
@@ -348,25 +440,32 @@ final class AccountWorkspaceRuntime {
     if (record == null) {
       throw StateError('account_workspace_session_missing');
     }
-    final payload = record.payload;
-    if (payload['version'] != 1 || payload['accountScope'] is! String) {
-      throw const FormatException('account_workspace_session');
-    }
-    final accountScope = (payload['accountScope'] as String).trim();
-    if (accountScope.isEmpty || _workspaceKey(accountScope) != workspaceKey) {
-      throw const FormatException('account_workspace_scope_mismatch');
-    }
-    final rawSession = payload['session'];
+    final stored = _parseStoredSession(
+      record.payload,
+      expectedWorkspaceKey: workspaceKey,
+    );
+    final accountScope = stored.accountScope;
     final CloudSyncAccountSession? session;
-    if (rawSession == null) {
+    if (stored.sessionMetadata == null) {
+      await sessionTokenStore.deleteTokens(
+        accountDirectory: accountDirectory,
+        keep: null,
+        durability: durability,
+      );
       session = null;
-    } else if (rawSession is Map<String, Object?>) {
-      session = CloudSyncAccountSession.fromJson(rawSession);
+    } else {
+      final token = await sessionTokenStore.readToken(
+        accountDirectory: accountDirectory,
+        workspaceKey: workspaceKey,
+        reference: stored.tokenReference!,
+      );
+      session = CloudSyncAccountSession.fromMetadataJson(
+        stored.sessionMetadata!,
+        token: token,
+      );
       if (session.accountScope != accountScope) {
         throw const FormatException('account_workspace_session_scope');
       }
-    } else {
-      throw const FormatException('account_workspace_session');
     }
     final dataDirectory = await _ensureAccountDataDirectoryPath(
       workspaceRoot: workspaceRoot,
@@ -403,6 +502,7 @@ final class AccountWorkspaceRuntime {
     required String workspaceKey,
     required String accountScope,
     required RestoreDurability durability,
+    required AccountSessionTokenStore sessionTokenStore,
   }) async {
     final accountDirectory = await _ensureAccountDirectoryPath(
       workspaceRoot: workspaceRoot,
@@ -414,12 +514,26 @@ final class AccountWorkspaceRuntime {
       directory: accountDirectory,
       recordName: _sessionRecordName,
     );
+    if (current != null) {
+      final stored = _parseStoredSession(
+        current.payload,
+        expectedWorkspaceKey: workspaceKey,
+      );
+      if (stored.accountScope != accountScope) {
+        throw const FormatException('account_workspace_scope_mismatch');
+      }
+    }
     await _writeNextRecord(
       directory: accountDirectory,
       recordName: _sessionRecordName,
       currentGeneration: current?.generation ?? 0,
       currentSlot: current?.slot,
-      payload: <String, Object?>{'version': 1, 'accountScope': accountScope},
+      payload: <String, Object?>{'version': 2, 'accountScope': accountScope},
+      durability: durability,
+    );
+    await sessionTokenStore.deleteTokens(
+      accountDirectory: accountDirectory,
+      keep: null,
       durability: durability,
     );
   }
@@ -552,6 +666,83 @@ final class AccountWorkspaceRuntime {
     return active;
   }
 
+  static _StoredAccountSession _parseStoredSession(
+    Map<String, Object?> payload, {
+    required String expectedWorkspaceKey,
+  }) {
+    if (payload['version'] != 2 || payload['accountScope'] is! String) {
+      throw const FormatException('account_workspace_session');
+    }
+    final accountScope = (payload['accountScope'] as String).trim();
+    if (accountScope.isEmpty ||
+        _workspaceKey(accountScope) != expectedWorkspaceKey) {
+      throw const FormatException('account_workspace_scope_mismatch');
+    }
+
+    final rawSession = payload['session'];
+    final rawTokenReference = payload['tokenReference'];
+    if (rawSession == null && rawTokenReference == null) {
+      if (payload.length != 2) {
+        throw const FormatException('account_workspace_session');
+      }
+      return _StoredAccountSession(accountScope: accountScope);
+    }
+    if (payload.length != 4 ||
+        rawSession is! Map<String, Object?> ||
+        rawSession.containsKey('token') ||
+        rawTokenReference == null) {
+      throw const FormatException('account_workspace_session');
+    }
+    return _StoredAccountSession(
+      accountScope: accountScope,
+      sessionMetadata: Map<String, Object?>.from(rawSession),
+      tokenReference: AccountSessionTokenReference.fromJson(rawTokenReference),
+    );
+  }
+
+  static Future<bool> _hasRecordFile({
+    required Directory directory,
+    required String recordName,
+  }) async {
+    var found = false;
+    for (final slot in const <String>['a', 'b']) {
+      final file = File(p.join(directory.path, '$recordName-$slot.json'));
+      final type = await FileSystemEntity.type(file.path, followLinks: false);
+      if (type == FileSystemEntityType.notFound) continue;
+      if (type != FileSystemEntityType.file) {
+        throw const FormatException('account_workspace_record_corrupt');
+      }
+      found = true;
+    }
+    return found;
+  }
+
+  static Future<bool> _deleteLegacySessionRecords(
+    Directory directory, {
+    required RestoreDurability durability,
+  }) async {
+    var deleted = false;
+    for (final slot in const <String>['a', 'b']) {
+      for (final name in <String>[
+        '$_legacySessionRecordName-$slot.json',
+        '.$_legacySessionRecordName-$slot.next',
+      ]) {
+        final file = File(p.join(directory.path, name));
+        final type = await FileSystemEntity.type(file.path, followLinks: false);
+        if (type == FileSystemEntityType.notFound) continue;
+        if (type != FileSystemEntityType.file) {
+          throw StateError('account_workspace_legacy_session_target');
+        }
+        await file.delete();
+        deleted = true;
+      }
+    }
+    if (deleted) {
+      await durability.syncDirectory(directory, fullBarrier: true);
+    }
+    return deleted;
+  }
+
   static Future<_WorkspaceRecord?> _readLatestRecord({
     required Directory directory,
     required String recordName,
@@ -658,4 +849,19 @@ final class _WorkspaceRecord {
   final int generation;
   final String slot;
   final Map<String, Object?> payload;
+}
+
+final class _StoredAccountSession {
+  const _StoredAccountSession({
+    required this.accountScope,
+    this.sessionMetadata,
+    this.tokenReference,
+  }) : assert(
+         (sessionMetadata == null) == (tokenReference == null),
+         '会话元数据与 token 引用必须同时存在',
+       );
+
+  final String accountScope;
+  final Map<String, Object?>? sessionMetadata;
+  final AccountSessionTokenReference? tokenReference;
 }
