@@ -119,7 +119,11 @@ class AppLocalizationsEn extends AppLocalizations {
       'Complete the service URL, account, password, and device name.';
 
   @override
-  String get cloudSyncAccountSection => 'Account & Sync';
+  String get cloudSyncAccountSection => 'Account';
+
+  @override
+  String get cloudSyncContentLocalOnlyNotice =>
+      'During the end-to-end encryption upgrade, chats and settings are stored only on this device. Account and device management remain available.';
 
   @override
   String get cloudSyncAccount => 'Account';

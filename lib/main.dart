@@ -477,20 +477,8 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(
           lazy: false,
           create: (ctx) {
-            final provider = CloudSyncProvider(
-              ctx.read<ChatService>(),
-              cloudSyncStore,
-              syncWriteJournal,
+            final provider = CloudSyncProvider.controlPlaneOnly(
               workspaceRuntime,
-              settingsProvider: ctx.read<SettingsProvider>(),
-              assistantProvider: ctx.read<AssistantProvider>(),
-              memoryProvider: ctx.read<MemoryProvider>(),
-              mcpProvider: ctx.read<McpProvider>(),
-              quickPhraseProvider: ctx.read<QuickPhraseProvider>(),
-              instructionInjectionProvider: ctx
-                  .read<InstructionInjectionProvider>(),
-              worldBookProvider: ctx.read<WorldBookProvider>(),
-              userProvider: ctx.read<UserProvider>(),
             );
             unawaited(provider.initialize());
             return provider;

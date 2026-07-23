@@ -111,7 +111,14 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
         else ...[
           _buildAccountSection(context, provider, session),
           const SizedBox(height: 14),
-          _buildConflictsSection(context, provider),
+          if (provider.contentSyncEnabled)
+            _buildConflictsSection(context, provider)
+          else
+            _ConflictNoticeCard(
+              message: AppLocalizations.of(
+                context,
+              )!.cloudSyncContentLocalOnlyNotice,
+            ),
           const SizedBox(height: 14),
           _buildDevicesSection(context, provider),
         ],
@@ -185,12 +192,14 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   ) {
     final l10n = AppLocalizations.of(context)!;
     final status = provider.status;
+    final contentSyncEnabled = provider.contentSyncEnabled;
     final busy =
         status == CloudSyncProviderStatus.signingOut ||
         status == CloudSyncProviderStatus.signingIn ||
         status == CloudSyncProviderStatus.workspaceChangePending ||
-        provider.conflictsLoading ||
-        provider.resolvingConflictId != null;
+        (contentSyncEnabled &&
+            (provider.conflictsLoading ||
+                provider.resolvingConflictId != null));
     final syncing = status == CloudSyncProviderStatus.syncing;
     return _Section(
       title: l10n.cloudSyncAccountSection,
@@ -202,42 +211,46 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
         ),
         const _SectionDivider(),
         _InfoRow(label: l10n.cloudSyncService, value: session.baseUrl),
-        const _SectionDivider(),
-        _InfoRow(
-          label: l10n.cloudSyncStatus,
-          value: cloudSyncStatusText(l10n, status),
-        ),
-        const _SectionDivider(),
-        _InfoRow(
-          label: l10n.cloudSyncLastSync,
-          value: _formatDateTime(context, provider.lastRun?.completedAt),
-        ),
-        const _SectionDivider(),
-        _SwitchRow(
-          label: l10n.cloudSyncPause,
-          detail: l10n.cloudSyncPauseDescription,
-          value: provider.paused,
-          enabled: !busy,
-          onChanged: (value) => unawaited(_setPaused(value)),
-        ),
+        if (contentSyncEnabled) ...[
+          const _SectionDivider(),
+          _InfoRow(
+            label: l10n.cloudSyncStatus,
+            value: cloudSyncStatusText(l10n, status),
+          ),
+          const _SectionDivider(),
+          _InfoRow(
+            label: l10n.cloudSyncLastSync,
+            value: _formatDateTime(context, provider.lastRun?.completedAt),
+          ),
+          const _SectionDivider(),
+          _SwitchRow(
+            label: l10n.cloudSyncPause,
+            detail: l10n.cloudSyncPauseDescription,
+            value: provider.paused,
+            enabled: !busy,
+            onChanged: (value) => unawaited(_setPaused(value)),
+          ),
+        ],
         const _SectionDivider(),
         Padding(
           padding: const EdgeInsets.all(12),
           child: Row(
             children: [
-              Expanded(
-                child: IosTileButton(
-                  label: syncing
-                      ? l10n.cloudSyncSyncing
-                      : l10n.cloudSyncSyncNow,
-                  icon: Lucide.RefreshCw,
-                  enabled: !busy && !provider.paused && !syncing,
-                  backgroundColor: Theme.of(context).colorScheme.primary,
-                  foregroundColor: Theme.of(context).colorScheme.primary,
-                  onTap: () => unawaited(_syncNow()),
+              if (contentSyncEnabled) ...[
+                Expanded(
+                  child: IosTileButton(
+                    label: syncing
+                        ? l10n.cloudSyncSyncing
+                        : l10n.cloudSyncSyncNow,
+                    icon: Lucide.RefreshCw,
+                    enabled: !busy && !provider.paused && !syncing,
+                    backgroundColor: Theme.of(context).colorScheme.primary,
+                    foregroundColor: Theme.of(context).colorScheme.primary,
+                    onTap: () => unawaited(_syncNow()),
+                  ),
                 ),
-              ),
-              const SizedBox(width: 10),
+                const SizedBox(width: 10),
+              ],
               Expanded(
                 child: IosTileButton(
                   label: l10n.cloudSyncLogout,

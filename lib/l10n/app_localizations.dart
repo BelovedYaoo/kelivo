@@ -313,8 +313,14 @@ abstract class AppLocalizations {
   /// No description provided for @cloudSyncAccountSection.
   ///
   /// In en, this message translates to:
-  /// **'Account & Sync'**
+  /// **'Account'**
   String get cloudSyncAccountSection;
+
+  /// No description provided for @cloudSyncContentLocalOnlyNotice.
+  ///
+  /// In en, this message translates to:
+  /// **'During the end-to-end encryption upgrade, chats and settings are stored only on this device. Account and device management remain available.'**
+  String get cloudSyncContentLocalOnlyNotice;
 
   /// No description provided for @cloudSyncAccount.
   ///

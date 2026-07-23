@@ -29,8 +29,33 @@ abstract interface class CloudSyncConflictTransport {
   Future<CloudSyncConflict> resolveConflict(String conflictId);
 }
 
+abstract interface class CloudSyncAccountClient {
+  void setToken(String? token);
+
+  void close({bool force = false});
+
+  Future<CloudSyncAccountSession> login({
+    required String loginName,
+    required String password,
+    required String deviceName,
+    required CloudSyncPlatform platform,
+    required String clientVersion,
+  });
+
+  Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
+    CloudSyncDeviceStatus? status,
+    int pageIndex = 1,
+    int pageSize = 50,
+  });
+
+  Future<CloudSyncDeviceSession> revokeDevice(String deviceId);
+}
+
 final class CloudSyncClient
-    implements CloudSyncTransport, CloudSyncConflictTransport {
+    implements
+        CloudSyncAccountClient,
+        CloudSyncTransport,
+        CloudSyncConflictTransport {
   CloudSyncClient._({
     required this.baseUrl,
     required this._dio,
@@ -101,6 +126,7 @@ final class CloudSyncClient
   final Dio _signedUrlDio;
   final api.KelivoSyncApiClient _client;
 
+  @override
   void setToken(String? token) {
     if (token == null || token.isEmpty) {
       _client.removeBearerAuth(_bearerAuthName);
@@ -109,6 +135,7 @@ final class CloudSyncClient
     _client.setBearerAuth(_bearerAuthName, token);
   }
 
+  @override
   void close({bool force = false}) {
     _dio.close(force: force);
     _signedUrlDio.close(force: force);
@@ -128,6 +155,7 @@ final class CloudSyncClient
     });
   }
 
+  @override
   Future<CloudSyncAccountSession> login({
     required String loginName,
     required String password,
@@ -301,6 +329,7 @@ final class CloudSyncClient
     });
   }
 
+  @override
   Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
     CloudSyncDeviceStatus? status,
     int pageIndex = 1,
@@ -336,6 +365,7 @@ final class CloudSyncClient
     });
   }
 
+  @override
   Future<CloudSyncDeviceSession> revokeDevice(String deviceId) {
     _requireNonEmpty(deviceId);
     return _guard(() async {

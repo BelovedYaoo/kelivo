@@ -116,7 +116,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncRequiredFields => '请填写服务地址、账号、密码和设备名称。';
 
   @override
-  String get cloudSyncAccountSection => '账户与同步';
+  String get cloudSyncAccountSection => '账户';
+
+  @override
+  String get cloudSyncContentLocalOnlyNotice =>
+      '端到端加密升级期间，聊天与配置仅保存在本机，账号和设备管理仍可用。';
 
   @override
   String get cloudSyncAccount => '账户';
@@ -6108,7 +6112,11 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncRequiredFields => '请填写服务地址、账号、密码和设备名称。';
 
   @override
-  String get cloudSyncAccountSection => '账户与同步';
+  String get cloudSyncAccountSection => '账户';
+
+  @override
+  String get cloudSyncContentLocalOnlyNotice =>
+      '端到端加密升级期间，聊天与配置仅保存在本机，账号和设备管理仍可用。';
 
   @override
   String get cloudSyncAccount => '账户';
@@ -12100,7 +12108,11 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncRequiredFields => '請填寫服務位址、帳號、密碼和裝置名稱。';
 
   @override
-  String get cloudSyncAccountSection => '帳戶與同步';
+  String get cloudSyncAccountSection => '帳戶';
+
+  @override
+  String get cloudSyncContentLocalOnlyNotice =>
+      '端對端加密升級期間，聊天與設定僅儲存在本機，帳號與裝置管理仍可使用。';
 
   @override
   String get cloudSyncAccount => '帳戶';
