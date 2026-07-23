@@ -5,6 +5,10 @@
 use std::fmt;
 use std::ops::Deref;
 
+use chacha20poly1305::{
+    Tag, XChaCha20Poly1305, XNonce,
+    aead::{AeadInOut, KeyInit},
+};
 use opaque_ke::errors::ProtocolError as OpaqueProtocolError;
 use opaque_ke::{
     CipherSuite, ClientLogin as OpaqueClientLogin,
@@ -21,11 +25,21 @@ use opaque_ke::{
 };
 use rand::rngs::OsRng;
 use rand::{CryptoRng, RngCore};
-use zeroize::{Zeroize, Zeroizing};
+use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
 const WIRE_MAGIC: [u8; 4] = *b"KOPA";
 const WIRE_HEADER_LENGTH: usize = 16;
 const WIRE_FLAGS: u8 = 0;
+const SERVER_LOGIN_STATE_LENGTH: usize = 128;
+const SERVER_LOGIN_CONTINUATION_MAGIC: [u8; 4] = *b"KOSC";
+const SERVER_LOGIN_CONTINUATION_HEADER_LENGTH: usize = 8;
+const SERVER_LOGIN_CONTINUATION_NONCE_LENGTH: usize = 24;
+const SERVER_LOGIN_CONTINUATION_TAG_LENGTH: usize = 16;
+const SERVER_LOGIN_CONTINUATION_CIPHERTEXT_OFFSET: usize =
+    SERVER_LOGIN_CONTINUATION_HEADER_LENGTH + SERVER_LOGIN_CONTINUATION_NONCE_LENGTH;
+const SERVER_LOGIN_CONTINUATION_TAG_OFFSET: usize =
+    SERVER_LOGIN_CONTINUATION_CIPHERTEXT_OFFSET + SERVER_LOGIN_STATE_LENGTH;
+const SERVER_LOGIN_CONTINUATION_AAD_DOMAIN: &[u8] = b"kelivo.opaque.server-login-state.v1";
 pub const MAX_OPAQUE_INPUT_LENGTH: usize = u16::MAX as usize;
 const OPAQUE_CONTEXT: &[u8] = b"Kelivo-OPAQUE-v1";
 const SERVER_IDENTIFIER: &[u8] = b"kelivo-cloud-v1";
@@ -43,6 +57,12 @@ pub const REGISTRATION_UPLOAD_LENGTH: usize = WIRE_HEADER_LENGTH + 192;
 pub const CREDENTIAL_REQUEST_LENGTH: usize = WIRE_HEADER_LENGTH + 96;
 pub const CREDENTIAL_RESPONSE_LENGTH: usize = WIRE_HEADER_LENGTH + 320;
 pub const CREDENTIAL_FINALIZATION_LENGTH: usize = WIRE_HEADER_LENGTH + 64;
+pub const SERVER_LOGIN_CONTINUATION_FORMAT_VERSION: u16 = 1;
+pub const SERVER_LOGIN_CONTINUATION_CIPHER_SUITE_ID: u16 = 1;
+pub const SERVER_LOGIN_CONTINUATION_KEY_LENGTH: usize = 32;
+pub const SERVER_LOGIN_CONTINUATION_LENGTH: usize =
+    SERVER_LOGIN_CONTINUATION_TAG_OFFSET + SERVER_LOGIN_CONTINUATION_TAG_LENGTH;
+pub const MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProtocolProfile {
@@ -85,6 +105,14 @@ pub enum Error {
     InvalidPasswordLength,
     InvalidPasswordProfileConfiguration,
     RandomnessUnavailable,
+    InvalidServerLoginContinuationKeyLength { expected: usize, actual: usize },
+    InvalidServerLoginContinuationMagic,
+    UnsupportedServerLoginContinuationVersion(u16),
+    UnsupportedServerLoginContinuationCipherSuite(u16),
+    InvalidServerLoginContinuationLength { expected: usize, actual: usize },
+    ServerLoginContinuationAadTooLarge,
+    ServerLoginContinuationCrypto,
+    ServerLoginContinuationAuthenticationFailed,
     Opaque(OpaqueProtocolError),
 }
 
@@ -124,6 +152,33 @@ impl fmt::Display for Error {
                 formatter.write_str("OPAQUE 密码配置参数无效")
             }
             Self::RandomnessUnavailable => formatter.write_str("系统安全随机源不可用"),
+            Self::InvalidServerLoginContinuationKeyLength { expected, actual } => write!(
+                formatter,
+                "OPAQUE 服务端登录状态密钥长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::InvalidServerLoginContinuationMagic => {
+                formatter.write_str("OPAQUE 服务端登录状态魔数无效")
+            }
+            Self::UnsupportedServerLoginContinuationVersion(version) => {
+                write!(formatter, "不支持的 OPAQUE 服务端登录状态版本：{version}")
+            }
+            Self::UnsupportedServerLoginContinuationCipherSuite(cipher_suite) => write!(
+                formatter,
+                "不支持的 OPAQUE 服务端登录状态密码套件：{cipher_suite}"
+            ),
+            Self::InvalidServerLoginContinuationLength { expected, actual } => write!(
+                formatter,
+                "OPAQUE 服务端登录状态长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::ServerLoginContinuationAadTooLarge => {
+                formatter.write_str("OPAQUE 服务端登录状态关联数据过大")
+            }
+            Self::ServerLoginContinuationCrypto => {
+                formatter.write_str("OPAQUE 服务端登录状态密封失败")
+            }
+            Self::ServerLoginContinuationAuthenticationFailed => {
+                formatter.write_str("OPAQUE 服务端登录状态认证失败")
+            }
             Self::Opaque(error) => write!(formatter, "OPAQUE 协议失败：{error:?}"),
         }
     }
@@ -201,7 +256,7 @@ impl ObjectKind {
             Self::ClientLoginState => 192,
             Self::CredentialRequest => 96,
             #[cfg(test)]
-            Self::ServerLoginState => 128,
+            Self::ServerLoginState => SERVER_LOGIN_STATE_LENGTH,
             Self::CredentialResponse => 320,
             Self::CredentialFinalization => 64,
         }
@@ -457,6 +512,74 @@ impl SessionKey {
     }
 }
 
+pub struct ServerLoginContinuationKey([u8; SERVER_LOGIN_CONTINUATION_KEY_LENGTH]);
+
+impl ServerLoginContinuationKey {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        let actual = bytes.len();
+        let key: [u8; SERVER_LOGIN_CONTINUATION_KEY_LENGTH] =
+            bytes
+                .try_into()
+                .map_err(|_| Error::InvalidServerLoginContinuationKeyLength {
+                    expected: SERVER_LOGIN_CONTINUATION_KEY_LENGTH,
+                    actual,
+                })?;
+        Ok(Self(key))
+    }
+
+    fn as_bytes(&self) -> &[u8; SERVER_LOGIN_CONTINUATION_KEY_LENGTH] {
+        &self.0
+    }
+}
+
+impl Zeroize for ServerLoginContinuationKey {
+    fn zeroize(&mut self) {
+        self.0.zeroize();
+    }
+}
+
+impl ZeroizeOnDrop for ServerLoginContinuationKey {}
+
+impl Drop for ServerLoginContinuationKey {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+pub struct ServerLoginContinuation([u8; SERVER_LOGIN_CONTINUATION_LENGTH]);
+
+impl ServerLoginContinuation {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, Error> {
+        if bytes.len() != SERVER_LOGIN_CONTINUATION_LENGTH {
+            return Err(Error::InvalidServerLoginContinuationLength {
+                expected: SERVER_LOGIN_CONTINUATION_LENGTH,
+                actual: bytes.len(),
+            });
+        }
+        if bytes[..SERVER_LOGIN_CONTINUATION_MAGIC.len()] != SERVER_LOGIN_CONTINUATION_MAGIC {
+            return Err(Error::InvalidServerLoginContinuationMagic);
+        }
+        let version = u16::from_be_bytes([bytes[4], bytes[5]]);
+        if version != SERVER_LOGIN_CONTINUATION_FORMAT_VERSION {
+            return Err(Error::UnsupportedServerLoginContinuationVersion(version));
+        }
+        let cipher_suite = u16::from_be_bytes([bytes[6], bytes[7]]);
+        if cipher_suite != SERVER_LOGIN_CONTINUATION_CIPHER_SUITE_ID {
+            return Err(Error::UnsupportedServerLoginContinuationCipherSuite(
+                cipher_suite,
+            ));
+        }
+
+        let mut continuation = [0_u8; SERVER_LOGIN_CONTINUATION_LENGTH];
+        continuation.copy_from_slice(bytes);
+        Ok(Self(continuation))
+    }
+
+    pub fn as_bytes(&self) -> &[u8] {
+        &self.0
+    }
+}
+
 pub struct ClientRegistrationStart {
     state: ClientRegistrationState,
     request: RegistrationRequest,
@@ -474,6 +597,11 @@ pub struct ClientLoginStart {
 pub struct ServerLoginStart {
     pub state: ServerLoginState,
     pub response: CredentialResponse,
+}
+
+pub struct SealedServerLoginStart {
+    response: CredentialResponse,
+    continuation: ServerLoginContinuation,
 }
 
 pub struct ClientLoginFinish {
@@ -496,6 +624,12 @@ impl ClientRegistrationFinish {
 impl ClientLoginStart {
     pub fn into_parts(self) -> (ClientLoginState, CredentialRequest) {
         (self.state, self.request)
+    }
+}
+
+impl SealedServerLoginStart {
+    pub fn into_parts(self) -> (CredentialResponse, ServerLoginContinuation) {
+        (self.response, self.continuation)
     }
 }
 
@@ -656,6 +790,27 @@ where
     })
 }
 
+pub fn server_login_start_sealed<R>(
+    rng: &mut R,
+    server_setup: &ServerSetup,
+    registration: Option<&RegistrationRecord>,
+    request: CredentialRequest,
+    binding: AccountBinding<'_>,
+    continuation_key: &ServerLoginContinuationKey,
+    continuation_aad: &[u8],
+) -> Result<SealedServerLoginStart, Error>
+where
+    R: CryptoRng + RngCore,
+{
+    let ServerLoginStart { state, response } =
+        server_login_start(rng, server_setup, registration, request, binding)?;
+    let continuation = seal_server_login_state(rng, state, continuation_key, continuation_aad)?;
+    Ok(SealedServerLoginStart {
+        response,
+        continuation,
+    })
+}
+
 pub fn client_login_finish<R>(
     rng: &mut R,
     state: ClientLoginState,
@@ -706,6 +861,106 @@ pub fn server_login_finish(
     Ok(SessionKey::from_material(Zeroizing::new(
         result.session_key,
     )))
+}
+
+pub fn server_login_finish_sealed(
+    continuation: ServerLoginContinuation,
+    continuation_key: &ServerLoginContinuationKey,
+    continuation_aad: &[u8],
+    finalization: CredentialFinalization,
+    binding: AccountBinding<'_>,
+) -> Result<(), Error> {
+    let state = open_server_login_state(continuation, continuation_key, continuation_aad)?;
+    let session_key = server_login_finish(state, finalization, binding)?;
+    // OPAQUE 会话密钥只证明本次登录；内容密钥必须继续由可信设备链独立提供。
+    drop(session_key);
+    Ok(())
+}
+
+fn continuation_aad(header: &[u8], external_aad: &[u8]) -> Result<Vec<u8>, Error> {
+    if external_aad.len() > MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH {
+        return Err(Error::ServerLoginContinuationAadTooLarge);
+    }
+    let capacity = SERVER_LOGIN_CONTINUATION_AAD_DOMAIN
+        .len()
+        .checked_add(header.len())
+        .and_then(|length| length.checked_add(external_aad.len()))
+        .ok_or(Error::ServerLoginContinuationAadTooLarge)?;
+    let mut aad = Vec::with_capacity(capacity);
+    aad.extend_from_slice(SERVER_LOGIN_CONTINUATION_AAD_DOMAIN);
+    aad.extend_from_slice(header);
+    aad.extend_from_slice(external_aad);
+    Ok(aad)
+}
+
+fn seal_server_login_state<R>(
+    rng: &mut R,
+    state: ServerLoginState,
+    key: &ServerLoginContinuationKey,
+    external_aad: &[u8],
+) -> Result<ServerLoginContinuation, Error>
+where
+    R: CryptoRng + RngCore,
+{
+    let mut bytes = [0_u8; SERVER_LOGIN_CONTINUATION_LENGTH];
+    bytes[..4].copy_from_slice(&SERVER_LOGIN_CONTINUATION_MAGIC);
+    bytes[4..6].copy_from_slice(&SERVER_LOGIN_CONTINUATION_FORMAT_VERSION.to_be_bytes());
+    bytes[6..8].copy_from_slice(&SERVER_LOGIN_CONTINUATION_CIPHER_SUITE_ID.to_be_bytes());
+
+    let mut nonce_bytes = [0_u8; SERVER_LOGIN_CONTINUATION_NONCE_LENGTH];
+    rng.try_fill_bytes(&mut nonce_bytes)
+        .map_err(|_| Error::RandomnessUnavailable)?;
+    bytes[SERVER_LOGIN_CONTINUATION_HEADER_LENGTH..SERVER_LOGIN_CONTINUATION_CIPHERTEXT_OFFSET]
+        .copy_from_slice(&nonce_bytes);
+
+    let aad = continuation_aad(
+        &bytes[..SERVER_LOGIN_CONTINUATION_HEADER_LENGTH],
+        external_aad,
+    )?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_bytes())
+        .map_err(|_| Error::ServerLoginContinuationCrypto)?;
+    let nonce = XNonce::from(nonce_bytes);
+    let mut secret_state = Zeroizing::new(state.0.serialize());
+    drop(state);
+    debug_assert_eq!(secret_state.len(), SERVER_LOGIN_STATE_LENGTH);
+    let tag = cipher
+        .encrypt_inout_detached(&nonce, &aad, secret_state.as_mut_slice().into())
+        .map_err(|_| Error::ServerLoginContinuationCrypto)?;
+    bytes[SERVER_LOGIN_CONTINUATION_CIPHERTEXT_OFFSET..SERVER_LOGIN_CONTINUATION_TAG_OFFSET]
+        .copy_from_slice(secret_state.as_slice());
+    bytes[SERVER_LOGIN_CONTINUATION_TAG_OFFSET..].copy_from_slice(tag.as_slice());
+    Ok(ServerLoginContinuation(bytes))
+}
+
+fn open_server_login_state(
+    continuation: ServerLoginContinuation,
+    key: &ServerLoginContinuationKey,
+    external_aad: &[u8],
+) -> Result<ServerLoginState, Error> {
+    let aad = continuation_aad(
+        &continuation.0[..SERVER_LOGIN_CONTINUATION_HEADER_LENGTH],
+        external_aad,
+    )?;
+    let cipher = XChaCha20Poly1305::new_from_slice(key.as_bytes())
+        .map_err(|_| Error::ServerLoginContinuationCrypto)?;
+    let nonce_bytes: [u8; SERVER_LOGIN_CONTINUATION_NONCE_LENGTH] = continuation.0
+        [SERVER_LOGIN_CONTINUATION_HEADER_LENGTH..SERVER_LOGIN_CONTINUATION_CIPHERTEXT_OFFSET]
+        .try_into()
+        .map_err(|_| Error::ServerLoginContinuationAuthenticationFailed)?;
+    let nonce = XNonce::from(nonce_bytes);
+    let mut secret_state = Zeroizing::new([0_u8; SERVER_LOGIN_STATE_LENGTH]);
+    secret_state.copy_from_slice(
+        &continuation.0
+            [SERVER_LOGIN_CONTINUATION_CIPHERTEXT_OFFSET..SERVER_LOGIN_CONTINUATION_TAG_OFFSET],
+    );
+    let tag: &Tag = continuation.0[SERVER_LOGIN_CONTINUATION_TAG_OFFSET..]
+        .try_into()
+        .map_err(|_| Error::ServerLoginContinuationAuthenticationFailed)?;
+    cipher
+        .decrypt_inout_detached(&nonce, &aad, secret_state.as_mut_slice().into(), tag)
+        .map_err(|_| Error::ServerLoginContinuationAuthenticationFailed)?;
+    let state = OpaqueServerLogin::<Rfc9807Suite>::deserialize(secret_state.as_slice())?;
+    Ok(ServerLoginState::from_value(state))
 }
 
 #[cfg(test)]
@@ -789,6 +1044,256 @@ mod tests {
                 .map(|value| (value as u8).wrapping_add(seed))
                 .collect(),
         )
+    }
+
+    fn registered_account() -> (ServerSetup, RegistrationRecord) {
+        let binding = AccountBinding::new(b"sealed-account").expect("账户标识应有效");
+        let password = b"sealed continuation password";
+        let mut setup_rng = deterministic_rng(12);
+        let setup = generate_server_setup(&mut setup_rng).expect("服务端初始化应成功");
+        let mut registration_rng = deterministic_rng(22);
+        let (state, request) = client_registration_start(&mut registration_rng, password)
+            .expect("注册起始应成功")
+            .into_parts();
+        let response =
+            server_registration_start(&setup, request, binding).expect("服务端注册响应应成功");
+        let mut finish_rng = deterministic_rng(32);
+        let upload =
+            client_registration_finish(&mut finish_rng, state, password, response, binding)
+                .expect("客户端注册完成应成功")
+                .into_upload();
+        let record = server_registration_finish(upload).expect("服务端保存记录应成功");
+        (setup, record)
+    }
+
+    #[test]
+    fn sealed_server_login_round_trip_uses_fixed_public_continuation() {
+        let (setup, record) = registered_account();
+        let binding = AccountBinding::new(b"sealed-account").expect("账户标识应有效");
+        let password = b"sealed continuation password";
+        let continuation_key =
+            ServerLoginContinuationKey::from_bytes(&[0x31; SERVER_LOGIN_CONTINUATION_KEY_LENGTH])
+                .expect("固定长度密封密钥应有效");
+        let continuation_aad = b"login-attempt/018f6d5e";
+
+        let mut client_start_rng = deterministic_rng(42);
+        let (client_state, request) = client_login_start(&mut client_start_rng, password)
+            .expect("客户端登录起始应成功")
+            .into_parts();
+        let mut server_start_rng = deterministic_rng(52);
+        let (response, continuation) = server_login_start_sealed(
+            &mut server_start_rng,
+            &setup,
+            Some(&record),
+            request,
+            binding,
+            &continuation_key,
+            continuation_aad,
+        )
+        .expect("服务端应返回密封登录状态")
+        .into_parts();
+        assert_eq!(
+            continuation.as_bytes().len(),
+            SERVER_LOGIN_CONTINUATION_LENGTH
+        );
+
+        let mut client_finish_rng = deterministic_rng(62);
+        let finalization = client_login_finish(
+            &mut client_finish_rng,
+            client_state,
+            password,
+            response,
+            binding,
+        )
+        .expect("正确密码应生成最终确认")
+        .into_finalization();
+        server_login_finish_sealed(
+            continuation,
+            &continuation_key,
+            continuation_aad,
+            finalization,
+            binding,
+        )
+        .expect("正确密钥与 AAD 应完成认证");
+    }
+
+    fn sealed_login_attempt() -> (Vec<u8>, Vec<u8>) {
+        let (setup, record) = registered_account();
+        let binding = AccountBinding::new(b"sealed-account").expect("账户标识应有效");
+        let password = b"sealed continuation password";
+        let continuation_key =
+            ServerLoginContinuationKey::from_bytes(&[0x31; SERVER_LOGIN_CONTINUATION_KEY_LENGTH])
+                .expect("固定长度密封密钥应有效");
+        let mut client_start_rng = deterministic_rng(72);
+        let (client_state, request) = client_login_start(&mut client_start_rng, password)
+            .expect("客户端登录起始应成功")
+            .into_parts();
+        let mut server_start_rng = deterministic_rng(82);
+        let (response, continuation) = server_login_start_sealed(
+            &mut server_start_rng,
+            &setup,
+            Some(&record),
+            request,
+            binding,
+            &continuation_key,
+            b"login-attempt/failure-cases",
+        )
+        .expect("服务端应返回密封登录状态")
+        .into_parts();
+        let mut client_finish_rng = deterministic_rng(92);
+        let finalization = client_login_finish(
+            &mut client_finish_rng,
+            client_state,
+            password,
+            response,
+            binding,
+        )
+        .expect("正确密码应生成最终确认")
+        .into_finalization();
+        (
+            continuation.as_bytes().to_vec(),
+            finalization.as_bytes().to_vec(),
+        )
+    }
+
+    fn finish_sealed_attempt(
+        continuation: &[u8],
+        key: &[u8],
+        aad: &[u8],
+        finalization: &[u8],
+    ) -> Result<(), Error> {
+        server_login_finish_sealed(
+            ServerLoginContinuation::from_bytes(continuation)?,
+            &ServerLoginContinuationKey::from_bytes(key)?,
+            aad,
+            CredentialFinalization::from_bytes(finalization)?,
+            AccountBinding::new(b"sealed-account")?,
+        )
+    }
+
+    #[test]
+    fn sealed_server_login_rejects_tampering_wrong_context_and_wrong_ke3() {
+        let (continuation, finalization) = sealed_login_attempt();
+        let key = [0x31; SERVER_LOGIN_CONTINUATION_KEY_LENGTH];
+        let aad = b"login-attempt/failure-cases";
+
+        let mut tampered_continuation = continuation.clone();
+        let last = tampered_continuation
+            .last_mut()
+            .expect("固定 continuation 必须包含认证标签");
+        *last ^= 1;
+        assert_eq!(
+            finish_sealed_attempt(&tampered_continuation, &key, aad, &finalization),
+            Err(Error::ServerLoginContinuationAuthenticationFailed)
+        );
+
+        let wrong_key = [0x32; SERVER_LOGIN_CONTINUATION_KEY_LENGTH];
+        assert_eq!(
+            finish_sealed_attempt(&continuation, &wrong_key, aad, &finalization),
+            Err(Error::ServerLoginContinuationAuthenticationFailed)
+        );
+        assert_eq!(
+            finish_sealed_attempt(&continuation, &key, b"login-attempt/other", &finalization,),
+            Err(Error::ServerLoginContinuationAuthenticationFailed)
+        );
+
+        let mut wrong_finalization = finalization.clone();
+        let last = wrong_finalization
+            .last_mut()
+            .expect("固定 KE3 必须包含客户端 MAC");
+        *last ^= 1;
+        assert!(matches!(
+            finish_sealed_attempt(&continuation, &key, aad, &wrong_finalization),
+            Err(Error::Opaque(OpaqueProtocolError::InvalidLoginError))
+        ));
+    }
+
+    #[test]
+    fn sealed_server_login_public_values_enforce_every_length_boundary() {
+        fn require_zeroizing_key<T: Zeroize + ZeroizeOnDrop>() {}
+
+        require_zeroizing_key::<ServerLoginContinuationKey>();
+        assert_eq!(SERVER_LOGIN_CONTINUATION_FORMAT_VERSION, 1);
+        assert_eq!(SERVER_LOGIN_CONTINUATION_CIPHER_SUITE_ID, 1);
+        assert_eq!(SERVER_LOGIN_CONTINUATION_KEY_LENGTH, 32);
+        assert_eq!(SERVER_LOGIN_CONTINUATION_LENGTH, 176);
+
+        assert_eq!(
+            ServerLoginContinuationKey::from_bytes(&[0_u8; 31]).err(),
+            Some(Error::InvalidServerLoginContinuationKeyLength {
+                expected: 32,
+                actual: 31,
+            })
+        );
+        assert_eq!(
+            ServerLoginContinuationKey::from_bytes(&[0_u8; 33]).err(),
+            Some(Error::InvalidServerLoginContinuationKeyLength {
+                expected: 32,
+                actual: 33,
+            })
+        );
+
+        let mut valid_shape = [0_u8; 176];
+        valid_shape[..4].copy_from_slice(b"KOSC");
+        valid_shape[4..6].copy_from_slice(&1_u16.to_be_bytes());
+        valid_shape[6..8].copy_from_slice(&1_u16.to_be_bytes());
+        ServerLoginContinuation::from_bytes(&valid_shape).expect("固定格式外壳应可解析");
+
+        let mut invalid_magic = valid_shape;
+        invalid_magic[0] ^= 1;
+        assert_eq!(
+            ServerLoginContinuation::from_bytes(&invalid_magic).err(),
+            Some(Error::InvalidServerLoginContinuationMagic)
+        );
+        let mut unsupported_version = valid_shape;
+        unsupported_version[4..6].copy_from_slice(&2_u16.to_be_bytes());
+        assert_eq!(
+            ServerLoginContinuation::from_bytes(&unsupported_version).err(),
+            Some(Error::UnsupportedServerLoginContinuationVersion(2))
+        );
+        let mut unsupported_cipher_suite = valid_shape;
+        unsupported_cipher_suite[6..8].copy_from_slice(&2_u16.to_be_bytes());
+        assert_eq!(
+            ServerLoginContinuation::from_bytes(&unsupported_cipher_suite).err(),
+            Some(Error::UnsupportedServerLoginContinuationCipherSuite(2))
+        );
+
+        assert_eq!(
+            ServerLoginContinuation::from_bytes(&valid_shape[..175]).err(),
+            Some(Error::InvalidServerLoginContinuationLength {
+                expected: 176,
+                actual: 175,
+            })
+        );
+        let mut too_long = valid_shape.to_vec();
+        too_long.push(0);
+        assert_eq!(
+            ServerLoginContinuation::from_bytes(&too_long).err(),
+            Some(Error::InvalidServerLoginContinuationLength {
+                expected: 176,
+                actual: 177,
+            })
+        );
+
+        let (continuation, finalization) = sealed_login_attempt();
+        assert_eq!(
+            finish_sealed_attempt(
+                &continuation,
+                &[0x31; 32],
+                &vec![0_u8; MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH],
+                &finalization,
+            ),
+            Err(Error::ServerLoginContinuationAuthenticationFailed)
+        );
+        assert_eq!(
+            finish_sealed_attempt(
+                &continuation,
+                &[0x31; 32],
+                &vec![0_u8; MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH + 1],
+                &finalization,
+            ),
+            Err(Error::ServerLoginContinuationAadTooLarge)
+        );
     }
 
     fn decode_hex(value: &str) -> Vec<u8> {
@@ -1085,6 +1590,8 @@ mod tests {
             "pub fn wrap_",
             "pub fn encrypt_root",
             "pub fn decrypt_root",
+            "pub fn seal_server_login_state",
+            "pub fn open_server_login_state",
         ] {
             assert!(
                 !production_source.contains(forbidden),
@@ -1131,6 +1638,42 @@ mod tests {
                 .count(),
             1
         );
+
+        let sealed_start_interface = production_source
+            .split("pub fn server_login_start_sealed")
+            .nth(1)
+            .and_then(|source| source.split("where").next())
+            .expect("密封登录起始接口必须存在");
+        let sealed_finish_interface = production_source
+            .split("pub fn server_login_finish_sealed")
+            .nth(1)
+            .and_then(|source| source.split('{').next())
+            .expect("密封登录完成接口必须存在");
+        let sealed_start_result = production_source
+            .split("pub struct SealedServerLoginStart")
+            .nth(1)
+            .and_then(|source| source.split("pub struct ClientLoginFinish").next())
+            .expect("密封登录结果接口必须存在");
+        for interface in [
+            sealed_start_interface,
+            sealed_finish_interface,
+            sealed_start_result,
+        ] {
+            for forbidden in ["ServerLoginState", "SessionKey", "ExportKey", "export_key"] {
+                assert!(
+                    !interface.contains(forbidden),
+                    "密封登录接口禁止暴露：{forbidden}"
+                );
+            }
+        }
+        assert!(sealed_finish_interface.contains("Result<(), Error>"));
+
+        let continuation_key_interface = production_source
+            .split("impl ServerLoginContinuationKey")
+            .nth(1)
+            .and_then(|source| source.split("impl Zeroize for").next())
+            .expect("continuation key 接口必须存在");
+        assert!(!continuation_key_interface.contains("pub fn as_bytes"));
     }
 
     #[test]
