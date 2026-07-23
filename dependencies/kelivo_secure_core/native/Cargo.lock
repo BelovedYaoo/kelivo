@@ -505,6 +505,7 @@ dependencies = [
 name = "kelivo_secure_core_protocol"
 version = "0.1.0"
 dependencies = [
+ "chacha20poly1305",
  "getrandom",
  "opaque-ke",
  "rand",

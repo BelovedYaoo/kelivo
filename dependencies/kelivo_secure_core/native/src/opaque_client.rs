@@ -191,7 +191,18 @@ fn protocol_error_status(error: ProtocolError) -> KelivoStatus {
         | ProtocolError::InvalidPayloadLength { .. }
         | ProtocolError::InvalidWireLength { .. } => KelivoStatus::OpaqueMessageInvalid,
         ProtocolError::Opaque(_) => KelivoStatus::OpaqueProtocolFailed,
-        ProtocolError::InvalidPasswordProfileConfiguration => KelivoStatus::InternalState,
+        ProtocolError::InvalidPasswordProfileConfiguration
+        | ProtocolError::InvalidServerLoginContinuationKeyLength { .. }
+        | ProtocolError::InvalidServerLoginContinuationMagic
+        | ProtocolError::UnsupportedServerLoginContinuationVersion(_)
+        | ProtocolError::UnsupportedServerLoginContinuationCipherSuite(_)
+        | ProtocolError::InvalidServerLoginContinuationLength { .. }
+        | ProtocolError::ServerLoginContinuationAadTooLarge
+        | ProtocolError::ServerLoginContinuationCrypto
+        | ProtocolError::ServerLoginContinuationAuthenticationFailed => {
+            // 客户端 ABI 不会处理服务端 continuation；若这些错误越过模块边界，属于内部接线错误。
+            KelivoStatus::InternalState
+        }
     }
 }
 
