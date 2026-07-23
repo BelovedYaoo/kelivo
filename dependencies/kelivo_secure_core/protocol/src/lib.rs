@@ -2,6 +2,9 @@
 
 //! Kelivo 端到端加密认证使用的纯 Rust OPAQUE 协议核心。
 
+#[cfg(feature = "device-crypto")]
+pub mod device_crypto;
+
 use std::fmt;
 use std::ops::Deref;
 

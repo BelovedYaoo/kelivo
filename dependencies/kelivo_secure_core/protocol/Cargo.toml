@@ -5,7 +5,8 @@ edition = "2024"
 publish = false
 
 [features]
-default = ["system-rng"]
+default = ["system-rng", "device-crypto"]
+device-crypto = ["dep:ed25519-dalek", "dep:hpke", "dep:sha2_device"]
 system-rng = ["rand/getrandom", "dep:getrandom"]
 
 [dependencies]
@@ -13,11 +14,19 @@ chacha20poly1305 = { version = "=0.11.0", default-features = false, features = [
   "alloc",
   "zeroize",
 ] }
+ed25519-dalek = { version = "=2.2.0", default-features = false, optional = true, features = [
+  "zeroize",
+] }
+hpke = { version = "=0.14.0", default-features = false, optional = true, features = [
+  "chacha",
+  "x25519",
+] }
 opaque-ke = { version = "=4.0.1", default-features = false, features = [
   "argon2",
   "ristretto255",
 ] }
 rand = { version = "=0.8.5", default-features = false }
+sha2_device = { package = "sha2", version = "=0.11.0", default-features = false, optional = true }
 sha2_opaque = { package = "sha2", version = "=0.10.9", default-features = false }
 zeroize = { version = "=1.9.0", default-features = false, features = ["alloc"] }
 
