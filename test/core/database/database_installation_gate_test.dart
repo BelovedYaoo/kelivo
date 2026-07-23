@@ -484,6 +484,40 @@ void main() {
       expect(await sidecar.readAsBytes(), [5, 6]);
       expect(await receipt.readAsString(), '{unknown');
     });
+
+    test('硬切发现数据库侧车拓扑异常时不先删除明文主库', () async {
+      final mainFile = databaseFile(directory);
+      await mainFile.writeAsBytes([
+        0x53,
+        0x51,
+        0x4c,
+        0x69,
+        0x74,
+        0x65,
+        0x20,
+        0x66,
+        0x6f,
+        0x72,
+        0x6d,
+        0x61,
+        0x74,
+        0x20,
+        0x33,
+        0x00,
+      ]);
+      final invalidSidecar = Directory('${mainFile.path}-wal');
+      await invalidSidecar.create();
+
+      await expectLater(
+        DatabaseEncryptionCutover.discardPlaintextState(
+          appDataDirectory: directory,
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      expect(await _hasPlaintextSqliteHeader(mainFile), isTrue);
+      expect(await invalidSidecar.exists(), isTrue);
+    });
   });
 }
 

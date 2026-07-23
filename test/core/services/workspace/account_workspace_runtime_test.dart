@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/providers/user_provider.dart';
 import 'package:Kelivo/core/models/provider_group.dart';
@@ -214,6 +215,186 @@ void main() {
     runtime = await bootstrap();
     expect(runtime.current.session?.userId, 'account-b');
     expect(runtime.current.dataDirectory.path, targetB.dataDirectory.path);
+  });
+
+  test('硬切清理本地与所有账号工作区的明文同步状态并保留密文凭证', () async {
+    var runtime = await bootstrap();
+    final bindA = await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'token-a'),
+    );
+    final targetA = (bindA as AccountWorkspaceRestartRequired).target;
+    await close(runtime);
+
+    runtime = await bootstrap();
+    final bindB = await runtime.bindAccount(
+      _session(userId: 'account-b', token: 'token-b'),
+    );
+    final targetB = (bindB as AccountWorkspaceRestartRequired).target;
+    await close(runtime);
+
+    final artifacts = <File>[
+      File(
+        p.join(installationRoot.path, '${CloudSyncStore.defaultBoxName}.hive'),
+      ),
+      File(
+        p.join(
+          targetA.dataDirectory.path,
+          '${CloudSyncStore.defaultBoxName}.hivec',
+        ),
+      ),
+      File(
+        p.join(
+          targetB.dataDirectory.path,
+          '${CloudSyncStore.defaultBoxName}.lock',
+        ),
+      ),
+    ];
+    for (final artifact in artifacts) {
+      await artifact.writeAsString('legacy-plaintext');
+    }
+    final databaseArtifacts = <File>[
+      for (final dataDirectory in <Directory>[
+        installationRoot,
+        targetA.dataDirectory,
+        targetB.dataDirectory,
+      ])
+        File(p.join(dataDirectory.path, AppDatabase.databaseFileName)),
+    ];
+    for (final databaseArtifact in databaseArtifacts) {
+      await databaseArtifact.writeAsBytes([
+        ...ascii.encode('SQLite format 3\u0000'),
+        1,
+      ]);
+    }
+    final sessionRecords = await installationRoot
+        .list(recursive: true, followLinks: false)
+        .where(
+          (entity) =>
+              entity is File &&
+              p.basename(entity.path).startsWith('session-v2-'),
+        )
+        .cast<File>()
+        .toList();
+    expect(sessionRecords, hasLength(2));
+    expect(sessionTokenStore.tokenCount, 2);
+
+    runtime = await bootstrap();
+    await runtime.discardPlaintextLocalState();
+
+    for (final artifact in artifacts) {
+      expect(await artifact.exists(), isFalse, reason: artifact.path);
+    }
+    for (final databaseArtifact in databaseArtifacts) {
+      expect(
+        await databaseArtifact.exists(),
+        isFalse,
+        reason: databaseArtifact.path,
+      );
+    }
+    for (final sessionRecord in sessionRecords) {
+      expect(await sessionRecord.exists(), isTrue, reason: sessionRecord.path);
+    }
+    expect(sessionTokenStore.tokenCount, 2);
+  });
+
+  test('任一非当前工作区存在未知同步拓扑时整批清理失败且不先删本地状态', () async {
+    var runtime = await bootstrap();
+    final bind = await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'token-a'),
+    );
+    final account = (bind as AccountWorkspaceRestartRequired).target;
+    await close(runtime);
+
+    final localArtifact = File(
+      p.join(installationRoot.path, '${CloudSyncStore.defaultBoxName}.hive'),
+    );
+    final unknownArtifact = File(
+      p.join(
+        account.dataDirectory.path,
+        '${CloudSyncStore.defaultBoxName}.unknown',
+      ),
+    );
+    await localArtifact.writeAsString('local-plaintext');
+    await unknownArtifact.writeAsString('ambiguous');
+
+    runtime = await bootstrap();
+    await expectLater(
+      runtime.discardPlaintextLocalState(),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(await localArtifact.exists(), isTrue);
+    expect(await unknownArtifact.exists(), isTrue);
+  });
+
+  test('账号目录出现非工作区条目时整批明文清理失败且不先删本地状态', () async {
+    var runtime = await bootstrap();
+    await runtime.bindAccount(_session(userId: 'account-a', token: 'token-a'));
+    await close(runtime);
+
+    final localArtifact = File(
+      p.join(installationRoot.path, '${CloudSyncStore.defaultBoxName}.hive'),
+    );
+    await localArtifact.writeAsString('local-plaintext');
+    final unknownEntry = File(
+      p.join(
+        installationRoot.path,
+        '.kelivo-workspaces',
+        'accounts',
+        'not-a-workspace',
+      ),
+    );
+    await unknownEntry.writeAsString('ambiguous');
+
+    runtime = await bootstrap();
+    await expectLater(
+      runtime.discardPlaintextLocalState(),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(await localArtifact.exists(), isTrue);
+    expect(await unknownEntry.exists(), isTrue);
+  });
+
+  test('非当前账号数据目录链接使整批明文清理失败且不先删本地状态', () async {
+    var runtime = await bootstrap();
+    final bindA = await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'token-a'),
+    );
+    final accountA = (bindA as AccountWorkspaceRestartRequired).target;
+    await close(runtime);
+
+    runtime = await bootstrap();
+    await runtime.bindAccount(_session(userId: 'account-b', token: 'token-b'));
+    await close(runtime);
+
+    final redirectedData = Directory(
+      p.join(installationRoot.path, 'redirected-account-a-data'),
+    );
+    await accountA.dataDirectory.rename(redirectedData.path);
+    await _createDirectoryLink(
+      accountA.dataDirectory.path,
+      redirectedData.path,
+    );
+    final localArtifact = File(
+      p.join(installationRoot.path, '${CloudSyncStore.defaultBoxName}.hive'),
+    );
+    await localArtifact.writeAsString('local-plaintext');
+
+    runtime = await bootstrap();
+    await expectLater(
+      runtime.discardPlaintextLocalState(),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(await localArtifact.exists(), isTrue);
+    expect(
+      await FileSystemEntity.type(
+        accountA.dataDirectory.path,
+        followLinks: false,
+      ),
+      isNot(FileSystemEntityType.directory),
+    );
   });
 
   test('切换到账号 B 后真实上传批次不包含账号 A 的本地配置', () async {

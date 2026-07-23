@@ -11,36 +11,21 @@ final class CloudSyncStateRetirement {
   static const _artifactSuffixes = <String>['.hive', '.hivec', '.lock'];
   static const _cleanupMarkerFileName = '.cloud-sync-state-retirement-v1';
 
+  static Future<void> validatePlaintextStateTopology({
+    required Directory appDataDirectory,
+  }) async {
+    await _validateDirectoryAndMarker(appDataDirectory);
+    await _inspectArtifacts(appDataDirectory);
+  }
+
   static Future<void> discardPlaintextState({
     required Directory appDataDirectory,
     RestoreDurability? durability,
   }) async {
     final resolvedDurability = durability ?? RestorePlatformDurability();
-    final appDataType = await FileSystemEntity.type(
-      appDataDirectory.path,
-      followLinks: false,
+    final (cleanupMarker, markerType) = await _validateDirectoryAndMarker(
+      appDataDirectory,
     );
-    if (appDataType != FileSystemEntityType.directory) {
-      throw StateError(
-        'cloud_sync_state_retirement_directory_type:'
-        '${appDataDirectory.path}',
-      );
-    }
-
-    final cleanupMarker = File(
-      p.join(appDataDirectory.path, _cleanupMarkerFileName),
-    );
-    final markerType = await FileSystemEntity.type(
-      cleanupMarker.path,
-      followLinks: false,
-    );
-    if (markerType != FileSystemEntityType.notFound &&
-        markerType != FileSystemEntityType.file) {
-      throw StateError(
-        'cloud_sync_state_retirement_marker_type:${cleanupMarker.path}',
-      );
-    }
-
     final initialArtifacts = await _inspectArtifacts(appDataDirectory);
     if (markerType == FileSystemEntityType.notFound &&
         initialArtifacts.isEmpty) {
@@ -83,6 +68,36 @@ final class CloudSyncStateRetirement {
     }
     await cleanupMarker.delete();
     await resolvedDurability.syncDirectory(appDataDirectory, fullBarrier: true);
+  }
+
+  static Future<(File, FileSystemEntityType)> _validateDirectoryAndMarker(
+    Directory appDataDirectory,
+  ) async {
+    final appDataType = await FileSystemEntity.type(
+      appDataDirectory.path,
+      followLinks: false,
+    );
+    if (appDataType != FileSystemEntityType.directory) {
+      throw StateError(
+        'cloud_sync_state_retirement_directory_type:'
+        '${appDataDirectory.path}',
+      );
+    }
+
+    final cleanupMarker = File(
+      p.join(appDataDirectory.path, _cleanupMarkerFileName),
+    );
+    final markerType = await FileSystemEntity.type(
+      cleanupMarker.path,
+      followLinks: false,
+    );
+    if (markerType != FileSystemEntityType.notFound &&
+        markerType != FileSystemEntityType.file) {
+      throw StateError(
+        'cloud_sync_state_retirement_marker_type:${cleanupMarker.path}',
+      );
+    }
+    return (cleanupMarker, markerType);
   }
 
   static Future<List<File>> _inspectArtifacts(

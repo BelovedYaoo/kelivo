@@ -308,6 +308,10 @@ typedef _GetLastErrorNative = Uint32 Function();
 typedef _GetLastErrorDart = int Function();
 
 final class _WindowsRestoreDurability implements RestoreDurability {
+  static const _extendedPathPrefix = '\\\\?\\';
+  static const _devicePathPrefix = '\\\\.\\';
+  static const _uncPathPrefix = '\\\\';
+  static const _extendedUncPathPrefix = '\\\\?\\UNC\\';
   _WindowsRestoreDurability() : _library = DynamicLibrary.open('kernel32.dll') {
     _createFile = _library.lookupFunction<_CreateFileNative, _CreateFileDart>(
       'CreateFileW',
@@ -388,7 +392,7 @@ final class _WindowsRestoreDurability implements RestoreDurability {
         expectedType) {
       throw FileSystemException('restore_durability_path_type', entity.path);
     }
-    final nativePath = entity.absolute.path.toNativeUtf16();
+    final nativePath = _nativePath(entity.absolute.path).toNativeUtf16();
     late final int handle;
     var openError = 0;
     try {
@@ -452,8 +456,8 @@ final class _WindowsRestoreDurability implements RestoreDurability {
         FileSystemEntityType.notFound) {
       throw FileSystemException('restore_durability_target_exists', target);
     }
-    final nativeSource = sourcePath.toNativeUtf16();
-    final nativeTarget = target.toNativeUtf16();
+    final nativeSource = _nativePath(sourcePath).toNativeUtf16();
+    final nativeTarget = _nativePath(target).toNativeUtf16();
     try {
       // 此处唯一使用的持久性原语是 MOVEFILE_WRITE_THROUGH。
       // 在每种受支持文件系统上完成验证前，同卷重命名与目录元数据
@@ -473,6 +477,20 @@ final class _WindowsRestoreDurability implements RestoreDurability {
       targetPath: target,
       expectedType: sourceType,
     );
+  }
+
+  static String _nativePath(String path) {
+    final absolute = p.normalize(p.absolute(path));
+    if (absolute.startsWith(_extendedPathPrefix) ||
+        absolute.startsWith(_devicePathPrefix)) {
+      return absolute;
+    }
+    // Flutter 的文件 API 已能访问长路径，但原生 Win32 调用仍受
+    // MAX_PATH 限制；统一转换后，深层账号工作区与普通路径使用同一语义。
+    if (absolute.startsWith(_uncPathPrefix)) {
+      return '$_extendedUncPathPrefix${absolute.substring(2)}';
+    }
+    return '$_extendedPathPrefix$absolute';
   }
 }
 

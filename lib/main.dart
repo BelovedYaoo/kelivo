@@ -8,7 +8,6 @@ import 'features/migration/hive_to_sqlite_migration_page.dart';
 import 'features/migration/hive_to_sqlite_migration_service.dart';
 import 'desktop/desktop_home_page.dart';
 import 'package:flutter/services.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:window_manager/window_manager.dart';
 import 'desktop/desktop_window_controller.dart';
 import 'desktop/desktop_tray_controller.dart';
@@ -37,12 +36,10 @@ import 'core/providers/backup_reminder_provider.dart';
 import 'core/providers/hotkey_provider.dart';
 import 'core/providers/cloud_sync_provider.dart';
 import 'core/database/chat_database_gateway.dart';
-import 'core/database/database_encryption_cutover.dart';
 import 'core/database/database_installation_gate.dart';
 import 'core/database/sqlcipher_database_key.dart';
 import 'core/services/chat/chat_service.dart';
-import 'core/services/sync/cloud_sync_store.dart';
-import 'core/services/sync/sync_write_journal.dart';
+import 'core/services/sync/sync_write_executor.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
 import 'core/services/database_v2_rollout_ledger.dart';
 import 'core/services/backup/restore_business_lease.dart';
@@ -161,9 +158,7 @@ Future<void> main() async {
         final businessLease = await RestoreBusinessLease.acquire(
           appDataDirectory: appDataDirectory,
         );
-        await DatabaseEncryptionCutover.discardPlaintextState(
-          appDataDirectory: appDataDirectory,
-        );
+        await workspaceRuntime.discardPlaintextLocalState();
         restoreOutcome =
             await RestoreStartupGate.recoverAndRequireBusinessReady(
               appDataDirectory: appDataDirectory,
@@ -248,22 +243,11 @@ Future<void> main() async {
         );
         return;
       }
-      // 同步写前日志必须在领域 Provider 创建前就绪，避免启动阶段本地写入漏记。
-      await Hive.initFlutter(appDataDirectory.path);
-      final cloudSyncStore = await CloudSyncStore.open();
-      final journalScopeId = await cloudSyncStore.loadOrCreateJournalScopeId();
-      final syncWriteJournal = SyncWriteJournal(
-        store: cloudSyncStore,
-        journalScopeId: journalScopeId,
-        initialSession: workspaceRuntime.current.session,
-      );
       // Enable edge-to-edge to allow content under system bars (Android)
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
       // Start app (Flutter log capture is toggleable and off by default)
       runApp(
         MyApp(
-          cloudSyncStore: cloudSyncStore,
-          syncWriteJournal: syncWriteJournal,
           workspaceRuntime: workspaceRuntime,
           databaseGateway: databaseGateway,
           restoreOutcome: restoreOutcome?.state,
@@ -391,52 +375,51 @@ class MigrationApp extends StatelessWidget {
 
 class MyApp extends StatelessWidget {
   const MyApp({
-    required this.cloudSyncStore,
-    required this.syncWriteJournal,
     required this.workspaceRuntime,
     required this.databaseGateway,
     super.key,
     this.restoreOutcome,
   });
 
-  final CloudSyncStore cloudSyncStore;
-  final SyncWriteJournal syncWriteJournal;
   final AccountWorkspaceRuntime workspaceRuntime;
   final ChatDatabaseGateway databaseGateway;
   final RestoreReceiptState? restoreOutcome;
 
   @override
   Widget build(BuildContext context) {
+    const localSyncWriteExecutor = LocalOnlySyncWriteExecutor();
     return MultiProvider(
       providers: [
-        Provider<SyncWriteJournal>.value(value: syncWriteJournal),
         ChangeNotifierProvider(create: (_) => ChatProvider()),
         ChangeNotifierProvider(
-          create: (_) => UserProvider(syncWriteExecutor: syncWriteJournal),
+          create: (_) =>
+              UserProvider(syncWriteExecutor: localSyncWriteExecutor),
         ),
         ChangeNotifierProvider(
           create: (_) {
             final settings = SettingsProvider(
-              syncWriteExecutor: syncWriteJournal,
+              syncWriteExecutor: localSyncWriteExecutor,
             );
             unawaited(settings.incrementAppLaunchCount());
             return settings;
           },
         ),
         ChangeNotifierProvider(
-          create: (_) =>
-              ChatService(syncWriteJournal, databaseGateway: databaseGateway),
+          create: (_) => ChatService(
+            localSyncWriteExecutor,
+            databaseGateway: databaseGateway,
+          ),
         ),
         ChangeNotifierProvider(create: (_) => McpToolService()),
         ChangeNotifierProvider(
-          create: (_) => McpProvider(syncWriteExecutor: syncWriteJournal),
+          create: (_) => McpProvider(syncWriteExecutor: localSyncWriteExecutor),
         ),
         ChangeNotifierProvider(create: (_) => ToolApprovalService()),
         ChangeNotifierProvider(create: (_) => AskUserInteractionService()),
         ChangeNotifierProvider(
           create: (ctx) => AssistantProvider(
             chatService: ctx.read<ChatService>(),
-            syncWriteExecutor: syncWriteJournal,
+            syncWriteExecutor: localSyncWriteExecutor,
           ),
         ),
         ChangeNotifierProvider(create: (_) => TagProvider()),
@@ -444,20 +427,23 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(create: (_) => UpdateProvider()),
         ChangeNotifierProvider(
           create: (_) =>
-              QuickPhraseProvider(syncWriteExecutor: syncWriteJournal),
+              QuickPhraseProvider(syncWriteExecutor: localSyncWriteExecutor),
         ),
         ChangeNotifierProvider(
-          create: (_) =>
-              InstructionInjectionProvider(syncWriteExecutor: syncWriteJournal),
+          create: (_) => InstructionInjectionProvider(
+            syncWriteExecutor: localSyncWriteExecutor,
+          ),
         ),
         ChangeNotifierProvider(
           create: (_) => InstructionInjectionGroupProvider(),
         ),
         ChangeNotifierProvider(
-          create: (_) => WorldBookProvider(syncWriteExecutor: syncWriteJournal),
+          create: (_) =>
+              WorldBookProvider(syncWriteExecutor: localSyncWriteExecutor),
         ),
         ChangeNotifierProvider(
-          create: (_) => MemoryProvider(syncWriteExecutor: syncWriteJournal),
+          create: (_) =>
+              MemoryProvider(syncWriteExecutor: localSyncWriteExecutor),
         ),
         ChangeNotifierProvider(create: (_) => BackupReminderProvider()),
         // Desktop hotkeys provider

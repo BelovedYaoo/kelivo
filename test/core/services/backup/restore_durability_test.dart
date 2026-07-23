@@ -38,6 +38,34 @@ void main() {
       }
     });
 
+    test('Windows 原生持久化支持超过 MAX_PATH 的受管路径', () async {
+      if (!Platform.isWindows) return;
+
+      var deepDirectory = root;
+      var segment = 0;
+      while (p.join(deepDirectory.path, 'payload.bin').length <= 270) {
+        deepDirectory = Directory(
+          p.join(
+            deepDirectory.path,
+            'segment_${segment.toString().padLeft(2, '0')}_0123456789',
+          ),
+        );
+        await deepDirectory.create();
+        segment++;
+      }
+      final source = File(p.join(deepDirectory.path, 'payload.bin'));
+      final target = p.join(deepDirectory.path, 'published.bin');
+      await source.writeAsBytes([7, 8, 9], flush: true);
+      expect(source.absolute.path.length, greaterThan(260));
+
+      await durability.syncFile(source, fullBarrier: true);
+      await durability.syncDirectory(deepDirectory, fullBarrier: true);
+      await durability.renameAndSync(source: source, targetPath: target);
+
+      expect(await source.exists(), isFalse);
+      expect(await File(target).readAsBytes(), [7, 8, 9]);
+    });
+
     test(
       'renames files across directories and persists both parents',
       () async {

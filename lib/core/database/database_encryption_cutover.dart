@@ -18,10 +18,60 @@ final class DatabaseEncryptionCutover {
   static const _databaseSidecarSuffixes = ['-wal', '-shm', '-journal', ''];
   static const _cleanupMarkerFileName = '.database-encryption-cutover-v1';
 
+  static Future<void> validatePlaintextStateTopology({
+    required Directory appDataDirectory,
+  }) async {
+    if (await FileSystemEntity.type(
+          appDataDirectory.path,
+          followLinks: false,
+        ) !=
+        FileSystemEntityType.directory) {
+      throw StateError('database_encryption_cutover_directory_type');
+    }
+    final legacyRetirement = LegacyDataRetirementService(appDataDirectory);
+    await legacyRetirement.inspectHiveArtifacts();
+    await legacyRetirement.readReceipt();
+    await _validateOptionalFile(
+      File(p.join(appDataDirectory.path, _cleanupMarkerFileName)),
+      errorCode: 'database_encryption_cutover_marker_type',
+    );
+    await _validateDatabaseFamily(
+      File(p.join(appDataDirectory.path, AppDatabase.databaseFileName)),
+    );
+    await _validateInstallationReceiptTopology(appDataDirectory);
+
+    final workspaceLock = RestoreWorkspaceLock(
+      appDataDirectory: appDataDirectory,
+    );
+    final workspaceType = await FileSystemEntity.type(
+      workspaceLock.workspaceRoot.path,
+      followLinks: false,
+    );
+    if (workspaceType == FileSystemEntityType.notFound) return;
+    if (workspaceType != FileSystemEntityType.directory) {
+      throw StateError('database_encryption_cutover_workspace_type');
+    }
+    await _validateOptionalFile(
+      File(
+        p.join(
+          workspaceLock.workspaceRoot.path,
+          RestoreWorkspaceLock.lockFileName,
+        ),
+      ),
+      errorCode: 'database_encryption_cutover_workspace_entry',
+    );
+    await _validateOptionalFile(
+      File(p.join(workspaceLock.workspaceRoot.path, _cleanupMarkerFileName)),
+      errorCode: 'database_encryption_cutover_marker_type',
+    );
+    await _validateRegularDirectoryTree(workspaceLock.workspaceRoot);
+  }
+
   static Future<void> discardPlaintextState({
     required Directory appDataDirectory,
     RestoreDurability? durability,
   }) async {
+    await validatePlaintextStateTopology(appDataDirectory: appDataDirectory);
     final resolvedDurability = durability ?? RestorePlatformDurability();
     await LegacyDataRetirementService(
       appDataDirectory,
@@ -216,6 +266,59 @@ final class DatabaseEncryptionCutover {
     }
     if (files.isNotEmpty) {
       await durability.syncDirectory(databaseFile.parent, fullBarrier: true);
+    }
+  }
+
+  static Future<void> _validateDatabaseFamily(File databaseFile) async {
+    for (final suffix in _databaseSidecarSuffixes) {
+      final type = await FileSystemEntity.type(
+        '${databaseFile.path}$suffix',
+        followLinks: false,
+      );
+      if (type != FileSystemEntityType.notFound &&
+          type != FileSystemEntityType.file) {
+        throw StateError('database_encryption_cutover_database_type');
+      }
+    }
+  }
+
+  static Future<void> _validateInstallationReceiptTopology(
+    Directory appDataDirectory,
+  ) async {
+    await for (final entity in appDataDirectory.list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      final isReceipt =
+          name == '.database_installation_receipt.tmp' ||
+          (name.startsWith('database_installation_receipt_') &&
+              name.endsWith('.json'));
+      if (!isReceipt) continue;
+      if (await FileSystemEntity.type(entity.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        throw StateError('database_installation_receipt_type');
+      }
+    }
+  }
+
+  static Future<void> _validateOptionalFile(
+    File file, {
+    required String errorCode,
+  }) async {
+    final type = await FileSystemEntity.type(file.path, followLinks: false);
+    if (type != FileSystemEntityType.notFound &&
+        type != FileSystemEntityType.file) {
+      throw StateError(errorCode);
+    }
+  }
+
+  static Future<void> _validateRegularDirectoryTree(Directory directory) async {
+    await for (final entity in directory.list(followLinks: false)) {
+      final type = await FileSystemEntity.type(entity.path, followLinks: false);
+      if (type == FileSystemEntityType.file) continue;
+      if (type == FileSystemEntityType.directory) {
+        await _validateRegularDirectoryTree(Directory(entity.path));
+        continue;
+      }
+      throw StateError('database_encryption_cutover_workspace_entry');
     }
   }
 

@@ -6,8 +6,10 @@ import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../../utils/app_directories.dart';
+import '../../database/database_encryption_cutover.dart';
 import '../backup/restore_business_lease.dart';
 import '../backup/restore_durability.dart';
+import '../sync/cloud_sync_state_retirement.dart';
 import '../sync/cloud_sync_types.dart';
 import 'account_session_token_store.dart';
 
@@ -98,6 +100,30 @@ final class AccountWorkspaceRuntime {
   bool _closed = false;
 
   AccountWorkspaceContext get current => _current;
+
+  Future<void> discardPlaintextLocalState() async {
+    _requireOpen();
+    final dataDirectories = await _existingDataDirectories();
+    // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
+    for (final dataDirectory in dataDirectories) {
+      await DatabaseEncryptionCutover.validatePlaintextStateTopology(
+        appDataDirectory: dataDirectory,
+      );
+      await CloudSyncStateRetirement.validatePlaintextStateTopology(
+        appDataDirectory: dataDirectory,
+      );
+    }
+    for (final dataDirectory in dataDirectories) {
+      await DatabaseEncryptionCutover.discardPlaintextState(
+        appDataDirectory: dataDirectory,
+        durability: _durability,
+      );
+      await CloudSyncStateRetirement.discardPlaintextState(
+        appDataDirectory: dataDirectory,
+        durability: _durability,
+      );
+    }
+  }
 
   static Future<AccountWorkspaceRuntime> bootstrap({
     Directory? installationRoot,
@@ -548,6 +574,83 @@ final class AccountWorkspaceRuntime {
       workspaceKey: workspaceKey,
       createMissing: createMissing,
     );
+  }
+
+  Future<List<Directory>> _existingDataDirectories() async {
+    final canonicalInstallationRoot = p.dirname(_canonicalWorkspaceRoot);
+    final localDataDirectory = await _ensureOwnedDirectory(
+      directory: installationRoot,
+      expectedCanonicalPath: canonicalInstallationRoot,
+      createMissing: false,
+      errorCode: 'account_workspace_installation_root_unsafe',
+    );
+    final dataDirectories = <Directory>[localDataDirectory];
+    final accountsDirectory = Directory(
+      p.join(_workspaceRoot.path, _accountsDirectoryName),
+    );
+    final accountsType = await FileSystemEntity.type(
+      accountsDirectory.path,
+      followLinks: false,
+    );
+    if (accountsType == FileSystemEntityType.notFound) {
+      return List<Directory>.unmodifiable(dataDirectories);
+    }
+    final ownedAccountsDirectory = await _ensureOwnedDirectory(
+      directory: accountsDirectory,
+      expectedCanonicalPath: p.join(
+        _canonicalWorkspaceRoot,
+        _accountsDirectoryName,
+      ),
+      createMissing: false,
+      errorCode: 'account_workspace_accounts_unsafe',
+    );
+    await for (final entity in ownedAccountsDirectory.list(
+      followLinks: false,
+    )) {
+      final entityType = await FileSystemEntity.type(
+        entity.path,
+        followLinks: false,
+      );
+      final workspaceKey = p.basename(entity.path);
+      if (entityType != FileSystemEntityType.directory ||
+          !_isWorkspaceKey(workspaceKey)) {
+        throw StateError('account_workspace_account_entry_unsafe');
+      }
+      final accountDirectory = await _ensureAccountDirectoryPath(
+        workspaceRoot: _workspaceRoot,
+        canonicalWorkspaceRoot: _canonicalWorkspaceRoot,
+        workspaceKey: workspaceKey,
+        createMissing: false,
+      );
+      final dataDirectory = Directory(
+        p.join(accountDirectory.path, _dataDirectoryName),
+      );
+      final dataType = await FileSystemEntity.type(
+        dataDirectory.path,
+        followLinks: false,
+      );
+      if (dataType == FileSystemEntityType.notFound) continue;
+      dataDirectories.add(
+        await _ensureOwnedDirectory(
+          directory: dataDirectory,
+          expectedCanonicalPath: p.join(
+            _canonicalWorkspaceRoot,
+            _accountsDirectoryName,
+            workspaceKey,
+            _dataDirectoryName,
+          ),
+          createMissing: false,
+          errorCode: 'account_workspace_data_unsafe',
+        ),
+      );
+    }
+    dataDirectories.sort(
+      (left, right) => p
+          .normalize(left.path)
+          .toLowerCase()
+          .compareTo(p.normalize(right.path).toLowerCase()),
+    );
+    return List<Directory>.unmodifiable(dataDirectories);
   }
 
   Future<Directory> _ensureAccountDataDirectory(
