@@ -37,12 +37,10 @@ final class LegacyRetirementReceipt {
   final List<LegacyHiveArtifact> deletedArtifacts;
 }
 
-/// 仅在用户明确操作后删除冻结的 Hive 产物族。
+/// E2EE 硬切时退役冻结的 Hive 明文产物族。
 ///
-/// 迁移准入在存储 UI 可用前完成。UI 会结合推出证据与
-/// [inspectHiveArtifacts] 决定是否提供清理。此服务让删除支持崩溃恢复，
-/// 但有意不设置保留时长、诊断导出或推出阈值：
-/// 迁移完成后，保留的 Hive 文件属于用户。
+/// 删除前先发布带校验链的回执，使进程中断后无需重新信任明文内容
+/// 也能继续完成同一批清理；[inspectHiveArtifacts] 同时供存储统计复用。
 final class LegacyDataRetirementService {
   LegacyDataRetirementService(
     this.appDataDirectory, {
