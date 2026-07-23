@@ -27,9 +27,9 @@ void main() {
     final before = await service.inspectHiveArtifacts();
     final receipt = await service.retireHiveArtifacts();
 
-    expect(before, hasLength(3));
+    expect(before, hasLength(9));
     expect(receipt.state, LegacyRetirementState.completed);
-    expect(receipt.deletedArtifacts, hasLength(3));
+    expect(receipt.deletedArtifacts, hasLength(9));
     expect(await unrelated.exists(), isTrue);
     expect(await service.inspectHiveArtifacts(), isEmpty);
   });
@@ -64,7 +64,7 @@ void main() {
       (await service.readReceipt())!.state,
       LegacyRetirementState.deleting,
     );
-    expect(await service.inspectHiveArtifacts(), hasLength(3));
+    expect(await service.inspectHiveArtifacts(), hasLength(9));
 
     interrupt = false;
     final completed = await service.retireHiveArtifacts();
@@ -82,5 +82,27 @@ void main() {
 
     expect(second.sequence, first.sequence + 2);
     expect(await service.inspectHiveArtifacts(), isEmpty);
+  });
+
+  test('rejects unknown files in a managed Hive box family', () async {
+    final known = File(p.join(directory.path, 'messages.hivec'));
+    final unknown = File(p.join(directory.path, 'messages.hive.partial'));
+    await known.writeAsString('legacy');
+    await unknown.writeAsString('ambiguous');
+    final service = LegacyDataRetirementService(directory);
+
+    await expectLater(
+      service.retireHiveArtifacts(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'legacy_retirement_unknown_topology',
+        ),
+      ),
+    );
+
+    expect(await known.exists(), isTrue);
+    expect(await unknown.exists(), isTrue);
   });
 }

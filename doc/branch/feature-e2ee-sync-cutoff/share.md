@@ -14,5 +14,6 @@
 - 已退役聊天、导入和恢复路径对 `CloudSyncStore.runWithDefaultRescanWrite` 的生产调用，并删除仅服务旧重扫协议的测试注入接口。
 - 已合入明文同步状态退役与内容同步门禁：应用不再初始化旧 Hive、`CloudSyncStore` 或 `SyncWriteJournal`，领域写入统一使用 `LocalOnlySyncWriteExecutor`，云同步只保留账号和设备控制面。
 - 启动阶段会在任何业务数据库打开前枚举匿名及全部账号工作区；先整批校验目录、链接、SQLite/Hive/同步状态拓扑，再清理所有明文数据库与同步状态。任一工作区存在歧义时整批失败关闭，不会先部分删除。
+- 三个旧 Hive box 的 `.hive/.hivec/.lock` 文件族均纳入回执链清理；同 box 前缀的未知文件失败关闭，避免压缩中断遗留完整明文帧，Issue #27 等完整验证后关闭。
 - Windows 原生持久化调用已使用扩展长度路径；超过 260 字符的账号目录可完成文件/目录同步与原子重命名，Issue #26 等完整验证后关闭。
-- 数据库安装门、账号工作区与 Windows 持久化相关测试共 70 项通过；变更文件定向 `flutter analyze --no-pub` 通过。
+- 旧 Hive 退役与账号工作区相关测试共 54 项通过；根仓及变更文件 `flutter analyze --no-pub` 通过。

@@ -252,6 +252,14 @@ void main() {
     for (final artifact in artifacts) {
       await artifact.writeAsString('legacy-plaintext');
     }
+    final legacyHiveArtifacts = <File>[
+      File(p.join(installationRoot.path, 'conversations.hive')),
+      File(p.join(targetA.dataDirectory.path, 'messages.hivec')),
+      File(p.join(targetB.dataDirectory.path, 'tool_events_v1.lock')),
+    ];
+    for (final artifact in legacyHiveArtifacts) {
+      await artifact.writeAsString('legacy-hive-plaintext');
+    }
     final databaseArtifacts = <File>[
       for (final dataDirectory in <Directory>[
         installationRoot,
@@ -282,6 +290,9 @@ void main() {
     await runtime.discardPlaintextLocalState();
 
     for (final artifact in artifacts) {
+      expect(await artifact.exists(), isFalse, reason: artifact.path);
+    }
+    for (final artifact in legacyHiveArtifacts) {
       expect(await artifact.exists(), isFalse, reason: artifact.path);
     }
     for (final databaseArtifact in databaseArtifacts) {
@@ -321,6 +332,39 @@ void main() {
     await expectLater(
       runtime.discardPlaintextLocalState(),
       throwsA(isA<StateError>()),
+    );
+
+    expect(await localArtifact.exists(), isTrue);
+    expect(await unknownArtifact.exists(), isTrue);
+  });
+
+  test('非当前工作区存在未知 Hive 拓扑时整批清理失败且不先删本地状态', () async {
+    var runtime = await bootstrap();
+    final bind = await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'token-a'),
+    );
+    final account = (bind as AccountWorkspaceRestartRequired).target;
+    await close(runtime);
+
+    final localArtifact = File(
+      p.join(installationRoot.path, 'conversations.hive'),
+    );
+    final unknownArtifact = File(
+      p.join(account.dataDirectory.path, 'messages.hive.partial'),
+    );
+    await localArtifact.writeAsString('local-legacy');
+    await unknownArtifact.writeAsString('ambiguous');
+
+    runtime = await bootstrap();
+    await expectLater(
+      runtime.discardPlaintextLocalState(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'legacy_retirement_unknown_topology',
+        ),
+      ),
     );
 
     expect(await localArtifact.exists(), isTrue);

@@ -51,10 +51,21 @@ final class LegacyDataRetirementService {
     this.clock,
   }) : durability = durability ?? RestorePlatformDurability();
 
+  static const hiveBoxNames = <String>{
+    'conversations',
+    'messages',
+    'tool_events_v1',
+  };
   static const hiveArtifactNames = <String>{
     'conversations.hive',
+    'conversations.hivec',
+    'conversations.lock',
     'messages.hive',
+    'messages.hivec',
+    'messages.lock',
     'tool_events_v1.hive',
+    'tool_events_v1.hivec',
+    'tool_events_v1.lock',
   };
   static const _retentionDirectoryName = '.database_v2_retention';
   static final _checksumPattern = RegExp(r'^[0-9a-f]{64}$');
@@ -70,33 +81,44 @@ final class LegacyDataRetirementService {
 
   Future<List<LegacyHiveArtifact>> inspectHiveArtifacts() async {
     final artifacts = <LegacyHiveArtifact>[];
-    for (final name in hiveArtifactNames.toList()..sort()) {
-      final file = File(p.join(appDataDirectory.path, name));
-      final type = await FileSystemEntity.type(file.path, followLinks: false);
-      if (type == FileSystemEntityType.notFound) continue;
+    await for (final entity in appDataDirectory.list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      final normalizedName = name.toLowerCase();
+      if (!hiveBoxNames.any(
+        (boxName) => normalizedName.startsWith('$boxName.'),
+      )) {
+        continue;
+      }
+      if (!hiveArtifactNames.contains(name)) {
+        throw StateError('legacy_retirement_unknown_topology');
+      }
+      final type = await FileSystemEntity.type(entity.path, followLinks: false);
       if (type != FileSystemEntityType.file) {
         throw StateError('legacy_retirement_artifact_type');
       }
-      artifacts.add(LegacyHiveArtifact(name: name, bytes: await file.length()));
+      artifacts.add(
+        LegacyHiveArtifact(name: name, bytes: await File(entity.path).length()),
+      );
     }
+    artifacts.sort((left, right) => left.name.compareTo(right.name));
     return List.unmodifiable(artifacts);
   }
 
   Future<LegacyRetirementReceipt> retireHiveArtifacts() async {
+    final currentArtifacts = await inspectHiveArtifacts();
     final existing = await readReceipt();
     late final LegacyRetirementReceipt deleting;
     if (existing?.state == LegacyRetirementState.deleting) {
       deleting = existing!;
     } else {
-      final artifacts = await inspectHiveArtifacts();
-      if (artifacts.isEmpty && existing != null) return existing;
+      if (currentArtifacts.isEmpty && existing != null) return existing;
       deleting = await _publishReceipt(
         sequence: (existing?.sequence ?? 0) + 1,
         state: LegacyRetirementState.deleting,
         previousChecksum: existing?.checksum,
         requestedAtUtc: (clock?.call() ?? DateTime.now()).toUtc(),
         completedAtUtc: null,
-        artifacts: artifacts,
+        artifacts: currentArtifacts,
       );
       await afterDeletingReceiptPublished?.call();
     }
@@ -112,7 +134,7 @@ final class LegacyDataRetirementService {
       await file.delete();
       await durability.syncDirectory(appDataDirectory, fullBarrier: true);
     }
-    return _publishReceipt(
+    final completed = await _publishReceipt(
       sequence: deleting.sequence + 1,
       state: LegacyRetirementState.completed,
       previousChecksum: deleting.checksum,
@@ -120,6 +142,10 @@ final class LegacyDataRetirementService {
       completedAtUtc: (clock?.call() ?? DateTime.now()).toUtc(),
       artifacts: deleting.deletedArtifacts,
     );
+    if ((await inspectHiveArtifacts()).isNotEmpty) {
+      throw StateError('legacy_retirement_artifact_recreated');
+    }
+    return completed;
   }
 
   Future<LegacyRetirementReceipt?> readReceipt() async {
