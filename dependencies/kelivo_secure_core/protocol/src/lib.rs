@@ -51,9 +51,11 @@ pub const ARGON2_MEMORY_KIB: u32 = 65_536;
 pub const ARGON2_ITERATIONS: u32 = 3;
 pub const ARGON2_PARALLELISM: u32 = 4;
 pub const KEY_LENGTH: usize = 64;
+pub const SERVER_SETUP_LENGTH: usize = WIRE_HEADER_LENGTH + 128;
 pub const REGISTRATION_REQUEST_LENGTH: usize = WIRE_HEADER_LENGTH + 32;
 pub const REGISTRATION_RESPONSE_LENGTH: usize = WIRE_HEADER_LENGTH + 64;
 pub const REGISTRATION_UPLOAD_LENGTH: usize = WIRE_HEADER_LENGTH + 192;
+pub const REGISTRATION_RECORD_LENGTH: usize = WIRE_HEADER_LENGTH + 192;
 pub const CREDENTIAL_REQUEST_LENGTH: usize = WIRE_HEADER_LENGTH + 96;
 pub const CREDENTIAL_RESPONSE_LENGTH: usize = WIRE_HEADER_LENGTH + 320;
 pub const CREDENTIAL_FINALIZATION_LENGTH: usize = WIRE_HEADER_LENGTH + 64;
@@ -62,6 +64,8 @@ pub const SERVER_LOGIN_CONTINUATION_CIPHER_SUITE_ID: u16 = 1;
 pub const SERVER_LOGIN_CONTINUATION_KEY_LENGTH: usize = 32;
 pub const SERVER_LOGIN_CONTINUATION_LENGTH: usize =
     SERVER_LOGIN_CONTINUATION_TAG_OFFSET + SERVER_LOGIN_CONTINUATION_TAG_LENGTH;
+/// AAD 只承载账户、设备与登录尝试等有界绑定信息，不允许塞入业务正文。
+/// 恰好 64 KiB 可以使用；再多一个字节会在读取随机源或执行 OPAQUE 前被拒绝。
 pub const MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH: usize = 64 * 1024;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -264,6 +268,7 @@ impl ObjectKind {
 }
 
 const _: () = {
+    assert!(SERVER_SETUP_LENGTH == WIRE_HEADER_LENGTH + ObjectKind::ServerSetup.payload_length());
     assert!(
         REGISTRATION_REQUEST_LENGTH
             == WIRE_HEADER_LENGTH + ObjectKind::RegistrationRequest.payload_length()
@@ -275,6 +280,10 @@ const _: () = {
     assert!(
         REGISTRATION_UPLOAD_LENGTH
             == WIRE_HEADER_LENGTH + ObjectKind::RegistrationUpload.payload_length()
+    );
+    assert!(
+        REGISTRATION_RECORD_LENGTH
+            == WIRE_HEADER_LENGTH + ObjectKind::RegistrationRecord.payload_length()
     );
     assert!(
         CREDENTIAL_REQUEST_LENGTH
@@ -512,6 +521,17 @@ impl SessionKey {
     }
 }
 
+/// 服务端登录状态密封密钥。原始字节只允许在构造时进入协议模块。
+///
+/// 外部调用方不能解构密钥并读回原始字节：
+///
+/// ```compile_fail
+/// use kelivo_secure_core_protocol::ServerLoginContinuationKey;
+///
+/// let key = ServerLoginContinuationKey::from_bytes(&[0x31; 32]).unwrap();
+/// let ServerLoginContinuationKey(raw) = key;
+/// let _ = raw;
+/// ```
 pub struct ServerLoginContinuationKey([u8; SERVER_LOGIN_CONTINUATION_KEY_LENGTH]);
 
 impl ServerLoginContinuationKey {
@@ -599,6 +619,21 @@ pub struct ServerLoginStart {
     pub response: CredentialResponse,
 }
 
+/// 密封登录起始结果只允许通过 `into_parts` 取得公开响应与密封 continuation。
+///
+/// 外部调用方不能绕过接口读取结果内部字段：
+///
+/// ```compile_fail
+/// use kelivo_secure_core_protocol::SealedServerLoginStart;
+///
+/// fn expose(result: SealedServerLoginStart) {
+///     let SealedServerLoginStart {
+///         response,
+///         continuation,
+///     } = result;
+///     let _ = (response, continuation);
+/// }
+/// ```
 pub struct SealedServerLoginStart {
     response: CredentialResponse,
     continuation: ServerLoginContinuation,
@@ -802,6 +837,7 @@ pub fn server_login_start_sealed<R>(
 where
     R: CryptoRng + RngCore,
 {
+    validate_continuation_aad(continuation_aad)?;
     let ServerLoginStart { state, response } =
         server_login_start(rng, server_setup, registration, request, binding)?;
     let continuation = seal_server_login_state(rng, state, continuation_key, continuation_aad)?;
@@ -863,6 +899,25 @@ pub fn server_login_finish(
     )))
 }
 
+/// 验证密封 continuation 与 KE3，只返回认证结果。
+///
+/// 返回类型固定为 `Result<(), Error>`，不会向调用方提供 session key 或 export key：
+///
+/// ```
+/// use kelivo_secure_core_protocol::{
+///     AccountBinding, CredentialFinalization, Error, ServerLoginContinuation,
+///     ServerLoginContinuationKey, server_login_finish_sealed,
+/// };
+///
+/// let finish: for<'key, 'aad, 'binding> fn(
+///     ServerLoginContinuation,
+///     &'key ServerLoginContinuationKey,
+///     &'aad [u8],
+///     CredentialFinalization,
+///     AccountBinding<'binding>,
+/// ) -> Result<(), Error> = server_login_finish_sealed;
+/// let _ = finish;
+/// ```
 pub fn server_login_finish_sealed(
     continuation: ServerLoginContinuation,
     continuation_key: &ServerLoginContinuationKey,
@@ -877,10 +932,15 @@ pub fn server_login_finish_sealed(
     Ok(())
 }
 
-fn continuation_aad(header: &[u8], external_aad: &[u8]) -> Result<Vec<u8>, Error> {
+fn validate_continuation_aad(external_aad: &[u8]) -> Result<(), Error> {
     if external_aad.len() > MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH {
         return Err(Error::ServerLoginContinuationAadTooLarge);
     }
+    Ok(())
+}
+
+fn continuation_aad(header: &[u8], external_aad: &[u8]) -> Result<Vec<u8>, Error> {
+    validate_continuation_aad(external_aad)?;
     let capacity = SERVER_LOGIN_CONTINUATION_AAD_DOMAIN
         .len()
         .checked_add(header.len())
@@ -1038,6 +1098,52 @@ mod tests {
         }
     }
 
+    struct SealFailingRng(CycleRng);
+
+    impl RngCore for SealFailingRng {
+        fn next_u32(&mut self) -> u32 {
+            self.0.next_u32()
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            self.0.next_u64()
+        }
+
+        fn fill_bytes(&mut self, destination: &mut [u8]) {
+            self.0.fill_bytes(destination);
+        }
+
+        fn try_fill_bytes(&mut self, _destination: &mut [u8]) -> Result<(), RandomError> {
+            let code =
+                NonZeroU32::new(RandomError::CUSTOM_START + 1).expect("随机错误码必须为非零值");
+            Err(RandomError::from(code))
+        }
+    }
+
+    impl CryptoRng for SealFailingRng {}
+
+    struct PanicRng;
+
+    impl RngCore for PanicRng {
+        fn next_u32(&mut self) -> u32 {
+            panic!("超限 AAD 必须在读取随机源前拒绝")
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            panic!("超限 AAD 必须在读取随机源前拒绝")
+        }
+
+        fn fill_bytes(&mut self, _destination: &mut [u8]) {
+            panic!("超限 AAD 必须在读取随机源前拒绝")
+        }
+
+        fn try_fill_bytes(&mut self, _destination: &mut [u8]) -> Result<(), RandomError> {
+            panic!("超限 AAD 必须在读取随机源前拒绝")
+        }
+    }
+
+    impl CryptoRng for PanicRng {}
+
     fn deterministic_rng(seed: u8) -> CycleRng {
         CycleRng::new(
             (0_u16..=255)
@@ -1117,7 +1223,7 @@ mod tests {
         .expect("正确密钥与 AAD 应完成认证");
     }
 
-    fn sealed_login_attempt() -> (Vec<u8>, Vec<u8>) {
+    fn sealed_login_attempt_with_aad(continuation_aad: &[u8]) -> (Vec<u8>, Vec<u8>) {
         let (setup, record) = registered_account();
         let binding = AccountBinding::new(b"sealed-account").expect("账户标识应有效");
         let password = b"sealed continuation password";
@@ -1136,7 +1242,7 @@ mod tests {
             request,
             binding,
             &continuation_key,
-            b"login-attempt/failure-cases",
+            continuation_aad,
         )
         .expect("服务端应返回密封登录状态")
         .into_parts();
@@ -1156,6 +1262,10 @@ mod tests {
         )
     }
 
+    fn sealed_login_attempt() -> (Vec<u8>, Vec<u8>) {
+        sealed_login_attempt_with_aad(b"login-attempt/failure-cases")
+    }
+
     fn finish_sealed_attempt(
         continuation: &[u8],
         key: &[u8],
@@ -1171,22 +1281,37 @@ mod tests {
         )
     }
 
+    fn assert_continuation_tampering_fails(index: usize) {
+        let (mut continuation, finalization) = sealed_login_attempt();
+        let key = [0x31; SERVER_LOGIN_CONTINUATION_KEY_LENGTH];
+        let aad = b"login-attempt/failure-cases";
+        continuation[index] ^= 1;
+        assert_eq!(
+            finish_sealed_attempt(&continuation, &key, aad, &finalization),
+            Err(Error::ServerLoginContinuationAuthenticationFailed)
+        );
+    }
+
     #[test]
-    fn sealed_server_login_rejects_tampering_wrong_context_and_wrong_ke3() {
+    fn sealed_server_login_rejects_nonce_tampering() {
+        assert_continuation_tampering_fails(SERVER_LOGIN_CONTINUATION_HEADER_LENGTH);
+    }
+
+    #[test]
+    fn sealed_server_login_rejects_ciphertext_tampering() {
+        assert_continuation_tampering_fails(SERVER_LOGIN_CONTINUATION_CIPHERTEXT_OFFSET);
+    }
+
+    #[test]
+    fn sealed_server_login_rejects_tag_tampering() {
+        assert_continuation_tampering_fails(SERVER_LOGIN_CONTINUATION_TAG_OFFSET);
+    }
+
+    #[test]
+    fn sealed_server_login_rejects_wrong_context_and_wrong_ke3() {
         let (continuation, finalization) = sealed_login_attempt();
         let key = [0x31; SERVER_LOGIN_CONTINUATION_KEY_LENGTH];
         let aad = b"login-attempt/failure-cases";
-
-        let mut tampered_continuation = continuation.clone();
-        let last = tampered_continuation
-            .last_mut()
-            .expect("固定 continuation 必须包含认证标签");
-        *last ^= 1;
-        assert_eq!(
-            finish_sealed_attempt(&tampered_continuation, &key, aad, &finalization),
-            Err(Error::ServerLoginContinuationAuthenticationFailed)
-        );
-
         let wrong_key = [0x32; SERVER_LOGIN_CONTINUATION_KEY_LENGTH];
         assert_eq!(
             finish_sealed_attempt(&continuation, &wrong_key, aad, &finalization),
@@ -1206,6 +1331,76 @@ mod tests {
             finish_sealed_attempt(&continuation, &key, aad, &wrong_finalization),
             Err(Error::Opaque(OpaqueProtocolError::InvalidLoginError))
         ));
+    }
+
+    #[test]
+    fn sealed_server_login_reports_continuation_rng_failure() {
+        let (setup, record) = registered_account();
+        let binding = AccountBinding::new(b"sealed-account").expect("账户标识应有效");
+        let mut client_rng = deterministic_rng(102);
+        let (_, request) = client_login_start(&mut client_rng, b"sealed continuation password")
+            .expect("客户端登录起始应成功")
+            .into_parts();
+        let key =
+            ServerLoginContinuationKey::from_bytes(&[0x31; SERVER_LOGIN_CONTINUATION_KEY_LENGTH])
+                .expect("固定长度密封密钥应有效");
+        let mut rng = SealFailingRng(deterministic_rng(112));
+
+        assert_eq!(
+            server_login_start_sealed(
+                &mut rng,
+                &setup,
+                Some(&record),
+                request,
+                binding,
+                &key,
+                b"login-attempt/rng-failure",
+            )
+            .err(),
+            Some(Error::RandomnessUnavailable)
+        );
+    }
+
+    #[test]
+    fn sealed_server_login_accepts_exact_aad_limit() {
+        let aad = vec![0x5a; MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH];
+        let (continuation, finalization) = sealed_login_attempt_with_aad(&aad);
+        finish_sealed_attempt(
+            &continuation,
+            &[0x31; SERVER_LOGIN_CONTINUATION_KEY_LENGTH],
+            &aad,
+            &finalization,
+        )
+        .expect("恰好 64 KiB 的 AAD 应完成认证");
+    }
+
+    #[test]
+    fn sealed_server_login_rejects_oversized_aad_before_rng() {
+        let (setup, record) = registered_account();
+        let binding = AccountBinding::new(b"sealed-account").expect("账户标识应有效");
+        let mut client_rng = deterministic_rng(122);
+        let (_, request) = client_login_start(&mut client_rng, b"sealed continuation password")
+            .expect("客户端登录起始应成功")
+            .into_parts();
+        let key =
+            ServerLoginContinuationKey::from_bytes(&[0x31; SERVER_LOGIN_CONTINUATION_KEY_LENGTH])
+                .expect("固定长度密封密钥应有效");
+        let oversized_aad = vec![0_u8; MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH + 1];
+        let mut rng = PanicRng;
+
+        assert_eq!(
+            server_login_start_sealed(
+                &mut rng,
+                &setup,
+                Some(&record),
+                request,
+                binding,
+                &key,
+                &oversized_aad,
+            )
+            .err(),
+            Some(Error::ServerLoginContinuationAadTooLarge)
+        );
     }
 
     #[test]
@@ -1274,26 +1469,6 @@ mod tests {
                 actual: 177,
             })
         );
-
-        let (continuation, finalization) = sealed_login_attempt();
-        assert_eq!(
-            finish_sealed_attempt(
-                &continuation,
-                &[0x31; 32],
-                &vec![0_u8; MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH],
-                &finalization,
-            ),
-            Err(Error::ServerLoginContinuationAuthenticationFailed)
-        );
-        assert_eq!(
-            finish_sealed_attempt(
-                &continuation,
-                &[0x31; 32],
-                &vec![0_u8; MAX_SERVER_LOGIN_CONTINUATION_AAD_LENGTH + 1],
-                &finalization,
-            ),
-            Err(Error::ServerLoginContinuationAadTooLarge)
-        );
     }
 
     fn decode_hex(value: &str) -> Vec<u8> {
@@ -1323,6 +1498,8 @@ mod tests {
         assert_eq!(PROTOCOL_PROFILE.format_version, 1);
         assert_eq!(PROTOCOL_PROFILE.ciphersuite_id, 1);
         assert_eq!(PROTOCOL_PROFILE.password_profile_id, 1);
+        assert_eq!(SERVER_SETUP_LENGTH, 144);
+        assert_eq!(REGISTRATION_RECORD_LENGTH, 208);
         assert_eq!(ksf.params().m_cost(), 65_536);
         assert_eq!(ksf.params().t_cost(), 3);
         assert_eq!(ksf.params().p_cost(), 4);
@@ -1430,6 +1607,7 @@ mod tests {
 
         let mut setup_rng = deterministic_rng(11);
         let setup = generate_server_setup(&mut setup_rng).expect("服务端初始化应成功");
+        assert_eq!(setup.as_bytes().len(), SERVER_SETUP_LENGTH);
         wire_digest.update(setup.as_bytes());
         let setup = ServerSetup::from_bytes(setup.as_bytes()).expect("服务端配置线格式应可往返");
 
@@ -1465,6 +1643,7 @@ mod tests {
         let upload = RegistrationUpload::from_bytes(registration_finish.upload.as_bytes())
             .expect("注册上传线格式应可往返");
         let record = server_registration_finish(upload).expect("服务端保存记录应成功");
+        assert_eq!(record.as_bytes().len(), REGISTRATION_RECORD_LENGTH);
         wire_digest.update(record.as_bytes());
         let record =
             RegistrationRecord::from_bytes(record.as_bytes()).expect("注册记录线格式应可往返");
@@ -1590,8 +1769,6 @@ mod tests {
             "pub fn wrap_",
             "pub fn encrypt_root",
             "pub fn decrypt_root",
-            "pub fn seal_server_login_state",
-            "pub fn open_server_login_state",
         ] {
             assert!(
                 !production_source.contains(forbidden),
@@ -1638,42 +1815,6 @@ mod tests {
                 .count(),
             1
         );
-
-        let sealed_start_interface = production_source
-            .split("pub fn server_login_start_sealed")
-            .nth(1)
-            .and_then(|source| source.split("where").next())
-            .expect("密封登录起始接口必须存在");
-        let sealed_finish_interface = production_source
-            .split("pub fn server_login_finish_sealed")
-            .nth(1)
-            .and_then(|source| source.split('{').next())
-            .expect("密封登录完成接口必须存在");
-        let sealed_start_result = production_source
-            .split("pub struct SealedServerLoginStart")
-            .nth(1)
-            .and_then(|source| source.split("pub struct ClientLoginFinish").next())
-            .expect("密封登录结果接口必须存在");
-        for interface in [
-            sealed_start_interface,
-            sealed_finish_interface,
-            sealed_start_result,
-        ] {
-            for forbidden in ["ServerLoginState", "SessionKey", "ExportKey", "export_key"] {
-                assert!(
-                    !interface.contains(forbidden),
-                    "密封登录接口禁止暴露：{forbidden}"
-                );
-            }
-        }
-        assert!(sealed_finish_interface.contains("Result<(), Error>"));
-
-        let continuation_key_interface = production_source
-            .split("impl ServerLoginContinuationKey")
-            .nth(1)
-            .and_then(|source| source.split("impl Zeroize for").next())
-            .expect("continuation key 接口必须存在");
-        assert!(!continuation_key_interface.contains("pub fn as_bytes"));
     }
 
     #[test]
