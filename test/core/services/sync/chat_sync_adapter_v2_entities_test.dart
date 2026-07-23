@@ -666,7 +666,7 @@ void main() {
     );
   });
 
-  test('删除会话只锁定会话并请求完整聊天重扫', () async {
+  test('删除会话只锁定会话且不请求旧聊天重扫', () async {
     final conversation = await chatService.createConversation(title: 'Chat');
     final message = await chatService.addMessage(
       conversationId: conversation.id,
@@ -693,13 +693,10 @@ void main() {
     ]);
     expect(await chatService.loadConversationForSync(conversation.id), isNull);
     expect(await chatService.loadMessageForSync(message.id), isNull);
-    expect(
-      (await _readDefaultRescanRequest())?.entityTypes,
-      CloudSyncStore.chatRescanEntityTypes,
-    );
+    expect(store.rescanRequest, isNull);
   });
 
-  test('恢复旧版会话不逐项写 journal 并请求完整聊天重扫', () async {
+  test('恢复旧版会话不逐项写 journal 且不请求旧聊天重扫', () async {
     final conversation = Conversation(
       id: 'legacy-conversation',
       title: 'Legacy',
@@ -723,13 +720,10 @@ void main() {
     final persistedMessage = await chatService.loadMessageForSync(message.id);
     expect(persistedConversation?.messageIds, contains(message.id));
     expect(persistedMessage?.content, message.content);
-    expect(
-      (await _readDefaultRescanRequest())?.entityTypes,
-      CloudSyncStore.chatRescanEntityTypes,
-    );
+    expect(store.rescanRequest, isNull);
   });
 
-  test('向旧版会话补入消息不逐项写 journal 并请求完整聊天重扫', () async {
+  test('向旧版会话补入消息不逐项写 journal 且不请求旧聊天重扫', () async {
     final conversation = await chatService.createConversation(title: 'Chat');
     writeExecutor.batches.clear();
     final message = ChatMessage(
@@ -750,13 +744,10 @@ void main() {
     final persistedMessage = await chatService.loadMessageForSync(message.id);
     expect(persistedConversation?.messageIds, contains(message.id));
     expect(persistedMessage?.content, message.content);
-    expect(
-      (await _readDefaultRescanRequest())?.entityTypes,
-      CloudSyncStore.chatRescanEntityTypes,
-    );
+    expect(store.rescanRequest, isNull);
   });
 
-  test('覆盖恢复不逐项写 journal 并请求完整聊天重扫', () async {
+  test('覆盖恢复不逐项写 journal 且不请求旧聊天重扫', () async {
     final oldConversation = await chatService.createConversation(title: 'Old');
     final oldMessage = await chatService.addMessage(
       conversationId: oldConversation.id,
@@ -801,13 +792,10 @@ void main() {
     );
     expect(persistedConversation?.messageIds, contains(newMessage.id));
     expect(persistedMessage?.content, newMessage.content);
-    expect(
-      (await _readDefaultRescanRequest())?.entityTypes,
-      CloudSyncStore.chatRescanEntityTypes,
-    );
+    expect(store.rescanRequest, isNull);
   });
 
-  test('清空聊天数据不逐项写 journal 并请求完整聊天重扫', () async {
+  test('清空聊天数据不逐项写 journal 且不请求旧聊天重扫', () async {
     final conversation = await chatService.createConversation(title: 'Chat');
     final message = await chatService.addMessage(
       conversationId: conversation.id,
@@ -823,10 +811,7 @@ void main() {
     expect(writeExecutor.batches, isEmpty);
     expect(await chatService.loadConversationForSync(conversation.id), isNull);
     expect(await chatService.loadMessageForSync(message.id), isNull);
-    expect(
-      (await _readDefaultRescanRequest())?.entityTypes,
-      CloudSyncStore.chatRescanEntityTypes,
-    );
+    expect(store.rescanRequest, isNull);
   });
 
   test('导出版本选择、工具事件和思维签名实体', () async {
@@ -1401,16 +1386,6 @@ void main() {
     expect(chatService.hasToolEvents(message.id), isFalse);
     expect(chatService.getGeminiThoughtSignature(message.id), isNull);
   });
-}
-
-Future<CloudSyncRescanRequest?> _readDefaultRescanRequest() async {
-  final wasOpen = Hive.isBoxOpen(CloudSyncStore.defaultBoxName);
-  final defaultStore = await CloudSyncStore.open();
-  try {
-    return defaultStore.rescanRequest;
-  } finally {
-    if (!wasOpen) await defaultStore.close();
-  }
 }
 
 CloudSyncAccountSession _session(String baseUrl) {
