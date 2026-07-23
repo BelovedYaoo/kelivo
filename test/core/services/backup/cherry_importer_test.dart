@@ -58,7 +58,6 @@ void main() {
 
   group('CherryImporter', () {
     test('imports Cherry Studio v6 direct backup zip', () async {
-      var configRescanCount = 0;
       final backup = await _createZip(tempDir, <String, List<int>>{
         'metadata.json': utf8.encode(
           jsonEncode(<String, dynamic>{
@@ -101,14 +100,12 @@ void main() {
           syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
         ),
         chatService: chatService,
-        markConfigRescanRequired: () async => configRescanCount++,
       );
 
       expect(result.providers, 1);
       expect(result.assistants, 1);
       expect(result.conversations, 4);
       expect(result.messages, 3);
-      expect(configRescanCount, 1);
 
       final conversations = <String, dynamic>{
         for (final conversation in chatService.getAllConversations())
@@ -156,7 +153,6 @@ void main() {
     });
 
     test('keeps legacy data.json zip import working', () async {
-      var configRescanCount = 0;
       final backup = await _createZip(tempDir, <String, List<int>>{
         'data.json': utf8.encode(
           jsonEncode(<String, dynamic>{
@@ -211,12 +207,10 @@ void main() {
           syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
         ),
         chatService: chatService,
-        markConfigRescanRequired: () async => configRescanCount++,
       );
 
       expect(result.conversations, 1);
       expect(result.messages, 1);
-      expect(configRescanCount, 1);
       expect(
         (await chatService.loadMessages('topic-1')).single.content,
         'hello from legacy',
@@ -224,7 +218,6 @@ void main() {
     });
 
     test('rejects v6 direct backup without persisted Cherry state', () async {
-      var configRescanAttempted = false;
       final backup = await _createZip(tempDir, <String, List<int>>{
         'metadata.json': utf8.encode(
           jsonEncode(<String, dynamic>{
@@ -250,72 +243,46 @@ void main() {
             syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
           ),
           chatService: chatService,
-          markConfigRescanRequired: () async {
-            configRescanAttempted = true;
-            throw StateError('校验失败时不应标记配置重扫');
-          },
         ),
         throwsA(isA<Exception>()),
       );
-      expect(configRescanAttempted, isFalse);
     });
 
-    test(
-      'keeps the production full-rescan lease active until restart',
-      () async {
-        Hive.init(tempDir.path);
-        final store = await CloudSyncStore.open();
-        addTearDown(store.close);
-        final backup = await _createZip(tempDir, <String, List<int>>{
-          'data.json': utf8.encode(
-            jsonEncode(<String, dynamic>{
-              'version': 5,
-              'localStorage': <String, dynamic>{
-                'persist:cherry-studio': _persistStateJson(),
-              },
-              'indexedDB': <String, dynamic>{
-                'topics': <Map<String, dynamic>>[],
-                'message_blocks': <Map<String, dynamic>>[],
-                'files': <Map<String, dynamic>>[],
-              },
-            }),
-          ),
-        });
-        final chatService = ChatService(
-          const UntrackedSyncWriteExecutor.forTests(),
-          databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
-        );
-        addTearDown(chatService.close);
+    test('overwrite import does not create legacy sync state', () async {
+      final backup = await _createZip(tempDir, <String, List<int>>{
+        'data.json': utf8.encode(
+          jsonEncode(<String, dynamic>{
+            'version': 5,
+            'localStorage': <String, dynamic>{
+              'persist:cherry-studio': _persistStateJson(),
+            },
+            'indexedDB': <String, dynamic>{
+              'topics': <Map<String, dynamic>>[],
+              'message_blocks': <Map<String, dynamic>>[],
+              'files': <Map<String, dynamic>>[],
+            },
+          }),
+        ),
+      });
+      final chatService = ChatService(
+        const UntrackedSyncWriteExecutor.forTests(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+      );
+      addTearDown(chatService.close);
 
-        await CherryImporter.importFromCherryStudio(
-          file: backup,
-          mode: RestoreMode.overwrite,
-          settings: SettingsProvider(
-            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
-          ),
-          chatService: chatService,
-        );
+      await CherryImporter.importFromCherryStudio(
+        file: backup,
+        mode: RestoreMode.overwrite,
+        settings: SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
+        chatService: chatService,
+      );
 
-        final request = store.rescanRequest;
-        expect(request, isNotNull);
-        expect(request!.entityTypes, CloudSyncStore.allRescanEntityTypes);
-        expect(request.localAuthoritativeEntityTypes, const <String>{
-          'conversation',
-          'turn',
-          'message',
-          'message-selection',
-          'tool-event',
-          'thought-signature',
-          'provider',
-          'assistant',
-        });
-        expect(request.hasActiveWrites, isTrue);
-      },
-    );
+      await _expectLegacyCloudSyncStateAbsent(tempDir);
+    });
 
-    test('merge import keeps the full rescan non-authoritative', () async {
-      final store = await CloudSyncStore.open();
-      addTearDown(store.close);
+    test('merge import does not create legacy sync state', () async {
       final backup = await _createZip(tempDir, <String, List<int>>{
         'data.json': utf8.encode(
           jsonEncode(<String, dynamic>{
@@ -346,62 +313,14 @@ void main() {
         chatService: chatService,
       );
 
-      final request = store.rescanRequest;
-      expect(request, isNotNull);
-      expect(request!.entityTypes, CloudSyncStore.allRescanEntityTypes);
-      expect(request.localAuthoritativeEntityTypes, isEmpty);
-    });
-
-    test('does not write when the rescan callback fails', () async {
-      final backup = await _createZip(tempDir, <String, List<int>>{
-        'data.json': utf8.encode(
-          jsonEncode(<String, dynamic>{
-            'version': 5,
-            'localStorage': <String, dynamic>{
-              'persist:cherry-studio': _persistStateJson(),
-            },
-            'indexedDB': <String, dynamic>{
-              'topics': <Map<String, dynamic>>[],
-              'message_blocks': <Map<String, dynamic>>[],
-              'files': <Map<String, dynamic>>[],
-            },
-          }),
-        ),
-      });
-      final chatService = ChatService(
-        const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
-      );
-      addTearDown(chatService.close);
-
-      await expectLater(
-        CherryImporter.importFromCherryStudio(
-          file: backup,
-          mode: RestoreMode.overwrite,
-          settings: SettingsProvider(
-            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
-          ),
-          chatService: chatService,
-          markConfigRescanRequired: () =>
-              Future<void>.error(StateError('重扫标记失败')),
-        ),
-        throwsA(isA<StateError>()),
-      );
-
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('provider_configs_v1'), isNull);
-      expect(prefs.getString('assistants_v1'), isNull);
-      expect(chatService.getAllCompleteConversations(), isEmpty);
+      await _expectLegacyCloudSyncStateAbsent(tempDir);
     });
   });
 
   group('ChatboxImporter', () {
     test(
-      'overwrite without providers retains local providers and excludes provider authority',
+      'overwrite without providers retains local providers without legacy state',
       () async {
-        Hive.init(tempDir.path);
-        final store = await CloudSyncStore.open();
-        addTearDown(store.close);
         final backup = await _createMinimalChatboxBackup(tempDir);
         final prefs = await SharedPreferences.getInstance();
         final localProviders = jsonEncode(<String, dynamic>{
@@ -423,28 +342,14 @@ void main() {
           chatService: chatService,
         );
 
-        final request = store.rescanRequest;
-        expect(request, isNotNull);
-        expect(request!.entityTypes, CloudSyncStore.allRescanEntityTypes);
-        expect(request.localAuthoritativeEntityTypes, const <String>{
-          'conversation',
-          'turn',
-          'message',
-          'message-selection',
-          'tool-event',
-          'thought-signature',
-          'assistant',
-        });
         expect(prefs.getString('provider_configs_v1'), localProviders);
-        expect(request.hasActiveWrites, isTrue);
+        await _expectLegacyCloudSyncStateAbsent(tempDir);
       },
     );
 
     test(
-      'overwrite includes provider authority when providers are imported',
+      'overwrite imports providers without creating legacy sync state',
       () async {
-        final store = await CloudSyncStore.open();
-        addTearDown(store.close);
         final backup = await _createMinimalChatboxBackup(
           tempDir,
           providers: <String, dynamic>{
@@ -469,24 +374,13 @@ void main() {
           chatService: chatService,
         );
 
-        final request = store.rescanRequest;
-        expect(request, isNotNull);
-        expect(request!.localAuthoritativeEntityTypes, const <String>{
-          'conversation',
-          'turn',
-          'message',
-          'message-selection',
-          'tool-event',
-          'thought-signature',
-          'provider',
-          'assistant',
-        });
+        final prefs = await SharedPreferences.getInstance();
+        expect(prefs.getString('provider_configs_v1'), contains('sk-test'));
+        await _expectLegacyCloudSyncStateAbsent(tempDir);
       },
     );
 
-    test('merge import keeps the full rescan non-authoritative', () async {
-      final store = await CloudSyncStore.open();
-      addTearDown(store.close);
+    test('merge import does not create legacy sync state', () async {
       final backup = await _createMinimalChatboxBackup(tempDir);
       final chatService = ChatService(
         const UntrackedSyncWriteExecutor.forTests(),
@@ -503,40 +397,21 @@ void main() {
         chatService: chatService,
       );
 
-      final request = store.rescanRequest;
-      expect(request, isNotNull);
-      expect(request!.entityTypes, CloudSyncStore.allRescanEntityTypes);
-      expect(request.localAuthoritativeEntityTypes, isEmpty);
-    });
-
-    test('does not write when the rescan callback fails', () async {
-      final backup = await _createMinimalChatboxBackup(tempDir);
-      final chatService = ChatService(
-        const UntrackedSyncWriteExecutor.forTests(),
-        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
-      );
-      addTearDown(chatService.close);
-
-      await expectLater(
-        ChatboxImporter.importFromChatbox(
-          file: backup,
-          mode: RestoreMode.overwrite,
-          settings: SettingsProvider(
-            syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
-          ),
-          chatService: chatService,
-          markConfigRescanRequired: () =>
-              Future<void>.error(StateError('重扫标记失败')),
-        ),
-        throwsA(isA<StateError>()),
-      );
-
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('provider_configs_v1'), isNull);
-      expect(prefs.getString('assistants_v1'), isNull);
-      expect(chatService.getAllCompleteConversations(), isEmpty);
+      await _expectLegacyCloudSyncStateAbsent(tempDir);
     });
   });
+}
+
+Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
+  expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+  for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
+    expect(
+      await File(
+        '${root.path}/${CloudSyncStore.defaultBoxName}$suffix',
+      ).exists(),
+      isFalse,
+    );
+  }
 }
 
 Future<File> _createMinimalChatboxBackup(

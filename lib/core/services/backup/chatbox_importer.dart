@@ -9,7 +9,6 @@ import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../../providers/settings_provider.dart';
 import '../chat/chat_service.dart';
-import '../sync/cloud_sync_store.dart';
 
 class ChatboxImportException implements Exception {
   final String message;
@@ -43,17 +42,11 @@ class ChatboxImporter {
       'assistant_tag_map_v1'; // assistantId -> tagId
   static const String _collapsedKey =
       'assistant_tag_collapsed_v1'; // tagId -> bool
-  static const Set<String> _overwriteAuthoritativeEntityTypes = <String>{
-    ...CloudSyncStore.chatRescanEntityTypes,
-    'assistant',
-  };
-
   static Future<ChatboxImportResult> importFromChatbox({
     required File file,
     required RestoreMode mode,
     required SettingsProvider settings,
     required ChatService chatService,
-    Future<void> Function()? markConfigRescanRequired,
   }) async {
     final root = await _readChatboxBackupFile(file);
     final importableProviderConfigs = _readImportableProviderConfigs(root);
@@ -83,10 +76,7 @@ class ChatboxImporter {
       }
     }
 
-    return _runImportWrite<ChatboxImportResult>(
-      mode: mode,
-      overwritesProviders: importableProviderConfigs.isNotEmpty,
-      markConfigRescanRequired: markConfigRescanRequired,
+    return _runLocalImportWrite<ChatboxImportResult>(
       write: () async {
         final importedProviders = await _importProviders(
           importableProviderConfigs,
@@ -109,29 +99,11 @@ class ChatboxImporter {
     );
   }
 
-  static Future<T> _runImportWrite<T>({
-    required RestoreMode mode,
-    required bool overwritesProviders,
+  // 导入边界只能执行本地写入，避免重新接入已退役的明文同步日志。
+  static Future<T> _runLocalImportWrite<T>({
     required Future<T> Function() write,
-    Future<void> Function()? markConfigRescanRequired,
-  }) async {
-    if (markConfigRescanRequired != null) {
-      // 测试注入必须先于任何落盘执行，避免单元测试依赖默认 Hive。
-      await markConfigRescanRequired();
-      return write();
-    }
-    // 配置 Provider 要到强制重启后才会重载，期间保持租约以阻止旧内存态消费重扫请求。
-    return CloudSyncStore.runWithDefaultRescanWrite<T>(
-      entityTypes: CloudSyncStore.allRescanEntityTypes,
-      localAuthoritativeEntityTypes: mode == RestoreMode.overwrite
-          ? <String>{
-              ..._overwriteAuthoritativeEntityTypes,
-              if (overwritesProviders) 'provider',
-            }
-          : const <String>{},
-      write: write,
-      keepActiveOnSuccess: true,
-    );
+  }) {
+    return write();
   }
 
   // ---------- parsing ----------

@@ -20,7 +20,6 @@ import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import '../chat/chat_service.dart';
 import '../chat/upload_directory_critical_section.dart';
-import '../sync/cloud_sync_store.dart';
 import '../../../utils/app_directories.dart';
 import 'backup_settings_validator.dart';
 import 'restore_bundle_preparation.dart';
@@ -120,33 +119,17 @@ class DataSync {
   static const _maxRestoreEntries = 100000;
 
   final ChatService chatService;
-  final Future<void> Function(Set<String> entityTypes)? _rescanMarkerOverride;
   BackupMergeReport? _lastMergeReport;
 
   BackupMergeReport? get lastMergeReport => _lastMergeReport;
 
-  DataSync({
-    required this.chatService,
-    Future<void> Function(Set<String> entityTypes)? markRescanRequired,
-  }) : _rescanMarkerOverride = markRescanRequired;
+  DataSync({required this.chatService});
 
-  Future<T> _runWithRescanWrite<T>({
-    required Set<String> entityTypes,
-    Set<String> localAuthoritativeEntityTypes = const <String>{},
+  // 恢复边界只能执行本地写入，避免重新接入已退役的明文同步日志。
+  static Future<T> _runLocalRestoreWrite<T>({
     required Future<T> Function() write,
-    bool keepActiveOnSuccess = false,
-  }) async {
-    final markerOverride = _rescanMarkerOverride;
-    if (markerOverride != null) {
-      await markerOverride(entityTypes);
-      return write();
-    }
-    return CloudSyncStore.runWithDefaultRescanWrite<T>(
-      entityTypes: entityTypes,
-      localAuthoritativeEntityTypes: localAuthoritativeEntityTypes,
-      write: write,
-      keepActiveOnSuccess: keepActiveOnSuccess,
-    );
+  }) {
+    return write();
   }
 
   // ===== WebDAV helpers =====
@@ -1497,13 +1480,6 @@ class DataSync {
           jsonDecode(await settingsFile.readAsString()) as Map<String, dynamic>;
       BackupSettingsValidator.normalizeAndValidate(settings);
       final prefs = await SharedPreferencesAsync.instance;
-      final rescanEntityTypes = <String>{
-        ...CloudSyncStore.configRescanEntityTypes,
-        if (restoreChats) ...CloudSyncStore.chatRescanEntityTypes,
-      };
-      final localAuthoritativeEntityTypes = mode == RestoreMode.overwrite
-          ? rescanEntityTypes
-          : const <String>{};
       if (versionedBackup != null) {
         final includeChats = versionedBackup.includeChats;
         final includeFiles = versionedBackup.includeFiles;
@@ -1512,30 +1488,21 @@ class DataSync {
           final appDataPath = (await AppDirectories.getAppDataDirectory()).path;
           final extractedPath = extractDir.path;
           final sourceManifestSha256 = versionedBackup.normalizedManifestSha256;
-          // 冷恢复在下次启动切换数据库；成功后保留租约，直到启动恢复
-          // 完成并重新打开同步存储。
-          await _runWithRescanWrite<void>(
-            entityTypes: rescanEntityTypes,
-            localAuthoritativeEntityTypes: localAuthoritativeEntityTypes,
-            keepActiveOnSuccess: true,
-            write: () => _prepareRestoreBundleInIsolate(
-              appDataPath: appDataPath,
-              extractedPath: extractedPath,
-              sourceManifestSha256: sourceManifestSha256,
-              bundleIncludesChats: includeChats,
-              bundleIncludesFiles: includeFiles,
-              restoreChats: restoreChats,
-              restoreFiles: restoreFiles,
-              cipher: chatService.databaseCipher,
-            ),
+          // 冷恢复只准备经校验的候选，下次启动再以收据为边界切换数据库。
+          await _prepareRestoreBundleInIsolate(
+            appDataPath: appDataPath,
+            extractedPath: extractedPath,
+            sourceManifestSha256: sourceManifestSha256,
+            bundleIncludesChats: includeChats,
+            bundleIncludesFiles: includeFiles,
+            restoreChats: restoreChats,
+            restoreFiles: restoreFiles,
+            cipher: chatService.databaseCipher,
           );
           return;
         }
       }
-      await _runWithRescanWrite<void>(
-        entityTypes: rescanEntityTypes,
-        localAuthoritativeEntityTypes: localAuthoritativeEntityTypes,
-        keepActiveOnSuccess: true,
+      await _runLocalRestoreWrite<void>(
         write: () async {
           if (versionedBackup != null && restoreChats) {
             _lastMergeReport = await chatService.mergeDatabaseSnapshot(

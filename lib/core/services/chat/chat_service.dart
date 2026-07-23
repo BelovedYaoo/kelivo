@@ -16,7 +16,6 @@ import '../../models/conversation.dart';
 import '../../../utils/sandbox_path_resolver.dart';
 import '../../../utils/app_directories.dart';
 import '../backup/portable_ndjson_v2.dart';
-import '../sync/cloud_sync_store.dart';
 import '../sync/sync_codec.dart';
 import '../sync/sync_write_executor.dart';
 import '../../utils/batched_change_notifier.dart';
@@ -524,15 +523,9 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       }
     });
     if (identical(Zone.current[_importBatchZoneKey], this)) return write();
-    return CloudSyncStore.runWithDefaultRescanWrite<T>(
-      entityTypes: CloudSyncStore.chatRescanEntityTypes,
-      localAuthoritativeEntityTypes: overwrite
-          ? CloudSyncStore.chatRescanEntityTypes
-          : const <String>{},
-      write: () => runZoned<Future<T>>(
-        apply,
-        zoneValues: <Object?, Object?>{_importBatchZoneKey: this},
-      ),
+    return runZoned<Future<T>>(
+      apply,
+      zoneValues: <Object?, Object?>{_importBatchZoneKey: this},
     );
   }
 
@@ -1739,26 +1732,22 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   Future<bool> _deletePersistedConversation(String id) async {
     final conversation = _conversationsCache[id];
     if (conversation == null) return false;
-    return CloudSyncStore.runWithDefaultRescanWrite<bool>(
-      entityTypes: CloudSyncStore.chatRescanEntityTypes,
-      write: () => _syncWriteExecutor.runLocal<bool>(
-        key: _conversationKey(id),
-        write: () async {
-          if (await _repo.getConversation(id, includeMessageIds: false) ==
-              null) {
-            _conversationsCache.remove(id);
-            return false;
-          }
-          await _repo.deleteConversation(id);
+    return _syncWriteExecutor.runLocal<bool>(
+      key: _conversationKey(id),
+      write: () async {
+        if (await _repo.getConversation(id, includeMessageIds: false) == null) {
           _conversationsCache.remove(id);
-          _messagesCache.remove(id);
+          return false;
+        }
+        await _repo.deleteConversation(id);
+        _conversationsCache.remove(id);
+        _messagesCache.remove(id);
 
-          if (_currentConversationId == id) {
-            _currentConversationId = null;
-          }
-          return true;
-        },
-      ),
+        if (_currentConversationId == id) {
+          _currentConversationId = null;
+        }
+        return true;
+      },
     );
   }
 
@@ -2628,29 +2617,18 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<void> restoreDatabaseSnapshot(File snapshotFile) async {
     if (!_initialized) await init();
-    await CloudSyncStore.runWithDefaultRescanWrite<void>(
-      entityTypes: CloudSyncStore.chatRescanEntityTypes,
-      localAuthoritativeEntityTypes: CloudSyncStore.chatRescanEntityTypes,
-      write: () async {
-        await _repo.replaceBackupSnapshot(snapshotFile);
-        await _resetAfterOverwriteRestore();
-      },
-    );
+    await _repo.replaceBackupSnapshot(snapshotFile);
+    await _resetAfterOverwriteRestore();
   }
 
   Future<BackupMergeReport> mergeDatabaseSnapshot(File snapshotFile) async {
     if (!_initialized) await init();
-    return CloudSyncStore.runWithDefaultRescanWrite<BackupMergeReport>(
-      entityTypes: CloudSyncStore.chatRescanEntityTypes,
-      write: () async {
-        final report = await _repo.mergeBackupSnapshot(snapshotFile);
-        _messagesCache.clear();
-        await _backfillAssetReferencesForCurrentRoot();
-        await _loadConversationsCache();
-        notifyListeners();
-        return report;
-      },
-    );
+    final report = await _repo.mergeBackupSnapshot(snapshotFile);
+    _messagesCache.clear();
+    await _backfillAssetReferencesForCurrentRoot();
+    await _loadConversationsCache();
+    notifyListeners();
+    return report;
   }
 
   Future<PortableChatExportResult> exportPortableChats(
@@ -2667,20 +2645,15 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<BackupMergeReport> importPortableChats(File source) async {
     if (!_initialized) await init();
-    return CloudSyncStore.runWithDefaultRescanWrite<BackupMergeReport>(
-      entityTypes: CloudSyncStore.chatRescanEntityTypes,
-      write: () async {
-        final report = await PortableNdjsonV2.importFromFile(
-          target: _repo,
-          source: source,
-        );
-        _messagesCache.clear();
-        await _backfillAssetReferencesForCurrentRoot();
-        await _loadConversationsCache();
-        notifyListeners();
-        return report;
-      },
+    final report = await PortableNdjsonV2.importFromFile(
+      target: _repo,
+      source: source,
     );
+    _messagesCache.clear();
+    await _backfillAssetReferencesForCurrentRoot();
+    await _loadConversationsCache();
+    notifyListeners();
+    return report;
   }
 
   Future<void> _resetAfterOverwriteRestore() async {
@@ -4038,11 +4011,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       await write();
       return;
     }
-    await CloudSyncStore.runWithDefaultRescanWrite<void>(
-      entityTypes: CloudSyncStore.chatRescanEntityTypes,
-      localAuthoritativeEntityTypes: CloudSyncStore.chatRescanEntityTypes,
-      write: write,
-    );
+    await write();
   }
 
   // Uploads stats: count and total size of files under app documents/upload

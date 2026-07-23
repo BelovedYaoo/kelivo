@@ -1421,57 +1421,25 @@ void main() {
     expect(page!.slots.single.message.id, original.id);
   });
 
-  test('批量导入仅在覆盖模式声明聊天实体为本地权威', () async {
-    final store = await CloudSyncStore.open();
-    addTearDown(store.close);
+  test('批量导入成功后不创建旧同步状态库', () async {
     final service = createService();
     await service.init();
+    var writes = 0;
 
     await service.runImportBatch<void>(
       overwrite: false,
       conversations: const [],
       messages: const [],
-      write: () async {},
+      write: () async {
+        writes++;
+      },
     );
 
-    final mergeRequest = store.rescanRequest;
-    expect(mergeRequest, isNotNull);
-    expect(mergeRequest!.entityTypes, CloudSyncStore.chatRescanEntityTypes);
-    expect(mergeRequest.localAuthoritativeEntityTypes, isEmpty);
-    expect(await store.consumeRescanRequest(mergeRequest.generation), isTrue);
-
-    await service.runImportBatch<void>(
-      overwrite: true,
-      conversations: const [],
-      messages: const [],
-      write: () async {},
-    );
-
-    final overwriteRequest = store.rescanRequest;
-    expect(overwriteRequest, isNotNull);
-    expect(
-      overwriteRequest!.localAuthoritativeEntityTypes,
-      CloudSyncStore.chatRescanEntityTypes,
-    );
+    expect(writes, 1);
+    await _expectLegacyCloudSyncStateAbsent(tempDir);
   });
 
-  test('清空聊天数据声明聊天实体为本地权威', () async {
-    final store = await CloudSyncStore.open();
-    addTearDown(store.close);
-    final service = createService();
-    await service.init();
-
-    await service.clearAllData(deleteUploads: false);
-
-    expect(
-      store.rescanRequest?.localAuthoritativeEntityTypes,
-      CloudSyncStore.chatRescanEntityTypes,
-    );
-  });
-
-  test('覆盖导入回滚后不会遗留清空操作的本地权威标记', () async {
-    final store = await CloudSyncStore.open();
-    addTearDown(store.close);
+  test('批量导入失败后不创建旧同步状态库', () async {
     final service = createService();
     await service.init();
 
@@ -1480,32 +1448,49 @@ void main() {
         overwrite: true,
         conversations: const [],
         messages: const [],
-        write: () async {
-          await service.clearAllData(deleteUploads: false);
-          throw StateError('导入失败');
-        },
+        write: () => Future<void>.error(StateError('导入失败')),
       ),
       throwsA(isA<StateError>()),
     );
 
-    expect(store.rescanRequest?.localAuthoritativeEntityTypes, isEmpty);
+    await _expectLegacyCloudSyncStateAbsent(tempDir);
   });
 
-  test('恢复数据库快照声明聊天实体为本地权威', () async {
-    final store = await CloudSyncStore.open();
-    addTearDown(store.close);
+  test('删除和清空聊天数据不创建旧同步状态库', () async {
     final service = createService();
     await service.init();
-    final snapshot = File('${tempDir.path}/restore-authority.db');
+    final conversation = await service.createConversation(title: 'Local');
+
+    await service.deleteConversation(conversation.id);
+    expect(service.getConversation(conversation.id), isNull);
+    await service.clearAllData(deleteUploads: false);
+
+    expect(service.getAllCompleteConversations(), isEmpty);
+    await _expectLegacyCloudSyncStateAbsent(tempDir);
+  });
+
+  test('恢复数据库快照不创建旧同步状态库', () async {
+    final service = createService();
+    await service.init();
+    final snapshot = File('${tempDir.path}/restore-local-only.db');
     await service.createBackupDatabaseSnapshot(snapshot);
 
     await service.restoreDatabaseSnapshot(snapshot);
 
-    expect(
-      store.rescanRequest?.localAuthoritativeEntityTypes,
-      CloudSyncStore.chatRescanEntityTypes,
-    );
+    await _expectLegacyCloudSyncStateAbsent(tempDir);
   });
+}
+
+Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
+  expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+  for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
+    expect(
+      await File(
+        p.join(root.path, '${CloudSyncStore.defaultBoxName}$suffix'),
+      ).exists(),
+      isFalse,
+    );
+  }
 }
 
 Future<void> _createDirectoryLink(String linkPath, String targetPath) async {

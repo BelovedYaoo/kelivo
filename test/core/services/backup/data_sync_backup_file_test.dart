@@ -240,6 +240,18 @@ Future<String> _fileSha256(File file) async {
   return (await sha256.bind(file.openRead()).first).toString();
 }
 
+Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
+  expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+  for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
+    expect(
+      await File(
+        p.join(root.path, '${CloudSyncStore.defaultBoxName}$suffix'),
+      ).exists(),
+      isFalse,
+    );
+  }
+}
+
 Future<Directory> _singleRestoreRunDirectory(Directory appDataDirectory) async {
   final workspace = Directory(
     '${appDataDirectory.path}${Platform.pathSeparator}.kelivo_restore',
@@ -1006,22 +1018,12 @@ void main() {
       addTearDown(chatService.close);
       final existing = await chatService.createConversation(title: 'Existing');
 
-      Set<String>? requestedRescanEntityTypes;
-      await DataSync(
-        chatService: chatService,
-        markRescanRequired: (entityTypes) async {
-          expect(
-            await RestoreStartupGate.inspect(appDataDirectory: root),
-            isNull,
-          );
-          requestedRescanEntityTypes = Set<String>.unmodifiable(entityTypes);
-        },
-      ).restoreFromLocalFile(
+      await DataSync(chatService: chatService).restoreFromLocalFile(
         zipFile,
         const WebDavConfig(includeChats: true, includeFiles: false),
       );
 
-      expect(requestedRescanEntityTypes, CloudSyncStore.allRescanEntityTypes);
+      await _expectLegacyCloudSyncStateAbsent(root);
       expect(chatService.getConversation(existing.id), isNotNull);
       expect(chatService.getConversation('restored-conversation'), isNull);
 
@@ -1586,8 +1588,6 @@ void main() {
       final chatService = ChatService(writeExecutor);
       await chatService.init();
       addTearDown(chatService.close);
-      final store = await CloudSyncStore.open();
-      addTearDown(store.close);
       final existing = await chatService.createConversation(title: 'Local');
       writeExecutor.batches.clear();
 
@@ -1603,11 +1603,8 @@ void main() {
       expect(chatService.getConversation(existing.id), isNotNull);
       expect(chatService.getConversation('fixture-conversation'), isNotNull);
       expect(sync.lastMergeReport?.importedConversations, 1);
-      final request = store.rescanRequest;
-      expect(request, isNotNull);
-      expect(request!.entityTypes, CloudSyncStore.allRescanEntityTypes);
-      expect(request.localAuthoritativeEntityTypes, isEmpty);
       expect(writeExecutor.batches, isEmpty);
+      await _expectLegacyCloudSyncStateAbsent(root);
     });
 
     test(
@@ -1758,13 +1755,8 @@ void main() {
         encoder.addFileSync(settingsFile, 'settings.json');
         encoder.closeSync();
 
-        var configRescanMarks = 0;
         final sync = DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-          markRescanRequired: (entityTypes) async {
-            configRescanMarks++;
-            expect(entityTypes, CloudSyncStore.configRescanEntityTypes);
-          },
         );
         await sync.restoreFromLocalFile(
           zipFile,
@@ -1819,38 +1811,8 @@ void main() {
           ),
           isTrue,
         );
-        expect(configRescanMarks, 1);
       },
     );
-
-    test('配置重扫标记失败时不写入导入设置', () async {
-      final settingsFile = File('${root.path}/settings_marker_failure.json');
-      await settingsFile.writeAsString(
-        jsonEncode(<String, Object?>{'imported_setting': 'value'}),
-      );
-      final zipFile = File('${root.path}/settings_marker_failure.zip');
-      final encoder = ZipFileEncoder();
-      encoder.create(zipFile.path);
-      encoder.addFileSync(settingsFile, 'settings.json');
-      encoder.closeSync();
-      final sync = DataSync(
-        chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-        markRescanRequired: (entityTypes) async {
-          throw StateError('marker failed');
-        },
-      );
-
-      await expectLater(
-        sync.restoreFromLocalFile(
-          zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
-        ),
-        throwsA(isA<StateError>()),
-      );
-
-      final prefs = await SharedPreferences.getInstance();
-      expect(prefs.getString('imported_setting'), isNull);
-    });
 
     test(
       'normalizes legacy JSON string lists before merging settings',
@@ -2389,8 +2351,6 @@ void main() {
 
         final chatService = _RecordingClearChatService();
         final sync = DataSync(chatService: chatService);
-        final store = await CloudSyncStore.open();
-        addTearDown(store.close);
 
         await sync.restoreFromLocalFile(
           zipFile,
@@ -2408,13 +2368,7 @@ void main() {
           prefs.getString('provider_configs_v1'),
           contains('legacy-api-secret'),
         );
-        final request = store.rescanRequest;
-        expect(request, isNotNull);
-        expect(request!.entityTypes, CloudSyncStore.configRescanEntityTypes);
-        expect(
-          request.localAuthoritativeEntityTypes,
-          CloudSyncStore.configRescanEntityTypes,
-        );
+        await _expectLegacyCloudSyncStateAbsent(root);
       },
     );
 

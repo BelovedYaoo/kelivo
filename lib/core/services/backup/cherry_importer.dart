@@ -10,7 +10,6 @@ import '../../models/conversation.dart';
 import '../../providers/settings_provider.dart';
 import '../chat/chat_service.dart';
 import '../chat/upload_directory_critical_section.dart';
-import '../sync/cloud_sync_store.dart';
 import '../../../utils/app_directories.dart';
 import 'cherry_direct_backup_reader.dart';
 
@@ -36,18 +35,11 @@ class CherryImporter {
   static const String _providersKey = 'provider_configs_v1';
   static const String _providersOrderKey = 'providers_order_v1';
   static const String _assistantsKey = 'assistants_v1';
-  static const Set<String> _overwriteAuthoritativeEntityTypes = <String>{
-    ...CloudSyncStore.chatRescanEntityTypes,
-    'provider',
-    'assistant',
-  };
-
   static Future<CherryImportResult> importFromCherryStudio({
     required File file,
     required RestoreMode mode,
     required SettingsProvider settings,
     required ChatService chatService,
-    Future<void> Function()? markConfigRescanRequired,
   }) async {
     // 1) Load JSON from ZIP/BAK (best-effort)
     final Map<String, dynamic> root = await _readCherryBackupFile(file);
@@ -195,9 +187,7 @@ class CherryImporter {
       }
     }
 
-    return _runImportWrite<CherryImportResult>(
-      mode: mode,
-      markConfigRescanRequired: markConfigRescanRequired,
+    return _runLocalImportWrite<CherryImportResult>(
       write: () async {
         // 5) 将供应商导入设置并持久化到 SharedPreferences
         final importedProviders = await _importProviders(
@@ -325,25 +315,11 @@ class CherryImporter {
     );
   }
 
-  static Future<T> _runImportWrite<T>({
-    required RestoreMode mode,
+  // 导入边界只能执行本地写入，避免重新接入已退役的明文同步日志。
+  static Future<T> _runLocalImportWrite<T>({
     required Future<T> Function() write,
-    Future<void> Function()? markConfigRescanRequired,
-  }) async {
-    if (markConfigRescanRequired != null) {
-      // 测试注入必须先于任何落盘执行，避免单元测试依赖默认 Hive。
-      await markConfigRescanRequired();
-      return write();
-    }
-    // 配置 Provider 要到强制重启后才会重载，期间保持租约以阻止旧内存态消费重扫请求。
-    return CloudSyncStore.runWithDefaultRescanWrite<T>(
-      entityTypes: CloudSyncStore.allRescanEntityTypes,
-      localAuthoritativeEntityTypes: mode == RestoreMode.overwrite
-          ? _overwriteAuthoritativeEntityTypes
-          : const <String>{},
-      write: write,
-      keepActiveOnSuccess: true,
-    );
+  }) {
+    return write();
   }
 
   // ---------- helpers ----------
