@@ -72,8 +72,6 @@ class _$SyncRejectedMutationResult extends SyncRejectedMutationResult {
   final SyncRejectedMutationResultStatusEnum status;
   @override
   final String errorCode;
-  @override
-  final BuiltMap<String, JsonObject?>? params;
 
   factory _$SyncRejectedMutationResult([
     void Function(SyncRejectedMutationResultBuilder)? updates,
@@ -83,7 +81,6 @@ class _$SyncRejectedMutationResult extends SyncRejectedMutationResult {
     required this.mutationId,
     required this.status,
     required this.errorCode,
-    this.params,
   }) : super._();
   @override
   SyncRejectedMutationResult rebuild(
@@ -100,8 +97,7 @@ class _$SyncRejectedMutationResult extends SyncRejectedMutationResult {
     return other is SyncRejectedMutationResult &&
         mutationId == other.mutationId &&
         status == other.status &&
-        errorCode == other.errorCode &&
-        params == other.params;
+        errorCode == other.errorCode;
   }
 
   @override
@@ -110,7 +106,6 @@ class _$SyncRejectedMutationResult extends SyncRejectedMutationResult {
     _$hash = $jc(_$hash, mutationId.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, errorCode.hashCode);
-    _$hash = $jc(_$hash, params.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -120,8 +115,7 @@ class _$SyncRejectedMutationResult extends SyncRejectedMutationResult {
     return (newBuiltValueToStringHelper(r'SyncRejectedMutationResult')
           ..add('mutationId', mutationId)
           ..add('status', status)
-          ..add('errorCode', errorCode)
-          ..add('params', params))
+          ..add('errorCode', errorCode))
         .toString();
   }
 }
@@ -144,12 +138,6 @@ class SyncRejectedMutationResultBuilder
   String? get errorCode => _$this._errorCode;
   set errorCode(String? errorCode) => _$this._errorCode = errorCode;
 
-  MapBuilder<String, JsonObject?>? _params;
-  MapBuilder<String, JsonObject?> get params =>
-      _$this._params ??= MapBuilder<String, JsonObject?>();
-  set params(MapBuilder<String, JsonObject?>? params) =>
-      _$this._params = params;
-
   SyncRejectedMutationResultBuilder() {
     SyncRejectedMutationResult._defaults(this);
   }
@@ -160,7 +148,6 @@ class SyncRejectedMutationResultBuilder
       _mutationId = $v.mutationId;
       _status = $v.status;
       _errorCode = $v.errorCode;
-      _params = $v.params?.toBuilder();
       _$v = null;
     }
     return this;
@@ -180,42 +167,25 @@ class SyncRejectedMutationResultBuilder
   SyncRejectedMutationResult build() => _build();
 
   _$SyncRejectedMutationResult _build() {
-    _$SyncRejectedMutationResult _$result;
-    try {
-      _$result =
-          _$v ??
-          _$SyncRejectedMutationResult._(
-            mutationId: BuiltValueNullFieldError.checkNotNull(
-              mutationId,
-              r'SyncRejectedMutationResult',
-              'mutationId',
-            ),
-            status: BuiltValueNullFieldError.checkNotNull(
-              status,
-              r'SyncRejectedMutationResult',
-              'status',
-            ),
-            errorCode: BuiltValueNullFieldError.checkNotNull(
-              errorCode,
-              r'SyncRejectedMutationResult',
-              'errorCode',
-            ),
-            params: _params?.build(),
-          );
-    } catch (_) {
-      late String _$failedField;
-      try {
-        _$failedField = 'params';
-        _params?.build();
-      } catch (e) {
-        throw BuiltValueNestedFieldError(
-          r'SyncRejectedMutationResult',
-          _$failedField,
-          e.toString(),
+    final _$result =
+        _$v ??
+        _$SyncRejectedMutationResult._(
+          mutationId: BuiltValueNullFieldError.checkNotNull(
+            mutationId,
+            r'SyncRejectedMutationResult',
+            'mutationId',
+          ),
+          status: BuiltValueNullFieldError.checkNotNull(
+            status,
+            r'SyncRejectedMutationResult',
+            'status',
+          ),
+          errorCode: BuiltValueNullFieldError.checkNotNull(
+            errorCode,
+            r'SyncRejectedMutationResult',
+            'errorCode',
+          ),
         );
-      }
-      rethrow;
-    }
     replace(_$result);
     return _$result;
   }

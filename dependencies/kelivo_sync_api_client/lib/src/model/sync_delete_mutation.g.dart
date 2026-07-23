@@ -67,13 +67,11 @@ class _$SyncDeleteMutation extends SyncDeleteMutation {
   @override
   final String mutationId;
   @override
-  final SyncEntityType entityType;
+  final String recordId;
   @override
-  final String entityId;
+  final int expectedRevision;
   @override
   final SyncDeleteMutationOperationEnum operation;
-  @override
-  final int baseRevision;
 
   factory _$SyncDeleteMutation([
     void Function(SyncDeleteMutationBuilder)? updates,
@@ -81,10 +79,9 @@ class _$SyncDeleteMutation extends SyncDeleteMutation {
 
   _$SyncDeleteMutation._({
     required this.mutationId,
-    required this.entityType,
-    required this.entityId,
+    required this.recordId,
+    required this.expectedRevision,
     required this.operation,
-    required this.baseRevision,
   }) : super._();
   @override
   SyncDeleteMutation rebuild(
@@ -100,20 +97,18 @@ class _$SyncDeleteMutation extends SyncDeleteMutation {
     if (identical(other, this)) return true;
     return other is SyncDeleteMutation &&
         mutationId == other.mutationId &&
-        entityType == other.entityType &&
-        entityId == other.entityId &&
-        operation == other.operation &&
-        baseRevision == other.baseRevision;
+        recordId == other.recordId &&
+        expectedRevision == other.expectedRevision &&
+        operation == other.operation;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, mutationId.hashCode);
-    _$hash = $jc(_$hash, entityType.hashCode);
-    _$hash = $jc(_$hash, entityId.hashCode);
+    _$hash = $jc(_$hash, recordId.hashCode);
+    _$hash = $jc(_$hash, expectedRevision.hashCode);
     _$hash = $jc(_$hash, operation.hashCode);
-    _$hash = $jc(_$hash, baseRevision.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -122,10 +117,9 @@ class _$SyncDeleteMutation extends SyncDeleteMutation {
   String toString() {
     return (newBuiltValueToStringHelper(r'SyncDeleteMutation')
           ..add('mutationId', mutationId)
-          ..add('entityType', entityType)
-          ..add('entityId', entityId)
-          ..add('operation', operation)
-          ..add('baseRevision', baseRevision))
+          ..add('recordId', recordId)
+          ..add('expectedRevision', expectedRevision)
+          ..add('operation', operation))
         .toString();
   }
 }
@@ -138,22 +132,19 @@ class SyncDeleteMutationBuilder
   String? get mutationId => _$this._mutationId;
   set mutationId(String? mutationId) => _$this._mutationId = mutationId;
 
-  SyncEntityType? _entityType;
-  SyncEntityType? get entityType => _$this._entityType;
-  set entityType(SyncEntityType? entityType) => _$this._entityType = entityType;
+  String? _recordId;
+  String? get recordId => _$this._recordId;
+  set recordId(String? recordId) => _$this._recordId = recordId;
 
-  String? _entityId;
-  String? get entityId => _$this._entityId;
-  set entityId(String? entityId) => _$this._entityId = entityId;
+  int? _expectedRevision;
+  int? get expectedRevision => _$this._expectedRevision;
+  set expectedRevision(int? expectedRevision) =>
+      _$this._expectedRevision = expectedRevision;
 
   SyncDeleteMutationOperationEnum? _operation;
   SyncDeleteMutationOperationEnum? get operation => _$this._operation;
   set operation(SyncDeleteMutationOperationEnum? operation) =>
       _$this._operation = operation;
-
-  int? _baseRevision;
-  int? get baseRevision => _$this._baseRevision;
-  set baseRevision(int? baseRevision) => _$this._baseRevision = baseRevision;
 
   SyncDeleteMutationBuilder() {
     SyncDeleteMutation._defaults(this);
@@ -163,10 +154,9 @@ class SyncDeleteMutationBuilder
     final $v = _$v;
     if ($v != null) {
       _mutationId = $v.mutationId;
-      _entityType = $v.entityType;
-      _entityId = $v.entityId;
+      _recordId = $v.recordId;
+      _expectedRevision = $v.expectedRevision;
       _operation = $v.operation;
-      _baseRevision = $v.baseRevision;
       _$v = null;
     }
     return this;
@@ -194,25 +184,20 @@ class SyncDeleteMutationBuilder
             r'SyncDeleteMutation',
             'mutationId',
           ),
-          entityType: BuiltValueNullFieldError.checkNotNull(
-            entityType,
+          recordId: BuiltValueNullFieldError.checkNotNull(
+            recordId,
             r'SyncDeleteMutation',
-            'entityType',
+            'recordId',
           ),
-          entityId: BuiltValueNullFieldError.checkNotNull(
-            entityId,
+          expectedRevision: BuiltValueNullFieldError.checkNotNull(
+            expectedRevision,
             r'SyncDeleteMutation',
-            'entityId',
+            'expectedRevision',
           ),
           operation: BuiltValueNullFieldError.checkNotNull(
             operation,
             r'SyncDeleteMutation',
             'operation',
-          ),
-          baseRevision: BuiltValueNullFieldError.checkNotNull(
-            baseRevision,
-            r'SyncDeleteMutation',
-            'baseRevision',
           ),
         );
     replace(_$result);

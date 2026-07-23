@@ -3,18 +3,15 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:built_collection/built_collection.dart';
 import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'sync_delete_change.g.dart';
+part 'sync_deleted_record.g.dart';
 
-/// SyncDeleteChange
+/// SyncDeletedRecord
 ///
 /// Properties:
-/// * [changeSeq]
-/// * [operation]
 /// * [recordId]
 /// * [revision]
 /// * [envelopeVersion]
@@ -24,16 +21,10 @@ part 'sync_delete_change.g.dart';
 /// * [deletedAt]
 /// * [updatedAt]
 /// * [updatedByDeviceId]
+/// * [lastChangeSeq]
 @BuiltValue()
-abstract class SyncDeleteChange
-    implements Built<SyncDeleteChange, SyncDeleteChangeBuilder> {
-  @BuiltValueField(wireName: r'changeSeq')
-  int get changeSeq;
-
-  @BuiltValueField(wireName: r'operation')
-  SyncDeleteChangeOperationEnum get operation;
-  // enum operationEnum {  delete,  };
-
+abstract class SyncDeletedRecord
+    implements Built<SyncDeletedRecord, SyncDeletedRecordBuilder> {
   @BuiltValueField(wireName: r'recordId')
   String get recordId;
 
@@ -61,42 +52,35 @@ abstract class SyncDeleteChange
   @BuiltValueField(wireName: r'updatedByDeviceId')
   String? get updatedByDeviceId;
 
-  SyncDeleteChange._();
+  @BuiltValueField(wireName: r'lastChangeSeq')
+  int get lastChangeSeq;
 
-  factory SyncDeleteChange([void updates(SyncDeleteChangeBuilder b)]) =
-      _$SyncDeleteChange;
+  SyncDeletedRecord._();
+
+  factory SyncDeletedRecord([void updates(SyncDeletedRecordBuilder b)]) =
+      _$SyncDeletedRecord;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(SyncDeleteChangeBuilder b) => b;
+  static void _defaults(SyncDeletedRecordBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<SyncDeleteChange> get serializer =>
-      _$SyncDeleteChangeSerializer();
+  static Serializer<SyncDeletedRecord> get serializer =>
+      _$SyncDeletedRecordSerializer();
 }
 
-class _$SyncDeleteChangeSerializer
-    implements PrimitiveSerializer<SyncDeleteChange> {
+class _$SyncDeletedRecordSerializer
+    implements PrimitiveSerializer<SyncDeletedRecord> {
   @override
-  final Iterable<Type> types = const [SyncDeleteChange, _$SyncDeleteChange];
+  final Iterable<Type> types = const [SyncDeletedRecord, _$SyncDeletedRecord];
 
   @override
-  final String wireName = r'SyncDeleteChange';
+  final String wireName = r'SyncDeletedRecord';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    SyncDeleteChange object, {
+    SyncDeletedRecord object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    yield r'changeSeq';
-    yield serializers.serialize(
-      object.changeSeq,
-      specifiedType: const FullType(int),
-    );
-    yield r'operation';
-    yield serializers.serialize(
-      object.operation,
-      specifiedType: const FullType(SyncDeleteChangeOperationEnum),
-    );
     yield r'recordId';
     yield serializers.serialize(
       object.recordId,
@@ -150,12 +134,17 @@ class _$SyncDeleteChangeSerializer
             object.updatedByDeviceId,
             specifiedType: const FullType.nullable(String),
           );
+    yield r'lastChangeSeq';
+    yield serializers.serialize(
+      object.lastChangeSeq,
+      specifiedType: const FullType(int),
+    );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    SyncDeleteChange object, {
+    SyncDeletedRecord object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -170,30 +159,13 @@ class _$SyncDeleteChangeSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required SyncDeleteChangeBuilder result,
+    required SyncDeletedRecordBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'changeSeq':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.changeSeq = valueDes;
-          break;
-        case r'operation':
-          final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType(
-                      SyncDeleteChangeOperationEnum,
-                    ),
-                  )
-                  as SyncDeleteChangeOperationEnum;
-          result.operation = valueDes;
-          break;
         case r'recordId':
           final valueDes =
               serializers.deserialize(
@@ -273,6 +245,12 @@ class _$SyncDeleteChangeSerializer
           if (valueDes == null) continue;
           result.updatedByDeviceId = valueDes;
           break;
+        case r'lastChangeSeq':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.lastChangeSeq = valueDes;
+          break;
         default:
           unhandled.add(key);
           unhandled.add(value);
@@ -282,12 +260,12 @@ class _$SyncDeleteChangeSerializer
   }
 
   @override
-  SyncDeleteChange deserialize(
+  SyncDeletedRecord deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = SyncDeleteChangeBuilder();
+    final result = SyncDeletedRecordBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(
@@ -300,20 +278,4 @@ class _$SyncDeleteChangeSerializer
     );
     return result.build();
   }
-}
-
-class SyncDeleteChangeOperationEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'delete')
-  static const SyncDeleteChangeOperationEnum delete =
-      _$syncDeleteChangeOperationEnum_delete;
-
-  static Serializer<SyncDeleteChangeOperationEnum> get serializer =>
-      _$syncDeleteChangeOperationEnumSerializer;
-
-  const SyncDeleteChangeOperationEnum._(String name) : super(name);
-
-  static BuiltSet<SyncDeleteChangeOperationEnum> get values =>
-      _$syncDeleteChangeOperationEnumValues;
-  static SyncDeleteChangeOperationEnum valueOf(String name) =>
-      _$syncDeleteChangeOperationEnumValueOf(name);
 }

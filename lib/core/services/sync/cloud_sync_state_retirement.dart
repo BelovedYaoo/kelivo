@@ -3,11 +3,11 @@ import 'dart:io';
 import 'package:path/path.dart' as p;
 
 import '../backup/restore_durability.dart';
-import 'cloud_sync_store.dart';
 
 final class CloudSyncStateRetirement {
   CloudSyncStateRetirement._();
 
+  static const legacyBoxName = 'cloud_sync_state_v1';
   static const _artifactSuffixes = <String>['.hive', '.hivec', '.lock'];
   static const _cleanupMarkerFileName = '.cloud-sync-state-retirement-v1';
 
@@ -104,15 +104,12 @@ final class CloudSyncStateRetirement {
     Directory appDataDirectory,
   ) async {
     final artifactNames = <String>{
-      for (final suffix in _artifactSuffixes)
-        '${CloudSyncStore.defaultBoxName}$suffix',
+      for (final suffix in _artifactSuffixes) '$legacyBoxName$suffix',
     };
     final artifacts = <File>[];
     await for (final entity in appDataDirectory.list(followLinks: false)) {
       final name = p.basename(entity.path);
-      if (!name.toLowerCase().startsWith(
-        CloudSyncStore.defaultBoxName.toLowerCase(),
-      )) {
+      if (!name.toLowerCase().startsWith(legacyBoxName.toLowerCase())) {
         continue;
       }
       if (!artifactNames.contains(name)) {

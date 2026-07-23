@@ -1,118 +1,113 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'sync_delete_change.dart';
+part of 'sync_put_change.dart';
 
 // **************************************************************************
 // BuiltValueGenerator
 // **************************************************************************
 
-const SyncDeleteChangeOperationEnum _$syncDeleteChangeOperationEnum_delete =
-    const SyncDeleteChangeOperationEnum._('delete');
+const SyncPutChangeOperationEnum _$syncPutChangeOperationEnum_put =
+    const SyncPutChangeOperationEnum._('put');
 
-SyncDeleteChangeOperationEnum _$syncDeleteChangeOperationEnumValueOf(
-  String name,
-) {
+SyncPutChangeOperationEnum _$syncPutChangeOperationEnumValueOf(String name) {
   switch (name) {
-    case 'delete':
-      return _$syncDeleteChangeOperationEnum_delete;
+    case 'put':
+      return _$syncPutChangeOperationEnum_put;
     default:
       throw ArgumentError(name);
   }
 }
 
-final BuiltSet<SyncDeleteChangeOperationEnum>
-_$syncDeleteChangeOperationEnumValues = BuiltSet<SyncDeleteChangeOperationEnum>(
-  const <SyncDeleteChangeOperationEnum>[_$syncDeleteChangeOperationEnum_delete],
-);
+final BuiltSet<SyncPutChangeOperationEnum> _$syncPutChangeOperationEnumValues =
+    BuiltSet<SyncPutChangeOperationEnum>(const <SyncPutChangeOperationEnum>[
+      _$syncPutChangeOperationEnum_put,
+    ]);
 
-Serializer<SyncDeleteChangeOperationEnum>
-_$syncDeleteChangeOperationEnumSerializer =
-    _$SyncDeleteChangeOperationEnumSerializer();
+Serializer<SyncPutChangeOperationEnum> _$syncPutChangeOperationEnumSerializer =
+    _$SyncPutChangeOperationEnumSerializer();
 
-class _$SyncDeleteChangeOperationEnumSerializer
-    implements PrimitiveSerializer<SyncDeleteChangeOperationEnum> {
+class _$SyncPutChangeOperationEnumSerializer
+    implements PrimitiveSerializer<SyncPutChangeOperationEnum> {
   static const Map<String, Object> _toWire = const <String, Object>{
-    'delete': 'delete',
+    'put': 'put',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
-    'delete': 'delete',
+    'put': 'put',
   };
 
   @override
-  final Iterable<Type> types = const <Type>[SyncDeleteChangeOperationEnum];
+  final Iterable<Type> types = const <Type>[SyncPutChangeOperationEnum];
   @override
-  final String wireName = 'SyncDeleteChangeOperationEnum';
+  final String wireName = 'SyncPutChangeOperationEnum';
 
   @override
   Object serialize(
     Serializers serializers,
-    SyncDeleteChangeOperationEnum object, {
+    SyncPutChangeOperationEnum object, {
     FullType specifiedType = FullType.unspecified,
   }) => _toWire[object.name] ?? object.name;
 
   @override
-  SyncDeleteChangeOperationEnum deserialize(
+  SyncPutChangeOperationEnum deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
-  }) => SyncDeleteChangeOperationEnum.valueOf(
+  }) => SyncPutChangeOperationEnum.valueOf(
     _fromWire[serialized] ?? (serialized is String ? serialized : ''),
   );
 }
 
-class _$SyncDeleteChange extends SyncDeleteChange {
+class _$SyncPutChange extends SyncPutChange {
   @override
   final int changeSeq;
   @override
-  final SyncDeleteChangeOperationEnum operation;
+  final SyncPutChangeOperationEnum operation;
   @override
   final String recordId;
   @override
   final int revision;
   @override
-  final JsonObject? envelopeVersion;
+  final int envelopeVersion;
   @override
-  final JsonObject? keyEpoch;
+  final int keyEpoch;
   @override
-  final JsonObject? ciphertext;
+  final String ciphertext;
   @override
   final int ciphertextBytes;
   @override
-  final DateTime deletedAt;
+  final JsonObject? deletedAt;
   @override
   final DateTime updatedAt;
   @override
   final String? updatedByDeviceId;
 
-  factory _$SyncDeleteChange([
-    void Function(SyncDeleteChangeBuilder)? updates,
-  ]) => (SyncDeleteChangeBuilder()..update(updates))._build();
+  factory _$SyncPutChange([void Function(SyncPutChangeBuilder)? updates]) =>
+      (SyncPutChangeBuilder()..update(updates))._build();
 
-  _$SyncDeleteChange._({
+  _$SyncPutChange._({
     required this.changeSeq,
     required this.operation,
     required this.recordId,
     required this.revision,
-    this.envelopeVersion,
-    this.keyEpoch,
-    this.ciphertext,
+    required this.envelopeVersion,
+    required this.keyEpoch,
+    required this.ciphertext,
     required this.ciphertextBytes,
-    required this.deletedAt,
+    this.deletedAt,
     required this.updatedAt,
     this.updatedByDeviceId,
   }) : super._();
   @override
-  SyncDeleteChange rebuild(void Function(SyncDeleteChangeBuilder) updates) =>
+  SyncPutChange rebuild(void Function(SyncPutChangeBuilder) updates) =>
       (toBuilder()..update(updates)).build();
 
   @override
-  SyncDeleteChangeBuilder toBuilder() =>
-      SyncDeleteChangeBuilder()..replace(this);
+  SyncPutChangeBuilder toBuilder() => SyncPutChangeBuilder()..replace(this);
 
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is SyncDeleteChange &&
+    return other is SyncPutChange &&
         changeSeq == other.changeSeq &&
         operation == other.operation &&
         recordId == other.recordId &&
@@ -146,7 +141,7 @@ class _$SyncDeleteChange extends SyncDeleteChange {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'SyncDeleteChange')
+    return (newBuiltValueToStringHelper(r'SyncPutChange')
           ..add('changeSeq', changeSeq)
           ..add('operation', operation)
           ..add('recordId', recordId)
@@ -162,17 +157,17 @@ class _$SyncDeleteChange extends SyncDeleteChange {
   }
 }
 
-class SyncDeleteChangeBuilder
-    implements Builder<SyncDeleteChange, SyncDeleteChangeBuilder> {
-  _$SyncDeleteChange? _$v;
+class SyncPutChangeBuilder
+    implements Builder<SyncPutChange, SyncPutChangeBuilder> {
+  _$SyncPutChange? _$v;
 
   int? _changeSeq;
   int? get changeSeq => _$this._changeSeq;
   set changeSeq(int? changeSeq) => _$this._changeSeq = changeSeq;
 
-  SyncDeleteChangeOperationEnum? _operation;
-  SyncDeleteChangeOperationEnum? get operation => _$this._operation;
-  set operation(SyncDeleteChangeOperationEnum? operation) =>
+  SyncPutChangeOperationEnum? _operation;
+  SyncPutChangeOperationEnum? get operation => _$this._operation;
+  set operation(SyncPutChangeOperationEnum? operation) =>
       _$this._operation = operation;
 
   String? _recordId;
@@ -183,27 +178,27 @@ class SyncDeleteChangeBuilder
   int? get revision => _$this._revision;
   set revision(int? revision) => _$this._revision = revision;
 
-  JsonObject? _envelopeVersion;
-  JsonObject? get envelopeVersion => _$this._envelopeVersion;
-  set envelopeVersion(JsonObject? envelopeVersion) =>
+  int? _envelopeVersion;
+  int? get envelopeVersion => _$this._envelopeVersion;
+  set envelopeVersion(int? envelopeVersion) =>
       _$this._envelopeVersion = envelopeVersion;
 
-  JsonObject? _keyEpoch;
-  JsonObject? get keyEpoch => _$this._keyEpoch;
-  set keyEpoch(JsonObject? keyEpoch) => _$this._keyEpoch = keyEpoch;
+  int? _keyEpoch;
+  int? get keyEpoch => _$this._keyEpoch;
+  set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
 
-  JsonObject? _ciphertext;
-  JsonObject? get ciphertext => _$this._ciphertext;
-  set ciphertext(JsonObject? ciphertext) => _$this._ciphertext = ciphertext;
+  String? _ciphertext;
+  String? get ciphertext => _$this._ciphertext;
+  set ciphertext(String? ciphertext) => _$this._ciphertext = ciphertext;
 
   int? _ciphertextBytes;
   int? get ciphertextBytes => _$this._ciphertextBytes;
   set ciphertextBytes(int? ciphertextBytes) =>
       _$this._ciphertextBytes = ciphertextBytes;
 
-  DateTime? _deletedAt;
-  DateTime? get deletedAt => _$this._deletedAt;
-  set deletedAt(DateTime? deletedAt) => _$this._deletedAt = deletedAt;
+  JsonObject? _deletedAt;
+  JsonObject? get deletedAt => _$this._deletedAt;
+  set deletedAt(JsonObject? deletedAt) => _$this._deletedAt = deletedAt;
 
   DateTime? _updatedAt;
   DateTime? get updatedAt => _$this._updatedAt;
@@ -214,11 +209,11 @@ class SyncDeleteChangeBuilder
   set updatedByDeviceId(String? updatedByDeviceId) =>
       _$this._updatedByDeviceId = updatedByDeviceId;
 
-  SyncDeleteChangeBuilder() {
-    SyncDeleteChange._defaults(this);
+  SyncPutChangeBuilder() {
+    SyncPutChange._defaults(this);
   }
 
-  SyncDeleteChangeBuilder get _$this {
+  SyncPutChangeBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
       _changeSeq = $v.changeSeq;
@@ -238,58 +233,66 @@ class SyncDeleteChangeBuilder
   }
 
   @override
-  void replace(SyncDeleteChange other) {
-    _$v = other as _$SyncDeleteChange;
+  void replace(SyncPutChange other) {
+    _$v = other as _$SyncPutChange;
   }
 
   @override
-  void update(void Function(SyncDeleteChangeBuilder)? updates) {
+  void update(void Function(SyncPutChangeBuilder)? updates) {
     if (updates != null) updates(this);
   }
 
   @override
-  SyncDeleteChange build() => _build();
+  SyncPutChange build() => _build();
 
-  _$SyncDeleteChange _build() {
+  _$SyncPutChange _build() {
     final _$result =
         _$v ??
-        _$SyncDeleteChange._(
+        _$SyncPutChange._(
           changeSeq: BuiltValueNullFieldError.checkNotNull(
             changeSeq,
-            r'SyncDeleteChange',
+            r'SyncPutChange',
             'changeSeq',
           ),
           operation: BuiltValueNullFieldError.checkNotNull(
             operation,
-            r'SyncDeleteChange',
+            r'SyncPutChange',
             'operation',
           ),
           recordId: BuiltValueNullFieldError.checkNotNull(
             recordId,
-            r'SyncDeleteChange',
+            r'SyncPutChange',
             'recordId',
           ),
           revision: BuiltValueNullFieldError.checkNotNull(
             revision,
-            r'SyncDeleteChange',
+            r'SyncPutChange',
             'revision',
           ),
-          envelopeVersion: envelopeVersion,
-          keyEpoch: keyEpoch,
-          ciphertext: ciphertext,
+          envelopeVersion: BuiltValueNullFieldError.checkNotNull(
+            envelopeVersion,
+            r'SyncPutChange',
+            'envelopeVersion',
+          ),
+          keyEpoch: BuiltValueNullFieldError.checkNotNull(
+            keyEpoch,
+            r'SyncPutChange',
+            'keyEpoch',
+          ),
+          ciphertext: BuiltValueNullFieldError.checkNotNull(
+            ciphertext,
+            r'SyncPutChange',
+            'ciphertext',
+          ),
           ciphertextBytes: BuiltValueNullFieldError.checkNotNull(
             ciphertextBytes,
-            r'SyncDeleteChange',
+            r'SyncPutChange',
             'ciphertextBytes',
           ),
-          deletedAt: BuiltValueNullFieldError.checkNotNull(
-            deletedAt,
-            r'SyncDeleteChange',
-            'deletedAt',
-          ),
+          deletedAt: deletedAt,
           updatedAt: BuiltValueNullFieldError.checkNotNull(
             updatedAt,
-            r'SyncDeleteChange',
+            r'SyncPutChange',
             'updatedAt',
           ),
           updatedByDeviceId: updatedByDeviceId,

@@ -15,7 +15,6 @@ part 'sync_conflict_mutation_result.g.dart';
 /// * [mutationId]
 /// * [status]
 /// * [currentRevision]
-/// * [reason]
 @BuiltValue()
 abstract class SyncConflictMutationResult
     implements
@@ -29,10 +28,6 @@ abstract class SyncConflictMutationResult
 
   @BuiltValueField(wireName: r'currentRevision')
   int? get currentRevision;
-
-  @BuiltValueField(wireName: r'reason')
-  SyncConflictMutationResultReasonEnum get reason;
-  // enum reasonEnum {  entity-exists,  entity-missing,  entity-deleted,  entity-active,  parent-missing,  parent-deleted,  restore-required,  revision-ahead,  revision-stale,  };
 
   SyncConflictMutationResult._();
 
@@ -81,11 +76,6 @@ class _$SyncConflictMutationResultSerializer
             object.currentRevision,
             specifiedType: const FullType.nullable(int),
           );
-    yield r'reason';
-    yield serializers.serialize(
-      object.reason,
-      specifiedType: const FullType(SyncConflictMutationResultReasonEnum),
-    );
   }
 
   @override
@@ -143,17 +133,6 @@ class _$SyncConflictMutationResultSerializer
           if (valueDes == null) continue;
           result.currentRevision = valueDes;
           break;
-        case r'reason':
-          final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType(
-                      SyncConflictMutationResultReasonEnum,
-                    ),
-                  )
-                  as SyncConflictMutationResultReasonEnum;
-          result.reason = valueDes;
-          break;
         default:
           unhandled.add(key);
           unhandled.add(value);
@@ -197,44 +176,4 @@ class SyncConflictMutationResultStatusEnum extends EnumClass {
       _$syncConflictMutationResultStatusEnumValues;
   static SyncConflictMutationResultStatusEnum valueOf(String name) =>
       _$syncConflictMutationResultStatusEnumValueOf(name);
-}
-
-class SyncConflictMutationResultReasonEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'entity-exists')
-  static const SyncConflictMutationResultReasonEnum entityExists =
-      _$syncConflictMutationResultReasonEnum_entityExists;
-  @BuiltValueEnumConst(wireName: r'entity-missing')
-  static const SyncConflictMutationResultReasonEnum entityMissing =
-      _$syncConflictMutationResultReasonEnum_entityMissing;
-  @BuiltValueEnumConst(wireName: r'entity-deleted')
-  static const SyncConflictMutationResultReasonEnum entityDeleted =
-      _$syncConflictMutationResultReasonEnum_entityDeleted;
-  @BuiltValueEnumConst(wireName: r'entity-active')
-  static const SyncConflictMutationResultReasonEnum entityActive =
-      _$syncConflictMutationResultReasonEnum_entityActive;
-  @BuiltValueEnumConst(wireName: r'parent-missing')
-  static const SyncConflictMutationResultReasonEnum parentMissing =
-      _$syncConflictMutationResultReasonEnum_parentMissing;
-  @BuiltValueEnumConst(wireName: r'parent-deleted')
-  static const SyncConflictMutationResultReasonEnum parentDeleted =
-      _$syncConflictMutationResultReasonEnum_parentDeleted;
-  @BuiltValueEnumConst(wireName: r'restore-required')
-  static const SyncConflictMutationResultReasonEnum restoreRequired =
-      _$syncConflictMutationResultReasonEnum_restoreRequired;
-  @BuiltValueEnumConst(wireName: r'revision-ahead')
-  static const SyncConflictMutationResultReasonEnum revisionAhead =
-      _$syncConflictMutationResultReasonEnum_revisionAhead;
-  @BuiltValueEnumConst(wireName: r'revision-stale')
-  static const SyncConflictMutationResultReasonEnum revisionStale =
-      _$syncConflictMutationResultReasonEnum_revisionStale;
-
-  static Serializer<SyncConflictMutationResultReasonEnum> get serializer =>
-      _$syncConflictMutationResultReasonEnumSerializer;
-
-  const SyncConflictMutationResultReasonEnum._(String name) : super(name);
-
-  static BuiltSet<SyncConflictMutationResultReasonEnum> get values =>
-      _$syncConflictMutationResultReasonEnumValues;
-  static SyncConflictMutationResultReasonEnum valueOf(String name) =>
-      _$syncConflictMutationResultReasonEnumValueOf(name);
 }

@@ -1,11 +1,20 @@
-import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+
+const _mutationId1 = '00000000-0000-4000-8000-000000000001';
+const _mutationId2 = '00000000-0000-4000-8000-000000000002';
+const _mutationId3 = '00000000-0000-4000-8000-000000000003';
+const _recordId1 = '10000000-0000-4000-8000-000000000001';
+const _recordId2 = '10000000-0000-4000-8000-000000000002';
+const _recordId3 = '10000000-0000-4000-8000-000000000003';
+const _deviceId1 = '20000000-0000-4000-8000-000000000001';
 
 void main() {
   test('生产客户端固定使用官方服务地址', () {
@@ -75,103 +84,94 @@ void main() {
     expect(targetRequestCount, 0);
   });
 
-  test('签名附件响应重定向时拒绝访问目标地址', () async {
-    final target = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    var targetRequestCount = 0;
-    final targetSubscription = target.listen((request) async {
-      targetRequestCount++;
-      await request.drain<void>();
-      request.response.headers.set(HttpHeaders.etagHeader, 'unexpected-target');
-      await request.response.close();
-    });
-
-    final origin = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final originSubscription = origin.listen((request) async {
-      await request.drain<void>();
-      request.response
-        ..statusCode = HttpStatus.temporaryRedirect
-        ..headers.set(
-          HttpHeaders.locationHeader,
-          'http://${target.address.address}:${target.port}/signed-target',
-        );
-      await request.response.close();
-    });
-    final client = CloudSyncClient.forTesting(
-      baseUrl: 'http://${origin.address.address}:${origin.port}',
-    );
-    addTearDown(() async {
-      client.close(force: true);
-      await originSubscription.cancel();
-      await targetSubscription.cancel();
-      await origin.close(force: true);
-      await target.close(force: true);
-    });
-
-    await expectLater(
-      client.putSignedAttachment(
-        uploadUrl:
-            'http://${origin.address.address}:${origin.port}/signed-origin',
-        headers: const <String, String>{},
-        content: Stream<List<int>>.value(<int>[1, 2, 3]),
-      ),
-      throwsA(
-        isA<CloudSyncException>()
-            .having(
-              (error) => error.kind,
-              'kind',
-              CloudSyncFailureKind.invalidResponse,
-            )
-            .having(
-              (error) => error.statusCode,
-              'statusCode',
-              HttpStatus.temporaryRedirect,
-            ),
-      ),
-    );
-    expect(targetRequestCount, 0);
-  });
-
-  test('同步传输始终携带独立协议版本', () async {
+  test('v3 推送以不透明 put 和 delete 提交并解析三类结果', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
 
-    final pushFuture = client.push(<CloudSyncOutboxMutation>[
-      CloudSyncOutboxMutation.create(
-        mutationId: 'mutation-1',
-        entityType: CloudSyncEntityType.conversation,
-        entityId: 'conversation-1',
-        schemaVersion: 2,
-        payload: <String, Object?>{
-          'title': '会话',
-          'createdAt': '2026-07-16T08:00:00.000Z',
-          'updatedAt': '2026-07-16T08:00:00.000Z',
-          'isPinned': false,
-          'assistantId': null,
-          'mcpServerIds': <String>[],
-          'truncateIndex': -1,
-          'summary': null,
-          'lastSummarizedMessageCount': 0,
-          'chatSuggestions': <String>[],
-        },
+    final pushFuture = client.pushRecords(<CloudSyncRecordMutation>[
+      const CloudSyncPutRecordMutation(
+        mutationId: _mutationId1,
+        recordId: _recordId1,
+        expectedRevision: 0,
+        keyEpoch: 7,
+        ciphertext: 'AQID',
+      ),
+      const CloudSyncDeleteRecordMutation(
+        mutationId: _mutationId2,
+        recordId: _recordId2,
+        expectedRevision: 3,
+      ),
+      const CloudSyncPutRecordMutation(
+        mutationId: _mutationId3,
+        recordId: _recordId3,
+        expectedRevision: 2,
+        keyEpoch: 8,
+        ciphertext: 'BAUG',
       ),
     ]);
 
     final request = await requestFuture;
-    expect(request.headers.value('x-kelivo-sync-protocol-version'), '2');
+    expect(request.uri.path, '/api/sync/record/push');
+    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    expect(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+      <String, Object?>{
+        'mutations': <Object?>[
+          <String, Object?>{
+            'mutationId': _mutationId1,
+            'recordId': _recordId1,
+            'expectedRevision': 0,
+            'operation': 'put',
+            'envelopeVersion': 1,
+            'keyEpoch': 7,
+            'ciphertext': 'AQID',
+          },
+          <String, Object?>{
+            'mutationId': _mutationId2,
+            'recordId': _recordId2,
+            'expectedRevision': 3,
+            'operation': 'delete',
+          },
+          <String, Object?>{
+            'mutationId': _mutationId3,
+            'recordId': _recordId3,
+            'expectedRevision': 2,
+            'operation': 'put',
+            'envelopeVersion': 1,
+            'keyEpoch': 8,
+            'ciphertext': 'BAUG',
+          },
+        ],
+      },
+    );
     request.response.headers.contentType = ContentType.json;
     request.response.write(
       jsonEncode(<String, Object?>{
         'data': <String, Object?>{
           'results': <Object?>[
             <String, Object?>{
-              'mutationId': 'mutation-1',
+              'mutationId': _mutationId1,
               'status': 'applied',
               'revision': 1,
-              'changeSeq': 1,
+              'changeSeq': 11,
+            },
+            <String, Object?>{
+              'mutationId': _mutationId2,
+              'status': 'conflict',
+              'currentRevision': 4,
+            },
+            <String, Object?>{
+              'mutationId': _mutationId3,
+              'status': 'rejected',
+              'errorCode': 'SYNC_RECORD_REJECTED',
             },
           ],
         },
@@ -180,321 +180,545 @@ void main() {
     await request.response.close();
 
     final results = await pushFuture;
-    expect(results.single.status, CloudSyncMutationStatus.applied);
-
-    client.close(force: true);
-    await server.close(force: true);
+    expect(
+      results[0],
+      isA<CloudSyncAppliedMutationResult>()
+          .having((result) => result.revision, 'revision', 1)
+          .having((result) => result.changeSeq, 'changeSeq', 11),
+    );
+    expect(
+      results[1],
+      isA<CloudSyncConflictMutationResult>().having(
+        (result) => result.currentRevision,
+        'currentRevision',
+        4,
+      ),
+    );
+    expect(
+      results[2],
+      isA<CloudSyncRejectedMutationResult>().having(
+        (result) => result.errorCode,
+        'errorCode',
+        'SYNC_RECORD_REJECTED',
+      ),
+    );
   });
 
-  test('增量拉取能够识别指令注入实体', () async {
+  test('v3 增量拉取保持密文不透明并区分 put 与 delete', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
 
-    final pullFuture = client.pull();
+    final pullFuture = client.pullChanges(cursor: 'cursor-1', limit: 2);
+
     final request = await requestFuture;
+    expect(request.uri.path, '/api/sync/change/pull');
+    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    expect(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+      <String, Object?>{'cursor': 'cursor-1', 'limit': 2},
+    );
     request.response.headers.contentType = ContentType.json;
     request.response.write(
       jsonEncode(<String, Object?>{
         'data': <String, Object?>{
           'changes': <Object?>[
             <String, Object?>{
-              'changeSeq': 1,
-              'operation': 'upsert',
-              'record': <String, Object?>{
-                'entityType': 'instruction-injection',
-                'entityId': 'instruction-1',
-                'parentId': null,
-                'revision': 1,
-                'schemaVersion': 2,
-                'sortSeq': null,
-                'payload': <String, Object?>{
-                  'title': '学习模式',
-                  'prompt': '请逐步引导。',
-                  'group': '',
-                  '_position': 0,
-                },
-                'deletedAt': null,
-                'updatedAt': '2026-07-16T08:00:00.000Z',
-                'updatedByDeviceId': null,
-                'lastChangeSeq': 1,
-              },
+              'changeSeq': 12,
+              'operation': 'put',
+              'recordId': _recordId1,
+              'revision': 2,
+              'envelopeVersion': 1,
+              'keyEpoch': 7,
+              'ciphertext': 'AQID',
+              'ciphertextBytes': 3,
+              'deletedAt': null,
+              'updatedAt': '2026-07-19T05:00:00.000Z',
+              'updatedByDeviceId': _deviceId1,
+            },
+            <String, Object?>{
+              'changeSeq': 13,
+              'operation': 'delete',
+              'recordId': _recordId2,
+              'revision': 4,
+              'envelopeVersion': null,
+              'keyEpoch': null,
+              'ciphertext': null,
+              'ciphertextBytes': 0,
+              'deletedAt': '2026-07-19T05:01:00.000Z',
+              'updatedAt': '2026-07-19T05:01:00.000Z',
+              'updatedByDeviceId': null,
             },
           ],
-          'nextCursor': 'cursor-1',
-          'hasMore': false,
+          'nextCursor': 'cursor-2',
+          'hasMore': true,
           'resetRequired': false,
         },
       }),
     );
     await request.response.close();
 
-    final result = await pullFuture;
+    final page = await pullFuture;
+    expect(page.nextCursor, 'cursor-2');
+    expect(page.hasMore, isTrue);
+    expect(page.resetRequired, isFalse);
     expect(
-      result.changes.single.record?.entityType,
-      CloudSyncEntityType.instructionInjection,
+      page.changes[0],
+      isA<CloudSyncPutRecordChange>()
+          .having((change) => change.changeSeq, 'changeSeq', 12)
+          .having((change) => change.recordId, 'recordId', _recordId1)
+          .having((change) => change.revision, 'revision', 2)
+          .having((change) => change.envelopeVersion, 'envelopeVersion', 1)
+          .having((change) => change.keyEpoch, 'keyEpoch', 7)
+          .having((change) => change.ciphertext, 'ciphertext', 'AQID')
+          .having(
+            (change) => change.updatedByDeviceId,
+            'updatedByDeviceId',
+            _deviceId1,
+          ),
     );
-
-    client.close(force: true);
-    await server.close(force: true);
+    expect(
+      page.changes[1],
+      isA<CloudSyncDeleteRecordChange>()
+          .having((change) => change.changeSeq, 'changeSeq', 13)
+          .having(
+            (change) => change.deletedAt,
+            'deletedAt',
+            DateTime.utc(2026, 7, 19, 5, 1),
+          ),
+    );
   });
 
-  test('附件传输全部携带独立协议版本', () async {
+  test('v3 增量拉取显式返回服务端要求重置游标', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final requests = StreamIterator<HttpRequest>(server);
+    final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
 
-    Future<void> expectProtocolHeader(
-      String path,
-      Future<void> Function() send,
-    ) async {
-      final operation = send();
-      expect(await requests.moveNext(), isTrue);
-      final request = requests.current;
-      expect(request.uri.path, path);
-      expect(request.headers.value('x-kelivo-sync-protocol-version'), '2');
-      await request.drain<void>();
-      request.response
-        ..statusCode = HttpStatus.unauthorized
-        ..headers.contentType = ContentType.json
-        ..write(
+    final pullFuture = client.pullChanges();
+    final request = await requestFuture;
+    expect(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+      <String, Object?>{'limit': 10},
+    );
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'changes': <Object?>[],
+          'nextCursor': 'reset-cursor',
+          'hasMore': false,
+          'resetRequired': true,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final page = await pullFuture;
+    expect(page.changes, isEmpty);
+    expect(page.nextCursor, 'reset-cursor');
+    expect(page.hasMore, isFalse);
+    expect(page.resetRequired, isTrue);
+  });
+
+  test('v3 快照拉取解析 active 与 deleted 并返回固定水位游标', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: 'token',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final pullFuture = client.pullSnapshot(
+      snapshotCursor: 'snapshot-1',
+      limit: 2,
+    );
+
+    final request = await requestFuture;
+    expect(request.uri.path, '/api/sync/snapshot/pull');
+    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    expect(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+      <String, Object?>{'snapshotCursor': 'snapshot-1', 'limit': 2},
+    );
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'records': <Object?>[
+            <String, Object?>{
+              'recordId': _recordId1,
+              'revision': 2,
+              'envelopeVersion': 1,
+              'keyEpoch': 7,
+              'ciphertext': 'BAUG',
+              'ciphertextBytes': 3,
+              'deletedAt': null,
+              'updatedAt': '2026-07-19T05:00:00.000Z',
+              'updatedByDeviceId': _deviceId1,
+              'lastChangeSeq': 12,
+            },
+            <String, Object?>{
+              'recordId': _recordId2,
+              'revision': 4,
+              'envelopeVersion': null,
+              'keyEpoch': null,
+              'ciphertext': null,
+              'ciphertextBytes': 0,
+              'deletedAt': '2026-07-19T05:01:00.000Z',
+              'updatedAt': '2026-07-19T05:01:00.000Z',
+              'updatedByDeviceId': null,
+              'lastChangeSeq': 13,
+            },
+          ],
+          'nextSnapshotCursor': null,
+          'syncCursor': 'sync-13',
+          'hasMore': false,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final page = await pullFuture;
+    expect(page.nextSnapshotCursor, isNull);
+    expect(page.syncCursor, 'sync-13');
+    expect(page.hasMore, isFalse);
+    expect(
+      page.records[0],
+      isA<CloudSyncActiveRecord>()
+          .having((record) => record.recordId, 'recordId', _recordId1)
+          .having((record) => record.revision, 'revision', 2)
+          .having((record) => record.lastChangeSeq, 'lastChangeSeq', 12)
+          .having((record) => record.envelopeVersion, 'envelopeVersion', 1)
+          .having((record) => record.keyEpoch, 'keyEpoch', 7)
+          .having((record) => record.ciphertext, 'ciphertext', 'BAUG'),
+    );
+    expect(
+      page.records[1],
+      isA<CloudSyncDeletedRecord>()
+          .having((record) => record.recordId, 'recordId', _recordId2)
+          .having((record) => record.lastChangeSeq, 'lastChangeSeq', 13)
+          .having(
+            (record) => record.deletedAt,
+            'deletedAt',
+            DateTime.utc(2026, 7, 19, 5, 1),
+          ),
+    );
+  });
+
+  test('v3 推送在发网前拒绝非法标识、密文与批量边界', () {
+    final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
+    addTearDown(() => client.close(force: true));
+    final oversizedCiphertext = base64Url
+        .encode(Uint8List(1048577))
+        .replaceAll('=', '');
+    final halfBatchCiphertext = base64Url
+        .encode(Uint8List(524289))
+        .replaceAll('=', '');
+    final oversizedBatch = List<CloudSyncRecordMutation>.generate(
+      11,
+      (index) => CloudSyncDeleteRecordMutation(
+        mutationId:
+            '00000000-0000-4000-8000-${(index + 100).toString().padLeft(12, '0')}',
+        recordId:
+            '10000000-0000-4000-8000-${(index + 100).toString().padLeft(12, '0')}',
+        expectedRevision: 1,
+      ),
+    );
+    final invalidCalls = <(String, Object? Function())>[
+      ('空批次', () => client.pushRecords(const <CloudSyncRecordMutation>[])),
+      ('超过十条', () => client.pushRecords(oversizedBatch)),
+      (
+        '非规范 UUID',
+        () => client.pushRecords(const <CloudSyncRecordMutation>[
+          CloudSyncPutRecordMutation(
+            mutationId: 'A0000000-0000-4000-8000-000000000001',
+            recordId: _recordId1,
+            expectedRevision: 0,
+            keyEpoch: 1,
+            ciphertext: 'AQID',
+          ),
+        ]),
+      ),
+      (
+        '带填充 Base64URL',
+        () => client.pushRecords(const <CloudSyncRecordMutation>[
+          CloudSyncPutRecordMutation(
+            mutationId: _mutationId1,
+            recordId: _recordId1,
+            expectedRevision: 0,
+            keyEpoch: 1,
+            ciphertext: 'AQID=',
+          ),
+        ]),
+      ),
+      (
+        '非规范尾位 Base64URL',
+        () => client.pushRecords(const <CloudSyncRecordMutation>[
+          CloudSyncPutRecordMutation(
+            mutationId: _mutationId1,
+            recordId: _recordId1,
+            expectedRevision: 0,
+            keyEpoch: 1,
+            ciphertext: 'AB',
+          ),
+        ]),
+      ),
+      (
+        '单条密文超过一 MiB',
+        () => client.pushRecords(<CloudSyncRecordMutation>[
+          CloudSyncPutRecordMutation(
+            mutationId: _mutationId1,
+            recordId: _recordId1,
+            expectedRevision: 0,
+            keyEpoch: 1,
+            ciphertext: oversizedCiphertext,
+          ),
+        ]),
+      ),
+      (
+        '批次密文总量超过一 MiB',
+        () => client.pushRecords(<CloudSyncRecordMutation>[
+          CloudSyncPutRecordMutation(
+            mutationId: _mutationId1,
+            recordId: _recordId1,
+            expectedRevision: 0,
+            keyEpoch: 1,
+            ciphertext: halfBatchCiphertext,
+          ),
+          CloudSyncPutRecordMutation(
+            mutationId: _mutationId2,
+            recordId: _recordId2,
+            expectedRevision: 0,
+            keyEpoch: 1,
+            ciphertext: halfBatchCiphertext,
+          ),
+        ]),
+      ),
+      (
+        'delete 不允许零 revision',
+        () => client.pushRecords(const <CloudSyncRecordMutation>[
+          CloudSyncDeleteRecordMutation(
+            mutationId: _mutationId1,
+            recordId: _recordId1,
+            expectedRevision: 0,
+          ),
+        ]),
+      ),
+      (
+        'key epoch 越界',
+        () => client.pushRecords(const <CloudSyncRecordMutation>[
+          CloudSyncPutRecordMutation(
+            mutationId: _mutationId1,
+            recordId: _recordId1,
+            expectedRevision: 0,
+            keyEpoch: 2147483648,
+            ciphertext: 'AQID',
+          ),
+        ]),
+      ),
+    ];
+
+    for (final invalidCall in invalidCalls) {
+      expect(
+        invalidCall.$2,
+        throwsA(
+          isA<CloudSyncException>()
+              .having(
+                (error) => error.kind,
+                'kind',
+                CloudSyncFailureKind.validation,
+              )
+              .having((error) => error.retryable, 'retryable', isFalse),
+        ),
+        reason: invalidCall.$1,
+      );
+    }
+  });
+
+  test('v3 拉取在发网前拒绝非法分页与游标边界', () {
+    final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
+    addTearDown(() => client.close(force: true));
+    final oversizedCursor = List<String>.filled(4097, 'a').join();
+    final invalidCalls = <(String, Object? Function())>[
+      ('增量 limit 下界', () => client.pullChanges(limit: 0)),
+      ('增量 limit 上界', () => client.pullChanges(limit: 11)),
+      ('增量空游标', () => client.pullChanges(cursor: '')),
+      ('增量超长游标', () => client.pullChanges(cursor: oversizedCursor)),
+      ('快照 limit 下界', () => client.pullSnapshot(limit: 0)),
+      ('快照 limit 上界', () => client.pullSnapshot(limit: 11)),
+      ('快照空游标', () => client.pullSnapshot(snapshotCursor: '')),
+      ('快照超长游标', () => client.pullSnapshot(snapshotCursor: oversizedCursor)),
+    ];
+
+    for (final invalidCall in invalidCalls) {
+      expect(
+        invalidCall.$2,
+        throwsA(
+          isA<CloudSyncException>().having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.validation,
+          ),
+        ),
+        reason: invalidCall.$1,
+      );
+    }
+  });
+
+  test('v3 拒绝密文长度、分页数量或最终水位无效的响应', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var changeRequestCount = 0;
+    final subscription = server.listen((request) async {
+      await utf8.decoder.bind(request).join();
+      request.response.headers.contentType = ContentType.json;
+      if (request.uri.path == '/api/sync/change/pull') {
+        changeRequestCount++;
+        request.response.write(
           jsonEncode(<String, Object?>{
-            'error': <String, Object?>{
-              'code': 'unauthorized',
-              'message': 'unauthorized',
+            'data': <String, Object?>{
+              'changes': <Object?>[
+                <String, Object?>{
+                  'changeSeq': 12,
+                  'operation': 'put',
+                  'recordId': _recordId1,
+                  'revision': 2,
+                  'envelopeVersion': 1,
+                  'keyEpoch': 7,
+                  'ciphertext': 'AQID',
+                  'ciphertextBytes': changeRequestCount == 1 ? 4 : 3,
+                  'deletedAt': null,
+                  'updatedAt': '2026-07-19T05:00:00.000Z',
+                  'updatedByDeviceId': _deviceId1,
+                },
+                if (changeRequestCount > 1)
+                  <String, Object?>{
+                    'changeSeq': 13,
+                    'operation': 'delete',
+                    'recordId': _recordId2,
+                    'revision': 4,
+                    'envelopeVersion': null,
+                    'keyEpoch': null,
+                    'ciphertext': null,
+                    'ciphertextBytes': 0,
+                    'deletedAt': '2026-07-19T05:01:00.000Z',
+                    'updatedAt': '2026-07-19T05:01:00.000Z',
+                    'updatedByDeviceId': null,
+                  },
+              ],
+              'nextCursor': 'cursor-2',
+              'hasMore': false,
+              'resetRequired': false,
             },
           }),
         );
+      } else {
+        request.response.write(
+          jsonEncode(<String, Object?>{
+            'data': <String, Object?>{
+              'records': <Object?>[],
+              'nextSnapshotCursor': null,
+              'syncCursor': null,
+              'hasMore': false,
+            },
+          }),
+        );
+      }
       await request.response.close();
-      await expectLater(operation, throwsA(isA<CloudSyncException>()));
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: 'token',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    final invalidResponse = throwsA(
+      isA<CloudSyncException>()
+          .having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.invalidResponse,
+          )
+          .having((error) => error.retryable, 'retryable', isFalse),
+    );
+    for (final request in <Future<Object?> Function()>[
+      () => client.pullChanges(),
+      () => client.pullChanges(limit: 1),
+      () => client.pullSnapshot(),
+    ]) {
+      await expectLater(request(), invalidResponse);
     }
-
-    await expectProtocolHeader('/api/attachment/upload/prepare', () async {
-      await client.prepareAttachmentUpload(
-        sha256: 'sha256',
-        md5Base64: 'md5',
-        sizeBytes: 1,
-      );
-    });
-    await expectProtocolHeader('/api/attachment/upload/complete', () async {
-      await client.completeAttachmentUpload(
-        attachmentId: 'attachment-1',
-        blobId: 'blob-1',
-        entityType: 'message',
-        entityId: 'message-1',
-        fileName: 'image.png',
-        mimeType: 'image/png',
-        etag: 'etag',
-      );
-    });
-    await expectProtocolHeader('/api/attachment/info/list', () async {
-      await client.listAttachmentInfo(
-        entityType: 'message',
-        entityId: 'message-1',
-      );
-    });
-    await expectProtocolHeader('/api/attachment/download-url/get', () async {
-      await client.getAttachmentDownloadUrl('attachment-1');
-    });
-    await expectProtocolHeader('/api/attachment/info/delete', () async {
-      await client.deleteAttachmentInfo('attachment-1');
-    });
-
-    await requests.cancel();
-    client.close(force: true);
-    await server.close(force: true);
   });
 
-  test('字段冲突结果保留冲突标识和冲突路径', () async {
+  test('v3 协议版本错误保留服务端错误码与请求标识', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: 'token',
     );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
 
-    final pushFuture = client.push(<CloudSyncOutboxMutation>[
-      CloudSyncOutboxMutation.update(
-        mutationId: 'mutation-2',
-        entityType: CloudSyncEntityType.conversation,
-        entityId: 'conversation-1',
-        baseRevision: 2,
-        patch: <CloudSyncPatch>[CloudSyncPatch.replace('/title', '本地标题')],
-      ),
-    ]);
-
+    final pullFuture = client.pullChanges();
     final request = await requestFuture;
-    request.response.headers.contentType = ContentType.json;
-    request.response.write(
-      jsonEncode(<String, Object?>{
-        'data': <String, Object?>{
-          'results': <Object?>[
-            <String, Object?>{
-              'mutationId': 'mutation-2',
-              'status': 'conflict',
-              'currentRevision': 3,
-              'reason': 'field-conflict',
-              'conflictId': 'conflict-1',
-              'conflictingPaths': <String>['/title'],
-              'changeSeq': 7,
-            },
-          ],
-        },
-      }),
-    );
+    await utf8.decoder.bind(request).join();
+    request.response
+      ..statusCode = 426
+      ..headers.contentType = ContentType.json
+      ..write(
+        jsonEncode(<String, Object?>{
+          'error': <String, Object?>{
+            'code': 'SYNC_PROTOCOL_VERSION_UNSUPPORTED',
+            'message': 'unsupported protocol',
+            'retryable': false,
+          },
+          'requestId': 'request-1',
+        }),
+      );
     await request.response.close();
 
-    final result = (await pushFuture).single;
-    expect(result.status, CloudSyncMutationStatus.conflict);
-    expect(result.reason, 'field-conflict');
-    expect(result.conflictId, 'conflict-1');
-    expect(result.conflictingPaths, <String>['/title']);
-    expect(result.changeSeq, 7);
-
-    client.close(force: true);
-    await server.close(force: true);
-  });
-
-  test('父级删除冲突原因能够传回协调器', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final requestFuture = server.first;
-    final client = CloudSyncClient.forTesting(
-      baseUrl: 'http://${server.address.address}:${server.port}',
-      token: 'token',
-    );
-
-    final pushFuture = client.push(<CloudSyncOutboxMutation>[
-      CloudSyncOutboxMutation.delete(
-        mutationId: 'mutation-parent',
-        entityType: CloudSyncEntityType.turn,
-        entityId: 'turn-1',
-        baseRevision: 1,
+    await expectLater(
+      pullFuture,
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            )
+            .having((error) => error.statusCode, 'statusCode', 426)
+            .having(
+              (error) => error.serverCode,
+              'serverCode',
+              'SYNC_PROTOCOL_VERSION_UNSUPPORTED',
+            )
+            .having((error) => error.requestId, 'requestId', 'request-1')
+            .having((error) => error.retryable, 'retryable', isFalse),
       ),
-    ]);
-
-    final request = await requestFuture;
-    request.response.headers.contentType = ContentType.json;
-    request.response.write(
-      jsonEncode(<String, Object?>{
-        'data': <String, Object?>{
-          'results': <Object?>[
-            <String, Object?>{
-              'mutationId': 'mutation-parent',
-              'status': 'conflict',
-              'currentRevision': 1,
-              'reason': 'parent-deleted',
-            },
-          ],
-        },
-      }),
     );
-    await request.response.close();
-
-    final result = (await pushFuture).single;
-    expect(result.status, CloudSyncMutationStatus.conflict);
-    expect(result.reason, 'parent-deleted');
-
-    client.close(force: true);
-    await server.close(force: true);
   });
-
-  test('字段冲突可以列出并标记为已解决', () async {
-    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-    final requests = StreamIterator<HttpRequest>(server);
-    final client = CloudSyncClient.forTesting(
-      baseUrl: 'http://${server.address.address}:${server.port}',
-      token: 'token',
-    );
-
-    final listFuture = client.listConflicts(limit: 20);
-    expect(await requests.moveNext(), isTrue);
-    final listRequest = requests.current;
-    expect(listRequest.uri.path, '/api/sync/conflict/list');
-    expect(listRequest.headers.value('x-kelivo-sync-protocol-version'), '2');
-    expect(
-      jsonDecode(await utf8.decoder.bind(listRequest).join()),
-      <String, Object?>{'state': 'open', 'limit': 20},
-    );
-    listRequest.response.headers.contentType = ContentType.json;
-    listRequest.response.write(
-      jsonEncode(<String, Object?>{
-        'data': <String, Object?>{
-          'conflicts': <Object?>[
-            _conflictJson(state: 'open', resolvedAt: null),
-          ],
-        },
-      }),
-    );
-    await listRequest.response.close();
-
-    final conflict = (await listFuture).single;
-    expect(conflict.conflictId, 'conflict-1');
-    expect(conflict.entityType, CloudSyncEntityType.conversation);
-    expect(conflict.baseRevision, 2);
-    expect(conflict.state, CloudSyncConflictState.open);
-    expect(conflict.fields.single.path, '/title');
-    expect(conflict.fields.single.current.exists, isTrue);
-    expect(conflict.fields.single.current.value, '云端标题');
-    expect(conflict.fields.single.desired.exists, isFalse);
-
-    final resolveFuture = client.resolveConflict('conflict-1');
-    expect(await requests.moveNext(), isTrue);
-    final resolveRequest = requests.current;
-    expect(resolveRequest.uri.path, '/api/sync/conflict/resolve');
-    expect(
-      jsonDecode(await utf8.decoder.bind(resolveRequest).join()),
-      <String, Object?>{'conflictId': 'conflict-1'},
-    );
-    resolveRequest.response.headers.contentType = ContentType.json;
-    resolveRequest.response.write(
-      jsonEncode(<String, Object?>{
-        'data': <String, Object?>{
-          'conflict': _conflictJson(
-            state: 'resolved',
-            resolvedAt: '2026-07-16T08:02:00.000Z',
-          ),
-        },
-      }),
-    );
-    await resolveRequest.response.close();
-
-    final resolved = await resolveFuture;
-    expect(resolved.state, CloudSyncConflictState.resolved);
-    expect(resolved.resolvedAt, DateTime.utc(2026, 7, 16, 8, 2));
-
-    await requests.cancel();
-    client.close(force: true);
-    await server.close(force: true);
-  });
-}
-
-Map<String, Object?> _conflictJson({
-  required String state,
-  required String? resolvedAt,
-}) {
-  return <String, Object?>{
-    'conflictId': 'conflict-1',
-    'mutationId': 'mutation-2',
-    'entityType': 'conversation',
-    'entityId': 'conversation-1',
-    'details': <String, Object?>{
-      'baseRevision': 2,
-      'fields': <Object?>[
-        <String, Object?>{
-          'path': '/title',
-          'current': <String, Object?>{'exists': true, 'value': '云端标题'},
-          'desired': <String, Object?>{'exists': false},
-        },
-      ],
-    },
-    'state': state,
-    'createdAt': '2026-07-16T08:01:00.000Z',
-    'resolvedAt': resolvedAt,
-  };
 }

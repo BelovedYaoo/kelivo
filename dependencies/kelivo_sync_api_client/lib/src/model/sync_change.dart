@@ -4,9 +4,8 @@
 
 // ignore_for_file: unused_element
 import 'package:built_collection/built_collection.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_record.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_entity_type.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_upsert_change.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_put_change.dart';
+import 'package:built_value/json_object.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_delete_change.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
@@ -19,21 +18,25 @@ part 'sync_change.g.dart';
 /// Properties:
 /// * [changeSeq]
 /// * [operation]
-/// * [record]
-/// * [entityType]
-/// * [entityId]
+/// * [recordId]
 /// * [revision]
+/// * [envelopeVersion]
+/// * [keyEpoch]
+/// * [ciphertext]
+/// * [ciphertextBytes]
 /// * [deletedAt]
+/// * [updatedAt]
+/// * [updatedByDeviceId]
 @BuiltValue()
 abstract class SyncChange implements Built<SyncChange, SyncChangeBuilder> {
-  /// One Of [SyncDeleteChange], [SyncUpsertChange]
+  /// One Of [SyncDeleteChange], [SyncPutChange]
   OneOf get oneOf;
 
   static const String discriminatorFieldName = r'operation';
 
   static const Map<String, Type> discriminatorMapping = {
     r'delete': SyncDeleteChange,
-    r'upsert': SyncUpsertChange,
+    r'put': SyncPutChange,
   };
 
   SyncChange._();
@@ -52,8 +55,8 @@ extension SyncChangeDiscriminatorExt on SyncChange {
     if (this is SyncDeleteChange) {
       return r'delete';
     }
-    if (this is SyncUpsertChange) {
-      return r'upsert';
+    if (this is SyncPutChange) {
+      return r'put';
     }
     return null;
   }
@@ -64,8 +67,8 @@ extension SyncChangeBuilderDiscriminatorExt on SyncChangeBuilder {
     if (this is SyncDeleteChangeBuilder) {
       return r'delete';
     }
-    if (this is SyncUpsertChangeBuilder) {
-      return r'upsert';
+    if (this is SyncPutChangeBuilder) {
+      return r'put';
     }
     return null;
   }
@@ -115,7 +118,7 @@ class _$SyncChangeSerializer implements PrimitiveSerializer<SyncChange> {
             )
             as String;
     oneOfDataSrc = serialized;
-    final oneOfTypes = [SyncDeleteChange, SyncUpsertChange];
+    final oneOfTypes = [SyncDeleteChange, SyncPutChange];
     Object oneOfResult;
     Type oneOfType;
     switch (discValue) {
@@ -128,14 +131,14 @@ class _$SyncChangeSerializer implements PrimitiveSerializer<SyncChange> {
                 as SyncDeleteChange;
         oneOfType = SyncDeleteChange;
         break;
-      case r'upsert':
+      case r'put':
         oneOfResult =
             serializers.deserialize(
                   oneOfDataSrc,
-                  specifiedType: FullType(SyncUpsertChange),
+                  specifiedType: FullType(SyncPutChange),
                 )
-                as SyncUpsertChange;
-        oneOfType = SyncUpsertChange;
+                as SyncPutChange;
+        oneOfType = SyncPutChange;
         break;
       default:
         throw UnsupportedError(

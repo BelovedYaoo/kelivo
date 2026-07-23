@@ -13,7 +13,7 @@ import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/generation_run.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
-import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/utils/app_directories.dart';
@@ -1482,11 +1482,11 @@ void main() {
 }
 
 Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
-  expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+  expect(Hive.isBoxOpen(CloudSyncStateRetirement.legacyBoxName), isFalse);
   for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
     expect(
       await File(
-        p.join(root.path, '${CloudSyncStore.defaultBoxName}$suffix'),
+        p.join(root.path, '${CloudSyncStateRetirement.legacyBoxName}$suffix'),
       ).exists(),
       isFalse,
     );

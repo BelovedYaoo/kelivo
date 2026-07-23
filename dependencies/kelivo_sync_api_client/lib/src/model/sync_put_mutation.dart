@@ -7,18 +7,21 @@ import 'package:built_collection/built_collection.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'sync_delete_mutation.g.dart';
+part 'sync_put_mutation.g.dart';
 
-/// SyncDeleteMutation
+/// SyncPutMutation
 ///
 /// Properties:
 /// * [mutationId]
 /// * [recordId]
 /// * [expectedRevision]
 /// * [operation]
+/// * [envelopeVersion]
+/// * [keyEpoch]
+/// * [ciphertext] - 客户端生成的完整加密信封，使用无填充 Base64URL 编码，解码后最大 1 MiB
 @BuiltValue()
-abstract class SyncDeleteMutation
-    implements Built<SyncDeleteMutation, SyncDeleteMutationBuilder> {
+abstract class SyncPutMutation
+    implements Built<SyncPutMutation, SyncPutMutationBuilder> {
   @BuiltValueField(wireName: r'mutationId')
   String get mutationId;
 
@@ -29,33 +32,43 @@ abstract class SyncDeleteMutation
   int get expectedRevision;
 
   @BuiltValueField(wireName: r'operation')
-  SyncDeleteMutationOperationEnum get operation;
-  // enum operationEnum {  delete,  };
+  SyncPutMutationOperationEnum get operation;
+  // enum operationEnum {  put,  };
 
-  SyncDeleteMutation._();
+  @BuiltValueField(wireName: r'envelopeVersion')
+  int get envelopeVersion;
 
-  factory SyncDeleteMutation([void updates(SyncDeleteMutationBuilder b)]) =
-      _$SyncDeleteMutation;
+  @BuiltValueField(wireName: r'keyEpoch')
+  int get keyEpoch;
+
+  /// 客户端生成的完整加密信封，使用无填充 Base64URL 编码，解码后最大 1 MiB
+  @BuiltValueField(wireName: r'ciphertext')
+  String get ciphertext;
+
+  SyncPutMutation._();
+
+  factory SyncPutMutation([void updates(SyncPutMutationBuilder b)]) =
+      _$SyncPutMutation;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(SyncDeleteMutationBuilder b) => b;
+  static void _defaults(SyncPutMutationBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<SyncDeleteMutation> get serializer =>
-      _$SyncDeleteMutationSerializer();
+  static Serializer<SyncPutMutation> get serializer =>
+      _$SyncPutMutationSerializer();
 }
 
-class _$SyncDeleteMutationSerializer
-    implements PrimitiveSerializer<SyncDeleteMutation> {
+class _$SyncPutMutationSerializer
+    implements PrimitiveSerializer<SyncPutMutation> {
   @override
-  final Iterable<Type> types = const [SyncDeleteMutation, _$SyncDeleteMutation];
+  final Iterable<Type> types = const [SyncPutMutation, _$SyncPutMutation];
 
   @override
-  final String wireName = r'SyncDeleteMutation';
+  final String wireName = r'SyncPutMutation';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    SyncDeleteMutation object, {
+    SyncPutMutation object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'mutationId';
@@ -76,14 +89,29 @@ class _$SyncDeleteMutationSerializer
     yield r'operation';
     yield serializers.serialize(
       object.operation,
-      specifiedType: const FullType(SyncDeleteMutationOperationEnum),
+      specifiedType: const FullType(SyncPutMutationOperationEnum),
+    );
+    yield r'envelopeVersion';
+    yield serializers.serialize(
+      object.envelopeVersion,
+      specifiedType: const FullType(int),
+    );
+    yield r'keyEpoch';
+    yield serializers.serialize(
+      object.keyEpoch,
+      specifiedType: const FullType(int),
+    );
+    yield r'ciphertext';
+    yield serializers.serialize(
+      object.ciphertext,
+      specifiedType: const FullType(String),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    SyncDeleteMutation object, {
+    SyncPutMutation object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -98,7 +126,7 @@ class _$SyncDeleteMutationSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required SyncDeleteMutationBuilder result,
+    required SyncPutMutationBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -133,12 +161,31 @@ class _$SyncDeleteMutationSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(
-                      SyncDeleteMutationOperationEnum,
-                    ),
+                    specifiedType: const FullType(SyncPutMutationOperationEnum),
                   )
-                  as SyncDeleteMutationOperationEnum;
+                  as SyncPutMutationOperationEnum;
           result.operation = valueDes;
+          break;
+        case r'envelopeVersion':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.envelopeVersion = valueDes;
+          break;
+        case r'keyEpoch':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.keyEpoch = valueDes;
+          break;
+        case r'ciphertext':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.ciphertext = valueDes;
           break;
         default:
           unhandled.add(key);
@@ -149,12 +196,12 @@ class _$SyncDeleteMutationSerializer
   }
 
   @override
-  SyncDeleteMutation deserialize(
+  SyncPutMutation deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = SyncDeleteMutationBuilder();
+    final result = SyncPutMutationBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(
@@ -169,18 +216,18 @@ class _$SyncDeleteMutationSerializer
   }
 }
 
-class SyncDeleteMutationOperationEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'delete')
-  static const SyncDeleteMutationOperationEnum delete =
-      _$syncDeleteMutationOperationEnum_delete;
+class SyncPutMutationOperationEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'put')
+  static const SyncPutMutationOperationEnum put =
+      _$syncPutMutationOperationEnum_put;
 
-  static Serializer<SyncDeleteMutationOperationEnum> get serializer =>
-      _$syncDeleteMutationOperationEnumSerializer;
+  static Serializer<SyncPutMutationOperationEnum> get serializer =>
+      _$syncPutMutationOperationEnumSerializer;
 
-  const SyncDeleteMutationOperationEnum._(String name) : super(name);
+  const SyncPutMutationOperationEnum._(String name) : super(name);
 
-  static BuiltSet<SyncDeleteMutationOperationEnum> get values =>
-      _$syncDeleteMutationOperationEnumValues;
-  static SyncDeleteMutationOperationEnum valueOf(String name) =>
-      _$syncDeleteMutationOperationEnumValueOf(name);
+  static BuiltSet<SyncPutMutationOperationEnum> get values =>
+      _$syncPutMutationOperationEnumValues;
+  static SyncPutMutationOperationEnum valueOf(String name) =>
+      _$syncPutMutationOperationEnumValueOf(name);
 }

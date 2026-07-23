@@ -28,82 +28,9 @@ _$syncConflictMutationResultStatusEnumValues =
       ],
     );
 
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_entityExists =
-    const SyncConflictMutationResultReasonEnum._('entityExists');
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_entityMissing =
-    const SyncConflictMutationResultReasonEnum._('entityMissing');
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_entityDeleted =
-    const SyncConflictMutationResultReasonEnum._('entityDeleted');
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_entityActive =
-    const SyncConflictMutationResultReasonEnum._('entityActive');
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_parentMissing =
-    const SyncConflictMutationResultReasonEnum._('parentMissing');
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_parentDeleted =
-    const SyncConflictMutationResultReasonEnum._('parentDeleted');
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_restoreRequired =
-    const SyncConflictMutationResultReasonEnum._('restoreRequired');
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_revisionAhead =
-    const SyncConflictMutationResultReasonEnum._('revisionAhead');
-const SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnum_revisionStale =
-    const SyncConflictMutationResultReasonEnum._('revisionStale');
-
-SyncConflictMutationResultReasonEnum
-_$syncConflictMutationResultReasonEnumValueOf(String name) {
-  switch (name) {
-    case 'entityExists':
-      return _$syncConflictMutationResultReasonEnum_entityExists;
-    case 'entityMissing':
-      return _$syncConflictMutationResultReasonEnum_entityMissing;
-    case 'entityDeleted':
-      return _$syncConflictMutationResultReasonEnum_entityDeleted;
-    case 'entityActive':
-      return _$syncConflictMutationResultReasonEnum_entityActive;
-    case 'parentMissing':
-      return _$syncConflictMutationResultReasonEnum_parentMissing;
-    case 'parentDeleted':
-      return _$syncConflictMutationResultReasonEnum_parentDeleted;
-    case 'restoreRequired':
-      return _$syncConflictMutationResultReasonEnum_restoreRequired;
-    case 'revisionAhead':
-      return _$syncConflictMutationResultReasonEnum_revisionAhead;
-    case 'revisionStale':
-      return _$syncConflictMutationResultReasonEnum_revisionStale;
-    default:
-      throw ArgumentError(name);
-  }
-}
-
-final BuiltSet<SyncConflictMutationResultReasonEnum>
-_$syncConflictMutationResultReasonEnumValues =
-    BuiltSet<SyncConflictMutationResultReasonEnum>(
-      const <SyncConflictMutationResultReasonEnum>[
-        _$syncConflictMutationResultReasonEnum_entityExists,
-        _$syncConflictMutationResultReasonEnum_entityMissing,
-        _$syncConflictMutationResultReasonEnum_entityDeleted,
-        _$syncConflictMutationResultReasonEnum_entityActive,
-        _$syncConflictMutationResultReasonEnum_parentMissing,
-        _$syncConflictMutationResultReasonEnum_parentDeleted,
-        _$syncConflictMutationResultReasonEnum_restoreRequired,
-        _$syncConflictMutationResultReasonEnum_revisionAhead,
-        _$syncConflictMutationResultReasonEnum_revisionStale,
-      ],
-    );
-
 Serializer<SyncConflictMutationResultStatusEnum>
 _$syncConflictMutationResultStatusEnumSerializer =
     _$SyncConflictMutationResultStatusEnumSerializer();
-Serializer<SyncConflictMutationResultReasonEnum>
-_$syncConflictMutationResultReasonEnumSerializer =
-    _$SyncConflictMutationResultReasonEnumSerializer();
 
 class _$SyncConflictMutationResultStatusEnumSerializer
     implements PrimitiveSerializer<SyncConflictMutationResultStatusEnum> {
@@ -138,55 +65,6 @@ class _$SyncConflictMutationResultStatusEnumSerializer
   );
 }
 
-class _$SyncConflictMutationResultReasonEnumSerializer
-    implements PrimitiveSerializer<SyncConflictMutationResultReasonEnum> {
-  static const Map<String, Object> _toWire = const <String, Object>{
-    'entityExists': 'entity-exists',
-    'entityMissing': 'entity-missing',
-    'entityDeleted': 'entity-deleted',
-    'entityActive': 'entity-active',
-    'parentMissing': 'parent-missing',
-    'parentDeleted': 'parent-deleted',
-    'restoreRequired': 'restore-required',
-    'revisionAhead': 'revision-ahead',
-    'revisionStale': 'revision-stale',
-  };
-  static const Map<Object, String> _fromWire = const <Object, String>{
-    'entity-exists': 'entityExists',
-    'entity-missing': 'entityMissing',
-    'entity-deleted': 'entityDeleted',
-    'entity-active': 'entityActive',
-    'parent-missing': 'parentMissing',
-    'parent-deleted': 'parentDeleted',
-    'restore-required': 'restoreRequired',
-    'revision-ahead': 'revisionAhead',
-    'revision-stale': 'revisionStale',
-  };
-
-  @override
-  final Iterable<Type> types = const <Type>[
-    SyncConflictMutationResultReasonEnum,
-  ];
-  @override
-  final String wireName = 'SyncConflictMutationResultReasonEnum';
-
-  @override
-  Object serialize(
-    Serializers serializers,
-    SyncConflictMutationResultReasonEnum object, {
-    FullType specifiedType = FullType.unspecified,
-  }) => _toWire[object.name] ?? object.name;
-
-  @override
-  SyncConflictMutationResultReasonEnum deserialize(
-    Serializers serializers,
-    Object serialized, {
-    FullType specifiedType = FullType.unspecified,
-  }) => SyncConflictMutationResultReasonEnum.valueOf(
-    _fromWire[serialized] ?? (serialized is String ? serialized : ''),
-  );
-}
-
 class _$SyncConflictMutationResult extends SyncConflictMutationResult {
   @override
   final String mutationId;
@@ -194,8 +72,6 @@ class _$SyncConflictMutationResult extends SyncConflictMutationResult {
   final SyncConflictMutationResultStatusEnum status;
   @override
   final int? currentRevision;
-  @override
-  final SyncConflictMutationResultReasonEnum reason;
 
   factory _$SyncConflictMutationResult([
     void Function(SyncConflictMutationResultBuilder)? updates,
@@ -205,7 +81,6 @@ class _$SyncConflictMutationResult extends SyncConflictMutationResult {
     required this.mutationId,
     required this.status,
     this.currentRevision,
-    required this.reason,
   }) : super._();
   @override
   SyncConflictMutationResult rebuild(
@@ -222,8 +97,7 @@ class _$SyncConflictMutationResult extends SyncConflictMutationResult {
     return other is SyncConflictMutationResult &&
         mutationId == other.mutationId &&
         status == other.status &&
-        currentRevision == other.currentRevision &&
-        reason == other.reason;
+        currentRevision == other.currentRevision;
   }
 
   @override
@@ -232,7 +106,6 @@ class _$SyncConflictMutationResult extends SyncConflictMutationResult {
     _$hash = $jc(_$hash, mutationId.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, currentRevision.hashCode);
-    _$hash = $jc(_$hash, reason.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -242,8 +115,7 @@ class _$SyncConflictMutationResult extends SyncConflictMutationResult {
     return (newBuiltValueToStringHelper(r'SyncConflictMutationResult')
           ..add('mutationId', mutationId)
           ..add('status', status)
-          ..add('currentRevision', currentRevision)
-          ..add('reason', reason))
+          ..add('currentRevision', currentRevision))
         .toString();
   }
 }
@@ -267,11 +139,6 @@ class SyncConflictMutationResultBuilder
   set currentRevision(int? currentRevision) =>
       _$this._currentRevision = currentRevision;
 
-  SyncConflictMutationResultReasonEnum? _reason;
-  SyncConflictMutationResultReasonEnum? get reason => _$this._reason;
-  set reason(SyncConflictMutationResultReasonEnum? reason) =>
-      _$this._reason = reason;
-
   SyncConflictMutationResultBuilder() {
     SyncConflictMutationResult._defaults(this);
   }
@@ -282,7 +149,6 @@ class SyncConflictMutationResultBuilder
       _mutationId = $v.mutationId;
       _status = $v.status;
       _currentRevision = $v.currentRevision;
-      _reason = $v.reason;
       _$v = null;
     }
     return this;
@@ -316,11 +182,6 @@ class SyncConflictMutationResultBuilder
             'status',
           ),
           currentRevision: currentRevision,
-          reason: BuiltValueNullFieldError.checkNotNull(
-            reason,
-            r'SyncConflictMutationResult',
-            'reason',
-          ),
         );
     replace(_$result);
     return _$result;

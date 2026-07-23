@@ -3,14 +3,9 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/sync_patch_operation.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_put_mutation.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_delete_mutation.dart';
 import 'package:built_collection/built_collection.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_create_mutation.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_entity_type.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_restore_mutation.dart';
-import 'package:built_value/json_object.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_update_mutation.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 import 'package:one_of/one_of.dart';
@@ -21,27 +16,23 @@ part 'sync_mutation.g.dart';
 ///
 /// Properties:
 /// * [mutationId]
-/// * [entityType]
-/// * [entityId]
+/// * [recordId]
+/// * [expectedRevision]
 /// * [operation]
-/// * [parentId]
-/// * [schemaVersion]
-/// * [payload]
-/// * [baseRevision]
-/// * [patch_]
+/// * [envelopeVersion]
+/// * [keyEpoch]
+/// * [ciphertext] - 客户端生成的完整加密信封，使用无填充 Base64URL 编码，解码后最大 1 MiB
 @BuiltValue()
 abstract class SyncMutation
     implements Built<SyncMutation, SyncMutationBuilder> {
-  /// One Of [SyncCreateMutation], [SyncDeleteMutation], [SyncRestoreMutation], [SyncUpdateMutation]
+  /// One Of [SyncDeleteMutation], [SyncPutMutation]
   OneOf get oneOf;
 
   static const String discriminatorFieldName = r'operation';
 
   static const Map<String, Type> discriminatorMapping = {
-    r'create': SyncCreateMutation,
     r'delete': SyncDeleteMutation,
-    r'restore': SyncRestoreMutation,
-    r'update': SyncUpdateMutation,
+    r'put': SyncPutMutation,
   };
 
   SyncMutation._();
@@ -57,17 +48,11 @@ abstract class SyncMutation
 
 extension SyncMutationDiscriminatorExt on SyncMutation {
   String? get discriminatorValue {
-    if (this is SyncCreateMutation) {
-      return r'create';
-    }
     if (this is SyncDeleteMutation) {
       return r'delete';
     }
-    if (this is SyncRestoreMutation) {
-      return r'restore';
-    }
-    if (this is SyncUpdateMutation) {
-      return r'update';
+    if (this is SyncPutMutation) {
+      return r'put';
     }
     return null;
   }
@@ -75,17 +60,11 @@ extension SyncMutationDiscriminatorExt on SyncMutation {
 
 extension SyncMutationBuilderDiscriminatorExt on SyncMutationBuilder {
   String? get discriminatorValue {
-    if (this is SyncCreateMutationBuilder) {
-      return r'create';
-    }
     if (this is SyncDeleteMutationBuilder) {
       return r'delete';
     }
-    if (this is SyncRestoreMutationBuilder) {
-      return r'restore';
-    }
-    if (this is SyncUpdateMutationBuilder) {
-      return r'update';
+    if (this is SyncPutMutationBuilder) {
+      return r'put';
     }
     return null;
   }
@@ -135,24 +114,10 @@ class _$SyncMutationSerializer implements PrimitiveSerializer<SyncMutation> {
             )
             as String;
     oneOfDataSrc = serialized;
-    final oneOfTypes = [
-      SyncCreateMutation,
-      SyncDeleteMutation,
-      SyncRestoreMutation,
-      SyncUpdateMutation,
-    ];
+    final oneOfTypes = [SyncDeleteMutation, SyncPutMutation];
     Object oneOfResult;
     Type oneOfType;
     switch (discValue) {
-      case r'create':
-        oneOfResult =
-            serializers.deserialize(
-                  oneOfDataSrc,
-                  specifiedType: FullType(SyncCreateMutation),
-                )
-                as SyncCreateMutation;
-        oneOfType = SyncCreateMutation;
-        break;
       case r'delete':
         oneOfResult =
             serializers.deserialize(
@@ -162,23 +127,14 @@ class _$SyncMutationSerializer implements PrimitiveSerializer<SyncMutation> {
                 as SyncDeleteMutation;
         oneOfType = SyncDeleteMutation;
         break;
-      case r'restore':
+      case r'put':
         oneOfResult =
             serializers.deserialize(
                   oneOfDataSrc,
-                  specifiedType: FullType(SyncRestoreMutation),
+                  specifiedType: FullType(SyncPutMutation),
                 )
-                as SyncRestoreMutation;
-        oneOfType = SyncRestoreMutation;
-        break;
-      case r'update':
-        oneOfResult =
-            serializers.deserialize(
-                  oneOfDataSrc,
-                  specifiedType: FullType(SyncUpdateMutation),
-                )
-                as SyncUpdateMutation;
-        oneOfType = SyncUpdateMutation;
+                as SyncPutMutation;
+        oneOfType = SyncPutMutation;
         break;
       default:
         throw UnsupportedError(
@@ -195,9 +151,9 @@ class _$SyncMutationSerializer implements PrimitiveSerializer<SyncMutation> {
 }
 
 class SyncMutationOperationEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'restore')
-  static const SyncMutationOperationEnum restore =
-      _$syncMutationOperationEnum_restore;
+  @BuiltValueEnumConst(wireName: r'delete')
+  static const SyncMutationOperationEnum delete =
+      _$syncMutationOperationEnum_delete;
 
   static Serializer<SyncMutationOperationEnum> get serializer =>
       _$syncMutationOperationEnumSerializer;

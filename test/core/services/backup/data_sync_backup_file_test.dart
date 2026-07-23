@@ -25,7 +25,7 @@ import 'package:Kelivo/core/services/backup/data_sync.dart';
 import 'package:Kelivo/core/services/backup/restore_receipt.dart';
 import 'package:Kelivo/core/services/backup/restore_startup_gate.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart' as production_chat;
-import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
@@ -241,11 +241,11 @@ Future<String> _fileSha256(File file) async {
 }
 
 Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
-  expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+  expect(Hive.isBoxOpen(CloudSyncStateRetirement.legacyBoxName), isFalse);
   for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
     expect(
       await File(
-        p.join(root.path, '${CloudSyncStore.defaultBoxName}$suffix'),
+        p.join(root.path, '${CloudSyncStateRetirement.legacyBoxName}$suffix'),
       ).exists(),
       isFalse,
     );

@@ -8,9 +8,9 @@ import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'sync_delete_change.g.dart';
+part 'sync_put_change.g.dart';
 
-/// SyncDeleteChange
+/// SyncPutChange
 ///
 /// Properties:
 /// * [changeSeq]
@@ -19,20 +19,20 @@ part 'sync_delete_change.g.dart';
 /// * [revision]
 /// * [envelopeVersion]
 /// * [keyEpoch]
-/// * [ciphertext]
+/// * [ciphertext] - 客户端生成的完整加密信封，使用无填充 Base64URL 编码，解码后最大 1 MiB
 /// * [ciphertextBytes]
 /// * [deletedAt]
 /// * [updatedAt]
 /// * [updatedByDeviceId]
 @BuiltValue()
-abstract class SyncDeleteChange
-    implements Built<SyncDeleteChange, SyncDeleteChangeBuilder> {
+abstract class SyncPutChange
+    implements Built<SyncPutChange, SyncPutChangeBuilder> {
   @BuiltValueField(wireName: r'changeSeq')
   int get changeSeq;
 
   @BuiltValueField(wireName: r'operation')
-  SyncDeleteChangeOperationEnum get operation;
-  // enum operationEnum {  delete,  };
+  SyncPutChangeOperationEnum get operation;
+  // enum operationEnum {  put,  };
 
   @BuiltValueField(wireName: r'recordId')
   String get recordId;
@@ -41,19 +41,20 @@ abstract class SyncDeleteChange
   int get revision;
 
   @BuiltValueField(wireName: r'envelopeVersion')
-  JsonObject? get envelopeVersion;
+  int get envelopeVersion;
 
   @BuiltValueField(wireName: r'keyEpoch')
-  JsonObject? get keyEpoch;
+  int get keyEpoch;
 
+  /// 客户端生成的完整加密信封，使用无填充 Base64URL 编码，解码后最大 1 MiB
   @BuiltValueField(wireName: r'ciphertext')
-  JsonObject? get ciphertext;
+  String get ciphertext;
 
   @BuiltValueField(wireName: r'ciphertextBytes')
   int get ciphertextBytes;
 
   @BuiltValueField(wireName: r'deletedAt')
-  DateTime get deletedAt;
+  JsonObject? get deletedAt;
 
   @BuiltValueField(wireName: r'updatedAt')
   DateTime get updatedAt;
@@ -61,30 +62,29 @@ abstract class SyncDeleteChange
   @BuiltValueField(wireName: r'updatedByDeviceId')
   String? get updatedByDeviceId;
 
-  SyncDeleteChange._();
+  SyncPutChange._();
 
-  factory SyncDeleteChange([void updates(SyncDeleteChangeBuilder b)]) =
-      _$SyncDeleteChange;
+  factory SyncPutChange([void updates(SyncPutChangeBuilder b)]) =
+      _$SyncPutChange;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(SyncDeleteChangeBuilder b) => b;
+  static void _defaults(SyncPutChangeBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<SyncDeleteChange> get serializer =>
-      _$SyncDeleteChangeSerializer();
+  static Serializer<SyncPutChange> get serializer =>
+      _$SyncPutChangeSerializer();
 }
 
-class _$SyncDeleteChangeSerializer
-    implements PrimitiveSerializer<SyncDeleteChange> {
+class _$SyncPutChangeSerializer implements PrimitiveSerializer<SyncPutChange> {
   @override
-  final Iterable<Type> types = const [SyncDeleteChange, _$SyncDeleteChange];
+  final Iterable<Type> types = const [SyncPutChange, _$SyncPutChange];
 
   @override
-  final String wireName = r'SyncDeleteChange';
+  final String wireName = r'SyncPutChange';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    SyncDeleteChange object, {
+    SyncPutChange object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'changeSeq';
@@ -95,7 +95,7 @@ class _$SyncDeleteChangeSerializer
     yield r'operation';
     yield serializers.serialize(
       object.operation,
-      specifiedType: const FullType(SyncDeleteChangeOperationEnum),
+      specifiedType: const FullType(SyncPutChangeOperationEnum),
     );
     yield r'recordId';
     yield serializers.serialize(
@@ -108,36 +108,32 @@ class _$SyncDeleteChangeSerializer
       specifiedType: const FullType(int),
     );
     yield r'envelopeVersion';
-    yield object.envelopeVersion == null
-        ? null
-        : serializers.serialize(
-            object.envelopeVersion,
-            specifiedType: const FullType.nullable(JsonObject),
-          );
+    yield serializers.serialize(
+      object.envelopeVersion,
+      specifiedType: const FullType(int),
+    );
     yield r'keyEpoch';
-    yield object.keyEpoch == null
-        ? null
-        : serializers.serialize(
-            object.keyEpoch,
-            specifiedType: const FullType.nullable(JsonObject),
-          );
+    yield serializers.serialize(
+      object.keyEpoch,
+      specifiedType: const FullType(int),
+    );
     yield r'ciphertext';
-    yield object.ciphertext == null
-        ? null
-        : serializers.serialize(
-            object.ciphertext,
-            specifiedType: const FullType.nullable(JsonObject),
-          );
+    yield serializers.serialize(
+      object.ciphertext,
+      specifiedType: const FullType(String),
+    );
     yield r'ciphertextBytes';
     yield serializers.serialize(
       object.ciphertextBytes,
       specifiedType: const FullType(int),
     );
     yield r'deletedAt';
-    yield serializers.serialize(
-      object.deletedAt,
-      specifiedType: const FullType(DateTime),
-    );
+    yield object.deletedAt == null
+        ? null
+        : serializers.serialize(
+            object.deletedAt,
+            specifiedType: const FullType.nullable(JsonObject),
+          );
     yield r'updatedAt';
     yield serializers.serialize(
       object.updatedAt,
@@ -155,7 +151,7 @@ class _$SyncDeleteChangeSerializer
   @override
   Object serialize(
     Serializers serializers,
-    SyncDeleteChange object, {
+    SyncPutChange object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -170,7 +166,7 @@ class _$SyncDeleteChangeSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required SyncDeleteChangeBuilder result,
+    required SyncPutChangeBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -187,11 +183,9 @@ class _$SyncDeleteChangeSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(
-                      SyncDeleteChangeOperationEnum,
-                    ),
+                    specifiedType: const FullType(SyncPutChangeOperationEnum),
                   )
-                  as SyncDeleteChangeOperationEnum;
+                  as SyncPutChangeOperationEnum;
           result.operation = valueDes;
           break;
         case r'recordId':
@@ -211,32 +205,23 @@ class _$SyncDeleteChangeSerializer
           break;
         case r'envelopeVersion':
           final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType.nullable(JsonObject),
-                  )
-                  as JsonObject?;
-          if (valueDes == null) continue;
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
           result.envelopeVersion = valueDes;
           break;
         case r'keyEpoch':
           final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType.nullable(JsonObject),
-                  )
-                  as JsonObject?;
-          if (valueDes == null) continue;
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
           result.keyEpoch = valueDes;
           break;
         case r'ciphertext':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType.nullable(JsonObject),
+                    specifiedType: const FullType(String),
                   )
-                  as JsonObject?;
-          if (valueDes == null) continue;
+                  as String;
           result.ciphertext = valueDes;
           break;
         case r'ciphertextBytes':
@@ -249,9 +234,10 @@ class _$SyncDeleteChangeSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(DateTime),
+                    specifiedType: const FullType.nullable(JsonObject),
                   )
-                  as DateTime;
+                  as JsonObject?;
+          if (valueDes == null) continue;
           result.deletedAt = valueDes;
           break;
         case r'updatedAt':
@@ -282,12 +268,12 @@ class _$SyncDeleteChangeSerializer
   }
 
   @override
-  SyncDeleteChange deserialize(
+  SyncPutChange deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = SyncDeleteChangeBuilder();
+    final result = SyncPutChangeBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(
@@ -302,18 +288,18 @@ class _$SyncDeleteChangeSerializer
   }
 }
 
-class SyncDeleteChangeOperationEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'delete')
-  static const SyncDeleteChangeOperationEnum delete =
-      _$syncDeleteChangeOperationEnum_delete;
+class SyncPutChangeOperationEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'put')
+  static const SyncPutChangeOperationEnum put =
+      _$syncPutChangeOperationEnum_put;
 
-  static Serializer<SyncDeleteChangeOperationEnum> get serializer =>
-      _$syncDeleteChangeOperationEnumSerializer;
+  static Serializer<SyncPutChangeOperationEnum> get serializer =>
+      _$syncPutChangeOperationEnumSerializer;
 
-  const SyncDeleteChangeOperationEnum._(String name) : super(name);
+  const SyncPutChangeOperationEnum._(String name) : super(name);
 
-  static BuiltSet<SyncDeleteChangeOperationEnum> get values =>
-      _$syncDeleteChangeOperationEnumValues;
-  static SyncDeleteChangeOperationEnum valueOf(String name) =>
-      _$syncDeleteChangeOperationEnumValueOf(name);
+  static BuiltSet<SyncPutChangeOperationEnum> get values =>
+      _$syncPutChangeOperationEnumValues;
+  static SyncPutChangeOperationEnum valueOf(String name) =>
+      _$syncPutChangeOperationEnumValueOf(name);
 }

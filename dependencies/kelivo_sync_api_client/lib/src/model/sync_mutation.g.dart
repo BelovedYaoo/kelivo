@@ -6,13 +6,13 @@ part of 'sync_mutation.dart';
 // BuiltValueGenerator
 // **************************************************************************
 
-const SyncMutationOperationEnum _$syncMutationOperationEnum_restore =
-    const SyncMutationOperationEnum._('restore');
+const SyncMutationOperationEnum _$syncMutationOperationEnum_delete =
+    const SyncMutationOperationEnum._('delete');
 
 SyncMutationOperationEnum _$syncMutationOperationEnumValueOf(String name) {
   switch (name) {
-    case 'restore':
-      return _$syncMutationOperationEnum_restore;
+    case 'delete':
+      return _$syncMutationOperationEnum_delete;
     default:
       throw ArgumentError(name);
   }
@@ -20,7 +20,7 @@ SyncMutationOperationEnum _$syncMutationOperationEnumValueOf(String name) {
 
 final BuiltSet<SyncMutationOperationEnum> _$syncMutationOperationEnumValues =
     BuiltSet<SyncMutationOperationEnum>(const <SyncMutationOperationEnum>[
-      _$syncMutationOperationEnum_restore,
+      _$syncMutationOperationEnum_delete,
     ]);
 
 Serializer<SyncMutationOperationEnum> _$syncMutationOperationEnumSerializer =
@@ -29,10 +29,10 @@ Serializer<SyncMutationOperationEnum> _$syncMutationOperationEnumSerializer =
 class _$SyncMutationOperationEnumSerializer
     implements PrimitiveSerializer<SyncMutationOperationEnum> {
   static const Map<String, Object> _toWire = const <String, Object>{
-    'restore': 'restore',
+    'delete': 'delete',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
-    'restore': 'restore',
+    'delete': 'delete',
   };
 
   @override

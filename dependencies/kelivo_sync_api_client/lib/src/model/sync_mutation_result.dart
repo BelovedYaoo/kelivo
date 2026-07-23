@@ -4,15 +4,12 @@
 
 // ignore_for_file: unused_element
 import 'package:kelivo_sync_api_client/src/model/sync_conflict_mutation_result.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_retry_mutation_result.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_field_conflict_mutation_result.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_rejected_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_applied_mutation_result.dart';
-import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
-import 'package:one_of/any_of.dart';
+import 'package:one_of/one_of.dart';
 
 part 'sync_mutation_result.g.dart';
 
@@ -24,17 +21,20 @@ part 'sync_mutation_result.g.dart';
 /// * [revision]
 /// * [changeSeq]
 /// * [currentRevision]
-/// * [reason]
-/// * [conflictId]
-/// * [conflictingPaths]
 /// * [errorCode]
-/// * [params]
-/// * [retryable]
 @BuiltValue()
 abstract class SyncMutationResult
     implements Built<SyncMutationResult, SyncMutationResultBuilder> {
-  /// Any Of [SyncAppliedMutationResult], [SyncConflictMutationResult], [SyncFieldConflictMutationResult], [SyncRejectedMutationResult], [SyncRetryMutationResult]
-  AnyOf get anyOf;
+  /// One Of [SyncAppliedMutationResult], [SyncConflictMutationResult], [SyncRejectedMutationResult]
+  OneOf get oneOf;
+
+  static const String discriminatorFieldName = r'status';
+
+  static const Map<String, Type> discriminatorMapping = {
+    r'applied': SyncAppliedMutationResult,
+    r'conflict': SyncConflictMutationResult,
+    r'rejected': SyncRejectedMutationResult,
+  };
 
   SyncMutationResult._();
 
@@ -47,6 +47,37 @@ abstract class SyncMutationResult
   @BuiltValueSerializer(custom: true)
   static Serializer<SyncMutationResult> get serializer =>
       _$SyncMutationResultSerializer();
+}
+
+extension SyncMutationResultDiscriminatorExt on SyncMutationResult {
+  String? get discriminatorValue {
+    if (this is SyncAppliedMutationResult) {
+      return r'applied';
+    }
+    if (this is SyncConflictMutationResult) {
+      return r'conflict';
+    }
+    if (this is SyncRejectedMutationResult) {
+      return r'rejected';
+    }
+    return null;
+  }
+}
+
+extension SyncMutationResultBuilderDiscriminatorExt
+    on SyncMutationResultBuilder {
+  String? get discriminatorValue {
+    if (this is SyncAppliedMutationResultBuilder) {
+      return r'applied';
+    }
+    if (this is SyncConflictMutationResultBuilder) {
+      return r'conflict';
+    }
+    if (this is SyncRejectedMutationResultBuilder) {
+      return r'rejected';
+    }
+    return null;
+  }
 }
 
 class _$SyncMutationResultSerializer
@@ -69,13 +100,10 @@ class _$SyncMutationResultSerializer
     SyncMutationResult object, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final anyOf = object.anyOf;
+    final oneOf = object.oneOf;
     return serializers.serialize(
-      anyOf,
-      specifiedType: FullType(
-        AnyOf,
-        anyOf.valueTypes.map((type) => FullType(type)).toList(),
-      ),
+      oneOf.value,
+      specifiedType: FullType(oneOf.valueType),
     )!;
   }
 
@@ -86,26 +114,70 @@ class _$SyncMutationResultSerializer
     FullType specifiedType = FullType.unspecified,
   }) {
     final result = SyncMutationResultBuilder();
-    Object? anyOfDataSrc;
-    final targetType = const FullType(AnyOf, [
-      FullType(SyncAppliedMutationResult),
-      FullType(SyncConflictMutationResult),
-      FullType(SyncFieldConflictMutationResult),
-      FullType(SyncRejectedMutationResult),
-      FullType(SyncRetryMutationResult),
-    ]);
-    anyOfDataSrc = serialized;
-    result.anyOf =
-        serializers.deserialize(anyOfDataSrc, specifiedType: targetType)
-            as AnyOf;
+    Object? oneOfDataSrc;
+    final serializedList = (serialized as Iterable<Object?>).toList();
+    final discIndex =
+        serializedList.indexOf(SyncMutationResult.discriminatorFieldName) + 1;
+    final discValue =
+        serializers.deserialize(
+              serializedList[discIndex],
+              specifiedType: FullType(String),
+            )
+            as String;
+    oneOfDataSrc = serialized;
+    final oneOfTypes = [
+      SyncAppliedMutationResult,
+      SyncConflictMutationResult,
+      SyncRejectedMutationResult,
+    ];
+    Object oneOfResult;
+    Type oneOfType;
+    switch (discValue) {
+      case r'applied':
+        oneOfResult =
+            serializers.deserialize(
+                  oneOfDataSrc,
+                  specifiedType: FullType(SyncAppliedMutationResult),
+                )
+                as SyncAppliedMutationResult;
+        oneOfType = SyncAppliedMutationResult;
+        break;
+      case r'conflict':
+        oneOfResult =
+            serializers.deserialize(
+                  oneOfDataSrc,
+                  specifiedType: FullType(SyncConflictMutationResult),
+                )
+                as SyncConflictMutationResult;
+        oneOfType = SyncConflictMutationResult;
+        break;
+      case r'rejected':
+        oneOfResult =
+            serializers.deserialize(
+                  oneOfDataSrc,
+                  specifiedType: FullType(SyncRejectedMutationResult),
+                )
+                as SyncRejectedMutationResult;
+        oneOfType = SyncRejectedMutationResult;
+        break;
+      default:
+        throw UnsupportedError(
+          "Couldn't deserialize oneOf for the discriminator value: ${discValue}",
+        );
+    }
+    result.oneOf = OneOfDynamic(
+      typeIndex: oneOfTypes.indexOf(oneOfType),
+      types: oneOfTypes,
+      value: oneOfResult,
+    );
     return result.build();
   }
 }
 
 class SyncMutationResultStatusEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'retry')
-  static const SyncMutationResultStatusEnum retry =
-      _$syncMutationResultStatusEnum_retry;
+  @BuiltValueEnumConst(wireName: r'rejected')
+  static const SyncMutationResultStatusEnum rejected =
+      _$syncMutationResultStatusEnum_rejected;
 
   static Serializer<SyncMutationResultStatusEnum> get serializer =>
       _$syncMutationResultStatusEnumSerializer;
@@ -116,20 +188,4 @@ class SyncMutationResultStatusEnum extends EnumClass {
       _$syncMutationResultStatusEnumValues;
   static SyncMutationResultStatusEnum valueOf(String name) =>
       _$syncMutationResultStatusEnumValueOf(name);
-}
-
-class SyncMutationResultReasonEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'field-conflict')
-  static const SyncMutationResultReasonEnum fieldConflict =
-      _$syncMutationResultReasonEnum_fieldConflict;
-
-  static Serializer<SyncMutationResultReasonEnum> get serializer =>
-      _$syncMutationResultReasonEnumSerializer;
-
-  const SyncMutationResultReasonEnum._(String name) : super(name);
-
-  static BuiltSet<SyncMutationResultReasonEnum> get values =>
-      _$syncMutationResultReasonEnumValues;
-  static SyncMutationResultReasonEnum valueOf(String name) =>
-      _$syncMutationResultReasonEnumValueOf(name);
 }

@@ -474,11 +474,6 @@ class MyApp extends StatelessWidget {
       child: Builder(
         builder: (context) {
           final settings = context.watch<SettingsProvider>();
-          final allowsAssistantDefaults = context
-              .select<CloudSyncProvider, bool>(
-                (provider) =>
-                    provider.initialHydrationState.allowsAssistantDefaults,
-              );
           final workspaceRestartRequired = context
               .select<CloudSyncProvider, bool>(
                 (provider) => provider.workspaceRestartRequired,
@@ -727,21 +722,11 @@ class MyApp extends StatelessWidget {
                       } catch (_) {}
                     });
                   }
-                  // 云账号必须先接收服务端真值，避免本地随机默认助手覆盖已有配置。
-                  if (allowsAssistantDefaults) {
-                    _assistantDefaultsBootstrap.schedule(() async {
-                      if (!ctx.mounted) return false;
-                      final cloudSync = ctx.read<CloudSyncProvider>();
-                      if (!cloudSync
-                          .initialHydrationState
-                          .allowsAssistantDefaults) {
-                        return false;
-                      }
-                      await ctx.read<AssistantProvider>().ensureDefaults(ctx);
-                      await cloudSync.syncAfterLocalWrites();
-                      return true;
-                    });
-                  }
+                  _assistantDefaultsBootstrap.schedule(() async {
+                    if (!ctx.mounted) return false;
+                    await ctx.read<AssistantProvider>().ensureDefaults(ctx);
+                    return true;
+                  });
 
                   // Desktop tray + close behaviour (minimize to tray) sync
                   final l10n = AppLocalizations.of(ctx);

@@ -24,18 +24,6 @@ void main() {
     await fixture.provider.initialize();
 
     expect(fixture.provider.contentSyncEnabled, isFalse);
-    expect(
-      fixture.provider.initialHydrationState,
-      CloudSyncInitialHydrationState.notRequired,
-    );
-    expect(await fixture.provider.setPaused(true), isFalse);
-    expect(await fixture.provider.syncAfterLocalWrites(), isFalse);
-    expect(await fixture.provider.syncNow(), isFalse);
-    expect(await fixture.provider.refreshConflicts(), isFalse);
-    expect(
-      await fixture.provider.resolveConflict(_conflict(), const <String>{}),
-      isFalse,
-    );
     expect(fixture.client.requestNames, isEmpty);
     final legacyStatePaths = fixture.root
         .listSync(recursive: true)
@@ -56,7 +44,6 @@ void main() {
     expect(fixture.provider.initialized, isTrue);
     expect(fixture.provider.signedIn, isTrue);
     expect(fixture.provider.status, CloudSyncProviderStatus.idle);
-    expect(fixture.provider.paused, isFalse);
     expect(client.token, 'session-token');
     expect(client.requestNames, isEmpty);
 
@@ -133,7 +120,6 @@ void main() {
     expect(await fixture.provider.refreshDevices(), isFalse);
 
     expect(fixture.provider.deviceError?.kind, CloudSyncFailureKind.network);
-    expect(await fixture.provider.syncNow(), isFalse);
     expect(client.requestNames, <String>['list-devices']);
   });
 
@@ -287,26 +273,6 @@ CloudSyncDeviceSession _otherDevice() {
     lastSeenAt: DateTime.utc(2026, 7, 22),
     revokedAt: null,
     isCurrent: false,
-  );
-}
-
-CloudSyncConflict _conflict() {
-  return CloudSyncConflict(
-    conflictId: 'conflict-1',
-    mutationId: 'mutation-1',
-    entityType: CloudSyncEntityType.message,
-    entityId: 'message-1',
-    baseRevision: 1,
-    fields: <CloudSyncConflictField>[
-      CloudSyncConflictField(
-        path: '/content',
-        current: CloudSyncConflictFieldState(exists: true, value: 'cloud'),
-        desired: CloudSyncConflictFieldState(exists: true, value: 'local'),
-      ),
-    ],
-    state: CloudSyncConflictState.open,
-    createdAt: DateTime.utc(2026, 7, 22),
-    resolvedAt: null,
   );
 }
 

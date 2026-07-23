@@ -10,7 +10,6 @@ import 'package:kelivo_sync_api_client/src/auth/basic_auth.dart';
 import 'package:kelivo_sync_api_client/src/auth/bearer_auth.dart';
 import 'package:kelivo_sync_api_client/src/auth/oauth.dart';
 import 'package:kelivo_sync_api_client/src/api/admin_api.dart';
-import 'package:kelivo_sync_api_client/src/api/attachment_api.dart';
 import 'package:kelivo_sync_api_client/src/api/auth_api.dart';
 import 'package:kelivo_sync_api_client/src/api/device_api.dart';
 import 'package:kelivo_sync_api_client/src/api/sync_api.dart';
@@ -147,12 +146,6 @@ class KelivoSyncApiClient {
   /// by doing that all interceptors will not be executed
   AdminApi getAdminApi() {
     return AdminApi(dio, serializers);
-  }
-
-  /// Get AttachmentApi instance, base route and serializer can be overridden by a given but be careful,
-  /// by doing that all interceptors will not be executed
-  AttachmentApi getAttachmentApi() {
-    return AttachmentApi(dio, serializers);
   }
 
   /// Get AuthApi instance, base route and serializer can be overridden by a given but be careful,

@@ -7,20 +7,16 @@ import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/providers/user_provider.dart';
 import 'package:Kelivo/core/models/provider_group.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
-import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
-import 'package:Kelivo/core/services/sync/cloud_sync_coordinator.dart';
-import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
-import 'package:Kelivo/core/services/sync/sync_write_journal.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:Kelivo/core/services/workspace/account_workspace_runtime.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:Kelivo/utils/sandbox_path_resolver.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive/hive.dart';
 import 'package:path/path.dart' as p;
 import 'package:shared_preferences/shared_preferences.dart';
 // ignore: depend_on_referenced_packages
@@ -234,18 +230,21 @@ void main() {
 
     final artifacts = <File>[
       File(
-        p.join(installationRoot.path, '${CloudSyncStore.defaultBoxName}.hive'),
+        p.join(
+          installationRoot.path,
+          '${CloudSyncStateRetirement.legacyBoxName}.hive',
+        ),
       ),
       File(
         p.join(
           targetA.dataDirectory.path,
-          '${CloudSyncStore.defaultBoxName}.hivec',
+          '${CloudSyncStateRetirement.legacyBoxName}.hivec',
         ),
       ),
       File(
         p.join(
           targetB.dataDirectory.path,
-          '${CloudSyncStore.defaultBoxName}.lock',
+          '${CloudSyncStateRetirement.legacyBoxName}.lock',
         ),
       ),
     ];
@@ -317,12 +316,15 @@ void main() {
     await close(runtime);
 
     final localArtifact = File(
-      p.join(installationRoot.path, '${CloudSyncStore.defaultBoxName}.hive'),
+      p.join(
+        installationRoot.path,
+        '${CloudSyncStateRetirement.legacyBoxName}.hive',
+      ),
     );
     final unknownArtifact = File(
       p.join(
         account.dataDirectory.path,
-        '${CloudSyncStore.defaultBoxName}.unknown',
+        '${CloudSyncStateRetirement.legacyBoxName}.unknown',
       ),
     );
     await localArtifact.writeAsString('local-plaintext');
@@ -377,7 +379,10 @@ void main() {
     await close(runtime);
 
     final localArtifact = File(
-      p.join(installationRoot.path, '${CloudSyncStore.defaultBoxName}.hive'),
+      p.join(
+        installationRoot.path,
+        '${CloudSyncStateRetirement.legacyBoxName}.hive',
+      ),
     );
     await localArtifact.writeAsString('local-plaintext');
     final unknownEntry = File(
@@ -421,7 +426,10 @@ void main() {
       redirectedData.path,
     );
     final localArtifact = File(
-      p.join(installationRoot.path, '${CloudSyncStore.defaultBoxName}.hive'),
+      p.join(
+        installationRoot.path,
+        '${CloudSyncStateRetirement.legacyBoxName}.hive',
+      ),
     );
     await localArtifact.writeAsString('local-plaintext');
 
@@ -439,65 +447,6 @@ void main() {
       ),
       isNot(FileSystemEntityType.directory),
     );
-  });
-
-  test('切换到账号 B 后真实上传批次不包含账号 A 的本地配置', () async {
-    var runtime = await bootstrap();
-    final accountA = _session(userId: 'account-a', token: 'token-a');
-    final accountB = _session(userId: 'account-b', token: 'token-b');
-    await runtime.bindAccount(accountA);
-    await close(runtime);
-
-    runtime = await bootstrap();
-    expect(runtime.current.session?.userId, accountA.userId);
-    final accountASettings = SettingsProvider(
-      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
-    );
-    await accountASettings.ready;
-    await accountASettings.setProviderConfig(
-      'account-a-provider',
-      ProviderConfig.defaultsFor('account-a-provider'),
-    );
-    final accountAUpload = await _captureAccountProviderUpload(
-      workspace: runtime.current,
-      settings: accountASettings,
-    );
-    expect(
-      accountAUpload.map((mutation) => mutation.entityId),
-      contains('account-a-provider'),
-    );
-
-    final switchResult = await runtime.bindAccount(accountB);
-    expect(switchResult, isA<AccountWorkspaceRestartRequired>());
-    accountASettings.dispose();
-    await close(runtime);
-    SharedPreferences.resetStatic();
-
-    runtime = await bootstrap();
-    expect(runtime.current.session?.userId, accountB.userId);
-    final accountBSettings = SettingsProvider(
-      syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
-    );
-    await accountBSettings.ready;
-    expect(
-      accountBSettings.providerConfigs,
-      isNot(contains('account-a-provider')),
-    );
-    await accountBSettings.setProviderConfig(
-      'account-b-provider',
-      ProviderConfig.defaultsFor('account-b-provider'),
-    );
-    final accountBUpload = await _captureAccountProviderUpload(
-      workspace: runtime.current,
-      settings: accountBSettings,
-    );
-    final accountBUploadedIds = accountBUpload
-        .map((mutation) => mutation.entityId)
-        .toSet();
-
-    expect(accountBUploadedIds, contains('account-b-provider'));
-    expect(accountBUploadedIds, isNot(contains('account-a-provider')));
-    accountBSettings.dispose();
   });
 
   test('同账号重新认证只更新会话而不切换工作区', () async {
@@ -2003,143 +1952,6 @@ void main() {
     );
     settings.dispose();
   });
-}
-
-Future<List<CloudSyncOutboxMutation>> _captureAccountProviderUpload({
-  required AccountWorkspaceContext workspace,
-  required SettingsProvider settings,
-}) async {
-  final session = workspace.session;
-  if (session == null) {
-    throw StateError('账号上传测试必须运行在已登录工作区');
-  }
-  Hive.init(workspace.dataDirectory.path);
-  final store = await CloudSyncStore.open(
-    boxName: 'account-workspace-cloud-sync-boundary-test',
-  );
-  final journal = SyncWriteJournal(
-    store: store,
-    journalScopeId: 'account-boundary-${workspace.workspaceKey}',
-    initialSession: session,
-  );
-  final transport = _AccountBoundaryTransport();
-  final adapter = _ProviderConfigBoundaryAdapter(settings);
-  final coordinator = CloudSyncCoordinator(
-    session,
-    transport,
-    store,
-    journal,
-    adapters: <SyncEntityAdapter>[adapter],
-  );
-  try {
-    await store.savePullCursor(session, 'cursor-0');
-    await coordinator.synchronize(
-      rescanEntityTypes: const <String>{'provider'},
-    );
-    return List<CloudSyncOutboxMutation>.unmodifiable(
-      transport.pushedMutations,
-    );
-  } finally {
-    await journal.close();
-    await store.close();
-    await Hive.close();
-  }
-}
-
-final class _ProviderConfigBoundaryAdapter implements SyncEntityAdapter {
-  _ProviderConfigBoundaryAdapter(this._settings);
-
-  final SettingsProvider _settings;
-
-  @override
-  int get applyPriority => 0;
-
-  @override
-  Set<String> get entityTypes => const <String>{'provider'};
-
-  Iterable<LocalSyncEntity> get _entities sync* {
-    for (final providerId in _settings.providerConfigs.keys) {
-      if (!providerId.startsWith('account-')) continue;
-      yield LocalSyncEntity(
-        entityType: 'provider',
-        entityId: providerId,
-        payload: <String, Object?>{'name': providerId},
-      );
-    }
-  }
-
-  @override
-  Future<T> runRemoteBatch<T>(Future<T> Function() apply) => apply();
-
-  @override
-  Future<LocalSyncEntity?> exportLocalEntity(SyncEntityKey key) async {
-    for (final entity in _entities) {
-      if (entity.key == key) return entity;
-    }
-    return null;
-  }
-
-  @override
-  Future<Map<SyncEntityKey, LocalSyncEntity>> exportLocalEntitiesForKeys(
-    Set<SyncEntityKey> keys,
-  ) async {
-    return <SyncEntityKey, LocalSyncEntity>{
-      for (final entity in _entities)
-        if (keys.contains(entity.key)) entity.key: entity,
-    };
-  }
-
-  @override
-  Future<List<LocalSyncEntity>> exportLocalEntities() async {
-    return List<LocalSyncEntity>.unmodifiable(_entities);
-  }
-
-  @override
-  Future<void> applyRemoteDelete(SyncEntityKey key) async {}
-
-  @override
-  Future<void> applyRemoteUpsert(RemoteSyncEntity entity) async {}
-}
-
-final class _AccountBoundaryTransport implements CloudSyncTransport {
-  final List<CloudSyncOutboxMutation> pushedMutations =
-      <CloudSyncOutboxMutation>[];
-  var _changeSeq = 0;
-
-  @override
-  Future<CloudSyncPullResult> pull({String? cursor, int limit = 100}) async {
-    return const CloudSyncPullResult(
-      changes: <CloudSyncChange>[],
-      nextCursor: 'cursor-1',
-      hasMore: false,
-      resetRequired: false,
-    );
-  }
-
-  @override
-  Future<List<CloudSyncMutationResult>> push(
-    List<CloudSyncOutboxMutation> mutations,
-  ) async {
-    pushedMutations.addAll(mutations);
-    return <CloudSyncMutationResult>[
-      for (final mutation in mutations)
-        CloudSyncMutationResult(
-          mutationId: mutation.mutationId,
-          status: CloudSyncMutationStatus.applied,
-          retryable: false,
-          revision: 1,
-          changeSeq: ++_changeSeq,
-        ),
-    ];
-  }
-
-  @override
-  Future<CloudSyncSnapshotResult> snapshot({
-    String? snapshotCursor,
-    int limit = 100,
-  }) {
-    throw StateError('账号边界测试已有游标，不应请求全量快照');
-  }
 }
 
 final class _BlockingFirstWriteExecutor implements SyncWriteExecutor {

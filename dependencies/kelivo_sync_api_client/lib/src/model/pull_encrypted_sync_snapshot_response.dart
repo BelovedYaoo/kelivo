@@ -3,71 +3,67 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/sync_snapshot_response_data.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'sync_pull_request.g.dart';
+part 'pull_encrypted_sync_snapshot_response.g.dart';
 
-/// SyncPullRequest
+/// PullEncryptedSyncSnapshotResponse
 ///
 /// Properties:
-/// * [cursor]
-/// * [limit]
+/// * [data]
 @BuiltValue()
-abstract class SyncPullRequest
-    implements Built<SyncPullRequest, SyncPullRequestBuilder> {
-  @BuiltValueField(wireName: r'cursor')
-  String? get cursor;
+abstract class PullEncryptedSyncSnapshotResponse
+    implements
+        Built<
+          PullEncryptedSyncSnapshotResponse,
+          PullEncryptedSyncSnapshotResponseBuilder
+        > {
+  @BuiltValueField(wireName: r'data')
+  SyncSnapshotResponseData get data;
 
-  @BuiltValueField(wireName: r'limit')
-  int? get limit;
+  PullEncryptedSyncSnapshotResponse._();
 
-  SyncPullRequest._();
-
-  factory SyncPullRequest([void updates(SyncPullRequestBuilder b)]) =
-      _$SyncPullRequest;
+  factory PullEncryptedSyncSnapshotResponse([
+    void updates(PullEncryptedSyncSnapshotResponseBuilder b),
+  ]) = _$PullEncryptedSyncSnapshotResponse;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(SyncPullRequestBuilder b) => b..limit = 10;
+  static void _defaults(PullEncryptedSyncSnapshotResponseBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<SyncPullRequest> get serializer =>
-      _$SyncPullRequestSerializer();
+  static Serializer<PullEncryptedSyncSnapshotResponse> get serializer =>
+      _$PullEncryptedSyncSnapshotResponseSerializer();
 }
 
-class _$SyncPullRequestSerializer
-    implements PrimitiveSerializer<SyncPullRequest> {
+class _$PullEncryptedSyncSnapshotResponseSerializer
+    implements PrimitiveSerializer<PullEncryptedSyncSnapshotResponse> {
   @override
-  final Iterable<Type> types = const [SyncPullRequest, _$SyncPullRequest];
+  final Iterable<Type> types = const [
+    PullEncryptedSyncSnapshotResponse,
+    _$PullEncryptedSyncSnapshotResponse,
+  ];
 
   @override
-  final String wireName = r'SyncPullRequest';
+  final String wireName = r'PullEncryptedSyncSnapshotResponse';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    SyncPullRequest object, {
+    PullEncryptedSyncSnapshotResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    if (object.cursor != null) {
-      yield r'cursor';
-      yield serializers.serialize(
-        object.cursor,
-        specifiedType: const FullType.nullable(String),
-      );
-    }
-    if (object.limit != null) {
-      yield r'limit';
-      yield serializers.serialize(
-        object.limit,
-        specifiedType: const FullType(int),
-      );
-    }
+    yield r'data';
+    yield serializers.serialize(
+      object.data,
+      specifiedType: const FullType(SyncSnapshotResponseData),
+    );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    SyncPullRequest object, {
+    PullEncryptedSyncSnapshotResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -82,28 +78,21 @@ class _$SyncPullRequestSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required SyncPullRequestBuilder result,
+    required PullEncryptedSyncSnapshotResponseBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'cursor':
+        case r'data':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType.nullable(String),
+                    specifiedType: const FullType(SyncSnapshotResponseData),
                   )
-                  as String?;
-          if (valueDes == null) continue;
-          result.cursor = valueDes;
-          break;
-        case r'limit':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.limit = valueDes;
+                  as SyncSnapshotResponseData;
+          result.data.replace(valueDes);
           break;
         default:
           unhandled.add(key);
@@ -114,12 +103,12 @@ class _$SyncPullRequestSerializer
   }
 
   @override
-  SyncPullRequest deserialize(
+  PullEncryptedSyncSnapshotResponse deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = SyncPullRequestBuilder();
+    final result = PullEncryptedSyncSnapshotResponseBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

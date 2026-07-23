@@ -6,15 +6,15 @@ part of 'sync_mutation_result.dart';
 // BuiltValueGenerator
 // **************************************************************************
 
-const SyncMutationResultStatusEnum _$syncMutationResultStatusEnum_retry =
-    const SyncMutationResultStatusEnum._('retry');
+const SyncMutationResultStatusEnum _$syncMutationResultStatusEnum_rejected =
+    const SyncMutationResultStatusEnum._('rejected');
 
 SyncMutationResultStatusEnum _$syncMutationResultStatusEnumValueOf(
   String name,
 ) {
   switch (name) {
-    case 'retry':
-      return _$syncMutationResultStatusEnum_retry;
+    case 'rejected':
+      return _$syncMutationResultStatusEnum_rejected;
     default:
       throw ArgumentError(name);
   }
@@ -22,45 +22,20 @@ SyncMutationResultStatusEnum _$syncMutationResultStatusEnumValueOf(
 
 final BuiltSet<SyncMutationResultStatusEnum>
 _$syncMutationResultStatusEnumValues = BuiltSet<SyncMutationResultStatusEnum>(
-  const <SyncMutationResultStatusEnum>[_$syncMutationResultStatusEnum_retry],
-);
-
-const SyncMutationResultReasonEnum
-_$syncMutationResultReasonEnum_fieldConflict =
-    const SyncMutationResultReasonEnum._('fieldConflict');
-
-SyncMutationResultReasonEnum _$syncMutationResultReasonEnumValueOf(
-  String name,
-) {
-  switch (name) {
-    case 'fieldConflict':
-      return _$syncMutationResultReasonEnum_fieldConflict;
-    default:
-      throw ArgumentError(name);
-  }
-}
-
-final BuiltSet<SyncMutationResultReasonEnum>
-_$syncMutationResultReasonEnumValues = BuiltSet<SyncMutationResultReasonEnum>(
-  const <SyncMutationResultReasonEnum>[
-    _$syncMutationResultReasonEnum_fieldConflict,
-  ],
+  const <SyncMutationResultStatusEnum>[_$syncMutationResultStatusEnum_rejected],
 );
 
 Serializer<SyncMutationResultStatusEnum>
 _$syncMutationResultStatusEnumSerializer =
     _$SyncMutationResultStatusEnumSerializer();
-Serializer<SyncMutationResultReasonEnum>
-_$syncMutationResultReasonEnumSerializer =
-    _$SyncMutationResultReasonEnumSerializer();
 
 class _$SyncMutationResultStatusEnumSerializer
     implements PrimitiveSerializer<SyncMutationResultStatusEnum> {
   static const Map<String, Object> _toWire = const <String, Object>{
-    'retry': 'retry',
+    'rejected': 'rejected',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
-    'retry': 'retry',
+    'rejected': 'rejected',
   };
 
   @override
@@ -85,46 +60,15 @@ class _$SyncMutationResultStatusEnumSerializer
   );
 }
 
-class _$SyncMutationResultReasonEnumSerializer
-    implements PrimitiveSerializer<SyncMutationResultReasonEnum> {
-  static const Map<String, Object> _toWire = const <String, Object>{
-    'fieldConflict': 'field-conflict',
-  };
-  static const Map<Object, String> _fromWire = const <Object, String>{
-    'field-conflict': 'fieldConflict',
-  };
-
-  @override
-  final Iterable<Type> types = const <Type>[SyncMutationResultReasonEnum];
-  @override
-  final String wireName = 'SyncMutationResultReasonEnum';
-
-  @override
-  Object serialize(
-    Serializers serializers,
-    SyncMutationResultReasonEnum object, {
-    FullType specifiedType = FullType.unspecified,
-  }) => _toWire[object.name] ?? object.name;
-
-  @override
-  SyncMutationResultReasonEnum deserialize(
-    Serializers serializers,
-    Object serialized, {
-    FullType specifiedType = FullType.unspecified,
-  }) => SyncMutationResultReasonEnum.valueOf(
-    _fromWire[serialized] ?? (serialized is String ? serialized : ''),
-  );
-}
-
 class _$SyncMutationResult extends SyncMutationResult {
   @override
-  final AnyOf anyOf;
+  final OneOf oneOf;
 
   factory _$SyncMutationResult([
     void Function(SyncMutationResultBuilder)? updates,
   ]) => (SyncMutationResultBuilder()..update(updates))._build();
 
-  _$SyncMutationResult._({required this.anyOf}) : super._();
+  _$SyncMutationResult._({required this.oneOf}) : super._();
   @override
   SyncMutationResult rebuild(
     void Function(SyncMutationResultBuilder) updates,
@@ -137,13 +81,13 @@ class _$SyncMutationResult extends SyncMutationResult {
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is SyncMutationResult && anyOf == other.anyOf;
+    return other is SyncMutationResult && oneOf == other.oneOf;
   }
 
   @override
   int get hashCode {
     var _$hash = 0;
-    _$hash = $jc(_$hash, anyOf.hashCode);
+    _$hash = $jc(_$hash, oneOf.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -152,7 +96,7 @@ class _$SyncMutationResult extends SyncMutationResult {
   String toString() {
     return (newBuiltValueToStringHelper(
       r'SyncMutationResult',
-    )..add('anyOf', anyOf)).toString();
+    )..add('oneOf', oneOf)).toString();
   }
 }
 
@@ -160,9 +104,9 @@ class SyncMutationResultBuilder
     implements Builder<SyncMutationResult, SyncMutationResultBuilder> {
   _$SyncMutationResult? _$v;
 
-  AnyOf? _anyOf;
-  AnyOf? get anyOf => _$this._anyOf;
-  set anyOf(AnyOf? anyOf) => _$this._anyOf = anyOf;
+  OneOf? _oneOf;
+  OneOf? get oneOf => _$this._oneOf;
+  set oneOf(OneOf? oneOf) => _$this._oneOf = oneOf;
 
   SyncMutationResultBuilder() {
     SyncMutationResult._defaults(this);
@@ -171,7 +115,7 @@ class SyncMutationResultBuilder
   SyncMutationResultBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
-      _anyOf = $v.anyOf;
+      _oneOf = $v.oneOf;
       _$v = null;
     }
     return this;
@@ -194,10 +138,10 @@ class SyncMutationResultBuilder
     final _$result =
         _$v ??
         _$SyncMutationResult._(
-          anyOf: BuiltValueNullFieldError.checkNotNull(
-            anyOf,
+          oneOf: BuiltValueNullFieldError.checkNotNull(
+            oneOf,
             r'SyncMutationResult',
-            'anyOf',
+            'oneOf',
           ),
         );
     replace(_$result);

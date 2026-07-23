@@ -16,7 +16,7 @@ import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/services/backup/chatbox_importer.dart';
 import 'package:Kelivo/core/services/backup/cherry_importer.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
-import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 
 class _FakePathProviderPlatform extends PathProviderPlatform {
@@ -403,11 +403,11 @@ void main() {
 }
 
 Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
-  expect(Hive.isBoxOpen(CloudSyncStore.defaultBoxName), isFalse);
+  expect(Hive.isBoxOpen(CloudSyncStateRetirement.legacyBoxName), isFalse);
   for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
     expect(
       await File(
-        '${root.path}/${CloudSyncStore.defaultBoxName}$suffix',
+        '${root.path}/${CloudSyncStateRetirement.legacyBoxName}$suffix',
       ).exists(),
       isFalse,
     );

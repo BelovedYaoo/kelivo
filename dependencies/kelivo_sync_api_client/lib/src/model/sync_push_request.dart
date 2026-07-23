@@ -10,7 +10,7 @@ import 'package:built_value/serializer.dart';
 
 part 'sync_push_request.g.dart';
 
-/// SyncPushRequest
+/// 单批最多 10 条 mutation；所有 put 密文的解码字节总和不得超过 1 MiB，delete 按 0 字节计算
 ///
 /// Properties:
 /// * [mutations]

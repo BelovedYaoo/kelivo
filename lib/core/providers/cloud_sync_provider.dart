@@ -4,8 +4,6 @@ import 'package:flutter/foundation.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/sync/cloud_sync_client.dart';
-import '../services/sync/cloud_sync_conflict_resolver.dart';
-import '../services/sync/cloud_sync_coordinator.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/workspace/account_workspace_runtime.dart';
 
@@ -23,27 +21,7 @@ enum CloudSyncProviderStatus {
   signingOut,
   workspaceChangePending,
   idle,
-  syncing,
-  pendingSync,
-  syncBlocked,
-  needsAttention,
-  paused,
   error,
-}
-
-enum CloudSyncInitialHydrationState {
-  notRequired,
-  pending,
-  completed;
-
-  static CloudSyncInitialHydrationState initialForWorkspace({
-    required bool isLocalWorkspace,
-  }) => isLocalWorkspace ? notRequired : pending;
-
-  bool get allowsAssistantDefaults => switch (this) {
-    notRequired || completed => true,
-    pending => false,
-  };
 }
 
 final class CloudSyncProvider extends ChangeNotifier {
@@ -73,7 +51,6 @@ final class CloudSyncProvider extends ChangeNotifier {
 
   CloudSyncProviderStatus get status => _status;
   CloudSyncAccountSession? get session => _session;
-  CloudSyncRunSummary? get lastRun => null;
   CloudSyncException? get lastError => _lastError;
   CloudSyncException? get deviceError => _deviceError;
   bool get contentSyncEnabled => false;
@@ -82,17 +59,7 @@ final class CloudSyncProvider extends ChangeNotifier {
   bool get initialized => _ready;
   bool get signedIn => _session != null;
   bool get workspaceRestartRequired => _workspaceRestartRequired;
-  CloudSyncInitialHydrationState get initialHydrationState =>
-      CloudSyncInitialHydrationState.notRequired;
-  bool get paused => false;
   bool get devicesLoading => _devicesLoading;
-  List<CloudSyncConflict> get conflicts => const <CloudSyncConflict>[];
-  CloudSyncException? get conflictError => null;
-  CloudSyncConflictResolutionFailureReason? get conflictResolutionFailure =>
-      null;
-  bool get conflictsLoading => false;
-  bool get conflictListTruncated => false;
-  String? get resolvingConflictId => null;
   bool get _sessionMutationInProgress => _sessionMutation != null;
 
   Future<void> initialize() {
@@ -246,8 +213,6 @@ final class CloudSyncProvider extends ChangeNotifier {
     return true;
   }
 
-  Future<bool> setPaused(bool value) => Future<bool>.value(false);
-
   Future<void> prepareWorkspaceRestart() async {
     if (!_workspaceRestartRequired) {
       throw StateError('account_workspace_restart_not_required');
@@ -257,17 +222,6 @@ final class CloudSyncProvider extends ChangeNotifier {
     _client = null;
     await _workspaceRuntime.prepareRestartHandoff();
   }
-
-  Future<bool> syncAfterLocalWrites() => Future<bool>.value(false);
-
-  Future<bool> syncNow() => Future<bool>.value(false);
-
-  Future<bool> refreshConflicts() => Future<bool>.value(false);
-
-  Future<bool> resolveConflict(
-    CloudSyncConflict conflict,
-    Set<String> localPaths,
-  ) => Future<bool>.value(false);
 
   Future<bool> refreshDevices() async {
     await initialize();

@@ -1,32 +1,24 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:kelivo_sync_api_client/kelivo_sync_api_client.dart' as api;
+import 'package:one_of/one_of.dart';
 
+import 'cloud_sync_record_types.dart';
 import 'cloud_sync_types.dart';
 
-abstract interface class CloudSyncTransport {
-  Future<List<CloudSyncMutationResult>> push(
-    List<CloudSyncOutboxMutation> mutations,
+abstract interface class CloudSyncRecordTransport {
+  Future<List<CloudSyncRecordMutationResult>> pushRecords(
+    List<CloudSyncRecordMutation> mutations,
   );
 
-  Future<CloudSyncPullResult> pull({String? cursor, int limit = 100});
+  Future<CloudSyncChangePage> pullChanges({String? cursor, int limit = 10});
 
-  Future<CloudSyncSnapshotResult> snapshot({
+  Future<CloudSyncSnapshotPage> pullSnapshot({
     String? snapshotCursor,
-    int limit = 100,
+    int limit = 10,
   });
-}
-
-abstract interface class CloudSyncConflictTransport {
-  Future<List<CloudSyncConflict>> listConflicts({
-    CloudSyncConflictState state = CloudSyncConflictState.open,
-    int limit = 100,
-  });
-
-  Future<CloudSyncConflict> resolveConflict(String conflictId);
 }
 
 abstract interface class CloudSyncAccountClient {
@@ -52,14 +44,10 @@ abstract interface class CloudSyncAccountClient {
 }
 
 final class CloudSyncClient
-    implements
-        CloudSyncAccountClient,
-        CloudSyncTransport,
-        CloudSyncConflictTransport {
+    implements CloudSyncAccountClient, CloudSyncRecordTransport {
   CloudSyncClient._({
     required this.baseUrl,
     required this._dio,
-    required this._signedUrlDio,
     required this._client,
   });
 
@@ -99,31 +87,20 @@ final class CloudSyncClient
         headers: const <String, String>{'accept': 'application/json'},
       ),
     );
-    final generatedClient = api.KelivoSyncApiClient(dio: dio);
-    final signedUrlDio = Dio(
-      BaseOptions(
-        connectTimeout: const Duration(seconds: 10),
-        sendTimeout: const Duration(minutes: 5),
-        receiveTimeout: const Duration(minutes: 5),
-        followRedirects: false,
-      ),
-    );
     final client = CloudSyncClient._(
       baseUrl: normalized,
       dio: dio,
-      signedUrlDio: signedUrlDio,
-      client: generatedClient,
+      client: api.KelivoSyncApiClient(dio: dio),
     );
     client.setToken(token);
     return client;
   }
 
   static const _bearerAuthName = 'BearerAuth';
-  static const _syncProtocolVersion = '2';
+  static const _syncProtocolVersion = '3';
 
   final String baseUrl;
   final Dio _dio;
-  final Dio _signedUrlDio;
   final api.KelivoSyncApiClient _client;
 
   @override
@@ -138,7 +115,6 @@ final class CloudSyncClient
   @override
   void close({bool force = false}) {
     _dio.close(force: force);
-    _signedUrlDio.close(force: force);
   }
 
   Future<CloudSyncHealth> health() {
@@ -201,49 +177,61 @@ final class CloudSyncClient
   }
 
   @override
-  Future<List<CloudSyncMutationResult>> push(
-    List<CloudSyncOutboxMutation> mutations,
+  Future<List<CloudSyncRecordMutationResult>> pushRecords(
+    List<CloudSyncRecordMutation> mutations,
   ) {
-    if (mutations.isEmpty || mutations.length > 10) {
-      throw const CloudSyncException(
-        kind: CloudSyncFailureKind.validation,
-        retryable: false,
-      );
-    }
+    _validatePushMutations(mutations);
+    final requestedMutationIds = <String>{
+      for (final mutation in mutations) mutation.mutationId,
+    };
+
     return _guard(() async {
-      final generated = mutations.map(_toGeneratedMutation).toList();
       final request = api.SyncPushRequest(
-        (builder) => builder.mutations.replace(generated),
+        (builder) =>
+            builder.mutations.addAll(mutations.map(_toGeneratedMutation)),
       );
-      final response = await _client.getSyncApi().pushSyncChanges(
+      final response = await _client.getSyncApi().pushEncryptedSyncRecords(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncPushRequest: request,
       );
       final data = _requireResponseData(response.data?.data);
-      return List<CloudSyncMutationResult>.unmodifiable(
-        data.results.map(_fromMutationResult),
-      );
+      final results = data.results
+          .map(_fromMutationResult)
+          .toList(growable: false);
+      _validateMutationResults(results, requestedMutationIds);
+      return List<CloudSyncRecordMutationResult>.unmodifiable(results);
     });
   }
 
   @override
-  Future<CloudSyncPullResult> pull({String? cursor, int limit = 100}) {
-    _requirePageLimit(limit);
+  Future<CloudSyncChangePage> pullChanges({String? cursor, int limit = 10}) {
+    _validatePullArguments(cursor: cursor, limit: limit);
+
     return _guard(() async {
-      final request = api.SyncPullRequest(
-        (builder) => builder
-          ..cursor = cursor
-          ..limit = limit,
-      );
-      final response = await _client.getSyncApi().pullSyncChanges(
+      final request = api.SyncPullRequest((builder) {
+        builder.limit = limit;
+        if (cursor != null) {
+          builder.cursor = cursor;
+        }
+      });
+      final response = await _client.getSyncApi().pullEncryptedSyncChanges(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncPullRequest: request,
       );
       final data = _requireResponseData(response.data?.data);
-      return CloudSyncPullResult(
-        changes: List<CloudSyncChange>.unmodifiable(
-          data.changes.map(_fromChange),
-        ),
+      _validateChangePage(
+        changeCount: data.changes.length,
+        pageLimit: limit,
+        nextCursor: data.nextCursor,
+        hasMore: data.hasMore,
+        resetRequired: data.resetRequired,
+      );
+      final changes = data.changes
+          .map(_fromRecordChange)
+          .toList(growable: false);
+      _validateChangeOrdering(changes);
+      return CloudSyncChangePage(
+        changes: List<CloudSyncRecordChange>.unmodifiable(changes),
         nextCursor: data.nextCursor,
         hasMore: data.hasMore,
         resetRequired: data.resetRequired,
@@ -252,80 +240,40 @@ final class CloudSyncClient
   }
 
   @override
-  Future<CloudSyncSnapshotResult> snapshot({
+  Future<CloudSyncSnapshotPage> pullSnapshot({
     String? snapshotCursor,
-    int limit = 100,
+    int limit = 10,
   }) {
-    _requirePageLimit(limit);
+    _validatePullArguments(cursor: snapshotCursor, limit: limit);
+
     return _guard(() async {
-      final request = api.SyncSnapshotRequest(
-        (builder) => builder
-          ..snapshotCursor = snapshotCursor
-          ..limit = limit,
-      );
-      final response = await _client.getSyncApi().pullSyncSnapshot(
+      final request = api.SyncSnapshotRequest((builder) {
+        builder.limit = limit;
+        if (snapshotCursor != null) {
+          builder.snapshotCursor = snapshotCursor;
+        }
+      });
+      final response = await _client.getSyncApi().pullEncryptedSyncSnapshot(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncSnapshotRequest: request,
       );
       final data = _requireResponseData(response.data?.data);
-      return CloudSyncSnapshotResult(
-        records: List<CloudSyncRecord>.unmodifiable(
-          data.records.map(_fromRecord),
-        ),
+      _validateSnapshotPage(
+        recordCount: data.records.length,
+        pageLimit: limit,
         nextSnapshotCursor: data.nextSnapshotCursor,
         syncCursor: data.syncCursor,
         hasMore: data.hasMore,
       );
-    });
-  }
-
-  @override
-  Future<List<CloudSyncConflict>> listConflicts({
-    CloudSyncConflictState state = CloudSyncConflictState.open,
-    int limit = 100,
-  }) {
-    if (limit < 1 || limit > 100) {
-      throw const CloudSyncException(
-        kind: CloudSyncFailureKind.validation,
-        retryable: false,
+      final records = data.records
+          .map(_fromRecordState)
+          .toList(growable: false);
+      return CloudSyncSnapshotPage(
+        records: List<CloudSyncRecordState>.unmodifiable(records),
+        nextSnapshotCursor: data.nextSnapshotCursor,
+        syncCursor: data.syncCursor,
+        hasMore: data.hasMore,
       );
-    }
-    return _guard(() async {
-      final request = api.ListSyncConflictsRequest(
-        (builder) => builder
-          ..state = _toConflictListState(state)
-          ..limit = limit,
-      );
-      final response = await _client.getSyncApi().listSyncConflicts(
-        xKelivoSyncProtocolVersion: _syncProtocolVersion,
-        listSyncConflictsRequest: request,
-      );
-      final data = _requireResponseData(response.data?.data);
-      return List<CloudSyncConflict>.unmodifiable(
-        data.conflicts.map(_fromConflict),
-      );
-    });
-  }
-
-  @override
-  Future<CloudSyncConflict> resolveConflict(String conflictId) {
-    final normalizedId = conflictId.trim();
-    if (normalizedId.isEmpty) {
-      throw const CloudSyncException(
-        kind: CloudSyncFailureKind.validation,
-        retryable: false,
-      );
-    }
-    return _guard(() async {
-      final request = api.ResolveSyncConflictRequest(
-        (builder) => builder.conflictId = normalizedId,
-      );
-      final response = await _client.getSyncApi().resolveSyncConflict(
-        xKelivoSyncProtocolVersion: _syncProtocolVersion,
-        resolveSyncConflictRequest: request,
-      );
-      final data = _requireResponseData(response.data?.data);
-      return _fromConflict(data.conflict);
     });
   }
 
@@ -379,245 +327,6 @@ final class CloudSyncClient
     });
   }
 
-  Future<CloudSyncAttachmentUploadPreparation> prepareAttachmentUpload({
-    required String sha256,
-    required String md5Base64,
-    required int sizeBytes,
-  }) {
-    _requireNonEmpty(sha256);
-    _requireNonEmpty(md5Base64);
-    if (sizeBytes < 0 || sizeBytes > maximumCloudSyncAttachmentSizeBytes) {
-      throw const CloudSyncException(
-        kind: CloudSyncFailureKind.validation,
-        retryable: false,
-      );
-    }
-    return _guard(() async {
-      final request = api.PrepareAttachmentUploadRequest(
-        (builder) => builder
-          ..sha256 = sha256
-          ..md5 = md5Base64
-          ..sizeBytes = sizeBytes,
-      );
-      final response = await _client.getAttachmentApi().prepareAttachmentUpload(
-        xKelivoSyncProtocolVersion: _syncProtocolVersion,
-        prepareAttachmentUploadRequest: request,
-      );
-      final data = _requireResponseData(response.data?.data);
-      return CloudSyncAttachmentUploadPreparation(
-        blobId: data.blobId,
-        alreadyExists: data.alreadyExists,
-        uploadUrl: data.uploadUrl,
-        uploadHeaders: <String, String>{
-          for (final entry in data.uploadHeaders.entries)
-            entry.key: entry.value,
-        },
-        etag: data.etag,
-      );
-    });
-  }
-
-  Future<CloudSyncAttachmentInfo> completeAttachmentUpload({
-    required String attachmentId,
-    required String blobId,
-    required String entityType,
-    required String entityId,
-    required String fileName,
-    required String mimeType,
-    required String etag,
-  }) {
-    for (final value in <String>[
-      attachmentId,
-      blobId,
-      entityType,
-      entityId,
-      fileName,
-      mimeType,
-      etag,
-    ]) {
-      _requireNonEmpty(value);
-    }
-    return _guard(() async {
-      final request = api.CompleteAttachmentUploadRequest(
-        (builder) => builder
-          ..attachmentId = attachmentId
-          ..blobId = blobId
-          ..entityType = entityType
-          ..entityId = entityId
-          ..fileName = fileName
-          ..mimeType = mimeType
-          ..etag = etag,
-      );
-      final response = await _client
-          .getAttachmentApi()
-          .completeAttachmentUpload(
-            xKelivoSyncProtocolVersion: _syncProtocolVersion,
-            completeAttachmentUploadRequest: request,
-          );
-      return _fromAttachmentInfo(
-        _requireResponseData(response.data?.data).attachment,
-      );
-    });
-  }
-
-  Future<List<CloudSyncAttachmentInfo>> listAttachmentInfo({
-    required String entityType,
-    required String entityId,
-  }) {
-    _requireNonEmpty(entityType);
-    _requireNonEmpty(entityId);
-    return _guard(() async {
-      final request = api.ListAttachmentInfoRequest(
-        (builder) => builder
-          ..entityType = entityType
-          ..entityId = entityId,
-      );
-      final response = await _client.getAttachmentApi().listAttachmentInfo(
-        xKelivoSyncProtocolVersion: _syncProtocolVersion,
-        listAttachmentInfoRequest: request,
-      );
-      final data = _requireResponseData(response.data?.data);
-      return List<CloudSyncAttachmentInfo>.unmodifiable(
-        data.items.map(_fromAttachmentInfo),
-      );
-    });
-  }
-
-  Future<CloudSyncAttachmentDownload> getAttachmentDownloadUrl(
-    String attachmentId,
-  ) {
-    _requireNonEmpty(attachmentId);
-    return _guard(() async {
-      final request = api.GetAttachmentDownloadUrlRequest(
-        (builder) => builder.attachmentId = attachmentId,
-      );
-      final response = await _client
-          .getAttachmentApi()
-          .getAttachmentDownloadUrl(
-            xKelivoSyncProtocolVersion: _syncProtocolVersion,
-            getAttachmentDownloadUrlRequest: request,
-          );
-      final data = _requireResponseData(response.data?.data);
-      return CloudSyncAttachmentDownload(
-        attachmentId: data.attachmentId,
-        downloadUrl: data.downloadUrl,
-        expiresAt: data.expiresAt,
-      );
-    });
-  }
-
-  Future<void> deleteAttachmentInfo(String attachmentId) {
-    _requireNonEmpty(attachmentId);
-    return _guard(() async {
-      final request = api.DeleteAttachmentInfoRequest(
-        (builder) => builder.attachmentId = attachmentId,
-      );
-      final response = await _client.getAttachmentApi().deleteAttachmentInfo(
-        xKelivoSyncProtocolVersion: _syncProtocolVersion,
-        deleteAttachmentInfoRequest: request,
-      );
-      final data = _requireResponseData(response.data?.data);
-      if (!data.deleted || data.attachmentId != attachmentId) {
-        throw const FormatException('附件删除结果不匹配');
-      }
-    });
-  }
-
-  Future<String> putSignedAttachment({
-    required String uploadUrl,
-    required Map<String, String> headers,
-    required Stream<List<int>> content,
-  }) {
-    final url = _requireSignedUrl(uploadUrl);
-    final safeHeaders = _validatedSignedHeaders(headers);
-    return _guard(() async {
-      final response = await _signedUrlDio.put<Object?>(
-        url,
-        data: content,
-        options: Options(headers: safeHeaders, followRedirects: false),
-      );
-      final etag = response.headers.value('etag')?.trim();
-      if (etag == null || etag.isEmpty) {
-        throw const FormatException('签名上传响应缺少 ETag');
-      }
-      return etag;
-    });
-  }
-
-  Future<void> downloadSignedAttachment({
-    required String downloadUrl,
-    required String destinationPath,
-    required int expectedSizeBytes,
-  }) {
-    final url = _requireSignedUrl(downloadUrl);
-    _requireNonEmpty(destinationPath);
-    if (expectedSizeBytes < 0 ||
-        expectedSizeBytes > maximumCloudSyncAttachmentSizeBytes) {
-      throw const CloudSyncException(
-        kind: CloudSyncFailureKind.validation,
-        retryable: false,
-      );
-    }
-    return _guard(() async {
-      final response = await _signedUrlDio.get<ResponseBody>(
-        url,
-        options: Options(
-          headers: const <String, String>{},
-          followRedirects: false,
-          responseType: ResponseType.stream,
-        ),
-      );
-      final body = response.data;
-      if (body == null) {
-        throw const FormatException('签名下载响应缺少数据流');
-      }
-      final declaredSize = body.contentLength;
-      if (declaredSize > maximumCloudSyncAttachmentSizeBytes ||
-          (declaredSize >= 0 && declaredSize != expectedSizeBytes)) {
-        throw const FormatException('签名下载声明长度无效');
-      }
-
-      final file = File(destinationPath);
-      final sink = file.openWrite(mode: FileMode.writeOnly);
-      try {
-        var receivedBytes = 0;
-        await for (final chunk in body.stream) {
-          final nextSize = receivedBytes + chunk.length;
-          if (nextSize > maximumCloudSyncAttachmentSizeBytes ||
-              nextSize > expectedSizeBytes) {
-            throw const FormatException('签名下载实际长度超出限制');
-          }
-          sink.add(chunk);
-          receivedBytes = nextSize;
-        }
-        if (receivedBytes != expectedSizeBytes) {
-          throw const FormatException('签名下载实际长度不匹配');
-        }
-        await sink.flush();
-        await sink.close();
-      } catch (error, stackTrace) {
-        Object? cleanupError;
-        StackTrace? cleanupStackTrace;
-        try {
-          await sink.close();
-        } catch (error, stackTrace) {
-          cleanupError = error;
-          cleanupStackTrace = stackTrace;
-        }
-        try {
-          if (await file.exists()) await file.delete();
-        } catch (error, stackTrace) {
-          cleanupError ??= error;
-          cleanupStackTrace ??= stackTrace;
-        }
-        if (cleanupError != null && cleanupStackTrace != null) {
-          Error.throwWithStackTrace(cleanupError, cleanupStackTrace);
-        }
-        Error.throwWithStackTrace(error, stackTrace);
-      }
-    });
-  }
-
   Future<T> _guard<T>(Future<T> Function() action) async {
     try {
       return await action();
@@ -634,34 +343,253 @@ final class CloudSyncClient
   }
 }
 
-api.SyncMutation _toGeneratedMutation(CloudSyncOutboxMutation mutation) {
-  final map = <String, Object?>{
-    'mutationId': mutation.mutationId,
-    'entityType': mutation.entityType.wireName,
-    'entityId': mutation.entityId,
-    'operation': mutation.operation.name,
-    if (mutation.parentId != null) 'parentId': mutation.parentId,
-    if (mutation.operation != CloudSyncMutationOperation.create)
-      'baseRevision': mutation.baseRevision,
-    if (mutation.schemaVersion != null) 'schemaVersion': mutation.schemaVersion,
-    if (mutation.payload != null) 'payload': mutation.payload,
-    if (mutation.operation == CloudSyncMutationOperation.update)
-      'patch': mutation.patch
-          .map((item) => item.toJson())
-          .toList(growable: false),
+api.SyncMutation _toGeneratedMutation(CloudSyncRecordMutation mutation) {
+  return switch (mutation) {
+    CloudSyncPutRecordMutation() => _toGeneratedPutMutation(mutation),
+    CloudSyncDeleteRecordMutation() => _toGeneratedDeleteMutation(mutation),
   };
-  try {
-    final result = api.standardSerializers.deserializeWith(
-      api.SyncMutation.serializer,
-      map,
-    );
-    if (result == null) {
-      throw const FormatException('无法构造同步 mutation');
+}
+
+api.SyncMutation _toGeneratedPutMutation(CloudSyncPutRecordMutation mutation) {
+  final value = api.SyncPutMutation(
+    (builder) => builder
+      ..mutationId = mutation.mutationId
+      ..recordId = mutation.recordId
+      ..expectedRevision = mutation.expectedRevision
+      ..operation = api.SyncPutMutationOperationEnum.put
+      ..envelopeVersion = CloudSyncPutRecordMutation.envelopeVersion
+      ..keyEpoch = mutation.keyEpoch
+      ..ciphertext = mutation.ciphertext,
+  );
+  return api.SyncMutation(
+    (builder) =>
+        builder.oneOf = OneOf2<api.SyncDeleteMutation, api.SyncPutMutation>(
+          value: value,
+          typeIndex: 1,
+        ),
+  );
+}
+
+api.SyncMutation _toGeneratedDeleteMutation(
+  CloudSyncDeleteRecordMutation mutation,
+) {
+  final value = api.SyncDeleteMutation(
+    (builder) => builder
+      ..mutationId = mutation.mutationId
+      ..recordId = mutation.recordId
+      ..expectedRevision = mutation.expectedRevision
+      ..operation = api.SyncDeleteMutationOperationEnum.delete,
+  );
+  return api.SyncMutation(
+    (builder) =>
+        builder.oneOf = OneOf2<api.SyncDeleteMutation, api.SyncPutMutation>(
+          value: value,
+          typeIndex: 0,
+        ),
+  );
+}
+
+CloudSyncRecordMutationResult _fromMutationResult(
+  api.SyncMutationResult result,
+) {
+  final value = result.oneOf.value;
+  if (value is api.SyncAppliedMutationResult) {
+    _requireServerIdentifier(value.mutationId);
+    if (value.revision < 1 || value.changeSeq < 0) {
+      throw const FormatException('服务端返回了无效的 applied 结果');
     }
-    return result;
-  } on CloudSyncException {
-    rethrow;
-  } on Object {
+    return CloudSyncAppliedMutationResult(
+      mutationId: value.mutationId,
+      revision: value.revision,
+      changeSeq: value.changeSeq,
+    );
+  }
+  if (value is api.SyncConflictMutationResult) {
+    _requireServerIdentifier(value.mutationId);
+    final currentRevision = value.currentRevision;
+    if (currentRevision != null && currentRevision < 1) {
+      throw const FormatException('服务端返回了无效的 conflict 结果');
+    }
+    return CloudSyncConflictMutationResult(
+      mutationId: value.mutationId,
+      currentRevision: currentRevision,
+    );
+  }
+  if (value is api.SyncRejectedMutationResult) {
+    _requireServerIdentifier(value.mutationId);
+    if (value.errorCode.isEmpty || value.errorCode.length > 100) {
+      throw const FormatException('服务端返回了无效的 rejected 结果');
+    }
+    return CloudSyncRejectedMutationResult(
+      mutationId: value.mutationId,
+      errorCode: value.errorCode,
+    );
+  }
+  throw const FormatException('服务端返回了未知的 mutation 结果');
+}
+
+CloudSyncRecordChange _fromRecordChange(api.SyncChange change) {
+  final value = change.oneOf.value;
+  if (value is api.SyncPutChange) {
+    _validateRecordMetadata(
+      recordId: value.recordId,
+      revision: value.revision,
+      sequence: value.changeSeq,
+      updatedByDeviceId: value.updatedByDeviceId,
+    );
+    final ciphertextBytes = _syncCiphertextByteLength(value.ciphertext);
+    if (value.envelopeVersion != CloudSyncPutRecordMutation.envelopeVersion ||
+        value.keyEpoch < 1 ||
+        value.keyEpoch > 2147483647 ||
+        ciphertextBytes == null ||
+        ciphertextBytes != value.ciphertextBytes ||
+        value.deletedAt != null) {
+      throw const FormatException('服务端返回了无效的 put 增量');
+    }
+    return CloudSyncPutRecordChange(
+      changeSeq: value.changeSeq,
+      recordId: value.recordId,
+      revision: value.revision,
+      updatedAt: value.updatedAt.toUtc(),
+      updatedByDeviceId: value.updatedByDeviceId,
+      envelopeVersion: value.envelopeVersion,
+      keyEpoch: value.keyEpoch,
+      ciphertext: value.ciphertext,
+    );
+  }
+  if (value is api.SyncDeleteChange) {
+    _validateRecordMetadata(
+      recordId: value.recordId,
+      revision: value.revision,
+      sequence: value.changeSeq,
+      updatedByDeviceId: value.updatedByDeviceId,
+    );
+    if (value.envelopeVersion != null ||
+        value.keyEpoch != null ||
+        value.ciphertext != null ||
+        value.ciphertextBytes != 0) {
+      throw const FormatException('服务端返回了无效的 delete 增量');
+    }
+    return CloudSyncDeleteRecordChange(
+      changeSeq: value.changeSeq,
+      recordId: value.recordId,
+      revision: value.revision,
+      updatedAt: value.updatedAt.toUtc(),
+      updatedByDeviceId: value.updatedByDeviceId,
+      deletedAt: value.deletedAt.toUtc(),
+    );
+  }
+  throw const FormatException('服务端返回了未知的同步增量');
+}
+
+CloudSyncRecordState _fromRecordState(api.SyncRecord record) {
+  final values = record.anyOf.values.values.whereType<Object>().toList(
+    growable: false,
+  );
+  if (values.length != 1) {
+    throw const FormatException('服务端返回了歧义的同步记录');
+  }
+  final value = values.single;
+  if (value is api.SyncActiveRecord) {
+    _validateRecordMetadata(
+      recordId: value.recordId,
+      revision: value.revision,
+      sequence: value.lastChangeSeq,
+      updatedByDeviceId: value.updatedByDeviceId,
+    );
+    final ciphertextBytes = _syncCiphertextByteLength(value.ciphertext);
+    if (value.envelopeVersion != CloudSyncPutRecordMutation.envelopeVersion ||
+        value.keyEpoch < 1 ||
+        value.keyEpoch > 2147483647 ||
+        ciphertextBytes == null ||
+        ciphertextBytes != value.ciphertextBytes ||
+        value.deletedAt != null) {
+      throw const FormatException('服务端返回了无效的 active 记录');
+    }
+    return CloudSyncActiveRecord(
+      recordId: value.recordId,
+      revision: value.revision,
+      updatedAt: value.updatedAt.toUtc(),
+      updatedByDeviceId: value.updatedByDeviceId,
+      lastChangeSeq: value.lastChangeSeq,
+      envelopeVersion: value.envelopeVersion,
+      keyEpoch: value.keyEpoch,
+      ciphertext: value.ciphertext,
+    );
+  }
+  if (value is api.SyncDeletedRecord) {
+    _validateRecordMetadata(
+      recordId: value.recordId,
+      revision: value.revision,
+      sequence: value.lastChangeSeq,
+      updatedByDeviceId: value.updatedByDeviceId,
+    );
+    if (value.envelopeVersion != null ||
+        value.keyEpoch != null ||
+        value.ciphertext != null ||
+        value.ciphertextBytes != 0) {
+      throw const FormatException('服务端返回了无效的 deleted 记录');
+    }
+    return CloudSyncDeletedRecord(
+      recordId: value.recordId,
+      revision: value.revision,
+      updatedAt: value.updatedAt.toUtc(),
+      updatedByDeviceId: value.updatedByDeviceId,
+      lastChangeSeq: value.lastChangeSeq,
+      deletedAt: value.deletedAt.toUtc(),
+    );
+  }
+  throw const FormatException('服务端返回了未知的同步记录');
+}
+
+void _validatePushMutations(List<CloudSyncRecordMutation> mutations) {
+  if (mutations.isEmpty || mutations.length > 10) {
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.validation,
+      retryable: false,
+    );
+  }
+
+  final mutationIds = <String>{};
+  var totalCiphertextBytes = 0;
+  for (final mutation in mutations) {
+    _requireClientIdentifier(mutation.mutationId);
+    _requireClientIdentifier(mutation.recordId);
+    if (!mutationIds.add(mutation.mutationId) ||
+        mutation.expectedRevision < 0) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      );
+    }
+    switch (mutation) {
+      case CloudSyncPutRecordMutation():
+        if (mutation.keyEpoch < 1 || mutation.keyEpoch > 2147483647) {
+          throw const CloudSyncException(
+            kind: CloudSyncFailureKind.validation,
+            retryable: false,
+          );
+        }
+        final ciphertextBytes = _syncCiphertextByteLength(mutation.ciphertext);
+        if (ciphertextBytes == null ||
+            ciphertextBytes < 1 ||
+            ciphertextBytes > 1048576) {
+          throw const CloudSyncException(
+            kind: CloudSyncFailureKind.validation,
+            retryable: false,
+          );
+        }
+        totalCiphertextBytes += ciphertextBytes;
+      case CloudSyncDeleteRecordMutation():
+        if (mutation.expectedRevision == 0) {
+          throw const CloudSyncException(
+            kind: CloudSyncFailureKind.validation,
+            retryable: false,
+          );
+        }
+    }
+  }
+  if (totalCiphertextBytes > 1048576) {
     throw const CloudSyncException(
       kind: CloudSyncFailureKind.validation,
       retryable: false,
@@ -669,149 +597,132 @@ api.SyncMutation _toGeneratedMutation(CloudSyncOutboxMutation mutation) {
   }
 }
 
-CloudSyncMutationResult _fromMutationResult(api.SyncMutationResult result) {
-  final values = result.anyOf.values.values.whereType<Object>().toList();
-  if (values.length != 1) {
-    throw const FormatException('mutation 结果类型不唯一');
-  }
-  final value = values.single;
-  if (value is api.SyncAppliedMutationResult) {
-    return CloudSyncMutationResult(
-      mutationId: value.mutationId,
-      status: CloudSyncMutationStatus.applied,
-      retryable: false,
-      revision: value.revision,
-      changeSeq: value.changeSeq,
-    );
-  }
-  if (value is api.SyncConflictMutationResult) {
-    return CloudSyncMutationResult(
-      mutationId: value.mutationId,
-      status: CloudSyncMutationStatus.conflict,
-      retryable: false,
-      currentRevision: value.currentRevision,
-      reason: _conflictReason(value.reason),
-    );
-  }
-  if (value is api.SyncFieldConflictMutationResult) {
-    return CloudSyncMutationResult(
-      mutationId: value.mutationId,
-      status: CloudSyncMutationStatus.conflict,
-      retryable: false,
-      currentRevision: value.currentRevision,
-      reason: 'field-conflict',
-      conflictId: value.conflictId,
-      conflictingPaths: List<String>.unmodifiable(value.conflictingPaths),
-      changeSeq: value.changeSeq,
-    );
-  }
-  if (value is api.SyncRejectedMutationResult) {
-    return CloudSyncMutationResult(
-      mutationId: value.mutationId,
-      status: CloudSyncMutationStatus.rejected,
-      retryable: false,
-      errorCode: value.errorCode,
-    );
-  }
-  if (value is api.SyncRetryMutationResult) {
-    return CloudSyncMutationResult(
-      mutationId: value.mutationId,
-      status: CloudSyncMutationStatus.retry,
-      retryable: value.retryable,
-    );
-  }
-  throw const FormatException('未知的 mutation 结果');
-}
-
-CloudSyncConflict _fromConflict(api.SyncConflict conflict) {
-  return CloudSyncConflict(
-    conflictId: conflict.conflictId,
-    mutationId: conflict.mutationId,
-    entityType: _fromEntityType(conflict.entityType),
-    entityId: conflict.entityId,
-    baseRevision: conflict.details.baseRevision,
-    fields: conflict.details.fields
-        .map(
-          (field) => CloudSyncConflictField(
-            path: field.path,
-            current: _fromConflictFieldState(field.current),
-            desired: _fromConflictFieldState(field.desired),
-          ),
-        )
-        .toList(growable: false),
-    state: _fromConflictState(conflict.state),
-    createdAt: conflict.createdAt,
-    resolvedAt: conflict.resolvedAt,
-  );
-}
-
-CloudSyncConflictFieldState _fromConflictFieldState(
-  api.SyncConflictDetailsFieldsInnerCurrent state,
+void _validateMutationResults(
+  List<CloudSyncRecordMutationResult> results,
+  Set<String> requestedMutationIds,
 ) {
-  return CloudSyncConflictFieldState(
-    exists: state.exists,
-    value: state.exists ? copyCloudSyncJsonValue(state.value?.value) : null,
-  );
-}
-
-CloudSyncConflictState _fromConflictState(api.SyncConflictStateEnum state) {
-  if (state == api.SyncConflictStateEnum.open) {
-    return CloudSyncConflictState.open;
+  if (results.length != requestedMutationIds.length) {
+    throw const FormatException('服务端返回的 mutation 结果数量不匹配');
   }
-  if (state == api.SyncConflictStateEnum.resolved) {
-    return CloudSyncConflictState.resolved;
+  final resultIds = <String>{};
+  for (final result in results) {
+    if (!requestedMutationIds.contains(result.mutationId) ||
+        !resultIds.add(result.mutationId)) {
+      throw const FormatException('服务端返回了未知或重复的 mutation 结果');
+    }
   }
-  throw const FormatException('未知的同步冲突状态');
 }
 
-api.ListSyncConflictsRequestStateEnum _toConflictListState(
-  CloudSyncConflictState state,
-) {
-  return switch (state) {
-    CloudSyncConflictState.open => api.ListSyncConflictsRequestStateEnum.open,
-    CloudSyncConflictState.resolved =>
-      api.ListSyncConflictsRequestStateEnum.resolved,
-  };
-}
-
-CloudSyncChange _fromChange(api.SyncChange change) {
-  final value = change.oneOf.value;
-  if (value is api.SyncUpsertChange) {
-    return CloudSyncChange.upsert(
-      changeSeq: value.changeSeq,
-      record: _fromRecord(value.record),
+void _validatePullArguments({required String? cursor, required int limit}) {
+  if (limit < 1 ||
+      limit > 10 ||
+      (cursor != null && !_isValidSyncCursor(cursor))) {
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.validation,
+      retryable: false,
     );
   }
-  if (value is api.SyncDeleteChange) {
-    return CloudSyncChange.delete(
-      changeSeq: value.changeSeq,
-      entityType: _fromEntityType(value.entityType),
-      entityId: value.entityId,
-      revision: value.revision,
-      deletedAt: value.deletedAt.toUtc(),
-    );
-  }
-  throw const FormatException('未知的增量变更');
 }
 
-CloudSyncRecord _fromRecord(api.SyncRecord record) {
-  final payload = <String, Object?>{};
-  for (final entry in record.payload.entries) {
-    payload[entry.key] = copyCloudSyncJsonValue(entry.value?.value);
+void _validateRecordMetadata({
+  required String recordId,
+  required int revision,
+  required int sequence,
+  required String? updatedByDeviceId,
+}) {
+  _requireServerIdentifier(recordId);
+  if (updatedByDeviceId != null) {
+    _requireServerIdentifier(updatedByDeviceId);
   }
-  return CloudSyncRecord(
-    entityType: _fromEntityType(record.entityType),
-    entityId: record.entityId,
-    parentId: record.parentId,
-    revision: record.revision,
-    schemaVersion: record.schemaVersion,
-    sortSeq: record.sortSeq,
-    payload: payload,
-    deletedAt: record.deletedAt?.toUtc(),
-    updatedAt: record.updatedAt.toUtc(),
-    updatedByDeviceId: record.updatedByDeviceId,
-    lastChangeSeq: record.lastChangeSeq,
-  );
+  if (revision < 1 || sequence < 0) {
+    throw const FormatException('服务端返回了无效的记录元数据');
+  }
+}
+
+bool _isValidSyncCursor(String value) {
+  return value.isNotEmpty && value.length <= 4096;
+}
+
+void _validateChangePage({
+  required int changeCount,
+  required int pageLimit,
+  required String nextCursor,
+  required bool hasMore,
+  required bool resetRequired,
+}) {
+  final resetStateIsValid = !resetRequired || (changeCount == 0 && !hasMore);
+  if (changeCount > pageLimit ||
+      !_isValidSyncCursor(nextCursor) ||
+      (hasMore && changeCount == 0) ||
+      !resetStateIsValid) {
+    throw const FormatException('服务端返回了无效的增量分页数据');
+  }
+}
+
+void _validateChangeOrdering(List<CloudSyncRecordChange> changes) {
+  int? previousSequence;
+  for (final change in changes) {
+    final previous = previousSequence;
+    if (previous != null && change.changeSeq <= previous) {
+      throw const FormatException('服务端返回了乱序的同步增量');
+    }
+    previousSequence = change.changeSeq;
+  }
+}
+
+void _validateSnapshotPage({
+  required int recordCount,
+  required int pageLimit,
+  required String? nextSnapshotCursor,
+  required String? syncCursor,
+  required bool hasMore,
+}) {
+  final nextCursorIsValid =
+      nextSnapshotCursor == null || _isValidSyncCursor(nextSnapshotCursor);
+  final syncCursorIsValid =
+      syncCursor == null || _isValidSyncCursor(syncCursor);
+  final cursorsMatchPageState = hasMore
+      ? nextSnapshotCursor != null && syncCursor == null
+      : nextSnapshotCursor == null && syncCursor != null;
+  if (recordCount > pageLimit ||
+      (hasMore && recordCount == 0) ||
+      !nextCursorIsValid ||
+      !syncCursorIsValid ||
+      !cursorsMatchPageState) {
+    throw const FormatException('服务端返回了无效的快照分页数据');
+  }
+}
+
+int? _syncCiphertextByteLength(String ciphertext) {
+  if (ciphertext.isEmpty ||
+      ciphertext.length > 1398102 ||
+      !_base64UrlPattern.hasMatch(ciphertext)) {
+    return null;
+  }
+  final remainder = ciphertext.length % 4;
+  if (remainder == 1) return null;
+  final lastCharacter = ciphertext[ciphertext.length - 1];
+  if ((remainder == 2 && !_base64UrlRemainder2.contains(lastCharacter)) ||
+      (remainder == 3 && !_base64UrlRemainder3.contains(lastCharacter))) {
+    return null;
+  }
+  return (ciphertext.length ~/ 4) * 3 +
+      (remainder == 2 ? 1 : (remainder == 3 ? 2 : 0));
+}
+
+void _requireClientIdentifier(String value) {
+  if (!_syncIdentifierPattern.hasMatch(value)) {
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.validation,
+      retryable: false,
+    );
+  }
+}
+
+void _requireServerIdentifier(String value) {
+  if (!_syncIdentifierPattern.hasMatch(value)) {
+    throw const FormatException('服务端返回了无效的同步标识符');
+  }
 }
 
 CloudSyncDeviceSession _fromDevice(api.DeviceSessionSummary device) {
@@ -828,64 +739,6 @@ CloudSyncDeviceSession _fromDevice(api.DeviceSessionSummary device) {
     revokedAt: device.revokedAt?.toUtc(),
     isCurrent: device.isCurrent,
   );
-}
-
-CloudSyncAttachmentInfo _fromAttachmentInfo(api.AttachmentInfo attachment) {
-  return CloudSyncAttachmentInfo(
-    id: attachment.id,
-    blobId: attachment.blobId,
-    entityType: attachment.entityType,
-    entityId: attachment.entityId,
-    fileName: attachment.fileName,
-    mimeType: attachment.mimeType,
-    sizeBytes: attachment.sizeBytes,
-    sha256: attachment.sha256,
-    createdAt: attachment.createdAt,
-  );
-}
-
-CloudSyncEntityType _fromEntityType(api.SyncEntityType value) {
-  if (value == api.SyncEntityType.conversation) {
-    return CloudSyncEntityType.conversation;
-  }
-  if (value == api.SyncEntityType.turn) return CloudSyncEntityType.turn;
-  if (value == api.SyncEntityType.message) return CloudSyncEntityType.message;
-  if (value == api.SyncEntityType.messageSelection) {
-    return CloudSyncEntityType.messageSelection;
-  }
-  if (value == api.SyncEntityType.toolEvent) {
-    return CloudSyncEntityType.toolEvent;
-  }
-  if (value == api.SyncEntityType.thoughtSignature) {
-    return CloudSyncEntityType.thoughtSignature;
-  }
-  if (value == api.SyncEntityType.provider) return CloudSyncEntityType.provider;
-  if (value == api.SyncEntityType.assistant) {
-    return CloudSyncEntityType.assistant;
-  }
-  if (value == api.SyncEntityType.memory) return CloudSyncEntityType.memory;
-  if (value == api.SyncEntityType.worldBook) {
-    return CloudSyncEntityType.worldBook;
-  }
-  if (value == api.SyncEntityType.quickPhrase) {
-    return CloudSyncEntityType.quickPhrase;
-  }
-  if (value == api.SyncEntityType.searchService) {
-    return CloudSyncEntityType.searchService;
-  }
-  if (value == api.SyncEntityType.networkTts) {
-    return CloudSyncEntityType.networkTts;
-  }
-  if (value == api.SyncEntityType.mcpServer) {
-    return CloudSyncEntityType.mcpServer;
-  }
-  if (value == api.SyncEntityType.instructionInjection) {
-    return CloudSyncEntityType.instructionInjection;
-  }
-  if (value == api.SyncEntityType.userPreference) {
-    return CloudSyncEntityType.userPreference;
-  }
-  throw const FormatException('服务端返回了未知实体类型');
 }
 
 api.CreateAuthSessionRequestPlatformEnum _toLoginPlatform(
@@ -960,37 +813,6 @@ api.ListDeviceSessionsRequestStatusEnum _toDeviceFilterStatus(
   };
 }
 
-String _conflictReason(api.SyncConflictMutationResultReasonEnum value) {
-  if (value == api.SyncConflictMutationResultReasonEnum.entityExists) {
-    return 'entity-exists';
-  }
-  if (value == api.SyncConflictMutationResultReasonEnum.entityMissing) {
-    return 'entity-missing';
-  }
-  if (value == api.SyncConflictMutationResultReasonEnum.entityDeleted) {
-    return 'entity-deleted';
-  }
-  if (value == api.SyncConflictMutationResultReasonEnum.entityActive) {
-    return 'entity-active';
-  }
-  if (value == api.SyncConflictMutationResultReasonEnum.parentMissing) {
-    return 'parent-missing';
-  }
-  if (value == api.SyncConflictMutationResultReasonEnum.parentDeleted) {
-    return 'parent-deleted';
-  }
-  if (value == api.SyncConflictMutationResultReasonEnum.restoreRequired) {
-    return 'restore-required';
-  }
-  if (value == api.SyncConflictMutationResultReasonEnum.revisionAhead) {
-    return 'revision-ahead';
-  }
-  if (value == api.SyncConflictMutationResultReasonEnum.revisionStale) {
-    return 'revision-stale';
-  }
-  throw const FormatException('服务端返回了未知冲突原因');
-}
-
 T _requireResponseData<T>(T? data) {
   if (data == null) {
     throw const CloudSyncException(
@@ -1003,47 +825,6 @@ T _requireResponseData<T>(T? data) {
 
 void _requireNonEmpty(String value) {
   if (value.trim().isEmpty) {
-    throw const CloudSyncException(
-      kind: CloudSyncFailureKind.validation,
-      retryable: false,
-    );
-  }
-}
-
-String _requireSignedUrl(String value) {
-  final normalized = value.trim();
-  final uri = Uri.tryParse(normalized);
-  if (uri == null ||
-      !isAllowedCloudSyncTransportUri(uri) ||
-      uri.userInfo.isNotEmpty) {
-    throw const CloudSyncException(
-      kind: CloudSyncFailureKind.validation,
-      retryable: false,
-    );
-  }
-  return normalized;
-}
-
-Map<String, String> _validatedSignedHeaders(Map<String, String> headers) {
-  final result = <String, String>{};
-  for (final entry in headers.entries) {
-    final name = entry.key.trim();
-    final value = entry.value.trim();
-    if (name.isEmpty ||
-        value.isEmpty ||
-        name.toLowerCase() == 'authorization') {
-      throw const CloudSyncException(
-        kind: CloudSyncFailureKind.validation,
-        retryable: false,
-      );
-    }
-    result[name] = value;
-  }
-  return Map<String, String>.unmodifiable(result);
-}
-
-void _requirePageLimit(int limit) {
-  if (limit < 1 || limit > 100) {
     throw const CloudSyncException(
       kind: CloudSyncFailureKind.validation,
       retryable: false,
@@ -1116,6 +897,13 @@ _ParsedServerError? _parseServerError(Object? raw) {
     return null;
   }
 }
+
+final _syncIdentifierPattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+final _base64UrlPattern = RegExp(r'^[A-Za-z0-9_-]+$');
+const _base64UrlRemainder2 = 'AQgw';
+const _base64UrlRemainder3 = 'AEIMQUYcgkosw048';
 
 final class _ParsedServerError {
   const _ParsedServerError({

@@ -28,7 +28,7 @@ abstract class SyncSnapshotRequest
       _$SyncSnapshotRequest;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(SyncSnapshotRequestBuilder b) => b..limit = 100;
+  static void _defaults(SyncSnapshotRequestBuilder b) => b..limit = 10;
 
   @BuiltValueSerializer(custom: true)
   static Serializer<SyncSnapshotRequest> get serializer =>

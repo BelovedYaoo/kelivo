@@ -12,9 +12,7 @@ import 'package:shared_preferences_platform_interface/shared_preferences_platfor
 import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
-import 'package:Kelivo/core/services/sync/cloud_sync_store.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
-import 'package:Kelivo/core/services/sync/sync_write_journal.dart';
 import 'package:Kelivo/features/search/services/global_session_search_service.dart';
 
 import '../database/test_database_cipher.dart';
@@ -109,8 +107,6 @@ void main() {
   late Directory tempDir;
   late SharedPreferencesStorePlatform previousPreferencesStore;
   final services = <ChatService>[];
-  final journals = <SyncWriteJournal>[];
-  final stores = <CloudSyncStore>[];
 
   setUp(() async {
     tempDir = await Directory.systemTemp.createTemp(
@@ -126,14 +122,6 @@ void main() {
       await service.close();
     }
     services.clear();
-    for (final journal in journals) {
-      await journal.close();
-    }
-    journals.clear();
-    for (final store in stores) {
-      await store.close();
-    }
-    stores.clear();
     await Hive.close();
     SharedPreferences.resetStatic();
     SharedPreferencesStorePlatform.instance = previousPreferencesStore;
@@ -213,21 +201,13 @@ void main() {
       },
     );
 
-    test('共享真实写前日志时仍可级联删除持久化会话', () async {
-      final store = await CloudSyncStore.open(
-        boxName: 'assistant-cascade-shared-journal',
-      );
-      stores.add(store);
-      final journal = SyncWriteJournal(
-        store: store,
-        journalScopeId: 'assistant-cascade-test',
-      );
-      journals.add(journal);
-      final chatService = createService(journal);
+    test('共享仅本地写执行器时仍可级联删除持久化会话', () async {
+      const executor = LocalOnlySyncWriteExecutor();
+      final chatService = createService(executor);
       await chatService.init();
       final provider = await _createLoadedAssistantProvider(
         chatService: chatService,
-        syncWriteExecutor: journal,
+        syncWriteExecutor: executor,
       );
       final conversation = await chatService.createConversation(
         title: 'Shared journal conversation',
@@ -347,16 +327,8 @@ void main() {
     );
 
     test('持久化失败时会话删除可重试且助手不会永久短路', () async {
-      final cloudStore = await CloudSyncStore.open(
-        boxName: 'assistant-cascade-retry-shared-journal',
-      );
-      stores.add(cloudStore);
-      final journal = SyncWriteJournal(
-        store: cloudStore,
-        journalScopeId: 'assistant-cascade-retry-test',
-      );
-      journals.add(journal);
-      final chatService = createService(journal);
+      const executor = LocalOnlySyncWriteExecutor();
+      final chatService = createService(executor);
       await chatService.init();
       final assistants = <Map<String, Object?>>[
         {'id': 'assistant-delete', 'name': 'Delete Me'},
@@ -370,7 +342,7 @@ void main() {
         chatService: chatService,
         assistants: assistants,
         preferencesStore: store,
-        syncWriteExecutor: journal,
+        syncWriteExecutor: executor,
       );
       final conversation = await chatService.createConversation(
         title: 'Retry delete',

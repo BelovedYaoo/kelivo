@@ -25,7 +25,6 @@
   "settingsPageBackup": "数据备份",
   "cloudSyncTitle": "云同步",
   "cloudSyncSignInSection": "登录",
-  "cloudSyncServiceUrl": "服务地址",
   "cloudSyncLoginName": "账号",
   "cloudSyncPassword": "密码",
   "cloudSyncDeviceName": "设备名称",
@@ -44,13 +43,6 @@
   "cloudSyncContentLocalOnlyNotice": "端到端加密升级期间，聊天与配置仅保存在本机，账号和设备管理仍可用。",
   "cloudSyncAccount": "账户",
   "cloudSyncService": "服务",
-  "cloudSyncStatus": "状态",
-  "cloudSyncPause": "暂停同步",
-  "cloudSyncPauseDescription": "恢复同步前，仅保留本机数据变更。",
-  "cloudSyncSyncNow": "立即同步",
-  "cloudSyncSyncing": "正在同步…",
-  "cloudSyncSyncCompleted": "同步完成",
-  "cloudSyncLastSync": "上次同步",
   "cloudSyncNever": "从未同步",
   "cloudSyncDevicesSection": "设备",
   "cloudSyncRefreshDevices": "刷新设备",
@@ -73,124 +65,6 @@
   "cloudSyncWorkspaceRestartMessage": "工作区选择已安全保存。重启前，Kelivo 不会连接新的工作区。",
   "cloudSyncWorkspaceRestartButton": "重启 Kelivo",
   "cloudSyncErrorTitle": "云同步错误",
-  "cloudSyncStatusInitializing": "正在初始化",
-  "cloudSyncStatusSignedOut": "未登录",
-  "cloudSyncStatusSigningIn": "正在登录",
-  "cloudSyncStatusSigningOut": "正在退出",
-  "cloudSyncStatusWorkspaceChangePending": "需要重启",
-  "cloudSyncStatusIdle": "同步正常",
-  "cloudSyncStatusSyncing": "正在同步",
-  "cloudSyncStatusPaused": "已暂停",
-  "cloudSyncStatusError": "需要处理",
-  "cloudSyncStatusNeedsAttention": "有待确认项",
-  "cloudSyncStatusPendingSync": "仍有数据未同步",
-  "cloudSyncStatusBlocked": "部分数据同步失败",
-  "cloudSyncSyncNeedsAttention": "同步已完成，但仍有内容需要确认。",
-  "cloudSyncSyncPending": "部分数据尚未同步。",
-  "cloudSyncSyncBlocked": "部分数据无法同步。",
-  "cloudSyncConflictsSection": "同步冲突",
-  "cloudSyncRefreshConflicts": "刷新同步冲突",
-  "cloudSyncNoConflicts": "暂无需要确认的冲突",
-  "cloudSyncConflictsTruncated": "当前仅显示前 100 项冲突。处理后请刷新，以继续查看其余冲突。",
-  "cloudSyncConflictErrorTitle": "无法读取或处理同步冲突",
-  "cloudSyncConflictFieldCount": "有 {count} 个字段需要确认",
-  "@cloudSyncConflictFieldCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "cloudSyncConflictValueComparison": "云端：{cloudValue} · 本机：{localValue}",
-  "@cloudSyncConflictValueComparison": {
-    "placeholders": {
-      "cloudValue": {
-        "type": "String"
-      },
-      "localValue": {
-        "type": "String"
-      }
-    }
-  },
-  "cloudSyncConflictResolveTitle": "处理同步冲突",
-  "cloudSyncConflictResolveDescription": "请选择“{entity}”每个字段要保留的版本，默认保留云端版本。",
-  "@cloudSyncConflictResolveDescription": {
-    "placeholders": {
-      "entity": {
-        "type": "String"
-      }
-    }
-  },
-  "cloudSyncConflictClose": "关闭冲突处理面板",
-  "cloudSyncConflictCloudValue": "云端",
-  "cloudSyncConflictLocalValue": "本机",
-  "cloudSyncConflictUseCloud": "云端（默认）",
-  "cloudSyncConflictUseLocal": "本机",
-  "cloudSyncConflictUseAllCloud": "全部云端",
-  "cloudSyncConflictUseAllLocal": "全部本机",
-  "cloudSyncConflictConfirm": "确认处理",
-  "cloudSyncConflictResolving": "正在处理…",
-  "cloudSyncConflictResolved": "同步冲突已处理",
-  "cloudSyncConflictTruncatedLocalBlocked": "冲突列表尚不完整。为避免覆盖未显示的变更，暂不可选择本机或混合版本，但仍可全部保留云端版本。",
-  "cloudSyncConflictResolveFailed": "未能处理此冲突，请刷新后重试。",
-  "cloudSyncConflictEntityConversation": "聊天会话",
-  "cloudSyncConflictEntityTurn": "对话轮次",
-  "cloudSyncConflictEntityMessage": "消息",
-  "cloudSyncConflictEntityMessageSelection": "消息选择",
-  "cloudSyncConflictEntityToolEvent": "工具结果",
-  "cloudSyncConflictEntityThoughtSignature": "推理状态",
-  "cloudSyncConflictEntityProvider": "模型供应商",
-  "cloudSyncConflictEntityAssistant": "助手",
-  "cloudSyncConflictEntityMemory": "记忆",
-  "cloudSyncConflictEntityWorldBook": "世界书条目",
-  "cloudSyncConflictEntityQuickPhrase": "快捷短语",
-  "cloudSyncConflictEntitySearchService": "搜索服务",
-  "cloudSyncConflictEntityNetworkTts": "语音服务",
-  "cloudSyncConflictEntityMcpServer": "MCP 服务",
-  "cloudSyncConflictEntityInstructionInjection": "指令规则",
-  "cloudSyncConflictEntityUserPreference": "应用设置",
-  "cloudSyncConflictFieldTitle": "标题",
-  "cloudSyncConflictFieldContent": "内容",
-  "cloudSyncConflictFieldSummary": "摘要",
-  "cloudSyncConflictFieldName": "名称",
-  "cloudSyncConflictFieldStatus": "状态",
-  "cloudSyncConflictFieldTime": "时间",
-  "cloudSyncConflictFieldSettings": "设置",
-  "cloudSyncConflictFieldSecurity": "凭据",
-  "cloudSyncConflictFieldReference": "关联项",
-  "cloudSyncConflictFieldAttachments": "附件",
-  "cloudSyncConflictFieldSelection": "选择项",
-  "cloudSyncConflictFieldOther": "其他设置",
-  "cloudSyncConflictValueAbsent": "无此值",
-  "cloudSyncConflictValueEmpty": "空值",
-  "cloudSyncConflictValueSet": "已设置",
-  "cloudSyncConflictValueNotSet": "未设置",
-  "cloudSyncConflictValueReference": "关联项",
-  "cloudSyncConflictValueItems": "共 {count} 项",
-  "@cloudSyncConflictValueItems": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "cloudSyncConflictValueEnabled": "已启用",
-  "cloudSyncConflictValueDisabled": "已停用",
-  "cloudSyncConflictValueNumber": "{value}",
-  "@cloudSyncConflictValueNumber": {
-    "placeholders": {
-      "value": {
-        "type": "num"
-      }
-    }
-  },
-  "cloudSyncConflictValueBlank": "空白文本",
-  "cloudSyncConflictFailureChanged": "此冲突已变化或已被处理，请刷新列表后重试。",
-  "cloudSyncConflictFailureSelection": "当前字段选择无法安全应用，请保留云端版本，或刷新后重新选择。",
-  "cloudSyncConflictFailureUnsupported": "当前版本无法处理此类数据，请更新应用或全部保留云端版本。",
-  "cloudSyncConflictFailureIncomplete": "冲突列表尚不完整，请刷新列表，或全部保留云端版本。",
-  "cloudSyncConflictFailurePendingWrites": "此内容仍有本机变更等待同步，请先同步并刷新后重试。",
-  "cloudSyncConflictFailureVerification": "处理结果未通过校验，本次冲突未被确认。请刷新后重试。",
   "cloudSyncPlatformAndroid": "Android",
   "cloudSyncPlatformIos": "iOS",
   "cloudSyncPlatformMacos": "macOS",

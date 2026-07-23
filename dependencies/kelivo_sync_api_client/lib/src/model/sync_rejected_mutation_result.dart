@@ -4,7 +4,6 @@
 
 // ignore_for_file: unused_element
 import 'package:built_collection/built_collection.dart';
-import 'package:built_value/json_object.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -16,7 +15,6 @@ part 'sync_rejected_mutation_result.g.dart';
 /// * [mutationId]
 /// * [status]
 /// * [errorCode]
-/// * [params]
 @BuiltValue()
 abstract class SyncRejectedMutationResult
     implements
@@ -30,9 +28,6 @@ abstract class SyncRejectedMutationResult
 
   @BuiltValueField(wireName: r'errorCode')
   String get errorCode;
-
-  @BuiltValueField(wireName: r'params')
-  BuiltMap<String, JsonObject?>? get params;
 
   SyncRejectedMutationResult._();
 
@@ -79,16 +74,6 @@ class _$SyncRejectedMutationResultSerializer
       object.errorCode,
       specifiedType: const FullType(String),
     );
-    if (object.params != null) {
-      yield r'params';
-      yield serializers.serialize(
-        object.params,
-        specifiedType: const FullType(BuiltMap, [
-          FullType(String),
-          FullType.nullable(JsonObject),
-        ]),
-      );
-    }
   }
 
   @override
@@ -144,18 +129,6 @@ class _$SyncRejectedMutationResultSerializer
                   )
                   as String;
           result.errorCode = valueDes;
-          break;
-        case r'params':
-          final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType(BuiltMap, [
-                      FullType(String),
-                      FullType.nullable(JsonObject),
-                    ]),
-                  )
-                  as BuiltMap<String, JsonObject?>;
-          result.params.replace(valueDes);
           break;
         default:
           unhandled.add(key);
