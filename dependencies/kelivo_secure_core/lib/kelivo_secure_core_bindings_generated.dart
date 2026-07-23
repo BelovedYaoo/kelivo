@@ -160,6 +160,101 @@ external int kelivo_record_open(
   ffi.Pointer<ffi.Size> out_plaintext_length,
 );
 
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint64>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_opaque_client_registration_start(
+  ffi.Pointer<ffi.Uint8> password,
+  int password_length,
+  ffi.Pointer<ffi.Uint64> out_state_handle,
+  ffi.Pointer<ffi.Uint8> out_request,
+  int out_request_capacity,
+  ffi.Pointer<ffi.Size> out_request_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_opaque_client_registration_finish(
+  int state_handle,
+  ffi.Pointer<ffi.Uint8> password,
+  int password_length,
+  ffi.Pointer<ffi.Uint8> response,
+  int response_length,
+  ffi.Pointer<ffi.Uint8> credential_identifier,
+  int credential_identifier_length,
+  ffi.Pointer<ffi.Uint8> out_upload,
+  int out_upload_capacity,
+  ffi.Pointer<ffi.Size> out_upload_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint64>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_opaque_client_login_start(
+  ffi.Pointer<ffi.Uint8> password,
+  int password_length,
+  ffi.Pointer<ffi.Uint64> out_state_handle,
+  ffi.Pointer<ffi.Uint8> out_request,
+  int out_request_capacity,
+  ffi.Pointer<ffi.Size> out_request_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_opaque_client_login_finish(
+  int state_handle,
+  ffi.Pointer<ffi.Uint8> password,
+  int password_length,
+  ffi.Pointer<ffi.Uint8> response,
+  int response_length,
+  ffi.Pointer<ffi.Uint8> credential_identifier,
+  int credential_identifier_length,
+  ffi.Pointer<ffi.Uint8> out_finalization,
+  int out_finalization_capacity,
+  ffi.Pointer<ffi.Size> out_finalization_length,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Uint64)>()
+external int kelivo_opaque_client_state_close(int state_handle);
+
 typedef KelivoStatus = ffi.Int32;
 typedef DartKelivoStatus = int;
 typedef KelivoSqlCipherKeyCallbackFunction =
@@ -266,7 +361,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 2;
+const int KELIVO_CORE_ABI_VERSION = 3;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -318,6 +413,18 @@ const int KELIVO_STATUS_SQLCIPHER_KEY_FAILED = 19;
 
 const int KELIVO_STATUS_SQLCIPHER_ATTACH_FAILED = 20;
 
+const int KELIVO_STATUS_INVALID_OPAQUE_STATE_HANDLE = 21;
+
+const int KELIVO_STATUS_OPAQUE_MESSAGE_INVALID = 22;
+
+const int KELIVO_STATUS_OPAQUE_PROTOCOL_FAILED = 23;
+
+const int KELIVO_STATUS_TOO_MANY_ACTIVE_HANDLES = 24;
+
+const int KELIVO_STATUS_HANDLE_SPACE_EXHAUSTED = 25;
+
+const int KELIVO_STATUS_INVALID_ACCOUNT_ID = 26;
+
 const int KELIVO_STATUS_UNSUPPORTED_PLATFORM = 100;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_NONE = 0;
@@ -340,6 +447,8 @@ const int KELIVO_CAPABILITY_SQLCIPHER_KEY_APPLICATION = 8;
 
 const int KELIVO_CAPABILITY_SQLCIPHER_DATABASE_ATTACH = 16;
 
+const int KELIVO_CAPABILITY_OPAQUE_CLIENT = 32;
+
 const int KELIVO_RECORD_ID_SIZE = 16;
 
 const int KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE = 65536;
@@ -353,3 +462,21 @@ const int KELIVO_DATABASE_ID_SIZE = 16;
 const int KELIVO_DATABASE_NAME_MAX_SIZE = 64;
 
 const int KELIVO_DATABASE_PATH_MAX_SIZE = 65536;
+
+const int KELIVO_OPAQUE_INVALID_STATE_HANDLE = 0;
+
+const int KELIVO_OPAQUE_MAX_INPUT_SIZE = 65535;
+
+const int KELIVO_OPAQUE_ACCOUNT_ID_SIZE = 16;
+
+const int KELIVO_OPAQUE_REGISTRATION_REQUEST_SIZE = 48;
+
+const int KELIVO_OPAQUE_REGISTRATION_RESPONSE_SIZE = 80;
+
+const int KELIVO_OPAQUE_REGISTRATION_UPLOAD_SIZE = 208;
+
+const int KELIVO_OPAQUE_CREDENTIAL_REQUEST_SIZE = 112;
+
+const int KELIVO_OPAQUE_CREDENTIAL_RESPONSE_SIZE = 336;
+
+const int KELIVO_OPAQUE_CREDENTIAL_FINALIZATION_SIZE = 80;

@@ -11,6 +11,7 @@ crate-type = ["cdylib"]
 [dependencies]
 chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 hkdf = "=0.13.0"
+kelivo_secure_core_protocol = { path = "../protocol" }
 sha2 = { version = "=0.11.0", default-features = false }
 zeroize = "=1.9.0"
 
@@ -22,7 +23,7 @@ windows-sys = { version = "=0.61.2", features = [
 ] }
 
 [target.'cfg(target_os = "android")'.dependencies]
-getrandom = "=0.2.15"
+getrandom = "=0.2.17"
 jni = "=0.21.1"
 libc = "=0.2.155"
 

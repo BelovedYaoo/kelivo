@@ -2,13 +2,20 @@
 
 use core::{ffi::c_void, mem::size_of, slice};
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashMap,
     sync::{Arc, Mutex, OnceLock},
 };
 use zeroize::Zeroizing;
 
 mod database;
+mod opaque_client;
 mod record;
+
+pub use opaque_client::{
+    kelivo_opaque_client_login_finish, kelivo_opaque_client_login_start,
+    kelivo_opaque_client_registration_finish, kelivo_opaque_client_registration_start,
+    kelivo_opaque_client_state_close,
+};
 
 #[cfg(target_os = "windows")]
 mod windows;
@@ -19,11 +26,34 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 2;
+const ABI_VERSION: u32 = 3;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
 const INVALID_KEY_HANDLE: u64 = 0;
+const INVALID_OPAQUE_STATE_HANDLE: u64 = 0;
+// Dart FFI 只稳定往返正 63 位整数，因此类型域占用第 61、62 位，保留符号位为零。
+const HANDLE_TAG_MASK: u64 = 0b11 << 61;
+const HANDLE_SEQUENCE_MASK: u64 = (1_u64 << 61) - 1;
+const HANDLE_RESERVED_MASK: u64 = 1_u64 << 63;
+const KEY_HANDLE_TAG: u64 = 0b01 << 61;
+const OPAQUE_STATE_HANDLE_TAG: u64 = 0b10 << 61;
+const MAX_ACTIVE_KEY_HANDLES: usize = 1024;
+const MAX_ACTIVE_OPAQUE_STATES: usize = 64;
+const MAX_IN_FLIGHT_OPAQUE_FINISHES: usize = 1;
+const OPAQUE_ACCOUNT_ID_SIZE: usize = 16;
+const OPAQUE_REGISTRATION_REQUEST_SIZE: usize =
+    kelivo_secure_core_protocol::REGISTRATION_REQUEST_LENGTH;
+const OPAQUE_REGISTRATION_RESPONSE_SIZE: usize =
+    kelivo_secure_core_protocol::REGISTRATION_RESPONSE_LENGTH;
+const OPAQUE_REGISTRATION_UPLOAD_SIZE: usize =
+    kelivo_secure_core_protocol::REGISTRATION_UPLOAD_LENGTH;
+const OPAQUE_CREDENTIAL_REQUEST_SIZE: usize =
+    kelivo_secure_core_protocol::CREDENTIAL_REQUEST_LENGTH;
+const OPAQUE_CREDENTIAL_RESPONSE_SIZE: usize =
+    kelivo_secure_core_protocol::CREDENTIAL_RESPONSE_LENGTH;
+const OPAQUE_CREDENTIAL_FINALIZATION_SIZE: usize =
+    kelivo_secure_core_protocol::CREDENTIAL_FINALIZATION_LENGTH;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 const KEY_SLOTS_CAPABILITY: u64 = 1 << 0;
 #[cfg(any(target_os = "android", target_os = "windows"))]
@@ -34,6 +64,7 @@ const RECORD_ENVELOPES_CAPABILITY: u64 = 1 << 2;
 const SQLCIPHER_KEY_APPLICATION_CAPABILITY: u64 = 1 << 3;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 const SQLCIPHER_DATABASE_ATTACH_CAPABILITY: u64 = 1 << 4;
+const OPAQUE_CLIENT_CAPABILITY: u64 = 1 << 5;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
@@ -98,6 +129,12 @@ pub(crate) enum KelivoStatus {
     InputTooLarge = 18,
     SqlCipherKeyFailed = 19,
     SqlCipherAttachFailed = 20,
+    InvalidOpaqueStateHandle = 21,
+    OpaqueMessageInvalid = 22,
+    OpaqueProtocolFailed = 23,
+    TooManyActiveHandles = 24,
+    HandleSpaceExhausted = 25,
+    InvalidAccountId = 26,
     UnsupportedPlatform = 100,
 }
 
@@ -213,10 +250,39 @@ unsafe fn validate_key_slot_request(
     Ok(validated)
 }
 
-#[derive(Default)]
 struct KeyRegistry {
     active: HashMap<u64, Arc<LocalKey>>,
-    issued: HashSet<u64>,
+    next_sequence: u64,
+}
+
+impl Default for KeyRegistry {
+    fn default() -> Self {
+        Self {
+            active: HashMap::new(),
+            next_sequence: 1,
+        }
+    }
+}
+
+fn issue_typed_handle(tag: u64, next_sequence: &mut u64) -> Result<u64, KelivoStatus> {
+    debug_assert_eq!(tag & HANDLE_TAG_MASK, tag);
+    debug_assert_ne!(tag, 0);
+    let sequence = *next_sequence;
+    if sequence == 0 || sequence > HANDLE_SEQUENCE_MASK {
+        return Err(KelivoStatus::HandleSpaceExhausted);
+    }
+    *next_sequence = if sequence == HANDLE_SEQUENCE_MASK {
+        0
+    } else {
+        sequence + 1
+    };
+    Ok(tag | sequence)
+}
+
+fn handle_has_tag(handle: u64, tag: u64) -> bool {
+    handle & HANDLE_RESERVED_MASK == 0
+        && handle & HANDLE_TAG_MASK == tag
+        && handle & HANDLE_SEQUENCE_MASK != 0
 }
 
 fn key_registry() -> &'static Mutex<KeyRegistry> {
@@ -229,25 +295,17 @@ fn register_key(key: LocalKey) -> Result<u64, KelivoStatus> {
         .lock()
         .map_err(|_| KelivoStatus::InternalState)?;
 
-    for _ in 0..64 {
-        let mut candidate_bytes = [0_u8; size_of::<u64>()];
-        platform::fill_random(&mut candidate_bytes)?;
-        let candidate = u64::from_le_bytes(candidate_bytes);
-        if candidate == INVALID_KEY_HANDLE || registry.issued.contains(&candidate) {
-            continue;
-        }
-
-        registry.issued.insert(candidate);
-        let replaced = registry.active.insert(candidate, Arc::new(key));
-        debug_assert!(replaced.is_none());
-        return Ok(candidate);
+    if registry.active.len() >= MAX_ACTIVE_KEY_HANDLES {
+        return Err(KelivoStatus::TooManyActiveHandles);
     }
-
-    Err(KelivoStatus::InternalState)
+    let handle = issue_typed_handle(KEY_HANDLE_TAG, &mut registry.next_sequence)?;
+    let replaced = registry.active.insert(handle, Arc::new(key));
+    debug_assert!(replaced.is_none());
+    Ok(handle)
 }
 
 fn key_for_handle(handle: u64) -> Result<Arc<LocalKey>, KelivoStatus> {
-    if handle == INVALID_KEY_HANDLE {
+    if !handle_has_tag(handle, KEY_HANDLE_TAG) {
         return Err(KelivoStatus::InvalidKeyHandle);
     }
     key_registry()
@@ -260,7 +318,7 @@ fn key_for_handle(handle: u64) -> Result<Arc<LocalKey>, KelivoStatus> {
 }
 
 fn close_key_handle(handle: u64) -> Result<(), KelivoStatus> {
-    if handle == INVALID_KEY_HANDLE {
+    if !handle_has_tag(handle, KEY_HANDLE_TAG) {
         return Err(KelivoStatus::InvalidKeyHandle);
     }
 
@@ -297,7 +355,7 @@ pub unsafe extern "C" fn kelivo_core_get_capabilities(
     let capabilities = KelivoCoreCapabilities {
         struct_size: CAPABILITIES_STRUCT_SIZE,
         abi_version: ABI_VERSION,
-        flags: platform::CAPABILITY_FLAGS,
+        flags: platform::CAPABILITY_FLAGS | OPAQUE_CLIENT_CAPABILITY,
         secure_storage_backend: platform::SECURE_STORAGE_BACKEND,
         reserved: [0; 3],
     };
@@ -698,6 +756,21 @@ mod tests {
         }
     }
 
+    fn account_id(seed: u8) -> [u8; OPAQUE_ACCOUNT_ID_SIZE] {
+        let mut value = [seed; OPAQUE_ACCOUNT_ID_SIZE];
+        value[6] = (value[6] & 0x0f) | 0x40;
+        value[8] = (value[8] & 0x3f) | 0x80;
+        value
+    }
+
+    fn opaque_finish_test_guard() -> std::sync::MutexGuard<'static, ()> {
+        static FINISH_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        // 生产约束只允许一个 Argon2 finish；相关单测必须在默认并行 runner 下确定执行。
+        FINISH_TEST_LOCK
+            .lock()
+            .expect("OPAQUE 完成测试门禁不得中毒")
+    }
+
     #[test]
     fn capabilities_reject_invalid_buffers_without_writing() {
         assert_eq!(
@@ -732,7 +805,10 @@ mod tests {
             size_of::<KelivoCoreCapabilities>()
         );
         assert_eq!(output.abi_version, ABI_VERSION);
-        assert_eq!(output.flags, platform::CAPABILITY_FLAGS);
+        assert_eq!(
+            output.flags,
+            platform::CAPABILITY_FLAGS | OPAQUE_CLIENT_CAPABILITY
+        );
         assert_eq!(
             output.secure_storage_backend,
             platform::SECURE_STORAGE_BACKEND
@@ -758,6 +834,7 @@ mod tests {
                 | RECORD_ENVELOPES_CAPABILITY
                 | SQLCIPHER_KEY_APPLICATION_CAPABILITY
                 | SQLCIPHER_DATABASE_ATTACH_CAPABILITY
+                | OPAQUE_CLIENT_CAPABILITY
         );
     }
 
@@ -1360,5 +1437,642 @@ mod tests {
         );
         assert_eq!(rejected_length, 0);
         assert!(rejected_output.iter().all(|value| *value == 0xa5));
+    }
+
+    #[test]
+    fn opaque_registration_start_zeroes_outputs_before_rejecting_password() {
+        let mut handle = 42_u64;
+        let mut request_length = usize::MAX;
+        let mut request = [0xa5_u8; OPAQUE_REGISTRATION_REQUEST_SIZE];
+
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    ptr::null(),
+                    0,
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(handle, INVALID_OPAQUE_STATE_HANDLE);
+        assert_eq!(request_length, 0);
+        assert!(request.iter().all(|value| *value == 0xa5));
+    }
+
+    #[test]
+    fn opaque_start_rejects_pointer_and_length_boundaries_without_partial_output() {
+        let password = b"registration-password";
+        let mut handle = 42_u64;
+        let mut request_length = usize::MAX;
+        let mut request = [0xa5_u8; OPAQUE_REGISTRATION_REQUEST_SIZE];
+
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    ptr::null_mut(),
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(request_length, 0);
+        assert!(request.iter().all(|value| *value == 0xa5));
+
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    ptr::null_mut(),
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(handle, INVALID_OPAQUE_STATE_HANDLE);
+
+        handle = 42;
+        request_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut handle,
+                    ptr::null_mut(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(handle, INVALID_OPAQUE_STATE_HANDLE);
+        assert_eq!(request_length, 0);
+
+        handle = 42;
+        request_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len() - 1,
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::OutputBufferTooSmall.code()
+        );
+        assert_eq!(handle, INVALID_OPAQUE_STATE_HANDLE);
+        assert_eq!(request_length, 0);
+        assert!(request.iter().all(|value| *value == 0xa5));
+
+        handle = 42;
+        request_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    ptr::null(),
+                    1,
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(handle, INVALID_OPAQUE_STATE_HANDLE);
+        assert_eq!(request_length, 0);
+
+        handle = 42;
+        request_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    kelivo_secure_core_protocol::MAX_OPAQUE_INPUT_LENGTH + 1,
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::InputTooLarge.code()
+        );
+        assert_eq!(handle, INVALID_OPAQUE_STATE_HANDLE);
+        assert_eq!(request_length, 0);
+    }
+
+    #[test]
+    fn opaque_client_state_handle_can_be_cancelled_exactly_once() {
+        let password = b"registration-password";
+        let mut handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request_length = 0_usize;
+        let mut request = [0_u8; OPAQUE_REGISTRATION_REQUEST_SIZE];
+
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_ne!(handle, INVALID_OPAQUE_STATE_HANDLE);
+        assert_eq!(request_length, request.len());
+        assert_eq!(
+            kelivo_opaque_client_state_close(handle),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_opaque_client_state_close(handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn key_and_opaque_handles_use_disjoint_non_reusable_namespaces() {
+        let key_handle = register_key(Zeroizing::new(
+            vec![0x41; LOCAL_KEY_SIZE].into_boxed_slice(),
+        ))
+        .expect("密钥句柄应注册成功");
+        let password = b"registration-password";
+        let mut opaque_handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request = [0_u8; OPAQUE_REGISTRATION_REQUEST_SIZE];
+        let mut request_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut opaque_handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        assert!(handle_has_tag(key_handle, KEY_HANDLE_TAG));
+        assert!(handle_has_tag(opaque_handle, OPAQUE_STATE_HANDLE_TAG));
+        assert_ne!(key_handle, opaque_handle);
+        assert_eq!(
+            kelivo_key_handle_close(opaque_handle),
+            KelivoStatus::InvalidKeyHandle.code()
+        );
+        assert_eq!(
+            kelivo_opaque_client_state_close(key_handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+        assert_eq!(
+            kelivo_opaque_client_state_close(opaque_handle),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(kelivo_key_handle_close(key_handle), KelivoStatus::Ok.code());
+    }
+
+    #[test]
+    fn typed_handle_sequence_fails_explicitly_at_exhaustion() {
+        let mut sequence = HANDLE_SEQUENCE_MASK;
+        assert_eq!(
+            issue_typed_handle(OPAQUE_STATE_HANDLE_TAG, &mut sequence),
+            Ok(OPAQUE_STATE_HANDLE_TAG | HANDLE_SEQUENCE_MASK)
+        );
+        assert_eq!(sequence, 0);
+        assert_eq!(
+            issue_typed_handle(OPAQUE_STATE_HANDLE_TAG, &mut sequence),
+            Err(KelivoStatus::HandleSpaceExhausted)
+        );
+    }
+
+    #[test]
+    fn opaque_registration_finish_returns_only_public_upload_and_consumes_state() {
+        let _finish_test_guard = opaque_finish_test_guard();
+        let password = b"registration-password";
+        let credential_identifier = account_id(0x17);
+        let mut handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request_length = 0_usize;
+        let mut request = [0_u8; OPAQUE_REGISTRATION_REQUEST_SIZE];
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let mut server_rng = kelivo_secure_core_protocol::system_rng().expect("服务端随机源应可用");
+        let setup = kelivo_secure_core_protocol::generate_server_setup(&mut server_rng)
+            .expect("服务端配置应生成");
+        let response = kelivo_secure_core_protocol::server_registration_start(
+            &setup,
+            kelivo_secure_core_protocol::RegistrationRequest::from_bytes(&request)
+                .expect("注册请求应可解析"),
+            kelivo_secure_core_protocol::AccountBinding::new(&credential_identifier)
+                .expect("账户绑定应有效"),
+        )
+        .expect("服务端注册响应应生成");
+
+        let mut upload = [0_u8; OPAQUE_REGISTRATION_UPLOAD_SIZE];
+        let mut upload_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_finish(
+                    handle,
+                    password.as_ptr(),
+                    password.len(),
+                    response.as_bytes().as_ptr(),
+                    response.as_bytes().len(),
+                    credential_identifier.as_ptr(),
+                    credential_identifier.len(),
+                    upload.as_mut_ptr(),
+                    upload.len(),
+                    &mut upload_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(upload_length, upload.len());
+        let registration = kelivo_secure_core_protocol::RegistrationUpload::from_bytes(&upload)
+            .and_then(kelivo_secure_core_protocol::server_registration_finish)
+            .expect("上传消息应形成服务端注册记录");
+        assert_eq!(
+            registration.as_bytes().len(),
+            kelivo_secure_core_protocol::REGISTRATION_UPLOAD_LENGTH
+        );
+        assert_eq!(
+            kelivo_opaque_client_state_close(handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+    }
+
+    #[test]
+    fn opaque_registration_finish_failure_zeroes_output_and_consumes_state() {
+        let _finish_test_guard = opaque_finish_test_guard();
+        let password = b"registration-password";
+        let credential_identifier = account_id(0x27);
+        let mut handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request_length = 0_usize;
+        let mut request = [0_u8; OPAQUE_REGISTRATION_REQUEST_SIZE];
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let malformed_response = [0_u8; OPAQUE_REGISTRATION_RESPONSE_SIZE];
+        let mut upload = [0xa5_u8; OPAQUE_REGISTRATION_UPLOAD_SIZE];
+        let mut upload_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_finish(
+                    handle,
+                    password.as_ptr(),
+                    password.len(),
+                    malformed_response.as_ptr(),
+                    malformed_response.len(),
+                    credential_identifier.as_ptr(),
+                    credential_identifier.len(),
+                    upload.as_mut_ptr(),
+                    upload.len(),
+                    &mut upload_length,
+                )
+            },
+            KelivoStatus::OpaqueMessageInvalid.code()
+        );
+        assert_eq!(upload_length, 0);
+        assert!(upload.iter().all(|value| *value == 0xa5));
+        assert_eq!(
+            kelivo_opaque_client_state_close(handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+    }
+
+    #[test]
+    fn opaque_finish_consumes_state_before_rejecting_output_capacity() {
+        let _finish_test_guard = opaque_finish_test_guard();
+        let password = b"registration-password";
+        let mut handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request_length = 0_usize;
+        let mut request = [0_u8; OPAQUE_REGISTRATION_REQUEST_SIZE];
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let response = [0_u8; OPAQUE_REGISTRATION_RESPONSE_SIZE];
+        let credential_identifier = account_id(0x37);
+        let mut upload = [0xa5_u8; OPAQUE_REGISTRATION_UPLOAD_SIZE];
+        let mut upload_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_finish(
+                    handle,
+                    password.as_ptr(),
+                    password.len(),
+                    response.as_ptr(),
+                    response.len(),
+                    credential_identifier.as_ptr(),
+                    credential_identifier.len(),
+                    upload.as_mut_ptr(),
+                    upload.len() - 1,
+                    &mut upload_length,
+                )
+            },
+            KelivoStatus::OutputBufferTooSmall.code()
+        );
+        assert_eq!(upload_length, 0);
+        assert!(upload.iter().all(|value| *value == 0xa5));
+        assert_eq!(
+            kelivo_opaque_client_state_close(handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+    }
+
+    #[test]
+    fn opaque_finish_accepts_only_raw_uuid_v4_account_ids() {
+        let _finish_test_guard = opaque_finish_test_guard();
+        let password = b"registration-password";
+        let mut handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request_length = 0_usize;
+        let mut request = [0_u8; OPAQUE_REGISTRATION_REQUEST_SIZE];
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let response = [0_u8; OPAQUE_REGISTRATION_RESPONSE_SIZE];
+        let invalid_account_id = [0_u8; OPAQUE_ACCOUNT_ID_SIZE];
+        let mut upload = [0xa5_u8; OPAQUE_REGISTRATION_UPLOAD_SIZE];
+        let mut upload_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_finish(
+                    handle,
+                    password.as_ptr(),
+                    password.len(),
+                    response.as_ptr(),
+                    response.len(),
+                    invalid_account_id.as_ptr(),
+                    invalid_account_id.len(),
+                    upload.as_mut_ptr(),
+                    upload.len(),
+                    &mut upload_length,
+                )
+            },
+            KelivoStatus::InvalidAccountId.code()
+        );
+        assert_eq!(upload_length, 0);
+        assert!(upload.iter().all(|value| *value == 0xa5));
+        assert_eq!(
+            kelivo_opaque_client_state_close(handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+    }
+
+    #[test]
+    fn opaque_state_type_confusion_fails_closed_and_consumes_handle() {
+        let _finish_test_guard = opaque_finish_test_guard();
+        let password = b"login-password";
+        let credential_identifier = account_id(0x47);
+        let mut login_handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request = [0_u8; OPAQUE_CREDENTIAL_REQUEST_SIZE];
+        let mut request_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_login_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut login_handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let response = [0_u8; OPAQUE_REGISTRATION_RESPONSE_SIZE];
+        let mut upload = [0xa5_u8; OPAQUE_REGISTRATION_UPLOAD_SIZE];
+        let mut upload_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_registration_finish(
+                    login_handle,
+                    password.as_ptr(),
+                    password.len(),
+                    response.as_ptr(),
+                    response.len(),
+                    credential_identifier.as_ptr(),
+                    credential_identifier.len(),
+                    upload.as_mut_ptr(),
+                    upload.len(),
+                    &mut upload_length,
+                )
+            },
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+        assert_eq!(upload_length, 0);
+        assert_eq!(
+            kelivo_opaque_client_state_close(login_handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+    }
+
+    #[test]
+    fn opaque_login_finish_authenticates_server_without_exporting_session_key() {
+        let _finish_test_guard = opaque_finish_test_guard();
+        let password = b"login-password";
+        let credential_identifier = account_id(0x57);
+        let binding = kelivo_secure_core_protocol::AccountBinding::new(&credential_identifier)
+            .expect("账户绑定应有效");
+        let mut server_rng = kelivo_secure_core_protocol::system_rng().expect("服务端随机源应可用");
+        let setup = kelivo_secure_core_protocol::generate_server_setup(&mut server_rng)
+            .expect("服务端配置应生成");
+
+        let mut registration_rng =
+            kelivo_secure_core_protocol::system_rng().expect("客户端随机源应可用");
+        let (registration_state, registration_request) =
+            kelivo_secure_core_protocol::client_registration_start(&mut registration_rng, password)
+                .expect("客户端注册应开始")
+                .into_parts();
+        let registration_response = kelivo_secure_core_protocol::server_registration_start(
+            &setup,
+            registration_request,
+            binding,
+        )
+        .expect("服务端注册响应应生成");
+        let registration_upload = kelivo_secure_core_protocol::client_registration_finish(
+            &mut registration_rng,
+            registration_state,
+            password,
+            registration_response,
+            binding,
+        )
+        .expect("客户端注册应完成")
+        .into_upload();
+        let registration =
+            kelivo_secure_core_protocol::server_registration_finish(registration_upload)
+                .expect("服务端注册应完成");
+
+        let mut login_handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request = [0_u8; OPAQUE_CREDENTIAL_REQUEST_SIZE];
+        let mut request_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_login_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut login_handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(request_length, request.len());
+
+        let server_login = kelivo_secure_core_protocol::server_login_start(
+            &mut server_rng,
+            &setup,
+            Some(&registration),
+            kelivo_secure_core_protocol::CredentialRequest::from_bytes(&request)
+                .expect("登录请求应可解析"),
+            binding,
+        )
+        .expect("服务端登录响应应生成");
+        let mut finalization = [0_u8; OPAQUE_CREDENTIAL_FINALIZATION_SIZE];
+        let mut finalization_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_login_finish(
+                    login_handle,
+                    password.as_ptr(),
+                    password.len(),
+                    server_login.response.as_bytes().as_ptr(),
+                    server_login.response.as_bytes().len(),
+                    credential_identifier.as_ptr(),
+                    credential_identifier.len(),
+                    finalization.as_mut_ptr(),
+                    finalization.len(),
+                    &mut finalization_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(finalization_length, finalization.len());
+        kelivo_secure_core_protocol::server_login_finish(
+            server_login.state,
+            kelivo_secure_core_protocol::CredentialFinalization::from_bytes(&finalization)
+                .expect("客户端完成消息应可解析"),
+            binding,
+        )
+        .expect("服务端必须确认客户端认证成功");
+        assert_eq!(
+            kelivo_opaque_client_state_close(login_handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
+    }
+
+    #[test]
+    fn opaque_login_finish_rejects_malformed_response_and_consumes_state() {
+        let _finish_test_guard = opaque_finish_test_guard();
+        let password = b"login-password";
+        let credential_identifier = account_id(0x67);
+        let mut login_handle = INVALID_OPAQUE_STATE_HANDLE;
+        let mut request = [0_u8; OPAQUE_CREDENTIAL_REQUEST_SIZE];
+        let mut request_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_login_start(
+                    password.as_ptr(),
+                    password.len(),
+                    &mut login_handle,
+                    request.as_mut_ptr(),
+                    request.len(),
+                    &mut request_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let response = [0_u8; OPAQUE_CREDENTIAL_RESPONSE_SIZE];
+        let mut finalization = [0xa5_u8; OPAQUE_CREDENTIAL_FINALIZATION_SIZE];
+        let mut finalization_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_opaque_client_login_finish(
+                    login_handle,
+                    password.as_ptr(),
+                    password.len(),
+                    response.as_ptr(),
+                    response.len(),
+                    credential_identifier.as_ptr(),
+                    credential_identifier.len(),
+                    finalization.as_mut_ptr(),
+                    finalization.len(),
+                    &mut finalization_length,
+                )
+            },
+            KelivoStatus::OpaqueMessageInvalid.code()
+        );
+        assert_eq!(finalization_length, 0);
+        assert!(finalization.iter().all(|value| *value == 0xa5));
+        assert_eq!(
+            kelivo_opaque_client_state_close(login_handle),
+            KelivoStatus::InvalidOpaqueStateHandle.code()
+        );
     }
 }

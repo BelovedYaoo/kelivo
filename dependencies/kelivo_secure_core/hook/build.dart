@@ -18,7 +18,8 @@ void main(List<String> arguments) async {
 
     final target = _resolveTarget(code);
     final nativeRoot = input.packageRoot.resolve('native/');
-    final dependencies = _nativeDependencies(nativeRoot);
+    final protocolRoot = input.packageRoot.resolve('protocol/');
+    final dependencies = _nativeDependencies(nativeRoot, protocolRoot);
     output.dependencies.addAll(dependencies);
 
     final outputDirectory = Directory.fromUri(input.outputDirectory);
@@ -187,11 +188,14 @@ Map<String, String> _cargoEnvironment(CodeConfig code, _CargoTarget target) {
   return environment;
 }
 
-List<Uri> _nativeDependencies(Uri nativeRoot) {
+List<Uri> _nativeDependencies(Uri nativeRoot, Uri protocolRoot) {
   final requiredFiles = <Uri>[
     nativeRoot.resolve('Cargo.toml'),
     nativeRoot.resolve('Cargo.lock'),
     nativeRoot.resolve('rust-toolchain.toml'),
+    protocolRoot.resolve('Cargo.toml'),
+    protocolRoot.resolve('Cargo.lock'),
+    protocolRoot.resolve('rust-toolchain.toml'),
   ];
   for (final dependency in requiredFiles) {
     if (!File.fromUri(dependency).existsSync()) {
@@ -215,6 +219,19 @@ List<Uri> _nativeDependencies(Uri nativeRoot) {
           ..sort((left, right) => left.toString().compareTo(right.toString()));
     dependencies.addAll(files);
   }
+  final protocolSource = Directory.fromUri(protocolRoot.resolve('src/'));
+  if (!protocolSource.existsSync()) {
+    throw BuildError(message: '缺少 OPAQUE 协议源码目录：${protocolSource.path}');
+  }
+  dependencies.add(protocolSource.uri);
+  final protocolFiles =
+      protocolSource
+          .listSync(recursive: true, followLinks: false)
+          .whereType<File>()
+          .map((file) => file.uri)
+          .toList()
+        ..sort((left, right) => left.toString().compareTo(right.toString()));
+  dependencies.addAll(protocolFiles);
   return dependencies;
 }
 

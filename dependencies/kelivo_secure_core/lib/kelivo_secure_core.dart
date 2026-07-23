@@ -9,7 +9,7 @@ import 'package:ffi/ffi.dart';
 
 import 'kelivo_secure_core_bindings_generated.dart' as native;
 
-const _expectedAbiVersion = 2;
+const _expectedAbiVersion = 3;
 const _keySlotIdLength = 16;
 const _keyPolicyVersion = 1;
 const _keySlotsCapability = 1 << 0;
@@ -17,12 +17,15 @@ const _backgroundAccessCapability = 1 << 1;
 const _recordEnvelopesCapability = 1 << 2;
 const _sqlCipherKeyApplicationCapability = 1 << 3;
 const _sqlCipherDatabaseAttachCapability = 1 << 4;
-const _knownCapabilityFlags =
+const _opaqueClientCapability = 1 << 5;
+const _secureStorageCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
     _recordEnvelopesCapability |
     _sqlCipherKeyApplicationCapability |
     _sqlCipherDatabaseAttachCapability;
+const _knownCapabilityFlags =
+    _secureStorageCapabilityFlags | _opaqueClientCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
@@ -31,6 +34,21 @@ const _recordMaxEnvelopeSize = native.KELIVO_RECORD_MAX_ENVELOPE_SIZE;
 const _databaseIdLength = native.KELIVO_DATABASE_ID_SIZE;
 const _databaseNameMaxLength = native.KELIVO_DATABASE_NAME_MAX_SIZE;
 const _databasePathMaxLength = native.KELIVO_DATABASE_PATH_MAX_SIZE;
+const _opaqueInvalidStateHandle = native.KELIVO_OPAQUE_INVALID_STATE_HANDLE;
+const _opaqueMaxInputSize = native.KELIVO_OPAQUE_MAX_INPUT_SIZE;
+const _opaqueAccountIdSize = native.KELIVO_OPAQUE_ACCOUNT_ID_SIZE;
+const _opaqueRegistrationRequestSize =
+    native.KELIVO_OPAQUE_REGISTRATION_REQUEST_SIZE;
+const _opaqueRegistrationResponseSize =
+    native.KELIVO_OPAQUE_REGISTRATION_RESPONSE_SIZE;
+const _opaqueRegistrationUploadSize =
+    native.KELIVO_OPAQUE_REGISTRATION_UPLOAD_SIZE;
+const _opaqueCredentialRequestSize =
+    native.KELIVO_OPAQUE_CREDENTIAL_REQUEST_SIZE;
+const _opaqueCredentialResponseSize =
+    native.KELIVO_OPAQUE_CREDENTIAL_RESPONSE_SIZE;
+const _opaqueCredentialFinalizationSize =
+    native.KELIVO_OPAQUE_CREDENTIAL_FINALIZATION_SIZE;
 // Dart FFI 用有符号 int 传递 Uint64；保留正数域可避免跨平台符号歧义。
 const _recordMaxEpoch = 0x7fffffffffffffff;
 
@@ -74,6 +92,12 @@ enum KelivoSecureCoreStatus {
   inputTooLarge(18),
   sqlCipherKeyFailed(19),
   sqlCipherAttachFailed(20),
+  invalidOpaqueStateHandle(21),
+  opaqueMessageInvalid(22),
+  opaqueProtocolFailed(23),
+  tooManyActiveHandles(24),
+  handleSpaceExhausted(25),
+  invalidAccountId(26),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);
@@ -97,6 +121,7 @@ final class KelivoCoreCapabilities {
     required this.supportsRecordEnvelopes,
     required this.supportsSqlCipherKeyApplication,
     required this.supportsSqlCipherDatabaseAttach,
+    required this.supportsOpaqueClient,
   });
 
   final int abiVersion;
@@ -106,6 +131,7 @@ final class KelivoCoreCapabilities {
   final bool supportsRecordEnvelopes;
   final bool supportsSqlCipherKeyApplication;
   final bool supportsSqlCipherDatabaseAttach;
+  final bool supportsOpaqueClient;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -181,6 +207,64 @@ final class KelivoKeyHandle {
 
 enum _KelivoKeyHandleState { open, closing, closed }
 
+final class _KelivoOpaqueStateHandle {
+  _KelivoOpaqueStateHandle(this.value);
+
+  final int value;
+  _KelivoOpaqueStateHandleState state = _KelivoOpaqueStateHandleState.active;
+
+  int beginConsume() {
+    if (state != _KelivoOpaqueStateHandleState.active) {
+      throw StateError('OPAQUE 客户端状态已消费或正在消费');
+    }
+    state = _KelivoOpaqueStateHandleState.consuming;
+    return value;
+  }
+
+  void completeConsume() {
+    state = _KelivoOpaqueStateHandleState.closed;
+  }
+}
+
+enum _KelivoOpaqueStateHandleState { active, consuming, closed }
+
+final class KelivoOpaqueRegistrationHandle {
+  KelivoOpaqueRegistrationHandle._(int value)
+    : _state = _KelivoOpaqueStateHandle(value);
+
+  final _KelivoOpaqueStateHandle _state;
+
+  @override
+  String toString() => 'KelivoOpaqueRegistrationHandle(opaque)';
+}
+
+final class KelivoOpaqueLoginHandle {
+  KelivoOpaqueLoginHandle._(int value)
+    : _state = _KelivoOpaqueStateHandle(value);
+
+  final _KelivoOpaqueStateHandle _state;
+
+  @override
+  String toString() => 'KelivoOpaqueLoginHandle(opaque)';
+}
+
+final class KelivoOpaqueRegistrationStart {
+  const KelivoOpaqueRegistrationStart({
+    required this.state,
+    required this.request,
+  });
+
+  final KelivoOpaqueRegistrationHandle state;
+  final Uint8List request;
+}
+
+final class KelivoOpaqueLoginStart {
+  const KelivoOpaqueLoginStart({required this.state, required this.request});
+
+  final KelivoOpaqueLoginHandle state;
+  final Uint8List request;
+}
+
 final class KelivoSecureCoreException implements Exception {
   const KelivoSecureCoreException({
     required this.operation,
@@ -200,6 +284,94 @@ final class KelivoSecureCore {
 
   Future<KelivoCoreCapabilities> getCapabilities() =>
       Isolate.run(_readCapabilities);
+
+  Future<KelivoOpaqueRegistrationStart> startOpaqueRegistration(
+    Uint8List password,
+  ) async {
+    _validateOpaquePassword(password);
+    final result = await _runWithTransferredPassword(
+      password,
+      _opaqueRegistrationStart,
+    );
+    return KelivoOpaqueRegistrationStart(
+      state: KelivoOpaqueRegistrationHandle._(result.handle),
+      request: result.message,
+    );
+  }
+
+  Future<Uint8List> finishOpaqueRegistration(
+    KelivoOpaqueRegistrationHandle state, {
+    required Uint8List password,
+    required Uint8List response,
+    required Uint8List accountId,
+  }) {
+    final opaqueValue = state._state.beginConsume();
+    return _consumeOpaqueState(state._state, opaqueValue, () async {
+      _validateOpaqueFinishInputs(
+        password: password,
+        response: response,
+        expectedResponseSize: _opaqueRegistrationResponseSize,
+        accountId: accountId,
+      );
+      final copiedResponse = Uint8List.fromList(response);
+      final copiedAccountId = Uint8List.fromList(accountId);
+      return _runWithTransferredPassword(
+        password,
+        (workerPassword) => _opaqueRegistrationFinish(
+          opaqueValue,
+          workerPassword,
+          copiedResponse,
+          copiedAccountId,
+        ),
+      );
+    });
+  }
+
+  Future<void> cancelOpaqueRegistration(KelivoOpaqueRegistrationHandle state) =>
+      _cancelOpaqueState(state._state);
+
+  Future<KelivoOpaqueLoginStart> startOpaqueLogin(Uint8List password) async {
+    _validateOpaquePassword(password);
+    final result = await _runWithTransferredPassword(
+      password,
+      _opaqueLoginStart,
+    );
+    return KelivoOpaqueLoginStart(
+      state: KelivoOpaqueLoginHandle._(result.handle),
+      request: result.message,
+    );
+  }
+
+  Future<Uint8List> finishOpaqueLogin(
+    KelivoOpaqueLoginHandle state, {
+    required Uint8List password,
+    required Uint8List response,
+    required Uint8List accountId,
+  }) {
+    final opaqueValue = state._state.beginConsume();
+    return _consumeOpaqueState(state._state, opaqueValue, () async {
+      _validateOpaqueFinishInputs(
+        password: password,
+        response: response,
+        expectedResponseSize: _opaqueCredentialResponseSize,
+        accountId: accountId,
+      );
+      final copiedResponse = Uint8List.fromList(response);
+      final copiedAccountId = Uint8List.fromList(accountId);
+      return _runWithTransferredPassword(
+        password,
+        (workerPassword) => _opaqueLoginFinish(
+          opaqueValue,
+          workerPassword,
+          copiedResponse,
+          copiedAccountId,
+        ),
+      );
+    });
+  }
+
+  Future<void> cancelOpaqueLogin(KelivoOpaqueLoginHandle state) =>
+      _cancelOpaqueState(state._state);
 
   Future<KelivoKeyHandle> createSlot(Uint8List slotId) {
     final copiedSlotId = Uint8List.fromList(slotId);
@@ -430,6 +602,337 @@ final class KelivoSecureCore {
   }
 }
 
+final class _OpaqueStartNativeResult {
+  const _OpaqueStartNativeResult({required this.handle, required this.message});
+
+  final int handle;
+  final Uint8List message;
+}
+
+void _validateOpaquePassword(Uint8List password) {
+  if (password.isEmpty || password.length > _opaqueMaxInputSize) {
+    throw ArgumentError.value(
+      password.length,
+      'password',
+      'OPAQUE 密码必须为 1 到 $_opaqueMaxInputSize 字节',
+    );
+  }
+}
+
+void _validateOpaqueFinishInputs({
+  required Uint8List password,
+  required Uint8List response,
+  required int expectedResponseSize,
+  required Uint8List accountId,
+}) {
+  _validateOpaquePassword(password);
+  if (response.length != expectedResponseSize) {
+    throw ArgumentError.value(
+      response.length,
+      'response',
+      'OPAQUE 响应必须为 $expectedResponseSize 字节',
+    );
+  }
+  if (accountId.length != _opaqueAccountIdSize ||
+      accountId[6] & 0xf0 != 0x40 ||
+      accountId[8] & 0xc0 != 0x80) {
+    throw ArgumentError.value(
+      accountId.length,
+      'accountId',
+      '账户标识必须为 RFC 4122 UUIDv4 原始 16 字节',
+    );
+  }
+}
+
+TransferableTypedData _transferPassword(Uint8List password) {
+  final temporary = Uint8List.fromList(password);
+  try {
+    // 跨 isolate 使用可转移缓冲区，避免消息发送再产生一份无法主动清零的密码副本。
+    return TransferableTypedData.fromList([temporary]);
+  } finally {
+    temporary.fillRange(0, temporary.length, 0);
+  }
+}
+
+Future<T> _runWithTransferredPassword<T>(
+  Uint8List password,
+  T Function(Uint8List workerPassword) operation,
+) async {
+  final transferredPassword = _transferPassword(password);
+  try {
+    return await Isolate.run(() {
+      final workerPassword = transferredPassword.materialize().asUint8List();
+      try {
+        return operation(workerPassword);
+      } finally {
+        workerPassword.fillRange(0, workerPassword.length, 0);
+      }
+    });
+  } catch (error, stackTrace) {
+    try {
+      final unsentPassword = transferredPassword.materialize().asUint8List();
+      unsentPassword.fillRange(0, unsentPassword.length, 0);
+    } on ArgumentError {
+      // 已转移时原 isolate 会拒绝再次 materialize，工作 isolate 负责清零。
+    } on StateError {
+      // 已转移时，工作 isolate 必定先 materialize，并由其 finally 负责清零。
+    }
+    Error.throwWithStackTrace(error, stackTrace);
+  }
+}
+
+Future<T> _consumeOpaqueState<T>(
+  _KelivoOpaqueStateHandle state,
+  int opaqueValue,
+  Future<T> Function() operation,
+) async {
+  try {
+    return await operation();
+  } catch (error, stackTrace) {
+    try {
+      _closeConsumedOpaqueState(opaqueValue);
+    } catch (closeError, closeStackTrace) {
+      Error.throwWithStackTrace(
+        StateError('OPAQUE 操作失败且秘密状态销毁失败：$error；$closeError'),
+        closeStackTrace,
+      );
+    }
+    Error.throwWithStackTrace(error, stackTrace);
+  } finally {
+    state.completeConsume();
+  }
+}
+
+Future<void> _cancelOpaqueState(_KelivoOpaqueStateHandle state) async {
+  final opaqueValue = state.beginConsume();
+  try {
+    await Isolate.run(() {
+      _throwOnError(
+        operation: 'opaque_client_state_close',
+        statusCode: native.kelivo_opaque_client_state_close(opaqueValue),
+      );
+    });
+  } finally {
+    state.completeConsume();
+  }
+}
+
+void _closeConsumedOpaqueState(int opaqueValue) {
+  final status = KelivoSecureCoreStatus.fromCode(
+    native.kelivo_opaque_client_state_close(opaqueValue),
+  );
+  if (status == KelivoSecureCoreStatus.ok ||
+      status == KelivoSecureCoreStatus.invalidOpaqueStateHandle) {
+    return;
+  }
+  throw KelivoSecureCoreException(
+    operation: 'opaque_client_state_close_after_failure',
+    status: status,
+  );
+}
+
+_OpaqueStartNativeResult _opaqueRegistrationStart(Uint8List password) =>
+    _opaqueClientStart(password, registration: true);
+
+_OpaqueStartNativeResult _opaqueLoginStart(Uint8List password) =>
+    _opaqueClientStart(password, registration: false);
+
+_OpaqueStartNativeResult _opaqueClientStart(
+  Uint8List password, {
+  required bool registration,
+}) {
+  final outputSize = registration
+      ? _opaqueRegistrationRequestSize
+      : _opaqueCredentialRequestSize;
+  ffi.Pointer<ffi.Uint8>? passwordPointer;
+  ffi.Pointer<ffi.Uint64>? outputHandle;
+  ffi.Pointer<ffi.Size>? outputLength;
+  ffi.Pointer<ffi.Uint8>? output;
+  var preserveHandle = false;
+  try {
+    passwordPointer = _copyToNative(password);
+    outputHandle = calloc<ffi.Uint64>();
+    outputLength = calloc<ffi.Size>();
+    output = calloc<ffi.Uint8>(outputSize);
+    final statusCode = registration
+        ? native.kelivo_opaque_client_registration_start(
+            passwordPointer,
+            password.length,
+            outputHandle,
+            output,
+            outputSize,
+            outputLength,
+          )
+        : native.kelivo_opaque_client_login_start(
+            passwordPointer,
+            password.length,
+            outputHandle,
+            output,
+            outputSize,
+            outputLength,
+          );
+    _throwOnError(
+      operation: registration
+          ? 'opaque_client_registration_start'
+          : 'opaque_client_login_start',
+      statusCode: statusCode,
+    );
+    if (outputHandle.value == _opaqueInvalidStateHandle) {
+      throw StateError('OPAQUE 客户端开始操作返回了无效状态句柄');
+    }
+    _requireExactOutputLength(
+      operation: registration
+          ? 'opaque_client_registration_start'
+          : 'opaque_client_login_start',
+      expected: outputSize,
+      actual: outputLength.value,
+    );
+    final result = _OpaqueStartNativeResult(
+      handle: outputHandle.value,
+      message: Uint8List.fromList(output.asTypedList(outputSize)),
+    );
+    preserveHandle = true;
+    return result;
+  } finally {
+    final danglingHandle =
+        !preserveHandle &&
+            outputHandle != null &&
+            outputHandle.value != _opaqueInvalidStateHandle
+        ? outputHandle.value
+        : null;
+    final closeStatus = danglingHandle == null
+        ? null
+        : native.kelivo_opaque_client_state_close(danglingHandle);
+    if (passwordPointer != null) {
+      _clearAndFree(passwordPointer, password.length);
+    }
+    password.fillRange(0, password.length, 0);
+    if (output != null) {
+      _clearAndFree(output, outputSize);
+    }
+    if (outputHandle != null) {
+      calloc.free(outputHandle);
+    }
+    if (outputLength != null) {
+      calloc.free(outputLength);
+    }
+    if (closeStatus != null) {
+      _throwOnError(
+        operation: 'opaque_client_state_close_after_start_failure',
+        statusCode: closeStatus,
+      );
+    }
+  }
+}
+
+Uint8List _opaqueRegistrationFinish(
+  int stateHandle,
+  Uint8List password,
+  Uint8List response,
+  Uint8List accountId,
+) => _opaqueClientFinish(
+  stateHandle,
+  password,
+  response,
+  accountId,
+  registration: true,
+);
+
+Uint8List _opaqueLoginFinish(
+  int stateHandle,
+  Uint8List password,
+  Uint8List response,
+  Uint8List accountId,
+) => _opaqueClientFinish(
+  stateHandle,
+  password,
+  response,
+  accountId,
+  registration: false,
+);
+
+Uint8List _opaqueClientFinish(
+  int stateHandle,
+  Uint8List password,
+  Uint8List response,
+  Uint8List accountId, {
+  required bool registration,
+}) {
+  final outputSize = registration
+      ? _opaqueRegistrationUploadSize
+      : _opaqueCredentialFinalizationSize;
+  ffi.Pointer<ffi.Uint8>? passwordPointer;
+  ffi.Pointer<ffi.Uint8>? responsePointer;
+  ffi.Pointer<ffi.Uint8>? accountIdPointer;
+  ffi.Pointer<ffi.Size>? outputLength;
+  ffi.Pointer<ffi.Uint8>? output;
+  try {
+    passwordPointer = _copyToNative(password);
+    responsePointer = _copyToNative(response);
+    accountIdPointer = _copyToNative(accountId);
+    outputLength = calloc<ffi.Size>();
+    output = calloc<ffi.Uint8>(outputSize);
+    final statusCode = registration
+        ? native.kelivo_opaque_client_registration_finish(
+            stateHandle,
+            passwordPointer,
+            password.length,
+            responsePointer,
+            response.length,
+            accountIdPointer,
+            accountId.length,
+            output,
+            outputSize,
+            outputLength,
+          )
+        : native.kelivo_opaque_client_login_finish(
+            stateHandle,
+            passwordPointer,
+            password.length,
+            responsePointer,
+            response.length,
+            accountIdPointer,
+            accountId.length,
+            output,
+            outputSize,
+            outputLength,
+          );
+    _throwOnError(
+      operation: registration
+          ? 'opaque_client_registration_finish'
+          : 'opaque_client_login_finish',
+      statusCode: statusCode,
+    );
+    _requireExactOutputLength(
+      operation: registration
+          ? 'opaque_client_registration_finish'
+          : 'opaque_client_login_finish',
+      expected: outputSize,
+      actual: outputLength.value,
+    );
+    return Uint8List.fromList(output.asTypedList(outputSize));
+  } finally {
+    if (passwordPointer != null) {
+      _clearAndFree(passwordPointer, password.length);
+    }
+    if (responsePointer != null) {
+      _clearAndFree(responsePointer, response.length);
+    }
+    if (accountIdPointer != null) {
+      _clearAndFree(accountIdPointer, accountId.length);
+    }
+    if (output != null) {
+      _clearAndFree(output, outputSize);
+    }
+    password.fillRange(0, password.length, 0);
+    response.fillRange(0, response.length, 0);
+    accountId.fillRange(0, accountId.length, 0);
+    if (outputLength != null) {
+      calloc.free(outputLength);
+    }
+  }
+}
+
 Uint8List _validateDatabasePath(String databasePath) {
   final bytes = utf8.encode(databasePath);
   if (bytes.isEmpty ||
@@ -495,7 +998,8 @@ KelivoCoreCapabilities _readCapabilities() {
     final backend = KelivoSecureStorageBackend.fromCode(
       capabilities.secure_storage_backend,
     );
-    if (backend == KelivoSecureStorageBackend.none && capabilities.flags != 0) {
+    if (backend == KelivoSecureStorageBackend.none &&
+        capabilities.flags & _secureStorageCapabilityFlags != 0) {
       throw StateError('安全核心在无安全存储后端时声明了密钥能力');
     }
     if (capabilities.flags & _recordEnvelopesCapability != 0 &&
@@ -520,6 +1024,7 @@ KelivoCoreCapabilities _readCapabilities() {
           capabilities.flags & _sqlCipherKeyApplicationCapability != 0,
       supportsSqlCipherDatabaseAttach:
           capabilities.flags & _sqlCipherDatabaseAttachCapability != 0,
+      supportsOpaqueClient: capabilities.flags & _opaqueClientCapability != 0,
     );
   } finally {
     calloc.free(output);
@@ -773,10 +1278,15 @@ Uint8List _openRecord(
 
 ffi.Pointer<ffi.Uint8> _copyToNative(Uint8List bytes) {
   final pointer = calloc<ffi.Uint8>(bytes.isEmpty ? 1 : bytes.length);
-  if (bytes.isNotEmpty) {
-    pointer.asTypedList(bytes.length).setAll(0, bytes);
+  try {
+    if (bytes.isNotEmpty) {
+      pointer.asTypedList(bytes.length).setAll(0, bytes);
+    }
+    return pointer;
+  } catch (_) {
+    _clearAndFree(pointer, bytes.length);
+    rethrow;
   }
-  return pointer;
 }
 
 void _clearAndFree(ffi.Pointer<ffi.Uint8> pointer, int length) {

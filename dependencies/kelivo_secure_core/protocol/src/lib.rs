@@ -26,7 +26,7 @@ use zeroize::{Zeroize, Zeroizing};
 const WIRE_MAGIC: [u8; 4] = *b"KOPA";
 const WIRE_HEADER_LENGTH: usize = 16;
 const WIRE_FLAGS: u8 = 0;
-const MAX_OPAQUE_INPUT_LENGTH: usize = u16::MAX as usize;
+pub const MAX_OPAQUE_INPUT_LENGTH: usize = u16::MAX as usize;
 const OPAQUE_CONTEXT: &[u8] = b"Kelivo-OPAQUE-v1";
 const SERVER_IDENTIFIER: &[u8] = b"kelivo-cloud-v1";
 
@@ -37,6 +37,12 @@ pub const ARGON2_MEMORY_KIB: u32 = 65_536;
 pub const ARGON2_ITERATIONS: u32 = 3;
 pub const ARGON2_PARALLELISM: u32 = 4;
 pub const KEY_LENGTH: usize = 64;
+pub const REGISTRATION_REQUEST_LENGTH: usize = WIRE_HEADER_LENGTH + 32;
+pub const REGISTRATION_RESPONSE_LENGTH: usize = WIRE_HEADER_LENGTH + 64;
+pub const REGISTRATION_UPLOAD_LENGTH: usize = WIRE_HEADER_LENGTH + 192;
+pub const CREDENTIAL_REQUEST_LENGTH: usize = WIRE_HEADER_LENGTH + 96;
+pub const CREDENTIAL_RESPONSE_LENGTH: usize = WIRE_HEADER_LENGTH + 320;
+pub const CREDENTIAL_FINALIZATION_LENGTH: usize = WIRE_HEADER_LENGTH + 64;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ProtocolProfile {
@@ -201,6 +207,33 @@ impl ObjectKind {
         }
     }
 }
+
+const _: () = {
+    assert!(
+        REGISTRATION_REQUEST_LENGTH
+            == WIRE_HEADER_LENGTH + ObjectKind::RegistrationRequest.payload_length()
+    );
+    assert!(
+        REGISTRATION_RESPONSE_LENGTH
+            == WIRE_HEADER_LENGTH + ObjectKind::RegistrationResponse.payload_length()
+    );
+    assert!(
+        REGISTRATION_UPLOAD_LENGTH
+            == WIRE_HEADER_LENGTH + ObjectKind::RegistrationUpload.payload_length()
+    );
+    assert!(
+        CREDENTIAL_REQUEST_LENGTH
+            == WIRE_HEADER_LENGTH + ObjectKind::CredentialRequest.payload_length()
+    );
+    assert!(
+        CREDENTIAL_RESPONSE_LENGTH
+            == WIRE_HEADER_LENGTH + ObjectKind::CredentialResponse.payload_length()
+    );
+    assert!(
+        CREDENTIAL_FINALIZATION_LENGTH
+            == WIRE_HEADER_LENGTH + ObjectKind::CredentialFinalization.payload_length()
+    );
+};
 
 struct EncodedObject {
     bytes: Zeroizing<Vec<u8>>,
@@ -425,17 +458,17 @@ impl SessionKey {
 }
 
 pub struct ClientRegistrationStart {
-    pub state: ClientRegistrationState,
-    pub request: RegistrationRequest,
+    state: ClientRegistrationState,
+    request: RegistrationRequest,
 }
 
 pub struct ClientRegistrationFinish {
-    pub upload: RegistrationUpload,
+    upload: RegistrationUpload,
 }
 
 pub struct ClientLoginStart {
-    pub state: ClientLoginState,
-    pub request: CredentialRequest,
+    state: ClientLoginState,
+    request: CredentialRequest,
 }
 
 pub struct ServerLoginStart {
@@ -444,8 +477,38 @@ pub struct ServerLoginStart {
 }
 
 pub struct ClientLoginFinish {
-    pub finalization: CredentialFinalization,
-    pub session_key: SessionKey,
+    finalization: CredentialFinalization,
+    session_key: SessionKey,
+}
+
+impl ClientRegistrationStart {
+    pub fn into_parts(self) -> (ClientRegistrationState, RegistrationRequest) {
+        (self.state, self.request)
+    }
+}
+
+impl ClientRegistrationFinish {
+    pub fn into_upload(self) -> RegistrationUpload {
+        self.upload
+    }
+}
+
+impl ClientLoginStart {
+    pub fn into_parts(self) -> (ClientLoginState, CredentialRequest) {
+        (self.state, self.request)
+    }
+}
+
+impl ClientLoginFinish {
+    pub fn into_finalization(self) -> CredentialFinalization {
+        // 客户端原生接口只需要认证消息；会话密钥在返回前随 self 一并归零销毁。
+        let Self {
+            finalization,
+            session_key,
+        } = self;
+        drop(session_key);
+        finalization
+    }
 }
 
 fn validate_password(password: &[u8]) -> Result<(), Error> {
@@ -539,9 +602,11 @@ where
         response.decode()?,
         OpaqueClientRegistrationFinishParameters::new(binding.identifiers(), Some(&ksf)),
     )?;
+    // opaque-ke 的 FinishResult 本身不保证 Drop 时归零，必须先接管秘密再做可失败编码。
+    let export_key_guard = Zeroizing::new(result.export_key);
     let upload = RegistrationUpload::from_value(&result.message)?;
     // 服务器完整失陷后仍可能离线猜测密码，因此 export key 不能进入 ARK 密钥链。
-    drop(Zeroizing::new(result.export_key));
+    drop(export_key_guard);
     Ok(ClientRegistrationFinish { upload })
 }
 
@@ -613,10 +678,13 @@ where
             Some(&ksf),
         ),
     )?;
+    // 两份密钥先进入归零守卫，后续线消息编码异常也不能走普通数组析构。
+    let session_key_guard = Zeroizing::new(result.session_key);
+    let export_key_guard = Zeroizing::new(result.export_key);
     let finalization = CredentialFinalization::from_value(&result.message)?;
-    let session_key = SessionKey::from_material(Zeroizing::new(result.session_key));
+    let session_key = SessionKey::from_material(session_key_guard);
     // OPAQUE 只承担认证；设备根密钥必须继续由可信设备通道独立传递。
-    drop(Zeroizing::new(result.export_key));
+    drop(export_key_guard);
     Ok(ClientLoginFinish {
         finalization,
         session_key,
@@ -1023,12 +1091,40 @@ mod tests {
                 "生产 API 禁止出现：{forbidden}"
             );
         }
-        assert_eq!(
-            production_source
-                .matches("drop(Zeroizing::new(result.export_key));")
-                .count(),
-            2
+        let registration_finish_source = production_source
+            .split("pub fn client_registration_finish")
+            .nth(1)
+            .and_then(|source| source.split("pub fn server_registration_finish").next())
+            .expect("客户端注册完成函数边界必须存在");
+        assert!(
+            registration_finish_source
+                .find("Zeroizing::new(result.export_key)")
+                .expect("注册 export key 必须进入归零守卫")
+                < registration_finish_source
+                    .find("RegistrationUpload::from_value")
+                    .expect("注册上传消息编码必须存在")
         );
+
+        let login_finish_source = production_source
+            .split("pub fn client_login_finish")
+            .nth(1)
+            .and_then(|source| source.split("pub fn server_login_finish").next())
+            .expect("客户端登录完成函数边界必须存在");
+        let finalization_position = login_finish_source
+            .find("CredentialFinalization::from_value")
+            .expect("登录完成消息编码必须存在");
+        for secret in [
+            "Zeroizing::new(result.session_key)",
+            "Zeroizing::new(result.export_key)",
+        ] {
+            assert!(
+                login_finish_source
+                    .find(secret)
+                    .unwrap_or_else(|| panic!("{secret} 必须进入归零守卫"))
+                    < finalization_position,
+                "{secret} 必须早于任何可失败线消息编码"
+            );
+        }
         assert_eq!(
             production_source
                 .matches("pub struct SessionKey(Zeroizing<Vec<u8>>);")
