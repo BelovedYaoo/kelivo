@@ -163,13 +163,16 @@ impl<'a> AccountBinding<'a> {
 #[derive(Clone, Copy)]
 enum ObjectKind {
     ServerSetup = 1,
+    #[cfg(test)]
     ClientRegistrationState = 2,
     RegistrationRequest = 3,
     RegistrationResponse = 4,
     RegistrationUpload = 5,
     RegistrationRecord = 6,
+    #[cfg(test)]
     ClientLoginState = 7,
     CredentialRequest = 8,
+    #[cfg(test)]
     ServerLoginState = 9,
     CredentialResponse = 10,
     CredentialFinalization = 11,
@@ -183,12 +186,15 @@ impl ObjectKind {
     const fn payload_length(self) -> usize {
         match self {
             Self::ServerSetup => 128,
+            #[cfg(test)]
             Self::ClientRegistrationState => 64,
             Self::RegistrationRequest => 32,
             Self::RegistrationResponse => 64,
             Self::RegistrationUpload | Self::RegistrationRecord => 192,
+            #[cfg(test)]
             Self::ClientLoginState => 192,
             Self::CredentialRequest => 96,
+            #[cfg(test)]
             Self::ServerLoginState => 128,
             Self::CredentialResponse => 320,
             Self::CredentialFinalization => 64,
@@ -318,8 +324,39 @@ macro_rules! define_wire_object {
     };
 }
 
+macro_rules! define_secret_state {
+    ($name:ident, $kind:ident, $opaque:ty) => {
+        // 直接持有 opaque-ke 的零化状态，避免生产构建获得可持久化秘密状态的字节入口。
+        pub struct $name($opaque);
+
+        impl $name {
+            fn from_value(value: $opaque) -> Self {
+                Self(value)
+            }
+
+            fn into_value(self) -> $opaque {
+                self.0
+            }
+
+            // 私有测试线格式只用于锁定依赖升级影响，不能成为跨进程状态恢复机制。
+            #[cfg(test)]
+            fn from_wire_bytes_for_test(bytes: &[u8]) -> Result<Self, Error> {
+                let encoded = EncodedObject::parse(ObjectKind::$kind, bytes)?;
+                Ok(Self(<$opaque>::deserialize(encoded.payload())?))
+            }
+
+            #[cfg(test)]
+            fn wire_bytes_for_test(&self) -> Result<Zeroizing<Vec<u8>>, Error> {
+                let serialized = Zeroizing::new(self.0.serialize());
+                let encoded = EncodedObject::encode(ObjectKind::$kind, serialized.as_slice())?;
+                Ok(Zeroizing::new(encoded.as_bytes().to_vec()))
+            }
+        }
+    };
+}
+
 define_wire_object!(ServerSetup, ServerSetup, OpaqueServerSetup<Rfc9807Suite>);
-define_wire_object!(
+define_secret_state!(
     ClientRegistrationState,
     ClientRegistrationState,
     OpaqueClientRegistration<Rfc9807Suite>
@@ -344,7 +381,7 @@ define_wire_object!(
     RegistrationRecord,
     OpaqueServerRegistration<Rfc9807Suite>
 );
-define_wire_object!(
+define_secret_state!(
     ClientLoginState,
     ClientLoginState,
     OpaqueClientLogin<Rfc9807Suite>
@@ -354,7 +391,7 @@ define_wire_object!(
     CredentialRequest,
     OpaqueCredentialRequest<Rfc9807Suite>
 );
-define_wire_object!(
+define_secret_state!(
     ServerLoginState,
     ServerLoginState,
     OpaqueServerLogin<Rfc9807Suite>
@@ -465,7 +502,7 @@ where
     validate_password(password)?;
     let result = OpaqueClientRegistration::<Rfc9807Suite>::start(rng, password)?;
     Ok(ClientRegistrationStart {
-        state: ClientRegistrationState::from_value(&result.state)?,
+        state: ClientRegistrationState::from_value(result.state),
         request: RegistrationRequest::from_value(&result.message)?,
     })
 }
@@ -496,7 +533,7 @@ where
 {
     validate_password(password)?;
     let ksf = password_ksf()?;
-    let result = state.decode()?.finish(
+    let result = state.into_value().finish(
         rng,
         password,
         response.decode()?,
@@ -520,7 +557,7 @@ where
     validate_password(password)?;
     let result = OpaqueClientLogin::<Rfc9807Suite>::start(rng, password)?;
     Ok(ClientLoginStart {
-        state: ClientLoginState::from_value(&result.state)?,
+        state: ClientLoginState::from_value(result.state),
         request: CredentialRequest::from_value(&result.message)?,
     })
 }
@@ -549,7 +586,7 @@ where
         },
     )?;
     Ok(ServerLoginStart {
-        state: ServerLoginState::from_value(&result.state)?,
+        state: ServerLoginState::from_value(result.state),
         response: CredentialResponse::from_value(&result.message)?,
     })
 }
@@ -566,7 +603,7 @@ where
 {
     validate_password(password)?;
     let ksf = password_ksf()?;
-    let result = state.decode()?.finish(
+    let result = state.into_value().finish(
         rng,
         password,
         response.decode()?,
@@ -591,7 +628,7 @@ pub fn server_login_finish(
     finalization: CredentialFinalization,
     binding: AccountBinding<'_>,
 ) -> Result<SessionKey, Error> {
-    let result = state.decode()?.finish(
+    let result = state.into_value().finish(
         finalization.decode()?,
         OpaqueServerLoginParameters {
             context: Some(OPAQUE_CONTEXT),
@@ -826,10 +863,15 @@ mod tests {
         let mut registration_rng = deterministic_rng(21);
         let registration =
             client_registration_start(&mut registration_rng, password).expect("注册起始应成功");
-        wire_digest.update(registration.state.as_bytes());
+        let registration_state_bytes = registration
+            .state
+            .wire_bytes_for_test()
+            .expect("客户端注册状态测试线格式应可编码");
+        wire_digest.update(registration_state_bytes.as_slice());
         wire_digest.update(registration.request.as_bytes());
-        let registration_state = ClientRegistrationState::from_bytes(registration.state.as_bytes())
-            .expect("客户端注册状态线格式应可往返");
+        let registration_state =
+            ClientRegistrationState::from_wire_bytes_for_test(registration_state_bytes.as_slice())
+                .expect("客户端注册状态测试线格式应可往返");
         let registration_request = RegistrationRequest::from_bytes(registration.request.as_bytes())
             .expect("注册请求线格式应可往返");
         let response = server_registration_start(&setup, registration_request, binding)
@@ -856,10 +898,15 @@ mod tests {
 
         let mut login_rng = deterministic_rng(41);
         let login = client_login_start(&mut login_rng, password).expect("登录起始应成功");
-        wire_digest.update(login.state.as_bytes());
+        let client_login_state_bytes = login
+            .state
+            .wire_bytes_for_test()
+            .expect("客户端登录状态测试线格式应可编码");
+        wire_digest.update(client_login_state_bytes.as_slice());
         wire_digest.update(login.request.as_bytes());
-        let login_state = ClientLoginState::from_bytes(login.state.as_bytes())
-            .expect("客户端登录状态线格式应可往返");
+        let login_state =
+            ClientLoginState::from_wire_bytes_for_test(client_login_state_bytes.as_slice())
+                .expect("客户端登录状态测试线格式应可往返");
         let login_request = CredentialRequest::from_bytes(login.request.as_bytes())
             .expect("凭据请求线格式应可往返");
         let mut server_login_rng = deterministic_rng(51);
@@ -871,10 +918,15 @@ mod tests {
             binding,
         )
         .expect("服务端登录响应应成功");
-        wire_digest.update(server_login.state.as_bytes());
+        let server_login_state_bytes = server_login
+            .state
+            .wire_bytes_for_test()
+            .expect("服务端登录状态测试线格式应可编码");
+        wire_digest.update(server_login_state_bytes.as_slice());
         wire_digest.update(server_login.response.as_bytes());
-        let server_login_state = ServerLoginState::from_bytes(server_login.state.as_bytes())
-            .expect("服务端登录状态线格式应可往返");
+        let server_login_state =
+            ServerLoginState::from_wire_bytes_for_test(server_login_state_bytes.as_slice())
+                .expect("服务端登录状态测试线格式应可往返");
         let login_response = CredentialResponse::from_bytes(server_login.response.as_bytes())
             .expect("凭据响应线格式应可往返");
         let mut login_finish_rng = deterministic_rng(61);
@@ -955,7 +1007,7 @@ mod tests {
     fn public_api_does_not_expose_opaque_export_key_or_root_key_wrapping() {
         let source = include_str!("lib.rs");
         let production_source = source
-            .split("#[cfg(test)]")
+            .split("mod tests {")
             .next()
             .expect("生产源码边界必须存在");
         for forbidden in [
@@ -983,6 +1035,41 @@ mod tests {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn secret_states_cannot_restore_public_byte_interfaces() {
+        let source = include_str!("lib.rs");
+        let production_source = source
+            .split("mod tests {")
+            .next()
+            .expect("生产源码边界必须存在");
+        let normalized: String = production_source.split_whitespace().collect();
+        let secret_macro = normalized
+            .split("macro_rules!define_secret_state{")
+            .nth(1)
+            .and_then(|source| source.split("define_wire_object!(ServerSetup").next())
+            .expect("秘密状态宏边界必须存在");
+
+        assert!(!secret_macro.contains("pubfn"));
+        assert!(secret_macro.contains("#[cfg(test)]fnfrom_wire_bytes_for_test"));
+        assert!(secret_macro.contains("#[cfg(test)]fnwire_bytes_for_test"));
+
+        for state in [
+            "ClientRegistrationState",
+            "ClientLoginState",
+            "ServerLoginState",
+        ] {
+            assert!(
+                normalized.contains(&format!("define_secret_state!({state},")),
+                "{state} 必须使用秘密状态接口"
+            );
+            assert!(
+                !normalized.contains(&format!("define_wire_object!({state},")),
+                "{state} 禁止恢复公开线对象接口"
+            );
+        }
+        assert_eq!(normalized.matches("define_secret_state!(").count(), 3);
     }
 
     struct Rfc9807IdentitySuite;
