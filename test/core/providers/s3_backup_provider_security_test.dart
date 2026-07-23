@@ -4,7 +4,6 @@ import 'package:archive/archive_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../database/test_database_cipher.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -48,11 +47,9 @@ void main() {
       previousPathProvider = PathProviderPlatform.instance;
       PathProviderPlatform.instance = _FakePathProviderPlatform(root.path);
       SharedPreferences.setMockInitialValues({});
-      Hive.init(root.path);
     });
 
     tearDown(() async {
-      await Hive.close();
       PathProviderPlatform.instance = previousPathProvider;
       if (await root.exists()) await root.delete(recursive: true);
     });

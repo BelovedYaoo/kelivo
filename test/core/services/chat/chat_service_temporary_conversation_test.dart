@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:path/path.dart' as p;
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
@@ -94,7 +93,6 @@ void main() {
       accountWorkspace: false,
     );
     await SandboxPathResolver.init();
-    Hive.init(tempDir.path);
   });
 
   tearDown(() async {
@@ -102,7 +100,6 @@ void main() {
       await service.close();
     }
     services.clear();
-    await Hive.close();
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -1482,7 +1479,6 @@ void main() {
 }
 
 Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
-  expect(Hive.isBoxOpen(CloudSyncStateRetirement.legacyBoxName), isFalse);
   for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
     expect(
       await File(

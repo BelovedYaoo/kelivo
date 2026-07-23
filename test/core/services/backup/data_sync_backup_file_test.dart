@@ -5,7 +5,6 @@ import 'dart:isolate';
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 // ignore: depend_on_referenced_packages
@@ -241,7 +240,6 @@ Future<String> _fileSha256(File file) async {
 }
 
 Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
-  expect(Hive.isBoxOpen(CloudSyncStateRetirement.legacyBoxName), isFalse);
   for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
     expect(
       await File(
@@ -427,7 +425,6 @@ void main() {
 
     setUp(() async {
       root = await Directory.systemTemp.createTemp('kelivo_data_sync_test_');
-      Hive.init(root.path);
       PathProviderPlatform.instance = _FakePathProviderPlatform(root.path);
       PackageInfo.setMockInitialValues(
         appName: 'Kelivo',
@@ -442,7 +439,6 @@ void main() {
     });
 
     tearDown(() async {
-      await Hive.close();
       if (await root.exists()) {
         await root.delete(recursive: true);
       }

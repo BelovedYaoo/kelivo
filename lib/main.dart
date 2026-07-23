@@ -4,8 +4,6 @@ import 'package:flutter/foundation.dart'
 import 'dart:async';
 import 'l10n/app_localizations.dart';
 import 'features/home/pages/home_page.dart';
-import 'features/migration/hive_to_sqlite_migration_page.dart';
-import 'features/migration/hive_to_sqlite_migration_service.dart';
 import 'desktop/desktop_home_page.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
@@ -52,7 +50,6 @@ import 'features/home/services/tool_approval_service.dart';
 import 'utils/platform_utils.dart';
 import 'utils/sandbox_path_resolver.dart';
 import 'shared/widgets/app_overlays.dart';
-import 'shared/widgets/snackbar.dart';
 import 'shared/widgets/restore_failure_screen.dart';
 import 'shared/widgets/restore_cold_restart_screen.dart';
 import 'shared/widgets/restore_outcome_notice.dart';
@@ -346,32 +343,6 @@ Future<void> _initDesktopWindow() async {
 }
 
 // Removed eager system font preloading to reduce memory footprint at launch.
-
-class MigrationApp extends StatelessWidget {
-  const MigrationApp({super.key, required this.service, this.restoreOutcome});
-
-  final HiveToSqliteMigrationService service;
-  final RestoreReceiptState? restoreOutcome;
-
-  @override
-  Widget build(BuildContext context) {
-    final palette = ThemePalettes.defaultPalette;
-    return MaterialApp(
-      debugShowCheckedModeBanner: false,
-      title: 'Kelivo',
-      supportedLocales: AppLocalizations.supportedLocales,
-      localizationsDelegates: AppLocalizations.localizationsDelegates,
-      theme: buildLightThemeForScheme(palette.light),
-      darkTheme: buildDarkThemeForScheme(palette.dark),
-      builder: (context, child) =>
-          AppSnackBarOverlay(child: child ?? const SizedBox.shrink()),
-      home: RestoreOutcomeNotice(
-        outcome: restoreOutcome,
-        child: HiveToSqliteMigrationPage(service: service),
-      ),
-    );
-  }
-}
 
 class MyApp extends StatelessWidget {
   const MyApp({

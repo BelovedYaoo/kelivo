@@ -5,7 +5,6 @@ import 'package:archive/archive_io.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import '../../database/test_database_cipher.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -46,11 +45,9 @@ void main() {
     tempDir = await Directory.systemTemp.createTemp('kelivo_cherry_test_');
     PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir.path);
     SharedPreferences.setMockInitialValues({});
-    Hive.init(tempDir.path);
   });
 
   tearDown(() async {
-    await Hive.close();
     if (await tempDir.exists()) {
       await tempDir.delete(recursive: true);
     }
@@ -403,7 +400,6 @@ void main() {
 }
 
 Future<void> _expectLegacyCloudSyncStateAbsent(Directory root) async {
-  expect(Hive.isBoxOpen(CloudSyncStateRetirement.legacyBoxName), isFalse);
   for (final suffix in const <String>['.hive', '.hivec', '.lock']) {
     expect(
       await File(

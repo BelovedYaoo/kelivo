@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:hive_flutter/hive_flutter.dart';
 // ignore: depend_on_referenced_packages
 import 'package:path_provider_platform_interface/path_provider_platform_interface.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -114,7 +113,6 @@ void main() {
     );
     previousPreferencesStore = SharedPreferencesStorePlatform.instance;
     PathProviderPlatform.instance = _FakePathProviderPlatform(tempDir.path);
-    Hive.init(tempDir.path);
   });
 
   tearDown(() async {
@@ -122,7 +120,6 @@ void main() {
       await service.close();
     }
     services.clear();
-    await Hive.close();
     SharedPreferences.resetStatic();
     SharedPreferencesStorePlatform.instance = previousPreferencesStore;
     if (await tempDir.exists()) {
