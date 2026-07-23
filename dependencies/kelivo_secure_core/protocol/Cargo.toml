@@ -1,0 +1,20 @@
+[package]
+name = "kelivo_secure_core_protocol"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+opaque-ke = { version = "=4.0.1", default-features = false, features = [
+  "argon2",
+  "ristretto255",
+] }
+rand = { version = "=0.8.5", default-features = false, features = ["getrandom"] }
+sha2_opaque = { package = "sha2", version = "=0.10.9", default-features = false }
+zeroize = { version = "=1.9.0", default-features = false, features = ["alloc"] }
+
+[target.'cfg(target_arch = "wasm32")'.dependencies]
+getrandom = { version = "=0.2.17", features = ["js"] }
+
+[lints.rust]
+unsafe_code = "forbid"
