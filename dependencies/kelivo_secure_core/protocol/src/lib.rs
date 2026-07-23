@@ -23,6 +23,7 @@ use opaque_ke::{
     ServerLoginParameters as OpaqueServerLoginParameters,
     ServerRegistration as OpaqueServerRegistration, ServerSetup as OpaqueServerSetup, TripleDh,
 };
+#[cfg(feature = "system-rng")]
 use rand::rngs::OsRng;
 use rand::{CryptoRng, RngCore};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -702,6 +703,7 @@ fn password_ksf() -> Result<opaque_ke::argon2::Argon2<'static>, Error> {
     ))
 }
 
+#[cfg(any(feature = "system-rng", test))]
 fn probe_random_source<R>(mut rng: R) -> Result<R, Error>
 where
     R: RngCore,
@@ -713,6 +715,9 @@ where
     Ok(rng)
 }
 
+/// 使用操作系统安全随机源。关闭 `system-rng` 特性时本入口与相关依赖一并移除，
+/// 调用方必须显式注入实现 `CryptoRng` 的随机源，不允许回退到确定性数据。
+#[cfg(feature = "system-rng")]
 pub fn system_rng() -> Result<OsRng, Error> {
     probe_random_source(OsRng)
 }
