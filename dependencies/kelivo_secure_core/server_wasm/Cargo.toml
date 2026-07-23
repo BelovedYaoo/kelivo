@@ -1,0 +1,30 @@
+[package]
+name = "kelivo_secure_core_server_wasm"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+chacha20 = { version = "=0.10.1", default-features = false, features = [
+  "rng",
+  "zeroize",
+] }
+kelivo_secure_core_protocol = { path = "../protocol", default-features = false }
+rand_core = { version = "=0.6.4", default-features = false }
+zeroize = { version = "=1.9.0", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+rand_chacha = { version = "=0.3.1", default-features = false }
+
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = "z"
+panic = "abort"
+strip = "symbols"
+
+[lints.rust]
+unsafe_op_in_unsafe_fn = "deny"
