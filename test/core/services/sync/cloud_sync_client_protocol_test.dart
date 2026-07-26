@@ -60,6 +60,7 @@ Map<String, Object?> _authenticatedData({
   String token = _fullTokenValue,
   int keyEpoch = 7,
   String deviceId = _deviceId1,
+  String loginName = 'alice',
 }) {
   return <String, Object?>{
     'protocolVersion': cloudSyncOpaqueProtocolVersion,
@@ -69,7 +70,7 @@ Map<String, Object?> _authenticatedData({
     'tokenExpiresAt': '2026-07-27T05:00:00.000Z',
     'user': <String, Object?>{
       'id': _userId,
-      'loginName': 'alice',
+      'loginName': loginName,
       'displayName': 'Alice',
       'role': 'owner',
       'attachmentQuotaBytes': 1048576,
@@ -750,9 +751,273 @@ void main() {
     expect(opened.binding.account, isNull);
     expect(opened.binding.keyVersion, 1);
     expect(body['deviceId'], _uuidStringForTest(opened.binding.deviceId));
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
     await core.closeDeviceIdentity(opened.identity);
     await core.close(key);
   });
+
+  test('首设备注册响应丢失后新认证器原样重放且提交确认前保留事务', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    const loginName = 'recover-registration';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final expectedRequest = await _seedPendingRegistration(
+      core: core,
+      store: store,
+      baseUrl: baseUrl,
+      loginName: loginName,
+      attemptExpiresAt: DateTime.now().toUtc().add(const Duration(minutes: 5)),
+    );
+    final firstClient = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final firstAuthenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: firstClient,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      firstClient.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final firstPassword = Uint8List.fromList(utf8.encode('password'));
+    final firstResult = firstAuthenticator.registerFirstDevice(
+      loginName: loginName,
+      displayName: 'Recovery User',
+      password: firstPassword,
+      deviceName: 'Android 手机',
+      platform: CloudSyncPlatform.android,
+      clientVersion: '1.2.3',
+    );
+    expect(await requests.moveNext(), isTrue);
+    final firstRequest = requests.current;
+    final firstBody = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(firstRequest).join()),
+    );
+    expect(firstRequest.uri.path, '/api/auth/opaque-registration/finish');
+    expect(firstBody, expectedRequest);
+    final firstSocket = await firstRequest.response.detachSocket();
+    firstSocket.destroy();
+    await expectLater(firstResult, throwsA(isA<CloudSyncException>()));
+    expect(firstPassword, everyElement(0));
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNotNull,
+    );
+
+    final persistedKey = await core.openSlot(
+      _authenticatorSlotId(baseUrl, loginName),
+    );
+    final persistedState = await core.openDeviceState(
+      persistedKey,
+      stateBlob: (await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ))!,
+    );
+    expect(persistedState.binding.account?.keyEpoch, 1);
+    expect(
+      persistedState.binding.account?.userId,
+      orderedEquals(_rawUuid(_userId)),
+    );
+    await core.closeAccountRootKey(persistedState.ark!);
+    await core.closeDeviceIdentity(persistedState.identity);
+    await core.close(persistedKey);
+
+    firstClient.close(force: true);
+    final secondClient = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final secondAuthenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: secondClient,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() => secondClient.close(force: true));
+    final secondPassword = Uint8List.fromList(utf8.encode('password'));
+    final secondResultFuture = secondAuthenticator.registerFirstDevice(
+      loginName: loginName,
+      displayName: 'Ignored On Recovery',
+      password: secondPassword,
+      deviceName: 'Android 手机',
+      platform: CloudSyncPlatform.android,
+      clientVersion: '1.2.3',
+    );
+    expect(await requests.moveNext(), isTrue);
+    final secondRequest = requests.current;
+    final secondBody = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(secondRequest).join()),
+    );
+    expect(secondRequest.uri.path, '/api/auth/opaque-registration/finish');
+    expect(secondBody, expectedRequest);
+    secondRequest.response.headers.contentType = ContentType.json;
+    secondRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': _authenticatedData(
+          keyEpoch: 1,
+          deviceId: _deviceId1,
+          loginName: loginName,
+        ),
+      }),
+    );
+    await secondRequest.response.close();
+
+    final secondResult = await secondResultFuture;
+    expect(secondResult.user.id, _userId);
+    expect(secondResult.device.id, _deviceId1);
+    expect(secondPassword, everyElement(0));
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNotNull,
+    );
+    await secondAuthenticator.confirmFirstDeviceRegistration(
+      loginName: loginName,
+      session: secondResult,
+    );
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+  });
+
+  for (final scenario
+      in <
+        ({String name, Duration attemptExpiryOffset, String expectedServerCode})
+      >[
+        (
+          name: '未过期注册事务被拒绝时保留服务端错误且不回滚 ARK',
+          attemptExpiryOffset: const Duration(minutes: 5),
+          expectedServerCode: 'AUTH_REGISTRATION_FAILED',
+        ),
+        (
+          name: '已过期注册恢复要求正常登录且不回滚 ARK',
+          attemptExpiryOffset: const Duration(minutes: -1),
+          expectedServerCode: 'SYNC_REGISTRATION_RECOVERY_LOGIN_REQUIRED',
+        ),
+      ]) {
+    test(scenario.name, () async {
+      const core = KelivoSecureCore();
+      if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+      final requestFuture = server.first;
+      final baseUrl = 'http://${server.address.address}:${server.port}';
+      final loginName = scenario.attemptExpiryOffset.isNegative
+          ? 'expired-registration'
+          : 'rejected-registration';
+      final testRoot = Directory(
+        '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+        '${Platform.pathSeparator}e2ee_authenticator_tests',
+      );
+      await testRoot.create(recursive: true);
+      final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+      final store = DeviceStateBlobStore(installationRoot: root);
+      await _seedPendingRegistration(
+        core: core,
+        store: store,
+        baseUrl: baseUrl,
+        loginName: loginName,
+        attemptExpiresAt: DateTime.now().toUtc().add(
+          scenario.attemptExpiryOffset,
+        ),
+      );
+      final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+      final authenticator = E2eeAccountAuthenticator(
+        baseUrl: baseUrl,
+        accountClient: client,
+        deviceStateStore: store,
+        secureCore: core,
+      );
+      addTearDown(() async {
+        client.close(force: true);
+        await server.close(force: true);
+        if (await root.exists()) await root.delete(recursive: true);
+      });
+
+      final password = Uint8List.fromList(utf8.encode('password'));
+      final result = authenticator.registerFirstDevice(
+        loginName: loginName,
+        displayName: 'Recovery User',
+        password: password,
+        deviceName: 'Android 手机',
+        platform: CloudSyncPlatform.android,
+        clientVersion: '1.2.3',
+      );
+      final request = await requestFuture;
+      await utf8.decoder.bind(request).join();
+      expect(request.uri.path, '/api/auth/opaque-registration/finish');
+      request.response
+        ..statusCode = 400
+        ..headers.contentType = ContentType.json
+        ..write(
+          jsonEncode(<String, Object?>{
+            'error': <String, Object?>{
+              'code': 'AUTH_REGISTRATION_FAILED',
+              'message': 'registration failed',
+              'retryable': false,
+            },
+            'requestId': 'registration-recovery-failure',
+          }),
+        );
+      await request.response.close();
+
+      await expectLater(
+        result,
+        throwsA(
+          isA<CloudSyncException>().having(
+            (error) => error.serverCode,
+            'serverCode',
+            scenario.expectedServerCode,
+          ),
+        ),
+      );
+      expect(password, everyElement(0));
+      expect(
+        await store.readPendingRegistrationEnvelope(
+          normalizedBaseUrl: baseUrl,
+          normalizedLoginName: loginName,
+        ),
+        isNotNull,
+      );
+      final key = await core.openSlot(_authenticatorSlotId(baseUrl, loginName));
+      final opened = await core.openDeviceState(
+        key,
+        stateBlob: (await store.read(
+          normalizedBaseUrl: baseUrl,
+          normalizedLoginName: loginName,
+        ))!,
+      );
+      expect(opened.binding.account?.keyEpoch, 1);
+      expect(opened.ark, isNotNull);
+      await core.closeAccountRootKey(opened.ark!);
+      await core.closeDeviceIdentity(opened.identity);
+      await core.close(key);
+    });
+  }
 
   test('生产客户端固定使用官方服务地址', () {
     final client = CloudSyncClient();
@@ -2487,4 +2752,127 @@ String _uuidStringForTest(Uint8List value) {
   return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
       '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
       '${hex.substring(20)}';
+}
+
+Future<Map<String, Object?>> _seedPendingRegistration({
+  required KelivoSecureCore core,
+  required DeviceStateBlobStore store,
+  required String baseUrl,
+  required String loginName,
+  required DateTime attemptExpiresAt,
+}) async {
+  final registrationUpload = _filledBytes(
+    cloudSyncOpaqueRegistrationUploadBytes,
+    0x51,
+  );
+  final accountKeyEnvelope = _filledBytes(
+    cloudSyncAccountKeyEnvelopeBytes,
+    0x52,
+  );
+  final deviceProof = _filledBytes(cloudSyncDeviceProofBytes, 0x53);
+  final expectedRequest = <String, Object?>{
+    'protocolVersion': cloudSyncOpaqueProtocolVersion,
+    'attemptId': _attemptId1,
+    'registrationUpload': base64Url
+        .encode(registrationUpload)
+        .replaceAll('=', ''),
+    'accountKeyEnvelope': base64Url
+        .encode(accountKeyEnvelope)
+        .replaceAll('=', ''),
+    'deviceProof': base64Url.encode(deviceProof).replaceAll('=', ''),
+  };
+  final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
+  final identity = await core.generateDeviceIdentity();
+  final ark = await core.generateAccountRootKey();
+  final deviceId = _rawUuid(_deviceId1);
+  final userId = _rawUuid(_userId);
+  final identityOnlyState = Uint8List.fromList(
+    await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: deviceId,
+      keyVersion: 1,
+    ),
+  );
+  final fullState = Uint8List.fromList(
+    await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: deviceId,
+      keyVersion: 1,
+      ark: ark,
+      account: KelivoDeviceStateAccountBinding(userId: userId, keyEpoch: 1),
+    ),
+  );
+  final frame = Uint8List(892);
+  final magic = ascii.encode('KELVRT01');
+  frame.setRange(0, magic.length, magic);
+  final fields = ByteData.sublistView(frame);
+  fields.setUint16(8, 1, Endian.big);
+  fields.setUint16(10, 0, Endian.big);
+  fields.setUint32(12, 1, Endian.big);
+  fields.setUint32(16, 1, Endian.big);
+  fields.setUint32(20, 0, Endian.big);
+  fields.setUint64(
+    24,
+    attemptExpiresAt.toUtc().millisecondsSinceEpoch,
+    Endian.big,
+  );
+  frame.setRange(32, 48, _rawUuid(_attemptId1));
+  frame.setRange(48, 64, userId);
+  frame.setRange(64, 80, _rawUuid(_accountContextId));
+  frame.setRange(80, 96, deviceId);
+  frame.setRange(96, 304, registrationUpload);
+  frame.setRange(304, 640, accountKeyEnvelope);
+  frame.setRange(640, 704, deviceProof);
+  frame.setRange(704, 892, fullState);
+  final recordId = Uint8List.fromList(
+    sha256
+        .convert(
+          utf8.encode(
+            'kelivo.e2ee.registration-transaction.record.v1\u0000'
+            '$baseUrl\u0000$loginName',
+          ),
+        )
+        .bytes
+        .sublist(0, 16),
+  );
+  final associatedData = Uint8List.fromList(
+    utf8.encode(
+      'kelivo.e2ee.registration-transaction.aad.v1\u0000'
+      '$baseUrl\u0000$loginName',
+    ),
+  );
+  try {
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: identityOnlyState,
+    );
+    final envelope = await core.sealRecord(
+      key,
+      recordId: recordId,
+      epoch: 1,
+      associatedData: associatedData,
+      plaintext: frame,
+    );
+    await store.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+  } finally {
+    frame.fillRange(0, frame.length, 0);
+    identityOnlyState.fillRange(0, identityOnlyState.length, 0);
+    fullState.fillRange(0, fullState.length, 0);
+    registrationUpload.fillRange(0, registrationUpload.length, 0);
+    accountKeyEnvelope.fillRange(0, accountKeyEnvelope.length, 0);
+    deviceProof.fillRange(0, deviceProof.length, 0);
+    recordId.fillRange(0, recordId.length, 0);
+    associatedData.fillRange(0, associatedData.length, 0);
+    await core.closeAccountRootKey(ark);
+    await core.closeDeviceIdentity(identity);
+    await core.close(key);
+  }
+  return expectedRequest;
 }

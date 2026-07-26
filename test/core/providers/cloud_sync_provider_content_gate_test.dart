@@ -226,12 +226,55 @@ void main() {
       isTrue,
     );
 
-    expect(fixture.authentication.requestNames, <String>['register']);
+    expect(fixture.authentication.requestNames, <String>[
+      'register',
+      'confirm-registration',
+    ]);
     expect(fixture.authentication.lastLoginName, 'ovo');
     expect(fixture.authentication.lastDisplayName, 'Ovo');
     expect(fixture.authentication.lastPassword, 'password');
     expect(fixture.authentication.lastDeviceName, '测试手机');
     expect(fixture.authentication.lastPlatform, CloudSyncPlatform.android);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(
+      fixture.provider.status,
+      CloudSyncProviderStatus.workspaceChangePending,
+    );
+  });
+
+  test('首设备注册工作区提交后事务清理失败仍保持已提交结果', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    PackageInfo.setMockInitialValues(
+      appName: 'Kelivo',
+      packageName: 'Kelivo',
+      version: '1.1.17',
+      buildNumber: '1',
+      buildSignature: 'test',
+    );
+    final authentication = _FakeE2eeAccountAuthentication(
+      confirmationFailure: StateError('registration_cleanup_failed'),
+    );
+    final fixture = await _createSignedOutFixture(
+      authentication: authentication,
+    );
+    addTearDown(fixture.close);
+
+    expect(
+      await fixture.provider.register(
+        loginName: 'ovo',
+        displayName: 'Ovo',
+        password: 'password',
+        deviceName: '测试手机',
+      ),
+      isTrue,
+    );
+
+    expect(authentication.requestNames, <String>[
+      'register',
+      'confirm-registration',
+    ]);
+    expect(fixture.provider.lastError, isNull);
     expect(fixture.provider.workspaceRestartRequired, isTrue);
     expect(
       fixture.provider.status,
@@ -674,6 +717,7 @@ final class _FakeE2eeAccountAuthentication
     CloudSyncAuthenticatedSession? registrationSession,
     this.loginFailure,
     this.registrationFailure,
+    this.confirmationFailure,
   }) : loginResult =
            loginResult ??
            E2eeAccountLoginAuthenticated(_authenticatedSession()),
@@ -683,6 +727,7 @@ final class _FakeE2eeAccountAuthentication
   final CloudSyncAuthenticatedSession registrationSession;
   final Object? loginFailure;
   final Object? registrationFailure;
+  final Object? confirmationFailure;
   final List<String> requestNames = <String>[];
   String? lastLoginName;
   String? lastDisplayName;
@@ -737,6 +782,17 @@ final class _FakeE2eeAccountAuthentication
     } finally {
       password.fillRange(0, password.length, 0);
     }
+  }
+
+  @override
+  Future<void> confirmFirstDeviceRegistration({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+  }) async {
+    requestNames.add('confirm-registration');
+    lastLoginName = loginName;
+    final failure = confirmationFailure;
+    if (failure != null) throw failure;
   }
 }
 

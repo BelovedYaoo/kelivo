@@ -18,4 +18,6 @@
 - `E2eeAccountAuthenticator` 已增加实例级并发冲突门禁，业务主异常不再被 cleanup 覆盖，失败和 cleanup 异常均清空候选 token。Provider 11/11、协议 62/62、`flutter analyze lib`、`flutter analyze test` 通过；根分析受 `mcp_client` 既有测试依赖缺失阻塞，根测试因共享缓存争用 8 分钟无用例输出后终止。
 - API 已在 `kelivo-api/main@9ab952e` 完成 Issue #39 所需的原样 finish 恢复语义；当前正在实现客户端加密注册事务、重启重放及账号工作区提交后的确认清理。
 - 注册事务存储已完成：同一设备 locator 锁内一次发布、原样幂等、不同事务拒绝覆盖、摘要条件删除、损坏失败关闭，并随设备 tombstone 一并退役；重命名后目录屏障中断仍可由新实例恢复。
+- 客户端 Issue #39 闭环已完成：892 字节固定事务帧经平台槽记录信封加密，finish 前先持久化事务与完整设备状态；响应丢失后新认证器只原样重放 finish，工作区会话提交后才按密文摘要确认删除。未过期拒绝保留服务端错误，过期拒绝要求正常登录且绝不回滚 ARK。
+- 验证：认证/传输协议 65/65、Provider 12/12、注册事务存储 3/3、设备状态回归 15/15、`flutter analyze lib` 与 `flutter analyze test` 均通过。
 - 设备配对 QR：新增固定版本化完整 transcript 二进制帧，严格校验长度、UUID、时效、CRC 与规范编码；raw secret 始终保持字节所有权并支持显式清零。定向分析无问题，QR 协议测试 37/37 通过。

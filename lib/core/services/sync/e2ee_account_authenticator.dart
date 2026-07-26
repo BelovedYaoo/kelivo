@@ -45,6 +45,11 @@ abstract interface class E2eeAccountAuthentication {
     required String clientVersion,
   });
 
+  Future<void> confirmFirstDeviceRegistration({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+  });
+
   /// 为避免密码在调用方继续驻留，所有退出路径都会清零传入缓冲区。
   Future<E2eeAccountLoginResult> loginDevice({
     required String loginName,
@@ -78,6 +83,25 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   );
 
   static const _deviceStateSlotDomain = 'kelivo.e2ee.device-state.slot.v1';
+  static const _registrationRecordDomain =
+      'kelivo.e2ee.registration-transaction.record.v1';
+  static const _registrationAssociatedDataDomain =
+      'kelivo.e2ee.registration-transaction.aad.v1';
+  static const _registrationRecordEpoch = 1;
+  static const _registrationFrameVersion = 1;
+  static const _registrationFrameHeaderLength = 96;
+  static const _registrationUploadOffset = _registrationFrameHeaderLength;
+  static const _registrationEnvelopeOffset =
+      _registrationUploadOffset + cloudSyncOpaqueRegistrationUploadBytes;
+  static const _registrationProofOffset =
+      _registrationEnvelopeOffset + cloudSyncAccountKeyEnvelopeBytes;
+  static const _registrationStateOffset =
+      _registrationProofOffset + cloudSyncDeviceProofBytes;
+  static const _registrationFrameLength =
+      _registrationStateOffset + DeviceStateBlobStore.blobLength;
+  static final Uint8List _registrationFrameMagic = Uint8List.fromList(
+    ascii.encode('KELVRT01'),
+  );
   static final RegExp _normalizedLoginNamePattern = RegExp(
     r'^[a-z0-9][a-z0-9._-]*$',
   );
@@ -106,6 +130,11 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     var opaqueStateActive = false;
     KelivoAccountRootKeyHandle? ark;
     Uint8List? registrationUpload;
+    Uint8List? accountKeyEnvelope;
+    Uint8List? deviceProof;
+    Uint8List? fullStateBlob;
+    _OpenedPendingRegistration? pending;
+    _PendingRegistrationTransaction? transaction;
     Object? primaryError;
     try {
       if (platform != CloudSyncPlatform.android &&
@@ -114,6 +143,23 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       }
       final normalizedLoginName = _normalizeLoginName(loginName);
       context = await _openDeviceContext(normalizedLoginName);
+      pending = await _readPendingRegistration(context, normalizedLoginName);
+      if (pending != null) {
+        transaction = pending.transaction;
+        await _ensurePendingRegistrationState(
+          context,
+          normalizedLoginName: normalizedLoginName,
+          transaction: transaction,
+        );
+        final session = await _finishPendingRegistration(transaction);
+        _validateRegistrationSession(
+          context,
+          normalizedLoginName: normalizedLoginName,
+          transaction: transaction,
+          session: session,
+        );
+        return session;
+      }
       if (context.account != null || context.ark != null) {
         throw StateError('已绑定账户的设备状态不能再次注册');
       }
@@ -153,55 +199,145 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
             challenge: start.deviceChallenge,
             registrationUpload: registrationUpload,
           );
+      accountKeyEnvelope = Uint8List.fromList(registrationBundle.envelope);
+      deviceProof = Uint8List.fromList(registrationBundle.signature);
 
-      final fullStateBlob = await _secureCore.sealDeviceState(
-        context.key,
-        context.identity,
-        deviceId: context.deviceId,
-        keyVersion: context.keyVersion,
-        ark: ark,
-        account: KelivoDeviceStateAccountBinding(userId: userId, keyEpoch: 1),
+      fullStateBlob = Uint8List.fromList(
+        await _secureCore.sealDeviceState(
+          context.key,
+          context.identity,
+          deviceId: context.deviceId,
+          keyVersion: context.keyVersion,
+          ark: ark,
+          account: KelivoDeviceStateAccountBinding(userId: userId, keyEpoch: 1),
+        ),
       );
-      // 服务端完成注册后无法回滚，必须先确保唯一 ARK 已经在本机耐久化。
+      transaction = _PendingRegistrationTransaction(
+        attemptId: start.attemptId,
+        userId: start.userId,
+        accountBinding: start.accountBinding,
+        deviceId: context.deviceIdText,
+        keyVersion: context.keyVersion,
+        keyEpoch: 1,
+        attemptExpiresAt: start.expiresAt,
+        registrationUpload: registrationUpload,
+        accountKeyEnvelope: accountKeyEnvelope,
+        deviceProof: deviceProof,
+        fullStateBlob: fullStateBlob,
+      );
+      // 本地事务是注册提交点；服务端调用只能发生在唯一 ARK 与原样载荷均可恢复之后。
+      await _persistPendingRegistration(
+        context,
+        normalizedLoginName: normalizedLoginName,
+        transaction: transaction,
+      );
       await _deviceStateStore.write(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: normalizedLoginName,
         blob: fullStateBlob,
       );
 
-      final session = await _accountClient.finishOpaqueRegistration(
-        attemptId: start.attemptId,
-        registrationUpload: registrationUpload,
-        accountKeyEnvelope: registrationBundle.envelope,
-        deviceProof: registrationBundle.signature,
+      final session = await _finishPendingRegistration(transaction);
+      _validateRegistrationSession(
+        context,
+        normalizedLoginName: normalizedLoginName,
+        transaction: transaction,
+        session: session,
       );
-      if (session.user.id != start.userId ||
-          session.device.id != context.deviceIdText ||
-          session.keyEpoch != 1) {
-        throw StateError('注册结果与本地设备状态不匹配');
-      }
       return session;
-    } catch (error) {
-      primaryError = error;
+    } catch (error, stackTrace) {
+      final reportedError =
+          transaction != null &&
+              error is CloudSyncException &&
+              _registrationRecoveryRequiresLogin(error, transaction)
+          ? CloudSyncException(
+              kind: CloudSyncFailureKind.unauthenticated,
+              retryable: false,
+              serverCode: 'SYNC_REGISTRATION_RECOVERY_LOGIN_REQUIRED',
+              requestId: error.requestId,
+              statusCode: error.statusCode,
+            )
+          : error;
+      primaryError = reportedError;
       _clearAccountClientToken();
-      rethrow;
+      Error.throwWithStackTrace(reportedError, stackTrace);
     } finally {
       final stateToCancel = opaqueStateActive ? opaqueStart : null;
-      await _finishAuthentication(
-        primaryError: primaryError,
-        cleanup: () => _cleanupOperation(
-          cancelOpaque: stateToCancel == null
-              ? null
-              : () => _secureCore.cancelOpaqueRegistration(stateToCancel.state),
-          mutableSecrets: <Uint8List?>[
-            password,
-            passwordCopy,
-            registrationUpload,
-          ],
-          ark: ark,
-          context: context,
-        ),
+      try {
+        await _finishAuthentication(
+          primaryError: primaryError,
+          cleanup: () => _cleanupOperation(
+            cancelOpaque: stateToCancel == null
+                ? null
+                : () =>
+                      _secureCore.cancelOpaqueRegistration(stateToCancel.state),
+            mutableSecrets: <Uint8List?>[
+              password,
+              passwordCopy,
+              registrationUpload,
+              accountKeyEnvelope,
+              deviceProof,
+              fullStateBlob,
+            ],
+            ark: ark,
+            context: context,
+          ),
+        );
+      } finally {
+        if (pending != null) {
+          pending.dispose();
+        } else {
+          transaction?.dispose();
+        }
+      }
+    }
+  }
+
+  @override
+  Future<void> confirmFirstDeviceRegistration({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+  }) async {
+    _beginExclusiveOperation();
+    _DeviceContext? context;
+    _OpenedPendingRegistration? pending;
+    Object? primaryError;
+    try {
+      final normalizedLoginName = _normalizeLoginName(loginName);
+      context = await _openDeviceContext(normalizedLoginName);
+      pending = await _readPendingRegistration(context, normalizedLoginName);
+      if (pending == null) return;
+      await _ensurePendingRegistrationState(
+        context,
+        normalizedLoginName: normalizedLoginName,
+        transaction: pending.transaction,
       );
+      _validateRegistrationSession(
+        context,
+        normalizedLoginName: normalizedLoginName,
+        transaction: pending.transaction,
+        session: session,
+      );
+      await _deviceStateStore.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+        expectedDigest: pending.envelopeDigest,
+      );
+    } catch (error) {
+      primaryError = error;
+      rethrow;
+    } finally {
+      try {
+        pending?.dispose();
+        await _closeHandles(context: context);
+      } catch (error, stackTrace) {
+        if (primaryError == null) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+        _logSuppressedCleanupFailure(error, stackTrace);
+      } finally {
+        _authenticationInProgress = false;
+      }
     }
   }
 
@@ -218,6 +354,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     KelivoOpaqueLoginStart? opaqueStart;
     var opaqueStateActive = false;
     Uint8List? credentialFinalization;
+    Uint8List? deviceProof;
     Object? primaryError;
     try {
       final normalizedLoginName = _normalizeLoginName(loginName);
@@ -244,21 +381,23 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         response: start.credentialResponse,
         accountId: opaqueAccountBinding,
       );
-      final deviceProof = await _secureCore.signDeviceLoginProof(
-        context.identity,
-        attemptId: _uuidBytes(start.attemptId),
-        accountContextId: opaqueAccountBinding,
-        deviceId: context.deviceId,
-        expiresAtMs: start.expiresAt.millisecondsSinceEpoch,
-        challenge: start.deviceChallenge,
-        credentialFinalization: credentialFinalization,
+      deviceProof = Uint8List.fromList(
+        await _secureCore.signDeviceLoginProof(
+          context.identity,
+          attemptId: _uuidBytes(start.attemptId),
+          accountContextId: opaqueAccountBinding,
+          deviceId: context.deviceId,
+          expiresAtMs: start.expiresAt.millisecondsSinceEpoch,
+          challenge: start.deviceChallenge,
+          credentialFinalization: credentialFinalization,
+        ),
       );
       final result = await _accountClient.finishOpaqueLogin(
         attemptId: start.attemptId,
         credentialFinalization: credentialFinalization,
         deviceProof: deviceProof,
       );
-      return switch (result) {
+      final loginResult = switch (result) {
         CloudSyncOpaqueLoginAuthenticated(:final session) =>
           _authenticatedLoginResult(context, session),
         CloudSyncOpaqueLoginApprovalRequired(
@@ -274,6 +413,12 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
             device: device,
           ),
       };
+      if (loginResult is E2eeAccountLoginAuthenticated) {
+        await _discardPendingRegistrationAfterAuthenticatedLogin(
+          normalizedLoginName,
+        );
+      }
+      return loginResult;
     } catch (error) {
       primaryError = error;
       _clearAccountClientToken();
@@ -290,11 +435,259 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
             password,
             passwordCopy,
             credentialFinalization,
+            deviceProof,
           ],
           context: context,
         ),
       );
     }
+  }
+
+  Future<CloudSyncAuthenticatedSession> _finishPendingRegistration(
+    _PendingRegistrationTransaction transaction,
+  ) {
+    return _accountClient.finishOpaqueRegistration(
+      attemptId: transaction.attemptId,
+      registrationUpload: transaction.registrationUpload,
+      accountKeyEnvelope: transaction.accountKeyEnvelope,
+      deviceProof: transaction.deviceProof,
+    );
+  }
+
+  Future<void> _persistPendingRegistration(
+    _DeviceContext context, {
+    required String normalizedLoginName,
+    required _PendingRegistrationTransaction transaction,
+  }) async {
+    final frame = _encodePendingRegistration(transaction);
+    final recordId = _registrationRecordId(normalizedLoginName);
+    final associatedData = _registrationAssociatedData(normalizedLoginName);
+    Uint8List? envelope;
+    try {
+      envelope = await _secureCore.sealRecord(
+        context.key,
+        recordId: recordId,
+        epoch: _registrationRecordEpoch,
+        associatedData: associatedData,
+        plaintext: frame,
+      );
+      if (envelope.length >
+          DeviceStateBlobStore.pendingRegistrationEnvelopeMaxLength) {
+        throw const FormatException('注册事务密文超过持久化边界');
+      }
+      await _deviceStateStore.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+        envelope: envelope,
+      );
+    } finally {
+      _clearBytes(frame);
+      _clearBytes(recordId);
+      _clearBytes(associatedData);
+      _clearBytes(envelope);
+    }
+  }
+
+  Future<_OpenedPendingRegistration?> _readPendingRegistration(
+    _DeviceContext context,
+    String normalizedLoginName,
+  ) async {
+    final envelope = await _deviceStateStore.readPendingRegistrationEnvelope(
+      normalizedBaseUrl: _baseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    if (envelope == null) return null;
+    final envelopeDigest = Uint8List.fromList(sha256.convert(envelope).bytes);
+    final recordId = _registrationRecordId(normalizedLoginName);
+    final associatedData = _registrationAssociatedData(normalizedLoginName);
+    Uint8List? plaintext;
+    try {
+      plaintext = await _secureCore.openRecord(
+        context.key,
+        recordId: recordId,
+        epoch: _registrationRecordEpoch,
+        associatedData: associatedData,
+        envelope: envelope,
+      );
+      final transaction = _decodePendingRegistration(plaintext);
+      return _OpenedPendingRegistration(
+        transaction: transaction,
+        envelopeDigest: envelopeDigest,
+      );
+    } catch (_) {
+      _clearBytes(envelopeDigest);
+      rethrow;
+    } finally {
+      _clearBytes(envelope);
+      _clearBytes(recordId);
+      _clearBytes(associatedData);
+      _clearBytes(plaintext);
+    }
+  }
+
+  Future<void> _ensurePendingRegistrationState(
+    _DeviceContext context, {
+    required String normalizedLoginName,
+    required _PendingRegistrationTransaction transaction,
+  }) async {
+    if (context.deviceIdText != transaction.deviceId ||
+        context.keyVersion != transaction.keyVersion) {
+      throw StateError('注册事务与当前设备身份不匹配');
+    }
+    await _validatePendingFullState(context, transaction);
+    final account = context.account;
+    if (account == null) {
+      if (context.ark != null) {
+        throw StateError('未绑定设备状态意外包含账户根密钥');
+      }
+      await _deviceStateStore.write(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+        blob: transaction.fullStateBlob,
+      );
+      return;
+    }
+    if (context.ark == null ||
+        _uuidString(account.userId) != transaction.userId ||
+        account.keyEpoch != transaction.keyEpoch) {
+      throw StateError('注册事务与已绑定设备状态不匹配');
+    }
+  }
+
+  Future<void> _validatePendingFullState(
+    _DeviceContext context,
+    _PendingRegistrationTransaction transaction,
+  ) async {
+    KelivoOpenedDeviceState? opened;
+    Object? primaryError;
+    try {
+      opened = await _secureCore.openDeviceState(
+        context.key,
+        stateBlob: transaction.fullStateBlob,
+      );
+      final account = opened.binding.account;
+      if (opened.ark == null ||
+          account == null ||
+          _uuidString(opened.binding.deviceId) != transaction.deviceId ||
+          opened.binding.keyVersion != transaction.keyVersion ||
+          _uuidString(account.userId) != transaction.userId ||
+          account.keyEpoch != transaction.keyEpoch) {
+        throw StateError('注册事务内的完整设备状态绑定无效');
+      }
+      final currentKeys = await _secureCore.readDevicePublicKeys(
+        context.identity,
+      );
+      final pendingKeys = await _secureCore.readDevicePublicKeys(
+        opened.identity,
+      );
+      if (!_sameBytes(
+            currentKeys.signingPublicKey,
+            pendingKeys.signingPublicKey,
+          ) ||
+          !_sameBytes(
+            currentKeys.keyAgreementPublicKey,
+            pendingKeys.keyAgreementPublicKey,
+          )) {
+        throw StateError('注册事务内的设备身份已被替换');
+      }
+    } catch (error) {
+      primaryError = error;
+      rethrow;
+    } finally {
+      if (opened != null) {
+        await _closeTemporaryOpenedState(opened, primaryError: primaryError);
+      }
+    }
+  }
+
+  Future<void> _closeTemporaryOpenedState(
+    KelivoOpenedDeviceState opened, {
+    required Object? primaryError,
+  }) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> close(Future<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    if (opened.ark != null) {
+      await close(() => _secureCore.closeAccountRootKey(opened.ark!));
+    }
+    await close(() => _secureCore.closeDeviceIdentity(opened.identity));
+    if (firstError != null && firstStackTrace != null) {
+      if (primaryError == null) {
+        Error.throwWithStackTrace(firstError!, firstStackTrace!);
+      }
+      _logSuppressedCleanupFailure(firstError!, firstStackTrace!);
+    }
+  }
+
+  void _validateRegistrationSession(
+    _DeviceContext context, {
+    required String normalizedLoginName,
+    required _PendingRegistrationTransaction transaction,
+    required CloudSyncAuthenticatedSession session,
+  }) {
+    if (context.deviceIdText != transaction.deviceId ||
+        context.keyVersion != transaction.keyVersion ||
+        session.user.id != transaction.userId ||
+        session.user.loginName != normalizedLoginName ||
+        session.device.id != transaction.deviceId ||
+        session.keyEpoch != transaction.keyEpoch) {
+      throw StateError('注册结果与本地注册事务不匹配');
+    }
+    final account = context.account;
+    if (account != null &&
+        (_uuidString(account.userId) != transaction.userId ||
+            account.keyEpoch != transaction.keyEpoch ||
+            context.ark == null)) {
+      throw StateError('注册结果与已绑定设备状态不匹配');
+    }
+  }
+
+  Future<void> _discardPendingRegistrationAfterAuthenticatedLogin(
+    String normalizedLoginName,
+  ) async {
+    Uint8List? envelope;
+    Uint8List? digest;
+    try {
+      envelope = await _deviceStateStore.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+      );
+      if (envelope == null) return;
+      digest = Uint8List.fromList(sha256.convert(envelope).bytes);
+      await _deviceStateStore.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+        expectedDigest: digest,
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        '账户已认证，遗留注册事务将在后续登录重试清理',
+        name: 'Kelivo.E2eeAccountAuthenticator',
+        level: 900,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    } finally {
+      _clearBytes(envelope);
+      _clearBytes(digest);
+    }
+  }
+
+  bool _registrationRecoveryRequiresLogin(
+    CloudSyncException error,
+    _PendingRegistrationTransaction transaction,
+  ) {
+    return error.serverCode == 'AUTH_REGISTRATION_FAILED' &&
+        !DateTime.now().toUtc().isBefore(transaction.attemptExpiresAt);
   }
 
   E2eeAccountLoginAuthenticated _authenticatedLoginResult(
@@ -428,6 +821,180 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     return Uint8List.fromList(digest.bytes.sublist(0, 16));
   }
 
+  Uint8List _registrationRecordId(String normalizedLoginName) {
+    final digest = sha256.convert(
+      utf8.encode(
+        '$_registrationRecordDomain\u0000$_baseUrl\u0000$normalizedLoginName',
+      ),
+    );
+    return Uint8List.fromList(digest.bytes.sublist(0, 16));
+  }
+
+  Uint8List _registrationAssociatedData(String normalizedLoginName) {
+    return Uint8List.fromList(
+      utf8.encode(
+        '$_registrationAssociatedDataDomain\u0000'
+        '$_baseUrl\u0000$normalizedLoginName',
+      ),
+    );
+  }
+
+  static Uint8List _encodePendingRegistration(
+    _PendingRegistrationTransaction transaction,
+  ) {
+    if (transaction.keyVersion <= 0 ||
+        transaction.keyVersion > 0xffffffff ||
+        transaction.keyEpoch != 1 ||
+        transaction.attemptExpiresAt.millisecondsSinceEpoch <= 0) {
+      throw const FormatException('注册事务元数据无效');
+    }
+    _requireFixedBytes(
+      transaction.registrationUpload,
+      cloudSyncOpaqueRegistrationUploadBytes,
+      'registrationUpload',
+    );
+    _requireFixedBytes(
+      transaction.accountKeyEnvelope,
+      cloudSyncAccountKeyEnvelopeBytes,
+      'accountKeyEnvelope',
+    );
+    _requireFixedBytes(
+      transaction.deviceProof,
+      cloudSyncDeviceProofBytes,
+      'deviceProof',
+    );
+    _requireFixedBytes(
+      transaction.fullStateBlob,
+      DeviceStateBlobStore.blobLength,
+      'fullStateBlob',
+    );
+
+    final frame = Uint8List(_registrationFrameLength);
+    frame.setRange(0, _registrationFrameMagic.length, _registrationFrameMagic);
+    final fields = ByteData.sublistView(frame);
+    fields.setUint16(8, _registrationFrameVersion, Endian.big);
+    fields.setUint16(10, 0, Endian.big);
+    fields.setUint32(12, transaction.keyEpoch, Endian.big);
+    fields.setUint32(16, transaction.keyVersion, Endian.big);
+    fields.setUint32(20, 0, Endian.big);
+    fields.setUint64(
+      24,
+      transaction.attemptExpiresAt.millisecondsSinceEpoch,
+      Endian.big,
+    );
+    frame.setRange(32, 48, _uuidBytes(transaction.attemptId));
+    frame.setRange(48, 64, _uuidBytes(transaction.userId));
+    frame.setRange(64, 80, _uuidBytes(transaction.accountBinding));
+    frame.setRange(80, 96, _uuidBytes(transaction.deviceId));
+    frame.setRange(
+      _registrationUploadOffset,
+      _registrationEnvelopeOffset,
+      transaction.registrationUpload,
+    );
+    frame.setRange(
+      _registrationEnvelopeOffset,
+      _registrationProofOffset,
+      transaction.accountKeyEnvelope,
+    );
+    frame.setRange(
+      _registrationProofOffset,
+      _registrationStateOffset,
+      transaction.deviceProof,
+    );
+    frame.setRange(
+      _registrationStateOffset,
+      _registrationFrameLength,
+      transaction.fullStateBlob,
+    );
+    return frame;
+  }
+
+  static _PendingRegistrationTransaction _decodePendingRegistration(
+    Uint8List frame,
+  ) {
+    if (frame.length != _registrationFrameLength ||
+        !_startsWith(frame, _registrationFrameMagic)) {
+      throw const FormatException('注册事务帧无效');
+    }
+    final fields = ByteData.sublistView(frame);
+    final keyEpoch = fields.getUint32(12, Endian.big);
+    final keyVersion = fields.getUint32(16, Endian.big);
+    final expiresAtMs = fields.getUint64(24, Endian.big);
+    if (fields.getUint16(8, Endian.big) != _registrationFrameVersion ||
+        fields.getUint16(10, Endian.big) != 0 ||
+        keyEpoch != 1 ||
+        keyVersion <= 0 ||
+        fields.getUint32(20, Endian.big) != 0 ||
+        expiresAtMs <= 0) {
+      throw const FormatException('注册事务帧元数据无效');
+    }
+    final attemptExpiresAt = _utcDateTimeFromMilliseconds(expiresAtMs);
+    return _PendingRegistrationTransaction(
+      attemptId: _canonicalUuidFromBytes(frame, 32),
+      userId: _canonicalUuidFromBytes(frame, 48),
+      accountBinding: _canonicalUuidFromBytes(frame, 64),
+      deviceId: _canonicalUuidFromBytes(frame, 80),
+      keyVersion: keyVersion,
+      keyEpoch: keyEpoch,
+      attemptExpiresAt: attemptExpiresAt,
+      registrationUpload: Uint8List.fromList(
+        frame.sublist(_registrationUploadOffset, _registrationEnvelopeOffset),
+      ),
+      accountKeyEnvelope: Uint8List.fromList(
+        frame.sublist(_registrationEnvelopeOffset, _registrationProofOffset),
+      ),
+      deviceProof: Uint8List.fromList(
+        frame.sublist(_registrationProofOffset, _registrationStateOffset),
+      ),
+      fullStateBlob: Uint8List.fromList(
+        frame.sublist(_registrationStateOffset),
+      ),
+    );
+  }
+
+  static DateTime _utcDateTimeFromMilliseconds(int value) {
+    try {
+      return DateTime.fromMillisecondsSinceEpoch(value, isUtc: true);
+    } on RangeError {
+      throw const FormatException('注册事务过期时间无效');
+    }
+  }
+
+  static String _canonicalUuidFromBytes(Uint8List frame, int offset) {
+    final value = _uuidString(
+      Uint8List.fromList(frame.sublist(offset, offset + 16)),
+    );
+    _uuidBytes(value);
+    return value;
+  }
+
+  static void _requireFixedBytes(
+    Uint8List value,
+    int expectedLength,
+    String field,
+  ) {
+    if (value.length != expectedLength) {
+      throw FormatException('注册事务字段长度无效：$field');
+    }
+  }
+
+  static bool _startsWith(Uint8List value, Uint8List prefix) {
+    if (value.length < prefix.length) return false;
+    for (var index = 0; index < prefix.length; index++) {
+      if (value[index] != prefix[index]) return false;
+    }
+    return true;
+  }
+
+  static bool _sameBytes(Uint8List left, Uint8List right) {
+    if (left.length != right.length) return false;
+    var difference = 0;
+    for (var index = 0; index < left.length; index++) {
+      difference |= left[index] ^ right[index];
+    }
+    return difference == 0;
+  }
+
   static String _normalizeLoginName(String value) {
     final normalized = value.trim().toLowerCase();
     if (normalized.length < 3 ||
@@ -467,6 +1034,17 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   static void _clearBytes(Uint8List? value) {
     if (value == null) return;
     value.fillRange(0, value.length, 0);
+  }
+
+  void _beginExclusiveOperation() {
+    if (_authenticationInProgress) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_AUTHENTICATION_IN_PROGRESS',
+      );
+    }
+    _authenticationInProgress = true;
   }
 
   Uint8List _beginAuthentication(Uint8List password) {
@@ -629,4 +1207,64 @@ final class _DeviceContext {
   final KelivoDeviceStateAccountBinding? account;
 
   String get deviceIdText => E2eeAccountAuthenticator._uuidString(deviceId);
+}
+
+final class _PendingRegistrationTransaction {
+  _PendingRegistrationTransaction({
+    required this.attemptId,
+    required this.userId,
+    required this.accountBinding,
+    required this.deviceId,
+    required this.keyVersion,
+    required this.keyEpoch,
+    required DateTime attemptExpiresAt,
+    required Uint8List registrationUpload,
+    required Uint8List accountKeyEnvelope,
+    required Uint8List deviceProof,
+    required Uint8List fullStateBlob,
+  }) : attemptExpiresAt = attemptExpiresAt.toUtc(),
+       registrationUpload = Uint8List.fromList(registrationUpload),
+       accountKeyEnvelope = Uint8List.fromList(accountKeyEnvelope),
+       deviceProof = Uint8List.fromList(deviceProof),
+       fullStateBlob = Uint8List.fromList(fullStateBlob);
+
+  final String attemptId;
+  final String userId;
+  final String accountBinding;
+  final String deviceId;
+  final int keyVersion;
+  final int keyEpoch;
+  final DateTime attemptExpiresAt;
+  final Uint8List registrationUpload;
+  final Uint8List accountKeyEnvelope;
+  final Uint8List deviceProof;
+  final Uint8List fullStateBlob;
+  bool _disposed = false;
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    registrationUpload.fillRange(0, registrationUpload.length, 0);
+    accountKeyEnvelope.fillRange(0, accountKeyEnvelope.length, 0);
+    deviceProof.fillRange(0, deviceProof.length, 0);
+    fullStateBlob.fillRange(0, fullStateBlob.length, 0);
+  }
+}
+
+final class _OpenedPendingRegistration {
+  _OpenedPendingRegistration({
+    required this.transaction,
+    required this.envelopeDigest,
+  });
+
+  final _PendingRegistrationTransaction transaction;
+  final Uint8List envelopeDigest;
+  bool _disposed = false;
+
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    transaction.dispose();
+    envelopeDigest.fillRange(0, envelopeDigest.length, 0);
+  }
 }

@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
@@ -246,6 +247,21 @@ final class CloudSyncProvider extends ChangeNotifier {
         authenticatedSession,
         registrationClient,
       );
+      try {
+        await authentication.confirmFirstDeviceRegistration(
+          loginName: loginName.trim(),
+          session: authenticatedSession,
+        );
+      } catch (error, stackTrace) {
+        // 工作区会话已经提交，事务清理失败只能延后重试，不能把成功注册伪装成失败。
+        developer.log(
+          '首设备注册已提交，恢复事务将在后续认证重试清理',
+          name: 'Kelivo.CloudSyncProvider',
+          level: 900,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
       if (connected) registrationClient = null;
       return true;
     } catch (error, stackTrace) {
