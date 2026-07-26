@@ -5,6 +5,7 @@
 
 use std::{convert::Infallible, fmt};
 
+use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
 use hpke::{
     Deserializable, Kem as HpkeKemTrait, OpModeR, OpModeS, Serializable,
@@ -229,13 +230,42 @@ impl Sha256Digest {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceSigningPublicKey([u8; DEVICE_PUBLIC_KEY_LENGTH]);
 
+fn is_strict_ed25519_point(bytes: &[u8; DEVICE_PUBLIC_KEY_LENGTH]) -> bool {
+    let compressed = CompressedEdwardsY(*bytes);
+    let Some(point) = compressed.decompress() else {
+        return false;
+    };
+
+    point.compress().to_bytes() == *bytes && !point.is_small_order() && point.is_torsion_free()
+}
+
+fn strict_verifying_key(
+    bytes: &[u8; DEVICE_PUBLIC_KEY_LENGTH],
+) -> Result<VerifyingKey, DeviceCryptoError> {
+    let public_key =
+        VerifyingKey::from_bytes(bytes).map_err(|_| DeviceCryptoError::InvalidSigningPublicKey)?;
+    if !is_strict_ed25519_point(bytes) {
+        return Err(DeviceCryptoError::InvalidSigningPublicKey);
+    }
+    Ok(public_key)
+}
+
+fn verify_strict_device_signature(
+    public_key: &VerifyingKey,
+    message: &[u8],
+    signature: &Signature,
+) -> bool {
+    let signature_bytes = signature.to_bytes();
+    let signature_r = copy_array(&signature_bytes[..DEVICE_PUBLIC_KEY_LENGTH]);
+
+    is_strict_ed25519_point(public_key.as_bytes())
+        && is_strict_ed25519_point(&signature_r)
+        && public_key.verify_strict(message, signature).is_ok()
+}
+
 impl DeviceSigningPublicKey {
     pub fn from_bytes(bytes: [u8; DEVICE_PUBLIC_KEY_LENGTH]) -> Result<Self, DeviceCryptoError> {
-        let public_key = VerifyingKey::from_bytes(&bytes)
-            .map_err(|_| DeviceCryptoError::InvalidSigningPublicKey)?;
-        if public_key.is_weak() {
-            return Err(DeviceCryptoError::InvalidSigningPublicKey);
-        }
+        strict_verifying_key(&bytes)?;
         Ok(Self(bytes))
     }
 
@@ -244,7 +274,7 @@ impl DeviceSigningPublicKey {
     }
 
     fn verifying_key(&self) -> Result<VerifyingKey, DeviceCryptoError> {
-        VerifyingKey::from_bytes(&self.0).map_err(|_| DeviceCryptoError::InvalidSigningPublicKey)
+        strict_verifying_key(&self.0)
     }
 }
 
@@ -503,11 +533,15 @@ impl DeviceProofMessage {
         if self.0 != expected_message.0 {
             return Err(DeviceCryptoError::DeviceProofBindingMismatch);
         }
-        expected_fields
-            .signing_public_key
-            .verifying_key()?
-            .verify_strict(&self.0, &Signature::from_bytes(&signature.0))
-            .map_err(|_| DeviceCryptoError::DeviceProofSignatureInvalid)
+        let public_key = expected_fields.signing_public_key.verifying_key()?;
+        if !verify_strict_device_signature(
+            &public_key,
+            &self.0,
+            &Signature::from_bytes(&signature.0),
+        ) {
+            return Err(DeviceCryptoError::DeviceProofSignatureInvalid);
+        }
+        Ok(())
     }
 }
 
@@ -696,11 +730,15 @@ pub fn verify_ark_envelope(
     let signature = Signature::from_bytes(&copy_array(
         &envelope.0[ARK_SIGNATURE_OFFSET..ARK_ENVELOPE_LENGTH],
     ));
-    expected_binding
-        .issuer_signing_public_key
-        .verifying_key()?
-        .verify_strict(&envelope.0[..ARK_SIGNATURE_OFFSET], &signature)
-        .map_err(|_| DeviceCryptoError::ArkEnvelopeSignatureInvalid)
+    let issuer_public_key = expected_binding.issuer_signing_public_key.verifying_key()?;
+    if !verify_strict_device_signature(
+        &issuer_public_key,
+        &envelope.0[..ARK_SIGNATURE_OFFSET],
+        &signature,
+    ) {
+        return Err(DeviceCryptoError::ArkEnvelopeSignatureInvalid);
+    }
+    Ok(())
 }
 
 pub fn open_ark_envelope(
@@ -1297,6 +1335,61 @@ mod tests {
         assert!(matches!(
             DeviceProofMessage::new(fields),
             Err(DeviceCryptoError::InvalidExpiry)
+        ));
+    }
+
+    #[test]
+    fn signing_public_key_rejects_cctv_mixed_order_point() {
+        // CCTV #50 是可规范解码、非纯小阶但带低阶分量的 A，必须在导入边界拒绝。
+        let mixed_order_key = hex_array::<DEVICE_PUBLIC_KEY_LENGTH>(
+            "10eb7c3acfb2bed3e0d6ab89bf5a3d6afddd1176ce4812e38d9fd485058fdb1f",
+        );
+        let signature =
+            Signature::from_bytes(&hex_array::<DEVICE_PROOF_SIGNATURE_LENGTH>(concat!(
+                "b62cf890de42c413b11b1411c9f01f1c4d77aa87ef182258d1251f69af2a3506",
+                "08f32d206a7c0b7efa9a59e66546e8f1f599ef843fb502c9cc3c4ae8b7c11e05",
+            )));
+        let dalek_key =
+            VerifyingKey::from_bytes(&mixed_order_key).expect("CCTV #50 公钥应能被 dalek 2.2 解码");
+
+        assert!(
+            dalek_key
+                .verify_strict(b"ed25519vectors 5", &signature)
+                .is_ok()
+        );
+
+        assert!(matches!(
+            DeviceSigningPublicKey::from_bytes(mixed_order_key),
+            Err(DeviceCryptoError::InvalidSigningPublicKey)
+        ));
+    }
+
+    #[test]
+    fn device_signature_rejects_cctv_mixed_order_r() {
+        // CCTV #7 的 A 与 R 都带低阶分量，dalek 2.2 严格验签仍接受该固定向量。
+        let mixed_order_key = hex_array::<DEVICE_PUBLIC_KEY_LENGTH>(
+            "10eb7c3acfb2bed3e0d6ab89bf5a3d6afddd1176ce4812e38d9fd485058fdb1f",
+        );
+        let signature =
+            Signature::from_bytes(&hex_array::<DEVICE_PROOF_SIGNATURE_LENGTH>(concat!(
+                "36684ea91032ba5b1dbab2d02f4debc74c3327f2b3802e2e4d371aa42b12b56b",
+                "bbfd00bd9c259d8d222d15e67a3d8228585050dbb9b9585be20d8fadc721da03",
+            )));
+        let signature_bytes = signature.to_bytes();
+        let signature_r = copy_array(&signature_bytes[..DEVICE_PUBLIC_KEY_LENGTH]);
+        let dalek_key =
+            VerifyingKey::from_bytes(&mixed_order_key).expect("CCTV #7 公钥应能被 dalek 2.2 解码");
+
+        assert!(
+            dalek_key
+                .verify_strict(b"ed25519vectors", &signature)
+                .is_ok()
+        );
+        assert!(!is_strict_ed25519_point(&signature_r));
+        assert!(!verify_strict_device_signature(
+            &dalek_key,
+            b"ed25519vectors",
+            &signature,
         ));
     }
 
