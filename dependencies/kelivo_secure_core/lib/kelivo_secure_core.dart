@@ -11,7 +11,7 @@ import 'kelivo_secure_core_bindings_generated.dart' as native;
 
 part 'src/device_core.dart';
 
-const _expectedAbiVersion = 4;
+const _expectedAbiVersion = 5;
 const _keySlotIdLength = 16;
 const _keyPolicyVersion = 1;
 const _keySlotsCapability = 1 << 0;

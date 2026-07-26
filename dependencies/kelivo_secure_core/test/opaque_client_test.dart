@@ -24,10 +24,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v4 OPAQUE 与设备 E2EE 支持', () async {
+  test('能力门禁声明 ABI v5 OPAQUE 与设备 E2EE 支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 4);
+    expect(capabilities.abiVersion, 5);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -228,10 +228,11 @@ void main() {
     final reopenedPending = await core.openDeviceState(
       key,
       stateBlob: pendingState,
-      expectedDeviceId: targetDeviceId,
-      expectedKeyVersion: keyVersion,
     );
     expect(reopenedPending.ark, isNull);
+    expect(reopenedPending.binding.deviceId, orderedEquals(targetDeviceId));
+    expect(reopenedPending.binding.keyVersion, keyVersion);
+    expect(reopenedPending.binding.account, isNull);
     final targetPublicKeys = await core.readDevicePublicKeys(
       reopenedPending.identity,
     );
@@ -366,14 +367,12 @@ void main() {
     final reopenedFull = await core.openDeviceState(
       key,
       stateBlob: accepted.stateBlob,
-      expectedDeviceId: targetDeviceId,
-      expectedKeyVersion: keyVersion,
-      expectedAccount: KelivoDeviceStateAccountBinding(
-        userId: userId,
-        keyEpoch: keyEpoch,
-      ),
     );
     expect(reopenedFull.ark, isNotNull);
+    expect(reopenedFull.binding.deviceId, orderedEquals(targetDeviceId));
+    expect(reopenedFull.binding.keyVersion, keyVersion);
+    expect(reopenedFull.binding.account?.userId, orderedEquals(userId));
+    expect(reopenedFull.binding.account?.keyEpoch, keyEpoch);
     final reopenedPublicKeys = await core.readDevicePublicKeys(
       reopenedFull.identity,
     );

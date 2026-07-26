@@ -25,8 +25,10 @@ pub(super) const PAIRING_APPROVAL_BUNDLE_LENGTH: usize = crypto::ARK_ENVELOPE_LE
 pub(super) const PENDING_PAIRING_MATERIAL_LENGTH: usize =
     UUID_LENGTH + PAIRING_SECRET_LENGTH + crypto::SHA256_DIGEST_LENGTH;
 pub(super) const DEVICE_STATE_BLOB_LENGTH: usize = crypto::DEVICE_STATE_BLOB_LENGTH;
+pub(super) const DEVICE_STATE_BINDING_STRUCT_SIZE: u32 = 48;
 
 const UUID_LENGTH: usize = 16;
+pub(super) const DEVICE_STATE_BINDING_FLAG_ACCOUNT: u32 = 1;
 const PAIRING_SECRET_LENGTH: usize = crypto::PAIRING_SECRET_LENGTH;
 const PAIRING_PROTOCOL_VERSION: u32 = 1;
 const PAIRING_LIFETIME_MILLISECONDS: u64 = 5 * 60 * 1000;
@@ -35,6 +37,53 @@ const STATE_KEY_INFO: &[u8] = b"kelivo.device-state.key.v1\0";
 const MAX_ACTIVE_DEVICE_IDENTITIES: usize = 64;
 const MAX_ACTIVE_ACCOUNT_ROOT_KEYS: usize = 64;
 const MAX_ACTIVE_PENDING_PAIRINGS: usize = 64;
+
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub struct KelivoDeviceStateBinding {
+    pub struct_size: u32,
+    pub flags: u32,
+    pub device_id: [u8; UUID_LENGTH],
+    pub key_version: u32,
+    pub user_id: [u8; UUID_LENGTH],
+    pub key_epoch: u32,
+}
+
+const _: () = assert!(
+    core::mem::size_of::<KelivoDeviceStateBinding>() == DEVICE_STATE_BINDING_STRUCT_SIZE as usize
+);
+
+impl KelivoDeviceStateBinding {
+    const fn empty() -> Self {
+        Self {
+            struct_size: 0,
+            flags: 0,
+            device_id: [0; UUID_LENGTH],
+            key_version: 0,
+            user_id: [0; UUID_LENGTH],
+            key_epoch: 0,
+        }
+    }
+
+    fn authenticated(binding: crypto::DeviceStateBinding) -> Self {
+        let (flags, user_id, key_epoch) = match binding.account {
+            Some(account) => (
+                DEVICE_STATE_BINDING_FLAG_ACCOUNT,
+                *account.user_id.as_bytes(),
+                account.key_epoch,
+            ),
+            None => (0, [0; UUID_LENGTH], 0),
+        };
+        Self {
+            struct_size: DEVICE_STATE_BINDING_STRUCT_SIZE,
+            flags,
+            device_id: *binding.device_id.as_bytes(),
+            key_version: binding.key_version,
+            user_id,
+            key_epoch,
+        }
+    }
+}
 
 struct SecretRegistry<T> {
     active: HashMap<u64, Arc<T>>,
@@ -530,6 +579,19 @@ fn state_binding(
 
 unsafe fn reset_handle(out_handle: *mut u64) -> Result<(), KelivoStatus> {
     unsafe { write_output(out_handle, INVALID_KEY_HANDLE) }
+}
+
+unsafe fn reset_device_state_open_outputs(
+    out_binding: *mut KelivoDeviceStateBinding,
+    out_identity_handle: *mut u64,
+    out_ark_handle: *mut u64,
+) -> Result<(), KelivoStatus> {
+    let binding_result = unsafe { write_output(out_binding, KelivoDeviceStateBinding::empty()) };
+    let identity_result = unsafe { reset_handle(out_identity_handle) };
+    let ark_result = unsafe { reset_handle(out_ark_handle) };
+    binding_result?;
+    identity_result?;
+    ark_result
 }
 
 unsafe fn reset_handle_and_length(
@@ -1029,44 +1091,23 @@ pub unsafe extern "C" fn kelivo_device_state_seal(
 #[unsafe(no_mangle)]
 /// # Safety
 ///
-/// 所有输入指针必须覆盖声明长度；两个输出句柄指针必须可写且不得重叠。
+/// 输入指针必须覆盖声明长度；三个输出指针必须可写且彼此不得重叠。
 pub unsafe extern "C" fn kelivo_device_state_open(
     key_handle: u64,
     blob: *const u8,
     blob_length: usize,
-    expected_device_id: *const u8,
-    expected_device_id_length: usize,
-    expected_key_version: u32,
-    expected_user_id: *const u8,
-    expected_user_id_length: usize,
-    expected_key_epoch: u32,
+    out_binding: *mut KelivoDeviceStateBinding,
     out_identity_handle: *mut u64,
     out_ark_handle: *mut u64,
 ) -> i32 {
-    if let Err(status) = unsafe { reset_handle(out_identity_handle) } {
-        return status.code();
-    }
-    if let Err(status) = unsafe { reset_handle(out_ark_handle) } {
+    if let Err(status) =
+        unsafe { reset_device_state_open_outputs(out_binding, out_identity_handle, out_ark_handle) }
+    {
         return status.code();
     }
     if blob_length != DEVICE_STATE_BLOB_LENGTH {
         return KelivoStatus::DeviceStateInvalid.code();
     }
-    let expected_device_id =
-        match unsafe { read_device_id(expected_device_id, expected_device_id_length) } {
-            Ok(device_id) => device_id,
-            Err(status) => return status.code(),
-        };
-    let expected_account = match unsafe {
-        read_optional_account_binding(
-            expected_user_id,
-            expected_user_id_length,
-            expected_key_epoch,
-        )
-    } {
-        Ok(account) => account,
-        Err(status) => return status.code(),
-    };
     let blob = match unsafe { read_input(blob, blob_length) } {
         Ok(bytes) => match crypto::DeviceStateBlob::from_bytes(bytes) {
             Ok(blob) => blob,
@@ -1082,15 +1123,11 @@ pub unsafe extern "C" fn kelivo_device_state_open(
         Ok(key) => key,
         Err(status) => return status.code(),
     };
-    let (actual_binding, identity, ark) = match crypto::open_device_state(&state_key, &blob) {
+    let (binding, identity, ark) = match crypto::open_device_state(&state_key, &blob) {
         Ok(opened) => opened,
         Err(error) => return device_error_status(error).code(),
     };
-    let expected_binding =
-        state_binding(expected_device_id, expected_key_version, expected_account);
-    if actual_binding != expected_binding {
-        return KelivoStatus::DeviceStateAuthenticationFailed.code();
-    }
+    let authenticated_binding = KelivoDeviceStateBinding::authenticated(binding);
 
     let identity_handle = match register_identity(identity) {
         Ok(handle) => handle,
@@ -1107,6 +1144,7 @@ pub unsafe extern "C" fn kelivo_device_state_open(
         None => INVALID_KEY_HANDLE,
     };
     unsafe {
+        write_output(out_binding, authenticated_binding).expect("已验证的设备状态绑定输出必须可写");
         write_output(out_identity_handle, identity_handle)
             .expect("已验证的设备身份句柄输出必须可写");
         write_output(out_ark_handle, ark_handle).expect("已验证的 ARK 句柄输出必须可写");

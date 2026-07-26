@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(4)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(5)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -109,6 +109,17 @@ typedef int32_t KelivoStatus;
 #define KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE ((size_t)400)
 #define KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE ((size_t)432)
 #define KELIVO_DEVICE_STATE_BLOB_SIZE ((size_t)188)
+#define KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE UINT32_C(48)
+#define KELIVO_DEVICE_STATE_BINDING_FLAG_ACCOUNT (UINT32_C(1) << 0)
+
+typedef struct KelivoDeviceStateBinding {
+    uint32_t struct_size;
+    uint32_t flags;
+    uint8_t device_id[KELIVO_DEVICE_UUID_SIZE];
+    uint32_t key_version;
+    uint8_t user_id[KELIVO_DEVICE_UUID_SIZE];
+    uint32_t key_epoch;
+} KelivoDeviceStateBinding;
 
 typedef int32_t (*KelivoSqlCipherKeyCallback)(
     void *database,
@@ -524,19 +535,15 @@ KELIVO_CORE_API KelivoStatus kelivo_device_state_seal(
     size_t *out_blob_length);
 
 /*
- * 开启状态时必须提供调用方当前预期的完整绑定；不匹配不得发布任何句柄。
- * identity-only 成功时 out_ark_handle 保持零，完整态成功时两个句柄都有效。
+ * 状态绑定与秘密经过同一 AEAD 认证；认证成功前不得发布绑定或任何句柄。
+ * identity-only 成功时 binding 不含 ACCOUNT 标志且 out_ark_handle 保持零；
+ * 完整态成功时绑定包含账户与 epoch，两个句柄都有效。
  */
 KELIVO_CORE_API KelivoStatus kelivo_device_state_open(
     uint64_t key_handle,
     const uint8_t *blob,
     size_t blob_length,
-    const uint8_t *expected_device_id,
-    size_t expected_device_id_length,
-    uint32_t expected_key_version,
-    const uint8_t *expected_user_id,
-    size_t expected_user_id_length,
-    uint32_t expected_key_epoch,
+    KelivoDeviceStateBinding *out_binding,
     uint64_t *out_identity_handle,
     uint64_t *out_ark_handle);
 
