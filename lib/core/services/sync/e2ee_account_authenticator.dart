@@ -24,14 +24,12 @@ final class E2eeAccountLoginApprovalRequired extends E2eeAccountLoginResult {
     required this.onboardingToken,
     required DateTime onboardingTokenExpiresAt,
     required this.loginName,
-    required this.accountContextId,
     required this.device,
   }) : onboardingTokenExpiresAt = onboardingTokenExpiresAt.toUtc();
 
   final CloudSyncOnboardingToken onboardingToken;
   final DateTime onboardingTokenExpiresAt;
   final String loginName;
-  final String accountContextId;
   final CloudSyncAuthenticatedDevice device;
 }
 
@@ -227,24 +225,19 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         device: device,
         credentialRequest: opaqueStart.request,
       );
-      final accountContextId = _uuidBytes(start.accountBinding);
-      final localAccount = context.account;
-      if (localAccount != null &&
-          !_sameBytes(localAccount.userId, accountContextId)) {
-        throw StateError('登录账户与本地设备状态不匹配');
-      }
+      final opaqueAccountBinding = _uuidBytes(start.accountBinding);
 
       opaqueStateActive = false;
       credentialFinalization = await _secureCore.finishOpaqueLogin(
         opaqueStart.state,
         password: passwordCopy,
         response: start.credentialResponse,
-        accountId: accountContextId,
+        accountId: opaqueAccountBinding,
       );
       final deviceProof = await _secureCore.signDeviceLoginProof(
         context.identity,
         attemptId: _uuidBytes(start.attemptId),
-        accountContextId: accountContextId,
+        accountContextId: opaqueAccountBinding,
         deviceId: context.deviceId,
         expiresAtMs: start.expiresAt.millisecondsSinceEpoch,
         challenge: start.deviceChallenge,
@@ -268,7 +261,6 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
             onboardingToken: onboardingToken,
             onboardingTokenExpiresAt: onboardingTokenExpiresAt,
             loginName: normalizedLoginName,
-            accountContextId: start.accountBinding,
             device: device,
           ),
       };
@@ -309,7 +301,6 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     required CloudSyncOnboardingToken onboardingToken,
     required DateTime onboardingTokenExpiresAt,
     required String loginName,
-    required String accountContextId,
     required CloudSyncAuthenticatedDevice device,
   }) {
     if (context.account != null ||
@@ -321,7 +312,6 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       onboardingToken: onboardingToken,
       onboardingTokenExpiresAt: onboardingTokenExpiresAt,
       loginName: loginName,
-      accountContextId: accountContextId,
       device: device,
     );
   }
@@ -453,15 +443,6 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
         '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
         '${hex.substring(20)}';
-  }
-
-  static bool _sameBytes(Uint8List left, Uint8List right) {
-    if (left.length != right.length) return false;
-    var difference = 0;
-    for (var index = 0; index < left.length; index++) {
-      difference |= left[index] ^ right[index];
-    }
-    return difference == 0;
   }
 
   static void _clearBytes(Uint8List? value) {

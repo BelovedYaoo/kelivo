@@ -305,7 +305,7 @@ void main() {
     );
   });
 
-  test('已有完整设备状态拒绝其他账户上下文且释放所有句柄', () async {
+  test('OPAQUE 账户伪名不同于本地用户标识时仍继续密码学登录', () async {
     const core = KelivoSecureCore();
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -341,6 +341,7 @@ void main() {
     await core.closeAccountRootKey(ark);
     await core.closeDeviceIdentity(identity);
     await core.close(key);
+    expect(_accountContextId, isNot(_userId));
 
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
@@ -388,7 +389,16 @@ void main() {
       }),
     );
     await request.response.close();
-    await expectLater(loginFuture, throwsStateError);
+    await expectLater(
+      loginFuture,
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.opaqueMessageInvalid,
+        ),
+      ),
+    );
 
     final reopenedKey = await core.openSlot(slotId);
     final reopened = await core.openDeviceState(
