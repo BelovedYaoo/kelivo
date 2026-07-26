@@ -15,6 +15,95 @@ const _recordId1 = '10000000-0000-4000-8000-000000000001';
 const _recordId2 = '10000000-0000-4000-8000-000000000002';
 const _recordId3 = '10000000-0000-4000-8000-000000000003';
 const _deviceId1 = '20000000-0000-4000-8000-000000000001';
+const _deviceId2 = '20000000-0000-4000-8000-000000000002';
+const _attemptId1 = '30000000-0000-4000-8000-000000000001';
+const _attemptId2 = '30000000-0000-4000-8000-000000000002';
+const _userId = '40000000-0000-4000-8000-000000000001';
+const _accountContextId = '50000000-0000-4000-8000-000000000001';
+const _pairingId = '60000000-0000-4000-8000-000000000001';
+const _issuerDeviceId = '70000000-0000-4000-8000-000000000001';
+const _fullTokenValue = 'kelivo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const _onboardingTokenValue =
+    'kelivo_onboarding_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
+
+final _fullToken = CloudSyncFullSessionToken.parse(_fullTokenValue);
+final _onboardingToken = CloudSyncOnboardingToken.parse(_onboardingTokenValue);
+
+Uint8List _filledBytes(int length, [int value = 0]) {
+  return Uint8List.fromList(List<int>.filled(length, value));
+}
+
+String _encodedBytes(int length, [int value = 0]) {
+  return base64Url.encode(_filledBytes(length, value)).replaceAll('=', '');
+}
+
+CloudSyncOpaqueDeviceIdentity _deviceIdentity() {
+  return CloudSyncOpaqueDeviceIdentity(
+    deviceId: _deviceId1,
+    deviceName: 'Windows 主机',
+    platform: CloudSyncPlatform.windows,
+    clientVersion: '1.2.3',
+    deviceKeyVersion: 1,
+    signingPublicKey: _filledBytes(cloudSyncDevicePublicKeyBytes, 1),
+    keyAgreementPublicKey: _filledBytes(cloudSyncDevicePublicKeyBytes, 2),
+  );
+}
+
+Map<String, Object?> _authenticatedData({
+  String token = _fullTokenValue,
+  int keyEpoch = 7,
+  String deviceId = _deviceId1,
+}) {
+  return <String, Object?>{
+    'protocolVersion': cloudSyncOpaqueProtocolVersion,
+    'result': 'authenticated',
+    'keyEpoch': keyEpoch,
+    'token': token,
+    'tokenExpiresAt': '2026-07-27T05:00:00.000Z',
+    'user': <String, Object?>{
+      'id': _userId,
+      'loginName': 'alice',
+      'displayName': 'Alice',
+      'role': 'owner',
+      'attachmentQuotaBytes': 1048576,
+    },
+    'device': <String, Object?>{
+      'id': deviceId,
+      'name': 'Windows 主机',
+      'platform': 'windows',
+      'clientVersion': '1.2.3',
+      'status': 'active',
+      'createdAt': '2026-07-26T05:00:00.000Z',
+    },
+  };
+}
+
+Map<String, Object?> _pairingTargetJson() {
+  return <String, Object?>{
+    'id': _deviceId2,
+    'name': 'Android 手机',
+    'platform': 'android',
+    'clientVersion': '1.2.3',
+    'keyVersion': 1,
+    'authGeneration': 0,
+    'signingPublicKey': _encodedBytes(cloudSyncDevicePublicKeyBytes, 4),
+    'keyAgreementPublicKey': _encodedBytes(cloudSyncDevicePublicKeyBytes, 5),
+  };
+}
+
+Map<String, Object?> _trustedDeviceJson({String status = 'active'}) {
+  return <String, Object?>{
+    'id': _deviceId2,
+    'name': 'Android 手机',
+    'platform': 'android',
+    'clientVersion': '1.2.3',
+    'status': status,
+    'createdAt': '2026-07-26T05:00:00.000Z',
+    'lastSeenAt': '2026-07-26T06:00:00.000Z',
+    'revokedAt': status == 'revoked' ? '2026-07-26T07:00:00.000Z' : null,
+    'isCurrent': false,
+  };
+}
 
 void main() {
   test('生产客户端固定使用官方服务地址', () {
@@ -23,6 +112,609 @@ void main() {
 
     expect(client.baseUrl, 'https://kelivo.bemylover.top');
     expect(client.baseUrl, defaultCloudSyncBaseUrl);
+  });
+
+  test('完整会话令牌与设备引导令牌不可混淆且不会被日志输出', () {
+    expect(_fullToken.value, _fullTokenValue);
+    expect(_onboardingToken.value, _onboardingTokenValue);
+    expect(_fullToken.toString(), isNot(contains(_fullTokenValue)));
+    expect(_onboardingToken.toString(), isNot(contains(_onboardingTokenValue)));
+    expect(
+      () => CloudSyncFullSessionToken.parse(_onboardingTokenValue),
+      throwsFormatException,
+    );
+    expect(
+      () => CloudSyncOnboardingToken.parse(_fullTokenValue),
+      throwsFormatException,
+    );
+    expect(
+      () => CloudSyncFullSessionToken.parse('kelivo_short'),
+      throwsFormatException,
+    );
+  });
+
+  test('OPAQUE 注册开始规范化账户字段并保持固定长度二进制', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final startFuture = client.startOpaqueRegistration(
+      loginName: ' Alice ',
+      displayName: ' Alice ',
+      device: _deviceIdentity(),
+      registrationRequest: _filledBytes(
+        cloudSyncOpaqueRegistrationRequestBytes,
+        3,
+      ),
+    );
+
+    final request = await requestFuture;
+    expect(request.uri.path, '/api/auth/opaque-registration/start');
+    expect(request.headers.value(HttpHeaders.authorizationHeader), isNull);
+    expect(jsonDecode(await utf8.decoder.bind(request).join()), <
+      String,
+      Object?
+    >{
+      'protocolVersion': cloudSyncOpaqueProtocolVersion,
+      'loginName': 'alice',
+      'displayName': 'Alice',
+      'deviceId': _deviceId1,
+      'deviceName': 'Windows 主机',
+      'platform': 'windows',
+      'clientVersion': '1.2.3',
+      'deviceKeyVersion': 1,
+      'signingPublicKey': _encodedBytes(cloudSyncDevicePublicKeyBytes, 1),
+      'keyAgreementPublicKey': _encodedBytes(cloudSyncDevicePublicKeyBytes, 2),
+      'registrationRequest': _encodedBytes(
+        cloudSyncOpaqueRegistrationRequestBytes,
+        3,
+      ),
+    });
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'attemptId': _attemptId1,
+          'userId': _userId,
+          'accountBinding': _accountContextId,
+          'deviceChallenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 6),
+          'registrationResponse': _encodedBytes(
+            cloudSyncOpaqueRegistrationResponseBytes,
+            7,
+          ),
+          'expiresAt': '2026-07-26T05:05:00.000Z',
+        },
+      }),
+    );
+    await request.response.close();
+
+    final result = await startFuture;
+    expect(result.attemptId, _attemptId1);
+    expect(result.userId, _userId);
+    expect(result.accountBinding, _accountContextId);
+    expect(result.deviceChallenge, everyElement(6));
+    expect(result.registrationResponse, everyElement(7));
+  });
+
+  test('OPAQUE 注册完成返回绑定当前 keyEpoch 的完整会话', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final finishFuture = client.finishOpaqueRegistration(
+      attemptId: _attemptId1,
+      registrationUpload: _filledBytes(
+        cloudSyncOpaqueRegistrationUploadBytes,
+        8,
+      ),
+      accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 9),
+      deviceProof: _filledBytes(cloudSyncDeviceProofBytes, 10),
+    );
+
+    final request = await requestFuture;
+    expect(request.uri.path, '/api/auth/opaque-registration/finish');
+    expect(request.headers.value(HttpHeaders.authorizationHeader), isNull);
+    expect(jsonDecode(await utf8.decoder.bind(request).join()), <
+      String,
+      Object?
+    >{
+      'protocolVersion': cloudSyncOpaqueProtocolVersion,
+      'attemptId': _attemptId1,
+      'registrationUpload': _encodedBytes(
+        cloudSyncOpaqueRegistrationUploadBytes,
+        8,
+      ),
+      'accountKeyEnvelope': _encodedBytes(cloudSyncAccountKeyEnvelopeBytes, 9),
+      'deviceProof': _encodedBytes(cloudSyncDeviceProofBytes, 10),
+    });
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{'data': _authenticatedData(keyEpoch: 11)}),
+    );
+    await request.response.close();
+
+    final session = await finishFuture;
+    expect(session.token.value, _fullTokenValue);
+    expect(session.keyEpoch, 11);
+    expect(session.user.id, _userId);
+    expect(session.device.id, _deviceId1);
+    expect(session.device.status, CloudSyncAuthenticatedDeviceStatus.active);
+  });
+
+  test('OPAQUE 登录保持匿名并区分已认证与待设备批准结果', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = <(String, String?, CloudSyncJsonMap)>[];
+    final subscription = server.listen((request) async {
+      final body = copyCloudSyncJsonMap(
+        jsonDecode(await utf8.decoder.bind(request).join()),
+      );
+      requests.add((
+        request.uri.path,
+        request.headers.value(HttpHeaders.authorizationHeader),
+        body,
+      ));
+      final Object data;
+      if (request.uri.path == '/api/auth/opaque-login/start') {
+        data = <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'attemptId': _attemptId1,
+          'accountBinding': _accountContextId,
+          'deviceChallenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 11),
+          'credentialResponse': _encodedBytes(
+            cloudSyncOpaqueCredentialResponseBytes,
+            12,
+          ),
+          'expiresAt': '2026-07-26T05:05:00.000Z',
+        };
+      } else if (body['attemptId'] == _attemptId1) {
+        data = _authenticatedData(keyEpoch: 12);
+      } else {
+        data = <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'result': 'device-approval-required',
+          'onboardingToken': _onboardingTokenValue,
+          'onboardingTokenExpiresAt': '2026-07-26T05:05:00.000Z',
+          'device': <String, Object?>{
+            'id': _deviceId2,
+            'name': 'Windows 主机',
+            'platform': 'windows',
+            'clientVersion': '1.2.3',
+            'status': 'pending',
+            'createdAt': '2026-07-26T05:00:00.000Z',
+          },
+        };
+      }
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(<String, Object?>{'data': data}));
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    final start = await client.startOpaqueLogin(
+      loginName: ' Alice ',
+      device: _deviceIdentity(),
+      credentialRequest: _filledBytes(
+        cloudSyncOpaqueCredentialRequestBytes,
+        13,
+      ),
+    );
+    final authenticated = await client.finishOpaqueLogin(
+      attemptId: _attemptId1,
+      credentialFinalization: _filledBytes(
+        cloudSyncOpaqueCredentialFinalizationBytes,
+        14,
+      ),
+      deviceProof: _filledBytes(cloudSyncDeviceProofBytes, 15),
+    );
+    final approvalRequired = await client.finishOpaqueLogin(
+      attemptId: _attemptId2,
+      credentialFinalization: _filledBytes(
+        cloudSyncOpaqueCredentialFinalizationBytes,
+        16,
+      ),
+      deviceProof: _filledBytes(cloudSyncDeviceProofBytes, 17),
+    );
+
+    expect(start.credentialResponse, everyElement(12));
+    expect(
+      authenticated,
+      isA<CloudSyncOpaqueLoginAuthenticated>().having(
+        (result) => result.session.keyEpoch,
+        'keyEpoch',
+        12,
+      ),
+    );
+    expect(
+      approvalRequired,
+      isA<CloudSyncOpaqueLoginApprovalRequired>()
+          .having(
+            (result) => result.onboardingToken.value,
+            'onboardingToken',
+            _onboardingTokenValue,
+          )
+          .having(
+            (result) => result.device.status,
+            'device.status',
+            CloudSyncAuthenticatedDeviceStatus.pending,
+          ),
+    );
+    expect(requests, hasLength(3));
+    expect(requests.map((request) => request.$2), everyElement(isNull));
+    expect(requests.first.$3['loginName'], 'alice');
+    expect(
+      requests.first.$3['credentialRequest'],
+      _encodedBytes(cloudSyncOpaqueCredentialRequestBytes, 13),
+    );
+  });
+
+  test('设备配对全生命周期按令牌能力隔离并接管完整会话', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = <(String, String?, CloudSyncJsonMap)>[];
+    var queryCount = 0;
+    final subscription = server.listen((request) async {
+      final body = copyCloudSyncJsonMap(
+        jsonDecode(await utf8.decoder.bind(request).join()),
+      );
+      requests.add((
+        request.uri.path,
+        request.headers.value(HttpHeaders.authorizationHeader),
+        body,
+      ));
+      final Object data = switch (request.uri.path) {
+        '/api/auth/device-pairing/create' => <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': _pairingId,
+          'accountContextId': _accountContextId,
+          'challenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 18),
+          'expiresAt': '2026-07-26T05:05:00.000Z',
+          'targetDevice': _pairingTargetJson(),
+        },
+        '/api/auth/device-pairing/query' => <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': _pairingId,
+          'accountContextId': _accountContextId,
+          'challenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 18),
+          'expiresAt': '2026-07-26T05:05:00.000Z',
+          'targetDevice': _pairingTargetJson(),
+          'status': ++queryCount == 1 ? 'pending' : 'approved',
+          if (queryCount > 1) ...<String, Object?>{
+            'issuerDeviceId': _issuerDeviceId,
+            'issuerSigningPublicKey': _encodedBytes(
+              cloudSyncDevicePublicKeyBytes,
+              19,
+            ),
+            'issuerKeyAgreementPublicKey': _encodedBytes(
+              cloudSyncDevicePublicKeyBytes,
+              20,
+            ),
+            'keyEpoch': 23,
+            'accountKeyEnvelope': _encodedBytes(
+              cloudSyncAccountKeyEnvelopeBytes,
+              21,
+            ),
+            'deviceProof': _encodedBytes(cloudSyncDeviceProofBytes, 22),
+            'pairingAuthenticator': _encodedBytes(
+              cloudSyncPairingAuthenticatorBytes,
+              23,
+            ),
+          },
+        },
+        '/api/auth/device-pairing/approve' => <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': _pairingId,
+          'result': 'approved',
+          'approvedAt': '2026-07-26T05:01:00.000Z',
+        },
+        '/api/auth/device-pairing/consume' => _authenticatedData(
+          keyEpoch: 23,
+          deviceId: _deviceId2,
+        ),
+        '/api/auth/device-pairing/cancel' => <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': _pairingId,
+          'result': 'cancelled',
+          'cancelledAt': '2026-07-26T05:02:00.000Z',
+        },
+        '/api/device/trusted/list' => <String, Object?>{
+          'items': <Object?>[_trustedDeviceJson()],
+          'total': 1,
+          'pageIndex': 1,
+          'pageSize': 10,
+        },
+        '/api/device/trusted/revoke' => <String, Object?>{
+          'device': _trustedDeviceJson(status: 'revoked'),
+        },
+        _ => throw StateError('未预期的请求路径：${request.uri.path}'),
+      };
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(<String, Object?>{'data': data}));
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    final created = await client.createDevicePairing(
+      token: _onboardingToken,
+      pairingId: _pairingId,
+      pairingSecretHash: _filledBytes(cloudSyncPairingSecretHashBytes, 24),
+    );
+    final pending = await client.queryDevicePairing(
+      token: _onboardingToken,
+      pairingId: _pairingId,
+    );
+    final approval = await client.approveDevicePairing(
+      token: _fullToken,
+      pairingId: _pairingId,
+      keyEpoch: 23,
+      accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 21),
+      deviceProof: _filledBytes(cloudSyncDeviceProofBytes, 22),
+      pairingAuthenticator: _filledBytes(
+        cloudSyncPairingAuthenticatorBytes,
+        23,
+      ),
+    );
+    final approved = await client.queryDevicePairing(
+      token: _onboardingToken,
+      pairingId: _pairingId,
+    );
+    final session = await client.consumeDevicePairing(
+      token: _onboardingToken,
+      pairingId: _pairingId,
+    );
+    final devices = await client.listDevices(
+      status: CloudSyncDeviceStatus.active,
+      pageSize: 10,
+    );
+    final revoked = await client.revokeDevice(_deviceId2);
+    final cancellation = await client.cancelDevicePairing(
+      token: _onboardingToken,
+      pairingId: _pairingId,
+    );
+
+    expect(created.targetDevice.id, _deviceId2);
+    expect(created.challenge, everyElement(18));
+    expect(pending, isA<CloudSyncDevicePairingPending>());
+    expect(approval.pairingId, _pairingId);
+    expect(
+      approved,
+      isA<CloudSyncDevicePairingApproved>()
+          .having((result) => result.keyEpoch, 'keyEpoch', 23)
+          .having(
+            (result) => result.issuerDeviceId,
+            'issuerDeviceId',
+            _issuerDeviceId,
+          )
+          .having(
+            (result) => result.accountKeyEnvelope,
+            'accountKeyEnvelope',
+            everyElement(21),
+          ),
+    );
+    expect(session.keyEpoch, 23);
+    expect(session.device.id, _deviceId2);
+    expect(devices.items.single.id, _deviceId2);
+    expect(revoked.status, CloudSyncDeviceStatus.revoked);
+    expect(cancellation.pairingId, _pairingId);
+
+    final onboardingHeader = 'Bearer $_onboardingTokenValue';
+    final fullHeader = 'Bearer $_fullTokenValue';
+    for (final request in requests) {
+      final expectedHeader = switch (request.$1) {
+        '/api/auth/device-pairing/approve' ||
+        '/api/device/trusted/list' ||
+        '/api/device/trusted/revoke' => fullHeader,
+        _ => onboardingHeader,
+      };
+      expect(request.$2, expectedHeader, reason: request.$1);
+    }
+    expect(requests.first.$3, <String, Object?>{
+      'protocolVersion': cloudSyncOpaqueProtocolVersion,
+      'pairingId': _pairingId,
+      'pairingSecretHash': _encodedBytes(cloudSyncPairingSecretHashBytes, 24),
+    });
+    expect(requests[2].$3['keyEpoch'], 23);
+    expect(
+      requests[2].$3['accountKeyEnvelope'],
+      _encodedBytes(cloudSyncAccountKeyEnvelopeBytes, 21),
+    );
+    expect(requests[5].$3, <String, Object?>{
+      'status': 'active',
+      'pageIndex': 1,
+      'pageSize': 10,
+    });
+  });
+
+  test('认证与配对请求在发网前拒绝错误长度和越界 keyEpoch', () {
+    final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
+    addTearDown(() => client.close(force: true));
+    final identity = _deviceIdentity();
+    final invalidCalls = <(String, Object? Function())>[
+      (
+        '注册请求长度',
+        () => client.startOpaqueRegistration(
+          loginName: 'alice',
+          displayName: 'Alice',
+          device: identity,
+          registrationRequest: _filledBytes(
+            cloudSyncOpaqueRegistrationRequestBytes - 1,
+          ),
+        ),
+      ),
+      (
+        '注册上传长度',
+        () => client.finishOpaqueRegistration(
+          attemptId: _attemptId1,
+          registrationUpload: _filledBytes(
+            cloudSyncOpaqueRegistrationUploadBytes + 1,
+          ),
+          accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes),
+          deviceProof: _filledBytes(cloudSyncDeviceProofBytes),
+        ),
+      ),
+      (
+        '登录请求长度',
+        () => client.startOpaqueLogin(
+          loginName: 'alice',
+          device: identity,
+          credentialRequest: _filledBytes(
+            cloudSyncOpaqueCredentialRequestBytes - 1,
+          ),
+        ),
+      ),
+      (
+        '登录完成长度',
+        () => client.finishOpaqueLogin(
+          attemptId: _attemptId1,
+          credentialFinalization: _filledBytes(
+            cloudSyncOpaqueCredentialFinalizationBytes - 1,
+          ),
+          deviceProof: _filledBytes(cloudSyncDeviceProofBytes),
+        ),
+      ),
+      (
+        '配对密钥摘要长度',
+        () => client.createDevicePairing(
+          token: _onboardingToken,
+          pairingId: _pairingId,
+          pairingSecretHash: _filledBytes(cloudSyncPairingSecretHashBytes + 1),
+        ),
+      ),
+      (
+        'key epoch 下界',
+        () => client.approveDevicePairing(
+          token: _fullToken,
+          pairingId: _pairingId,
+          keyEpoch: 0,
+          accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes),
+          deviceProof: _filledBytes(cloudSyncDeviceProofBytes),
+          pairingAuthenticator: _filledBytes(
+            cloudSyncPairingAuthenticatorBytes,
+          ),
+        ),
+      ),
+      (
+        'key epoch 上界',
+        () => client.approveDevicePairing(
+          token: _fullToken,
+          pairingId: _pairingId,
+          keyEpoch: 0x100000000,
+          accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes),
+          deviceProof: _filledBytes(cloudSyncDeviceProofBytes),
+          pairingAuthenticator: _filledBytes(
+            cloudSyncPairingAuthenticatorBytes,
+          ),
+        ),
+      ),
+    ];
+
+    for (final invalidCall in invalidCalls) {
+      expect(
+        invalidCall.$2,
+        throwsA(
+          isA<CloudSyncException>()
+              .having(
+                (error) => error.kind,
+                'kind',
+                CloudSyncFailureKind.validation,
+              )
+              .having((error) => error.retryable, 'retryable', isFalse),
+        ),
+        reason: invalidCall.$1,
+      );
+    }
+  });
+
+  test('认证响应拒绝非规范 Base64URL 和 generated 模型缺字段', () async {
+    final canonicalChallenge = _encodedBytes(cloudSyncDeviceChallengeBytes);
+    final invalidChallenges = <String>[
+      '$canonicalChallenge=',
+      '${canonicalChallenge.substring(0, canonicalChallenge.length - 1)}B',
+      canonicalChallenge.substring(0, canonicalChallenge.length - 1),
+    ];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var requestIndex = 0;
+    final subscription = server.listen((request) async {
+      await utf8.decoder.bind(request).join();
+      final currentIndex = requestIndex++;
+      final omitRegistrationResponse = currentIndex == invalidChallenges.length;
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'data': <String, Object?>{
+            'protocolVersion': cloudSyncOpaqueProtocolVersion,
+            'attemptId': _attemptId1,
+            'userId': _userId,
+            'accountBinding': _accountContextId,
+            'deviceChallenge': omitRegistrationResponse
+                ? canonicalChallenge
+                : invalidChallenges[currentIndex],
+            if (!omitRegistrationResponse)
+              'registrationResponse': _encodedBytes(
+                cloudSyncOpaqueRegistrationResponseBytes,
+              ),
+            'expiresAt': '2026-07-26T05:05:00.000Z',
+          },
+        }),
+      );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    final invalidResponse = throwsA(
+      isA<CloudSyncException>()
+          .having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.invalidResponse,
+          )
+          .having((error) => error.retryable, 'retryable', isFalse),
+    );
+    for (var index = 0; index <= invalidChallenges.length; index++) {
+      await expectLater(
+        client.startOpaqueRegistration(
+          loginName: 'alice',
+          displayName: 'Alice',
+          device: _deviceIdentity(),
+          registrationRequest: _filledBytes(
+            cloudSyncOpaqueRegistrationRequestBytes,
+          ),
+        ),
+        invalidResponse,
+      );
+    }
   });
 
   test('同步服务响应重定向时拒绝访问目标地址', () async {
@@ -89,7 +781,7 @@ void main() {
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
-      token: 'token',
+      token: _fullToken,
     );
     addTearDown(() async {
       client.close(force: true);
@@ -209,7 +901,7 @@ void main() {
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
-      token: 'token',
+      token: _fullToken,
     );
     addTearDown(() async {
       client.close(force: true);
@@ -301,7 +993,7 @@ void main() {
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
-      token: 'token',
+      token: _fullToken,
     );
     addTearDown(() async {
       client.close(force: true);
@@ -339,7 +1031,7 @@ void main() {
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
-      token: 'token',
+      token: _fullToken,
     );
     addTearDown(() async {
       client.close(force: true);
@@ -645,7 +1337,7 @@ void main() {
     });
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
-      token: 'token',
+      token: _fullToken,
     );
     addTearDown(() async {
       client.close(force: true);
@@ -676,7 +1368,7 @@ void main() {
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
       baseUrl: 'http://${server.address.address}:${server.port}',
-      token: 'token',
+      token: _fullToken,
     );
     addTearDown(() async {
       client.close(force: true);

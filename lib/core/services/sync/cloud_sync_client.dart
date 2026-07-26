@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
@@ -22,16 +23,64 @@ abstract interface class CloudSyncRecordTransport {
 }
 
 abstract interface class CloudSyncAccountClient {
-  void setToken(String? token);
+  void setToken(CloudSyncFullSessionToken? token);
 
   void close({bool force = false});
 
-  Future<CloudSyncAccountSession> login({
+  Future<CloudSyncOpaqueRegistrationStart> startOpaqueRegistration({
     required String loginName,
-    required String password,
-    required String deviceName,
-    required CloudSyncPlatform platform,
-    required String clientVersion,
+    required String displayName,
+    required CloudSyncOpaqueDeviceIdentity device,
+    required Uint8List registrationRequest,
+  });
+
+  Future<CloudSyncAuthenticatedSession> finishOpaqueRegistration({
+    required String attemptId,
+    required Uint8List registrationUpload,
+    required Uint8List accountKeyEnvelope,
+    required Uint8List deviceProof,
+  });
+
+  Future<CloudSyncOpaqueLoginStart> startOpaqueLogin({
+    required String loginName,
+    required CloudSyncOpaqueDeviceIdentity device,
+    required Uint8List credentialRequest,
+  });
+
+  Future<CloudSyncOpaqueLoginFinishResult> finishOpaqueLogin({
+    required String attemptId,
+    required Uint8List credentialFinalization,
+    required Uint8List deviceProof,
+  });
+
+  Future<CloudSyncDevicePairingCreated> createDevicePairing({
+    required CloudSyncOnboardingToken token,
+    required String pairingId,
+    required Uint8List pairingSecretHash,
+  });
+
+  Future<CloudSyncDevicePairingQueryResult> queryDevicePairing({
+    required CloudSyncOnboardingToken token,
+    required String pairingId,
+  });
+
+  Future<CloudSyncDevicePairingApproval> approveDevicePairing({
+    required CloudSyncFullSessionToken token,
+    required String pairingId,
+    required int keyEpoch,
+    required Uint8List accountKeyEnvelope,
+    required Uint8List deviceProof,
+    required Uint8List pairingAuthenticator,
+  });
+
+  Future<CloudSyncAuthenticatedSession> consumeDevicePairing({
+    required CloudSyncOnboardingToken token,
+    required String pairingId,
+  });
+
+  Future<CloudSyncDevicePairingCancellation> cancelDevicePairing({
+    required CloudSyncOnboardingToken token,
+    required String pairingId,
   });
 
   Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
@@ -51,7 +100,7 @@ final class CloudSyncClient
     required this._client,
   });
 
-  factory CloudSyncClient({String? token}) {
+  factory CloudSyncClient({CloudSyncFullSessionToken? token}) {
     return CloudSyncClient._forBaseUrl(
       baseUrl: defaultCloudSyncBaseUrl,
       token: token,
@@ -59,13 +108,16 @@ final class CloudSyncClient
   }
 
   @visibleForTesting
-  factory CloudSyncClient.forTesting({required String baseUrl, String? token}) {
+  factory CloudSyncClient.forTesting({
+    required String baseUrl,
+    CloudSyncFullSessionToken? token,
+  }) {
     return CloudSyncClient._forBaseUrl(baseUrl: baseUrl, token: token);
   }
 
   factory CloudSyncClient._forBaseUrl({
     required String baseUrl,
-    String? token,
+    CloudSyncFullSessionToken? token,
   }) {
     final String normalized;
     try {
@@ -90,27 +142,25 @@ final class CloudSyncClient
     final client = CloudSyncClient._(
       baseUrl: normalized,
       dio: dio,
-      client: api.KelivoSyncApiClient(dio: dio),
+      // 鉴权逐请求显式注入，避免并发请求共享可变拦截器令牌。
+      client: api.KelivoSyncApiClient(
+        dio: dio,
+        interceptors: const <Interceptor>[],
+      ),
     );
     client.setToken(token);
     return client;
   }
 
-  static const _bearerAuthName = 'BearerAuth';
   static const _syncProtocolVersion = '3';
 
   final String baseUrl;
   final Dio _dio;
   final api.KelivoSyncApiClient _client;
+  CloudSyncFullSessionToken? _sessionToken;
 
   @override
-  void setToken(String? token) {
-    if (token == null || token.isEmpty) {
-      _client.removeBearerAuth(_bearerAuthName);
-      return;
-    }
-    _client.setBearerAuth(_bearerAuthName, token);
-  }
+  void setToken(CloudSyncFullSessionToken? token) => _sessionToken = token;
 
   @override
   void close({bool force = false}) {
@@ -132,47 +182,441 @@ final class CloudSyncClient
   }
 
   @override
-  Future<CloudSyncAccountSession> login({
+  Future<CloudSyncOpaqueRegistrationStart> startOpaqueRegistration({
     required String loginName,
-    required String password,
-    required String deviceName,
-    required CloudSyncPlatform platform,
-    required String clientVersion,
+    required String displayName,
+    required CloudSyncOpaqueDeviceIdentity device,
+    required Uint8List registrationRequest,
   }) {
-    _requireNonEmpty(loginName);
-    _requireNonEmpty(password);
-    _requireNonEmpty(deviceName);
-    _requireNonEmpty(clientVersion);
+    final normalizedLoginName = _normalizeLoginNameForRequest(loginName);
+    final normalizedDisplayName = _normalizeTextForRequest(
+      displayName,
+      maximumLength: 80,
+    );
+    final encodedRegistrationRequest = _encodeFixedBinaryForRequest(
+      registrationRequest,
+      cloudSyncOpaqueRegistrationRequestBytes,
+    );
 
     return _guard(() async {
-      final request = api.CreateAuthSessionRequest(
+      final request = api.OpaqueRegistrationStartRequest(
         (builder) => builder
-          ..loginName = loginName
-          ..password = password
-          ..deviceName = deviceName
-          ..platform = _toLoginPlatform(platform)
-          ..clientVersion = clientVersion,
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..loginName = normalizedLoginName
+          ..displayName = normalizedDisplayName
+          ..deviceId = device.deviceId
+          ..deviceName = device.deviceName
+          ..platform = _toRegistrationPlatform(device.platform)
+          ..clientVersion = device.clientVersion
+          ..deviceKeyVersion = device.deviceKeyVersion
+          ..signingPublicKey = _encodeFixedBinaryForRequest(
+            device.signingPublicKey,
+            cloudSyncDevicePublicKeyBytes,
+          )
+          ..keyAgreementPublicKey = _encodeFixedBinaryForRequest(
+            device.keyAgreementPublicKey,
+            cloudSyncDevicePublicKeyBytes,
+          )
+          ..registrationRequest = encodedRegistrationRequest,
       );
-      final response = await _client.getAuthApi().createAuthSession(
-        createAuthSessionRequest: request,
+      final response = await _client.getAuthApi().startOpaqueRegistration(
+        opaqueRegistrationStartRequest: request,
       );
       final data = _requireResponseData(response.data?.data);
-      final session = CloudSyncAccountSession(
-        baseUrl: baseUrl,
-        token: data.token,
-        userId: data.user.id,
-        loginName: data.user.loginName,
-        displayName: data.user.displayName,
-        role: _fromUserRole(data.user.role),
-        attachmentQuotaBytes: data.user.attachmentQuotaBytes,
-        deviceId: data.device.id,
-        deviceName: data.device.name,
-        platform: _fromAuthPlatform(data.device.platform),
-        clientVersion: data.device.clientVersion,
-        deviceCreatedAt: data.device.createdAt,
+      _requireProtocolVersion(data.protocolVersion);
+      return CloudSyncOpaqueRegistrationStart(
+        attemptId: data.attemptId,
+        userId: data.userId,
+        accountBinding: data.accountBinding,
+        deviceChallenge: _decodeFixedBinaryFromResponse(
+          data.deviceChallenge,
+          cloudSyncDeviceChallengeBytes,
+        ),
+        registrationResponse: _decodeFixedBinaryFromResponse(
+          data.registrationResponse,
+          cloudSyncOpaqueRegistrationResponseBytes,
+        ),
+        expiresAt: data.expiresAt,
       );
+    });
+  }
+
+  @override
+  Future<CloudSyncAuthenticatedSession> finishOpaqueRegistration({
+    required String attemptId,
+    required Uint8List registrationUpload,
+    required Uint8List accountKeyEnvelope,
+    required Uint8List deviceProof,
+  }) {
+    _requireClientIdentifier(attemptId);
+    final encodedRegistrationUpload = _encodeFixedBinaryForRequest(
+      registrationUpload,
+      cloudSyncOpaqueRegistrationUploadBytes,
+    );
+    final encodedAccountKeyEnvelope = _encodeFixedBinaryForRequest(
+      accountKeyEnvelope,
+      cloudSyncAccountKeyEnvelopeBytes,
+    );
+    final encodedDeviceProof = _encodeFixedBinaryForRequest(
+      deviceProof,
+      cloudSyncDeviceProofBytes,
+    );
+
+    return _guard(() async {
+      final request = api.OpaqueRegistrationFinishRequest(
+        (builder) => builder
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..attemptId = attemptId
+          ..registrationUpload = encodedRegistrationUpload
+          ..accountKeyEnvelope = encodedAccountKeyEnvelope
+          ..deviceProof = encodedDeviceProof,
+      );
+      final response = await _client.getAuthApi().finishOpaqueRegistration(
+        opaqueRegistrationFinishRequest: request,
+      );
+      final data = _requireResponseData(response.data?.data);
+      _requireProtocolVersion(data.protocolVersion);
+      if (data.result.name != 'authenticated') {
+        throw const FormatException('服务端返回了未知的注册结果');
+      }
+      final session = _authenticatedSessionFromRegistration(data);
       setToken(session.token);
       return session;
+    });
+  }
+
+  @override
+  Future<CloudSyncOpaqueLoginStart> startOpaqueLogin({
+    required String loginName,
+    required CloudSyncOpaqueDeviceIdentity device,
+    required Uint8List credentialRequest,
+  }) {
+    final normalizedLoginName = _normalizeLoginNameForRequest(loginName);
+    final encodedCredentialRequest = _encodeFixedBinaryForRequest(
+      credentialRequest,
+      cloudSyncOpaqueCredentialRequestBytes,
+    );
+
+    return _guard(() async {
+      final request = api.OpaqueLoginStartRequest(
+        (builder) => builder
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..loginName = normalizedLoginName
+          ..deviceId = device.deviceId
+          ..deviceName = device.deviceName
+          ..platform = _toLoginPlatform(device.platform)
+          ..clientVersion = device.clientVersion
+          ..deviceKeyVersion = device.deviceKeyVersion
+          ..signingPublicKey = _encodeFixedBinaryForRequest(
+            device.signingPublicKey,
+            cloudSyncDevicePublicKeyBytes,
+          )
+          ..keyAgreementPublicKey = _encodeFixedBinaryForRequest(
+            device.keyAgreementPublicKey,
+            cloudSyncDevicePublicKeyBytes,
+          )
+          ..credentialRequest = encodedCredentialRequest,
+      );
+      final response = await _client.getAuthApi().startOpaqueLogin(
+        opaqueLoginStartRequest: request,
+      );
+      final data = _requireResponseData(response.data?.data);
+      _requireProtocolVersion(data.protocolVersion);
+      return CloudSyncOpaqueLoginStart(
+        attemptId: data.attemptId,
+        accountBinding: data.accountBinding,
+        deviceChallenge: _decodeFixedBinaryFromResponse(
+          data.deviceChallenge,
+          cloudSyncDeviceChallengeBytes,
+        ),
+        credentialResponse: _decodeFixedBinaryFromResponse(
+          data.credentialResponse,
+          cloudSyncOpaqueCredentialResponseBytes,
+        ),
+        expiresAt: data.expiresAt,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncOpaqueLoginFinishResult> finishOpaqueLogin({
+    required String attemptId,
+    required Uint8List credentialFinalization,
+    required Uint8List deviceProof,
+  }) {
+    _requireClientIdentifier(attemptId);
+    final encodedCredentialFinalization = _encodeFixedBinaryForRequest(
+      credentialFinalization,
+      cloudSyncOpaqueCredentialFinalizationBytes,
+    );
+    final encodedDeviceProof = _encodeFixedBinaryForRequest(
+      deviceProof,
+      cloudSyncDeviceProofBytes,
+    );
+
+    return _guard(() async {
+      final request = api.OpaqueLoginFinishRequest(
+        (builder) => builder
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..attemptId = attemptId
+          ..credentialFinalization = encodedCredentialFinalization
+          ..deviceProof = encodedDeviceProof,
+      );
+      final response = await _client.getAuthApi().finishOpaqueLogin(
+        opaqueLoginFinishRequest: request,
+      );
+      final value = _requireResponseData(response.data?.data).oneOf.value;
+      if (value is api.OpaqueLoginFinishDataOneOf) {
+        _requireProtocolVersion(value.protocolVersion);
+        if (value.result.name != 'authenticated') {
+          throw const FormatException('服务端返回了未知的登录结果');
+        }
+        final session = _authenticatedSessionFromLogin(value);
+        setToken(session.token);
+        return CloudSyncOpaqueLoginAuthenticated(session);
+      }
+      if (value is api.OpaqueLoginFinishDataOneOf1) {
+        _requireProtocolVersion(value.protocolVersion);
+        if (value.result.name != 'deviceApprovalRequired') {
+          throw const FormatException('服务端返回了未知的登录结果');
+        }
+        return CloudSyncOpaqueLoginApprovalRequired(
+          onboardingToken: CloudSyncOnboardingToken.parse(
+            value.onboardingToken,
+          ),
+          onboardingTokenExpiresAt: value.onboardingTokenExpiresAt,
+          device: _authenticatedDevice(
+            id: value.device.id,
+            name: value.device.name,
+            platform: value.device.platform.name,
+            clientVersion: value.device.clientVersion,
+            status: value.device.status.name,
+            createdAt: value.device.createdAt,
+          ),
+        );
+      }
+      throw const FormatException('服务端返回了歧义的登录结果');
+    });
+  }
+
+  @override
+  Future<CloudSyncDevicePairingCreated> createDevicePairing({
+    required CloudSyncOnboardingToken token,
+    required String pairingId,
+    required Uint8List pairingSecretHash,
+  }) {
+    _requireClientIdentifier(pairingId);
+    final encodedSecretHash = _encodeFixedBinaryForRequest(
+      pairingSecretHash,
+      cloudSyncPairingSecretHashBytes,
+    );
+
+    return _guard(() async {
+      final request = api.DevicePairingCreateRequest(
+        (builder) => builder
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..pairingId = pairingId
+          ..pairingSecretHash = encodedSecretHash,
+      );
+      final response = await _client.getAuthApi().createDevicePairing(
+        devicePairingCreateRequest: request,
+        headers: _authorizationHeaders(token.value),
+      );
+      final data = _requireResponseData(response.data?.data);
+      _requireProtocolVersion(data.protocolVersion);
+      return CloudSyncDevicePairingCreated(
+        pairingId: data.pairingId,
+        accountContextId: data.accountContextId,
+        challenge: _decodeFixedBinaryFromResponse(
+          data.challenge,
+          cloudSyncDeviceChallengeBytes,
+        ),
+        expiresAt: data.expiresAt,
+        targetDevice: _pairingTarget(data.targetDevice),
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncDevicePairingQueryResult> queryDevicePairing({
+    required CloudSyncOnboardingToken token,
+    required String pairingId,
+  }) {
+    _requireClientIdentifier(pairingId);
+
+    return _guard(() async {
+      final request = api.DevicePairingQueryRequest(
+        (builder) => builder
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..pairingId = pairingId,
+      );
+      final response = await _client.getAuthApi().queryDevicePairing(
+        devicePairingQueryRequest: request,
+        headers: _authorizationHeaders(token.value),
+      );
+      final value = _requireResponseData(response.data?.data).oneOf.value;
+      if (value is api.DevicePairingQueryDataOneOf) {
+        _requireProtocolVersion(value.protocolVersion);
+        if (value.status.name != 'pending') {
+          throw const FormatException('服务端返回了未知的配对状态');
+        }
+        return CloudSyncDevicePairingPending(
+          pairingId: value.pairingId,
+          accountContextId: value.accountContextId,
+          challenge: _decodeFixedBinaryFromResponse(
+            value.challenge,
+            cloudSyncDeviceChallengeBytes,
+          ),
+          expiresAt: value.expiresAt,
+          targetDevice: _pairingTarget(value.targetDevice),
+        );
+      }
+      if (value is api.DevicePairingQueryDataOneOf1) {
+        _requireProtocolVersion(value.protocolVersion);
+        if (value.status.name != 'approved') {
+          throw const FormatException('服务端返回了未知的配对状态');
+        }
+        return CloudSyncDevicePairingApproved(
+          pairingId: value.pairingId,
+          accountContextId: value.accountContextId,
+          challenge: _decodeFixedBinaryFromResponse(
+            value.challenge,
+            cloudSyncDeviceChallengeBytes,
+          ),
+          expiresAt: value.expiresAt,
+          targetDevice: _pairingTarget(value.targetDevice),
+          issuerDeviceId: value.issuerDeviceId,
+          issuerSigningPublicKey: _decodeFixedBinaryFromResponse(
+            value.issuerSigningPublicKey,
+            cloudSyncDevicePublicKeyBytes,
+          ),
+          issuerKeyAgreementPublicKey: _decodeFixedBinaryFromResponse(
+            value.issuerKeyAgreementPublicKey,
+            cloudSyncDevicePublicKeyBytes,
+          ),
+          keyEpoch: value.keyEpoch,
+          accountKeyEnvelope: _decodeFixedBinaryFromResponse(
+            value.accountKeyEnvelope,
+            cloudSyncAccountKeyEnvelopeBytes,
+          ),
+          deviceProof: _decodeFixedBinaryFromResponse(
+            value.deviceProof,
+            cloudSyncDeviceProofBytes,
+          ),
+          pairingAuthenticator: _decodeFixedBinaryFromResponse(
+            value.pairingAuthenticator,
+            cloudSyncPairingAuthenticatorBytes,
+          ),
+        );
+      }
+      throw const FormatException('服务端返回了歧义的配对状态');
+    });
+  }
+
+  @override
+  Future<CloudSyncDevicePairingApproval> approveDevicePairing({
+    required CloudSyncFullSessionToken token,
+    required String pairingId,
+    required int keyEpoch,
+    required Uint8List accountKeyEnvelope,
+    required Uint8List deviceProof,
+    required Uint8List pairingAuthenticator,
+  }) {
+    _requireClientIdentifier(pairingId);
+    _requireClientKeyEpoch(keyEpoch);
+    final encodedAccountKeyEnvelope = _encodeFixedBinaryForRequest(
+      accountKeyEnvelope,
+      cloudSyncAccountKeyEnvelopeBytes,
+    );
+    final encodedDeviceProof = _encodeFixedBinaryForRequest(
+      deviceProof,
+      cloudSyncDeviceProofBytes,
+    );
+    final encodedPairingAuthenticator = _encodeFixedBinaryForRequest(
+      pairingAuthenticator,
+      cloudSyncPairingAuthenticatorBytes,
+    );
+
+    return _guard(() async {
+      final request = api.DevicePairingApproveRequest(
+        (builder) => builder
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..pairingId = pairingId
+          ..keyEpoch = keyEpoch
+          ..accountKeyEnvelope = encodedAccountKeyEnvelope
+          ..deviceProof = encodedDeviceProof
+          ..pairingAuthenticator = encodedPairingAuthenticator,
+      );
+      final response = await _client.getAuthApi().approveDevicePairing(
+        devicePairingApproveRequest: request,
+        headers: _authorizationHeaders(token.value),
+      );
+      final data = _requireResponseData(response.data?.data);
+      _requireProtocolVersion(data.protocolVersion);
+      if (data.result.name != 'approved') {
+        throw const FormatException('服务端返回了未知的配对批准结果');
+      }
+      return CloudSyncDevicePairingApproval(
+        pairingId: data.pairingId,
+        approvedAt: data.approvedAt,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncAuthenticatedSession> consumeDevicePairing({
+    required CloudSyncOnboardingToken token,
+    required String pairingId,
+  }) {
+    _requireClientIdentifier(pairingId);
+
+    return _guard(() async {
+      final request = api.DevicePairingConsumeRequest(
+        (builder) => builder
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..pairingId = pairingId,
+      );
+      final response = await _client.getAuthApi().consumeDevicePairing(
+        devicePairingConsumeRequest: request,
+        headers: _authorizationHeaders(token.value),
+      );
+      final data = _requireResponseData(response.data?.data);
+      _requireProtocolVersion(data.protocolVersion);
+      if (data.result.name != 'authenticated') {
+        throw const FormatException('服务端返回了未知的配对消费结果');
+      }
+      final session = _authenticatedSessionFromPairing(data);
+      setToken(session.token);
+      return session;
+    });
+  }
+
+  @override
+  Future<CloudSyncDevicePairingCancellation> cancelDevicePairing({
+    required CloudSyncOnboardingToken token,
+    required String pairingId,
+  }) {
+    _requireClientIdentifier(pairingId);
+
+    return _guard(() async {
+      final request = api.DevicePairingCancelRequest(
+        (builder) => builder
+          ..protocolVersion = cloudSyncOpaqueProtocolVersion
+          ..pairingId = pairingId,
+      );
+      final response = await _client.getAuthApi().cancelDevicePairing(
+        devicePairingCancelRequest: request,
+        headers: _authorizationHeaders(token.value),
+      );
+      final data = _requireResponseData(response.data?.data);
+      _requireProtocolVersion(data.protocolVersion);
+      if (data.result.name != 'cancelled') {
+        throw const FormatException('服务端返回了未知的配对取消结果');
+      }
+      return CloudSyncDevicePairingCancellation(
+        pairingId: data.pairingId,
+        cancelledAt: data.cancelledAt,
+      );
     });
   }
 
@@ -193,6 +637,7 @@ final class CloudSyncClient
       final response = await _client.getSyncApi().pushEncryptedSyncRecords(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncPushRequest: request,
+        headers: _requireFullSessionHeaders(),
       );
       final data = _requireResponseData(response.data?.data);
       final results = data.results
@@ -217,6 +662,7 @@ final class CloudSyncClient
       final response = await _client.getSyncApi().pullEncryptedSyncChanges(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncPullRequest: request,
+        headers: _requireFullSessionHeaders(),
       );
       final data = _requireResponseData(response.data?.data);
       _validateChangePage(
@@ -256,6 +702,7 @@ final class CloudSyncClient
       final response = await _client.getSyncApi().pullEncryptedSyncSnapshot(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncSnapshotRequest: request,
+        headers: _requireFullSessionHeaders(),
       );
       final data = _requireResponseData(response.data?.data);
       _validateSnapshotPage(
@@ -290,7 +737,7 @@ final class CloudSyncClient
       );
     }
     return _guard(() async {
-      final request = api.ListDeviceSessionsRequest((builder) {
+      final request = api.ListTrustedDevicesRequest((builder) {
         builder
           ..pageIndex = pageIndex
           ..pageSize = pageSize;
@@ -298,8 +745,9 @@ final class CloudSyncClient
           builder.status = _toDeviceFilterStatus(status);
         }
       });
-      final response = await _client.getDeviceApi().listDeviceSessions(
-        listDeviceSessionsRequest: request,
+      final response = await _client.getDeviceApi().listTrustedDevices(
+        listTrustedDevicesRequest: request,
+        headers: _requireFullSessionHeaders(),
       );
       final data = _requireResponseData(response.data?.data);
       return CloudSyncPage<CloudSyncDeviceSession>(
@@ -315,16 +763,28 @@ final class CloudSyncClient
 
   @override
   Future<CloudSyncDeviceSession> revokeDevice(String deviceId) {
-    _requireNonEmpty(deviceId);
+    _requireClientIdentifier(deviceId);
     return _guard(() async {
-      final request = api.RevokeDeviceSessionRequest(
+      final request = api.RevokeTrustedDeviceRequest(
         (builder) => builder.deviceId = deviceId,
       );
-      final response = await _client.getDeviceApi().revokeDeviceSession(
-        revokeDeviceSessionRequest: request,
+      final response = await _client.getDeviceApi().revokeTrustedDevice(
+        revokeTrustedDeviceRequest: request,
+        headers: _requireFullSessionHeaders(),
       );
       return _fromDevice(_requireResponseData(response.data?.data).device);
     });
+  }
+
+  Map<String, String> _requireFullSessionHeaders() {
+    final token = _sessionToken;
+    if (token == null) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.unauthenticated,
+        retryable: false,
+      );
+    }
+    return _authorizationHeaders(token.value);
   }
 
   Future<T> _guard<T>(Future<T> Function() action) async {
@@ -725,15 +1185,162 @@ void _requireServerIdentifier(String value) {
   }
 }
 
-CloudSyncDeviceSession _fromDevice(api.DeviceSessionSummary device) {
+CloudSyncAuthenticatedSession _authenticatedSessionFromRegistration(
+  api.OpaqueRegistrationFinishData data,
+) {
+  return _authenticatedSession(
+    token: data.token,
+    tokenExpiresAt: data.tokenExpiresAt,
+    keyEpoch: data.keyEpoch,
+    userId: data.user.id,
+    loginName: data.user.loginName,
+    displayName: data.user.displayName,
+    role: data.user.role.name,
+    attachmentQuotaBytes: data.user.attachmentQuotaBytes,
+    deviceId: data.device.id,
+    deviceName: data.device.name,
+    platform: data.device.platform.name,
+    clientVersion: data.device.clientVersion,
+    deviceStatus: data.device.status.name,
+    deviceCreatedAt: data.device.createdAt,
+  );
+}
+
+CloudSyncAuthenticatedSession _authenticatedSessionFromLogin(
+  api.OpaqueLoginFinishDataOneOf data,
+) {
+  return _authenticatedSession(
+    token: data.token,
+    tokenExpiresAt: data.tokenExpiresAt,
+    keyEpoch: data.keyEpoch,
+    userId: data.user.id,
+    loginName: data.user.loginName,
+    displayName: data.user.displayName,
+    role: data.user.role.name,
+    attachmentQuotaBytes: data.user.attachmentQuotaBytes,
+    deviceId: data.device.id,
+    deviceName: data.device.name,
+    platform: data.device.platform.name,
+    clientVersion: data.device.clientVersion,
+    deviceStatus: data.device.status.name,
+    deviceCreatedAt: data.device.createdAt,
+  );
+}
+
+CloudSyncAuthenticatedSession _authenticatedSessionFromPairing(
+  api.DevicePairingConsumeData data,
+) {
+  return _authenticatedSession(
+    token: data.token,
+    tokenExpiresAt: data.tokenExpiresAt,
+    keyEpoch: data.keyEpoch,
+    userId: data.user.id,
+    loginName: data.user.loginName,
+    displayName: data.user.displayName,
+    role: data.user.role.name,
+    attachmentQuotaBytes: data.user.attachmentQuotaBytes,
+    deviceId: data.device.id,
+    deviceName: data.device.name,
+    platform: data.device.platform.name,
+    clientVersion: data.device.clientVersion,
+    deviceStatus: data.device.status.name,
+    deviceCreatedAt: data.device.createdAt,
+  );
+}
+
+CloudSyncAuthenticatedSession _authenticatedSession({
+  required String token,
+  required DateTime tokenExpiresAt,
+  required int keyEpoch,
+  required String userId,
+  required String loginName,
+  required String displayName,
+  required String role,
+  required int attachmentQuotaBytes,
+  required String deviceId,
+  required String deviceName,
+  required String platform,
+  required String clientVersion,
+  required String deviceStatus,
+  required DateTime deviceCreatedAt,
+}) {
+  return CloudSyncAuthenticatedSession(
+    token: CloudSyncFullSessionToken.parse(token),
+    tokenExpiresAt: tokenExpiresAt,
+    keyEpoch: keyEpoch,
+    user: CloudSyncAuthenticatedUser(
+      id: userId,
+      loginName: loginName,
+      displayName: displayName,
+      role: _fromUserRoleName(role),
+      attachmentQuotaBytes: attachmentQuotaBytes,
+    ),
+    device: _authenticatedDevice(
+      id: deviceId,
+      name: deviceName,
+      platform: platform,
+      clientVersion: clientVersion,
+      status: deviceStatus,
+      createdAt: deviceCreatedAt,
+    ),
+  );
+}
+
+CloudSyncAuthenticatedDevice _authenticatedDevice({
+  required String id,
+  required String name,
+  required String platform,
+  required String clientVersion,
+  required String status,
+  required DateTime createdAt,
+}) {
+  return CloudSyncAuthenticatedDevice(
+    id: id,
+    name: name,
+    platform: _fromPlatformName(platform),
+    clientVersion: clientVersion,
+    status: switch (status) {
+      'pending' => CloudSyncAuthenticatedDeviceStatus.pending,
+      'active' => CloudSyncAuthenticatedDeviceStatus.active,
+      _ => throw const FormatException('服务端返回了未知认证设备状态'),
+    },
+    createdAt: createdAt,
+  );
+}
+
+CloudSyncDevicePairingTarget _pairingTarget(
+  api.DevicePairingCreateDataTargetDevice target,
+) {
+  return CloudSyncDevicePairingTarget(
+    id: target.id,
+    name: target.name,
+    platform: _fromPlatformName(target.platform.name),
+    clientVersion: target.clientVersion,
+    keyVersion: target.keyVersion,
+    authGeneration: target.authGeneration,
+    signingPublicKey: _decodeFixedBinaryFromResponse(
+      target.signingPublicKey,
+      cloudSyncDevicePublicKeyBytes,
+    ),
+    keyAgreementPublicKey: _decodeFixedBinaryFromResponse(
+      target.keyAgreementPublicKey,
+      cloudSyncDevicePublicKeyBytes,
+    ),
+  );
+}
+
+CloudSyncDeviceSession _fromDevice(api.TrustedDeviceSummary device) {
+  _requireServerIdentifier(device.id);
   return CloudSyncDeviceSession(
     id: device.id,
     name: device.name,
-    platform: _fromDevicePlatform(device.platform),
+    platform: _fromPlatformName(device.platform.name),
     clientVersion: device.clientVersion,
-    status: device.status == api.DeviceSessionSummaryStatusEnum.active
-        ? CloudSyncDeviceStatus.active
-        : CloudSyncDeviceStatus.revoked,
+    status: switch (device.status.name) {
+      'active' => CloudSyncDeviceStatus.active,
+      'revoked' => CloudSyncDeviceStatus.revoked,
+      _ => throw const FormatException('服务端返回了未知设备状态'),
+    },
     createdAt: device.createdAt.toUtc(),
     lastSeenAt: device.lastSeenAt?.toUtc(),
     revokedAt: device.revokedAt?.toUtc(),
@@ -741,76 +1348,138 @@ CloudSyncDeviceSession _fromDevice(api.DeviceSessionSummary device) {
   );
 }
 
-api.CreateAuthSessionRequestPlatformEnum _toLoginPlatform(
+api.OpaqueRegistrationStartRequestPlatformEnum _toRegistrationPlatform(
   CloudSyncPlatform platform,
 ) {
   return switch (platform) {
     CloudSyncPlatform.android =>
-      api.CreateAuthSessionRequestPlatformEnum.android,
-    CloudSyncPlatform.ios => api.CreateAuthSessionRequestPlatformEnum.ios,
-    CloudSyncPlatform.macos => api.CreateAuthSessionRequestPlatformEnum.macos,
+      api.OpaqueRegistrationStartRequestPlatformEnum.android,
+    CloudSyncPlatform.ios => api.OpaqueRegistrationStartRequestPlatformEnum.ios,
+    CloudSyncPlatform.macos =>
+      api.OpaqueRegistrationStartRequestPlatformEnum.macos,
     CloudSyncPlatform.windows =>
-      api.CreateAuthSessionRequestPlatformEnum.windows,
-    CloudSyncPlatform.linux => api.CreateAuthSessionRequestPlatformEnum.linux,
+      api.OpaqueRegistrationStartRequestPlatformEnum.windows,
+    CloudSyncPlatform.linux =>
+      api.OpaqueRegistrationStartRequestPlatformEnum.linux,
   };
 }
 
-CloudSyncPlatform _fromAuthPlatform(api.AuthDeviceSummaryPlatformEnum value) {
-  if (value == api.AuthDeviceSummaryPlatformEnum.android) {
-    return CloudSyncPlatform.android;
-  }
-  if (value == api.AuthDeviceSummaryPlatformEnum.ios) {
-    return CloudSyncPlatform.ios;
-  }
-  if (value == api.AuthDeviceSummaryPlatformEnum.macos) {
-    return CloudSyncPlatform.macos;
-  }
-  if (value == api.AuthDeviceSummaryPlatformEnum.windows) {
-    return CloudSyncPlatform.windows;
-  }
-  if (value == api.AuthDeviceSummaryPlatformEnum.linux) {
-    return CloudSyncPlatform.linux;
-  }
-  throw const FormatException('服务端返回了未知平台');
-}
-
-CloudSyncPlatform _fromDevicePlatform(
-  api.DeviceSessionSummaryPlatformEnum value,
+api.OpaqueLoginStartRequestPlatformEnum _toLoginPlatform(
+  CloudSyncPlatform platform,
 ) {
-  if (value == api.DeviceSessionSummaryPlatformEnum.android) {
-    return CloudSyncPlatform.android;
-  }
-  if (value == api.DeviceSessionSummaryPlatformEnum.ios) {
-    return CloudSyncPlatform.ios;
-  }
-  if (value == api.DeviceSessionSummaryPlatformEnum.macos) {
-    return CloudSyncPlatform.macos;
-  }
-  if (value == api.DeviceSessionSummaryPlatformEnum.windows) {
-    return CloudSyncPlatform.windows;
-  }
-  if (value == api.DeviceSessionSummaryPlatformEnum.linux) {
-    return CloudSyncPlatform.linux;
-  }
-  throw const FormatException('服务端返回了未知平台');
+  return switch (platform) {
+    CloudSyncPlatform.android =>
+      api.OpaqueLoginStartRequestPlatformEnum.android,
+    CloudSyncPlatform.ios => api.OpaqueLoginStartRequestPlatformEnum.ios,
+    CloudSyncPlatform.macos => api.OpaqueLoginStartRequestPlatformEnum.macos,
+    CloudSyncPlatform.windows =>
+      api.OpaqueLoginStartRequestPlatformEnum.windows,
+    CloudSyncPlatform.linux => api.OpaqueLoginStartRequestPlatformEnum.linux,
+  };
 }
 
-CloudSyncUserRole _fromUserRole(api.UserSummaryRoleEnum value) {
-  if (value == api.UserSummaryRoleEnum.owner) return CloudSyncUserRole.owner;
-  if (value == api.UserSummaryRoleEnum.admin) return CloudSyncUserRole.admin;
-  if (value == api.UserSummaryRoleEnum.user) return CloudSyncUserRole.user;
-  throw const FormatException('服务端返回了未知用户角色');
+CloudSyncPlatform _fromPlatformName(String value) {
+  return switch (value) {
+    'android' => CloudSyncPlatform.android,
+    'ios' => CloudSyncPlatform.ios,
+    'macos' => CloudSyncPlatform.macos,
+    'windows' => CloudSyncPlatform.windows,
+    'linux' => CloudSyncPlatform.linux,
+    _ => throw const FormatException('服务端返回了未知平台'),
+  };
 }
 
-api.ListDeviceSessionsRequestStatusEnum _toDeviceFilterStatus(
+CloudSyncUserRole _fromUserRoleName(String value) {
+  return switch (value) {
+    'owner' => CloudSyncUserRole.owner,
+    'admin' => CloudSyncUserRole.admin,
+    'user' => CloudSyncUserRole.user,
+    _ => throw const FormatException('服务端返回了未知用户角色'),
+  };
+}
+
+api.ListTrustedDevicesRequestStatusEnum _toDeviceFilterStatus(
   CloudSyncDeviceStatus status,
 ) {
   return switch (status) {
     CloudSyncDeviceStatus.active =>
-      api.ListDeviceSessionsRequestStatusEnum.active,
+      api.ListTrustedDevicesRequestStatusEnum.active,
     CloudSyncDeviceStatus.revoked =>
-      api.ListDeviceSessionsRequestStatusEnum.revoked,
+      api.ListTrustedDevicesRequestStatusEnum.revoked,
   };
+}
+
+Map<String, String> _authorizationHeaders(String token) {
+  return <String, String>{'authorization': 'Bearer $token'};
+}
+
+void _requireProtocolVersion(int value) {
+  if (value != cloudSyncOpaqueProtocolVersion) {
+    throw const FormatException('服务端返回了不支持的认证协议版本');
+  }
+}
+
+String _normalizeLoginNameForRequest(String value) {
+  final normalized = value.trim().toLowerCase();
+  if (normalized.length < 3 ||
+      normalized.length > 64 ||
+      !_opaqueLoginNamePattern.hasMatch(normalized)) {
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.validation,
+      retryable: false,
+    );
+  }
+  return normalized;
+}
+
+String _normalizeTextForRequest(String value, {required int maximumLength}) {
+  final normalized = value.trim();
+  if (normalized.isEmpty || normalized.length > maximumLength) {
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.validation,
+      retryable: false,
+    );
+  }
+  return normalized;
+}
+
+void _requireClientKeyEpoch(int value) {
+  if (value < 1 || value > 0xffffffff) {
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.validation,
+      retryable: false,
+    );
+  }
+}
+
+String _encodeFixedBinaryForRequest(Uint8List value, int expectedBytes) {
+  if (value.length != expectedBytes) {
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.validation,
+      retryable: false,
+    );
+  }
+  return base64Url.encode(value).replaceAll('=', '');
+}
+
+Uint8List _decodeFixedBinaryFromResponse(String value, int expectedBytes) {
+  final expectedEncodedLength = (expectedBytes * 8 + 5) ~/ 6;
+  if (value.length != expectedEncodedLength ||
+      !_base64UrlPattern.hasMatch(value)) {
+    throw const FormatException('服务端返回了无效的二进制字段');
+  }
+
+  try {
+    final padding = '=' * ((4 - value.length % 4) % 4);
+    final decoded = base64Url.decode('$value$padding');
+    final canonical = base64Url.encode(decoded).replaceAll('=', '');
+    if (decoded.length != expectedBytes || canonical != value) {
+      throw const FormatException('服务端返回了非规范二进制字段');
+    }
+    return Uint8List.fromList(decoded).asUnmodifiableView();
+  } on FormatException {
+    throw const FormatException('服务端返回了无效的二进制字段');
+  }
 }
 
 T _requireResponseData<T>(T? data) {
@@ -823,27 +1492,27 @@ T _requireResponseData<T>(T? data) {
   return data;
 }
 
-void _requireNonEmpty(String value) {
-  if (value.trim().isEmpty) {
-    throw const CloudSyncException(
-      kind: CloudSyncFailureKind.validation,
-      retryable: false,
-    );
-  }
-}
-
 CloudSyncException _fromDioException(DioException error) {
   final statusCode = error.response?.statusCode;
   final serverError = _parseServerError(error.response?.data);
-  final kind = switch (error.type) {
-    DioExceptionType.cancel => CloudSyncFailureKind.cancelled,
-    DioExceptionType.connectionTimeout ||
-    DioExceptionType.sendTimeout ||
-    DioExceptionType.receiveTimeout => CloudSyncFailureKind.timeout,
-    DioExceptionType.connectionError ||
-    DioExceptionType.badCertificate => CloudSyncFailureKind.network,
-    _ => _failureKindFromStatus(statusCode),
-  };
+  // generated 客户端将 2xx 响应反序列化失败包装成 unknown DioException。
+  final responseDeserializationFailed =
+      error.type == DioExceptionType.unknown &&
+      statusCode != null &&
+      statusCode >= 200 &&
+      statusCode < 300 &&
+      error.error != null;
+  final kind = responseDeserializationFailed
+      ? CloudSyncFailureKind.invalidResponse
+      : switch (error.type) {
+          DioExceptionType.cancel => CloudSyncFailureKind.cancelled,
+          DioExceptionType.connectionTimeout ||
+          DioExceptionType.sendTimeout ||
+          DioExceptionType.receiveTimeout => CloudSyncFailureKind.timeout,
+          DioExceptionType.connectionError ||
+          DioExceptionType.badCertificate => CloudSyncFailureKind.network,
+          _ => _failureKindFromStatus(statusCode),
+        };
   final retryable =
       serverError?.retryable ??
       kind == CloudSyncFailureKind.network ||
@@ -901,6 +1570,7 @@ _ParsedServerError? _parseServerError(Object? raw) {
 final _syncIdentifierPattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
+final _opaqueLoginNamePattern = RegExp(r'^[a-z0-9][a-z0-9._-]*$');
 final _base64UrlPattern = RegExp(r'^[A-Za-z0-9_-]+$');
 const _base64UrlRemainder2 = 'AQgw';
 const _base64UrlRemainder3 = 'AEIMQUYcgkosw048';

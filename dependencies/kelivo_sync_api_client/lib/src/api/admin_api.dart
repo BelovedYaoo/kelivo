@@ -8,15 +8,11 @@ import 'package:built_value/json_object.dart';
 import 'package:built_value/serializer.dart';
 import 'package:dio/dio.dart';
 
-import 'package:kelivo_sync_api_client/src/model/create_admin_user_request.dart';
-import 'package:kelivo_sync_api_client/src/model/create_admin_user_response.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_request.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_users_request.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_users_response.dart';
-import 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_request.dart';
-import 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_response.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_request.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_response.dart';
 import 'package:kelivo_sync_api_client/src/model/update_admin_user_quota_request.dart';
@@ -30,102 +26,6 @@ class AdminApi {
   final Serializers _serializers;
 
   const AdminApi(this._dio, this._serializers);
-
-  /// createAdminUser
-  ///
-  ///
-  /// Parameters:
-  /// * [createAdminUserRequest]
-  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
-  /// * [headers] - Can be used to add additional headers to the request
-  /// * [extras] - Can be used to add flags to the request
-  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
-  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
-  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
-  ///
-  /// Returns a [Future] containing a [Response] with a [CreateAdminUserResponse] as data
-  /// Throws [DioException] if API call or serialization fails
-  Future<Response<CreateAdminUserResponse>> createAdminUser({
-    required CreateAdminUserRequest createAdminUserRequest,
-    CancelToken? cancelToken,
-    Map<String, dynamic>? headers,
-    Map<String, dynamic>? extra,
-    ValidateStatus? validateStatus,
-    ProgressCallback? onSendProgress,
-    ProgressCallback? onReceiveProgress,
-  }) async {
-    final _path = r'/api/admin/user/create';
-    final _options = Options(
-      method: r'POST',
-      headers: <String, dynamic>{...?headers},
-      extra: <String, dynamic>{
-        'secure': <Map<String, String>>[
-          {'type': 'http', 'scheme': 'bearer', 'name': 'BearerAuth'},
-        ],
-        ...?extra,
-      },
-      contentType: 'application/json',
-      validateStatus: validateStatus,
-    );
-
-    dynamic _bodyData;
-
-    try {
-      const _type = FullType(CreateAdminUserRequest);
-      _bodyData = _serializers.serialize(
-        createAdminUserRequest,
-        specifiedType: _type,
-      );
-    } catch (error, stackTrace) {
-      throw DioException(
-        requestOptions: _options.compose(_dio.options, _path),
-        type: DioExceptionType.unknown,
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
-    final _response = await _dio.request<Object>(
-      _path,
-      data: _bodyData,
-      options: _options,
-      cancelToken: cancelToken,
-      onSendProgress: onSendProgress,
-      onReceiveProgress: onReceiveProgress,
-    );
-
-    CreateAdminUserResponse? _responseData;
-
-    try {
-      final rawResponse = _response.data;
-      _responseData = rawResponse == null
-          ? null
-          : _serializers.deserialize(
-                  rawResponse,
-                  specifiedType: const FullType(CreateAdminUserResponse),
-                )
-                as CreateAdminUserResponse;
-    } catch (error, stackTrace) {
-      throw DioException(
-        requestOptions: _response.requestOptions,
-        response: _response,
-        type: DioExceptionType.unknown,
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
-    return Response<CreateAdminUserResponse>(
-      data: _responseData,
-      headers: _response.headers,
-      isRedirect: _response.isRedirect,
-      requestOptions: _response.requestOptions,
-      redirects: _response.redirects,
-      statusCode: _response.statusCode,
-      statusMessage: _response.statusMessage,
-      extra: _response.extra,
-    );
-  }
 
   /// listAdminDevices
   ///
@@ -308,102 +208,6 @@ class AdminApi {
     }
 
     return Response<ListAdminUsersResponse>(
-      data: _responseData,
-      headers: _response.headers,
-      isRedirect: _response.isRedirect,
-      requestOptions: _response.requestOptions,
-      redirects: _response.redirects,
-      statusCode: _response.statusCode,
-      statusMessage: _response.statusMessage,
-      extra: _response.extra,
-    );
-  }
-
-  /// resetAdminUserPassword
-  ///
-  ///
-  /// Parameters:
-  /// * [resetAdminUserPasswordRequest]
-  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
-  /// * [headers] - Can be used to add additional headers to the request
-  /// * [extras] - Can be used to add flags to the request
-  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
-  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
-  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
-  ///
-  /// Returns a [Future] containing a [Response] with a [ResetAdminUserPasswordResponse] as data
-  /// Throws [DioException] if API call or serialization fails
-  Future<Response<ResetAdminUserPasswordResponse>> resetAdminUserPassword({
-    required ResetAdminUserPasswordRequest resetAdminUserPasswordRequest,
-    CancelToken? cancelToken,
-    Map<String, dynamic>? headers,
-    Map<String, dynamic>? extra,
-    ValidateStatus? validateStatus,
-    ProgressCallback? onSendProgress,
-    ProgressCallback? onReceiveProgress,
-  }) async {
-    final _path = r'/api/admin/user/password/reset';
-    final _options = Options(
-      method: r'POST',
-      headers: <String, dynamic>{...?headers},
-      extra: <String, dynamic>{
-        'secure': <Map<String, String>>[
-          {'type': 'http', 'scheme': 'bearer', 'name': 'BearerAuth'},
-        ],
-        ...?extra,
-      },
-      contentType: 'application/json',
-      validateStatus: validateStatus,
-    );
-
-    dynamic _bodyData;
-
-    try {
-      const _type = FullType(ResetAdminUserPasswordRequest);
-      _bodyData = _serializers.serialize(
-        resetAdminUserPasswordRequest,
-        specifiedType: _type,
-      );
-    } catch (error, stackTrace) {
-      throw DioException(
-        requestOptions: _options.compose(_dio.options, _path),
-        type: DioExceptionType.unknown,
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
-    final _response = await _dio.request<Object>(
-      _path,
-      data: _bodyData,
-      options: _options,
-      cancelToken: cancelToken,
-      onSendProgress: onSendProgress,
-      onReceiveProgress: onReceiveProgress,
-    );
-
-    ResetAdminUserPasswordResponse? _responseData;
-
-    try {
-      final rawResponse = _response.data;
-      _responseData = rawResponse == null
-          ? null
-          : _serializers.deserialize(
-                  rawResponse,
-                  specifiedType: const FullType(ResetAdminUserPasswordResponse),
-                )
-                as ResetAdminUserPasswordResponse;
-    } catch (error, stackTrace) {
-      throw DioException(
-        requestOptions: _response.requestOptions,
-        response: _response,
-        type: DioExceptionType.unknown,
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
-    return Response<ResetAdminUserPasswordResponse>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

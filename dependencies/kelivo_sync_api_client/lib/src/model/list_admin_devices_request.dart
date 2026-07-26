@@ -24,7 +24,7 @@ abstract class ListAdminDevicesRequest
 
   @BuiltValueField(wireName: r'status')
   ListAdminDevicesRequestStatusEnum? get status;
-  // enum statusEnum {  active,  revoked,  };
+  // enum statusEnum {  pending,  active,  revoked,  };
 
   @BuiltValueField(wireName: r'pageIndex')
   int? get pageIndex;
@@ -181,6 +181,9 @@ class _$ListAdminDevicesRequestSerializer
 }
 
 class ListAdminDevicesRequestStatusEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'pending')
+  static const ListAdminDevicesRequestStatusEnum pending =
+      _$listAdminDevicesRequestStatusEnum_pending;
   @BuiltValueEnumConst(wireName: r'active')
   static const ListAdminDevicesRequestStatusEnum active =
       _$listAdminDevicesRequestStatusEnum_active;

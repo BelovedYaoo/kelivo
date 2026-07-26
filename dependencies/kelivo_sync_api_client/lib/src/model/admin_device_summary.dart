@@ -41,7 +41,7 @@ abstract class AdminDeviceSummary
 
   @BuiltValueField(wireName: r'status')
   AdminDeviceSummaryStatusEnum get status;
-  // enum statusEnum {  active,  revoked,  };
+  // enum statusEnum {  pending,  active,  revoked,  };
 
   @BuiltValueField(wireName: r'createdAt')
   DateTime get createdAt;
@@ -317,6 +317,9 @@ class AdminDeviceSummaryPlatformEnum extends EnumClass {
 }
 
 class AdminDeviceSummaryStatusEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'pending')
+  static const AdminDeviceSummaryStatusEnum pending =
+      _$adminDeviceSummaryStatusEnum_pending;
   @BuiltValueEnumConst(wireName: r'active')
   static const AdminDeviceSummaryStatusEnum active =
       _$adminDeviceSummaryStatusEnum_active;

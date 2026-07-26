@@ -17,17 +17,24 @@ import 'package:kelivo_sync_api_client/src/model/date.dart';
 import 'package:kelivo_sync_api_client/src/model/admin_device_summary.dart';
 import 'package:kelivo_sync_api_client/src/model/admin_device_user_summary.dart';
 import 'package:kelivo_sync_api_client/src/model/admin_user_summary.dart';
-import 'package:kelivo_sync_api_client/src/model/auth_device_summary.dart';
-import 'package:kelivo_sync_api_client/src/model/auth_session_data.dart';
-import 'package:kelivo_sync_api_client/src/model/bootstrap_owner_data.dart';
-import 'package:kelivo_sync_api_client/src/model/bootstrap_owner_request.dart';
-import 'package:kelivo_sync_api_client/src/model/bootstrap_owner_response.dart';
-import 'package:kelivo_sync_api_client/src/model/create_admin_user_data.dart';
-import 'package:kelivo_sync_api_client/src/model/create_admin_user_request.dart';
-import 'package:kelivo_sync_api_client/src/model/create_admin_user_response.dart';
-import 'package:kelivo_sync_api_client/src/model/create_auth_session_request.dart';
-import 'package:kelivo_sync_api_client/src/model/create_auth_session_response.dart';
-import 'package:kelivo_sync_api_client/src/model/device_session_summary.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_approve_data.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_approve_request.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_approve_response.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_cancel_data.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_cancel_request.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_cancel_response.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_consume_data.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_consume_request.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_consume_response.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_create_data.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_create_data_target_device.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_create_request.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_create_response.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_query_data.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_query_data_one_of.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_query_data_one_of1.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_query_request.dart';
+import 'package:kelivo_sync_api_client/src/model/device_pairing_query_response.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response_error.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_data.dart';
@@ -36,21 +43,35 @@ import 'package:kelivo_sync_api_client/src/model/list_admin_devices_response.dar
 import 'package:kelivo_sync_api_client/src/model/list_admin_users_data.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_users_request.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_users_response.dart';
-import 'package:kelivo_sync_api_client/src/model/list_device_sessions_data.dart';
-import 'package:kelivo_sync_api_client/src/model/list_device_sessions_request.dart';
-import 'package:kelivo_sync_api_client/src/model/list_device_sessions_response.dart';
+import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_data.dart';
+import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_request.dart';
+import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_response.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_finish_data.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_finish_data_one_of.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_finish_data_one_of1.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_finish_data_one_of1_device.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_finish_request.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_finish_response.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_start_data.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_start_request.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_login_start_response.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_data.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_data_device.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_data_user.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_request.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_response.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_registration_start_data.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_registration_start_request.dart';
+import 'package:kelivo_sync_api_client/src/model/opaque_registration_start_response.dart';
 import 'package:kelivo_sync_api_client/src/model/pull_encrypted_sync_changes_response.dart';
 import 'package:kelivo_sync_api_client/src/model/pull_encrypted_sync_snapshot_response.dart';
 import 'package:kelivo_sync_api_client/src/model/push_encrypted_sync_records_response.dart';
-import 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_data.dart';
-import 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_request.dart';
-import 'package:kelivo_sync_api_client/src/model/reset_admin_user_password_response.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_data.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_request.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_response.dart';
-import 'package:kelivo_sync_api_client/src/model/revoke_device_session_data.dart';
-import 'package:kelivo_sync_api_client/src/model/revoke_device_session_request.dart';
-import 'package:kelivo_sync_api_client/src/model/revoke_device_session_response.dart';
+import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_data.dart';
+import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_request.dart';
+import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_response.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_active_record.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_applied_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_change.dart';
@@ -72,15 +93,12 @@ import 'package:kelivo_sync_api_client/src/model/sync_snapshot_request.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_snapshot_response_data.dart';
 import 'package:kelivo_sync_api_client/src/model/system_health_data.dart';
 import 'package:kelivo_sync_api_client/src/model/system_health_response.dart';
+import 'package:kelivo_sync_api_client/src/model/trusted_device_summary.dart';
 import 'package:kelivo_sync_api_client/src/model/update_admin_user_data.dart';
 import 'package:kelivo_sync_api_client/src/model/update_admin_user_quota_request.dart';
 import 'package:kelivo_sync_api_client/src/model/update_admin_user_quota_response.dart';
 import 'package:kelivo_sync_api_client/src/model/update_admin_user_status_request.dart';
 import 'package:kelivo_sync_api_client/src/model/update_admin_user_status_response.dart';
-import 'package:kelivo_sync_api_client/src/model/update_auth_password_data.dart';
-import 'package:kelivo_sync_api_client/src/model/update_auth_password_request.dart';
-import 'package:kelivo_sync_api_client/src/model/update_auth_password_response.dart';
-import 'package:kelivo_sync_api_client/src/model/user_summary.dart';
 
 part 'serializers.g.dart';
 
@@ -88,17 +106,24 @@ part 'serializers.g.dart';
   AdminDeviceSummary,
   AdminDeviceUserSummary,
   AdminUserSummary,
-  AuthDeviceSummary,
-  AuthSessionData,
-  BootstrapOwnerData,
-  BootstrapOwnerRequest,
-  BootstrapOwnerResponse,
-  CreateAdminUserData,
-  CreateAdminUserRequest,
-  CreateAdminUserResponse,
-  CreateAuthSessionRequest,
-  CreateAuthSessionResponse,
-  DeviceSessionSummary,
+  DevicePairingApproveData,
+  DevicePairingApproveRequest,
+  DevicePairingApproveResponse,
+  DevicePairingCancelData,
+  DevicePairingCancelRequest,
+  DevicePairingCancelResponse,
+  DevicePairingConsumeData,
+  DevicePairingConsumeRequest,
+  DevicePairingConsumeResponse,
+  DevicePairingCreateData,
+  DevicePairingCreateDataTargetDevice,
+  DevicePairingCreateRequest,
+  DevicePairingCreateResponse,
+  DevicePairingQueryData,
+  DevicePairingQueryDataOneOf,
+  DevicePairingQueryDataOneOf1,
+  DevicePairingQueryRequest,
+  DevicePairingQueryResponse,
   ErrorResponse,
   ErrorResponseError,
   ListAdminDevicesData,
@@ -107,21 +132,35 @@ part 'serializers.g.dart';
   ListAdminUsersData,
   ListAdminUsersRequest,
   ListAdminUsersResponse,
-  ListDeviceSessionsData,
-  ListDeviceSessionsRequest,
-  ListDeviceSessionsResponse,
+  ListTrustedDevicesData,
+  ListTrustedDevicesRequest,
+  ListTrustedDevicesResponse,
+  OpaqueLoginFinishData,
+  OpaqueLoginFinishDataOneOf,
+  OpaqueLoginFinishDataOneOf1,
+  OpaqueLoginFinishDataOneOf1Device,
+  OpaqueLoginFinishRequest,
+  OpaqueLoginFinishResponse,
+  OpaqueLoginStartData,
+  OpaqueLoginStartRequest,
+  OpaqueLoginStartResponse,
+  OpaqueRegistrationFinishData,
+  OpaqueRegistrationFinishDataDevice,
+  OpaqueRegistrationFinishDataUser,
+  OpaqueRegistrationFinishRequest,
+  OpaqueRegistrationFinishResponse,
+  OpaqueRegistrationStartData,
+  OpaqueRegistrationStartRequest,
+  OpaqueRegistrationStartResponse,
   PullEncryptedSyncChangesResponse,
   PullEncryptedSyncSnapshotResponse,
   PushEncryptedSyncRecordsResponse,
-  ResetAdminUserPasswordData,
-  ResetAdminUserPasswordRequest,
-  ResetAdminUserPasswordResponse,
   RevokeAdminDeviceData,
   RevokeAdminDeviceRequest,
   RevokeAdminDeviceResponse,
-  RevokeDeviceSessionData,
-  RevokeDeviceSessionRequest,
-  RevokeDeviceSessionResponse,
+  RevokeTrustedDeviceData,
+  RevokeTrustedDeviceRequest,
+  RevokeTrustedDeviceResponse,
   SyncActiveRecord,
   SyncAppliedMutationResult,
   SyncChange,
@@ -143,15 +182,12 @@ part 'serializers.g.dart';
   SyncSnapshotResponseData,
   SystemHealthData,
   SystemHealthResponse,
+  TrustedDeviceSummary,
   UpdateAdminUserData,
   UpdateAdminUserQuotaRequest,
   UpdateAdminUserQuotaResponse,
   UpdateAdminUserStatusRequest,
   UpdateAdminUserStatusResponse,
-  UpdateAuthPasswordData,
-  UpdateAuthPasswordRequest,
-  UpdateAuthPasswordResponse,
-  UserSummary,
 ])
 Serializers serializers =
     (_$serializers.toBuilder()
