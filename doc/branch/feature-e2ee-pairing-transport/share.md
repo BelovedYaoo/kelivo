@@ -1,47 +1,13 @@
 # 协作摘要
 
-- 已从最新 OpenAPI 重新生成 Dart 客户端，硬删除旧密码认证与旧设备会话接口。
-- 已实现 OPAQUE 四路由和设备配对五路由的强类型传输；完整会话令牌与设备引导令牌不可混用，鉴权逐请求显式注入。
-- 固定长度二进制统一使用规范、无填充 Base64URL；响应数据防御性复制为不可修改视图；2xx generated 反序列化失败归类为不可重试的无效响应。
-- 已将设备列表与撤销切换到 trusted-device 路由；注册、登录认证和配对消费响应均保留当前 `keyEpoch`。
-- 验证：generated 包分析通过；三文件定向分析通过；协议测试 17/17 通过；`git diff --check` 通过。
-- 集成边界：未修改 Provider/UI/ARB。Provider 仍保留旧密码入口，合并后需由后续任务迁移到 OPAQUE；设备身份启动闭环由 Issue #36 跟踪。
-- 已将账号工作区持久会话硬切到 E2EE 契约：token 使用 `CloudSyncFullSessionToken`，metadata v2 持久化 `tokenExpiresAt` 与正 uint32 `keyEpoch`，旧 metadata 版本直接拒绝；token 仍仅以原始值进入加密存储，恢复后立即解析。
-- 会话定向分析通过；新增/相邻会话用例 12/12 通过。runtime 全文件测试因既有 runner 五分钟无输出而超时，未发现失败输出。
-- 集成残余：`cloud_sync_provider_content_gate_test.dart:235` 仍使用旧会话构造（缺少 `tokenExpiresAt`、`keyEpoch` 且 token 为 String）；同文件 fake client 还残留新版账户客户端接口未实现及旧 `setToken(String?)`，交由 Provider 集成任务统一处理。
-- 会话审查阻断已修复：构造与恢复统一执行 UUID/login/名称/client/quota 严格校验，JSON/metadata 使用精确键集合、整型 v2 与规范 UTC；新增纯 `isExpiredAt(now)` 边界判断，启动恢复会在 scope 校验后清理旧 token。三文件定向分析通过，会话用例 30/30、账号隔离与磁盘格式精确用例各 1/1 通过。
-- 新增 `E2eeAccountAuthentication` 深模块接口及生产实现：移动首设备注册在服务端完成前先耐久化 full device state；登录严格区分已认证与待批准设备，并校验本地账户、设备和 key epoch 绑定。
-- 设备状态 key slot 由规范服务地址与登录名经域分离 SHA-256 截断派生；缺失状态仅初始化 identity-only，已有 blob 的 slot 缺失或 AEAD 失败均直接失败关闭。
-- 密码缓冲区由认证模块取得所有权并在所有退出路径清零；OPAQUE、持久 key、identity、ARK 句柄在成功和失败路径统一关闭，服务端身份不匹配时清除已接管 token。
-- 认证验证：认证/传输协议测试 23/23 通过，认证模块与协议测试定向分析无问题。真实 OPAQUE 成功组合门禁由 Issue #38 跟踪；映射盘临时目录问题由 Issue #37 跟踪。
-- Provider 已硬切 `E2eeAccountAuthentication`：支持强类型登录、Android/iOS 首设备注册、待批准结果和过期会话拒绝；底层 finish/consume 仅返回候选会话，本地绑定成功后才显式接管 token。
-- `E2eeAccountAuthenticator` 已增加实例级并发冲突门禁，业务主异常不再被 cleanup 覆盖，失败和 cleanup 异常均清空候选 token。Provider 11/11、协议 62/62、`flutter analyze lib`、`flutter analyze test` 通过；根分析受 `mcp_client` 既有测试依赖缺失阻塞，根测试因共享缓存争用 8 分钟无用例输出后终止。
-- API 已在 `kelivo-api/main@9ab952e` 完成 Issue #39 所需的原样 finish 恢复语义；当前正在实现客户端加密注册事务、重启重放及账号工作区提交后的确认清理。
-- 注册事务存储已完成：同一设备 locator 锁内一次发布、原样幂等、不同事务拒绝覆盖、摘要条件删除、损坏失败关闭，并随设备 tombstone 一并退役；重命名后目录屏障中断仍可由新实例恢复。
-- 客户端 Issue #39 闭环已完成：892 字节固定事务帧经平台槽记录信封加密，finish 前先持久化事务与完整设备状态；响应丢失后新认证器只原样重放 finish，工作区会话提交后才按密文摘要确认删除。未过期拒绝保留服务端错误，过期拒绝要求正常登录且绝不回滚 ARK。
-- 验证：认证/传输协议 65/65、Provider 12/12、注册事务存储 3/3、设备状态回归 15/15、`flutter analyze lib` 与 `flutter analyze test` 均通过。
-- 设备配对 QR：新增固定版本化完整 transcript 二进制帧，严格校验长度、UUID、时效、CRC 与规范编码；raw secret 始终保持字节所有权并支持显式清零。定向分析无问题，QR 协议测试 37/37 通过。
-- API 的配对批准原样恢复已在 `kelivo-api/main@2b8c7e3` 完成并关闭服务端 Issue #12。
-- 客户端配对闭环由 Issue #42 跟踪。当前设计将 Secure Core 句柄、轮询、批准、消费和崩溃恢复封装为深模块；桌面完整设备状态会在消费前连同加密恢复事务耐久化，账号工作区提交后才确认清理，避免服务端与本地设备状态形成双真相。
-- 已新增独立 `pairing-pending.bin` 配对恢复 sidecar：同一 locator/OS 锁内原子发布、原样幂等、不同事务拒绝覆盖、摘要条件删除、损坏失败关闭，并随设备 tombstone 一并退役；与注册事务文件和 magic 隔离。注册/配对事务回归 7/7、定向分析通过。
-- API 的配对期限缺口已由 `kelivo-api/main@a599ee4` 修复并关闭 Issue #14：期限不晚于 onboarding session，剩余不足 60 秒拒绝创建；未部署，等待 E2EE 整体发版。
-- 客户端已完成桌面配对创建与取消深模块：服务端回显严格绑定本地设备 ID、公钥、平台和版本，QR secret 单一所有权，取消始终销毁本地 pending 句柄；超出 onboarding 截止时间的配对响应失败关闭。
-- 验证：协议全文件 66/66、认证/配对三文件定向分析通过。
-- 移动端批准已进入认证深模块：仅 Android/iOS 的当前完整会话可签发，扫码账号必须匹配本地 user，扫码帧与 pairing secret 在所有路径清零；批准响应丢失最多原样重试三次且不越过 QR/session 截止时间。
-- 修复 Issue #43 所述传输分类：无 HTTP 状态且底层为 `SocketException`/`HttpException` 的 Dio unknown 现在归类为可重试网络中断；2xx 反序列化失败及其他 unknown 仍不可重试。
-- 验证：协议全文件 67/67、认证/配对/传输四文件定向分析通过；跨账号与桌面签发失败路径均通过。
-- 桌面接收批准闭环已完成：轮询结果严格匹配创建时 transcript；Secure Core 接受批准后生成固定 536 字节恢复帧，平台槽 AEAD 加密并写入独立 sidecar，随后才发布 full 状态并调用 consume。
-- 恢复事务绑定 pairing/user/device/keyVersion/keyEpoch、onboarding 与 pairing 截止时间、原始 identity-only 状态及 full 状态；读取时同时验证两份状态的设备公钥与绑定。账号工作区提交后按密文摘要确认删除。
-- 验证：消费请求到达前已观察到 sidecar 与 full 状态，确认前事务保留、确认后删除；协议全文件 68/68、定向分析通过。
-- 配对消费响应丢失后，下一次登录会先恢复 full 状态并原样重放 consume；仅在服务端明确表示配对冲突或 onboarding token 无效时回到 OPAQUE，若设备仍待批准则先恢复 identity-only 状态再按摘要删除 sidecar。
-- 等待批准期间现可并发取消：本地取消信号会立即唤醒轮询，取消方接管认证互斥直到轮询清理完成，Secure Core pending 句柄只释放一次；进入批准接受阶段后仍拒绝取消。
-- 验证：取消、移动批准重试、消费响应丢失重启恢复三个定向用例及协议全文件 68/68 均通过，相关三文件定向分析通过。
-- 测试超时会遗留 `flutter_tester.exe` 并锁定 Windows 原生库，已记录 Issue #44；本轮终止当前工作树残留进程后复验通过，Issue 保持开放等待测试执行器级修复。
-- 认证模块现通过 `E2eeDevicePairingSession` 暴露一次性 QR、等待和取消能力，Provider 不接触 Secure Core 句柄或配对内部状态；生产实现仍保留具体返回类型供协议层测试。
-- Provider 已接管待批准设备的完整生命周期：登录后创建二维码并后台轮询，用户取消会等待底层清理，批准成功后先提交账户工作区再确认删除配对恢复事务；普通登录也会幂等确认可能遗留的配对 sidecar。
-- Android/iOS 当前完整会话可通过 Provider 批准二进制扫码帧，非移动平台、无会话、并发批准均失败关闭；传入帧在所有退出路径清零。
-- 验证：Provider 15/15、协议 68/68，认证/Provider/配对与测试定向分析通过；后台网络失败、取消竞争、提交确认和扫码缓冲区所有权均有现有测试文件内的回归场景。
-- 云同步页已接入真实配对入口：待批准登录直接以 `QrCode.fromUint8List` 生成 QR 矩阵，原始帧随后立即清零；页面退出会取消仍在等待的事务。Android/iOS 已登录设备通过设备区扫码按钮批准。
-- 扫码页保留原文本导入行为并新增二进制模式；Android 使用 `DecodedBarcodeBytes.bytes`，Apple Vision 仅使用已解码的可选 `bytes`，不会把带头部/填充的 `rawBytes` 误交给协议解析。
-- 4 个 ARB 的键集合均为 1869，`desiredFileName.txt` 未翻译项为 0；Provider/UI 16/16、相关五文件分析通过，待批准 QR 渲染及页面退出取消有 widget 回归。
-- Windows debug 构建两次卡在 CMake `CompilerIdCXX.vcxproj`，`cl.exe` 零 CPU 且启动父进程提前退出；切换 `TEMP/TMP` 到本地磁盘仍复现，已记录 Issue #45，未进入 Kelivo 源码编译。
+- 已将账户注册、登录与会话持久化硬切到 E2EE 契约：OPAQUE、强类型令牌、严格账户/设备/key epoch 绑定，旧 metadata 直接拒绝。
+- 已完成 Android/iOS 首设备注册：完整设备状态与加密注册事务先于服务端提交耐久化，响应丢失可原样重放，工作区提交后才确认清理。
+- 已完成桌面待批准设备配对：固定二进制 QR transcript、轮询、取消、移动端批准、完整设备状态恢复、consume 原样重放与崩溃恢复均封装在认证模块内。
+- Provider 与云同步页已接入配对状态机；待批准登录显示真实二维码，退出页面会取消等待，Android/iOS 已登录设备可扫描并批准。
+- 二进制扫码在 Android 使用已解码 bytes，Apple Vision 仅接受已解码的可选 bytes；原始秘密、扫码帧、密码及 Secure Core 句柄均在所有退出路径清理。
+- 传输层已修复无 HTTP 状态的 SocketException/HttpException 分类；2xx 反序列化失败及其他 unknown 仍不可重试。
+- 4 个 ARB 键集合均为 1869，`desiredFileName.txt` 未翻译项为 0；Provider/UI 16/16、协议 68/68 及相关定向分析通过。
+- Android debug APK 已成功构建：`build/app/outputs/flutter-apk/app-debug.apk`，大小 241855000 字节；Kotlin 插件兼容告警已有 Issue #4。
+- Windows debug 构建两次卡在 CMake `CompilerIdCXX.vcxproj`，切换本地 TEMP/TMP 仍复现，已记录 Issue #45；测试进程超时残留问题由 Issue #44 跟踪。
+- 配对功能由 Issue #42 跟踪；代码闭环已完成，Windows 构建验证仍受 Issue #45 阻塞。Issue #43 的传输修复需合并到 main 后关闭。
+- 相关 API 服务端实现位于 `kelivo-api/main@9ab952e`、`2b8c7e3`、`a599ee4`，尚未随 E2EE 整体发版。
