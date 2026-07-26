@@ -16,5 +16,6 @@
 - 认证验证：认证/传输协议测试 23/23 通过，认证模块与协议测试定向分析无问题。真实 OPAQUE 成功组合门禁由 Issue #38 跟踪；映射盘临时目录问题由 Issue #37 跟踪。
 - Provider 已硬切 `E2eeAccountAuthentication`：支持强类型登录、Android/iOS 首设备注册、待批准结果和过期会话拒绝；底层 finish/consume 仅返回候选会话，本地绑定成功后才显式接管 token。
 - `E2eeAccountAuthenticator` 已增加实例级并发冲突门禁，业务主异常不再被 cleanup 覆盖，失败和 cleanup 异常均清空候选 token。Provider 11/11、协议 62/62、`flutter analyze lib`、`flutter analyze test` 通过；根分析受 `mcp_client` 既有测试依赖缺失阻塞，根测试因共享缓存争用 8 分钟无用例输出后终止。
-- Issue #39 仍阻塞首设备注册完整闭环：服务端先消费 attempt 再 commit，且没有幂等结果恢复，响应丢失时客户端无法单边判定或重试。
+- API 已在 `kelivo-api/main@9ab952e` 完成 Issue #39 所需的原样 finish 恢复语义；当前正在实现客户端加密注册事务、重启重放及账号工作区提交后的确认清理。
+- 注册事务存储已完成：同一设备 locator 锁内一次发布、原样幂等、不同事务拒绝覆盖、摘要条件删除、损坏失败关闭，并随设备 tombstone 一并退役；重命名后目录屏障中断仍可由新实例恢复。
 - 设备配对 QR：新增固定版本化完整 transcript 二进制帧，严格校验长度、UUID、时效、CRC 与规范编码；raw secret 始终保持字节所有权并支持显式清零。定向分析无问题，QR 协议测试 37/37 通过。

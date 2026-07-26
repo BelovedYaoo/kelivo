@@ -167,6 +167,204 @@ void main() {
     );
   });
 
+  test('首设备注册事务信封只允许原样重放并按摘要确认删除', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'pending-registration';
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x31);
+    final envelope = Uint8List.fromList(
+      List<int>.generate(257, (index) => (index * 17) & 0xff),
+    );
+    final digest = Uint8List.fromList(sha256.convert(envelope).bytes);
+    await expectLater(
+      store.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: envelope,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: state,
+    );
+    expect(
+      () => store.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List(0),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => store.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List(
+          DeviceStateBlobStore.pendingRegistrationEnvelopeMaxLength + 1,
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+    await store.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+    await store.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: Uint8List.fromList(envelope),
+    );
+
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(envelope),
+    );
+    await expectLater(
+      store.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List.fromList(envelope)..last ^= 1,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      store.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: Uint8List(32)..fillRange(0, 32, 0x44),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      () => store.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: Uint8List(31),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      await store.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: digest,
+      ),
+      isTrue,
+    );
+    expect(
+      await store.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: digest,
+      ),
+      isFalse,
+    );
+  });
+
+  test('首设备注册事务重命名后屏障中断仍可由新实例原样恢复', () async {
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'registration-publish-interrupted';
+    final normalStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+    );
+    await normalStore.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x46),
+    );
+    final envelope = Uint8List(320)..fillRange(0, 320, 0x47);
+    final interruptedStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+      durability: _InterruptAfterPendingRegistrationRenameDurability(
+        RestorePlatformDurability(),
+      ),
+    );
+
+    await expectLater(
+      interruptedStore.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: envelope,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await DeviceStateBlobStore(
+        installationRoot: installationRoot,
+      ).readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(envelope),
+    );
+    await normalStore.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+  });
+
+  test('首设备注册事务损坏时失败关闭且设备删除一并退役事务', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'damaged-registration';
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x32),
+    );
+    await store.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: Uint8List(128)..fillRange(0, 128, 0x45),
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final pendingFile = File(p.join(locator.path, 'registration-pending.bin'));
+    final damaged = await pendingFile.readAsBytes()
+      ..last ^= 1;
+    await pendingFile.writeAsBytes(damaged, flush: true);
+
+    await expectLater(
+      store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await store.delete(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+    );
+    expect(await pendingFile.exists(), isFalse);
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+  });
+
   test('设备状态删除只清理指定身份且删除后与损坏严格区分', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     final first = Uint8List(188)..fillRange(0, 188, 0x11);
@@ -3507,6 +3705,47 @@ final class _InterruptAfterDeviceTombstoneRenameDurability
     if (p.basename(targetPath) == 'tombstone.bin') {
       await File(source.path).rename(targetPath);
       throw StateError('device_state_tombstone_directory_barrier_interrupted');
+    }
+    await delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
+final class _InterruptAfterPendingRegistrationRenameDurability
+    implements RestoreDurability {
+  _InterruptAfterPendingRegistrationRenameDurability(this.delegate);
+
+  final RestoreDurability delegate;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    if (p.basename(targetPath) == 'registration-pending.bin') {
+      await File(source.path).rename(targetPath);
+      throw StateError(
+        'device_state_registration_directory_barrier_interrupted',
+      );
     }
     await delegate.renameAndSync(source: source, targetPath: targetPath);
   }
