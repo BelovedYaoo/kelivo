@@ -249,7 +249,7 @@ fn claim_pending_pairing_at(
     let Some(bound) = permit.pending().bound else {
         return Err(KelivoStatus::PendingPairingStateInvalid);
     };
-    if now > permit.pending().deadline || now_ms > bound.expires_at_ms {
+    if now >= permit.pending().deadline || now_ms >= bound.expires_at_ms {
         permit.commit();
         return Err(KelivoStatus::PairingExpired);
     }
@@ -1516,18 +1516,15 @@ mod tests {
         bytes
     }
 
-    #[test]
-    fn pending_pairing_monotonic_deadline_is_an_independent_acceptance_gate() {
+    fn register_bound_pending_pairing(created_at: Instant, wall_now_ms: u64) -> u64 {
         let mut rng = protocol::system_rng().expect("测试随机源应可用");
         let identity = crypto::DeviceIdentity::generate(&mut rng).expect("测试设备身份应可生成");
         let target_device_id = crypto::DeviceId::new(uuid_v4(1)).expect("目标设备 UUID 应有效");
-        let created_at = Instant::now();
         let (pending, _) = create_pending_pairing_at(&identity, target_device_id, 1, created_at)
             .expect("pending 配对应可创建");
         let pairing_id = pending.pairing_id;
         let target_public_keys = pending.target_public_keys;
         let handle = register_pending_pairing(pending).expect("pending 配对应可注册");
-        let wall_now_ms = 1_800_000_000_000;
         bind_pending_pairing_at(
             handle,
             PairingBindInput {
@@ -1545,11 +1542,40 @@ mod tests {
         )
         .expect("创建响应应可绑定");
 
-        let after_deadline = created_at
-            .checked_add(PAIRING_LIFETIME + Duration::from_nanos(1))
+        handle
+    }
+
+    #[test]
+    fn pending_pairing_wall_clock_expiry_boundary_is_closed() {
+        let created_at = Instant::now();
+        let wall_now_ms = 1_800_000_000_000;
+        let handle = register_bound_pending_pairing(created_at, wall_now_ms);
+
+        assert!(matches!(
+            claim_pending_pairing_at(
+                handle,
+                wall_now_ms + PAIRING_LIFETIME_MILLISECONDS,
+                created_at,
+            ),
+            Err(KelivoStatus::PairingExpired)
+        ));
+        assert_eq!(
+            close_pending_pairing(handle),
+            Err(KelivoStatus::InvalidPendingPairingHandle)
+        );
+    }
+
+    #[test]
+    fn pending_pairing_monotonic_deadline_boundary_is_closed() {
+        let created_at = Instant::now();
+        let wall_now_ms = 1_800_000_000_000;
+        let handle = register_bound_pending_pairing(created_at, wall_now_ms);
+
+        let deadline = created_at
+            .checked_add(PAIRING_LIFETIME)
             .expect("测试单调时钟应可前移");
         assert!(matches!(
-            claim_pending_pairing_at(handle, wall_now_ms, after_deadline),
+            claim_pending_pairing_at(handle, wall_now_ms, deadline),
             Err(KelivoStatus::PairingExpired)
         ));
         assert_eq!(

@@ -2618,7 +2618,7 @@ mod tests {
                     key_handle,
                     reopened_target,
                     pending_handle,
-                    expires_at_ms,
+                    expires_at_ms - 1,
                     issuer_device_id.as_ptr(),
                     issuer_device_id.len(),
                     key_epoch,
