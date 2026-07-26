@@ -365,6 +365,188 @@ void main() {
     );
   });
 
+  test('设备配对事务信封只允许原样重放并按摘要确认删除', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'pending-pairing';
+    final envelope = Uint8List.fromList(
+      List<int>.generate(513, (index) => (index * 29) & 0xff),
+    );
+    final digest = Uint8List.fromList(sha256.convert(envelope).bytes);
+
+    await expectLater(
+      store.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: envelope,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x51),
+    );
+    expect(
+      () => store.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List(0),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => store.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List(
+          DeviceStateBlobStore.pendingPairingEnvelopeMaxLength + 1,
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    await store.writePendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+    await store.writePendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: Uint8List.fromList(envelope),
+    );
+    expect(
+      await store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(envelope),
+    );
+    await expectLater(
+      store.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List.fromList(envelope)..first ^= 1,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      store.deletePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: Uint8List(32)..fillRange(0, 32, 0x52),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await store.deletePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: digest,
+      ),
+      isTrue,
+    );
+    expect(
+      await store.deletePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: digest,
+      ),
+      isFalse,
+    );
+  });
+
+  test('设备配对事务重命名后屏障中断仍可由新实例原样恢复', () async {
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'pairing-publish-interrupted';
+    final normalStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+    );
+    await normalStore.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x53),
+    );
+    final envelope = Uint8List(384)..fillRange(0, 384, 0x54);
+    final interruptedStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+      durability: _InterruptAfterPendingPairingRenameDurability(
+        RestorePlatformDurability(),
+      ),
+    );
+
+    await expectLater(
+      interruptedStore.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: envelope,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await DeviceStateBlobStore(
+        installationRoot: installationRoot,
+      ).readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(envelope),
+    );
+    await normalStore.writePendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+  });
+
+  test('设备配对事务损坏时失败关闭且设备删除一并退役事务', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'damaged-pairing';
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x55),
+    );
+    await store.writePendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: Uint8List(192)..fillRange(0, 192, 0x56),
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final pendingFile = File(p.join(locator.path, 'pairing-pending.bin'));
+    final damaged = await pendingFile.readAsBytes()
+      ..last ^= 1;
+    await pendingFile.writeAsBytes(damaged, flush: true);
+
+    await expectLater(
+      store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await store.delete(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+    );
+    expect(await pendingFile.exists(), isFalse);
+    expect(
+      await store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+  });
+
   test('设备状态删除只清理指定身份且删除后与损坏严格区分', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     final first = Uint8List(188)..fillRange(0, 188, 0x11);
@@ -3746,6 +3928,45 @@ final class _InterruptAfterPendingRegistrationRenameDurability
       throw StateError(
         'device_state_registration_directory_barrier_interrupted',
       );
+    }
+    await delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
+final class _InterruptAfterPendingPairingRenameDurability
+    implements RestoreDurability {
+  _InterruptAfterPendingPairingRenameDurability(this.delegate);
+
+  final RestoreDurability delegate;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    if (p.basename(targetPath) == 'pairing-pending.bin') {
+      await File(source.path).rename(targetPath);
+      throw StateError('device_state_pairing_directory_barrier_interrupted');
     }
     await delegate.renameAndSync(source: source, targetPath: targetPath);
   }
