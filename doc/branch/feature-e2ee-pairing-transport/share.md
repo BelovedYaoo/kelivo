@@ -33,3 +33,7 @@
 - 桌面接收批准闭环已完成：轮询结果严格匹配创建时 transcript；Secure Core 接受批准后生成固定 536 字节恢复帧，平台槽 AEAD 加密并写入独立 sidecar，随后才发布 full 状态并调用 consume。
 - 恢复事务绑定 pairing/user/device/keyVersion/keyEpoch、onboarding 与 pairing 截止时间、原始 identity-only 状态及 full 状态；读取时同时验证两份状态的设备公钥与绑定。账号工作区提交后按密文摘要确认删除。
 - 验证：消费请求到达前已观察到 sidecar 与 full 状态，确认前事务保留、确认后删除；协议全文件 68/68、定向分析通过。
+- 配对消费响应丢失后，下一次登录会先恢复 full 状态并原样重放 consume；仅在服务端明确表示配对冲突或 onboarding token 无效时回到 OPAQUE，若设备仍待批准则先恢复 identity-only 状态再按摘要删除 sidecar。
+- 等待批准期间现可并发取消：本地取消信号会立即唤醒轮询，取消方接管认证互斥直到轮询清理完成，Secure Core pending 句柄只释放一次；进入批准接受阶段后仍拒绝取消。
+- 验证：取消、移动批准重试、消费响应丢失重启恢复三个定向用例及协议全文件 68/68 均通过，相关三文件定向分析通过。
+- 测试超时会遗留 `flutter_tester.exe` 并锁定 Windows 原生库，已记录 Issue #44；本轮终止当前工作树残留进程后复验通过，Issue 保持开放等待测试执行器级修复。

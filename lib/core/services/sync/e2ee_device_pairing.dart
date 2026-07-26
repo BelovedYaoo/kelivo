@@ -50,7 +50,10 @@ final class E2eePendingDevicePairing {
   CloudSyncDevicePairingQrPayload? _qrPayload;
   final CloudSyncDevicePairingCreated _created;
   final DateTime _onboardingTokenExpiresAt;
+  final Completer<void> _cancellationRequested = Completer<void>();
+  final Completer<void> _waitFinished = Completer<void>();
   _E2eePendingPairingState _state = _E2eePendingPairingState.active;
+  bool _cancelInterruptedWait = false;
 
   Uint8List takeQrFrame({required DateTime now}) {
     if (_state != _E2eePendingPairingState.active &&
@@ -69,14 +72,22 @@ final class E2eePendingDevicePairing {
     }
   }
 
+  bool _isWaitingFor(E2eeAccountAuthenticator owner) {
+    return identical(owner, _owner) &&
+        _state == _E2eePendingPairingState.waiting;
+  }
+
   void _beginCancel(E2eeAccountAuthenticator owner) {
     if (!identical(owner, _owner)) {
       throw StateError('设备配对不属于当前认证器');
     }
-    if (_state != _E2eePendingPairingState.active) {
+    if (_state != _E2eePendingPairingState.active &&
+        _state != _E2eePendingPairingState.waiting) {
       throw StateError('设备配对已经结束');
     }
+    _cancelInterruptedWait = _state == _E2eePendingPairingState.waiting;
     _state = _E2eePendingPairingState.cancelling;
+    _cancellationRequested.complete();
   }
 
   void _beginWait(E2eeAccountAuthenticator owner) {
@@ -103,6 +114,12 @@ final class E2eePendingDevicePairing {
   }
 
   KelivoPendingPairingHandle? _finishCompletion({required bool succeeded}) {
+    if (_state == _E2eePendingPairingState.cancelling ||
+        _state == _E2eePendingPairingState.cancelled) {
+      _qrPayload?.dispose();
+      _qrPayload = null;
+      return null;
+    }
     _state = succeeded
         ? _E2eePendingPairingState.completed
         : _E2eePendingPairingState.failed;
@@ -111,6 +128,37 @@ final class E2eePendingDevicePairing {
     final pending = _pendingHandle;
     _pendingHandle = null;
     return pending;
+  }
+
+  Future<T> _awaitWhileNotCancelled<T>(Future<T> operation) async {
+    _throwIfCancellationRequested();
+    await Future.any<void>(<Future<void>>[
+      operation.then<void>((_) {}),
+      _cancellationRequested.future,
+    ]);
+    _throwIfCancellationRequested();
+    return operation;
+  }
+
+  void _throwIfCancellationRequested() {
+    if (_state == _E2eePendingPairingState.cancelling ||
+        _state == _E2eePendingPairingState.cancelled) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.cancelled,
+        retryable: false,
+        serverCode: 'SYNC_DEVICE_PAIRING_CANCELLED',
+      );
+    }
+  }
+
+  bool get _cancellationOwnsExclusiveOperation => _cancelInterruptedWait;
+
+  Future<void> get _waitFinishedFuture => _waitFinished.future;
+
+  void _markWaitFinished() {
+    if (!_waitFinished.isCompleted) {
+      _waitFinished.complete();
+    }
   }
 
   KelivoPendingPairingHandle? _finishCancel() {
@@ -449,7 +497,10 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
   }
 
   Future<void> cancelDevicePairing(E2eePendingDevicePairing pairing) async {
-    _beginExclusiveOperation();
+    final interruptsActiveWait = pairing._isWaitingFor(this);
+    if (!interruptsActiveWait) {
+      _beginExclusiveOperation();
+    }
     Object? primaryError;
     KelivoPendingPairingHandle? pending;
     var cancellationStarted = false;
@@ -469,6 +520,9 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
           pending = pairing._finishCancel();
           if (pending != null) {
             await _secureCore.cancelPendingPairing(pending);
+          }
+          if (interruptsActiveWait) {
+            await pairing._waitFinishedFuture;
           }
         }
       } catch (error, stackTrace) {
@@ -603,7 +657,14 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
           stackTrace,
         );
       } finally {
-        _authenticationInProgress = false;
+        final cancellationOwnsOperation =
+            waitStarted && pairing._cancellationOwnsExclusiveOperation;
+        if (waitStarted) {
+          pairing._markWaitFinished();
+        }
+        if (!cancellationOwnsOperation) {
+          _authenticationInProgress = false;
+        }
       }
     }
   }
@@ -660,6 +721,49 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         _authenticationInProgress = false;
       }
     }
+  }
+
+  bool _pairingRecoveryRequiresOpaqueLogin(CloudSyncException error) {
+    return !error.retryable &&
+        (error.serverCode == 'AUTH_DEVICE_PAIRING_CONFLICT' ||
+            error.serverCode == 'AUTH_ONBOARDING_TOKEN_INVALID');
+  }
+
+  Future<E2eeAccountLoginApprovalRequired>
+  _rollbackPairingAfterApprovalRequired(
+    _DeviceContext context, {
+    required String normalizedLoginName,
+    required _OpenedPendingPairing pending,
+    required CloudSyncOnboardingToken onboardingToken,
+    required DateTime onboardingTokenExpiresAt,
+    required CloudSyncAuthenticatedDevice device,
+  }) async {
+    final transaction = pending.transaction;
+    await _validatePairingRecoveryStates(context, transaction);
+    if (device.id != transaction.deviceId) {
+      throw StateError('待批准登录与配对恢复事务的设备不匹配');
+    }
+    // 先发布 identity-only 状态；即使进程在删除 sidecar 前退出，下次仍可重复收敛。
+    await _deviceStateStore.write(
+      normalizedBaseUrl: _baseUrl,
+      normalizedLoginName: normalizedLoginName,
+      blob: transaction.originalStateBlob,
+    );
+    final deleted = await _deviceStateStore.deletePendingPairingEnvelope(
+      normalizedBaseUrl: _baseUrl,
+      normalizedLoginName: normalizedLoginName,
+      expectedDigest: pending.envelopeDigest,
+    );
+    if (!deleted) {
+      throw StateError('设备配对恢复事务已被其他进程替换');
+    }
+    _accountClient.setToken(null);
+    return E2eeAccountLoginApprovalRequired(
+      onboardingToken: onboardingToken,
+      onboardingTokenExpiresAt: onboardingTokenExpiresAt,
+      loginName: normalizedLoginName,
+      device: device,
+    );
   }
 
   Future<CloudSyncDevicePairingApproval> approveScannedDevicePairing({
@@ -796,6 +900,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
     E2eePendingDevicePairing pairing,
   ) async {
     while (true) {
+      pairing._throwIfCancellationRequested();
       final now = DateTime.now().toUtc();
       final deadline =
           pairing.expiresAt.isBefore(pairing._onboardingTokenExpiresAt)
@@ -811,20 +916,27 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
 
       CloudSyncDevicePairingQueryResult query;
       try {
-        query = await _accountClient.queryDevicePairing(
-          token: pairing._onboardingToken,
-          pairingId: pairing._pairingId,
+        query = await pairing._awaitWhileNotCancelled(
+          _accountClient.queryDevicePairing(
+            token: pairing._onboardingToken,
+            pairingId: pairing._pairingId,
+          ),
         );
       } on CloudSyncException catch (error) {
+        pairing._throwIfCancellationRequested();
         if (!error.retryable) rethrow;
-        await _delayUntilNextPairingQuery(deadline);
+        await pairing._awaitWhileNotCancelled(
+          _delayUntilNextPairingQuery(deadline),
+        );
         continue;
       }
       _validatePairingQuery(pairing._created, query);
       if (query is CloudSyncDevicePairingApproved) {
         return query;
       }
-      await _delayUntilNextPairingQuery(deadline);
+      await pairing._awaitWhileNotCancelled(
+        _delayUntilNextPairingQuery(deadline),
+      );
     }
   }
 

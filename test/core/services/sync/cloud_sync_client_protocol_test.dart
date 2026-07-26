@@ -1383,10 +1383,11 @@ void main() {
       return pairingId;
     }
 
-    final startFuture = authenticator.startDevicePairing(approvalRequired);
-    final pairingId = await respondToCreate(
-      onboardingExpiresAt.subtract(const Duration(seconds: 1)),
+    final pairingExpiresAt = onboardingExpiresAt.subtract(
+      const Duration(seconds: 1),
     );
+    final startFuture = authenticator.startDevicePairing(approvalRequired);
+    final pairingId = await respondToCreate(pairingExpiresAt);
 
     final pending = await startFuture;
     final frame = pending.takeQrFrame(now: DateTime.now().toUtc());
@@ -1416,6 +1417,22 @@ void main() {
       throwsStateError,
     );
 
+    final waitingFuture = authenticator.waitForDevicePairing(pending);
+    expect(await requests.moveNext(), isTrue);
+    final queryRequest = requests.current;
+    expect(queryRequest.uri.path, '/api/auth/device-pairing/query');
+    await utf8.decoder.bind(queryRequest).join();
+    final waitingExpectation = expectLater(
+      waitingFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.cancelled,
+        ),
+      ),
+    );
+
     final cancelFuture = authenticator.cancelDevicePairing(pending);
     expect(await requests.moveNext(), isTrue);
     final cancelRequest = requests.current;
@@ -1433,6 +1450,35 @@ void main() {
     );
     await cancelRequest.response.close();
     await cancelFuture;
+    queryRequest.response.headers.contentType = ContentType.json;
+    queryRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': pairingId,
+          'accountContextId': _userId,
+          'challenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 18),
+          'expiresAt': pairingExpiresAt.toIso8601String(),
+          'targetDevice': <String, Object?>{
+            'id': _deviceId2,
+            'name': 'Windows 主机',
+            'platform': 'windows',
+            'clientVersion': '1.2.3',
+            'keyVersion': 1,
+            'authGeneration': 0,
+            'signingPublicKey': base64Url
+                .encode(publicKeys.signingPublicKey)
+                .replaceAll('=', ''),
+            'keyAgreementPublicKey': base64Url
+                .encode(publicKeys.keyAgreementPublicKey)
+                .replaceAll('=', ''),
+          },
+          'status': 'pending',
+        },
+      }),
+    );
+    await queryRequest.response.close();
+    await waitingExpectation;
 
     final rejectedStart = authenticator.startDevicePairing(approvalRequired);
     await respondToCreate(onboardingExpiresAt.add(const Duration(seconds: 1)));
@@ -1812,7 +1858,9 @@ void main() {
     expect(await requests.moveNext(), isTrue);
     final consumeRequest = requests.current;
     expect(consumeRequest.uri.path, '/api/auth/device-pairing/consume');
-    await utf8.decoder.bind(consumeRequest).join();
+    final firstConsumeBody = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(consumeRequest).join()),
+    );
     expect(
       await store.readPendingPairingEnvelope(
         normalizedBaseUrl: baseUrl,
@@ -1839,8 +1887,38 @@ void main() {
     await core.closeDeviceIdentity(persistedState.identity);
     await core.close(persistedKey);
 
-    consumeRequest.response.headers.contentType = ContentType.json;
-    consumeRequest.response.write(
+    final consumeSocket = await consumeRequest.response.detachSocket();
+    consumeSocket.destroy();
+    await expectLater(completionFuture, throwsA(isA<CloudSyncException>()));
+    client.close(force: true);
+
+    final recoveryClient = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final recoveryAuthenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: recoveryClient,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() => recoveryClient.close(force: true));
+    final password = Uint8List.fromList(utf8.encode('password'));
+    final recoveryFuture = recoveryAuthenticator.loginDevice(
+      loginName: loginName,
+      password: password,
+      deviceName: 'Windows 主机',
+      platform: CloudSyncPlatform.windows,
+      clientVersion: '1.2.3',
+    );
+    expect(await requests.moveNext(), isTrue);
+    final retriedConsumeRequest = requests.current;
+    expect(retriedConsumeRequest.uri.path, '/api/auth/device-pairing/consume');
+    expect(
+      copyCloudSyncJsonMap(
+        jsonDecode(await utf8.decoder.bind(retriedConsumeRequest).join()),
+      ),
+      firstConsumeBody,
+    );
+    retriedConsumeRequest.response.headers.contentType = ContentType.json;
+    retriedConsumeRequest.response.write(
       jsonEncode(<String, Object?>{
         'data': _authenticatedData(
           keyEpoch: 7,
@@ -1849,10 +1927,13 @@ void main() {
         ),
       }),
     );
-    await consumeRequest.response.close();
-    final session = await completionFuture;
+    await retriedConsumeRequest.response.close();
+    final recoveryResult = await recoveryFuture;
+    expect(recoveryResult, isA<E2eeAccountLoginAuthenticated>());
+    final session = (recoveryResult as E2eeAccountLoginAuthenticated).session;
     expect(session.user.id, _userId);
     expect(session.device.id, _deviceId2);
+    expect(password, everyElement(0));
     expect(
       await store.readPendingPairingEnvelope(
         normalizedBaseUrl: baseUrl,
@@ -1860,7 +1941,7 @@ void main() {
       ),
       isNotNull,
     );
-    await authenticator.confirmDevicePairing(
+    await recoveryAuthenticator.confirmDevicePairing(
       loginName: loginName,
       session: session,
     );

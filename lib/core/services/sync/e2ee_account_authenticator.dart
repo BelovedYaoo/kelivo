@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:typed_data';
@@ -358,10 +359,51 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     var opaqueStateActive = false;
     Uint8List? credentialFinalization;
     Uint8List? deviceProof;
+    _OpenedPendingPairing? pendingPairing;
     Object? primaryError;
     try {
       final normalizedLoginName = _normalizeLoginName(loginName);
       context = await _openDeviceContext(normalizedLoginName);
+      pendingPairing = await E2eeDevicePairingAuthentication(
+        this,
+      )._readPendingPairing(context, normalizedLoginName);
+      if (pendingPairing != null) {
+        final contextWasIdentityOnly = context.account == null;
+        await E2eeDevicePairingAuthentication(
+          this,
+        )._ensurePendingPairingFullState(
+          context,
+          normalizedLoginName: normalizedLoginName,
+          transaction: pendingPairing.transaction,
+        );
+        if (contextWasIdentityOnly) {
+          await _closeHandles(context: context);
+          context = null;
+          context = await _openDeviceContext(normalizedLoginName);
+        }
+        if (DateTime.now().toUtc().isBefore(
+          pendingPairing.transaction.onboardingTokenExpiresAt,
+        )) {
+          try {
+            final recoveredSession = await _accountClient.consumeDevicePairing(
+              token: pendingPairing.transaction.onboardingToken,
+              pairingId: pendingPairing.transaction.pairingId,
+            );
+            E2eeDevicePairingAuthentication(this)._validatePairingSession(
+              normalizedLoginName: normalizedLoginName,
+              transaction: pendingPairing.transaction,
+              session: recoveredSession,
+            );
+            return _authenticatedLoginResult(context, recoveredSession);
+          } on CloudSyncException catch (error) {
+            if (!E2eeDevicePairingAuthentication(
+              this,
+            )._pairingRecoveryRequiresOpaqueLogin(error)) {
+              rethrow;
+            }
+          }
+        }
+      }
       final device = await _deviceIdentity(
         context,
         deviceName: deviceName,
@@ -400,22 +442,35 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         credentialFinalization: credentialFinalization,
         deviceProof: deviceProof,
       );
-      final loginResult = switch (result) {
-        CloudSyncOpaqueLoginAuthenticated(:final session) =>
-          _authenticatedLoginResult(context, session),
-        CloudSyncOpaqueLoginApprovalRequired(
+      late final E2eeAccountLoginResult loginResult;
+      switch (result) {
+        case CloudSyncOpaqueLoginAuthenticated(:final session):
+          loginResult = _authenticatedLoginResult(context, session);
+        case CloudSyncOpaqueLoginApprovalRequired(
           :final onboardingToken,
           :final onboardingTokenExpiresAt,
           :final device,
-        ) =>
-          _approvalRequiredLoginResult(
-            context,
-            onboardingToken: onboardingToken,
-            onboardingTokenExpiresAt: onboardingTokenExpiresAt,
-            loginName: normalizedLoginName,
-            device: device,
-          ),
-      };
+        ):
+          final pending = pendingPairing;
+          loginResult = pending == null
+              ? _approvalRequiredLoginResult(
+                  context,
+                  onboardingToken: onboardingToken,
+                  onboardingTokenExpiresAt: onboardingTokenExpiresAt,
+                  loginName: normalizedLoginName,
+                  device: device,
+                )
+              : await E2eeDevicePairingAuthentication(
+                  this,
+                )._rollbackPairingAfterApprovalRequired(
+                  context,
+                  normalizedLoginName: normalizedLoginName,
+                  pending: pending,
+                  onboardingToken: onboardingToken,
+                  onboardingTokenExpiresAt: onboardingTokenExpiresAt,
+                  device: device,
+                );
+      }
       if (loginResult is E2eeAccountLoginAuthenticated) {
         await _discardPendingRegistrationAfterAuthenticatedLogin(
           normalizedLoginName,
@@ -428,21 +483,25 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       rethrow;
     } finally {
       final stateToCancel = opaqueStateActive ? opaqueStart : null;
-      await _finishAuthentication(
-        primaryError: primaryError,
-        cleanup: () => _cleanupOperation(
-          cancelOpaque: stateToCancel == null
-              ? null
-              : () => _secureCore.cancelOpaqueLogin(stateToCancel.state),
-          mutableSecrets: <Uint8List?>[
-            password,
-            passwordCopy,
-            credentialFinalization,
-            deviceProof,
-          ],
-          context: context,
-        ),
-      );
+      try {
+        await _finishAuthentication(
+          primaryError: primaryError,
+          cleanup: () => _cleanupOperation(
+            cancelOpaque: stateToCancel == null
+                ? null
+                : () => _secureCore.cancelOpaqueLogin(stateToCancel.state),
+            mutableSecrets: <Uint8List?>[
+              password,
+              passwordCopy,
+              credentialFinalization,
+              deviceProof,
+            ],
+            context: context,
+          ),
+        );
+      } finally {
+        pendingPairing?.dispose();
+      }
     }
   }
 
