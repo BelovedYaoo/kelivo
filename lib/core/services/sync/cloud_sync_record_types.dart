@@ -1,4 +1,19 @@
 import 'e2ee_account_record_cipher.dart';
+import 'e2ee_account_record_state.dart';
+
+String _requireMatchingOperationId(
+  String mutationId,
+  E2eeSealedAccountRecordState state,
+) {
+  if (mutationId != state.operationId) {
+    throw ArgumentError.value(
+      mutationId,
+      'mutationId',
+      '必须与密文状态的 operationId 一致',
+    );
+  }
+  return mutationId;
+}
 
 sealed class CloudSyncRecordMutation {
   const CloudSyncRecordMutation({
@@ -14,12 +29,16 @@ sealed class CloudSyncRecordMutation {
 
 final class CloudSyncPutRecordMutation extends CloudSyncRecordMutation {
   CloudSyncPutRecordMutation({
-    required super.mutationId,
+    required String mutationId,
     required super.expectedRevision,
-    required this.record,
-  }) : super(recordId: record.recordId);
+    required E2eeSealedAccountRecordState state,
+  }) : state = state,
+       super(
+         mutationId: _requireMatchingOperationId(mutationId, state),
+         recordId: state.record.recordId,
+       );
 
-  final E2eeSealedAccountRecordEnvelope record;
+  final E2eeSealedAccountRecordState state;
 }
 
 sealed class CloudSyncRecordMutationResult {
@@ -88,19 +107,6 @@ final class CloudSyncPutRecordChange extends CloudSyncRecordChange {
   final E2eeUntrustedAccountRecordEnvelope record;
 }
 
-final class CloudSyncDeleteRecordChange extends CloudSyncRecordChange {
-  const CloudSyncDeleteRecordChange({
-    required super.changeSeq,
-    required super.recordId,
-    required super.revision,
-    required super.updatedAt,
-    required super.updatedByDeviceId,
-    required this.deletedAt,
-  });
-
-  final DateTime deletedAt;
-}
-
 final class CloudSyncChangePage {
   const CloudSyncChangePage({
     required this.changes,
@@ -141,19 +147,6 @@ final class CloudSyncActiveRecord extends CloudSyncRecordState {
   }) : super(recordId: record.recordId);
 
   final E2eeUntrustedAccountRecordEnvelope record;
-}
-
-final class CloudSyncDeletedRecord extends CloudSyncRecordState {
-  const CloudSyncDeletedRecord({
-    required super.recordId,
-    required super.revision,
-    required super.updatedAt,
-    required super.updatedByDeviceId,
-    required super.lastChangeSeq,
-    required this.deletedAt,
-  });
-
-  final DateTime deletedAt;
 }
 
 final class CloudSyncSnapshotPage {

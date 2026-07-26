@@ -391,6 +391,138 @@ class GenerationRunRows extends Table {
   ];
 }
 
+@TableIndex(
+  name: 'idx_e2ee_sync_record_states_record_version',
+  columns: {#recordId, #logicalVersion, #digest},
+)
+class E2eeSyncRecordStateRows extends Table {
+  BlobColumn get digest => blob()();
+  TextColumn get recordId => text()();
+  TextColumn get entityType => text()();
+  TextColumn get entityId => text()();
+  IntColumn get logicalVersion => integer()();
+  TextColumn get kind => text()();
+  TextColumn get operationId => text()();
+  TextColumn get claimedWriterDeviceId => text()();
+  IntColumn get claimedWriterKeyVersion => integer()();
+  IntColumn get keyEpoch => integer()();
+  IntColumn get acceptedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {digest};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {operationId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(digest) = 'blob' AND length(digest) = 32)",
+    "CHECK (typeof(record_id) = 'text' AND length(record_id) = 36 "
+        "AND record_id = lower(record_id) "
+        "AND record_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(record_id, 9, 1) = '-' "
+        "AND substr(record_id, 14, 1) = '-' "
+        "AND substr(record_id, 15, 1) = '4' "
+        "AND substr(record_id, 19, 1) = '-' "
+        "AND substr(record_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(record_id, 24, 1) = '-' "
+        "AND substr(record_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(record_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(entity_type) = 'text' "
+        'AND length(CAST(entity_type AS BLOB)) BETWEEN 1 AND 64)',
+    "CHECK (typeof(entity_id) = 'text' "
+        'AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024)',
+    "CHECK (typeof(logical_version) = 'integer' "
+        'AND logical_version BETWEEN 1 AND 9223372036854775807)',
+    "CHECK (typeof(kind) = 'text' AND kind IN ('value', 'tombstone'))",
+    "CHECK (typeof(operation_id) = 'text' AND length(operation_id) = 36 "
+        "AND operation_id = lower(operation_id) "
+        "AND operation_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(operation_id, 9, 1) = '-' "
+        "AND substr(operation_id, 14, 1) = '-' "
+        "AND substr(operation_id, 15, 1) = '4' "
+        "AND substr(operation_id, 19, 1) = '-' "
+        "AND substr(operation_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(operation_id, 24, 1) = '-' "
+        "AND substr(operation_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(operation_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(claimed_writer_device_id) = 'text' "
+        'AND length(claimed_writer_device_id) = 36 '
+        'AND claimed_writer_device_id = lower(claimed_writer_device_id) '
+        "AND claimed_writer_device_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(claimed_writer_device_id, 9, 1) = '-' "
+        "AND substr(claimed_writer_device_id, 14, 1) = '-' "
+        "AND substr(claimed_writer_device_id, 15, 1) = '4' "
+        "AND substr(claimed_writer_device_id, 19, 1) = '-' "
+        "AND substr(claimed_writer_device_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(claimed_writer_device_id, 24, 1) = '-' "
+        "AND substr(claimed_writer_device_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(claimed_writer_device_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(claimed_writer_device_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(claimed_writer_device_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(claimed_writer_device_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(claimed_writer_key_version) = 'integer' "
+        'AND claimed_writer_key_version BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(key_epoch) = 'integer' "
+        'AND key_epoch BETWEEN 1 AND 2147483647)',
+    "CHECK (typeof(accepted_at) = 'integer' AND accepted_at >= 0)",
+  ];
+}
+
+class E2eeSyncRecordParentRows extends Table {
+  @ReferenceName('childStateParents')
+  BlobColumn get childDigest => blob().references(
+    E2eeSyncRecordStateRows,
+    #digest,
+    onDelete: KeyAction.cascade,
+  )();
+  IntColumn get ordinal => integer()();
+  @ReferenceName('parentStateChildren')
+  BlobColumn get parentDigest =>
+      blob().references(E2eeSyncRecordStateRows, #digest)();
+
+  @override
+  Set<Column<Object>> get primaryKey => {childDigest, ordinal};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {childDigest, parentDigest},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(child_digest) = 'blob' AND length(child_digest) = 32)",
+    "CHECK (typeof(ordinal) = 'integer' AND ordinal BETWEEN 0 AND 1)",
+    "CHECK (typeof(parent_digest) = 'blob' AND length(parent_digest) = 32)",
+    'CHECK (child_digest <> parent_digest)',
+  ];
+}
+
+class E2eeSyncRecordHeadRows extends Table {
+  BlobColumn get digest => blob().references(
+    E2eeSyncRecordStateRows,
+    #digest,
+    onDelete: KeyAction.cascade,
+  )();
+
+  @override
+  Set<Column<Object>> get primaryKey => {digest};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(digest) = 'blob' AND length(digest) = 32)",
+  ];
+}
+
 @DriftDatabase(
   tables: [
     ConversationRows,
@@ -405,6 +537,9 @@ class GenerationRunRows extends Table {
     MigrationRunRows,
     MigrationIssueRows,
     GenerationRunRows,
+    E2eeSyncRecordStateRows,
+    E2eeSyncRecordParentRows,
+    E2eeSyncRecordHeadRows,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -412,9 +547,8 @@ class AppDatabase extends _$AppDatabase {
 
   static const databaseFileName = 'kelivo.db';
 
-  // 定制同步协议把轮次身份和稳定生成终态作为持久化事实。版本 12
-  // 与上游未发布的版本 11 硬切，避免旧库被误认为具备这些列。
-  static const currentSchemaVersion = 12;
+  // 认证状态账本是防回滚的信任锚，不能在缺少可信历史的旧库上伪造迁移结果。
+  static const currentSchemaVersion = 13;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

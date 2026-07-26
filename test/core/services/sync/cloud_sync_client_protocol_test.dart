@@ -14,6 +14,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_pairing_qr_codec.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 
@@ -3119,26 +3120,42 @@ void main() {
       userId: _userId,
       currentKeyEpoch: 7,
     );
-    addTearDown(cipher.close);
-    final firstRecord = await cipher.seal(
+    final stateCodec = E2eeAccountRecordStateCodec.takeOwnership(cipher);
+    addTearDown(stateCodec.close);
+    final firstState = await stateCodec.sealValue(
       entityKey: const SyncEntityKey(
         entityType: 'conversation',
         entityId: 'conversation-1',
       ),
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _mutationId1,
+      claimedWriterDeviceId: _deviceId1,
+      claimedWriterKeyVersion: 1,
       payload: Uint8List.fromList(<int>[1, 2, 3]),
     );
-    final secondRecord = await cipher.seal(
+    final secondState = await stateCodec.sealValue(
       entityKey: const SyncEntityKey(
         entityType: 'conversation',
         entityId: 'conversation-2',
       ),
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _mutationId2,
+      claimedWriterDeviceId: _deviceId1,
+      claimedWriterKeyVersion: 1,
       payload: Uint8List.fromList(<int>[7, 8, 9]),
     );
-    final thirdRecord = await cipher.seal(
+    final thirdState = await stateCodec.sealValue(
       entityKey: const SyncEntityKey(
         entityType: 'message',
         entityId: 'message-1',
       ),
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _mutationId3,
+      claimedWriterDeviceId: _deviceId1,
+      claimedWriterKeyVersion: 1,
       payload: Uint8List.fromList(<int>[4, 5, 6]),
     );
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -3156,17 +3173,17 @@ void main() {
       CloudSyncPutRecordMutation(
         mutationId: _mutationId1,
         expectedRevision: 0,
-        record: firstRecord,
+        state: firstState,
       ),
       CloudSyncPutRecordMutation(
         mutationId: _mutationId2,
         expectedRevision: 3,
-        record: secondRecord,
+        state: secondState,
       ),
       CloudSyncPutRecordMutation(
         mutationId: _mutationId3,
         expectedRevision: 2,
-        record: thirdRecord,
+        state: thirdState,
       ),
     ]);
 
@@ -3179,30 +3196,30 @@ void main() {
         'mutations': <Object?>[
           <String, Object?>{
             'mutationId': _mutationId1,
-            'recordId': firstRecord.recordId.wireValue,
+            'recordId': firstState.record.recordId.wireValue,
             'expectedRevision': 0,
             'operation': 'put',
             'envelopeVersion': 1,
             'keyEpoch': 7,
-            'ciphertext': _encodedRecordCiphertext(firstRecord),
+            'ciphertext': _encodedRecordCiphertext(firstState.record),
           },
           <String, Object?>{
             'mutationId': _mutationId2,
-            'recordId': secondRecord.recordId.wireValue,
+            'recordId': secondState.record.recordId.wireValue,
             'expectedRevision': 3,
             'operation': 'put',
             'envelopeVersion': 1,
             'keyEpoch': 7,
-            'ciphertext': _encodedRecordCiphertext(secondRecord),
+            'ciphertext': _encodedRecordCiphertext(secondState.record),
           },
           <String, Object?>{
             'mutationId': _mutationId3,
-            'recordId': thirdRecord.recordId.wireValue,
+            'recordId': thirdState.record.recordId.wireValue,
             'expectedRevision': 2,
             'operation': 'put',
             'envelopeVersion': 1,
             'keyEpoch': 7,
-            'ciphertext': _encodedRecordCiphertext(thirdRecord),
+            'ciphertext': _encodedRecordCiphertext(thirdState.record),
           },
         ],
       },
@@ -3259,7 +3276,119 @@ void main() {
     );
   });
 
-  test('v3 增量拉取保持密文不透明并区分 put 与 delete', () async {
+  test('v3 推送在发网前拒绝 mutationId 与认证 operationId 不一致', () async {
+    const core = KelivoSecureCore();
+    final ark = await core.generateAccountRootKey();
+    final cipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: ark,
+      userId: _userId,
+      currentKeyEpoch: 7,
+    );
+    final stateCodec = E2eeAccountRecordStateCodec.takeOwnership(cipher);
+    addTearDown(stateCodec.close);
+    final state = await stateCodec.sealValue(
+      entityKey: const SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'conversation-1',
+      ),
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _mutationId1,
+      claimedWriterDeviceId: _deviceId1,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+
+    expect(
+      () => CloudSyncPutRecordMutation(
+        mutationId: _mutationId2,
+        expectedRevision: 0,
+        state: state,
+      ),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.name,
+          'name',
+          'mutationId',
+        ),
+      ),
+    );
+  });
+
+  test('v3 增量拉取保持 put 密文不透明', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final pullFuture = client.pullChanges(cursor: 'cursor-1', limit: 1);
+
+    final request = await requestFuture;
+    expect(request.uri.path, '/api/sync/change/pull');
+    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    expect(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+      <String, Object?>{'cursor': 'cursor-1', 'limit': 1},
+    );
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'changes': <Object?>[
+            <String, Object?>{
+              'changeSeq': 12,
+              'operation': 'put',
+              'recordId': _recordId1,
+              'revision': 2,
+              'envelopeVersion': 1,
+              'keyEpoch': 7,
+              'ciphertext': 'AQID',
+              'ciphertextBytes': 3,
+              'deletedAt': null,
+              'updatedAt': '2026-07-19T05:00:00.000Z',
+              'updatedByDeviceId': _deviceId1,
+            },
+          ],
+          'nextCursor': 'cursor-2',
+          'hasMore': true,
+          'resetRequired': false,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final page = await pullFuture;
+    expect(page.nextCursor, 'cursor-2');
+    expect(page.hasMore, isTrue);
+    expect(page.resetRequired, isFalse);
+    expect(
+      page.changes[0],
+      isA<CloudSyncPutRecordChange>()
+          .having((change) => change.changeSeq, 'changeSeq', 12)
+          .having((change) => change.recordId.wireValue, 'recordId', _recordId1)
+          .having((change) => change.revision, 'revision', 2)
+          .having((change) => change.record.keyEpoch, 'keyEpoch', 7)
+          .having(
+            (change) => change.record.ciphertext,
+            'ciphertext',
+            orderedEquals(<int>[1, 2, 3]),
+          )
+          .having(
+            (change) => change.updatedByDeviceId,
+            'updatedByDeviceId',
+            _deviceId1,
+          ),
+    );
+  });
+
+  test('v3 增量拉取拒绝包含 raw delete 的整页响应', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -3272,14 +3401,8 @@ void main() {
     });
 
     final pullFuture = client.pullChanges(cursor: 'cursor-1', limit: 2);
-
     final request = await requestFuture;
-    expect(request.uri.path, '/api/sync/change/pull');
-    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
-    expect(
-      jsonDecode(await utf8.decoder.bind(request).join()),
-      <String, Object?>{'cursor': 'cursor-1', 'limit': 2},
-    );
+    await utf8.decoder.bind(request).join();
     request.response.headers.contentType = ContentType.json;
     request.response.write(
       jsonEncode(<String, Object?>{
@@ -3320,37 +3443,17 @@ void main() {
     );
     await request.response.close();
 
-    final page = await pullFuture;
-    expect(page.nextCursor, 'cursor-2');
-    expect(page.hasMore, isTrue);
-    expect(page.resetRequired, isFalse);
-    expect(
-      page.changes[0],
-      isA<CloudSyncPutRecordChange>()
-          .having((change) => change.changeSeq, 'changeSeq', 12)
-          .having((change) => change.recordId.wireValue, 'recordId', _recordId1)
-          .having((change) => change.revision, 'revision', 2)
-          .having((change) => change.record.keyEpoch, 'keyEpoch', 7)
-          .having(
-            (change) => change.record.ciphertext,
-            'ciphertext',
-            orderedEquals(<int>[1, 2, 3]),
-          )
-          .having(
-            (change) => change.updatedByDeviceId,
-            'updatedByDeviceId',
-            _deviceId1,
-          ),
-    );
-    expect(
-      page.changes[1],
-      isA<CloudSyncDeleteRecordChange>()
-          .having((change) => change.changeSeq, 'changeSeq', 13)
-          .having(
-            (change) => change.deletedAt,
-            'deletedAt',
-            DateTime.utc(2026, 7, 19, 5, 1),
-          ),
+    await expectLater(
+      pullFuture,
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
     );
   });
 
@@ -3392,7 +3495,76 @@ void main() {
     expect(page.resetRequired, isTrue);
   });
 
-  test('v3 快照拉取解析 active 与 deleted 并返回固定水位游标', () async {
+  test('v3 快照拉取解析 active 并返回固定水位游标', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final pullFuture = client.pullSnapshot(
+      snapshotCursor: 'snapshot-1',
+      limit: 1,
+    );
+
+    final request = await requestFuture;
+    expect(request.uri.path, '/api/sync/snapshot/pull');
+    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    expect(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+      <String, Object?>{'snapshotCursor': 'snapshot-1', 'limit': 1},
+    );
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'records': <Object?>[
+            <String, Object?>{
+              'recordId': _recordId1,
+              'revision': 2,
+              'envelopeVersion': 1,
+              'keyEpoch': 7,
+              'ciphertext': 'BAUG',
+              'ciphertextBytes': 3,
+              'deletedAt': null,
+              'updatedAt': '2026-07-19T05:00:00.000Z',
+              'updatedByDeviceId': _deviceId1,
+              'lastChangeSeq': 12,
+            },
+          ],
+          'nextSnapshotCursor': null,
+          'syncCursor': 'sync-13',
+          'hasMore': false,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final page = await pullFuture;
+    expect(page.nextSnapshotCursor, isNull);
+    expect(page.syncCursor, 'sync-13');
+    expect(page.hasMore, isFalse);
+    expect(
+      page.records[0],
+      isA<CloudSyncActiveRecord>()
+          .having((record) => record.recordId.wireValue, 'recordId', _recordId1)
+          .having((record) => record.revision, 'revision', 2)
+          .having((record) => record.lastChangeSeq, 'lastChangeSeq', 12)
+          .having((record) => record.record.keyEpoch, 'keyEpoch', 7)
+          .having(
+            (record) => record.record.ciphertext,
+            'ciphertext',
+            orderedEquals(<int>[4, 5, 6]),
+          ),
+    );
+  });
+
+  test('v3 快照拉取拒绝包含 raw deleted 的整页响应', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -3408,14 +3580,8 @@ void main() {
       snapshotCursor: 'snapshot-1',
       limit: 2,
     );
-
     final request = await requestFuture;
-    expect(request.uri.path, '/api/sync/snapshot/pull');
-    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
-    expect(
-      jsonDecode(await utf8.decoder.bind(request).join()),
-      <String, Object?>{'snapshotCursor': 'snapshot-1', 'limit': 2},
-    );
+    await utf8.decoder.bind(request).join();
     request.response.headers.contentType = ContentType.json;
     request.response.write(
       jsonEncode(<String, Object?>{
@@ -3454,33 +3620,17 @@ void main() {
     );
     await request.response.close();
 
-    final page = await pullFuture;
-    expect(page.nextSnapshotCursor, isNull);
-    expect(page.syncCursor, 'sync-13');
-    expect(page.hasMore, isFalse);
-    expect(
-      page.records[0],
-      isA<CloudSyncActiveRecord>()
-          .having((record) => record.recordId.wireValue, 'recordId', _recordId1)
-          .having((record) => record.revision, 'revision', 2)
-          .having((record) => record.lastChangeSeq, 'lastChangeSeq', 12)
-          .having((record) => record.record.keyEpoch, 'keyEpoch', 7)
-          .having(
-            (record) => record.record.ciphertext,
-            'ciphertext',
-            orderedEquals(<int>[4, 5, 6]),
-          ),
-    );
-    expect(
-      page.records[1],
-      isA<CloudSyncDeletedRecord>()
-          .having((record) => record.recordId.wireValue, 'recordId', _recordId2)
-          .having((record) => record.lastChangeSeq, 'lastChangeSeq', 13)
-          .having(
-            (record) => record.deletedAt,
-            'deletedAt',
-            DateTime.utc(2026, 7, 19, 5, 1),
-          ),
+    await expectLater(
+      pullFuture,
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
     );
   });
 
@@ -3493,57 +3643,62 @@ void main() {
       userId: _userId,
       currentKeyEpoch: 7,
     );
+    final stateCodec = E2eeAccountRecordStateCodec.takeOwnership(cipher);
     final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
     addTearDown(() async {
       client.close(force: true);
-      await cipher.close();
+      await stateCodec.close();
     });
-    final smallRecord = await cipher.seal(
+    final smallState = await stateCodec.sealValue(
       entityKey: const SyncEntityKey(entityType: 'conversation', entityId: '1'),
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _mutationId1,
+      claimedWriterDeviceId: _deviceId1,
+      claimedWriterKeyVersion: 1,
       payload: Uint8List(0),
     );
-    final firstHalfRecord = await cipher.seal(
+    final firstHalfState = await stateCodec.sealValue(
       entityKey: const SyncEntityKey(entityType: 'message', entityId: '1'),
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _mutationId1,
+      claimedWriterDeviceId: _deviceId1,
+      claimedWriterKeyVersion: 1,
       payload: Uint8List(524200),
     );
-    final secondHalfRecord = await cipher.seal(
+    final secondHalfState = await stateCodec.sealValue(
       entityKey: const SyncEntityKey(entityType: 'message', entityId: '2'),
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _mutationId2,
+      claimedWriterDeviceId: _deviceId1,
+      claimedWriterKeyVersion: 1,
       payload: Uint8List(524200),
     );
     final oversizedBatch = List<CloudSyncRecordMutation>.generate(
       11,
-      (index) => CloudSyncPutRecordMutation(
-        mutationId:
-            '00000000-0000-4000-8000-${(index + 100).toString().padLeft(12, '0')}',
+      (_) => CloudSyncPutRecordMutation(
+        mutationId: _mutationId1,
         expectedRevision: 1,
-        record: smallRecord,
+        state: smallState,
       ),
     );
     final invalidCalls = <(String, Object? Function())>[
       ('空批次', () => client.pushRecords(const <CloudSyncRecordMutation>[])),
       ('超过十条', () => client.pushRecords(oversizedBatch)),
       (
-        '非规范 UUID',
-        () => client.pushRecords(<CloudSyncRecordMutation>[
-          CloudSyncPutRecordMutation(
-            mutationId: 'A0000000-0000-4000-8000-000000000001',
-            expectedRevision: 0,
-            record: smallRecord,
-          ),
-        ]),
-      ),
-      (
         '批次密文总量超过一 MiB',
         () => client.pushRecords(<CloudSyncRecordMutation>[
           CloudSyncPutRecordMutation(
             mutationId: _mutationId1,
             expectedRevision: 0,
-            record: firstHalfRecord,
+            state: firstHalfState,
           ),
           CloudSyncPutRecordMutation(
             mutationId: _mutationId2,
             expectedRevision: 0,
-            record: secondHalfRecord,
+            state: secondHalfState,
           ),
         ]),
       ),

@@ -20,7 +20,7 @@ void main() {
     verifier = SchemaVerifier(GeneratedHelper());
   });
 
-  test('frozen schema includes and matches current schema 12', () async {
+  test('frozen schema includes and matches current schema 13', () async {
     expect(GeneratedHelper.versions, [AppDatabase.currentSchemaVersion]);
     final directory = await Directory.systemTemp.createTemp(
       'kelivo_schema_current_',

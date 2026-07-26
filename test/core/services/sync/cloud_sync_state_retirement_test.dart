@@ -1,12 +1,27 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path/path.dart' as p;
 
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
+
+const _stateTestUserId = '10000000-0000-4000-8000-000000000001';
+const _stateTestOperationId1 = '20000000-0000-4000-8000-000000000001';
+const _stateTestOperationId2 = '20000000-0000-4000-8000-000000000002';
+const _stateTestOperationId3 = '20000000-0000-4000-8000-000000000003';
+const _stateTestOperationId4 = '20000000-0000-4000-8000-000000000004';
+const _stateTestWriterDeviceId = '30000000-0000-4000-8000-000000000001';
+const _stateTestEntityKey = SyncEntityKey(
+  entityType: 'conversation',
+  entityId: 'conversation-1',
+);
 
 void main() {
   late Directory tempDirectory;
@@ -248,6 +263,344 @@ void main() {
       ),
     );
   });
+
+  test('认证记录状态往返值与墓碑并清零借用明文', () async {
+    final codec = await _createStateCodec();
+    addTearDown(codec.close);
+    final valuePayload = Uint8List.fromList(<int>[1, 2, 3]);
+    final value = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: valuePayload,
+    );
+
+    Uint8List? borrowedPayload;
+    final openedValue = await codec.open(
+      _untrustedStateRecord(value),
+      decode: (state, payload) {
+        borrowedPayload = payload;
+        return (state: state, payload: Uint8List.fromList(payload));
+      },
+    );
+    expect(openedValue.state.recordId, value.record.recordId);
+    expect(openedValue.state.entityKey, _stateTestEntityKey);
+    expect(openedValue.state.digest, value.digest);
+    expect(openedValue.state.kind, E2eeAccountRecordStateKind.value);
+    expect(openedValue.state.logicalVersion, 1);
+    expect(openedValue.state.parentDigests, isEmpty);
+    expect(openedValue.state.operationId, _stateTestOperationId1);
+    expect(openedValue.state.claimedWriterDeviceId, _stateTestWriterDeviceId);
+    expect(openedValue.state.claimedWriterKeyVersion, 1);
+    expect(openedValue.state.keyEpoch, 7);
+    expect(openedValue.payload, orderedEquals(valuePayload));
+    expect(borrowedPayload, everyElement(0));
+    expect(valuePayload, orderedEquals(<int>[1, 2, 3]));
+
+    final tombstone = await codec.sealTombstone(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 2,
+      parentDigests: <E2eeAccountRecordStateDigest>[value.digest],
+      operationId: _stateTestOperationId2,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+    );
+    final openedTombstone = await codec.open(
+      _untrustedStateRecord(tombstone),
+      decode: (state, payload) => (state: state, payloadLength: payload.length),
+    );
+    expect(tombstone.record.recordId, value.record.recordId);
+    expect(openedTombstone.state.kind, E2eeAccountRecordStateKind.tombstone);
+    expect(openedTombstone.state.logicalVersion, 2);
+    expect(openedTombstone.state.parentDigests, <Object>[value.digest]);
+    expect(openedTombstone.payloadLength, 0);
+  });
+
+  test('认证记录状态规范化双父摘要并表达显式合并', () async {
+    final codec = await _createStateCodec();
+    addTearDown(codec.close);
+    final genesis = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[1]),
+    );
+    final firstBranch = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 2,
+      parentDigests: <E2eeAccountRecordStateDigest>[genesis.digest],
+      operationId: _stateTestOperationId2,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[2]),
+    );
+    final secondBranch = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 2,
+      parentDigests: <E2eeAccountRecordStateDigest>[genesis.digest],
+      operationId: _stateTestOperationId3,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[3]),
+    );
+    final merge = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 3,
+      parentDigests: <E2eeAccountRecordStateDigest>[
+        secondBranch.digest,
+        firstBranch.digest,
+      ],
+      operationId: _stateTestOperationId4,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[4]),
+    );
+    final sameParentsOtherOrder = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 3,
+      parentDigests: <E2eeAccountRecordStateDigest>[
+        firstBranch.digest,
+        secondBranch.digest,
+      ],
+      operationId: '20000000-0000-4000-8000-000000000005',
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[4]),
+    );
+
+    expect(merge.parentDigests, sameParentsOtherOrder.parentDigests);
+    expect(
+      merge.parentDigests,
+      unorderedEquals(<Object>[firstBranch.digest, secondBranch.digest]),
+    );
+    final openedParents = await codec.open(
+      _untrustedStateRecord(merge),
+      decode: (state, _) => state.parentDigests,
+    );
+    expect(openedParents, merge.parentDigests);
+  });
+
+  test('认证记录状态拒绝非法版本、父集合与写入声明', () async {
+    final codec = await _createStateCodec();
+    addTearDown(codec.close);
+    final genesis = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List(0),
+    );
+    final other = E2eeAccountRecordStateDigest.fromTrustedStorage(
+      Uint8List.fromList(List<int>.filled(32, 7)),
+    );
+
+    Future<void> seal({
+      required int version,
+      required List<E2eeAccountRecordStateDigest> parents,
+      String operationId = _stateTestOperationId2,
+      String claimedWriterDeviceId = _stateTestWriterDeviceId,
+      int claimedWriterKeyVersion = 1,
+    }) async {
+      await codec.sealValue(
+        entityKey: _stateTestEntityKey,
+        logicalVersion: version,
+        parentDigests: parents,
+        operationId: operationId,
+        claimedWriterDeviceId: claimedWriterDeviceId,
+        claimedWriterKeyVersion: claimedWriterKeyVersion,
+        payload: Uint8List(0),
+      );
+    }
+
+    await expectLater(
+      seal(version: 1, parents: <E2eeAccountRecordStateDigest>[genesis.digest]),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      seal(version: 2, parents: const []),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      seal(
+        version: 2,
+        parents: <E2eeAccountRecordStateDigest>[genesis.digest, genesis.digest],
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      seal(
+        version: 3,
+        parents: <E2eeAccountRecordStateDigest>[
+          genesis.digest,
+          other,
+          E2eeAccountRecordStateDigest.fromTrustedStorage(
+            Uint8List.fromList(List<int>.filled(32, 8)),
+          ),
+        ],
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      seal(
+        version: 2,
+        parents: <E2eeAccountRecordStateDigest>[genesis.digest],
+        operationId: 'ABCDEFAB-0000-4000-8000-000000000002',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      seal(
+        version: 2,
+        parents: <E2eeAccountRecordStateDigest>[genesis.digest],
+        claimedWriterDeviceId: '30000000-0000-3000-8000-000000000001',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      seal(
+        version: 2,
+        parents: <E2eeAccountRecordStateDigest>[genesis.digest],
+        claimedWriterKeyVersion: 0,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      codec.sealValue(
+        entityKey: _stateTestEntityKey,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[genesis.digest],
+        operationId: _stateTestOperationId2,
+        claimedWriterDeviceId: _stateTestWriterDeviceId,
+        claimedWriterKeyVersion: 1,
+        payload: Uint8List(e2eeAccountRecordMaxCiphertextBytes),
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+  });
+
+  test('认证记录状态在墓碑被篡改或内层帧非法时失败关闭', () async {
+    final codec = await _createStateCodec();
+    addTearDown(codec.close);
+    final tombstone = await codec.sealTombstone(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+    );
+    final tampered = Uint8List.fromList(tombstone.record.ciphertext);
+    tampered[tampered.length - 1] ^= 1;
+    await expectLater(
+      codec.open<void>(
+        _untrustedStateRecord(tombstone, ciphertext: tampered),
+        decode: (_, _) {},
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+
+    const core = KelivoSecureCore();
+    final rawCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: await core.generateAccountRootKey(),
+      userId: _stateTestUserId,
+      currentKeyEpoch: 7,
+    );
+    final malformed = await rawCipher.seal(
+      entityKey: _stateTestEntityKey,
+      payload: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final malformedCodec = E2eeAccountRecordStateCodec.takeOwnership(rawCipher);
+    addTearDown(malformedCodec.close);
+    await expectLater(
+      malformedCodec.open<void>(
+        E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: E2eeUntrustedAccountRecordId.fromTransport(
+            malformed.recordId.wireValue,
+          ),
+          envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+          keyEpoch: malformed.keyEpoch,
+          ciphertext: malformed.ciphertext,
+        ),
+        decode: (_, _) {},
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('认证记录状态在解码异常或异步回调后清零借用明文', () async {
+    final codec = await _createStateCodec();
+    addTearDown(codec.close);
+    final sealed = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[4, 5, 6]),
+    );
+
+    Uint8List? failedDecodePayload;
+    await expectLater(
+      codec.open<void>(
+        _untrustedStateRecord(sealed),
+        decode: (_, payload) {
+          failedDecodePayload = payload;
+          throw const FormatException('模拟领域解码失败');
+        },
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(failedDecodePayload, everyElement(0));
+
+    Uint8List? asynchronousPayload;
+    await expectLater(
+      codec.open<Object?>(
+        _untrustedStateRecord(sealed),
+        decode: (_, payload) {
+          asynchronousPayload = payload;
+          return Future<void>.value();
+        },
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+    expect(asynchronousPayload, everyElement(0));
+  });
+}
+
+Future<E2eeAccountRecordStateCodec> _createStateCodec() async {
+  const core = KelivoSecureCore();
+  return E2eeAccountRecordStateCodec.takeOwnership(
+    E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: await core.generateAccountRootKey(),
+      userId: _stateTestUserId,
+      currentKeyEpoch: 7,
+    ),
+  );
+}
+
+E2eeUntrustedAccountRecordEnvelope _untrustedStateRecord(
+  E2eeSealedAccountRecordState state, {
+  Uint8List? ciphertext,
+}) {
+  return E2eeUntrustedAccountRecordEnvelope.fromTransport(
+    recordId: E2eeUntrustedAccountRecordId.fromTransport(
+      state.record.recordId.wireValue,
+    ),
+    envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+    keyEpoch: state.record.keyEpoch,
+    ciphertext: ciphertext ?? state.record.ciphertext,
+  );
 }
 
 Iterable<SyncEntityKey> _unreadableSyncEntityKeys() sync* {
