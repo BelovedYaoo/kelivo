@@ -557,8 +557,12 @@ impl DeviceIdentity {
             pairing_secret,
             envelope.as_bytes(),
         )?;
-        let authenticator =
-            PairingAuthenticator::create(pairing_secret, &message, &signature, envelope)?;
+        let authenticator = PairingAuthenticator::create(
+            pairing_secret,
+            &message,
+            &signature,
+            envelope.as_bytes(),
+        )?;
         Ok((signature, authenticator))
     }
 
@@ -609,7 +613,7 @@ impl DeviceIdentity {
         require_exact_length(pairing_secret, PAIRING_SECRET_LENGTH, true)?;
         let proof_signature = DeviceProofSignature::from_bytes(proof_signature)?;
         let authenticator = PairingAuthenticator::from_bytes(authenticator)?;
-        let envelope = ArkEnvelope::from_bytes(envelope)?;
+        require_exact_length(envelope, ARK_ENVELOPE_LENGTH, false)?;
         let target_public_keys = self.public_keys();
         let proof_fields = DeviceProofFields {
             kind: DeviceProofKind::PairingApprove,
@@ -621,11 +625,12 @@ impl DeviceIdentity {
             signing_public_key: expected.issuer_public_keys.signing,
             key_agreement_public_key: expected.issuer_public_keys.key_agreement,
             primary_payload_hash: Sha256Digest::of(pairing_secret),
-            envelope_hash: Sha256Digest::of(envelope.as_bytes()),
+            envelope_hash: Sha256Digest::of(envelope),
         };
         let proof_message = DeviceProofMessage::new(proof_fields)?;
-        authenticator.verify(pairing_secret, &proof_message, &proof_signature, &envelope)?;
+        authenticator.verify(pairing_secret, &proof_message, &proof_signature, envelope)?;
         proof_message.verify_expected(proof_fields, &proof_signature)?;
+        let envelope = ArkEnvelope::from_bytes(envelope)?;
 
         open_ark_envelope(
             &envelope,
@@ -882,14 +887,14 @@ impl PairingAuthenticator {
         pairing_secret: &[u8],
         message: &DeviceProofMessage,
         signature: &DeviceProofSignature,
-        envelope: &ArkEnvelope,
+        envelope: &[u8],
     ) -> Result<Self, DeviceCryptoError> {
         let key = derive_pairing_authenticator_key(pairing_secret)?;
         let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(key.as_slice())
             .map_err(|_| DeviceCryptoError::PairingAuthenticatorCryptoFailed)?;
         mac.update(message.as_bytes());
         mac.update(signature.as_bytes());
-        mac.update(envelope.as_bytes());
+        mac.update(envelope);
         Ok(Self(mac.finalize().into_bytes().into()))
     }
 
@@ -898,14 +903,14 @@ impl PairingAuthenticator {
         pairing_secret: &[u8],
         message: &DeviceProofMessage,
         signature: &DeviceProofSignature,
-        envelope: &ArkEnvelope,
+        envelope: &[u8],
     ) -> Result<(), DeviceCryptoError> {
         let key = derive_pairing_authenticator_key(pairing_secret)?;
         let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(key.as_slice())
             .map_err(|_| DeviceCryptoError::PairingAuthenticatorCryptoFailed)?;
         mac.update(message.as_bytes());
         mac.update(signature.as_bytes());
-        mac.update(envelope.as_bytes());
+        mac.update(envelope);
         mac.verify_slice(&self.0)
             .map_err(|_| DeviceCryptoError::PairingAuthenticatorInvalid)
     }
@@ -1225,16 +1230,14 @@ impl DeviceStateBlob {
         if reserved != DEVICE_STATE_RESERVED {
             return Err(DeviceCryptoError::UnsupportedDeviceStateReserved(reserved));
         }
-        let blob = Self(copy_array(bytes));
-        blob.binding()?;
-        Ok(blob)
+        Ok(Self(copy_array(bytes)))
     }
 
     pub const fn as_bytes(&self) -> &[u8; DEVICE_STATE_BLOB_LENGTH] {
         &self.0
     }
 
-    pub fn binding(&self) -> Result<DeviceStateBinding, DeviceCryptoError> {
+    fn authenticated_binding(&self) -> Result<DeviceStateBinding, DeviceCryptoError> {
         let flags = u16::from_be_bytes(copy_array(&self.0[8..10]));
         let device_id = DeviceId::new(copy_array(
             &self.0[DEVICE_STATE_DEVICE_ID_OFFSET..DEVICE_STATE_KEY_VERSION_OFFSET],
@@ -1347,7 +1350,6 @@ pub fn open_device_state(
     state_key: &[u8; DEVICE_STATE_KEY_LENGTH],
     blob: &DeviceStateBlob,
 ) -> Result<(DeviceStateBinding, DeviceIdentity, Option<AccountRootKey>), DeviceCryptoError> {
-    let binding = blob.binding()?;
     let nonce_bytes: [u8; DEVICE_STATE_NONCE_LENGTH] = blob.0
         [DEVICE_STATE_NONCE_OFFSET..DEVICE_STATE_CIPHERTEXT_OFFSET]
         .try_into()
@@ -1369,15 +1371,19 @@ pub fn open_device_state(
         )
         .map_err(|_| DeviceCryptoError::DeviceStateAuthenticationFailed)?;
 
-    let identity = DeviceIdentity::from_private_bytes(
-        copy_array(&plaintext[..DEVICE_PRIVATE_KEY_LENGTH]),
-        copy_array(&plaintext[DEVICE_PRIVATE_KEY_LENGTH..DEVICE_PRIVATE_KEY_LENGTH * 2]),
-    )?;
-    let ark_bytes = copy_array(&plaintext[DEVICE_PRIVATE_KEY_LENGTH * 2..]);
+    // 元数据与秘密使用同一 AEAD tag；认证前不得把 clear metadata 提升为可信绑定。
+    let binding = blob.authenticated_binding()?;
+
+    let signing_seed = Zeroizing::new(copy_array(&plaintext[..DEVICE_PRIVATE_KEY_LENGTH]));
+    let key_agreement_bytes = Zeroizing::new(copy_array(
+        &plaintext[DEVICE_PRIVATE_KEY_LENGTH..DEVICE_PRIVATE_KEY_LENGTH * 2],
+    ));
+    let ark_bytes = Zeroizing::new(copy_array(&plaintext[DEVICE_PRIVATE_KEY_LENGTH * 2..]));
+    let identity = DeviceIdentity::from_private_bytes(*signing_seed, *key_agreement_bytes)?;
     let ark = if binding.account.is_some() {
-        Some(AccountRootKey::from_bytes(ark_bytes))
+        Some(AccountRootKey::from_bytes(*ark_bytes))
     } else {
-        if ark_bytes != [0; ACCOUNT_ROOT_KEY_LENGTH] {
+        if *ark_bytes != [0; ACCOUNT_ROOT_KEY_LENGTH] {
             return Err(DeviceCryptoError::DeviceStateAuthenticationFailed);
         }
         None
@@ -2287,6 +2293,12 @@ mod tests {
                 &envelope,
             )
             .expect("配对批准应产生证明和认证器");
+        assert_eq!(
+            authenticator.as_bytes(),
+            &hex_array::<PAIRING_AUTHENTICATOR_LENGTH>(
+                "2b65a897a33efcf05dd529ce7c33a8f3269b1fded3404bd6ee283f1b08a5eceb"
+            )
+        );
         let expected = PairingApprovalExpected {
             pairing_id,
             user_id,
@@ -2308,6 +2320,117 @@ mod tests {
             .expect("认证器、KDPF 与 KAEK 全部有效后才应安装 ARK");
         assert_eq!(installed.0, ark.0);
 
+        let assert_authenticator_rejected =
+            |candidate_expected: PairingApprovalExpected,
+             candidate_secret: &[u8],
+             candidate_signature: &[u8],
+             candidate_envelope: &[u8]| {
+                assert!(matches!(
+                    target.open_pairing_approval(
+                        candidate_expected,
+                        candidate_secret,
+                        candidate_signature,
+                        authenticator.as_bytes(),
+                        candidate_envelope,
+                    ),
+                    Err(DeviceCryptoError::PairingAuthenticatorInvalid)
+                ));
+            };
+
+        let mut wrong_secret = pairing_secret;
+        wrong_secret[0] ^= 1;
+        assert_authenticator_rejected(
+            expected,
+            &wrong_secret,
+            signature.as_bytes(),
+            envelope.as_bytes(),
+        );
+
+        let mut forged_signature = *signature.as_bytes();
+        forged_signature[0] ^= 1;
+        assert_authenticator_rejected(
+            expected,
+            &pairing_secret,
+            &forged_signature,
+            envelope.as_bytes(),
+        );
+
+        let mut forged_envelope = *envelope.as_bytes();
+        forged_envelope[0] ^= 1;
+        assert_authenticator_rejected(
+            expected,
+            &pairing_secret,
+            signature.as_bytes(),
+            &forged_envelope,
+        );
+
+        let mut changed = expected;
+        changed.pairing_id =
+            DeviceProofAttemptId::new(uuid_v4(5)).expect("替换 pairing UUID 应有效");
+        assert_authenticator_rejected(
+            changed,
+            &pairing_secret,
+            signature.as_bytes(),
+            envelope.as_bytes(),
+        );
+
+        changed = expected;
+        changed.user_id = UserId::new(uuid_v4(6)).expect("替换用户 UUID 应有效");
+        assert_authenticator_rejected(
+            changed,
+            &pairing_secret,
+            signature.as_bytes(),
+            envelope.as_bytes(),
+        );
+
+        changed = expected;
+        changed.issuer_device_id = DeviceId::new(uuid_v4(7)).expect("替换设备 UUID 应有效");
+        assert_authenticator_rejected(
+            changed,
+            &pairing_secret,
+            signature.as_bytes(),
+            envelope.as_bytes(),
+        );
+
+        changed = expected;
+        changed.expires_at_ms += 1;
+        assert_authenticator_rejected(
+            changed,
+            &pairing_secret,
+            signature.as_bytes(),
+            envelope.as_bytes(),
+        );
+
+        changed = expected;
+        changed.challenge = DeviceProofChallenge::from_bytes([0x67; 32]);
+        assert_authenticator_rejected(
+            changed,
+            &pairing_secret,
+            signature.as_bytes(),
+            envelope.as_bytes(),
+        );
+
+        let alternate_issuer =
+            DeviceIdentity::from_private_bytes([0x12; 32], [0x23; 32]).expect("替换签发身份应有效");
+        let alternate_issuer_keys = alternate_issuer.public_keys();
+        changed = expected;
+        changed.issuer_public_keys.signing = alternate_issuer_keys.signing;
+        assert_authenticator_rejected(
+            changed,
+            &pairing_secret,
+            signature.as_bytes(),
+            envelope.as_bytes(),
+        );
+
+        changed = expected;
+        changed.issuer_public_keys.key_agreement = alternate_issuer_keys.key_agreement;
+        assert_authenticator_rejected(
+            changed,
+            &pairing_secret,
+            signature.as_bytes(),
+            envelope.as_bytes(),
+        );
+
         let mut forged_authenticator = *authenticator.as_bytes();
         forged_authenticator[0] ^= 1;
         assert!(matches!(
@@ -2321,11 +2444,38 @@ mod tests {
             Err(DeviceCryptoError::PairingAuthenticatorInvalid)
         ));
 
+        let mut changed_target = expected;
+        changed_target.target_device_id =
+            DeviceId::new(uuid_v4(8)).expect("替换目标设备 UUID 应有效");
+        assert!(matches!(
+            target.open_pairing_approval(
+                changed_target,
+                &pairing_secret,
+                signature.as_bytes(),
+                authenticator.as_bytes(),
+                envelope.as_bytes(),
+            ),
+            Err(DeviceCryptoError::ArkEnvelopeBindingMismatch)
+        ));
+
         let mut newer_epoch = expected;
         newer_epoch.key_epoch += 1;
         assert!(matches!(
             target.open_pairing_approval(
                 newer_epoch,
+                &pairing_secret,
+                signature.as_bytes(),
+                authenticator.as_bytes(),
+                envelope.as_bytes(),
+            ),
+            Err(DeviceCryptoError::ArkEnvelopeBindingMismatch)
+        ));
+
+        let wrong_target =
+            DeviceIdentity::from_private_bytes([0x34; 32], [0x45; 32]).expect("替换目标身份应有效");
+        assert!(matches!(
+            wrong_target.open_pairing_approval(
+                expected,
                 &pairing_secret,
                 signature.as_bytes(),
                 authenticator.as_bytes(),
@@ -2397,6 +2547,15 @@ mod tests {
         let tampered = DeviceStateBlob::from_bytes(&tampered).expect("篡改不破坏固定头格式");
         assert!(matches!(
             open_device_state(&state_key, &tampered),
+            Err(DeviceCryptoError::DeviceStateAuthenticationFailed)
+        ));
+
+        let mut tampered_metadata = *installed.as_bytes();
+        tampered_metadata[DEVICE_STATE_DEVICE_ID_OFFSET] ^= 1;
+        let tampered_metadata = DeviceStateBlob::from_bytes(&tampered_metadata)
+            .expect("明文元数据必须等到 AEAD 认证后解析");
+        assert!(matches!(
+            open_device_state(&state_key, &tampered_metadata),
             Err(DeviceCryptoError::DeviceStateAuthenticationFailed)
         ));
         assert!(matches!(
