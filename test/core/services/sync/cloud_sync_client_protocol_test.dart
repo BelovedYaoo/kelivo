@@ -2,12 +2,14 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_pairing_qr_codec.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
@@ -93,6 +95,84 @@ Map<String, Object?> _pairingTargetJson() {
     'signingPublicKey': _encodedBytes(cloudSyncDevicePublicKeyBytes, 4),
     'keyAgreementPublicKey': _encodedBytes(cloudSyncDevicePublicKeyBytes, 5),
   };
+}
+
+CloudSyncDevicePairingCreated _pairingQrCreated({DateTime? expiresAt}) {
+  return CloudSyncDevicePairingCreated(
+    pairingId: _pairingId,
+    accountContextId: _userId,
+    challenge: _filledBytes(cloudSyncDeviceChallengeBytes, 18),
+    expiresAt: expiresAt ?? DateTime.utc(2026, 7, 26, 5, 5),
+    targetDevice: CloudSyncDevicePairingTarget(
+      id: _deviceId2,
+      name: 'Android 手机',
+      platform: CloudSyncPlatform.android,
+      clientVersion: '1.2.3',
+      keyVersion: 1,
+      authGeneration: 0,
+      signingPublicKey: _filledBytes(cloudSyncDevicePublicKeyBytes, 4),
+      keyAgreementPublicKey: _filledBytes(cloudSyncDevicePublicKeyBytes, 5),
+    ),
+  );
+}
+
+CloudSyncDevicePairingQrPayload _pairingQrPayload({
+  required Uint8List pairingSecret,
+  DateTime? now,
+  DateTime? expiresAt,
+  int protocolVersion = cloudSyncOpaqueProtocolVersion,
+  CloudSyncPlatform platform = CloudSyncPlatform.android,
+  String deviceName = 'Android 手机',
+  String clientVersion = '1.2.3',
+  int keyVersion = 1,
+  String pairingId = _pairingId,
+  String accountContextId = _userId,
+  String targetDeviceId = _deviceId2,
+  Uint8List? challenge,
+  Uint8List? signingPublicKey,
+  Uint8List? keyAgreementPublicKey,
+}) {
+  return CloudSyncDevicePairingQrPayload.takeOwnership(
+    protocolVersion: protocolVersion,
+    platform: platform,
+    untrustedDeviceName: deviceName,
+    untrustedClientVersion: clientVersion,
+    keyVersion: keyVersion,
+    expiresAt: expiresAt ?? DateTime.utc(2026, 7, 26, 5, 5),
+    pairingId: pairingId,
+    accountContextId: accountContextId,
+    targetDeviceId: targetDeviceId,
+    challenge: challenge ?? _filledBytes(cloudSyncDeviceChallengeBytes, 18),
+    signingPublicKey:
+        signingPublicKey ?? _filledBytes(cloudSyncDevicePublicKeyBytes, 4),
+    keyAgreementPublicKey:
+        keyAgreementPublicKey ?? _filledBytes(cloudSyncDevicePublicKeyBytes, 5),
+    pairingSecret: pairingSecret,
+    now: now ?? DateTime.utc(2026, 7, 26, 5),
+  );
+}
+
+Uint8List _validPairingQrFrame() {
+  final payload = _pairingQrPayload(
+    pairingSecret: _filledBytes(cloudSyncPairingSecretBytes, 24),
+  );
+  try {
+    return CloudSyncDevicePairingQrCodec.encode(
+      payload,
+      now: DateTime.utc(2026, 7, 26, 5),
+    );
+  } finally {
+    payload.dispose();
+  }
+}
+
+void _refreshPairingQrCrc(Uint8List frame) {
+  final crcOffset = frame.length - 4;
+  ByteData.sublistView(frame).setUint32(
+    crcOffset,
+    getCrc32(Uint8List.sublistView(frame, 0, crcOffset)),
+    Endian.big,
+  );
 }
 
 Map<String, Object?> _trustedDeviceJson({String status = 'active'}) {
@@ -956,6 +1036,395 @@ void main() {
       'pageSize': 10,
     });
   });
+
+  test('设备配对 QR 完整 transcript 规范编码并转移敏感缓冲区所有权', () {
+    final now = DateTime.utc(2026, 7, 26, 5);
+    final sourceSecret = _filledBytes(cloudSyncPairingSecretBytes, 24);
+    final payload = CloudSyncDevicePairingQrPayload.fromCreatedPairing(
+      created: _pairingQrCreated(),
+      pairingSecret: sourceSecret,
+      now: now,
+    );
+    final frame = CloudSyncDevicePairingQrCodec.encode(payload, now: now);
+    final deviceNameBytes = utf8.encode('Android 手机');
+    final clientVersionBytes = ascii.encode('1.2.3');
+    final expectedLength =
+        cloudSyncPairingQrMinimumFrameBytes +
+        deviceNameBytes.length +
+        clientVersionBytes.length;
+    final frameData = ByteData.sublistView(frame);
+
+    expect(frame, hasLength(expectedLength));
+    expect(frame.sublist(0, 16), <int>[
+      0x4b,
+      0x4c,
+      0x50,
+      0x51,
+      cloudSyncPairingQrFrameVersion,
+      0,
+      expectedLength >> 8,
+      expectedLength & 0xff,
+      0,
+      0,
+      0,
+      cloudSyncOpaqueProtocolVersion,
+      1,
+      deviceNameBytes.length,
+      clientVersionBytes.length,
+      0,
+    ]);
+    expect(frameData.getUint32(16, Endian.big), 1);
+    expect(
+      frameData.getUint64(20, Endian.big),
+      DateTime.utc(2026, 7, 26, 5, 5).millisecondsSinceEpoch,
+    );
+    expect(frame.sublist(76, 108), everyElement(18));
+    expect(frame.sublist(108, 140), everyElement(4));
+    expect(frame.sublist(140, 172), everyElement(5));
+    expect(frame.sublist(172, 204), everyElement(24));
+    expect(frame.sublist(204, 204 + deviceNameBytes.length), deviceNameBytes);
+    expect(
+      frame.sublist(204 + deviceNameBytes.length, frame.length - 4),
+      clientVersionBytes,
+    );
+    expect(
+      frameData.getUint32(frame.length - 4, Endian.big),
+      getCrc32(Uint8List.sublistView(frame, 0, frame.length - 4)),
+    );
+
+    payload.dispose();
+    expect(sourceSecret, everyElement(0));
+    final decoded = CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+      frame,
+      now: now,
+    );
+    expect(frame, everyElement(0));
+    expect(decoded.protocolVersion, cloudSyncOpaqueProtocolVersion);
+    expect(decoded.platform, CloudSyncPlatform.android);
+    expect(decoded.untrustedDeviceName, 'Android 手机');
+    expect(decoded.untrustedClientVersion, '1.2.3');
+    expect(decoded.keyVersion, 1);
+    expect(decoded.expiresAt, DateTime.utc(2026, 7, 26, 5, 5));
+    expect(decoded.pairingId, _pairingId);
+    expect(decoded.accountContextId, _userId);
+    expect(decoded.targetDeviceId, _deviceId2);
+    expect(decoded.challenge, everyElement(18));
+    expect(decoded.signingPublicKey, everyElement(4));
+    expect(decoded.keyAgreementPublicKey, everyElement(5));
+    expect(
+      () => decoded.requireAccountContextMatchesLocalUserId(_userId),
+      returnsNormally,
+    );
+    expect(
+      () => decoded.requireAccountContextMatchesLocalUserId(_accountContextId),
+      throwsA(isA<FormatException>()),
+    );
+    final decodedSecret = decoded.takePairingSecret();
+    expect(decodedSecret, everyElement(24));
+    expect(decoded.isDisposed, isTrue);
+    decodedSecret.fillRange(0, decodedSecret.length, 0);
+    expect(decodedSecret, everyElement(0));
+
+    final disposableFrame = _validPairingQrFrame();
+    final disposableDecoded =
+        CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+          disposableFrame,
+          now: now,
+        );
+    disposableDecoded.dispose();
+    expect(disposableDecoded.isDisposed, isTrue);
+    expect(disposableDecoded.takePairingSecret, throwsStateError);
+  });
+
+  final invalidPairingQrPayloads =
+      <
+        ({
+          String name,
+          CloudSyncDevicePairingQrPayload Function(Uint8List secret) create,
+        })
+      >[
+        (
+          name: '协议版本',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            protocolVersion: cloudSyncOpaqueProtocolVersion + 1,
+          ),
+        ),
+        (
+          name: '设备名空白',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            deviceName: ' Android 手机',
+          ),
+        ),
+        (
+          name: '设备名长度',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            deviceName: List<String>.filled(81, 'x').join(),
+          ),
+        ),
+        (
+          name: '客户端版本',
+          create: (secret) =>
+              _pairingQrPayload(pairingSecret: secret, clientVersion: '1/2'),
+        ),
+        (
+          name: 'keyVersion 下界',
+          create: (secret) =>
+              _pairingQrPayload(pairingSecret: secret, keyVersion: 0),
+        ),
+        (
+          name: 'keyVersion 上界',
+          create: (secret) =>
+              _pairingQrPayload(pairingSecret: secret, keyVersion: 0x80000000),
+        ),
+        (
+          name: 'pairingId 规范形式',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            pairingId: 'ABCDEFAB-CDEF-4ABC-8DEF-ABCDEFABCDEF',
+          ),
+        ),
+        (
+          name: 'accountContextId UUID 版本',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            accountContextId: 'abcdefab-cdef-3abc-8def-abcdefabcdef',
+          ),
+        ),
+        (
+          name: 'targetDeviceId UUID variant',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            targetDeviceId: 'abcdefab-cdef-4abc-7def-abcdefabcdef',
+          ),
+        ),
+        (
+          name: 'challenge 长度',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            challenge: _filledBytes(cloudSyncDeviceChallengeBytes - 1),
+          ),
+        ),
+        (
+          name: '签名公钥长度',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            signingPublicKey: _filledBytes(cloudSyncDevicePublicKeyBytes + 1),
+          ),
+        ),
+        (
+          name: '密钥协商公钥长度',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            keyAgreementPublicKey: _filledBytes(
+              cloudSyncDevicePublicKeyBytes - 1,
+            ),
+          ),
+        ),
+        (
+          name: '到期边界',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            expiresAt: DateTime.utc(2026, 7, 26, 5),
+          ),
+        ),
+        (
+          name: '五分钟上界',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            expiresAt: DateTime.utc(2026, 7, 26, 5, 5, 0, 1),
+          ),
+        ),
+        (
+          name: '毫秒精度',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            expiresAt: DateTime.utc(
+              2026,
+              7,
+              26,
+              5,
+              4,
+            ).add(const Duration(microseconds: 1)),
+          ),
+        ),
+      ];
+  for (final invalid in invalidPairingQrPayloads) {
+    test('设备配对 QR payload 拒绝非法${invalid.name}并清零 secret', () {
+      final secret = _filledBytes(cloudSyncPairingSecretBytes, 24);
+
+      expect(() => invalid.create(secret), throwsA(isA<FormatException>()));
+      expect(secret, everyElement(0));
+    });
+  }
+
+  test('设备配对 QR payload 拒绝错误 secret 长度并清零', () {
+    final secret = _filledBytes(cloudSyncPairingSecretBytes - 1, 24);
+
+    expect(
+      () => _pairingQrPayload(pairingSecret: secret),
+      throwsA(isA<FormatException>()),
+    );
+    expect(secret, everyElement(0));
+  });
+
+  final invalidPairingQrFrames =
+      <({String name, void Function(Uint8List frame) mutate})>[
+        (name: 'magic', mutate: (frame) => frame[0] ^= 0xff),
+        (name: '帧版本', mutate: (frame) => frame[4] = 2),
+        (name: 'flags', mutate: (frame) => frame[5] = 1),
+        (
+          name: 'totalLength',
+          mutate: (frame) => ByteData.sublistView(
+            frame,
+          ).setUint16(6, frame.length - 1, Endian.big),
+        ),
+        (name: '设备名长度', mutate: (frame) => frame[13] += 1),
+        (name: 'reserved', mutate: (frame) => frame[15] = 1),
+        (name: 'CRC', mutate: (frame) => frame[172] ^= 0xff),
+      ];
+  for (final invalid in invalidPairingQrFrames) {
+    test('设备配对 QR 解码拒绝非法${invalid.name}并清零帧', () {
+      final frame = _validPairingQrFrame();
+      invalid.mutate(frame);
+
+      expect(
+        () => CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+          frame,
+          now: DateTime.utc(2026, 7, 26, 5),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(frame, everyElement(0));
+    });
+  }
+
+  final invalidPairingQrTranscripts =
+      <({String name, void Function(Uint8List frame) mutate})>[
+        (
+          name: 'protocolVersion',
+          mutate: (frame) {
+            ByteData.sublistView(frame).setUint32(8, 2, Endian.big);
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: 'platform',
+          mutate: (frame) {
+            frame[12] = 0;
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: 'keyVersion',
+          mutate: (frame) {
+            ByteData.sublistView(frame).setUint32(16, 0, Endian.big);
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: 'expiresAt',
+          mutate: (frame) {
+            ByteData.sublistView(
+              frame,
+            ).setUint64(20, 0xffffffffffffffff, Endian.big);
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: 'pairingId UUID',
+          mutate: (frame) {
+            frame[28 + 6] = (frame[28 + 6] & 0x0f) | 0x30;
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: 'accountContextId UUID',
+          mutate: (frame) {
+            frame[44 + 8] = (frame[44 + 8] & 0x3f) | 0x40;
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: 'targetDeviceId UUID',
+          mutate: (frame) {
+            frame[60 + 6] = (frame[60 + 6] & 0x0f) | 0x50;
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: '设备名 UTF-8',
+          mutate: (frame) {
+            frame[204] = 0xff;
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: 'clientVersion',
+          mutate: (frame) {
+            final clientVersionOffset = 204 + frame[13];
+            frame[clientVersionOffset] = 0x2f;
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+      ];
+  for (final invalid in invalidPairingQrTranscripts) {
+    test('设备配对 QR 解码拒绝非法${invalid.name}并清零帧', () {
+      final frame = _validPairingQrFrame();
+      invalid.mutate(frame);
+
+      expect(
+        () => CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+          frame,
+          now: DateTime.utc(2026, 7, 26, 5),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(frame, everyElement(0));
+    });
+  }
+
+  for (final lengthDelta in <int>[-1, 1]) {
+    test('设备配对 QR 解码拒绝非规范总长度 $lengthDelta', () {
+      final validFrame = _validPairingQrFrame();
+      final frame = Uint8List(validFrame.length + lengthDelta);
+      frame.setRange(
+        0,
+        lengthDelta < 0 ? frame.length : validFrame.length,
+        validFrame,
+      );
+      validFrame.fillRange(0, validFrame.length, 0);
+
+      expect(
+        () => CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+          frame,
+          now: DateTime.utc(2026, 7, 26, 5),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(frame, everyElement(0));
+    });
+  }
+
+  for (final decodeNow in <DateTime>[
+    DateTime.utc(2026, 7, 26, 4, 59, 59, 999),
+    DateTime.utc(2026, 7, 26, 5, 5),
+  ]) {
+    test('设备配对 QR 解码拒绝越界时间 $decodeNow 并清零帧', () {
+      final frame = _validPairingQrFrame();
+
+      expect(
+        () => CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+          frame,
+          now: decodeNow,
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(frame, everyElement(0));
+    });
+  }
 
   test('认证与配对请求在发网前拒绝错误长度和越界 keyEpoch', () {
     final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
