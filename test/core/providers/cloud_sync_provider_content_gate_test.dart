@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -110,7 +111,10 @@ void main() {
       isTrue,
     );
 
-    expect(fixture.authentication.requestNames, <String>['login']);
+    expect(fixture.authentication.requestNames, <String>[
+      'login',
+      'confirm-pairing',
+    ]);
     expect(fixture.authentication.lastLoginName, 'ovo');
     expect(fixture.authentication.lastPassword, 'password');
     expect(fixture.authentication.lastDeviceName, '测试手机');
@@ -142,8 +146,13 @@ void main() {
         createdAt: DateTime.utc(2026, 7, 26),
       ),
     );
+    final pairing = _FakeE2eeDevicePairingSession();
+    final authentication = _FakeE2eeAccountAuthentication(
+      loginResult: approval,
+      pairingSession: pairing,
+    );
     final fixture = await _createSignedOutFixture(
-      authentication: _FakeE2eeAccountAuthentication(loginResult: approval),
+      authentication: authentication,
     );
     addTearDown(fixture.close);
 
@@ -157,13 +166,150 @@ void main() {
     );
 
     expect(fixture.provider.pendingDeviceApproval, same(approval));
+    expect(authentication.requestNames, <String>['login', 'start-pairing']);
     expect(
-      fixture.provider.lastError?.serverCode,
-      'SYNC_DEVICE_APPROVAL_REQUIRED',
+      fixture.provider.status,
+      CloudSyncProviderStatus.awaitingDeviceApproval,
+    );
+    expect(
+      fixture.provider.takePendingDevicePairingQrFrame(),
+      pairing.expectedQrFrame,
     );
     expect(fixture.provider.signedIn, isFalse);
     expect(fixture.provider.workspaceRestartRequired, isFalse);
     expect(fixture.client.token, isNull);
+    expect(await fixture.provider.cancelPendingDevicePairing(), isTrue);
+    expect(pairing.cancelCalls, 1);
+    expect(fixture.client.closed, isTrue);
+  });
+
+  test('待批准设备完成配对后提交账户工作区并确认恢复事务', () async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Kelivo',
+      packageName: 'Kelivo',
+      version: '1.1.17',
+      buildNumber: '1',
+      buildSignature: 'test',
+    );
+    final approval = E2eeAccountLoginApprovalRequired(
+      onboardingToken: _onboardingToken,
+      onboardingTokenExpiresAt: DateTime.utc(2100),
+      loginName: 'ovo',
+      device: CloudSyncAuthenticatedDevice(
+        id: _deviceId,
+        name: '测试电脑',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.1.17',
+        status: CloudSyncAuthenticatedDeviceStatus.pending,
+        createdAt: DateTime.utc(2026, 7, 26),
+      ),
+    );
+    final pairing = _FakeE2eeDevicePairingSession();
+    final authentication = _FakeE2eeAccountAuthentication(
+      loginResult: approval,
+      pairingSession: pairing,
+    );
+    final fixture = await _createSignedOutFixture(
+      authentication: authentication,
+    );
+    addTearDown(fixture.close);
+
+    expect(
+      await fixture.provider.login(
+        loginName: 'ovo',
+        password: 'password',
+        deviceName: '测试电脑',
+      ),
+      isFalse,
+    );
+    pairing.approve(_authenticatedSession());
+    await _waitUntil(
+      () => authentication.requestNames.contains('confirm-pairing'),
+    );
+
+    expect(authentication.requestNames, <String>[
+      'login',
+      'start-pairing',
+      'confirm-pairing',
+    ]);
+    expect(fixture.provider.pendingDeviceApproval, isNull);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(
+      fixture.provider.status,
+      CloudSyncProviderStatus.workspaceChangePending,
+    );
+    expect(fixture.client.closed, isTrue);
+  });
+
+  test('等待设备配对失败时清理待批准状态并关闭候选客户端', () async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Kelivo',
+      packageName: 'Kelivo',
+      version: '1.1.17',
+      buildNumber: '1',
+      buildSignature: 'test',
+    );
+    final approval = E2eeAccountLoginApprovalRequired(
+      onboardingToken: _onboardingToken,
+      onboardingTokenExpiresAt: DateTime.utc(2100),
+      loginName: 'ovo',
+      device: CloudSyncAuthenticatedDevice(
+        id: _deviceId,
+        name: '测试电脑',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.1.17',
+        status: CloudSyncAuthenticatedDeviceStatus.pending,
+        createdAt: DateTime.utc(2026, 7, 26),
+      ),
+    );
+    final pairing = _FakeE2eeDevicePairingSession();
+    final fixture = await _createSignedOutFixture(
+      authentication: _FakeE2eeAccountAuthentication(
+        loginResult: approval,
+        pairingSession: pairing,
+      ),
+    );
+    addTearDown(fixture.close);
+
+    expect(
+      await fixture.provider.login(
+        loginName: 'ovo',
+        password: 'password',
+        deviceName: '测试电脑',
+      ),
+      isFalse,
+    );
+    pairing.fail(
+      const CloudSyncException(
+        kind: CloudSyncFailureKind.network,
+        retryable: true,
+      ),
+    );
+    await _waitUntil(() => fixture.provider.pendingDeviceApproval == null);
+
+    expect(fixture.provider.lastError?.kind, CloudSyncFailureKind.network);
+    expect(fixture.provider.status, CloudSyncProviderStatus.signedOut);
+    expect(fixture.client.closed, isTrue);
+    expect(fixture.provider.takePendingDevicePairingQrFrame(), isNull);
+  });
+
+  test('移动可信设备批准扫码配对并清零二维码帧', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final authentication = _FakeE2eeAccountAuthentication();
+    final fixture = await _createSignedInFixture(
+      authentication: authentication,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+    final qrFrame = Uint8List.fromList(<int>[8, 6, 7, 5, 3, 0, 9]);
+
+    expect(await fixture.provider.approveDevicePairing(qrFrame), isTrue);
+
+    expect(authentication.requestNames, <String>['approve-pairing']);
+    expect(authentication.lastPairingQrFrame, <int>[8, 6, 7, 5, 3, 0, 9]);
+    expect(qrFrame, everyElement(0));
+    expect(fixture.provider.devicePairingApprovalInProgress, isFalse);
   });
 
   test('账户登录失败时保持登出且关闭候选客户端', () async {
@@ -715,16 +861,19 @@ final class _FakeE2eeAccountAuthentication
   _FakeE2eeAccountAuthentication({
     E2eeAccountLoginResult? loginResult,
     CloudSyncAuthenticatedSession? registrationSession,
+    _FakeE2eeDevicePairingSession? pairingSession,
     this.loginFailure,
     this.registrationFailure,
     this.confirmationFailure,
   }) : loginResult =
            loginResult ??
            E2eeAccountLoginAuthenticated(_authenticatedSession()),
-       registrationSession = registrationSession ?? _authenticatedSession();
+       registrationSession = registrationSession ?? _authenticatedSession(),
+       pairingSession = pairingSession ?? _FakeE2eeDevicePairingSession();
 
   final E2eeAccountLoginResult loginResult;
   final CloudSyncAuthenticatedSession registrationSession;
+  final _FakeE2eeDevicePairingSession pairingSession;
   final Object? loginFailure;
   final Object? registrationFailure;
   final Object? confirmationFailure;
@@ -735,6 +884,7 @@ final class _FakeE2eeAccountAuthentication
   String? lastDeviceName;
   CloudSyncPlatform? lastPlatform;
   String? lastClientVersion;
+  List<int>? lastPairingQrFrame;
 
   @override
   Future<E2eeAccountLoginResult> loginDevice({
@@ -794,6 +944,92 @@ final class _FakeE2eeAccountAuthentication
     final failure = confirmationFailure;
     if (failure != null) throw failure;
   }
+
+  @override
+  Future<E2eeDevicePairingSession> startDevicePairing(
+    E2eeAccountLoginApprovalRequired approval,
+  ) async {
+    requestNames.add('start-pairing');
+    return pairingSession;
+  }
+
+  @override
+  Future<void> confirmDevicePairing({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+  }) async {
+    requestNames.add('confirm-pairing');
+    lastLoginName = loginName;
+  }
+
+  @override
+  Future<CloudSyncDevicePairingApproval> approveScannedDevicePairing({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+    required Uint8List qrFrame,
+  }) async {
+    requestNames.add('approve-pairing');
+    lastLoginName = loginName;
+    try {
+      lastPairingQrFrame = List<int>.of(qrFrame);
+      return CloudSyncDevicePairingApproval(
+        pairingId: _otherDeviceId,
+        approvedAt: DateTime.utc(2026, 7, 26),
+      );
+    } finally {
+      qrFrame.fillRange(0, qrFrame.length, 0);
+    }
+  }
+}
+
+final class _FakeE2eeDevicePairingSession implements E2eeDevicePairingSession {
+  _FakeE2eeDevicePairingSession()
+    : expectedQrFrame = Uint8List.fromList(<int>[1, 3, 3, 7]);
+
+  final Uint8List expectedQrFrame;
+  final Completer<CloudSyncAuthenticatedSession> _completion =
+      Completer<CloudSyncAuthenticatedSession>();
+  bool _qrFrameTaken = false;
+  int waitCalls = 0;
+  int cancelCalls = 0;
+
+  @override
+  DateTime get expiresAt => DateTime.utc(2100);
+
+  @override
+  Uint8List takeQrFrame({required DateTime now}) {
+    if (_qrFrameTaken) throw StateError('qr_frame_taken');
+    _qrFrameTaken = true;
+    return Uint8List.fromList(expectedQrFrame);
+  }
+
+  @override
+  Future<CloudSyncAuthenticatedSession> wait() {
+    waitCalls++;
+    return _completion.future;
+  }
+
+  @override
+  Future<void> cancel() async {
+    cancelCalls++;
+    if (!_completion.isCompleted) {
+      _completion.completeError(
+        const CloudSyncException(
+          kind: CloudSyncFailureKind.cancelled,
+          retryable: false,
+          serverCode: 'SYNC_DEVICE_PAIRING_CANCELLED',
+        ),
+      );
+    }
+  }
+
+  void approve(CloudSyncAuthenticatedSession session) {
+    _completion.complete(session);
+  }
+
+  void fail(Object error) {
+    _completion.completeError(error);
+  }
 }
 
 final class _MemoryAccountSessionTokenStore
@@ -841,5 +1077,15 @@ final class _MemoryAccountSessionTokenStore
   ) {
     return '${accountDirectory.absolute.path}|'
         '${reference.slot}|${reference.generation}';
+  }
+}
+
+Future<void> _waitUntil(bool Function() condition) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 5));
+  while (!condition()) {
+    if (DateTime.now().isAfter(deadline)) {
+      fail('等待异步状态收敛超时');
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
   }
 }

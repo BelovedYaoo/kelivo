@@ -28,7 +28,7 @@ enum _E2eePendingPairingState {
   failed,
 }
 
-final class E2eePendingDevicePairing {
+final class E2eePendingDevicePairing implements E2eeDevicePairingSession {
   E2eePendingDevicePairing._({
     required this._owner,
     required this.loginName,
@@ -43,6 +43,7 @@ final class E2eePendingDevicePairing {
 
   final E2eeAccountAuthenticator _owner;
   final String loginName;
+  @override
   final DateTime expiresAt;
   final CloudSyncOnboardingToken _onboardingToken;
   final String _pairingId;
@@ -55,6 +56,7 @@ final class E2eePendingDevicePairing {
   _E2eePendingPairingState _state = _E2eePendingPairingState.active;
   bool _cancelInterruptedWait = false;
 
+  @override
   Uint8List takeQrFrame({required DateTime now}) {
     if (_state != _E2eePendingPairingState.active &&
         _state != _E2eePendingPairingState.waiting) {
@@ -70,6 +72,16 @@ final class E2eePendingDevicePairing {
       payload.dispose();
       _qrPayload = null;
     }
+  }
+
+  @override
+  Future<CloudSyncAuthenticatedSession> wait() {
+    return E2eeDevicePairingAuthentication(_owner).waitForDevicePairing(this);
+  }
+
+  @override
+  Future<void> cancel() {
+    return E2eeDevicePairingAuthentication(_owner).cancelDevicePairing(this);
   }
 
   bool _isWaitingFor(E2eeAccountAuthenticator owner) {

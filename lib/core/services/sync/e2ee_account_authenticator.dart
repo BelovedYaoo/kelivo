@@ -38,6 +38,16 @@ final class E2eeAccountLoginApprovalRequired extends E2eeAccountLoginResult {
   final CloudSyncAuthenticatedDevice device;
 }
 
+abstract interface class E2eeDevicePairingSession {
+  DateTime get expiresAt;
+
+  Uint8List takeQrFrame({required DateTime now});
+
+  Future<CloudSyncAuthenticatedSession> wait();
+
+  Future<void> cancel();
+}
+
 abstract interface class E2eeAccountAuthentication {
   /// 为避免密码在调用方继续驻留，所有退出路径都会清零传入缓冲区。
   Future<CloudSyncAuthenticatedSession> registerFirstDevice({
@@ -61,6 +71,21 @@ abstract interface class E2eeAccountAuthentication {
     required String deviceName,
     required CloudSyncPlatform platform,
     required String clientVersion,
+  });
+
+  Future<E2eeDevicePairingSession> startDevicePairing(
+    E2eeAccountLoginApprovalRequired approval,
+  );
+
+  Future<void> confirmDevicePairing({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+  });
+
+  Future<CloudSyncDevicePairingApproval> approveScannedDevicePairing({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+    required Uint8List qrFrame,
   });
 }
 
@@ -503,6 +528,36 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         pendingPairing?.dispose();
       }
     }
+  }
+
+  @override
+  Future<E2eePendingDevicePairing> startDevicePairing(
+    E2eeAccountLoginApprovalRequired approval,
+  ) {
+    return E2eeDevicePairingAuthentication(this).startDevicePairing(approval);
+  }
+
+  @override
+  Future<void> confirmDevicePairing({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+  }) {
+    return E2eeDevicePairingAuthentication(
+      this,
+    ).confirmDevicePairing(loginName: loginName, session: session);
+  }
+
+  @override
+  Future<CloudSyncDevicePairingApproval> approveScannedDevicePairing({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+    required Uint8List qrFrame,
+  }) {
+    return E2eeDevicePairingAuthentication(this).approveScannedDevicePairing(
+      loginName: loginName,
+      session: session,
+      qrFrame: qrFrame,
+    );
   }
 
   Future<CloudSyncAuthenticatedSession> _finishPendingRegistration(
