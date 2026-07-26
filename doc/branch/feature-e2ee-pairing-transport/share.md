@@ -30,3 +30,6 @@
 - 移动端批准已进入认证深模块：仅 Android/iOS 的当前完整会话可签发，扫码账号必须匹配本地 user，扫码帧与 pairing secret 在所有路径清零；批准响应丢失最多原样重试三次且不越过 QR/session 截止时间。
 - 修复 Issue #43 所述传输分类：无 HTTP 状态且底层为 `SocketException`/`HttpException` 的 Dio unknown 现在归类为可重试网络中断；2xx 反序列化失败及其他 unknown 仍不可重试。
 - 验证：协议全文件 67/67、认证/配对/传输四文件定向分析通过；跨账号与桌面签发失败路径均通过。
+- 桌面接收批准闭环已完成：轮询结果严格匹配创建时 transcript；Secure Core 接受批准后生成固定 536 字节恢复帧，平台槽 AEAD 加密并写入独立 sidecar，随后才发布 full 状态并调用 consume。
+- 恢复事务绑定 pairing/user/device/keyVersion/keyEpoch、onboarding 与 pairing 截止时间、原始 identity-only 状态及 full 状态；读取时同时验证两份状态的设备公钥与绑定。账号工作区提交后按密文摘要确认删除。
+- 验证：消费请求到达前已观察到 sidecar 与 full 状态，确认前事务保留、确认后删除；协议全文件 68/68、定向分析通过。

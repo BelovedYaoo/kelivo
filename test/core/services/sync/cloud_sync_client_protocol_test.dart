@@ -1408,6 +1408,10 @@ void main() {
     );
     addTearDown(() => foreignClient.close(force: true));
     await expectLater(
+      foreignAuthenticator.waitForDevicePairing(pending),
+      throwsStateError,
+    );
+    await expectLater(
       foreignAuthenticator.cancelDevicePairing(pending),
       throwsStateError,
     );
@@ -1622,6 +1626,251 @@ void main() {
       throwsUnsupportedError,
     );
     expect(desktopFrame, everyElement(0));
+  });
+
+  test('桌面接收批准后先持久化完整状态与恢复事务再消费', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    const loginName = 'pairing-consumer';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
+    final targetIdentity = await core.generateDeviceIdentity();
+    final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
+    final identityState = await core.sealDeviceState(
+      key,
+      targetIdentity,
+      deviceId: _rawUuid(_deviceId2),
+      keyVersion: 1,
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: identityState,
+    );
+    await core.closeDeviceIdentity(targetIdentity);
+    await core.close(key);
+
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final now = DateTime.fromMillisecondsSinceEpoch(
+      DateTime.now().toUtc().millisecondsSinceEpoch,
+      isUtc: true,
+    );
+    final pairingExpiresAt = now.add(const Duration(minutes: 4));
+    final approvalRequired = E2eeAccountLoginApprovalRequired(
+      onboardingToken: _onboardingToken,
+      onboardingTokenExpiresAt: now.add(const Duration(minutes: 5)),
+      loginName: loginName,
+      device: CloudSyncAuthenticatedDevice(
+        id: _deviceId2,
+        name: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+        status: CloudSyncAuthenticatedDeviceStatus.pending,
+        createdAt: now,
+      ),
+    );
+    final startFuture = authenticator.startDevicePairing(approvalRequired);
+    expect(await requests.moveNext(), isTrue);
+    final createRequest = requests.current;
+    final createBody = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(createRequest).join()),
+    );
+    final pairingId = createBody['pairingId']! as String;
+    createRequest.response.headers.contentType = ContentType.json;
+    createRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': pairingId,
+          'accountContextId': _userId,
+          'challenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 18),
+          'expiresAt': pairingExpiresAt.toIso8601String(),
+          'targetDevice': <String, Object?>{
+            'id': _deviceId2,
+            'name': 'Windows 主机',
+            'platform': 'windows',
+            'clientVersion': '1.2.3',
+            'keyVersion': 1,
+            'authGeneration': 0,
+            'signingPublicKey': base64Url
+                .encode(targetPublicKeys.signingPublicKey)
+                .replaceAll('=', ''),
+            'keyAgreementPublicKey': base64Url
+                .encode(targetPublicKeys.keyAgreementPublicKey)
+                .replaceAll('=', ''),
+          },
+        },
+      }),
+    );
+    await createRequest.response.close();
+    final pending = await startFuture;
+
+    final frame = pending.takeQrFrame(now: now);
+    final decoded = CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+      frame,
+      now: now,
+    );
+    final pairingSecret = decoded.takePairingSecret();
+    decoded.dispose();
+    final issuerIdentity = await core.generateDeviceIdentity();
+    final issuerArk = await core.generateAccountRootKey();
+    final issuerPublicKeys = await core.readDevicePublicKeys(issuerIdentity);
+    late final KelivoPairingApprovalBundle approvalBundle;
+    try {
+      approvalBundle = await core.createPairingApproval(
+        issuerIdentity,
+        issuerArk,
+        pairingId: _rawUuid(pairingId),
+        userId: _rawUuid(_userId),
+        issuerDeviceId: _rawUuid(_issuerDeviceId),
+        targetDeviceId: _rawUuid(_deviceId2),
+        expiresAtMs: pairingExpiresAt.millisecondsSinceEpoch,
+        challenge: _filledBytes(cloudSyncDeviceChallengeBytes, 18),
+        keyEpoch: 7,
+        targetPublicKeys: targetPublicKeys,
+        pairingSecret: pairingSecret,
+      );
+    } finally {
+      pairingSecret.fillRange(0, pairingSecret.length, 0);
+      await core.closeAccountRootKey(issuerArk);
+      await core.closeDeviceIdentity(issuerIdentity);
+    }
+
+    final completionFuture = authenticator.waitForDevicePairing(pending);
+    expect(await requests.moveNext(), isTrue);
+    final queryRequest = requests.current;
+    expect(queryRequest.uri.path, '/api/auth/device-pairing/query');
+    await utf8.decoder.bind(queryRequest).join();
+    queryRequest.response.headers.contentType = ContentType.json;
+    queryRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': pairingId,
+          'accountContextId': _userId,
+          'challenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 18),
+          'expiresAt': pairingExpiresAt.toIso8601String(),
+          'targetDevice': <String, Object?>{
+            'id': _deviceId2,
+            'name': 'Windows 主机',
+            'platform': 'windows',
+            'clientVersion': '1.2.3',
+            'keyVersion': 1,
+            'authGeneration': 0,
+            'signingPublicKey': base64Url
+                .encode(targetPublicKeys.signingPublicKey)
+                .replaceAll('=', ''),
+            'keyAgreementPublicKey': base64Url
+                .encode(targetPublicKeys.keyAgreementPublicKey)
+                .replaceAll('=', ''),
+          },
+          'status': 'approved',
+          'issuerDeviceId': _issuerDeviceId,
+          'issuerSigningPublicKey': base64Url
+              .encode(issuerPublicKeys.signingPublicKey)
+              .replaceAll('=', ''),
+          'issuerKeyAgreementPublicKey': base64Url
+              .encode(issuerPublicKeys.keyAgreementPublicKey)
+              .replaceAll('=', ''),
+          'keyEpoch': 7,
+          'accountKeyEnvelope': base64Url
+              .encode(approvalBundle.envelope)
+              .replaceAll('=', ''),
+          'deviceProof': base64Url
+              .encode(approvalBundle.signature)
+              .replaceAll('=', ''),
+          'pairingAuthenticator': base64Url
+              .encode(approvalBundle.authenticator)
+              .replaceAll('=', ''),
+        },
+      }),
+    );
+    await queryRequest.response.close();
+
+    expect(await requests.moveNext(), isTrue);
+    final consumeRequest = requests.current;
+    expect(consumeRequest.uri.path, '/api/auth/device-pairing/consume');
+    await utf8.decoder.bind(consumeRequest).join();
+    expect(
+      await store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNotNull,
+    );
+    final persistedKey = await core.openSlot(
+      _authenticatorSlotId(baseUrl, loginName),
+    );
+    final persistedState = await core.openDeviceState(
+      persistedKey,
+      stateBlob: (await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ))!,
+    );
+    expect(persistedState.binding.account?.keyEpoch, 7);
+    expect(
+      persistedState.binding.account?.userId,
+      orderedEquals(_rawUuid(_userId)),
+    );
+    await core.closeAccountRootKey(persistedState.ark!);
+    await core.closeDeviceIdentity(persistedState.identity);
+    await core.close(persistedKey);
+
+    consumeRequest.response.headers.contentType = ContentType.json;
+    consumeRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': _authenticatedData(
+          keyEpoch: 7,
+          deviceId: _deviceId2,
+          loginName: loginName,
+        ),
+      }),
+    );
+    await consumeRequest.response.close();
+    final session = await completionFuture;
+    expect(session.user.id, _userId);
+    expect(session.device.id, _deviceId2);
+    expect(
+      await store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNotNull,
+    );
+    await authenticator.confirmDevicePairing(
+      loginName: loginName,
+      session: session,
+    );
+    expect(
+      await store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
   });
 
   test('设备配对全生命周期按令牌能力隔离并显式接管完整会话', () async {
