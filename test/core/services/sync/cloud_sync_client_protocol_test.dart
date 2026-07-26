@@ -763,7 +763,7 @@ void main() {
     );
   });
 
-  test('设备配对全生命周期按令牌能力隔离并接管完整会话', () async {
+  test('设备配对全生命周期按令牌能力隔离并显式接管完整会话', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = <(String, String?, CloudSyncJsonMap)>[];
     var queryCount = 0;
@@ -883,6 +883,17 @@ void main() {
       token: _onboardingToken,
       pairingId: _pairingId,
     );
+    await expectLater(
+      client.listDevices(),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.unauthenticated,
+        ),
+      ),
+    );
+    client.setToken(session.token);
     final devices = await client.listDevices(
       status: CloudSyncDeviceStatus.active,
       pageSize: 10,

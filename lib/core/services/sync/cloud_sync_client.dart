@@ -279,9 +279,7 @@ final class CloudSyncClient
       if (data.result.name != 'authenticated') {
         throw const FormatException('服务端返回了未知的注册结果');
       }
-      final session = _authenticatedSessionFromRegistration(data);
-      setToken(session.token);
-      return session;
+      return _authenticatedSessionFromRegistration(data);
     });
   }
 
@@ -371,9 +369,9 @@ final class CloudSyncClient
         if (value.result.name != 'authenticated') {
           throw const FormatException('服务端返回了未知的登录结果');
         }
-        final session = _authenticatedSessionFromLogin(value);
-        setToken(session.token);
-        return CloudSyncOpaqueLoginAuthenticated(session);
+        return CloudSyncOpaqueLoginAuthenticated(
+          _authenticatedSessionFromLogin(value),
+        );
       }
       if (value is api.OpaqueLoginFinishDataOneOf1) {
         _requireProtocolVersion(value.protocolVersion);
@@ -585,9 +583,7 @@ final class CloudSyncClient
       if (data.result.name != 'authenticated') {
         throw const FormatException('服务端返回了未知的配对消费结果');
       }
-      final session = _authenticatedSessionFromPairing(data);
-      setToken(session.token);
-      return session;
+      return _authenticatedSessionFromPairing(data);
     });
   }
 
