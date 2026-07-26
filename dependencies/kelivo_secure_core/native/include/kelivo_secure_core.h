@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(6)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(7)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -80,6 +80,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_DEVICE_E2EE_CORE (UINT64_C(1) << 6)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
+#define KELIVO_RECORD_ENTITY_KEY_MAX_SIZE ((size_t)2048)
 #define KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE ((size_t)(64 * 1024))
 #define KELIVO_RECORD_MAX_PLAINTEXT_SIZE ((size_t)(16 * 1024 * 1024))
 #define KELIVO_RECORD_MAX_ENVELOPE_SIZE ((size_t)(KELIVO_RECORD_MAX_PLAINTEXT_SIZE + 80))
@@ -440,6 +441,19 @@ KELIVO_CORE_API KelivoStatus kelivo_pending_pairing_handle_close(
 /* ARK 只以不透明句柄生成和使用，不存在原始字节导出接口。 */
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_generate(
     uint64_t *out_handle);
+
+/*
+ * 使用 ARK 对调用方提供的非空规范实体键执行 v1 域分离 keyed PRF，输出固定
+ * 16 字节不透明记录 ID，并设置 RFC 4122 UUIDv4/variant 位。实体键最长 2048
+ * 字节；原始 ARK 和完整 PRF 输出均不会通过 ABI 暴露。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_record_id_derive(
+    uint64_t ark_handle,
+    const uint8_t *canonical_entity_key,
+    size_t canonical_entity_key_length,
+    uint8_t *out_record_id,
+    size_t out_record_id_capacity,
+    size_t *out_record_id_length);
 
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_handle_close(
     uint64_t ark_handle);

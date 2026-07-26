@@ -15,6 +15,7 @@ const _registrationFinishBundleLength =
     native.KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE;
 const _pairingApprovalBundleLength = native.KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE;
 const _deviceStateBlobLength = native.KELIVO_DEVICE_STATE_BLOB_SIZE;
+const _recordEntityKeyMaxLength = native.KELIVO_RECORD_ENTITY_KEY_MAX_SIZE;
 const _maxUint32 = 0xffffffff;
 
 enum _DeviceHandlePhase { open, busy, closing, closed }
@@ -361,6 +362,33 @@ extension KelivoDeviceCore on KelivoSecureCore {
         close: native.kelivo_account_root_key_handle_close,
         invalidStatus: KelivoSecureCoreStatus.invalidAccountRootKeyHandle,
       );
+
+  Future<Uint8List> deriveAccountRecordId(
+    KelivoAccountRootKeyHandle ark, {
+    required Uint8List canonicalEntityKey,
+  }) async {
+    if (canonicalEntityKey.isEmpty ||
+        canonicalEntityKey.length > _recordEntityKeyMaxLength) {
+      throw ArgumentError.value(
+        canonicalEntityKey.length,
+        'canonicalEntityKey',
+        '规范实体键必须为 1 至 $_recordEntityKeyMaxLength 字节',
+      );
+    }
+
+    final value = ark._state.beginUse();
+    try {
+      final recordId = await Isolate.run(
+        () => _deriveAccountRecordId(
+          value,
+          Uint8List.fromList(canonicalEntityKey),
+        ),
+      );
+      return _immutableDeviceBytes(recordId);
+    } finally {
+      ark._state.completeUse();
+    }
+  }
 
   Future<Uint8List> sealAccountRecord(
     KelivoAccountRootKeyHandle ark, {
@@ -1034,6 +1062,28 @@ Uint8List _readDevicePublicKeys(int identityHandle) => _fixedDeviceOutput(
         outputLength,
       ),
 );
+
+Uint8List _deriveAccountRecordId(int arkHandle, Uint8List canonicalEntityKey) {
+  final entityKeyPointer = _copyToNative(canonicalEntityKey);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'account_record_id_derive',
+      expectedLength: _recordIdLength,
+      call: (output, capacity, outputLength) =>
+          native.kelivo_account_record_id_derive(
+            arkHandle,
+            entityKeyPointer,
+            canonicalEntityKey.length,
+            output,
+            capacity,
+            outputLength,
+          ),
+    );
+  } finally {
+    _clearAndFree(entityKeyPointer, canonicalEntityKey.length);
+    canonicalEntityKey.fillRange(0, canonicalEntityKey.length, 0);
+  }
+}
 
 Uint8List _signDeviceLoginProof(
   int identityHandle,

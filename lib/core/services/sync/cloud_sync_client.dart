@@ -9,6 +9,7 @@ import 'package:one_of/one_of.dart';
 
 import 'cloud_sync_record_types.dart';
 import 'cloud_sync_types.dart';
+import 'e2ee_account_record_cipher.dart';
 
 abstract interface class CloudSyncRecordTransport {
   Future<List<CloudSyncRecordMutationResult>> pushRecords(
@@ -153,7 +154,8 @@ final class CloudSyncClient
     return client;
   }
 
-  static const _syncProtocolVersion = '3';
+  static final _syncProtocolVersion = e2eeAccountRecordSyncProtocolVersion
+      .toString();
 
   final String baseUrl;
   final Dio _dio;
@@ -803,7 +805,6 @@ final class CloudSyncClient
 api.SyncMutation _toGeneratedMutation(CloudSyncRecordMutation mutation) {
   return switch (mutation) {
     CloudSyncPutRecordMutation() => _toGeneratedPutMutation(mutation),
-    CloudSyncDeleteRecordMutation() => _toGeneratedDeleteMutation(mutation),
   };
 }
 
@@ -811,37 +812,18 @@ api.SyncMutation _toGeneratedPutMutation(CloudSyncPutRecordMutation mutation) {
   final value = api.SyncPutMutation(
     (builder) => builder
       ..mutationId = mutation.mutationId
-      ..recordId = mutation.recordId
+      ..recordId = mutation.recordId.wireValue
       ..expectedRevision = mutation.expectedRevision
       ..operation = api.SyncPutMutationOperationEnum.put
-      ..envelopeVersion = CloudSyncPutRecordMutation.envelopeVersion
-      ..keyEpoch = mutation.keyEpoch
-      ..ciphertext = mutation.ciphertext,
+      ..envelopeVersion = e2eeAccountRecordEnvelopeVersion
+      ..keyEpoch = mutation.record.keyEpoch
+      ..ciphertext = _encodeSyncCiphertext(mutation.record.ciphertext),
   );
   return api.SyncMutation(
     (builder) =>
         builder.oneOf = OneOf2<api.SyncDeleteMutation, api.SyncPutMutation>(
           value: value,
           typeIndex: 1,
-        ),
-  );
-}
-
-api.SyncMutation _toGeneratedDeleteMutation(
-  CloudSyncDeleteRecordMutation mutation,
-) {
-  final value = api.SyncDeleteMutation(
-    (builder) => builder
-      ..mutationId = mutation.mutationId
-      ..recordId = mutation.recordId
-      ..expectedRevision = mutation.expectedRevision
-      ..operation = api.SyncDeleteMutationOperationEnum.delete,
-  );
-  return api.SyncMutation(
-    (builder) =>
-        builder.oneOf = OneOf2<api.SyncDeleteMutation, api.SyncPutMutation>(
-          value: value,
-          typeIndex: 0,
         ),
   );
 }
@@ -894,24 +876,30 @@ CloudSyncRecordChange _fromRecordChange(api.SyncChange change) {
       sequence: value.changeSeq,
       updatedByDeviceId: value.updatedByDeviceId,
     );
-    final ciphertextBytes = _syncCiphertextByteLength(value.ciphertext);
-    if (value.envelopeVersion != CloudSyncPutRecordMutation.envelopeVersion ||
+    if (value.envelopeVersion != e2eeAccountRecordEnvelopeVersion ||
         value.keyEpoch < 1 ||
         value.keyEpoch > 2147483647 ||
-        ciphertextBytes == null ||
-        ciphertextBytes != value.ciphertextBytes ||
+        value.ciphertextBytes < 1 ||
+        value.ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes ||
+        _syncCiphertextByteLength(value.ciphertext) != value.ciphertextBytes ||
         value.deletedAt != null) {
       throw const FormatException('服务端返回了无效的 put 增量');
     }
+    final ciphertext = _decodeSyncCiphertext(
+      value.ciphertext,
+      value.ciphertextBytes,
+    );
     return CloudSyncPutRecordChange(
       changeSeq: value.changeSeq,
-      recordId: value.recordId,
       revision: value.revision,
       updatedAt: value.updatedAt.toUtc(),
       updatedByDeviceId: value.updatedByDeviceId,
-      envelopeVersion: value.envelopeVersion,
-      keyEpoch: value.keyEpoch,
-      ciphertext: value.ciphertext,
+      record: E2eeUntrustedAccountRecordEnvelope.fromTransport(
+        recordId: E2eeUntrustedAccountRecordId.fromTransport(value.recordId),
+        envelopeVersion: value.envelopeVersion,
+        keyEpoch: value.keyEpoch,
+        ciphertext: ciphertext,
+      ),
     );
   }
   if (value is api.SyncDeleteChange) {
@@ -929,7 +917,7 @@ CloudSyncRecordChange _fromRecordChange(api.SyncChange change) {
     }
     return CloudSyncDeleteRecordChange(
       changeSeq: value.changeSeq,
-      recordId: value.recordId,
+      recordId: E2eeUntrustedAccountRecordId.fromTransport(value.recordId),
       revision: value.revision,
       updatedAt: value.updatedAt.toUtc(),
       updatedByDeviceId: value.updatedByDeviceId,
@@ -954,24 +942,30 @@ CloudSyncRecordState _fromRecordState(api.SyncRecord record) {
       sequence: value.lastChangeSeq,
       updatedByDeviceId: value.updatedByDeviceId,
     );
-    final ciphertextBytes = _syncCiphertextByteLength(value.ciphertext);
-    if (value.envelopeVersion != CloudSyncPutRecordMutation.envelopeVersion ||
+    if (value.envelopeVersion != e2eeAccountRecordEnvelopeVersion ||
         value.keyEpoch < 1 ||
         value.keyEpoch > 2147483647 ||
-        ciphertextBytes == null ||
-        ciphertextBytes != value.ciphertextBytes ||
+        value.ciphertextBytes < 1 ||
+        value.ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes ||
+        _syncCiphertextByteLength(value.ciphertext) != value.ciphertextBytes ||
         value.deletedAt != null) {
       throw const FormatException('服务端返回了无效的 active 记录');
     }
+    final ciphertext = _decodeSyncCiphertext(
+      value.ciphertext,
+      value.ciphertextBytes,
+    );
     return CloudSyncActiveRecord(
-      recordId: value.recordId,
       revision: value.revision,
       updatedAt: value.updatedAt.toUtc(),
       updatedByDeviceId: value.updatedByDeviceId,
       lastChangeSeq: value.lastChangeSeq,
-      envelopeVersion: value.envelopeVersion,
-      keyEpoch: value.keyEpoch,
-      ciphertext: value.ciphertext,
+      record: E2eeUntrustedAccountRecordEnvelope.fromTransport(
+        recordId: E2eeUntrustedAccountRecordId.fromTransport(value.recordId),
+        envelopeVersion: value.envelopeVersion,
+        keyEpoch: value.keyEpoch,
+        ciphertext: ciphertext,
+      ),
     );
   }
   if (value is api.SyncDeletedRecord) {
@@ -988,7 +982,7 @@ CloudSyncRecordState _fromRecordState(api.SyncRecord record) {
       throw const FormatException('服务端返回了无效的 deleted 记录');
     }
     return CloudSyncDeletedRecord(
-      recordId: value.recordId,
+      recordId: E2eeUntrustedAccountRecordId.fromTransport(value.recordId),
       revision: value.revision,
       updatedAt: value.updatedAt.toUtc(),
       updatedByDeviceId: value.updatedByDeviceId,
@@ -1011,7 +1005,7 @@ void _validatePushMutations(List<CloudSyncRecordMutation> mutations) {
   var totalCiphertextBytes = 0;
   for (final mutation in mutations) {
     _requireClientIdentifier(mutation.mutationId);
-    _requireClientIdentifier(mutation.recordId);
+    _requireClientIdentifier(mutation.recordId.wireValue);
     if (!mutationIds.add(mutation.mutationId) ||
         mutation.expectedRevision < 0) {
       throw const CloudSyncException(
@@ -1021,29 +1015,22 @@ void _validatePushMutations(List<CloudSyncRecordMutation> mutations) {
     }
     switch (mutation) {
       case CloudSyncPutRecordMutation():
-        if (mutation.keyEpoch < 1 || mutation.keyEpoch > 2147483647) {
+        if (mutation.record.keyEpoch < 1 ||
+            mutation.record.keyEpoch > 2147483647) {
           throw const CloudSyncException(
             kind: CloudSyncFailureKind.validation,
             retryable: false,
           );
         }
-        final ciphertextBytes = _syncCiphertextByteLength(mutation.ciphertext);
-        if (ciphertextBytes == null ||
-            ciphertextBytes < 1 ||
-            ciphertextBytes > 1048576) {
+        final ciphertextBytes = mutation.record.ciphertext.length;
+        if (ciphertextBytes < 1 ||
+            ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes) {
           throw const CloudSyncException(
             kind: CloudSyncFailureKind.validation,
             retryable: false,
           );
         }
         totalCiphertextBytes += ciphertextBytes;
-      case CloudSyncDeleteRecordMutation():
-        if (mutation.expectedRevision == 0) {
-          throw const CloudSyncException(
-            kind: CloudSyncFailureKind.validation,
-            retryable: false,
-          );
-        }
     }
   }
   if (totalCiphertextBytes > 1048576) {
@@ -1147,6 +1134,22 @@ void _validateSnapshotPage({
       !syncCursorIsValid ||
       !cursorsMatchPageState) {
     throw const FormatException('服务端返回了无效的快照分页数据');
+  }
+}
+
+String _encodeSyncCiphertext(Uint8List ciphertext) =>
+    base64Url.encode(ciphertext).replaceAll('=', '');
+
+Uint8List _decodeSyncCiphertext(String ciphertext, int expectedLength) {
+  try {
+    final padding = '=' * ((4 - ciphertext.length % 4) % 4);
+    final decoded = base64Url.decode('$ciphertext$padding');
+    if (decoded.length != expectedLength) {
+      throw const FormatException('服务端返回了长度不匹配的同步密文');
+    }
+    return decoded;
+  } on FormatException {
+    throw const FormatException('服务端返回了无效的同步密文');
   }
 }
 

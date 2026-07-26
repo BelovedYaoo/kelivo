@@ -13,6 +13,8 @@ import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_pairing_qr_codec.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
+import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 
 const _mutationId1 = '00000000-0000-4000-8000-000000000001';
@@ -20,7 +22,6 @@ const _mutationId2 = '00000000-0000-4000-8000-000000000002';
 const _mutationId3 = '00000000-0000-4000-8000-000000000003';
 const _recordId1 = '10000000-0000-4000-8000-000000000001';
 const _recordId2 = '10000000-0000-4000-8000-000000000002';
-const _recordId3 = '10000000-0000-4000-8000-000000000003';
 const _deviceId1 = '20000000-0000-4000-8000-000000000001';
 const _deviceId2 = '20000000-0000-4000-8000-000000000002';
 const _attemptId1 = '30000000-0000-4000-8000-000000000001';
@@ -42,6 +43,116 @@ Uint8List _filledBytes(int length, [int value = 0]) {
 
 String _encodedBytes(int length, [int value = 0]) {
   return base64Url.encode(_filledBytes(length, value)).replaceAll('=', '');
+}
+
+String _encodedRecordCiphertext(E2eeSealedAccountRecordEnvelope record) {
+  return base64Url.encode(record.ciphertext).replaceAll('=', '');
+}
+
+E2eeUntrustedAccountRecordEnvelope _untrustedRecord(
+  E2eeSealedAccountRecordEnvelope record, {
+  E2eeUntrustedAccountRecordId? recordId,
+  int? keyEpoch,
+  Uint8List? ciphertext,
+}) {
+  return E2eeUntrustedAccountRecordEnvelope.fromTransport(
+    recordId:
+        recordId ??
+        E2eeUntrustedAccountRecordId.fromTransport(record.recordId.wireValue),
+    envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+    keyEpoch: keyEpoch ?? record.keyEpoch,
+    ciphertext: ciphertext ?? record.ciphertext,
+  );
+}
+
+Future<E2eeUntrustedAccountRecordEnvelope> _sealRawAccountRecord({
+  required KelivoSecureCore core,
+  required KelivoAccountRootKeyHandle ark,
+  required SyncEntityKey recordIdKey,
+  required SyncEntityKey frameKey,
+  required String userId,
+  int keyEpoch = 7,
+}) async {
+  final canonicalKey = _recordCanonicalKey(recordIdKey);
+  final frame = _recordPlaintextFrame(frameKey, Uint8List(0));
+  final associatedData = _recordAssociatedData(userId);
+  Uint8List? ciphertext;
+  try {
+    final recordId = await core.deriveAccountRecordId(
+      ark,
+      canonicalEntityKey: canonicalKey,
+    );
+    ciphertext = await core.sealAccountRecord(
+      ark,
+      recordId: recordId,
+      keyEpoch: keyEpoch,
+      associatedData: associatedData,
+      plaintext: frame,
+    );
+    return E2eeUntrustedAccountRecordEnvelope.fromTransport(
+      recordId: E2eeUntrustedAccountRecordId.fromTransport(
+        _uuidStringForTest(recordId),
+      ),
+      envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+      keyEpoch: keyEpoch,
+      ciphertext: ciphertext,
+    );
+  } finally {
+    canonicalKey.fillRange(0, canonicalKey.length, 0);
+    frame.fillRange(0, frame.length, 0);
+    associatedData.fillRange(0, associatedData.length, 0);
+    ciphertext?.fillRange(0, ciphertext.length, 0);
+  }
+}
+
+Uint8List _recordCanonicalKey(SyncEntityKey key) {
+  final typeBytes = utf8.encode(key.entityType);
+  final idBytes = utf8.encode(key.entityId);
+  final result = Uint8List(20 + typeBytes.length + idBytes.length);
+  result.setRange(0, 8, ascii.encode('KELVRK01'));
+  final fields = ByteData.sublistView(result);
+  fields.setUint16(8, 1, Endian.big);
+  fields.setUint32(12, typeBytes.length, Endian.big);
+  fields.setUint32(16, idBytes.length, Endian.big);
+  result.setRange(20, 20 + typeBytes.length, typeBytes);
+  result.setRange(20 + typeBytes.length, result.length, idBytes);
+  return result;
+}
+
+Uint8List _recordPlaintextFrame(SyncEntityKey key, Uint8List payload) {
+  final typeBytes = utf8.encode(key.entityType);
+  final idBytes = utf8.encode(key.entityId);
+  final result = Uint8List(
+    24 + typeBytes.length + idBytes.length + payload.length,
+  );
+  result.setRange(0, 8, ascii.encode('KELVRF01'));
+  final fields = ByteData.sublistView(result);
+  fields.setUint16(8, 1, Endian.big);
+  fields.setUint32(12, typeBytes.length, Endian.big);
+  fields.setUint32(16, idBytes.length, Endian.big);
+  fields.setUint32(20, payload.length, Endian.big);
+  result.setRange(24, 24 + typeBytes.length, typeBytes);
+  result.setRange(
+    24 + typeBytes.length,
+    24 + typeBytes.length + idBytes.length,
+    idBytes,
+  );
+  result.setRange(
+    24 + typeBytes.length + idBytes.length,
+    result.length,
+    payload,
+  );
+  return result;
+}
+
+Uint8List _recordAssociatedData(String userId) {
+  final result = Uint8List(28);
+  result.setRange(0, 8, ascii.encode('KELVRA01'));
+  final fields = ByteData.sublistView(result);
+  fields.setUint16(8, 1, Endian.big);
+  fields.setUint16(10, e2eeAccountRecordSyncProtocolVersion, Endian.big);
+  result.setRange(12, 28, _rawUuid(userId));
+  return result;
 }
 
 CloudSyncOpaqueDeviceIdentity _deviceIdentity() {
@@ -2763,7 +2874,273 @@ void main() {
     expect(targetRequestCount, 0);
   });
 
-  test('v3 推送以不透明 put 和 delete 提交并解析三类结果', () async {
+  test('账户记录加密器派生稳定不透明标识并限制明文生命周期', () async {
+    const core = KelivoSecureCore();
+    final ark = await core.generateAccountRootKey();
+    final cipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: ark,
+      userId: _userId,
+      currentKeyEpoch: 7,
+    );
+    addTearDown(cipher.close);
+
+    const entityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-1',
+    );
+    const otherEntityKey = SyncEntityKey(
+      entityType: 'message',
+      entityId: 'conversation-1',
+    );
+    final payload = Uint8List.fromList(<int>[1, 2, 3]);
+    final firstId = await cipher.deriveRecordId(entityKey);
+    final repeatedId = await cipher.deriveRecordId(entityKey);
+    final otherId = await cipher.deriveRecordId(otherEntityKey);
+    final first = await cipher.seal(entityKey: entityKey, payload: payload);
+    final second = await cipher.seal(entityKey: entityKey, payload: payload);
+
+    expect(firstId, repeatedId);
+    expect(first.recordId, firstId);
+    expect(otherId, isNot(firstId));
+    expect(first.ciphertext, isNot(orderedEquals(second.ciphertext)));
+    final recordIdBytes = _rawUuid(firstId.wireValue);
+    expect(recordIdBytes[6] & 0xf0, 0x40);
+    expect(recordIdBytes[8] & 0xc0, 0x80);
+    expect(payload, orderedEquals(<int>[1, 2, 3]));
+
+    Uint8List? borrowedPayload;
+    final opened = await cipher.open(
+      _untrustedRecord(first),
+      decode: (openedKey, borrowed) {
+        expect(openedKey, entityKey);
+        borrowedPayload = borrowed;
+        return Uint8List.fromList(borrowed);
+      },
+    );
+    expect(opened, orderedEquals(payload));
+    expect(borrowedPayload, everyElement(0));
+    expect(payload, orderedEquals(<int>[1, 2, 3]));
+  });
+
+  test('账户记录加密器拒绝篡改、错误标识、未来世代与越界内容', () async {
+    const core = KelivoSecureCore();
+    final ark = await core.generateAccountRootKey();
+    final cipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: ark,
+      userId: _userId,
+      currentKeyEpoch: 7,
+    );
+    addTearDown(cipher.close);
+
+    const entityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-1',
+    );
+    const otherEntityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-2',
+    );
+    final sealed = await cipher.seal(
+      entityKey: entityKey,
+      payload: Uint8List(0),
+    );
+    final otherId = await cipher.deriveRecordId(otherEntityKey);
+    final tampered = Uint8List.fromList(sealed.ciphertext);
+    tampered[tampered.length - 1] ^= 1;
+
+    await expectLater(
+      cipher.open<Object?>(
+        _untrustedRecord(sealed, ciphertext: tampered),
+        decode: (_, _) => null,
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+    await expectLater(
+      cipher.open<Object?>(
+        _untrustedRecord(
+          sealed,
+          recordId: E2eeUntrustedAccountRecordId.fromTransport(
+            otherId.wireValue,
+          ),
+        ),
+        decode: (_, _) => null,
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+    await expectLater(
+      cipher.open<Object?>(
+        _untrustedRecord(sealed, keyEpoch: 8),
+        decode: (_, _) => null,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      cipher.deriveRecordId(
+        const SyncEntityKey(entityType: 'Conversation', entityId: '1'),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      cipher.deriveRecordId(
+        SyncEntityKey(
+          entityType: 'message',
+          entityId: List<String>.filled(1025, 'a').join(),
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      cipher.deriveRecordId(
+        SyncEntityKey(
+          entityType: 'message',
+          entityId: String.fromCharCode(0xd800),
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      cipher.seal(
+        entityKey: entityKey,
+        payload: Uint8List(e2eeAccountRecordMaxCiphertextBytes),
+      ),
+      throwsA(isA<ArgumentError>()),
+    );
+
+    await cipher.close();
+    await expectLater(
+      cipher.deriveRecordId(entityKey),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('账户记录加密器隔离用户 AAD 并拒绝帧内实体键替换', () async {
+    const core = KelivoSecureCore();
+    const firstKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-1',
+    );
+    const secondKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-2',
+    );
+
+    final aadArk = await core.generateAccountRootKey();
+    final wrongUserRecord = await _sealRawAccountRecord(
+      core: core,
+      ark: aadArk,
+      recordIdKey: firstKey,
+      frameKey: firstKey,
+      userId: _userId,
+    );
+    final wrongUserCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: aadArk,
+      userId: _accountContextId,
+      currentKeyEpoch: 7,
+    );
+    addTearDown(wrongUserCipher.close);
+    await expectLater(
+      wrongUserCipher.open<Object?>(wrongUserRecord, decode: (_, _) => null),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+
+    final identityArk = await core.generateAccountRootKey();
+    final mismatchedRecord = await _sealRawAccountRecord(
+      core: core,
+      ark: identityArk,
+      recordIdKey: firstKey,
+      frameKey: secondKey,
+      userId: _userId,
+    );
+    final identityCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: identityArk,
+      userId: _userId,
+      currentKeyEpoch: 7,
+    );
+    addTearDown(identityCipher.close);
+    await expectLater(
+      identityCipher.open<Object?>(mismatchedRecord, decode: (_, _) => null),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('不可信账户记录信封严格校验传输边界', () {
+    expect(
+      () => E2eeUntrustedAccountRecordId.fromTransport(
+        'A0000000-0000-4000-8000-000000000001',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    final recordId = E2eeUntrustedAccountRecordId.fromTransport(_recordId1);
+    final validEpochs = <int>[1, 0x7fffffff];
+    for (final keyEpoch in validEpochs) {
+      expect(
+        E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: recordId,
+          envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+          keyEpoch: keyEpoch,
+          ciphertext: Uint8List.fromList(<int>[1]),
+        ).keyEpoch,
+        keyEpoch,
+      );
+    }
+    for (final invalid in <({int version, int epoch, Uint8List ciphertext})>[
+      (version: 2, epoch: 1, ciphertext: Uint8List.fromList(<int>[1])),
+      (version: 1, epoch: 0, ciphertext: Uint8List.fromList(<int>[1])),
+      (version: 1, epoch: 0x80000000, ciphertext: Uint8List.fromList(<int>[1])),
+      (version: 1, epoch: 1, ciphertext: Uint8List(0)),
+      (
+        version: 1,
+        epoch: 1,
+        ciphertext: Uint8List(e2eeAccountRecordMaxCiphertextBytes + 1),
+      ),
+    ]) {
+      expect(
+        () => E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: recordId,
+          envelopeVersion: invalid.version,
+          keyEpoch: invalid.epoch,
+          ciphertext: invalid.ciphertext,
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test('v3 推送只接受加密 put 并解析三类结果', () async {
+    const core = KelivoSecureCore();
+    final ark = await core.generateAccountRootKey();
+    final cipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: ark,
+      userId: _userId,
+      currentKeyEpoch: 7,
+    );
+    addTearDown(cipher.close);
+    final firstRecord = await cipher.seal(
+      entityKey: const SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'conversation-1',
+      ),
+      payload: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final secondRecord = await cipher.seal(
+      entityKey: const SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'conversation-2',
+      ),
+      payload: Uint8List.fromList(<int>[7, 8, 9]),
+    );
+    final thirdRecord = await cipher.seal(
+      entityKey: const SyncEntityKey(
+        entityType: 'message',
+        entityId: 'message-1',
+      ),
+      payload: Uint8List.fromList(<int>[4, 5, 6]),
+    );
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -2776,24 +3153,20 @@ void main() {
     });
 
     final pushFuture = client.pushRecords(<CloudSyncRecordMutation>[
-      const CloudSyncPutRecordMutation(
+      CloudSyncPutRecordMutation(
         mutationId: _mutationId1,
-        recordId: _recordId1,
         expectedRevision: 0,
-        keyEpoch: 7,
-        ciphertext: 'AQID',
+        record: firstRecord,
       ),
-      const CloudSyncDeleteRecordMutation(
+      CloudSyncPutRecordMutation(
         mutationId: _mutationId2,
-        recordId: _recordId2,
         expectedRevision: 3,
+        record: secondRecord,
       ),
-      const CloudSyncPutRecordMutation(
+      CloudSyncPutRecordMutation(
         mutationId: _mutationId3,
-        recordId: _recordId3,
         expectedRevision: 2,
-        keyEpoch: 8,
-        ciphertext: 'BAUG',
+        record: thirdRecord,
       ),
     ]);
 
@@ -2806,27 +3179,30 @@ void main() {
         'mutations': <Object?>[
           <String, Object?>{
             'mutationId': _mutationId1,
-            'recordId': _recordId1,
+            'recordId': firstRecord.recordId.wireValue,
             'expectedRevision': 0,
             'operation': 'put',
             'envelopeVersion': 1,
             'keyEpoch': 7,
-            'ciphertext': 'AQID',
+            'ciphertext': _encodedRecordCiphertext(firstRecord),
           },
           <String, Object?>{
             'mutationId': _mutationId2,
-            'recordId': _recordId2,
+            'recordId': secondRecord.recordId.wireValue,
             'expectedRevision': 3,
-            'operation': 'delete',
+            'operation': 'put',
+            'envelopeVersion': 1,
+            'keyEpoch': 7,
+            'ciphertext': _encodedRecordCiphertext(secondRecord),
           },
           <String, Object?>{
             'mutationId': _mutationId3,
-            'recordId': _recordId3,
+            'recordId': thirdRecord.recordId.wireValue,
             'expectedRevision': 2,
             'operation': 'put',
             'envelopeVersion': 1,
-            'keyEpoch': 8,
-            'ciphertext': 'BAUG',
+            'keyEpoch': 7,
+            'ciphertext': _encodedRecordCiphertext(thirdRecord),
           },
         ],
       },
@@ -2952,11 +3328,14 @@ void main() {
       page.changes[0],
       isA<CloudSyncPutRecordChange>()
           .having((change) => change.changeSeq, 'changeSeq', 12)
-          .having((change) => change.recordId, 'recordId', _recordId1)
+          .having((change) => change.recordId.wireValue, 'recordId', _recordId1)
           .having((change) => change.revision, 'revision', 2)
-          .having((change) => change.envelopeVersion, 'envelopeVersion', 1)
-          .having((change) => change.keyEpoch, 'keyEpoch', 7)
-          .having((change) => change.ciphertext, 'ciphertext', 'AQID')
+          .having((change) => change.record.keyEpoch, 'keyEpoch', 7)
+          .having(
+            (change) => change.record.ciphertext,
+            'ciphertext',
+            orderedEquals(<int>[1, 2, 3]),
+          )
           .having(
             (change) => change.updatedByDeviceId,
             'updatedByDeviceId',
@@ -3082,17 +3461,20 @@ void main() {
     expect(
       page.records[0],
       isA<CloudSyncActiveRecord>()
-          .having((record) => record.recordId, 'recordId', _recordId1)
+          .having((record) => record.recordId.wireValue, 'recordId', _recordId1)
           .having((record) => record.revision, 'revision', 2)
           .having((record) => record.lastChangeSeq, 'lastChangeSeq', 12)
-          .having((record) => record.envelopeVersion, 'envelopeVersion', 1)
-          .having((record) => record.keyEpoch, 'keyEpoch', 7)
-          .having((record) => record.ciphertext, 'ciphertext', 'BAUG'),
+          .having((record) => record.record.keyEpoch, 'keyEpoch', 7)
+          .having(
+            (record) => record.record.ciphertext,
+            'ciphertext',
+            orderedEquals(<int>[4, 5, 6]),
+          ),
     );
     expect(
       page.records[1],
       isA<CloudSyncDeletedRecord>()
-          .having((record) => record.recordId, 'recordId', _recordId2)
+          .having((record) => record.recordId.wireValue, 'recordId', _recordId2)
           .having((record) => record.lastChangeSeq, 'lastChangeSeq', 13)
           .having(
             (record) => record.deletedAt,
@@ -3102,23 +3484,39 @@ void main() {
     );
   });
 
-  test('v3 推送在发网前拒绝非法标识、密文与批量边界', () {
+  test('v3 推送在发网前拒绝非法标识与批量边界', () async {
+    const core = KelivoSecureCore();
+    final ark = await core.generateAccountRootKey();
+    final cipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: ark,
+      userId: _userId,
+      currentKeyEpoch: 7,
+    );
     final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
-    addTearDown(() => client.close(force: true));
-    final oversizedCiphertext = base64Url
-        .encode(Uint8List(1048577))
-        .replaceAll('=', '');
-    final halfBatchCiphertext = base64Url
-        .encode(Uint8List(524289))
-        .replaceAll('=', '');
+    addTearDown(() async {
+      client.close(force: true);
+      await cipher.close();
+    });
+    final smallRecord = await cipher.seal(
+      entityKey: const SyncEntityKey(entityType: 'conversation', entityId: '1'),
+      payload: Uint8List(0),
+    );
+    final firstHalfRecord = await cipher.seal(
+      entityKey: const SyncEntityKey(entityType: 'message', entityId: '1'),
+      payload: Uint8List(524200),
+    );
+    final secondHalfRecord = await cipher.seal(
+      entityKey: const SyncEntityKey(entityType: 'message', entityId: '2'),
+      payload: Uint8List(524200),
+    );
     final oversizedBatch = List<CloudSyncRecordMutation>.generate(
       11,
-      (index) => CloudSyncDeleteRecordMutation(
+      (index) => CloudSyncPutRecordMutation(
         mutationId:
             '00000000-0000-4000-8000-${(index + 100).toString().padLeft(12, '0')}',
-        recordId:
-            '10000000-0000-4000-8000-${(index + 100).toString().padLeft(12, '0')}',
         expectedRevision: 1,
+        record: smallRecord,
       ),
     );
     final invalidCalls = <(String, Object? Function())>[
@@ -3126,49 +3524,11 @@ void main() {
       ('超过十条', () => client.pushRecords(oversizedBatch)),
       (
         '非规范 UUID',
-        () => client.pushRecords(const <CloudSyncRecordMutation>[
-          CloudSyncPutRecordMutation(
-            mutationId: 'A0000000-0000-4000-8000-000000000001',
-            recordId: _recordId1,
-            expectedRevision: 0,
-            keyEpoch: 1,
-            ciphertext: 'AQID',
-          ),
-        ]),
-      ),
-      (
-        '带填充 Base64URL',
-        () => client.pushRecords(const <CloudSyncRecordMutation>[
-          CloudSyncPutRecordMutation(
-            mutationId: _mutationId1,
-            recordId: _recordId1,
-            expectedRevision: 0,
-            keyEpoch: 1,
-            ciphertext: 'AQID=',
-          ),
-        ]),
-      ),
-      (
-        '非规范尾位 Base64URL',
-        () => client.pushRecords(const <CloudSyncRecordMutation>[
-          CloudSyncPutRecordMutation(
-            mutationId: _mutationId1,
-            recordId: _recordId1,
-            expectedRevision: 0,
-            keyEpoch: 1,
-            ciphertext: 'AB',
-          ),
-        ]),
-      ),
-      (
-        '单条密文超过一 MiB',
         () => client.pushRecords(<CloudSyncRecordMutation>[
           CloudSyncPutRecordMutation(
-            mutationId: _mutationId1,
-            recordId: _recordId1,
+            mutationId: 'A0000000-0000-4000-8000-000000000001',
             expectedRevision: 0,
-            keyEpoch: 1,
-            ciphertext: oversizedCiphertext,
+            record: smallRecord,
           ),
         ]),
       ),
@@ -3177,39 +3537,13 @@ void main() {
         () => client.pushRecords(<CloudSyncRecordMutation>[
           CloudSyncPutRecordMutation(
             mutationId: _mutationId1,
-            recordId: _recordId1,
             expectedRevision: 0,
-            keyEpoch: 1,
-            ciphertext: halfBatchCiphertext,
+            record: firstHalfRecord,
           ),
           CloudSyncPutRecordMutation(
             mutationId: _mutationId2,
-            recordId: _recordId2,
             expectedRevision: 0,
-            keyEpoch: 1,
-            ciphertext: halfBatchCiphertext,
-          ),
-        ]),
-      ),
-      (
-        'delete 不允许零 revision',
-        () => client.pushRecords(const <CloudSyncRecordMutation>[
-          CloudSyncDeleteRecordMutation(
-            mutationId: _mutationId1,
-            recordId: _recordId1,
-            expectedRevision: 0,
-          ),
-        ]),
-      ),
-      (
-        'key epoch 越界',
-        () => client.pushRecords(const <CloudSyncRecordMutation>[
-          CloudSyncPutRecordMutation(
-            mutationId: _mutationId1,
-            recordId: _recordId1,
-            expectedRevision: 0,
-            keyEpoch: 2147483648,
-            ciphertext: 'AQID',
+            record: secondHalfRecord,
           ),
         ]),
       ),
@@ -3281,13 +3615,13 @@ void main() {
                   'revision': 2,
                   'envelopeVersion': 1,
                   'keyEpoch': 7,
-                  'ciphertext': 'AQID',
+                  'ciphertext': changeRequestCount == 2 ? 'AQID=' : 'AQID',
                   'ciphertextBytes': changeRequestCount == 1 ? 4 : 3,
                   'deletedAt': null,
                   'updatedAt': '2026-07-19T05:00:00.000Z',
                   'updatedByDeviceId': _deviceId1,
                 },
-                if (changeRequestCount > 1)
+                if (changeRequestCount > 2)
                   <String, Object?>{
                     'changeSeq': 13,
                     'operation': 'delete',
@@ -3342,6 +3676,7 @@ void main() {
           .having((error) => error.retryable, 'retryable', isFalse),
     );
     for (final request in <Future<Object?> Function()>[
+      () => client.pullChanges(),
       () => client.pullChanges(),
       () => client.pullChanges(limit: 1),
       () => client.pullSnapshot(),
