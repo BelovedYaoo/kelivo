@@ -9,3 +9,7 @@
 - 已将账号工作区持久会话硬切到 E2EE 契约：token 使用 `CloudSyncFullSessionToken`，metadata v2 持久化 `tokenExpiresAt` 与正 uint32 `keyEpoch`，旧 metadata 版本直接拒绝；token 仍仅以原始值进入加密存储，恢复后立即解析。
 - 会话定向分析通过；新增/相邻会话用例 12/12 通过。runtime 全文件测试因既有 runner 五分钟无输出而超时，未发现失败输出。
 - 集成残余：`cloud_sync_provider_content_gate_test.dart:235` 仍使用旧会话构造（缺少 `tokenExpiresAt`、`keyEpoch` 且 token 为 String）；同文件 fake client 还残留新版账户客户端接口未实现及旧 `setToken(String?)`，交由 Provider 集成任务统一处理。
+- 新增 `E2eeAccountAuthentication` 深模块接口及生产实现：移动首设备注册在服务端完成前先耐久化 full device state；登录严格区分已认证与待批准设备，并校验本地账户、设备和 key epoch 绑定。
+- 设备状态 key slot 由规范服务地址与登录名经域分离 SHA-256 截断派生；缺失状态仅初始化 identity-only，已有 blob 的 slot 缺失或 AEAD 失败均直接失败关闭。
+- 密码缓冲区由认证模块取得所有权并在所有退出路径清零；OPAQUE、持久 key、identity、ARK 句柄在成功和失败路径统一关闭，服务端身份不匹配时清除已接管 token。
+- 认证验证：认证/传输协议测试 23/23 通过，认证模块与协议测试定向分析无问题。真实 OPAQUE 成功组合门禁由 Issue #38 跟踪；映射盘临时目录问题由 Issue #37 跟踪。

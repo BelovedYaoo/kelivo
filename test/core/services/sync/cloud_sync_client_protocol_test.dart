@@ -2,11 +2,15 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
+import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 
 const _mutationId1 = '00000000-0000-4000-8000-000000000001';
 const _mutationId2 = '00000000-0000-4000-8000-000000000002';
@@ -106,6 +110,388 @@ Map<String, Object?> _trustedDeviceJson({String status = 'active'}) {
 }
 
 void main() {
+  test('桌面端不能注册首个可信设备且不会创建本地设备状态', () async {
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: 'http://127.0.0.1:1',
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: const KelivoSecureCore(),
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final password = Uint8List.fromList(utf8.encode('password'));
+    await expectLater(
+      authenticator.registerFirstDevice(
+        loginName: 'desktop-user',
+        displayName: 'Desktop User',
+        password: password,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+      throwsA(isA<UnsupportedError>()),
+    );
+    expect(password, everyElement(0));
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'http://127.0.0.1:1',
+        normalizedLoginName: 'desktop-user',
+      ),
+      isNull,
+    );
+  });
+
+  test('登录网络失败后保留可认证重开的设备状态且不会伪成功', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    const baseUrl = 'http://127.0.0.1:1';
+    const normalizedLoginName = 'network-user';
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: '$baseUrl/',
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    Future<void> login() async {
+      await authenticator.loginDevice(
+        loginName: ' Network-User ',
+        password: Uint8List.fromList(utf8.encode('password')),
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      );
+    }
+
+    await expectLater(login(), throwsA(isA<CloudSyncException>()));
+    final firstBlob = await store.read(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    expect(firstBlob, hasLength(DeviceStateBlobStore.blobLength));
+
+    await expectLater(login(), throwsA(isA<CloudSyncException>()));
+    final secondBlob = await store.read(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    expect(secondBlob, orderedEquals(firstBlob!));
+  });
+
+  test('设备状态存在但持久密钥槽缺失时失败关闭', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    const baseUrl = 'https://missing-slot.example';
+    final loginName = 'missing${DateTime.now().microsecondsSinceEpoch}';
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength),
+    );
+
+    await expectLater(
+      authenticator.loginDevice(
+        loginName: loginName,
+        password: Uint8List.fromList(utf8.encode('password')),
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.slotNotFound,
+        ),
+      ),
+    );
+  });
+
+  test('设备状态密文损坏时不会重建身份掩盖认证失败', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    const baseUrl = 'http://127.0.0.1:1';
+    const loginName = 'damaged-user';
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    Future<void> login() async {
+      await authenticator.loginDevice(
+        loginName: loginName,
+        password: Uint8List.fromList(utf8.encode('password')),
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      );
+    }
+
+    await expectLater(login(), throwsA(isA<CloudSyncException>()));
+    final blob = await store.read(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+    );
+    final damagedBlob = Uint8List.fromList(blob!)..last ^= 1;
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: damagedBlob,
+    );
+
+    await expectLater(
+      login(),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.deviceStateAuthenticationFailed,
+        ),
+      ),
+    );
+  });
+
+  test('已有完整设备状态拒绝其他账户上下文且释放所有句柄', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    const loginName = 'bound-user';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final slotId = _authenticatorSlotId(baseUrl, loginName);
+    final key = await core.createSlot(slotId);
+    final identity = await core.generateDeviceIdentity();
+    final ark = await core.generateAccountRootKey();
+    final stateBlob = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: _rawUuid(_deviceId1),
+      keyVersion: 1,
+      ark: ark,
+      account: KelivoDeviceStateAccountBinding(
+        userId: _rawUuid(_userId),
+        keyEpoch: 7,
+      ),
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: stateBlob,
+    );
+    await core.closeAccountRootKey(ark);
+    await core.closeDeviceIdentity(identity);
+    await core.close(key);
+
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final loginFuture = authenticator.loginDevice(
+      loginName: loginName,
+      password: Uint8List.fromList(utf8.encode('password')),
+      deviceName: 'Windows 主机',
+      platform: CloudSyncPlatform.windows,
+      clientVersion: '1.2.3',
+    );
+    final request = await requestFuture;
+    final body = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+    );
+    expect(body['deviceId'], _deviceId1);
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'attemptId': _attemptId1,
+          'accountBinding': _accountContextId,
+          'deviceChallenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 1),
+          'credentialResponse': _encodedBytes(
+            cloudSyncOpaqueCredentialResponseBytes,
+            2,
+          ),
+          'expiresAt': DateTime.now()
+              .toUtc()
+              .add(const Duration(minutes: 5))
+              .toIso8601String(),
+        },
+      }),
+    );
+    await request.response.close();
+    await expectLater(loginFuture, throwsStateError);
+
+    final reopenedKey = await core.openSlot(slotId);
+    final reopened = await core.openDeviceState(
+      reopenedKey,
+      stateBlob: (await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ))!,
+    );
+    expect(reopened.binding.account?.keyEpoch, 7);
+    expect(reopened.binding.account?.userId, orderedEquals(_rawUuid(_userId)));
+    await core.closeAccountRootKey(reopened.ark!);
+    await core.closeDeviceIdentity(reopened.identity);
+    await core.close(reopenedKey);
+  });
+
+  test('移动注册的畸形 OPAQUE 响应保留可重开的未绑定设备状态', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    const loginName = 'mobile-user';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final requestFuture = server.first;
+    final registrationFuture = authenticator.registerFirstDevice(
+      loginName: loginName,
+      displayName: 'Mobile User',
+      password: Uint8List.fromList(utf8.encode('password')),
+      deviceName: 'Android 手机',
+      platform: CloudSyncPlatform.android,
+      clientVersion: '1.2.3',
+    );
+    final request = await requestFuture;
+    final body = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+    );
+    expect(body['platform'], 'android');
+    expect(body['deviceKeyVersion'], 1);
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'attemptId': _attemptId1,
+          'userId': _userId,
+          'accountBinding': _accountContextId,
+          'deviceChallenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 1),
+          'registrationResponse': _encodedBytes(
+            cloudSyncOpaqueRegistrationResponseBytes,
+          ),
+          'expiresAt': DateTime.now()
+              .toUtc()
+              .add(const Duration(minutes: 5))
+              .toIso8601String(),
+        },
+      }),
+    );
+    await request.response.close();
+    await expectLater(
+      registrationFuture,
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.opaqueMessageInvalid,
+        ),
+      ),
+    );
+
+    final key = await core.openSlot(_authenticatorSlotId(baseUrl, loginName));
+    final opened = await core.openDeviceState(
+      key,
+      stateBlob: (await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ))!,
+    );
+    expect(opened.binding.account, isNull);
+    expect(opened.binding.keyVersion, 1);
+    expect(body['deviceId'], _uuidStringForTest(opened.binding.deviceId));
+    await core.closeDeviceIdentity(opened.identity);
+    await core.close(key);
+  });
+
   test('生产客户端固定使用官方服务地址', () {
     final client = CloudSyncClient();
     addTearDown(() => client.close(force: true));
@@ -1413,4 +1799,30 @@ void main() {
       ),
     );
   });
+}
+
+Uint8List _authenticatorSlotId(String baseUrl, String loginName) {
+  final digest = sha256.convert(
+    utf8.encode(
+      'kelivo.e2ee.device-state.slot.v1\u0000$baseUrl\u0000$loginName',
+    ),
+  );
+  return Uint8List.fromList(digest.bytes.sublist(0, 16));
+}
+
+Uint8List _rawUuid(String value) {
+  final hex = value.replaceAll('-', '');
+  return Uint8List.fromList(<int>[
+    for (var offset = 0; offset < hex.length; offset += 2)
+      int.parse(hex.substring(offset, offset + 2), radix: 16),
+  ]);
+}
+
+String _uuidStringForTest(Uint8List value) {
+  final hex = value
+      .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+      .join();
+  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+      '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
+      '${hex.substring(20)}';
 }
