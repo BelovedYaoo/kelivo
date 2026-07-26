@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
+import 'dart:typed_data';
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
@@ -13,6 +15,7 @@ import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:Kelivo/core/services/workspace/account_workspace_runtime.dart';
+import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:Kelivo/utils/sandbox_path_resolver.dart';
 import 'package:crypto/crypto.dart';
@@ -67,6 +70,828 @@ void main() {
     await runtime.close();
     runtimes.remove(runtime);
   }
+
+  test('设备状态首次发布后可按规范身份读取且路径不泄漏登录名', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'alice.private@example.com';
+    final state = Uint8List.fromList(
+      List<int>.generate(188, (index) => index & 0xff),
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: state,
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(state),
+    );
+    final persistedPaths = await installationRoot
+        .list(recursive: true, followLinks: false)
+        .map((entity) => entity.path.toLowerCase())
+        .toList();
+    expect(persistedPaths.where((path) => path.contains(loginName)), isEmpty);
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    expect(
+      p.basename(locator.path),
+      'effefc01e7293e432584e2ea8cef7f7c816bc0daeaa0b6a97856248d7d58da0b',
+    );
+  });
+
+  test('设备状态删除只清理指定身份且删除后与损坏严格区分', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final first = Uint8List(188)..fillRange(0, 188, 0x11);
+    final second = Uint8List(188)..fillRange(0, 188, 0x22);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+      blob: first,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'bob',
+      blob: second,
+    );
+
+    await store.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+      ),
+      isNull,
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'bob',
+      ),
+      orderedEquals(second),
+    );
+  });
+
+  test('设备状态删除发布tombstone后遇路径异常仍不得复活', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final state = Uint8List(188)..fillRange(0, 188, 0x23);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'unsafe-delete',
+      blob: state,
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final unexpectedDirectory = Directory(p.join(locator.path, 'state-b.bin'));
+    await unexpectedDirectory.create();
+
+    await expectLater(
+      store.delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unsafe-delete',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await unexpectedDirectory.delete();
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unsafe-delete',
+      ),
+      isNull,
+    );
+    await store.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'unsafe-delete',
+    );
+  });
+
+  test('设备状态删除发布第二代tombstone后清理中断不得复活旧代', () async {
+    final state = Uint8List(188)..fillRange(0, 188, 0x24);
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'delete-interrupted',
+      blob: state,
+    );
+    final interruptedStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+      durability: _InterruptAfterDeviceTombstonePublishDurability(
+        RestorePlatformDurability(),
+      ),
+    );
+
+    await expectLater(
+      interruptedStore.delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'delete-interrupted',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'delete-interrupted',
+      ),
+      isNull,
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final tombstone = await File(
+      p.join(locator.path, 'tombstone.bin'),
+    ).readAsBytes();
+    expect(ByteData.sublistView(tombstone).getUint64(8, Endian.big), 2);
+  });
+
+  test('设备状态删除在tombstone提交点两侧中断时保持原子可见性', () async {
+    final beforeRoot = Directory(
+      p.join(installationRoot.path, 'before-tombstone-publish'),
+    );
+    final afterRenameRoot = Directory(
+      p.join(installationRoot.path, 'after-tombstone-rename'),
+    );
+    await beforeRoot.create();
+    await afterRenameRoot.create();
+    final state = Uint8List(188)..fillRange(0, 188, 0x25);
+    final beforeStore = DeviceStateBlobStore(installationRoot: beforeRoot);
+    await beforeStore.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'before-tombstone-publish',
+      blob: state,
+    );
+
+    await expectLater(
+      DeviceStateBlobStore(
+        installationRoot: beforeRoot,
+        durability: _InterruptBeforeDeviceTombstonePublishDurability(
+          RestorePlatformDurability(),
+        ),
+      ).delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'before-tombstone-publish',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await beforeStore.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'before-tombstone-publish',
+      ),
+      orderedEquals(state),
+    );
+
+    final afterRenameStore = DeviceStateBlobStore(
+      installationRoot: afterRenameRoot,
+    );
+    await afterRenameStore.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'after-tombstone-rename',
+      blob: state,
+    );
+    await expectLater(
+      DeviceStateBlobStore(
+        installationRoot: afterRenameRoot,
+        durability: _InterruptAfterDeviceTombstoneRenameDurability(
+          RestorePlatformDurability(),
+        ),
+      ).delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'after-tombstone-rename',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await afterRenameStore.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'after-tombstone-rename',
+      ),
+      isNull,
+    );
+  });
+
+  test('设备状态删除任一清理屏障失败后均不得复活旧代', () async {
+    for (final failOnCleanupSync in const <int>[1, 2]) {
+      final root = Directory(
+        p.join(installationRoot.path, 'cleanup-$failOnCleanupSync'),
+      );
+      await root.create();
+      final store = DeviceStateBlobStore(installationRoot: root);
+      await store.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cleanup-$failOnCleanupSync',
+        blob: Uint8List(188)..fillRange(0, 188, 0x25 + failOnCleanupSync),
+      );
+
+      await expectLater(
+        DeviceStateBlobStore(
+          installationRoot: root,
+          durability: _FailDeviceDeleteCleanupBarrierDurability(
+            RestorePlatformDurability(),
+            failOnCleanupSync: failOnCleanupSync,
+          ),
+        ).delete(
+          normalizedBaseUrl: 'https://kelivo.bemylover.top',
+          normalizedLoginName: 'cleanup-$failOnCleanupSync',
+        ),
+        throwsA(isA<StateError>()),
+      );
+      expect(
+        await store.read(
+          normalizedBaseUrl: 'https://kelivo.bemylover.top',
+          normalizedLoginName: 'cleanup-$failOnCleanupSync',
+        ),
+        isNull,
+      );
+      await store.delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cleanup-$failOnCleanupSync',
+      );
+    }
+  });
+
+  test('设备状态tombstone损坏时读写删均失败关闭且代际上限不回绕', () async {
+    final corruptRoot = Directory(
+      p.join(installationRoot.path, 'corrupt-tombstone'),
+    );
+    await corruptRoot.create();
+    final corruptStore = DeviceStateBlobStore(installationRoot: corruptRoot);
+    await corruptStore.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'corrupt-tombstone',
+      blob: Uint8List(188)..fillRange(0, 188, 0x28),
+    );
+    await corruptStore.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'corrupt-tombstone',
+    );
+    final corruptLocator = await _deviceStateLocatorDirectory(
+      corruptRoot,
+      expectedCount: 1,
+    );
+    final corruptTombstone = File(p.join(corruptLocator.path, 'tombstone.bin'));
+    final corruptFrame = await corruptTombstone.readAsBytes();
+    corruptFrame[corruptFrame.length - 1] ^= 0xff;
+    await corruptTombstone.writeAsBytes(corruptFrame, flush: true);
+
+    await expectLater(
+      corruptStore.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'corrupt-tombstone',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      corruptStore.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'corrupt-tombstone',
+        blob: Uint8List(188)..fillRange(0, 188, 0x29),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      corruptStore.delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'corrupt-tombstone',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    final maximumRoot = Directory(
+      p.join(installationRoot.path, 'maximum-tombstone'),
+    );
+    await maximumRoot.create();
+    final maximumStore = DeviceStateBlobStore(installationRoot: maximumRoot);
+    await maximumStore.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'maximum-tombstone',
+      blob: Uint8List(188)..fillRange(0, 188, 0x2a),
+    );
+    await maximumStore.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'maximum-tombstone',
+    );
+    final maximumLocator = await _deviceStateLocatorDirectory(
+      maximumRoot,
+      expectedCount: 1,
+    );
+    final maximumTombstone = File(p.join(maximumLocator.path, 'tombstone.bin'));
+    final maximumFrame = await maximumTombstone.readAsBytes();
+    ByteData.sublistView(
+      maximumFrame,
+    ).setUint64(8, 0x7fffffffffffffff, Endian.big);
+    maximumFrame.setRange(
+      16,
+      maximumFrame.length,
+      sha256.convert(maximumFrame.sublist(0, 16)).bytes,
+    );
+    await maximumTombstone.writeAsBytes(maximumFrame, flush: true);
+
+    await expectLater(
+      maximumStore.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'maximum-tombstone',
+        blob: Uint8List(188)..fillRange(0, 188, 0x2b),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await maximumStore.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'maximum-tombstone',
+      ),
+      isNull,
+    );
+    expect(await maximumTombstone.readAsBytes(), orderedEquals(maximumFrame));
+  });
+
+  test('设备状态重建清除tombstone的目录屏障失败时只暴露新代', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final oldState = Uint8List(188)..fillRange(0, 188, 0x2c);
+    final newState = Uint8List(188)..fillRange(0, 188, 0x2d);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'tombstone-clear-failure',
+      blob: oldState,
+    );
+    await store.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'tombstone-clear-failure',
+    );
+
+    await expectLater(
+      DeviceStateBlobStore(
+        installationRoot: installationRoot,
+        durability: _FailDeviceTombstoneClearBarrierDurability(
+          RestorePlatformDurability(),
+        ),
+      ).write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'tombstone-clear-failure',
+        blob: newState,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'tombstone-clear-failure',
+      ),
+      orderedEquals(newState),
+    );
+  });
+
+  test('设备状态只接受188字节且不同规范身份拥有独立代次', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    expect(
+      () => store.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+        blob: Uint8List(187),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => store.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+        blob: Uint8List(189),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    final first = Uint8List(188)..fillRange(0, 188, 0x31);
+    final second = Uint8List(188)..fillRange(0, 188, 0x32);
+    final third = Uint8List(188)..fillRange(0, 188, 0x33);
+    final otherIdentity = Uint8List(188)..fillRange(0, 188, 0x44);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+      blob: first,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+      blob: second,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+      blob: third,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'Alice',
+      blob: otherIdentity,
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+      ),
+      orderedEquals(third),
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'Alice',
+      ),
+      orderedEquals(otherIdentity),
+    );
+  });
+
+  test('设备状态当前manifest或slot损坏时拒绝回退旧代', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final first = Uint8List(188)..fillRange(0, 188, 0x51);
+    final second = Uint8List(188)..fillRange(0, 188, 0x52);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'manifest-corrupt',
+      blob: first,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'manifest-corrupt',
+      blob: second,
+    );
+    var locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    await File(
+      p.join(locator.path, 'manifest-b.bin'),
+    ).writeAsBytes(<int>[0x01], flush: true);
+
+    await expectLater(
+      store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'manifest-corrupt',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    await store.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'manifest-corrupt',
+    );
+    final state = Uint8List(188)..fillRange(0, 188, 0x61);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'manifest-corrupt',
+      blob: state,
+    );
+    locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final stateFile = File(p.join(locator.path, 'state-a.bin'));
+    final stateFrame = await stateFile.readAsBytes();
+    stateFrame[stateFrame.length - 1] ^= 0xff;
+    await stateFile.writeAsBytes(stateFrame, flush: true);
+
+    await expectLater(
+      store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'manifest-corrupt',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('设备状态slot持久化但manifest发布失败时仍读取旧代', () async {
+    final first = Uint8List(188)..fillRange(0, 188, 0x71);
+    final second = Uint8List(188)..fillRange(0, 188, 0x72);
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'crash-recovery',
+      blob: first,
+    );
+    final interruptedStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+      durability: _InterruptBeforeDeviceManifestPublishDurability(
+        RestorePlatformDurability(),
+        manifestSlot: 'b',
+      ),
+    );
+
+    await expectLater(
+      interruptedStore.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'crash-recovery',
+        blob: second,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'crash-recovery',
+      ),
+      orderedEquals(first),
+    );
+
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'crash-recovery',
+      blob: second,
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'crash-recovery',
+      ),
+      orderedEquals(second),
+    );
+  });
+
+  test('设备状态写入不使用可预测固定临时路径', () async {
+    final first = Uint8List(188)..fillRange(0, 188, 0x73);
+    final second = Uint8List(188)..fillRange(0, 188, 0x74);
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'unpredictable-temporary',
+      blob: first,
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    await Directory(p.join(locator.path, '.manifest-b.next')).create();
+
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'unpredictable-temporary',
+      blob: second,
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unpredictable-temporary',
+      ),
+      orderedEquals(second),
+    );
+
+    await Directory(
+      p.join(locator.path, '.state-a-00000000000000000000000000000000.next'),
+    ).create();
+    await expectLater(
+      store.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unpredictable-temporary',
+        blob: Uint8List(188)..fillRange(0, 188, 0x75),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unpredictable-temporary',
+      ),
+      orderedEquals(second),
+    );
+  });
+
+  test('设备状态locator链接与锁路径错误类型均被拒绝', () async {
+    final lockRoot = Directory(p.join(installationRoot.path, 'unsafe-lock'));
+    await lockRoot.create();
+    final lockStore = DeviceStateBlobStore(installationRoot: lockRoot);
+    await lockStore.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'unsafe-lock',
+      blob: Uint8List(188)..fillRange(0, 188, 0x75),
+    );
+    final lockLocator = await _deviceStateLocatorDirectory(
+      lockRoot,
+      expectedCount: 1,
+    );
+    await File(p.join(lockLocator.path, '.lock')).delete();
+    await Directory(p.join(lockLocator.path, '.lock')).create();
+
+    await expectLater(
+      lockStore.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unsafe-lock',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      lockStore.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unsafe-lock',
+        blob: Uint8List(188)..fillRange(0, 188, 0x76),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      lockStore.delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unsafe-lock',
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    final locatorRoot = Directory(
+      p.join(installationRoot.path, 'unsafe-locator'),
+    );
+    await locatorRoot.create();
+    final locatorStore = DeviceStateBlobStore(installationRoot: locatorRoot);
+    await locatorStore.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'unsafe-locator',
+      blob: Uint8List(188)..fillRange(0, 188, 0x77),
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      locatorRoot,
+      expectedCount: 1,
+    );
+    final relocated = Directory(
+      p.join(locatorRoot.path, 'relocated-device-state'),
+    );
+    await locator.rename(relocated.path);
+    await _createDirectoryLink(locator.path, relocated.path);
+
+    await expectLater(
+      locatorStore.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unsafe-locator',
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('设备状态真实isolate并发写同一locator时由操作系统锁顺序提交', () async {
+    final initial = Uint8List(188)..fillRange(0, 188, 0x81);
+    final expectedSecondGeneration = Uint8List(188)..fillRange(0, 188, 0x82);
+    final expectedFinal = Uint8List(188)..fillRange(0, 188, 0x83);
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'isolate-lock',
+      blob: initial,
+    );
+    final controls = Directory(p.join(installationRoot.path, 'lock-controls'));
+    await controls.create();
+    final paused = File(p.join(controls.path, 'first-paused'));
+    final release = File(p.join(controls.path, 'release-first'));
+    final firstCompleted = File(p.join(controls.path, 'first-completed'));
+    final firstError = File(p.join(controls.path, 'first-error'));
+    final secondStarted = File(p.join(controls.path, 'second-started'));
+    final secondCompleted = File(p.join(controls.path, 'second-completed'));
+    final secondError = File(p.join(controls.path, 'second-error'));
+
+    final firstWrite = Isolate.run(
+      () => _writeDeviceStateFromIsolate(
+        installationRootPath: installationRoot.path,
+        value: 0x82,
+        startedPath: p.join(controls.path, 'first-started'),
+        completedPath: firstCompleted.path,
+        errorPath: firstError.path,
+        pausePath: paused.path,
+        releasePath: release.path,
+      ),
+    );
+    await _waitForFile(paused);
+    final secondWrite = Isolate.run(
+      () => _writeDeviceStateFromIsolate(
+        installationRootPath: installationRoot.path,
+        value: 0x83,
+        startedPath: secondStarted.path,
+        completedPath: secondCompleted.path,
+        errorPath: secondError.path,
+      ),
+    );
+    await _waitForFile(secondStarted);
+    await Future<void>.delayed(const Duration(milliseconds: 250));
+    final secondCompletedBeforeRelease = await secondCompleted.exists();
+    await release.writeAsString('release', flush: true);
+    await Future.wait(<Future<void>>[
+      firstWrite,
+      secondWrite,
+    ]).timeout(const Duration(seconds: 20));
+
+    expect(secondCompletedBeforeRelease, isFalse);
+    expect(await firstError.exists(), isFalse);
+    expect(await secondError.exists(), isFalse);
+    expect(await firstCompleted.exists(), isTrue);
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'isolate-lock',
+      ),
+      orderedEquals(expectedFinal),
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final manifestB = await File(
+      p.join(locator.path, 'manifest-b.bin'),
+    ).readAsBytes();
+    expect(ByteData.sublistView(manifestB).getUint64(8, Endian.big), 2);
+    final stateB = await File(
+      p.join(locator.path, 'state-b.bin'),
+    ).readAsBytes();
+    expect(stateB.sublist(20), orderedEquals(expectedSecondGeneration));
+  });
+
+  test('设备状态读与删在真实isolate中等待同一操作系统锁', () async {
+    for (final operation in const <String>['read', 'delete']) {
+      final root = Directory(
+        p.join(installationRoot.path, 'isolate-$operation'),
+      );
+      await root.create();
+      final store = DeviceStateBlobStore(installationRoot: root);
+      await store.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'isolate-lock',
+        blob: Uint8List(188)..fillRange(0, 188, 0x81),
+      );
+      final controls = Directory(p.join(root.path, 'controls'));
+      await controls.create();
+      final paused = File(p.join(controls.path, 'writer-paused'));
+      final release = File(p.join(controls.path, 'writer-release'));
+      final writerError = File(p.join(controls.path, 'writer-error'));
+      final operationStarted = File(
+        p.join(controls.path, '$operation-started'),
+      );
+      final operationCompleted = File(
+        p.join(controls.path, '$operation-completed'),
+      );
+      final operationError = File(p.join(controls.path, '$operation-error'));
+
+      final writer = Isolate.run(
+        () => _writeDeviceStateFromIsolate(
+          installationRootPath: root.path,
+          value: 0x82,
+          startedPath: p.join(controls.path, 'writer-started'),
+          completedPath: p.join(controls.path, 'writer-completed'),
+          errorPath: writerError.path,
+          pausePath: paused.path,
+          releasePath: release.path,
+        ),
+      );
+      await _waitForFile(paused);
+      final access = Isolate.run(
+        () => _accessDeviceStateFromIsolate(
+          installationRootPath: root.path,
+          operation: operation,
+          startedPath: operationStarted.path,
+          completedPath: operationCompleted.path,
+          errorPath: operationError.path,
+        ),
+      );
+      await _waitForFile(operationStarted);
+      await Future<void>.delayed(const Duration(milliseconds: 250));
+      final completedBeforeRelease = await operationCompleted.exists();
+      await release.writeAsString('release', flush: true);
+      await Future.wait(<Future<void>>[
+        writer,
+        access,
+      ]).timeout(const Duration(seconds: 20));
+
+      expect(completedBeforeRelease, isFalse, reason: operation);
+      expect(await writerError.exists(), isFalse, reason: operation);
+      expect(await operationError.exists(), isFalse, reason: operation);
+      if (operation == 'read') {
+        expect(await operationCompleted.readAsString(), '130');
+      } else {
+        expect(
+          await store.read(
+            normalizedBaseUrl: 'https://kelivo.bemylover.top',
+            normalizedLoginName: 'isolate-lock',
+          ),
+          isNull,
+        );
+      }
+    }
+  });
 
   test('账号工作区磁盘不得持久化 bearer token 明文', () async {
     const token = 'disk-sentinel-bearer-token';
@@ -2061,6 +2886,410 @@ final class _BlockingFirstPreferenceSetStore
       }
     }
     return super.setValue(valueType, key, value);
+  }
+}
+
+Future<void> _writeDeviceStateFromIsolate({
+  required String installationRootPath,
+  required int value,
+  required String startedPath,
+  required String completedPath,
+  required String errorPath,
+  String? pausePath,
+  String? releasePath,
+}) async {
+  await File(startedPath).writeAsString('started', flush: true);
+  final RestoreDurability durability;
+  if (pausePath != null && releasePath != null) {
+    durability = _PauseBeforeDeviceManifestPublishDurability(
+      RestorePlatformDurability(),
+      pausedFile: File(pausePath),
+      releaseFile: File(releasePath),
+    );
+  } else {
+    durability = RestorePlatformDurability();
+  }
+  try {
+    await DeviceStateBlobStore(
+      installationRoot: Directory(installationRootPath),
+      durability: durability,
+    ).write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'isolate-lock',
+      blob: Uint8List(188)..fillRange(0, 188, value),
+    );
+    await File(completedPath).writeAsString('completed', flush: true);
+  } catch (error, stackTrace) {
+    await File(errorPath).writeAsString('$error\n$stackTrace', flush: true);
+  }
+}
+
+Future<void> _accessDeviceStateFromIsolate({
+  required String installationRootPath,
+  required String operation,
+  required String startedPath,
+  required String completedPath,
+  required String errorPath,
+}) async {
+  await File(startedPath).writeAsString('started', flush: true);
+  final store = DeviceStateBlobStore(
+    installationRoot: Directory(installationRootPath),
+  );
+  try {
+    if (operation == 'read') {
+      final state = await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'isolate-lock',
+      );
+      if (state == null) throw StateError('device_state_test_missing_state');
+      await File(completedPath).writeAsString('${state.first}', flush: true);
+    } else if (operation == 'delete') {
+      await store.delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'isolate-lock',
+      );
+      await File(completedPath).writeAsString('completed', flush: true);
+    } else {
+      throw StateError('device_state_test_unknown_operation');
+    }
+  } catch (error, stackTrace) {
+    await File(errorPath).writeAsString('$error\n$stackTrace', flush: true);
+  }
+}
+
+Future<void> _waitForFile(File file) async {
+  final deadline = DateTime.now().add(const Duration(seconds: 10));
+  while (!await file.exists()) {
+    if (DateTime.now().isAfter(deadline)) {
+      throw TimeoutException(
+        'device_state_test_signal_timeout',
+        const Duration(seconds: 10),
+      );
+    }
+    await Future<void>.delayed(const Duration(milliseconds: 10));
+  }
+}
+
+Future<Directory> _deviceStateLocatorDirectory(
+  Directory installationRoot, {
+  required int expectedCount,
+}) async {
+  final root = Directory(
+    p.join(installationRoot.path, '.kelivo-device-state-v1'),
+  );
+  final directories = await root
+      .list(followLinks: false)
+      .where((entity) => entity is Directory)
+      .cast<Directory>()
+      .toList();
+  expect(directories, hasLength(expectedCount));
+  return directories.single;
+}
+
+final class _PauseBeforeDeviceManifestPublishDurability
+    implements RestoreDurability {
+  _PauseBeforeDeviceManifestPublishDurability(
+    this.delegate, {
+    required this.pausedFile,
+    required this.releaseFile,
+  });
+
+  final RestoreDurability delegate;
+  final File pausedFile;
+  final File releaseFile;
+  bool _paused = false;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    final sourceName = p.basename(source.path);
+    if (!_paused &&
+        sourceName.startsWith('.manifest-') &&
+        sourceName.endsWith('.next')) {
+      _paused = true;
+      await pausedFile.writeAsString('paused', flush: true);
+      await _waitForFile(releaseFile);
+    }
+    await delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
+final class _InterruptBeforeDeviceManifestPublishDurability
+    implements RestoreDurability {
+  _InterruptBeforeDeviceManifestPublishDurability(
+    this.delegate, {
+    required this.manifestSlot,
+  });
+
+  final RestoreDurability delegate;
+  final String manifestSlot;
+  bool _interrupted = false;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) {
+    final sourceName = p.basename(source.path);
+    if (!_interrupted &&
+        sourceName.startsWith('.manifest-$manifestSlot-') &&
+        sourceName.endsWith('.next')) {
+      _interrupted = true;
+      throw StateError('device_state_manifest_publish_interrupted');
+    }
+    return delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
+final class _InterruptBeforeDeviceTombstonePublishDurability
+    implements RestoreDurability {
+  _InterruptBeforeDeviceTombstonePublishDurability(this.delegate);
+
+  final RestoreDurability delegate;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) {
+    if (p.basename(targetPath) == 'tombstone.bin') {
+      throw StateError('device_state_tombstone_publish_interrupted');
+    }
+    return delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
+final class _InterruptAfterDeviceTombstoneRenameDurability
+    implements RestoreDurability {
+  _InterruptAfterDeviceTombstoneRenameDurability(this.delegate);
+
+  final RestoreDurability delegate;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    if (p.basename(targetPath) == 'tombstone.bin') {
+      await File(source.path).rename(targetPath);
+      throw StateError('device_state_tombstone_directory_barrier_interrupted');
+    }
+    await delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
+final class _FailDeviceDeleteCleanupBarrierDurability
+    implements RestoreDurability {
+  _FailDeviceDeleteCleanupBarrierDurability(
+    this.delegate, {
+    required this.failOnCleanupSync,
+  });
+
+  final RestoreDurability delegate;
+  final int failOnCleanupSync;
+  bool _tombstonePublished = false;
+  int _cleanupSyncCount = 0;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    if (_tombstonePublished) {
+      _cleanupSyncCount += 1;
+      if (_cleanupSyncCount == failOnCleanupSync) {
+        throw StateError('device_state_delete_cleanup_barrier_interrupted');
+      }
+    }
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    await delegate.renameAndSync(source: source, targetPath: targetPath);
+    if (p.basename(targetPath) == 'tombstone.bin') {
+      _tombstonePublished = true;
+    }
+  }
+}
+
+final class _FailDeviceTombstoneClearBarrierDurability
+    implements RestoreDurability {
+  _FailDeviceTombstoneClearBarrierDurability(this.delegate);
+
+  final RestoreDurability delegate;
+  bool _failed = false;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(
+    Directory directory, {
+    bool fullBarrier = false,
+  }) async {
+    final tombstone = File(p.join(directory.path, 'tombstone.bin'));
+    final manifest = File(p.join(directory.path, 'manifest-a.bin'));
+    if (!_failed && !await tombstone.exists() && await manifest.exists()) {
+      _failed = true;
+      throw StateError('device_state_tombstone_clear_barrier_interrupted');
+    }
+    await delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) {
+    return delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
+final class _InterruptAfterDeviceTombstonePublishDurability
+    implements RestoreDurability {
+  _InterruptAfterDeviceTombstonePublishDurability(this.delegate);
+
+  final RestoreDurability delegate;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    await delegate.renameAndSync(source: source, targetPath: targetPath);
+    if (p.basename(targetPath) == 'tombstone.bin') {
+      throw StateError('device_state_tombstone_cleanup_interrupted');
+    }
   }
 }
 
