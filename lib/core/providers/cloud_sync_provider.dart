@@ -1,16 +1,25 @@
 import 'dart:async';
+import 'dart:convert';
+import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/sync/cloud_sync_client.dart';
+import '../services/sync/e2ee_account_authenticator.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/workspace/account_workspace_runtime.dart';
+import '../services/workspace/device_state_blob_store.dart';
 
 typedef CloudSyncAccountClientFactory =
-    CloudSyncAccountClient Function({String? token});
+    CloudSyncAccountClient Function({CloudSyncFullSessionToken? token});
+typedef E2eeAccountAuthenticationFactory =
+    E2eeAccountAuthentication Function(CloudSyncAccountClient accountClient);
 
-CloudSyncAccountClient _createCloudSyncAccountClient({String? token}) {
+CloudSyncAccountClient _createCloudSyncAccountClient({
+  CloudSyncFullSessionToken? token,
+}) {
   return CloudSyncClient(token: token);
 }
 
@@ -18,6 +27,7 @@ enum CloudSyncProviderStatus {
   initializing,
   signedOut,
   signingIn,
+  awaitingDeviceApproval,
   signingOut,
   workspaceChangePending,
   idle,
@@ -28,17 +38,34 @@ final class CloudSyncProvider extends ChangeNotifier {
   CloudSyncProvider.controlPlaneOnly(
     this._workspaceRuntime, {
     CloudSyncAccountClientFactory clientFactory = _createCloudSyncAccountClient,
+    E2eeAccountAuthenticationFactory? authenticationFactory,
   }) {
     _clientFactory = clientFactory;
+    _authenticationFactory =
+        authenticationFactory ??
+        (accountClient) => E2eeAccountAuthenticator(
+          baseUrl: defaultCloudSyncBaseUrl,
+          accountClient: accountClient,
+          deviceStateStore: DeviceStateBlobStore(
+            installationRoot: _workspaceRuntime.installationRoot,
+          ),
+          secureCore: const KelivoSecureCore(),
+        );
   }
 
   final AccountWorkspaceRuntime _workspaceRuntime;
   late final CloudSyncAccountClientFactory _clientFactory;
+  late final E2eeAccountAuthenticationFactory _authenticationFactory;
 
   CloudSyncProviderStatus _status = CloudSyncProviderStatus.initializing;
   CloudSyncAccountSession? _session;
   CloudSyncException? _lastError;
   CloudSyncException? _deviceError;
+  E2eeAccountLoginApprovalRequired? _pendingDeviceApproval;
+  E2eeDevicePairingSession? _pendingPairingSession;
+  CloudSyncAccountClient? _pendingPairingClient;
+  Uint8List? _pendingPairingQrFrame;
+  Future<void>? _pendingPairingTask;
   List<CloudSyncDeviceSession> _devices = const <CloudSyncDeviceSession>[];
   CloudSyncAccountClient? _client;
   Future<void>? _initialization;
@@ -46,13 +73,22 @@ final class CloudSyncProvider extends ChangeNotifier {
   bool _devicesLoading = false;
   bool _disposed = false;
   bool _workspaceRestartRequired = false;
+  bool _pendingPairingCancellationRequested = false;
+  bool _devicePairingApprovalInProgress = false;
   Completer<void>? _sessionMutation;
   int _sessionEpoch = 0;
+  int _pendingPairingGeneration = 0;
 
   CloudSyncProviderStatus get status => _status;
   CloudSyncAccountSession? get session => _session;
   CloudSyncException? get lastError => _lastError;
   CloudSyncException? get deviceError => _deviceError;
+  E2eeAccountLoginApprovalRequired? get pendingDeviceApproval =>
+      _pendingDeviceApproval;
+  DateTime? get pendingDevicePairingExpiresAt =>
+      _pendingPairingSession?.expiresAt;
+  int get pendingDevicePairingGeneration => _pendingPairingGeneration;
+  bool get devicePairingApprovalInProgress => _devicePairingApprovalInProgress;
   bool get contentSyncEnabled => false;
   List<CloudSyncDeviceSession> get devices =>
       List<CloudSyncDeviceSession>.unmodifiable(_devices);
@@ -82,7 +118,9 @@ final class CloudSyncProvider extends ChangeNotifier {
 
     try {
       final session = _workspaceRuntime.current.session;
-      if (session != null && session.baseUrl != defaultCloudSyncBaseUrl) {
+      if (session != null &&
+          (session.baseUrl != defaultCloudSyncBaseUrl ||
+              session.isExpiredAt(DateTime.now().toUtc()))) {
         await _workspaceRuntime.signOut();
         _workspaceRestartRequired = true;
         _setStatus(CloudSyncProviderStatus.workspaceChangePending);
@@ -118,7 +156,9 @@ final class CloudSyncProvider extends ChangeNotifier {
   }) async {
     await initialize();
     if (!_ready || _disposed) return false;
-    if (_session != null || _sessionMutationInProgress) {
+    if (_session != null ||
+        _sessionMutationInProgress ||
+        _pendingPairingSession != null) {
       _lastError = const CloudSyncException(
         kind: CloudSyncFailureKind.conflict,
         retryable: false,
@@ -131,6 +171,7 @@ final class CloudSyncProvider extends ChangeNotifier {
     _beginSessionMutation();
     _lastError = null;
     _deviceError = null;
+    _pendingDeviceApproval = null;
     _devicesLoading = false;
     _setStatus(CloudSyncProviderStatus.signingIn);
     CloudSyncAccountClient? loginClient;
@@ -138,28 +179,63 @@ final class CloudSyncProvider extends ChangeNotifier {
       final packageInfo = await PackageInfo.fromPlatform();
       if (_disposed) return false;
       loginClient = _clientFactory();
-      final session = await loginClient.login(
+      final authentication = _authenticationFactory(loginClient);
+      final loginResult = await authentication.loginDevice(
         loginName: loginName.trim(),
-        password: password,
+        password: Uint8List.fromList(utf8.encode(password)),
         deviceName: deviceName.trim(),
         platform: _currentPlatform(),
         clientVersion: packageInfo.version,
       );
       if (_disposed) return false;
-      final workspaceBinding = await _workspaceRuntime.bindAccount(session);
-      if (workspaceBinding is AccountWorkspaceRestartRequired) {
-        _workspaceRestartRequired = true;
-        _setStatus(CloudSyncProviderStatus.workspaceChangePending);
-        return true;
+      switch (loginResult) {
+        case E2eeAccountLoginApprovalRequired():
+          final pairing = await authentication.startDevicePairing(loginResult);
+          Uint8List? qrFrame;
+          try {
+            qrFrame = pairing.takeQrFrame(now: DateTime.now().toUtc());
+            if (_disposed) {
+              _clearMutableBytes(qrFrame);
+              await pairing.cancel();
+              return false;
+            }
+            _retainPendingApproval(
+              authentication: authentication,
+              client: loginClient,
+              approval: loginResult,
+              pairing: pairing,
+              qrFrame: qrFrame,
+            );
+          } catch (error, stackTrace) {
+            _clearMutableBytes(qrFrame);
+            try {
+              await pairing.cancel();
+            } catch (cleanupError, cleanupStackTrace) {
+              developer.log(
+                '创建设备配对二维码失败后的清理未完成',
+                name: 'Kelivo.CloudSyncProvider',
+                level: 900,
+                error: cleanupError,
+                stackTrace: cleanupStackTrace,
+              );
+            }
+            Error.throwWithStackTrace(error, stackTrace);
+          }
+          loginClient = null;
+          return false;
+        case E2eeAccountLoginAuthenticated(:final session):
+          final connected = await _bindAuthenticatedSession(
+            session,
+            loginClient,
+          );
+          await _confirmDevicePairingAfterWorkspaceCommit(
+            authentication,
+            loginName: loginName.trim(),
+            session: session,
+          );
+          if (connected) loginClient = null;
+          return true;
       }
-
-      _workspaceRestartRequired = false;
-      _session = session;
-      _connect(session, client: loginClient);
-      loginClient = null;
-      if (_disposed) return false;
-      _setStatus(CloudSyncProviderStatus.idle);
-      return true;
     } catch (error, stackTrace) {
       _recordFailure(
         error,
@@ -176,11 +252,93 @@ final class CloudSyncProvider extends ChangeNotifier {
     }
   }
 
+  Future<bool> register({
+    required String loginName,
+    required String displayName,
+    required String password,
+    required String deviceName,
+  }) async {
+    await initialize();
+    if (!_ready || _disposed) return false;
+    if (_session != null ||
+        _sessionMutationInProgress ||
+        _pendingPairingSession != null) {
+      _lastError = const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
+      );
+      _notify();
+      return false;
+    }
+
+    _beginSessionMutation();
+    _lastError = null;
+    _deviceError = null;
+    _pendingDeviceApproval = null;
+    _devicesLoading = false;
+    _setStatus(CloudSyncProviderStatus.signingIn);
+    CloudSyncAccountClient? registrationClient;
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (_disposed) return false;
+      registrationClient = _clientFactory();
+      final authentication = _authenticationFactory(registrationClient);
+      final authenticatedSession = await authentication.registerFirstDevice(
+        loginName: loginName.trim(),
+        displayName: displayName.trim(),
+        password: Uint8List.fromList(utf8.encode(password)),
+        deviceName: deviceName.trim(),
+        platform: _currentPlatform(),
+        clientVersion: packageInfo.version,
+      );
+      if (_disposed) return false;
+      final connected = await _bindAuthenticatedSession(
+        authenticatedSession,
+        registrationClient,
+      );
+      try {
+        await authentication.confirmFirstDeviceRegistration(
+          loginName: loginName.trim(),
+          session: authenticatedSession,
+        );
+      } catch (error, stackTrace) {
+        // 工作区会话已经提交，事务清理失败只能延后重试，不能把成功注册伪装成失败。
+        developer.log(
+          '首设备注册已提交，恢复事务将在后续认证重试清理',
+          name: 'Kelivo.CloudSyncProvider',
+          level: 900,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+      if (connected) registrationClient = null;
+      return true;
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '注册云同步账户',
+        status: _session == null
+            ? CloudSyncProviderStatus.signedOut
+            : CloudSyncProviderStatus.error,
+      );
+      return false;
+    } finally {
+      registrationClient?.close(force: true);
+      _endSessionMutation();
+    }
+  }
+
   Future<bool> logout() async {
     await initialize();
     if (_disposed || _sessionMutationInProgress) return false;
+    if (_pendingPairingSession != null) {
+      return cancelPendingDevicePairing();
+    }
     _beginSessionMutation();
     _session = null;
+    _pendingDeviceApproval = null;
     _devicesLoading = false;
     _setStatus(CloudSyncProviderStatus.signingOut);
 
@@ -270,6 +428,96 @@ final class CloudSyncProvider extends ChangeNotifier {
     }
   }
 
+  Uint8List? takePendingDevicePairingQrFrame() {
+    final frame = _pendingPairingQrFrame;
+    _pendingPairingQrFrame = null;
+    return frame;
+  }
+
+  Future<bool> cancelPendingDevicePairing() async {
+    final pairing = _pendingPairingSession;
+    final task = _pendingPairingTask;
+    if (pairing == null || task == null) return false;
+    _pendingPairingCancellationRequested = true;
+    _notify();
+    Object? cancellationError;
+    StackTrace? cancellationStackTrace;
+    try {
+      await pairing.cancel();
+    } catch (error, stackTrace) {
+      cancellationError = error;
+      cancellationStackTrace = stackTrace;
+    }
+    await task;
+    if (cancellationError != null) {
+      if (_session != null || _workspaceRestartRequired) {
+        developer.log(
+          '设备配对已先于取消完成提交',
+          name: 'Kelivo.CloudSyncProvider',
+          level: 800,
+          error: cancellationError,
+          stackTrace: cancellationStackTrace,
+        );
+        return false;
+      }
+      _recordFailure(
+        cancellationError,
+        cancellationStackTrace!,
+        operation: '取消设备配对',
+        status: CloudSyncProviderStatus.signedOut,
+      );
+      return false;
+    }
+    return true;
+  }
+
+  Future<bool> approveDevicePairing(Uint8List qrFrame) async {
+    try {
+      await initialize();
+      final session = _session;
+      final client = _client;
+      final platform = _currentPlatform();
+      if (_disposed ||
+          session == null ||
+          client == null ||
+          _devicePairingApprovalInProgress ||
+          (platform != CloudSyncPlatform.android &&
+              platform != CloudSyncPlatform.ios)) {
+        _deviceError = const CloudSyncException(
+          kind: CloudSyncFailureKind.validation,
+          retryable: false,
+          serverCode: 'SYNC_DEVICE_PAIRING_APPROVAL_UNAVAILABLE',
+        );
+        _notify();
+        return false;
+      }
+
+      _devicePairingApprovalInProgress = true;
+      _deviceError = null;
+      _notify();
+      try {
+        final authentication = _authenticationFactory(client);
+        await authentication.approveScannedDevicePairing(
+          loginName: session.loginName,
+          session: _authenticatedSession(session),
+          qrFrame: qrFrame,
+        );
+        return true;
+      } catch (error, stackTrace) {
+        _recordDeviceFailure(error, stackTrace, operation: '批准设备配对');
+        return false;
+      } finally {
+        _devicePairingApprovalInProgress = false;
+        _notify();
+      }
+    } catch (error, stackTrace) {
+      _recordDeviceFailure(error, stackTrace, operation: '批准设备配对');
+      return false;
+    } finally {
+      _clearMutableBytes(qrFrame);
+    }
+  }
+
   void clearError() {
     if (_lastError == null && _deviceError == null) return;
     _lastError = null;
@@ -291,6 +539,173 @@ final class CloudSyncProvider extends ChangeNotifier {
     final nextClient = client ?? _clientFactory(token: session.token);
     nextClient.setToken(session.token);
     _client = nextClient;
+  }
+
+  void _retainPendingApproval({
+    required E2eeAccountAuthentication authentication,
+    required CloudSyncAccountClient client,
+    required E2eeAccountLoginApprovalRequired approval,
+    required E2eeDevicePairingSession pairing,
+    required Uint8List qrFrame,
+  }) {
+    client.setToken(null);
+    _pendingDeviceApproval = approval;
+    _pendingPairingSession = pairing;
+    _pendingPairingClient = client;
+    _pendingPairingQrFrame = qrFrame;
+    _pendingPairingGeneration++;
+    _pendingPairingCancellationRequested = false;
+    _lastError = null;
+    final task = _completePendingDevicePairing(
+      authentication: authentication,
+      client: client,
+      approval: approval,
+      pairing: pairing,
+    );
+    _pendingPairingTask = task;
+    _setStatus(CloudSyncProviderStatus.awaitingDeviceApproval);
+    unawaited(task);
+  }
+
+  Future<void> _completePendingDevicePairing({
+    required E2eeAccountAuthentication authentication,
+    required CloudSyncAccountClient client,
+    required E2eeAccountLoginApprovalRequired approval,
+    required E2eeDevicePairingSession pairing,
+  }) async {
+    var clientTransferred = false;
+    try {
+      final authenticatedSession = await pairing.wait();
+      if (!_ownsPendingDevicePairing(pairing, client) || _disposed) return;
+      clientTransferred = await _bindAuthenticatedSession(
+        authenticatedSession,
+        client,
+      );
+      await _confirmDevicePairingAfterWorkspaceCommit(
+        authentication,
+        loginName: approval.loginName,
+        session: authenticatedSession,
+      );
+    } catch (error, stackTrace) {
+      if (!_ownsPendingDevicePairing(pairing, client)) return;
+      if (!_pendingPairingCancellationRequested && !_disposed) {
+        _recordFailure(
+          error,
+          stackTrace,
+          operation: '等待设备配对批准',
+          status: CloudSyncProviderStatus.signedOut,
+        );
+      }
+    } finally {
+      if (_ownsPendingDevicePairing(pairing, client)) {
+        final cancelled = _pendingPairingCancellationRequested;
+        _releasePendingDevicePairing(
+          client: client,
+          closeClient: !clientTransferred,
+        );
+        if (cancelled && !_disposed) {
+          _setStatus(CloudSyncProviderStatus.signedOut);
+        }
+      }
+    }
+  }
+
+  Future<void> _confirmDevicePairingAfterWorkspaceCommit(
+    E2eeAccountAuthentication authentication, {
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+  }) async {
+    try {
+      await authentication.confirmDevicePairing(
+        loginName: loginName,
+        session: session,
+      );
+    } catch (error, stackTrace) {
+      // 工作区会话已提交；确认清理可由下次登录重复完成，不能撤销成功登录。
+      developer.log(
+        '设备配对已提交，恢复事务将在后续登录重试清理',
+        name: 'Kelivo.CloudSyncProvider',
+        level: 900,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
+  bool _ownsPendingDevicePairing(
+    E2eeDevicePairingSession pairing,
+    CloudSyncAccountClient client,
+  ) {
+    return identical(_pendingPairingSession, pairing) &&
+        identical(_pendingPairingClient, client);
+  }
+
+  void _releasePendingDevicePairing({
+    required CloudSyncAccountClient client,
+    required bool closeClient,
+  }) {
+    _clearMutableBytes(_pendingPairingQrFrame);
+    _pendingPairingQrFrame = null;
+    _pendingDeviceApproval = null;
+    _pendingPairingSession = null;
+    _pendingPairingClient = null;
+    _pendingPairingTask = null;
+    _pendingPairingCancellationRequested = false;
+    if (closeClient) {
+      client.close(force: true);
+    }
+  }
+
+  Future<bool> _bindAuthenticatedSession(
+    CloudSyncAuthenticatedSession authenticatedSession,
+    CloudSyncAccountClient client,
+  ) async {
+    final session = CloudSyncAccountSession.fromAuthenticatedSession(
+      baseUrl: defaultCloudSyncBaseUrl,
+      session: authenticatedSession,
+    );
+    final workspaceBinding = await _workspaceRuntime.bindAccount(session);
+    if (workspaceBinding is AccountWorkspaceRestartRequired) {
+      _workspaceRestartRequired = true;
+      _setStatus(CloudSyncProviderStatus.workspaceChangePending);
+      return false;
+    }
+
+    _workspaceRestartRequired = false;
+    _session = session;
+    _connect(session, client: client);
+    if (!_disposed) _setStatus(CloudSyncProviderStatus.idle);
+    return true;
+  }
+
+  CloudSyncAuthenticatedSession _authenticatedSession(
+    CloudSyncAccountSession session,
+  ) {
+    return CloudSyncAuthenticatedSession(
+      token: session.token,
+      tokenExpiresAt: session.tokenExpiresAt,
+      keyEpoch: session.keyEpoch,
+      user: CloudSyncAuthenticatedUser(
+        id: session.userId,
+        loginName: session.loginName,
+        displayName: session.displayName,
+        role: session.role,
+        attachmentQuotaBytes: session.attachmentQuotaBytes,
+      ),
+      device: CloudSyncAuthenticatedDevice(
+        id: session.deviceId,
+        name: session.deviceName,
+        platform: session.platform,
+        clientVersion: session.clientVersion,
+        status: CloudSyncAuthenticatedDeviceStatus.active,
+        createdAt: session.deviceCreatedAt,
+      ),
+    );
+  }
+
+  static void _clearMutableBytes(Uint8List? value) {
+    if (value == null) return;
+    value.fillRange(0, value.length, 0);
   }
 
   CloudSyncPlatform _currentPlatform() {
@@ -379,6 +794,26 @@ final class CloudSyncProvider extends ChangeNotifier {
   void dispose() {
     _disposed = true;
     _sessionEpoch++;
+    final pendingPairing = _pendingPairingSession;
+    if (pendingPairing != null) {
+      _pendingPairingCancellationRequested = true;
+      unawaited(
+        pendingPairing.cancel().catchError((
+          Object error,
+          StackTrace stackTrace,
+        ) {
+          developer.log(
+            '关闭云同步页面时取消设备配对失败',
+            name: 'Kelivo.CloudSyncProvider',
+            level: 900,
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }),
+      );
+    }
+    _clearMutableBytes(_pendingPairingQrFrame);
+    _pendingPairingQrFrame = null;
     _client?.close(force: true);
     _client = null;
     super.dispose();

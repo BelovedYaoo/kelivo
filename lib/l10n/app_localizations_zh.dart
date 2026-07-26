@@ -110,6 +110,26 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncSigningIn => '正在登录…';
 
   @override
+  String get cloudSyncPairingSection => '设备批准';
+
+  @override
+  String get cloudSyncPairingWaiting => '等待可信设备批准';
+
+  @override
+  String cloudSyncPairingExpiresAt(String time) {
+    return '有效期至 $time';
+  }
+
+  @override
+  String get cloudSyncPairingQrUnavailable => '配对二维码不可用。';
+
+  @override
+  String get cloudSyncApproveDevice => '批准设备';
+
+  @override
+  String get cloudSyncApproveDeviceSuccess => '设备已批准';
+
+  @override
   String get cloudSyncRequiredFields => '请填写服务地址、账号、密码和设备名称。';
 
   @override
@@ -5701,6 +5721,26 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncSigningIn => '正在登录…';
 
   @override
+  String get cloudSyncPairingSection => '设备批准';
+
+  @override
+  String get cloudSyncPairingWaiting => '等待可信设备批准';
+
+  @override
+  String cloudSyncPairingExpiresAt(String time) {
+    return '有效期至 $time';
+  }
+
+  @override
+  String get cloudSyncPairingQrUnavailable => '配对二维码不可用。';
+
+  @override
+  String get cloudSyncApproveDevice => '批准设备';
+
+  @override
+  String get cloudSyncApproveDeviceSuccess => '设备已批准';
+
+  @override
   String get cloudSyncRequiredFields => '请填写服务地址、账号、密码和设备名称。';
 
   @override
@@ -11290,6 +11330,26 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get cloudSyncSigningIn => '正在登入…';
+
+  @override
+  String get cloudSyncPairingSection => '裝置批准';
+
+  @override
+  String get cloudSyncPairingWaiting => '等待受信任裝置批准';
+
+  @override
+  String cloudSyncPairingExpiresAt(String time) {
+    return '有效期至 $time';
+  }
+
+  @override
+  String get cloudSyncPairingQrUnavailable => '配對 QR Code 無法使用。';
+
+  @override
+  String get cloudSyncApproveDevice => '批准裝置';
+
+  @override
+  String get cloudSyncApproveDeviceSuccess => '裝置已批准';
 
   @override
   String get cloudSyncRequiredFields => '請填寫服務位址、帳號、密碼和裝置名稱。';

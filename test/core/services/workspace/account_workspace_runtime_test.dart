@@ -57,10 +57,13 @@ void main() {
     SharedPreferences.resetStatic();
   });
 
-  Future<AccountWorkspaceRuntime> bootstrap() async {
+  Future<AccountWorkspaceRuntime> bootstrap({
+    DateTime Function()? utcNow,
+  }) async {
     final runtime = await AccountWorkspaceRuntime.bootstrap(
       installationRoot: installationRoot,
       sessionTokenStore: sessionTokenStore,
+      utcNow: utcNow,
     );
     runtimes.add(runtime);
     return runtime;
@@ -69,6 +72,55 @@ void main() {
   Future<void> close(AccountWorkspaceRuntime runtime) async {
     await runtime.close();
     runtimes.remove(runtime);
+  }
+
+  Future<void> mutateStoredSessionMetadata(
+    CloudSyncAccountSession session,
+    void Function(Map<String, Object?> metadata) mutate,
+  ) async {
+    final workspaceKey = sha256
+        .convert(utf8.encode(session.accountScope))
+        .toString();
+    final accountDirectory = Directory(
+      p.join(
+        installationRoot.path,
+        '.kelivo-workspaces',
+        'accounts',
+        workspaceKey,
+      ),
+    );
+    final sessionRecords = await accountDirectory
+        .list(followLinks: false)
+        .where(
+          (entity) =>
+              entity is File &&
+              p.basename(entity.path).startsWith('session-v2-'),
+        )
+        .cast<File>()
+        .toList();
+    expect(sessionRecords, hasLength(1));
+    final record =
+        jsonDecode(await sessionRecords.single.readAsString())
+            as Map<String, Object?>;
+    final payload = record['payload'] as Map<String, Object?>;
+    final metadata = payload['session'] as Map<String, Object?>;
+    mutate(metadata);
+    await sessionRecords.single.writeAsString(jsonEncode(record), flush: true);
+  }
+
+  Future<void> expectStoredSessionMetadataRejected(
+    void Function(Map<String, Object?> metadata) mutate,
+  ) async {
+    final session = _session(
+      userId: 'account-a',
+      token: 'metadata-validation-token',
+    );
+    final runtime = await bootstrap();
+    await runtime.bindAccount(session);
+    await close(runtime);
+    await mutateStoredSessionMetadata(session, mutate);
+
+    await expectLater(bootstrap(), throwsA(isA<FormatException>()));
   }
 
   test('设备状态首次发布后可按规范身份读取且路径不泄漏登录名', () async {
@@ -112,6 +164,386 @@ void main() {
     expect(
       p.basename(locator.path),
       'effefc01e7293e432584e2ea8cef7f7c816bc0daeaa0b6a97856248d7d58da0b',
+    );
+  });
+
+  test('首设备注册事务信封只允许原样重放并按摘要确认删除', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'pending-registration';
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x31);
+    final envelope = Uint8List.fromList(
+      List<int>.generate(257, (index) => (index * 17) & 0xff),
+    );
+    final digest = Uint8List.fromList(sha256.convert(envelope).bytes);
+    await expectLater(
+      store.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: envelope,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: state,
+    );
+    expect(
+      () => store.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List(0),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => store.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List(
+          DeviceStateBlobStore.pendingRegistrationEnvelopeMaxLength + 1,
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+    await store.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+    await store.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: Uint8List.fromList(envelope),
+    );
+
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(envelope),
+    );
+    await expectLater(
+      store.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List.fromList(envelope)..last ^= 1,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      store.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: Uint8List(32)..fillRange(0, 32, 0x44),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      () => store.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: Uint8List(31),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      await store.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: digest,
+      ),
+      isTrue,
+    );
+    expect(
+      await store.deletePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: digest,
+      ),
+      isFalse,
+    );
+  });
+
+  test('首设备注册事务重命名后屏障中断仍可由新实例原样恢复', () async {
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'registration-publish-interrupted';
+    final normalStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+    );
+    await normalStore.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x46),
+    );
+    final envelope = Uint8List(320)..fillRange(0, 320, 0x47);
+    final interruptedStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+      durability: _InterruptAfterPendingRegistrationRenameDurability(
+        RestorePlatformDurability(),
+      ),
+    );
+
+    await expectLater(
+      interruptedStore.writePendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: envelope,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await DeviceStateBlobStore(
+        installationRoot: installationRoot,
+      ).readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(envelope),
+    );
+    await normalStore.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+  });
+
+  test('首设备注册事务损坏时失败关闭且设备删除一并退役事务', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'damaged-registration';
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x32),
+    );
+    await store.writePendingRegistrationEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: Uint8List(128)..fillRange(0, 128, 0x45),
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final pendingFile = File(p.join(locator.path, 'registration-pending.bin'));
+    final damaged = await pendingFile.readAsBytes()
+      ..last ^= 1;
+    await pendingFile.writeAsBytes(damaged, flush: true);
+
+    await expectLater(
+      store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await store.delete(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+    );
+    expect(await pendingFile.exists(), isFalse);
+    expect(
+      await store.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+  });
+
+  test('设备配对事务信封只允许原样重放并按摘要确认删除', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'pending-pairing';
+    final envelope = Uint8List.fromList(
+      List<int>.generate(513, (index) => (index * 29) & 0xff),
+    );
+    final digest = Uint8List.fromList(sha256.convert(envelope).bytes);
+
+    await expectLater(
+      store.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: envelope,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x51),
+    );
+    expect(
+      () => store.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List(0),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => store.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List(
+          DeviceStateBlobStore.pendingPairingEnvelopeMaxLength + 1,
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    await store.writePendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+    await store.writePendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: Uint8List.fromList(envelope),
+    );
+    expect(
+      await store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(envelope),
+    );
+    await expectLater(
+      store.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: Uint8List.fromList(envelope)..first ^= 1,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      store.deletePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: Uint8List(32)..fillRange(0, 32, 0x52),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await store.deletePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: digest,
+      ),
+      isTrue,
+    );
+    expect(
+      await store.deletePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedDigest: digest,
+      ),
+      isFalse,
+    );
+  });
+
+  test('设备配对事务重命名后屏障中断仍可由新实例原样恢复', () async {
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'pairing-publish-interrupted';
+    final normalStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+    );
+    await normalStore.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x53),
+    );
+    final envelope = Uint8List(384)..fillRange(0, 384, 0x54);
+    final interruptedStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+      durability: _InterruptAfterPendingPairingRenameDurability(
+        RestorePlatformDurability(),
+      ),
+    );
+
+    await expectLater(
+      interruptedStore.writePendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        envelope: envelope,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await DeviceStateBlobStore(
+        installationRoot: installationRoot,
+      ).readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(envelope),
+    );
+    await normalStore.writePendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: envelope,
+    );
+  });
+
+  test('设备配对事务损坏时失败关闭且设备删除一并退役事务', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'damaged-pairing';
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x55),
+    );
+    await store.writePendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      envelope: Uint8List(192)..fillRange(0, 192, 0x56),
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final pendingFile = File(p.join(locator.path, 'pairing-pending.bin'));
+    final damaged = await pendingFile.readAsBytes()
+      ..last ^= 1;
+    await pendingFile.writeAsBytes(damaged, flush: true);
+
+    await expectLater(
+      store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await store.delete(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+    );
+    expect(await pendingFile.exists(), isFalse);
+    expect(
+      await store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
     );
   });
 
@@ -894,9 +1326,13 @@ void main() {
   });
 
   test('账号工作区磁盘不得持久化 bearer token 明文', () async {
-    const token = 'disk-sentinel-bearer-token';
+    final session = _session(
+      userId: 'account-a',
+      token: 'disk-sentinel-bearer-token',
+    );
+    final token = session.token.value;
     final runtime = await bootstrap();
-    await runtime.bindAccount(_session(userId: 'account-a', token: token));
+    await runtime.bindAccount(session);
 
     final tokenBytes = utf8.encode(token);
     final files = await installationRoot
@@ -930,6 +1366,9 @@ void main() {
       'tokenReference',
     });
     expect(sessionMetadata, isNot(contains('token')));
+    expect(sessionMetadata['version'], 2);
+    expect(sessionMetadata['tokenExpiresAt'], '2030-07-18T00:00:00.000Z');
+    expect(sessionMetadata['keyEpoch'], 1);
     expect(payload['tokenReference'], <String, Object?>{
       'version': 1,
       'generation': 1,
@@ -937,10 +1376,216 @@ void main() {
     });
   });
 
-  test('旧版明文会话启动时硬切并清除凭证', () async {
-    const legacyToken = 'legacy-plaintext-token-sentinel';
+  test('E2EE 已认证会话重启后完整 roundtrip', () async {
+    final authenticatedSession = CloudSyncAuthenticatedSession(
+      token: _fullSessionToken('authenticated-roundtrip-token'),
+      tokenExpiresAt: DateTime.parse('2031-07-26T16:20:00+08:00'),
+      keyEpoch: 0xffffffff,
+      user: CloudSyncAuthenticatedUser(
+        id: '11111111-1111-4111-8111-111111111111',
+        loginName: 'roundtrip-user',
+        displayName: 'Roundtrip User',
+        role: CloudSyncUserRole.admin,
+        attachmentQuotaBytes: 4096,
+      ),
+      device: CloudSyncAuthenticatedDevice(
+        id: '22222222-2222-4222-8222-222222222222',
+        name: 'Roundtrip Device',
+        platform: CloudSyncPlatform.linux,
+        clientVersion: '2.0.0',
+        status: CloudSyncAuthenticatedDeviceStatus.active,
+        createdAt: DateTime.parse('2026-07-25T09:30:00+08:00'),
+      ),
+    );
+    final expected = CloudSyncAccountSession.fromAuthenticatedSession(
+      baseUrl: defaultCloudSyncBaseUrl,
+      session: authenticatedSession,
+    );
     var runtime = await bootstrap();
-    final session = _session(userId: 'account-a', token: legacyToken);
+    await runtime.bindAccount(expected);
+    await close(runtime);
+
+    runtime = await bootstrap();
+    final restored = runtime.current.session!;
+    expect(restored.baseUrl, expected.baseUrl);
+    expect(restored.token.value, expected.token.value);
+    expect(restored.tokenExpiresAt, DateTime.utc(2031, 7, 26, 8, 20));
+    expect(restored.keyEpoch, 0xffffffff);
+    expect(restored.userId, expected.userId);
+    expect(restored.loginName, expected.loginName);
+    expect(restored.displayName, expected.displayName);
+    expect(restored.role, expected.role);
+    expect(restored.attachmentQuotaBytes, expected.attachmentQuotaBytes);
+    expect(restored.deviceId, expected.deviceId);
+    expect(restored.deviceName, expected.deviceName);
+    expect(restored.platform, expected.platform);
+    expect(restored.clientVersion, expected.clientVersion);
+    expect(restored.deviceCreatedAt, DateTime.utc(2026, 7, 25, 1, 30));
+  });
+
+  test('会话过期判断在到期瞬间生效且不读取系统时间', () {
+    final expiresAt = DateTime.utc(2030, 7, 18);
+    final session = _session(
+      userId: 'expiry-boundary',
+      token: 'expiry-boundary-token',
+      tokenExpiresAt: expiresAt,
+    );
+
+    expect(
+      session.isExpiredAt(expiresAt.subtract(const Duration(microseconds: 1))),
+      isFalse,
+    );
+    expect(session.isExpiredAt(expiresAt), isTrue);
+    expect(
+      session.isExpiredAt(expiresAt.add(const Duration(microseconds: 1))),
+      isTrue,
+    );
+  });
+
+  final invalidSessionFields = <({String name, String field, Object value})>[
+    (name: 'userId', field: 'userId', value: 'user-1'),
+    (name: 'deviceId', field: 'deviceId', value: 'device-1'),
+    (name: 'loginName', field: 'loginName', value: 'Invalid Login'),
+    (name: 'displayName', field: 'displayName', value: ' '),
+    (
+      name: 'deviceName',
+      field: 'deviceName',
+      value: List<String>.filled(81, 'x').join(),
+    ),
+    (name: 'clientVersion', field: 'clientVersion', value: '1/0'),
+    (name: '负 attachmentQuotaBytes', field: 'attachmentQuotaBytes', value: -1),
+    (
+      name: '超界 attachmentQuotaBytes',
+      field: 'attachmentQuotaBytes',
+      value: 9007199254740992,
+    ),
+  ];
+  for (final invalid in invalidSessionFields) {
+    test('完整会话 JSON 拒绝非法 ${invalid.name}', () {
+      final json = _session(
+        userId: 'invalid-${invalid.field}',
+        token: 'invalid-${invalid.field}-token',
+      ).toJson();
+      json[invalid.field] = invalid.value;
+
+      expect(
+        () => CloudSyncAccountSession.fromJson(json),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  }
+
+  test('完整会话 JSON 拒绝未知字段', () {
+    final json = _session(
+      userId: 'unknown-json-field',
+      token: 'unknown-json-field-token',
+    ).toJson()..['unknown'] = true;
+
+    expect(
+      () => CloudSyncAccountSession.fromJson(json),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('完整会话 JSON 拒绝浮点版本 2.0', () {
+    final json = _session(
+      userId: 'floating-json-version',
+      token: 'floating-json-version-token',
+    ).toJson()..['version'] = 2.0;
+
+    expect(
+      () => CloudSyncAccountSession.fromJson(json),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  for (final invalidTime in <({String field, String value})>[
+    (field: 'tokenExpiresAt', value: '2030-07-18T00:00:00.000+00:00'),
+    (field: 'deviceCreatedAt', value: '2026-07-18T00:00:00Z'),
+  ]) {
+    test('完整会话 JSON 拒绝非规范 UTC ${invalidTime.field}', () {
+      final json = _session(
+        userId: 'invalid-${invalidTime.field}',
+        token: 'invalid-${invalidTime.field}-token',
+      ).toJson();
+      json[invalidTime.field] = invalidTime.value;
+
+      expect(
+        () => CloudSyncAccountSession.fromJson(json),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  }
+
+  test('会话令牌解密后格式非法时启动失败', () async {
+    final runtime = await bootstrap();
+    await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'invalid-token-source'),
+    );
+    await close(runtime);
+    sessionTokenStore.replaceAllTokens('invalid-token');
+
+    await expectLater(bootstrap(), throwsA(isA<FormatException>()));
+  });
+
+  test('会话 metadata 缺失 keyEpoch 时启动失败', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata.remove('keyEpoch'),
+    );
+  });
+
+  for (final invalidEpoch in <int>[0, 0x100000000]) {
+    test('会话 metadata 包含非法 keyEpoch $invalidEpoch 时启动失败', () async {
+      await expectStoredSessionMetadataRejected(
+        (metadata) => metadata['keyEpoch'] = invalidEpoch,
+      );
+    });
+  }
+
+  test('会话 metadata 缺失 tokenExpiresAt 时启动失败', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata.remove('tokenExpiresAt'),
+    );
+  });
+
+  test('会话 metadata 包含非法 tokenExpiresAt 时启动失败', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata['tokenExpiresAt'] = 'not-a-date-time',
+    );
+  });
+
+  test('旧版会话 metadata 启动时拒绝迁移', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata['version'] = 1,
+    );
+  });
+
+  test('会话 metadata 拒绝浮点版本 2.0', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata['version'] = 2.0,
+    );
+  });
+
+  test('会话 metadata 拒绝未知字段', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata['unknown'] = true,
+    );
+  });
+
+  test('会话 metadata 拒绝非规范 UTC 时间', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) =>
+          metadata['tokenExpiresAt'] = '2030-07-18T00:00:00.000+00:00',
+    );
+  });
+
+  test('旧版明文会话启动时硬切并清除凭证', () async {
+    var runtime = await bootstrap();
+    final session = _session(
+      userId: 'account-a',
+      token: 'legacy-plaintext-token-sentinel',
+    );
+    final legacyToken = session.token.value;
     await runtime.bindAccount(session);
     await close(runtime);
 
@@ -1022,19 +1667,19 @@ void main() {
 
     await close(runtime);
     runtime = await bootstrap();
-    expect(runtime.current.session?.userId, 'account-a');
+    expect(runtime.current.session?.userId, accountA.userId);
     expect(runtime.current.dataDirectory.path, targetA.dataDirectory.path);
 
     final bindB = await runtime.bindAccount(accountB);
     expect(bindB, isA<AccountWorkspaceRestartRequired>());
     final targetB = (bindB as AccountWorkspaceRestartRequired).target;
-    expect(runtime.current.session?.userId, 'account-a');
+    expect(runtime.current.session?.userId, accountA.userId);
     expect(targetB.dataDirectory.path, isNot(targetA.dataDirectory.path));
     expect(targetB.preferencesPrefix, isNot(targetA.preferencesPrefix));
 
     await close(runtime);
     runtime = await bootstrap();
-    expect(runtime.current.session?.userId, 'account-b');
+    expect(runtime.current.session?.userId, accountB.userId);
     expect(runtime.current.dataDirectory.path, targetB.dataDirectory.path);
   });
 
@@ -1287,12 +1932,33 @@ void main() {
 
     expect(result, isA<AccountWorkspaceRetained>());
     expect(runtime.current.dataDirectory.path, originalPath);
-    expect(runtime.current.session?.token, 'new-token');
+    expect(runtime.current.session?.token.value, refreshed.token.value);
 
     await close(runtime);
     runtime = await bootstrap();
     expect(runtime.current.dataDirectory.path, originalPath);
-    expect(runtime.current.session?.token, 'new-token');
+    expect(runtime.current.session?.token.value, refreshed.token.value);
+  });
+
+  test('会话 metadata 提交后清理失败仍切换会话并由下次启动清理', () async {
+    var runtime = await bootstrap();
+    final original = _session(userId: 'account-a', token: 'old-token');
+    await runtime.bindAccount(original);
+    await close(runtime);
+
+    runtime = await bootstrap();
+    final refreshed = _session(userId: 'account-a', token: 'new-token');
+    sessionTokenStore.failNextDelete = true;
+    final result = await runtime.bindAccount(refreshed);
+
+    expect(result, isA<AccountWorkspaceRetained>());
+    expect(runtime.current.session?.token.value, refreshed.token.value);
+    expect(sessionTokenStore.tokenCount, 2);
+    await close(runtime);
+
+    runtime = await bootstrap();
+    expect(runtime.current.session?.token.value, refreshed.token.value);
+    expect(sessionTokenStore.tokenCount, 1);
   });
 
   test('账号目录祖先链接不能把账号数据重定向到其他位置', () async {
@@ -1417,6 +2083,69 @@ void main() {
     expect(runtime.current.isLocal, isTrue);
   });
 
+  test('账号会话在到期前一微秒仍恢复原工作区', () async {
+    final expiresAt = DateTime.utc(2030, 7, 18);
+    var runtime = await bootstrap();
+    final session = _session(
+      userId: 'not-expired-account',
+      token: 'not-expired-token',
+      tokenExpiresAt: expiresAt,
+    );
+    await runtime.bindAccount(session);
+    await close(runtime);
+
+    runtime = await bootstrap(
+      utcNow: () => expiresAt.subtract(const Duration(microseconds: 1)),
+    );
+
+    expect(runtime.current.session?.token.value, session.token.value);
+    expect(sessionTokenStore.tokenCount, 1);
+  });
+
+  test('账号会话在到期瞬间失效并切回匿名工作区', () async {
+    final expiresAt = DateTime.utc(2030, 7, 18);
+    var runtime = await bootstrap();
+    await runtime.bindAccount(
+      _session(
+        userId: 'expired-account',
+        token: 'expired-token',
+        tokenExpiresAt: expiresAt,
+      ),
+    );
+    await close(runtime);
+
+    runtime = await bootstrap(utcNow: () => expiresAt);
+
+    expect(runtime.current.isLocal, isTrue);
+    expect(runtime.current.session, isNull);
+    expect(sessionTokenStore.tokenCount, 0);
+  });
+
+  test('账号会话到期提交后令牌删除失败仍切回匿名工作区并重试清理', () async {
+    final expiresAt = DateTime.utc(2030, 7, 18);
+    var runtime = await bootstrap();
+    await runtime.bindAccount(
+      _session(
+        userId: 'expired-cleanup-account',
+        token: 'expired-cleanup-token',
+        tokenExpiresAt: expiresAt,
+      ),
+    );
+    await close(runtime);
+
+    sessionTokenStore.failNextDeleteAll = true;
+    runtime = await bootstrap(utcNow: () => expiresAt);
+
+    expect(runtime.current.isLocal, isTrue);
+    expect(runtime.current.session, isNull);
+    expect(sessionTokenStore.tokenCount, 1);
+    await close(runtime);
+
+    runtime = await bootstrap(utcNow: () => expiresAt);
+    expect(runtime.current.isLocal, isTrue);
+    expect(sessionTokenStore.tokenCount, 0);
+  });
+
   test('退出在 tombstone 落盘后中断时启动自动完成切回匿名工作区', () async {
     var runtime = await bootstrap();
     await runtime.bindAccount(_session(userId: 'account-a', token: 'token-a'));
@@ -1440,14 +2169,17 @@ void main() {
     expect(runtime.current.isLocal, isTrue);
   });
 
-  test('退出令牌删除中断后启动依据 tombstone 清理残留密文', () async {
+  test('退出提交后令牌删除失败仍完成退出并由下次启动清理', () async {
     var runtime = await bootstrap();
     await runtime.bindAccount(_session(userId: 'account-a', token: 'token-a'));
     await close(runtime);
 
     runtime = await bootstrap();
     sessionTokenStore.failNextDelete = true;
-    await expectLater(runtime.signOut(), throwsA(isA<StateError>()));
+    final result = await runtime.signOut();
+
+    expect(result.target.isLocal, isTrue);
+    expect(runtime.current.session, isNull);
     expect(sessionTokenStore.tokenCount, 1);
     await close(runtime);
 
@@ -3160,6 +3892,86 @@ final class _InterruptAfterDeviceTombstoneRenameDurability
   }
 }
 
+final class _InterruptAfterPendingRegistrationRenameDurability
+    implements RestoreDurability {
+  _InterruptAfterPendingRegistrationRenameDurability(this.delegate);
+
+  final RestoreDurability delegate;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    if (p.basename(targetPath) == 'registration-pending.bin') {
+      await File(source.path).rename(targetPath);
+      throw StateError(
+        'device_state_registration_directory_barrier_interrupted',
+      );
+    }
+    await delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
+final class _InterruptAfterPendingPairingRenameDurability
+    implements RestoreDurability {
+  _InterruptAfterPendingPairingRenameDurability(this.delegate);
+
+  final RestoreDurability delegate;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    if (p.basename(targetPath) == 'pairing-pending.bin') {
+      await File(source.path).rename(targetPath);
+      throw StateError('device_state_pairing_directory_barrier_interrupted');
+    }
+    await delegate.renameAndSync(source: source, targetPath: targetPath);
+  }
+}
+
 final class _FailDeviceDeleteCleanupBarrierDurability
     implements RestoreDurability {
   _FailDeviceDeleteCleanupBarrierDurability(
@@ -3297,10 +4109,15 @@ final class _MemoryAccountSessionTokenStore
     implements AccountSessionTokenStore {
   final Map<String, String> _tokens = <String, String>{};
   bool failNextDelete = false;
+  bool failNextDeleteAll = false;
 
   int get tokenCount => _tokens.length;
 
   void clear() => _tokens.clear();
+
+  void replaceAllTokens(String token) {
+    _tokens.updateAll((_, _) => token);
+  }
 
   @override
   Future<AccountSessionTokenReference> writeToken({
@@ -3332,8 +4149,9 @@ final class _MemoryAccountSessionTokenStore
     required AccountSessionTokenReference? keep,
     required RestoreDurability durability,
   }) async {
-    if (failNextDelete) {
+    if (failNextDelete || (failNextDeleteAll && keep == null)) {
       failNextDelete = false;
+      failNextDeleteAll = false;
       throw StateError('account_session_token_delete_interrupted');
     }
     final prefix = '${p.normalize(accountDirectory.absolute.path)}|';
@@ -3406,19 +4224,36 @@ CloudSyncAccountSession _session({
   required String userId,
   required String token,
   String baseUrl = defaultCloudSyncBaseUrl,
+  DateTime? tokenExpiresAt,
 }) {
   return CloudSyncAccountSession(
     baseUrl: baseUrl,
-    token: token,
-    userId: userId,
-    loginName: userId,
+    token: _fullSessionToken(token),
+    tokenExpiresAt: tokenExpiresAt ?? DateTime.utc(2030, 7, 18),
+    keyEpoch: 1,
+    userId: _testUuid('user:$userId'),
+    loginName: userId.toLowerCase(),
     displayName: userId,
     role: CloudSyncUserRole.user,
     attachmentQuotaBytes: 1024,
-    deviceId: 'device-$userId',
+    deviceId: _testUuid('device:$userId'),
     deviceName: 'Device $userId',
     platform: CloudSyncPlatform.windows,
     clientVersion: '1.0.0',
     deviceCreatedAt: DateTime.utc(2026, 7, 18),
   );
+}
+
+CloudSyncFullSessionToken _fullSessionToken(String seed) {
+  final payload = base64Url
+      .encode(sha256.convert(utf8.encode(seed)).bytes)
+      .replaceAll('=', '');
+  return CloudSyncFullSessionToken.parse('kelivo_$payload');
+}
+
+String _testUuid(String seed) {
+  final hex = sha256.convert(utf8.encode(seed)).toString();
+  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+      '4${hex.substring(13, 16)}-8${hex.substring(17, 20)}-'
+      '${hex.substring(20, 32)}';
 }

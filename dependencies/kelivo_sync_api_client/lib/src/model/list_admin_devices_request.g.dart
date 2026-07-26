@@ -7,6 +7,9 @@ part of 'list_admin_devices_request.dart';
 // **************************************************************************
 
 const ListAdminDevicesRequestStatusEnum
+_$listAdminDevicesRequestStatusEnum_pending =
+    const ListAdminDevicesRequestStatusEnum._('pending');
+const ListAdminDevicesRequestStatusEnum
 _$listAdminDevicesRequestStatusEnum_active =
     const ListAdminDevicesRequestStatusEnum._('active');
 const ListAdminDevicesRequestStatusEnum
@@ -17,6 +20,8 @@ ListAdminDevicesRequestStatusEnum _$listAdminDevicesRequestStatusEnumValueOf(
   String name,
 ) {
   switch (name) {
+    case 'pending':
+      return _$listAdminDevicesRequestStatusEnum_pending;
     case 'active':
       return _$listAdminDevicesRequestStatusEnum_active;
     case 'revoked':
@@ -30,6 +35,7 @@ final BuiltSet<ListAdminDevicesRequestStatusEnum>
 _$listAdminDevicesRequestStatusEnumValues =
     BuiltSet<ListAdminDevicesRequestStatusEnum>(
       const <ListAdminDevicesRequestStatusEnum>[
+        _$listAdminDevicesRequestStatusEnum_pending,
         _$listAdminDevicesRequestStatusEnum_active,
         _$listAdminDevicesRequestStatusEnum_revoked,
       ],
@@ -42,10 +48,12 @@ _$listAdminDevicesRequestStatusEnumSerializer =
 class _$ListAdminDevicesRequestStatusEnumSerializer
     implements PrimitiveSerializer<ListAdminDevicesRequestStatusEnum> {
   static const Map<String, Object> _toWire = const <String, Object>{
+    'pending': 'pending',
     'active': 'active',
     'revoked': 'revoked',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
+    'pending': 'pending',
     'active': 'active',
     'revoked': 'revoked',
   };

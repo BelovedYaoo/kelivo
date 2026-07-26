@@ -48,6 +48,8 @@ _$adminDeviceSummaryPlatformEnumValues =
       ],
     );
 
+const AdminDeviceSummaryStatusEnum _$adminDeviceSummaryStatusEnum_pending =
+    const AdminDeviceSummaryStatusEnum._('pending');
 const AdminDeviceSummaryStatusEnum _$adminDeviceSummaryStatusEnum_active =
     const AdminDeviceSummaryStatusEnum._('active');
 const AdminDeviceSummaryStatusEnum _$adminDeviceSummaryStatusEnum_revoked =
@@ -57,6 +59,8 @@ AdminDeviceSummaryStatusEnum _$adminDeviceSummaryStatusEnumValueOf(
   String name,
 ) {
   switch (name) {
+    case 'pending':
+      return _$adminDeviceSummaryStatusEnum_pending;
     case 'active':
       return _$adminDeviceSummaryStatusEnum_active;
     case 'revoked':
@@ -67,12 +71,12 @@ AdminDeviceSummaryStatusEnum _$adminDeviceSummaryStatusEnumValueOf(
 }
 
 final BuiltSet<AdminDeviceSummaryStatusEnum>
-_$adminDeviceSummaryStatusEnumValues = BuiltSet<AdminDeviceSummaryStatusEnum>(
-  const <AdminDeviceSummaryStatusEnum>[
-    _$adminDeviceSummaryStatusEnum_active,
-    _$adminDeviceSummaryStatusEnum_revoked,
-  ],
-);
+_$adminDeviceSummaryStatusEnumValues =
+    BuiltSet<AdminDeviceSummaryStatusEnum>(const <AdminDeviceSummaryStatusEnum>[
+      _$adminDeviceSummaryStatusEnum_pending,
+      _$adminDeviceSummaryStatusEnum_active,
+      _$adminDeviceSummaryStatusEnum_revoked,
+    ]);
 
 Serializer<AdminDeviceSummaryPlatformEnum>
 _$adminDeviceSummaryPlatformEnumSerializer =
@@ -123,10 +127,12 @@ class _$AdminDeviceSummaryPlatformEnumSerializer
 class _$AdminDeviceSummaryStatusEnumSerializer
     implements PrimitiveSerializer<AdminDeviceSummaryStatusEnum> {
   static const Map<String, Object> _toWire = const <String, Object>{
+    'pending': 'pending',
     'active': 'active',
     'revoked': 'revoked',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
+    'pending': 'pending',
     'active': 'active',
     'revoked': 'revoked',
   };

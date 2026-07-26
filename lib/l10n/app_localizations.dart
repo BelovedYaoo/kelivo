@@ -298,6 +298,42 @@ abstract class AppLocalizations {
   /// **'Signing In…'**
   String get cloudSyncSigningIn;
 
+  /// No description provided for @cloudSyncPairingSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Device Approval'**
+  String get cloudSyncPairingSection;
+
+  /// No description provided for @cloudSyncPairingWaiting.
+  ///
+  /// In en, this message translates to:
+  /// **'Waiting for approval'**
+  String get cloudSyncPairingWaiting;
+
+  /// No description provided for @cloudSyncPairingExpiresAt.
+  ///
+  /// In en, this message translates to:
+  /// **'Expires {time}'**
+  String cloudSyncPairingExpiresAt(String time);
+
+  /// No description provided for @cloudSyncPairingQrUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The pairing code is unavailable.'**
+  String get cloudSyncPairingQrUnavailable;
+
+  /// No description provided for @cloudSyncApproveDevice.
+  ///
+  /// In en, this message translates to:
+  /// **'Approve device'**
+  String get cloudSyncApproveDevice;
+
+  /// No description provided for @cloudSyncApproveDeviceSuccess.
+  ///
+  /// In en, this message translates to:
+  /// **'Device approved'**
+  String get cloudSyncApproveDeviceSuccess;
+
   /// No description provided for @cloudSyncRequiredFields.
   ///
   /// In en, this message translates to:

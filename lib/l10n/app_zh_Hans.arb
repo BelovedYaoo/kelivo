@@ -38,6 +38,19 @@
   },
   "cloudSyncSignIn": "登录",
   "cloudSyncSigningIn": "正在登录…",
+  "cloudSyncPairingSection": "设备批准",
+  "cloudSyncPairingWaiting": "等待可信设备批准",
+  "cloudSyncPairingExpiresAt": "有效期至 {time}",
+  "@cloudSyncPairingExpiresAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "cloudSyncPairingQrUnavailable": "配对二维码不可用。",
+  "cloudSyncApproveDevice": "批准设备",
+  "cloudSyncApproveDeviceSuccess": "设备已批准",
   "cloudSyncRequiredFields": "请填写服务地址、账号、密码和设备名称。",
   "cloudSyncAccountSection": "账户",
   "cloudSyncContentLocalOnlyNotice": "端到端加密升级期间，聊天与配置仅保存在本机，账号和设备管理仍可用。",

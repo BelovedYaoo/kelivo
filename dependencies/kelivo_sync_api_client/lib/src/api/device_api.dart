@@ -9,10 +9,10 @@ import 'package:built_value/serializer.dart';
 import 'package:dio/dio.dart';
 
 import 'package:kelivo_sync_api_client/src/model/error_response.dart';
-import 'package:kelivo_sync_api_client/src/model/list_device_sessions_request.dart';
-import 'package:kelivo_sync_api_client/src/model/list_device_sessions_response.dart';
-import 'package:kelivo_sync_api_client/src/model/revoke_device_session_request.dart';
-import 'package:kelivo_sync_api_client/src/model/revoke_device_session_response.dart';
+import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_request.dart';
+import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_response.dart';
+import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_request.dart';
+import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_response.dart';
 
 class DeviceApi {
   final Dio _dio;
@@ -21,11 +21,11 @@ class DeviceApi {
 
   const DeviceApi(this._dio, this._serializers);
 
-  /// listDeviceSessions
+  /// listTrustedDevices
   ///
   ///
   /// Parameters:
-  /// * [listDeviceSessionsRequest]
+  /// * [listTrustedDevicesRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -33,10 +33,10 @@ class DeviceApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [ListDeviceSessionsResponse] as data
+  /// Returns a [Future] containing a [Response] with a [ListTrustedDevicesResponse] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<ListDeviceSessionsResponse>> listDeviceSessions({
-    required ListDeviceSessionsRequest listDeviceSessionsRequest,
+  Future<Response<ListTrustedDevicesResponse>> listTrustedDevices({
+    required ListTrustedDevicesRequest listTrustedDevicesRequest,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -44,7 +44,7 @@ class DeviceApi {
     ProgressCallback? onSendProgress,
     ProgressCallback? onReceiveProgress,
   }) async {
-    final _path = r'/api/device/session/list';
+    final _path = r'/api/device/trusted/list';
     final _options = Options(
       method: r'POST',
       headers: <String, dynamic>{...?headers},
@@ -61,9 +61,9 @@ class DeviceApi {
     dynamic _bodyData;
 
     try {
-      const _type = FullType(ListDeviceSessionsRequest);
+      const _type = FullType(ListTrustedDevicesRequest);
       _bodyData = _serializers.serialize(
-        listDeviceSessionsRequest,
+        listTrustedDevicesRequest,
         specifiedType: _type,
       );
     } catch (error, stackTrace) {
@@ -84,7 +84,7 @@ class DeviceApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    ListDeviceSessionsResponse? _responseData;
+    ListTrustedDevicesResponse? _responseData;
 
     try {
       final rawResponse = _response.data;
@@ -92,9 +92,9 @@ class DeviceApi {
           ? null
           : _serializers.deserialize(
                   rawResponse,
-                  specifiedType: const FullType(ListDeviceSessionsResponse),
+                  specifiedType: const FullType(ListTrustedDevicesResponse),
                 )
-                as ListDeviceSessionsResponse;
+                as ListTrustedDevicesResponse;
     } catch (error, stackTrace) {
       throw DioException(
         requestOptions: _response.requestOptions,
@@ -105,7 +105,7 @@ class DeviceApi {
       );
     }
 
-    return Response<ListDeviceSessionsResponse>(
+    return Response<ListTrustedDevicesResponse>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,
@@ -117,11 +117,11 @@ class DeviceApi {
     );
   }
 
-  /// revokeDeviceSession
+  /// revokeTrustedDevice
   ///
   ///
   /// Parameters:
-  /// * [revokeDeviceSessionRequest]
+  /// * [revokeTrustedDeviceRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -129,10 +129,10 @@ class DeviceApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [RevokeDeviceSessionResponse] as data
+  /// Returns a [Future] containing a [Response] with a [RevokeTrustedDeviceResponse] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<RevokeDeviceSessionResponse>> revokeDeviceSession({
-    required RevokeDeviceSessionRequest revokeDeviceSessionRequest,
+  Future<Response<RevokeTrustedDeviceResponse>> revokeTrustedDevice({
+    required RevokeTrustedDeviceRequest revokeTrustedDeviceRequest,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -140,7 +140,7 @@ class DeviceApi {
     ProgressCallback? onSendProgress,
     ProgressCallback? onReceiveProgress,
   }) async {
-    final _path = r'/api/device/session/revoke';
+    final _path = r'/api/device/trusted/revoke';
     final _options = Options(
       method: r'POST',
       headers: <String, dynamic>{...?headers},
@@ -157,9 +157,9 @@ class DeviceApi {
     dynamic _bodyData;
 
     try {
-      const _type = FullType(RevokeDeviceSessionRequest);
+      const _type = FullType(RevokeTrustedDeviceRequest);
       _bodyData = _serializers.serialize(
-        revokeDeviceSessionRequest,
+        revokeTrustedDeviceRequest,
         specifiedType: _type,
       );
     } catch (error, stackTrace) {
@@ -180,7 +180,7 @@ class DeviceApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    RevokeDeviceSessionResponse? _responseData;
+    RevokeTrustedDeviceResponse? _responseData;
 
     try {
       final rawResponse = _response.data;
@@ -188,9 +188,9 @@ class DeviceApi {
           ? null
           : _serializers.deserialize(
                   rawResponse,
-                  specifiedType: const FullType(RevokeDeviceSessionResponse),
+                  specifiedType: const FullType(RevokeTrustedDeviceResponse),
                 )
-                as RevokeDeviceSessionResponse;
+                as RevokeTrustedDeviceResponse;
     } catch (error, stackTrace) {
       throw DioException(
         requestOptions: _response.requestOptions,
@@ -201,7 +201,7 @@ class DeviceApi {
       );
     }
 
-    return Response<RevokeDeviceSessionResponse>(
+    return Response<RevokeTrustedDeviceResponse>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,
