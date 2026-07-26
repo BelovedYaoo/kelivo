@@ -494,6 +494,11 @@ final class AccountWorkspaceRuntime {
       if (session.accountScope != accountScope) {
         throw const FormatException('account_workspace_session_scope');
       }
+      await sessionTokenStore.deleteTokens(
+        accountDirectory: accountDirectory,
+        keep: stored.tokenReference!,
+        durability: durability,
+      );
     }
     final dataDirectory = await _ensureAccountDataDirectoryPath(
       workspaceRoot: workspaceRoot,

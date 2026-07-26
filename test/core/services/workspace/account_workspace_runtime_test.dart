@@ -1040,6 +1040,100 @@ void main() {
     expect(restored.deviceCreatedAt, DateTime.utc(2026, 7, 25, 1, 30));
   });
 
+  test('会话过期判断在到期瞬间生效且不读取系统时间', () {
+    final expiresAt = DateTime.utc(2030, 7, 18);
+    final session = _session(
+      userId: 'expiry-boundary',
+      token: 'expiry-boundary-token',
+      tokenExpiresAt: expiresAt,
+    );
+
+    expect(
+      session.isExpiredAt(expiresAt.subtract(const Duration(microseconds: 1))),
+      isFalse,
+    );
+    expect(session.isExpiredAt(expiresAt), isTrue);
+    expect(
+      session.isExpiredAt(expiresAt.add(const Duration(microseconds: 1))),
+      isTrue,
+    );
+  });
+
+  final invalidSessionFields = <({String name, String field, Object value})>[
+    (name: 'userId', field: 'userId', value: 'user-1'),
+    (name: 'deviceId', field: 'deviceId', value: 'device-1'),
+    (name: 'loginName', field: 'loginName', value: 'Invalid Login'),
+    (name: 'displayName', field: 'displayName', value: ' '),
+    (
+      name: 'deviceName',
+      field: 'deviceName',
+      value: List<String>.filled(81, 'x').join(),
+    ),
+    (name: 'clientVersion', field: 'clientVersion', value: '1/0'),
+    (name: '负 attachmentQuotaBytes', field: 'attachmentQuotaBytes', value: -1),
+    (
+      name: '超界 attachmentQuotaBytes',
+      field: 'attachmentQuotaBytes',
+      value: 9007199254740992,
+    ),
+  ];
+  for (final invalid in invalidSessionFields) {
+    test('完整会话 JSON 拒绝非法 ${invalid.name}', () {
+      final json = _session(
+        userId: 'invalid-${invalid.field}',
+        token: 'invalid-${invalid.field}-token',
+      ).toJson();
+      json[invalid.field] = invalid.value;
+
+      expect(
+        () => CloudSyncAccountSession.fromJson(json),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  }
+
+  test('完整会话 JSON 拒绝未知字段', () {
+    final json = _session(
+      userId: 'unknown-json-field',
+      token: 'unknown-json-field-token',
+    ).toJson()..['unknown'] = true;
+
+    expect(
+      () => CloudSyncAccountSession.fromJson(json),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('完整会话 JSON 拒绝浮点版本 2.0', () {
+    final json = _session(
+      userId: 'floating-json-version',
+      token: 'floating-json-version-token',
+    ).toJson()..['version'] = 2.0;
+
+    expect(
+      () => CloudSyncAccountSession.fromJson(json),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  for (final invalidTime in <({String field, String value})>[
+    (field: 'tokenExpiresAt', value: '2030-07-18T00:00:00.000+00:00'),
+    (field: 'deviceCreatedAt', value: '2026-07-18T00:00:00Z'),
+  ]) {
+    test('完整会话 JSON 拒绝非规范 UTC ${invalidTime.field}', () {
+      final json = _session(
+        userId: 'invalid-${invalidTime.field}',
+        token: 'invalid-${invalidTime.field}-token',
+      ).toJson();
+      json[invalidTime.field] = invalidTime.value;
+
+      expect(
+        () => CloudSyncAccountSession.fromJson(json),
+        throwsA(isA<FormatException>()),
+      );
+    });
+  }
+
   test('会话令牌解密后格式非法时启动失败', () async {
     final runtime = await bootstrap();
     await runtime.bindAccount(
@@ -1080,6 +1174,25 @@ void main() {
   test('旧版会话 metadata 启动时拒绝迁移', () async {
     await expectStoredSessionMetadataRejected(
       (metadata) => metadata['version'] = 1,
+    );
+  });
+
+  test('会话 metadata 拒绝浮点版本 2.0', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata['version'] = 2.0,
+    );
+  });
+
+  test('会话 metadata 拒绝未知字段', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata['unknown'] = true,
+    );
+  });
+
+  test('会话 metadata 拒绝非规范 UTC 时间', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) =>
+          metadata['tokenExpiresAt'] = '2030-07-18T00:00:00.000+00:00',
     );
   });
 
@@ -1171,19 +1284,19 @@ void main() {
 
     await close(runtime);
     runtime = await bootstrap();
-    expect(runtime.current.session?.userId, 'account-a');
+    expect(runtime.current.session?.userId, accountA.userId);
     expect(runtime.current.dataDirectory.path, targetA.dataDirectory.path);
 
     final bindB = await runtime.bindAccount(accountB);
     expect(bindB, isA<AccountWorkspaceRestartRequired>());
     final targetB = (bindB as AccountWorkspaceRestartRequired).target;
-    expect(runtime.current.session?.userId, 'account-a');
+    expect(runtime.current.session?.userId, accountA.userId);
     expect(targetB.dataDirectory.path, isNot(targetA.dataDirectory.path));
     expect(targetB.preferencesPrefix, isNot(targetA.preferencesPrefix));
 
     await close(runtime);
     runtime = await bootstrap();
-    expect(runtime.current.session?.userId, 'account-b');
+    expect(runtime.current.session?.userId, accountB.userId);
     expect(runtime.current.dataDirectory.path, targetB.dataDirectory.path);
   });
 
@@ -1442,6 +1555,28 @@ void main() {
     runtime = await bootstrap();
     expect(runtime.current.dataDirectory.path, originalPath);
     expect(runtime.current.session?.token.value, refreshed.token.value);
+  });
+
+  test('会话 metadata 提交后清理失败由下次启动完成旧 token 清理', () async {
+    var runtime = await bootstrap();
+    final original = _session(userId: 'account-a', token: 'old-token');
+    await runtime.bindAccount(original);
+    await close(runtime);
+
+    runtime = await bootstrap();
+    final refreshed = _session(userId: 'account-a', token: 'new-token');
+    sessionTokenStore.failNextDelete = true;
+    await expectLater(
+      runtime.bindAccount(refreshed),
+      throwsA(isA<StateError>()),
+    );
+    expect(runtime.current.session?.token.value, original.token.value);
+    expect(sessionTokenStore.tokenCount, 2);
+    await close(runtime);
+
+    runtime = await bootstrap();
+    expect(runtime.current.session?.token.value, refreshed.token.value);
+    expect(sessionTokenStore.tokenCount, 1);
   });
 
   test('账号目录祖先链接不能把账号数据重定向到其他位置', () async {
@@ -3559,18 +3694,19 @@ CloudSyncAccountSession _session({
   required String userId,
   required String token,
   String baseUrl = defaultCloudSyncBaseUrl,
+  DateTime? tokenExpiresAt,
 }) {
   return CloudSyncAccountSession(
     baseUrl: baseUrl,
     token: _fullSessionToken(token),
-    tokenExpiresAt: DateTime.utc(2030, 7, 18),
+    tokenExpiresAt: tokenExpiresAt ?? DateTime.utc(2030, 7, 18),
     keyEpoch: 1,
-    userId: userId,
-    loginName: userId,
+    userId: _testUuid('user:$userId'),
+    loginName: userId.toLowerCase(),
     displayName: userId,
     role: CloudSyncUserRole.user,
     attachmentQuotaBytes: 1024,
-    deviceId: 'device-$userId',
+    deviceId: _testUuid('device:$userId'),
     deviceName: 'Device $userId',
     platform: CloudSyncPlatform.windows,
     clientVersion: '1.0.0',
@@ -3583,4 +3719,11 @@ CloudSyncFullSessionToken _fullSessionToken(String seed) {
       .encode(sha256.convert(utf8.encode(seed)).bytes)
       .replaceAll('=', '');
   return CloudSyncFullSessionToken.parse('kelivo_$payload');
+}
+
+String _testUuid(String seed) {
+  final hex = sha256.convert(utf8.encode(seed)).toString();
+  return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+      '4${hex.substring(13, 16)}-8${hex.substring(17, 20)}-'
+      '${hex.substring(20, 32)}';
 }

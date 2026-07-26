@@ -519,35 +519,53 @@ final class CloudSyncDevicePairingCancellation {
 }
 
 final class CloudSyncAccountSession {
+  static const _jsonKeys = <String>{..._metadataKeys, 'token'};
+  static const _metadataKeys = <String>{
+    'version',
+    'baseUrl',
+    'tokenExpiresAt',
+    'keyEpoch',
+    'userId',
+    'loginName',
+    'displayName',
+    'role',
+    'attachmentQuotaBytes',
+    'deviceId',
+    'deviceName',
+    'platform',
+    'clientVersion',
+    'deviceCreatedAt',
+  };
+
   CloudSyncAccountSession({
     required String baseUrl,
     required this.token,
     required DateTime tokenExpiresAt,
     required int keyEpoch,
-    required this.userId,
-    required this.loginName,
-    required this.displayName,
+    required String userId,
+    required String loginName,
+    required String displayName,
     required this.role,
-    required this.attachmentQuotaBytes,
-    required this.deviceId,
-    required this.deviceName,
+    required int attachmentQuotaBytes,
+    required String deviceId,
+    required String deviceName,
     required this.platform,
-    required this.clientVersion,
+    required String clientVersion,
     required DateTime deviceCreatedAt,
   }) : baseUrl = normalizeCloudSyncBaseUrl(baseUrl),
        tokenExpiresAt = tokenExpiresAt.toUtc(),
        keyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch'),
-       deviceCreatedAt = deviceCreatedAt.toUtc() {
-    _requireNonEmpty(userId, 'userId');
-    _requireNonEmpty(loginName, 'loginName');
-    _requireNonEmpty(displayName, 'displayName');
-    _requireNonEmpty(deviceId, 'deviceId');
-    _requireNonEmpty(deviceName, 'deviceName');
-    _requireNonEmpty(clientVersion, 'clientVersion');
-    if (attachmentQuotaBytes < 0) {
-      throw const FormatException('attachmentQuotaBytes 不能为负数');
-    }
-  }
+       userId = _requireCanonicalUuid(userId, 'userId'),
+       loginName = _requireNormalizedLoginName(loginName),
+       displayName = _requireBoundedText(displayName, 'displayName', 80),
+       attachmentQuotaBytes = _requireNonNegativeSafeInteger(
+         attachmentQuotaBytes,
+         'attachmentQuotaBytes',
+       ),
+       deviceId = _requireCanonicalUuid(deviceId, 'deviceId'),
+       deviceName = _requireBoundedText(deviceName, 'deviceName', 80),
+       clientVersion = _requireClientVersion(clientVersion),
+       deviceCreatedAt = deviceCreatedAt.toUtc();
 
   factory CloudSyncAccountSession.fromAuthenticatedSession({
     required String baseUrl,
@@ -590,6 +608,8 @@ final class CloudSyncAccountSession {
 
   String get accountScope => Uri.encodeComponent('$baseUrl\n$userId');
 
+  bool isExpiredAt(DateTime now) => !now.toUtc().isBefore(tokenExpiresAt);
+
   CloudSyncJsonMap toJson() => <String, Object?>{
     'version': 2,
     'baseUrl': baseUrl,
@@ -615,11 +635,12 @@ final class CloudSyncAccountSession {
   }
 
   factory CloudSyncAccountSession.fromJson(CloudSyncJsonMap json) {
+    _requireExactKeys(json, _jsonKeys, '账号会话 JSON');
     _requireAccountSessionVersion(json);
     return CloudSyncAccountSession(
       baseUrl: _requireString(json, 'baseUrl'),
       token: CloudSyncFullSessionToken.parse(_requireString(json, 'token')),
-      tokenExpiresAt: _requireDateTime(json, 'tokenExpiresAt'),
+      tokenExpiresAt: _requireCanonicalUtcDateTime(json, 'tokenExpiresAt'),
       keyEpoch: _requireInt(json, 'keyEpoch'),
       userId: _requireString(json, 'userId'),
       loginName: _requireString(json, 'loginName'),
@@ -638,7 +659,7 @@ final class CloudSyncAccountSession {
         'platform',
       ),
       clientVersion: _requireString(json, 'clientVersion'),
-      deviceCreatedAt: _requireDateTime(json, 'deviceCreatedAt'),
+      deviceCreatedAt: _requireCanonicalUtcDateTime(json, 'deviceCreatedAt'),
     );
   }
 
@@ -646,9 +667,7 @@ final class CloudSyncAccountSession {
     CloudSyncJsonMap json, {
     required CloudSyncFullSessionToken token,
   }) {
-    if (json.containsKey('token')) {
-      throw const FormatException('session_metadata_token');
-    }
+    _requireExactKeys(json, _metadataKeys, '账号会话 metadata');
     return CloudSyncAccountSession.fromJson(<String, Object?>{
       ...json,
       'token': token.value,
@@ -784,15 +803,20 @@ Uint8List _copyFixedBytes(Uint8List value, int length, String field) {
   return Uint8List.fromList(value).asUnmodifiableView();
 }
 
-void _requireNonEmpty(String value, String field) {
-  if (value.trim().isEmpty) {
-    throw FormatException('$field 不能为空');
+void _requireAccountSessionVersion(CloudSyncJsonMap json) {
+  final version = json['version'];
+  if (version is! int || version != 2) {
+    throw const FormatException('不支持的本地同步状态版本');
   }
 }
 
-void _requireAccountSessionVersion(CloudSyncJsonMap json) {
-  if (json['version'] != 2) {
-    throw const FormatException('不支持的本地同步状态版本');
+void _requireExactKeys(
+  CloudSyncJsonMap json,
+  Set<String> expected,
+  String context,
+) {
+  if (json.length != expected.length || !json.keys.every(expected.contains)) {
+    throw FormatException('$context 字段集合无效');
   }
 }
 
@@ -812,13 +836,13 @@ int _requireInt(CloudSyncJsonMap json, String key) {
   return value;
 }
 
-DateTime _requireDateTime(CloudSyncJsonMap json, String key) {
+DateTime _requireCanonicalUtcDateTime(CloudSyncJsonMap json, String key) {
   final value = _requireString(json, key);
   final parsed = DateTime.tryParse(value);
-  if (parsed == null) {
-    throw FormatException('$key 必须为 ISO 8601 时间');
+  if (parsed == null || !parsed.isUtc || parsed.toIso8601String() != value) {
+    throw FormatException('$key 必须为规范 UTC 时间');
   }
-  return parsed.toUtc();
+  return parsed;
 }
 
 T _parseEnum<T extends Enum>(List<T> values, String name, String field) {
