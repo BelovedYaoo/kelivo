@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
@@ -88,6 +89,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   final CloudSyncAccountClient _accountClient;
   final DeviceStateBlobStore _deviceStateStore;
   final KelivoSecureCore _secureCore;
+  bool _authenticationInProgress = false;
 
   @override
   Future<CloudSyncAuthenticatedSession> registerFirstDevice({
@@ -98,12 +100,13 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     required CloudSyncPlatform platform,
     required String clientVersion,
   }) async {
-    final passwordCopy = Uint8List.fromList(password);
+    final passwordCopy = _beginAuthentication(password);
     _DeviceContext? context;
     KelivoOpaqueRegistrationStart? opaqueStart;
     var opaqueStateActive = false;
     KelivoAccountRootKeyHandle? ark;
     Uint8List? registrationUpload;
+    Object? primaryError;
     try {
       if (platform != CloudSyncPlatform.android &&
           platform != CloudSyncPlatform.ios) {
@@ -175,23 +178,29 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       if (session.user.id != start.userId ||
           session.device.id != context.deviceIdText ||
           session.keyEpoch != 1) {
-        _accountClient.setToken(null);
         throw StateError('注册结果与本地设备状态不匹配');
       }
       return session;
+    } catch (error) {
+      primaryError = error;
+      _clearAccountClientToken();
+      rethrow;
     } finally {
       final stateToCancel = opaqueStateActive ? opaqueStart : null;
-      await _cleanupOperation(
-        cancelOpaque: stateToCancel == null
-            ? null
-            : () => _secureCore.cancelOpaqueRegistration(stateToCancel.state),
-        mutableSecrets: <Uint8List?>[
-          password,
-          passwordCopy,
-          registrationUpload,
-        ],
-        ark: ark,
-        context: context,
+      await _finishAuthentication(
+        primaryError: primaryError,
+        cleanup: () => _cleanupOperation(
+          cancelOpaque: stateToCancel == null
+              ? null
+              : () => _secureCore.cancelOpaqueRegistration(stateToCancel.state),
+          mutableSecrets: <Uint8List?>[
+            password,
+            passwordCopy,
+            registrationUpload,
+          ],
+          ark: ark,
+          context: context,
+        ),
       );
     }
   }
@@ -204,11 +213,12 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     required CloudSyncPlatform platform,
     required String clientVersion,
   }) async {
-    final passwordCopy = Uint8List.fromList(password);
+    final passwordCopy = _beginAuthentication(password);
     _DeviceContext? context;
     KelivoOpaqueLoginStart? opaqueStart;
     var opaqueStateActive = false;
     Uint8List? credentialFinalization;
+    Object? primaryError;
     try {
       final normalizedLoginName = _normalizeLoginName(loginName);
       context = await _openDeviceContext(normalizedLoginName);
@@ -264,18 +274,25 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
             device: device,
           ),
       };
+    } catch (error) {
+      primaryError = error;
+      _clearAccountClientToken();
+      rethrow;
     } finally {
       final stateToCancel = opaqueStateActive ? opaqueStart : null;
-      await _cleanupOperation(
-        cancelOpaque: stateToCancel == null
-            ? null
-            : () => _secureCore.cancelOpaqueLogin(stateToCancel.state),
-        mutableSecrets: <Uint8List?>[
-          password,
-          passwordCopy,
-          credentialFinalization,
-        ],
-        context: context,
+      await _finishAuthentication(
+        primaryError: primaryError,
+        cleanup: () => _cleanupOperation(
+          cancelOpaque: stateToCancel == null
+              ? null
+              : () => _secureCore.cancelOpaqueLogin(stateToCancel.state),
+          mutableSecrets: <Uint8List?>[
+            password,
+            passwordCopy,
+            credentialFinalization,
+          ],
+          context: context,
+        ),
       );
     }
   }
@@ -290,7 +307,6 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         session.user.id != _uuidString(account.userId) ||
         session.device.id != context.deviceIdText ||
         session.keyEpoch != account.keyEpoch) {
-      _accountClient.setToken(null);
       throw StateError('已认证登录结果与本地设备状态不匹配');
     }
     return E2eeAccountLoginAuthenticated(session);
@@ -308,6 +324,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         device.id != context.deviceIdText) {
       throw StateError('待批准登录结果与本地设备状态不匹配');
     }
+    _accountClient.setToken(null);
     return E2eeAccountLoginApprovalRequired(
       onboardingToken: onboardingToken,
       onboardingTokenExpiresAt: onboardingTokenExpiresAt,
@@ -352,9 +369,11 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
           keyVersion: opened.binding.keyVersion,
           account: opened.binding.account,
         );
-      } catch (_) {
-        await _secureCore.close(key);
-        rethrow;
+      } catch (error, stackTrace) {
+        await _runCleanupPreservingPrimary(<Future<void> Function()>[
+          () => _secureCore.close(key),
+        ]);
+        Error.throwWithStackTrace(error, stackTrace);
       }
     }
 
@@ -382,12 +401,12 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         keyVersion: 1,
         account: null,
       );
-    } catch (_) {
-      if (identity != null) {
-        await _secureCore.closeDeviceIdentity(identity);
-      }
-      await _secureCore.close(key);
-      rethrow;
+    } catch (error, stackTrace) {
+      await _runCleanupPreservingPrimary(<Future<void> Function()>[
+        if (identity != null) () => _secureCore.closeDeviceIdentity(identity!),
+        () => _secureCore.close(key),
+      ]);
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 
@@ -448,6 +467,83 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   static void _clearBytes(Uint8List? value) {
     if (value == null) return;
     value.fillRange(0, value.length, 0);
+  }
+
+  Uint8List _beginAuthentication(Uint8List password) {
+    // 设备状态槽和账户客户端由实例共享，交错认证会破坏令牌与句柄归属。
+    if (_authenticationInProgress) {
+      _clearBytesPreservingFailure(password);
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_AUTHENTICATION_IN_PROGRESS',
+      );
+    }
+    _authenticationInProgress = true;
+    try {
+      return Uint8List.fromList(password);
+    } catch (_) {
+      _authenticationInProgress = false;
+      _clearBytesPreservingFailure(password);
+      rethrow;
+    }
+  }
+
+  Future<void> _finishAuthentication({
+    required Object? primaryError,
+    required Future<void> Function() cleanup,
+  }) async {
+    try {
+      await cleanup();
+    } catch (error, stackTrace) {
+      _clearAccountClientToken();
+      if (primaryError == null) {
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+      _logSuppressedCleanupFailure(error, stackTrace);
+    } finally {
+      _authenticationInProgress = false;
+    }
+  }
+
+  void _clearAccountClientToken() {
+    try {
+      _accountClient.setToken(null);
+    } catch (error, stackTrace) {
+      _logSuppressedCleanupFailure(error, stackTrace);
+    }
+  }
+
+  static void _clearBytesPreservingFailure(Uint8List value) {
+    try {
+      _clearBytes(value);
+    } catch (error, stackTrace) {
+      _logSuppressedCleanupFailure(error, stackTrace);
+    }
+  }
+
+  static Future<void> _runCleanupPreservingPrimary(
+    List<Future<void> Function()> actions,
+  ) async {
+    for (final action in actions) {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        _logSuppressedCleanupFailure(error, stackTrace);
+      }
+    }
+  }
+
+  static void _logSuppressedCleanupFailure(
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    developer.log(
+      'E2EE 认证资源清理失败',
+      name: 'Kelivo.E2eeAccountAuthenticator',
+      error: error,
+      stackTrace: stackTrace,
+    );
   }
 
   Future<void> _cleanupOperation({

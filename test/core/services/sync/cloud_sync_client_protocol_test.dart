@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -232,6 +233,57 @@ void main() {
     );
   });
 
+  test('业务校验与密码清理同时失败时保留主异常', () async {
+    final client = CloudSyncClient.forTesting(baseUrl: 'http://127.0.0.1:1');
+    client.setToken(_fullToken);
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: 'http://127.0.0.1:1',
+      accountClient: client,
+      deviceStateStore: DeviceStateBlobStore(installationRoot: root),
+      secureCore: const KelivoSecureCore(),
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final readOnlyPassword = Uint8List.fromList(
+      utf8.encode('password'),
+    ).asUnmodifiableView();
+    await expectLater(
+      authenticator.loginDevice(
+        loginName: 'invalid login name',
+        password: readOnlyPassword,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.validation,
+        ),
+      ),
+    );
+    await expectLater(
+      client.listDevices(),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.unauthenticated,
+        ),
+      ),
+    );
+  });
+
   test('登录网络失败后保留可认证重开的设备状态且不会伪成功', () async {
     const core = KelivoSecureCore();
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
@@ -279,6 +331,126 @@ void main() {
       normalizedLoginName: normalizedLoginName,
     );
     expect(secondBlob, orderedEquals(firstBlob!));
+  });
+
+  test('同一认证器并发登录时第二个操作失败关闭', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    final firstRequestArrived = Completer<void>();
+    final releaseFirstRequest = Completer<void>();
+    var requestCount = 0;
+    final subscription = server.listen((request) async {
+      requestCount++;
+      if (requestCount == 1) {
+        firstRequestArrived.complete();
+        await releaseFirstRequest.future;
+      }
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'data': <String, Object?>{
+            'protocolVersion': cloudSyncOpaqueProtocolVersion,
+            'attemptId': _attemptId1,
+            'accountBinding': _accountContextId,
+            'deviceChallenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 1),
+            'credentialResponse': _encodedBytes(
+              cloudSyncOpaqueCredentialResponseBytes,
+              2,
+            ),
+            'expiresAt': DateTime.now()
+                .toUtc()
+                .add(const Duration(minutes: 5))
+                .toIso8601String(),
+          },
+        }),
+      );
+      await request.response.close();
+    });
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    Future<Object?> capture(Future<Object?> operation) async {
+      try {
+        await operation;
+        return null;
+      } catch (error) {
+        return error;
+      }
+    }
+
+    final firstPassword = Uint8List.fromList(utf8.encode('first-password'));
+    final firstOutcome = capture(
+      authenticator.loginDevice(
+        loginName: 'first-user',
+        password: firstPassword,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+    );
+    await firstRequestArrived.future;
+
+    final secondPassword = Uint8List.fromList(utf8.encode('second-password'));
+    final secondOutcome = await capture(
+      authenticator.loginDevice(
+        loginName: 'second-user',
+        password: secondPassword,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+    );
+    releaseFirstRequest.complete();
+    final completedFirstOutcome = await firstOutcome;
+
+    expect(
+      secondOutcome,
+      isA<CloudSyncException>()
+          .having((error) => error.kind, 'kind', CloudSyncFailureKind.conflict)
+          .having(
+            (error) => error.serverCode,
+            'serverCode',
+            'SYNC_AUTHENTICATION_IN_PROGRESS',
+          ),
+    );
+    expect(
+      completedFirstOutcome,
+      isA<KelivoSecureCoreException>().having(
+        (error) => error.status,
+        'status',
+        KelivoSecureCoreStatus.opaqueMessageInvalid,
+      ),
+    );
+    expect(requestCount, 1);
+    expect(firstPassword, everyElement(0));
+    expect(secondPassword, everyElement(0));
+    expect(
+      await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: 'second-user',
+      ),
+      isNull,
+    );
   });
 
   test('设备状态存在但持久密钥槽缺失时失败关闭', () async {
