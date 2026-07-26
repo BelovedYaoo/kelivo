@@ -21,6 +21,7 @@ class Lucide {
   static const IconData ArrowLeft = lucide.LucideIcons.arrowLeft;
   static const IconData ArrowRight = lucide.LucideIcons.arrowRight;
   static const IconData Camera = lucide.LucideIcons.camera;
+  static const IconData ScanLine = lucide.LucideIcons.scanLine;
   static const IconData Image = lucide.LucideIcons.image;
   static const IconData ImageDown = lucide.LucideIcons.imageDown;
   static const IconData Brush = lucide.LucideIcons.brush;

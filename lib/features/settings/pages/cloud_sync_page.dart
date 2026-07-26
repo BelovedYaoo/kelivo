@@ -2,9 +2,11 @@ import 'dart:async';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:pretty_qr_code/pretty_qr_code.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/providers/cloud_sync_provider.dart';
+import '../../../core/services/sync/e2ee_account_authenticator.dart';
 import '../../../core/services/sync/cloud_sync_types.dart';
 import '../../../icons/lucide_adapter.dart';
 import '../../../l10n/app_localizations.dart';
@@ -13,6 +15,7 @@ import '../../../shared/widgets/ios_tactile.dart';
 import '../../../shared/widgets/ios_tile_button.dart';
 import '../../../shared/widgets/snackbar.dart';
 import '../../../theme/app_font_weights.dart';
+import '../../scan/pages/qr_scan_page.dart';
 
 class CloudSyncPage extends StatelessWidget {
   const CloudSyncPage({super.key});
@@ -52,10 +55,16 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
 
   bool _deviceNameInitialized = false;
   String? _requestedDeviceScope;
+  CloudSyncProvider? _provider;
+  QrImage? _pendingPairingQrImage;
+  int? _renderedPairingGeneration;
+  bool _pairingQrUnavailable = false;
+  bool _cancellingPairing = false;
 
   @override
   void didChangeDependencies() {
     super.didChangeDependencies();
+    _provider = context.read<CloudSyncProvider>();
     if (_deviceNameInitialized) return;
     final l10n = AppLocalizations.of(context)!;
     _deviceNameController.text = l10n.cloudSyncDefaultDeviceName(
@@ -66,6 +75,11 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
 
   @override
   void dispose() {
+    final provider = _provider;
+    if (provider?.pendingDeviceApproval != null) {
+      unawaited(provider!.cancelPendingDevicePairing());
+    }
+    _pendingPairingQrImage = null;
     _loginNameController.dispose();
     _passwordController.dispose();
     _deviceNameController.dispose();
@@ -75,6 +89,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   @override
   Widget build(BuildContext context) {
     final provider = context.watch<CloudSyncProvider>();
+    _syncPendingPairingQr(provider);
     final session = provider.session;
     if (session == null) {
       _requestedDeviceScope = null;
@@ -103,7 +118,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
           const SizedBox(height: 12),
         ],
         if (session == null)
-          _buildSignInSection(context, provider)
+          if (provider.pendingDeviceApproval case final approval?)
+            _buildPendingPairingSection(context, provider, approval)
+          else
+            _buildSignInSection(context, provider)
         else ...[
           _buildAccountSection(context, provider, session),
           const SizedBox(height: 14),
@@ -119,11 +137,145 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     );
   }
 
+  void _syncPendingPairingQr(CloudSyncProvider provider) {
+    if (provider.pendingDeviceApproval == null) {
+      _pendingPairingQrImage = null;
+      _renderedPairingGeneration = null;
+      _pairingQrUnavailable = false;
+      return;
+    }
+    final generation = provider.pendingDevicePairingGeneration;
+    if (_renderedPairingGeneration == generation) return;
+    _renderedPairingGeneration = generation;
+    _pendingPairingQrImage = null;
+    _pairingQrUnavailable = false;
+    final frame = provider.takePendingDevicePairingQrFrame();
+    if (frame == null) {
+      _pairingQrUnavailable = true;
+      return;
+    }
+    try {
+      _pendingPairingQrImage = QrImage(
+        QrCode.fromUint8List(
+          data: frame,
+          errorCorrectLevel: QrErrorCorrectLevel.L,
+        ),
+      );
+    } catch (error, stackTrace) {
+      _pairingQrUnavailable = true;
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: error,
+          stack: stackTrace,
+          library: 'Kelivo.CloudSync',
+          context: ErrorDescription('生成设备配对二维码时'),
+        ),
+      );
+    } finally {
+      frame.fillRange(0, frame.length, 0);
+    }
+  }
+
+  Widget _buildPendingPairingSection(
+    BuildContext context,
+    CloudSyncProvider provider,
+    E2eeAccountLoginApprovalRequired approval,
+  ) {
+    final l10n = AppLocalizations.of(context)!;
+    final qrImage = _pendingPairingQrImage;
+    final expiresAt = provider.pendingDevicePairingExpiresAt;
+    return _Section(
+      title: l10n.cloudSyncPairingSection,
+      children: [
+        _InfoRow(
+          label: l10n.cloudSyncDeviceName,
+          value: approval.device.name,
+          detail: cloudSyncPlatformText(l10n, approval.device.platform),
+        ),
+        const _SectionDivider(),
+        Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            children: [
+              if (qrImage != null)
+                Container(
+                  padding: const EdgeInsets.all(10),
+                  color: Colors.white,
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 280),
+                    child: AspectRatio(
+                      aspectRatio: 1,
+                      child: PrettyQrView(
+                        qrImage: qrImage,
+                        decoration: const PrettyQrDecoration(
+                          quietZone: PrettyQrQuietZone.modules(4),
+                        ),
+                      ),
+                    ),
+                  ),
+                )
+              else if (_pairingQrUnavailable)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 36),
+                  child: Text(
+                    l10n.cloudSyncPairingQrUnavailable,
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              const SizedBox(height: 14),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const SizedBox.square(
+                    dimension: 16,
+                    child: CircularProgressIndicator(strokeWidth: 2),
+                  ),
+                  const SizedBox(width: 8),
+                  Flexible(child: Text(l10n.cloudSyncPairingWaiting)),
+                ],
+              ),
+              if (expiresAt != null) ...[
+                const SizedBox(height: 5),
+                Text(
+                  l10n.cloudSyncPairingExpiresAt(
+                    _formatDateTime(context, expiresAt),
+                  ),
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12,
+                    color: Theme.of(
+                      context,
+                    ).colorScheme.onSurface.withValues(alpha: 0.58),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 14),
+              SizedBox(
+                width: double.infinity,
+                child: IosTileButton(
+                  label: l10n.cloudSyncCancel,
+                  icon: Lucide.X,
+                  enabled: !_cancellingPairing,
+                  foregroundColor: Theme.of(context).colorScheme.error,
+                  borderColor: Theme.of(
+                    context,
+                  ).colorScheme.error.withValues(alpha: 0.35),
+                  onTap: () => unawaited(_cancelPendingPairing()),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
+
   Widget _buildSignInSection(BuildContext context, CloudSyncProvider provider) {
     final l10n = AppLocalizations.of(context)!;
     final busy =
         provider.status == CloudSyncProviderStatus.initializing ||
         provider.status == CloudSyncProviderStatus.signingIn ||
+        provider.status == CloudSyncProviderStatus.awaitingDeviceApproval ||
         provider.status == CloudSyncProviderStatus.signingOut ||
         provider.status == CloudSyncProviderStatus.workspaceChangePending;
     return _Section(
@@ -234,6 +386,13 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
         Row(
           children: [
             Expanded(child: _SectionHeader(l10n.cloudSyncDevicesSection)),
+            if (_supportsPairingApproval)
+              IosIconButton(
+                icon: Lucide.ScanLine,
+                semanticLabel: l10n.cloudSyncApproveDevice,
+                enabled: !provider.devicePairingApprovalInProgress,
+                onTap: () => unawaited(_scanAndApproveDevicePairing()),
+              ),
             IosIconButton(
               icon: Lucide.RefreshCw,
               semanticLabel: l10n.cloudSyncRefreshDevices,
@@ -314,6 +473,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       _passwordController.clear();
       return;
     }
+    if (provider.pendingDeviceApproval != null) {
+      _passwordController.clear();
+      return;
+    }
     showAppSnackBar(
       context,
       message: cloudSyncFailureText(
@@ -325,6 +488,63 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
             ),
       ),
       type: NotificationType.error,
+    );
+  }
+
+  bool get _supportsPairingApproval {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
+  Future<void> _cancelPendingPairing() async {
+    if (_cancellingPairing) return;
+    setState(() => _cancellingPairing = true);
+    final provider = context.read<CloudSyncProvider>();
+    final success = await provider.cancelPendingDevicePairing();
+    if (!mounted) return;
+    setState(() => _cancellingPairing = false);
+    if (success || provider.pendingDeviceApproval == null) return;
+    showAppSnackBar(
+      context,
+      message: cloudSyncFailureText(
+        AppLocalizations.of(context)!,
+        provider.lastError ??
+            const CloudSyncException(
+              kind: CloudSyncFailureKind.unknown,
+              retryable: false,
+            ),
+      ),
+      type: NotificationType.error,
+    );
+  }
+
+  Future<void> _scanAndApproveDevicePairing() async {
+    final frame = await Navigator.of(context).push<Uint8List>(
+      MaterialPageRoute<Uint8List>(builder: (_) => const BinaryQrScanPage()),
+    );
+    if (frame == null) return;
+    if (!mounted) {
+      frame.fillRange(0, frame.length, 0);
+      return;
+    }
+    final provider = context.read<CloudSyncProvider>();
+    final success = await provider.approveDevicePairing(frame);
+    if (!mounted) return;
+    final l10n = AppLocalizations.of(context)!;
+    showAppSnackBar(
+      context,
+      message: success
+          ? l10n.cloudSyncApproveDeviceSuccess
+          : cloudSyncFailureText(
+              l10n,
+              provider.deviceError ??
+                  const CloudSyncException(
+                    kind: CloudSyncFailureKind.unknown,
+                    retryable: false,
+                  ),
+            ),
+      type: success ? NotificationType.success : NotificationType.error,
     );
   }
 

@@ -38,6 +38,19 @@
   },
   "cloudSyncSignIn": "登入",
   "cloudSyncSigningIn": "正在登入…",
+  "cloudSyncPairingSection": "裝置批准",
+  "cloudSyncPairingWaiting": "等待受信任裝置批准",
+  "cloudSyncPairingExpiresAt": "有效期至 {time}",
+  "@cloudSyncPairingExpiresAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "cloudSyncPairingQrUnavailable": "配對 QR Code 無法使用。",
+  "cloudSyncApproveDevice": "批准裝置",
+  "cloudSyncApproveDeviceSuccess": "裝置已批准",
   "cloudSyncRequiredFields": "請填寫服務位址、帳號、密碼和裝置名稱。",
   "cloudSyncAccountSection": "帳戶",
   "cloudSyncContentLocalOnlyNotice": "端對端加密升級期間，聊天與設定僅儲存在本機，帳號與裝置管理仍可使用。",

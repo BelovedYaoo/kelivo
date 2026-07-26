@@ -112,6 +112,27 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudSyncSigningIn => 'Signing In…';
 
   @override
+  String get cloudSyncPairingSection => 'Device Approval';
+
+  @override
+  String get cloudSyncPairingWaiting => 'Waiting for approval';
+
+  @override
+  String cloudSyncPairingExpiresAt(String time) {
+    return 'Expires $time';
+  }
+
+  @override
+  String get cloudSyncPairingQrUnavailable =>
+      'The pairing code is unavailable.';
+
+  @override
+  String get cloudSyncApproveDevice => 'Approve device';
+
+  @override
+  String get cloudSyncApproveDeviceSuccess => 'Device approved';
+
+  @override
   String get cloudSyncRequiredFields =>
       'Complete the service URL, account, password, and device name.';
 

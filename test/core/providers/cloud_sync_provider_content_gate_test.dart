@@ -16,6 +16,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:pretty_qr_code/pretty_qr_code.dart';
 import 'package:provider/provider.dart';
 
 const _userId = '40000000-0000-4000-8000-000000000001';
@@ -538,6 +539,75 @@ void main() {
     expect(find.text('同步冲突'), findsNothing);
     expect(find.text('设备'), findsOneWidget);
     expect(find.text('退出登录'), findsOneWidget);
+  });
+
+  testWidgets('待批准登录显示二进制二维码且页面退出时取消配对', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    PackageInfo.setMockInitialValues(
+      appName: 'Kelivo',
+      packageName: 'Kelivo',
+      version: '1.1.17',
+      buildNumber: '1',
+      buildSignature: 'test',
+    );
+    final approval = E2eeAccountLoginApprovalRequired(
+      onboardingToken: _onboardingToken,
+      onboardingTokenExpiresAt: DateTime.utc(2100),
+      loginName: 'ovo',
+      device: CloudSyncAuthenticatedDevice(
+        id: _deviceId,
+        name: '测试电脑',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.1.17',
+        status: CloudSyncAuthenticatedDeviceStatus.pending,
+        createdAt: DateTime.utc(2026, 7, 26),
+      ),
+    );
+    final pairing = _FakeE2eeDevicePairingSession();
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(
+        authentication: _FakeE2eeAccountAuthentication(
+          loginResult: approval,
+          pairingSession: pairing,
+        ),
+      ),
+    );
+    if (fixture == null) {
+      throw StateError('pairing_ui_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(
+      () => fixture.provider.login(
+        loginName: 'ovo',
+        password: 'password',
+        deviceName: '测试电脑',
+      ),
+    );
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<CloudSyncProvider>.value(
+        value: fixture.provider,
+        child: MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: const Scaffold(body: CloudSyncSettingsContent()),
+        ),
+      ),
+    );
+    await tester.pump();
+
+    expect(find.text('设备批准'), findsOneWidget);
+    expect(find.text('等待可信设备批准'), findsOneWidget);
+    expect(find.byType(PrettyQrView), findsOneWidget);
+    expect(pairing.waitCalls, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.runAsync(() => _waitUntil(() => pairing.cancelCalls == 1));
+    expect(fixture.provider.pendingDeviceApproval, isNull);
   });
 }
 

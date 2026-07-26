@@ -41,3 +41,7 @@
 - Provider 已接管待批准设备的完整生命周期：登录后创建二维码并后台轮询，用户取消会等待底层清理，批准成功后先提交账户工作区再确认删除配对恢复事务；普通登录也会幂等确认可能遗留的配对 sidecar。
 - Android/iOS 当前完整会话可通过 Provider 批准二进制扫码帧，非移动平台、无会话、并发批准均失败关闭；传入帧在所有退出路径清零。
 - 验证：Provider 15/15、协议 68/68，认证/Provider/配对与测试定向分析通过；后台网络失败、取消竞争、提交确认和扫码缓冲区所有权均有现有测试文件内的回归场景。
+- 云同步页已接入真实配对入口：待批准登录直接以 `QrCode.fromUint8List` 生成 QR 矩阵，原始帧随后立即清零；页面退出会取消仍在等待的事务。Android/iOS 已登录设备通过设备区扫码按钮批准。
+- 扫码页保留原文本导入行为并新增二进制模式；Android 使用 `DecodedBarcodeBytes.bytes`，Apple Vision 仅使用已解码的可选 `bytes`，不会把带头部/填充的 `rawBytes` 误交给协议解析。
+- 4 个 ARB 的键集合均为 1869，`desiredFileName.txt` 未翻译项为 0；Provider/UI 16/16、相关五文件分析通过，待批准 QR 渲染及页面退出取消有 widget 回归。
+- Windows debug 构建两次卡在 CMake `CompilerIdCXX.vcxproj`，`cl.exe` 零 CPU 且启动父进程提前退出；切换 `TEMP/TMP` 到本地磁盘仍复现，已记录 Issue #45，未进入 Kelivo 源码编译。

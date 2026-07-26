@@ -77,6 +77,7 @@ final class CloudSyncProvider extends ChangeNotifier {
   bool _devicePairingApprovalInProgress = false;
   Completer<void>? _sessionMutation;
   int _sessionEpoch = 0;
+  int _pendingPairingGeneration = 0;
 
   CloudSyncProviderStatus get status => _status;
   CloudSyncAccountSession? get session => _session;
@@ -86,6 +87,7 @@ final class CloudSyncProvider extends ChangeNotifier {
       _pendingDeviceApproval;
   DateTime? get pendingDevicePairingExpiresAt =>
       _pendingPairingSession?.expiresAt;
+  int get pendingDevicePairingGeneration => _pendingPairingGeneration;
   bool get devicePairingApprovalInProgress => _devicePairingApprovalInProgress;
   bool get contentSyncEnabled => false;
   List<CloudSyncDeviceSession> get devices =>
@@ -551,6 +553,7 @@ final class CloudSyncProvider extends ChangeNotifier {
     _pendingPairingSession = pairing;
     _pendingPairingClient = client;
     _pendingPairingQrFrame = qrFrame;
+    _pendingPairingGeneration++;
     _pendingPairingCancellationRequested = false;
     _lastError = null;
     final task = _completePendingDevicePairing(

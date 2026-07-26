@@ -39,6 +39,19 @@
   },
   "cloudSyncSignIn": "Sign In",
   "cloudSyncSigningIn": "Signing In…",
+  "cloudSyncPairingSection": "Device Approval",
+  "cloudSyncPairingWaiting": "Waiting for approval",
+  "cloudSyncPairingExpiresAt": "Expires {time}",
+  "@cloudSyncPairingExpiresAt": {
+    "placeholders": {
+      "time": {
+        "type": "String"
+      }
+    }
+  },
+  "cloudSyncPairingQrUnavailable": "The pairing code is unavailable.",
+  "cloudSyncApproveDevice": "Approve device",
+  "cloudSyncApproveDeviceSuccess": "Device approved",
   "cloudSyncRequiredFields": "Complete the service URL, account, password, and device name.",
   "cloudSyncAccountSection": "Account",
   "cloudSyncContentLocalOnlyNotice": "During the end-to-end encryption upgrade, chats and settings are stored only on this device. Account and device management remain available.",
