@@ -12,6 +12,7 @@ crate-type = ["cdylib"]
 chacha20poly1305 = { version = "=0.11.0", default-features = false, features = ["alloc", "zeroize"] }
 hkdf = "=0.13.0"
 kelivo_secure_core_protocol = { path = "../protocol" }
+rand = { version = "=0.8.5", default-features = false }
 sha2 = { version = "=0.11.0", default-features = false }
 zeroize = "=1.9.0"
 

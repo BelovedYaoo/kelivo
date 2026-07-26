@@ -255,6 +255,348 @@ external int kelivo_opaque_client_login_finish(
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_opaque_client_state_close(int state_handle);
 
+@ffi.Native<KelivoStatus Function(ffi.Pointer<ffi.Uint64>)>()
+external int kelivo_device_identity_generate(
+  ffi.Pointer<ffi.Uint64> out_handle,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_device_identity_public_keys(
+  int identity_handle,
+  ffi.Pointer<ffi.Uint8> out_public_keys,
+  int out_public_keys_capacity,
+  ffi.Pointer<ffi.Size> out_public_keys_length,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Uint64)>()
+external int kelivo_device_identity_handle_close(int identity_handle);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint64>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_pending_pairing_start(
+  int identity_handle,
+  ffi.Pointer<ffi.Uint8> target_device_id,
+  int target_device_id_length,
+  int target_key_version,
+  ffi.Pointer<ffi.Uint64> out_pending_handle,
+  ffi.Pointer<ffi.Uint8> out_material,
+  int out_material_capacity,
+  ffi.Pointer<ffi.Size> out_material_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+  )
+>()
+external int kelivo_pending_pairing_bind(
+  int pending_handle,
+  int protocol_version,
+  ffi.Pointer<ffi.Uint8> pairing_id,
+  int pairing_id_length,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> target_device_id,
+  int target_device_id_length,
+  int target_key_version,
+  ffi.Pointer<ffi.Uint8> target_signing_public_key,
+  int target_signing_public_key_length,
+  ffi.Pointer<ffi.Uint8> target_key_agreement_public_key,
+  int target_key_agreement_public_key_length,
+  int expires_at_ms,
+  ffi.Pointer<ffi.Uint8> challenge,
+  int challenge_length,
+  int now_ms,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Uint64)>()
+external int kelivo_pending_pairing_handle_close(int pending_handle);
+
+@ffi.Native<KelivoStatus Function(ffi.Pointer<ffi.Uint64>)>()
+external int kelivo_account_root_key_generate(
+  ffi.Pointer<ffi.Uint64> out_handle,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Uint64)>()
+external int kelivo_account_root_key_handle_close(int ark_handle);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_device_login_proof_sign(
+  int identity_handle,
+  ffi.Pointer<ffi.Uint8> attempt_id,
+  int attempt_id_length,
+  ffi.Pointer<ffi.Uint8> account_context_id,
+  int account_context_id_length,
+  ffi.Pointer<ffi.Uint8> device_id,
+  int device_id_length,
+  int expires_at_ms,
+  ffi.Pointer<ffi.Uint8> challenge,
+  int challenge_length,
+  ffi.Pointer<ffi.Uint8> credential_finalization,
+  int credential_finalization_length,
+  ffi.Pointer<ffi.Uint8> out_signature,
+  int out_signature_capacity,
+  ffi.Pointer<ffi.Size> out_signature_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_device_registration_finish_create(
+  int identity_handle,
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> device_id,
+  int device_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> attempt_id,
+  int attempt_id_length,
+  ffi.Pointer<ffi.Uint8> account_context_id,
+  int account_context_id_length,
+  int expires_at_ms,
+  ffi.Pointer<ffi.Uint8> challenge,
+  int challenge_length,
+  ffi.Pointer<ffi.Uint8> registration_upload,
+  int registration_upload_length,
+  ffi.Pointer<ffi.Uint8> out_bundle,
+  int out_bundle_capacity,
+  ffi.Pointer<ffi.Size> out_bundle_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_device_pairing_approval_create(
+  int identity_handle,
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> pairing_id,
+  int pairing_id_length,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> issuer_device_id,
+  int issuer_device_id_length,
+  ffi.Pointer<ffi.Uint8> target_device_id,
+  int target_device_id_length,
+  int expires_at_ms,
+  ffi.Pointer<ffi.Uint8> challenge,
+  int challenge_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> target_signing_public_key,
+  int target_signing_public_key_length,
+  ffi.Pointer<ffi.Uint8> target_key_agreement_public_key,
+  int target_key_agreement_public_key_length,
+  ffi.Pointer<ffi.Uint8> pairing_secret,
+  int pairing_secret_length,
+  ffi.Pointer<ffi.Uint8> out_bundle,
+  int out_bundle_capacity,
+  ffi.Pointer<ffi.Size> out_bundle_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint64>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_device_pairing_approval_accept(
+  int key_handle,
+  int identity_handle,
+  int pending_handle,
+  int now_ms,
+  ffi.Pointer<ffi.Uint8> issuer_device_id,
+  int issuer_device_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> issuer_signing_public_key,
+  int issuer_signing_public_key_length,
+  ffi.Pointer<ffi.Uint8> issuer_key_agreement_public_key,
+  int issuer_key_agreement_public_key_length,
+  ffi.Pointer<ffi.Uint8> signature,
+  int signature_length,
+  ffi.Pointer<ffi.Uint8> authenticator,
+  int authenticator_length,
+  ffi.Pointer<ffi.Uint8> envelope,
+  int envelope_length,
+  ffi.Pointer<ffi.Uint64> out_ark_handle,
+  ffi.Pointer<ffi.Uint8> out_state_blob,
+  int out_state_blob_capacity,
+  ffi.Pointer<ffi.Size> out_state_blob_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_device_state_seal(
+  int key_handle,
+  int identity_handle,
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> device_id,
+  int device_id_length,
+  int key_version,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> out_blob,
+  int out_blob_capacity,
+  ffi.Pointer<ffi.Size> out_blob_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint64>,
+    ffi.Pointer<ffi.Uint64>,
+  )
+>()
+external int kelivo_device_state_open(
+  int key_handle,
+  ffi.Pointer<ffi.Uint8> blob,
+  int blob_length,
+  ffi.Pointer<ffi.Uint8> expected_device_id,
+  int expected_device_id_length,
+  int expected_key_version,
+  ffi.Pointer<ffi.Uint8> expected_user_id,
+  int expected_user_id_length,
+  int expected_key_epoch,
+  ffi.Pointer<ffi.Uint64> out_identity_handle,
+  ffi.Pointer<ffi.Uint64> out_ark_handle,
+);
+
 typedef KelivoStatus = ffi.Int32;
 typedef DartKelivoStatus = int;
 typedef KelivoSqlCipherKeyCallbackFunction =
@@ -361,7 +703,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 3;
+const int KELIVO_CORE_ABI_VERSION = 4;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -425,6 +767,24 @@ const int KELIVO_STATUS_HANDLE_SPACE_EXHAUSTED = 25;
 
 const int KELIVO_STATUS_INVALID_ACCOUNT_ID = 26;
 
+const int KELIVO_STATUS_INVALID_DEVICE_IDENTITY_HANDLE = 27;
+
+const int KELIVO_STATUS_INVALID_ACCOUNT_ROOT_KEY_HANDLE = 28;
+
+const int KELIVO_STATUS_DEVICE_MESSAGE_INVALID = 29;
+
+const int KELIVO_STATUS_DEVICE_AUTHENTICATION_FAILED = 30;
+
+const int KELIVO_STATUS_DEVICE_STATE_INVALID = 31;
+
+const int KELIVO_STATUS_DEVICE_STATE_AUTHENTICATION_FAILED = 32;
+
+const int KELIVO_STATUS_INVALID_PENDING_PAIRING_HANDLE = 33;
+
+const int KELIVO_STATUS_PAIRING_EXPIRED = 34;
+
+const int KELIVO_STATUS_PENDING_PAIRING_STATE_INVALID = 35;
+
 const int KELIVO_STATUS_UNSUPPORTED_PLATFORM = 100;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_NONE = 0;
@@ -448,6 +808,8 @@ const int KELIVO_CAPABILITY_SQLCIPHER_KEY_APPLICATION = 8;
 const int KELIVO_CAPABILITY_SQLCIPHER_DATABASE_ATTACH = 16;
 
 const int KELIVO_CAPABILITY_OPAQUE_CLIENT = 32;
+
+const int KELIVO_CAPABILITY_DEVICE_E2EE_CORE = 64;
 
 const int KELIVO_RECORD_ID_SIZE = 16;
 
@@ -480,3 +842,31 @@ const int KELIVO_OPAQUE_CREDENTIAL_REQUEST_SIZE = 112;
 const int KELIVO_OPAQUE_CREDENTIAL_RESPONSE_SIZE = 336;
 
 const int KELIVO_OPAQUE_CREDENTIAL_FINALIZATION_SIZE = 80;
+
+const int KELIVO_DEVICE_INVALID_HANDLE = 0;
+
+const int KELIVO_DEVICE_UUID_SIZE = 16;
+
+const int KELIVO_DEVICE_PUBLIC_KEY_SIZE = 32;
+
+const int KELIVO_DEVICE_PUBLIC_KEYS_SIZE = 64;
+
+const int KELIVO_DEVICE_CHALLENGE_SIZE = 32;
+
+const int KELIVO_DEVICE_PROOF_SIZE = 64;
+
+const int KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE = 336;
+
+const int KELIVO_PAIRING_SECRET_SIZE = 32;
+
+const int KELIVO_PAIRING_AUTHENTICATOR_SIZE = 32;
+
+const int KELIVO_PAIRING_PROTOCOL_VERSION = 1;
+
+const int KELIVO_PENDING_PAIRING_MATERIAL_SIZE = 80;
+
+const int KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE = 400;
+
+const int KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE = 432;
+
+const int KELIVO_DEVICE_STATE_BLOB_SIZE = 188;

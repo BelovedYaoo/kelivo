@@ -8,9 +8,18 @@ use std::{
 use zeroize::Zeroizing;
 
 mod database;
+mod device_core;
 mod opaque_client;
 mod record;
 
+pub use device_core::{
+    kelivo_account_root_key_generate, kelivo_account_root_key_handle_close,
+    kelivo_device_identity_generate, kelivo_device_identity_handle_close,
+    kelivo_device_identity_public_keys, kelivo_device_login_proof_sign,
+    kelivo_device_pairing_approval_accept, kelivo_device_pairing_approval_create,
+    kelivo_device_registration_finish_create, kelivo_device_state_open, kelivo_device_state_seal,
+    kelivo_pending_pairing_bind, kelivo_pending_pairing_handle_close, kelivo_pending_pairing_start,
+};
 pub use opaque_client::{
     kelivo_opaque_client_login_finish, kelivo_opaque_client_login_start,
     kelivo_opaque_client_registration_finish, kelivo_opaque_client_registration_start,
@@ -26,18 +35,21 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 3;
+const ABI_VERSION: u32 = 4;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
 const INVALID_KEY_HANDLE: u64 = 0;
 const INVALID_OPAQUE_STATE_HANDLE: u64 = 0;
-// Dart FFI 只稳定往返正 63 位整数，因此类型域占用第 61、62 位，保留符号位为零。
-const HANDLE_TAG_MASK: u64 = 0b11 << 61;
-const HANDLE_SEQUENCE_MASK: u64 = (1_u64 << 61) - 1;
+// Dart FFI 只稳定往返正 63 位整数；三位类型域让五类秘密句柄互不兼容。
+const HANDLE_TAG_MASK: u64 = 0b111 << 60;
+const HANDLE_SEQUENCE_MASK: u64 = (1_u64 << 60) - 1;
 const HANDLE_RESERVED_MASK: u64 = 1_u64 << 63;
-const KEY_HANDLE_TAG: u64 = 0b01 << 61;
-const OPAQUE_STATE_HANDLE_TAG: u64 = 0b10 << 61;
+const KEY_HANDLE_TAG: u64 = 0b001 << 60;
+const OPAQUE_STATE_HANDLE_TAG: u64 = 0b010 << 60;
+const DEVICE_IDENTITY_HANDLE_TAG: u64 = 0b011 << 60;
+const ACCOUNT_ROOT_KEY_HANDLE_TAG: u64 = 0b100 << 60;
+const PENDING_PAIRING_HANDLE_TAG: u64 = 0b101 << 60;
 const MAX_ACTIVE_KEY_HANDLES: usize = 1024;
 const MAX_ACTIVE_OPAQUE_STATES: usize = 64;
 const MAX_IN_FLIGHT_OPAQUE_FINISHES: usize = 1;
@@ -65,6 +77,7 @@ const SQLCIPHER_KEY_APPLICATION_CAPABILITY: u64 = 1 << 3;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 const SQLCIPHER_DATABASE_ATTACH_CAPABILITY: u64 = 1 << 4;
 const OPAQUE_CLIENT_CAPABILITY: u64 = 1 << 5;
+const DEVICE_E2EE_CORE_CAPABILITY: u64 = 1 << 6;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
@@ -135,6 +148,15 @@ pub(crate) enum KelivoStatus {
     TooManyActiveHandles = 24,
     HandleSpaceExhausted = 25,
     InvalidAccountId = 26,
+    InvalidDeviceIdentityHandle = 27,
+    InvalidAccountRootKeyHandle = 28,
+    DeviceMessageInvalid = 29,
+    DeviceAuthenticationFailed = 30,
+    DeviceStateInvalid = 31,
+    DeviceStateAuthenticationFailed = 32,
+    InvalidPendingPairingHandle = 33,
+    PairingExpired = 34,
+    PendingPairingStateInvalid = 35,
     UnsupportedPlatform = 100,
 }
 
@@ -355,7 +377,13 @@ pub unsafe extern "C" fn kelivo_core_get_capabilities(
     let capabilities = KelivoCoreCapabilities {
         struct_size: CAPABILITIES_STRUCT_SIZE,
         abi_version: ABI_VERSION,
-        flags: platform::CAPABILITY_FLAGS | OPAQUE_CLIENT_CAPABILITY,
+        flags: platform::CAPABILITY_FLAGS
+            | OPAQUE_CLIENT_CAPABILITY
+            | if cfg!(any(target_os = "android", target_os = "windows")) {
+                DEVICE_E2EE_CORE_CAPABILITY
+            } else {
+                0
+            },
         secure_storage_backend: platform::SECURE_STORAGE_BACKEND,
         reserved: [0; 3],
     };
@@ -745,6 +773,7 @@ pub unsafe extern "C" fn kelivo_record_open(
 mod tests {
     use super::*;
     use core::{ffi::c_char, ptr, slice};
+    use kelivo_secure_core_protocol::device_crypto as crypto;
 
     fn empty_capabilities() -> KelivoCoreCapabilities {
         KelivoCoreCapabilities {
@@ -807,7 +836,13 @@ mod tests {
         assert_eq!(output.abi_version, ABI_VERSION);
         assert_eq!(
             output.flags,
-            platform::CAPABILITY_FLAGS | OPAQUE_CLIENT_CAPABILITY
+            platform::CAPABILITY_FLAGS
+                | OPAQUE_CLIENT_CAPABILITY
+                | if cfg!(any(target_os = "android", target_os = "windows")) {
+                    DEVICE_E2EE_CORE_CAPABILITY
+                } else {
+                    0
+                }
         );
         assert_eq!(
             output.secure_storage_backend,
@@ -835,6 +870,7 @@ mod tests {
                 | SQLCIPHER_KEY_APPLICATION_CAPABILITY
                 | SQLCIPHER_DATABASE_ATTACH_CAPABILITY
                 | OPAQUE_CLIENT_CAPABILITY
+                | DEVICE_E2EE_CORE_CAPABILITY
         );
     }
 
@@ -2074,5 +2110,625 @@ mod tests {
             kelivo_opaque_client_state_close(login_handle),
             KelivoStatus::InvalidOpaqueStateHandle.code()
         );
+    }
+
+    fn generate_device_identity() -> u64 {
+        let mut handle = INVALID_KEY_HANDLE;
+        assert_eq!(
+            unsafe { kelivo_device_identity_generate(&mut handle) },
+            KelivoStatus::Ok.code()
+        );
+        assert!(handle_has_tag(handle, DEVICE_IDENTITY_HANDLE_TAG));
+        handle
+    }
+
+    fn generate_ark() -> u64 {
+        let mut handle = INVALID_KEY_HANDLE;
+        assert_eq!(
+            unsafe { kelivo_account_root_key_generate(&mut handle) },
+            KelivoStatus::Ok.code()
+        );
+        assert!(handle_has_tag(handle, ACCOUNT_ROOT_KEY_HANDLE_TAG));
+        handle
+    }
+
+    fn device_public_keys(handle: u64) -> [u8; device_core::DEVICE_PUBLIC_KEYS_LENGTH] {
+        let mut public_keys = [0_u8; device_core::DEVICE_PUBLIC_KEYS_LENGTH];
+        let mut public_keys_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_identity_public_keys(
+                    handle,
+                    public_keys.as_mut_ptr(),
+                    public_keys.len(),
+                    &mut public_keys_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(public_keys_length, public_keys.len());
+        public_keys
+    }
+
+    #[test]
+    fn device_and_ark_handles_are_strongly_typed_and_close_once() {
+        let identity = generate_device_identity();
+        let ark = generate_ark();
+        let public_keys = device_public_keys(identity);
+        assert!(public_keys.iter().any(|byte| *byte != 0));
+
+        assert_eq!(
+            kelivo_account_root_key_handle_close(identity),
+            KelivoStatus::InvalidAccountRootKeyHandle.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(ark),
+            KelivoStatus::InvalidDeviceIdentityHandle.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(identity),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(identity),
+            KelivoStatus::InvalidDeviceIdentityHandle.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(ark),
+            KelivoStatus::InvalidAccountRootKeyHandle.code()
+        );
+    }
+
+    #[test]
+    fn registration_and_login_proofs_hash_only_strict_raw_payloads_in_rust() {
+        let identity = generate_device_identity();
+        let ark = generate_ark();
+        let public_keys = device_public_keys(identity);
+        let signing_public_key = crypto::DeviceSigningPublicKey::from_bytes(
+            public_keys[..crypto::DEVICE_PUBLIC_KEY_LENGTH]
+                .try_into()
+                .expect("Ed25519 公钥长度固定"),
+        )
+        .expect("Ed25519 公钥应有效");
+        let key_agreement_public_key = crypto::DeviceKeyAgreementPublicKey::from_bytes(
+            public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..]
+                .try_into()
+                .expect("X25519 公钥长度固定"),
+        )
+        .expect("X25519 公钥应有效");
+        let user_id = account_id(0x41);
+        let device_id = account_id(0x42);
+        let attempt_id = account_id(0x43);
+        let account_context_id = account_id(0x44);
+        let challenge = [0x45; crypto::DEVICE_PROOF_CHALLENGE_LENGTH];
+        let expires_at_ms = 1_800_000_000_000_u64;
+        let key_epoch = 1_u32;
+        let registration_upload = [0x46; OPAQUE_REGISTRATION_UPLOAD_SIZE];
+        let mut bundle = [0_u8; device_core::REGISTRATION_FINISH_BUNDLE_LENGTH];
+        let mut bundle_length = usize::MAX;
+
+        assert_eq!(
+            unsafe {
+                kelivo_device_registration_finish_create(
+                    identity,
+                    ark,
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    device_id.as_ptr(),
+                    device_id.len(),
+                    key_epoch,
+                    attempt_id.as_ptr(),
+                    attempt_id.len(),
+                    account_context_id.as_ptr(),
+                    account_context_id.len(),
+                    expires_at_ms,
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    registration_upload.as_ptr(),
+                    registration_upload.len(),
+                    bundle.as_mut_ptr(),
+                    bundle.len(),
+                    &mut bundle_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(bundle_length, bundle.len());
+        let envelope = crypto::ArkEnvelope::from_bytes(&bundle[..crypto::ARK_ENVELOPE_LENGTH])
+            .expect("注册 KAEK 应是严格线格式");
+        let user_id = crypto::UserId::new(user_id).expect("用户 UUID 应有效");
+        let device_id = crypto::DeviceId::new(device_id).expect("设备 UUID 应有效");
+        crypto::verify_ark_envelope(
+            &envelope,
+            crypto::ArkEnvelopeBinding {
+                user_id,
+                issuer_device_id: device_id,
+                target_device_id: device_id,
+                key_epoch,
+                issuer_signing_public_key: signing_public_key,
+                issuer_key_agreement_public_key: key_agreement_public_key,
+                target_signing_public_key: signing_public_key,
+                target_key_agreement_public_key: key_agreement_public_key,
+            },
+        )
+        .expect("注册自信封必须由同一设备身份签发");
+        let proof_signature =
+            crypto::DeviceProofSignature::from_bytes(&bundle[crypto::ARK_ENVELOPE_LENGTH..])
+                .expect("注册证明签名长度固定");
+        let registration_fields = crypto::DeviceProofFields {
+            kind: crypto::DeviceProofKind::RegistrationFinish,
+            attempt_id: crypto::DeviceProofAttemptId::new(attempt_id).expect("attempt UUID 应有效"),
+            account_context_id: crypto::AccountContextId::new(account_context_id)
+                .expect("账户上下文 UUID 应有效"),
+            device_id,
+            expires_at_ms,
+            challenge: crypto::DeviceProofChallenge::from_bytes(challenge),
+            signing_public_key,
+            key_agreement_public_key,
+            primary_payload_hash: crypto::Sha256Digest::of(&registration_upload),
+            envelope_hash: crypto::Sha256Digest::of(envelope.as_bytes()),
+        };
+        crypto::DeviceProofMessage::new(registration_fields)
+            .expect("注册 KDPF 应可构造")
+            .verify_expected(registration_fields, &proof_signature)
+            .expect("注册证明必须覆盖原始 upload 与同次生成的 KAEK");
+
+        let finalization = [0x47; OPAQUE_CREDENTIAL_FINALIZATION_SIZE];
+        let mut login_signature = [0_u8; crypto::DEVICE_PROOF_SIGNATURE_LENGTH];
+        let mut login_signature_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_login_proof_sign(
+                    identity,
+                    attempt_id.as_ptr(),
+                    attempt_id.len(),
+                    account_context_id.as_ptr(),
+                    account_context_id.len(),
+                    device_id.as_bytes().as_ptr(),
+                    device_id.as_bytes().len(),
+                    expires_at_ms,
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    finalization.as_ptr(),
+                    finalization.len(),
+                    login_signature.as_mut_ptr(),
+                    login_signature.len(),
+                    &mut login_signature_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(login_signature_length, login_signature.len());
+        let login_fields = crypto::DeviceProofFields {
+            kind: crypto::DeviceProofKind::LoginFinish,
+            attempt_id: crypto::DeviceProofAttemptId::new(attempt_id).expect("attempt UUID 应有效"),
+            account_context_id: crypto::AccountContextId::new(account_context_id)
+                .expect("账户上下文 UUID 应有效"),
+            device_id,
+            expires_at_ms,
+            challenge: crypto::DeviceProofChallenge::from_bytes(challenge),
+            signing_public_key,
+            key_agreement_public_key,
+            primary_payload_hash: crypto::Sha256Digest::of(&finalization),
+            envelope_hash: crypto::Sha256Digest::of(&[]),
+        };
+        crypto::DeviceProofMessage::new(login_fields)
+            .expect("登录 KDPF 应可构造")
+            .verify_expected(
+                login_fields,
+                &crypto::DeviceProofSignature::from_bytes(&login_signature)
+                    .expect("登录签名长度固定"),
+            )
+            .expect("登录证明必须覆盖原始 finalization");
+
+        assert_eq!(
+            kelivo_account_root_key_handle_close(ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(identity),
+            KelivoStatus::Ok.code()
+        );
+    }
+
+    #[test]
+    fn pending_state_pairing_accept_and_full_state_form_one_closed_loop() {
+        let key_handle = register_key(Zeroizing::new(
+            vec![0x91; LOCAL_KEY_SIZE].into_boxed_slice(),
+        ))
+        .expect("测试槽位主密钥应注册");
+        let issuer_identity = generate_device_identity();
+        let issuer_ark = generate_ark();
+        let target_identity = generate_device_identity();
+        let target_device_id = account_id(0x31);
+        let issuer_device_id = account_id(0x32);
+        let user_id = account_id(0x33);
+        let challenge = [0x35; crypto::DEVICE_PROOF_CHALLENGE_LENGTH];
+        let now_ms = 1_800_000_000_000_u64;
+        let expires_at_ms = now_ms + 300_000;
+        let key_epoch = 7_u32;
+        let key_version = 1_u32;
+
+        let mut pending_blob = [0_u8; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut pending_blob_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_seal(
+                    key_handle,
+                    target_identity,
+                    INVALID_KEY_HANDLE,
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_version,
+                    ptr::null(),
+                    0,
+                    0,
+                    pending_blob.as_mut_ptr(),
+                    pending_blob.len(),
+                    &mut pending_blob_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(pending_blob_length, pending_blob.len());
+        assert_eq!(
+            kelivo_device_identity_handle_close(target_identity),
+            KelivoStatus::Ok.code()
+        );
+
+        let mut reopened_target = INVALID_KEY_HANDLE;
+        let mut absent_ark = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    pending_blob.as_ptr(),
+                    pending_blob.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_version,
+                    ptr::null(),
+                    0,
+                    0,
+                    &mut reopened_target,
+                    &mut absent_ark,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert!(handle_has_tag(reopened_target, DEVICE_IDENTITY_HANDLE_TAG));
+        assert_eq!(absent_ark, INVALID_KEY_HANDLE);
+
+        let target_public_keys = device_public_keys(reopened_target);
+        let issuer_public_keys = device_public_keys(issuer_identity);
+        let mut pending_handle = INVALID_KEY_HANDLE;
+        let mut pairing_material = [0_u8; device_core::PENDING_PAIRING_MATERIAL_LENGTH];
+        let mut pairing_material_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_pending_pairing_start(
+                    reopened_target,
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_version,
+                    &mut pending_handle,
+                    pairing_material.as_mut_ptr(),
+                    pairing_material.len(),
+                    &mut pairing_material_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert!(handle_has_tag(pending_handle, PENDING_PAIRING_HANDLE_TAG));
+        assert_eq!(pairing_material_length, pairing_material.len());
+        let pairing_id = &pairing_material[..16];
+        let pairing_secret = &pairing_material[16..48];
+        assert_eq!(
+            &pairing_material[48..],
+            crypto::Sha256Digest::of(pairing_secret).as_bytes()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(pending_handle),
+            KelivoStatus::InvalidAccountRootKeyHandle.code()
+        );
+
+        assert_eq!(
+            unsafe {
+                kelivo_pending_pairing_bind(
+                    pending_handle,
+                    1,
+                    pairing_id.as_ptr(),
+                    pairing_id.len(),
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_version,
+                    issuer_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    issuer_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    expires_at_ms,
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    now_ms,
+                )
+            },
+            KelivoStatus::DeviceAuthenticationFailed.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_pending_pairing_bind(
+                    pending_handle,
+                    1,
+                    pairing_id.as_ptr(),
+                    pairing_id.len(),
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_version,
+                    target_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    expires_at_ms + 1,
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    now_ms,
+                )
+            },
+            KelivoStatus::DeviceMessageInvalid.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_pending_pairing_bind(
+                    pending_handle,
+                    1,
+                    pairing_id.as_ptr(),
+                    pairing_id.len(),
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_version,
+                    target_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    expires_at_ms,
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    now_ms,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_pending_pairing_bind(
+                    pending_handle,
+                    1,
+                    pairing_id.as_ptr(),
+                    pairing_id.len(),
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_version,
+                    target_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    expires_at_ms,
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    now_ms,
+                )
+            },
+            KelivoStatus::PendingPairingStateInvalid.code()
+        );
+
+        let mut approval_bundle = [0_u8; device_core::PAIRING_APPROVAL_BUNDLE_LENGTH];
+        let mut approval_bundle_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_pairing_approval_create(
+                    issuer_identity,
+                    issuer_ark,
+                    pairing_id.as_ptr(),
+                    pairing_id.len(),
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    issuer_device_id.as_ptr(),
+                    issuer_device_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    expires_at_ms,
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    key_epoch,
+                    target_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    pairing_secret.as_ptr(),
+                    pairing_secret.len(),
+                    approval_bundle.as_mut_ptr(),
+                    approval_bundle.len(),
+                    &mut approval_bundle_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(approval_bundle_length, approval_bundle.len());
+        let signature_offset = crypto::ARK_ENVELOPE_LENGTH;
+        let authenticator_offset = signature_offset + crypto::DEVICE_PROOF_SIGNATURE_LENGTH;
+
+        let mut tampered_authenticator: [u8; crypto::PAIRING_AUTHENTICATOR_LENGTH] =
+            approval_bundle[authenticator_offset..]
+                .try_into()
+                .expect("认证器长度固定");
+        tampered_authenticator[0] ^= 1;
+        let mut rejected_ark = u64::MAX;
+        let mut rejected_blob = [0xa5_u8; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut rejected_blob_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_pairing_approval_accept(
+                    key_handle,
+                    reopened_target,
+                    pending_handle,
+                    now_ms,
+                    issuer_device_id.as_ptr(),
+                    issuer_device_id.len(),
+                    key_epoch,
+                    issuer_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    issuer_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    approval_bundle[signature_offset..authenticator_offset].as_ptr(),
+                    crypto::DEVICE_PROOF_SIGNATURE_LENGTH,
+                    tampered_authenticator.as_ptr(),
+                    tampered_authenticator.len(),
+                    approval_bundle[..signature_offset].as_ptr(),
+                    crypto::ARK_ENVELOPE_LENGTH,
+                    &mut rejected_ark,
+                    rejected_blob.as_mut_ptr(),
+                    rejected_blob.len(),
+                    &mut rejected_blob_length,
+                )
+            },
+            KelivoStatus::DeviceAuthenticationFailed.code()
+        );
+        assert_eq!(rejected_ark, INVALID_KEY_HANDLE);
+        assert_eq!(rejected_blob_length, 0);
+        assert!(rejected_blob.iter().all(|byte| *byte == 0xa5));
+
+        let mut installed_ark = INVALID_KEY_HANDLE;
+        let mut full_blob = [0_u8; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut full_blob_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_pairing_approval_accept(
+                    key_handle,
+                    reopened_target,
+                    pending_handle,
+                    expires_at_ms - 1,
+                    issuer_device_id.as_ptr(),
+                    issuer_device_id.len(),
+                    key_epoch,
+                    issuer_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    issuer_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    approval_bundle[signature_offset..authenticator_offset].as_ptr(),
+                    crypto::DEVICE_PROOF_SIGNATURE_LENGTH,
+                    approval_bundle[authenticator_offset..].as_ptr(),
+                    crypto::PAIRING_AUTHENTICATOR_LENGTH,
+                    approval_bundle[..signature_offset].as_ptr(),
+                    crypto::ARK_ENVELOPE_LENGTH,
+                    &mut installed_ark,
+                    full_blob.as_mut_ptr(),
+                    full_blob.len(),
+                    &mut full_blob_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert!(handle_has_tag(installed_ark, ACCOUNT_ROOT_KEY_HANDLE_TAG));
+        assert_eq!(full_blob_length, full_blob.len());
+
+        let mut consumed_ark = u64::MAX;
+        let mut consumed_blob = [0xa5_u8; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut consumed_blob_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_pairing_approval_accept(
+                    key_handle,
+                    reopened_target,
+                    pending_handle,
+                    now_ms,
+                    issuer_device_id.as_ptr(),
+                    issuer_device_id.len(),
+                    key_epoch,
+                    issuer_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    issuer_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    approval_bundle[signature_offset..authenticator_offset].as_ptr(),
+                    crypto::DEVICE_PROOF_SIGNATURE_LENGTH,
+                    approval_bundle[authenticator_offset..].as_ptr(),
+                    crypto::PAIRING_AUTHENTICATOR_LENGTH,
+                    approval_bundle[..signature_offset].as_ptr(),
+                    crypto::ARK_ENVELOPE_LENGTH,
+                    &mut consumed_ark,
+                    consumed_blob.as_mut_ptr(),
+                    consumed_blob.len(),
+                    &mut consumed_blob_length,
+                )
+            },
+            KelivoStatus::InvalidPendingPairingHandle.code()
+        );
+        assert_eq!(consumed_ark, INVALID_KEY_HANDLE);
+        assert_eq!(consumed_blob_length, 0);
+        assert!(consumed_blob.iter().all(|byte| *byte == 0xa5));
+        assert_eq!(
+            kelivo_pending_pairing_handle_close(pending_handle),
+            KelivoStatus::InvalidPendingPairingHandle.code()
+        );
+
+        let mut full_identity = INVALID_KEY_HANDLE;
+        let mut full_ark = INVALID_KEY_HANDLE;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    full_blob.as_ptr(),
+                    full_blob.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_version,
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    key_epoch,
+                    &mut full_identity,
+                    &mut full_ark,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(device_public_keys(full_identity), target_public_keys);
+        assert!(handle_has_tag(full_ark, ACCOUNT_ROOT_KEY_HANDLE_TAG));
+
+        assert_eq!(
+            kelivo_account_root_key_handle_close(full_ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(full_identity),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(installed_ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(reopened_target),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(issuer_ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(issuer_identity),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(close_key_handle(key_handle), Ok(()));
     }
 }

@@ -9,7 +9,9 @@ import 'package:ffi/ffi.dart';
 
 import 'kelivo_secure_core_bindings_generated.dart' as native;
 
-const _expectedAbiVersion = 3;
+part 'src/device_core.dart';
+
+const _expectedAbiVersion = 4;
 const _keySlotIdLength = 16;
 const _keyPolicyVersion = 1;
 const _keySlotsCapability = 1 << 0;
@@ -18,6 +20,7 @@ const _recordEnvelopesCapability = 1 << 2;
 const _sqlCipherKeyApplicationCapability = 1 << 3;
 const _sqlCipherDatabaseAttachCapability = 1 << 4;
 const _opaqueClientCapability = 1 << 5;
+const _deviceE2eeCoreCapability = 1 << 6;
 const _secureStorageCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
@@ -25,7 +28,9 @@ const _secureStorageCapabilityFlags =
     _sqlCipherKeyApplicationCapability |
     _sqlCipherDatabaseAttachCapability;
 const _knownCapabilityFlags =
-    _secureStorageCapabilityFlags | _opaqueClientCapability;
+    _secureStorageCapabilityFlags |
+    _opaqueClientCapability |
+    _deviceE2eeCoreCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
@@ -98,6 +103,15 @@ enum KelivoSecureCoreStatus {
   tooManyActiveHandles(24),
   handleSpaceExhausted(25),
   invalidAccountId(26),
+  invalidDeviceIdentityHandle(27),
+  invalidAccountRootKeyHandle(28),
+  deviceMessageInvalid(29),
+  deviceAuthenticationFailed(30),
+  deviceStateInvalid(31),
+  deviceStateAuthenticationFailed(32),
+  invalidPendingPairingHandle(33),
+  pairingExpired(34),
+  pendingPairingStateInvalid(35),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);
@@ -122,6 +136,7 @@ final class KelivoCoreCapabilities {
     required this.supportsSqlCipherKeyApplication,
     required this.supportsSqlCipherDatabaseAttach,
     required this.supportsOpaqueClient,
+    required this.supportsDeviceE2eeCore,
   });
 
   final int abiVersion;
@@ -132,6 +147,7 @@ final class KelivoCoreCapabilities {
   final bool supportsSqlCipherKeyApplication;
   final bool supportsSqlCipherDatabaseAttach;
   final bool supportsOpaqueClient;
+  final bool supportsDeviceE2eeCore;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -191,6 +207,19 @@ final class KelivoKeyHandle {
     return value;
   }
 
+  int _beginUse() {
+    final value = _requireOpen();
+    _state = _KelivoKeyHandleState.busy;
+    return value;
+  }
+
+  void _completeUse() {
+    if (_state != _KelivoKeyHandleState.busy) {
+      throw StateError('密钥句柄生命周期已失配');
+    }
+    _state = _KelivoKeyHandleState.open;
+  }
+
   void _completeClose() {
     _state = _KelivoKeyHandleState.closed;
   }
@@ -205,7 +234,7 @@ final class KelivoKeyHandle {
   String toString() => 'KelivoKeyHandle(opaque)';
 }
 
-enum _KelivoKeyHandleState { open, closing, closed }
+enum _KelivoKeyHandleState { open, busy, closing, closed }
 
 final class _KelivoOpaqueStateHandle {
   _KelivoOpaqueStateHandle(this.value);
@@ -1011,6 +1040,11 @@ KelivoCoreCapabilities _readCapabilities() {
             capabilities.flags & _backgroundAccessCapability == 0)) {
       throw StateError('安全核心在缺少后台密钥槽位时声明了 SQLCipher 设键能力');
     }
+    if (capabilities.flags & _deviceE2eeCoreCapability != 0 &&
+        (capabilities.flags & _keySlotsCapability == 0 ||
+            capabilities.flags & _backgroundAccessCapability == 0)) {
+      throw StateError('安全核心在缺少后台密钥槽位时声明了设备 E2EE 能力');
+    }
 
     return KelivoCoreCapabilities(
       abiVersion: capabilities.abi_version,
@@ -1025,6 +1059,8 @@ KelivoCoreCapabilities _readCapabilities() {
       supportsSqlCipherDatabaseAttach:
           capabilities.flags & _sqlCipherDatabaseAttachCapability != 0,
       supportsOpaqueClient: capabilities.flags & _opaqueClientCapability != 0,
+      supportsDeviceE2eeCore:
+          capabilities.flags & _deviceE2eeCoreCapability != 0,
     );
   } finally {
     calloc.free(output);

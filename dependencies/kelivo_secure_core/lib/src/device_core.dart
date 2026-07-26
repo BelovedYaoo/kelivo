@@ -1,0 +1,1496 @@
+part of '../kelivo_secure_core.dart';
+
+const _deviceUuidLength = native.KELIVO_DEVICE_UUID_SIZE;
+const _devicePublicKeyLength = native.KELIVO_DEVICE_PUBLIC_KEY_SIZE;
+const _devicePublicKeysLength = native.KELIVO_DEVICE_PUBLIC_KEYS_SIZE;
+const _deviceChallengeLength = native.KELIVO_DEVICE_CHALLENGE_SIZE;
+const _deviceProofLength = native.KELIVO_DEVICE_PROOF_SIZE;
+const _accountKeyEnvelopeLength = native.KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE;
+const _pairingSecretLength = native.KELIVO_PAIRING_SECRET_SIZE;
+const _pairingAuthenticatorLength = native.KELIVO_PAIRING_AUTHENTICATOR_SIZE;
+const _pairingProtocolVersion = native.KELIVO_PAIRING_PROTOCOL_VERSION;
+const _pendingPairingMaterialLength =
+    native.KELIVO_PENDING_PAIRING_MATERIAL_SIZE;
+const _registrationFinishBundleLength =
+    native.KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE;
+const _pairingApprovalBundleLength = native.KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE;
+const _deviceStateBlobLength = native.KELIVO_DEVICE_STATE_BLOB_SIZE;
+const _maxUint32 = 0xffffffff;
+
+enum _DeviceHandlePhase { open, busy, closing, closed }
+
+final class _DeviceHandleState {
+  _DeviceHandleState(this.value);
+
+  final int value;
+  _DeviceHandlePhase phase = _DeviceHandlePhase.open;
+
+  int beginUse() {
+    if (phase != _DeviceHandlePhase.open) {
+      throw StateError('设备安全句柄已占用、正在关闭或已经关闭');
+    }
+    phase = _DeviceHandlePhase.busy;
+    return value;
+  }
+
+  void completeUse() {
+    if (phase != _DeviceHandlePhase.busy) {
+      throw StateError('设备安全句柄生命周期已失配');
+    }
+    phase = _DeviceHandlePhase.open;
+  }
+
+  int beginClose() {
+    if (phase != _DeviceHandlePhase.open) {
+      throw StateError('设备安全句柄已占用、正在关闭或已经关闭');
+    }
+    phase = _DeviceHandlePhase.closing;
+    return value;
+  }
+
+  void completeClose() {
+    phase = _DeviceHandlePhase.closed;
+  }
+
+  void cancelClose() {
+    if (phase == _DeviceHandlePhase.closing) {
+      phase = _DeviceHandlePhase.open;
+    }
+  }
+}
+
+final class KelivoDeviceIdentityHandle {
+  KelivoDeviceIdentityHandle._(int value) : _state = _DeviceHandleState(value);
+
+  final _DeviceHandleState _state;
+
+  @override
+  String toString() => 'KelivoDeviceIdentityHandle(opaque)';
+}
+
+final class KelivoAccountRootKeyHandle {
+  KelivoAccountRootKeyHandle._(int value) : _state = _DeviceHandleState(value);
+
+  final _DeviceHandleState _state;
+
+  @override
+  String toString() => 'KelivoAccountRootKeyHandle(opaque)';
+}
+
+enum _PendingPairingPhase {
+  unbound,
+  binding,
+  bound,
+  accepting,
+  closing,
+  closed,
+}
+
+final class KelivoPendingPairingHandle {
+  KelivoPendingPairingHandle._(this._value);
+
+  final int _value;
+  _PendingPairingPhase _phase = _PendingPairingPhase.unbound;
+  _PendingPairingPhase? _phaseBeforeClose;
+
+  int _beginBind() {
+    if (_phase != _PendingPairingPhase.unbound) {
+      throw StateError('pending 配对必须处于未绑定状态');
+    }
+    _phase = _PendingPairingPhase.binding;
+    return _value;
+  }
+
+  void _completeBind() {
+    if (_phase != _PendingPairingPhase.binding) {
+      throw StateError('pending 配对绑定生命周期已失配');
+    }
+    _phase = _PendingPairingPhase.bound;
+  }
+
+  void _cancelBind() {
+    if (_phase == _PendingPairingPhase.binding) {
+      _phase = _PendingPairingPhase.unbound;
+    }
+  }
+
+  int _beginAccept() {
+    if (_phase != _PendingPairingPhase.bound) {
+      throw StateError('pending 配对必须先绑定创建响应');
+    }
+    _phase = _PendingPairingPhase.accepting;
+    return _value;
+  }
+
+  void _completeAccept() {
+    _phase = _PendingPairingPhase.closed;
+  }
+
+  void _cancelAccept() {
+    if (_phase == _PendingPairingPhase.accepting) {
+      _phase = _PendingPairingPhase.bound;
+    }
+  }
+
+  int _beginClose() {
+    if (_phase != _PendingPairingPhase.unbound &&
+        _phase != _PendingPairingPhase.bound) {
+      throw StateError('pending 配对正在操作或已经关闭');
+    }
+    _phaseBeforeClose = _phase;
+    _phase = _PendingPairingPhase.closing;
+    return _value;
+  }
+
+  void _completeClose() {
+    _phaseBeforeClose = null;
+    _phase = _PendingPairingPhase.closed;
+  }
+
+  void _cancelClose() {
+    if (_phase == _PendingPairingPhase.closing) {
+      _phase = _phaseBeforeClose ?? _PendingPairingPhase.closed;
+      _phaseBeforeClose = null;
+    }
+  }
+
+  @override
+  String toString() => 'KelivoPendingPairingHandle(opaque)';
+}
+
+final class KelivoDevicePublicKeys {
+  factory KelivoDevicePublicKeys({
+    required Uint8List signingPublicKey,
+    required Uint8List keyAgreementPublicKey,
+  }) {
+    _requireLength(
+      signingPublicKey,
+      _devicePublicKeyLength,
+      'signingPublicKey',
+    );
+    _requireLength(
+      keyAgreementPublicKey,
+      _devicePublicKeyLength,
+      'keyAgreementPublicKey',
+    );
+    return KelivoDevicePublicKeys._(
+      _immutableDeviceBytes(signingPublicKey),
+      _immutableDeviceBytes(keyAgreementPublicKey),
+    );
+  }
+
+  const KelivoDevicePublicKeys._(
+    this.signingPublicKey,
+    this.keyAgreementPublicKey,
+  );
+
+  final Uint8List signingPublicKey;
+  final Uint8List keyAgreementPublicKey;
+}
+
+final class KelivoDeviceStateAccountBinding {
+  factory KelivoDeviceStateAccountBinding({
+    required Uint8List userId,
+    required int keyEpoch,
+  }) {
+    _validateUuidV4(userId, 'userId');
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    return KelivoDeviceStateAccountBinding._(
+      _immutableDeviceBytes(userId),
+      keyEpoch,
+    );
+  }
+
+  const KelivoDeviceStateAccountBinding._(this.userId, this.keyEpoch);
+
+  final Uint8List userId;
+  final int keyEpoch;
+}
+
+final class KelivoDeviceRegistrationBundle {
+  KelivoDeviceRegistrationBundle._(this.envelope, this.signature);
+
+  final Uint8List envelope;
+  final Uint8List signature;
+}
+
+final class KelivoPairingApprovalBundle {
+  factory KelivoPairingApprovalBundle({
+    required Uint8List envelope,
+    required Uint8List signature,
+    required Uint8List authenticator,
+  }) {
+    _requireLength(envelope, _accountKeyEnvelopeLength, 'envelope');
+    _requireLength(signature, _deviceProofLength, 'signature');
+    _requireLength(authenticator, _pairingAuthenticatorLength, 'authenticator');
+    return KelivoPairingApprovalBundle._(
+      _immutableDeviceBytes(envelope),
+      _immutableDeviceBytes(signature),
+      _immutableDeviceBytes(authenticator),
+    );
+  }
+
+  const KelivoPairingApprovalBundle._(
+    this.envelope,
+    this.signature,
+    this.authenticator,
+  );
+
+  final Uint8List envelope;
+  final Uint8List signature;
+  final Uint8List authenticator;
+}
+
+final class KelivoPendingPairingStart {
+  KelivoPendingPairingStart._({
+    required this.state,
+    required this.pairingId,
+    required this._pairingSecret,
+    required this.pairingSecretHash,
+  });
+
+  final KelivoPendingPairingHandle state;
+  final Uint8List pairingId;
+  final Uint8List pairingSecretHash;
+  Uint8List? _pairingSecret;
+
+  /// 二维码编码器取得缓冲区所有权后必须在不再需要时主动清零。
+  Uint8List takePairingSecret() {
+    final secret = _pairingSecret;
+    if (secret == null) {
+      throw StateError('配对 secret 已经取出');
+    }
+    _pairingSecret = null;
+    return secret;
+  }
+
+  void discardPairingSecret() {
+    final secret = _pairingSecret;
+    if (secret == null) return;
+    secret.fillRange(0, secret.length, 0);
+    _pairingSecret = null;
+  }
+}
+
+final class KelivoAcceptedPairing {
+  KelivoAcceptedPairing._({required this.ark, required this.stateBlob});
+
+  final KelivoAccountRootKeyHandle ark;
+  final Uint8List stateBlob;
+}
+
+final class KelivoOpenedDeviceState {
+  KelivoOpenedDeviceState._({required this.identity, required this.ark});
+
+  final KelivoDeviceIdentityHandle identity;
+  final KelivoAccountRootKeyHandle? ark;
+}
+
+extension KelivoDeviceCore on KelivoSecureCore {
+  Future<KelivoDeviceIdentityHandle> generateDeviceIdentity() async {
+    final value = await Isolate.run(
+      () => _generateDeviceHandle(
+        operation: 'device_identity_generate',
+        generate: native.kelivo_device_identity_generate,
+      ),
+    );
+    return KelivoDeviceIdentityHandle._(value);
+  }
+
+  Future<KelivoDevicePublicKeys> readDevicePublicKeys(
+    KelivoDeviceIdentityHandle identity,
+  ) async {
+    final value = identity._state.beginUse();
+    try {
+      final bytes = await Isolate.run(() => _readDevicePublicKeys(value));
+      return KelivoDevicePublicKeys(
+        signingPublicKey: Uint8List.sublistView(
+          bytes,
+          0,
+          _devicePublicKeyLength,
+        ),
+        keyAgreementPublicKey: Uint8List.sublistView(
+          bytes,
+          _devicePublicKeyLength,
+        ),
+      );
+    } finally {
+      identity._state.completeUse();
+    }
+  }
+
+  Future<void> closeDeviceIdentity(KelivoDeviceIdentityHandle identity) =>
+      _closeDeviceHandle(
+        identity._state,
+        operation: 'device_identity_handle_close',
+        close: native.kelivo_device_identity_handle_close,
+        invalidStatus: KelivoSecureCoreStatus.invalidDeviceIdentityHandle,
+      );
+
+  Future<KelivoAccountRootKeyHandle> generateAccountRootKey() async {
+    final value = await Isolate.run(
+      () => _generateDeviceHandle(
+        operation: 'account_root_key_generate',
+        generate: native.kelivo_account_root_key_generate,
+      ),
+    );
+    return KelivoAccountRootKeyHandle._(value);
+  }
+
+  Future<void> closeAccountRootKey(KelivoAccountRootKeyHandle ark) =>
+      _closeDeviceHandle(
+        ark._state,
+        operation: 'account_root_key_handle_close',
+        close: native.kelivo_account_root_key_handle_close,
+        invalidStatus: KelivoSecureCoreStatus.invalidAccountRootKeyHandle,
+      );
+
+  Future<Uint8List> signDeviceLoginProof(
+    KelivoDeviceIdentityHandle identity, {
+    required Uint8List attemptId,
+    required Uint8List accountContextId,
+    required Uint8List deviceId,
+    required int expiresAtMs,
+    required Uint8List challenge,
+    required Uint8List credentialFinalization,
+  }) async {
+    _validateProofContext(
+      attemptId: attemptId,
+      accountContextId: accountContextId,
+      deviceId: deviceId,
+      expiresAtMs: expiresAtMs,
+      challenge: challenge,
+    );
+    _requireLength(
+      credentialFinalization,
+      _opaqueCredentialFinalizationSize,
+      'credentialFinalization',
+    );
+    final value = identity._state.beginUse();
+    try {
+      final copiedAttemptId = Uint8List.fromList(attemptId);
+      final copiedAccountContextId = Uint8List.fromList(accountContextId);
+      final copiedDeviceId = Uint8List.fromList(deviceId);
+      final copiedChallenge = Uint8List.fromList(challenge);
+      final copiedFinalization = Uint8List.fromList(credentialFinalization);
+      final proof = await Isolate.run(
+        () => _signDeviceLoginProof(
+          value,
+          copiedAttemptId,
+          copiedAccountContextId,
+          copiedDeviceId,
+          expiresAtMs,
+          copiedChallenge,
+          copiedFinalization,
+        ),
+      );
+      return _immutableDeviceBytes(proof);
+    } finally {
+      identity._state.completeUse();
+    }
+  }
+
+  Future<KelivoDeviceRegistrationBundle> createDeviceRegistrationFinish(
+    KelivoDeviceIdentityHandle identity,
+    KelivoAccountRootKeyHandle ark, {
+    required Uint8List userId,
+    required Uint8List deviceId,
+    required int keyEpoch,
+    required Uint8List attemptId,
+    required Uint8List accountContextId,
+    required int expiresAtMs,
+    required Uint8List challenge,
+    required Uint8List registrationUpload,
+  }) async {
+    _validateUuidV4(userId, 'userId');
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    _validateProofContext(
+      attemptId: attemptId,
+      accountContextId: accountContextId,
+      deviceId: deviceId,
+      expiresAtMs: expiresAtMs,
+      challenge: challenge,
+    );
+    _requireLength(
+      registrationUpload,
+      _opaqueRegistrationUploadSize,
+      'registrationUpload',
+    );
+    final handles = _beginDeviceHandlePair(identity._state, ark._state);
+    try {
+      final bundle = await Isolate.run(
+        () => _createDeviceRegistrationFinish(
+          handles.$1,
+          handles.$2,
+          Uint8List.fromList(userId),
+          Uint8List.fromList(deviceId),
+          keyEpoch,
+          Uint8List.fromList(attemptId),
+          Uint8List.fromList(accountContextId),
+          expiresAtMs,
+          Uint8List.fromList(challenge),
+          Uint8List.fromList(registrationUpload),
+        ),
+      );
+      return KelivoDeviceRegistrationBundle._(
+        _immutableDeviceBytes(
+          Uint8List.sublistView(bundle, 0, _accountKeyEnvelopeLength),
+        ),
+        _immutableDeviceBytes(
+          Uint8List.sublistView(bundle, _accountKeyEnvelopeLength),
+        ),
+      );
+    } finally {
+      _completeDeviceHandlePair(identity._state, ark._state);
+    }
+  }
+
+  Future<KelivoPendingPairingStart> startPendingPairing(
+    KelivoDeviceIdentityHandle identity, {
+    required Uint8List targetDeviceId,
+    required int targetKeyVersion,
+  }) async {
+    _validateUuidV4(targetDeviceId, 'targetDeviceId');
+    _validatePositiveUint32(targetKeyVersion, 'targetKeyVersion');
+    final identityValue = identity._state.beginUse();
+    try {
+      final nativeResult = await Isolate.run(
+        () => _startPendingPairing(
+          identityValue,
+          Uint8List.fromList(targetDeviceId),
+          targetKeyVersion,
+        ),
+      );
+      final secret = nativeResult.pairingSecret.materialize().asUint8List();
+      return KelivoPendingPairingStart._(
+        state: KelivoPendingPairingHandle._(nativeResult.handle),
+        pairingId: _immutableDeviceBytes(nativeResult.pairingId),
+        pairingSecret: secret,
+        pairingSecretHash: _immutableDeviceBytes(
+          nativeResult.pairingSecretHash,
+        ),
+      );
+    } finally {
+      identity._state.completeUse();
+    }
+  }
+
+  Future<void> bindPendingPairing(
+    KelivoPendingPairingHandle pending, {
+    required Uint8List pairingId,
+    required Uint8List userId,
+    required Uint8List targetDeviceId,
+    required int targetKeyVersion,
+    required KelivoDevicePublicKeys targetPublicKeys,
+    required int expiresAtMs,
+    required Uint8List challenge,
+    required int nowMs,
+  }) async {
+    _validateUuidV4(pairingId, 'pairingId');
+    _validateUuidV4(userId, 'userId');
+    _validateUuidV4(targetDeviceId, 'targetDeviceId');
+    _validatePositiveUint32(targetKeyVersion, 'targetKeyVersion');
+    _validateTimestamp(expiresAtMs, 'expiresAtMs');
+    _validateTimestamp(nowMs, 'nowMs');
+    _requireLength(challenge, _deviceChallengeLength, 'challenge');
+    final pendingValue = pending._beginBind();
+    try {
+      await Isolate.run(
+        () => _bindPendingPairing(
+          pendingValue,
+          Uint8List.fromList(pairingId),
+          Uint8List.fromList(userId),
+          Uint8List.fromList(targetDeviceId),
+          targetKeyVersion,
+          Uint8List.fromList(targetPublicKeys.signingPublicKey),
+          Uint8List.fromList(targetPublicKeys.keyAgreementPublicKey),
+          expiresAtMs,
+          Uint8List.fromList(challenge),
+          nowMs,
+        ),
+      );
+      pending._completeBind();
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status == KelivoSecureCoreStatus.pairingExpired ||
+          error.status == KelivoSecureCoreStatus.invalidPendingPairingHandle) {
+        pending._completeClose();
+      } else if (error.status ==
+          KelivoSecureCoreStatus.pendingPairingStateInvalid) {
+        // 本地与 Rust 状态若失配，继续猜测状态会让 secret 生命周期失去单一真相。
+        native.kelivo_pending_pairing_handle_close(pendingValue);
+        pending._completeClose();
+      } else {
+        pending._cancelBind();
+      }
+      rethrow;
+    } catch (_) {
+      // isolate 在原生调用后异常时无法证明 bind 是否已经生效，直接销毁更可审计。
+      native.kelivo_pending_pairing_handle_close(pendingValue);
+      pending._completeClose();
+      rethrow;
+    }
+  }
+
+  Future<void> cancelPendingPairing(KelivoPendingPairingHandle pending) async {
+    final value = pending._beginClose();
+    try {
+      await Isolate.run(
+        () => _throwOnError(
+          operation: 'pending_pairing_handle_close',
+          statusCode: native.kelivo_pending_pairing_handle_close(value),
+        ),
+      );
+      pending._completeClose();
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status == KelivoSecureCoreStatus.invalidPendingPairingHandle) {
+        pending._completeClose();
+      } else {
+        pending._cancelClose();
+      }
+      rethrow;
+    } catch (_) {
+      pending._cancelClose();
+      rethrow;
+    }
+  }
+
+  Future<KelivoPairingApprovalBundle> createPairingApproval(
+    KelivoDeviceIdentityHandle identity,
+    KelivoAccountRootKeyHandle ark, {
+    required Uint8List pairingId,
+    required Uint8List userId,
+    required Uint8List issuerDeviceId,
+    required Uint8List targetDeviceId,
+    required int expiresAtMs,
+    required Uint8List challenge,
+    required int keyEpoch,
+    required KelivoDevicePublicKeys targetPublicKeys,
+    required Uint8List pairingSecret,
+  }) async {
+    _validateUuidV4(pairingId, 'pairingId');
+    _validateUuidV4(userId, 'userId');
+    _validateUuidV4(issuerDeviceId, 'issuerDeviceId');
+    _validateUuidV4(targetDeviceId, 'targetDeviceId');
+    _validateTimestamp(expiresAtMs, 'expiresAtMs');
+    _requireLength(challenge, _deviceChallengeLength, 'challenge');
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    _requireLength(pairingSecret, _pairingSecretLength, 'pairingSecret');
+    final handles = _beginDeviceHandlePair(identity._state, ark._state);
+    try {
+      final bundle = await _runWithTransferredDeviceSecret(
+        pairingSecret,
+        (workerSecret) => _createPairingApproval(
+          handles.$1,
+          handles.$2,
+          Uint8List.fromList(pairingId),
+          Uint8List.fromList(userId),
+          Uint8List.fromList(issuerDeviceId),
+          Uint8List.fromList(targetDeviceId),
+          expiresAtMs,
+          Uint8List.fromList(challenge),
+          keyEpoch,
+          Uint8List.fromList(targetPublicKeys.signingPublicKey),
+          Uint8List.fromList(targetPublicKeys.keyAgreementPublicKey),
+          workerSecret,
+        ),
+      );
+      final signatureOffset = _accountKeyEnvelopeLength;
+      final authenticatorOffset = signatureOffset + _deviceProofLength;
+      return KelivoPairingApprovalBundle(
+        envelope: Uint8List.sublistView(bundle, 0, signatureOffset),
+        signature: Uint8List.sublistView(
+          bundle,
+          signatureOffset,
+          authenticatorOffset,
+        ),
+        authenticator: Uint8List.sublistView(bundle, authenticatorOffset),
+      );
+    } finally {
+      _completeDeviceHandlePair(identity._state, ark._state);
+    }
+  }
+
+  Future<KelivoAcceptedPairing> acceptPairingApproval(
+    KelivoKeyHandle key,
+    KelivoDeviceIdentityHandle identity,
+    KelivoPendingPairingHandle pending, {
+    required int nowMs,
+    required Uint8List issuerDeviceId,
+    required int keyEpoch,
+    required KelivoDevicePublicKeys issuerPublicKeys,
+    required KelivoPairingApprovalBundle approval,
+  }) async {
+    _validateTimestamp(nowMs, 'nowMs');
+    _validateUuidV4(issuerDeviceId, 'issuerDeviceId');
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    final keyValue = key._beginUse();
+    int identityValue;
+    try {
+      identityValue = identity._state.beginUse();
+    } catch (_) {
+      key._completeUse();
+      rethrow;
+    }
+    int pendingValue;
+    try {
+      pendingValue = pending._beginAccept();
+    } catch (_) {
+      identity._state.completeUse();
+      key._completeUse();
+      rethrow;
+    }
+    try {
+      final result = await Isolate.run(
+        () => _acceptPairingApproval(
+          keyValue,
+          identityValue,
+          pendingValue,
+          nowMs,
+          Uint8List.fromList(issuerDeviceId),
+          keyEpoch,
+          Uint8List.fromList(issuerPublicKeys.signingPublicKey),
+          Uint8List.fromList(issuerPublicKeys.keyAgreementPublicKey),
+          Uint8List.fromList(approval.signature),
+          Uint8List.fromList(approval.authenticator),
+          Uint8List.fromList(approval.envelope),
+        ),
+      );
+      pending._completeAccept();
+      return KelivoAcceptedPairing._(
+        ark: KelivoAccountRootKeyHandle._(result.arkHandle),
+        stateBlob: _immutableDeviceBytes(result.stateBlob),
+      );
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status == KelivoSecureCoreStatus.pairingExpired ||
+          error.status == KelivoSecureCoreStatus.invalidPendingPairingHandle) {
+        pending._completeAccept();
+      } else {
+        pending._cancelAccept();
+      }
+      rethrow;
+    } catch (_) {
+      // 未知跨 isolate 故障可能发生在原生成功之后，不能把已消费句柄伪装成可重试。
+      native.kelivo_pending_pairing_handle_close(pendingValue);
+      pending._completeAccept();
+      rethrow;
+    } finally {
+      identity._state.completeUse();
+      key._completeUse();
+    }
+  }
+
+  Future<Uint8List> sealDeviceState(
+    KelivoKeyHandle key,
+    KelivoDeviceIdentityHandle identity, {
+    required Uint8List deviceId,
+    required int keyVersion,
+    KelivoAccountRootKeyHandle? ark,
+    KelivoDeviceStateAccountBinding? account,
+  }) async {
+    _validateUuidV4(deviceId, 'deviceId');
+    _validatePositiveUint32(keyVersion, 'keyVersion');
+    if ((ark == null) != (account == null)) {
+      throw ArgumentError('ARK 与账户绑定必须同时提供或同时省略');
+    }
+    final keyValue = key._beginUse();
+    int identityValue;
+    try {
+      identityValue = identity._state.beginUse();
+    } catch (_) {
+      key._completeUse();
+      rethrow;
+    }
+    int? arkValue;
+    try {
+      arkValue = ark?._state.beginUse();
+    } catch (_) {
+      identity._state.completeUse();
+      key._completeUse();
+      rethrow;
+    }
+    try {
+      final stateBlob = await Isolate.run(
+        () => _sealDeviceState(
+          keyValue,
+          identityValue,
+          arkValue ?? native.KELIVO_DEVICE_INVALID_HANDLE,
+          Uint8List.fromList(deviceId),
+          keyVersion,
+          account == null ? null : Uint8List.fromList(account.userId),
+          account?.keyEpoch ?? 0,
+        ),
+      );
+      return _immutableDeviceBytes(stateBlob);
+    } finally {
+      if (ark != null) ark._state.completeUse();
+      identity._state.completeUse();
+      key._completeUse();
+    }
+  }
+
+  Future<KelivoOpenedDeviceState> openDeviceState(
+    KelivoKeyHandle key, {
+    required Uint8List stateBlob,
+    required Uint8List expectedDeviceId,
+    required int expectedKeyVersion,
+    KelivoDeviceStateAccountBinding? expectedAccount,
+  }) async {
+    _requireLength(stateBlob, _deviceStateBlobLength, 'stateBlob');
+    _validateUuidV4(expectedDeviceId, 'expectedDeviceId');
+    _validatePositiveUint32(expectedKeyVersion, 'expectedKeyVersion');
+    final keyValue = key._beginUse();
+    try {
+      final result = await Isolate.run(
+        () => _openDeviceState(
+          keyValue,
+          Uint8List.fromList(stateBlob),
+          Uint8List.fromList(expectedDeviceId),
+          expectedKeyVersion,
+          expectedAccount == null
+              ? null
+              : Uint8List.fromList(expectedAccount.userId),
+          expectedAccount?.keyEpoch ?? 0,
+        ),
+      );
+      return KelivoOpenedDeviceState._(
+        identity: KelivoDeviceIdentityHandle._(result.identityHandle),
+        ark: result.arkHandle == native.KELIVO_DEVICE_INVALID_HANDLE
+            ? null
+            : KelivoAccountRootKeyHandle._(result.arkHandle),
+      );
+    } finally {
+      key._completeUse();
+    }
+  }
+}
+
+typedef _NativeHandleGenerator =
+    int Function(ffi.Pointer<ffi.Uint64> outHandle);
+typedef _NativeHandleCloser = int Function(int handle);
+typedef _FixedDeviceOutputCall =
+    int Function(
+      ffi.Pointer<ffi.Uint8> output,
+      int capacity,
+      ffi.Pointer<ffi.Size> outputLength,
+    );
+
+final class _PendingPairingStartNativeResult {
+  const _PendingPairingStartNativeResult({
+    required this.handle,
+    required this.pairingId,
+    required this.pairingSecret,
+    required this.pairingSecretHash,
+  });
+
+  final int handle;
+  final Uint8List pairingId;
+  final TransferableTypedData pairingSecret;
+  final Uint8List pairingSecretHash;
+}
+
+final class _AcceptedPairingNativeResult {
+  const _AcceptedPairingNativeResult({
+    required this.arkHandle,
+    required this.stateBlob,
+  });
+
+  final int arkHandle;
+  final Uint8List stateBlob;
+}
+
+final class _OpenedDeviceStateNativeResult {
+  const _OpenedDeviceStateNativeResult({
+    required this.identityHandle,
+    required this.arkHandle,
+  });
+
+  final int identityHandle;
+  final int arkHandle;
+}
+
+Uint8List _immutableDeviceBytes(Uint8List bytes) =>
+    Uint8List.fromList(bytes).asUnmodifiableView();
+
+void _requireLength(Uint8List bytes, int expected, String name) {
+  if (bytes.length != expected) {
+    throw ArgumentError.value(bytes.length, name, '必须为 $expected 字节');
+  }
+}
+
+void _validateUuidV4(Uint8List bytes, String name) {
+  if (bytes.length != _deviceUuidLength ||
+      bytes[6] & 0xf0 != 0x40 ||
+      bytes[8] & 0xc0 != 0x80) {
+    throw ArgumentError.value(
+      bytes.length,
+      name,
+      '必须为 RFC 4122 UUIDv4 原始 16 字节',
+    );
+  }
+}
+
+void _validatePositiveUint32(int value, String name) {
+  if (value <= 0 || value > _maxUint32) {
+    throw ArgumentError.value(value, name, '必须位于无符号 32 位正整数范围');
+  }
+}
+
+void _validateTimestamp(int value, String name) {
+  if (value <= 0 || value > _recordMaxEpoch) {
+    throw ArgumentError.value(value, name, '必须位于正 63 位整数范围');
+  }
+}
+
+void _validateProofContext({
+  required Uint8List attemptId,
+  required Uint8List accountContextId,
+  required Uint8List deviceId,
+  required int expiresAtMs,
+  required Uint8List challenge,
+}) {
+  _validateUuidV4(attemptId, 'attemptId');
+  _validateUuidV4(accountContextId, 'accountContextId');
+  _validateUuidV4(deviceId, 'deviceId');
+  _validateTimestamp(expiresAtMs, 'expiresAtMs');
+  _requireLength(challenge, _deviceChallengeLength, 'challenge');
+}
+
+(int, int) _beginDeviceHandlePair(
+  _DeviceHandleState first,
+  _DeviceHandleState second,
+) {
+  final firstValue = first.beginUse();
+  try {
+    return (firstValue, second.beginUse());
+  } catch (_) {
+    first.completeUse();
+    rethrow;
+  }
+}
+
+void _completeDeviceHandlePair(
+  _DeviceHandleState first,
+  _DeviceHandleState second,
+) {
+  second.completeUse();
+  first.completeUse();
+}
+
+Future<void> _closeDeviceHandle(
+  _DeviceHandleState state, {
+  required String operation,
+  required _NativeHandleCloser close,
+  required KelivoSecureCoreStatus invalidStatus,
+}) async {
+  final value = state.beginClose();
+  try {
+    await Isolate.run(
+      () => _throwOnError(operation: operation, statusCode: close(value)),
+    );
+    state.completeClose();
+  } on KelivoSecureCoreException catch (error) {
+    if (error.status == invalidStatus) {
+      state.completeClose();
+    } else {
+      state.cancelClose();
+    }
+    rethrow;
+  } catch (_) {
+    state.cancelClose();
+    rethrow;
+  }
+}
+
+int _generateDeviceHandle({
+  required String operation,
+  required _NativeHandleGenerator generate,
+}) {
+  final output = calloc<ffi.Uint64>();
+  try {
+    _throwOnError(operation: operation, statusCode: generate(output));
+    if (output.value == native.KELIVO_DEVICE_INVALID_HANDLE) {
+      throw StateError('$operation 成功返回了无效句柄');
+    }
+    return output.value;
+  } finally {
+    calloc.free(output);
+  }
+}
+
+Uint8List _fixedDeviceOutput({
+  required String operation,
+  required int expectedLength,
+  required _FixedDeviceOutputCall call,
+}) {
+  final output = calloc<ffi.Uint8>(expectedLength);
+  final outputLength = calloc<ffi.Size>();
+  try {
+    _throwOnError(
+      operation: operation,
+      statusCode: call(output, expectedLength, outputLength),
+    );
+    _requireExactOutputLength(
+      operation: operation,
+      expected: expectedLength,
+      actual: outputLength.value,
+    );
+    return Uint8List.fromList(output.asTypedList(expectedLength));
+  } finally {
+    _clearAndFree(output, expectedLength);
+    calloc.free(outputLength);
+  }
+}
+
+Uint8List _readDevicePublicKeys(int identityHandle) => _fixedDeviceOutput(
+  operation: 'device_identity_public_keys',
+  expectedLength: _devicePublicKeysLength,
+  call: (output, capacity, outputLength) =>
+      native.kelivo_device_identity_public_keys(
+        identityHandle,
+        output,
+        capacity,
+        outputLength,
+      ),
+);
+
+Uint8List _signDeviceLoginProof(
+  int identityHandle,
+  Uint8List attemptId,
+  Uint8List accountContextId,
+  Uint8List deviceId,
+  int expiresAtMs,
+  Uint8List challenge,
+  Uint8List credentialFinalization,
+) {
+  final attemptIdPointer = _copyToNative(attemptId);
+  final accountContextPointer = _copyToNative(accountContextId);
+  final deviceIdPointer = _copyToNative(deviceId);
+  final challengePointer = _copyToNative(challenge);
+  final finalizationPointer = _copyToNative(credentialFinalization);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'device_login_proof_sign',
+      expectedLength: _deviceProofLength,
+      call: (output, capacity, outputLength) =>
+          native.kelivo_device_login_proof_sign(
+            identityHandle,
+            attemptIdPointer,
+            attemptId.length,
+            accountContextPointer,
+            accountContextId.length,
+            deviceIdPointer,
+            deviceId.length,
+            expiresAtMs,
+            challengePointer,
+            challenge.length,
+            finalizationPointer,
+            credentialFinalization.length,
+            output,
+            capacity,
+            outputLength,
+          ),
+    );
+  } finally {
+    _clearAndFree(attemptIdPointer, attemptId.length);
+    _clearAndFree(accountContextPointer, accountContextId.length);
+    _clearAndFree(deviceIdPointer, deviceId.length);
+    _clearAndFree(challengePointer, challenge.length);
+    _clearAndFree(finalizationPointer, credentialFinalization.length);
+    attemptId.fillRange(0, attemptId.length, 0);
+    accountContextId.fillRange(0, accountContextId.length, 0);
+    deviceId.fillRange(0, deviceId.length, 0);
+    challenge.fillRange(0, challenge.length, 0);
+    credentialFinalization.fillRange(0, credentialFinalization.length, 0);
+  }
+}
+
+Uint8List _createDeviceRegistrationFinish(
+  int identityHandle,
+  int arkHandle,
+  Uint8List userId,
+  Uint8List deviceId,
+  int keyEpoch,
+  Uint8List attemptId,
+  Uint8List accountContextId,
+  int expiresAtMs,
+  Uint8List challenge,
+  Uint8List registrationUpload,
+) {
+  final userIdPointer = _copyToNative(userId);
+  final deviceIdPointer = _copyToNative(deviceId);
+  final attemptIdPointer = _copyToNative(attemptId);
+  final accountContextPointer = _copyToNative(accountContextId);
+  final challengePointer = _copyToNative(challenge);
+  final uploadPointer = _copyToNative(registrationUpload);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'device_registration_finish_create',
+      expectedLength: _registrationFinishBundleLength,
+      call: (output, capacity, outputLength) =>
+          native.kelivo_device_registration_finish_create(
+            identityHandle,
+            arkHandle,
+            userIdPointer,
+            userId.length,
+            deviceIdPointer,
+            deviceId.length,
+            keyEpoch,
+            attemptIdPointer,
+            attemptId.length,
+            accountContextPointer,
+            accountContextId.length,
+            expiresAtMs,
+            challengePointer,
+            challenge.length,
+            uploadPointer,
+            registrationUpload.length,
+            output,
+            capacity,
+            outputLength,
+          ),
+    );
+  } finally {
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(deviceIdPointer, deviceId.length);
+    _clearAndFree(attemptIdPointer, attemptId.length);
+    _clearAndFree(accountContextPointer, accountContextId.length);
+    _clearAndFree(challengePointer, challenge.length);
+    _clearAndFree(uploadPointer, registrationUpload.length);
+    userId.fillRange(0, userId.length, 0);
+    deviceId.fillRange(0, deviceId.length, 0);
+    attemptId.fillRange(0, attemptId.length, 0);
+    accountContextId.fillRange(0, accountContextId.length, 0);
+    challenge.fillRange(0, challenge.length, 0);
+    registrationUpload.fillRange(0, registrationUpload.length, 0);
+  }
+}
+
+_PendingPairingStartNativeResult _startPendingPairing(
+  int identityHandle,
+  Uint8List targetDeviceId,
+  int targetKeyVersion,
+) {
+  final targetDeviceIdPointer = _copyToNative(targetDeviceId);
+  final outputHandle = calloc<ffi.Uint64>();
+  final output = calloc<ffi.Uint8>(_pendingPairingMaterialLength);
+  final outputLength = calloc<ffi.Size>();
+  var published = false;
+  try {
+    _throwOnError(
+      operation: 'pending_pairing_start',
+      statusCode: native.kelivo_pending_pairing_start(
+        identityHandle,
+        targetDeviceIdPointer,
+        targetDeviceId.length,
+        targetKeyVersion,
+        outputHandle,
+        output,
+        _pendingPairingMaterialLength,
+        outputLength,
+      ),
+    );
+    _requireExactOutputLength(
+      operation: 'pending_pairing_start',
+      expected: _pendingPairingMaterialLength,
+      actual: outputLength.value,
+    );
+    if (outputHandle.value == native.KELIVO_DEVICE_INVALID_HANDLE) {
+      throw StateError('pending_pairing_start 成功返回了无效句柄');
+    }
+    final material = output.asTypedList(_pendingPairingMaterialLength);
+    final pairingId = Uint8List.fromList(
+      Uint8List.sublistView(material, 0, _deviceUuidLength),
+    );
+    final secret = Uint8List.fromList(
+      Uint8List.sublistView(
+        material,
+        _deviceUuidLength,
+        _deviceUuidLength + _pairingSecretLength,
+      ),
+    );
+    final secretHash = Uint8List.fromList(
+      Uint8List.sublistView(material, _deviceUuidLength + _pairingSecretLength),
+    );
+    final transferableSecret = TransferableTypedData.fromList([secret]);
+    secret.fillRange(0, secret.length, 0);
+    published = true;
+    return _PendingPairingStartNativeResult(
+      handle: outputHandle.value,
+      pairingId: pairingId,
+      pairingSecret: transferableSecret,
+      pairingSecretHash: secretHash,
+    );
+  } finally {
+    if (!published &&
+        outputHandle.value != native.KELIVO_DEVICE_INVALID_HANDLE) {
+      native.kelivo_pending_pairing_handle_close(outputHandle.value);
+    }
+    _clearAndFree(targetDeviceIdPointer, targetDeviceId.length);
+    _clearAndFree(output, _pendingPairingMaterialLength);
+    targetDeviceId.fillRange(0, targetDeviceId.length, 0);
+    calloc.free(outputHandle);
+    calloc.free(outputLength);
+  }
+}
+
+void _bindPendingPairing(
+  int pendingHandle,
+  Uint8List pairingId,
+  Uint8List userId,
+  Uint8List targetDeviceId,
+  int targetKeyVersion,
+  Uint8List targetSigningPublicKey,
+  Uint8List targetKeyAgreementPublicKey,
+  int expiresAtMs,
+  Uint8List challenge,
+  int nowMs,
+) {
+  final pairingIdPointer = _copyToNative(pairingId);
+  final userIdPointer = _copyToNative(userId);
+  final targetDeviceIdPointer = _copyToNative(targetDeviceId);
+  final signingKeyPointer = _copyToNative(targetSigningPublicKey);
+  final agreementKeyPointer = _copyToNative(targetKeyAgreementPublicKey);
+  final challengePointer = _copyToNative(challenge);
+  try {
+    _throwOnError(
+      operation: 'pending_pairing_bind',
+      statusCode: native.kelivo_pending_pairing_bind(
+        pendingHandle,
+        _pairingProtocolVersion,
+        pairingIdPointer,
+        pairingId.length,
+        userIdPointer,
+        userId.length,
+        targetDeviceIdPointer,
+        targetDeviceId.length,
+        targetKeyVersion,
+        signingKeyPointer,
+        targetSigningPublicKey.length,
+        agreementKeyPointer,
+        targetKeyAgreementPublicKey.length,
+        expiresAtMs,
+        challengePointer,
+        challenge.length,
+        nowMs,
+      ),
+    );
+  } finally {
+    _clearAndFree(pairingIdPointer, pairingId.length);
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(targetDeviceIdPointer, targetDeviceId.length);
+    _clearAndFree(signingKeyPointer, targetSigningPublicKey.length);
+    _clearAndFree(agreementKeyPointer, targetKeyAgreementPublicKey.length);
+    _clearAndFree(challengePointer, challenge.length);
+    pairingId.fillRange(0, pairingId.length, 0);
+    userId.fillRange(0, userId.length, 0);
+    targetDeviceId.fillRange(0, targetDeviceId.length, 0);
+    targetSigningPublicKey.fillRange(0, targetSigningPublicKey.length, 0);
+    targetKeyAgreementPublicKey.fillRange(
+      0,
+      targetKeyAgreementPublicKey.length,
+      0,
+    );
+    challenge.fillRange(0, challenge.length, 0);
+  }
+}
+
+Future<T> _runWithTransferredDeviceSecret<T>(
+  Uint8List secret,
+  T Function(Uint8List workerSecret) operation,
+) async {
+  final temporary = Uint8List.fromList(secret);
+  final transferred = TransferableTypedData.fromList([temporary]);
+  temporary.fillRange(0, temporary.length, 0);
+  try {
+    return await Isolate.run(() {
+      final workerSecret = transferred.materialize().asUint8List();
+      try {
+        return operation(workerSecret);
+      } finally {
+        workerSecret.fillRange(0, workerSecret.length, 0);
+      }
+    });
+  } catch (error, stackTrace) {
+    try {
+      final unsent = transferred.materialize().asUint8List();
+      unsent.fillRange(0, unsent.length, 0);
+    } on ArgumentError {
+      // 已发送时由工作 isolate 的 finally 清零唯一缓冲区。
+    } on StateError {
+      // 已发送时由工作 isolate 的 finally 清零唯一缓冲区。
+    }
+    Error.throwWithStackTrace(error, stackTrace);
+  }
+}
+
+Uint8List _createPairingApproval(
+  int identityHandle,
+  int arkHandle,
+  Uint8List pairingId,
+  Uint8List userId,
+  Uint8List issuerDeviceId,
+  Uint8List targetDeviceId,
+  int expiresAtMs,
+  Uint8List challenge,
+  int keyEpoch,
+  Uint8List targetSigningPublicKey,
+  Uint8List targetKeyAgreementPublicKey,
+  Uint8List pairingSecret,
+) {
+  final pairingIdPointer = _copyToNative(pairingId);
+  final userIdPointer = _copyToNative(userId);
+  final issuerDeviceIdPointer = _copyToNative(issuerDeviceId);
+  final targetDeviceIdPointer = _copyToNative(targetDeviceId);
+  final challengePointer = _copyToNative(challenge);
+  final signingKeyPointer = _copyToNative(targetSigningPublicKey);
+  final agreementKeyPointer = _copyToNative(targetKeyAgreementPublicKey);
+  final secretPointer = _copyToNative(pairingSecret);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'device_pairing_approval_create',
+      expectedLength: _pairingApprovalBundleLength,
+      call: (output, capacity, outputLength) =>
+          native.kelivo_device_pairing_approval_create(
+            identityHandle,
+            arkHandle,
+            pairingIdPointer,
+            pairingId.length,
+            userIdPointer,
+            userId.length,
+            issuerDeviceIdPointer,
+            issuerDeviceId.length,
+            targetDeviceIdPointer,
+            targetDeviceId.length,
+            expiresAtMs,
+            challengePointer,
+            challenge.length,
+            keyEpoch,
+            signingKeyPointer,
+            targetSigningPublicKey.length,
+            agreementKeyPointer,
+            targetKeyAgreementPublicKey.length,
+            secretPointer,
+            pairingSecret.length,
+            output,
+            capacity,
+            outputLength,
+          ),
+    );
+  } finally {
+    _clearAndFree(pairingIdPointer, pairingId.length);
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(issuerDeviceIdPointer, issuerDeviceId.length);
+    _clearAndFree(targetDeviceIdPointer, targetDeviceId.length);
+    _clearAndFree(challengePointer, challenge.length);
+    _clearAndFree(signingKeyPointer, targetSigningPublicKey.length);
+    _clearAndFree(agreementKeyPointer, targetKeyAgreementPublicKey.length);
+    _clearAndFree(secretPointer, pairingSecret.length);
+    pairingId.fillRange(0, pairingId.length, 0);
+    userId.fillRange(0, userId.length, 0);
+    issuerDeviceId.fillRange(0, issuerDeviceId.length, 0);
+    targetDeviceId.fillRange(0, targetDeviceId.length, 0);
+    challenge.fillRange(0, challenge.length, 0);
+    targetSigningPublicKey.fillRange(0, targetSigningPublicKey.length, 0);
+    targetKeyAgreementPublicKey.fillRange(
+      0,
+      targetKeyAgreementPublicKey.length,
+      0,
+    );
+    pairingSecret.fillRange(0, pairingSecret.length, 0);
+  }
+}
+
+_AcceptedPairingNativeResult _acceptPairingApproval(
+  int keyHandle,
+  int identityHandle,
+  int pendingHandle,
+  int nowMs,
+  Uint8List issuerDeviceId,
+  int keyEpoch,
+  Uint8List issuerSigningPublicKey,
+  Uint8List issuerKeyAgreementPublicKey,
+  Uint8List signature,
+  Uint8List authenticator,
+  Uint8List envelope,
+) {
+  final issuerDeviceIdPointer = _copyToNative(issuerDeviceId);
+  final signingKeyPointer = _copyToNative(issuerSigningPublicKey);
+  final agreementKeyPointer = _copyToNative(issuerKeyAgreementPublicKey);
+  final signaturePointer = _copyToNative(signature);
+  final authenticatorPointer = _copyToNative(authenticator);
+  final envelopePointer = _copyToNative(envelope);
+  final outputHandle = calloc<ffi.Uint64>();
+  final output = calloc<ffi.Uint8>(_deviceStateBlobLength);
+  final outputLength = calloc<ffi.Size>();
+  var published = false;
+  try {
+    _throwOnError(
+      operation: 'device_pairing_approval_accept',
+      statusCode: native.kelivo_device_pairing_approval_accept(
+        keyHandle,
+        identityHandle,
+        pendingHandle,
+        nowMs,
+        issuerDeviceIdPointer,
+        issuerDeviceId.length,
+        keyEpoch,
+        signingKeyPointer,
+        issuerSigningPublicKey.length,
+        agreementKeyPointer,
+        issuerKeyAgreementPublicKey.length,
+        signaturePointer,
+        signature.length,
+        authenticatorPointer,
+        authenticator.length,
+        envelopePointer,
+        envelope.length,
+        outputHandle,
+        output,
+        _deviceStateBlobLength,
+        outputLength,
+      ),
+    );
+    _requireExactOutputLength(
+      operation: 'device_pairing_approval_accept',
+      expected: _deviceStateBlobLength,
+      actual: outputLength.value,
+    );
+    if (outputHandle.value == native.KELIVO_DEVICE_INVALID_HANDLE) {
+      throw StateError('device_pairing_approval_accept 成功返回了无效 ARK 句柄');
+    }
+    published = true;
+    return _AcceptedPairingNativeResult(
+      arkHandle: outputHandle.value,
+      stateBlob: Uint8List.fromList(output.asTypedList(_deviceStateBlobLength)),
+    );
+  } finally {
+    if (!published &&
+        outputHandle.value != native.KELIVO_DEVICE_INVALID_HANDLE) {
+      native.kelivo_account_root_key_handle_close(outputHandle.value);
+    }
+    _clearAndFree(issuerDeviceIdPointer, issuerDeviceId.length);
+    _clearAndFree(signingKeyPointer, issuerSigningPublicKey.length);
+    _clearAndFree(agreementKeyPointer, issuerKeyAgreementPublicKey.length);
+    _clearAndFree(signaturePointer, signature.length);
+    _clearAndFree(authenticatorPointer, authenticator.length);
+    _clearAndFree(envelopePointer, envelope.length);
+    _clearAndFree(output, _deviceStateBlobLength);
+    issuerDeviceId.fillRange(0, issuerDeviceId.length, 0);
+    issuerSigningPublicKey.fillRange(0, issuerSigningPublicKey.length, 0);
+    issuerKeyAgreementPublicKey.fillRange(
+      0,
+      issuerKeyAgreementPublicKey.length,
+      0,
+    );
+    signature.fillRange(0, signature.length, 0);
+    authenticator.fillRange(0, authenticator.length, 0);
+    envelope.fillRange(0, envelope.length, 0);
+    calloc.free(outputHandle);
+    calloc.free(outputLength);
+  }
+}
+
+Uint8List _sealDeviceState(
+  int keyHandle,
+  int identityHandle,
+  int arkHandle,
+  Uint8List deviceId,
+  int keyVersion,
+  Uint8List? userId,
+  int keyEpoch,
+) {
+  final deviceIdPointer = _copyToNative(deviceId);
+  final userIdPointer = userId == null
+      ? ffi.nullptr.cast<ffi.Uint8>()
+      : _copyToNative(userId);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'device_state_seal',
+      expectedLength: _deviceStateBlobLength,
+      call: (output, capacity, outputLength) => native.kelivo_device_state_seal(
+        keyHandle,
+        identityHandle,
+        arkHandle,
+        deviceIdPointer,
+        deviceId.length,
+        keyVersion,
+        userIdPointer,
+        userId?.length ?? 0,
+        keyEpoch,
+        output,
+        capacity,
+        outputLength,
+      ),
+    );
+  } finally {
+    _clearAndFree(deviceIdPointer, deviceId.length);
+    if (userId != null) {
+      _clearAndFree(userIdPointer, userId.length);
+      userId.fillRange(0, userId.length, 0);
+    }
+    deviceId.fillRange(0, deviceId.length, 0);
+  }
+}
+
+_OpenedDeviceStateNativeResult _openDeviceState(
+  int keyHandle,
+  Uint8List stateBlob,
+  Uint8List expectedDeviceId,
+  int expectedKeyVersion,
+  Uint8List? expectedUserId,
+  int expectedKeyEpoch,
+) {
+  final blobPointer = _copyToNative(stateBlob);
+  final deviceIdPointer = _copyToNative(expectedDeviceId);
+  final userIdPointer = expectedUserId == null
+      ? ffi.nullptr.cast<ffi.Uint8>()
+      : _copyToNative(expectedUserId);
+  final identityHandle = calloc<ffi.Uint64>();
+  final arkHandle = calloc<ffi.Uint64>();
+  var published = false;
+  try {
+    _throwOnError(
+      operation: 'device_state_open',
+      statusCode: native.kelivo_device_state_open(
+        keyHandle,
+        blobPointer,
+        stateBlob.length,
+        deviceIdPointer,
+        expectedDeviceId.length,
+        expectedKeyVersion,
+        userIdPointer,
+        expectedUserId?.length ?? 0,
+        expectedKeyEpoch,
+        identityHandle,
+        arkHandle,
+      ),
+    );
+    if (identityHandle.value == native.KELIVO_DEVICE_INVALID_HANDLE) {
+      throw StateError('device_state_open 成功返回了无效设备身份句柄');
+    }
+    published = true;
+    return _OpenedDeviceStateNativeResult(
+      identityHandle: identityHandle.value,
+      arkHandle: arkHandle.value,
+    );
+  } finally {
+    if (!published) {
+      if (identityHandle.value != native.KELIVO_DEVICE_INVALID_HANDLE) {
+        native.kelivo_device_identity_handle_close(identityHandle.value);
+      }
+      if (arkHandle.value != native.KELIVO_DEVICE_INVALID_HANDLE) {
+        native.kelivo_account_root_key_handle_close(arkHandle.value);
+      }
+    }
+    _clearAndFree(blobPointer, stateBlob.length);
+    _clearAndFree(deviceIdPointer, expectedDeviceId.length);
+    if (expectedUserId != null) {
+      _clearAndFree(userIdPointer, expectedUserId.length);
+      expectedUserId.fillRange(0, expectedUserId.length, 0);
+    }
+    stateBlob.fillRange(0, stateBlob.length, 0);
+    expectedDeviceId.fillRange(0, expectedDeviceId.length, 0);
+    calloc.free(identityHandle);
+    calloc.free(arkHandle);
+  }
+}

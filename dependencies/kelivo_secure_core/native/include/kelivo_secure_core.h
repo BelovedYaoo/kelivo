@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(3)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(4)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -55,6 +55,15 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_TOO_MANY_ACTIVE_HANDLES INT32_C(24)
 #define KELIVO_STATUS_HANDLE_SPACE_EXHAUSTED INT32_C(25)
 #define KELIVO_STATUS_INVALID_ACCOUNT_ID INT32_C(26)
+#define KELIVO_STATUS_INVALID_DEVICE_IDENTITY_HANDLE INT32_C(27)
+#define KELIVO_STATUS_INVALID_ACCOUNT_ROOT_KEY_HANDLE INT32_C(28)
+#define KELIVO_STATUS_DEVICE_MESSAGE_INVALID INT32_C(29)
+#define KELIVO_STATUS_DEVICE_AUTHENTICATION_FAILED INT32_C(30)
+#define KELIVO_STATUS_DEVICE_STATE_INVALID INT32_C(31)
+#define KELIVO_STATUS_DEVICE_STATE_AUTHENTICATION_FAILED INT32_C(32)
+#define KELIVO_STATUS_INVALID_PENDING_PAIRING_HANDLE INT32_C(33)
+#define KELIVO_STATUS_PAIRING_EXPIRED INT32_C(34)
+#define KELIVO_STATUS_PENDING_PAIRING_STATE_INVALID INT32_C(35)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
@@ -68,6 +77,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_SQLCIPHER_KEY_APPLICATION (UINT64_C(1) << 3)
 #define KELIVO_CAPABILITY_SQLCIPHER_DATABASE_ATTACH (UINT64_C(1) << 4)
 #define KELIVO_CAPABILITY_OPAQUE_CLIENT (UINT64_C(1) << 5)
+#define KELIVO_CAPABILITY_DEVICE_E2EE_CORE (UINT64_C(1) << 6)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE ((size_t)(64 * 1024))
@@ -85,6 +95,20 @@ typedef int32_t KelivoStatus;
 #define KELIVO_OPAQUE_CREDENTIAL_REQUEST_SIZE ((size_t)112)
 #define KELIVO_OPAQUE_CREDENTIAL_RESPONSE_SIZE ((size_t)336)
 #define KELIVO_OPAQUE_CREDENTIAL_FINALIZATION_SIZE ((size_t)80)
+#define KELIVO_DEVICE_INVALID_HANDLE UINT64_C(0)
+#define KELIVO_DEVICE_UUID_SIZE ((size_t)16)
+#define KELIVO_DEVICE_PUBLIC_KEY_SIZE ((size_t)32)
+#define KELIVO_DEVICE_PUBLIC_KEYS_SIZE ((size_t)64)
+#define KELIVO_DEVICE_CHALLENGE_SIZE ((size_t)32)
+#define KELIVO_DEVICE_PROOF_SIZE ((size_t)64)
+#define KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE ((size_t)336)
+#define KELIVO_PAIRING_SECRET_SIZE ((size_t)32)
+#define KELIVO_PAIRING_AUTHENTICATOR_SIZE ((size_t)32)
+#define KELIVO_PAIRING_PROTOCOL_VERSION UINT32_C(1)
+#define KELIVO_PENDING_PAIRING_MATERIAL_SIZE ((size_t)80)
+#define KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE ((size_t)400)
+#define KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE ((size_t)432)
+#define KELIVO_DEVICE_STATE_BLOB_SIZE ((size_t)188)
 
 typedef int32_t (*KelivoSqlCipherKeyCallback)(
     void *database,
@@ -306,6 +330,215 @@ KELIVO_CORE_API KelivoStatus kelivo_opaque_client_login_finish(
  */
 KELIVO_CORE_API KelivoStatus kelivo_opaque_client_state_close(
     uint64_t state_handle);
+
+/*
+ * 生成设备 Ed25519/X25519 身份。私钥只保存在当前进程的不透明句柄内；
+ * 失败时 out_handle 先写零，不提供任何私钥导出函数。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_identity_generate(
+    uint64_t *out_handle);
+
+/*
+ * 输出固定 64 字节公开材料：Ed25519 公钥在前，X25519 公钥在后。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_identity_public_keys(
+    uint64_t identity_handle,
+    uint8_t *out_public_keys,
+    size_t out_public_keys_capacity,
+    size_t *out_public_keys_length);
+
+KELIVO_CORE_API KelivoStatus kelivo_device_identity_handle_close(
+    uint64_t identity_handle);
+
+/*
+ * 目标端在 Rust 内生成一次性 pairingId 与 raw secret，并绑定本机设备身份、
+ * deviceId、keyVersion 和五分钟单调时钟截止点。固定 80 字节输出顺序为
+ * pairingId16 || rawSecret32 || SHA256(rawSecret)32；raw secret 只用于生成二维码。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_pending_pairing_start(
+    uint64_t identity_handle,
+    const uint8_t *target_device_id,
+    size_t target_device_id_length,
+    uint32_t target_key_version,
+    uint64_t *out_pending_handle,
+    uint8_t *out_material,
+    size_t out_material_capacity,
+    size_t *out_material_length);
+
+/*
+ * 将服务端创建响应绑定到本地 pending 句柄。返回的 pairingId、目标设备、
+ * keyVersion 与两把目标公钥必须逐字节匹配本机材料；expiresAt 必须位于
+ * (nowMs, nowMs+300000]，同一句柄只允许绑定一次。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_pending_pairing_bind(
+    uint64_t pending_handle,
+    uint32_t protocol_version,
+    const uint8_t *pairing_id,
+    size_t pairing_id_length,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *target_device_id,
+    size_t target_device_id_length,
+    uint32_t target_key_version,
+    const uint8_t *target_signing_public_key,
+    size_t target_signing_public_key_length,
+    const uint8_t *target_key_agreement_public_key,
+    size_t target_key_agreement_public_key_length,
+    uint64_t expires_at_ms,
+    const uint8_t *challenge,
+    size_t challenge_length,
+    uint64_t now_ms);
+
+KELIVO_CORE_API KelivoStatus kelivo_pending_pairing_handle_close(
+    uint64_t pending_handle);
+
+/* ARK 只以不透明句柄生成和使用，不存在原始字节导出接口。 */
+KELIVO_CORE_API KelivoStatus kelivo_account_root_key_generate(
+    uint64_t *out_handle);
+
+KELIVO_CORE_API KelivoStatus kelivo_account_root_key_handle_close(
+    uint64_t ark_handle);
+
+/*
+ * 对严格 80 字节 CredentialFinalization 生成 LoginFinish KDPF 签名。
+ * 公钥从 identity_handle 内取得，主载荷摘要由 Rust 内部计算。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_login_proof_sign(
+    uint64_t identity_handle,
+    const uint8_t *attempt_id,
+    size_t attempt_id_length,
+    const uint8_t *account_context_id,
+    size_t account_context_id_length,
+    const uint8_t *device_id,
+    size_t device_id_length,
+    uint64_t expires_at_ms,
+    const uint8_t *challenge,
+    size_t challenge_length,
+    const uint8_t *credential_finalization,
+    size_t credential_finalization_length,
+    uint8_t *out_signature,
+    size_t out_signature_capacity,
+    size_t *out_signature_length);
+
+/*
+ * 单次生成注册自 KAEK 与 RegistrationFinish KDPF，禁止 Dart 分别拼装。
+ * 固定 400 字节输出顺序为 KAEK336 || signature64。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_registration_finish_create(
+    uint64_t identity_handle,
+    uint64_t ark_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *device_id,
+    size_t device_id_length,
+    uint32_t key_epoch,
+    const uint8_t *attempt_id,
+    size_t attempt_id_length,
+    const uint8_t *account_context_id,
+    size_t account_context_id_length,
+    uint64_t expires_at_ms,
+    const uint8_t *challenge,
+    size_t challenge_length,
+    const uint8_t *registration_upload,
+    size_t registration_upload_length,
+    uint8_t *out_bundle,
+    size_t out_bundle_capacity,
+    size_t *out_bundle_length);
+
+/*
+ * 单次完成面向目标设备的 KAEK、PairingApprove KDPF 与 secret 派生认证器。
+ * raw pairing secret 必须恰好 32 字节且不会进入输出；固定输出顺序为
+ * KAEK336 || signature64 || authenticator32。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_pairing_approval_create(
+    uint64_t identity_handle,
+    uint64_t ark_handle,
+    const uint8_t *pairing_id,
+    size_t pairing_id_length,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *issuer_device_id,
+    size_t issuer_device_id_length,
+    const uint8_t *target_device_id,
+    size_t target_device_id_length,
+    uint64_t expires_at_ms,
+    const uint8_t *challenge,
+    size_t challenge_length,
+    uint32_t key_epoch,
+    const uint8_t *target_signing_public_key,
+    size_t target_signing_public_key_length,
+    const uint8_t *target_key_agreement_public_key,
+    size_t target_key_agreement_public_key_length,
+    const uint8_t *pairing_secret,
+    size_t pairing_secret_length,
+    uint8_t *out_bundle,
+    size_t out_bundle_capacity,
+    size_t *out_bundle_length);
+
+/*
+ * 目标端深验证入口。pairingId、userId、目标设备、公钥、过期时间、challenge
+ * 与 raw secret 均只从 pending_handle 读取；Dart 无法重新提供这些值。函数先
+ * 验证墙钟与单调时钟，再验证 authenticator、KDPF、KAEK，最后解封 ARK。
+ * 成功会原子消费并清零 pending，同时输出 ARK 句柄和 188 字节完整状态；
+ * 认证失败会归还 pending 供重试，输出句柄与长度保持为零。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_pairing_approval_accept(
+    uint64_t key_handle,
+    uint64_t identity_handle,
+    uint64_t pending_handle,
+    uint64_t now_ms,
+    const uint8_t *issuer_device_id,
+    size_t issuer_device_id_length,
+    uint32_t key_epoch,
+    const uint8_t *issuer_signing_public_key,
+    size_t issuer_signing_public_key_length,
+    const uint8_t *issuer_key_agreement_public_key,
+    size_t issuer_key_agreement_public_key_length,
+    const uint8_t *signature,
+    size_t signature_length,
+    const uint8_t *authenticator,
+    size_t authenticator_length,
+    const uint8_t *envelope,
+    size_t envelope_length,
+    uint64_t *out_ark_handle,
+    uint8_t *out_state_blob,
+    size_t out_state_blob_capacity,
+    size_t *out_state_blob_length);
+
+/*
+ * 使用平台槽位句柄密封单一设备状态。ark_handle=0 时必须同时使用空 user_id
+ * 和 key_epoch=0，得到 identity-only 状态；完整态必须三者同时存在。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_state_seal(
+    uint64_t key_handle,
+    uint64_t identity_handle,
+    uint64_t ark_handle,
+    const uint8_t *device_id,
+    size_t device_id_length,
+    uint32_t key_version,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t key_epoch,
+    uint8_t *out_blob,
+    size_t out_blob_capacity,
+    size_t *out_blob_length);
+
+/*
+ * 开启状态时必须提供调用方当前预期的完整绑定；不匹配不得发布任何句柄。
+ * identity-only 成功时 out_ark_handle 保持零，完整态成功时两个句柄都有效。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_state_open(
+    uint64_t key_handle,
+    const uint8_t *blob,
+    size_t blob_length,
+    const uint8_t *expected_device_id,
+    size_t expected_device_id_length,
+    uint32_t expected_key_version,
+    const uint8_t *expected_user_id,
+    size_t expected_user_id_length,
+    uint32_t expected_key_epoch,
+    uint64_t *out_identity_handle,
+    uint64_t *out_ark_handle);
 
 #ifdef __cplusplus
 }
