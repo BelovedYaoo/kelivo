@@ -13,7 +13,7 @@ mod opaque_client;
 mod record;
 
 pub use device_core::{
-    KelivoDeviceStateBinding, kelivo_account_root_key_generate,
+    KelivoDeviceStateBinding, kelivo_account_record_id_derive, kelivo_account_root_key_generate,
     kelivo_account_root_key_handle_close, kelivo_device_identity_generate,
     kelivo_device_identity_handle_close, kelivo_device_identity_public_keys,
     kelivo_device_login_proof_sign, kelivo_device_pairing_approval_accept,
@@ -36,7 +36,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 6;
+const ABI_VERSION: u32 = 7;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -2468,6 +2468,153 @@ mod tests {
         );
         assert!(handle_has_tag(handle, ACCOUNT_ROOT_KEY_HANDLE_TAG));
         handle
+    }
+
+    #[test]
+    fn account_record_id_derivation_enforces_keyed_uuid_contract() {
+        let ark = generate_ark();
+        let canonical_key = b"chat-message/018f2f89-8d5a-7bd2-a459-5d540a8f90ab";
+        let mut first = [0_u8; 16];
+        let mut first_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    canonical_key.as_ptr(),
+                    canonical_key.len(),
+                    first.as_mut_ptr(),
+                    first.len(),
+                    &mut first_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(first_length, first.len());
+        assert_eq!(first[6] & 0xf0, 0x40);
+        assert_eq!(first[8] & 0xc0, 0x80);
+
+        let mut repeated = [0_u8; 16];
+        let mut repeated_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    canonical_key.as_ptr(),
+                    canonical_key.len(),
+                    repeated.as_mut_ptr(),
+                    repeated.len(),
+                    &mut repeated_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(repeated, first);
+
+        let other_key = b"chat-message/018f2f89-8d5a-7bd2-a459-5d540a8f90ac";
+        let mut other = [0_u8; 16];
+        let mut other_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    other_key.as_ptr(),
+                    other_key.len(),
+                    other.as_mut_ptr(),
+                    other.len(),
+                    &mut other_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_ne!(other, first);
+
+        let maximum_key = [0x5a_u8; device_core::RECORD_ENTITY_KEY_MAX_LENGTH];
+        let mut boundary_output = [0_u8; 16];
+        let mut boundary_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    maximum_key.as_ptr(),
+                    maximum_key.len(),
+                    boundary_output.as_mut_ptr(),
+                    boundary_output.len(),
+                    &mut boundary_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let mut untouched = [0xa5_u8; 15];
+        let mut required_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    canonical_key.as_ptr(),
+                    canonical_key.len(),
+                    untouched.as_mut_ptr(),
+                    untouched.len(),
+                    &mut required_length,
+                )
+            },
+            KelivoStatus::OutputBufferTooSmall.code()
+        );
+        assert_eq!(required_length, 16);
+        assert!(untouched.iter().all(|value| *value == 0xa5));
+
+        let mut rejected_output = [0xa5_u8; 16];
+        let mut rejected_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    ptr::null(),
+                    0,
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(rejected_length, 0);
+        assert!(rejected_output.iter().all(|value| *value == 0xa5));
+
+        let oversized_key = [0x5a_u8; device_core::RECORD_ENTITY_KEY_MAX_LENGTH + 1];
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    oversized_key.as_ptr(),
+                    oversized_key.len(),
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::InputTooLarge.code()
+        );
+        assert_eq!(rejected_length, 0);
+
+        assert_eq!(
+            kelivo_account_root_key_handle_close(ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    canonical_key.as_ptr(),
+                    canonical_key.len(),
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::InvalidAccountRootKeyHandle.code()
+        );
+        assert_eq!(rejected_length, 0);
     }
 
     fn device_public_keys(handle: u64) -> [u8; device_core::DEVICE_PUBLIC_KEYS_LENGTH] {

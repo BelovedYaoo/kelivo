@@ -5,10 +5,11 @@ use std::{
 };
 
 use hkdf::Hkdf;
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use kelivo_secure_core_protocol::{self as protocol, device_crypto as crypto};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     ACCOUNT_ROOT_KEY_HANDLE_TAG, DEVICE_IDENTITY_HANDLE_TAG, INVALID_KEY_HANDLE, KelivoStatus,
@@ -26,14 +27,18 @@ pub(super) const PENDING_PAIRING_MATERIAL_LENGTH: usize =
     UUID_LENGTH + PAIRING_SECRET_LENGTH + crypto::SHA256_DIGEST_LENGTH;
 pub(super) const DEVICE_STATE_BLOB_LENGTH: usize = crypto::DEVICE_STATE_BLOB_LENGTH;
 pub(super) const DEVICE_STATE_BINDING_STRUCT_SIZE: u32 = 48;
+pub(super) const RECORD_ENTITY_KEY_MAX_LENGTH: usize = 2048;
 
 const UUID_LENGTH: usize = 16;
+pub(super) const DERIVED_RECORD_ID_LENGTH: usize = UUID_LENGTH;
 pub(super) const DEVICE_STATE_BINDING_FLAG_ACCOUNT: u32 = 1;
 const PAIRING_SECRET_LENGTH: usize = crypto::PAIRING_SECRET_LENGTH;
 const PAIRING_PROTOCOL_VERSION: u32 = 1;
 const PAIRING_LIFETIME_MILLISECONDS: u64 = 5 * 60 * 1000;
 const PAIRING_LIFETIME: Duration = Duration::from_secs(5 * 60);
 const STATE_KEY_INFO: &[u8] = b"kelivo.device-state.key.v1\0";
+const RECORD_ID_KEY_INFO: &[u8] = b"kelivo.sync.record-id.key.v1\0";
+const RECORD_ID_PRF_DOMAIN: &[u8] = b"kelivo.sync.record-id.v1\0";
 const MAX_ACTIVE_DEVICE_IDENTITIES: usize = 64;
 const MAX_ACTIVE_ACCOUNT_ROOT_KEYS: usize = 64;
 const MAX_ACTIVE_PENDING_PAIRINGS: usize = 64;
@@ -410,6 +415,38 @@ fn close_ark(handle: u64) -> Result<(), KelivoStatus> {
         ACCOUNT_ROOT_KEY_HANDLE_TAG,
         KelivoStatus::InvalidAccountRootKeyHandle,
     )
+}
+
+fn derive_account_record_id(
+    ark: &crypto::AccountRootKey,
+    canonical_entity_key: &[u8],
+) -> Result<[u8; DERIVED_RECORD_ID_LENGTH], KelivoStatus> {
+    if canonical_entity_key.is_empty() {
+        return Err(KelivoStatus::InvalidArgument);
+    }
+    if canonical_entity_key.len() > RECORD_ENTITY_KEY_MAX_LENGTH {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+
+    let entity_key_length =
+        u32::try_from(canonical_entity_key.len()).map_err(|_| KelivoStatus::InputTooLarge)?;
+    let mut record_id_key = Zeroizing::new([0_u8; crypto::ACCOUNT_ROOT_KEY_LENGTH]);
+    Hkdf::<Sha256>::new(None, ark.as_bytes())
+        .expand(RECORD_ID_KEY_INFO, record_id_key.as_mut_slice())
+        .map_err(|_| KelivoStatus::InternalState)?;
+    let mut prf = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(record_id_key.as_slice())
+        .map_err(|_| KelivoStatus::InternalState)?;
+    prf.update(RECORD_ID_PRF_DOMAIN);
+    prf.update(&entity_key_length.to_be_bytes());
+    prf.update(canonical_entity_key);
+
+    let mut digest = prf.finalize().into_bytes();
+    let mut record_id = [0_u8; DERIVED_RECORD_ID_LENGTH];
+    record_id.copy_from_slice(&digest[..DERIVED_RECORD_ID_LENGTH]);
+    digest.as_mut_slice().zeroize();
+    record_id[6] = (record_id[6] & 0x0f) | 0x40;
+    record_id[8] = (record_id[8] & 0x3f) | 0x80;
+    Ok(record_id)
 }
 
 fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
@@ -901,6 +938,60 @@ pub unsafe extern "C" fn kelivo_account_root_key_generate(out_handle: *mut u64) 
         Err(status) => return status.code(),
     };
     unsafe { write_output(out_handle, handle).expect("已验证的 ARK 句柄输出必须可写") };
+    KelivoStatus::Ok.code()
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `canonical_entity_key` 必须覆盖声明长度；输出指针必须覆盖声明容量，长度指针
+/// 必须可写，且所有缓冲区不得重叠。
+pub unsafe extern "C" fn kelivo_account_record_id_derive(
+    ark_handle: u64,
+    canonical_entity_key: *const u8,
+    canonical_entity_key_length: usize,
+    out_record_id: *mut u8,
+    out_record_id_capacity: usize,
+    out_record_id_length: *mut usize,
+) -> i32 {
+    if let Err(status) = unsafe {
+        prepare_fixed_output(
+            out_record_id,
+            out_record_id_capacity,
+            out_record_id_length,
+            DERIVED_RECORD_ID_LENGTH,
+        )
+    } {
+        return status.code();
+    }
+    if canonical_entity_key_length == 0 {
+        return KelivoStatus::InvalidArgument.code();
+    }
+    if canonical_entity_key_length > RECORD_ENTITY_KEY_MAX_LENGTH {
+        return KelivoStatus::InputTooLarge.code();
+    }
+    let canonical_entity_key =
+        match unsafe { read_input(canonical_entity_key, canonical_entity_key_length) } {
+            Ok(value) => value,
+            Err(status) => return status.code(),
+        };
+    let ark = match ark_for_handle(ark_handle) {
+        Ok(ark) => ark,
+        Err(status) => return status.code(),
+    };
+    let record_id = match derive_account_record_id(&ark, canonical_entity_key) {
+        Ok(record_id) => record_id,
+        Err(status) => return status.code(),
+    };
+    unsafe {
+        write_bytes(
+            out_record_id,
+            out_record_id_capacity,
+            &record_id,
+            out_record_id_length,
+        )
+        .expect("已验证的不透明记录 ID 输出必须可写");
+    }
     KelivoStatus::Ok.code()
 }
 
@@ -1552,6 +1643,30 @@ mod tests {
         bytes[6] = (bytes[6] & 0x0f) | 0x40;
         bytes[8] = (bytes[8] & 0x3f) | 0x80;
         bytes
+    }
+
+    #[test]
+    fn record_id_derivation_matches_subkey_separated_hmac_vector() {
+        let ark = crypto::AccountRootKey::from_bytes([0x11; 32]);
+        let record_id =
+            derive_account_record_id(&ark, b"chat-message/018f2f89-8d5a-7bd2-a459-5d540a8f90ab")
+                .expect("规范实体键应可派生记录 ID");
+
+        assert_eq!(
+            record_id,
+            [
+                0x8c, 0x3f, 0x2a, 0x00, 0xe1, 0xe4, 0x44, 0xaa, 0xb4, 0xad, 0x06, 0xfa, 0x57, 0xec,
+                0x38, 0xef,
+            ]
+        );
+        assert_eq!(
+            derive_account_record_id(&ark, &[]),
+            Err(KelivoStatus::InvalidArgument)
+        );
+        assert_eq!(
+            derive_account_record_id(&ark, &[0_u8; RECORD_ENTITY_KEY_MAX_LENGTH + 1]),
+            Err(KelivoStatus::InputTooLarge)
+        );
     }
 
     fn register_bound_pending_pairing(created_at: Instant, wall_now_ms: u64) -> u64 {

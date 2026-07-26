@@ -1,3 +1,5 @@
+import 'e2ee_account_record_cipher.dart';
+
 sealed class CloudSyncRecordMutation {
   const CloudSyncRecordMutation({
     required this.mutationId,
@@ -6,31 +8,18 @@ sealed class CloudSyncRecordMutation {
   });
 
   final String mutationId;
-  final String recordId;
+  final E2eeAccountRecordId recordId;
   final int expectedRevision;
 }
 
 final class CloudSyncPutRecordMutation extends CloudSyncRecordMutation {
-  const CloudSyncPutRecordMutation({
+  CloudSyncPutRecordMutation({
     required super.mutationId,
-    required super.recordId,
     required super.expectedRevision,
-    required this.keyEpoch,
-    required this.ciphertext,
-  });
+    required this.record,
+  }) : super(recordId: record.recordId);
 
-  static const envelopeVersion = 1;
-
-  final int keyEpoch;
-  final String ciphertext;
-}
-
-final class CloudSyncDeleteRecordMutation extends CloudSyncRecordMutation {
-  const CloudSyncDeleteRecordMutation({
-    required super.mutationId,
-    required super.recordId,
-    required super.expectedRevision,
-  });
+  final E2eeSealedAccountRecordEnvelope record;
 }
 
 sealed class CloudSyncRecordMutationResult {
@@ -81,27 +70,22 @@ sealed class CloudSyncRecordChange {
   });
 
   final int changeSeq;
-  final String recordId;
+  final E2eeUntrustedAccountRecordId recordId;
   final int revision;
   final DateTime updatedAt;
   final String? updatedByDeviceId;
 }
 
 final class CloudSyncPutRecordChange extends CloudSyncRecordChange {
-  const CloudSyncPutRecordChange({
+  CloudSyncPutRecordChange({
     required super.changeSeq,
-    required super.recordId,
     required super.revision,
     required super.updatedAt,
     required super.updatedByDeviceId,
-    required this.envelopeVersion,
-    required this.keyEpoch,
-    required this.ciphertext,
-  });
+    required this.record,
+  }) : super(recordId: record.recordId);
 
-  final int envelopeVersion;
-  final int keyEpoch;
-  final String ciphertext;
+  final E2eeUntrustedAccountRecordEnvelope record;
 }
 
 final class CloudSyncDeleteRecordChange extends CloudSyncRecordChange {
@@ -140,7 +124,7 @@ sealed class CloudSyncRecordState {
     required this.lastChangeSeq,
   });
 
-  final String recordId;
+  final E2eeUntrustedAccountRecordId recordId;
   final int revision;
   final DateTime updatedAt;
   final String? updatedByDeviceId;
@@ -148,20 +132,15 @@ sealed class CloudSyncRecordState {
 }
 
 final class CloudSyncActiveRecord extends CloudSyncRecordState {
-  const CloudSyncActiveRecord({
-    required super.recordId,
+  CloudSyncActiveRecord({
     required super.revision,
     required super.updatedAt,
     required super.updatedByDeviceId,
     required super.lastChangeSeq,
-    required this.envelopeVersion,
-    required this.keyEpoch,
-    required this.ciphertext,
-  });
+    required this.record,
+  }) : super(recordId: record.recordId);
 
-  final int envelopeVersion;
-  final int keyEpoch;
-  final String ciphertext;
+  final E2eeUntrustedAccountRecordEnvelope record;
 }
 
 final class CloudSyncDeletedRecord extends CloudSyncRecordState {

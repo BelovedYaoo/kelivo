@@ -24,10 +24,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v6 OPAQUE 与设备 E2EE 支持', () async {
+  test('能力门禁声明 ABI v7 OPAQUE 与设备 E2EE 支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 6);
+    expect(capabilities.abiVersion, 7);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -199,6 +199,57 @@ void main() {
     await core.closeAccountRootKey(ark);
     await core.closeDeviceIdentity(identity);
     await expectLater(core.closeDeviceIdentity(identity), throwsStateError);
+  });
+
+  test('账户根密钥稳定派生不透明 UUIDv4 记录标识并拒绝非法实体键', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final ark = await core.generateAccountRootKey();
+    final canonicalKey = Uint8List.fromList(
+      'chat-message/018f2f89-8d5a-7bd2-a459-5d540a8f90ab'.codeUnits,
+    );
+
+    final first = await core.deriveAccountRecordId(
+      ark,
+      canonicalEntityKey: canonicalKey,
+    );
+    final repeated = await core.deriveAccountRecordId(
+      ark,
+      canonicalEntityKey: canonicalKey,
+    );
+    final other = await core.deriveAccountRecordId(
+      ark,
+      canonicalEntityKey: Uint8List.fromList(
+        'chat-message/018f2f89-8d5a-7bd2-a459-5d540a8f90ac'.codeUnits,
+      ),
+    );
+
+    expect(first, hasLength(16));
+    expect(first[6] & 0xf0, 0x40);
+    expect(first[8] & 0xc0, 0x80);
+    expect(repeated, orderedEquals(first));
+    expect(other, isNot(orderedEquals(first)));
+    expect(
+      await core.deriveAccountRecordId(
+        ark,
+        canonicalEntityKey: Uint8List(2048)..fillRange(0, 2048, 0x5a),
+      ),
+      hasLength(16),
+    );
+
+    await expectLater(
+      core.deriveAccountRecordId(ark, canonicalEntityKey: Uint8List(0)),
+      throwsArgumentError,
+    );
+    await expectLater(
+      core.deriveAccountRecordId(ark, canonicalEntityKey: Uint8List(2049)),
+      throwsArgumentError,
+    );
+
+    await core.closeAccountRootKey(ark);
+    await expectLater(
+      core.deriveAccountRecordId(ark, canonicalEntityKey: canonicalKey),
+      throwsStateError,
+    );
   });
 
   test('账户根密钥记录可跨句柄互解并严格绑定上下文', () async {
