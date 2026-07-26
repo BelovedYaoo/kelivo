@@ -27,3 +27,6 @@
 - API 的配对期限缺口已由 `kelivo-api/main@a599ee4` 修复并关闭 Issue #14：期限不晚于 onboarding session，剩余不足 60 秒拒绝创建；未部署，等待 E2EE 整体发版。
 - 客户端已完成桌面配对创建与取消深模块：服务端回显严格绑定本地设备 ID、公钥、平台和版本，QR secret 单一所有权，取消始终销毁本地 pending 句柄；超出 onboarding 截止时间的配对响应失败关闭。
 - 验证：协议全文件 66/66、认证/配对三文件定向分析通过。
+- 移动端批准已进入认证深模块：仅 Android/iOS 的当前完整会话可签发，扫码账号必须匹配本地 user，扫码帧与 pairing secret 在所有路径清零；批准响应丢失最多原样重试三次且不越过 QR/session 截止时间。
+- 修复 Issue #43 所述传输分类：无 HTTP 状态且底层为 `SocketException`/`HttpException` 的 Dio unknown 现在归类为可重试网络中断；2xx 反序列化失败及其他 unknown 仍不可重试。
+- 验证：协议全文件 67/67、认证/配对/传输四文件定向分析通过；跨账号与桌面签发失败路径均通过。

@@ -1,5 +1,8 @@
 part of 'e2ee_account_authenticator.dart';
 
+const _pairingApprovalMaximumAttempts = 3;
+const _pairingApprovalRetryDelay = Duration(milliseconds: 200);
+
 enum _E2eePendingPairingState { active, cancelling, cancelled }
 
 final class E2eePendingDevicePairing {
@@ -200,6 +203,136 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         );
       } finally {
         _authenticationInProgress = false;
+      }
+    }
+  }
+
+  Future<CloudSyncDevicePairingApproval> approveScannedDevicePairing({
+    required String loginName,
+    required CloudSyncAuthenticatedSession session,
+    required Uint8List qrFrame,
+  }) async {
+    try {
+      _beginExclusiveOperation();
+    } catch (_) {
+      E2eeAccountAuthenticator._clearBytesPreservingFailure(qrFrame);
+      rethrow;
+    }
+    _DeviceContext? context;
+    CloudSyncDevicePairingQrPayload? payload;
+    Uint8List? pairingSecret;
+    Object? primaryError;
+    try {
+      final normalizedLoginName = E2eeAccountAuthenticator._normalizeLoginName(
+        loginName,
+      );
+      final now = DateTime.now().toUtc();
+      if (session.user.loginName != normalizedLoginName ||
+          session.tokenExpiresAt.isBefore(now) ||
+          session.tokenExpiresAt.isAtSameMomentAs(now)) {
+        throw StateError('配对签发会话与当前账户不匹配或已经过期');
+      }
+      if (session.device.platform != CloudSyncPlatform.android &&
+          session.device.platform != CloudSyncPlatform.ios) {
+        throw UnsupportedError('设备配对只能由移动可信设备批准');
+      }
+
+      context = await _openDeviceContext(normalizedLoginName);
+      _authenticatedLoginResult(context, session);
+      final account = context.account;
+      final ark = context.ark;
+      if (account == null || ark == null) {
+        throw StateError('配对签发设备缺少账户密钥状态');
+      }
+
+      payload = CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+        qrFrame,
+        now: now,
+      );
+      payload.requireAccountContextMatchesLocalUserId(session.user.id);
+      pairingSecret = payload.takePairingSecret();
+      late final KelivoPairingApprovalBundle bundle;
+      try {
+        bundle = await _secureCore.createPairingApproval(
+          context.identity,
+          ark,
+          pairingId: payload.pairingIdBytes,
+          userId: account.userId,
+          issuerDeviceId: context.deviceId,
+          targetDeviceId: payload.targetDeviceIdBytes,
+          expiresAtMs: payload.expiresAt.millisecondsSinceEpoch,
+          challenge: payload.challenge,
+          keyEpoch: account.keyEpoch,
+          targetPublicKeys: KelivoDevicePublicKeys(
+            signingPublicKey: payload.signingPublicKey,
+            keyAgreementPublicKey: payload.keyAgreementPublicKey,
+          ),
+          pairingSecret: pairingSecret,
+        );
+      } finally {
+        E2eeAccountAuthenticator._clearBytes(pairingSecret);
+        pairingSecret = null;
+      }
+
+      final approval = await _approvePairingBundleWithRetry(
+        session: session,
+        payload: payload,
+        bundle: bundle,
+      );
+      if (approval.pairingId != payload.pairingId) {
+        throw StateError('服务端批准结果与扫码配对不匹配');
+      }
+      return approval;
+    } catch (error) {
+      primaryError = error;
+      rethrow;
+    } finally {
+      try {
+        E2eeAccountAuthenticator._clearBytesPreservingFailure(qrFrame);
+        E2eeAccountAuthenticator._clearBytes(pairingSecret);
+        payload?.dispose();
+        await _closeHandles(context: context);
+      } catch (error, stackTrace) {
+        if (primaryError == null) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+        E2eeAccountAuthenticator._logSuppressedCleanupFailure(
+          error,
+          stackTrace,
+        );
+      } finally {
+        _authenticationInProgress = false;
+      }
+    }
+  }
+
+  Future<CloudSyncDevicePairingApproval> _approvePairingBundleWithRetry({
+    required CloudSyncAuthenticatedSession session,
+    required CloudSyncDevicePairingQrPayload payload,
+    required KelivoPairingApprovalBundle bundle,
+  }) async {
+    final retryDeadline = payload.expiresAt.isBefore(session.tokenExpiresAt)
+        ? payload.expiresAt
+        : session.tokenExpiresAt;
+    for (var attempt = 1; ; attempt++) {
+      try {
+        return await _accountClient.approveDevicePairing(
+          token: session.token,
+          pairingId: payload.pairingId,
+          keyEpoch: session.keyEpoch,
+          accountKeyEnvelope: bundle.envelope,
+          deviceProof: bundle.signature,
+          pairingAuthenticator: bundle.authenticator,
+        );
+      } on CloudSyncException catch (error) {
+        final retryAt = DateTime.now().toUtc().add(_pairingApprovalRetryDelay);
+        if (!error.retryable ||
+            attempt >= _pairingApprovalMaximumAttempts ||
+            !retryAt.isBefore(retryDeadline)) {
+          rethrow;
+        }
+        // 原样重放同一 bundle 才能与服务端批准幂等键保持一致。
+        await Future<void>.delayed(_pairingApprovalRetryDelay);
       }
     }
   }

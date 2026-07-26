@@ -1435,6 +1435,195 @@ void main() {
     await expectLater(rejectedStart, throwsStateError);
   });
 
+  test('移动可信设备批准响应丢失后原样重试并清零扫码帧', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    const loginName = 'pairing-issuer';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
+    final identity = await core.generateDeviceIdentity();
+    final ark = await core.generateAccountRootKey();
+    final targetIdentity = await core.generateDeviceIdentity();
+    final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
+    final fullState = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: _rawUuid(_issuerDeviceId),
+      keyVersion: 1,
+      ark: ark,
+      account: KelivoDeviceStateAccountBinding(
+        userId: _rawUuid(_userId),
+        keyEpoch: 7,
+      ),
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: fullState,
+    );
+    await core.closeAccountRootKey(ark);
+    await core.closeDeviceIdentity(targetIdentity);
+    await core.closeDeviceIdentity(identity);
+    await core.close(key);
+
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final now = DateTime.fromMillisecondsSinceEpoch(
+      DateTime.now().toUtc().millisecondsSinceEpoch,
+      isUtc: true,
+    );
+    final qrPayload = _pairingQrPayload(
+      pairingSecret: _filledBytes(cloudSyncPairingSecretBytes, 24),
+      now: now,
+      expiresAt: now.add(const Duration(minutes: 4)),
+      signingPublicKey: targetPublicKeys.signingPublicKey,
+      keyAgreementPublicKey: targetPublicKeys.keyAgreementPublicKey,
+    );
+    final qrFrame = CloudSyncDevicePairingQrCodec.encode(qrPayload, now: now);
+    qrPayload.dispose();
+    final session = CloudSyncAuthenticatedSession(
+      token: _fullToken,
+      tokenExpiresAt: now.add(const Duration(minutes: 10)),
+      keyEpoch: 7,
+      user: CloudSyncAuthenticatedUser(
+        id: _userId,
+        loginName: loginName,
+        displayName: 'Pairing Issuer',
+        role: CloudSyncUserRole.owner,
+        attachmentQuotaBytes: 1048576,
+      ),
+      device: CloudSyncAuthenticatedDevice(
+        id: _issuerDeviceId,
+        name: 'Android 手机',
+        platform: CloudSyncPlatform.android,
+        clientVersion: '1.2.3',
+        status: CloudSyncAuthenticatedDeviceStatus.active,
+        createdAt: now,
+      ),
+    );
+
+    final approvalFuture = authenticator.approveScannedDevicePairing(
+      loginName: loginName,
+      session: session,
+      qrFrame: qrFrame,
+    );
+    expect(await requests.moveNext(), isTrue);
+    final firstRequest = requests.current;
+    expect(firstRequest.uri.path, '/api/auth/device-pairing/approve');
+    final firstBody = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(firstRequest).join()),
+    );
+    final firstSocket = await firstRequest.response.detachSocket();
+    firstSocket.destroy();
+
+    expect(await requests.moveNext(), isTrue);
+    final secondRequest = requests.current;
+    expect(secondRequest.uri.path, '/api/auth/device-pairing/approve');
+    expect(
+      secondRequest.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
+    final secondBody = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(secondRequest).join()),
+    );
+    expect(secondBody, firstBody);
+    secondRequest.response.headers.contentType = ContentType.json;
+    secondRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': _pairingId,
+          'result': 'approved',
+          'approvedAt': now.toIso8601String(),
+        },
+      }),
+    );
+    await secondRequest.response.close();
+
+    final approval = await approvalFuture;
+    expect(approval.pairingId, _pairingId);
+    expect(qrFrame, everyElement(0));
+
+    Uint8List createQrFrame({
+      required int secretByte,
+      String accountContextId = _userId,
+    }) {
+      final payload = _pairingQrPayload(
+        pairingSecret: _filledBytes(cloudSyncPairingSecretBytes, secretByte),
+        now: now,
+        expiresAt: now.add(const Duration(minutes: 4)),
+        accountContextId: accountContextId,
+        signingPublicKey: targetPublicKeys.signingPublicKey,
+        keyAgreementPublicKey: targetPublicKeys.keyAgreementPublicKey,
+      );
+      try {
+        return CloudSyncDevicePairingQrCodec.encode(payload, now: now);
+      } finally {
+        payload.dispose();
+      }
+    }
+
+    final crossAccountFrame = createQrFrame(
+      secretByte: 25,
+      accountContextId: _accountContextId,
+    );
+    await expectLater(
+      authenticator.approveScannedDevicePairing(
+        loginName: loginName,
+        session: session,
+        qrFrame: crossAccountFrame,
+      ),
+      throwsFormatException,
+    );
+    expect(crossAccountFrame, everyElement(0));
+
+    final desktopFrame = createQrFrame(secretByte: 26);
+    final desktopSession = CloudSyncAuthenticatedSession(
+      token: _fullToken,
+      tokenExpiresAt: session.tokenExpiresAt,
+      keyEpoch: session.keyEpoch,
+      user: session.user,
+      device: CloudSyncAuthenticatedDevice(
+        id: session.device.id,
+        name: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: session.device.clientVersion,
+        status: CloudSyncAuthenticatedDeviceStatus.active,
+        createdAt: session.device.createdAt,
+      ),
+    );
+    await expectLater(
+      authenticator.approveScannedDevicePairing(
+        loginName: loginName,
+        session: desktopSession,
+        qrFrame: desktopFrame,
+      ),
+      throwsUnsupportedError,
+    );
+    expect(desktopFrame, everyElement(0));
+  });
+
   test('设备配对全生命周期按令牌能力隔离并显式接管完整会话', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = <(String, String?, CloudSyncJsonMap)>[];

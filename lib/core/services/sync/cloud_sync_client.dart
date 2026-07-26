@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:dio/dio.dart';
@@ -1498,8 +1499,14 @@ CloudSyncException _fromDioException(DioException error) {
       statusCode >= 200 &&
       statusCode < 300 &&
       error.error != null;
+  final responseConnectionInterrupted =
+      error.type == DioExceptionType.unknown &&
+      statusCode == null &&
+      (error.error is SocketException || error.error is HttpException);
   final kind = responseDeserializationFailed
       ? CloudSyncFailureKind.invalidResponse
+      : responseConnectionInterrupted
+      ? CloudSyncFailureKind.network
       : switch (error.type) {
           DioExceptionType.cancel => CloudSyncFailureKind.cancelled,
           DioExceptionType.connectionTimeout ||
