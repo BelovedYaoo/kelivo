@@ -1,16 +1,24 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/sync/cloud_sync_client.dart';
+import '../services/sync/e2ee_account_authenticator.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/workspace/account_workspace_runtime.dart';
+import '../services/workspace/device_state_blob_store.dart';
 
 typedef CloudSyncAccountClientFactory =
-    CloudSyncAccountClient Function({String? token});
+    CloudSyncAccountClient Function({CloudSyncFullSessionToken? token});
+typedef E2eeAccountAuthenticationFactory =
+    E2eeAccountAuthentication Function(CloudSyncAccountClient accountClient);
 
-CloudSyncAccountClient _createCloudSyncAccountClient({String? token}) {
+CloudSyncAccountClient _createCloudSyncAccountClient({
+  CloudSyncFullSessionToken? token,
+}) {
   return CloudSyncClient(token: token);
 }
 
@@ -28,17 +36,30 @@ final class CloudSyncProvider extends ChangeNotifier {
   CloudSyncProvider.controlPlaneOnly(
     this._workspaceRuntime, {
     CloudSyncAccountClientFactory clientFactory = _createCloudSyncAccountClient,
+    E2eeAccountAuthenticationFactory? authenticationFactory,
   }) {
     _clientFactory = clientFactory;
+    _authenticationFactory =
+        authenticationFactory ??
+        (accountClient) => E2eeAccountAuthenticator(
+          baseUrl: defaultCloudSyncBaseUrl,
+          accountClient: accountClient,
+          deviceStateStore: DeviceStateBlobStore(
+            installationRoot: _workspaceRuntime.installationRoot,
+          ),
+          secureCore: const KelivoSecureCore(),
+        );
   }
 
   final AccountWorkspaceRuntime _workspaceRuntime;
   late final CloudSyncAccountClientFactory _clientFactory;
+  late final E2eeAccountAuthenticationFactory _authenticationFactory;
 
   CloudSyncProviderStatus _status = CloudSyncProviderStatus.initializing;
   CloudSyncAccountSession? _session;
   CloudSyncException? _lastError;
   CloudSyncException? _deviceError;
+  E2eeAccountLoginApprovalRequired? _pendingDeviceApproval;
   List<CloudSyncDeviceSession> _devices = const <CloudSyncDeviceSession>[];
   CloudSyncAccountClient? _client;
   Future<void>? _initialization;
@@ -53,6 +74,8 @@ final class CloudSyncProvider extends ChangeNotifier {
   CloudSyncAccountSession? get session => _session;
   CloudSyncException? get lastError => _lastError;
   CloudSyncException? get deviceError => _deviceError;
+  E2eeAccountLoginApprovalRequired? get pendingDeviceApproval =>
+      _pendingDeviceApproval;
   bool get contentSyncEnabled => false;
   List<CloudSyncDeviceSession> get devices =>
       List<CloudSyncDeviceSession>.unmodifiable(_devices);
@@ -82,7 +105,9 @@ final class CloudSyncProvider extends ChangeNotifier {
 
     try {
       final session = _workspaceRuntime.current.session;
-      if (session != null && session.baseUrl != defaultCloudSyncBaseUrl) {
+      if (session != null &&
+          (session.baseUrl != defaultCloudSyncBaseUrl ||
+              session.isExpiredAt(DateTime.now().toUtc()))) {
         await _workspaceRuntime.signOut();
         _workspaceRestartRequired = true;
         _setStatus(CloudSyncProviderStatus.workspaceChangePending);
@@ -131,6 +156,7 @@ final class CloudSyncProvider extends ChangeNotifier {
     _beginSessionMutation();
     _lastError = null;
     _deviceError = null;
+    _pendingDeviceApproval = null;
     _devicesLoading = false;
     _setStatus(CloudSyncProviderStatus.signingIn);
     CloudSyncAccountClient? loginClient;
@@ -138,28 +164,29 @@ final class CloudSyncProvider extends ChangeNotifier {
       final packageInfo = await PackageInfo.fromPlatform();
       if (_disposed) return false;
       loginClient = _clientFactory();
-      final session = await loginClient.login(
+      final authentication = _authenticationFactory(loginClient);
+      final loginResult = await authentication.loginDevice(
         loginName: loginName.trim(),
-        password: password,
+        password: Uint8List.fromList(utf8.encode(password)),
         deviceName: deviceName.trim(),
         platform: _currentPlatform(),
         clientVersion: packageInfo.version,
       );
       if (_disposed) return false;
-      final workspaceBinding = await _workspaceRuntime.bindAccount(session);
-      if (workspaceBinding is AccountWorkspaceRestartRequired) {
-        _workspaceRestartRequired = true;
-        _setStatus(CloudSyncProviderStatus.workspaceChangePending);
-        return true;
-      }
-
-      _workspaceRestartRequired = false;
-      _session = session;
-      _connect(session, client: loginClient);
-      loginClient = null;
-      if (_disposed) return false;
-      _setStatus(CloudSyncProviderStatus.idle);
-      return true;
+      return switch (loginResult) {
+        E2eeAccountLoginApprovalRequired() => _retainPendingApproval(
+          loginClient,
+          loginResult,
+        ),
+        E2eeAccountLoginAuthenticated(:final session) => () async {
+          final connected = await _bindAuthenticatedSession(
+            session,
+            loginClient!,
+          );
+          if (connected) loginClient = null;
+          return true;
+        }(),
+      };
     } catch (error, stackTrace) {
       _recordFailure(
         error,
@@ -176,11 +203,73 @@ final class CloudSyncProvider extends ChangeNotifier {
     }
   }
 
+  Future<bool> register({
+    required String loginName,
+    required String displayName,
+    required String password,
+    required String deviceName,
+  }) async {
+    await initialize();
+    if (!_ready || _disposed) return false;
+    if (_session != null || _sessionMutationInProgress) {
+      _lastError = const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
+      );
+      _notify();
+      return false;
+    }
+
+    _beginSessionMutation();
+    _lastError = null;
+    _deviceError = null;
+    _pendingDeviceApproval = null;
+    _devicesLoading = false;
+    _setStatus(CloudSyncProviderStatus.signingIn);
+    CloudSyncAccountClient? registrationClient;
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (_disposed) return false;
+      registrationClient = _clientFactory();
+      final authentication = _authenticationFactory(registrationClient);
+      final authenticatedSession = await authentication.registerFirstDevice(
+        loginName: loginName.trim(),
+        displayName: displayName.trim(),
+        password: Uint8List.fromList(utf8.encode(password)),
+        deviceName: deviceName.trim(),
+        platform: _currentPlatform(),
+        clientVersion: packageInfo.version,
+      );
+      if (_disposed) return false;
+      final connected = await _bindAuthenticatedSession(
+        authenticatedSession,
+        registrationClient,
+      );
+      if (connected) registrationClient = null;
+      return true;
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '注册云同步账户',
+        status: _session == null
+            ? CloudSyncProviderStatus.signedOut
+            : CloudSyncProviderStatus.error,
+      );
+      return false;
+    } finally {
+      registrationClient?.close(force: true);
+      _endSessionMutation();
+    }
+  }
+
   Future<bool> logout() async {
     await initialize();
     if (_disposed || _sessionMutationInProgress) return false;
     _beginSessionMutation();
     _session = null;
+    _pendingDeviceApproval = null;
     _devicesLoading = false;
     _setStatus(CloudSyncProviderStatus.signingOut);
 
@@ -291,6 +380,43 @@ final class CloudSyncProvider extends ChangeNotifier {
     final nextClient = client ?? _clientFactory(token: session.token);
     nextClient.setToken(session.token);
     _client = nextClient;
+  }
+
+  bool _retainPendingApproval(
+    CloudSyncAccountClient client,
+    E2eeAccountLoginApprovalRequired approval,
+  ) {
+    client.setToken(null);
+    _pendingDeviceApproval = approval;
+    _lastError = const CloudSyncException(
+      kind: CloudSyncFailureKind.conflict,
+      retryable: false,
+      serverCode: 'SYNC_DEVICE_APPROVAL_REQUIRED',
+    );
+    _setStatus(CloudSyncProviderStatus.signedOut);
+    return false;
+  }
+
+  Future<bool> _bindAuthenticatedSession(
+    CloudSyncAuthenticatedSession authenticatedSession,
+    CloudSyncAccountClient client,
+  ) async {
+    final session = CloudSyncAccountSession.fromAuthenticatedSession(
+      baseUrl: defaultCloudSyncBaseUrl,
+      session: authenticatedSession,
+    );
+    final workspaceBinding = await _workspaceRuntime.bindAccount(session);
+    if (workspaceBinding is AccountWorkspaceRestartRequired) {
+      _workspaceRestartRequired = true;
+      _setStatus(CloudSyncProviderStatus.workspaceChangePending);
+      return false;
+    }
+
+    _workspaceRestartRequired = false;
+    _session = session;
+    _connect(session, client: client);
+    if (!_disposed) _setStatus(CloudSyncProviderStatus.idle);
+    return true;
   }
 
   CloudSyncPlatform _currentPlatform() {
