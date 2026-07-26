@@ -5,8 +5,14 @@
 
 use std::{convert::Infallible, fmt};
 
+use chacha20poly1305::{
+    Tag, XChaCha20Poly1305, XNonce,
+    aead::{AeadInOut, KeyInit as AeadKeyInit},
+};
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
+use hkdf::Hkdf;
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use hpke::{
     Deserializable, Kem as HpkeKemTrait, OpModeR, OpModeS, Serializable,
     aead::{AeadTag, ChaCha20Poly1305 as HpkeAead},
@@ -30,6 +36,10 @@ pub const SHA256_DIGEST_LENGTH: usize = 32;
 pub const DEVICE_PROOF_CHALLENGE_LENGTH: usize = 32;
 pub const DEVICE_PROOF_MESSAGE_LENGTH: usize = 224;
 pub const DEVICE_PROOF_SIGNATURE_LENGTH: usize = 64;
+pub const DEVICE_PROOF_SIGNATURE_BUNDLE_LENGTH: usize = DEVICE_PROOF_SIGNATURE_LENGTH;
+pub const PAIRING_SECRET_LENGTH: usize = 32;
+pub const PAIRING_AUTHENTICATOR_LENGTH: usize = 32;
+const PAIRING_AUTHENTICATOR_INFO: &[u8] = b"kelivo.pairing.authenticator.v1\0";
 const ARK_ENVELOPE_MAGIC: [u8; 4] = *b"KAEK";
 pub const ARK_ENVELOPE_VERSION: u16 = 1;
 /// KAEK 套件 1 固定映射 RFC 9180：KEM 0x0020、KDF 0x0001、AEAD 0x0003。
@@ -42,16 +52,37 @@ pub const ARK_HPKE_ENCAPSULATED_KEY_LENGTH: usize = 32;
 pub const ARK_HPKE_CIPHERTEXT_LENGTH: usize = ACCOUNT_ROOT_KEY_LENGTH + 16;
 pub const ARK_ENVELOPE_LENGTH: usize = 336;
 const ARK_ENVELOPE_SIGNATURE_LENGTH: usize = 64;
+const DEVICE_STATE_MAGIC: [u8; 4] = *b"KDST";
+pub const DEVICE_STATE_VERSION: u16 = 1;
+pub const DEVICE_STATE_SUITE_ID: u16 = 1;
+const DEVICE_STATE_FLAG_ARK_PRESENT: u16 = 1;
+const DEVICE_STATE_SUPPORTED_FLAGS: u16 = DEVICE_STATE_FLAG_ARK_PRESENT;
+const DEVICE_STATE_RESERVED: u16 = 0;
+const DEVICE_STATE_HEADER_LENGTH: usize = 12;
+const DEVICE_STATE_METADATA_LENGTH: usize = 40;
+const DEVICE_STATE_NONCE_LENGTH: usize = 24;
+const DEVICE_STATE_SECRET_LENGTH: usize = DEVICE_PRIVATE_KEY_LENGTH * 2 + ACCOUNT_ROOT_KEY_LENGTH;
+const DEVICE_STATE_TAG_LENGTH: usize = 16;
+const DEVICE_STATE_DEVICE_ID_OFFSET: usize = DEVICE_STATE_HEADER_LENGTH;
+const DEVICE_STATE_KEY_VERSION_OFFSET: usize = DEVICE_STATE_DEVICE_ID_OFFSET + UUID_LENGTH;
+const DEVICE_STATE_USER_ID_OFFSET: usize = DEVICE_STATE_KEY_VERSION_OFFSET + size_of::<u32>();
+const DEVICE_STATE_KEY_EPOCH_OFFSET: usize = DEVICE_STATE_USER_ID_OFFSET + UUID_LENGTH;
+const DEVICE_STATE_NONCE_OFFSET: usize = DEVICE_STATE_HEADER_LENGTH + DEVICE_STATE_METADATA_LENGTH;
+const DEVICE_STATE_CIPHERTEXT_OFFSET: usize = DEVICE_STATE_NONCE_OFFSET + DEVICE_STATE_NONCE_LENGTH;
+const DEVICE_STATE_TAG_OFFSET: usize = DEVICE_STATE_CIPHERTEXT_OFFSET + DEVICE_STATE_SECRET_LENGTH;
+pub const DEVICE_STATE_BLOB_LENGTH: usize = DEVICE_STATE_TAG_OFFSET + DEVICE_STATE_TAG_LENGTH;
+pub const DEVICE_STATE_KEY_LENGTH: usize = 32;
 
 const PROOF_ATTEMPT_OFFSET: usize = DEVICE_PROOF_HEADER_LENGTH;
-const PROOF_ACCOUNT_OFFSET: usize = PROOF_ATTEMPT_OFFSET + UUID_LENGTH;
-const PROOF_DEVICE_OFFSET: usize = PROOF_ACCOUNT_OFFSET + UUID_LENGTH;
+const PROOF_ACCOUNT_CONTEXT_OFFSET: usize = PROOF_ATTEMPT_OFFSET + UUID_LENGTH;
+const PROOF_DEVICE_OFFSET: usize = PROOF_ACCOUNT_CONTEXT_OFFSET + UUID_LENGTH;
 const PROOF_EXPIRES_OFFSET: usize = PROOF_DEVICE_OFFSET + UUID_LENGTH;
 const PROOF_CHALLENGE_OFFSET: usize = PROOF_EXPIRES_OFFSET + size_of::<u64>();
 const PROOF_SIGNING_KEY_OFFSET: usize = PROOF_CHALLENGE_OFFSET + DEVICE_PROOF_CHALLENGE_LENGTH;
 const PROOF_KEY_AGREEMENT_OFFSET: usize = PROOF_SIGNING_KEY_OFFSET + DEVICE_PUBLIC_KEY_LENGTH;
-const PROOF_OPAQUE_HASH_OFFSET: usize = PROOF_KEY_AGREEMENT_OFFSET + DEVICE_PUBLIC_KEY_LENGTH;
-const PROOF_ENVELOPE_HASH_OFFSET: usize = PROOF_OPAQUE_HASH_OFFSET + SHA256_DIGEST_LENGTH;
+const PROOF_PRIMARY_PAYLOAD_HASH_OFFSET: usize =
+    PROOF_KEY_AGREEMENT_OFFSET + DEVICE_PUBLIC_KEY_LENGTH;
+const PROOF_ENVELOPE_HASH_OFFSET: usize = PROOF_PRIMARY_PAYLOAD_HASH_OFFSET + SHA256_DIGEST_LENGTH;
 const ARK_USER_OFFSET: usize = ARK_ENVELOPE_HEADER_LENGTH;
 const ARK_ISSUER_DEVICE_OFFSET: usize = ARK_USER_OFFSET + UUID_LENGTH;
 const ARK_TARGET_DEVICE_OFFSET: usize = ARK_ISSUER_DEVICE_OFFSET + UUID_LENGTH;
@@ -72,6 +103,8 @@ const _: () = {
     assert!(PROOF_ENVELOPE_HASH_OFFSET + SHA256_DIGEST_LENGTH == DEVICE_PROOF_MESSAGE_LENGTH);
     assert!(ARK_ENCAPSULATED_KEY_OFFSET == 192);
     assert!(ARK_SIGNATURE_OFFSET + ARK_ENVELOPE_SIGNATURE_LENGTH == ARK_ENVELOPE_LENGTH);
+    assert!(DEVICE_STATE_KEY_EPOCH_OFFSET + size_of::<u32>() == DEVICE_STATE_NONCE_OFFSET);
+    assert!(DEVICE_STATE_BLOB_LENGTH == 188);
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -81,6 +114,7 @@ pub enum DeviceCryptoError {
     InvalidSigningPublicKey,
     InvalidKeyAgreementPublicKey,
     InvalidKeyAgreementPrivateKey,
+    RandomnessUnavailable,
     SigningKeyMismatch,
     InvalidDeviceProofMagic,
     UnsupportedDeviceProofVersion(u16),
@@ -102,6 +136,21 @@ pub enum DeviceCryptoError {
     KeyAgreementKeyMismatch,
     ArkEnvelopeSealFailed,
     ArkEnvelopeOpenFailed,
+    InvalidPrimaryPayloadLength { expected: usize, actual: usize },
+    InvalidEnvelopePayloadLength { expected: usize, actual: usize },
+    InvalidPairingAuthenticatorLength { expected: usize, actual: usize },
+    PairingAuthenticatorCryptoFailed,
+    PairingAuthenticatorInvalid,
+    InvalidDeviceStateMagic,
+    UnsupportedDeviceStateVersion(u16),
+    UnsupportedDeviceStateSuite(u16),
+    UnsupportedDeviceStateFlags(u16),
+    UnsupportedDeviceStateReserved(u16),
+    InvalidDeviceStateLength { expected: usize, actual: usize },
+    InvalidDeviceKeyVersion,
+    DeviceStateBindingMismatch,
+    DeviceStateCryptoFailed,
+    DeviceStateAuthenticationFailed,
 }
 
 impl fmt::Display for DeviceCryptoError {
@@ -112,6 +161,7 @@ impl fmt::Display for DeviceCryptoError {
             Self::InvalidSigningPublicKey => formatter.write_str("Ed25519 公钥无效"),
             Self::InvalidKeyAgreementPublicKey => formatter.write_str("X25519 公钥无效"),
             Self::InvalidKeyAgreementPrivateKey => formatter.write_str("X25519 私钥无效"),
+            Self::RandomnessUnavailable => formatter.write_str("系统随机源不可用"),
             Self::SigningKeyMismatch => {
                 formatter.write_str("Ed25519 私钥与设备证明绑定的公钥不匹配")
             }
@@ -162,6 +212,43 @@ impl fmt::Display for DeviceCryptoError {
             Self::KeyAgreementKeyMismatch => formatter.write_str("X25519 私钥与目标设备公钥不匹配"),
             Self::ArkEnvelopeSealFailed => formatter.write_str("ARK 信封 HPKE 密封失败"),
             Self::ArkEnvelopeOpenFailed => formatter.write_str("ARK 信封 HPKE 打开失败"),
+            Self::InvalidPrimaryPayloadLength { expected, actual } => write!(
+                formatter,
+                "设备证明主载荷长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::InvalidEnvelopePayloadLength { expected, actual } => write!(
+                formatter,
+                "设备证明信封长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::InvalidPairingAuthenticatorLength { expected, actual } => write!(
+                formatter,
+                "配对认证器长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::PairingAuthenticatorCryptoFailed => formatter.write_str("配对认证器派生失败"),
+            Self::PairingAuthenticatorInvalid => formatter.write_str("配对认证器无效"),
+            Self::InvalidDeviceStateMagic => formatter.write_str("设备秘密状态魔数无效"),
+            Self::UnsupportedDeviceStateVersion(version) => {
+                write!(formatter, "不支持的设备秘密状态版本：{version}")
+            }
+            Self::UnsupportedDeviceStateSuite(suite) => {
+                write!(formatter, "不支持的设备秘密状态密码套件：{suite}")
+            }
+            Self::UnsupportedDeviceStateFlags(flags) => {
+                write!(formatter, "设备秘密状态包含不支持的标志：{flags}")
+            }
+            Self::UnsupportedDeviceStateReserved(reserved) => {
+                write!(formatter, "设备秘密状态保留字段必须为零，实际 {reserved}")
+            }
+            Self::InvalidDeviceStateLength { expected, actual } => write!(
+                formatter,
+                "设备秘密状态长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::InvalidDeviceKeyVersion => formatter.write_str("设备密钥版本必须为正整数"),
+            Self::DeviceStateBindingMismatch => {
+                formatter.write_str("设备秘密状态与身份或账户绑定不匹配")
+            }
+            Self::DeviceStateCryptoFailed => formatter.write_str("设备秘密状态密封失败"),
+            Self::DeviceStateAuthenticationFailed => formatter.write_str("设备秘密状态认证失败"),
         }
     }
 }
@@ -192,8 +279,8 @@ macro_rules! define_uuid_v4 {
     };
 }
 
-define_uuid_v4!(OpaqueAttemptId);
-define_uuid_v4!(AccountBindingId);
+define_uuid_v4!(DeviceProofAttemptId);
+define_uuid_v4!(AccountContextId);
 define_uuid_v4!(UserId);
 define_uuid_v4!(DeviceId);
 
@@ -391,10 +478,220 @@ impl Drop for DeviceKeyAgreementPrivateKey {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DevicePublicKeys {
+    pub signing: DeviceSigningPublicKey,
+    pub key_agreement: DeviceKeyAgreementPublicKey,
+}
+
+pub struct DeviceIdentity {
+    signing: DeviceSigningPrivateKey,
+    key_agreement: DeviceKeyAgreementPrivateKey,
+}
+
+impl DeviceIdentity {
+    pub fn generate<R>(rng: &mut R) -> Result<Self, DeviceCryptoError>
+    where
+        R: CryptoRng + RngCore,
+    {
+        let mut signing_seed = Zeroizing::new([0_u8; DEVICE_PRIVATE_KEY_LENGTH]);
+        let mut key_agreement_bytes = Zeroizing::new([0_u8; DEVICE_PRIVATE_KEY_LENGTH]);
+        rng.try_fill_bytes(signing_seed.as_mut_slice())
+            .map_err(|_| DeviceCryptoError::RandomnessUnavailable)?;
+        rng.try_fill_bytes(key_agreement_bytes.as_mut_slice())
+            .map_err(|_| DeviceCryptoError::RandomnessUnavailable)?;
+        Self::from_private_bytes(*signing_seed, *key_agreement_bytes)
+    }
+
+    fn from_private_bytes(
+        signing_seed: [u8; DEVICE_PRIVATE_KEY_LENGTH],
+        key_agreement_bytes: [u8; DEVICE_PRIVATE_KEY_LENGTH],
+    ) -> Result<Self, DeviceCryptoError> {
+        Ok(Self {
+            signing: DeviceSigningPrivateKey::from_seed(signing_seed),
+            key_agreement: DeviceKeyAgreementPrivateKey::from_bytes(key_agreement_bytes)?,
+        })
+    }
+
+    pub fn public_keys(&self) -> DevicePublicKeys {
+        DevicePublicKeys {
+            signing: self.signing.public_key(),
+            key_agreement: self.key_agreement.public_key(),
+        }
+    }
+
+    pub fn sign_opaque_finish_proof(
+        &self,
+        kind: DeviceProofKind,
+        context: DeviceProofContext,
+        primary_payload: &[u8],
+        envelope: &[u8],
+    ) -> Result<DeviceProofSignature, DeviceCryptoError> {
+        let (expected_primary_length, expected_envelope_length) = match kind {
+            DeviceProofKind::RegistrationFinish => {
+                (crate::REGISTRATION_UPLOAD_LENGTH, ARK_ENVELOPE_LENGTH)
+            }
+            DeviceProofKind::LoginFinish => (crate::CREDENTIAL_FINALIZATION_LENGTH, 0),
+            DeviceProofKind::PairingApprove => {
+                return Err(DeviceCryptoError::UnsupportedDeviceProofKind(kind as u8));
+            }
+        };
+        require_exact_length(primary_payload, expected_primary_length, true)?;
+        require_exact_length(envelope, expected_envelope_length, false)?;
+        if !envelope.is_empty() {
+            ArkEnvelope::from_bytes(envelope)?;
+        }
+        self.build_and_sign_proof(kind, context, primary_payload, envelope)
+            .map(|(_, signature)| signature)
+    }
+
+    pub fn sign_pairing_approval_proof(
+        &self,
+        context: DeviceProofContext,
+        pairing_secret: &[u8],
+        envelope: &ArkEnvelope,
+    ) -> Result<(DeviceProofSignature, PairingAuthenticator), DeviceCryptoError> {
+        require_exact_length(pairing_secret, PAIRING_SECRET_LENGTH, true)?;
+        let (message, signature) = self.build_and_sign_proof(
+            DeviceProofKind::PairingApprove,
+            context,
+            pairing_secret,
+            envelope.as_bytes(),
+        )?;
+        let authenticator =
+            PairingAuthenticator::create(pairing_secret, &message, &signature, envelope)?;
+        Ok((signature, authenticator))
+    }
+
+    fn build_and_sign_proof(
+        &self,
+        kind: DeviceProofKind,
+        context: DeviceProofContext,
+        primary_payload: &[u8],
+        envelope: &[u8],
+    ) -> Result<(DeviceProofMessage, DeviceProofSignature), DeviceCryptoError> {
+        let public_keys = self.public_keys();
+        let message = DeviceProofMessage::new(DeviceProofFields {
+            kind,
+            attempt_id: context.attempt_id,
+            account_context_id: context.account_context_id,
+            device_id: context.device_id,
+            expires_at_ms: context.expires_at_ms,
+            challenge: context.challenge,
+            signing_public_key: public_keys.signing,
+            key_agreement_public_key: public_keys.key_agreement,
+            primary_payload_hash: Sha256Digest::of(primary_payload),
+            envelope_hash: Sha256Digest::of(envelope),
+        })?;
+        let signature = message.sign(&self.signing)?;
+        Ok((message, signature))
+    }
+
+    pub fn seal_ark_envelope<R>(
+        &self,
+        rng: &mut R,
+        ark: &AccountRootKey,
+        binding: ArkEnvelopeBinding,
+    ) -> Result<ArkEnvelope, DeviceCryptoError>
+    where
+        R: CryptoRng + RngCore,
+    {
+        seal_ark_envelope(rng, ark, binding, &self.signing)
+    }
+
+    pub fn open_pairing_approval(
+        &self,
+        expected: PairingApprovalExpected,
+        pairing_secret: &[u8],
+        proof_signature: &[u8],
+        authenticator: &[u8],
+        envelope: &[u8],
+    ) -> Result<AccountRootKey, DeviceCryptoError> {
+        require_exact_length(pairing_secret, PAIRING_SECRET_LENGTH, true)?;
+        let proof_signature = DeviceProofSignature::from_bytes(proof_signature)?;
+        let authenticator = PairingAuthenticator::from_bytes(authenticator)?;
+        let envelope = ArkEnvelope::from_bytes(envelope)?;
+        let target_public_keys = self.public_keys();
+        let proof_fields = DeviceProofFields {
+            kind: DeviceProofKind::PairingApprove,
+            attempt_id: expected.pairing_id,
+            account_context_id: AccountContextId::new(*expected.user_id.as_bytes())?,
+            device_id: expected.issuer_device_id,
+            expires_at_ms: expected.expires_at_ms,
+            challenge: expected.challenge,
+            signing_public_key: expected.issuer_public_keys.signing,
+            key_agreement_public_key: expected.issuer_public_keys.key_agreement,
+            primary_payload_hash: Sha256Digest::of(pairing_secret),
+            envelope_hash: Sha256Digest::of(envelope.as_bytes()),
+        };
+        let proof_message = DeviceProofMessage::new(proof_fields)?;
+        authenticator.verify(pairing_secret, &proof_message, &proof_signature, &envelope)?;
+        proof_message.verify_expected(proof_fields, &proof_signature)?;
+
+        open_ark_envelope(
+            &envelope,
+            ArkEnvelopeBinding {
+                user_id: expected.user_id,
+                issuer_device_id: expected.issuer_device_id,
+                target_device_id: expected.target_device_id,
+                key_epoch: expected.key_epoch,
+                issuer_signing_public_key: expected.issuer_public_keys.signing,
+                issuer_key_agreement_public_key: expected.issuer_public_keys.key_agreement,
+                target_signing_public_key: target_public_keys.signing,
+                target_key_agreement_public_key: target_public_keys.key_agreement,
+            },
+            &self.key_agreement,
+        )
+    }
+}
+
+fn require_exact_length(
+    bytes: &[u8],
+    expected: usize,
+    primary_payload: bool,
+) -> Result<(), DeviceCryptoError> {
+    if bytes.len() == expected {
+        return Ok(());
+    }
+    if primary_payload {
+        Err(DeviceCryptoError::InvalidPrimaryPayloadLength {
+            expected,
+            actual: bytes.len(),
+        })
+    } else {
+        Err(DeviceCryptoError::InvalidEnvelopePayloadLength {
+            expected,
+            actual: bytes.len(),
+        })
+    }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 #[repr(u8)]
 pub enum DeviceProofKind {
     RegistrationFinish = 1,
     LoginFinish = 2,
+    PairingApprove = 3,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeviceProofContext {
+    pub attempt_id: DeviceProofAttemptId,
+    pub account_context_id: AccountContextId,
+    pub device_id: DeviceId,
+    pub expires_at_ms: u64,
+    pub challenge: DeviceProofChallenge,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct PairingApprovalExpected {
+    pub pairing_id: DeviceProofAttemptId,
+    pub user_id: UserId,
+    pub issuer_device_id: DeviceId,
+    pub target_device_id: DeviceId,
+    pub expires_at_ms: u64,
+    pub challenge: DeviceProofChallenge,
+    pub key_epoch: u32,
+    pub issuer_public_keys: DevicePublicKeys,
 }
 
 impl DeviceProofKind {
@@ -402,6 +699,7 @@ impl DeviceProofKind {
         match value {
             1 => Ok(Self::RegistrationFinish),
             2 => Ok(Self::LoginFinish),
+            3 => Ok(Self::PairingApprove),
             _ => Err(DeviceCryptoError::UnsupportedDeviceProofKind(value)),
         }
     }
@@ -410,10 +708,10 @@ impl DeviceProofKind {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct DeviceProofFields {
     pub kind: DeviceProofKind,
-    /// 服务端一次性 OPAQUE attempt UUIDv4。
-    pub attempt_id: OpaqueAttemptId,
-    /// OPAQUE 使用的 16 字节 credential/account binding UUIDv4。
-    pub account_binding: AccountBindingId,
+    /// 注册/登录使用 OPAQUE attempt，配对批准使用 pairing request UUIDv4。
+    pub attempt_id: DeviceProofAttemptId,
+    /// 注册/登录使用 OPAQUE account binding，配对批准使用 user UUIDv4。
+    pub account_context_id: AccountContextId,
     pub device_id: DeviceId,
     /// 服务端签发的毫秒 Unix 时间戳；零值永远无效。
     pub expires_at_ms: u64,
@@ -421,8 +719,8 @@ pub struct DeviceProofFields {
     pub challenge: DeviceProofChallenge,
     pub signing_public_key: DeviceSigningPublicKey,
     pub key_agreement_public_key: DeviceKeyAgreementPublicKey,
-    /// 对本次 RegistrationUpload 或 CredentialFinalization 完整线格式求 SHA-256。
-    pub opaque_finish_hash: Sha256Digest,
+    /// 按证明类型对 Rust 已校验的原始主载荷求 SHA-256。
+    pub primary_payload_hash: Sha256Digest,
     /// 对同请求携带的 KAEK 信封求 SHA-256；没有信封时使用 SHA-256(empty)。
     pub envelope_hash: Sha256Digest,
 }
@@ -440,10 +738,10 @@ impl DeviceProofMessage {
         bytes[4..6].copy_from_slice(&DEVICE_PROOF_VERSION.to_be_bytes());
         bytes[6] = fields.kind as u8;
         bytes[7] = DEVICE_PROOF_FLAGS;
-        bytes[PROOF_ATTEMPT_OFFSET..PROOF_ACCOUNT_OFFSET]
+        bytes[PROOF_ATTEMPT_OFFSET..PROOF_ACCOUNT_CONTEXT_OFFSET]
             .copy_from_slice(fields.attempt_id.as_bytes());
-        bytes[PROOF_ACCOUNT_OFFSET..PROOF_DEVICE_OFFSET]
-            .copy_from_slice(fields.account_binding.as_bytes());
+        bytes[PROOF_ACCOUNT_CONTEXT_OFFSET..PROOF_DEVICE_OFFSET]
+            .copy_from_slice(fields.account_context_id.as_bytes());
         bytes[PROOF_DEVICE_OFFSET..PROOF_EXPIRES_OFFSET]
             .copy_from_slice(fields.device_id.as_bytes());
         bytes[PROOF_EXPIRES_OFFSET..PROOF_CHALLENGE_OFFSET]
@@ -452,10 +750,10 @@ impl DeviceProofMessage {
             .copy_from_slice(fields.challenge.as_bytes());
         bytes[PROOF_SIGNING_KEY_OFFSET..PROOF_KEY_AGREEMENT_OFFSET]
             .copy_from_slice(fields.signing_public_key.as_bytes());
-        bytes[PROOF_KEY_AGREEMENT_OFFSET..PROOF_OPAQUE_HASH_OFFSET]
+        bytes[PROOF_KEY_AGREEMENT_OFFSET..PROOF_PRIMARY_PAYLOAD_HASH_OFFSET]
             .copy_from_slice(fields.key_agreement_public_key.as_bytes());
-        bytes[PROOF_OPAQUE_HASH_OFFSET..PROOF_ENVELOPE_HASH_OFFSET]
-            .copy_from_slice(fields.opaque_finish_hash.as_bytes());
+        bytes[PROOF_PRIMARY_PAYLOAD_HASH_OFFSET..PROOF_ENVELOPE_HASH_OFFSET]
+            .copy_from_slice(fields.primary_payload_hash.as_bytes());
         bytes[PROOF_ENVELOPE_HASH_OFFSET..].copy_from_slice(fields.envelope_hash.as_bytes());
         Ok(Self(bytes))
     }
@@ -479,11 +777,11 @@ impl DeviceProofMessage {
             return Err(DeviceCryptoError::UnsupportedDeviceProofFlags(bytes[7]));
         }
 
-        OpaqueAttemptId::new(copy_array(
-            &bytes[PROOF_ATTEMPT_OFFSET..PROOF_ACCOUNT_OFFSET],
+        DeviceProofAttemptId::new(copy_array(
+            &bytes[PROOF_ATTEMPT_OFFSET..PROOF_ACCOUNT_CONTEXT_OFFSET],
         ))?;
-        AccountBindingId::new(copy_array(
-            &bytes[PROOF_ACCOUNT_OFFSET..PROOF_DEVICE_OFFSET],
+        AccountContextId::new(copy_array(
+            &bytes[PROOF_ACCOUNT_CONTEXT_OFFSET..PROOF_DEVICE_OFFSET],
         ))?;
         DeviceId::new(copy_array(
             &bytes[PROOF_DEVICE_OFFSET..PROOF_EXPIRES_OFFSET],
@@ -498,7 +796,7 @@ impl DeviceProofMessage {
             &bytes[PROOF_SIGNING_KEY_OFFSET..PROOF_KEY_AGREEMENT_OFFSET],
         ))?;
         DeviceKeyAgreementPublicKey::from_bytes(copy_array(
-            &bytes[PROOF_KEY_AGREEMENT_OFFSET..PROOF_OPAQUE_HASH_OFFSET],
+            &bytes[PROOF_KEY_AGREEMENT_OFFSET..PROOF_PRIMARY_PAYLOAD_HASH_OFFSET],
         ))?;
 
         Ok(Self(copy_array(bytes)))
@@ -563,9 +861,80 @@ impl DeviceProofSignature {
     }
 }
 
+pub struct PairingAuthenticator([u8; PAIRING_AUTHENTICATOR_LENGTH]);
+
+impl PairingAuthenticator {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeviceCryptoError> {
+        if bytes.len() != PAIRING_AUTHENTICATOR_LENGTH {
+            return Err(DeviceCryptoError::InvalidPairingAuthenticatorLength {
+                expected: PAIRING_AUTHENTICATOR_LENGTH,
+                actual: bytes.len(),
+            });
+        }
+        Ok(Self(copy_array(bytes)))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; PAIRING_AUTHENTICATOR_LENGTH] {
+        &self.0
+    }
+
+    fn create(
+        pairing_secret: &[u8],
+        message: &DeviceProofMessage,
+        signature: &DeviceProofSignature,
+        envelope: &ArkEnvelope,
+    ) -> Result<Self, DeviceCryptoError> {
+        let key = derive_pairing_authenticator_key(pairing_secret)?;
+        let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(key.as_slice())
+            .map_err(|_| DeviceCryptoError::PairingAuthenticatorCryptoFailed)?;
+        mac.update(message.as_bytes());
+        mac.update(signature.as_bytes());
+        mac.update(envelope.as_bytes());
+        Ok(Self(mac.finalize().into_bytes().into()))
+    }
+
+    fn verify(
+        &self,
+        pairing_secret: &[u8],
+        message: &DeviceProofMessage,
+        signature: &DeviceProofSignature,
+        envelope: &ArkEnvelope,
+    ) -> Result<(), DeviceCryptoError> {
+        let key = derive_pairing_authenticator_key(pairing_secret)?;
+        let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(key.as_slice())
+            .map_err(|_| DeviceCryptoError::PairingAuthenticatorCryptoFailed)?;
+        mac.update(message.as_bytes());
+        mac.update(signature.as_bytes());
+        mac.update(envelope.as_bytes());
+        mac.verify_slice(&self.0)
+            .map_err(|_| DeviceCryptoError::PairingAuthenticatorInvalid)
+    }
+}
+
+fn derive_pairing_authenticator_key(
+    pairing_secret: &[u8],
+) -> Result<Zeroizing<[u8; PAIRING_AUTHENTICATOR_LENGTH]>, DeviceCryptoError> {
+    require_exact_length(pairing_secret, PAIRING_SECRET_LENGTH, true)?;
+    let mut key = Zeroizing::new([0_u8; PAIRING_AUTHENTICATOR_LENGTH]);
+    Hkdf::<Sha256>::new(Some(&[]), pairing_secret)
+        .expand(PAIRING_AUTHENTICATOR_INFO, key.as_mut_slice())
+        .map_err(|_| DeviceCryptoError::PairingAuthenticatorCryptoFailed)?;
+    Ok(key)
+}
+
 pub struct AccountRootKey([u8; ACCOUNT_ROOT_KEY_LENGTH]);
 
 impl AccountRootKey {
+    pub fn generate<R>(rng: &mut R) -> Result<Self, DeviceCryptoError>
+    where
+        R: CryptoRng + RngCore,
+    {
+        let mut bytes = Zeroizing::new([0_u8; ACCOUNT_ROOT_KEY_LENGTH]);
+        rng.try_fill_bytes(bytes.as_mut_slice())
+            .map_err(|_| DeviceCryptoError::RandomnessUnavailable)?;
+        Ok(Self(*bytes))
+    }
+
     pub const fn from_bytes(bytes: [u8; ACCOUNT_ROOT_KEY_LENGTH]) -> Self {
         Self(bytes)
     }
@@ -814,6 +1183,208 @@ fn encode_ark_envelope_binding(
     Ok(bytes)
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeviceStateAccountBinding {
+    pub user_id: UserId,
+    pub key_epoch: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DeviceStateBinding {
+    pub device_id: DeviceId,
+    pub key_version: u32,
+    pub account: Option<DeviceStateAccountBinding>,
+}
+
+pub struct DeviceStateBlob([u8; DEVICE_STATE_BLOB_LENGTH]);
+
+impl DeviceStateBlob {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeviceCryptoError> {
+        if bytes.len() != DEVICE_STATE_BLOB_LENGTH {
+            return Err(DeviceCryptoError::InvalidDeviceStateLength {
+                expected: DEVICE_STATE_BLOB_LENGTH,
+                actual: bytes.len(),
+            });
+        }
+        if bytes[..4] != DEVICE_STATE_MAGIC {
+            return Err(DeviceCryptoError::InvalidDeviceStateMagic);
+        }
+        let version = u16::from_be_bytes(copy_array(&bytes[4..6]));
+        if version != DEVICE_STATE_VERSION {
+            return Err(DeviceCryptoError::UnsupportedDeviceStateVersion(version));
+        }
+        let suite = u16::from_be_bytes(copy_array(&bytes[6..8]));
+        if suite != DEVICE_STATE_SUITE_ID {
+            return Err(DeviceCryptoError::UnsupportedDeviceStateSuite(suite));
+        }
+        let flags = u16::from_be_bytes(copy_array(&bytes[8..10]));
+        if flags & !DEVICE_STATE_SUPPORTED_FLAGS != 0 {
+            return Err(DeviceCryptoError::UnsupportedDeviceStateFlags(flags));
+        }
+        let reserved = u16::from_be_bytes(copy_array(&bytes[10..12]));
+        if reserved != DEVICE_STATE_RESERVED {
+            return Err(DeviceCryptoError::UnsupportedDeviceStateReserved(reserved));
+        }
+        let blob = Self(copy_array(bytes));
+        blob.binding()?;
+        Ok(blob)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; DEVICE_STATE_BLOB_LENGTH] {
+        &self.0
+    }
+
+    pub fn binding(&self) -> Result<DeviceStateBinding, DeviceCryptoError> {
+        let flags = u16::from_be_bytes(copy_array(&self.0[8..10]));
+        let device_id = DeviceId::new(copy_array(
+            &self.0[DEVICE_STATE_DEVICE_ID_OFFSET..DEVICE_STATE_KEY_VERSION_OFFSET],
+        ))?;
+        let key_version = u32::from_be_bytes(copy_array(
+            &self.0[DEVICE_STATE_KEY_VERSION_OFFSET..DEVICE_STATE_USER_ID_OFFSET],
+        ));
+        if key_version == 0 {
+            return Err(DeviceCryptoError::InvalidDeviceKeyVersion);
+        }
+        let user_id_bytes =
+            copy_array(&self.0[DEVICE_STATE_USER_ID_OFFSET..DEVICE_STATE_KEY_EPOCH_OFFSET]);
+        let key_epoch = u32::from_be_bytes(copy_array(
+            &self.0[DEVICE_STATE_KEY_EPOCH_OFFSET..DEVICE_STATE_NONCE_OFFSET],
+        ));
+        let account = if flags & DEVICE_STATE_FLAG_ARK_PRESENT != 0 {
+            if key_epoch == 0 {
+                return Err(DeviceCryptoError::InvalidKeyEpoch);
+            }
+            Some(DeviceStateAccountBinding {
+                user_id: UserId::new(user_id_bytes)?,
+                key_epoch,
+            })
+        } else {
+            if user_id_bytes != [0; UUID_LENGTH] || key_epoch != 0 {
+                return Err(DeviceCryptoError::DeviceStateBindingMismatch);
+            }
+            None
+        };
+        Ok(DeviceStateBinding {
+            device_id,
+            key_version,
+            account,
+        })
+    }
+}
+
+pub fn seal_device_state<R>(
+    rng: &mut R,
+    state_key: &[u8; DEVICE_STATE_KEY_LENGTH],
+    identity: &DeviceIdentity,
+    ark: Option<&AccountRootKey>,
+    binding: DeviceStateBinding,
+) -> Result<DeviceStateBlob, DeviceCryptoError>
+where
+    R: CryptoRng + RngCore,
+{
+    if binding.key_version == 0 {
+        return Err(DeviceCryptoError::InvalidDeviceKeyVersion);
+    }
+    if ark.is_some() != binding.account.is_some() {
+        return Err(DeviceCryptoError::DeviceStateBindingMismatch);
+    }
+
+    let mut bytes = [0_u8; DEVICE_STATE_BLOB_LENGTH];
+    bytes[..4].copy_from_slice(&DEVICE_STATE_MAGIC);
+    bytes[4..6].copy_from_slice(&DEVICE_STATE_VERSION.to_be_bytes());
+    bytes[6..8].copy_from_slice(&DEVICE_STATE_SUITE_ID.to_be_bytes());
+    let flags = if binding.account.is_some() {
+        DEVICE_STATE_FLAG_ARK_PRESENT
+    } else {
+        0
+    };
+    bytes[8..10].copy_from_slice(&flags.to_be_bytes());
+    bytes[10..12].copy_from_slice(&DEVICE_STATE_RESERVED.to_be_bytes());
+    bytes[DEVICE_STATE_DEVICE_ID_OFFSET..DEVICE_STATE_KEY_VERSION_OFFSET]
+        .copy_from_slice(binding.device_id.as_bytes());
+    bytes[DEVICE_STATE_KEY_VERSION_OFFSET..DEVICE_STATE_USER_ID_OFFSET]
+        .copy_from_slice(&binding.key_version.to_be_bytes());
+    if let Some(account) = binding.account {
+        if account.key_epoch == 0 {
+            return Err(DeviceCryptoError::InvalidKeyEpoch);
+        }
+        bytes[DEVICE_STATE_USER_ID_OFFSET..DEVICE_STATE_KEY_EPOCH_OFFSET]
+            .copy_from_slice(account.user_id.as_bytes());
+        bytes[DEVICE_STATE_KEY_EPOCH_OFFSET..DEVICE_STATE_NONCE_OFFSET]
+            .copy_from_slice(&account.key_epoch.to_be_bytes());
+    }
+
+    let mut nonce_bytes = [0_u8; DEVICE_STATE_NONCE_LENGTH];
+    rng.try_fill_bytes(&mut nonce_bytes)
+        .map_err(|_| DeviceCryptoError::RandomnessUnavailable)?;
+    bytes[DEVICE_STATE_NONCE_OFFSET..DEVICE_STATE_CIPHERTEXT_OFFSET].copy_from_slice(&nonce_bytes);
+
+    let mut plaintext = Zeroizing::new([0_u8; DEVICE_STATE_SECRET_LENGTH]);
+    plaintext[..DEVICE_PRIVATE_KEY_LENGTH].copy_from_slice(&identity.signing.0);
+    plaintext[DEVICE_PRIVATE_KEY_LENGTH..DEVICE_PRIVATE_KEY_LENGTH * 2]
+        .copy_from_slice(&identity.key_agreement.0);
+    if let Some(ark) = ark {
+        plaintext[DEVICE_PRIVATE_KEY_LENGTH * 2..].copy_from_slice(&ark.0);
+    }
+
+    let cipher = XChaCha20Poly1305::new_from_slice(state_key)
+        .map_err(|_| DeviceCryptoError::DeviceStateCryptoFailed)?;
+    let nonce = XNonce::from(nonce_bytes);
+    let tag = cipher
+        .encrypt_inout_detached(
+            &nonce,
+            &bytes[..DEVICE_STATE_CIPHERTEXT_OFFSET],
+            plaintext.as_mut_slice().into(),
+        )
+        .map_err(|_| DeviceCryptoError::DeviceStateCryptoFailed)?;
+    bytes[DEVICE_STATE_CIPHERTEXT_OFFSET..DEVICE_STATE_TAG_OFFSET]
+        .copy_from_slice(plaintext.as_slice());
+    bytes[DEVICE_STATE_TAG_OFFSET..].copy_from_slice(tag.as_slice());
+    Ok(DeviceStateBlob(bytes))
+}
+
+pub fn open_device_state(
+    state_key: &[u8; DEVICE_STATE_KEY_LENGTH],
+    blob: &DeviceStateBlob,
+) -> Result<(DeviceStateBinding, DeviceIdentity, Option<AccountRootKey>), DeviceCryptoError> {
+    let binding = blob.binding()?;
+    let nonce_bytes: [u8; DEVICE_STATE_NONCE_LENGTH] = blob.0
+        [DEVICE_STATE_NONCE_OFFSET..DEVICE_STATE_CIPHERTEXT_OFFSET]
+        .try_into()
+        .map_err(|_| DeviceCryptoError::DeviceStateAuthenticationFailed)?;
+    let nonce = XNonce::from(nonce_bytes);
+    let cipher = XChaCha20Poly1305::new_from_slice(state_key)
+        .map_err(|_| DeviceCryptoError::DeviceStateCryptoFailed)?;
+    let mut plaintext = Zeroizing::new([0_u8; DEVICE_STATE_SECRET_LENGTH]);
+    plaintext.copy_from_slice(&blob.0[DEVICE_STATE_CIPHERTEXT_OFFSET..DEVICE_STATE_TAG_OFFSET]);
+    let tag: &Tag = blob.0[DEVICE_STATE_TAG_OFFSET..]
+        .try_into()
+        .map_err(|_| DeviceCryptoError::DeviceStateAuthenticationFailed)?;
+    cipher
+        .decrypt_inout_detached(
+            &nonce,
+            &blob.0[..DEVICE_STATE_CIPHERTEXT_OFFSET],
+            plaintext.as_mut_slice().into(),
+            tag,
+        )
+        .map_err(|_| DeviceCryptoError::DeviceStateAuthenticationFailed)?;
+
+    let identity = DeviceIdentity::from_private_bytes(
+        copy_array(&plaintext[..DEVICE_PRIVATE_KEY_LENGTH]),
+        copy_array(&plaintext[DEVICE_PRIVATE_KEY_LENGTH..DEVICE_PRIVATE_KEY_LENGTH * 2]),
+    )?;
+    let ark_bytes = copy_array(&plaintext[DEVICE_PRIVATE_KEY_LENGTH * 2..]);
+    let ark = if binding.account.is_some() {
+        Some(AccountRootKey::from_bytes(ark_bytes))
+    } else {
+        if ark_bytes != [0; ACCOUNT_ROOT_KEY_LENGTH] {
+            return Err(DeviceCryptoError::DeviceStateAuthenticationFailed);
+        }
+        None
+    };
+    Ok((binding, identity, ark))
+}
+
 struct HpkeRngAdapter<'a, R>(&'a mut R);
 
 struct PublicKeyValidationRng;
@@ -989,14 +1560,14 @@ mod tests {
             DeviceKeyAgreementPrivateKey::from_bytes([0x22; 32]).expect("X25519 私钥应有效");
         let fields = DeviceProofFields {
             kind: DeviceProofKind::LoginFinish,
-            attempt_id: OpaqueAttemptId::new(uuid_v4(1)).expect("attempt UUID 应有效"),
-            account_binding: AccountBindingId::new(uuid_v4(2)).expect("账户绑定 UUID 应有效"),
+            attempt_id: DeviceProofAttemptId::new(uuid_v4(1)).expect("attempt UUID 应有效"),
+            account_context_id: AccountContextId::new(uuid_v4(2)).expect("账户上下文 UUID 应有效"),
             device_id: DeviceId::new(uuid_v4(3)).expect("设备 UUID 应有效"),
             expires_at_ms: 1_800_000_000_000,
             challenge: DeviceProofChallenge::from_bytes([0x44; 32]),
             signing_public_key: signing_key.public_key(),
             key_agreement_public_key: agreement_key.public_key(),
-            opaque_finish_hash: Sha256Digest::of(b"OPAQUE finish"),
+            primary_payload_hash: Sha256Digest::of(b"OPAQUE finish"),
             envelope_hash: Sha256Digest::of(b"ARK envelope"),
         };
         let message = DeviceProofMessage::new(fields).expect("设备证明字段应有效");
@@ -1054,14 +1625,14 @@ mod tests {
             DeviceKeyAgreementPrivateKey::from_bytes([0x22; 32]).expect("X25519 私钥应有效");
         let fields = DeviceProofFields {
             kind: DeviceProofKind::RegistrationFinish,
-            attempt_id: OpaqueAttemptId::new(uuid_v4(1)).expect("attempt UUID 应有效"),
-            account_binding: AccountBindingId::new(uuid_v4(2)).expect("账户绑定 UUID 应有效"),
+            attempt_id: DeviceProofAttemptId::new(uuid_v4(1)).expect("attempt UUID 应有效"),
+            account_context_id: AccountContextId::new(uuid_v4(2)).expect("账户上下文 UUID 应有效"),
             device_id: DeviceId::new(uuid_v4(3)).expect("设备 UUID 应有效"),
             expires_at_ms: 1_800_000_000_000,
             challenge: DeviceProofChallenge::from_bytes([0x44; 32]),
             signing_public_key: signing_key.public_key(),
             key_agreement_public_key: agreement_key.public_key(),
-            opaque_finish_hash: Sha256Digest::of(b"OPAQUE finish"),
+            primary_payload_hash: Sha256Digest::of(b"OPAQUE finish"),
             envelope_hash: Sha256Digest::of(b"ARK envelope"),
         };
 
@@ -1079,7 +1650,7 @@ mod tests {
         assert_eq!(&message.as_bytes()[8..24], fields.attempt_id.as_bytes());
         assert_eq!(
             &message.as_bytes()[24..40],
-            fields.account_binding.as_bytes()
+            fields.account_context_id.as_bytes()
         );
         assert_eq!(&message.as_bytes()[40..56], fields.device_id.as_bytes());
         assert_eq!(
@@ -1097,7 +1668,7 @@ mod tests {
         );
         assert_eq!(
             &message.as_bytes()[160..192],
-            fields.opaque_finish_hash.as_bytes()
+            fields.primary_payload_hash.as_bytes()
         );
         assert_eq!(
             &message.as_bytes()[192..224],
@@ -1263,13 +1834,13 @@ mod tests {
         let (fields, message, signature) = device_proof_fixture();
         let segments = [
             ("attempt", PROOF_ATTEMPT_OFFSET),
-            ("account", PROOF_ACCOUNT_OFFSET),
+            ("account context", PROOF_ACCOUNT_CONTEXT_OFFSET),
             ("device", PROOF_DEVICE_OFFSET),
             ("expires", PROOF_EXPIRES_OFFSET),
             ("challenge", PROOF_CHALLENGE_OFFSET),
             ("signing key", PROOF_SIGNING_KEY_OFFSET),
             ("key agreement", PROOF_KEY_AGREEMENT_OFFSET),
-            ("OPAQUE finish hash", PROOF_OPAQUE_HASH_OFFSET),
+            ("primary payload hash", PROOF_PRIMARY_PAYLOAD_HASH_OFFSET),
             ("envelope hash", PROOF_ENVELOPE_HASH_OFFSET),
         ];
 
@@ -1398,7 +1969,8 @@ mod tests {
         let (expected_fields, _, _) = device_proof_fixture();
         let signing_key = DeviceSigningPrivateKey::from_seed([0x11; 32]);
         let mut stale_fields = expected_fields;
-        stale_fields.attempt_id = OpaqueAttemptId::new(uuid_v4(9)).expect("旧 attempt UUID 应有效");
+        stale_fields.attempt_id =
+            DeviceProofAttemptId::new(uuid_v4(9)).expect("旧 attempt UUID 应有效");
         let stale_message =
             DeviceProofMessage::new(stale_fields).expect("旧 attempt 消息仍是合法线格式");
         let stale_signature = stale_message
@@ -1604,5 +2176,232 @@ mod tests {
             &envelope.as_bytes()[ARK_ENCAPSULATED_KEY_OFFSET..ARK_CIPHERTEXT_OFFSET],
             &hex_array::<32>("1afa08d3dec047a643885163f1180476fa7ddb54c6a8029ea33f95796bf2ac4a")
         );
+    }
+
+    #[test]
+    fn device_identity_signs_only_strict_raw_opaque_finish_payloads() {
+        let identity =
+            DeviceIdentity::from_private_bytes([0x11; 32], [0x22; 32]).expect("设备身份应可构造");
+        let context = DeviceProofContext {
+            attempt_id: DeviceProofAttemptId::new(uuid_v4(1)).expect("attempt UUID 应有效"),
+            account_context_id: AccountContextId::new(uuid_v4(2)).expect("账户上下文 UUID 应有效"),
+            device_id: DeviceId::new(uuid_v4(3)).expect("设备 UUID 应有效"),
+            expires_at_ms: 1_800_000_000_000,
+            challenge: DeviceProofChallenge::from_bytes([0x44; 32]),
+        };
+        let finalization = [0x55; crate::CREDENTIAL_FINALIZATION_LENGTH];
+        let signature = identity
+            .sign_opaque_finish_proof(DeviceProofKind::LoginFinish, context, &finalization, &[])
+            .expect("严格登录完成载荷应可签名");
+        let public_keys = identity.public_keys();
+        let expected = DeviceProofFields {
+            kind: DeviceProofKind::LoginFinish,
+            attempt_id: context.attempt_id,
+            account_context_id: context.account_context_id,
+            device_id: context.device_id,
+            expires_at_ms: context.expires_at_ms,
+            challenge: context.challenge,
+            signing_public_key: public_keys.signing,
+            key_agreement_public_key: public_keys.key_agreement,
+            primary_payload_hash: Sha256Digest::of(&finalization),
+            envelope_hash: Sha256Digest::of(&[]),
+        };
+        DeviceProofMessage::new(expected)
+            .expect("预期 KDPF 应可构造")
+            .verify_expected(expected, &signature)
+            .expect("签名必须覆盖 Rust 内部计算的原始载荷摘要");
+
+        assert!(matches!(
+            identity.sign_opaque_finish_proof(
+                DeviceProofKind::LoginFinish,
+                context,
+                &finalization[..finalization.len() - 1],
+                &[],
+            ),
+            Err(DeviceCryptoError::InvalidPrimaryPayloadLength { .. })
+        ));
+        assert!(matches!(
+            identity.sign_opaque_finish_proof(
+                DeviceProofKind::LoginFinish,
+                context,
+                &finalization,
+                &[0],
+            ),
+            Err(DeviceCryptoError::InvalidEnvelopePayloadLength { .. })
+        ));
+        assert!(matches!(
+            identity.sign_opaque_finish_proof(
+                DeviceProofKind::PairingApprove,
+                context,
+                &[0; PAIRING_SECRET_LENGTH],
+                &[0; ARK_ENVELOPE_LENGTH],
+            ),
+            Err(DeviceCryptoError::UnsupportedDeviceProofKind(3))
+        ));
+    }
+
+    #[test]
+    fn pairing_authenticator_is_the_first_trust_root_before_kdpf_and_kaek() {
+        let issuer =
+            DeviceIdentity::from_private_bytes([0x11; 32], [0x22; 32]).expect("签发设备身份应有效");
+        let target =
+            DeviceIdentity::from_private_bytes([0x33; 32], [0x44; 32]).expect("目标设备身份应有效");
+        let ark = AccountRootKey::from_bytes([0x55; ACCOUNT_ROOT_KEY_LENGTH]);
+        let user_id = UserId::new(uuid_v4(1)).expect("用户 UUID 应有效");
+        let issuer_device_id = DeviceId::new(uuid_v4(2)).expect("签发设备 UUID 应有效");
+        let target_device_id = DeviceId::new(uuid_v4(3)).expect("目标设备 UUID 应有效");
+        let issuer_public_keys = issuer.public_keys();
+        let target_public_keys = target.public_keys();
+        let key_epoch = 7;
+        let envelope = issuer
+            .seal_ark_envelope(
+                &mut TestRng(1),
+                &ark,
+                ArkEnvelopeBinding {
+                    user_id,
+                    issuer_device_id,
+                    target_device_id,
+                    key_epoch,
+                    issuer_signing_public_key: issuer_public_keys.signing,
+                    issuer_key_agreement_public_key: issuer_public_keys.key_agreement,
+                    target_signing_public_key: target_public_keys.signing,
+                    target_key_agreement_public_key: target_public_keys.key_agreement,
+                },
+            )
+            .expect("配对 KAEK 应可密封");
+        let pairing_id = DeviceProofAttemptId::new(uuid_v4(4)).expect("pairing UUID 应有效");
+        let expires_at_ms = 1_800_000_000_000;
+        let challenge = DeviceProofChallenge::from_bytes([0x66; 32]);
+        let pairing_secret = [0x77; PAIRING_SECRET_LENGTH];
+        let (signature, authenticator) = issuer
+            .sign_pairing_approval_proof(
+                DeviceProofContext {
+                    attempt_id: pairing_id,
+                    account_context_id: AccountContextId::new(*user_id.as_bytes())
+                        .expect("用户 UUID 应可作为账户上下文"),
+                    device_id: issuer_device_id,
+                    expires_at_ms,
+                    challenge,
+                },
+                &pairing_secret,
+                &envelope,
+            )
+            .expect("配对批准应产生证明和认证器");
+        let expected = PairingApprovalExpected {
+            pairing_id,
+            user_id,
+            issuer_device_id,
+            target_device_id,
+            expires_at_ms,
+            challenge,
+            key_epoch,
+            issuer_public_keys,
+        };
+        let installed = target
+            .open_pairing_approval(
+                expected,
+                &pairing_secret,
+                signature.as_bytes(),
+                authenticator.as_bytes(),
+                envelope.as_bytes(),
+            )
+            .expect("认证器、KDPF 与 KAEK 全部有效后才应安装 ARK");
+        assert_eq!(installed.0, ark.0);
+
+        let mut forged_authenticator = *authenticator.as_bytes();
+        forged_authenticator[0] ^= 1;
+        assert!(matches!(
+            target.open_pairing_approval(
+                expected,
+                &pairing_secret,
+                signature.as_bytes(),
+                &forged_authenticator,
+                envelope.as_bytes(),
+            ),
+            Err(DeviceCryptoError::PairingAuthenticatorInvalid)
+        ));
+
+        let mut newer_epoch = expected;
+        newer_epoch.key_epoch += 1;
+        assert!(matches!(
+            target.open_pairing_approval(
+                newer_epoch,
+                &pairing_secret,
+                signature.as_bytes(),
+                authenticator.as_bytes(),
+                envelope.as_bytes(),
+            ),
+            Err(DeviceCryptoError::ArkEnvelopeBindingMismatch)
+        ));
+    }
+
+    #[test]
+    fn device_state_supports_identity_only_then_ark_install_and_reseal() {
+        let state_key = [0x91; DEVICE_STATE_KEY_LENGTH];
+        let identity =
+            DeviceIdentity::from_private_bytes([0x11; 32], [0x22; 32]).expect("设备身份应有效");
+        let public_keys = identity.public_keys();
+        let pending_binding = DeviceStateBinding {
+            device_id: DeviceId::new(uuid_v4(1)).expect("设备 UUID 应有效"),
+            key_version: 1,
+            account: None,
+        };
+        let identity_only = seal_device_state(
+            &mut TestRng(1),
+            &state_key,
+            &identity,
+            None,
+            pending_binding,
+        )
+        .expect("pending 身份应可单独密封");
+        assert_eq!(identity_only.as_bytes().len(), DEVICE_STATE_BLOB_LENGTH);
+        assert_eq!(
+            u16::from_be_bytes(copy_array(&identity_only.as_bytes()[8..10])),
+            0
+        );
+        let (reopened_binding, reopened_identity, reopened_ark) =
+            open_device_state(&state_key, &identity_only).expect("pending 状态应可重开");
+        assert_eq!(reopened_binding, pending_binding);
+        assert_eq!(reopened_identity.public_keys(), public_keys);
+        assert!(reopened_ark.is_none());
+
+        let ark = AccountRootKey::from_bytes([0x55; ACCOUNT_ROOT_KEY_LENGTH]);
+        let installed_binding = DeviceStateBinding {
+            device_id: pending_binding.device_id,
+            key_version: pending_binding.key_version,
+            account: Some(DeviceStateAccountBinding {
+                user_id: UserId::new(uuid_v4(2)).expect("用户 UUID 应有效"),
+                key_epoch: 7,
+            }),
+        };
+        let installed = seal_device_state(
+            &mut TestRng(2),
+            &state_key,
+            &reopened_identity,
+            Some(&ark),
+            installed_binding,
+        )
+        .expect("安装 ARK 后应可重封");
+        assert_eq!(
+            u16::from_be_bytes(copy_array(&installed.as_bytes()[8..10])),
+            DEVICE_STATE_FLAG_ARK_PRESENT
+        );
+        let (reopened_installed_binding, installed_identity, installed_ark) =
+            open_device_state(&state_key, &installed).expect("完整状态应可重开");
+        assert_eq!(reopened_installed_binding, installed_binding);
+        assert_eq!(installed_identity.public_keys(), public_keys);
+        assert_eq!(installed_ark.expect("完整状态必须产生 ARK").0, ark.0);
+
+        let mut tampered = *installed.as_bytes();
+        tampered[DEVICE_STATE_CIPHERTEXT_OFFSET] ^= 1;
+        let tampered = DeviceStateBlob::from_bytes(&tampered).expect("篡改不破坏固定头格式");
+        assert!(matches!(
+            open_device_state(&state_key, &tampered),
+            Err(DeviceCryptoError::DeviceStateAuthenticationFailed)
+        ));
+        assert!(matches!(
+            open_device_state(&[0x92; DEVICE_STATE_KEY_LENGTH], &installed),
+            Err(DeviceCryptoError::DeviceStateAuthenticationFailed)
+        ));
     }
 }

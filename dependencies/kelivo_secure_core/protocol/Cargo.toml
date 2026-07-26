@@ -9,7 +9,9 @@ default = ["system-rng", "device-crypto"]
 device-crypto = [
   "dep:curve25519-dalek",
   "dep:ed25519-dalek",
+  "dep:hkdf",
   "dep:hpke",
+  "dep:hmac",
   "dep:sha2_device",
   "dep:x25519-dalek",
 ]
@@ -28,6 +30,8 @@ hpke = { version = "=0.14.0", default-features = false, optional = true, feature
   "chacha",
   "x25519",
 ] }
+hkdf = { version = "=0.13.0", default-features = false, optional = true }
+hmac = { version = "=0.13.0", default-features = false, optional = true }
 opaque-ke = { version = "=4.0.1", default-features = false, features = [
   "argon2",
   "ristretto255",
