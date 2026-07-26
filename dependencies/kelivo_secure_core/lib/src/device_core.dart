@@ -207,6 +207,18 @@ final class KelivoDeviceStateAccountBinding {
   final int keyEpoch;
 }
 
+final class KelivoDeviceStateBinding {
+  const KelivoDeviceStateBinding._({
+    required this.deviceId,
+    required this.keyVersion,
+    required this.account,
+  });
+
+  final Uint8List deviceId;
+  final int keyVersion;
+  final KelivoDeviceStateAccountBinding? account;
+}
+
 final class KelivoDeviceRegistrationBundle {
   KelivoDeviceRegistrationBundle._(this.envelope, this.signature);
 
@@ -280,8 +292,13 @@ final class KelivoAcceptedPairing {
 }
 
 final class KelivoOpenedDeviceState {
-  KelivoOpenedDeviceState._({required this.identity, required this.ark});
+  KelivoOpenedDeviceState._({
+    required this.binding,
+    required this.identity,
+    required this.ark,
+  });
 
+  final KelivoDeviceStateBinding binding;
   final KelivoDeviceIdentityHandle identity;
   final KelivoAccountRootKeyHandle? ark;
 }
@@ -731,28 +748,15 @@ extension KelivoDeviceCore on KelivoSecureCore {
   Future<KelivoOpenedDeviceState> openDeviceState(
     KelivoKeyHandle key, {
     required Uint8List stateBlob,
-    required Uint8List expectedDeviceId,
-    required int expectedKeyVersion,
-    KelivoDeviceStateAccountBinding? expectedAccount,
   }) async {
     _requireLength(stateBlob, _deviceStateBlobLength, 'stateBlob');
-    _validateUuidV4(expectedDeviceId, 'expectedDeviceId');
-    _validatePositiveUint32(expectedKeyVersion, 'expectedKeyVersion');
     final keyValue = key._beginUse();
     try {
       final result = await Isolate.run(
-        () => _openDeviceState(
-          keyValue,
-          Uint8List.fromList(stateBlob),
-          Uint8List.fromList(expectedDeviceId),
-          expectedKeyVersion,
-          expectedAccount == null
-              ? null
-              : Uint8List.fromList(expectedAccount.userId),
-          expectedAccount?.keyEpoch ?? 0,
-        ),
+        () => _openDeviceState(keyValue, Uint8List.fromList(stateBlob)),
       );
       return KelivoOpenedDeviceState._(
+        binding: result.binding,
         identity: KelivoDeviceIdentityHandle._(result.identityHandle),
         ark: result.arkHandle == native.KELIVO_DEVICE_INVALID_HANDLE
             ? null
@@ -800,10 +804,12 @@ final class _AcceptedPairingNativeResult {
 
 final class _OpenedDeviceStateNativeResult {
   const _OpenedDeviceStateNativeResult({
+    required this.binding,
     required this.identityHandle,
     required this.arkHandle,
   });
 
+  final KelivoDeviceStateBinding binding;
   final int identityHandle;
   final int arkHandle;
 }
@@ -1435,16 +1441,9 @@ Uint8List _sealDeviceState(
 _OpenedDeviceStateNativeResult _openDeviceState(
   int keyHandle,
   Uint8List stateBlob,
-  Uint8List expectedDeviceId,
-  int expectedKeyVersion,
-  Uint8List? expectedUserId,
-  int expectedKeyEpoch,
 ) {
   final blobPointer = _copyToNative(stateBlob);
-  final deviceIdPointer = _copyToNative(expectedDeviceId);
-  final userIdPointer = expectedUserId == null
-      ? ffi.nullptr.cast<ffi.Uint8>()
-      : _copyToNative(expectedUserId);
+  final binding = calloc<native.KelivoDeviceStateBinding>();
   final identityHandle = calloc<ffi.Uint64>();
   final arkHandle = calloc<ffi.Uint64>();
   var published = false;
@@ -1455,12 +1454,7 @@ _OpenedDeviceStateNativeResult _openDeviceState(
         keyHandle,
         blobPointer,
         stateBlob.length,
-        deviceIdPointer,
-        expectedDeviceId.length,
-        expectedKeyVersion,
-        userIdPointer,
-        expectedUserId?.length ?? 0,
-        expectedKeyEpoch,
+        binding,
         identityHandle,
         arkHandle,
       ),
@@ -1468,8 +1462,13 @@ _OpenedDeviceStateNativeResult _openDeviceState(
     if (identityHandle.value == native.KELIVO_DEVICE_INVALID_HANDLE) {
       throw StateError('device_state_open 成功返回了无效设备身份句柄');
     }
+    final openedBinding = _readAuthenticatedDeviceStateBinding(
+      binding.ref,
+      arkHandle: arkHandle.value,
+    );
     published = true;
     return _OpenedDeviceStateNativeResult(
+      binding: openedBinding,
       identityHandle: identityHandle.value,
       arkHandle: arkHandle.value,
     );
@@ -1483,14 +1482,56 @@ _OpenedDeviceStateNativeResult _openDeviceState(
       }
     }
     _clearAndFree(blobPointer, stateBlob.length);
-    _clearAndFree(deviceIdPointer, expectedDeviceId.length);
-    if (expectedUserId != null) {
-      _clearAndFree(userIdPointer, expectedUserId.length);
-      expectedUserId.fillRange(0, expectedUserId.length, 0);
-    }
+    _clearAndFree(
+      binding.cast<ffi.Uint8>(),
+      ffi.sizeOf<native.KelivoDeviceStateBinding>(),
+    );
     stateBlob.fillRange(0, stateBlob.length, 0);
-    expectedDeviceId.fillRange(0, expectedDeviceId.length, 0);
     calloc.free(identityHandle);
     calloc.free(arkHandle);
   }
+}
+
+KelivoDeviceStateBinding _readAuthenticatedDeviceStateBinding(
+  native.KelivoDeviceStateBinding value, {
+  required int arkHandle,
+}) {
+  if (value.struct_size != native.KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE) {
+    throw StateError('device_state_open 成功返回了未知绑定结构');
+  }
+  const accountFlag = native.KELIVO_DEVICE_STATE_BINDING_FLAG_ACCOUNT;
+  if ((value.flags & ~accountFlag) != 0) {
+    throw StateError('device_state_open 成功返回了未知绑定标志');
+  }
+  final deviceId = _copyNativeByteArray(value.device_id, _deviceUuidLength);
+  _validateUuidV4(deviceId, 'deviceId');
+  _validatePositiveUint32(value.key_version, 'keyVersion');
+  final hasAccount = (value.flags & accountFlag) != 0;
+  final userId = _copyNativeByteArray(value.user_id, _deviceUuidLength);
+  final account = hasAccount
+      ? KelivoDeviceStateAccountBinding(
+          userId: userId,
+          keyEpoch: value.key_epoch,
+        )
+      : null;
+  if (hasAccount != (arkHandle != native.KELIVO_DEVICE_INVALID_HANDLE)) {
+    throw StateError('device_state_open 成功返回了失配的账户句柄');
+  }
+  if (!hasAccount &&
+      (value.key_epoch != 0 || userId.any((byte) => byte != 0))) {
+    throw StateError('device_state_open 成功返回了非规范空账户绑定');
+  }
+  return KelivoDeviceStateBinding._(
+    deviceId: _immutableDeviceBytes(deviceId),
+    keyVersion: value.key_version,
+    account: account,
+  );
+}
+
+Uint8List _copyNativeByteArray(ffi.Array<ffi.Uint8> source, int length) {
+  final bytes = Uint8List(length);
+  for (var index = 0; index < length; index++) {
+    bytes[index] = source[index];
+  }
+  return bytes;
 }
