@@ -57,10 +57,13 @@ void main() {
     SharedPreferences.resetStatic();
   });
 
-  Future<AccountWorkspaceRuntime> bootstrap() async {
+  Future<AccountWorkspaceRuntime> bootstrap({
+    DateTime Function()? utcNow,
+  }) async {
     final runtime = await AccountWorkspaceRuntime.bootstrap(
       installationRoot: installationRoot,
       sessionTokenStore: sessionTokenStore,
+      utcNow: utcNow,
     );
     runtimes.add(runtime);
     return runtime;
@@ -1557,7 +1560,7 @@ void main() {
     expect(runtime.current.session?.token.value, refreshed.token.value);
   });
 
-  test('会话 metadata 提交后清理失败由下次启动完成旧 token 清理', () async {
+  test('会话 metadata 提交后清理失败仍切换会话并由下次启动清理', () async {
     var runtime = await bootstrap();
     final original = _session(userId: 'account-a', token: 'old-token');
     await runtime.bindAccount(original);
@@ -1566,11 +1569,10 @@ void main() {
     runtime = await bootstrap();
     final refreshed = _session(userId: 'account-a', token: 'new-token');
     sessionTokenStore.failNextDelete = true;
-    await expectLater(
-      runtime.bindAccount(refreshed),
-      throwsA(isA<StateError>()),
-    );
-    expect(runtime.current.session?.token.value, original.token.value);
+    final result = await runtime.bindAccount(refreshed);
+
+    expect(result, isA<AccountWorkspaceRetained>());
+    expect(runtime.current.session?.token.value, refreshed.token.value);
     expect(sessionTokenStore.tokenCount, 2);
     await close(runtime);
 
@@ -1701,6 +1703,69 @@ void main() {
     expect(runtime.current.isLocal, isTrue);
   });
 
+  test('账号会话在到期前一微秒仍恢复原工作区', () async {
+    final expiresAt = DateTime.utc(2030, 7, 18);
+    var runtime = await bootstrap();
+    final session = _session(
+      userId: 'not-expired-account',
+      token: 'not-expired-token',
+      tokenExpiresAt: expiresAt,
+    );
+    await runtime.bindAccount(session);
+    await close(runtime);
+
+    runtime = await bootstrap(
+      utcNow: () => expiresAt.subtract(const Duration(microseconds: 1)),
+    );
+
+    expect(runtime.current.session?.token.value, session.token.value);
+    expect(sessionTokenStore.tokenCount, 1);
+  });
+
+  test('账号会话在到期瞬间失效并切回匿名工作区', () async {
+    final expiresAt = DateTime.utc(2030, 7, 18);
+    var runtime = await bootstrap();
+    await runtime.bindAccount(
+      _session(
+        userId: 'expired-account',
+        token: 'expired-token',
+        tokenExpiresAt: expiresAt,
+      ),
+    );
+    await close(runtime);
+
+    runtime = await bootstrap(utcNow: () => expiresAt);
+
+    expect(runtime.current.isLocal, isTrue);
+    expect(runtime.current.session, isNull);
+    expect(sessionTokenStore.tokenCount, 0);
+  });
+
+  test('账号会话到期提交后令牌删除失败仍切回匿名工作区并重试清理', () async {
+    final expiresAt = DateTime.utc(2030, 7, 18);
+    var runtime = await bootstrap();
+    await runtime.bindAccount(
+      _session(
+        userId: 'expired-cleanup-account',
+        token: 'expired-cleanup-token',
+        tokenExpiresAt: expiresAt,
+      ),
+    );
+    await close(runtime);
+
+    sessionTokenStore.failNextDeleteAll = true;
+    runtime = await bootstrap(utcNow: () => expiresAt);
+
+    expect(runtime.current.isLocal, isTrue);
+    expect(runtime.current.session, isNull);
+    expect(sessionTokenStore.tokenCount, 1);
+    await close(runtime);
+
+    runtime = await bootstrap(utcNow: () => expiresAt);
+    expect(runtime.current.isLocal, isTrue);
+    expect(sessionTokenStore.tokenCount, 0);
+  });
+
   test('退出在 tombstone 落盘后中断时启动自动完成切回匿名工作区', () async {
     var runtime = await bootstrap();
     await runtime.bindAccount(_session(userId: 'account-a', token: 'token-a'));
@@ -1724,14 +1789,17 @@ void main() {
     expect(runtime.current.isLocal, isTrue);
   });
 
-  test('退出令牌删除中断后启动依据 tombstone 清理残留密文', () async {
+  test('退出提交后令牌删除失败仍完成退出并由下次启动清理', () async {
     var runtime = await bootstrap();
     await runtime.bindAccount(_session(userId: 'account-a', token: 'token-a'));
     await close(runtime);
 
     runtime = await bootstrap();
     sessionTokenStore.failNextDelete = true;
-    await expectLater(runtime.signOut(), throwsA(isA<StateError>()));
+    final result = await runtime.signOut();
+
+    expect(result.target.isLocal, isTrue);
+    expect(runtime.current.session, isNull);
     expect(sessionTokenStore.tokenCount, 1);
     await close(runtime);
 
@@ -3581,6 +3649,7 @@ final class _MemoryAccountSessionTokenStore
     implements AccountSessionTokenStore {
   final Map<String, String> _tokens = <String, String>{};
   bool failNextDelete = false;
+  bool failNextDeleteAll = false;
 
   int get tokenCount => _tokens.length;
 
@@ -3620,8 +3689,9 @@ final class _MemoryAccountSessionTokenStore
     required AccountSessionTokenReference? keep,
     required RestoreDurability durability,
   }) async {
-    if (failNextDelete) {
+    if (failNextDelete || (failNextDeleteAll && keep == null)) {
       failNextDelete = false;
+      failNextDeleteAll = false;
       throw StateError('account_session_token_delete_interrupted');
     }
     final prefix = '${p.normalize(accountDirectory.absolute.path)}|';

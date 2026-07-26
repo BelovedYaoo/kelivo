@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:developer' as developer;
 import 'dart:io';
 
 import 'package:crypto/crypto.dart';
@@ -76,6 +77,7 @@ final class AccountWorkspaceRuntime {
     this._current,
     this._registryGeneration,
     this._registrySlot,
+    this._pendingTokenCleanup,
   );
 
   static const _workspaceDirectoryName = '.kelivo-workspaces';
@@ -97,6 +99,8 @@ final class AccountWorkspaceRuntime {
   AccountWorkspaceContext _current;
   int _registryGeneration;
   String? _registrySlot;
+  // 活动账号指针清除后，只能依靠注册表队列跨进程定位待清理令牌。
+  final Set<String> _pendingTokenCleanup;
   bool _closed = false;
 
   AccountWorkspaceContext get current => _current;
@@ -128,6 +132,7 @@ final class AccountWorkspaceRuntime {
   static Future<AccountWorkspaceRuntime> bootstrap({
     Directory? installationRoot,
     AccountSessionTokenStore? sessionTokenStore,
+    DateTime Function()? utcNow,
   }) async {
     final resolvedSessionTokenStore =
         sessionTokenStore ?? const SecureAccountSessionTokenStore();
@@ -162,11 +167,25 @@ final class AccountWorkspaceRuntime {
     );
     final durability = RestorePlatformDurability();
     try {
+      final now = (utcNow ?? DateTime.now)().toUtc();
       var registry = await _readLatestRecord(
         directory: workspaceRoot,
         recordName: _registryRecordName,
       );
       var activeWorkspaceKey = _parseRegistry(registry?.payload);
+      final pendingTokenCleanup = _parsePendingTokenCleanup(registry?.payload);
+      for (final workspaceKey in pendingTokenCleanup.toList()) {
+        final tokensCleaned = await _retryPendingTokenCleanup(
+          workspaceRoot: workspaceRoot,
+          canonicalWorkspaceRoot: canonicalWorkspaceRoot,
+          workspaceKey: workspaceKey,
+          sessionTokenStore: resolvedSessionTokenStore,
+          durability: durability,
+        );
+        if (tokensCleaned) {
+          pendingTokenCleanup.remove(workspaceKey);
+        }
+      }
       late AccountWorkspaceContext current;
       if (activeWorkspaceKey == null) {
         current = _localContext(resolvedInstallationRoot);
@@ -186,43 +205,64 @@ final class AccountWorkspaceRuntime {
           recordName: _sessionRecordName,
         );
         if (removedLegacy && !hasEncryptedSession) {
-          await resolvedSessionTokenStore.deleteTokens(
+          final tokensCleaned = await _deleteTokensAfterCommit(
+            operation: 'discard-legacy-session',
+            workspaceKey: activeWorkspaceKey,
+            sessionTokenStore: resolvedSessionTokenStore,
             accountDirectory: accountDirectory,
             keep: null,
             durability: durability,
           );
+          _recordTokenCleanupResult(
+            pendingTokenCleanup,
+            activeWorkspaceKey,
+            tokensCleaned: tokensCleaned,
+          );
+          activeWorkspaceKey = null;
           registry = await _writeNextRecord(
             directory: workspaceRoot,
             recordName: _registryRecordName,
             currentGeneration: registry?.generation ?? 0,
             currentSlot: registry?.slot,
-            payload: const <String, Object?>{'version': 1},
+            payload: _registryPayload(
+              activeWorkspaceKey: activeWorkspaceKey,
+              pendingTokenCleanup: pendingTokenCleanup,
+            ),
             durability: durability,
           );
-          activeWorkspaceKey = null;
           current = _localContext(resolvedInstallationRoot);
         } else {
-          current = await _readAccountContext(
+          final accountRead = await _readAccountContext(
             workspaceRoot: workspaceRoot,
             canonicalWorkspaceRoot: canonicalWorkspaceRoot,
             workspaceKey: activeWorkspaceKey,
             sessionTokenStore: resolvedSessionTokenStore,
             durability: durability,
           );
+          current = accountRead.context;
+          if (accountRead.tokensCleaned) {
+            pendingTokenCleanup.remove(activeWorkspaceKey);
+          }
         }
       }
       final activeSession = current.session;
       if (activeWorkspaceKey != null &&
           activeSession != null &&
-          activeSession.baseUrl != defaultCloudSyncBaseUrl) {
-        // 服务地址已硬切时，旧凭证不能在账号工作区完成绑定后继续发起请求。
-        await _writeSessionTombstone(
+          (activeSession.baseUrl != defaultCloudSyncBaseUrl ||
+              activeSession.isExpiredAt(now))) {
+        // 不可再使用的凭证必须先由 tombstone 压过，再清除注册表选择。
+        final tokensCleaned = await _writeSessionTombstone(
           workspaceRoot: workspaceRoot,
           canonicalWorkspaceRoot: canonicalWorkspaceRoot,
           workspaceKey: activeWorkspaceKey,
           accountScope: current.accountScope!,
           durability: durability,
           sessionTokenStore: resolvedSessionTokenStore,
+        );
+        _recordTokenCleanupResult(
+          pendingTokenCleanup,
+          activeWorkspaceKey,
+          tokensCleaned: tokensCleaned,
         );
         current = current._withoutSession();
       }
@@ -234,10 +274,34 @@ final class AccountWorkspaceRuntime {
           recordName: _registryRecordName,
           currentGeneration: registry?.generation ?? 0,
           currentSlot: registry?.slot,
-          payload: const <String, Object?>{'version': 1},
+          payload: _registryPayload(
+            activeWorkspaceKey: null,
+            pendingTokenCleanup: pendingTokenCleanup,
+          ),
           durability: durability,
         );
+        activeWorkspaceKey = null;
         current = _localContext(resolvedInstallationRoot);
+      }
+      final persistedPendingTokenCleanup = _parsePendingTokenCleanup(
+        registry?.payload,
+      );
+      if (_parseRegistry(registry?.payload) != activeWorkspaceKey ||
+          !_sameWorkspaceKeys(
+            persistedPendingTokenCleanup,
+            pendingTokenCleanup,
+          )) {
+        registry = await _writeNextRecord(
+          directory: workspaceRoot,
+          recordName: _registryRecordName,
+          currentGeneration: registry?.generation ?? 0,
+          currentSlot: registry?.slot,
+          payload: _registryPayload(
+            activeWorkspaceKey: activeWorkspaceKey,
+            pendingTokenCleanup: pendingTokenCleanup,
+          ),
+          durability: durability,
+        );
       }
       await current.dataDirectory.create(recursive: true);
 
@@ -269,6 +333,7 @@ final class AccountWorkspaceRuntime {
         current,
         registry?.generation ?? 0,
         registry?.slot,
+        pendingTokenCleanup,
       );
     } catch (_) {
       await lease.close();
@@ -348,10 +413,10 @@ final class AccountWorkspaceRuntime {
       recordName: _registryRecordName,
       currentGeneration: _registryGeneration,
       currentSlot: _registrySlot,
-      payload: <String, Object?>{
-        'version': 1,
-        if (workspaceKey != null) 'activeAccount': workspaceKey,
-      },
+      payload: _registryPayload(
+        activeWorkspaceKey: workspaceKey,
+        pendingTokenCleanup: _pendingTokenCleanup,
+      ),
       durability: _durability,
     );
     _registryGeneration = next.generation;
@@ -394,10 +459,18 @@ final class AccountWorkspaceRuntime {
         payload: <String, Object?>{'version': 2, 'accountScope': accountScope},
         durability: _durability,
       );
-      await _sessionTokenStore.deleteTokens(
+      final tokensCleaned = await _deleteTokensAfterCommit(
+        operation: 'sign-out',
+        workspaceKey: workspaceKey,
+        sessionTokenStore: _sessionTokenStore,
         accountDirectory: accountDirectory,
         keep: null,
         durability: _durability,
+      );
+      _recordTokenCleanupResult(
+        _pendingTokenCleanup,
+        workspaceKey,
+        tokensCleaned: tokensCleaned,
       );
       return;
     }
@@ -422,11 +495,102 @@ final class AccountWorkspaceRuntime {
       },
       durability: _durability,
     );
-    await _sessionTokenStore.deleteTokens(
+    final tokensCleaned = await _deleteTokensAfterCommit(
+      operation: 'bind-account',
+      workspaceKey: workspaceKey,
+      sessionTokenStore: _sessionTokenStore,
       accountDirectory: accountDirectory,
       keep: tokenReference,
       durability: _durability,
     );
+    _recordTokenCleanupResult(
+      _pendingTokenCleanup,
+      workspaceKey,
+      tokensCleaned: tokensCleaned,
+    );
+  }
+
+  static Future<bool> _deleteTokensAfterCommit({
+    required String operation,
+    required String workspaceKey,
+    required AccountSessionTokenStore sessionTokenStore,
+    required Directory accountDirectory,
+    required AccountSessionTokenReference? keep,
+    required RestoreDurability durability,
+  }) async {
+    try {
+      await sessionTokenStore.deleteTokens(
+        accountDirectory: accountDirectory,
+        keep: keep,
+        durability: durability,
+      );
+      return true;
+    } catch (error, stackTrace) {
+      developer.log(
+        '账号会话已提交，令牌清理将在下次启动重试：$operation:$workspaceKey',
+        name: 'Kelivo.AccountWorkspaceRuntime',
+        level: 900,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+  }
+
+  static Future<bool> _retryPendingTokenCleanup({
+    required Directory workspaceRoot,
+    required String canonicalWorkspaceRoot,
+    required String workspaceKey,
+    required AccountSessionTokenStore sessionTokenStore,
+    required RestoreDurability durability,
+  }) async {
+    try {
+      final accountDirectory = await _ensureAccountDirectoryPath(
+        workspaceRoot: workspaceRoot,
+        canonicalWorkspaceRoot: canonicalWorkspaceRoot,
+        workspaceKey: workspaceKey,
+        createMissing: false,
+      );
+      final record = await _readLatestRecord(
+        directory: accountDirectory,
+        recordName: _sessionRecordName,
+      );
+      final stored = record == null
+          ? null
+          : _parseStoredSession(
+              record.payload,
+              expectedWorkspaceKey: workspaceKey,
+            );
+      return await _deleteTokensAfterCommit(
+        operation: 'bootstrap-retry',
+        workspaceKey: workspaceKey,
+        sessionTokenStore: sessionTokenStore,
+        accountDirectory: accountDirectory,
+        keep: stored?.tokenReference,
+        durability: durability,
+      );
+    } catch (error, stackTrace) {
+      developer.log(
+        '账号令牌待清理项暂时无法恢复，将在下次启动重试：$workspaceKey',
+        name: 'Kelivo.AccountWorkspaceRuntime',
+        level: 900,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+  }
+
+  static void _recordTokenCleanupResult(
+    Set<String> pendingTokenCleanup,
+    String workspaceKey, {
+    required bool tokensCleaned,
+  }) {
+    if (tokensCleaned) {
+      pendingTokenCleanup.remove(workspaceKey);
+    } else {
+      pendingTokenCleanup.add(workspaceKey);
+    }
   }
 
   void _requireOpen() {
@@ -443,7 +607,8 @@ final class AccountWorkspaceRuntime {
     );
   }
 
-  static Future<AccountWorkspaceContext> _readAccountContext({
+  static Future<({AccountWorkspaceContext context, bool tokensCleaned})>
+  _readAccountContext({
     required Directory workspaceRoot,
     required String canonicalWorkspaceRoot,
     required String workspaceKey,
@@ -472,8 +637,12 @@ final class AccountWorkspaceRuntime {
     );
     final accountScope = stored.accountScope;
     final CloudSyncAccountSession? session;
+    final bool tokensCleaned;
     if (stored.sessionMetadata == null) {
-      await sessionTokenStore.deleteTokens(
+      tokensCleaned = await _deleteTokensAfterCommit(
+        operation: 'bootstrap-tombstone',
+        workspaceKey: workspaceKey,
+        sessionTokenStore: sessionTokenStore,
         accountDirectory: accountDirectory,
         keep: null,
         durability: durability,
@@ -494,7 +663,10 @@ final class AccountWorkspaceRuntime {
       if (session.accountScope != accountScope) {
         throw const FormatException('account_workspace_session_scope');
       }
-      await sessionTokenStore.deleteTokens(
+      tokensCleaned = await _deleteTokensAfterCommit(
+        operation: 'bootstrap-session',
+        workspaceKey: workspaceKey,
+        sessionTokenStore: sessionTokenStore,
         accountDirectory: accountDirectory,
         keep: stored.tokenReference!,
         durability: durability,
@@ -506,11 +678,14 @@ final class AccountWorkspaceRuntime {
       workspaceKey: workspaceKey,
       createAccount: false,
     );
-    return _accountContext(
-      workspaceKey: workspaceKey,
-      dataDirectory: dataDirectory,
-      accountScope: accountScope,
-      session: session,
+    return (
+      context: _accountContext(
+        workspaceKey: workspaceKey,
+        dataDirectory: dataDirectory,
+        accountScope: accountScope,
+        session: session,
+      ),
+      tokensCleaned: tokensCleaned,
     );
   }
 
@@ -529,7 +704,7 @@ final class AccountWorkspaceRuntime {
     );
   }
 
-  static Future<void> _writeSessionTombstone({
+  static Future<bool> _writeSessionTombstone({
     required Directory workspaceRoot,
     required String canonicalWorkspaceRoot,
     required String workspaceKey,
@@ -564,7 +739,10 @@ final class AccountWorkspaceRuntime {
       payload: <String, Object?>{'version': 2, 'accountScope': accountScope},
       durability: durability,
     );
-    await sessionTokenStore.deleteTokens(
+    return _deleteTokensAfterCommit(
+      operation: 'invalidate-session',
+      workspaceKey: workspaceKey,
+      sessionTokenStore: sessionTokenStore,
       accountDirectory: accountDirectory,
       keep: null,
       durability: durability,
@@ -763,6 +941,19 @@ final class AccountWorkspaceRuntime {
     return RegExp(r'^[0-9a-f]{64}$').hasMatch(value);
   }
 
+  static Map<String, Object?> _registryPayload({
+    required String? activeWorkspaceKey,
+    required Set<String> pendingTokenCleanup,
+  }) {
+    final sortedPendingTokenCleanup = pendingTokenCleanup.toList()..sort();
+    return <String, Object?>{
+      'version': 1,
+      if (activeWorkspaceKey != null) 'activeAccount': activeWorkspaceKey,
+      if (sortedPendingTokenCleanup.isNotEmpty)
+        'pendingTokenCleanup': sortedPendingTokenCleanup,
+    };
+  }
+
   static String? _parseRegistry(Map<String, Object?>? payload) {
     if (payload == null) return null;
     if (payload['version'] != 1) {
@@ -774,6 +965,29 @@ final class AccountWorkspaceRuntime {
       throw const FormatException('account_workspace_registry');
     }
     return active;
+  }
+
+  static Set<String> _parsePendingTokenCleanup(Map<String, Object?>? payload) {
+    if (payload == null || !payload.containsKey('pendingTokenCleanup')) {
+      return <String>{};
+    }
+    final rawPending = payload['pendingTokenCleanup'];
+    if (rawPending is! List<Object?>) {
+      throw const FormatException('account_workspace_registry_cleanup');
+    }
+    final pending = <String>{};
+    for (final rawWorkspaceKey in rawPending) {
+      if (rawWorkspaceKey is! String ||
+          !_isWorkspaceKey(rawWorkspaceKey) ||
+          !pending.add(rawWorkspaceKey)) {
+        throw const FormatException('account_workspace_registry_cleanup');
+      }
+    }
+    return pending;
+  }
+
+  static bool _sameWorkspaceKeys(Set<String> left, Set<String> right) {
+    return left.length == right.length && left.every(right.contains);
   }
 
   static _StoredAccountSession _parseStoredSession(
