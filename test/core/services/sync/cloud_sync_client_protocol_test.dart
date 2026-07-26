@@ -1280,6 +1280,161 @@ void main() {
     );
   });
 
+  test('桌面待批准登录创建绑定当前设备身份的二维码并可取消', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    const loginName = 'pairing-target';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
+    final identity = await core.generateDeviceIdentity();
+    final publicKeys = await core.readDevicePublicKeys(identity);
+    final identityState = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: _rawUuid(_deviceId2),
+      keyVersion: 1,
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: identityState,
+    );
+    await core.closeDeviceIdentity(identity);
+    await core.close(key);
+
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final onboardingExpiresAt = DateTime.fromMillisecondsSinceEpoch(
+      DateTime.now()
+          .toUtc()
+          .add(const Duration(minutes: 5))
+          .millisecondsSinceEpoch,
+      isUtc: true,
+    );
+    final approvalRequired = E2eeAccountLoginApprovalRequired(
+      onboardingToken: _onboardingToken,
+      onboardingTokenExpiresAt: onboardingExpiresAt,
+      loginName: loginName,
+      device: CloudSyncAuthenticatedDevice(
+        id: _deviceId2,
+        name: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+        status: CloudSyncAuthenticatedDeviceStatus.pending,
+        createdAt: DateTime.utc(2026, 7, 26, 5),
+      ),
+    );
+    Future<String> respondToCreate(DateTime expiresAt) async {
+      expect(await requests.moveNext(), isTrue);
+      final createRequest = requests.current;
+      final createBody = copyCloudSyncJsonMap(
+        jsonDecode(await utf8.decoder.bind(createRequest).join()),
+      );
+      expect(createRequest.uri.path, '/api/auth/device-pairing/create');
+      final pairingId = createBody['pairingId']! as String;
+      createRequest.response.headers.contentType = ContentType.json;
+      createRequest.response.write(
+        jsonEncode(<String, Object?>{
+          'data': <String, Object?>{
+            'protocolVersion': cloudSyncOpaqueProtocolVersion,
+            'pairingId': pairingId,
+            'accountContextId': _userId,
+            'challenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 18),
+            'expiresAt': expiresAt.toIso8601String(),
+            'targetDevice': <String, Object?>{
+              'id': _deviceId2,
+              'name': 'Windows 主机',
+              'platform': 'windows',
+              'clientVersion': '1.2.3',
+              'keyVersion': 1,
+              'authGeneration': 0,
+              'signingPublicKey': base64Url
+                  .encode(publicKeys.signingPublicKey)
+                  .replaceAll('=', ''),
+              'keyAgreementPublicKey': base64Url
+                  .encode(publicKeys.keyAgreementPublicKey)
+                  .replaceAll('=', ''),
+            },
+          },
+        }),
+      );
+      await createRequest.response.close();
+      return pairingId;
+    }
+
+    final startFuture = authenticator.startDevicePairing(approvalRequired);
+    final pairingId = await respondToCreate(
+      onboardingExpiresAt.subtract(const Duration(seconds: 1)),
+    );
+
+    final pending = await startFuture;
+    final frame = pending.takeQrFrame(now: DateTime.now().toUtc());
+    final decoded = CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+      frame,
+      now: DateTime.now().toUtc(),
+    );
+    expect(decoded.pairingId, pairingId);
+    expect(decoded.accountContextId, _userId);
+    expect(decoded.targetDeviceId, _deviceId2);
+    decoded.dispose();
+
+    final foreignClient = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final foreignAuthenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: foreignClient,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() => foreignClient.close(force: true));
+    await expectLater(
+      foreignAuthenticator.cancelDevicePairing(pending),
+      throwsStateError,
+    );
+
+    final cancelFuture = authenticator.cancelDevicePairing(pending);
+    expect(await requests.moveNext(), isTrue);
+    final cancelRequest = requests.current;
+    expect(cancelRequest.uri.path, '/api/auth/device-pairing/cancel');
+    cancelRequest.response.headers.contentType = ContentType.json;
+    cancelRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'pairingId': pairingId,
+          'result': 'cancelled',
+          'cancelledAt': DateTime.now().toUtc().toIso8601String(),
+        },
+      }),
+    );
+    await cancelRequest.response.close();
+    await cancelFuture;
+
+    final rejectedStart = authenticator.startDevicePairing(approvalRequired);
+    await respondToCreate(onboardingExpiresAt.add(const Duration(seconds: 1)));
+    await expectLater(rejectedStart, throwsStateError);
+  });
+
   test('设备配对全生命周期按令牌能力隔离并显式接管完整会话', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = <(String, String?, CloudSyncJsonMap)>[];

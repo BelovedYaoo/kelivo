@@ -8,7 +8,10 @@ import 'package:uuid/uuid.dart';
 
 import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_client.dart';
+import 'cloud_sync_pairing_qr_codec.dart';
 import 'cloud_sync_types.dart';
+
+part 'e2ee_device_pairing.dart';
 
 sealed class E2eeAccountLoginResult {
   const E2eeAccountLoginResult();
