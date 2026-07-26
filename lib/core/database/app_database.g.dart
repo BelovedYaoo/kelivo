@@ -5807,6 +5807,1190 @@ class GenerationRunRowsCompanion extends UpdateCompanion<GenerationRunRow> {
   }
 }
 
+class $E2eeSyncRecordStateRowsTable extends E2eeSyncRecordStateRows
+    with TableInfo<$E2eeSyncRecordStateRowsTable, E2eeSyncRecordStateRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeSyncRecordStateRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _digestMeta = const VerificationMeta('digest');
+  @override
+  late final GeneratedColumn<Uint8List> digest = GeneratedColumn<Uint8List>(
+    'digest',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _recordIdMeta = const VerificationMeta(
+    'recordId',
+  );
+  @override
+  late final GeneratedColumn<String> recordId = GeneratedColumn<String>(
+    'record_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entityTypeMeta = const VerificationMeta(
+    'entityType',
+  );
+  @override
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entityIdMeta = const VerificationMeta(
+    'entityId',
+  );
+  @override
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _logicalVersionMeta = const VerificationMeta(
+    'logicalVersion',
+  );
+  @override
+  late final GeneratedColumn<int> logicalVersion = GeneratedColumn<int>(
+    'logical_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _operationIdMeta = const VerificationMeta(
+    'operationId',
+  );
+  @override
+  late final GeneratedColumn<String> operationId = GeneratedColumn<String>(
+    'operation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _claimedWriterDeviceIdMeta =
+      const VerificationMeta('claimedWriterDeviceId');
+  @override
+  late final GeneratedColumn<String> claimedWriterDeviceId =
+      GeneratedColumn<String>(
+        'claimed_writer_device_id',
+        aliasedName,
+        false,
+        type: DriftSqlType.string,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _claimedWriterKeyVersionMeta =
+      const VerificationMeta('claimedWriterKeyVersion');
+  @override
+  late final GeneratedColumn<int> claimedWriterKeyVersion =
+      GeneratedColumn<int>(
+        'claimed_writer_key_version',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _keyEpochMeta = const VerificationMeta(
+    'keyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
+    'key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> acceptedAt =
+      GeneratedColumn<int>(
+        'accepted_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeSyncRecordStateRowsTable.$converteracceptedAt,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    digest,
+    recordId,
+    entityType,
+    entityId,
+    logicalVersion,
+    kind,
+    operationId,
+    claimedWriterDeviceId,
+    claimedWriterKeyVersion,
+    keyEpoch,
+    acceptedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_record_state_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeSyncRecordStateRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('digest')) {
+      context.handle(
+        _digestMeta,
+        digest.isAcceptableOrUnknown(data['digest']!, _digestMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_digestMeta);
+    }
+    if (data.containsKey('record_id')) {
+      context.handle(
+        _recordIdMeta,
+        recordId.isAcceptableOrUnknown(data['record_id']!, _recordIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_recordIdMeta);
+    }
+    if (data.containsKey('entity_type')) {
+      context.handle(
+        _entityTypeMeta,
+        entityType.isAcceptableOrUnknown(data['entity_type']!, _entityTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityTypeMeta);
+    }
+    if (data.containsKey('entity_id')) {
+      context.handle(
+        _entityIdMeta,
+        entityId.isAcceptableOrUnknown(data['entity_id']!, _entityIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityIdMeta);
+    }
+    if (data.containsKey('logical_version')) {
+      context.handle(
+        _logicalVersionMeta,
+        logicalVersion.isAcceptableOrUnknown(
+          data['logical_version']!,
+          _logicalVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_logicalVersionMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('operation_id')) {
+      context.handle(
+        _operationIdMeta,
+        operationId.isAcceptableOrUnknown(
+          data['operation_id']!,
+          _operationIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_operationIdMeta);
+    }
+    if (data.containsKey('claimed_writer_device_id')) {
+      context.handle(
+        _claimedWriterDeviceIdMeta,
+        claimedWriterDeviceId.isAcceptableOrUnknown(
+          data['claimed_writer_device_id']!,
+          _claimedWriterDeviceIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_claimedWriterDeviceIdMeta);
+    }
+    if (data.containsKey('claimed_writer_key_version')) {
+      context.handle(
+        _claimedWriterKeyVersionMeta,
+        claimedWriterKeyVersion.isAcceptableOrUnknown(
+          data['claimed_writer_key_version']!,
+          _claimedWriterKeyVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_claimedWriterKeyVersionMeta);
+    }
+    if (data.containsKey('key_epoch')) {
+      context.handle(
+        _keyEpochMeta,
+        keyEpoch.isAcceptableOrUnknown(data['key_epoch']!, _keyEpochMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_keyEpochMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {digest};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {operationId},
+  ];
+  @override
+  E2eeSyncRecordStateRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeSyncRecordStateRow(
+      digest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}digest'],
+      )!,
+      recordId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}record_id'],
+      )!,
+      entityType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_type'],
+      )!,
+      entityId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_id'],
+      )!,
+      logicalVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}logical_version'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      operationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operation_id'],
+      )!,
+      claimedWriterDeviceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}claimed_writer_device_id'],
+      )!,
+      claimedWriterKeyVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}claimed_writer_key_version'],
+      )!,
+      keyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}key_epoch'],
+      )!,
+      acceptedAt: $E2eeSyncRecordStateRowsTable.$converteracceptedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}accepted_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeSyncRecordStateRowsTable createAlias(String alias) {
+    return $E2eeSyncRecordStateRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $converteracceptedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeSyncRecordStateRow extends DataClass
+    implements Insertable<E2eeSyncRecordStateRow> {
+  final Uint8List digest;
+  final String recordId;
+  final String entityType;
+  final String entityId;
+  final int logicalVersion;
+  final String kind;
+  final String operationId;
+  final String claimedWriterDeviceId;
+  final int claimedWriterKeyVersion;
+  final int keyEpoch;
+  final DateTime acceptedAt;
+  const E2eeSyncRecordStateRow({
+    required this.digest,
+    required this.recordId,
+    required this.entityType,
+    required this.entityId,
+    required this.logicalVersion,
+    required this.kind,
+    required this.operationId,
+    required this.claimedWriterDeviceId,
+    required this.claimedWriterKeyVersion,
+    required this.keyEpoch,
+    required this.acceptedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['digest'] = Variable<Uint8List>(digest);
+    map['record_id'] = Variable<String>(recordId);
+    map['entity_type'] = Variable<String>(entityType);
+    map['entity_id'] = Variable<String>(entityId);
+    map['logical_version'] = Variable<int>(logicalVersion);
+    map['kind'] = Variable<String>(kind);
+    map['operation_id'] = Variable<String>(operationId);
+    map['claimed_writer_device_id'] = Variable<String>(claimedWriterDeviceId);
+    map['claimed_writer_key_version'] = Variable<int>(claimedWriterKeyVersion);
+    map['key_epoch'] = Variable<int>(keyEpoch);
+    {
+      map['accepted_at'] = Variable<int>(
+        $E2eeSyncRecordStateRowsTable.$converteracceptedAt.toSql(acceptedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeSyncRecordStateRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeSyncRecordStateRowsCompanion(
+      digest: Value(digest),
+      recordId: Value(recordId),
+      entityType: Value(entityType),
+      entityId: Value(entityId),
+      logicalVersion: Value(logicalVersion),
+      kind: Value(kind),
+      operationId: Value(operationId),
+      claimedWriterDeviceId: Value(claimedWriterDeviceId),
+      claimedWriterKeyVersion: Value(claimedWriterKeyVersion),
+      keyEpoch: Value(keyEpoch),
+      acceptedAt: Value(acceptedAt),
+    );
+  }
+
+  factory E2eeSyncRecordStateRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeSyncRecordStateRow(
+      digest: serializer.fromJson<Uint8List>(json['digest']),
+      recordId: serializer.fromJson<String>(json['recordId']),
+      entityType: serializer.fromJson<String>(json['entityType']),
+      entityId: serializer.fromJson<String>(json['entityId']),
+      logicalVersion: serializer.fromJson<int>(json['logicalVersion']),
+      kind: serializer.fromJson<String>(json['kind']),
+      operationId: serializer.fromJson<String>(json['operationId']),
+      claimedWriterDeviceId: serializer.fromJson<String>(
+        json['claimedWriterDeviceId'],
+      ),
+      claimedWriterKeyVersion: serializer.fromJson<int>(
+        json['claimedWriterKeyVersion'],
+      ),
+      keyEpoch: serializer.fromJson<int>(json['keyEpoch']),
+      acceptedAt: serializer.fromJson<DateTime>(json['acceptedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'digest': serializer.toJson<Uint8List>(digest),
+      'recordId': serializer.toJson<String>(recordId),
+      'entityType': serializer.toJson<String>(entityType),
+      'entityId': serializer.toJson<String>(entityId),
+      'logicalVersion': serializer.toJson<int>(logicalVersion),
+      'kind': serializer.toJson<String>(kind),
+      'operationId': serializer.toJson<String>(operationId),
+      'claimedWriterDeviceId': serializer.toJson<String>(claimedWriterDeviceId),
+      'claimedWriterKeyVersion': serializer.toJson<int>(
+        claimedWriterKeyVersion,
+      ),
+      'keyEpoch': serializer.toJson<int>(keyEpoch),
+      'acceptedAt': serializer.toJson<DateTime>(acceptedAt),
+    };
+  }
+
+  E2eeSyncRecordStateRow copyWith({
+    Uint8List? digest,
+    String? recordId,
+    String? entityType,
+    String? entityId,
+    int? logicalVersion,
+    String? kind,
+    String? operationId,
+    String? claimedWriterDeviceId,
+    int? claimedWriterKeyVersion,
+    int? keyEpoch,
+    DateTime? acceptedAt,
+  }) => E2eeSyncRecordStateRow(
+    digest: digest ?? this.digest,
+    recordId: recordId ?? this.recordId,
+    entityType: entityType ?? this.entityType,
+    entityId: entityId ?? this.entityId,
+    logicalVersion: logicalVersion ?? this.logicalVersion,
+    kind: kind ?? this.kind,
+    operationId: operationId ?? this.operationId,
+    claimedWriterDeviceId: claimedWriterDeviceId ?? this.claimedWriterDeviceId,
+    claimedWriterKeyVersion:
+        claimedWriterKeyVersion ?? this.claimedWriterKeyVersion,
+    keyEpoch: keyEpoch ?? this.keyEpoch,
+    acceptedAt: acceptedAt ?? this.acceptedAt,
+  );
+  E2eeSyncRecordStateRow copyWithCompanion(
+    E2eeSyncRecordStateRowsCompanion data,
+  ) {
+    return E2eeSyncRecordStateRow(
+      digest: data.digest.present ? data.digest.value : this.digest,
+      recordId: data.recordId.present ? data.recordId.value : this.recordId,
+      entityType: data.entityType.present
+          ? data.entityType.value
+          : this.entityType,
+      entityId: data.entityId.present ? data.entityId.value : this.entityId,
+      logicalVersion: data.logicalVersion.present
+          ? data.logicalVersion.value
+          : this.logicalVersion,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      operationId: data.operationId.present
+          ? data.operationId.value
+          : this.operationId,
+      claimedWriterDeviceId: data.claimedWriterDeviceId.present
+          ? data.claimedWriterDeviceId.value
+          : this.claimedWriterDeviceId,
+      claimedWriterKeyVersion: data.claimedWriterKeyVersion.present
+          ? data.claimedWriterKeyVersion.value
+          : this.claimedWriterKeyVersion,
+      keyEpoch: data.keyEpoch.present ? data.keyEpoch.value : this.keyEpoch,
+      acceptedAt: data.acceptedAt.present
+          ? data.acceptedAt.value
+          : this.acceptedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncRecordStateRow(')
+          ..write('digest: $digest, ')
+          ..write('recordId: $recordId, ')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('logicalVersion: $logicalVersion, ')
+          ..write('kind: $kind, ')
+          ..write('operationId: $operationId, ')
+          ..write('claimedWriterDeviceId: $claimedWriterDeviceId, ')
+          ..write('claimedWriterKeyVersion: $claimedWriterKeyVersion, ')
+          ..write('keyEpoch: $keyEpoch, ')
+          ..write('acceptedAt: $acceptedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    $driftBlobEquality.hash(digest),
+    recordId,
+    entityType,
+    entityId,
+    logicalVersion,
+    kind,
+    operationId,
+    claimedWriterDeviceId,
+    claimedWriterKeyVersion,
+    keyEpoch,
+    acceptedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeSyncRecordStateRow &&
+          $driftBlobEquality.equals(other.digest, this.digest) &&
+          other.recordId == this.recordId &&
+          other.entityType == this.entityType &&
+          other.entityId == this.entityId &&
+          other.logicalVersion == this.logicalVersion &&
+          other.kind == this.kind &&
+          other.operationId == this.operationId &&
+          other.claimedWriterDeviceId == this.claimedWriterDeviceId &&
+          other.claimedWriterKeyVersion == this.claimedWriterKeyVersion &&
+          other.keyEpoch == this.keyEpoch &&
+          other.acceptedAt == this.acceptedAt);
+}
+
+class E2eeSyncRecordStateRowsCompanion
+    extends UpdateCompanion<E2eeSyncRecordStateRow> {
+  final Value<Uint8List> digest;
+  final Value<String> recordId;
+  final Value<String> entityType;
+  final Value<String> entityId;
+  final Value<int> logicalVersion;
+  final Value<String> kind;
+  final Value<String> operationId;
+  final Value<String> claimedWriterDeviceId;
+  final Value<int> claimedWriterKeyVersion;
+  final Value<int> keyEpoch;
+  final Value<DateTime> acceptedAt;
+  final Value<int> rowid;
+  const E2eeSyncRecordStateRowsCompanion({
+    this.digest = const Value.absent(),
+    this.recordId = const Value.absent(),
+    this.entityType = const Value.absent(),
+    this.entityId = const Value.absent(),
+    this.logicalVersion = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.operationId = const Value.absent(),
+    this.claimedWriterDeviceId = const Value.absent(),
+    this.claimedWriterKeyVersion = const Value.absent(),
+    this.keyEpoch = const Value.absent(),
+    this.acceptedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeSyncRecordStateRowsCompanion.insert({
+    required Uint8List digest,
+    required String recordId,
+    required String entityType,
+    required String entityId,
+    required int logicalVersion,
+    required String kind,
+    required String operationId,
+    required String claimedWriterDeviceId,
+    required int claimedWriterKeyVersion,
+    required int keyEpoch,
+    required DateTime acceptedAt,
+    this.rowid = const Value.absent(),
+  }) : digest = Value(digest),
+       recordId = Value(recordId),
+       entityType = Value(entityType),
+       entityId = Value(entityId),
+       logicalVersion = Value(logicalVersion),
+       kind = Value(kind),
+       operationId = Value(operationId),
+       claimedWriterDeviceId = Value(claimedWriterDeviceId),
+       claimedWriterKeyVersion = Value(claimedWriterKeyVersion),
+       keyEpoch = Value(keyEpoch),
+       acceptedAt = Value(acceptedAt);
+  static Insertable<E2eeSyncRecordStateRow> custom({
+    Expression<Uint8List>? digest,
+    Expression<String>? recordId,
+    Expression<String>? entityType,
+    Expression<String>? entityId,
+    Expression<int>? logicalVersion,
+    Expression<String>? kind,
+    Expression<String>? operationId,
+    Expression<String>? claimedWriterDeviceId,
+    Expression<int>? claimedWriterKeyVersion,
+    Expression<int>? keyEpoch,
+    Expression<int>? acceptedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (digest != null) 'digest': digest,
+      if (recordId != null) 'record_id': recordId,
+      if (entityType != null) 'entity_type': entityType,
+      if (entityId != null) 'entity_id': entityId,
+      if (logicalVersion != null) 'logical_version': logicalVersion,
+      if (kind != null) 'kind': kind,
+      if (operationId != null) 'operation_id': operationId,
+      if (claimedWriterDeviceId != null)
+        'claimed_writer_device_id': claimedWriterDeviceId,
+      if (claimedWriterKeyVersion != null)
+        'claimed_writer_key_version': claimedWriterKeyVersion,
+      if (keyEpoch != null) 'key_epoch': keyEpoch,
+      if (acceptedAt != null) 'accepted_at': acceptedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeSyncRecordStateRowsCompanion copyWith({
+    Value<Uint8List>? digest,
+    Value<String>? recordId,
+    Value<String>? entityType,
+    Value<String>? entityId,
+    Value<int>? logicalVersion,
+    Value<String>? kind,
+    Value<String>? operationId,
+    Value<String>? claimedWriterDeviceId,
+    Value<int>? claimedWriterKeyVersion,
+    Value<int>? keyEpoch,
+    Value<DateTime>? acceptedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeSyncRecordStateRowsCompanion(
+      digest: digest ?? this.digest,
+      recordId: recordId ?? this.recordId,
+      entityType: entityType ?? this.entityType,
+      entityId: entityId ?? this.entityId,
+      logicalVersion: logicalVersion ?? this.logicalVersion,
+      kind: kind ?? this.kind,
+      operationId: operationId ?? this.operationId,
+      claimedWriterDeviceId:
+          claimedWriterDeviceId ?? this.claimedWriterDeviceId,
+      claimedWriterKeyVersion:
+          claimedWriterKeyVersion ?? this.claimedWriterKeyVersion,
+      keyEpoch: keyEpoch ?? this.keyEpoch,
+      acceptedAt: acceptedAt ?? this.acceptedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (digest.present) {
+      map['digest'] = Variable<Uint8List>(digest.value);
+    }
+    if (recordId.present) {
+      map['record_id'] = Variable<String>(recordId.value);
+    }
+    if (entityType.present) {
+      map['entity_type'] = Variable<String>(entityType.value);
+    }
+    if (entityId.present) {
+      map['entity_id'] = Variable<String>(entityId.value);
+    }
+    if (logicalVersion.present) {
+      map['logical_version'] = Variable<int>(logicalVersion.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (operationId.present) {
+      map['operation_id'] = Variable<String>(operationId.value);
+    }
+    if (claimedWriterDeviceId.present) {
+      map['claimed_writer_device_id'] = Variable<String>(
+        claimedWriterDeviceId.value,
+      );
+    }
+    if (claimedWriterKeyVersion.present) {
+      map['claimed_writer_key_version'] = Variable<int>(
+        claimedWriterKeyVersion.value,
+      );
+    }
+    if (keyEpoch.present) {
+      map['key_epoch'] = Variable<int>(keyEpoch.value);
+    }
+    if (acceptedAt.present) {
+      map['accepted_at'] = Variable<int>(
+        $E2eeSyncRecordStateRowsTable.$converteracceptedAt.toSql(
+          acceptedAt.value,
+        ),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncRecordStateRowsCompanion(')
+          ..write('digest: $digest, ')
+          ..write('recordId: $recordId, ')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('logicalVersion: $logicalVersion, ')
+          ..write('kind: $kind, ')
+          ..write('operationId: $operationId, ')
+          ..write('claimedWriterDeviceId: $claimedWriterDeviceId, ')
+          ..write('claimedWriterKeyVersion: $claimedWriterKeyVersion, ')
+          ..write('keyEpoch: $keyEpoch, ')
+          ..write('acceptedAt: $acceptedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $E2eeSyncRecordParentRowsTable extends E2eeSyncRecordParentRows
+    with TableInfo<$E2eeSyncRecordParentRowsTable, E2eeSyncRecordParentRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeSyncRecordParentRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _childDigestMeta = const VerificationMeta(
+    'childDigest',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> childDigest =
+      GeneratedColumn<Uint8List>(
+        'child_digest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'REFERENCES e2ee_sync_record_state_rows (digest) ON DELETE CASCADE',
+        ),
+      );
+  static const VerificationMeta _ordinalMeta = const VerificationMeta(
+    'ordinal',
+  );
+  @override
+  late final GeneratedColumn<int> ordinal = GeneratedColumn<int>(
+    'ordinal',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _parentDigestMeta = const VerificationMeta(
+    'parentDigest',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> parentDigest =
+      GeneratedColumn<Uint8List>(
+        'parent_digest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+        defaultConstraints: GeneratedColumn.constraintIsAlways(
+          'REFERENCES e2ee_sync_record_state_rows (digest)',
+        ),
+      );
+  @override
+  List<GeneratedColumn> get $columns => [childDigest, ordinal, parentDigest];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_record_parent_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeSyncRecordParentRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('child_digest')) {
+      context.handle(
+        _childDigestMeta,
+        childDigest.isAcceptableOrUnknown(
+          data['child_digest']!,
+          _childDigestMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_childDigestMeta);
+    }
+    if (data.containsKey('ordinal')) {
+      context.handle(
+        _ordinalMeta,
+        ordinal.isAcceptableOrUnknown(data['ordinal']!, _ordinalMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_ordinalMeta);
+    }
+    if (data.containsKey('parent_digest')) {
+      context.handle(
+        _parentDigestMeta,
+        parentDigest.isAcceptableOrUnknown(
+          data['parent_digest']!,
+          _parentDigestMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_parentDigestMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {childDigest, ordinal};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {childDigest, parentDigest},
+  ];
+  @override
+  E2eeSyncRecordParentRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeSyncRecordParentRow(
+      childDigest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}child_digest'],
+      )!,
+      ordinal: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}ordinal'],
+      )!,
+      parentDigest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}parent_digest'],
+      )!,
+    );
+  }
+
+  @override
+  $E2eeSyncRecordParentRowsTable createAlias(String alias) {
+    return $E2eeSyncRecordParentRowsTable(attachedDatabase, alias);
+  }
+}
+
+class E2eeSyncRecordParentRow extends DataClass
+    implements Insertable<E2eeSyncRecordParentRow> {
+  final Uint8List childDigest;
+  final int ordinal;
+  final Uint8List parentDigest;
+  const E2eeSyncRecordParentRow({
+    required this.childDigest,
+    required this.ordinal,
+    required this.parentDigest,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['child_digest'] = Variable<Uint8List>(childDigest);
+    map['ordinal'] = Variable<int>(ordinal);
+    map['parent_digest'] = Variable<Uint8List>(parentDigest);
+    return map;
+  }
+
+  E2eeSyncRecordParentRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeSyncRecordParentRowsCompanion(
+      childDigest: Value(childDigest),
+      ordinal: Value(ordinal),
+      parentDigest: Value(parentDigest),
+    );
+  }
+
+  factory E2eeSyncRecordParentRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeSyncRecordParentRow(
+      childDigest: serializer.fromJson<Uint8List>(json['childDigest']),
+      ordinal: serializer.fromJson<int>(json['ordinal']),
+      parentDigest: serializer.fromJson<Uint8List>(json['parentDigest']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'childDigest': serializer.toJson<Uint8List>(childDigest),
+      'ordinal': serializer.toJson<int>(ordinal),
+      'parentDigest': serializer.toJson<Uint8List>(parentDigest),
+    };
+  }
+
+  E2eeSyncRecordParentRow copyWith({
+    Uint8List? childDigest,
+    int? ordinal,
+    Uint8List? parentDigest,
+  }) => E2eeSyncRecordParentRow(
+    childDigest: childDigest ?? this.childDigest,
+    ordinal: ordinal ?? this.ordinal,
+    parentDigest: parentDigest ?? this.parentDigest,
+  );
+  E2eeSyncRecordParentRow copyWithCompanion(
+    E2eeSyncRecordParentRowsCompanion data,
+  ) {
+    return E2eeSyncRecordParentRow(
+      childDigest: data.childDigest.present
+          ? data.childDigest.value
+          : this.childDigest,
+      ordinal: data.ordinal.present ? data.ordinal.value : this.ordinal,
+      parentDigest: data.parentDigest.present
+          ? data.parentDigest.value
+          : this.parentDigest,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncRecordParentRow(')
+          ..write('childDigest: $childDigest, ')
+          ..write('ordinal: $ordinal, ')
+          ..write('parentDigest: $parentDigest')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    $driftBlobEquality.hash(childDigest),
+    ordinal,
+    $driftBlobEquality.hash(parentDigest),
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeSyncRecordParentRow &&
+          $driftBlobEquality.equals(other.childDigest, this.childDigest) &&
+          other.ordinal == this.ordinal &&
+          $driftBlobEquality.equals(other.parentDigest, this.parentDigest));
+}
+
+class E2eeSyncRecordParentRowsCompanion
+    extends UpdateCompanion<E2eeSyncRecordParentRow> {
+  final Value<Uint8List> childDigest;
+  final Value<int> ordinal;
+  final Value<Uint8List> parentDigest;
+  final Value<int> rowid;
+  const E2eeSyncRecordParentRowsCompanion({
+    this.childDigest = const Value.absent(),
+    this.ordinal = const Value.absent(),
+    this.parentDigest = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeSyncRecordParentRowsCompanion.insert({
+    required Uint8List childDigest,
+    required int ordinal,
+    required Uint8List parentDigest,
+    this.rowid = const Value.absent(),
+  }) : childDigest = Value(childDigest),
+       ordinal = Value(ordinal),
+       parentDigest = Value(parentDigest);
+  static Insertable<E2eeSyncRecordParentRow> custom({
+    Expression<Uint8List>? childDigest,
+    Expression<int>? ordinal,
+    Expression<Uint8List>? parentDigest,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (childDigest != null) 'child_digest': childDigest,
+      if (ordinal != null) 'ordinal': ordinal,
+      if (parentDigest != null) 'parent_digest': parentDigest,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeSyncRecordParentRowsCompanion copyWith({
+    Value<Uint8List>? childDigest,
+    Value<int>? ordinal,
+    Value<Uint8List>? parentDigest,
+    Value<int>? rowid,
+  }) {
+    return E2eeSyncRecordParentRowsCompanion(
+      childDigest: childDigest ?? this.childDigest,
+      ordinal: ordinal ?? this.ordinal,
+      parentDigest: parentDigest ?? this.parentDigest,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (childDigest.present) {
+      map['child_digest'] = Variable<Uint8List>(childDigest.value);
+    }
+    if (ordinal.present) {
+      map['ordinal'] = Variable<int>(ordinal.value);
+    }
+    if (parentDigest.present) {
+      map['parent_digest'] = Variable<Uint8List>(parentDigest.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncRecordParentRowsCompanion(')
+          ..write('childDigest: $childDigest, ')
+          ..write('ordinal: $ordinal, ')
+          ..write('parentDigest: $parentDigest, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $E2eeSyncRecordHeadRowsTable extends E2eeSyncRecordHeadRows
+    with TableInfo<$E2eeSyncRecordHeadRowsTable, E2eeSyncRecordHeadRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeSyncRecordHeadRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _digestMeta = const VerificationMeta('digest');
+  @override
+  late final GeneratedColumn<Uint8List> digest = GeneratedColumn<Uint8List>(
+    'digest',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES e2ee_sync_record_state_rows (digest) ON DELETE CASCADE',
+    ),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [digest];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_record_head_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeSyncRecordHeadRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('digest')) {
+      context.handle(
+        _digestMeta,
+        digest.isAcceptableOrUnknown(data['digest']!, _digestMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_digestMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {digest};
+  @override
+  E2eeSyncRecordHeadRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeSyncRecordHeadRow(
+      digest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}digest'],
+      )!,
+    );
+  }
+
+  @override
+  $E2eeSyncRecordHeadRowsTable createAlias(String alias) {
+    return $E2eeSyncRecordHeadRowsTable(attachedDatabase, alias);
+  }
+}
+
+class E2eeSyncRecordHeadRow extends DataClass
+    implements Insertable<E2eeSyncRecordHeadRow> {
+  final Uint8List digest;
+  const E2eeSyncRecordHeadRow({required this.digest});
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['digest'] = Variable<Uint8List>(digest);
+    return map;
+  }
+
+  E2eeSyncRecordHeadRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeSyncRecordHeadRowsCompanion(digest: Value(digest));
+  }
+
+  factory E2eeSyncRecordHeadRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeSyncRecordHeadRow(
+      digest: serializer.fromJson<Uint8List>(json['digest']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{'digest': serializer.toJson<Uint8List>(digest)};
+  }
+
+  E2eeSyncRecordHeadRow copyWith({Uint8List? digest}) =>
+      E2eeSyncRecordHeadRow(digest: digest ?? this.digest);
+  E2eeSyncRecordHeadRow copyWithCompanion(
+    E2eeSyncRecordHeadRowsCompanion data,
+  ) {
+    return E2eeSyncRecordHeadRow(
+      digest: data.digest.present ? data.digest.value : this.digest,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncRecordHeadRow(')
+          ..write('digest: $digest')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => $driftBlobEquality.hash(digest);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeSyncRecordHeadRow &&
+          $driftBlobEquality.equals(other.digest, this.digest));
+}
+
+class E2eeSyncRecordHeadRowsCompanion
+    extends UpdateCompanion<E2eeSyncRecordHeadRow> {
+  final Value<Uint8List> digest;
+  final Value<int> rowid;
+  const E2eeSyncRecordHeadRowsCompanion({
+    this.digest = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeSyncRecordHeadRowsCompanion.insert({
+    required Uint8List digest,
+    this.rowid = const Value.absent(),
+  }) : digest = Value(digest);
+  static Insertable<E2eeSyncRecordHeadRow> custom({
+    Expression<Uint8List>? digest,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (digest != null) 'digest': digest,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeSyncRecordHeadRowsCompanion copyWith({
+    Value<Uint8List>? digest,
+    Value<int>? rowid,
+  }) {
+    return E2eeSyncRecordHeadRowsCompanion(
+      digest: digest ?? this.digest,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (digest.present) {
+      map['digest'] = Variable<Uint8List>(digest.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncRecordHeadRowsCompanion(')
+          ..write('digest: $digest, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -5834,6 +7018,12 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $MigrationIssueRowsTable(this);
   late final $GenerationRunRowsTable generationRunRows =
       $GenerationRunRowsTable(this);
+  late final $E2eeSyncRecordStateRowsTable e2eeSyncRecordStateRows =
+      $E2eeSyncRecordStateRowsTable(this);
+  late final $E2eeSyncRecordParentRowsTable e2eeSyncRecordParentRows =
+      $E2eeSyncRecordParentRowsTable(this);
+  late final $E2eeSyncRecordHeadRowsTable e2eeSyncRecordHeadRows =
+      $E2eeSyncRecordHeadRowsTable(this);
   late final Index idxConversationsUpdatedAt = Index(
     'idx_conversations_updated_at',
     'CREATE INDEX idx_conversations_updated_at ON conversation_rows (updated_at DESC, id ASC)',
@@ -5882,6 +7072,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_generation_runs_state_updated',
     'CREATE INDEX idx_generation_runs_state_updated ON generation_run_rows (state, updated_at, id)',
   );
+  late final Index idxE2eeSyncRecordStatesRecordVersion = Index(
+    'idx_e2ee_sync_record_states_record_version',
+    'CREATE INDEX idx_e2ee_sync_record_states_record_version ON e2ee_sync_record_state_rows (record_id, logical_version, digest)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -5899,6 +7093,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     migrationRunRows,
     migrationIssueRows,
     generationRunRows,
+    e2eeSyncRecordStateRows,
+    e2eeSyncRecordParentRows,
+    e2eeSyncRecordHeadRows,
     idxConversationsUpdatedAt,
     idxConversationsAssistant,
     idxMessagesConversationOrder,
@@ -5911,6 +7108,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxMigrationIssuesRunKind,
     idxGenerationRunsActiveTarget,
     idxGenerationRunsStateUpdated,
+    idxE2eeSyncRecordStatesRecordVersion,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -5966,6 +7164,24 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('generation_run_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'e2ee_sync_record_state_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('e2ee_sync_record_parent_rows', kind: UpdateKind.delete),
+      ],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'e2ee_sync_record_state_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('e2ee_sync_record_head_rows', kind: UpdateKind.delete),
+      ],
     ),
   ]);
 }
@@ -10595,6 +11811,1365 @@ typedef $$GenerationRunRowsTableProcessedTableManager =
       GenerationRunRow,
       PrefetchHooks Function({bool conversationId})
     >;
+typedef $$E2eeSyncRecordStateRowsTableCreateCompanionBuilder =
+    E2eeSyncRecordStateRowsCompanion Function({
+      required Uint8List digest,
+      required String recordId,
+      required String entityType,
+      required String entityId,
+      required int logicalVersion,
+      required String kind,
+      required String operationId,
+      required String claimedWriterDeviceId,
+      required int claimedWriterKeyVersion,
+      required int keyEpoch,
+      required DateTime acceptedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeSyncRecordStateRowsTableUpdateCompanionBuilder =
+    E2eeSyncRecordStateRowsCompanion Function({
+      Value<Uint8List> digest,
+      Value<String> recordId,
+      Value<String> entityType,
+      Value<String> entityId,
+      Value<int> logicalVersion,
+      Value<String> kind,
+      Value<String> operationId,
+      Value<String> claimedWriterDeviceId,
+      Value<int> claimedWriterKeyVersion,
+      Value<int> keyEpoch,
+      Value<DateTime> acceptedAt,
+      Value<int> rowid,
+    });
+
+final class $$E2eeSyncRecordStateRowsTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeSyncRecordStateRowsTable,
+          E2eeSyncRecordStateRow
+        > {
+  $$E2eeSyncRecordStateRowsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static MultiTypedResultKey<
+    $E2eeSyncRecordParentRowsTable,
+    List<E2eeSyncRecordParentRow>
+  >
+  _childStateParentsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.e2eeSyncRecordParentRows,
+    aliasName:
+        'e2ee_sync_record_state_rows__digest__e2ee_sync_record_parent_rows__child_digest',
+  );
+
+  $$E2eeSyncRecordParentRowsTableProcessedTableManager get childStateParents {
+    final manager =
+        $$E2eeSyncRecordParentRowsTableTableManager(
+          $_db,
+          $_db.e2eeSyncRecordParentRows,
+        ).filter(
+          (f) => f.childDigest.digest.sqlEquals(
+            $_itemColumn<Uint8List>('digest')!,
+          ),
+        );
+
+    final cache = $_typedResult.readTableOrNull(_childStateParentsTable($_db));
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<
+    $E2eeSyncRecordParentRowsTable,
+    List<E2eeSyncRecordParentRow>
+  >
+  _parentStateChildrenTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.e2eeSyncRecordParentRows,
+    aliasName:
+        'e2ee_sync_record_state_rows__digest__e2ee_sync_record_parent_rows__parent_digest',
+  );
+
+  $$E2eeSyncRecordParentRowsTableProcessedTableManager get parentStateChildren {
+    final manager =
+        $$E2eeSyncRecordParentRowsTableTableManager(
+          $_db,
+          $_db.e2eeSyncRecordParentRows,
+        ).filter(
+          (f) => f.parentDigest.digest.sqlEquals(
+            $_itemColumn<Uint8List>('digest')!,
+          ),
+        );
+
+    final cache = $_typedResult.readTableOrNull(
+      _parentStateChildrenTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
+  static MultiTypedResultKey<
+    $E2eeSyncRecordHeadRowsTable,
+    List<E2eeSyncRecordHeadRow>
+  >
+  _e2eeSyncRecordHeadRowsRefsTable(
+    _$AppDatabase db,
+  ) => MultiTypedResultKey.fromTable(
+    db.e2eeSyncRecordHeadRows,
+    aliasName:
+        'e2ee_sync_record_state_rows__digest__e2ee_sync_record_head_rows__digest',
+  );
+
+  $$E2eeSyncRecordHeadRowsTableProcessedTableManager
+  get e2eeSyncRecordHeadRowsRefs {
+    final manager =
+        $$E2eeSyncRecordHeadRowsTableTableManager(
+          $_db,
+          $_db.e2eeSyncRecordHeadRows,
+        ).filter(
+          (f) => f.digest.digest.sqlEquals($_itemColumn<Uint8List>('digest')!),
+        );
+
+    final cache = $_typedResult.readTableOrNull(
+      _e2eeSyncRecordHeadRowsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+}
+
+class $$E2eeSyncRecordStateRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordStateRowsTable> {
+  $$E2eeSyncRecordStateRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<Uint8List> get digest => $composableBuilder(
+    column: $table.digest,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get recordId => $composableBuilder(
+    column: $table.recordId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get logicalVersion => $composableBuilder(
+    column: $table.logicalVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get claimedWriterDeviceId => $composableBuilder(
+    column: $table.claimedWriterDeviceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get claimedWriterKeyVersion => $composableBuilder(
+    column: $table.claimedWriterKeyVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get keyEpoch => $composableBuilder(
+    column: $table.keyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get acceptedAt =>
+      $composableBuilder(
+        column: $table.acceptedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  Expression<bool> childStateParents(
+    Expression<bool> Function($$E2eeSyncRecordParentRowsTableFilterComposer f)
+    f,
+  ) {
+    final $$E2eeSyncRecordParentRowsTableFilterComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordParentRows,
+          getReferencedColumn: (t) => t.childDigest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordParentRowsTableFilterComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordParentRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<bool> parentStateChildren(
+    Expression<bool> Function($$E2eeSyncRecordParentRowsTableFilterComposer f)
+    f,
+  ) {
+    final $$E2eeSyncRecordParentRowsTableFilterComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordParentRows,
+          getReferencedColumn: (t) => t.parentDigest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordParentRowsTableFilterComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordParentRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<bool> e2eeSyncRecordHeadRowsRefs(
+    Expression<bool> Function($$E2eeSyncRecordHeadRowsTableFilterComposer f) f,
+  ) {
+    final $$E2eeSyncRecordHeadRowsTableFilterComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordHeadRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordHeadRowsTableFilterComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordHeadRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+}
+
+class $$E2eeSyncRecordStateRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordStateRowsTable> {
+  $$E2eeSyncRecordStateRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<Uint8List> get digest => $composableBuilder(
+    column: $table.digest,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get recordId => $composableBuilder(
+    column: $table.recordId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get logicalVersion => $composableBuilder(
+    column: $table.logicalVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get claimedWriterDeviceId => $composableBuilder(
+    column: $table.claimedWriterDeviceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get claimedWriterKeyVersion => $composableBuilder(
+    column: $table.claimedWriterKeyVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get keyEpoch => $composableBuilder(
+    column: $table.keyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get acceptedAt => $composableBuilder(
+    column: $table.acceptedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeSyncRecordStateRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordStateRowsTable> {
+  $$E2eeSyncRecordStateRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<Uint8List> get digest =>
+      $composableBuilder(column: $table.digest, builder: (column) => column);
+
+  GeneratedColumn<String> get recordId =>
+      $composableBuilder(column: $table.recordId, builder: (column) => column);
+
+  GeneratedColumn<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get entityId =>
+      $composableBuilder(column: $table.entityId, builder: (column) => column);
+
+  GeneratedColumn<int> get logicalVersion => $composableBuilder(
+    column: $table.logicalVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get claimedWriterDeviceId => $composableBuilder(
+    column: $table.claimedWriterDeviceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get claimedWriterKeyVersion => $composableBuilder(
+    column: $table.claimedWriterKeyVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get keyEpoch =>
+      $composableBuilder(column: $table.keyEpoch, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get acceptedAt =>
+      $composableBuilder(
+        column: $table.acceptedAt,
+        builder: (column) => column,
+      );
+
+  Expression<T> childStateParents<T extends Object>(
+    Expression<T> Function($$E2eeSyncRecordParentRowsTableAnnotationComposer a)
+    f,
+  ) {
+    final $$E2eeSyncRecordParentRowsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordParentRows,
+          getReferencedColumn: (t) => t.childDigest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordParentRowsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordParentRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<T> parentStateChildren<T extends Object>(
+    Expression<T> Function($$E2eeSyncRecordParentRowsTableAnnotationComposer a)
+    f,
+  ) {
+    final $$E2eeSyncRecordParentRowsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordParentRows,
+          getReferencedColumn: (t) => t.parentDigest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordParentRowsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordParentRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+
+  Expression<T> e2eeSyncRecordHeadRowsRefs<T extends Object>(
+    Expression<T> Function($$E2eeSyncRecordHeadRowsTableAnnotationComposer a) f,
+  ) {
+    final $$E2eeSyncRecordHeadRowsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordHeadRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordHeadRowsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordHeadRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return f(composer);
+  }
+}
+
+class $$E2eeSyncRecordStateRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeSyncRecordStateRowsTable,
+          E2eeSyncRecordStateRow,
+          $$E2eeSyncRecordStateRowsTableFilterComposer,
+          $$E2eeSyncRecordStateRowsTableOrderingComposer,
+          $$E2eeSyncRecordStateRowsTableAnnotationComposer,
+          $$E2eeSyncRecordStateRowsTableCreateCompanionBuilder,
+          $$E2eeSyncRecordStateRowsTableUpdateCompanionBuilder,
+          (E2eeSyncRecordStateRow, $$E2eeSyncRecordStateRowsTableReferences),
+          E2eeSyncRecordStateRow,
+          PrefetchHooks Function({
+            bool childStateParents,
+            bool parentStateChildren,
+            bool e2eeSyncRecordHeadRowsRefs,
+          })
+        > {
+  $$E2eeSyncRecordStateRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeSyncRecordStateRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeSyncRecordStateRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeSyncRecordStateRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeSyncRecordStateRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<Uint8List> digest = const Value.absent(),
+                Value<String> recordId = const Value.absent(),
+                Value<String> entityType = const Value.absent(),
+                Value<String> entityId = const Value.absent(),
+                Value<int> logicalVersion = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<String> operationId = const Value.absent(),
+                Value<String> claimedWriterDeviceId = const Value.absent(),
+                Value<int> claimedWriterKeyVersion = const Value.absent(),
+                Value<int> keyEpoch = const Value.absent(),
+                Value<DateTime> acceptedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncRecordStateRowsCompanion(
+                digest: digest,
+                recordId: recordId,
+                entityType: entityType,
+                entityId: entityId,
+                logicalVersion: logicalVersion,
+                kind: kind,
+                operationId: operationId,
+                claimedWriterDeviceId: claimedWriterDeviceId,
+                claimedWriterKeyVersion: claimedWriterKeyVersion,
+                keyEpoch: keyEpoch,
+                acceptedAt: acceptedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required Uint8List digest,
+                required String recordId,
+                required String entityType,
+                required String entityId,
+                required int logicalVersion,
+                required String kind,
+                required String operationId,
+                required String claimedWriterDeviceId,
+                required int claimedWriterKeyVersion,
+                required int keyEpoch,
+                required DateTime acceptedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncRecordStateRowsCompanion.insert(
+                digest: digest,
+                recordId: recordId,
+                entityType: entityType,
+                entityId: entityId,
+                logicalVersion: logicalVersion,
+                kind: kind,
+                operationId: operationId,
+                claimedWriterDeviceId: claimedWriterDeviceId,
+                claimedWriterKeyVersion: claimedWriterKeyVersion,
+                keyEpoch: keyEpoch,
+                acceptedAt: acceptedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$E2eeSyncRecordStateRowsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback:
+              ({
+                childStateParents = false,
+                parentStateChildren = false,
+                e2eeSyncRecordHeadRowsRefs = false,
+              }) {
+                return PrefetchHooks(
+                  db: db,
+                  explicitlyWatchedTables: [
+                    if (childStateParents) db.e2eeSyncRecordParentRows,
+                    if (parentStateChildren) db.e2eeSyncRecordParentRows,
+                    if (e2eeSyncRecordHeadRowsRefs) db.e2eeSyncRecordHeadRows,
+                  ],
+                  addJoins: null,
+                  getPrefetchedDataCallback: (items) async {
+                    return [
+                      if (childStateParents)
+                        await $_getPrefetchedData<
+                          E2eeSyncRecordStateRow,
+                          $E2eeSyncRecordStateRowsTable,
+                          E2eeSyncRecordParentRow
+                        >(
+                          currentTable: table,
+                          referencedTable:
+                              $$E2eeSyncRecordStateRowsTableReferences
+                                  ._childStateParentsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$E2eeSyncRecordStateRowsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).childStateParents,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.childDigest == item.digest,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (parentStateChildren)
+                        await $_getPrefetchedData<
+                          E2eeSyncRecordStateRow,
+                          $E2eeSyncRecordStateRowsTable,
+                          E2eeSyncRecordParentRow
+                        >(
+                          currentTable: table,
+                          referencedTable:
+                              $$E2eeSyncRecordStateRowsTableReferences
+                                  ._parentStateChildrenTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$E2eeSyncRecordStateRowsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).parentStateChildren,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.parentDigest == item.digest,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (e2eeSyncRecordHeadRowsRefs)
+                        await $_getPrefetchedData<
+                          E2eeSyncRecordStateRow,
+                          $E2eeSyncRecordStateRowsTable,
+                          E2eeSyncRecordHeadRow
+                        >(
+                          currentTable: table,
+                          referencedTable:
+                              $$E2eeSyncRecordStateRowsTableReferences
+                                  ._e2eeSyncRecordHeadRowsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$E2eeSyncRecordStateRowsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).e2eeSyncRecordHeadRowsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.digest == item.digest,
+                              ),
+                          typedResults: items,
+                        ),
+                    ];
+                  },
+                );
+              },
+        ),
+      );
+}
+
+typedef $$E2eeSyncRecordStateRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeSyncRecordStateRowsTable,
+      E2eeSyncRecordStateRow,
+      $$E2eeSyncRecordStateRowsTableFilterComposer,
+      $$E2eeSyncRecordStateRowsTableOrderingComposer,
+      $$E2eeSyncRecordStateRowsTableAnnotationComposer,
+      $$E2eeSyncRecordStateRowsTableCreateCompanionBuilder,
+      $$E2eeSyncRecordStateRowsTableUpdateCompanionBuilder,
+      (E2eeSyncRecordStateRow, $$E2eeSyncRecordStateRowsTableReferences),
+      E2eeSyncRecordStateRow,
+      PrefetchHooks Function({
+        bool childStateParents,
+        bool parentStateChildren,
+        bool e2eeSyncRecordHeadRowsRefs,
+      })
+    >;
+typedef $$E2eeSyncRecordParentRowsTableCreateCompanionBuilder =
+    E2eeSyncRecordParentRowsCompanion Function({
+      required Uint8List childDigest,
+      required int ordinal,
+      required Uint8List parentDigest,
+      Value<int> rowid,
+    });
+typedef $$E2eeSyncRecordParentRowsTableUpdateCompanionBuilder =
+    E2eeSyncRecordParentRowsCompanion Function({
+      Value<Uint8List> childDigest,
+      Value<int> ordinal,
+      Value<Uint8List> parentDigest,
+      Value<int> rowid,
+    });
+
+final class $$E2eeSyncRecordParentRowsTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeSyncRecordParentRowsTable,
+          E2eeSyncRecordParentRow
+        > {
+  $$E2eeSyncRecordParentRowsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $E2eeSyncRecordStateRowsTable _childDigestTable(
+    _$AppDatabase db,
+  ) => db.e2eeSyncRecordStateRows.createAlias(
+    'e2ee_sync_record_parent_rows__child_digest__e2ee_sync_record_state_rows__digest',
+  );
+
+  $$E2eeSyncRecordStateRowsTableProcessedTableManager get childDigest {
+    final $_column = $_itemColumn<Uint8List>('child_digest')!;
+
+    final manager = $$E2eeSyncRecordStateRowsTableTableManager(
+      $_db,
+      $_db.e2eeSyncRecordStateRows,
+    ).filter((f) => f.digest.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_childDigestTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+
+  static $E2eeSyncRecordStateRowsTable _parentDigestTable(
+    _$AppDatabase db,
+  ) => db.e2eeSyncRecordStateRows.createAlias(
+    'e2ee_sync_record_parent_rows__parent_digest__e2ee_sync_record_state_rows__digest',
+  );
+
+  $$E2eeSyncRecordStateRowsTableProcessedTableManager get parentDigest {
+    final $_column = $_itemColumn<Uint8List>('parent_digest')!;
+
+    final manager = $$E2eeSyncRecordStateRowsTableTableManager(
+      $_db,
+      $_db.e2eeSyncRecordStateRows,
+    ).filter((f) => f.digest.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_parentDigestTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$E2eeSyncRecordParentRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordParentRowsTable> {
+  $$E2eeSyncRecordParentRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get ordinal => $composableBuilder(
+    column: $table.ordinal,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$E2eeSyncRecordStateRowsTableFilterComposer get childDigest {
+    final $$E2eeSyncRecordStateRowsTableFilterComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.childDigest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableFilterComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+
+  $$E2eeSyncRecordStateRowsTableFilterComposer get parentDigest {
+    final $$E2eeSyncRecordStateRowsTableFilterComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.parentDigest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableFilterComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+}
+
+class $$E2eeSyncRecordParentRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordParentRowsTable> {
+  $$E2eeSyncRecordParentRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get ordinal => $composableBuilder(
+    column: $table.ordinal,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$E2eeSyncRecordStateRowsTableOrderingComposer get childDigest {
+    final $$E2eeSyncRecordStateRowsTableOrderingComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.childDigest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableOrderingComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+
+  $$E2eeSyncRecordStateRowsTableOrderingComposer get parentDigest {
+    final $$E2eeSyncRecordStateRowsTableOrderingComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.parentDigest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableOrderingComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+}
+
+class $$E2eeSyncRecordParentRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordParentRowsTable> {
+  $$E2eeSyncRecordParentRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get ordinal =>
+      $composableBuilder(column: $table.ordinal, builder: (column) => column);
+
+  $$E2eeSyncRecordStateRowsTableAnnotationComposer get childDigest {
+    final $$E2eeSyncRecordStateRowsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.childDigest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+
+  $$E2eeSyncRecordStateRowsTableAnnotationComposer get parentDigest {
+    final $$E2eeSyncRecordStateRowsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.parentDigest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+}
+
+class $$E2eeSyncRecordParentRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeSyncRecordParentRowsTable,
+          E2eeSyncRecordParentRow,
+          $$E2eeSyncRecordParentRowsTableFilterComposer,
+          $$E2eeSyncRecordParentRowsTableOrderingComposer,
+          $$E2eeSyncRecordParentRowsTableAnnotationComposer,
+          $$E2eeSyncRecordParentRowsTableCreateCompanionBuilder,
+          $$E2eeSyncRecordParentRowsTableUpdateCompanionBuilder,
+          (E2eeSyncRecordParentRow, $$E2eeSyncRecordParentRowsTableReferences),
+          E2eeSyncRecordParentRow,
+          PrefetchHooks Function({bool childDigest, bool parentDigest})
+        > {
+  $$E2eeSyncRecordParentRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeSyncRecordParentRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeSyncRecordParentRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeSyncRecordParentRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeSyncRecordParentRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<Uint8List> childDigest = const Value.absent(),
+                Value<int> ordinal = const Value.absent(),
+                Value<Uint8List> parentDigest = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncRecordParentRowsCompanion(
+                childDigest: childDigest,
+                ordinal: ordinal,
+                parentDigest: parentDigest,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required Uint8List childDigest,
+                required int ordinal,
+                required Uint8List parentDigest,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncRecordParentRowsCompanion.insert(
+                childDigest: childDigest,
+                ordinal: ordinal,
+                parentDigest: parentDigest,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$E2eeSyncRecordParentRowsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({childDigest = false, parentDigest = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (childDigest) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.childDigest,
+                                referencedTable:
+                                    $$E2eeSyncRecordParentRowsTableReferences
+                                        ._childDigestTable(db),
+                                referencedColumn:
+                                    $$E2eeSyncRecordParentRowsTableReferences
+                                        ._childDigestTable(db)
+                                        .digest,
+                              )
+                              as T;
+                    }
+                    if (parentDigest) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.parentDigest,
+                                referencedTable:
+                                    $$E2eeSyncRecordParentRowsTableReferences
+                                        ._parentDigestTable(db),
+                                referencedColumn:
+                                    $$E2eeSyncRecordParentRowsTableReferences
+                                        ._parentDigestTable(db)
+                                        .digest,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$E2eeSyncRecordParentRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeSyncRecordParentRowsTable,
+      E2eeSyncRecordParentRow,
+      $$E2eeSyncRecordParentRowsTableFilterComposer,
+      $$E2eeSyncRecordParentRowsTableOrderingComposer,
+      $$E2eeSyncRecordParentRowsTableAnnotationComposer,
+      $$E2eeSyncRecordParentRowsTableCreateCompanionBuilder,
+      $$E2eeSyncRecordParentRowsTableUpdateCompanionBuilder,
+      (E2eeSyncRecordParentRow, $$E2eeSyncRecordParentRowsTableReferences),
+      E2eeSyncRecordParentRow,
+      PrefetchHooks Function({bool childDigest, bool parentDigest})
+    >;
+typedef $$E2eeSyncRecordHeadRowsTableCreateCompanionBuilder =
+    E2eeSyncRecordHeadRowsCompanion Function({
+      required Uint8List digest,
+      Value<int> rowid,
+    });
+typedef $$E2eeSyncRecordHeadRowsTableUpdateCompanionBuilder =
+    E2eeSyncRecordHeadRowsCompanion Function({
+      Value<Uint8List> digest,
+      Value<int> rowid,
+    });
+
+final class $$E2eeSyncRecordHeadRowsTableReferences
+    extends
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeSyncRecordHeadRowsTable,
+          E2eeSyncRecordHeadRow
+        > {
+  $$E2eeSyncRecordHeadRowsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $E2eeSyncRecordStateRowsTable _digestTable(
+    _$AppDatabase db,
+  ) => db.e2eeSyncRecordStateRows.createAlias(
+    'e2ee_sync_record_head_rows__digest__e2ee_sync_record_state_rows__digest',
+  );
+
+  $$E2eeSyncRecordStateRowsTableProcessedTableManager get digest {
+    final $_column = $_itemColumn<Uint8List>('digest')!;
+
+    final manager = $$E2eeSyncRecordStateRowsTableTableManager(
+      $_db,
+      $_db.e2eeSyncRecordStateRows,
+    ).filter((f) => f.digest.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_digestTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$E2eeSyncRecordHeadRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordHeadRowsTable> {
+  $$E2eeSyncRecordHeadRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  $$E2eeSyncRecordStateRowsTableFilterComposer get digest {
+    final $$E2eeSyncRecordStateRowsTableFilterComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableFilterComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+}
+
+class $$E2eeSyncRecordHeadRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordHeadRowsTable> {
+  $$E2eeSyncRecordHeadRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  $$E2eeSyncRecordStateRowsTableOrderingComposer get digest {
+    final $$E2eeSyncRecordStateRowsTableOrderingComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableOrderingComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+}
+
+class $$E2eeSyncRecordHeadRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRecordHeadRowsTable> {
+  $$E2eeSyncRecordHeadRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  $$E2eeSyncRecordStateRowsTableAnnotationComposer get digest {
+    final $$E2eeSyncRecordStateRowsTableAnnotationComposer composer =
+        $composerBuilder(
+          composer: this,
+          getCurrentColumn: (t) => t.digest,
+          referencedTable: $db.e2eeSyncRecordStateRows,
+          getReferencedColumn: (t) => t.digest,
+          builder:
+              (
+                joinBuilder, {
+                $addJoinBuilderToRootComposer,
+                $removeJoinBuilderFromRootComposer,
+              }) => $$E2eeSyncRecordStateRowsTableAnnotationComposer(
+                $db: $db,
+                $table: $db.e2eeSyncRecordStateRows,
+                $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+                joinBuilder: joinBuilder,
+                $removeJoinBuilderFromRootComposer:
+                    $removeJoinBuilderFromRootComposer,
+              ),
+        );
+    return composer;
+  }
+}
+
+class $$E2eeSyncRecordHeadRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeSyncRecordHeadRowsTable,
+          E2eeSyncRecordHeadRow,
+          $$E2eeSyncRecordHeadRowsTableFilterComposer,
+          $$E2eeSyncRecordHeadRowsTableOrderingComposer,
+          $$E2eeSyncRecordHeadRowsTableAnnotationComposer,
+          $$E2eeSyncRecordHeadRowsTableCreateCompanionBuilder,
+          $$E2eeSyncRecordHeadRowsTableUpdateCompanionBuilder,
+          (E2eeSyncRecordHeadRow, $$E2eeSyncRecordHeadRowsTableReferences),
+          E2eeSyncRecordHeadRow,
+          PrefetchHooks Function({bool digest})
+        > {
+  $$E2eeSyncRecordHeadRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeSyncRecordHeadRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeSyncRecordHeadRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeSyncRecordHeadRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeSyncRecordHeadRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<Uint8List> digest = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) =>
+                  E2eeSyncRecordHeadRowsCompanion(digest: digest, rowid: rowid),
+          createCompanionCallback:
+              ({
+                required Uint8List digest,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncRecordHeadRowsCompanion.insert(
+                digest: digest,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$E2eeSyncRecordHeadRowsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({digest = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (digest) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.digest,
+                                referencedTable:
+                                    $$E2eeSyncRecordHeadRowsTableReferences
+                                        ._digestTable(db),
+                                referencedColumn:
+                                    $$E2eeSyncRecordHeadRowsTableReferences
+                                        ._digestTable(db)
+                                        .digest,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$E2eeSyncRecordHeadRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeSyncRecordHeadRowsTable,
+      E2eeSyncRecordHeadRow,
+      $$E2eeSyncRecordHeadRowsTableFilterComposer,
+      $$E2eeSyncRecordHeadRowsTableOrderingComposer,
+      $$E2eeSyncRecordHeadRowsTableAnnotationComposer,
+      $$E2eeSyncRecordHeadRowsTableCreateCompanionBuilder,
+      $$E2eeSyncRecordHeadRowsTableUpdateCompanionBuilder,
+      (E2eeSyncRecordHeadRow, $$E2eeSyncRecordHeadRowsTableReferences),
+      E2eeSyncRecordHeadRow,
+      PrefetchHooks Function({bool digest})
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -10630,4 +13205,19 @@ class $AppDatabaseManager {
       $$MigrationIssueRowsTableTableManager(_db, _db.migrationIssueRows);
   $$GenerationRunRowsTableTableManager get generationRunRows =>
       $$GenerationRunRowsTableTableManager(_db, _db.generationRunRows);
+  $$E2eeSyncRecordStateRowsTableTableManager get e2eeSyncRecordStateRows =>
+      $$E2eeSyncRecordStateRowsTableTableManager(
+        _db,
+        _db.e2eeSyncRecordStateRows,
+      );
+  $$E2eeSyncRecordParentRowsTableTableManager get e2eeSyncRecordParentRows =>
+      $$E2eeSyncRecordParentRowsTableTableManager(
+        _db,
+        _db.e2eeSyncRecordParentRows,
+      );
+  $$E2eeSyncRecordHeadRowsTableTableManager get e2eeSyncRecordHeadRows =>
+      $$E2eeSyncRecordHeadRowsTableTableManager(
+        _db,
+        _db.e2eeSyncRecordHeadRows,
+      );
 }

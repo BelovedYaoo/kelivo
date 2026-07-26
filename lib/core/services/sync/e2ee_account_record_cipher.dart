@@ -154,6 +154,19 @@ final class E2eeAccountRecordCipher {
     }
   }
 
+  int maxPayloadBytesFor(SyncEntityKey entityKey) {
+    _requireOpen();
+    final encodedKey = _encodeEntityKey(entityKey);
+    try {
+      return _recordMaxFrameBytes -
+          _recordFrameHeaderBytes -
+          encodedKey.typeBytes.length -
+          encodedKey.idBytes.length;
+    } finally {
+      encodedKey.clear();
+    }
+  }
+
   Future<E2eeSealedAccountRecordEnvelope> seal({
     required SyncEntityKey entityKey,
     required Uint8List payload,
@@ -197,6 +210,22 @@ final class E2eeAccountRecordCipher {
     E2eeUntrustedAccountRecordEnvelope record, {
     required T Function(SyncEntityKey entityKey, Uint8List borrowedPayload)
     decode,
+  }) {
+    return openVerified(
+      record,
+      decode: (_, entityKey, borrowedPayload) =>
+          decode(entityKey, borrowedPayload),
+    );
+  }
+
+  Future<T> openVerified<T>(
+    E2eeUntrustedAccountRecordEnvelope record, {
+    required T Function(
+      E2eeAccountRecordId recordId,
+      SyncEntityKey entityKey,
+      Uint8List borrowedPayload,
+    )
+    decode,
   }) async {
     _requireOpen();
     if (record.keyEpoch > currentKeyEpoch) {
@@ -224,7 +253,11 @@ final class E2eeAccountRecordCipher {
         throw const FormatException('账户记录标识与密文实体键不匹配');
       }
       // payload 只在回调期间借用，避免解密明文逃逸出可清零的生命周期。
-      final result = decode(decodedFrame.entityKey, decodedFrame.payload);
+      final result = decode(
+        expectedRecordId,
+        decodedFrame.entityKey,
+        decodedFrame.payload,
+      );
       if (result is Future<Object?>) {
         throw ArgumentError.value(decode, 'decode', '解码回调必须同步完成');
       }

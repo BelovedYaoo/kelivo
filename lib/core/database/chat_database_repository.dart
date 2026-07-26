@@ -8,8 +8,9 @@ import 'package:sqlite3/sqlite3.dart' as sqlite;
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import 'app_database.dart';
-import 'database_cipher.dart';
 import 'chat_database_observer.dart';
+import 'database_cipher.dart';
+import 'e2ee_sync_record_ledger.dart';
 import 'generation_run.dart';
 import 'generation_run_commands.dart';
 
@@ -139,6 +140,8 @@ class ChatDatabaseRepository {
   Future<T> runInTransaction<T>(Future<T> Function() action) {
     return _db.transaction(action);
   }
+
+  E2eeSyncRecordLedger get e2eeSyncRecordLedger => E2eeSyncRecordLedger(_db);
 
   Future<GenerationRun> createGenerationRun({
     required String id,
@@ -597,6 +600,9 @@ class ChatDatabaseRepository {
       'migration_issue_rows',
       'generation_run_rows',
       'provider_artifact_rows',
+      'e2ee_sync_record_state_rows',
+      'e2ee_sync_record_parent_rows',
+      'e2ee_sync_record_head_rows',
     };
     final tableRows = database.select(
       "SELECT name FROM sqlite_master WHERE type = 'table';",
@@ -715,6 +721,25 @@ class ChatDatabaseRepository {
         'created_at',
         'updated_at',
       ],
+      'e2ee_sync_record_state_rows': [
+        'digest',
+        'record_id',
+        'entity_type',
+        'entity_id',
+        'logical_version',
+        'kind',
+        'operation_id',
+        'claimed_writer_device_id',
+        'claimed_writer_key_version',
+        'key_epoch',
+        'accepted_at',
+      ],
+      'e2ee_sync_record_parent_rows': [
+        'child_digest',
+        'ordinal',
+        'parent_digest',
+      ],
+      'e2ee_sync_record_head_rows': ['digest'],
     };
     for (final entry in expectedColumns.entries) {
       final actual = database
@@ -744,6 +769,13 @@ class ChatDatabaseRepository {
         'target_revision_id->message_rows.id:NO ACTION',
       },
       'provider_artifact_rows': {'revision_id->message_rows.id:CASCADE'},
+      'e2ee_sync_record_parent_rows': {
+        'child_digest->e2ee_sync_record_state_rows.digest:CASCADE',
+        'parent_digest->e2ee_sync_record_state_rows.digest:NO ACTION',
+      },
+      'e2ee_sync_record_head_rows': {
+        'digest->e2ee_sync_record_state_rows.digest:CASCADE',
+      },
     };
     for (final entry in expectedForeignKeys.entries) {
       final actual = database

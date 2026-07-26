@@ -809,6 +809,7 @@ api.SyncMutation _toGeneratedMutation(CloudSyncRecordMutation mutation) {
 }
 
 api.SyncMutation _toGeneratedPutMutation(CloudSyncPutRecordMutation mutation) {
+  final record = mutation.state.record;
   final value = api.SyncPutMutation(
     (builder) => builder
       ..mutationId = mutation.mutationId
@@ -816,8 +817,8 @@ api.SyncMutation _toGeneratedPutMutation(CloudSyncPutRecordMutation mutation) {
       ..expectedRevision = mutation.expectedRevision
       ..operation = api.SyncPutMutationOperationEnum.put
       ..envelopeVersion = e2eeAccountRecordEnvelopeVersion
-      ..keyEpoch = mutation.record.keyEpoch
-      ..ciphertext = _encodeSyncCiphertext(mutation.record.ciphertext),
+      ..keyEpoch = record.keyEpoch
+      ..ciphertext = _encodeSyncCiphertext(record.ciphertext),
   );
   return api.SyncMutation(
     (builder) =>
@@ -903,26 +904,7 @@ CloudSyncRecordChange _fromRecordChange(api.SyncChange change) {
     );
   }
   if (value is api.SyncDeleteChange) {
-    _validateRecordMetadata(
-      recordId: value.recordId,
-      revision: value.revision,
-      sequence: value.changeSeq,
-      updatedByDeviceId: value.updatedByDeviceId,
-    );
-    if (value.envelopeVersion != null ||
-        value.keyEpoch != null ||
-        value.ciphertext != null ||
-        value.ciphertextBytes != 0) {
-      throw const FormatException('服务端返回了无效的 delete 增量');
-    }
-    return CloudSyncDeleteRecordChange(
-      changeSeq: value.changeSeq,
-      recordId: E2eeUntrustedAccountRecordId.fromTransport(value.recordId),
-      revision: value.revision,
-      updatedAt: value.updatedAt.toUtc(),
-      updatedByDeviceId: value.updatedByDeviceId,
-      deletedAt: value.deletedAt.toUtc(),
-    );
+    throw const FormatException('服务端返回了不受信任的 delete 增量');
   }
   throw const FormatException('服务端返回了未知的同步增量');
 }
@@ -969,26 +951,7 @@ CloudSyncRecordState _fromRecordState(api.SyncRecord record) {
     );
   }
   if (value is api.SyncDeletedRecord) {
-    _validateRecordMetadata(
-      recordId: value.recordId,
-      revision: value.revision,
-      sequence: value.lastChangeSeq,
-      updatedByDeviceId: value.updatedByDeviceId,
-    );
-    if (value.envelopeVersion != null ||
-        value.keyEpoch != null ||
-        value.ciphertext != null ||
-        value.ciphertextBytes != 0) {
-      throw const FormatException('服务端返回了无效的 deleted 记录');
-    }
-    return CloudSyncDeletedRecord(
-      recordId: E2eeUntrustedAccountRecordId.fromTransport(value.recordId),
-      revision: value.revision,
-      updatedAt: value.updatedAt.toUtc(),
-      updatedByDeviceId: value.updatedByDeviceId,
-      lastChangeSeq: value.lastChangeSeq,
-      deletedAt: value.deletedAt.toUtc(),
-    );
+    throw const FormatException('服务端返回了不受信任的 deleted 记录');
   }
   throw const FormatException('服务端返回了未知的同步记录');
 }
@@ -1015,14 +978,14 @@ void _validatePushMutations(List<CloudSyncRecordMutation> mutations) {
     }
     switch (mutation) {
       case CloudSyncPutRecordMutation():
-        if (mutation.record.keyEpoch < 1 ||
-            mutation.record.keyEpoch > 2147483647) {
+        final record = mutation.state.record;
+        if (record.keyEpoch < 1 || record.keyEpoch > 2147483647) {
           throw const CloudSyncException(
             kind: CloudSyncFailureKind.validation,
             retryable: false,
           );
         }
-        final ciphertextBytes = mutation.record.ciphertext.length;
+        final ciphertextBytes = record.ciphertext.length;
         if (ciphertextBytes < 1 ||
             ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes) {
           throw const CloudSyncException(
