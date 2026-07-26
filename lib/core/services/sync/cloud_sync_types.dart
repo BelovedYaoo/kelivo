@@ -522,6 +522,8 @@ final class CloudSyncAccountSession {
   CloudSyncAccountSession({
     required String baseUrl,
     required this.token,
+    required DateTime tokenExpiresAt,
+    required int keyEpoch,
     required this.userId,
     required this.loginName,
     required this.displayName,
@@ -533,8 +535,9 @@ final class CloudSyncAccountSession {
     required this.clientVersion,
     required DateTime deviceCreatedAt,
   }) : baseUrl = normalizeCloudSyncBaseUrl(baseUrl),
+       tokenExpiresAt = tokenExpiresAt.toUtc(),
+       keyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch'),
        deviceCreatedAt = deviceCreatedAt.toUtc() {
-    _requireNonEmpty(token, 'token');
     _requireNonEmpty(userId, 'userId');
     _requireNonEmpty(loginName, 'loginName');
     _requireNonEmpty(displayName, 'displayName');
@@ -546,8 +549,34 @@ final class CloudSyncAccountSession {
     }
   }
 
+  factory CloudSyncAccountSession.fromAuthenticatedSession({
+    required String baseUrl,
+    required CloudSyncAuthenticatedSession session,
+  }) {
+    final user = session.user;
+    final device = session.device;
+    return CloudSyncAccountSession(
+      baseUrl: baseUrl,
+      token: session.token,
+      tokenExpiresAt: session.tokenExpiresAt,
+      keyEpoch: session.keyEpoch,
+      userId: user.id,
+      loginName: user.loginName,
+      displayName: user.displayName,
+      role: user.role,
+      attachmentQuotaBytes: user.attachmentQuotaBytes,
+      deviceId: device.id,
+      deviceName: device.name,
+      platform: device.platform,
+      clientVersion: device.clientVersion,
+      deviceCreatedAt: device.createdAt,
+    );
+  }
+
   final String baseUrl;
-  final String token;
+  final CloudSyncFullSessionToken token;
+  final DateTime tokenExpiresAt;
+  final int keyEpoch;
   final String userId;
   final String loginName;
   final String displayName;
@@ -562,9 +591,11 @@ final class CloudSyncAccountSession {
   String get accountScope => Uri.encodeComponent('$baseUrl\n$userId');
 
   CloudSyncJsonMap toJson() => <String, Object?>{
-    'version': 1,
+    'version': 2,
     'baseUrl': baseUrl,
-    'token': token,
+    'token': token.value,
+    'tokenExpiresAt': tokenExpiresAt.toIso8601String(),
+    'keyEpoch': keyEpoch,
     'userId': userId,
     'loginName': loginName,
     'displayName': displayName,
@@ -584,10 +615,12 @@ final class CloudSyncAccountSession {
   }
 
   factory CloudSyncAccountSession.fromJson(CloudSyncJsonMap json) {
-    _requireVersion(json);
+    _requireAccountSessionVersion(json);
     return CloudSyncAccountSession(
       baseUrl: _requireString(json, 'baseUrl'),
-      token: _requireString(json, 'token'),
+      token: CloudSyncFullSessionToken.parse(_requireString(json, 'token')),
+      tokenExpiresAt: _requireDateTime(json, 'tokenExpiresAt'),
+      keyEpoch: _requireInt(json, 'keyEpoch'),
       userId: _requireString(json, 'userId'),
       loginName: _requireString(json, 'loginName'),
       displayName: _requireString(json, 'displayName'),
@@ -611,14 +644,14 @@ final class CloudSyncAccountSession {
 
   factory CloudSyncAccountSession.fromMetadataJson(
     CloudSyncJsonMap json, {
-    required String token,
+    required CloudSyncFullSessionToken token,
   }) {
     if (json.containsKey('token')) {
       throw const FormatException('session_metadata_token');
     }
     return CloudSyncAccountSession.fromJson(<String, Object?>{
       ...json,
-      'token': token,
+      'token': token.value,
     });
   }
 }
@@ -757,8 +790,8 @@ void _requireNonEmpty(String value, String field) {
   }
 }
 
-void _requireVersion(CloudSyncJsonMap json) {
-  if (json['version'] != 1) {
+void _requireAccountSessionVersion(CloudSyncJsonMap json) {
+  if (json['version'] != 2) {
     throw const FormatException('不支持的本地同步状态版本');
   }
 }

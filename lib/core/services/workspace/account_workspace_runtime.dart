@@ -405,7 +405,7 @@ final class AccountWorkspaceRuntime {
     final tokenReference = await _sessionTokenStore.writeToken(
       accountDirectory: accountDirectory,
       workspaceKey: workspaceKey,
-      token: session.token,
+      token: session.token.value,
       currentReference: stored?.tokenReference,
       durability: _durability,
     );
@@ -480,10 +480,12 @@ final class AccountWorkspaceRuntime {
       );
       session = null;
     } else {
-      final token = await sessionTokenStore.readToken(
-        accountDirectory: accountDirectory,
-        workspaceKey: workspaceKey,
-        reference: stored.tokenReference!,
+      final token = CloudSyncFullSessionToken.parse(
+        await sessionTokenStore.readToken(
+          accountDirectory: accountDirectory,
+          workspaceKey: workspaceKey,
+          reference: stored.tokenReference!,
+        ),
       );
       session = CloudSyncAccountSession.fromMetadataJson(
         stored.sessionMetadata!,

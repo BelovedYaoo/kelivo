@@ -71,6 +71,55 @@ void main() {
     runtimes.remove(runtime);
   }
 
+  Future<void> mutateStoredSessionMetadata(
+    CloudSyncAccountSession session,
+    void Function(Map<String, Object?> metadata) mutate,
+  ) async {
+    final workspaceKey = sha256
+        .convert(utf8.encode(session.accountScope))
+        .toString();
+    final accountDirectory = Directory(
+      p.join(
+        installationRoot.path,
+        '.kelivo-workspaces',
+        'accounts',
+        workspaceKey,
+      ),
+    );
+    final sessionRecords = await accountDirectory
+        .list(followLinks: false)
+        .where(
+          (entity) =>
+              entity is File &&
+              p.basename(entity.path).startsWith('session-v2-'),
+        )
+        .cast<File>()
+        .toList();
+    expect(sessionRecords, hasLength(1));
+    final record =
+        jsonDecode(await sessionRecords.single.readAsString())
+            as Map<String, Object?>;
+    final payload = record['payload'] as Map<String, Object?>;
+    final metadata = payload['session'] as Map<String, Object?>;
+    mutate(metadata);
+    await sessionRecords.single.writeAsString(jsonEncode(record), flush: true);
+  }
+
+  Future<void> expectStoredSessionMetadataRejected(
+    void Function(Map<String, Object?> metadata) mutate,
+  ) async {
+    final session = _session(
+      userId: 'account-a',
+      token: 'metadata-validation-token',
+    );
+    final runtime = await bootstrap();
+    await runtime.bindAccount(session);
+    await close(runtime);
+    await mutateStoredSessionMetadata(session, mutate);
+
+    await expectLater(bootstrap(), throwsA(isA<FormatException>()));
+  }
+
   test('设备状态首次发布后可按规范身份读取且路径不泄漏登录名', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     const baseUrl = 'https://kelivo.bemylover.top';
@@ -894,9 +943,13 @@ void main() {
   });
 
   test('账号工作区磁盘不得持久化 bearer token 明文', () async {
-    const token = 'disk-sentinel-bearer-token';
+    final session = _session(
+      userId: 'account-a',
+      token: 'disk-sentinel-bearer-token',
+    );
+    final token = session.token.value;
     final runtime = await bootstrap();
-    await runtime.bindAccount(_session(userId: 'account-a', token: token));
+    await runtime.bindAccount(session);
 
     final tokenBytes = utf8.encode(token);
     final files = await installationRoot
@@ -930,6 +983,9 @@ void main() {
       'tokenReference',
     });
     expect(sessionMetadata, isNot(contains('token')));
+    expect(sessionMetadata['version'], 2);
+    expect(sessionMetadata['tokenExpiresAt'], '2030-07-18T00:00:00.000Z');
+    expect(sessionMetadata['keyEpoch'], 1);
     expect(payload['tokenReference'], <String, Object?>{
       'version': 1,
       'generation': 1,
@@ -937,10 +993,103 @@ void main() {
     });
   });
 
-  test('旧版明文会话启动时硬切并清除凭证', () async {
-    const legacyToken = 'legacy-plaintext-token-sentinel';
+  test('E2EE 已认证会话重启后完整 roundtrip', () async {
+    final authenticatedSession = CloudSyncAuthenticatedSession(
+      token: _fullSessionToken('authenticated-roundtrip-token'),
+      tokenExpiresAt: DateTime.parse('2031-07-26T16:20:00+08:00'),
+      keyEpoch: 0xffffffff,
+      user: CloudSyncAuthenticatedUser(
+        id: '11111111-1111-4111-8111-111111111111',
+        loginName: 'roundtrip-user',
+        displayName: 'Roundtrip User',
+        role: CloudSyncUserRole.admin,
+        attachmentQuotaBytes: 4096,
+      ),
+      device: CloudSyncAuthenticatedDevice(
+        id: '22222222-2222-4222-8222-222222222222',
+        name: 'Roundtrip Device',
+        platform: CloudSyncPlatform.linux,
+        clientVersion: '2.0.0',
+        status: CloudSyncAuthenticatedDeviceStatus.active,
+        createdAt: DateTime.parse('2026-07-25T09:30:00+08:00'),
+      ),
+    );
+    final expected = CloudSyncAccountSession.fromAuthenticatedSession(
+      baseUrl: defaultCloudSyncBaseUrl,
+      session: authenticatedSession,
+    );
     var runtime = await bootstrap();
-    final session = _session(userId: 'account-a', token: legacyToken);
+    await runtime.bindAccount(expected);
+    await close(runtime);
+
+    runtime = await bootstrap();
+    final restored = runtime.current.session!;
+    expect(restored.baseUrl, expected.baseUrl);
+    expect(restored.token.value, expected.token.value);
+    expect(restored.tokenExpiresAt, DateTime.utc(2031, 7, 26, 8, 20));
+    expect(restored.keyEpoch, 0xffffffff);
+    expect(restored.userId, expected.userId);
+    expect(restored.loginName, expected.loginName);
+    expect(restored.displayName, expected.displayName);
+    expect(restored.role, expected.role);
+    expect(restored.attachmentQuotaBytes, expected.attachmentQuotaBytes);
+    expect(restored.deviceId, expected.deviceId);
+    expect(restored.deviceName, expected.deviceName);
+    expect(restored.platform, expected.platform);
+    expect(restored.clientVersion, expected.clientVersion);
+    expect(restored.deviceCreatedAt, DateTime.utc(2026, 7, 25, 1, 30));
+  });
+
+  test('会话令牌解密后格式非法时启动失败', () async {
+    final runtime = await bootstrap();
+    await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'invalid-token-source'),
+    );
+    await close(runtime);
+    sessionTokenStore.replaceAllTokens('invalid-token');
+
+    await expectLater(bootstrap(), throwsA(isA<FormatException>()));
+  });
+
+  test('会话 metadata 缺失 keyEpoch 时启动失败', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata.remove('keyEpoch'),
+    );
+  });
+
+  for (final invalidEpoch in <int>[0, 0x100000000]) {
+    test('会话 metadata 包含非法 keyEpoch $invalidEpoch 时启动失败', () async {
+      await expectStoredSessionMetadataRejected(
+        (metadata) => metadata['keyEpoch'] = invalidEpoch,
+      );
+    });
+  }
+
+  test('会话 metadata 缺失 tokenExpiresAt 时启动失败', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata.remove('tokenExpiresAt'),
+    );
+  });
+
+  test('会话 metadata 包含非法 tokenExpiresAt 时启动失败', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata['tokenExpiresAt'] = 'not-a-date-time',
+    );
+  });
+
+  test('旧版会话 metadata 启动时拒绝迁移', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata['version'] = 1,
+    );
+  });
+
+  test('旧版明文会话启动时硬切并清除凭证', () async {
+    var runtime = await bootstrap();
+    final session = _session(
+      userId: 'account-a',
+      token: 'legacy-plaintext-token-sentinel',
+    );
+    final legacyToken = session.token.value;
     await runtime.bindAccount(session);
     await close(runtime);
 
@@ -1287,12 +1436,12 @@ void main() {
 
     expect(result, isA<AccountWorkspaceRetained>());
     expect(runtime.current.dataDirectory.path, originalPath);
-    expect(runtime.current.session?.token, 'new-token');
+    expect(runtime.current.session?.token.value, refreshed.token.value);
 
     await close(runtime);
     runtime = await bootstrap();
     expect(runtime.current.dataDirectory.path, originalPath);
-    expect(runtime.current.session?.token, 'new-token');
+    expect(runtime.current.session?.token.value, refreshed.token.value);
   });
 
   test('账号目录祖先链接不能把账号数据重定向到其他位置', () async {
@@ -3302,6 +3451,10 @@ final class _MemoryAccountSessionTokenStore
 
   void clear() => _tokens.clear();
 
+  void replaceAllTokens(String token) {
+    _tokens.updateAll((_, _) => token);
+  }
+
   @override
   Future<AccountSessionTokenReference> writeToken({
     required Directory accountDirectory,
@@ -3409,7 +3562,9 @@ CloudSyncAccountSession _session({
 }) {
   return CloudSyncAccountSession(
     baseUrl: baseUrl,
-    token: token,
+    token: _fullSessionToken(token),
+    tokenExpiresAt: DateTime.utc(2030, 7, 18),
+    keyEpoch: 1,
     userId: userId,
     loginName: userId,
     displayName: userId,
@@ -3421,4 +3576,11 @@ CloudSyncAccountSession _session({
     clientVersion: '1.0.0',
     deviceCreatedAt: DateTime.utc(2026, 7, 18),
   );
+}
+
+CloudSyncFullSessionToken _fullSessionToken(String seed) {
+  final payload = base64Url
+      .encode(sha256.convert(utf8.encode(seed)).bytes)
+      .replaceAll('=', '');
+  return CloudSyncFullSessionToken.parse('kelivo_$payload');
 }
