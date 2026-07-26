@@ -6,7 +6,12 @@ publish = false
 
 [features]
 default = ["system-rng", "device-crypto"]
-device-crypto = ["dep:ed25519-dalek", "dep:hpke", "dep:sha2_device"]
+device-crypto = [
+  "dep:ed25519-dalek",
+  "dep:hpke",
+  "dep:sha2_device",
+  "dep:x25519-dalek",
+]
 system-rng = ["rand/getrandom", "dep:getrandom"]
 
 [dependencies]
@@ -28,6 +33,9 @@ opaque-ke = { version = "=4.0.1", default-features = false, features = [
 rand = { version = "=0.8.5", default-features = false }
 sha2_device = { package = "sha2", version = "=0.11.0", default-features = false, optional = true }
 sha2_opaque = { package = "sha2", version = "=0.10.9", default-features = false }
+x25519-dalek = { version = "=3.0.0", default-features = false, optional = true, features = [
+  "zeroize",
+] }
 zeroize = { version = "=1.9.0", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]

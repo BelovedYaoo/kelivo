@@ -1002,6 +1002,14 @@ mod tests {
     }
 
     #[test]
+    fn x25519_secrets_have_compile_time_zeroize_on_drop_contract() {
+        fn require_zeroize_on_drop<T: ZeroizeOnDrop>() {}
+
+        require_zeroize_on_drop::<x25519_dalek::StaticSecret>();
+        require_zeroize_on_drop::<x25519_dalek::SharedSecret>();
+    }
+
+    #[test]
     fn device_proof_round_trip_uses_fixed_wire_format() {
         let signing_key = DeviceSigningPrivateKey::from_seed([0x11; 32]);
         let agreement_key =
