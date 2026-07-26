@@ -394,7 +394,7 @@ fn register_ark(ark: crypto::AccountRootKey) -> Result<u64, KelivoStatus> {
     )
 }
 
-fn ark_for_handle(handle: u64) -> Result<Arc<crypto::AccountRootKey>, KelivoStatus> {
+pub(super) fn ark_for_handle(handle: u64) -> Result<Arc<crypto::AccountRootKey>, KelivoStatus> {
     secret_for_handle(
         ark_registry(),
         handle,

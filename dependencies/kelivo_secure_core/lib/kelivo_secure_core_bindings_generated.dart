@@ -162,6 +162,64 @@ external int kelivo_record_open(
 
 @ffi.Native<
   KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_record_seal(
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> record_id,
+  int record_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> associated_data,
+  int associated_data_length,
+  ffi.Pointer<ffi.Uint8> plaintext,
+  int plaintext_length,
+  ffi.Pointer<ffi.Uint8> out_envelope,
+  int out_envelope_capacity,
+  ffi.Pointer<ffi.Size> out_envelope_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_record_open(
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> record_id,
+  int record_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> associated_data,
+  int associated_data_length,
+  ffi.Pointer<ffi.Uint8> envelope,
+  int envelope_length,
+  ffi.Pointer<ffi.Uint8> out_plaintext,
+  int out_plaintext_capacity,
+  ffi.Pointer<ffi.Size> out_plaintext_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
     ffi.Pointer<ffi.Uint64>,
@@ -714,7 +772,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 5;
+const int KELIVO_CORE_ABI_VERSION = 6;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 

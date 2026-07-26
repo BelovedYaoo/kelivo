@@ -362,6 +362,82 @@ extension KelivoDeviceCore on KelivoSecureCore {
         invalidStatus: KelivoSecureCoreStatus.invalidAccountRootKeyHandle,
       );
 
+  Future<Uint8List> sealAccountRecord(
+    KelivoAccountRootKeyHandle ark, {
+    required Uint8List recordId,
+    required int keyEpoch,
+    required Uint8List associatedData,
+    required Uint8List plaintext,
+  }) async {
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    _validateRecordContext(
+      recordId: recordId,
+      epoch: keyEpoch,
+      associatedData: associatedData,
+    );
+    if (plaintext.length > _recordMaxPlaintextSize) {
+      throw ArgumentError.value(
+        plaintext.length,
+        'plaintext',
+        '记录明文不得超过 $_recordMaxPlaintextSize 字节',
+      );
+    }
+
+    final value = ark._state.beginUse();
+    try {
+      return await Isolate.run(
+        () => _sealRecord(
+          _RecordKeySource.accountRoot,
+          value,
+          Uint8List.fromList(recordId),
+          keyEpoch,
+          Uint8List.fromList(associatedData),
+          Uint8List.fromList(plaintext),
+        ),
+      );
+    } finally {
+      ark._state.completeUse();
+    }
+  }
+
+  Future<Uint8List> openAccountRecord(
+    KelivoAccountRootKeyHandle ark, {
+    required Uint8List recordId,
+    required int keyEpoch,
+    required Uint8List associatedData,
+    required Uint8List envelope,
+  }) async {
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    _validateRecordContext(
+      recordId: recordId,
+      epoch: keyEpoch,
+      associatedData: associatedData,
+    );
+    if (envelope.length > _recordMaxEnvelopeSize) {
+      throw ArgumentError.value(
+        envelope.length,
+        'envelope',
+        '记录信封不得超过 $_recordMaxEnvelopeSize 字节',
+      );
+    }
+
+    final value = ark._state.beginUse();
+    try {
+      return await Isolate.run(
+        () => _openRecord(
+          _RecordKeySource.accountRoot,
+          value,
+          Uint8List.fromList(recordId),
+          keyEpoch,
+          Uint8List.fromList(associatedData),
+          Uint8List.fromList(envelope),
+        ),
+      );
+    } finally {
+      ark._state.completeUse();
+    }
+  }
+
   Future<Uint8List> signDeviceLoginProof(
     KelivoDeviceIdentityHandle identity, {
     required Uint8List attemptId,

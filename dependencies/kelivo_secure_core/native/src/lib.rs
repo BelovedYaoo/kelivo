@@ -36,7 +36,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 5;
+const ABI_VERSION: u32 = 6;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -478,6 +478,38 @@ fn master_key(key: &LocalKey) -> Result<&[u8; LOCAL_KEY_SIZE], KelivoStatus> {
     <&[u8; LOCAL_KEY_SIZE]>::try_from(&key[..]).map_err(|_| KelivoStatus::InternalState)
 }
 
+#[derive(Clone, Copy)]
+enum RecordKeySource {
+    LocalSlot,
+    AccountRoot,
+}
+
+enum RecordMasterKey {
+    LocalSlot(Arc<LocalKey>),
+    AccountRoot(Arc<kelivo_secure_core_protocol::device_crypto::AccountRootKey>),
+}
+
+impl RecordMasterKey {
+    fn as_bytes(&self) -> Result<&[u8; 32], KelivoStatus> {
+        match self {
+            Self::LocalSlot(key) => master_key(key),
+            Self::AccountRoot(ark) => Ok(ark.as_bytes()),
+        }
+    }
+}
+
+fn record_key_for_handle(
+    handle: u64,
+    source: RecordKeySource,
+) -> Result<RecordMasterKey, KelivoStatus> {
+    match source {
+        RecordKeySource::LocalSlot => key_for_handle(handle).map(RecordMasterKey::LocalSlot),
+        RecordKeySource::AccountRoot => {
+            device_core::ark_for_handle(handle).map(RecordMasterKey::AccountRoot)
+        }
+    }
+}
+
 fn database_error_status(error: database::DatabaseKeyError) -> KelivoStatus {
     match error {
         database::DatabaseKeyError::Crypto => KelivoStatus::InternalState,
@@ -615,8 +647,8 @@ pub unsafe extern "C" fn kelivo_sqlcipher_database_attach(
 ///
 /// 所有输入指针必须覆盖声明的可读长度；输出指针必须覆盖声明的可写容量。
 /// `out_envelope_length` 必须始终可写。输出容量不足时不会生成 nonce 或写入输出缓冲区。
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelivo_record_seal(
+unsafe fn record_seal_with_handle(
+    key_source: RecordKeySource,
     handle: u64,
     record_id: *const u8,
     record_id_length: usize,
@@ -649,7 +681,7 @@ pub unsafe extern "C" fn kelivo_record_seal(
         Ok(value) => value,
         Err(status) => return status.code(),
     };
-    let key = match key_for_handle(handle) {
+    let key = match record_key_for_handle(handle, key_source) {
         Ok(value) => value,
         Err(status) => return status.code(),
     };
@@ -671,7 +703,7 @@ pub unsafe extern "C" fn kelivo_record_seal(
     if let Err(status) = platform::fill_random(&mut nonce) {
         return status.code();
     }
-    let key = match master_key(&key) {
+    let key = match key.as_bytes() {
         Ok(value) => value,
         Err(status) => return status.code(),
     };
@@ -695,10 +727,80 @@ pub unsafe extern "C" fn kelivo_record_seal(
 
 /// # Safety
 ///
+/// 约束与 `record_seal_with_handle` 相同；句柄必须来自平台本地密钥槽。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_record_seal(
+    handle: u64,
+    record_id: *const u8,
+    record_id_length: usize,
+    epoch: u64,
+    associated_data: *const u8,
+    associated_data_length: usize,
+    plaintext: *const u8,
+    plaintext_length: usize,
+    out_envelope: *mut u8,
+    out_envelope_capacity: usize,
+    out_envelope_length: *mut usize,
+) -> i32 {
+    unsafe {
+        record_seal_with_handle(
+            RecordKeySource::LocalSlot,
+            handle,
+            record_id,
+            record_id_length,
+            epoch,
+            associated_data,
+            associated_data_length,
+            plaintext,
+            plaintext_length,
+            out_envelope,
+            out_envelope_capacity,
+            out_envelope_length,
+        )
+    }
+}
+
+/// # Safety
+///
+/// 约束与 `record_seal_with_handle` 相同；句柄必须是不透明账户根密钥句柄。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_account_record_seal(
+    ark_handle: u64,
+    record_id: *const u8,
+    record_id_length: usize,
+    key_epoch: u32,
+    associated_data: *const u8,
+    associated_data_length: usize,
+    plaintext: *const u8,
+    plaintext_length: usize,
+    out_envelope: *mut u8,
+    out_envelope_capacity: usize,
+    out_envelope_length: *mut usize,
+) -> i32 {
+    unsafe {
+        record_seal_with_handle(
+            RecordKeySource::AccountRoot,
+            ark_handle,
+            record_id,
+            record_id_length,
+            u64::from(key_epoch),
+            associated_data,
+            associated_data_length,
+            plaintext,
+            plaintext_length,
+            out_envelope,
+            out_envelope_capacity,
+            out_envelope_length,
+        )
+    }
+}
+
+/// # Safety
+///
 /// 所有输入指针必须覆盖声明的可读长度；输出指针必须覆盖声明的可写容量。
 /// `out_plaintext_length` 必须始终可写；认证失败不得写出任何明文字节。
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelivo_record_open(
+unsafe fn record_open_with_handle(
+    key_source: RecordKeySource,
     handle: u64,
     record_id: *const u8,
     record_id_length: usize,
@@ -731,7 +833,7 @@ pub unsafe extern "C" fn kelivo_record_open(
         Ok(value) => value,
         Err(status) => return status.code(),
     };
-    let key = match key_for_handle(handle) {
+    let key = match record_key_for_handle(handle, key_source) {
         Ok(value) => value,
         Err(status) => return status.code(),
     };
@@ -749,7 +851,7 @@ pub unsafe extern "C" fn kelivo_record_open(
         return KelivoStatus::NullPointer.code();
     }
 
-    let key = match master_key(&key) {
+    let key = match key.as_bytes() {
         Ok(value) => value,
         Err(status) => return status.code(),
     };
@@ -767,6 +869,76 @@ pub unsafe extern "C" fn kelivo_record_open(
     } {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(status) => status.code(),
+    }
+}
+
+/// # Safety
+///
+/// 约束与 `record_open_with_handle` 相同；句柄必须来自平台本地密钥槽。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_record_open(
+    handle: u64,
+    record_id: *const u8,
+    record_id_length: usize,
+    epoch: u64,
+    associated_data: *const u8,
+    associated_data_length: usize,
+    envelope: *const u8,
+    envelope_length: usize,
+    out_plaintext: *mut u8,
+    out_plaintext_capacity: usize,
+    out_plaintext_length: *mut usize,
+) -> i32 {
+    unsafe {
+        record_open_with_handle(
+            RecordKeySource::LocalSlot,
+            handle,
+            record_id,
+            record_id_length,
+            epoch,
+            associated_data,
+            associated_data_length,
+            envelope,
+            envelope_length,
+            out_plaintext,
+            out_plaintext_capacity,
+            out_plaintext_length,
+        )
+    }
+}
+
+/// # Safety
+///
+/// 约束与 `record_open_with_handle` 相同；句柄必须是不透明账户根密钥句柄。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_account_record_open(
+    ark_handle: u64,
+    record_id: *const u8,
+    record_id_length: usize,
+    key_epoch: u32,
+    associated_data: *const u8,
+    associated_data_length: usize,
+    envelope: *const u8,
+    envelope_length: usize,
+    out_plaintext: *mut u8,
+    out_plaintext_capacity: usize,
+    out_plaintext_length: *mut usize,
+) -> i32 {
+    unsafe {
+        record_open_with_handle(
+            RecordKeySource::AccountRoot,
+            ark_handle,
+            record_id,
+            record_id_length,
+            u64::from(key_epoch),
+            associated_data,
+            associated_data_length,
+            envelope,
+            envelope_length,
+            out_plaintext,
+            out_plaintext_capacity,
+            out_plaintext_length,
+        )
     }
 }
 
@@ -1482,6 +1654,160 @@ mod tests {
                 )
             },
             KelivoStatus::InvalidKeyHandle.code()
+        );
+        assert_eq!(rejected_length, 0);
+        assert!(rejected_output.iter().all(|value| *value == 0xa5));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn account_root_handle_seals_and_opens_record_through_c_abi() {
+        let mut ark_handle = 0_u64;
+        assert_eq!(
+            unsafe { kelivo_account_root_key_generate(&mut ark_handle) },
+            KelivoStatus::Ok.code()
+        );
+        let record_id = [0x51_u8; 16];
+        let aad = b"account/vault/record";
+        let plaintext = b"shared record payload";
+        const KEY_EPOCH: u32 = 7;
+
+        let mut envelope_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_seal(
+                    ark_handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    KEY_EPOCH,
+                    aad.as_ptr(),
+                    aad.len(),
+                    plaintext.as_ptr(),
+                    plaintext.len(),
+                    ptr::null_mut(),
+                    0,
+                    &mut envelope_length,
+                )
+            },
+            KelivoStatus::OutputBufferTooSmall.code()
+        );
+        let mut envelope = vec![0_u8; envelope_length];
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_seal(
+                    ark_handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    KEY_EPOCH,
+                    aad.as_ptr(),
+                    aad.len(),
+                    plaintext.as_ptr(),
+                    plaintext.len(),
+                    envelope.as_mut_ptr(),
+                    envelope.len(),
+                    &mut envelope_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        envelope.truncate(envelope_length);
+
+        let mut opened_length = plaintext.len();
+        let mut opened = vec![0_u8; opened_length];
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_open(
+                    ark_handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    KEY_EPOCH,
+                    aad.as_ptr(),
+                    aad.len(),
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    opened.as_mut_ptr(),
+                    opened.len(),
+                    &mut opened_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        opened.truncate(opened_length);
+        assert_eq!(opened, plaintext);
+
+        let mut other_ark_handle = 0_u64;
+        assert_eq!(
+            unsafe { kelivo_account_root_key_generate(&mut other_ark_handle) },
+            KelivoStatus::Ok.code()
+        );
+        let mut rejected_length = usize::MAX;
+        let mut rejected_output = vec![0xa5_u8; plaintext.len()];
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_open(
+                    other_ark_handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    KEY_EPOCH,
+                    aad.as_ptr(),
+                    aad.len(),
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::RecordAuthenticationFailed.code()
+        );
+        assert_eq!(rejected_length, 0);
+        assert!(rejected_output.iter().all(|value| *value == 0xa5));
+
+        assert_eq!(
+            unsafe {
+                kelivo_record_open(
+                    ark_handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    u64::from(KEY_EPOCH),
+                    aad.as_ptr(),
+                    aad.len(),
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::InvalidKeyHandle.code()
+        );
+        assert_eq!(rejected_length, 0);
+
+        assert_eq!(
+            kelivo_account_root_key_handle_close(other_ark_handle),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(ark_handle),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_open(
+                    ark_handle,
+                    record_id.as_ptr(),
+                    record_id.len(),
+                    KEY_EPOCH,
+                    aad.as_ptr(),
+                    aad.len(),
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::InvalidAccountRootKeyHandle.code()
         );
         assert_eq!(rejected_length, 0);
         assert!(rejected_output.iter().all(|value| *value == 0xa5));
