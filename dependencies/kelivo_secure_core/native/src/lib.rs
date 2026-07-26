@@ -13,12 +13,13 @@ mod opaque_client;
 mod record;
 
 pub use device_core::{
-    kelivo_account_root_key_generate, kelivo_account_root_key_handle_close,
-    kelivo_device_identity_generate, kelivo_device_identity_handle_close,
-    kelivo_device_identity_public_keys, kelivo_device_login_proof_sign,
-    kelivo_device_pairing_approval_accept, kelivo_device_pairing_approval_create,
-    kelivo_device_registration_finish_create, kelivo_device_state_open, kelivo_device_state_seal,
-    kelivo_pending_pairing_bind, kelivo_pending_pairing_handle_close, kelivo_pending_pairing_start,
+    KelivoDeviceStateBinding, kelivo_account_root_key_generate,
+    kelivo_account_root_key_handle_close, kelivo_device_identity_generate,
+    kelivo_device_identity_handle_close, kelivo_device_identity_public_keys,
+    kelivo_device_login_proof_sign, kelivo_device_pairing_approval_accept,
+    kelivo_device_pairing_approval_create, kelivo_device_registration_finish_create,
+    kelivo_device_state_open, kelivo_device_state_seal, kelivo_pending_pairing_bind,
+    kelivo_pending_pairing_handle_close, kelivo_pending_pairing_start,
 };
 pub use opaque_client::{
     kelivo_opaque_client_login_finish, kelivo_opaque_client_login_start,
@@ -35,7 +36,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 4;
+const ABI_VERSION: u32 = 5;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -782,6 +783,17 @@ mod tests {
             flags: u64::MAX,
             secure_storage_backend: u32::MAX,
             reserved: [u32::MAX; 3],
+        }
+    }
+
+    fn sentinel_device_state_binding() -> KelivoDeviceStateBinding {
+        KelivoDeviceStateBinding {
+            struct_size: u32::MAX,
+            flags: u32::MAX,
+            device_id: [0xa5; 16],
+            key_version: u32::MAX,
+            user_id: [0xa5; 16],
+            key_epoch: u32::MAX,
         }
     }
 
@@ -2380,6 +2392,123 @@ mod tests {
             KelivoStatus::Ok.code()
         );
 
+        let mut rejected_identity = u64::MAX;
+        let mut rejected_ark = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    pending_blob.as_ptr(),
+                    pending_blob.len(),
+                    ptr::null_mut(),
+                    &mut rejected_identity,
+                    &mut rejected_ark,
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(rejected_identity, INVALID_KEY_HANDLE);
+        assert_eq!(rejected_ark, INVALID_KEY_HANDLE);
+
+        let mut rejected_binding = sentinel_device_state_binding();
+        rejected_ark = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    pending_blob.as_ptr(),
+                    pending_blob.len(),
+                    &mut rejected_binding,
+                    ptr::null_mut(),
+                    &mut rejected_ark,
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(rejected_binding, KelivoDeviceStateBinding::default());
+        assert_eq!(rejected_ark, INVALID_KEY_HANDLE);
+
+        rejected_binding = sentinel_device_state_binding();
+        rejected_identity = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    pending_blob.as_ptr(),
+                    pending_blob.len(),
+                    &mut rejected_binding,
+                    &mut rejected_identity,
+                    ptr::null_mut(),
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(rejected_binding, KelivoDeviceStateBinding::default());
+        assert_eq!(rejected_identity, INVALID_KEY_HANDLE);
+
+        rejected_binding = sentinel_device_state_binding();
+        rejected_identity = u64::MAX;
+        rejected_ark = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    ptr::null(),
+                    pending_blob.len(),
+                    &mut rejected_binding,
+                    &mut rejected_identity,
+                    &mut rejected_ark,
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(rejected_binding, KelivoDeviceStateBinding::default());
+        assert_eq!(rejected_identity, INVALID_KEY_HANDLE);
+        assert_eq!(rejected_ark, INVALID_KEY_HANDLE);
+
+        rejected_binding = sentinel_device_state_binding();
+        rejected_identity = u64::MAX;
+        rejected_ark = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    pending_blob.as_ptr(),
+                    pending_blob.len() - 1,
+                    &mut rejected_binding,
+                    &mut rejected_identity,
+                    &mut rejected_ark,
+                )
+            },
+            KelivoStatus::DeviceStateInvalid.code()
+        );
+        assert_eq!(rejected_binding, KelivoDeviceStateBinding::default());
+        assert_eq!(rejected_identity, INVALID_KEY_HANDLE);
+        assert_eq!(rejected_ark, INVALID_KEY_HANDLE);
+
+        let mut tampered_pending_blob = pending_blob;
+        tampered_pending_blob[device_core::DEVICE_STATE_BLOB_LENGTH - 1] ^= 1;
+        rejected_binding = sentinel_device_state_binding();
+        rejected_identity = u64::MAX;
+        rejected_ark = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    tampered_pending_blob.as_ptr(),
+                    tampered_pending_blob.len(),
+                    &mut rejected_binding,
+                    &mut rejected_identity,
+                    &mut rejected_ark,
+                )
+            },
+            KelivoStatus::DeviceStateAuthenticationFailed.code()
+        );
+        assert_eq!(rejected_binding, KelivoDeviceStateBinding::default());
+        assert_eq!(rejected_identity, INVALID_KEY_HANDLE);
+        assert_eq!(rejected_ark, INVALID_KEY_HANDLE);
+
+        let mut pending_binding = KelivoDeviceStateBinding::default();
         let mut reopened_target = INVALID_KEY_HANDLE;
         let mut absent_ark = u64::MAX;
         assert_eq!(
@@ -2388,18 +2517,22 @@ mod tests {
                     key_handle,
                     pending_blob.as_ptr(),
                     pending_blob.len(),
-                    target_device_id.as_ptr(),
-                    target_device_id.len(),
-                    key_version,
-                    ptr::null(),
-                    0,
-                    0,
+                    &mut pending_binding,
                     &mut reopened_target,
                     &mut absent_ark,
                 )
             },
             KelivoStatus::Ok.code()
         );
+        assert_eq!(
+            pending_binding.struct_size,
+            device_core::DEVICE_STATE_BINDING_STRUCT_SIZE
+        );
+        assert_eq!(pending_binding.flags, 0);
+        assert_eq!(pending_binding.device_id, target_device_id);
+        assert_eq!(pending_binding.key_version, key_version);
+        assert_eq!(pending_binding.user_id, [0; 16]);
+        assert_eq!(pending_binding.key_epoch, 0);
         assert!(handle_has_tag(reopened_target, DEVICE_IDENTITY_HANDLE_TAG));
         assert_eq!(absent_ark, INVALID_KEY_HANDLE);
 
@@ -2682,6 +2815,7 @@ mod tests {
             KelivoStatus::InvalidPendingPairingHandle.code()
         );
 
+        let mut full_binding = KelivoDeviceStateBinding::default();
         let mut full_identity = INVALID_KEY_HANDLE;
         let mut full_ark = INVALID_KEY_HANDLE;
         assert_eq!(
@@ -2690,18 +2824,25 @@ mod tests {
                     key_handle,
                     full_blob.as_ptr(),
                     full_blob.len(),
-                    target_device_id.as_ptr(),
-                    target_device_id.len(),
-                    key_version,
-                    user_id.as_ptr(),
-                    user_id.len(),
-                    key_epoch,
+                    &mut full_binding,
                     &mut full_identity,
                     &mut full_ark,
                 )
             },
             KelivoStatus::Ok.code()
         );
+        assert_eq!(
+            full_binding.struct_size,
+            device_core::DEVICE_STATE_BINDING_STRUCT_SIZE
+        );
+        assert_eq!(
+            full_binding.flags,
+            device_core::DEVICE_STATE_BINDING_FLAG_ACCOUNT
+        );
+        assert_eq!(full_binding.device_id, target_device_id);
+        assert_eq!(full_binding.key_version, key_version);
+        assert_eq!(full_binding.user_id, user_id);
+        assert_eq!(full_binding.key_epoch, key_epoch);
         assert_eq!(device_public_keys(full_identity), target_public_keys);
         assert!(handle_has_tag(full_ark, ACCOUNT_ROOT_KEY_HANDLE_TAG));
 

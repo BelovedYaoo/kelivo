@@ -573,12 +573,7 @@ external int kelivo_device_state_seal(
     ffi.Uint64,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
-    ffi.Pointer<ffi.Uint8>,
-    ffi.Size,
-    ffi.Uint32,
-    ffi.Pointer<ffi.Uint8>,
-    ffi.Size,
-    ffi.Uint32,
+    ffi.Pointer<KelivoDeviceStateBinding>,
     ffi.Pointer<ffi.Uint64>,
     ffi.Pointer<ffi.Uint64>,
   )
@@ -587,18 +582,34 @@ external int kelivo_device_state_open(
   int key_handle,
   ffi.Pointer<ffi.Uint8> blob,
   int blob_length,
-  ffi.Pointer<ffi.Uint8> expected_device_id,
-  int expected_device_id_length,
-  int expected_key_version,
-  ffi.Pointer<ffi.Uint8> expected_user_id,
-  int expected_user_id_length,
-  int expected_key_epoch,
+  ffi.Pointer<KelivoDeviceStateBinding> out_binding,
   ffi.Pointer<ffi.Uint64> out_identity_handle,
   ffi.Pointer<ffi.Uint64> out_ark_handle,
 );
 
 typedef KelivoStatus = ffi.Int32;
 typedef DartKelivoStatus = int;
+
+final class KelivoDeviceStateBinding extends ffi.Struct {
+  @ffi.Uint32()
+  external int struct_size;
+
+  @ffi.Uint32()
+  external int flags;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> device_id;
+
+  @ffi.Uint32()
+  external int key_version;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> user_id;
+
+  @ffi.Uint32()
+  external int key_epoch;
+}
+
 typedef KelivoSqlCipherKeyCallbackFunction =
     ffi.Int32 Function(
       ffi.Pointer<ffi.Void> database,
@@ -703,7 +714,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 4;
+const int KELIVO_CORE_ABI_VERSION = 5;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -870,3 +881,7 @@ const int KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE = 400;
 const int KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE = 432;
 
 const int KELIVO_DEVICE_STATE_BLOB_SIZE = 188;
+
+const int KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE = 48;
+
+const int KELIVO_DEVICE_STATE_BINDING_FLAG_ACCOUNT = 1;
