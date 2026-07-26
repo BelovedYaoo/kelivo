@@ -14,4 +14,7 @@
 - 设备状态 key slot 由规范服务地址与登录名经域分离 SHA-256 截断派生；缺失状态仅初始化 identity-only，已有 blob 的 slot 缺失或 AEAD 失败均直接失败关闭。
 - 密码缓冲区由认证模块取得所有权并在所有退出路径清零；OPAQUE、持久 key、identity、ARK 句柄在成功和失败路径统一关闭，服务端身份不匹配时清除已接管 token。
 - 认证验证：认证/传输协议测试 23/23 通过，认证模块与协议测试定向分析无问题。真实 OPAQUE 成功组合门禁由 Issue #38 跟踪；映射盘临时目录问题由 Issue #37 跟踪。
+- Provider 已硬切 `E2eeAccountAuthentication`：支持强类型登录、Android/iOS 首设备注册、待批准结果和过期会话拒绝；底层 finish/consume 仅返回候选会话，本地绑定成功后才显式接管 token。
+- `E2eeAccountAuthenticator` 已增加实例级并发冲突门禁，业务主异常不再被 cleanup 覆盖，失败和 cleanup 异常均清空候选 token。Provider 11/11、协议 62/62、`flutter analyze lib`、`flutter analyze test` 通过；根分析受 `mcp_client` 既有测试依赖缺失阻塞，根测试因共享缓存争用 8 分钟无用例输出后终止。
+- Issue #39 仍阻塞首设备注册完整闭环：服务端先消费 attempt 再 commit，且没有幂等结果恢复，响应丢失时客户端无法单边判定或重试。
 - 设备配对 QR：新增固定版本化完整 transcript 二进制帧，严格校验长度、UUID、时效、CRC 与规范编码；raw secret 始终保持字节所有权并支持显式清零。定向分析无问题，QR 协议测试 37/37 通过。
