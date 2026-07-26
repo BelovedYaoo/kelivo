@@ -24,10 +24,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v5 OPAQUE 与设备 E2EE 支持', () async {
+  test('能力门禁声明 ABI v6 OPAQUE 与设备 E2EE 支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 5);
+    expect(capabilities.abiVersion, 6);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -199,6 +199,131 @@ void main() {
     await core.closeAccountRootKey(ark);
     await core.closeDeviceIdentity(identity);
     await expectLater(core.closeDeviceIdentity(identity), throwsStateError);
+  });
+
+  test('账户根密钥记录可跨句柄互解并严格绑定上下文', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final key = await openOrCreateTestSlot();
+    final identity = await core.generateDeviceIdentity();
+    final ark = await core.generateAccountRootKey();
+    final userId = accountId(0x48);
+    final deviceId = accountId(0x49);
+    final recordId = accountId(0x4a);
+    final associatedData = Uint8List.fromList('sync/chat/message'.codeUnits);
+    final plaintext = Uint8List.fromList('encrypted payload'.codeUnits);
+    const keyEpoch = 7;
+
+    final stateBlob = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: deviceId,
+      keyVersion: 1,
+      ark: ark,
+      account: KelivoDeviceStateAccountBinding(
+        userId: userId,
+        keyEpoch: keyEpoch,
+      ),
+    );
+    final reopened = await core.openDeviceState(key, stateBlob: stateBlob);
+    final reopenedArk = reopened.ark!;
+    final envelope = await core.sealAccountRecord(
+      ark,
+      recordId: recordId,
+      keyEpoch: keyEpoch,
+      associatedData: associatedData,
+      plaintext: plaintext,
+    );
+    expect(
+      await core.openAccountRecord(
+        reopenedArk,
+        recordId: recordId,
+        keyEpoch: keyEpoch,
+        associatedData: associatedData,
+        envelope: envelope,
+      ),
+      orderedEquals(plaintext),
+    );
+
+    final authenticationFailure = throwsA(
+      isA<KelivoSecureCoreException>().having(
+        (error) => error.status,
+        'status',
+        KelivoSecureCoreStatus.recordAuthenticationFailed,
+      ),
+    );
+    final otherArk = await core.generateAccountRootKey();
+    await expectLater(
+      core.openAccountRecord(
+        otherArk,
+        recordId: recordId,
+        keyEpoch: keyEpoch,
+        associatedData: associatedData,
+        envelope: envelope,
+      ),
+      authenticationFailure,
+    );
+    await expectLater(
+      core.openAccountRecord(
+        reopenedArk,
+        recordId: recordId,
+        keyEpoch: keyEpoch + 1,
+        associatedData: associatedData,
+        envelope: envelope,
+      ),
+      authenticationFailure,
+    );
+    await expectLater(
+      core.openAccountRecord(
+        reopenedArk,
+        recordId: accountId(0x4b),
+        keyEpoch: keyEpoch,
+        associatedData: associatedData,
+        envelope: envelope,
+      ),
+      authenticationFailure,
+    );
+    await expectLater(
+      core.openAccountRecord(
+        reopenedArk,
+        recordId: recordId,
+        keyEpoch: keyEpoch,
+        associatedData: Uint8List.fromList('sync/chat/other'.codeUnits),
+        envelope: envelope,
+      ),
+      authenticationFailure,
+    );
+    final tamperedEnvelope = Uint8List.fromList(envelope);
+    tamperedEnvelope[tamperedEnvelope.length - 1] ^= 1;
+    await expectLater(
+      core.openAccountRecord(
+        reopenedArk,
+        recordId: recordId,
+        keyEpoch: keyEpoch,
+        associatedData: associatedData,
+        envelope: tamperedEnvelope,
+      ),
+      authenticationFailure,
+    );
+
+    final closedArk = await core.generateAccountRootKey();
+    await core.closeAccountRootKey(closedArk);
+    await expectLater(
+      core.openAccountRecord(
+        closedArk,
+        recordId: recordId,
+        keyEpoch: keyEpoch,
+        associatedData: associatedData,
+        envelope: envelope,
+      ),
+      throwsStateError,
+    );
+
+    await core.closeAccountRootKey(otherArk);
+    await core.closeAccountRootKey(reopenedArk);
+    await core.closeDeviceIdentity(reopened.identity);
+    await core.closeAccountRootKey(ark);
+    await core.closeDeviceIdentity(identity);
+    await core.close(key);
   });
 
   test('一次性 pending 配对失败可重试且成功后原子消费', () async {

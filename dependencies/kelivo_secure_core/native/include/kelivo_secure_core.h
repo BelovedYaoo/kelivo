@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(5)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(6)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -262,6 +262,40 @@ KELIVO_CORE_API KelivoStatus kelivo_record_open(
     const uint8_t *record_id,
     size_t record_id_length,
     uint64_t epoch,
+    const uint8_t *associated_data,
+    size_t associated_data_length,
+    const uint8_t *envelope,
+    size_t envelope_length,
+    uint8_t *out_plaintext,
+    size_t out_plaintext_capacity,
+    size_t *out_plaintext_length);
+
+/*
+ * 使用不透明账户根密钥句柄密封云同步记录。key_epoch 必须非零且会同时参与
+ * 记录密钥派生和信封认证；原始账户根密钥不会通过 ABI 输出。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_record_seal(
+    uint64_t ark_handle,
+    const uint8_t *record_id,
+    size_t record_id_length,
+    uint32_t key_epoch,
+    const uint8_t *associated_data,
+    size_t associated_data_length,
+    const uint8_t *plaintext,
+    size_t plaintext_length,
+    uint8_t *out_envelope,
+    size_t out_envelope_capacity,
+    size_t *out_envelope_length);
+
+/*
+ * 使用不透明账户根密钥句柄开启云同步记录。错误账户根密钥、key_epoch、
+ * record_id、关联数据或篡改信封均不得写出明文。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_record_open(
+    uint64_t ark_handle,
+    const uint8_t *record_id,
+    size_t record_id_length,
+    uint32_t key_epoch,
     const uint8_t *associated_data,
     size_t associated_data_length,
     const uint8_t *envelope,

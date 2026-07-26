@@ -11,7 +11,7 @@ import 'kelivo_secure_core_bindings_generated.dart' as native;
 
 part 'src/device_core.dart';
 
-const _expectedAbiVersion = 5;
+const _expectedAbiVersion = 6;
 const _keySlotIdLength = 16;
 const _keyPolicyVersion = 1;
 const _keySlotsCapability = 1 << 0;
@@ -56,6 +56,8 @@ const _opaqueCredentialFinalizationSize =
     native.KELIVO_OPAQUE_CREDENTIAL_FINALIZATION_SIZE;
 // Dart FFI 用有符号 int 传递 Uint64；保留正数域可避免跨平台符号歧义。
 const _recordMaxEpoch = 0x7fffffffffffffff;
+
+enum _RecordKeySource { localSlot, accountRoot }
 
 enum KelivoSecureStorageBackend {
   none(0),
@@ -438,6 +440,7 @@ final class KelivoSecureCore {
     final copiedPlaintext = Uint8List.fromList(plaintext);
     return Isolate.run(
       () => _sealRecord(
+        _RecordKeySource.localSlot,
         opaqueValue,
         copiedRecordId,
         epoch,
@@ -473,6 +476,7 @@ final class KelivoSecureCore {
     final copiedEnvelope = Uint8List.fromList(envelope);
     return Isolate.run(
       () => _openRecord(
+        _RecordKeySource.localSlot,
         opaqueValue,
         copiedRecordId,
         epoch,
@@ -1171,6 +1175,7 @@ void _validateRecordContext({
 }
 
 Uint8List _sealRecord(
+  _RecordKeySource keySource,
   int handle,
   Uint8List recordId,
   int epoch,
@@ -1181,22 +1186,46 @@ Uint8List _sealRecord(
   final associatedDataPointer = _copyToNative(associatedData);
   final plaintextPointer = _copyToNative(plaintext);
   final outputLength = calloc<ffi.Size>();
+  final operation = switch (keySource) {
+    _RecordKeySource.localSlot => 'record_seal',
+    _RecordKeySource.accountRoot => 'account_record_seal',
+  };
+
+  int seal(ffi.Pointer<ffi.Uint8> output, int capacity) {
+    return switch (keySource) {
+      _RecordKeySource.localSlot => native.kelivo_record_seal(
+        handle,
+        recordIdPointer,
+        recordId.length,
+        epoch,
+        associatedDataPointer,
+        associatedData.length,
+        plaintextPointer,
+        plaintext.length,
+        output,
+        capacity,
+        outputLength,
+      ),
+      _RecordKeySource.accountRoot => native.kelivo_account_record_seal(
+        handle,
+        recordIdPointer,
+        recordId.length,
+        epoch,
+        associatedDataPointer,
+        associatedData.length,
+        plaintextPointer,
+        plaintext.length,
+        output,
+        capacity,
+        outputLength,
+      ),
+    };
+  }
+
   try {
-    final queryStatus = native.kelivo_record_seal(
-      handle,
-      recordIdPointer,
-      recordId.length,
-      epoch,
-      associatedDataPointer,
-      associatedData.length,
-      plaintextPointer,
-      plaintext.length,
-      ffi.nullptr,
-      0,
-      outputLength,
-    );
+    final queryStatus = seal(ffi.nullptr, 0);
     final required = _readRequiredOutputLength(
-      operation: 'record_seal_size',
+      operation: '${operation}_size',
       statusCode: queryStatus,
       outputLength: outputLength.value,
       allowEmpty: false,
@@ -1204,24 +1233,9 @@ Uint8List _sealRecord(
     );
     final output = calloc<ffi.Uint8>(required);
     try {
-      _throwOnError(
-        operation: 'record_seal',
-        statusCode: native.kelivo_record_seal(
-          handle,
-          recordIdPointer,
-          recordId.length,
-          epoch,
-          associatedDataPointer,
-          associatedData.length,
-          plaintextPointer,
-          plaintext.length,
-          output,
-          required,
-          outputLength,
-        ),
-      );
+      _throwOnError(operation: operation, statusCode: seal(output, required));
       _requireExactOutputLength(
-        operation: 'record_seal',
+        operation: operation,
         expected: required,
         actual: outputLength.value,
       );
@@ -1241,6 +1255,7 @@ Uint8List _sealRecord(
 }
 
 Uint8List _openRecord(
+  _RecordKeySource keySource,
   int handle,
   Uint8List recordId,
   int epoch,
@@ -1251,22 +1266,46 @@ Uint8List _openRecord(
   final associatedDataPointer = _copyToNative(associatedData);
   final envelopePointer = _copyToNative(envelope);
   final outputLength = calloc<ffi.Size>();
+  final operation = switch (keySource) {
+    _RecordKeySource.localSlot => 'record_open',
+    _RecordKeySource.accountRoot => 'account_record_open',
+  };
+
+  int open(ffi.Pointer<ffi.Uint8> output, int capacity) {
+    return switch (keySource) {
+      _RecordKeySource.localSlot => native.kelivo_record_open(
+        handle,
+        recordIdPointer,
+        recordId.length,
+        epoch,
+        associatedDataPointer,
+        associatedData.length,
+        envelopePointer,
+        envelope.length,
+        output,
+        capacity,
+        outputLength,
+      ),
+      _RecordKeySource.accountRoot => native.kelivo_account_record_open(
+        handle,
+        recordIdPointer,
+        recordId.length,
+        epoch,
+        associatedDataPointer,
+        associatedData.length,
+        envelopePointer,
+        envelope.length,
+        output,
+        capacity,
+        outputLength,
+      ),
+    };
+  }
+
   try {
-    final queryStatus = native.kelivo_record_open(
-      handle,
-      recordIdPointer,
-      recordId.length,
-      epoch,
-      associatedDataPointer,
-      associatedData.length,
-      envelopePointer,
-      envelope.length,
-      ffi.nullptr,
-      0,
-      outputLength,
-    );
+    final queryStatus = open(ffi.nullptr, 0);
     final required = _readRequiredOutputLength(
-      operation: 'record_open_size',
+      operation: '${operation}_size',
       statusCode: queryStatus,
       outputLength: outputLength.value,
       allowEmpty: true,
@@ -1276,24 +1315,9 @@ Uint8List _openRecord(
 
     final output = calloc<ffi.Uint8>(required);
     try {
-      _throwOnError(
-        operation: 'record_open',
-        statusCode: native.kelivo_record_open(
-          handle,
-          recordIdPointer,
-          recordId.length,
-          epoch,
-          associatedDataPointer,
-          associatedData.length,
-          envelopePointer,
-          envelope.length,
-          output,
-          required,
-          outputLength,
-        ),
-      );
+      _throwOnError(operation: operation, statusCode: open(output, required));
       _requireExactOutputLength(
-        operation: 'record_open',
+        operation: operation,
         expected: required,
         actual: outputLength.value,
       );
