@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/providers/settings_provider.dart';
@@ -13,6 +14,7 @@ import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:Kelivo/core/services/workspace/account_workspace_runtime.dart';
+import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:Kelivo/utils/sandbox_path_resolver.dart';
 import 'package:crypto/crypto.dart';
@@ -67,6 +69,285 @@ void main() {
     await runtime.close();
     runtimes.remove(runtime);
   }
+
+  test('设备状态首次发布后可按规范身份读取且路径不泄漏登录名', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'alice.private@example.com';
+    final state = Uint8List.fromList(
+      List<int>.generate(188, (index) => index & 0xff),
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: state,
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(state),
+    );
+    final persistedPaths = await installationRoot
+        .list(recursive: true, followLinks: false)
+        .map((entity) => entity.path.toLowerCase())
+        .toList();
+    expect(persistedPaths.where((path) => path.contains(loginName)), isEmpty);
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    expect(
+      p.basename(locator.path),
+      'effefc01e7293e432584e2ea8cef7f7c816bc0daeaa0b6a97856248d7d58da0b',
+    );
+  });
+
+  test('设备状态删除只清理指定身份且删除后与损坏严格区分', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final first = Uint8List(188)..fillRange(0, 188, 0x11);
+    final second = Uint8List(188)..fillRange(0, 188, 0x22);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+      blob: first,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'bob',
+      blob: second,
+    );
+
+    await store.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+      ),
+      isNull,
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'bob',
+      ),
+      orderedEquals(second),
+    );
+  });
+
+  test('设备状态删除遇自有路径类型异常时拒绝部分清理', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final state = Uint8List(188)..fillRange(0, 188, 0x23);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'unsafe-delete',
+      blob: state,
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final unexpectedDirectory = Directory(
+      p.join(locator.path, '.state-b.next'),
+    );
+    await unexpectedDirectory.create();
+
+    await expectLater(
+      store.delete(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unsafe-delete',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await unexpectedDirectory.delete();
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'unsafe-delete',
+      ),
+      orderedEquals(state),
+    );
+  });
+
+  test('设备状态只接受188字节且不同规范身份拥有独立代次', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    expect(
+      () => store.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+        blob: Uint8List(187),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => store.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+        blob: Uint8List(189),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    final first = Uint8List(188)..fillRange(0, 188, 0x31);
+    final second = Uint8List(188)..fillRange(0, 188, 0x32);
+    final third = Uint8List(188)..fillRange(0, 188, 0x33);
+    final otherIdentity = Uint8List(188)..fillRange(0, 188, 0x44);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+      blob: first,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+      blob: second,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'alice',
+      blob: third,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'Alice',
+      blob: otherIdentity,
+    );
+
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+      ),
+      orderedEquals(third),
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'Alice',
+      ),
+      orderedEquals(otherIdentity),
+    );
+  });
+
+  test('设备状态当前manifest或slot损坏时拒绝回退旧代', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final first = Uint8List(188)..fillRange(0, 188, 0x51);
+    final second = Uint8List(188)..fillRange(0, 188, 0x52);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'manifest-corrupt',
+      blob: first,
+    );
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'manifest-corrupt',
+      blob: second,
+    );
+    var locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    await File(
+      p.join(locator.path, 'manifest-b.bin'),
+    ).writeAsBytes(<int>[0x01], flush: true);
+
+    await expectLater(
+      store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'manifest-corrupt',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    await store.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'manifest-corrupt',
+    );
+    final state = Uint8List(188)..fillRange(0, 188, 0x61);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'slot-corrupt',
+      blob: state,
+    );
+    locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final stateFile = File(p.join(locator.path, 'state-a.bin'));
+    final stateFrame = await stateFile.readAsBytes();
+    stateFrame[stateFrame.length - 1] ^= 0xff;
+    await stateFile.writeAsBytes(stateFrame, flush: true);
+
+    await expectLater(
+      store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'slot-corrupt',
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('设备状态slot持久化但manifest发布失败时仍读取旧代', () async {
+    final first = Uint8List(188)..fillRange(0, 188, 0x71);
+    final second = Uint8List(188)..fillRange(0, 188, 0x72);
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'crash-recovery',
+      blob: first,
+    );
+    final interruptedStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+      durability: _InterruptBeforeDeviceManifestPublishDurability(
+        RestorePlatformDurability(),
+        manifestSlot: 'b',
+      ),
+    );
+
+    await expectLater(
+      interruptedStore.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'crash-recovery',
+        blob: second,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'crash-recovery',
+      ),
+      orderedEquals(first),
+    );
+
+    await store.write(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'crash-recovery',
+      blob: second,
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'crash-recovery',
+      ),
+      orderedEquals(second),
+    );
+  });
 
   test('账号工作区磁盘不得持久化 bearer token 明文', () async {
     const token = 'disk-sentinel-bearer-token';
@@ -2061,6 +2342,67 @@ final class _BlockingFirstPreferenceSetStore
       }
     }
     return super.setValue(valueType, key, value);
+  }
+}
+
+Future<Directory> _deviceStateLocatorDirectory(
+  Directory installationRoot, {
+  required int expectedCount,
+}) async {
+  final root = Directory(
+    p.join(installationRoot.path, '.kelivo-device-state-v1'),
+  );
+  final directories = await root
+      .list(followLinks: false)
+      .where((entity) => entity is Directory)
+      .cast<Directory>()
+      .toList();
+  expect(directories, hasLength(expectedCount));
+  return directories.single;
+}
+
+final class _InterruptBeforeDeviceManifestPublishDurability
+    implements RestoreDurability {
+  _InterruptBeforeDeviceManifestPublishDurability(
+    this.delegate, {
+    required this.manifestSlot,
+  });
+
+  final RestoreDurability delegate;
+  final String manifestSlot;
+  bool _interrupted = false;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) {
+    return delegate.restrictDirectory(directory);
+  }
+
+  @override
+  Future<void> restrictFile(File file) {
+    return delegate.restrictFile(file);
+  }
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    return delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) {
+    return delegate.syncFile(file, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) {
+    if (!_interrupted &&
+        p.basename(source.path) == '.manifest-$manifestSlot.next') {
+      _interrupted = true;
+      throw StateError('device_state_manifest_publish_interrupted');
+    }
+    return delegate.renameAndSync(source: source, targetPath: targetPath);
   }
 }
 
