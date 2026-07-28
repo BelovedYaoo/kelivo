@@ -14,6 +14,7 @@ import 'package:Kelivo/core/database/generation_run.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
+import 'package:Kelivo/core/services/sync/e2ee_chat_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/utils/app_directories.dart';
@@ -1299,6 +1300,83 @@ void main() {
 
         expect(service.initialized, isTrue);
         await service.close().timeout(const Duration(seconds: 2));
+        expect(service.initialized, isFalse);
+      },
+    );
+
+    test('committed pull refreshes and notifies exactly once', () async {
+      final service = createService();
+      await service.init();
+      var notifications = 0;
+      service.addListener(() => notifications++);
+      final E2eeChatSyncPullBatchRunner runner =
+          service.runCommittedRemoteSyncPull;
+
+      final result = await runner<int>(
+        pull: () async => 7,
+        shouldRefresh: () => true,
+        mayHaveOrphanedAssets: () => false,
+      );
+
+      expect(result, 7);
+      expect(notifications, 1);
+    });
+
+    test('failed pull does not refresh or notify', () async {
+      final service = createService();
+      await service.init();
+      var notifications = 0;
+      service.addListener(() => notifications++);
+
+      await expectLater(
+        service.runCommittedRemoteSyncPull<void>(
+          pull: () async => throw StateError('pull-rolled-back'),
+          shouldRefresh: () => true,
+          mayHaveOrphanedAssets: () => true,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'pull-rolled-back',
+          ),
+        ),
+      );
+
+      expect(notifications, 0);
+    });
+
+    test(
+      'close waits until pull commit and cache publication finish',
+      () async {
+        final service = createService();
+        await service.init();
+        final pullEntered = Completer<void>();
+        final releasePull = Completer<void>();
+        var notifications = 0;
+        service.addListener(() => notifications++);
+
+        final pulling = service.runCommittedRemoteSyncPull<void>(
+          pull: () async {
+            pullEntered.complete();
+            await releasePull.future;
+          },
+          shouldRefresh: () => true,
+          mayHaveOrphanedAssets: () => false,
+        );
+        await pullEntered.future;
+        var closeCompleted = false;
+        final closing = service.close().whenComplete(
+          () => closeCompleted = true,
+        );
+
+        await Future<void>.delayed(const Duration(milliseconds: 20));
+        expect(closeCompleted, isFalse);
+        releasePull.complete();
+        await Future.wait<void>(<Future<void>>[pulling, closing]);
+
+        expect(notifications, 1);
+        expect(closeCompleted, isTrue);
         expect(service.initialized, isFalse);
       },
     );

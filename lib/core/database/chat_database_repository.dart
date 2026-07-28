@@ -1804,6 +1804,20 @@ class ChatDatabaseRepository {
     return message?.conversationId;
   }
 
+  Future<PersistedChatTurn?> getTurnForSync(String turnId) async {
+    final cleanTurnId = turnId.trim();
+    if (cleanTurnId.isEmpty) return null;
+    final row = await (_db.select(
+      _db.turnRows,
+    )..where((turn) => turn.id.equals(cleanTurnId))).getSingleOrNull();
+    if (row == null) return null;
+    return (
+      id: row.id,
+      conversationId: row.conversationId,
+      createdAt: row.createdAt,
+    );
+  }
+
   Future<String?> getConversationIdForSelection(String groupId) async {
     final cleanGroupId = groupId.trim();
     if (cleanGroupId.isEmpty) return null;
@@ -2765,6 +2779,17 @@ LIMIT 1;
         timestamp,
       ],
     );
+  }
+
+  Future<bool> hasMessageAssetReferences(String messageId) async {
+    await _ensureAssetGcSchema();
+    final row = await _db
+        .customSelect(
+          'SELECT 1 FROM message_asset_rows WHERE revision_id = ? LIMIT 1;',
+          variables: [Variable<String>(messageId)],
+        )
+        .getSingleOrNull();
+    return row != null;
   }
 
   Future<void> linkMessageAsset({
@@ -3780,34 +3805,36 @@ LIMIT 1;
     });
   }
 
-  Future<DeletedMessagesResult?> deleteTurnFromSync({
-    required String conversationId,
-    required String turnId,
-  }) {
+  Future<DeletedMessagesResult?> deleteTurnFromSync({required String turnId}) {
     return _db.transaction(() async {
-      final rows =
-          await (_db.select(_db.messageRows)..where(
-                (row) =>
-                    row.conversationId.equals(conversationId) &
-                    row.turnId.equals(turnId),
-              ))
-              .get();
+      final turn = await (_db.select(
+        _db.turnRows,
+      )..where((row) => row.id.equals(turnId))).getSingleOrNull();
+      final rows = await (_db.select(
+        _db.messageRows,
+      )..where((row) => row.turnId.equals(turnId))).get();
+      final parentIds = <String>{
+        if (turn != null) turn.conversationId,
+        for (final row in rows) row.conversationId,
+      };
+      if (parentIds.length > 1) {
+        throw StateError('sync_turn_parent_inconsistent');
+      }
+      final conversationId = parentIds.firstOrNull;
       final selectionChanges = <String, int?>{
         for (final row in rows) row.groupId ?? row.id: null,
       };
-      final result = rows.isEmpty
+      final result = rows.isEmpty || conversationId == null
           ? null
           : await _deleteMessages(
               conversationId: conversationId,
               messageIds: rows.map((row) => row.id).toSet(),
               versionSelectionChanges: selectionChanges,
+              touchConversationMetadata: false,
             );
-      await (_db.delete(_db.turnRows)..where(
-            (row) =>
-                row.id.equals(turnId) &
-                row.conversationId.equals(conversationId),
-          ))
-          .go();
+      await (_db.delete(
+        _db.turnRows,
+      )..where((row) => row.id.equals(turnId))).go();
       return result;
     });
   }
@@ -4366,7 +4393,21 @@ LIMIT 1;
         conversationId: conversationId,
         groupId: groupId,
         version: version,
+        touchUpdatedAt: true,
       ),
+    );
+  }
+
+  Future<Conversation?> setSelectedVersionFromSync({
+    required String conversationId,
+    required String groupId,
+    required int? version,
+  }) {
+    return _setSelectedVersion(
+      conversationId: conversationId,
+      groupId: groupId,
+      version: version,
+      touchUpdatedAt: false,
     );
   }
 
@@ -4374,6 +4415,7 @@ LIMIT 1;
     required String conversationId,
     required String groupId,
     required int? version,
+    required bool touchUpdatedAt,
   }) async {
     if (groupId.isEmpty) {
       throw ArgumentError.value(groupId, 'groupId', 'must not be empty');
@@ -4397,7 +4439,7 @@ LIMIT 1;
       }
       final conversation = current.copyWith(
         versionSelections: selections,
-        updatedAt: DateTime.now(),
+        updatedAt: touchUpdatedAt ? DateTime.now() : current.updatedAt,
       );
       await (_db.update(_db.conversationRows)
             ..where((conversation) => conversation.id.equals(conversationId)))
@@ -5105,6 +5147,17 @@ LIMIT 1;
     );
   }
 
+  Future<DeletedMessagesResult?> deleteMessageFromSync(String messageId) async {
+    final row = await getMessage(messageId);
+    if (row == null) return null;
+    return _deleteMessages(
+      conversationId: row.conversationId,
+      messageIds: <String>{messageId},
+      versionSelectionChanges: const <String, int?>{},
+      touchConversationMetadata: false,
+    );
+  }
+
   Future<DeletedMessagesResult?> deleteMessages({
     required String conversationId,
     required Set<String> messageIds,
@@ -5127,6 +5180,7 @@ LIMIT 1;
     required String conversationId,
     required Set<String> messageIds,
     required Map<String, int?> versionSelectionChanges,
+    bool touchConversationMetadata = true,
   }) async {
     if (messageIds.isEmpty) return null;
     for (final entry in versionSelectionChanges.entries) {
@@ -5202,8 +5256,12 @@ LIMIT 1;
       final conversation = currentConversation.copyWith(
         messageIds: orderedIds,
         versionSelections: selections,
-        chatSuggestions: const <String>[],
-        updatedAt: DateTime.now(),
+        chatSuggestions: touchConversationMetadata
+            ? const <String>[]
+            : currentConversation.chatSuggestions,
+        updatedAt: touchConversationMetadata
+            ? DateTime.now()
+            : currentConversation.updatedAt,
       );
       await (_db.update(_db.conversationRows)
             ..where((row) => row.id.equals(conversationId)))

@@ -471,9 +471,36 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return _activeRemoteBatchContext ?? (throw StateError('当前操作必须位于远端同步事务中'));
   }
 
-  Future<T> runRemoteBatch<T>(Future<T> Function() apply) async {
+  Future<T> runRemoteBatch<T>(Future<T> Function() apply) {
+    return _enqueueRemoteBatch<T>(
+      run: () => _runRemoteBatch(apply),
+      reenter: apply,
+    );
+  }
+
+  Future<T> runCommittedRemoteSyncPull<T>({
+    required Future<T> Function() pull,
+    required bool Function() shouldRefresh,
+    required bool Function() mayHaveOrphanedAssets,
+  }) {
+    return _enqueueRemoteBatch<T>(
+      run: () => _runCommittedRemoteSyncPull(
+        pull: pull,
+        shouldRefresh: shouldRefresh,
+        mayHaveOrphanedAssets: mayHaveOrphanedAssets,
+      ),
+    );
+  }
+
+  Future<T> _enqueueRemoteBatch<T>({
+    required Future<T> Function() run,
+    Future<T> Function()? reenter,
+  }) async {
     // Zone 令牌只认可同一异步调用链，避免并发请求借用另一个批次的事务状态。
-    if (_activeRemoteBatchContext != null) return apply();
+    if (_activeRemoteBatchContext != null) {
+      if (reenter != null) return reenter();
+      throw StateError('远端同步批次内不能开始新的 pull');
+    }
     if (_closeFuture != null) {
       throw StateError('聊天服务正在关闭，不能开始新的远端同步批次');
     }
@@ -489,7 +516,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     _remoteBatchTail = release.future;
     await previous;
     try {
-      return await _runRemoteBatch(apply);
+      return await run();
     } finally {
       release.complete();
     }
@@ -520,6 +547,30 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         await _refreshPersistedCachesAfterRemoteBatch();
         if (runAssetMaintenance) await _cleanupOrphanUploads();
         notifyListeners();
+      }
+    });
+  }
+
+  Future<T> _runCommittedRemoteSyncPull<T>({
+    required Future<T> Function() pull,
+    required bool Function() shouldRefresh,
+    required bool Function() mayHaveOrphanedAssets,
+  }) {
+    final context = _RemoteBatchContext();
+    return runNotificationBatch<T>(() async {
+      try {
+        final result = await runZoned<Future<T>>(
+          pull,
+          zoneValues: <Object?, Object?>{_remoteBatchZoneKey: context},
+        );
+        if (shouldRefresh()) {
+          await _refreshPersistedCachesAfterRemoteBatch();
+          if (mayHaveOrphanedAssets()) await _cleanupOrphanUploads();
+          notifyListeners();
+        }
+        return result;
+      } finally {
+        context.active = false;
       }
     });
   }
@@ -695,7 +746,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     if (conversation == null) {
       throw FormatException('版本选择所属会话不存在：$conversationId');
     }
-    await _repo.setSelectedVersion(
+    await _repo.setSelectedVersionFromSync(
       conversationId: conversationId,
       groupId: groupId,
       version: selectedVersion,
@@ -771,7 +822,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     _requireSyncIdentifier(groupId, 'groupId');
     final conversationId = await _repo.getConversationIdForSelection(groupId);
     if (conversationId == null) return;
-    await _repo.setSelectedVersion(
+    await _repo.setSelectedVersionFromSync(
       conversationId: conversationId,
       groupId: groupId,
       version: null,
@@ -795,33 +846,23 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return _repo.deleteGeminiThoughtSignature(messageId);
   }
 
-  Future<void> deleteTurnFromSync({
-    required String conversationId,
-    required String turnId,
-  }) {
+  Future<void> deleteTurnFromSync({required String turnId}) {
     if (_activeRemoteBatchContext == null) {
-      return runRemoteBatch(
-        () =>
-            deleteTurnFromSync(conversationId: conversationId, turnId: turnId),
-      );
+      return runRemoteBatch(() => deleteTurnFromSync(turnId: turnId));
     }
-    return _deleteTurnFromSync(conversationId: conversationId, turnId: turnId);
+    return _deleteTurnFromSync(turnId: turnId);
   }
 
-  Future<void> _deleteTurnFromSync({
-    required String conversationId,
-    required String turnId,
-  }) async {
-    _requireSyncIdentifier(conversationId, 'conversationId');
+  Future<void> _deleteTurnFromSync({required String turnId}) async {
     _requireSyncIdentifier(turnId, 'turnId');
-    final result = await _repo.deleteTurnFromSync(
-      conversationId: conversationId,
-      turnId: turnId,
-    );
+    final conversationId = await _repo.getConversationIdForTurn(turnId);
+    final result = await _repo.deleteTurnFromSync(turnId: turnId);
     if (result != null) {
       _requiredRemoteBatchContext.needsAssetMaintenance = true;
     }
-    _requiredRemoteBatchContext.rebuildConversationIds.add(conversationId);
+    if (conversationId != null) {
+      _requiredRemoteBatchContext.rebuildConversationIds.add(conversationId);
+    }
   }
 
   Future<void> deleteMessageFromSync(String messageId) {
@@ -835,7 +876,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     _requireSyncIdentifier(messageId, 'messageId');
     final message = await _repo.getMessage(messageId);
     if (message == null) return;
-    await _repo.deleteMessage(messageId);
+    await _repo.deleteMessageFromSync(messageId);
     final context = _requiredRemoteBatchContext;
     context.rebuildConversationIds.add(message.conversationId);
     context.needsAssetMaintenance = true;

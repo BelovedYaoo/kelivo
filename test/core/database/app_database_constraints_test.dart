@@ -6,6 +6,7 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/e2ee_sync_record_ledger.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/e2ee_chat_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
@@ -59,6 +60,41 @@ Map<String, Object?> _conversationPayload(String title) => <String, Object?>{
   'summary': null,
   'lastSummarizedMessageCount': 0,
   'chatSuggestions': const <Object?>[],
+};
+
+Map<String, Object?> _turnPayload(String conversationId) => <String, Object?>{
+  'conversationId': conversationId,
+  'createdAt': '2026-07-28T00:00:01.000Z',
+};
+
+Map<String, Object?> _messagePayload({
+  required String conversationId,
+  required String turnId,
+  required String groupId,
+  List<Object?> attachments = const <Object?>[],
+  String content = '远端消息',
+}) => <String, Object?>{
+  'conversationId': conversationId,
+  'turnId': turnId,
+  'role': 'assistant',
+  'content': content,
+  'attachments': attachments,
+  'timestamp': '2026-07-28T00:00:02.000Z',
+  'groupId': groupId,
+  'version': 0,
+  'status': 'completed',
+  'modelId': 'model-1',
+  'providerId': 'provider-1',
+  'totalTokens': 12,
+  'reasoningText': null,
+  'reasoningSegmentsJson': null,
+  'translation': null,
+  'reasoningStartAt': null,
+  'reasoningFinishedAt': null,
+  'promptTokens': 5,
+  'completionTokens': 7,
+  'cachedTokens': 0,
+  'durationMs': 100,
 };
 
 void main() {
@@ -224,6 +260,8 @@ void main() {
     required int revision,
     required int operation,
     SyncEntityKey? entityKey,
+    int logicalVersion = 1,
+    List<E2eeAccountRecordStateDigest> parentDigests = const [],
   }) async {
     final sealed = await stateCodec.sealTombstone(
       entityKey:
@@ -232,8 +270,8 @@ void main() {
             entityType: 'conversation',
             entityId: 'pull-tombstone-$operation',
           ),
-      logicalVersion: 1,
-      parentDigests: const [],
+      logicalVersion: logicalVersion,
+      parentDigests: parentDigests,
       operationId: _ledgerOperationId(operation),
       claimedWriterDeviceId: _ledgerClaimedWriterDeviceId,
       claimedWriterKeyVersion: 1,
@@ -251,6 +289,24 @@ void main() {
         keyEpoch: sealed.record.keyEpoch,
         ciphertext: sealed.record.ciphertext,
       ),
+    );
+  }
+
+  Future<E2eeSyncPulledTombstoneChange> authenticatePulledTombstoneChange(
+    CloudSyncPutRecordChange change,
+  ) {
+    return stateCodec.open(
+      change.record,
+      decode: (state, borrowedPayload) {
+        expect(borrowedPayload, isEmpty);
+        return E2eeSyncPulledTombstoneChange(
+          untrustedServerMetadata: E2eeSyncUntrustedServerMetadata(
+            changeSeq: change.changeSeq,
+            revision: change.revision,
+          ),
+          state: state,
+        );
+      },
     );
   }
 
@@ -290,6 +346,7 @@ void main() {
     String id = 'message-1',
     String conversationId = 'conversation-1',
     String role = 'assistant',
+    String content = 'content',
     String? groupId = 'group-1',
     int version = 0,
     int messageOrder = 0,
@@ -303,7 +360,7 @@ void main() {
             id: id,
             conversationId: conversationId,
             role: role,
-            content: 'content',
+            content: content,
             timestamp: timestamp ?? DateTime.utc(2026, 7, 11),
             turnId: 'turn-1',
             generationStatus: 'completed',
@@ -2333,6 +2390,381 @@ void main() {
       );
       expect(checkpoint.syncCursor, 'serialized-cursor-2');
       expect(checkpoint.transitionVersion, 3);
+    });
+  });
+
+  group('E2EE chat sync adapter', () {
+    test('逆序六实体按依赖提交且只在 checkpoint 提交后发布', () async {
+      const conversationId = 'adapter-conversation';
+      const turnId = 'adapter-turn';
+      const messageId = 'adapter-message';
+      const groupId = 'adapter-group';
+      const keys = <SyncEntityKey>[
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.thoughtSignature,
+          entityId: messageId,
+        ),
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.toolEvent,
+          entityId: messageId,
+        ),
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.messageSelection,
+          entityId: groupId,
+        ),
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.message,
+          entityId: messageId,
+        ),
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.turn,
+          entityId: turnId,
+        ),
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.conversation,
+          entityId: conversationId,
+        ),
+      ];
+      final payloads = <Map<String, Object?>>[
+        <String, Object?>{'messageId': messageId, 'signature': 'signature-1'},
+        <String, Object?>{
+          'messageId': messageId,
+          'events': <Object?>[
+            <String, Object?>{'id': 'tool-1', 'name': 'search'},
+          ],
+        },
+        <String, Object?>{
+          'conversationId': conversationId,
+          'groupId': groupId,
+          'selectedVersion': 0,
+        },
+        _messagePayload(
+          conversationId: conversationId,
+          turnId: turnId,
+          groupId: groupId,
+        ),
+        _turnPayload(conversationId),
+        _conversationPayload('Adapter conversation'),
+      ];
+      final changes = <E2eeSyncPulledChange>[];
+      for (var index = 0; index < keys.length; index++) {
+        final wire = await createPullValueChange(
+          changeSeq: index + 1,
+          revision: 1,
+          operation: 820 + index,
+          entityKey: keys[index],
+          payload: payloads[index],
+        );
+        changes.add(await authenticatePulledValueChange(wire));
+      }
+
+      var publishCount = 0;
+      Future<T> runPullBatch<T>({
+        required Future<T> Function() pull,
+        required bool Function() shouldRefresh,
+        required bool Function() mayHaveOrphanedAssets,
+      }) async {
+        final result = await pull();
+        if (shouldRefresh()) {
+          final checkpoint = await pullCommands.readOrCreate(
+            accountUserId: _syncAccountUserId,
+            now: DateTime.utc(2026, 7, 28, 0, 2),
+          );
+          expect(checkpoint.lastChangeSeq, keys.length);
+          expect(await repository.getMessage(messageId), isNot(equals(null)));
+          expect(mayHaveOrphanedAssets(), isFalse);
+          publishCount++;
+        }
+        return result;
+      }
+
+      final adapter = E2eeChatSyncAdapter(
+        repository: repository,
+        runPullBatch: runPullBatch,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+
+      await adapter.runPullAndPublish(
+        () => pullCommands.applyIncrementalPage(
+          expected: initial,
+          nextCursor: 'adapter-cursor',
+          lastChangeSeq: keys.length,
+          changes: changes,
+          applyBusiness: adapter.applyTransactional,
+          now: DateTime.utc(2026, 7, 28, 0, 1),
+        ),
+      );
+
+      expect(publishCount, 1);
+      expect(
+        await repository.getGeminiThoughtSignature(messageId),
+        'signature-1',
+      );
+      expect(await repository.getToolEvents(messageId), hasLength(1));
+      expect(
+        (await repository.getConversation(
+          conversationId,
+        ))?.versionSelections[groupId],
+        0,
+      );
+      expect(await database.select(database.e2eeSyncIntentRows).get(), isEmpty);
+      expect(await database.select(database.e2eeSyncOutboxRows).get(), isEmpty);
+      for (var index = 0; index < keys.length; index++) {
+        final snapshot = await adapter.readSnapshot(keys[index]);
+        expect(snapshot, isA<E2eeSyncValueSnapshot>());
+        final decoded = E2eeSyncPayloadCodec.decode(
+          entityKey: keys[index],
+          bytes: (snapshot as E2eeSyncValueSnapshot).payload,
+        );
+        expect(decoded, payloads[index]);
+      }
+    });
+
+    test('不可逆附件使远端整页回滚且本地路径快照失败关闭', () async {
+      const conversationId = 'attachment-conversation';
+      const turnId = 'attachment-turn';
+      const messageId = 'attachment-message';
+      const groupId = 'attachment-group';
+      const conversationKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.conversation,
+        entityId: conversationId,
+      );
+      const turnKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.turn,
+        entityId: turnId,
+      );
+      const messageKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.message,
+        entityId: messageId,
+      );
+      final payloads = <Map<String, Object?>>[
+        _conversationPayload('Attachment conversation'),
+        _turnPayload(conversationId),
+        _messagePayload(
+          conversationId: conversationId,
+          turnId: turnId,
+          groupId: groupId,
+          attachments: const <Object?>[
+            <String, Object?>{
+              'attachmentId': '10000000-0000-4000-8000-000000000001',
+              'kind': 'file',
+              'order': 0,
+            },
+          ],
+        ),
+      ];
+      const keys = <SyncEntityKey>[conversationKey, turnKey, messageKey];
+      final changes = <E2eeSyncPulledChange>[];
+      for (var index = 0; index < keys.length; index++) {
+        final wire = await createPullValueChange(
+          changeSeq: index + 1,
+          revision: 1,
+          operation: 840 + index,
+          entityKey: keys[index],
+          payload: payloads[index],
+        );
+        changes.add(await authenticatePulledValueChange(wire));
+      }
+      var publishCount = 0;
+      Future<T> runPullBatch<T>({
+        required Future<T> Function() pull,
+        required bool Function() shouldRefresh,
+        required bool Function() mayHaveOrphanedAssets,
+      }) async {
+        final result = await pull();
+        if (shouldRefresh()) publishCount++;
+        return result;
+      }
+
+      final adapter = E2eeChatSyncAdapter(
+        repository: repository,
+        runPullBatch: runPullBatch,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+
+      await expectLater(
+        adapter.runPullAndPublish(
+          () => pullCommands.applyIncrementalPage(
+            expected: initial,
+            nextCursor: 'attachment-must-not-commit',
+            lastChangeSeq: changes.length,
+            changes: changes,
+            applyBusiness: adapter.applyTransactional,
+            now: DateTime.utc(2026, 7, 28, 0, 1),
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'sync_message_attachments_not_supported',
+          ),
+        ),
+      );
+
+      final unchanged = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+      );
+      expect(unchanged.syncCursor, equals(null));
+      expect(unchanged.lastChangeSeq, 0);
+      expect(await repository.getConversation(conversationId), equals(null));
+      expect(publishCount, 0);
+
+      await insertConversation(id: conversationId);
+      await insertMessage(
+        id: messageId,
+        conversationId: conversationId,
+        groupId: groupId,
+        content: '[file:C:\\private\\secret.txt|secret.txt|text/plain]',
+      );
+      await expectLater(
+        adapter.readSnapshot(messageKey),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'sync_message_attachments_not_supported',
+          ),
+        ),
+      );
+    });
+
+    test('turn 墓碑只按 turnId 幂等删除所属消息', () async {
+      const conversationId = 'turn-delete-conversation';
+      const turnId = 'turn-delete-turn';
+      const messageId = 'turn-delete-message';
+      const conversationKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.conversation,
+        entityId: conversationId,
+      );
+      const turnKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.turn,
+        entityId: turnId,
+      );
+      const messageKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.message,
+        entityId: messageId,
+      );
+      final valuePayloads = <Map<String, Object?>>[
+        _conversationPayload('Turn delete conversation'),
+        _turnPayload(conversationId),
+        _messagePayload(
+          conversationId: conversationId,
+          turnId: turnId,
+          groupId: messageId,
+        ),
+      ];
+      const valueKeys = <SyncEntityKey>[conversationKey, turnKey, messageKey];
+      final valueChanges = <E2eeSyncPulledChange>[];
+      E2eeSyncPulledValueChange? turnValue;
+      for (var index = 0; index < valueKeys.length; index++) {
+        final wire = await createPullValueChange(
+          changeSeq: index + 1,
+          revision: 1,
+          operation: 860 + index,
+          entityKey: valueKeys[index],
+          payload: valuePayloads[index],
+        );
+        final change = await authenticatePulledValueChange(wire);
+        valueChanges.add(change);
+        if (valueKeys[index] == turnKey) turnValue = change;
+      }
+      Future<T> runPullBatch<T>({
+        required Future<T> Function() pull,
+        required bool Function() shouldRefresh,
+        required bool Function() mayHaveOrphanedAssets,
+      }) async {
+        final result = await pull();
+        if (shouldRefresh()) mayHaveOrphanedAssets();
+        return result;
+      }
+
+      final adapter = E2eeChatSyncAdapter(
+        repository: repository,
+        runPullBatch: runPullBatch,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final seeded = await adapter.runPullAndPublish(
+        () => pullCommands.applyIncrementalPage(
+          expected: initial,
+          nextCursor: 'turn-seeded',
+          lastChangeSeq: 3,
+          changes: valueChanges,
+          applyBusiness: adapter.applyTransactional,
+          now: DateTime.utc(2026, 7, 28, 0, 1),
+        ),
+      );
+      final firstWireTombstone = await createPullTombstoneChange(
+        changeSeq: 4,
+        revision: 2,
+        operation: 870,
+        entityKey: turnKey,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[turnValue!.state.digest],
+      );
+      final firstTombstone = await authenticatePulledTombstoneChange(
+        firstWireTombstone,
+      );
+
+      final deleted = await adapter.runPullAndPublish(
+        () => pullCommands.applyIncrementalPage(
+          expected: seeded.checkpoint,
+          nextCursor: 'turn-deleted',
+          lastChangeSeq: 4,
+          changes: <E2eeSyncPulledChange>[firstTombstone],
+          applyBusiness: adapter.applyTransactional,
+          now: DateTime.utc(2026, 7, 28, 0, 2),
+        ),
+      );
+
+      expect(await repository.getMessage(messageId), equals(null));
+      expect(
+        await repository.getConversation(conversationId),
+        isNot(equals(null)),
+      );
+      expect(
+        await adapter.readSnapshot(turnKey),
+        isA<E2eeSyncTombstoneSnapshot>(),
+      );
+
+      final secondWireTombstone = await createPullTombstoneChange(
+        changeSeq: 5,
+        revision: 3,
+        operation: 871,
+        entityKey: turnKey,
+        logicalVersion: 3,
+        parentDigests: <E2eeAccountRecordStateDigest>[
+          firstTombstone.state.digest,
+        ],
+      );
+      final secondTombstone = await authenticatePulledTombstoneChange(
+        secondWireTombstone,
+      );
+      await adapter.runPullAndPublish(
+        () => pullCommands.applyIncrementalPage(
+          expected: deleted.checkpoint,
+          nextCursor: 'turn-delete-replayed',
+          lastChangeSeq: 5,
+          changes: <E2eeSyncPulledChange>[secondTombstone],
+          applyBusiness: adapter.applyTransactional,
+          now: DateTime.utc(2026, 7, 28, 0, 3),
+        ),
+      );
+      expect(await repository.getMessage(messageId), equals(null));
+      expect(
+        await repository.getConversation(conversationId),
+        isNot(equals(null)),
+      );
     });
   });
 
