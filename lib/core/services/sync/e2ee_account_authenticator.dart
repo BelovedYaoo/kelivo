@@ -11,6 +11,7 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_pairing_qr_codec.dart';
 import 'cloud_sync_types.dart';
+import 'e2ee_device_state_access.dart';
 
 part 'e2ee_device_pairing.dart';
 
@@ -111,7 +112,6 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     this._secureCore,
   );
 
-  static const _deviceStateSlotDomain = 'kelivo.e2ee.device-state.slot.v1';
   static const _registrationRecordDomain =
       'kelivo.e2ee.registration-transaction.record.v1';
   static const _registrationAssociatedDataDomain =
@@ -142,6 +142,11 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   final CloudSyncAccountClient _accountClient;
   final DeviceStateBlobStore _deviceStateStore;
   final KelivoSecureCore _secureCore;
+  late final E2eeDeviceStateAccess _deviceStateAccess = E2eeDeviceStateAccess(
+    baseUrl: _baseUrl,
+    deviceStateStore: _deviceStateStore,
+    secureCore: _secureCore,
+  );
   bool _authenticationInProgress = false;
 
   @override
@@ -187,7 +192,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
           transaction: transaction,
           session: session,
         );
-        return session;
+        return _bindVerifiedDeviceKeyVersion(context, session);
       }
       if (context.account != null || context.ark != null) {
         throw StateError('已绑定账户的设备状态不能再次注册');
@@ -273,7 +278,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         transaction: transaction,
         session: session,
       );
-      return session;
+      return _bindVerifiedDeviceKeyVersion(context, session);
     } catch (error, stackTrace) {
       final reportedError =
           transaction != null &&
@@ -819,7 +824,16 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         session.keyEpoch != account.keyEpoch) {
       throw StateError('已认证登录结果与本地设备状态不匹配');
     }
-    return E2eeAccountLoginAuthenticated(session);
+    return E2eeAccountLoginAuthenticated(
+      _bindVerifiedDeviceKeyVersion(context, session),
+    );
+  }
+
+  CloudSyncAuthenticatedSession _bindVerifiedDeviceKeyVersion(
+    _DeviceContext context,
+    CloudSyncAuthenticatedSession session,
+  ) {
+    return session.withVerifiedDeviceKeyVersion(context.keyVersion);
   }
 
   E2eeAccountLoginApprovalRequired _approvalRequiredLoginResult(
@@ -862,32 +876,19 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   }
 
   Future<_DeviceContext> _openDeviceContext(String normalizedLoginName) async {
-    final slotId = _deriveSlotId(normalizedLoginName);
-    final blob = await _deviceStateStore.read(
-      normalizedBaseUrl: _baseUrl,
-      normalizedLoginName: normalizedLoginName,
-    );
-    if (blob != null) {
-      final key = await _secureCore.openSlot(slotId);
-      try {
-        final opened = await _secureCore.openDeviceState(key, stateBlob: blob);
-        return _DeviceContext(
-          key: key,
-          identity: opened.identity,
-          ark: opened.ark,
-          deviceId: opened.binding.deviceId,
-          keyVersion: opened.binding.keyVersion,
-          account: opened.binding.account,
-        );
-      } catch (error, stackTrace) {
-        await _runCleanupPreservingPrimary(<Future<void> Function()>[
-          () => _secureCore.close(key),
-        ]);
-        Error.throwWithStackTrace(error, stackTrace);
-      }
+    final opened = await _deviceStateAccess.openExisting(normalizedLoginName);
+    if (opened != null) {
+      return _DeviceContext(
+        key: opened.key,
+        identity: opened.identity,
+        ark: opened.ark,
+        deviceId: opened.binding.deviceId,
+        keyVersion: opened.binding.keyVersion,
+        account: opened.binding.account,
+      );
     }
 
-    final key = await _openOrCreateSlot(slotId);
+    final key = await _deviceStateAccess.openOrCreateSlot(normalizedLoginName);
     KelivoDeviceIdentityHandle? identity;
     try {
       identity = await _secureCore.generateDeviceIdentity();
@@ -918,24 +919,6 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       ]);
       Error.throwWithStackTrace(error, stackTrace);
     }
-  }
-
-  Future<KelivoKeyHandle> _openOrCreateSlot(Uint8List slotId) async {
-    try {
-      return await _secureCore.createSlot(slotId);
-    } on KelivoSecureCoreException catch (error) {
-      if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
-      return _secureCore.openSlot(slotId);
-    }
-  }
-
-  Uint8List _deriveSlotId(String normalizedLoginName) {
-    final digest = sha256.convert(
-      utf8.encode(
-        '$_deviceStateSlotDomain\u0000$_baseUrl\u0000$normalizedLoginName',
-      ),
-    );
-    return Uint8List.fromList(digest.bytes.sublist(0, 16));
   }
 
   Uint8List _registrationRecordId(String normalizedLoginName) {

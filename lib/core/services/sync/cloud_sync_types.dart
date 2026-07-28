@@ -297,8 +297,12 @@ final class CloudSyncAuthenticatedSession {
     required int keyEpoch,
     required this.user,
     required this.device,
+    int? deviceKeyVersion,
   }) : tokenExpiresAt = tokenExpiresAt.toUtc(),
-       keyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch') {
+       keyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch'),
+       deviceKeyVersion = deviceKeyVersion == null
+           ? null
+           : _requirePositiveInt32(deviceKeyVersion, 'deviceKeyVersion') {
     if (device.status != CloudSyncAuthenticatedDeviceStatus.active) {
       throw const FormatException('已认证会话的设备状态必须为 active');
     }
@@ -309,6 +313,28 @@ final class CloudSyncAuthenticatedSession {
   final int keyEpoch;
   final CloudSyncAuthenticatedUser user;
   final CloudSyncAuthenticatedDevice device;
+  final int? deviceKeyVersion;
+
+  CloudSyncAuthenticatedSession withVerifiedDeviceKeyVersion(
+    int verifiedDeviceKeyVersion,
+  ) {
+    final checkedVersion = _requirePositiveInt32(
+      verifiedDeviceKeyVersion,
+      'verifiedDeviceKeyVersion',
+    );
+    final currentVersion = deviceKeyVersion;
+    if (currentVersion != null && currentVersion != checkedVersion) {
+      throw StateError('已认证会话的设备密钥版本与本地验证结果不匹配');
+    }
+    return CloudSyncAuthenticatedSession(
+      token: token,
+      tokenExpiresAt: tokenExpiresAt,
+      keyEpoch: keyEpoch,
+      user: user,
+      device: device,
+      deviceKeyVersion: checkedVersion,
+    );
+  }
 }
 
 sealed class CloudSyncOpaqueLoginFinishResult {
@@ -534,6 +560,7 @@ final class CloudSyncAccountSession {
     'deviceName',
     'platform',
     'clientVersion',
+    'deviceKeyVersion',
     'deviceCreatedAt',
   };
 
@@ -551,6 +578,7 @@ final class CloudSyncAccountSession {
     required String deviceName,
     required this.platform,
     required String clientVersion,
+    required int deviceKeyVersion,
     required DateTime deviceCreatedAt,
   }) : baseUrl = normalizeCloudSyncBaseUrl(baseUrl),
        tokenExpiresAt = tokenExpiresAt.toUtc(),
@@ -565,6 +593,10 @@ final class CloudSyncAccountSession {
        deviceId = _requireCanonicalUuid(deviceId, 'deviceId'),
        deviceName = _requireBoundedText(deviceName, 'deviceName', 80),
        clientVersion = _requireClientVersion(clientVersion),
+       deviceKeyVersion = _requirePositiveInt32(
+         deviceKeyVersion,
+         'deviceKeyVersion',
+       ),
        deviceCreatedAt = deviceCreatedAt.toUtc();
 
   factory CloudSyncAccountSession.fromAuthenticatedSession({
@@ -573,6 +605,10 @@ final class CloudSyncAccountSession {
   }) {
     final user = session.user;
     final device = session.device;
+    final deviceKeyVersion = session.deviceKeyVersion;
+    if (deviceKeyVersion == null) {
+      throw StateError('已认证会话尚未绑定本地设备密钥版本');
+    }
     return CloudSyncAccountSession(
       baseUrl: baseUrl,
       token: session.token,
@@ -587,6 +623,7 @@ final class CloudSyncAccountSession {
       deviceName: device.name,
       platform: device.platform,
       clientVersion: device.clientVersion,
+      deviceKeyVersion: deviceKeyVersion,
       deviceCreatedAt: device.createdAt,
     );
   }
@@ -604,6 +641,7 @@ final class CloudSyncAccountSession {
   final String deviceName;
   final CloudSyncPlatform platform;
   final String clientVersion;
+  final int deviceKeyVersion;
   final DateTime deviceCreatedAt;
 
   String get accountScope => Uri.encodeComponent('$baseUrl\n$userId');
@@ -611,7 +649,7 @@ final class CloudSyncAccountSession {
   bool isExpiredAt(DateTime now) => !now.toUtc().isBefore(tokenExpiresAt);
 
   CloudSyncJsonMap toJson() => <String, Object?>{
-    'version': 2,
+    'version': 3,
     'baseUrl': baseUrl,
     'token': token.value,
     'tokenExpiresAt': tokenExpiresAt.toIso8601String(),
@@ -625,6 +663,7 @@ final class CloudSyncAccountSession {
     'deviceName': deviceName,
     'platform': platform.name,
     'clientVersion': clientVersion,
+    'deviceKeyVersion': deviceKeyVersion,
     'deviceCreatedAt': deviceCreatedAt.toIso8601String(),
   };
 
@@ -659,6 +698,7 @@ final class CloudSyncAccountSession {
         'platform',
       ),
       clientVersion: _requireString(json, 'clientVersion'),
+      deviceKeyVersion: _requireInt(json, 'deviceKeyVersion'),
       deviceCreatedAt: _requireCanonicalUtcDateTime(json, 'deviceCreatedAt'),
     );
   }
@@ -805,7 +845,7 @@ Uint8List _copyFixedBytes(Uint8List value, int length, String field) {
 
 void _requireAccountSessionVersion(CloudSyncJsonMap json) {
   final version = json['version'];
-  if (version is! int || version != 2) {
+  if (version is! int || version != 3) {
     throw const FormatException('不支持的本地同步状态版本');
   }
 }

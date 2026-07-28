@@ -637,7 +637,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         session: session,
       );
       completed = true;
-      return session;
+      return _bindVerifiedDeviceKeyVersion(context, session);
     } catch (error) {
       primaryError = error;
       rethrow;

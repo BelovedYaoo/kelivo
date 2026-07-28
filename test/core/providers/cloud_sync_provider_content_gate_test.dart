@@ -794,6 +794,7 @@ CloudSyncAccountSession _session({DateTime? tokenExpiresAt}) {
     deviceName: '测试手机',
     platform: CloudSyncPlatform.android,
     clientVersion: '1.1.17',
+    deviceKeyVersion: 1,
     deviceCreatedAt: DateTime.utc(2026, 7, 22),
   );
 }
@@ -806,6 +807,7 @@ CloudSyncAuthenticatedSession _authenticatedSession({
     token: _fullToken,
     tokenExpiresAt: tokenExpiresAt ?? DateTime.utc(2100),
     keyEpoch: keyEpoch,
+    deviceKeyVersion: 1,
     user: CloudSyncAuthenticatedUser(
       id: _userId,
       loginName: 'ovo',

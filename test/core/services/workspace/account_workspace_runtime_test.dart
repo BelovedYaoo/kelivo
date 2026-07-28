@@ -1366,9 +1366,10 @@ void main() {
       'tokenReference',
     });
     expect(sessionMetadata, isNot(contains('token')));
-    expect(sessionMetadata['version'], 2);
+    expect(sessionMetadata['version'], 3);
     expect(sessionMetadata['tokenExpiresAt'], '2030-07-18T00:00:00.000Z');
     expect(sessionMetadata['keyEpoch'], 1);
+    expect(sessionMetadata['deviceKeyVersion'], 1);
     expect(payload['tokenReference'], <String, Object?>{
       'version': 1,
       'generation': 1,
@@ -1381,6 +1382,7 @@ void main() {
       token: _fullSessionToken('authenticated-roundtrip-token'),
       tokenExpiresAt: DateTime.parse('2031-07-26T16:20:00+08:00'),
       keyEpoch: 0xffffffff,
+      deviceKeyVersion: 0x7fffffff,
       user: CloudSyncAuthenticatedUser(
         id: '11111111-1111-4111-8111-111111111111',
         loginName: 'roundtrip-user',
@@ -1420,6 +1422,7 @@ void main() {
     expect(restored.deviceName, expected.deviceName);
     expect(restored.platform, expected.platform);
     expect(restored.clientVersion, expected.clientVersion);
+    expect(restored.deviceKeyVersion, 0x7fffffff);
     expect(restored.deviceCreatedAt, DateTime.utc(2026, 7, 25, 1, 30));
   });
 
@@ -1453,6 +1456,8 @@ void main() {
       value: List<String>.filled(81, 'x').join(),
     ),
     (name: 'clientVersion', field: 'clientVersion', value: '1/0'),
+    (name: '零 deviceKeyVersion', field: 'deviceKeyVersion', value: 0),
+    (name: '超界 deviceKeyVersion', field: 'deviceKeyVersion', value: 0x80000000),
     (name: '负 attachmentQuotaBytes', field: 'attachmentQuotaBytes', value: -1),
     (
       name: '超界 attachmentQuotaBytes',
@@ -1487,11 +1492,11 @@ void main() {
     );
   });
 
-  test('完整会话 JSON 拒绝浮点版本 2.0', () {
+  test('完整会话 JSON 拒绝浮点版本 3.0', () {
     final json = _session(
       userId: 'floating-json-version',
       token: 'floating-json-version-token',
-    ).toJson()..['version'] = 2.0;
+    ).toJson()..['version'] = 3.0;
 
     expect(
       () => CloudSyncAccountSession.fromJson(json),
@@ -1534,6 +1539,12 @@ void main() {
     );
   });
 
+  test('会话 metadata 缺失 deviceKeyVersion 时启动失败', () async {
+    await expectStoredSessionMetadataRejected(
+      (metadata) => metadata.remove('deviceKeyVersion'),
+    );
+  });
+
   for (final invalidEpoch in <int>[0, 0x100000000]) {
     test('会话 metadata 包含非法 keyEpoch $invalidEpoch 时启动失败', () async {
       await expectStoredSessionMetadataRejected(
@@ -1556,13 +1567,13 @@ void main() {
 
   test('旧版会话 metadata 启动时拒绝迁移', () async {
     await expectStoredSessionMetadataRejected(
-      (metadata) => metadata['version'] = 1,
+      (metadata) => metadata['version'] = 2,
     );
   });
 
-  test('会话 metadata 拒绝浮点版本 2.0', () async {
+  test('会话 metadata 拒绝浮点版本 3.0', () async {
     await expectStoredSessionMetadataRejected(
-      (metadata) => metadata['version'] = 2.0,
+      (metadata) => metadata['version'] = 3.0,
     );
   });
 
@@ -4240,6 +4251,7 @@ CloudSyncAccountSession _session({
     deviceName: 'Device $userId',
     platform: CloudSyncPlatform.windows,
     clientVersion: '1.0.0',
+    deviceKeyVersion: 1,
     deviceCreatedAt: DateTime.utc(2026, 7, 18),
   );
 }

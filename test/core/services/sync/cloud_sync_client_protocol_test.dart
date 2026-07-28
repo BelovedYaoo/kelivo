@@ -13,7 +13,9 @@ import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_pairing_qr_codec.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_key_lease.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
+import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
@@ -1061,6 +1063,7 @@ void main() {
     final secondResult = await secondResultFuture;
     expect(secondResult.user.id, _userId);
     expect(secondResult.device.id, _deviceId1);
+    expect(secondResult.deviceKeyVersion, 1);
     expect(secondPassword, everyElement(0));
     expect(
       await store.readPendingRegistrationEnvelope(
@@ -1342,6 +1345,7 @@ void main() {
     expect(session.user.id, _userId);
     expect(session.device.id, _deviceId1);
     expect(session.device.status, CloudSyncAuthenticatedDeviceStatus.active);
+    expect(session.deviceKeyVersion, isNull);
   });
 
   test('OPAQUE 登录保持匿名并区分已认证与待设备批准结果', () async {
@@ -2110,6 +2114,7 @@ void main() {
     final session = (recoveryResult as E2eeAccountLoginAuthenticated).session;
     expect(session.user.id, _userId);
     expect(session.device.id, _deviceId2);
+    expect(session.deviceKeyVersion, 1);
     expect(password, everyElement(0));
     expect(
       await store.readPendingPairingEnvelope(
@@ -2987,6 +2992,161 @@ void main() {
     expect(opened, orderedEquals(payload));
     expect(borrowedPayload, everyElement(0));
     expect(payload, orderedEquals(<int>[1, 2, 3]));
+  });
+
+  test('账户ARK租约只向严格匹配会话转移一次所有权', () async {
+    const core = KelivoSecureCore();
+    final root = await Directory.current.createTemp('.kelivo-key-lease-');
+    addTearDown(() => root.delete(recursive: true));
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final nonce = sha256
+        .convert(utf8.encode(root.path))
+        .toString()
+        .substring(0, 16);
+    final baseUrl = 'https://lease-$nonce.example.com';
+    final loginName = 'lease-$nonce';
+    final session = await _seedAccountKeyLeaseState(
+      core: core,
+      store: store,
+      baseUrl: baseUrl,
+      loginName: loginName,
+    );
+
+    final lease = await E2eeAccountKeyLease.open(
+      session: session,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    expect(lease.deviceKeyVersion, 3);
+    final ark = lease.takeAccountRootKeyOwnership();
+    addTearDown(() async {
+      try {
+        await core.closeAccountRootKey(ark);
+      } on StateError {
+        // 测试正文可能已经关闭句柄；清理阶段只忽略该确定状态。
+      }
+    });
+
+    expect(lease.takeAccountRootKeyOwnership, throwsStateError);
+    await lease.close();
+    await lease.close();
+    final recordId = await core.deriveAccountRecordId(
+      ark,
+      canonicalEntityKey: Uint8List.fromList(utf8.encode('conversation:id')),
+    );
+    expect(recordId, hasLength(16));
+    await core.closeAccountRootKey(ark);
+  });
+
+  test('账户ARK租约拒绝会话与设备状态任一绑定不一致', () async {
+    const core = KelivoSecureCore();
+    final root = await Directory.current.createTemp(
+      'kelivo-key-lease-mismatch-',
+    );
+    addTearDown(() => root.delete(recursive: true));
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final nonce = sha256
+        .convert(utf8.encode(root.path))
+        .toString()
+        .substring(0, 16);
+    final baseUrl = 'https://lease-$nonce.example.com';
+    final loginName = 'lease-$nonce';
+    final valid = await _seedAccountKeyLeaseState(
+      core: core,
+      store: store,
+      baseUrl: baseUrl,
+      loginName: loginName,
+    );
+
+    final mismatches = <CloudSyncAccountSession>[
+      _accountKeyLeaseSession(baseUrl: baseUrl, loginName: '$loginName-other'),
+      _accountKeyLeaseSession(
+        baseUrl: 'https://other-$nonce.example.com',
+        loginName: loginName,
+      ),
+      _accountKeyLeaseSession(
+        baseUrl: baseUrl,
+        loginName: loginName,
+        userId: _accountContextId,
+      ),
+      _accountKeyLeaseSession(
+        baseUrl: baseUrl,
+        loginName: loginName,
+        deviceId: _deviceId2,
+      ),
+      _accountKeyLeaseSession(
+        baseUrl: baseUrl,
+        loginName: loginName,
+        keyEpoch: valid.keyEpoch + 1,
+      ),
+      _accountKeyLeaseSession(
+        baseUrl: baseUrl,
+        loginName: loginName,
+        deviceKeyVersion: valid.deviceKeyVersion + 1,
+      ),
+    ];
+    for (final mismatch in mismatches) {
+      await expectLater(
+        E2eeAccountKeyLease.open(
+          session: mismatch,
+          deviceStateStore: store,
+          secureCore: core,
+        ),
+        throwsStateError,
+      );
+    }
+
+    final unboundLoginName = 'unbound-$nonce';
+    final unbound = await _seedAccountKeyLeaseState(
+      core: core,
+      store: store,
+      baseUrl: baseUrl,
+      loginName: unboundLoginName,
+      bound: false,
+    );
+    await expectLater(
+      E2eeAccountKeyLease.open(
+        session: unbound,
+        deviceStateStore: store,
+        secureCore: core,
+      ),
+      throwsStateError,
+    );
+
+    final reopened = await E2eeAccountKeyLease.open(
+      session: valid,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    await reopened.close();
+  });
+
+  test('账户ARK租约关闭幂等且关闭后保持失败关闭', () async {
+    const core = KelivoSecureCore();
+    final root = await Directory.current.createTemp('kelivo-key-lease-close-');
+    addTearDown(() => root.delete(recursive: true));
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final nonce = sha256
+        .convert(utf8.encode(root.path))
+        .toString()
+        .substring(0, 16);
+    final baseUrl = 'https://lease-$nonce.example.com';
+    final loginName = 'lease-$nonce';
+    final session = await _seedAccountKeyLeaseState(
+      core: core,
+      store: store,
+      baseUrl: baseUrl,
+      loginName: loginName,
+    );
+    final lease = await E2eeAccountKeyLease.open(
+      session: session,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+
+    await lease.close();
+    await lease.close();
+    expect(lease.takeAccountRootKeyOwnership, throwsStateError);
   });
 
   test('E2EE 同步 payload 递归排序对象键并保留数组顺序', () {
@@ -4435,6 +4595,76 @@ Uint8List _authenticatorSlotId(String baseUrl, String loginName) {
     ),
   );
   return Uint8List.fromList(digest.bytes.sublist(0, 16));
+}
+
+Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
+  required KelivoSecureCore core,
+  required DeviceStateBlobStore store,
+  required String baseUrl,
+  required String loginName,
+  bool bound = true,
+}) async {
+  final key = await core.createSlot(
+    E2eeDeviceStateAccess.deriveSlotId(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+    ),
+  );
+  final identity = await core.generateDeviceIdentity();
+  KelivoAccountRootKeyHandle? ark;
+  try {
+    if (bound) ark = await core.generateAccountRootKey();
+    final blob = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: _rawUuid(_deviceId1),
+      keyVersion: 3,
+      ark: ark,
+      account: bound
+          ? KelivoDeviceStateAccountBinding(
+              userId: _rawUuid(_userId),
+              keyEpoch: 7,
+            )
+          : null,
+    );
+    await store.write(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      blob: blob,
+    );
+  } finally {
+    if (ark != null) await core.closeAccountRootKey(ark);
+    await core.closeDeviceIdentity(identity);
+    await core.close(key);
+  }
+  return _accountKeyLeaseSession(baseUrl: baseUrl, loginName: loginName);
+}
+
+CloudSyncAccountSession _accountKeyLeaseSession({
+  required String baseUrl,
+  required String loginName,
+  String userId = _userId,
+  String deviceId = _deviceId1,
+  int keyEpoch = 7,
+  int deviceKeyVersion = 3,
+}) {
+  return CloudSyncAccountSession(
+    baseUrl: baseUrl,
+    token: _fullToken,
+    tokenExpiresAt: DateTime.utc(2030),
+    keyEpoch: keyEpoch,
+    userId: userId,
+    loginName: loginName,
+    displayName: 'Lease User',
+    role: CloudSyncUserRole.user,
+    attachmentQuotaBytes: 1024,
+    deviceId: deviceId,
+    deviceName: 'Lease Device',
+    platform: CloudSyncPlatform.windows,
+    clientVersion: '1.0.0',
+    deviceKeyVersion: deviceKeyVersion,
+    deviceCreatedAt: DateTime.utc(2026),
+  );
 }
 
 Uint8List _rawUuid(String value) {
