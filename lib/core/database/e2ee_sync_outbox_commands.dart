@@ -154,10 +154,11 @@ final class E2eeSyncOutboxCommands {
 
   Object get ownershipIdentity => _database;
 
-  Future<List<E2eeSyncIntentRef>> beginLocalWrite({
+  Future<T> runLocalWriteAtomically<T>({
     required List<E2eeSyncLocalWriteIntent> intents,
     required String writerSessionId,
     required DateTime now,
+    required Future<T> Function() write,
   }) async {
     final writerSession = _requireBoundedText(
       writerSessionId,
@@ -171,8 +172,11 @@ final class E2eeSyncOutboxCommands {
         throw const FormatException('同一批本地写入包含重复实体键');
       }
     }
-    if (intents.isEmpty) return const [];
+    if (intents.isEmpty) {
+      throw ArgumentError.value(intents, 'intents', '本地同步写入必须包含实体键');
+    }
 
+    // 业务闭包必须继承同一 Drift 事务上下文，避免崩溃后留下无法解释的偏状态。
     return _database.transaction(() async {
       final refs = <E2eeSyncIntentRef>[];
       for (final input in intents) {
@@ -233,34 +237,28 @@ final class E2eeSyncOutboxCommands {
           ),
         );
       }
-      return List.unmodifiable(refs);
+      final result = await Future<T>.sync(write);
+      final finished =
+          await (_database.update(_database.e2eeSyncIntentRows)..where(
+                (row) =>
+                    row.phase.equals('preparing') &
+                    row.writerSessionId.equals(writerSession),
+              ))
+              .write(
+                E2eeSyncIntentRowsCompanion(
+                  phase: const Value('dirty'),
+                  writerSessionId: const Value(null),
+                  sealLeaseToken: const Value(null),
+                  sealOwnerSessionId: const Value(null),
+                  sealLeaseExpiresAt: const Value(null),
+                  updatedAt: Value(timestamp),
+                ),
+              );
+      if (finished != refs.length) {
+        throw StateError('本地同步意图未完整收口为 dirty');
+      }
+      return result;
     });
-  }
-
-  Future<int> finishLocalWrite({
-    required String writerSessionId,
-    required DateTime now,
-  }) {
-    final writerSession = _requireBoundedText(
-      writerSessionId,
-      'writerSessionId',
-    );
-    final timestamp = _requireStorageTime(now, 'now');
-    return (_database.update(_database.e2eeSyncIntentRows)..where(
-          (row) =>
-              row.phase.equals('preparing') &
-              row.writerSessionId.equals(writerSession),
-        ))
-        .write(
-          E2eeSyncIntentRowsCompanion(
-            phase: const Value('dirty'),
-            writerSessionId: const Value(null),
-            sealLeaseToken: const Value(null),
-            sealOwnerSessionId: const Value(null),
-            sealLeaseExpiresAt: const Value(null),
-            updatedAt: Value(timestamp),
-          ),
-        );
   }
 
   Future<int> _recoverStartup({required DateTime now}) {

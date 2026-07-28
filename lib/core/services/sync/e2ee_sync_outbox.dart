@@ -200,20 +200,12 @@ final class E2eeSyncOutbox implements SyncWriteExecutor {
               entityKey: key,
             ),
         ];
-        await _commands.beginLocalWrite(
+        return _commands.runLocalWriteAtomically<T>(
           intents: intents,
           writerSessionId: _processSessionId,
           now: _now(),
+          write: write,
         );
-        try {
-          return await Future<T>.sync(write);
-        } finally {
-          // 即使外部存储只完成了一部分，也必须重新读取当前值生成密文。
-          await _commands.finishLocalWrite(
-            writerSessionId: _processSessionId,
-            now: _now(),
-          );
-        }
       });
     });
   }

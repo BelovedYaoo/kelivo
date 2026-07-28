@@ -473,7 +473,7 @@ void main() {
       entityType: 'conversation',
       entityId: 'outbox-state-$discriminator',
     );
-    final refs = await outboxCommands.beginLocalWrite(
+    await outboxCommands.runLocalWriteAtomically<void>(
       intents: [
         E2eeSyncLocalWriteIntent(
           intentId: _syncUuid(100 + discriminator),
@@ -482,16 +482,12 @@ void main() {
       ],
       writerSessionId: 'writer-$discriminator',
       now: now,
+      write: () async {},
     );
-    expect(
-      await outboxCommands.finishLocalWrite(
-        writerSessionId: 'writer-$discriminator',
-        now: now.add(const Duration(seconds: 1)),
-      ),
-      1,
-    );
+    final refs = await outboxCommands.listDirtyIntents(limit: 10);
+    final ref = refs.singleWhere((item) => item.entityKey == entityKey);
     final lease = await outboxCommands.claimSealIntent(
-      intent: refs.single,
+      intent: ref,
       leaseToken: 'seal-token-$discriminator',
       leaseOwner: 'seal-owner-$discriminator',
       leaseExpiresAt: now.add(const Duration(minutes: 1)),
@@ -2351,61 +2347,56 @@ void main() {
       expect(snapshot.payload, orderedEquals(<int>[9, 2, 3]));
     });
 
-    test('本地写成功或抛错都从 preparing 收口为 dirty', () async {
-      final now = DateTime.utc(2026, 7, 28);
+    test('本地业务写与 dirty intent 在同一事务提交或回滚', () async {
+      final outbox = E2eeSyncOutbox.takeOwnership(
+        commands: outboxCommands,
+        stateCodec: stateCodec,
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        claimedWriterKeyVersion: 1,
+      );
+      addTearDown(outbox.close);
+      await outbox.initialize();
 
-      Future<void> runLocalWrite({
-        required int discriminator,
-        required bool shouldThrow,
-      }) async {
-        final entityKey = SyncEntityKey(
-          entityType: 'conversation',
-          entityId: 'local-write-$discriminator',
-        );
-        final sessionId = 'writer-$discriminator';
-        await outboxCommands.beginLocalWrite(
-          intents: [
-            E2eeSyncLocalWriteIntent(
-              intentId: _syncUuid(discriminator),
-              entityKey: entityKey,
-            ),
-          ],
-          writerSessionId: sessionId,
-          now: now,
-        );
-        final preparing =
-            await (database.select(database.e2eeSyncIntentRows)..where(
-                  (row) =>
-                      row.entityType.equals(entityKey.entityType) &
-                      row.entityId.equals(entityKey.entityId),
-                ))
-                .getSingle();
-        expect(preparing.phase, 'preparing');
-        expect(preparing.writerSessionId, sessionId);
+      const committedKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'local-write-301',
+      );
+      await outbox.runLocal<void>(
+        key: committedKey,
+        write: () => repository.runInTransaction(
+          () => insertConversation(id: committedKey.entityId),
+        ),
+      );
 
-        try {
-          if (shouldThrow) throw StateError('模拟本地写入失败');
-        } finally {
-          expect(
-            await outboxCommands.finishLocalWrite(
-              writerSessionId: sessionId,
-              now: now.add(const Duration(seconds: 1)),
-            ),
-            1,
-          );
-        }
-      }
-
-      await runLocalWrite(discriminator: 301, shouldThrow: false);
+      const rolledBackKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'local-write-302',
+      );
       await expectLater(
-        runLocalWrite(discriminator: 302, shouldThrow: true),
+        outbox.runLocal<void>(
+          key: rolledBackKey,
+          write: () async {
+            await repository.runInTransaction(
+              () => insertConversation(id: rolledBackKey.entityId),
+            );
+            throw StateError('模拟本地写入失败');
+          },
+        ),
         throwsStateError,
       );
 
+      final conversations = await database
+          .select(database.conversationRows)
+          .get();
+      expect(conversations.map((row) => row.id), <String>[
+        committedKey.entityId,
+      ]);
       final intents = await database.select(database.e2eeSyncIntentRows).get();
-      expect(intents, hasLength(2));
-      expect(intents.every((row) => row.phase == 'dirty'), isTrue);
-      expect(intents.every((row) => row.writerSessionId == null), isTrue);
+      expect(intents, hasLength(1));
+      expect(intents.single.entityId, committedKey.entityId);
+      expect(intents.single.phase, 'dirty');
+      expect(intents.single.writerSessionId, null);
     });
 
     test('seal commit 持久化认证密文且 unknown 重试逐字节不变', () async {
