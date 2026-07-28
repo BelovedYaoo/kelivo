@@ -2994,6 +2994,46 @@ void main() {
     expect(payload, orderedEquals(<int>[1, 2, 3]));
   });
 
+  test('账户记录加密器接受完整正 uint32 密钥世代', () async {
+    const core = KelivoSecureCore();
+    final ark = await core.generateAccountRootKey();
+    final cipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: ark,
+      userId: _userId,
+      currentKeyEpoch: 0xffffffff,
+    );
+    addTearDown(cipher.close);
+
+    const entityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'conversation-max-epoch',
+    );
+    final sealed = await cipher.seal(
+      entityKey: entityKey,
+      payload: Uint8List.fromList(<int>[4, 2]),
+    );
+    final opened = await cipher.open(
+      _untrustedRecord(sealed),
+      decode: (_, payload) => Uint8List.fromList(payload),
+    );
+
+    expect(sealed.keyEpoch, 0xffffffff);
+    expect(opened, orderedEquals(<int>[4, 2]));
+
+    final overflowArk = await core.generateAccountRootKey();
+    expect(
+      () => E2eeAccountRecordCipher.takeOwnership(
+        secureCore: core,
+        accountRootKey: overflowArk,
+        userId: _userId,
+        currentKeyEpoch: 0x100000000,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await core.closeAccountRootKey(overflowArk);
+  });
+
   test('账户ARK租约只向严格匹配会话转移一次所有权', () async {
     const core = KelivoSecureCore();
     final root = await Directory.current.createTemp('.kelivo-key-lease-');
@@ -3569,7 +3609,7 @@ void main() {
       throwsA(isA<FormatException>()),
     );
     final recordId = E2eeUntrustedAccountRecordId.fromTransport(_recordId1);
-    final validEpochs = <int>[1, 0x7fffffff];
+    final validEpochs = <int>[1, 0xffffffff];
     for (final keyEpoch in validEpochs) {
       expect(
         E2eeUntrustedAccountRecordEnvelope.fromTransport(
@@ -3584,7 +3624,11 @@ void main() {
     for (final invalid in <({int version, int epoch, Uint8List ciphertext})>[
       (version: 2, epoch: 1, ciphertext: Uint8List.fromList(<int>[1])),
       (version: 1, epoch: 0, ciphertext: Uint8List.fromList(<int>[1])),
-      (version: 1, epoch: 0x80000000, ciphertext: Uint8List.fromList(<int>[1])),
+      (
+        version: 1,
+        epoch: 0x100000000,
+        ciphertext: Uint8List.fromList(<int>[1]),
+      ),
       (version: 1, epoch: 1, ciphertext: Uint8List(0)),
       (
         version: 1,

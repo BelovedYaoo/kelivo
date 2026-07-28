@@ -17,7 +17,7 @@ const _recordMaxFrameBytes =
 const _recordKeyHeaderBytes = 20;
 const _recordKeyFormatVersion = 1;
 const _recordFrameFormatVersion = 1;
-const _maxPositiveInt32 = 0x7fffffff;
+const _maxUint32 = 0xffffffff;
 
 final _recordKeyMagic = Uint8List.fromList(ascii.encode('KELVRK01'));
 final _recordFrameMagic = Uint8List.fromList(ascii.encode('KELVRF01'));
@@ -87,7 +87,7 @@ final class E2eeUntrustedAccountRecordEnvelope {
     if (envelopeVersion != e2eeAccountRecordEnvelopeVersion) {
       throw const FormatException('不支持的账户记录信封版本');
     }
-    _requirePositiveInt32(keyEpoch, 'keyEpoch');
+    _requirePositiveUint32(keyEpoch, 'keyEpoch');
     if (ciphertext.isEmpty ||
         ciphertext.length > e2eeAccountRecordMaxCiphertextBytes) {
       throw const FormatException('账户记录密文长度无效');
@@ -119,7 +119,7 @@ final class E2eeAccountRecordCipher {
     required String userId,
     required int currentKeyEpoch,
   }) {
-    _requirePositiveInt32(currentKeyEpoch, 'currentKeyEpoch');
+    _requirePositiveUint32(currentKeyEpoch, 'currentKeyEpoch');
     return E2eeAccountRecordCipher._(
       secureCore: secureCore,
       accountRootKey: accountRootKey,
@@ -532,9 +532,9 @@ void _requireUuidV4Bytes(Uint8List bytes, String field) {
   }
 }
 
-void _requirePositiveInt32(int value, String field) {
-  if (value < 1 || value > _maxPositiveInt32) {
-    throw FormatException('$field 必须位于正 int32 范围');
+void _requirePositiveUint32(int value, String field) {
+  if (value < 1 || value > _maxUint32) {
+    throw FormatException('$field 必须位于正 uint32 范围');
   }
 }
 
