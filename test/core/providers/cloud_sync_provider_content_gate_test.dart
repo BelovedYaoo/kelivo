@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
@@ -44,6 +45,77 @@ void main() {
         .map((entry) => entry.path)
         .where((path) => path.contains('cloud_sync_state_v1'));
     expect(legacyStatePaths, isEmpty);
+  });
+
+  test('已有会话仅在内容运行时初始化成功后开启内容同步', () async {
+    final contentRuntime = _FakeCloudSyncContentRuntime();
+    final fixture = await _createSignedInFixture(
+      contentRuntime: contentRuntime,
+    );
+    addTearDown(fixture.close);
+
+    expect(fixture.provider.contentSyncEnabled, isFalse);
+
+    await fixture.provider.initialize();
+
+    expect(contentRuntime.initializeCalls, 1);
+    expect(fixture.provider.contentSyncEnabled, isTrue);
+    expect(fixture.provider.status, CloudSyncProviderStatus.idle);
+  });
+
+  test('内容运行时初始化失败时不接回控制面令牌', () async {
+    final contentRuntime = _FakeCloudSyncContentRuntime(
+      initializeFailure: StateError('content_runtime_initialize_failed'),
+    );
+    final fixture = await _createSignedInFixture(
+      contentRuntime: contentRuntime,
+    );
+    addTearDown(fixture.close);
+
+    await fixture.provider.initialize();
+
+    expect(contentRuntime.initializeCalls, 1);
+    expect(fixture.provider.contentSyncEnabled, isFalse);
+    expect(fixture.provider.status, CloudSyncProviderStatus.error);
+    expect(fixture.client.token, isNull);
+  });
+
+  test('登出先关闭内容运行时并关闭内容同步门', () async {
+    final contentRuntime = _FakeCloudSyncContentRuntime();
+    final fixture = await _createSignedInFixture(
+      contentRuntime: contentRuntime,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    expect(await fixture.provider.logout(), isTrue);
+
+    expect(contentRuntime.closeCalls, 1);
+    expect(fixture.provider.contentSyncEnabled, isFalse);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+  });
+
+  test('内容运行时关闭失败时仍清理持久会话并保持重启门禁', () async {
+    final contentRuntime = _FakeCloudSyncContentRuntime(
+      closeFailure: StateError('content_runtime_close_failed'),
+    );
+    final fixture = await _createSignedInFixture(
+      contentRuntime: contentRuntime,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    expect(await fixture.provider.logout(), isFalse);
+
+    expect(contentRuntime.closeCalls, 1);
+    expect(fixture.runtime.current.session, isNull);
+    expect(fixture.provider.signedIn, isFalse);
+    expect(fixture.provider.contentSyncEnabled, isFalse);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(
+      fixture.provider.status,
+      CloudSyncProviderStatus.workspaceChangePending,
+    );
   });
 
   test('恢复已有会话后设备列表与非当前设备撤销仍可用', () async {
@@ -615,6 +687,7 @@ Future<_Fixture> _createSignedInFixture({
   _FakeCloudSyncAccountClient? client,
   _FakeE2eeAccountAuthentication? authentication,
   CloudSyncAccountSession? session,
+  CloudSyncContentRuntime? contentRuntime,
 }) async {
   final testRoot = Directory(
     '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -643,14 +716,24 @@ Future<_Fixture> _createSignedInFixture({
   final accountClient = client ?? _FakeCloudSyncAccountClient();
   final accountAuthentication =
       authentication ?? _FakeE2eeAccountAuthentication();
-  final provider = CloudSyncProvider.controlPlaneOnly(
-    runtime,
-    clientFactory: ({CloudSyncFullSessionToken? token}) {
-      accountClient.setToken(token);
-      return accountClient;
-    },
-    authenticationFactory: (_) => accountAuthentication,
-  );
+  final provider = contentRuntime == null
+      ? CloudSyncProvider.controlPlaneOnly(
+          runtime,
+          clientFactory: ({CloudSyncFullSessionToken? token}) {
+            accountClient.setToken(token);
+            return accountClient;
+          },
+          authenticationFactory: (_) => accountAuthentication,
+        )
+      : CloudSyncProvider.withContentRuntime(
+          runtime,
+          contentRuntime: contentRuntime,
+          clientFactory: ({CloudSyncFullSessionToken? token}) {
+            accountClient.setToken(token);
+            return accountClient;
+          },
+          authenticationFactory: (_) => accountAuthentication,
+        );
   return _Fixture(
     root: root,
     runtime: runtime,
@@ -790,6 +873,29 @@ final class _Fixture {
     if (await root.exists()) {
       await root.delete(recursive: true);
     }
+  }
+}
+
+final class _FakeCloudSyncContentRuntime implements CloudSyncContentRuntime {
+  _FakeCloudSyncContentRuntime({this.initializeFailure, this.closeFailure});
+
+  final Object? initializeFailure;
+  final Object? closeFailure;
+  int initializeCalls = 0;
+  int closeCalls = 0;
+
+  @override
+  Future<void> initialize() async {
+    initializeCalls++;
+    final failure = initializeFailure;
+    if (failure != null) throw failure;
+  }
+
+  @override
+  Future<void> close() async {
+    closeCalls++;
+    final failure = closeFailure;
+    if (failure != null) throw failure;
   }
 }
 

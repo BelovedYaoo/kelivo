@@ -7,8 +7,9 @@ import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/sync/cloud_sync_client.dart';
-import '../services/sync/e2ee_account_authenticator.dart';
+import '../services/sync/cloud_sync_content_runtime.dart';
 import '../services/sync/cloud_sync_types.dart';
+import '../services/sync/e2ee_account_authenticator.dart';
 import '../services/workspace/account_workspace_runtime.dart';
 import '../services/workspace/device_state_blob_store.dart';
 
@@ -35,11 +36,46 @@ enum CloudSyncProviderStatus {
 }
 
 final class CloudSyncProvider extends ChangeNotifier {
-  CloudSyncProvider.controlPlaneOnly(
-    this._workspaceRuntime, {
+  factory CloudSyncProvider.controlPlaneOnly(
+    AccountWorkspaceRuntime workspaceRuntime, {
     CloudSyncAccountClientFactory clientFactory = _createCloudSyncAccountClient,
     E2eeAccountAuthenticationFactory? authenticationFactory,
   }) {
+    return CloudSyncProvider._(
+      workspaceRuntime,
+      contentRuntime: null,
+      clientFactory: clientFactory,
+      authenticationFactory: authenticationFactory,
+    );
+  }
+
+  factory CloudSyncProvider.withContentRuntime(
+    AccountWorkspaceRuntime workspaceRuntime, {
+    required CloudSyncContentRuntime contentRuntime,
+    CloudSyncAccountClientFactory clientFactory = _createCloudSyncAccountClient,
+    E2eeAccountAuthenticationFactory? authenticationFactory,
+  }) {
+    return CloudSyncProvider._(
+      workspaceRuntime,
+      contentRuntime: contentRuntime,
+      clientFactory: clientFactory,
+      authenticationFactory: authenticationFactory,
+    );
+  }
+
+  CloudSyncProvider._(
+    this._workspaceRuntime, {
+    required this._contentRuntime,
+    required CloudSyncAccountClientFactory clientFactory,
+    required E2eeAccountAuthenticationFactory? authenticationFactory,
+  }) {
+    _configureFactories(clientFactory, authenticationFactory);
+  }
+
+  void _configureFactories(
+    CloudSyncAccountClientFactory clientFactory,
+    E2eeAccountAuthenticationFactory? authenticationFactory,
+  ) {
     _clientFactory = clientFactory;
     _authenticationFactory =
         authenticationFactory ??
@@ -54,6 +90,7 @@ final class CloudSyncProvider extends ChangeNotifier {
   }
 
   final AccountWorkspaceRuntime _workspaceRuntime;
+  final CloudSyncContentRuntime? _contentRuntime;
   late final CloudSyncAccountClientFactory _clientFactory;
   late final E2eeAccountAuthenticationFactory _authenticationFactory;
 
@@ -69,7 +106,10 @@ final class CloudSyncProvider extends ChangeNotifier {
   List<CloudSyncDeviceSession> _devices = const <CloudSyncDeviceSession>[];
   CloudSyncAccountClient? _client;
   Future<void>? _initialization;
+  Future<void>? _contentRuntimeClose;
   bool _ready = false;
+  bool _contentRuntimeReady = false;
+  bool _contentRuntimeClosed = false;
   bool _devicesLoading = false;
   bool _disposed = false;
   bool _workspaceRestartRequired = false;
@@ -89,7 +129,8 @@ final class CloudSyncProvider extends ChangeNotifier {
       _pendingPairingSession?.expiresAt;
   int get pendingDevicePairingGeneration => _pendingPairingGeneration;
   bool get devicePairingApprovalInProgress => _devicePairingApprovalInProgress;
-  bool get contentSyncEnabled => false;
+  bool get contentSyncEnabled =>
+      _contentRuntime != null && _contentRuntimeReady && !_contentRuntimeClosed;
   List<CloudSyncDeviceSession> get devices =>
       List<CloudSyncDeviceSession>.unmodifiable(_devices);
   bool get initialized => _ready;
@@ -130,11 +171,23 @@ final class CloudSyncProvider extends ChangeNotifier {
 
       _session = session;
       if (session == null) {
+        if (_contentRuntime != null) {
+          throw StateError('content_runtime_requires_account_session');
+        }
         _ready = true;
         _setStatus(CloudSyncProviderStatus.signedOut);
         return;
       }
 
+      final contentRuntime = _contentRuntime;
+      if (contentRuntime != null) {
+        await contentRuntime.initialize();
+        if (_disposed) {
+          await _closeContentRuntime();
+          return;
+        }
+        _contentRuntimeReady = true;
+      }
       _connect(session);
       if (_disposed) return;
       _ready = true;
@@ -338,6 +391,7 @@ final class CloudSyncProvider extends ChangeNotifier {
     }
     _beginSessionMutation();
     _session = null;
+    _contentRuntimeReady = false;
     _pendingDeviceApproval = null;
     _devicesLoading = false;
     _setStatus(CloudSyncProviderStatus.signingOut);
@@ -345,12 +399,36 @@ final class CloudSyncProvider extends ChangeNotifier {
     _sessionEpoch++;
     _client?.close(force: true);
     _client = null;
+    Object? primaryError;
+    StackTrace? primaryStackTrace;
+    try {
+      await _closeContentRuntime();
+    } catch (error, stackTrace) {
+      primaryError = error;
+      primaryStackTrace = stackTrace;
+    }
     try {
       await _workspaceRuntime.signOut();
     } catch (error, stackTrace) {
+      if (primaryError == null) {
+        primaryError = error;
+        primaryStackTrace = stackTrace;
+      } else {
+        developer.log(
+          '关闭内容运行时失败后清理账户会话仍然失败',
+          name: 'Kelivo.CloudSyncProvider',
+          level: 1000,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    } finally {
+      _endSessionMutation();
+    }
+    if (primaryError != null) {
       _recordFailure(
-        error,
-        stackTrace,
+        primaryError,
+        primaryStackTrace!,
         operation: '退出云同步账户',
         status: CloudSyncProviderStatus.error,
       );
@@ -359,8 +437,6 @@ final class CloudSyncProvider extends ChangeNotifier {
       _workspaceRestartRequired = true;
       _setStatus(CloudSyncProviderStatus.workspaceChangePending);
       return false;
-    } finally {
-      _endSessionMutation();
     }
 
     _devices = const <CloudSyncDeviceSession>[];
@@ -378,7 +454,57 @@ final class CloudSyncProvider extends ChangeNotifier {
     _sessionEpoch++;
     _client?.close(force: true);
     _client = null;
-    await _workspaceRuntime.prepareRestartHandoff();
+    Object? primaryError;
+    StackTrace? primaryStackTrace;
+    try {
+      await _closeContentRuntime();
+    } catch (error, stackTrace) {
+      primaryError = error;
+      primaryStackTrace = stackTrace;
+    }
+    try {
+      await _workspaceRuntime.prepareRestartHandoff();
+    } catch (error, stackTrace) {
+      if (primaryError == null) {
+        primaryError = error;
+        primaryStackTrace = stackTrace;
+      } else {
+        developer.log(
+          '关闭内容运行时失败后释放工作区租约仍然失败',
+          name: 'Kelivo.CloudSyncProvider',
+          level: 1000,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }
+    }
+    if (primaryError != null) {
+      Error.throwWithStackTrace(primaryError, primaryStackTrace!);
+    }
+  }
+
+  Future<void> _closeContentRuntime() {
+    _contentRuntimeReady = false;
+    final runtime = _contentRuntime;
+    if (runtime == null || _contentRuntimeClosed) {
+      return Future<void>.value();
+    }
+    final active = _contentRuntimeClose;
+    if (active != null) return active;
+
+    late final Future<void> closing;
+    closing = runtime
+        .close()
+        .then((_) {
+          _contentRuntimeClosed = true;
+        })
+        .whenComplete(() {
+          if (identical(_contentRuntimeClose, closing)) {
+            _contentRuntimeClose = null;
+          }
+        });
+    _contentRuntimeClose = closing;
+    return closing;
   }
 
   Future<bool> refreshDevices() async {
@@ -793,6 +919,7 @@ final class CloudSyncProvider extends ChangeNotifier {
   @override
   void dispose() {
     _disposed = true;
+    _contentRuntimeReady = false;
     _sessionEpoch++;
     final pendingPairing = _pendingPairingSession;
     if (pendingPairing != null) {
@@ -816,6 +943,17 @@ final class CloudSyncProvider extends ChangeNotifier {
     _pendingPairingQrFrame = null;
     _client?.close(force: true);
     _client = null;
+    unawaited(
+      _closeContentRuntime().catchError((Object error, StackTrace stackTrace) {
+        developer.log(
+          '关闭 E2EE 内容同步运行时失败',
+          name: 'Kelivo.CloudSyncProvider',
+          level: 1000,
+          error: error,
+          stackTrace: stackTrace,
+        );
+      }),
+    );
     super.dispose();
   }
 }
