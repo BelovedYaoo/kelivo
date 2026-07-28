@@ -13,6 +13,7 @@ import 'package:kelivo_sync_api_client/src/api/admin_api.dart';
 import 'package:kelivo_sync_api_client/src/api/auth_api.dart';
 import 'package:kelivo_sync_api_client/src/api/device_api.dart';
 import 'package:kelivo_sync_api_client/src/api/sync_api.dart';
+import 'package:kelivo_sync_api_client/src/api/sync_attachment_api.dart';
 import 'package:kelivo_sync_api_client/src/api/system_api.dart';
 
 class KelivoSyncApiClient {
@@ -164,6 +165,12 @@ class KelivoSyncApiClient {
   /// by doing that all interceptors will not be executed
   SyncApi getSyncApi() {
     return SyncApi(dio, serializers);
+  }
+
+  /// Get SyncAttachmentApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  SyncAttachmentApi getSyncAttachmentApi() {
+    return SyncAttachmentApi(dio, serializers);
   }
 
   /// Get SystemApi instance, base route and serializer can be overridden by a given but be careful,

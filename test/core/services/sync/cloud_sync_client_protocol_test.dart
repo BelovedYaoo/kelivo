@@ -9,6 +9,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_pairing_qr_codec.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
@@ -34,6 +35,8 @@ const _userId = '40000000-0000-4000-8000-000000000001';
 const _accountContextId = '50000000-0000-4000-8000-000000000001';
 const _pairingId = '60000000-0000-4000-8000-000000000001';
 const _issuerDeviceId = '70000000-0000-4000-8000-000000000001';
+const _attachmentId = '80000000-0000-4000-8000-000000000001';
+const _uploadId = '90000000-0000-4000-8000-000000000001';
 const _fullTokenValue = 'kelivo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const _otherFullTokenValue =
     'kelivo_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
@@ -4596,6 +4599,590 @@ void main() {
     }
   });
 
+  test('v3 附件创建显式冻结完整会话令牌且只发送密文元数据', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _otherFullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final createFuture = client.createAttachmentUpload(
+      token: _fullToken,
+      request: CloudSyncAttachmentCreateUploadRequest(
+        mutationId: _mutationId1,
+        attachmentId: _attachmentId,
+        keyEpoch: 0xffffffff,
+        chunkCount: 2,
+        totalCiphertextBytes: 5,
+      ),
+    );
+    client.setToken(_otherFullToken);
+
+    final request = await requestFuture;
+    expect(request.uri.path, '/api/sync/attachment/upload/create');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
+    expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+    expect(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+      <String, Object?>{
+        'mutationId': _mutationId1,
+        'attachmentId': _attachmentId,
+        'keyEpoch': 0xffffffff,
+        'chunkCount': 2,
+        'totalCiphertextBytes': 5,
+      },
+    );
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'attachmentId': _attachmentId,
+          'uploadId': _uploadId,
+          'keyEpoch': 0xffffffff,
+          'chunkCount': 2,
+          'totalCiphertextBytes': 5,
+          'status': 'open',
+          'createdAt': '2026-07-29T00:00:00.000Z',
+        },
+      }),
+    );
+    await request.response.close();
+
+    final upload = await createFuture;
+    expect(upload.identity.attachmentId, _attachmentId);
+    expect(upload.identity.uploadId, _uploadId);
+    expect(upload.identity.keyEpoch, 0xffffffff);
+    expect(upload.chunkCount, 2);
+    expect(upload.totalCiphertextBytes, 5);
+    expect(upload.createdAt, DateTime.utc(2026, 7, 29));
+  });
+
+  test('v3 附件分块、提交、清单、下载和删除保持不透明密文合同', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+    });
+    final identity = CloudSyncAttachmentIdentity(
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: 7,
+    );
+    final chunk = CloudSyncAttachmentChunkIdentity(
+      identity: identity,
+      chunkIndex: 0,
+    );
+
+    final putFuture = client.putAttachmentChunk(
+      token: _fullToken,
+      request: CloudSyncAttachmentPutChunkRequest(
+        mutationId: _mutationId1,
+        chunk: chunk,
+        ciphertext: Uint8List.fromList(<int>[1, 2, 3]),
+      ),
+    );
+    final putRequest = await _nextAttachmentRequest(requests);
+    await _expectAttachmentRequest(
+      putRequest,
+      path: '/api/sync/attachment/chunk/put',
+      body: <String, Object?>{
+        'mutationId': _mutationId1,
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'chunkIndex': 0,
+        'ciphertext': 'AQID',
+      },
+    );
+    await _writeJsonResponse(putRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'chunkIndex': 0,
+        'ciphertextBytes': 3,
+        'status': 'stored',
+      },
+    });
+    final stored = await putFuture;
+    expect(stored.chunk, same(chunk));
+    expect(stored.ciphertextBytes, 3);
+
+    final commitFuture = client.commitAttachmentUpload(
+      token: _fullToken,
+      request: CloudSyncAttachmentCommitUploadRequest(
+        mutationId: _mutationId2,
+        identity: identity,
+        manifestCiphertext: Uint8List.fromList(<int>[4, 5]),
+        chunks: <CloudSyncAttachmentManifestChunk>[
+          CloudSyncAttachmentManifestChunk(chunkIndex: 0, ciphertextBytes: 3),
+        ],
+      ),
+    );
+    final commitRequest = await _nextAttachmentRequest(requests);
+    await _expectAttachmentRequest(
+      commitRequest,
+      path: '/api/sync/attachment/upload/commit',
+      body: <String, Object?>{
+        'mutationId': _mutationId2,
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'manifestCiphertext': 'BAU',
+        'chunks': <Object?>[
+          <String, Object?>{'chunkIndex': 0, 'ciphertextBytes': 3},
+        ],
+      },
+    );
+    await _writeJsonResponse(commitRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'status': 'committed',
+        'committedAt': '2026-07-29T00:01:00.000Z',
+      },
+    });
+    final committed = await commitFuture;
+    expect(committed.identity.attachmentId, _attachmentId);
+    expect(committed.committedAt, DateTime.utc(2026, 7, 29, 0, 1));
+
+    final manifestFuture = client.getAttachmentManifest(
+      token: _fullToken,
+      identity: identity,
+    );
+    final manifestRequest = await _nextAttachmentRequest(requests);
+    await _expectAttachmentRequest(
+      manifestRequest,
+      path: '/api/sync/attachment/manifest/get',
+      body: <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+      },
+    );
+    await _writeJsonResponse(manifestRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'chunkCount': 1,
+        'totalCiphertextBytes': 3,
+        'manifestCiphertext': 'BAU',
+        'manifestCiphertextBytes': 2,
+        'chunks': <Object?>[
+          <String, Object?>{'chunkIndex': 0, 'ciphertextBytes': 3},
+        ],
+        'committedAt': '2026-07-29T00:01:00.000Z',
+      },
+    });
+    final manifest = await manifestFuture;
+    expect(manifest.identity.uploadId, _uploadId);
+    expect(manifest.manifestCiphertext, orderedEquals(<int>[4, 5]));
+    expect(manifest.chunks.single.ciphertextBytes, 3);
+
+    final getChunkFuture = client.getAttachmentChunk(
+      token: _fullToken,
+      chunk: chunk,
+    );
+    final getChunkRequest = await _nextAttachmentRequest(requests);
+    await _expectAttachmentRequest(
+      getChunkRequest,
+      path: '/api/sync/attachment/chunk/get',
+      body: <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'chunkIndex': 0,
+      },
+    );
+    await _writeJsonResponse(getChunkRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'chunkIndex': 0,
+        'ciphertext': 'AQID',
+        'ciphertextBytes': 3,
+      },
+    });
+    final downloaded = await getChunkFuture;
+    expect(downloaded.chunk, same(chunk));
+    expect(downloaded.ciphertext, orderedEquals(<int>[1, 2, 3]));
+
+    final deleteFuture = client.deleteAttachment(
+      token: _fullToken,
+      request: CloudSyncAttachmentDeleteRequest(
+        mutationId: _mutationId3,
+        identity: identity,
+      ),
+    );
+    final deleteRequest = await _nextAttachmentRequest(requests);
+    await _expectAttachmentRequest(
+      deleteRequest,
+      path: '/api/sync/attachment/record/delete',
+      body: <String, Object?>{
+        'mutationId': _mutationId3,
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+      },
+    );
+    await _writeJsonResponse(deleteRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'status': 'deleted',
+        'deletedAt': '2026-07-29T00:02:00.000Z',
+      },
+    });
+    final deleted = await deleteFuture;
+    expect(deleted.identity.keyEpoch, 7);
+    expect(deleted.deletedAt, DateTime.utc(2026, 7, 29, 0, 2));
+  });
+
+  test('v3 附件强类型精确执行服务端大小与 uint32 边界', () {
+    final identity = CloudSyncAttachmentIdentity(
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: 0xffffffff,
+    );
+    final maximumCreate = CloudSyncAttachmentCreateUploadRequest(
+      mutationId: _mutationId1,
+      attachmentId: _attachmentId,
+      keyEpoch: 0xffffffff,
+      chunkCount: cloudSyncMaximumAttachmentChunkCount,
+      totalCiphertextBytes: cloudSyncMaximumAttachmentTotalCiphertextBytes,
+    );
+    expect(maximumCreate.keyEpoch, 0xffffffff);
+    expect(maximumCreate.totalCiphertextBytes, 1000 * 4 * 1024 * 1024);
+
+    final chunkSource = Uint8List(
+      cloudSyncMaximumAttachmentChunkCiphertextBytes,
+    )..first = 1;
+    final maximumChunk = CloudSyncAttachmentPutChunkRequest(
+      mutationId: _mutationId2,
+      chunk: CloudSyncAttachmentChunkIdentity(
+        identity: identity,
+        chunkIndex: cloudSyncMaximumAttachmentChunkCount - 1,
+      ),
+      ciphertext: chunkSource,
+    );
+    chunkSource.first = 9;
+    expect(maximumChunk.ciphertext.first, 1);
+    expect(() => maximumChunk.ciphertext.first = 2, throwsUnsupportedError);
+
+    final manifestSource = Uint8List(
+      cloudSyncMaximumAttachmentManifestCiphertextBytes,
+    )..first = 3;
+    final chunkDescriptors = List<CloudSyncAttachmentManifestChunk>.generate(
+      cloudSyncMaximumAttachmentChunkCount,
+      (index) => CloudSyncAttachmentManifestChunk(
+        chunkIndex: index,
+        ciphertextBytes: cloudSyncMaximumAttachmentChunkCiphertextBytes,
+      ),
+    );
+    final maximumCommit = CloudSyncAttachmentCommitUploadRequest(
+      mutationId: _mutationId3,
+      identity: identity,
+      manifestCiphertext: manifestSource,
+      chunks: chunkDescriptors,
+    );
+    manifestSource.first = 8;
+    chunkDescriptors.clear();
+    expect(maximumCommit.manifestCiphertext.first, 3);
+    expect(
+      maximumCommit.chunks,
+      hasLength(cloudSyncMaximumAttachmentChunkCount),
+    );
+
+    final invalidValues = <Object? Function()>[
+      () => CloudSyncAttachmentIdentity(
+        attachmentId: _attachmentId,
+        uploadId: _uploadId,
+        keyEpoch: 0,
+      ),
+      () => CloudSyncAttachmentIdentity(
+        attachmentId: _attachmentId,
+        uploadId: _uploadId,
+        keyEpoch: 0x100000000,
+      ),
+      () => CloudSyncAttachmentCreateUploadRequest(
+        mutationId: _mutationId1,
+        attachmentId: _attachmentId,
+        keyEpoch: 1,
+        chunkCount: 0,
+        totalCiphertextBytes: 1,
+      ),
+      () => CloudSyncAttachmentCreateUploadRequest(
+        mutationId: _mutationId1,
+        attachmentId: _attachmentId,
+        keyEpoch: 1,
+        chunkCount: cloudSyncMaximumAttachmentChunkCount + 1,
+        totalCiphertextBytes: cloudSyncMaximumAttachmentChunkCount + 1,
+      ),
+      () => CloudSyncAttachmentCreateUploadRequest(
+        mutationId: _mutationId1,
+        attachmentId: _attachmentId,
+        keyEpoch: 1,
+        chunkCount: 2,
+        totalCiphertextBytes: 1,
+      ),
+      () => CloudSyncAttachmentCreateUploadRequest(
+        mutationId: _mutationId1,
+        attachmentId: _attachmentId,
+        keyEpoch: 1,
+        chunkCount: 1,
+        totalCiphertextBytes:
+            cloudSyncMaximumAttachmentChunkCiphertextBytes + 1,
+      ),
+      () =>
+          CloudSyncAttachmentChunkIdentity(identity: identity, chunkIndex: -1),
+      () => CloudSyncAttachmentChunkIdentity(
+        identity: identity,
+        chunkIndex: cloudSyncMaximumAttachmentChunkCount,
+      ),
+      () => CloudSyncAttachmentPutChunkRequest(
+        mutationId: _mutationId1,
+        chunk: CloudSyncAttachmentChunkIdentity(
+          identity: identity,
+          chunkIndex: 0,
+        ),
+        ciphertext: Uint8List(0),
+      ),
+      () => CloudSyncAttachmentPutChunkRequest(
+        mutationId: _mutationId1,
+        chunk: CloudSyncAttachmentChunkIdentity(
+          identity: identity,
+          chunkIndex: 0,
+        ),
+        ciphertext: Uint8List(
+          cloudSyncMaximumAttachmentChunkCiphertextBytes + 1,
+        ),
+      ),
+      () => CloudSyncAttachmentCommitUploadRequest(
+        mutationId: _mutationId1,
+        identity: identity,
+        manifestCiphertext: Uint8List(0),
+        chunks: <CloudSyncAttachmentManifestChunk>[
+          CloudSyncAttachmentManifestChunk(chunkIndex: 0, ciphertextBytes: 1),
+        ],
+      ),
+      () => CloudSyncAttachmentCommitUploadRequest(
+        mutationId: _mutationId1,
+        identity: identity,
+        manifestCiphertext: Uint8List(
+          cloudSyncMaximumAttachmentManifestCiphertextBytes + 1,
+        ),
+        chunks: <CloudSyncAttachmentManifestChunk>[
+          CloudSyncAttachmentManifestChunk(chunkIndex: 0, ciphertextBytes: 1),
+        ],
+      ),
+      () => CloudSyncAttachmentCommitUploadRequest(
+        mutationId: _mutationId1,
+        identity: identity,
+        manifestCiphertext: Uint8List.fromList(<int>[1]),
+        chunks: const <CloudSyncAttachmentManifestChunk>[],
+      ),
+      () => CloudSyncAttachmentCommitUploadRequest(
+        mutationId: _mutationId1,
+        identity: identity,
+        manifestCiphertext: Uint8List.fromList(<int>[1]),
+        chunks: <CloudSyncAttachmentManifestChunk>[
+          CloudSyncAttachmentManifestChunk(chunkIndex: 1, ciphertextBytes: 1),
+        ],
+      ),
+    ];
+    for (final invalidValue in invalidValues) {
+      expect(invalidValue, throwsFormatException);
+    }
+  });
+
+  test('v3 附件响应拒绝未知字段、身份串线和非规范 Base64URL', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+    });
+    final createRequest = CloudSyncAttachmentCreateUploadRequest(
+      mutationId: _mutationId1,
+      attachmentId: _attachmentId,
+      keyEpoch: 7,
+      chunkCount: 1,
+      totalCiphertextBytes: 3,
+    );
+    final identity = CloudSyncAttachmentIdentity(
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: 7,
+    );
+    final invalidResponse = throwsA(
+      isA<CloudSyncException>()
+          .having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.invalidResponse,
+          )
+          .having((error) => error.retryable, 'retryable', isFalse),
+    );
+    Map<String, Object?> validUploadData() => <String, Object?>{
+      'attachmentId': _attachmentId,
+      'uploadId': _uploadId,
+      'keyEpoch': 7,
+      'chunkCount': 1,
+      'totalCiphertextBytes': 3,
+      'status': 'open',
+      'createdAt': '2026-07-29T00:00:00.000Z',
+    };
+    Future<void> expectInvalidCreate(Map<String, Object?> response) async {
+      final future = client.createAttachmentUpload(
+        token: _fullToken,
+        request: createRequest,
+      );
+      final request = await _nextAttachmentRequest(requests);
+      await utf8.decoder.bind(request).join();
+      await _writeJsonResponse(request, response);
+      await expectLater(future, invalidResponse);
+    }
+
+    await expectInvalidCreate(<String, Object?>{
+      'data': validUploadData(),
+      'trace': 'unknown',
+    });
+    await expectInvalidCreate(<String, Object?>{
+      'data': <String, Object?>{...validUploadData(), 'filename': '不得进入服务端'},
+    });
+    await expectInvalidCreate(<String, Object?>{
+      'data': <String, Object?>{
+        ...validUploadData(),
+        'attachmentId': _recordId1,
+      },
+    });
+
+    final manifestFuture = client.getAttachmentManifest(
+      token: _fullToken,
+      identity: identity,
+    );
+    final manifestRequest = await _nextAttachmentRequest(requests);
+    await utf8.decoder.bind(manifestRequest).join();
+    await _writeJsonResponse(manifestRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'chunkCount': 1,
+        'totalCiphertextBytes': 3,
+        'manifestCiphertext': 'AQ',
+        'manifestCiphertextBytes': 1,
+        'chunks': <Object?>[
+          <String, Object?>{
+            'chunkIndex': 0,
+            'ciphertextBytes': 3,
+            'hash': '不得进入服务端',
+          },
+        ],
+        'committedAt': '2026-07-29T00:01:00.000Z',
+      },
+    });
+    await expectLater(manifestFuture, invalidResponse);
+
+    final chunkFuture = client.getAttachmentChunk(
+      token: _fullToken,
+      chunk: CloudSyncAttachmentChunkIdentity(
+        identity: identity,
+        chunkIndex: 0,
+      ),
+    );
+    final chunkRequest = await _nextAttachmentRequest(requests);
+    await utf8.decoder.bind(chunkRequest).join();
+    await _writeJsonResponse(chunkRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'keyEpoch': 7,
+        'chunkIndex': 0,
+        'ciphertext': 'AQI=',
+        'ciphertextBytes': 2,
+      },
+    });
+    await expectLater(chunkFuture, invalidResponse);
+  });
+
+  test('v3 附件错误响应保留冲突代码与请求标识', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+    final deleteFuture = client.deleteAttachment(
+      token: _fullToken,
+      request: CloudSyncAttachmentDeleteRequest(
+        mutationId: _mutationId1,
+        identity: CloudSyncAttachmentIdentity(
+          attachmentId: _attachmentId,
+          uploadId: _uploadId,
+          keyEpoch: 7,
+        ),
+      ),
+    );
+    final request = await requestFuture;
+    await utf8.decoder.bind(request).join();
+    await _writeJsonResponse(request, <String, Object?>{
+      'error': <String, Object?>{
+        'code': 'ATTACHMENT_MUTATION_CONFLICT',
+        'message': 'conflict',
+        'retryable': false,
+      },
+      'requestId': 'attachment-request-1',
+    }, statusCode: HttpStatus.conflict);
+
+    await expectLater(
+      deleteFuture,
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.conflict,
+            )
+            .having((error) => error.statusCode, 'statusCode', 409)
+            .having(
+              (error) => error.serverCode,
+              'serverCode',
+              'ATTACHMENT_MUTATION_CONFLICT',
+            )
+            .having(
+              (error) => error.requestId,
+              'requestId',
+              'attachment-request-1',
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
+  });
+
   test('v3 协议版本错误保留服务端错误码与请求标识', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
@@ -4646,6 +5233,42 @@ void main() {
       ),
     );
   });
+}
+
+Future<HttpRequest> _nextAttachmentRequest(
+  StreamIterator<HttpRequest> requests,
+) async {
+  if (!await requests.moveNext()) {
+    throw StateError('附件测试服务提前关闭');
+  }
+  return requests.current;
+}
+
+Future<void> _expectAttachmentRequest(
+  HttpRequest request, {
+  required String path,
+  required Map<String, Object?> body,
+}) async {
+  expect(request.method, 'POST');
+  expect(request.uri.path, path);
+  expect(
+    request.headers.value(HttpHeaders.authorizationHeader),
+    'Bearer $_fullTokenValue',
+  );
+  expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
+  expect(jsonDecode(await utf8.decoder.bind(request).join()), body);
+}
+
+Future<void> _writeJsonResponse(
+  HttpRequest request,
+  Map<String, Object?> body, {
+  int statusCode = HttpStatus.ok,
+}) async {
+  request.response
+    ..statusCode = statusCode
+    ..headers.contentType = ContentType.json
+    ..write(jsonEncode(body));
+  await request.response.close();
 }
 
 Uint8List _authenticatorSlotId(String baseUrl, String loginName) {

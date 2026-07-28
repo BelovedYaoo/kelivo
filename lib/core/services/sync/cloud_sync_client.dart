@@ -6,6 +6,7 @@ import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:kelivo_sync_api_client/kelivo_sync_api_client.dart' as api;
 
+import 'cloud_sync_attachment_types.dart';
 import 'cloud_sync_record_types.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_record_cipher.dart';
@@ -20,6 +21,38 @@ abstract interface class CloudSyncRecordTransport {
   Future<CloudSyncSnapshotPage> pullSnapshot({
     String? snapshotCursor,
     int limit = 10,
+  });
+}
+
+abstract interface class CloudSyncAttachmentTransport {
+  Future<CloudSyncAttachmentUpload> createAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCreateUploadRequest request,
+  });
+
+  Future<CloudSyncAttachmentStoredChunk> putAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentPutChunkRequest request,
+  });
+
+  Future<CloudSyncAttachmentCommittedUpload> commitAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCommitUploadRequest request,
+  });
+
+  Future<CloudSyncAttachmentManifest> getAttachmentManifest({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentIdentity identity,
+  });
+
+  Future<CloudSyncAttachmentChunk> getAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentChunkIdentity chunk,
+  });
+
+  Future<CloudSyncAttachmentDeleted> deleteAttachment({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentDeleteRequest request,
   });
 }
 
@@ -94,7 +127,10 @@ abstract interface class CloudSyncAccountClient {
 }
 
 final class CloudSyncClient
-    implements CloudSyncAccountClient, CloudSyncRecordTransport {
+    implements
+        CloudSyncAccountClient,
+        CloudSyncAttachmentTransport,
+        CloudSyncRecordTransport {
   CloudSyncClient._({
     required this.baseUrl,
     required this._dio,
@@ -146,7 +182,17 @@ final class CloudSyncClient
       // 鉴权逐请求显式注入，避免并发请求共享可变拦截器令牌。
       client: api.KelivoSyncApiClient(
         dio: dio,
-        interceptors: const <Interceptor>[],
+        interceptors: <Interceptor>[
+          InterceptorsWrapper(
+            onResponse: (response, handler) {
+              if (response.requestOptions.extra[_attachmentResponseMarker] ==
+                  true) {
+                response.extra[_attachmentRawResponseKey] = response.data;
+              }
+              handler.next(response);
+            },
+          ),
+        ],
       ),
     );
     client.setToken(token);
@@ -619,6 +665,294 @@ final class CloudSyncClient
   }
 
   @override
+  Future<CloudSyncAttachmentUpload> createAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCreateUploadRequest request,
+  }) {
+    return _guard(() async {
+      final generatedRequest = api.AttachmentCreateUploadRequest(
+        (builder) => builder
+          ..mutationId = request.mutationId
+          ..attachmentId = request.attachmentId
+          ..keyEpoch = request.keyEpoch
+          ..chunkCount = request.chunkCount
+          ..totalCiphertextBytes = request.totalCiphertextBytes,
+      );
+      final response = await _client
+          .getSyncAttachmentApi()
+          .createEncryptedAttachmentUpload(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            attachmentCreateUploadRequest: generatedRequest,
+            headers: _authorizationHeaders(token.value),
+            extra: _strictAttachmentResponseExtra,
+          );
+      _requireStrictAttachmentResponse(
+        response.extra[_attachmentRawResponseKey],
+        _attachmentUploadResponseKeys,
+      );
+      final data = _requireResponseData(response.data?.data);
+      if (data.status.name != 'open') {
+        throw const FormatException('服务端返回了未知的附件上传状态');
+      }
+      final identity = _attachmentIdentity(
+        attachmentId: data.attachmentId,
+        uploadId: data.uploadId,
+        keyEpoch: data.keyEpoch,
+      );
+      _requireAttachmentCreateResponseMatches(
+        request: request,
+        identity: identity,
+        chunkCount: data.chunkCount,
+        totalCiphertextBytes: data.totalCiphertextBytes,
+      );
+      return CloudSyncAttachmentUpload(
+        identity: identity,
+        chunkCount: data.chunkCount,
+        totalCiphertextBytes: data.totalCiphertextBytes,
+        createdAt: data.createdAt,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncAttachmentStoredChunk> putAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentPutChunkRequest request,
+  }) {
+    return _guard(() async {
+      final identity = request.chunk.identity;
+      final generatedRequest = api.AttachmentPutChunkRequest(
+        (builder) => builder
+          ..mutationId = request.mutationId
+          ..attachmentId = identity.attachmentId
+          ..uploadId = identity.uploadId
+          ..keyEpoch = identity.keyEpoch
+          ..chunkIndex = request.chunk.chunkIndex
+          ..ciphertext = _encodeSyncCiphertext(request.ciphertext),
+      );
+      final response = await _client
+          .getSyncAttachmentApi()
+          .putEncryptedAttachmentChunk(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            attachmentPutChunkRequest: generatedRequest,
+            headers: _authorizationHeaders(token.value),
+            extra: _strictAttachmentResponseExtra,
+          );
+      _requireStrictAttachmentResponse(
+        response.extra[_attachmentRawResponseKey],
+        _attachmentStoredChunkResponseKeys,
+      );
+      final data = _requireResponseData(response.data?.data);
+      if (data.status.name != 'stored' ||
+          data.attachmentId != identity.attachmentId ||
+          data.uploadId != identity.uploadId ||
+          data.chunkIndex != request.chunk.chunkIndex ||
+          data.ciphertextBytes != request.ciphertext.length) {
+        throw const FormatException('服务端返回的附件分块写入结果与请求不一致');
+      }
+      return CloudSyncAttachmentStoredChunk(
+        chunk: request.chunk,
+        ciphertextBytes: data.ciphertextBytes,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncAttachmentCommittedUpload> commitAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCommitUploadRequest request,
+  }) {
+    return _guard(() async {
+      final identity = request.identity;
+      final generatedRequest = api.AttachmentCommitUploadRequest(
+        (builder) => builder
+          ..mutationId = request.mutationId
+          ..attachmentId = identity.attachmentId
+          ..uploadId = identity.uploadId
+          ..keyEpoch = identity.keyEpoch
+          ..manifestCiphertext = _encodeSyncCiphertext(
+            request.manifestCiphertext,
+          )
+          ..chunks.addAll(request.chunks.map(_toGeneratedManifestChunk)),
+      );
+      final response = await _client
+          .getSyncAttachmentApi()
+          .commitEncryptedAttachmentUpload(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            attachmentCommitUploadRequest: generatedRequest,
+            headers: _authorizationHeaders(token.value),
+            extra: _strictAttachmentResponseExtra,
+          );
+      _requireStrictAttachmentResponse(
+        response.extra[_attachmentRawResponseKey],
+        _attachmentCommittedResponseKeys,
+      );
+      final data = _requireResponseData(response.data?.data);
+      final responseIdentity = _attachmentIdentity(
+        attachmentId: data.attachmentId,
+        uploadId: data.uploadId,
+        keyEpoch: data.keyEpoch,
+      );
+      if (data.status.name != 'committed') {
+        throw const FormatException('服务端返回了未知的附件提交状态');
+      }
+      _requireMatchingAttachmentIdentity(identity, responseIdentity);
+      return CloudSyncAttachmentCommittedUpload(
+        identity: responseIdentity,
+        committedAt: data.committedAt,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncAttachmentManifest> getAttachmentManifest({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentIdentity identity,
+  }) {
+    return _guard(() async {
+      final generatedRequest = api.AttachmentGetManifestRequest(
+        (builder) => builder
+          ..attachmentId = identity.attachmentId
+          ..uploadId = identity.uploadId
+          ..keyEpoch = identity.keyEpoch,
+      );
+      final response = await _client
+          .getSyncAttachmentApi()
+          .getEncryptedAttachmentManifest(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            attachmentGetManifestRequest: generatedRequest,
+            headers: _authorizationHeaders(token.value),
+            extra: _strictAttachmentResponseExtra,
+          );
+      _requireStrictAttachmentResponse(
+        response.extra[_attachmentRawResponseKey],
+        _attachmentManifestResponseKeys,
+        validateChunks: true,
+      );
+      final data = _requireResponseData(response.data?.data);
+      final responseIdentity = _attachmentIdentity(
+        attachmentId: data.attachmentId,
+        uploadId: data.uploadId,
+        keyEpoch: data.keyEpoch,
+      );
+      _requireMatchingAttachmentIdentity(identity, responseIdentity);
+      final manifestCiphertext = _decodeCanonicalAttachmentCiphertext(
+        data.manifestCiphertext,
+        expectedLength: data.manifestCiphertextBytes,
+        maximumLength: cloudSyncMaximumAttachmentManifestCiphertextBytes,
+      );
+      return CloudSyncAttachmentManifest(
+        identity: responseIdentity,
+        chunkCount: data.chunkCount,
+        totalCiphertextBytes: data.totalCiphertextBytes,
+        manifestCiphertext: manifestCiphertext,
+        manifestCiphertextBytes: data.manifestCiphertextBytes,
+        chunks: data.chunks
+            .map(
+              (chunk) => CloudSyncAttachmentManifestChunk(
+                chunkIndex: chunk.chunkIndex,
+                ciphertextBytes: chunk.ciphertextBytes,
+              ),
+            )
+            .toList(growable: false),
+        committedAt: data.committedAt,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncAttachmentChunk> getAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentChunkIdentity chunk,
+  }) {
+    return _guard(() async {
+      final identity = chunk.identity;
+      final generatedRequest = api.AttachmentGetChunkRequest(
+        (builder) => builder
+          ..attachmentId = identity.attachmentId
+          ..uploadId = identity.uploadId
+          ..keyEpoch = identity.keyEpoch
+          ..chunkIndex = chunk.chunkIndex,
+      );
+      final response = await _client
+          .getSyncAttachmentApi()
+          .getEncryptedAttachmentChunk(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            attachmentGetChunkRequest: generatedRequest,
+            headers: _authorizationHeaders(token.value),
+            extra: _strictAttachmentResponseExtra,
+          );
+      _requireStrictAttachmentResponse(
+        response.extra[_attachmentRawResponseKey],
+        _attachmentChunkResponseKeys,
+      );
+      final data = _requireResponseData(response.data?.data);
+      final responseIdentity = _attachmentIdentity(
+        attachmentId: data.attachmentId,
+        uploadId: data.uploadId,
+        keyEpoch: data.keyEpoch,
+      );
+      _requireMatchingAttachmentIdentity(identity, responseIdentity);
+      if (data.chunkIndex != chunk.chunkIndex) {
+        throw const FormatException('服务端返回了其他附件分块');
+      }
+      final ciphertext = _decodeCanonicalAttachmentCiphertext(
+        data.ciphertext,
+        expectedLength: data.ciphertextBytes,
+        maximumLength: cloudSyncMaximumAttachmentChunkCiphertextBytes,
+      );
+      return CloudSyncAttachmentChunk(
+        chunk: chunk,
+        ciphertext: ciphertext,
+        ciphertextBytes: data.ciphertextBytes,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncAttachmentDeleted> deleteAttachment({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentDeleteRequest request,
+  }) {
+    return _guard(() async {
+      final identity = request.identity;
+      final generatedRequest = api.AttachmentDeleteRequest(
+        (builder) => builder
+          ..mutationId = request.mutationId
+          ..attachmentId = identity.attachmentId
+          ..uploadId = identity.uploadId
+          ..keyEpoch = identity.keyEpoch,
+      );
+      final response = await _client
+          .getSyncAttachmentApi()
+          .deleteEncryptedAttachment(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            attachmentDeleteRequest: generatedRequest,
+            headers: _authorizationHeaders(token.value),
+            extra: _strictAttachmentResponseExtra,
+          );
+      _requireStrictAttachmentResponse(
+        response.extra[_attachmentRawResponseKey],
+        _attachmentDeletedResponseKeys,
+      );
+      final data = _requireResponseData(response.data?.data);
+      final responseIdentity = _attachmentIdentity(
+        attachmentId: data.attachmentId,
+        uploadId: data.uploadId,
+        keyEpoch: data.keyEpoch,
+      );
+      if (data.status.name != 'deleted') {
+        throw const FormatException('服务端返回了未知的附件删除状态');
+      }
+      _requireMatchingAttachmentIdentity(identity, responseIdentity);
+      return CloudSyncAttachmentDeleted(
+        identity: responseIdentity,
+        deletedAt: data.deletedAt,
+      );
+    });
+  }
+
+  @override
   Future<List<CloudSyncRecordMutationResult>> pushRecords(
     List<CloudSyncRecordMutation> mutations,
   ) {
@@ -870,6 +1204,116 @@ final class CloudSyncClient
         retryable: false,
       );
     }
+  }
+}
+
+api.AttachmentManifestChunk _toGeneratedManifestChunk(
+  CloudSyncAttachmentManifestChunk chunk,
+) {
+  return api.AttachmentManifestChunk(
+    (builder) => builder
+      ..chunkIndex = chunk.chunkIndex
+      ..ciphertextBytes = chunk.ciphertextBytes,
+  );
+}
+
+CloudSyncAttachmentIdentity _attachmentIdentity({
+  required String attachmentId,
+  required String uploadId,
+  required int keyEpoch,
+}) {
+  return CloudSyncAttachmentIdentity(
+    attachmentId: attachmentId,
+    uploadId: uploadId,
+    keyEpoch: keyEpoch,
+  );
+}
+
+void _requireAttachmentCreateResponseMatches({
+  required CloudSyncAttachmentCreateUploadRequest request,
+  required CloudSyncAttachmentIdentity identity,
+  required int chunkCount,
+  required int totalCiphertextBytes,
+}) {
+  if (identity.attachmentId != request.attachmentId ||
+      identity.keyEpoch != request.keyEpoch ||
+      chunkCount != request.chunkCount ||
+      totalCiphertextBytes != request.totalCiphertextBytes) {
+    throw const FormatException('服务端返回的附件上传身份与请求不一致');
+  }
+}
+
+void _requireMatchingAttachmentIdentity(
+  CloudSyncAttachmentIdentity expected,
+  CloudSyncAttachmentIdentity actual,
+) {
+  if (actual.attachmentId != expected.attachmentId ||
+      actual.uploadId != expected.uploadId ||
+      actual.keyEpoch != expected.keyEpoch) {
+    throw const FormatException('服务端返回了其他附件上传身份');
+  }
+}
+
+void _requireStrictAttachmentResponse(
+  Object? rawResponse,
+  Set<String> expectedDataKeys, {
+  bool validateChunks = false,
+}) {
+  final envelope = copyCloudSyncJsonMap(rawResponse);
+  _requireExactAttachmentKeys(
+    envelope,
+    _attachmentResponseEnvelopeKeys,
+    '附件响应',
+  );
+  final data = copyCloudSyncJsonMap(envelope['data']);
+  _requireExactAttachmentKeys(data, expectedDataKeys, '附件响应 data');
+  if (!validateChunks) return;
+
+  final chunks = data['chunks'];
+  if (chunks is! List<Object?>) {
+    throw const FormatException('附件响应 chunks 必须为数组');
+  }
+  for (final chunk in chunks) {
+    _requireExactAttachmentKeys(
+      copyCloudSyncJsonMap(chunk),
+      _attachmentManifestChunkKeys,
+      '附件响应 chunk',
+    );
+  }
+}
+
+void _requireExactAttachmentKeys(
+  CloudSyncJsonMap value,
+  Set<String> expectedKeys,
+  String context,
+) {
+  if (value.length != expectedKeys.length ||
+      !value.keys.every(expectedKeys.contains)) {
+    throw FormatException('$context 字段集合无效');
+  }
+}
+
+Uint8List _decodeCanonicalAttachmentCiphertext(
+  String value, {
+  required int expectedLength,
+  required int maximumLength,
+}) {
+  if (expectedLength < 1 ||
+      expectedLength > maximumLength ||
+      value.length != (expectedLength * 8 + 5) ~/ 6 ||
+      !_base64UrlPattern.hasMatch(value)) {
+    throw const FormatException('服务端返回了无效的附件密文');
+  }
+  try {
+    final padding = '=' * ((4 - value.length % 4) % 4);
+    final decoded = base64Url.decode('$value$padding');
+    if (decoded.length != expectedLength ||
+        base64Url.encode(decoded).replaceAll('=', '') != value) {
+      throw const FormatException('服务端返回了非规范附件密文');
+    }
+    return Uint8List.fromList(decoded);
+  } on FormatException {
+    throw const FormatException('服务端返回了无效的附件密文');
   }
 }
 
@@ -1621,6 +2065,63 @@ _ParsedServerError? _parseServerError(Object? raw) {
     return null;
   }
 }
+
+const _attachmentResponseMarker = 'kelivo.strict-attachment-response';
+const _attachmentRawResponseKey = 'kelivo.raw-attachment-response';
+const _strictAttachmentResponseExtra = <String, Object>{
+  _attachmentResponseMarker: true,
+};
+const _attachmentResponseEnvelopeKeys = <String>{'data'};
+const _attachmentUploadResponseKeys = <String>{
+  'attachmentId',
+  'uploadId',
+  'keyEpoch',
+  'chunkCount',
+  'totalCiphertextBytes',
+  'status',
+  'createdAt',
+};
+const _attachmentStoredChunkResponseKeys = <String>{
+  'attachmentId',
+  'uploadId',
+  'chunkIndex',
+  'ciphertextBytes',
+  'status',
+};
+const _attachmentCommittedResponseKeys = <String>{
+  'attachmentId',
+  'uploadId',
+  'keyEpoch',
+  'status',
+  'committedAt',
+};
+const _attachmentManifestResponseKeys = <String>{
+  'attachmentId',
+  'uploadId',
+  'keyEpoch',
+  'chunkCount',
+  'totalCiphertextBytes',
+  'manifestCiphertext',
+  'manifestCiphertextBytes',
+  'chunks',
+  'committedAt',
+};
+const _attachmentChunkResponseKeys = <String>{
+  'attachmentId',
+  'uploadId',
+  'keyEpoch',
+  'chunkIndex',
+  'ciphertext',
+  'ciphertextBytes',
+};
+const _attachmentDeletedResponseKeys = <String>{
+  'attachmentId',
+  'uploadId',
+  'keyEpoch',
+  'status',
+  'deletedAt',
+};
+const _attachmentManifestChunkKeys = <String>{'chunkIndex', 'ciphertextBytes'};
 
 final _syncIdentifierPattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',

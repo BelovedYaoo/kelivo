@@ -17,6 +17,22 @@ import 'package:kelivo_sync_api_client/src/model/date.dart';
 import 'package:kelivo_sync_api_client/src/model/admin_device_summary.dart';
 import 'package:kelivo_sync_api_client/src/model/admin_device_user_summary.dart';
 import 'package:kelivo_sync_api_client/src/model/admin_user_summary.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_chunk_data.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_commit_upload_request.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_committed_data.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_create_upload_request.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_delete_request.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_deleted_data.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_get_chunk_request.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_get_manifest_request.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_manifest_chunk.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_manifest_data.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_put_chunk_request.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_stored_chunk_data.dart';
+import 'package:kelivo_sync_api_client/src/model/attachment_upload_data.dart';
+import 'package:kelivo_sync_api_client/src/model/commit_encrypted_attachment_upload_response.dart';
+import 'package:kelivo_sync_api_client/src/model/create_encrypted_attachment_upload_response.dart';
+import 'package:kelivo_sync_api_client/src/model/delete_encrypted_attachment_response.dart';
 import 'package:kelivo_sync_api_client/src/model/device_pairing_approve_data.dart';
 import 'package:kelivo_sync_api_client/src/model/device_pairing_approve_request.dart';
 import 'package:kelivo_sync_api_client/src/model/device_pairing_approve_response.dart';
@@ -37,6 +53,8 @@ import 'package:kelivo_sync_api_client/src/model/device_pairing_query_request.da
 import 'package:kelivo_sync_api_client/src/model/device_pairing_query_response.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response_error.dart';
+import 'package:kelivo_sync_api_client/src/model/get_encrypted_attachment_chunk_response.dart';
+import 'package:kelivo_sync_api_client/src/model/get_encrypted_attachment_manifest_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_data.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_request.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_response.dart';
@@ -66,6 +84,7 @@ import 'package:kelivo_sync_api_client/src/model/opaque_registration_start_respo
 import 'package:kelivo_sync_api_client/src/model/pull_encrypted_sync_changes_response.dart';
 import 'package:kelivo_sync_api_client/src/model/pull_encrypted_sync_snapshot_response.dart';
 import 'package:kelivo_sync_api_client/src/model/push_encrypted_sync_records_response.dart';
+import 'package:kelivo_sync_api_client/src/model/put_encrypted_attachment_chunk_response.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_data.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_request.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_response.dart';
@@ -102,6 +121,22 @@ part 'serializers.g.dart';
   AdminDeviceSummary,
   AdminDeviceUserSummary,
   AdminUserSummary,
+  AttachmentChunkData,
+  AttachmentCommitUploadRequest,
+  AttachmentCommittedData,
+  AttachmentCreateUploadRequest,
+  AttachmentDeleteRequest,
+  AttachmentDeletedData,
+  AttachmentGetChunkRequest,
+  AttachmentGetManifestRequest,
+  AttachmentManifestChunk,
+  AttachmentManifestData,
+  AttachmentPutChunkRequest,
+  AttachmentStoredChunkData,
+  AttachmentUploadData,
+  CommitEncryptedAttachmentUploadResponse,
+  CreateEncryptedAttachmentUploadResponse,
+  DeleteEncryptedAttachmentResponse,
   DevicePairingApproveData,
   DevicePairingApproveRequest,
   DevicePairingApproveResponse,
@@ -122,6 +157,8 @@ part 'serializers.g.dart';
   DevicePairingQueryResponse,
   ErrorResponse,
   ErrorResponseError,
+  GetEncryptedAttachmentChunkResponse,
+  GetEncryptedAttachmentManifestResponse,
   ListAdminDevicesData,
   ListAdminDevicesRequest,
   ListAdminDevicesResponse,
@@ -151,6 +188,7 @@ part 'serializers.g.dart';
   PullEncryptedSyncChangesResponse,
   PullEncryptedSyncSnapshotResponse,
   PushEncryptedSyncRecordsResponse,
+  PutEncryptedAttachmentChunkResponse,
   RevokeAdminDeviceData,
   RevokeAdminDeviceRequest,
   RevokeAdminDeviceResponse,

@@ -16,6 +16,26 @@ Serializers _$serializers =
           ..add(AdminUserSummary.serializer)
           ..add(AdminUserSummaryRoleEnum.serializer)
           ..add(AdminUserSummaryStatusEnum.serializer)
+          ..add(AttachmentChunkData.serializer)
+          ..add(AttachmentCommitUploadRequest.serializer)
+          ..add(AttachmentCommittedData.serializer)
+          ..add(AttachmentCommittedDataStatusEnum.serializer)
+          ..add(AttachmentCreateUploadRequest.serializer)
+          ..add(AttachmentDeleteRequest.serializer)
+          ..add(AttachmentDeletedData.serializer)
+          ..add(AttachmentDeletedDataStatusEnum.serializer)
+          ..add(AttachmentGetChunkRequest.serializer)
+          ..add(AttachmentGetManifestRequest.serializer)
+          ..add(AttachmentManifestChunk.serializer)
+          ..add(AttachmentManifestData.serializer)
+          ..add(AttachmentPutChunkRequest.serializer)
+          ..add(AttachmentStoredChunkData.serializer)
+          ..add(AttachmentStoredChunkDataStatusEnum.serializer)
+          ..add(AttachmentUploadData.serializer)
+          ..add(AttachmentUploadDataStatusEnum.serializer)
+          ..add(CommitEncryptedAttachmentUploadResponse.serializer)
+          ..add(CreateEncryptedAttachmentUploadResponse.serializer)
+          ..add(DeleteEncryptedAttachmentResponse.serializer)
           ..add(DevicePairingApproveData.serializer)
           ..add(DevicePairingApproveDataResultEnum.serializer)
           ..add(DevicePairingApproveRequest.serializer)
@@ -42,6 +62,8 @@ Serializers _$serializers =
           ..add(DevicePairingQueryResponse.serializer)
           ..add(ErrorResponse.serializer)
           ..add(ErrorResponseError.serializer)
+          ..add(GetEncryptedAttachmentChunkResponse.serializer)
+          ..add(GetEncryptedAttachmentManifestResponse.serializer)
           ..add(ListAdminDevicesData.serializer)
           ..add(ListAdminDevicesRequest.serializer)
           ..add(ListAdminDevicesRequestStatusEnum.serializer)
@@ -85,6 +107,7 @@ Serializers _$serializers =
           ..add(PullEncryptedSyncChangesResponse.serializer)
           ..add(PullEncryptedSyncSnapshotResponse.serializer)
           ..add(PushEncryptedSyncRecordsResponse.serializer)
+          ..add(PutEncryptedAttachmentChunkResponse.serializer)
           ..add(RevokeAdminDeviceData.serializer)
           ..add(RevokeAdminDeviceRequest.serializer)
           ..add(RevokeAdminDeviceResponse.serializer)
@@ -134,6 +157,18 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(AdminUserSummary)]),
             () => ListBuilder<AdminUserSummary>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(AttachmentManifestChunk),
+            ]),
+            () => ListBuilder<AttachmentManifestChunk>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(AttachmentManifestChunk),
+            ]),
+            () => ListBuilder<AttachmentManifestChunk>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncChange)]),
