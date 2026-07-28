@@ -1,10 +1,13 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import 'config_sync_keys.dart';
+import 'e2ee_config_sync_payload_schema.dart';
 import 'sync_codec.dart';
 
 const e2eeSyncPayloadFormatVersion = 1;
 const _maximumPositiveInt63 = 0x7fffffffffffffff;
+const _minimumSignedInt64 = -0x8000000000000000;
 // 解密内容不可信，限制嵌套层数可避免恶意载荷耗尽客户端调用栈。
 const _maximumJsonNestingDepth = 64;
 
@@ -26,10 +29,14 @@ abstract final class E2eeSyncChatRecordTypes {
   };
 }
 
-/// 聊天记录必须先通过实体专属 schema，再进入可逐字节比较的明文信封。
+/// 记录必须先通过实体专属 schema，再进入可逐字节比较的明文信封。
 abstract final class E2eeSyncPayloadCodec {
   static void validateEntityKey(SyncEntityKey entityKey) {
-    _validateChatEntityKey(entityKey);
+    if (E2eeSyncChatRecordTypes.values.contains(entityKey.entityType)) {
+      _validateChatEntityKey(entityKey);
+      return;
+    }
+    ConfigSyncKeys.validate(entityKey);
   }
 
   static Uint8List encode({
@@ -41,7 +48,7 @@ abstract final class E2eeSyncPayloadCodec {
     if (frozenPayload is! Map<String, Object?>) {
       throw const FormatException('E2EE 同步 payload 必须为对象');
     }
-    _validateChatPayload(entityKey, frozenPayload);
+    _validatePayload(entityKey, frozenPayload);
     final output = StringBuffer();
     _writeCanonicalJson(output, <String, Object?>{
       'payload': frozenPayload,
@@ -95,13 +102,21 @@ abstract final class E2eeSyncPayloadCodec {
     if (payload is! Map<String, Object?>) {
       throw const FormatException('E2EE 同步 payload 必须为对象');
     }
-    _validateChatPayload(entityKey, payload);
+    _validatePayload(entityKey, payload);
     final canonical = encode(entityKey: entityKey, payload: payload);
     if (!_sameBytes(bytes, canonical)) {
       throw const FormatException('E2EE 同步 payload 不是规范 JSON');
     }
     return payload;
   }
+}
+
+void _validatePayload(SyncEntityKey entityKey, Map<String, Object?> payload) {
+  if (E2eeSyncChatRecordTypes.values.contains(entityKey.entityType)) {
+    _validateChatPayload(entityKey, payload);
+    return;
+  }
+  E2eeConfigSyncPayloadSchema.validate(entityKey, payload);
 }
 
 const _conversationKeys = <String>{
@@ -433,7 +448,13 @@ Object? _freezeJsonValue(Object? value, [int depth = 0]) {
   if (depth > _maximumJsonNestingDepth) {
     throw const FormatException('E2EE 同步 payload 嵌套层数超出限制');
   }
-  if (value == null || value is bool || value is int) return value;
+  if (value == null || value is bool) return value;
+  if (value is int) {
+    if (value < _minimumSignedInt64 || value > _maximumPositiveInt63) {
+      throw const FormatException('E2EE 同步 payload 整数超出 int64 范围');
+    }
+    return value;
+  }
   if (value is String) {
     _requireWellFormedUtf16(value);
     return value;

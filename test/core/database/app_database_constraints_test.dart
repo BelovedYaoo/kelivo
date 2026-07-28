@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:Kelivo/core/database/app_database.dart';
@@ -9,6 +10,7 @@ import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
+import 'package:Kelivo/core/services/sync/e2ee_config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
@@ -97,6 +99,328 @@ Map<String, Object?> _messagePayload({
   'cachedTokens': 0,
   'durationMs': 100,
 };
+
+List<({SyncEntityKey key, Map<String, Object?> payload})>
+_configPayloadCases() {
+  const providerId = 'provider-config-1';
+  const assistantId = 'assistant-config-1';
+  const memoryId = 'memory-config-1';
+  const worldBookId = 'world-book-config-1';
+  const quickPhraseId = 'quick-phrase-config-1';
+  const searchServiceId = 'search-config-1';
+  const ttsServiceId = 'tts-config-1';
+  const mcpServerId = 'mcp-config-1';
+  const instructionId = 'instruction-config-1';
+  return <({SyncEntityKey key, Map<String, Object?> payload})>[
+    (
+      key: ConfigSyncKeys.provider(providerId),
+      payload: <String, Object?>{
+        'id': providerId,
+        'enabled': true,
+        'name': 'OpenAI',
+        'apiKey': 'sk-provider-secret',
+        'baseUrl': 'https://api.example.com/v1',
+        'providerType': 'openai',
+        'chatPath': null,
+        'useResponseApi': true,
+        'vertexAI': null,
+        'location': null,
+        'projectId': null,
+        'serviceAccountJson': null,
+        'models': <Object?>['gpt-4.1'],
+        'modelOverrides': <String, Object?>{
+          'gpt-4.1': <String, Object?>{
+            'apiModelId': 'gpt-4.1-2026-07-01',
+            'headers': <Object?>[
+              <String, Object?>{'name': 'X-Secret', 'value': 'header-secret'},
+            ],
+            'body': <Object?>[
+              <String, Object?>{'key': 'reasoning', 'value': 'true'},
+            ],
+          },
+        },
+        'proxyEnabled': true,
+        'proxyType': 'http',
+        'proxyHost': '127.0.0.1',
+        'proxyPort': '7890',
+        'proxyUsername': 'proxy-user',
+        'proxyPassword': 'proxy-secret',
+        'avatarType': null,
+        'avatarValue': null,
+        'multiKeyEnabled': true,
+        'apiKeys': <Object?>[
+          <String, Object?>{
+            'id': 'key-1',
+            'key': 'sk-key-secret',
+            'name': '主密钥',
+            'isEnabled': true,
+            'priority': 1,
+            'maxRequestsPerMinute': 60,
+            'usage': <String, Object?>{
+              'totalRequests': 12,
+              'successfulRequests': 10,
+              'failedRequests': 2,
+              'consecutiveFailures': 0,
+              'lastUsed': 1785254400000,
+            },
+            'status': 'active',
+            'lastError': null,
+            'createdAt': 1785254300000,
+            'updatedAt': 1785254400000,
+          },
+        ],
+        'keyManagement': <String, Object?>{
+          'strategy': 'roundRobin',
+          'maxFailuresBeforeDisable': 3,
+          'failureRecoveryTimeMinutes': 5,
+          'enableAutoRecovery': true,
+          'roundRobinIndex': 0,
+        },
+        'aihubmixAppCodeEnabled': false,
+        'balanceEnabled': true,
+        'balanceApiPath': '/credits',
+        'balanceResultPath': r'$.data.balance',
+        'claudePromptCachingEnabled': false,
+        'claudePromptCachingTtl': '5m',
+        '_position': 0,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.assistant(assistantId),
+      payload: <String, Object?>{
+        'id': assistantId,
+        'name': '助手',
+        'avatar': null,
+        'useAssistantAvatar': false,
+        'useAssistantName': true,
+        'chatModelProvider': providerId,
+        'chatModelId': 'gpt-4.1',
+        'temperature': 0.7,
+        'topP': 1.0,
+        'contextMessageSize': 64,
+        'limitContextMessages': true,
+        'streamOutput': true,
+        'thinkingBudget': 128,
+        'maxTokens': 4096,
+        'systemPrompt': '你是助手',
+        'messageTemplate': '{{ message }}',
+        'searchEnabled': true,
+        'mcpServerIds': <Object?>[mcpServerId],
+        'localToolIds': <Object?>['calculator'],
+        'background': 'https://example.com/background.png',
+        'customHeaders': <Object?>[
+          <String, Object?>{'name': 'X-Assistant', 'value': 'header-value'},
+        ],
+        'customBody': <Object?>[
+          <String, Object?>{'key': 'reasoning', 'value': 'true'},
+        ],
+        'enableMemory': true,
+        'enableRecentChatsReference': true,
+        'recentChatsSummaryMessageCount': 5,
+        'presetMessages': <Object?>[
+          <String, Object?>{'id': 'preset-1', 'role': 'user', 'content': '你好'},
+        ],
+        'regexRules': <Object?>[
+          <String, Object?>{
+            'id': 'regex-1',
+            'name': '清理',
+            'pattern': r'\s+$',
+            'replacement': '',
+            'scopes': <Object?>['assistant'],
+            'visualOnly': false,
+            'replaceOnly': true,
+            'enabled': true,
+          },
+        ],
+        '_position': 0,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.memory(memoryId),
+      payload: <String, Object?>{
+        'id': 7,
+        'syncId': memoryId,
+        'assistantId': assistantId,
+        'content': '偏好简洁回答',
+      },
+    ),
+    (
+      key: ConfigSyncKeys.worldBook(worldBookId),
+      payload: <String, Object?>{
+        'id': worldBookId,
+        'name': '世界书',
+        'description': '设定',
+        'enabled': true,
+        'entries': <Object?>[
+          <String, Object?>{
+            'id': 'entry-1',
+            'name': '地点',
+            'enabled': true,
+            'priority': 1,
+            'position': 'AFTER_SYSTEM_PROMPT',
+            'content': '地点设定',
+            'injectDepth': 4,
+            'role': 'USER',
+            'keywords': <Object?>['地点'],
+            'useRegex': false,
+            'caseSensitive': false,
+            'scanDepth': 4,
+            'constantActive': false,
+          },
+        ],
+        '_position': 0,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.quickPhrase(quickPhraseId),
+      payload: <String, Object?>{
+        'id': quickPhraseId,
+        'title': '继续',
+        'content': '请继续',
+        'isGlobal': false,
+        'assistantId': assistantId,
+        '_position': 0,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.searchService(searchServiceId),
+      payload: <String, Object?>{
+        'type': 'searxng',
+        'id': searchServiceId,
+        'url': 'https://search.example.com',
+        'engines': 'google,bing',
+        'language': 'zh-CN',
+        'username': 'search-user',
+        'password': 'search-secret',
+        '_position': 0,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.networkTts(ttsServiceId),
+      payload: <String, Object?>{
+        'id': ttsServiceId,
+        'enabled': true,
+        'name': 'MiniMax',
+        'kind': 'minimax',
+        'apiKey': 'tts-secret',
+        'baseUrl': 'https://tts.example.com/v1',
+        'model': 'speech-2.6-turbo',
+        'voiceId': 'female-shaonv',
+        'emotion': 'calm',
+        'speed': 1.0,
+        '_position': 0,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.mcpServer(mcpServerId),
+      payload: <String, Object?>{
+        'id': mcpServerId,
+        'enabled': true,
+        'name': '远端 MCP',
+        'transport': 'http',
+        'url': 'https://mcp.example.com',
+        'tools': <Object?>[
+          <String, Object?>{
+            'enabled': true,
+            'name': 'search',
+            'description': '搜索',
+            'params': <Object?>[
+              <String, Object?>{
+                'name': 'query',
+                'required': true,
+                'type': 'string',
+                'default': null,
+              },
+            ],
+            'schema': <String, Object?>{
+              'type': 'object',
+              'properties': <String, Object?>{
+                'query': <String, Object?>{'type': 'string'},
+              },
+            },
+            'needsApproval': true,
+          },
+        ],
+        'headers': <String, Object?>{'Authorization': 'Bearer mcp-secret'},
+        '_position': 0,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.instructionInjection(instructionId),
+      payload: <String, Object?>{
+        'id': instructionId,
+        'title': '格式',
+        'prompt': '使用 Markdown',
+        'group': '输出',
+        '_position': 0,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.profile,
+      payload: <String, Object?>{
+        'name': 'Ovo',
+        'avatarType': 'emoji',
+        'avatarValue': 'O',
+      },
+    ),
+    (
+      key: ConfigSyncKeys.providerGrouping,
+      payload: <String, Object?>{
+        'order': <Object?>[providerId],
+        'groups': <Object?>[
+          <String, Object?>{
+            'id': 'group-1',
+            'name': '常用',
+            'createdAt': 1785254400000,
+          },
+        ],
+        'assignments': <String, Object?>{providerId: 'group-1'},
+        'ungroupedPosition': 1,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.assistantSelection,
+      payload: <String, Object?>{'assistantId': assistantId},
+    ),
+    (
+      key: ConfigSyncKeys.worldBookActivity,
+      payload: <String, Object?>{
+        'activeIdsByAssistant': <String, Object?>{
+          assistantId: <Object?>[worldBookId],
+        },
+      },
+    ),
+    (
+      key: ConfigSyncKeys.instructionActivity,
+      payload: <String, Object?>{
+        'activeIdsByAssistant': <String, Object?>{
+          assistantId: <Object?>[instructionId],
+        },
+      },
+    ),
+    (
+      key: ConfigSyncKeys.searchState,
+      payload: <String, Object?>{
+        'selectedServiceId': searchServiceId,
+        'commonOptions': <String, Object?>{'resultSize': 10, 'timeout': 5000},
+        'enabled': true,
+        'autoTestOnLaunch': false,
+      },
+    ),
+    (
+      key: ConfigSyncKeys.ttsState,
+      payload: <String, Object?>{
+        'selectedServiceId': ttsServiceId,
+        'autoPlayAssistantReplies': true,
+        'textSelectionMode': 'fullText',
+      },
+    ),
+    (
+      key: ConfigSyncKeys.mcpState,
+      payload: <String, Object?>{'requestTimeoutSeconds': 30},
+    ),
+  ];
+}
 
 void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
@@ -3133,6 +3457,382 @@ void main() {
       expect(remaining.operationId, futureState.operationId);
       expect(remaining.phase, 'ready');
       expect(remaining.lastFailureKind, 'key-epoch-unavailable');
+    });
+  });
+
+  group('E2EE config payload codec and adapter', () {
+    test('十类配置实体与八个偏好单例规范往返且聊天 schema 不退化', () {
+      final seenEntityTypes = <String>{};
+      for (final testCase in _configPayloadCases()) {
+        seenEntityTypes.add(testCase.key.entityType);
+        final encoded = E2eeSyncPayloadCodec.encode(
+          entityKey: testCase.key,
+          payload: testCase.payload,
+        );
+        final decoded = E2eeSyncPayloadCodec.decode(
+          entityKey: testCase.key,
+          bytes: encoded,
+        );
+        final reencoded = E2eeSyncPayloadCodec.encode(
+          entityKey: testCase.key,
+          payload: decoded,
+        );
+
+        expect(decoded, testCase.payload, reason: testCase.key.toString());
+        expect(reencoded, orderedEquals(encoded));
+      }
+      expect(seenEntityTypes, ConfigSyncKeys.entityTypes);
+
+      const chatKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.conversation,
+        entityId: 'config-codec-chat-regression',
+      );
+      final chatEncoded = E2eeSyncPayloadCodec.encode(
+        entityKey: chatKey,
+        payload: _conversationPayload('聊天回归'),
+      );
+      expect(
+        E2eeSyncPayloadCodec.decode(entityKey: chatKey, bytes: chatEncoded),
+        _conversationPayload('聊天回归'),
+      );
+    });
+
+    test('拒绝额外字段、身份错配、未知变体、非法数值与非规范编码', () {
+      final providerCase = _configPayloadCases().firstWhere(
+        (testCase) => testCase.key.entityType == ConfigSyncKeys.providerType,
+      );
+      final withExtraField = <String, Object?>{
+        ...providerCase.payload,
+        'unexpected': true,
+      };
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: providerCase.key,
+          payload: withExtraField,
+        ),
+        throwsFormatException,
+      );
+
+      final wrongIdentity = <String, Object?>{
+        ...providerCase.payload,
+        'id': 'provider-config-other',
+      };
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: providerCase.key,
+          payload: wrongIdentity,
+        ),
+        throwsFormatException,
+      );
+
+      final apiKeys = List<Object?>.from(
+        providerCase.payload['apiKeys'] as List<Object?>,
+      );
+      final firstApiKey = Map<String, Object?>.from(
+        apiKeys.first as Map<String, Object?>,
+      );
+      final usage = Map<String, Object?>.from(
+        firstApiKey['usage'] as Map<String, Object?>,
+      )..['unknownUsageField'] = 1;
+      apiKeys[0] = <String, Object?>{...firstApiKey, 'usage': usage};
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: providerCase.key,
+          payload: <String, Object?>{
+            ...providerCase.payload,
+            'apiKeys': apiKeys,
+          },
+        ),
+        throwsFormatException,
+      );
+
+      final invalidPosition = <String, Object?>{
+        ...providerCase.payload,
+        '_position': -1,
+      };
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: providerCase.key,
+          payload: invalidPosition,
+        ),
+        throwsFormatException,
+      );
+
+      final invalidUnicode = <String, Object?>{
+        ...providerCase.payload,
+        'name': String.fromCharCode(0xd800),
+      };
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: providerCase.key,
+          payload: invalidUnicode,
+        ),
+        throwsFormatException,
+      );
+
+      final searchCase = _configPayloadCases().firstWhere(
+        (testCase) =>
+            testCase.key.entityType == ConfigSyncKeys.searchServiceType,
+      );
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: searchCase.key,
+          payload: <String, Object?>{
+            ...searchCase.payload,
+            'type': 'unknown-search',
+          },
+        ),
+        throwsFormatException,
+      );
+
+      final canonical = E2eeSyncPayloadCodec.encode(
+        entityKey: providerCase.key,
+        payload: providerCase.payload,
+      );
+      final nonCanonical = Uint8List.fromList(
+        utf8.encode(' ${utf8.decode(canonical)}'),
+      );
+      expect(
+        () => E2eeSyncPayloadCodec.decode(
+          entityKey: providerCase.key,
+          bytes: nonCanonical,
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeSyncPayloadCodec.validateEntityKey(
+          const SyncEntityKey(
+            entityType: 'unknown-config-type',
+            entityId: 'unknown-config-id',
+          ),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('远端整页按依赖稳定写入 Vault，墓碑幂等且不产生 outbox 回声', () async {
+      final cases = _configPayloadCases();
+      final providerCase = cases.firstWhere(
+        (testCase) => testCase.key.entityType == ConfigSyncKeys.providerType,
+      );
+      final secondProviderKey = ConfigSyncKeys.provider('provider-config-2');
+      final secondProviderPayload = <String, Object?>{
+        ...providerCase.payload,
+        'id': secondProviderKey.entityId,
+        'name': '第二供应商',
+        '_position': 1,
+      };
+      final assistantCase = cases.firstWhere(
+        (testCase) => testCase.key.entityType == ConfigSyncKeys.assistantType,
+      );
+      final profileCase = cases.firstWhere(
+        (testCase) => testCase.key == ConfigSyncKeys.profile,
+      );
+      final input = <({SyncEntityKey key, Map<String, Object?> payload})>[
+        profileCase,
+        assistantCase,
+        (key: secondProviderKey, payload: secondProviderPayload),
+        providerCase,
+      ];
+      final changes = <E2eeSyncPulledChange>[];
+      for (var index = 0; index < input.length; index++) {
+        final wire = await createPullValueChange(
+          changeSeq: index + 1,
+          revision: 1,
+          operation: 900 + index,
+          entityKey: input[index].key,
+          payload: input[index].payload,
+        );
+        changes.add(await authenticatePulledValueChange(wire));
+      }
+
+      var clockTick = 0;
+      final adapter = E2eeConfigSyncAdapter(
+        commands: configVault,
+        now: () => DateTime.utc(2026, 7, 29, 0, 0, clockTick++),
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 29),
+      );
+      final committed = await pullCommands.applyIncrementalPage(
+        expected: initial,
+        nextCursor: 'config-adapter-values',
+        lastChangeSeq: changes.length,
+        changes: changes,
+        applyBusiness: adapter.applyTransactional,
+        now: DateTime.utc(2026, 7, 29, 0, 1),
+      );
+
+      final insertedRows = await database
+          .customSelect(
+            'SELECT rowid AS row_id, entity_type, entity_id '
+            'FROM e2ee_config_entry_rows ORDER BY row_id',
+          )
+          .get();
+      expect(insertedRows.map((row) => row.read<String>('entity_id')), <String>[
+        secondProviderKey.entityId,
+        providerCase.key.entityId,
+        assistantCase.key.entityId,
+        profileCase.key.entityId,
+      ]);
+      expect(committed.checkpoint.syncCursor, 'config-adapter-values');
+      expect(await database.select(database.e2eeSyncIntentRows).get(), isEmpty);
+      expect(await database.select(database.e2eeSyncOutboxRows).get(), isEmpty);
+
+      for (final testCase in input) {
+        final snapshot = await adapter.readSnapshot(testCase.key);
+        expect(snapshot, isA<E2eeSyncValueSnapshot>());
+        final valueSnapshot = snapshot as E2eeSyncValueSnapshot;
+        expect(
+          E2eeSyncPayloadCodec.decode(
+            entityKey: testCase.key,
+            bytes: valueSnapshot.payload,
+          ),
+          testCase.payload,
+        );
+      }
+      final firstSnapshot =
+          await adapter.readSnapshot(providerCase.key) as E2eeSyncValueSnapshot;
+      firstSnapshot.payload.fillRange(0, firstSnapshot.payload.length, 0);
+      final secondSnapshot =
+          await adapter.readSnapshot(providerCase.key) as E2eeSyncValueSnapshot;
+      expect(secondSnapshot.payload, isNot(everyElement(0)));
+
+      final assistantValue = changes[1] as E2eeSyncPulledValueChange;
+      final tombstoneWire = await createPullTombstoneChange(
+        changeSeq: 5,
+        revision: 2,
+        operation: 904,
+        entityKey: assistantCase.key,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[
+          assistantValue.state.digest,
+        ],
+      );
+      final tombstone = await authenticatePulledTombstoneChange(tombstoneWire);
+      final firstDeletion = await pullCommands.applyIncrementalPage(
+        expected: committed.checkpoint,
+        nextCursor: 'config-adapter-tombstone',
+        lastChangeSeq: 5,
+        changes: <E2eeSyncPulledChange>[tombstone],
+        applyBusiness: adapter.applyTransactional,
+        now: DateTime.utc(2026, 7, 29, 0, 2),
+      );
+
+      expect(
+        await adapter.readSnapshot(assistantCase.key),
+        isA<E2eeSyncTombstoneSnapshot>(),
+      );
+      expect(
+        await adapter.readSnapshot(providerCase.key),
+        isA<E2eeSyncValueSnapshot>(),
+      );
+      expect(await database.select(database.e2eeSyncIntentRows).get(), isEmpty);
+      expect(await database.select(database.e2eeSyncOutboxRows).get(), isEmpty);
+
+      final secondTombstoneWire = await createPullTombstoneChange(
+        changeSeq: 6,
+        revision: 3,
+        operation: 905,
+        entityKey: assistantCase.key,
+        logicalVersion: 3,
+        parentDigests: <E2eeAccountRecordStateDigest>[tombstone.state.digest],
+      );
+      final secondTombstone = await authenticatePulledTombstoneChange(
+        secondTombstoneWire,
+      );
+      final secondDeletion = await pullCommands.applyIncrementalPage(
+        expected: firstDeletion.checkpoint,
+        nextCursor: 'config-adapter-tombstone-replayed',
+        lastChangeSeq: 6,
+        changes: <E2eeSyncPulledChange>[secondTombstone],
+        applyBusiness: adapter.applyTransactional,
+        now: DateTime.utc(2026, 7, 29, 0, 3),
+      );
+      expect(secondDeletion.checkpoint.lastChangeSeq, 6);
+      expect(
+        await adapter.readSnapshot(assistantCase.key),
+        isA<E2eeSyncTombstoneSnapshot>(),
+      );
+      expect(await database.select(database.e2eeSyncIntentRows).get(), isEmpty);
+      expect(await database.select(database.e2eeSyncOutboxRows).get(), isEmpty);
+    });
+
+    test('任一配置 payload 非法时 ledger、Vault 与 checkpoint 整页回滚', () async {
+      final cases = _configPayloadCases();
+      final providerCase = cases.firstWhere(
+        (testCase) => testCase.key.entityType == ConfigSyncKeys.providerType,
+      );
+      final assistantCase = cases.firstWhere(
+        (testCase) => testCase.key.entityType == ConfigSyncKeys.assistantType,
+      );
+      final providerWire = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 910,
+        entityKey: providerCase.key,
+        payload: providerCase.payload,
+      );
+      final assistantWire = await createPullValueChange(
+        changeSeq: 2,
+        revision: 1,
+        operation: 911,
+        entityKey: assistantCase.key,
+        payload: assistantCase.payload,
+      );
+      final providerChange = await authenticatePulledValueChange(providerWire);
+      final authenticatedAssistant = await authenticatePullChange(
+        assistantWire,
+      );
+      final invalidAssistant = E2eeSyncPulledValueChange(
+        untrustedServerMetadata: E2eeSyncUntrustedServerMetadata(
+          changeSeq: 2,
+          revision: 1,
+        ),
+        state: authenticatedAssistant,
+        payload: <String, Object?>{
+          ...assistantCase.payload,
+          'id': 'assistant-wrong-identity',
+        },
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 29),
+      );
+      final adapter = E2eeConfigSyncAdapter(
+        commands: configVault,
+        now: () => DateTime.utc(2026, 7, 29, 0, 1),
+      );
+
+      await expectLater(
+        pullCommands.applyIncrementalPage(
+          expected: initial,
+          nextCursor: 'must-rollback-config-page',
+          lastChangeSeq: 2,
+          changes: <E2eeSyncPulledChange>[providerChange, invalidAssistant],
+          applyBusiness: adapter.applyTransactional,
+          now: DateTime.utc(2026, 7, 29, 0, 2),
+        ),
+        throwsFormatException,
+      );
+
+      final unchanged = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 29, 0, 3),
+      );
+      expect(unchanged.syncCursor, equals(null));
+      expect(unchanged.lastChangeSeq, 0);
+      expect(await configVault.read(providerCase.key), equals(null));
+      expect(await configVault.read(assistantCase.key), equals(null));
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        isEmpty,
+      );
     });
   });
 
