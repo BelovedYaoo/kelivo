@@ -33,12 +33,17 @@ import 'core/providers/s3_backup_provider.dart';
 import 'core/providers/backup_reminder_provider.dart';
 import 'core/providers/hotkey_provider.dart';
 import 'core/providers/cloud_sync_provider.dart';
+import 'core/database/app_database.dart';
 import 'core/database/chat_database_gateway.dart';
 import 'core/database/database_installation_gate.dart';
 import 'core/database/sqlcipher_database_key.dart';
 import 'core/services/chat/chat_service.dart';
+import 'core/services/sync/cloud_sync_client.dart';
+import 'core/services/sync/cloud_sync_types.dart';
+import 'core/services/sync/e2ee_chat_content_runtime.dart';
 import 'core/services/sync/sync_write_executor.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
+import 'core/services/workspace/device_state_blob_store.dart';
 import 'core/services/database_v2_rollout_ledger.dart';
 import 'core/services/backup/restore_business_lease.dart';
 import 'core/services/backup/restore_startup_gate.dart';
@@ -58,12 +63,14 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:system_fonts/system_fonts.dart';
 import 'dart:io'
     show
+        File,
         Platform,
         pid,
         stderr; // kept for global override usage inside provider
 import 'core/services/android_background.dart';
 import 'core/services/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 final RouteObserver<ModalRoute<dynamic>> routeObserver =
     RouteObserver<ModalRoute<dynamic>>();
@@ -242,11 +249,16 @@ Future<void> main() async {
       }
       // Enable edge-to-edge to allow content under system bars (Android)
       SystemChrome.setEnabledSystemUIMode(SystemUiMode.edgeToEdge);
+      final chatContentRuntime = _createE2eeChatContentRuntime(
+        workspaceRuntime: workspaceRuntime,
+        databaseGateway: databaseGateway,
+      );
       // Start app (Flutter log capture is toggleable and off by default)
       runApp(
         MyApp(
           workspaceRuntime: workspaceRuntime,
           databaseGateway: databaseGateway,
+          chatContentRuntime: chatContentRuntime,
           restoreOutcome: restoreOutcome?.state,
         ),
       );
@@ -257,6 +269,31 @@ Future<void> main() async {
         parent.print(zone, line);
       },
     ),
+  );
+}
+
+E2eeChatContentRuntime? _createE2eeChatContentRuntime({
+  required AccountWorkspaceRuntime workspaceRuntime,
+  required ChatDatabaseGateway databaseGateway,
+}) {
+  final session = workspaceRuntime.current.session;
+  if (session == null ||
+      session.baseUrl != defaultCloudSyncBaseUrl ||
+      session.isExpiredAt(DateTime.now().toUtc())) {
+    return null;
+  }
+  return E2eeChatContentRuntime.takeOwnership(
+    session: session,
+    deviceStateStore: DeviceStateBlobStore(
+      installationRoot: workspaceRuntime.installationRoot,
+    ),
+    secureCore: const KelivoSecureCore(),
+    databaseGateway: databaseGateway,
+    databaseFile: File(
+      '${workspaceRuntime.current.dataDirectory.path}'
+      '${Platform.pathSeparator}${AppDatabase.databaseFileName}',
+    ),
+    client: CloudSyncClient(token: session.token),
   );
 }
 
@@ -349,16 +386,19 @@ class MyApp extends StatelessWidget {
     required this.workspaceRuntime,
     required this.databaseGateway,
     super.key,
+    this.chatContentRuntime,
     this.restoreOutcome,
   });
 
   final AccountWorkspaceRuntime workspaceRuntime;
   final ChatDatabaseGateway databaseGateway;
+  final E2eeChatContentRuntime? chatContentRuntime;
   final RestoreReceiptState? restoreOutcome;
 
   @override
   Widget build(BuildContext context) {
     const localSyncWriteExecutor = LocalOnlySyncWriteExecutor();
+    final chatSyncWriteExecutor = chatContentRuntime ?? localSyncWriteExecutor;
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ChatProvider()),
@@ -376,10 +416,16 @@ class MyApp extends StatelessWidget {
           },
         ),
         ChangeNotifierProvider(
-          create: (_) => ChatService(
-            localSyncWriteExecutor,
-            databaseGateway: databaseGateway,
-          ),
+          // 云同步 Provider 会立即初始化内容运行时，因此聊天服务必须先完成绑定。
+          lazy: false,
+          create: (_) {
+            final chatService = ChatService(
+              chatSyncWriteExecutor,
+              databaseGateway: databaseGateway,
+            );
+            chatContentRuntime?.bindChatService(chatService);
+            return chatService;
+          },
         ),
         ChangeNotifierProvider(create: (_) => McpToolService()),
         ChangeNotifierProvider(
@@ -434,9 +480,13 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(
           lazy: false,
           create: (ctx) {
-            final provider = CloudSyncProvider.controlPlaneOnly(
-              workspaceRuntime,
-            );
+            final runtime = chatContentRuntime;
+            final provider = runtime == null
+                ? CloudSyncProvider.controlPlaneOnly(workspaceRuntime)
+                : CloudSyncProvider.withContentRuntime(
+                    workspaceRuntime,
+                    contentRuntime: runtime,
+                  );
             unawaited(provider.initialize());
             return provider;
           },
