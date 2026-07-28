@@ -5,7 +5,7 @@ import 'config_sync_keys.dart';
 import 'e2ee_config_sync_payload_schema.dart';
 import 'sync_codec.dart';
 
-const e2eeSyncPayloadFormatVersion = 1;
+const e2eeSyncPayloadFormatVersion = 2;
 const _maximumPositiveInt63 = 0x7fffffffffffffff;
 const _minimumSignedInt64 = -0x8000000000000000;
 // 解密内容不可信，限制嵌套层数可避免恶意载荷耗尽客户端调用栈。
@@ -155,7 +155,13 @@ const _messageKeys = <String>{
   'cachedTokens',
   'durationMs',
 };
-const _attachmentKeys = <String>{'attachmentId', 'kind', 'order'};
+const _attachmentKeys = <String>{
+  'attachmentId',
+  'uploadId',
+  'keyEpoch',
+  'kind',
+  'order',
+};
 const _messageSelectionKeys = <String>{
   'conversationId',
   'groupId',
@@ -163,8 +169,8 @@ const _messageSelectionKeys = <String>{
 };
 const _toolEventKeys = <String>{'messageId', 'events'};
 const _thoughtSignatureKeys = <String>{'messageId', 'signature'};
-final _uuidPattern = RegExp(
-  r'^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$',
+final _canonicalUuidV4Pattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
 
 void _validateChatEntityKey(SyncEntityKey entityKey) {
@@ -261,8 +267,8 @@ void _validateMessage(Map<String, Object?> payload) {
 }
 
 void _validateAttachments(List<Object?> attachments) {
-  final ids = <String>{};
-  final orders = <int>{};
+  final attachmentIds = <String>{};
+  final uploadIds = <String>{};
   for (var index = 0; index < attachments.length; index++) {
     final attachment = attachments[index];
     if (attachment is! Map<String, Object?>) {
@@ -273,17 +279,29 @@ void _validateAttachments(List<Object?> attachments) {
       _attachmentKeys,
       'message.attachments[$index]',
     );
-    final id = _requiredString(attachment, 'attachmentId');
-    if (!_uuidPattern.hasMatch(id) || !ids.add(id)) {
+    final attachmentId = _requiredString(attachment, 'attachmentId');
+    if (!_canonicalUuidV4Pattern.hasMatch(attachmentId) ||
+        !attachmentIds.add(attachmentId)) {
       throw FormatException('message.attachments[$index].attachmentId 无效或重复');
+    }
+    final uploadId = _requiredString(attachment, 'uploadId');
+    if (!_canonicalUuidV4Pattern.hasMatch(uploadId) ||
+        !uploadIds.add(uploadId)) {
+      throw FormatException('message.attachments[$index].uploadId 无效或重复');
+    }
+    final keyEpoch = _requiredInteger(attachment, 'keyEpoch');
+    if (keyEpoch < 1 || keyEpoch > 0xffffffff) {
+      throw FormatException(
+        'message.attachments[$index].keyEpoch 超出正 uint32 范围',
+      );
     }
     final kind = _requiredString(attachment, 'kind');
     if (kind != 'image' && kind != 'file') {
       throw FormatException('message.attachments[$index].kind 无效');
     }
     final order = _requiredNonNegativeInteger(attachment, 'order');
-    if (!orders.add(order)) {
-      throw FormatException('message.attachments[$index].order 重复');
+    if (order != index) {
+      throw FormatException('message.attachments[$index].order 必须与数组顺序一致');
     }
   }
 }

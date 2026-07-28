@@ -2896,6 +2896,8 @@ void main() {
           attachments: const <Object?>[
             <String, Object?>{
               'attachmentId': '10000000-0000-4000-8000-000000000001',
+              'uploadId': '20000000-0000-4000-8000-000000000001',
+              'keyEpoch': 1,
               'kind': 'file',
               'order': 0,
             },
@@ -2980,6 +2982,84 @@ void main() {
           ),
         ),
       );
+    });
+
+    test('附件引用硬切完整远程身份并拒绝旧结构与非法世代', () {
+      const key = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.message,
+        entityId: 'attachment-identity-message',
+      );
+      final valid = _messagePayload(
+        conversationId: 'attachment-identity-conversation',
+        turnId: 'attachment-identity-turn',
+        groupId: 'attachment-identity-group',
+        attachments: const <Object?>[
+          <String, Object?>{
+            'attachmentId': '30000000-0000-4000-8000-000000000001',
+            'uploadId': '40000000-0000-4000-8000-000000000001',
+            'keyEpoch': 0xffffffff,
+            'kind': 'image',
+            'order': 0,
+          },
+        ],
+      );
+
+      final encoded = E2eeSyncPayloadCodec.encode(
+        entityKey: key,
+        payload: valid,
+      );
+      expect(
+        E2eeSyncPayloadCodec.decode(entityKey: key, bytes: encoded),
+        valid,
+      );
+      expect(e2eeSyncPayloadFormatVersion, 2);
+
+      final legacyEnvelope = Map<String, Object?>.from(
+        jsonDecode(utf8.decode(encoded)) as Map<String, Object?>,
+      )..['version'] = 1;
+      expect(
+        () => E2eeSyncPayloadCodec.decode(
+          entityKey: key,
+          bytes: Uint8List.fromList(utf8.encode(jsonEncode(legacyEnvelope))),
+        ),
+        throwsFormatException,
+      );
+
+      final oldAttachment = <String, Object?>{
+        'attachmentId': '30000000-0000-4000-8000-000000000001',
+        'kind': 'image',
+        'order': 0,
+      };
+      for (final invalidAttachment in <Map<String, Object?>>[
+        oldAttachment,
+        <String, Object?>{
+          ...oldAttachment,
+          'uploadId': '40000000-0000-4000-8000-000000000001',
+          'keyEpoch': 0,
+        },
+        <String, Object?>{
+          ...oldAttachment,
+          'uploadId': '40000000-0000-4000-8000-000000000001',
+          'keyEpoch': 0x100000000,
+        },
+        <String, Object?>{
+          ...oldAttachment,
+          'uploadId': '40000000-0000-4000-8000-000000000001',
+          'keyEpoch': 1,
+          'order': 1,
+        },
+      ]) {
+        expect(
+          () => E2eeSyncPayloadCodec.encode(
+            entityKey: key,
+            payload: <String, Object?>{
+              ...valid,
+              'attachments': <Object?>[invalidAttachment],
+            },
+          ),
+          throwsFormatException,
+        );
+      }
     });
 
     test('turn 墓碑只按 turnId 幂等删除所属消息', () async {
