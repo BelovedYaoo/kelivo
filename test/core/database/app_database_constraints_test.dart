@@ -449,6 +449,7 @@ void main() {
   late E2eeSyncRecordLedger ledger;
   late E2eeConfigVaultCommands configVault;
   late E2eeAttachmentUploadCommands attachmentUploads;
+  late E2eeAttachmentDownloadCommands attachmentDownloads;
   late E2eeSyncOutboxCommands outboxCommands;
   late E2eeSyncPullCommands pullCommands;
 
@@ -477,6 +478,7 @@ void main() {
     ledger = E2eeSyncRecordLedger(database);
     configVault = repository.e2eeConfigVaultCommands;
     attachmentUploads = repository.e2eeAttachmentUploadCommands;
+    attachmentDownloads = repository.e2eeAttachmentDownloadCommands;
     outboxCommands = await repository.acquireE2eeSyncOutboxCommands(
       now: DateTime.utc(2026, 7, 28),
     );
@@ -4567,9 +4569,18 @@ void main() {
         mutationId: 'd3000000-0000-4000-8000-000000000001',
         ciphertextPath: 'D:\\workspace\\cache\\chunk-0.part',
         ciphertextBytes: KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+        ciphertextSha256: Uint8List.fromList(List<int>.filled(32, 0x31)),
         now: now.add(const Duration(seconds: 3)),
       );
       final firstPending = lease.state.pendingChunk!;
+      await expectLater(
+        database.customStatement(
+          'UPDATE e2ee_attachment_upload_rows SET '
+          'pending_chunk_ciphertext_bytes = NULL WHERE attachment_id = ?;',
+          <Object?>[draft.descriptor.attachmentId],
+        ),
+        throwsRemoteSqliteException(),
+      );
       final retryAt = now.add(const Duration(minutes: 10));
       expect(
         await attachmentUploads.releaseAfterFailure(
@@ -4589,6 +4600,11 @@ void main() {
         firstPending.ciphertextPath,
       );
       expect(
+        persisted.pendingChunk!.ciphertextSha256,
+        orderedEquals(firstPending.ciphertextSha256),
+      );
+      expect(persisted.consecutiveFailureCount, 1);
+      expect(
         await attachmentUploads.claimDue(
           leaseToken: 'lease-upload-too-early',
           leaseOwner: 'foreground-runtime',
@@ -4606,12 +4622,32 @@ void main() {
       ))!;
       expect(lease.state.pendingChunk!.mutationId, firstPending.mutationId);
       expect(lease.state.attemptCount, 2);
+      expect(
+        await attachmentUploads.release(
+          lease: lease,
+          now: retryAt.add(const Duration(microseconds: 1)),
+        ),
+        isTrue,
+      );
+      expect(
+        (await attachmentUploads.readByAttachmentId(
+          draft.descriptor.attachmentId,
+        ))!.consecutiveFailureCount,
+        1,
+      );
+      lease = (await attachmentUploads.claimDue(
+        leaseToken: 'lease-upload-3',
+        leaseOwner: 'background-runtime',
+        leaseExpiresAt: retryAt.add(const Duration(minutes: 5)),
+        now: retryAt.add(const Duration(microseconds: 2)),
+      ))!;
       lease = await attachmentUploads.acknowledgeChunk(
         lease: lease,
         now: retryAt.add(const Duration(seconds: 1)),
       );
       expect(lease.state.nextChunkIndex, 1);
       expect(lease.state.pendingChunk, equals(null));
+      expect(lease.state.consecutiveFailureCount, 0);
 
       lease = await attachmentUploads.stageChunk(
         lease: lease,
@@ -4619,6 +4655,7 @@ void main() {
         mutationId: 'd3000000-0000-4000-8000-000000000002',
         ciphertextPath: 'D:\\workspace\\cache\\chunk-1.part',
         ciphertextBytes: KelivoAttachmentLimits.chunkEnvelopeOverheadBytes + 1,
+        ciphertextSha256: Uint8List.fromList(List<int>.filled(32, 0x32)),
         now: retryAt.add(const Duration(seconds: 2)),
       );
       lease = await attachmentUploads.acknowledgeChunk(
@@ -4716,6 +4753,408 @@ void main() {
           commitMutationId: 'd2000000-0000-4000-8000-000000000010',
         ),
         throwsFormatException,
+      );
+    });
+
+    test('永久失败保留待发分块并只允许精确 CAS 重建', () async {
+      final now = DateTime.utc(2026, 7, 29, 4);
+      final draft = uploadDraft(
+        attachmentId: 'd0000000-0000-4000-8000-000000000004',
+        localAssetId: 'asset-upload-4',
+      );
+      await attachmentUploads.create(draft: draft, now: now);
+      var lease = (await attachmentUploads.claimDue(
+        leaseToken: 'terminal-upload-lease',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now,
+      ))!;
+      lease = await attachmentUploads.acceptCreated(
+        lease: lease,
+        uploadId: 'e0000000-0000-4000-8000-000000000004',
+        now: now.add(const Duration(seconds: 1)),
+      );
+      const secureCore = KelivoSecureCore();
+      final manifestCipher = E2eeAttachmentManifestCipher.takeOwnership(
+        E2eeAccountRecordCipher.takeOwnership(
+          secureCore: secureCore,
+          accountRootKey: await secureCore.generateAccountRootKey(),
+          userId: _ledgerUserId,
+          currentKeyEpoch: 0xffffffff,
+        ),
+      );
+      try {
+        lease = await attachmentUploads.attachManifest(
+          lease: lease,
+          sealedManifest: await manifestCipher.seal(
+            E2eeAttachmentManifest.fromDescriptor(
+              descriptor: draft.descriptor,
+              uploadId: lease.state.uploadId!,
+            ),
+          ),
+          now: now.add(const Duration(seconds: 2)),
+        );
+      } finally {
+        await manifestCipher.close();
+      }
+      final digest = Uint8List.fromList(List<int>.filled(32, 0x41));
+      final expectedDigest = Uint8List.fromList(digest);
+      await expectLater(
+        () => attachmentUploads.stageChunk(
+          lease: lease,
+          chunkIndex: 0,
+          mutationId: 'd3000000-0000-4000-8000-000000000040',
+          ciphertextPath: 'D:\\workspace\\cache\\chunk-terminal.part',
+          ciphertextBytes: KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+          ciphertextSha256: Uint8List(31),
+          now: now.add(const Duration(seconds: 3)),
+        ),
+        throwsFormatException,
+      );
+      final stageFuture = attachmentUploads.stageChunk(
+        lease: lease,
+        chunkIndex: 0,
+        mutationId: 'd3000000-0000-4000-8000-000000000040',
+        ciphertextPath: 'D:\\workspace\\cache\\chunk-terminal.part',
+        ciphertextBytes: KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+        ciphertextSha256: digest,
+        now: now.add(const Duration(seconds: 3)),
+      );
+      digest[0] = 0x42;
+      lease = await stageFuture;
+      final terminal = await attachmentUploads.markPermanentlyFailed(
+        lease: lease,
+        failureKind: 'ciphertext-corrupt',
+        now: now.add(const Duration(seconds: 4)),
+      );
+      expect(terminal.phase, E2eeAttachmentUploadPhase.uploading);
+      expect(terminal.terminalFailureKind, 'ciphertext-corrupt');
+      expect(
+        terminal.pendingChunk!.mutationId,
+        lease.state.pendingChunk!.mutationId,
+      );
+      expect(
+        terminal.pendingChunk!.ciphertextSha256,
+        orderedEquals(expectedDigest),
+      );
+      expect(
+        await attachmentUploads.claimDue(
+          leaseToken: 'terminal-upload-reclaim',
+          leaseOwner: 'foreground-runtime',
+          leaseExpiresAt: now.add(const Duration(minutes: 6)),
+          now: now.add(const Duration(minutes: 5)),
+        ),
+        equals(null),
+      );
+      expect(
+        await attachmentUploads.deleteFailedForRebuild(
+          attachmentId: terminal.attachmentId,
+          expectedTransitionVersion: terminal.transitionVersion - 1,
+        ),
+        isFalse,
+      );
+      expect(
+        await attachmentUploads.deleteFailedForRebuild(
+          attachmentId: terminal.attachmentId,
+          expectedTransitionVersion: terminal.transitionVersion,
+        ),
+        isTrue,
+      );
+    });
+  });
+
+  group('E2EE 附件持久下载状态', () {
+    E2eeAttachmentDownloadReference downloadReference({
+      String attachmentId = 'f0000000-0000-4000-8000-000000000001',
+      String uploadId = 'f1000000-0000-4000-8000-000000000001',
+    }) {
+      return E2eeAttachmentDownloadReference(
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+        keyEpoch: 0xffffffff,
+        kind: E2eeAttachmentKind.file,
+      );
+    }
+
+    E2eeAttachmentManifest downloadManifest(
+      E2eeAttachmentDownloadReference reference, {
+      int totalPlaintextBytes = 0,
+      int digestByte = 0x61,
+    }) {
+      final layout = KelivoAttachmentLayout(
+        totalPlaintextBytes: totalPlaintextBytes,
+      );
+      return E2eeAttachmentManifest(
+        attachmentId: reference.attachmentId,
+        uploadId: reference.uploadId,
+        keyEpoch: reference.keyEpoch,
+        kind: reference.kind,
+        totalPlaintextBytes: totalPlaintextBytes,
+        contentSha256: Uint8List.fromList(List<int>.filled(32, digestByte)),
+        wrappedDataKey: Uint8List.fromList(
+          List<int>.filled(KelivoAttachmentLimits.wrappedDataKeyBytes, 0x71),
+        ),
+        chunkCiphertextBytes: List<int>.generate(
+          layout.chunkCount,
+          (index) =>
+              layout.plaintextLengthForChunk(index) +
+              KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+          growable: false,
+        ),
+        displayName: 'download.txt',
+        mediaType: 'text/plain',
+      );
+    }
+
+    test('完整身份幂等且任一身份冲突均失败关闭', () async {
+      final now = DateTime.utc(2026, 7, 29, 5);
+      final reference = downloadReference();
+      final first = await attachmentDownloads.ensure(
+        reference: reference,
+        now: now,
+      );
+      final repeated = await attachmentDownloads.ensure(
+        reference: reference,
+        now: now.add(const Duration(seconds: 1)),
+      );
+      expect(repeated.transitionVersion, first.transitionVersion);
+
+      await expectLater(
+        attachmentDownloads.ensure(
+          reference: downloadReference(
+            uploadId: 'f1000000-0000-4000-8000-000000000002',
+          ),
+          now: now.add(const Duration(seconds: 2)),
+        ),
+        throwsStateError,
+      );
+      await expectLater(
+        attachmentDownloads.ensure(
+          reference: downloadReference(
+            attachmentId: 'f0000000-0000-4000-8000-000000000002',
+          ),
+          now: now.add(const Duration(seconds: 3)),
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('零字节附件完成后原子注册资产并支持同内容复用', () async {
+      final now = DateTime.utc(2026, 7, 29, 6);
+      final references = <E2eeAttachmentDownloadReference>[
+        downloadReference(
+          attachmentId: 'f0000000-0000-4000-8000-000000000010',
+          uploadId: 'f1000000-0000-4000-8000-000000000010',
+        ),
+        downloadReference(
+          attachmentId: 'f0000000-0000-4000-8000-000000000011',
+          uploadId: 'f1000000-0000-4000-8000-000000000011',
+        ),
+      ];
+      final digest = Uint8List.fromList(List<int>.filled(32, 0x61));
+      final contentHash = digest
+          .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+          .join();
+      final assetId = 'asset_$contentHash';
+      const finalPath = 'D:\\workspace\\upload\\e2ee\\content\\shared';
+      await repository.registerAsset(
+        id: assetId,
+        contentHash: contentHash,
+        path: 'D:\\workspace\\upload\\e2ee\\content\\old',
+        byteSize: 0,
+        createdAt: now,
+      );
+      await repository.scheduleUnreferencedAssetGc(notBefore: now);
+      final initialGcCandidate = (await repository.claimAssetGc(
+        now: now,
+      )).single;
+      const quarantinePath = 'D:\\workspace\\quarantine\\shared';
+      await repository.recordAssetGcQuarantine(
+        assetId: assetId,
+        generation: initialGcCandidate.generation,
+        originalPath: initialGcCandidate.path,
+        quarantinePath: quarantinePath,
+        createdAt: now,
+      );
+
+      for (var index = 0; index < references.length; index++) {
+        final reference = references[index];
+        await attachmentDownloads.ensure(reference: reference, now: now);
+        var lease = (await attachmentDownloads.claimDue(
+          leaseToken: 'download-ready-$index',
+          leaseOwner: 'foreground-runtime',
+          leaseExpiresAt: now.add(const Duration(minutes: 5)),
+          now: now,
+        ))!;
+        await expectLater(
+          () => attachmentDownloads.attachManifest(
+            lease: lease,
+            manifest: downloadManifest(reference),
+            manifestCiphertext: Uint8List.fromList([1, 2, 3]),
+            stagingPath: finalPath,
+            finalPath: finalPath,
+            now: now.add(const Duration(seconds: 1)),
+          ),
+          throwsFormatException,
+        );
+        final manifestCiphertext = Uint8List.fromList([1, 2, 3]);
+        final attachFuture = attachmentDownloads.attachManifest(
+          lease: lease,
+          manifest: downloadManifest(reference),
+          manifestCiphertext: manifestCiphertext,
+          stagingPath: 'D:\\workspace\\upload\\e2ee\\tmp\\$index.part',
+          finalPath: finalPath,
+          now: now.add(const Duration(seconds: 1)),
+        );
+        manifestCiphertext[0] = 9;
+        lease = await attachFuture;
+        expect(lease.state.manifestCiphertext, orderedEquals([1, 2, 3]));
+        if (index == 0) {
+          expect(
+            await repository.isAssetGcClaimStillValid(
+              initialGcCandidate,
+              now: now,
+            ),
+            isFalse,
+          );
+          expect(
+            await repository.completeAssetGc(
+              assetId: assetId,
+              expectedGeneration: initialGcCandidate.generation,
+              expectedQuarantinePaths: const {quarantinePath},
+              now: now,
+            ),
+            isFalse,
+          );
+          expect(
+            (await attachmentDownloads.read(reference))!.phase,
+            E2eeAttachmentDownloadPhase.downloading,
+          );
+        }
+        lease = await attachmentDownloads.acknowledgeChunk(
+          lease: lease,
+          chunkIndex: 0,
+          confirmedPlaintextBytes: 0,
+          now: now.add(const Duration(seconds: 2)),
+        );
+        final ready = await attachmentDownloads.markReady(
+          lease: lease,
+          asset: MessageAssetRegistration(
+            assetId: assetId,
+            contentHash: contentHash,
+            path: finalPath,
+            byteSize: 0,
+            kind: 'file',
+          ),
+          now: now.add(const Duration(seconds: 3)),
+        );
+        expect(ready.phase, E2eeAttachmentDownloadPhase.ready);
+        expect(ready.stagingPath, equals(null));
+        expect(ready.finalPath, finalPath);
+        expect(
+          (await attachmentDownloads.readReady(reference))!.localAssetId,
+          assetId,
+        );
+        if (index == 0) {
+          expect(
+            await repository.scheduleUnreferencedAssetGc(notBefore: now),
+            1,
+          );
+        }
+      }
+
+      final assetCount = await database
+          .customSelect(
+            'SELECT COUNT(*) AS item_count FROM asset_rows WHERE id = ?;',
+            variables: [Variable<String>(assetId)],
+          )
+          .getSingle();
+      expect(assetCount.read<int>('item_count'), 1);
+      final mappingCount = await database
+          .customSelect(
+            'SELECT COUNT(*) AS item_count '
+            'FROM e2ee_attachment_download_rows WHERE local_asset_id = ?;',
+            variables: [Variable<String>(assetId)],
+          )
+          .getSingle();
+      expect(mappingCount.read<int>('item_count'), 2);
+      final pendingGc = await database
+          .customSelect(
+            'SELECT COUNT(*) AS item_count FROM asset_gc_rows '
+            'WHERE asset_id = ?;',
+            variables: [Variable<String>(assetId)],
+          )
+          .getSingle();
+      expect(pendingGc.read<int>('item_count'), 0);
+    });
+
+    test('重建暂存与永久失败保留进度并要求精确 CAS', () async {
+      final now = DateTime.utc(2026, 7, 29, 7);
+      final reference = downloadReference(
+        attachmentId: 'f0000000-0000-4000-8000-000000000020',
+        uploadId: 'f1000000-0000-4000-8000-000000000020',
+      );
+      await attachmentDownloads.ensure(reference: reference, now: now);
+      var lease = (await attachmentDownloads.claimDue(
+        leaseToken: 'download-rebuild-1',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now,
+      ))!;
+      lease = await attachmentDownloads.attachManifest(
+        lease: lease,
+        manifest: downloadManifest(reference, totalPlaintextBytes: 1),
+        manifestCiphertext: Uint8List.fromList([4, 5, 6]),
+        stagingPath: 'D:\\workspace\\upload\\e2ee\\tmp\\before.part',
+        finalPath: 'D:\\workspace\\upload\\e2ee\\content\\one',
+        now: now.add(const Duration(seconds: 1)),
+      );
+      lease = await attachmentDownloads.acknowledgeChunk(
+        lease: lease,
+        chunkIndex: 0,
+        confirmedPlaintextBytes: 1,
+        now: now.add(const Duration(seconds: 2)),
+      );
+      lease = await attachmentDownloads.restartStaging(
+        lease: lease,
+        stagingPath: 'D:\\workspace\\upload\\e2ee\\tmp\\after.part',
+        now: now.add(const Duration(seconds: 3)),
+      );
+      expect(lease.state.phase, E2eeAttachmentDownloadPhase.downloading);
+      expect(lease.state.nextChunkIndex, 0);
+      expect(lease.state.confirmedPlaintextBytes, 0);
+
+      final terminal = await attachmentDownloads.markPermanentlyFailed(
+        lease: lease,
+        failureKind: 'manifest-rejected',
+        now: now.add(const Duration(seconds: 4)),
+      );
+      expect(terminal.phase, E2eeAttachmentDownloadPhase.downloading);
+      expect(terminal.stagingPath, lease.state.stagingPath);
+      expect(terminal.terminalFailureKind, 'manifest-rejected');
+      expect(terminal.consecutiveFailureCount, 1);
+      expect(
+        await attachmentDownloads.claimDue(
+          leaseToken: 'download-rebuild-blocked',
+          leaseOwner: 'background-runtime',
+          leaseExpiresAt: now.add(const Duration(minutes: 10)),
+          now: now.add(const Duration(minutes: 6)),
+        ),
+        equals(null),
+      );
+      expect(
+        await attachmentDownloads.deleteFailedForRebuild(
+          reference: reference,
+          expectedTransitionVersion: terminal.transitionVersion - 1,
+        ),
+        isFalse,
+      );
+      expect(
+        await attachmentDownloads.deleteFailedForRebuild(
+          reference: reference,
+          expectedTransitionVersion: terminal.transitionVersion,
+        ),
+        isTrue,
       );
     });
   });

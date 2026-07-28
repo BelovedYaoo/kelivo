@@ -27,6 +27,7 @@ part 'e2ee_sync_pull_commands.dart';
 part 'e2ee_sync_pull_checkpoint_commands.dart';
 part 'e2ee_config_vault_commands.dart';
 part 'e2ee_attachment_upload_commands.dart';
+part 'e2ee_attachment_download_commands.dart';
 
 typedef ChatDatabaseSnapshotInfo = ({
   int schemaVersion,
@@ -164,6 +165,9 @@ class ChatDatabaseRepository {
 
   E2eeAttachmentUploadCommands get e2eeAttachmentUploadCommands =>
       E2eeAttachmentUploadCommands._(_db);
+
+  E2eeAttachmentDownloadCommands get e2eeAttachmentDownloadCommands =>
+      E2eeAttachmentDownloadCommands._(this);
 
   E2eeSyncPullCommands get e2eeSyncPullCommands => E2eeSyncPullCommands._(_db);
 
@@ -658,6 +662,8 @@ class ChatDatabaseRepository {
       'e2ee_sync_operation_rows',
       'e2ee_sync_outbox_rows',
       'e2ee_sync_remote_record_rows',
+      'e2ee_attachment_upload_rows',
+      'e2ee_attachment_download_rows',
     };
     final tableRows = database.select(
       "SELECT name FROM sqlite_master WHERE type = 'table';",
@@ -856,6 +862,73 @@ class ChatDatabaseRepository {
         'created_at',
         'updated_at',
       ],
+      'e2ee_attachment_upload_rows': [
+        'attachment_id',
+        'local_asset_id',
+        'source_path',
+        'key_epoch',
+        'kind',
+        'display_name',
+        'media_type',
+        'content_sha256',
+        'wrapped_data_key',
+        'total_plaintext_bytes',
+        'chunk_count',
+        'total_ciphertext_bytes',
+        'phase',
+        'create_mutation_id',
+        'upload_id',
+        'manifest_ciphertext',
+        'commit_mutation_id',
+        'next_chunk_index',
+        'pending_chunk_index',
+        'pending_chunk_mutation_id',
+        'pending_chunk_ciphertext_path',
+        'pending_chunk_ciphertext_bytes',
+        'pending_chunk_ciphertext_sha256',
+        'lease_token',
+        'lease_owner_session_id',
+        'lease_expires_at',
+        'transition_version',
+        'attempt_count',
+        'consecutive_failure_count',
+        'next_attempt_at',
+        'last_failure_kind',
+        'terminal_failure_kind',
+        'created_at',
+        'updated_at',
+      ],
+      'e2ee_attachment_download_rows': [
+        'attachment_id',
+        'upload_id',
+        'key_epoch',
+        'kind',
+        'phase',
+        'manifest_ciphertext',
+        'content_sha256',
+        'wrapped_data_key',
+        'total_plaintext_bytes',
+        'chunk_count',
+        'total_ciphertext_bytes',
+        'display_name',
+        'media_type',
+        'local_asset_id',
+        'staging_path',
+        'final_path',
+        'next_chunk_index',
+        'confirmed_plaintext_bytes',
+        'lease_token',
+        'lease_owner_session_id',
+        'lease_expires_at',
+        'transition_version',
+        'attempt_count',
+        'consecutive_failure_count',
+        'next_attempt_at',
+        'last_failure_kind',
+        'terminal_failure_kind',
+        'created_at',
+        'updated_at',
+      ],
     };
     for (final entry in expectedColumns.entries) {
       final actual = database
@@ -867,7 +940,7 @@ class ChatDatabaseRepository {
         throw StateError('table_schema:${entry.key}');
       }
     }
-    _validateE2eeQueueSchema(database);
+    _validateE2eeStorageSchema(database);
 
     const expectedForeignKeys = <String, Set<String>>{
       'conversation_mcp_server_rows': {
@@ -943,7 +1016,7 @@ class ChatDatabaseRepository {
     }
   }
 
-  static void _validateE2eeQueueSchema(sqlite.Database database) {
+  static void _validateE2eeStorageSchema(sqlite.Database database) {
     const expectedColumns =
         <String, Map<String, ({String type, int notNull, int primaryKey})>>{
           'e2ee_sync_intent_rows': {
@@ -1015,6 +1088,117 @@ class ChatDatabaseRepository {
             'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'updated_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
           },
+          'e2ee_attachment_upload_rows': {
+            'attachment_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'local_asset_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'source_path': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'kind': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'display_name': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'media_type': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'content_sha256': (type: 'BLOB', notNull: 1, primaryKey: 0),
+            'wrapped_data_key': (type: 'BLOB', notNull: 1, primaryKey: 0),
+            'total_plaintext_bytes': (
+              type: 'INTEGER',
+              notNull: 1,
+              primaryKey: 0,
+            ),
+            'chunk_count': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'total_ciphertext_bytes': (
+              type: 'INTEGER',
+              notNull: 1,
+              primaryKey: 0,
+            ),
+            'phase': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'create_mutation_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'upload_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'manifest_ciphertext': (type: 'BLOB', notNull: 0, primaryKey: 0),
+            'commit_mutation_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'next_chunk_index': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'pending_chunk_index': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'pending_chunk_mutation_id': (
+              type: 'TEXT',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'pending_chunk_ciphertext_path': (
+              type: 'TEXT',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'pending_chunk_ciphertext_bytes': (
+              type: 'INTEGER',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'pending_chunk_ciphertext_sha256': (
+              type: 'BLOB',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'lease_token': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'lease_owner_session_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'lease_expires_at': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'transition_version': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'attempt_count': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'consecutive_failure_count': (
+              type: 'INTEGER',
+              notNull: 1,
+              primaryKey: 0,
+            ),
+            'next_attempt_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'last_failure_kind': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'terminal_failure_kind': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'updated_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'e2ee_attachment_download_rows': {
+            'attachment_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'upload_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'kind': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'phase': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'manifest_ciphertext': (type: 'BLOB', notNull: 0, primaryKey: 0),
+            'content_sha256': (type: 'BLOB', notNull: 0, primaryKey: 0),
+            'wrapped_data_key': (type: 'BLOB', notNull: 0, primaryKey: 0),
+            'total_plaintext_bytes': (
+              type: 'INTEGER',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'chunk_count': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'total_ciphertext_bytes': (
+              type: 'INTEGER',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'display_name': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'media_type': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'local_asset_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'staging_path': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'final_path': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'next_chunk_index': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'confirmed_plaintext_bytes': (
+              type: 'INTEGER',
+              notNull: 1,
+              primaryKey: 0,
+            ),
+            'lease_token': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'lease_owner_session_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'lease_expires_at': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'transition_version': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'attempt_count': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'consecutive_failure_count': (
+              type: 'INTEGER',
+              notNull: 1,
+              primaryKey: 0,
+            ),
+            'next_attempt_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'last_failure_kind': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'terminal_failure_kind': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'updated_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
         };
     for (final table in expectedColumns.entries) {
       final rows = database.select('PRAGMA table_info(${table.key});');
@@ -1041,6 +1225,8 @@ class ChatDatabaseRepository {
       },
       'e2ee_sync_outbox_rows': {'record_id'},
       'e2ee_sync_remote_record_rows': {},
+      'e2ee_attachment_upload_rows': {'local_asset_id', 'upload_id'},
+      'e2ee_attachment_download_rows': {'upload_id'},
     };
     for (final table in expectedUniqueKeys.entries) {
       final actual = <String>{};
@@ -1090,6 +1276,18 @@ class ChatDatabaseRepository {
       'idx_e2ee_sync_remote_records_gate_updated': (
         table: 'e2ee_sync_remote_record_rows',
         columns: ['gate', 'updated_at', 'record_id'],
+      ),
+      'idx_e2ee_attachment_upload_due': (
+        table: 'e2ee_attachment_upload_rows',
+        columns: ['phase', 'next_attempt_at', 'created_at', 'attachment_id'],
+      ),
+      'idx_e2ee_attachment_download_due': (
+        table: 'e2ee_attachment_download_rows',
+        columns: ['phase', 'next_attempt_at', 'created_at', 'attachment_id'],
+      ),
+      'idx_e2ee_attachment_download_local_asset': (
+        table: 'e2ee_attachment_download_rows',
+        columns: ['local_asset_id', 'attachment_id'],
       ),
     };
     for (final index in expectedIndexes.entries) {
@@ -1157,6 +1355,33 @@ class ChatDatabaseRepository {
             'AND observed_revision IS NULL '
             'AND error_code IS NULL)',
         "OR (gate = 'quarantined' AND error_code IS NOT NULL))",
+      ],
+      'e2ee_attachment_upload_rows': [
+        "CHECK (typeof(phase) = 'text' AND phase IN "
+            "('create-pending', 'manifest-pending', 'uploading', "
+            "'commit-pending', 'committed'))",
+        'CHECK ((pending_chunk_index IS NULL '
+            'AND pending_chunk_mutation_id IS NULL '
+            'AND pending_chunk_ciphertext_path IS NULL '
+            'AND pending_chunk_ciphertext_bytes IS NULL '
+            'AND pending_chunk_ciphertext_sha256 IS NULL) OR '
+            '(pending_chunk_index IS NOT NULL '
+            'AND pending_chunk_index = next_chunk_index',
+        'CHECK (consecutive_failure_count <= attempt_count)',
+        'CHECK (terminal_failure_kind IS NULL OR '
+            "(phase != 'committed' AND lease_token IS NULL",
+      ],
+      'e2ee_attachment_download_rows': [
+        "CHECK (typeof(phase) = 'text' AND phase IN "
+            "('manifest-pending', 'downloading', 'verifying', 'ready'))",
+        'CHECK (staging_path IS NULL OR final_path IS NULL '
+            'OR staging_path != final_path)',
+        "(phase = 'ready' "
+            'AND manifest_ciphertext IS NOT NULL '
+            'AND content_sha256 IS NOT NULL',
+        'CHECK (consecutive_failure_count <= attempt_count)',
+        'CHECK (terminal_failure_kind IS NULL OR '
+            "(phase != 'ready' AND lease_token IS NULL",
       ],
     };
     for (final table in expectedChecks.entries) {
@@ -2924,6 +3149,12 @@ LIMIT 1;
       SELECT a.id, ?, 0, a.last_referenced_at FROM asset_rows a
       WHERE NOT EXISTS (
         SELECT 1 FROM message_asset_rows r WHERE r.asset_id = a.id
+      )
+      AND NOT EXISTS (
+        SELECT 1 FROM e2ee_attachment_download_rows d
+        WHERE d.local_asset_id = a.id
+          AND d.phase IN ('downloading', 'verifying')
+          AND d.terminal_failure_kind IS NULL
       );
     ''',
       [notBefore.microsecondsSinceEpoch],
@@ -2951,6 +3182,12 @@ LIMIT 1;
               AND NOT EXISTS (
                 SELECT 1 FROM message_asset_rows r
                 WHERE r.asset_id = g.asset_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM e2ee_attachment_download_rows d
+                WHERE d.local_asset_id = g.asset_id
+                  AND d.phase IN ('downloading', 'verifying')
+                  AND d.terminal_failure_kind IS NULL
               )
               AND NOT EXISTS (SELECT 1 FROM asset_reference_dirty_rows)
               AND NOT EXISTS (
@@ -3084,6 +3321,12 @@ LIMIT 1;
             AND NOT EXISTS (
               SELECT 1 FROM message_asset_rows r
               WHERE r.asset_id = g.asset_id
+            )
+            AND NOT EXISTS (
+              SELECT 1 FROM e2ee_attachment_download_rows d
+              WHERE d.local_asset_id = g.asset_id
+                AND d.phase IN ('downloading', 'verifying')
+                AND d.terminal_failure_kind IS NULL
             )
             AND NOT EXISTS (SELECT 1 FROM asset_reference_dirty_rows)
             AND NOT EXISTS (
@@ -3381,6 +3624,12 @@ LIMIT 1;
                 SELECT 1 FROM message_asset_rows r
                 WHERE r.asset_id = g.asset_id
               )
+              AND NOT EXISTS (
+                SELECT 1 FROM e2ee_attachment_download_rows d
+                WHERE d.local_asset_id = g.asset_id
+                  AND d.phase IN ('downloading', 'verifying')
+                  AND d.terminal_failure_kind IS NULL
+              )
               AND NOT EXISTS (SELECT 1 FROM asset_reference_dirty_rows)
               AND NOT EXISTS (
                 SELECT 1 FROM message_rows m
@@ -3466,6 +3715,12 @@ LIMIT 1;
           )
           .getSingleOrNull();
       if (claim == null) return false;
+      await _db.customStatement(
+        'DELETE FROM e2ee_attachment_download_rows '
+        "WHERE local_asset_id = ? AND phase = 'ready' "
+        'AND lease_token IS NULL;',
+        [assetId],
+      );
       await _db.customStatement('DELETE FROM asset_rows WHERE id = ?;', [
         assetId,
       ]);

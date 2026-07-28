@@ -1071,15 +1071,18 @@ class E2eeAttachmentUploadRows extends Table {
   TextColumn get pendingChunkMutationId => text().nullable()();
   TextColumn get pendingChunkCiphertextPath => text().nullable()();
   IntColumn get pendingChunkCiphertextBytes => integer().nullable()();
+  BlobColumn get pendingChunkCiphertextSha256 => blob().nullable()();
   TextColumn get leaseToken => text().nullable()();
   TextColumn get leaseOwnerSessionId => text().nullable()();
   IntColumn get leaseExpiresAt =>
       integer().map(const MicrosecondDateTimeConverter()).nullable()();
   IntColumn get transitionVersion => integer()();
   IntColumn get attemptCount => integer()();
+  IntColumn get consecutiveFailureCount => integer()();
   IntColumn get nextAttemptAt =>
       integer().map(const MicrosecondDateTimeConverter())();
   TextColumn get lastFailureKind => text().nullable()();
+  TextColumn get terminalFailureKind => text().nullable()();
   IntColumn get createdAt =>
       integer().map(const MicrosecondDateTimeConverter())();
   IntColumn get updatedAt =>
@@ -1227,13 +1230,20 @@ class E2eeAttachmentUploadRows extends Table {
     'CHECK (pending_chunk_ciphertext_bytes IS NULL OR '
         "(typeof(pending_chunk_ciphertext_bytes) = 'integer' "
         'AND pending_chunk_ciphertext_bytes BETWEEN 120 AND 4194304))',
+    'CHECK (pending_chunk_ciphertext_sha256 IS NULL OR '
+        "(typeof(pending_chunk_ciphertext_sha256) = 'blob' "
+        'AND length(pending_chunk_ciphertext_sha256) = 32))',
     'CHECK ((pending_chunk_index IS NULL '
         'AND pending_chunk_mutation_id IS NULL '
         'AND pending_chunk_ciphertext_path IS NULL '
-        'AND pending_chunk_ciphertext_bytes IS NULL) OR '
-        '(pending_chunk_index = next_chunk_index '
+        'AND pending_chunk_ciphertext_bytes IS NULL '
+        'AND pending_chunk_ciphertext_sha256 IS NULL) OR '
+        '(pending_chunk_index IS NOT NULL '
+        'AND pending_chunk_index = next_chunk_index '
         'AND pending_chunk_mutation_id IS NOT NULL '
         'AND pending_chunk_ciphertext_path IS NOT NULL '
+        'AND pending_chunk_ciphertext_bytes IS NOT NULL '
+        'AND pending_chunk_ciphertext_sha256 IS NOT NULL '
         'AND pending_chunk_ciphertext_bytes = '
         'CASE WHEN pending_chunk_index < chunk_count - 1 '
         'THEN 4194304 '
@@ -1260,7 +1270,8 @@ class E2eeAttachmentUploadRows extends Table {
         'BETWEEN 1 AND 1024))',
     'CHECK ((lease_token IS NULL AND lease_owner_session_id IS NULL '
         'AND lease_expires_at IS NULL) OR '
-        "(phase != 'committed' AND lease_token IS NOT NULL "
+        "(phase != 'committed' AND terminal_failure_kind IS NULL "
+        'AND lease_token IS NOT NULL '
         'AND lease_owner_session_id IS NOT NULL '
         "AND typeof(lease_expires_at) = 'integer' "
         'AND lease_expires_at >= 0))',
@@ -1268,10 +1279,241 @@ class E2eeAttachmentUploadRows extends Table {
         'AND transition_version BETWEEN 1 AND 9223372036854775807)',
     "CHECK (typeof(attempt_count) = 'integer' "
         'AND attempt_count BETWEEN 0 AND 9223372036854775807)',
+    "CHECK (typeof(consecutive_failure_count) = 'integer' "
+        'AND consecutive_failure_count BETWEEN 0 AND 9223372036854775807)',
+    'CHECK (consecutive_failure_count <= attempt_count)',
+    'CHECK ((consecutive_failure_count = 0 AND last_failure_kind IS NULL) OR '
+        '(consecutive_failure_count >= 1 AND last_failure_kind IS NOT NULL))',
     "CHECK (typeof(next_attempt_at) = 'integer' AND next_attempt_at >= 0)",
     'CHECK (last_failure_kind IS NULL OR '
         "(typeof(last_failure_kind) = 'text' "
         'AND length(CAST(last_failure_kind AS BLOB)) BETWEEN 1 AND 100))',
+    'CHECK (terminal_failure_kind IS NULL OR '
+        "(phase != 'committed' AND lease_token IS NULL "
+        'AND consecutive_failure_count >= 1 '
+        'AND last_failure_kind = terminal_failure_kind '
+        "AND typeof(terminal_failure_kind) = 'text' "
+        'AND length(CAST(terminal_failure_kind AS BLOB)) BETWEEN 1 AND 100))',
+    "CHECK (phase != 'committed' OR "
+        '(terminal_failure_kind IS NULL '
+        'AND consecutive_failure_count = 0 '
+        'AND last_failure_kind IS NULL))',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+  ];
+}
+
+@TableIndex(
+  name: 'idx_e2ee_attachment_download_due',
+  columns: {#phase, #nextAttemptAt, #createdAt, #attachmentId},
+)
+@TableIndex(
+  name: 'idx_e2ee_attachment_download_local_asset',
+  columns: {#localAssetId, #attachmentId},
+)
+class E2eeAttachmentDownloadRows extends Table {
+  TextColumn get attachmentId => text()();
+  TextColumn get uploadId => text()();
+  IntColumn get keyEpoch => integer()();
+  TextColumn get kind => text()();
+  TextColumn get phase => text()();
+  BlobColumn get manifestCiphertext => blob().nullable()();
+  BlobColumn get contentSha256 => blob().nullable()();
+  BlobColumn get wrappedDataKey => blob().nullable()();
+  IntColumn get totalPlaintextBytes => integer().nullable()();
+  IntColumn get chunkCount => integer().nullable()();
+  IntColumn get totalCiphertextBytes => integer().nullable()();
+  TextColumn get displayName => text().nullable()();
+  TextColumn get mediaType => text().nullable()();
+  TextColumn get localAssetId => text().nullable()();
+  TextColumn get stagingPath => text().nullable()();
+  TextColumn get finalPath => text().nullable()();
+  IntColumn get nextChunkIndex => integer()();
+  IntColumn get confirmedPlaintextBytes => integer()();
+  TextColumn get leaseToken => text().nullable()();
+  TextColumn get leaseOwnerSessionId => text().nullable()();
+  IntColumn get leaseExpiresAt =>
+      integer().map(const MicrosecondDateTimeConverter()).nullable()();
+  IntColumn get transitionVersion => integer()();
+  IntColumn get attemptCount => integer()();
+  IntColumn get consecutiveFailureCount => integer()();
+  IntColumn get nextAttemptAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  TextColumn get lastFailureKind => text().nullable()();
+  TextColumn get terminalFailureKind => text().nullable()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {attachmentId};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {uploadId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(attachment_id) = 'text' AND length(attachment_id) = 36 "
+        'AND attachment_id = lower(attachment_id) '
+        "AND attachment_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(attachment_id, 9, 1) = '-' "
+        "AND substr(attachment_id, 14, 1) = '-' "
+        "AND substr(attachment_id, 15, 1) = '4' "
+        "AND substr(attachment_id, 19, 1) = '-' "
+        "AND substr(attachment_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(attachment_id, 24, 1) = '-' "
+        "AND substr(attachment_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(attachment_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(attachment_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(attachment_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(attachment_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(upload_id) = 'text' AND length(upload_id) = 36 "
+        'AND upload_id = lower(upload_id) '
+        "AND upload_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(upload_id, 9, 1) = '-' "
+        "AND substr(upload_id, 14, 1) = '-' "
+        "AND substr(upload_id, 15, 1) = '4' "
+        "AND substr(upload_id, 19, 1) = '-' "
+        "AND substr(upload_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(upload_id, 24, 1) = '-' "
+        "AND substr(upload_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(upload_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(upload_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(upload_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(upload_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(key_epoch) = 'integer' "
+        'AND key_epoch BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(kind) = 'text' AND kind IN ('image', 'file'))",
+    "CHECK (typeof(phase) = 'text' AND phase IN "
+        "('manifest-pending', 'downloading', 'verifying', 'ready'))",
+    'CHECK (manifest_ciphertext IS NULL OR '
+        "(typeof(manifest_ciphertext) = 'blob' "
+        'AND length(manifest_ciphertext) BETWEEN 1 AND 1048576))',
+    'CHECK (content_sha256 IS NULL OR '
+        "(typeof(content_sha256) = 'blob' AND length(content_sha256) = 32))",
+    'CHECK (wrapped_data_key IS NULL OR '
+        "(typeof(wrapped_data_key) = 'blob' "
+        'AND length(wrapped_data_key) = 116))',
+    'CHECK (total_plaintext_bytes IS NULL OR '
+        "(typeof(total_plaintext_bytes) = 'integer' "
+        'AND total_plaintext_bytes BETWEEN 0 AND 4194184000))',
+    'CHECK (chunk_count IS NULL OR '
+        "(typeof(chunk_count) = 'integer' "
+        'AND chunk_count BETWEEN 1 AND 1000))',
+    'CHECK (total_ciphertext_bytes IS NULL OR '
+        "(typeof(total_ciphertext_bytes) = 'integer' "
+        'AND total_ciphertext_bytes BETWEEN 120 AND 4194304000))',
+    'CHECK ((total_plaintext_bytes IS NULL AND chunk_count IS NULL '
+        'AND total_ciphertext_bytes IS NULL) OR '
+        '(total_plaintext_bytes IS NOT NULL AND chunk_count IS NOT NULL '
+        'AND total_ciphertext_bytes = total_plaintext_bytes + '
+        'chunk_count * 120 AND '
+        '((total_plaintext_bytes = 0 AND chunk_count = 1) OR '
+        '(total_plaintext_bytes > 0 AND chunk_count = '
+        '((total_plaintext_bytes - 1) / 4194184) + 1))))',
+    'CHECK (display_name IS NULL OR '
+        "(typeof(display_name) = 'text' "
+        'AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(display_name, char(0)) = 0 '
+        "AND instr(display_name, '/') = 0 "
+        'AND instr(display_name, char(92)) = 0))',
+    'CHECK (media_type IS NULL OR '
+        "(typeof(media_type) = 'text' "
+        'AND length(CAST(media_type AS BLOB)) BETWEEN 3 AND 255 '
+        "AND instr(media_type, '/') BETWEEN 2 AND length(media_type) - 1))",
+    'CHECK (local_asset_id IS NULL OR '
+        "(typeof(local_asset_id) = 'text' "
+        'AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(local_asset_id, char(0)) = 0))',
+    'CHECK (staging_path IS NULL OR '
+        "(typeof(staging_path) = 'text' "
+        'AND length(CAST(staging_path AS BLOB)) BETWEEN 1 AND 32768 '
+        'AND instr(staging_path, char(0)) = 0))',
+    'CHECK (final_path IS NULL OR '
+        "(typeof(final_path) = 'text' "
+        'AND length(CAST(final_path AS BLOB)) BETWEEN 1 AND 32768 '
+        'AND instr(final_path, char(0)) = 0))',
+    'CHECK (staging_path IS NULL OR final_path IS NULL '
+        'OR staging_path != final_path)',
+    "CHECK (typeof(next_chunk_index) = 'integer' "
+        'AND next_chunk_index BETWEEN 0 AND 1000)',
+    "CHECK (typeof(confirmed_plaintext_bytes) = 'integer' "
+        'AND confirmed_plaintext_bytes BETWEEN 0 AND 4194184000)',
+    'CHECK ((phase = \'manifest-pending\' '
+        'AND manifest_ciphertext IS NULL AND content_sha256 IS NULL '
+        'AND wrapped_data_key IS NULL AND total_plaintext_bytes IS NULL '
+        'AND chunk_count IS NULL AND total_ciphertext_bytes IS NULL '
+        'AND display_name IS NULL AND media_type IS NULL '
+        'AND local_asset_id IS NULL AND staging_path IS NULL '
+        'AND final_path IS NULL AND next_chunk_index = 0 '
+        'AND confirmed_plaintext_bytes = 0) OR '
+        '(phase = \'downloading\' '
+        'AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL '
+        'AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL '
+        'AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL '
+        'AND local_asset_id IS NOT NULL AND staging_path IS NOT NULL '
+        'AND final_path IS NOT NULL AND next_chunk_index < chunk_count '
+        'AND confirmed_plaintext_bytes = '
+        'MIN(next_chunk_index * 4194184, total_plaintext_bytes) '
+        'AND ((kind = \'image\') OR '
+        '(display_name IS NOT NULL AND media_type IS NOT NULL))) OR '
+        '(phase = \'verifying\' '
+        'AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL '
+        'AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL '
+        'AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL '
+        'AND local_asset_id IS NOT NULL AND staging_path IS NOT NULL '
+        'AND final_path IS NOT NULL AND next_chunk_index = chunk_count '
+        'AND confirmed_plaintext_bytes = total_plaintext_bytes '
+        'AND ((kind = \'image\') OR '
+        '(display_name IS NOT NULL AND media_type IS NOT NULL))) OR '
+        '(phase = \'ready\' '
+        'AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL '
+        'AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL '
+        'AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL '
+        'AND local_asset_id IS NOT NULL AND staging_path IS NULL '
+        'AND final_path IS NOT NULL AND next_chunk_index = chunk_count '
+        'AND confirmed_plaintext_bytes = total_plaintext_bytes '
+        'AND ((kind = \'image\') OR '
+        '(display_name IS NOT NULL AND media_type IS NOT NULL))))',
+    "CHECK (lease_token IS NULL OR (typeof(lease_token) = 'text' "
+        'AND length(CAST(lease_token AS BLOB)) BETWEEN 1 AND 1024))',
+    'CHECK (lease_owner_session_id IS NULL OR '
+        "(typeof(lease_owner_session_id) = 'text' "
+        'AND length(CAST(lease_owner_session_id AS BLOB)) '
+        'BETWEEN 1 AND 1024))',
+    'CHECK ((lease_token IS NULL AND lease_owner_session_id IS NULL '
+        'AND lease_expires_at IS NULL) OR '
+        "(phase IN ('manifest-pending', 'downloading', 'verifying') "
+        'AND terminal_failure_kind IS NULL '
+        'AND lease_token IS NOT NULL AND lease_owner_session_id IS NOT NULL '
+        "AND typeof(lease_expires_at) = 'integer' "
+        'AND lease_expires_at >= 0))',
+    "CHECK (typeof(transition_version) = 'integer' "
+        'AND transition_version BETWEEN 1 AND 9223372036854775807)',
+    "CHECK (typeof(attempt_count) = 'integer' "
+        'AND attempt_count BETWEEN 0 AND 9223372036854775807)',
+    "CHECK (typeof(consecutive_failure_count) = 'integer' "
+        'AND consecutive_failure_count BETWEEN 0 AND 9223372036854775807)',
+    'CHECK (consecutive_failure_count <= attempt_count)',
+    'CHECK ((consecutive_failure_count = 0 AND last_failure_kind IS NULL) OR '
+        '(consecutive_failure_count >= 1 AND last_failure_kind IS NOT NULL))',
+    "CHECK (typeof(next_attempt_at) = 'integer' AND next_attempt_at >= 0)",
+    'CHECK (last_failure_kind IS NULL OR '
+        "(typeof(last_failure_kind) = 'text' "
+        'AND length(CAST(last_failure_kind AS BLOB)) BETWEEN 1 AND 100))',
+    'CHECK (terminal_failure_kind IS NULL OR '
+        "(phase != 'ready' AND lease_token IS NULL "
+        'AND consecutive_failure_count >= 1 '
+        'AND last_failure_kind = terminal_failure_kind '
+        "AND typeof(terminal_failure_kind) = 'text' "
+        'AND length(CAST(terminal_failure_kind AS BLOB)) BETWEEN 1 AND 100))',
+    "CHECK (phase != 'ready' OR "
+        '(terminal_failure_kind IS NULL '
+        'AND consecutive_failure_count = 0 '
+        'AND last_failure_kind IS NULL))',
     "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
     "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
   ];
@@ -1301,6 +1543,7 @@ class E2eeAttachmentUploadRows extends Table {
     E2eeSyncPullCheckpointRows,
     E2eeConfigEntryRows,
     E2eeAttachmentUploadRows,
+    E2eeAttachmentDownloadRows,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -1308,8 +1551,8 @@ class AppDatabase extends _$AppDatabase {
 
   static const databaseFileName = 'kelivo.db';
 
-  // 附件断点状态已硬切进 SQLCipher，旧库不能承担 E2EE 附件状态机。
-  static const currentSchemaVersion = 17;
+  // 附件上传摘要与下载断点已硬切进 SQLCipher，旧库不能承担 E2EE 附件状态机。
+  static const currentSchemaVersion = 18;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

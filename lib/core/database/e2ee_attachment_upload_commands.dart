@@ -70,12 +70,16 @@ final class E2eeAttachmentPendingChunk {
     required this.mutationId,
     required this.ciphertextPath,
     required this.ciphertextBytes,
-  });
+    required Uint8List ciphertextSha256,
+  }) : ciphertextSha256 = Uint8List.fromList(
+         ciphertextSha256,
+       ).asUnmodifiableView();
 
   final int index;
   final String mutationId;
   final String ciphertextPath;
   final int ciphertextBytes;
+  final Uint8List ciphertextSha256;
 }
 
 final class E2eeAttachmentUploadState {
@@ -92,8 +96,10 @@ final class E2eeAttachmentUploadState {
     required this.pendingChunk,
     required this.transitionVersion,
     required this.attemptCount,
+    required this.consecutiveFailureCount,
     required this.nextAttemptAt,
     required this.lastFailureKind,
+    required this.terminalFailureKind,
     required this.createdAt,
     required this.updatedAt,
   }) : manifestCiphertext = manifestCiphertext == null
@@ -112,8 +118,10 @@ final class E2eeAttachmentUploadState {
   final E2eeAttachmentPendingChunk? pendingChunk;
   final int transitionVersion;
   final int attemptCount;
+  final int consecutiveFailureCount;
   final DateTime nextAttemptAt;
   final String? lastFailureKind;
+  final String? terminalFailureKind;
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -167,6 +175,7 @@ final class E2eeAttachmentUploadCommands {
             nextChunkIndex: 0,
             transitionVersion: 1,
             attemptCount: 0,
+            consecutiveFailureCount: 0,
             nextAttemptAt: timestamp,
             createdAt: timestamp,
             updatedAt: timestamp,
@@ -219,6 +228,7 @@ final class E2eeAttachmentUploadCommands {
         ..where(
           (row) =>
               row.phase.isIn(_attachmentUploadPhases) &
+              row.terminalFailureKind.isNull() &
               row.nextAttemptAt.isSmallerOrEqualValue(
                 timestamp.microsecondsSinceEpoch,
               ) &
@@ -237,7 +247,9 @@ final class E2eeAttachmentUploadCommands {
       if (candidate == null) return null;
       try {
         if (candidate.transitionVersion >= _attachmentUploadMaxPositiveInt63 ||
-            candidate.attemptCount >= _attachmentUploadMaxPositiveInt63) {
+            candidate.attemptCount >= _attachmentUploadMaxPositiveInt63 ||
+            candidate.consecutiveFailureCount >=
+                _attachmentUploadMaxPositiveInt63) {
           throw StateError('附件上传状态计数已耗尽');
         }
         final nextTransitionVersion = candidate.transitionVersion + 1;
@@ -292,6 +304,7 @@ final class E2eeAttachmentUploadCommands {
     return _transitionLease(
       lease: lease,
       now: now,
+      resetFailureState: true,
       changes: E2eeAttachmentUploadRowsCompanion(
         phase: Value(E2eeAttachmentUploadPhase.manifestPending.wireValue),
         uploadId: Value(id),
@@ -317,6 +330,7 @@ final class E2eeAttachmentUploadCommands {
     return _transitionLease(
       lease: lease,
       now: now,
+      resetFailureState: false,
       changes: E2eeAttachmentUploadRowsCompanion(
         phase: Value(E2eeAttachmentUploadPhase.uploading.wireValue),
         manifestCiphertext: Value(sealedManifest.ciphertext),
@@ -330,6 +344,7 @@ final class E2eeAttachmentUploadCommands {
     required String mutationId,
     required String ciphertextPath,
     required int ciphertextBytes,
+    required Uint8List ciphertextSha256,
     required DateTime now,
   }) async {
     final state = lease.state;
@@ -348,14 +363,20 @@ final class E2eeAttachmentUploadCommands {
       'ciphertextPath',
       32768,
     );
+    if (ciphertextSha256.length != 32) {
+      throw const FormatException('待上传附件分块密文摘要长度无效');
+    }
+    final persistedCiphertextSha256 = Uint8List.fromList(ciphertextSha256);
     return _transitionLease(
       lease: lease,
       now: now,
+      resetFailureState: false,
       changes: E2eeAttachmentUploadRowsCompanion(
         pendingChunkIndex: Value(chunkIndex),
         pendingChunkMutationId: Value(mutation),
         pendingChunkCiphertextPath: Value(path),
         pendingChunkCiphertextBytes: Value(ciphertextBytes),
+        pendingChunkCiphertextSha256: Value(persistedCiphertextSha256),
       ),
     );
   }
@@ -378,6 +399,7 @@ final class E2eeAttachmentUploadCommands {
     return _transitionLease(
       lease: lease,
       now: now,
+      resetFailureState: true,
       changes: E2eeAttachmentUploadRowsCompanion(
         phase: Value(nextPhase.wireValue),
         nextChunkIndex: Value(nextIndex),
@@ -385,6 +407,7 @@ final class E2eeAttachmentUploadCommands {
         pendingChunkMutationId: const Value(null),
         pendingChunkCiphertextPath: const Value(null),
         pendingChunkCiphertextBytes: const Value(null),
+        pendingChunkCiphertextSha256: const Value(null),
       ),
     );
   }
@@ -412,8 +435,10 @@ final class E2eeAttachmentUploadCommands {
               leaseOwnerSessionId: const Value(null),
               leaseExpiresAt: const Value(null),
               transitionVersion: Value(lease.state.transitionVersion + 1),
+              consecutiveFailureCount: const Value(0),
               nextAttemptAt: Value(timestamp),
               lastFailureKind: const Value(null),
+              terminalFailureKind: const Value(null),
               updatedAt: Value(timestamp),
             ),
           );
@@ -430,7 +455,7 @@ final class E2eeAttachmentUploadCommands {
     return _releaseLease(
       lease: lease,
       nextAttemptAt: timestamp,
-      lastFailureKind: null,
+      recordFailure: false,
       now: timestamp,
     );
   }
@@ -447,17 +472,84 @@ final class E2eeAttachmentUploadCommands {
     if (retryAt.isBefore(timestamp)) {
       throw const FormatException('附件上传重试时间不得早于当前时间');
     }
+    if (lease.state.consecutiveFailureCount >=
+        _attachmentUploadMaxPositiveInt63) {
+      throw StateError('附件上传 consecutiveFailureCount 已耗尽');
+    }
     return _releaseLease(
       lease: lease,
       nextAttemptAt: retryAt,
+      recordFailure: true,
       lastFailureKind: failure,
+      consecutiveFailureCount: lease.state.consecutiveFailureCount + 1,
       now: timestamp,
     );
+  }
+
+  Future<E2eeAttachmentUploadState> markPermanentlyFailed({
+    required E2eeAttachmentUploadLease lease,
+    required String failureKind,
+    required DateTime now,
+  }) {
+    final timestamp = _requireStorageTime(now, 'now');
+    final failure = _requireErrorCode(failureKind, 'failureKind');
+    _requireActiveAttachmentUploadLease(lease, timestamp);
+    return _database.transaction(() async {
+      if (lease.state.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
+        throw StateError('附件上传 transitionVersion 已耗尽');
+      }
+      if (lease.state.consecutiveFailureCount >=
+          _attachmentUploadMaxPositiveInt63) {
+        throw StateError('附件上传 consecutiveFailureCount 已耗尽');
+      }
+      final updated =
+          await (_database.update(
+            _database.e2eeAttachmentUploadRows,
+          )..where((row) => _matchesAttachmentUploadLease(row, lease))).write(
+            E2eeAttachmentUploadRowsCompanion(
+              leaseToken: const Value(null),
+              leaseOwnerSessionId: const Value(null),
+              leaseExpiresAt: const Value(null),
+              transitionVersion: Value(lease.state.transitionVersion + 1),
+              consecutiveFailureCount: Value(
+                lease.state.consecutiveFailureCount + 1,
+              ),
+              lastFailureKind: Value(failure),
+              terminalFailureKind: Value(failure),
+              updatedAt: Value(timestamp),
+            ),
+          );
+      if (updated != 1) throw StateError('附件上传失败终态 CAS 失败');
+      return _stateFromRow(await _rowByAttachmentId(lease.state.attachmentId));
+    });
+  }
+
+  Future<bool> deleteFailedForRebuild({
+    required String attachmentId,
+    required int expectedTransitionVersion,
+  }) async {
+    final id = _requireCanonicalUuidV4(attachmentId, 'attachmentId');
+    if (expectedTransitionVersion < 1 ||
+        expectedTransitionVersion > _attachmentUploadMaxPositiveInt63) {
+      throw const FormatException('expectedTransitionVersion 超出有效范围');
+    }
+    final deleted =
+        await (_database.delete(_database.e2eeAttachmentUploadRows)..where(
+              (row) =>
+                  row.attachmentId.equals(id) &
+                  row.transitionVersion.equals(expectedTransitionVersion) &
+                  row.terminalFailureKind.isNotNull() &
+                  row.leaseToken.isNull(),
+            ))
+            .go();
+    if (deleted > 1) throw StateError('附件上传重建 CAS 删除了多行');
+    return deleted == 1;
   }
 
   Future<E2eeAttachmentUploadLease> _transitionLease({
     required E2eeAttachmentUploadLease lease,
     required DateTime now,
+    required bool resetFailureState,
     required E2eeAttachmentUploadRowsCompanion changes,
   }) {
     final timestamp = _requireStorageTime(now, 'now');
@@ -467,15 +559,21 @@ final class E2eeAttachmentUploadCommands {
         throw StateError('附件上传 transitionVersion 已耗尽');
       }
       final nextTransitionVersion = lease.state.transitionVersion + 1;
+      final persistedChanges = changes.copyWith(
+        transitionVersion: Value(nextTransitionVersion),
+        consecutiveFailureCount: resetFailureState
+            ? const Value(0)
+            : const Value.absent(),
+        nextAttemptAt: Value(timestamp),
+        lastFailureKind: resetFailureState
+            ? const Value(null)
+            : const Value.absent(),
+        updatedAt: Value(timestamp),
+      );
       final updated =
-          await (_database.update(
-            _database.e2eeAttachmentUploadRows,
-          )..where((row) => _matchesAttachmentUploadLease(row, lease))).write(
-            changes.copyWith(
-              transitionVersion: Value(nextTransitionVersion),
-              updatedAt: Value(timestamp),
-            ),
-          );
+          await (_database.update(_database.e2eeAttachmentUploadRows)
+                ..where((row) => _matchesAttachmentUploadLease(row, lease)))
+              .write(persistedChanges);
       if (updated != 1) throw StateError('附件上传阶段 CAS 失败');
       final next = await _rowByAttachmentId(lease.state.attachmentId);
       return _leaseFromRow(
@@ -490,9 +588,15 @@ final class E2eeAttachmentUploadCommands {
   Future<bool> _releaseLease({
     required E2eeAttachmentUploadLease lease,
     required DateTime nextAttemptAt,
-    required String? lastFailureKind,
+    required bool recordFailure,
+    String? lastFailureKind,
+    int? consecutiveFailureCount,
     required DateTime now,
   }) async {
+    if (recordFailure &&
+        (lastFailureKind == null || consecutiveFailureCount == null)) {
+      throw StateError('附件上传失败释放缺少失败状态');
+    }
     if (!now.isBefore(lease.leaseExpiresAt)) return false;
     if (lease.state.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
       throw StateError('附件上传 transitionVersion 已耗尽');
@@ -506,8 +610,13 @@ final class E2eeAttachmentUploadCommands {
             leaseOwnerSessionId: const Value(null),
             leaseExpiresAt: const Value(null),
             transitionVersion: Value(lease.state.transitionVersion + 1),
+            consecutiveFailureCount: recordFailure
+                ? Value(consecutiveFailureCount!)
+                : const Value.absent(),
             nextAttemptAt: Value(nextAttemptAt),
-            lastFailureKind: Value(lastFailureKind),
+            lastFailureKind: recordFailure
+                ? Value(lastFailureKind)
+                : const Value.absent(),
             updatedAt: Value(now),
           ),
         );
@@ -549,18 +658,23 @@ E2eeAttachmentUploadLease _leaseFromRow(
   required String leaseOwner,
   required DateTime leaseExpiresAt,
 }) {
-  if (row.leaseToken != leaseToken ||
-      row.leaseOwnerSessionId != leaseOwner ||
-      row.leaseExpiresAt == null ||
-      !row.leaseExpiresAt!.isAtSameMomentAs(leaseExpiresAt)) {
-    throw StateError('附件上传租约持久状态不一致');
+  try {
+    if (row.leaseToken != leaseToken ||
+        row.leaseOwnerSessionId != leaseOwner ||
+        row.leaseExpiresAt == null ||
+        !row.leaseExpiresAt!.isAtSameMomentAs(leaseExpiresAt)) {
+      throw StateError('附件上传租约持久状态不一致');
+    }
+    return E2eeAttachmentUploadLease._(
+      state: _stateFromRow(row),
+      leaseToken: leaseToken,
+      leaseOwner: leaseOwner,
+      leaseExpiresAt: leaseExpiresAt,
+    );
+  } catch (_) {
+    _clearAttachmentUploadRowBytes(row);
+    rethrow;
   }
-  return E2eeAttachmentUploadLease._(
-    state: _stateFromRow(row),
-    leaseToken: leaseToken,
-    leaseOwner: leaseOwner,
-    leaseExpiresAt: leaseExpiresAt,
-  );
 }
 
 E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
@@ -608,6 +722,7 @@ E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
               32768,
             ),
             ciphertextBytes: row.pendingChunkCiphertextBytes!,
+            ciphertextSha256: row.pendingChunkCiphertextSha256!,
           );
     final uploadId = row.uploadId == null
         ? null
@@ -639,8 +754,10 @@ E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
       pendingChunk: pendingChunk,
       transitionVersion: row.transitionVersion,
       attemptCount: row.attemptCount,
+      consecutiveFailureCount: row.consecutiveFailureCount,
       nextAttemptAt: row.nextAttemptAt.toUtc(),
       lastFailureKind: row.lastFailureKind,
+      terminalFailureKind: row.terminalFailureKind,
       createdAt: row.createdAt.toUtc(),
       updatedAt: row.updatedAt.toUtc(),
     );
@@ -654,6 +771,12 @@ void _clearAttachmentUploadRowBytes(E2eeAttachmentUploadRow row) {
   row.wrappedDataKey.fillRange(0, row.wrappedDataKey.length, 0);
   final manifestCiphertext = row.manifestCiphertext;
   manifestCiphertext?.fillRange(0, manifestCiphertext.length, 0);
+  final pendingChunkCiphertextSha256 = row.pendingChunkCiphertextSha256;
+  pendingChunkCiphertextSha256?.fillRange(
+    0,
+    pendingChunkCiphertextSha256.length,
+    0,
+  );
 }
 
 String _requireAttachmentStorageText(

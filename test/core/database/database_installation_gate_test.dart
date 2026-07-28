@@ -108,6 +108,52 @@ void main() {
       );
     });
 
+    test('E2EE 附件状态表或关键索引缺失时拒绝已安装数据库', () async {
+      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
+      final file = databaseFile(directory);
+      final raw = sqlite.sqlite3.open(file.path);
+      try {
+        testDatabaseCipher.apply(raw, createSlotIfMissing: false);
+        raw.execute('DROP INDEX idx_e2ee_attachment_download_due;');
+      } finally {
+        raw.close();
+      }
+      expect(
+        () => ChatDatabaseRepository.inspectInstalledDatabase(
+          file,
+          cipher: testDatabaseCipher,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'index_schema:idx_e2ee_attachment_download_due',
+          ),
+        ),
+      );
+
+      final rawWithoutTable = sqlite.sqlite3.open(file.path);
+      try {
+        testDatabaseCipher.apply(rawWithoutTable, createSlotIfMissing: false);
+        rawWithoutTable.execute('DROP TABLE e2ee_attachment_download_rows;');
+      } finally {
+        rawWithoutTable.close();
+      }
+      expect(
+        () => ChatDatabaseRepository.inspectInstalledDatabase(
+          file,
+          cipher: testDatabaseCipher,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'required_tables',
+          ),
+        ),
+      );
+    });
+
     test('升级时 adoption 已有有效数据库且不清空数据', () async {
       final repository = ChatDatabaseRepository.open(
         file: databaseFile(directory),

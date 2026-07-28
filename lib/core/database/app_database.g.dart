@@ -11621,6 +11621,17 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
         type: DriftSqlType.int,
         requiredDuringInsert: false,
       );
+  static const VerificationMeta _pendingChunkCiphertextSha256Meta =
+      const VerificationMeta('pendingChunkCiphertextSha256');
+  @override
+  late final GeneratedColumn<Uint8List> pendingChunkCiphertextSha256 =
+      GeneratedColumn<Uint8List>(
+        'pending_chunk_ciphertext_sha256',
+        aliasedName,
+        true,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _leaseTokenMeta = const VerificationMeta(
     'leaseToken',
   );
@@ -11676,6 +11687,17 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     type: DriftSqlType.int,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _consecutiveFailureCountMeta =
+      const VerificationMeta('consecutiveFailureCount');
+  @override
+  late final GeneratedColumn<int> consecutiveFailureCount =
+      GeneratedColumn<int>(
+        'consecutive_failure_count',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      );
   @override
   late final GeneratedColumnWithTypeConverter<DateTime, int> nextAttemptAt =
       GeneratedColumn<int>(
@@ -11698,6 +11720,17 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _terminalFailureKindMeta =
+      const VerificationMeta('terminalFailureKind');
+  @override
+  late final GeneratedColumn<String> terminalFailureKind =
+      GeneratedColumn<String>(
+        'terminal_failure_kind',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   @override
   late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
       GeneratedColumn<int>(
@@ -11744,13 +11777,16 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     pendingChunkMutationId,
     pendingChunkCiphertextPath,
     pendingChunkCiphertextBytes,
+    pendingChunkCiphertextSha256,
     leaseToken,
     leaseOwnerSessionId,
     leaseExpiresAt,
     transitionVersion,
     attemptCount,
+    consecutiveFailureCount,
     nextAttemptAt,
     lastFailureKind,
+    terminalFailureKind,
     createdAt,
     updatedAt,
   ];
@@ -11971,6 +12007,15 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
         ),
       );
     }
+    if (data.containsKey('pending_chunk_ciphertext_sha256')) {
+      context.handle(
+        _pendingChunkCiphertextSha256Meta,
+        pendingChunkCiphertextSha256.isAcceptableOrUnknown(
+          data['pending_chunk_ciphertext_sha256']!,
+          _pendingChunkCiphertextSha256Meta,
+        ),
+      );
+    }
     if (data.containsKey('lease_token')) {
       context.handle(
         _leaseTokenMeta,
@@ -12008,12 +12053,32 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     } else if (isInserting) {
       context.missing(_attemptCountMeta);
     }
+    if (data.containsKey('consecutive_failure_count')) {
+      context.handle(
+        _consecutiveFailureCountMeta,
+        consecutiveFailureCount.isAcceptableOrUnknown(
+          data['consecutive_failure_count']!,
+          _consecutiveFailureCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_consecutiveFailureCountMeta);
+    }
     if (data.containsKey('last_failure_kind')) {
       context.handle(
         _lastFailureKindMeta,
         lastFailureKind.isAcceptableOrUnknown(
           data['last_failure_kind']!,
           _lastFailureKindMeta,
+        ),
+      );
+    }
+    if (data.containsKey('terminal_failure_kind')) {
+      context.handle(
+        _terminalFailureKindMeta,
+        terminalFailureKind.isAcceptableOrUnknown(
+          data['terminal_failure_kind']!,
+          _terminalFailureKindMeta,
         ),
       );
     }
@@ -12122,6 +12187,10 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
         DriftSqlType.int,
         data['${effectivePrefix}pending_chunk_ciphertext_bytes'],
       ),
+      pendingChunkCiphertextSha256: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}pending_chunk_ciphertext_sha256'],
+      ),
       leaseToken: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}lease_token'],
@@ -12145,6 +12214,10 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
         DriftSqlType.int,
         data['${effectivePrefix}attempt_count'],
       )!,
+      consecutiveFailureCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}consecutive_failure_count'],
+      )!,
       nextAttemptAt: $E2eeAttachmentUploadRowsTable.$converternextAttemptAt
           .fromSql(
             attachedDatabase.typeMapping.read(
@@ -12155,6 +12228,10 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
       lastFailureKind: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}last_failure_kind'],
+      ),
+      terminalFailureKind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}terminal_failure_kind'],
       ),
       createdAt: $E2eeAttachmentUploadRowsTable.$convertercreatedAt.fromSql(
         attachedDatabase.typeMapping.read(
@@ -12212,13 +12289,16 @@ class E2eeAttachmentUploadRow extends DataClass
   final String? pendingChunkMutationId;
   final String? pendingChunkCiphertextPath;
   final int? pendingChunkCiphertextBytes;
+  final Uint8List? pendingChunkCiphertextSha256;
   final String? leaseToken;
   final String? leaseOwnerSessionId;
   final DateTime? leaseExpiresAt;
   final int transitionVersion;
   final int attemptCount;
+  final int consecutiveFailureCount;
   final DateTime nextAttemptAt;
   final String? lastFailureKind;
+  final String? terminalFailureKind;
   final DateTime createdAt;
   final DateTime updatedAt;
   const E2eeAttachmentUploadRow({
@@ -12244,13 +12324,16 @@ class E2eeAttachmentUploadRow extends DataClass
     this.pendingChunkMutationId,
     this.pendingChunkCiphertextPath,
     this.pendingChunkCiphertextBytes,
+    this.pendingChunkCiphertextSha256,
     this.leaseToken,
     this.leaseOwnerSessionId,
     this.leaseExpiresAt,
     required this.transitionVersion,
     required this.attemptCount,
+    required this.consecutiveFailureCount,
     required this.nextAttemptAt,
     this.lastFailureKind,
+    this.terminalFailureKind,
     required this.createdAt,
     required this.updatedAt,
   });
@@ -12301,6 +12384,11 @@ class E2eeAttachmentUploadRow extends DataClass
         pendingChunkCiphertextBytes,
       );
     }
+    if (!nullToAbsent || pendingChunkCiphertextSha256 != null) {
+      map['pending_chunk_ciphertext_sha256'] = Variable<Uint8List>(
+        pendingChunkCiphertextSha256,
+      );
+    }
     if (!nullToAbsent || leaseToken != null) {
       map['lease_token'] = Variable<String>(leaseToken);
     }
@@ -12316,6 +12404,7 @@ class E2eeAttachmentUploadRow extends DataClass
     }
     map['transition_version'] = Variable<int>(transitionVersion);
     map['attempt_count'] = Variable<int>(attemptCount);
+    map['consecutive_failure_count'] = Variable<int>(consecutiveFailureCount);
     {
       map['next_attempt_at'] = Variable<int>(
         $E2eeAttachmentUploadRowsTable.$converternextAttemptAt.toSql(
@@ -12325,6 +12414,9 @@ class E2eeAttachmentUploadRow extends DataClass
     }
     if (!nullToAbsent || lastFailureKind != null) {
       map['last_failure_kind'] = Variable<String>(lastFailureKind);
+    }
+    if (!nullToAbsent || terminalFailureKind != null) {
+      map['terminal_failure_kind'] = Variable<String>(terminalFailureKind);
     }
     {
       map['created_at'] = Variable<int>(
@@ -12381,6 +12473,10 @@ class E2eeAttachmentUploadRow extends DataClass
           pendingChunkCiphertextBytes == null && nullToAbsent
           ? const Value.absent()
           : Value(pendingChunkCiphertextBytes),
+      pendingChunkCiphertextSha256:
+          pendingChunkCiphertextSha256 == null && nullToAbsent
+          ? const Value.absent()
+          : Value(pendingChunkCiphertextSha256),
       leaseToken: leaseToken == null && nullToAbsent
           ? const Value.absent()
           : Value(leaseToken),
@@ -12392,10 +12488,14 @@ class E2eeAttachmentUploadRow extends DataClass
           : Value(leaseExpiresAt),
       transitionVersion: Value(transitionVersion),
       attemptCount: Value(attemptCount),
+      consecutiveFailureCount: Value(consecutiveFailureCount),
       nextAttemptAt: Value(nextAttemptAt),
       lastFailureKind: lastFailureKind == null && nullToAbsent
           ? const Value.absent()
           : Value(lastFailureKind),
+      terminalFailureKind: terminalFailureKind == null && nullToAbsent
+          ? const Value.absent()
+          : Value(terminalFailureKind),
       createdAt: Value(createdAt),
       updatedAt: Value(updatedAt),
     );
@@ -12441,6 +12541,9 @@ class E2eeAttachmentUploadRow extends DataClass
       pendingChunkCiphertextBytes: serializer.fromJson<int?>(
         json['pendingChunkCiphertextBytes'],
       ),
+      pendingChunkCiphertextSha256: serializer.fromJson<Uint8List?>(
+        json['pendingChunkCiphertextSha256'],
+      ),
       leaseToken: serializer.fromJson<String?>(json['leaseToken']),
       leaseOwnerSessionId: serializer.fromJson<String?>(
         json['leaseOwnerSessionId'],
@@ -12448,8 +12551,14 @@ class E2eeAttachmentUploadRow extends DataClass
       leaseExpiresAt: serializer.fromJson<DateTime?>(json['leaseExpiresAt']),
       transitionVersion: serializer.fromJson<int>(json['transitionVersion']),
       attemptCount: serializer.fromJson<int>(json['attemptCount']),
+      consecutiveFailureCount: serializer.fromJson<int>(
+        json['consecutiveFailureCount'],
+      ),
       nextAttemptAt: serializer.fromJson<DateTime>(json['nextAttemptAt']),
       lastFailureKind: serializer.fromJson<String?>(json['lastFailureKind']),
+      terminalFailureKind: serializer.fromJson<String?>(
+        json['terminalFailureKind'],
+      ),
       createdAt: serializer.fromJson<DateTime>(json['createdAt']),
       updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
     );
@@ -12486,13 +12595,20 @@ class E2eeAttachmentUploadRow extends DataClass
       'pendingChunkCiphertextBytes': serializer.toJson<int?>(
         pendingChunkCiphertextBytes,
       ),
+      'pendingChunkCiphertextSha256': serializer.toJson<Uint8List?>(
+        pendingChunkCiphertextSha256,
+      ),
       'leaseToken': serializer.toJson<String?>(leaseToken),
       'leaseOwnerSessionId': serializer.toJson<String?>(leaseOwnerSessionId),
       'leaseExpiresAt': serializer.toJson<DateTime?>(leaseExpiresAt),
       'transitionVersion': serializer.toJson<int>(transitionVersion),
       'attemptCount': serializer.toJson<int>(attemptCount),
+      'consecutiveFailureCount': serializer.toJson<int>(
+        consecutiveFailureCount,
+      ),
       'nextAttemptAt': serializer.toJson<DateTime>(nextAttemptAt),
       'lastFailureKind': serializer.toJson<String?>(lastFailureKind),
+      'terminalFailureKind': serializer.toJson<String?>(terminalFailureKind),
       'createdAt': serializer.toJson<DateTime>(createdAt),
       'updatedAt': serializer.toJson<DateTime>(updatedAt),
     };
@@ -12521,13 +12637,16 @@ class E2eeAttachmentUploadRow extends DataClass
     Value<String?> pendingChunkMutationId = const Value.absent(),
     Value<String?> pendingChunkCiphertextPath = const Value.absent(),
     Value<int?> pendingChunkCiphertextBytes = const Value.absent(),
+    Value<Uint8List?> pendingChunkCiphertextSha256 = const Value.absent(),
     Value<String?> leaseToken = const Value.absent(),
     Value<String?> leaseOwnerSessionId = const Value.absent(),
     Value<DateTime?> leaseExpiresAt = const Value.absent(),
     int? transitionVersion,
     int? attemptCount,
+    int? consecutiveFailureCount,
     DateTime? nextAttemptAt,
     Value<String?> lastFailureKind = const Value.absent(),
+    Value<String?> terminalFailureKind = const Value.absent(),
     DateTime? createdAt,
     DateTime? updatedAt,
   }) => E2eeAttachmentUploadRow(
@@ -12563,6 +12682,9 @@ class E2eeAttachmentUploadRow extends DataClass
     pendingChunkCiphertextBytes: pendingChunkCiphertextBytes.present
         ? pendingChunkCiphertextBytes.value
         : this.pendingChunkCiphertextBytes,
+    pendingChunkCiphertextSha256: pendingChunkCiphertextSha256.present
+        ? pendingChunkCiphertextSha256.value
+        : this.pendingChunkCiphertextSha256,
     leaseToken: leaseToken.present ? leaseToken.value : this.leaseToken,
     leaseOwnerSessionId: leaseOwnerSessionId.present
         ? leaseOwnerSessionId.value
@@ -12572,10 +12694,15 @@ class E2eeAttachmentUploadRow extends DataClass
         : this.leaseExpiresAt,
     transitionVersion: transitionVersion ?? this.transitionVersion,
     attemptCount: attemptCount ?? this.attemptCount,
+    consecutiveFailureCount:
+        consecutiveFailureCount ?? this.consecutiveFailureCount,
     nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
     lastFailureKind: lastFailureKind.present
         ? lastFailureKind.value
         : this.lastFailureKind,
+    terminalFailureKind: terminalFailureKind.present
+        ? terminalFailureKind.value
+        : this.terminalFailureKind,
     createdAt: createdAt ?? this.createdAt,
     updatedAt: updatedAt ?? this.updatedAt,
   );
@@ -12639,6 +12766,9 @@ class E2eeAttachmentUploadRow extends DataClass
       pendingChunkCiphertextBytes: data.pendingChunkCiphertextBytes.present
           ? data.pendingChunkCiphertextBytes.value
           : this.pendingChunkCiphertextBytes,
+      pendingChunkCiphertextSha256: data.pendingChunkCiphertextSha256.present
+          ? data.pendingChunkCiphertextSha256.value
+          : this.pendingChunkCiphertextSha256,
       leaseToken: data.leaseToken.present
           ? data.leaseToken.value
           : this.leaseToken,
@@ -12654,12 +12784,18 @@ class E2eeAttachmentUploadRow extends DataClass
       attemptCount: data.attemptCount.present
           ? data.attemptCount.value
           : this.attemptCount,
+      consecutiveFailureCount: data.consecutiveFailureCount.present
+          ? data.consecutiveFailureCount.value
+          : this.consecutiveFailureCount,
       nextAttemptAt: data.nextAttemptAt.present
           ? data.nextAttemptAt.value
           : this.nextAttemptAt,
       lastFailureKind: data.lastFailureKind.present
           ? data.lastFailureKind.value
           : this.lastFailureKind,
+      terminalFailureKind: data.terminalFailureKind.present
+          ? data.terminalFailureKind.value
+          : this.terminalFailureKind,
       createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
       updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
     );
@@ -12690,13 +12826,18 @@ class E2eeAttachmentUploadRow extends DataClass
           ..write('pendingChunkMutationId: $pendingChunkMutationId, ')
           ..write('pendingChunkCiphertextPath: $pendingChunkCiphertextPath, ')
           ..write('pendingChunkCiphertextBytes: $pendingChunkCiphertextBytes, ')
+          ..write(
+            'pendingChunkCiphertextSha256: $pendingChunkCiphertextSha256, ',
+          )
           ..write('leaseToken: $leaseToken, ')
           ..write('leaseOwnerSessionId: $leaseOwnerSessionId, ')
           ..write('leaseExpiresAt: $leaseExpiresAt, ')
           ..write('transitionVersion: $transitionVersion, ')
           ..write('attemptCount: $attemptCount, ')
+          ..write('consecutiveFailureCount: $consecutiveFailureCount, ')
           ..write('nextAttemptAt: $nextAttemptAt, ')
           ..write('lastFailureKind: $lastFailureKind, ')
+          ..write('terminalFailureKind: $terminalFailureKind, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt')
           ..write(')'))
@@ -12727,13 +12868,16 @@ class E2eeAttachmentUploadRow extends DataClass
     pendingChunkMutationId,
     pendingChunkCiphertextPath,
     pendingChunkCiphertextBytes,
+    $driftBlobEquality.hash(pendingChunkCiphertextSha256),
     leaseToken,
     leaseOwnerSessionId,
     leaseExpiresAt,
     transitionVersion,
     attemptCount,
+    consecutiveFailureCount,
     nextAttemptAt,
     lastFailureKind,
+    terminalFailureKind,
     createdAt,
     updatedAt,
   ]);
@@ -12770,13 +12914,19 @@ class E2eeAttachmentUploadRow extends DataClass
           other.pendingChunkCiphertextPath == this.pendingChunkCiphertextPath &&
           other.pendingChunkCiphertextBytes ==
               this.pendingChunkCiphertextBytes &&
+          $driftBlobEquality.equals(
+            other.pendingChunkCiphertextSha256,
+            this.pendingChunkCiphertextSha256,
+          ) &&
           other.leaseToken == this.leaseToken &&
           other.leaseOwnerSessionId == this.leaseOwnerSessionId &&
           other.leaseExpiresAt == this.leaseExpiresAt &&
           other.transitionVersion == this.transitionVersion &&
           other.attemptCount == this.attemptCount &&
+          other.consecutiveFailureCount == this.consecutiveFailureCount &&
           other.nextAttemptAt == this.nextAttemptAt &&
           other.lastFailureKind == this.lastFailureKind &&
+          other.terminalFailureKind == this.terminalFailureKind &&
           other.createdAt == this.createdAt &&
           other.updatedAt == this.updatedAt);
 }
@@ -12805,13 +12955,16 @@ class E2eeAttachmentUploadRowsCompanion
   final Value<String?> pendingChunkMutationId;
   final Value<String?> pendingChunkCiphertextPath;
   final Value<int?> pendingChunkCiphertextBytes;
+  final Value<Uint8List?> pendingChunkCiphertextSha256;
   final Value<String?> leaseToken;
   final Value<String?> leaseOwnerSessionId;
   final Value<DateTime?> leaseExpiresAt;
   final Value<int> transitionVersion;
   final Value<int> attemptCount;
+  final Value<int> consecutiveFailureCount;
   final Value<DateTime> nextAttemptAt;
   final Value<String?> lastFailureKind;
+  final Value<String?> terminalFailureKind;
   final Value<DateTime> createdAt;
   final Value<DateTime> updatedAt;
   final Value<int> rowid;
@@ -12838,13 +12991,16 @@ class E2eeAttachmentUploadRowsCompanion
     this.pendingChunkMutationId = const Value.absent(),
     this.pendingChunkCiphertextPath = const Value.absent(),
     this.pendingChunkCiphertextBytes = const Value.absent(),
+    this.pendingChunkCiphertextSha256 = const Value.absent(),
     this.leaseToken = const Value.absent(),
     this.leaseOwnerSessionId = const Value.absent(),
     this.leaseExpiresAt = const Value.absent(),
     this.transitionVersion = const Value.absent(),
     this.attemptCount = const Value.absent(),
+    this.consecutiveFailureCount = const Value.absent(),
     this.nextAttemptAt = const Value.absent(),
     this.lastFailureKind = const Value.absent(),
+    this.terminalFailureKind = const Value.absent(),
     this.createdAt = const Value.absent(),
     this.updatedAt = const Value.absent(),
     this.rowid = const Value.absent(),
@@ -12872,13 +13028,16 @@ class E2eeAttachmentUploadRowsCompanion
     this.pendingChunkMutationId = const Value.absent(),
     this.pendingChunkCiphertextPath = const Value.absent(),
     this.pendingChunkCiphertextBytes = const Value.absent(),
+    this.pendingChunkCiphertextSha256 = const Value.absent(),
     this.leaseToken = const Value.absent(),
     this.leaseOwnerSessionId = const Value.absent(),
     this.leaseExpiresAt = const Value.absent(),
     required int transitionVersion,
     required int attemptCount,
+    required int consecutiveFailureCount,
     required DateTime nextAttemptAt,
     this.lastFailureKind = const Value.absent(),
+    this.terminalFailureKind = const Value.absent(),
     required DateTime createdAt,
     required DateTime updatedAt,
     this.rowid = const Value.absent(),
@@ -12898,6 +13057,7 @@ class E2eeAttachmentUploadRowsCompanion
        nextChunkIndex = Value(nextChunkIndex),
        transitionVersion = Value(transitionVersion),
        attemptCount = Value(attemptCount),
+       consecutiveFailureCount = Value(consecutiveFailureCount),
        nextAttemptAt = Value(nextAttemptAt),
        createdAt = Value(createdAt),
        updatedAt = Value(updatedAt);
@@ -12924,13 +13084,16 @@ class E2eeAttachmentUploadRowsCompanion
     Expression<String>? pendingChunkMutationId,
     Expression<String>? pendingChunkCiphertextPath,
     Expression<int>? pendingChunkCiphertextBytes,
+    Expression<Uint8List>? pendingChunkCiphertextSha256,
     Expression<String>? leaseToken,
     Expression<String>? leaseOwnerSessionId,
     Expression<int>? leaseExpiresAt,
     Expression<int>? transitionVersion,
     Expression<int>? attemptCount,
+    Expression<int>? consecutiveFailureCount,
     Expression<int>? nextAttemptAt,
     Expression<String>? lastFailureKind,
+    Expression<String>? terminalFailureKind,
     Expression<int>? createdAt,
     Expression<int>? updatedAt,
     Expression<int>? rowid,
@@ -12963,14 +13126,20 @@ class E2eeAttachmentUploadRowsCompanion
         'pending_chunk_ciphertext_path': pendingChunkCiphertextPath,
       if (pendingChunkCiphertextBytes != null)
         'pending_chunk_ciphertext_bytes': pendingChunkCiphertextBytes,
+      if (pendingChunkCiphertextSha256 != null)
+        'pending_chunk_ciphertext_sha256': pendingChunkCiphertextSha256,
       if (leaseToken != null) 'lease_token': leaseToken,
       if (leaseOwnerSessionId != null)
         'lease_owner_session_id': leaseOwnerSessionId,
       if (leaseExpiresAt != null) 'lease_expires_at': leaseExpiresAt,
       if (transitionVersion != null) 'transition_version': transitionVersion,
       if (attemptCount != null) 'attempt_count': attemptCount,
+      if (consecutiveFailureCount != null)
+        'consecutive_failure_count': consecutiveFailureCount,
       if (nextAttemptAt != null) 'next_attempt_at': nextAttemptAt,
       if (lastFailureKind != null) 'last_failure_kind': lastFailureKind,
+      if (terminalFailureKind != null)
+        'terminal_failure_kind': terminalFailureKind,
       if (createdAt != null) 'created_at': createdAt,
       if (updatedAt != null) 'updated_at': updatedAt,
       if (rowid != null) 'rowid': rowid,
@@ -13000,13 +13169,16 @@ class E2eeAttachmentUploadRowsCompanion
     Value<String?>? pendingChunkMutationId,
     Value<String?>? pendingChunkCiphertextPath,
     Value<int?>? pendingChunkCiphertextBytes,
+    Value<Uint8List?>? pendingChunkCiphertextSha256,
     Value<String?>? leaseToken,
     Value<String?>? leaseOwnerSessionId,
     Value<DateTime?>? leaseExpiresAt,
     Value<int>? transitionVersion,
     Value<int>? attemptCount,
+    Value<int>? consecutiveFailureCount,
     Value<DateTime>? nextAttemptAt,
     Value<String?>? lastFailureKind,
+    Value<String?>? terminalFailureKind,
     Value<DateTime>? createdAt,
     Value<DateTime>? updatedAt,
     Value<int>? rowid,
@@ -13037,13 +13209,18 @@ class E2eeAttachmentUploadRowsCompanion
           pendingChunkCiphertextPath ?? this.pendingChunkCiphertextPath,
       pendingChunkCiphertextBytes:
           pendingChunkCiphertextBytes ?? this.pendingChunkCiphertextBytes,
+      pendingChunkCiphertextSha256:
+          pendingChunkCiphertextSha256 ?? this.pendingChunkCiphertextSha256,
       leaseToken: leaseToken ?? this.leaseToken,
       leaseOwnerSessionId: leaseOwnerSessionId ?? this.leaseOwnerSessionId,
       leaseExpiresAt: leaseExpiresAt ?? this.leaseExpiresAt,
       transitionVersion: transitionVersion ?? this.transitionVersion,
       attemptCount: attemptCount ?? this.attemptCount,
+      consecutiveFailureCount:
+          consecutiveFailureCount ?? this.consecutiveFailureCount,
       nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
       lastFailureKind: lastFailureKind ?? this.lastFailureKind,
+      terminalFailureKind: terminalFailureKind ?? this.terminalFailureKind,
       createdAt: createdAt ?? this.createdAt,
       updatedAt: updatedAt ?? this.updatedAt,
       rowid: rowid ?? this.rowid,
@@ -13127,6 +13304,11 @@ class E2eeAttachmentUploadRowsCompanion
         pendingChunkCiphertextBytes.value,
       );
     }
+    if (pendingChunkCiphertextSha256.present) {
+      map['pending_chunk_ciphertext_sha256'] = Variable<Uint8List>(
+        pendingChunkCiphertextSha256.value,
+      );
+    }
     if (leaseToken.present) {
       map['lease_token'] = Variable<String>(leaseToken.value);
     }
@@ -13148,6 +13330,11 @@ class E2eeAttachmentUploadRowsCompanion
     if (attemptCount.present) {
       map['attempt_count'] = Variable<int>(attemptCount.value);
     }
+    if (consecutiveFailureCount.present) {
+      map['consecutive_failure_count'] = Variable<int>(
+        consecutiveFailureCount.value,
+      );
+    }
     if (nextAttemptAt.present) {
       map['next_attempt_at'] = Variable<int>(
         $E2eeAttachmentUploadRowsTable.$converternextAttemptAt.toSql(
@@ -13157,6 +13344,11 @@ class E2eeAttachmentUploadRowsCompanion
     }
     if (lastFailureKind.present) {
       map['last_failure_kind'] = Variable<String>(lastFailureKind.value);
+    }
+    if (terminalFailureKind.present) {
+      map['terminal_failure_kind'] = Variable<String>(
+        terminalFailureKind.value,
+      );
     }
     if (createdAt.present) {
       map['created_at'] = Variable<int>(
@@ -13203,13 +13395,1747 @@ class E2eeAttachmentUploadRowsCompanion
           ..write('pendingChunkMutationId: $pendingChunkMutationId, ')
           ..write('pendingChunkCiphertextPath: $pendingChunkCiphertextPath, ')
           ..write('pendingChunkCiphertextBytes: $pendingChunkCiphertextBytes, ')
+          ..write(
+            'pendingChunkCiphertextSha256: $pendingChunkCiphertextSha256, ',
+          )
           ..write('leaseToken: $leaseToken, ')
           ..write('leaseOwnerSessionId: $leaseOwnerSessionId, ')
           ..write('leaseExpiresAt: $leaseExpiresAt, ')
           ..write('transitionVersion: $transitionVersion, ')
           ..write('attemptCount: $attemptCount, ')
+          ..write('consecutiveFailureCount: $consecutiveFailureCount, ')
           ..write('nextAttemptAt: $nextAttemptAt, ')
           ..write('lastFailureKind: $lastFailureKind, ')
+          ..write('terminalFailureKind: $terminalFailureKind, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
+    with
+        TableInfo<$E2eeAttachmentDownloadRowsTable, E2eeAttachmentDownloadRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeAttachmentDownloadRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _attachmentIdMeta = const VerificationMeta(
+    'attachmentId',
+  );
+  @override
+  late final GeneratedColumn<String> attachmentId = GeneratedColumn<String>(
+    'attachment_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _uploadIdMeta = const VerificationMeta(
+    'uploadId',
+  );
+  @override
+  late final GeneratedColumn<String> uploadId = GeneratedColumn<String>(
+    'upload_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _keyEpochMeta = const VerificationMeta(
+    'keyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
+    'key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _phaseMeta = const VerificationMeta('phase');
+  @override
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _manifestCiphertextMeta =
+      const VerificationMeta('manifestCiphertext');
+  @override
+  late final GeneratedColumn<Uint8List> manifestCiphertext =
+      GeneratedColumn<Uint8List>(
+        'manifest_ciphertext',
+        aliasedName,
+        true,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _contentSha256Meta = const VerificationMeta(
+    'contentSha256',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> contentSha256 =
+      GeneratedColumn<Uint8List>(
+        'content_sha256',
+        aliasedName,
+        true,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _wrappedDataKeyMeta = const VerificationMeta(
+    'wrappedDataKey',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> wrappedDataKey =
+      GeneratedColumn<Uint8List>(
+        'wrapped_data_key',
+        aliasedName,
+        true,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _totalPlaintextBytesMeta =
+      const VerificationMeta('totalPlaintextBytes');
+  @override
+  late final GeneratedColumn<int> totalPlaintextBytes = GeneratedColumn<int>(
+    'total_plaintext_bytes',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _chunkCountMeta = const VerificationMeta(
+    'chunkCount',
+  );
+  @override
+  late final GeneratedColumn<int> chunkCount = GeneratedColumn<int>(
+    'chunk_count',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _totalCiphertextBytesMeta =
+      const VerificationMeta('totalCiphertextBytes');
+  @override
+  late final GeneratedColumn<int> totalCiphertextBytes = GeneratedColumn<int>(
+    'total_ciphertext_bytes',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _displayNameMeta = const VerificationMeta(
+    'displayName',
+  );
+  @override
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _mediaTypeMeta = const VerificationMeta(
+    'mediaType',
+  );
+  @override
+  late final GeneratedColumn<String> mediaType = GeneratedColumn<String>(
+    'media_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _localAssetIdMeta = const VerificationMeta(
+    'localAssetId',
+  );
+  @override
+  late final GeneratedColumn<String> localAssetId = GeneratedColumn<String>(
+    'local_asset_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _stagingPathMeta = const VerificationMeta(
+    'stagingPath',
+  );
+  @override
+  late final GeneratedColumn<String> stagingPath = GeneratedColumn<String>(
+    'staging_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _finalPathMeta = const VerificationMeta(
+    'finalPath',
+  );
+  @override
+  late final GeneratedColumn<String> finalPath = GeneratedColumn<String>(
+    'final_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _nextChunkIndexMeta = const VerificationMeta(
+    'nextChunkIndex',
+  );
+  @override
+  late final GeneratedColumn<int> nextChunkIndex = GeneratedColumn<int>(
+    'next_chunk_index',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _confirmedPlaintextBytesMeta =
+      const VerificationMeta('confirmedPlaintextBytes');
+  @override
+  late final GeneratedColumn<int> confirmedPlaintextBytes =
+      GeneratedColumn<int>(
+        'confirmed_plaintext_bytes',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _leaseTokenMeta = const VerificationMeta(
+    'leaseToken',
+  );
+  @override
+  late final GeneratedColumn<String> leaseToken = GeneratedColumn<String>(
+    'lease_token',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _leaseOwnerSessionIdMeta =
+      const VerificationMeta('leaseOwnerSessionId');
+  @override
+  late final GeneratedColumn<String> leaseOwnerSessionId =
+      GeneratedColumn<String>(
+        'lease_owner_session_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime?, int> leaseExpiresAt =
+      GeneratedColumn<int>(
+        'lease_expires_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+      ).withConverter<DateTime?>(
+        $E2eeAttachmentDownloadRowsTable.$converterleaseExpiresAtn,
+      );
+  static const VerificationMeta _transitionVersionMeta = const VerificationMeta(
+    'transitionVersion',
+  );
+  @override
+  late final GeneratedColumn<int> transitionVersion = GeneratedColumn<int>(
+    'transition_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _attemptCountMeta = const VerificationMeta(
+    'attemptCount',
+  );
+  @override
+  late final GeneratedColumn<int> attemptCount = GeneratedColumn<int>(
+    'attempt_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _consecutiveFailureCountMeta =
+      const VerificationMeta('consecutiveFailureCount');
+  @override
+  late final GeneratedColumn<int> consecutiveFailureCount =
+      GeneratedColumn<int>(
+        'consecutive_failure_count',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> nextAttemptAt =
+      GeneratedColumn<int>(
+        'next_attempt_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeAttachmentDownloadRowsTable.$converternextAttemptAt,
+      );
+  static const VerificationMeta _lastFailureKindMeta = const VerificationMeta(
+    'lastFailureKind',
+  );
+  @override
+  late final GeneratedColumn<String> lastFailureKind = GeneratedColumn<String>(
+    'last_failure_kind',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _terminalFailureKindMeta =
+      const VerificationMeta('terminalFailureKind');
+  @override
+  late final GeneratedColumn<String> terminalFailureKind =
+      GeneratedColumn<String>(
+        'terminal_failure_kind',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
+      GeneratedColumn<int>(
+        'created_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeAttachmentDownloadRowsTable.$convertercreatedAt,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeAttachmentDownloadRowsTable.$converterupdatedAt,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    attachmentId,
+    uploadId,
+    keyEpoch,
+    kind,
+    phase,
+    manifestCiphertext,
+    contentSha256,
+    wrappedDataKey,
+    totalPlaintextBytes,
+    chunkCount,
+    totalCiphertextBytes,
+    displayName,
+    mediaType,
+    localAssetId,
+    stagingPath,
+    finalPath,
+    nextChunkIndex,
+    confirmedPlaintextBytes,
+    leaseToken,
+    leaseOwnerSessionId,
+    leaseExpiresAt,
+    transitionVersion,
+    attemptCount,
+    consecutiveFailureCount,
+    nextAttemptAt,
+    lastFailureKind,
+    terminalFailureKind,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_attachment_download_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeAttachmentDownloadRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('attachment_id')) {
+      context.handle(
+        _attachmentIdMeta,
+        attachmentId.isAcceptableOrUnknown(
+          data['attachment_id']!,
+          _attachmentIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_attachmentIdMeta);
+    }
+    if (data.containsKey('upload_id')) {
+      context.handle(
+        _uploadIdMeta,
+        uploadId.isAcceptableOrUnknown(data['upload_id']!, _uploadIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_uploadIdMeta);
+    }
+    if (data.containsKey('key_epoch')) {
+      context.handle(
+        _keyEpochMeta,
+        keyEpoch.isAcceptableOrUnknown(data['key_epoch']!, _keyEpochMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_keyEpochMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('phase')) {
+      context.handle(
+        _phaseMeta,
+        phase.isAcceptableOrUnknown(data['phase']!, _phaseMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_phaseMeta);
+    }
+    if (data.containsKey('manifest_ciphertext')) {
+      context.handle(
+        _manifestCiphertextMeta,
+        manifestCiphertext.isAcceptableOrUnknown(
+          data['manifest_ciphertext']!,
+          _manifestCiphertextMeta,
+        ),
+      );
+    }
+    if (data.containsKey('content_sha256')) {
+      context.handle(
+        _contentSha256Meta,
+        contentSha256.isAcceptableOrUnknown(
+          data['content_sha256']!,
+          _contentSha256Meta,
+        ),
+      );
+    }
+    if (data.containsKey('wrapped_data_key')) {
+      context.handle(
+        _wrappedDataKeyMeta,
+        wrappedDataKey.isAcceptableOrUnknown(
+          data['wrapped_data_key']!,
+          _wrappedDataKeyMeta,
+        ),
+      );
+    }
+    if (data.containsKey('total_plaintext_bytes')) {
+      context.handle(
+        _totalPlaintextBytesMeta,
+        totalPlaintextBytes.isAcceptableOrUnknown(
+          data['total_plaintext_bytes']!,
+          _totalPlaintextBytesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('chunk_count')) {
+      context.handle(
+        _chunkCountMeta,
+        chunkCount.isAcceptableOrUnknown(data['chunk_count']!, _chunkCountMeta),
+      );
+    }
+    if (data.containsKey('total_ciphertext_bytes')) {
+      context.handle(
+        _totalCiphertextBytesMeta,
+        totalCiphertextBytes.isAcceptableOrUnknown(
+          data['total_ciphertext_bytes']!,
+          _totalCiphertextBytesMeta,
+        ),
+      );
+    }
+    if (data.containsKey('display_name')) {
+      context.handle(
+        _displayNameMeta,
+        displayName.isAcceptableOrUnknown(
+          data['display_name']!,
+          _displayNameMeta,
+        ),
+      );
+    }
+    if (data.containsKey('media_type')) {
+      context.handle(
+        _mediaTypeMeta,
+        mediaType.isAcceptableOrUnknown(data['media_type']!, _mediaTypeMeta),
+      );
+    }
+    if (data.containsKey('local_asset_id')) {
+      context.handle(
+        _localAssetIdMeta,
+        localAssetId.isAcceptableOrUnknown(
+          data['local_asset_id']!,
+          _localAssetIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('staging_path')) {
+      context.handle(
+        _stagingPathMeta,
+        stagingPath.isAcceptableOrUnknown(
+          data['staging_path']!,
+          _stagingPathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('final_path')) {
+      context.handle(
+        _finalPathMeta,
+        finalPath.isAcceptableOrUnknown(data['final_path']!, _finalPathMeta),
+      );
+    }
+    if (data.containsKey('next_chunk_index')) {
+      context.handle(
+        _nextChunkIndexMeta,
+        nextChunkIndex.isAcceptableOrUnknown(
+          data['next_chunk_index']!,
+          _nextChunkIndexMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_nextChunkIndexMeta);
+    }
+    if (data.containsKey('confirmed_plaintext_bytes')) {
+      context.handle(
+        _confirmedPlaintextBytesMeta,
+        confirmedPlaintextBytes.isAcceptableOrUnknown(
+          data['confirmed_plaintext_bytes']!,
+          _confirmedPlaintextBytesMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_confirmedPlaintextBytesMeta);
+    }
+    if (data.containsKey('lease_token')) {
+      context.handle(
+        _leaseTokenMeta,
+        leaseToken.isAcceptableOrUnknown(data['lease_token']!, _leaseTokenMeta),
+      );
+    }
+    if (data.containsKey('lease_owner_session_id')) {
+      context.handle(
+        _leaseOwnerSessionIdMeta,
+        leaseOwnerSessionId.isAcceptableOrUnknown(
+          data['lease_owner_session_id']!,
+          _leaseOwnerSessionIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('transition_version')) {
+      context.handle(
+        _transitionVersionMeta,
+        transitionVersion.isAcceptableOrUnknown(
+          data['transition_version']!,
+          _transitionVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_transitionVersionMeta);
+    }
+    if (data.containsKey('attempt_count')) {
+      context.handle(
+        _attemptCountMeta,
+        attemptCount.isAcceptableOrUnknown(
+          data['attempt_count']!,
+          _attemptCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_attemptCountMeta);
+    }
+    if (data.containsKey('consecutive_failure_count')) {
+      context.handle(
+        _consecutiveFailureCountMeta,
+        consecutiveFailureCount.isAcceptableOrUnknown(
+          data['consecutive_failure_count']!,
+          _consecutiveFailureCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_consecutiveFailureCountMeta);
+    }
+    if (data.containsKey('last_failure_kind')) {
+      context.handle(
+        _lastFailureKindMeta,
+        lastFailureKind.isAcceptableOrUnknown(
+          data['last_failure_kind']!,
+          _lastFailureKindMeta,
+        ),
+      );
+    }
+    if (data.containsKey('terminal_failure_kind')) {
+      context.handle(
+        _terminalFailureKindMeta,
+        terminalFailureKind.isAcceptableOrUnknown(
+          data['terminal_failure_kind']!,
+          _terminalFailureKindMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {attachmentId};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {uploadId},
+  ];
+  @override
+  E2eeAttachmentDownloadRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeAttachmentDownloadRow(
+      attachmentId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}attachment_id'],
+      )!,
+      uploadId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}upload_id'],
+      )!,
+      keyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}key_epoch'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      phase: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phase'],
+      )!,
+      manifestCiphertext: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}manifest_ciphertext'],
+      ),
+      contentSha256: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}content_sha256'],
+      ),
+      wrappedDataKey: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}wrapped_data_key'],
+      ),
+      totalPlaintextBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}total_plaintext_bytes'],
+      ),
+      chunkCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}chunk_count'],
+      ),
+      totalCiphertextBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}total_ciphertext_bytes'],
+      ),
+      displayName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_name'],
+      ),
+      mediaType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}media_type'],
+      ),
+      localAssetId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}local_asset_id'],
+      ),
+      stagingPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}staging_path'],
+      ),
+      finalPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}final_path'],
+      ),
+      nextChunkIndex: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}next_chunk_index'],
+      )!,
+      confirmedPlaintextBytes: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}confirmed_plaintext_bytes'],
+      )!,
+      leaseToken: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}lease_token'],
+      ),
+      leaseOwnerSessionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}lease_owner_session_id'],
+      ),
+      leaseExpiresAt: $E2eeAttachmentDownloadRowsTable.$converterleaseExpiresAtn
+          .fromSql(
+            attachedDatabase.typeMapping.read(
+              DriftSqlType.int,
+              data['${effectivePrefix}lease_expires_at'],
+            ),
+          ),
+      transitionVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}transition_version'],
+      )!,
+      attemptCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}attempt_count'],
+      )!,
+      consecutiveFailureCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}consecutive_failure_count'],
+      )!,
+      nextAttemptAt: $E2eeAttachmentDownloadRowsTable.$converternextAttemptAt
+          .fromSql(
+            attachedDatabase.typeMapping.read(
+              DriftSqlType.int,
+              data['${effectivePrefix}next_attempt_at'],
+            )!,
+          ),
+      lastFailureKind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_failure_kind'],
+      ),
+      terminalFailureKind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}terminal_failure_kind'],
+      ),
+      createdAt: $E2eeAttachmentDownloadRowsTable.$convertercreatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}created_at'],
+        )!,
+      ),
+      updatedAt: $E2eeAttachmentDownloadRowsTable.$converterupdatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}updated_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeAttachmentDownloadRowsTable createAlias(String alias) {
+    return $E2eeAttachmentDownloadRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $converterleaseExpiresAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime?, int?> $converterleaseExpiresAtn =
+      NullAwareTypeConverter.wrap($converterleaseExpiresAt);
+  static TypeConverter<DateTime, int> $converternextAttemptAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $convertercreatedAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeAttachmentDownloadRow extends DataClass
+    implements Insertable<E2eeAttachmentDownloadRow> {
+  final String attachmentId;
+  final String uploadId;
+  final int keyEpoch;
+  final String kind;
+  final String phase;
+  final Uint8List? manifestCiphertext;
+  final Uint8List? contentSha256;
+  final Uint8List? wrappedDataKey;
+  final int? totalPlaintextBytes;
+  final int? chunkCount;
+  final int? totalCiphertextBytes;
+  final String? displayName;
+  final String? mediaType;
+  final String? localAssetId;
+  final String? stagingPath;
+  final String? finalPath;
+  final int nextChunkIndex;
+  final int confirmedPlaintextBytes;
+  final String? leaseToken;
+  final String? leaseOwnerSessionId;
+  final DateTime? leaseExpiresAt;
+  final int transitionVersion;
+  final int attemptCount;
+  final int consecutiveFailureCount;
+  final DateTime nextAttemptAt;
+  final String? lastFailureKind;
+  final String? terminalFailureKind;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const E2eeAttachmentDownloadRow({
+    required this.attachmentId,
+    required this.uploadId,
+    required this.keyEpoch,
+    required this.kind,
+    required this.phase,
+    this.manifestCiphertext,
+    this.contentSha256,
+    this.wrappedDataKey,
+    this.totalPlaintextBytes,
+    this.chunkCount,
+    this.totalCiphertextBytes,
+    this.displayName,
+    this.mediaType,
+    this.localAssetId,
+    this.stagingPath,
+    this.finalPath,
+    required this.nextChunkIndex,
+    required this.confirmedPlaintextBytes,
+    this.leaseToken,
+    this.leaseOwnerSessionId,
+    this.leaseExpiresAt,
+    required this.transitionVersion,
+    required this.attemptCount,
+    required this.consecutiveFailureCount,
+    required this.nextAttemptAt,
+    this.lastFailureKind,
+    this.terminalFailureKind,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['attachment_id'] = Variable<String>(attachmentId);
+    map['upload_id'] = Variable<String>(uploadId);
+    map['key_epoch'] = Variable<int>(keyEpoch);
+    map['kind'] = Variable<String>(kind);
+    map['phase'] = Variable<String>(phase);
+    if (!nullToAbsent || manifestCiphertext != null) {
+      map['manifest_ciphertext'] = Variable<Uint8List>(manifestCiphertext);
+    }
+    if (!nullToAbsent || contentSha256 != null) {
+      map['content_sha256'] = Variable<Uint8List>(contentSha256);
+    }
+    if (!nullToAbsent || wrappedDataKey != null) {
+      map['wrapped_data_key'] = Variable<Uint8List>(wrappedDataKey);
+    }
+    if (!nullToAbsent || totalPlaintextBytes != null) {
+      map['total_plaintext_bytes'] = Variable<int>(totalPlaintextBytes);
+    }
+    if (!nullToAbsent || chunkCount != null) {
+      map['chunk_count'] = Variable<int>(chunkCount);
+    }
+    if (!nullToAbsent || totalCiphertextBytes != null) {
+      map['total_ciphertext_bytes'] = Variable<int>(totalCiphertextBytes);
+    }
+    if (!nullToAbsent || displayName != null) {
+      map['display_name'] = Variable<String>(displayName);
+    }
+    if (!nullToAbsent || mediaType != null) {
+      map['media_type'] = Variable<String>(mediaType);
+    }
+    if (!nullToAbsent || localAssetId != null) {
+      map['local_asset_id'] = Variable<String>(localAssetId);
+    }
+    if (!nullToAbsent || stagingPath != null) {
+      map['staging_path'] = Variable<String>(stagingPath);
+    }
+    if (!nullToAbsent || finalPath != null) {
+      map['final_path'] = Variable<String>(finalPath);
+    }
+    map['next_chunk_index'] = Variable<int>(nextChunkIndex);
+    map['confirmed_plaintext_bytes'] = Variable<int>(confirmedPlaintextBytes);
+    if (!nullToAbsent || leaseToken != null) {
+      map['lease_token'] = Variable<String>(leaseToken);
+    }
+    if (!nullToAbsent || leaseOwnerSessionId != null) {
+      map['lease_owner_session_id'] = Variable<String>(leaseOwnerSessionId);
+    }
+    if (!nullToAbsent || leaseExpiresAt != null) {
+      map['lease_expires_at'] = Variable<int>(
+        $E2eeAttachmentDownloadRowsTable.$converterleaseExpiresAtn.toSql(
+          leaseExpiresAt,
+        ),
+      );
+    }
+    map['transition_version'] = Variable<int>(transitionVersion);
+    map['attempt_count'] = Variable<int>(attemptCount);
+    map['consecutive_failure_count'] = Variable<int>(consecutiveFailureCount);
+    {
+      map['next_attempt_at'] = Variable<int>(
+        $E2eeAttachmentDownloadRowsTable.$converternextAttemptAt.toSql(
+          nextAttemptAt,
+        ),
+      );
+    }
+    if (!nullToAbsent || lastFailureKind != null) {
+      map['last_failure_kind'] = Variable<String>(lastFailureKind);
+    }
+    if (!nullToAbsent || terminalFailureKind != null) {
+      map['terminal_failure_kind'] = Variable<String>(terminalFailureKind);
+    }
+    {
+      map['created_at'] = Variable<int>(
+        $E2eeAttachmentDownloadRowsTable.$convertercreatedAt.toSql(createdAt),
+      );
+    }
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeAttachmentDownloadRowsTable.$converterupdatedAt.toSql(updatedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeAttachmentDownloadRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeAttachmentDownloadRowsCompanion(
+      attachmentId: Value(attachmentId),
+      uploadId: Value(uploadId),
+      keyEpoch: Value(keyEpoch),
+      kind: Value(kind),
+      phase: Value(phase),
+      manifestCiphertext: manifestCiphertext == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manifestCiphertext),
+      contentSha256: contentSha256 == null && nullToAbsent
+          ? const Value.absent()
+          : Value(contentSha256),
+      wrappedDataKey: wrappedDataKey == null && nullToAbsent
+          ? const Value.absent()
+          : Value(wrappedDataKey),
+      totalPlaintextBytes: totalPlaintextBytes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(totalPlaintextBytes),
+      chunkCount: chunkCount == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chunkCount),
+      totalCiphertextBytes: totalCiphertextBytes == null && nullToAbsent
+          ? const Value.absent()
+          : Value(totalCiphertextBytes),
+      displayName: displayName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(displayName),
+      mediaType: mediaType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mediaType),
+      localAssetId: localAssetId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(localAssetId),
+      stagingPath: stagingPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(stagingPath),
+      finalPath: finalPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(finalPath),
+      nextChunkIndex: Value(nextChunkIndex),
+      confirmedPlaintextBytes: Value(confirmedPlaintextBytes),
+      leaseToken: leaseToken == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaseToken),
+      leaseOwnerSessionId: leaseOwnerSessionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaseOwnerSessionId),
+      leaseExpiresAt: leaseExpiresAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaseExpiresAt),
+      transitionVersion: Value(transitionVersion),
+      attemptCount: Value(attemptCount),
+      consecutiveFailureCount: Value(consecutiveFailureCount),
+      nextAttemptAt: Value(nextAttemptAt),
+      lastFailureKind: lastFailureKind == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastFailureKind),
+      terminalFailureKind: terminalFailureKind == null && nullToAbsent
+          ? const Value.absent()
+          : Value(terminalFailureKind),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeAttachmentDownloadRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeAttachmentDownloadRow(
+      attachmentId: serializer.fromJson<String>(json['attachmentId']),
+      uploadId: serializer.fromJson<String>(json['uploadId']),
+      keyEpoch: serializer.fromJson<int>(json['keyEpoch']),
+      kind: serializer.fromJson<String>(json['kind']),
+      phase: serializer.fromJson<String>(json['phase']),
+      manifestCiphertext: serializer.fromJson<Uint8List?>(
+        json['manifestCiphertext'],
+      ),
+      contentSha256: serializer.fromJson<Uint8List?>(json['contentSha256']),
+      wrappedDataKey: serializer.fromJson<Uint8List?>(json['wrappedDataKey']),
+      totalPlaintextBytes: serializer.fromJson<int?>(
+        json['totalPlaintextBytes'],
+      ),
+      chunkCount: serializer.fromJson<int?>(json['chunkCount']),
+      totalCiphertextBytes: serializer.fromJson<int?>(
+        json['totalCiphertextBytes'],
+      ),
+      displayName: serializer.fromJson<String?>(json['displayName']),
+      mediaType: serializer.fromJson<String?>(json['mediaType']),
+      localAssetId: serializer.fromJson<String?>(json['localAssetId']),
+      stagingPath: serializer.fromJson<String?>(json['stagingPath']),
+      finalPath: serializer.fromJson<String?>(json['finalPath']),
+      nextChunkIndex: serializer.fromJson<int>(json['nextChunkIndex']),
+      confirmedPlaintextBytes: serializer.fromJson<int>(
+        json['confirmedPlaintextBytes'],
+      ),
+      leaseToken: serializer.fromJson<String?>(json['leaseToken']),
+      leaseOwnerSessionId: serializer.fromJson<String?>(
+        json['leaseOwnerSessionId'],
+      ),
+      leaseExpiresAt: serializer.fromJson<DateTime?>(json['leaseExpiresAt']),
+      transitionVersion: serializer.fromJson<int>(json['transitionVersion']),
+      attemptCount: serializer.fromJson<int>(json['attemptCount']),
+      consecutiveFailureCount: serializer.fromJson<int>(
+        json['consecutiveFailureCount'],
+      ),
+      nextAttemptAt: serializer.fromJson<DateTime>(json['nextAttemptAt']),
+      lastFailureKind: serializer.fromJson<String?>(json['lastFailureKind']),
+      terminalFailureKind: serializer.fromJson<String?>(
+        json['terminalFailureKind'],
+      ),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'attachmentId': serializer.toJson<String>(attachmentId),
+      'uploadId': serializer.toJson<String>(uploadId),
+      'keyEpoch': serializer.toJson<int>(keyEpoch),
+      'kind': serializer.toJson<String>(kind),
+      'phase': serializer.toJson<String>(phase),
+      'manifestCiphertext': serializer.toJson<Uint8List?>(manifestCiphertext),
+      'contentSha256': serializer.toJson<Uint8List?>(contentSha256),
+      'wrappedDataKey': serializer.toJson<Uint8List?>(wrappedDataKey),
+      'totalPlaintextBytes': serializer.toJson<int?>(totalPlaintextBytes),
+      'chunkCount': serializer.toJson<int?>(chunkCount),
+      'totalCiphertextBytes': serializer.toJson<int?>(totalCiphertextBytes),
+      'displayName': serializer.toJson<String?>(displayName),
+      'mediaType': serializer.toJson<String?>(mediaType),
+      'localAssetId': serializer.toJson<String?>(localAssetId),
+      'stagingPath': serializer.toJson<String?>(stagingPath),
+      'finalPath': serializer.toJson<String?>(finalPath),
+      'nextChunkIndex': serializer.toJson<int>(nextChunkIndex),
+      'confirmedPlaintextBytes': serializer.toJson<int>(
+        confirmedPlaintextBytes,
+      ),
+      'leaseToken': serializer.toJson<String?>(leaseToken),
+      'leaseOwnerSessionId': serializer.toJson<String?>(leaseOwnerSessionId),
+      'leaseExpiresAt': serializer.toJson<DateTime?>(leaseExpiresAt),
+      'transitionVersion': serializer.toJson<int>(transitionVersion),
+      'attemptCount': serializer.toJson<int>(attemptCount),
+      'consecutiveFailureCount': serializer.toJson<int>(
+        consecutiveFailureCount,
+      ),
+      'nextAttemptAt': serializer.toJson<DateTime>(nextAttemptAt),
+      'lastFailureKind': serializer.toJson<String?>(lastFailureKind),
+      'terminalFailureKind': serializer.toJson<String?>(terminalFailureKind),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeAttachmentDownloadRow copyWith({
+    String? attachmentId,
+    String? uploadId,
+    int? keyEpoch,
+    String? kind,
+    String? phase,
+    Value<Uint8List?> manifestCiphertext = const Value.absent(),
+    Value<Uint8List?> contentSha256 = const Value.absent(),
+    Value<Uint8List?> wrappedDataKey = const Value.absent(),
+    Value<int?> totalPlaintextBytes = const Value.absent(),
+    Value<int?> chunkCount = const Value.absent(),
+    Value<int?> totalCiphertextBytes = const Value.absent(),
+    Value<String?> displayName = const Value.absent(),
+    Value<String?> mediaType = const Value.absent(),
+    Value<String?> localAssetId = const Value.absent(),
+    Value<String?> stagingPath = const Value.absent(),
+    Value<String?> finalPath = const Value.absent(),
+    int? nextChunkIndex,
+    int? confirmedPlaintextBytes,
+    Value<String?> leaseToken = const Value.absent(),
+    Value<String?> leaseOwnerSessionId = const Value.absent(),
+    Value<DateTime?> leaseExpiresAt = const Value.absent(),
+    int? transitionVersion,
+    int? attemptCount,
+    int? consecutiveFailureCount,
+    DateTime? nextAttemptAt,
+    Value<String?> lastFailureKind = const Value.absent(),
+    Value<String?> terminalFailureKind = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => E2eeAttachmentDownloadRow(
+    attachmentId: attachmentId ?? this.attachmentId,
+    uploadId: uploadId ?? this.uploadId,
+    keyEpoch: keyEpoch ?? this.keyEpoch,
+    kind: kind ?? this.kind,
+    phase: phase ?? this.phase,
+    manifestCiphertext: manifestCiphertext.present
+        ? manifestCiphertext.value
+        : this.manifestCiphertext,
+    contentSha256: contentSha256.present
+        ? contentSha256.value
+        : this.contentSha256,
+    wrappedDataKey: wrappedDataKey.present
+        ? wrappedDataKey.value
+        : this.wrappedDataKey,
+    totalPlaintextBytes: totalPlaintextBytes.present
+        ? totalPlaintextBytes.value
+        : this.totalPlaintextBytes,
+    chunkCount: chunkCount.present ? chunkCount.value : this.chunkCount,
+    totalCiphertextBytes: totalCiphertextBytes.present
+        ? totalCiphertextBytes.value
+        : this.totalCiphertextBytes,
+    displayName: displayName.present ? displayName.value : this.displayName,
+    mediaType: mediaType.present ? mediaType.value : this.mediaType,
+    localAssetId: localAssetId.present ? localAssetId.value : this.localAssetId,
+    stagingPath: stagingPath.present ? stagingPath.value : this.stagingPath,
+    finalPath: finalPath.present ? finalPath.value : this.finalPath,
+    nextChunkIndex: nextChunkIndex ?? this.nextChunkIndex,
+    confirmedPlaintextBytes:
+        confirmedPlaintextBytes ?? this.confirmedPlaintextBytes,
+    leaseToken: leaseToken.present ? leaseToken.value : this.leaseToken,
+    leaseOwnerSessionId: leaseOwnerSessionId.present
+        ? leaseOwnerSessionId.value
+        : this.leaseOwnerSessionId,
+    leaseExpiresAt: leaseExpiresAt.present
+        ? leaseExpiresAt.value
+        : this.leaseExpiresAt,
+    transitionVersion: transitionVersion ?? this.transitionVersion,
+    attemptCount: attemptCount ?? this.attemptCount,
+    consecutiveFailureCount:
+        consecutiveFailureCount ?? this.consecutiveFailureCount,
+    nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
+    lastFailureKind: lastFailureKind.present
+        ? lastFailureKind.value
+        : this.lastFailureKind,
+    terminalFailureKind: terminalFailureKind.present
+        ? terminalFailureKind.value
+        : this.terminalFailureKind,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeAttachmentDownloadRow copyWithCompanion(
+    E2eeAttachmentDownloadRowsCompanion data,
+  ) {
+    return E2eeAttachmentDownloadRow(
+      attachmentId: data.attachmentId.present
+          ? data.attachmentId.value
+          : this.attachmentId,
+      uploadId: data.uploadId.present ? data.uploadId.value : this.uploadId,
+      keyEpoch: data.keyEpoch.present ? data.keyEpoch.value : this.keyEpoch,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      phase: data.phase.present ? data.phase.value : this.phase,
+      manifestCiphertext: data.manifestCiphertext.present
+          ? data.manifestCiphertext.value
+          : this.manifestCiphertext,
+      contentSha256: data.contentSha256.present
+          ? data.contentSha256.value
+          : this.contentSha256,
+      wrappedDataKey: data.wrappedDataKey.present
+          ? data.wrappedDataKey.value
+          : this.wrappedDataKey,
+      totalPlaintextBytes: data.totalPlaintextBytes.present
+          ? data.totalPlaintextBytes.value
+          : this.totalPlaintextBytes,
+      chunkCount: data.chunkCount.present
+          ? data.chunkCount.value
+          : this.chunkCount,
+      totalCiphertextBytes: data.totalCiphertextBytes.present
+          ? data.totalCiphertextBytes.value
+          : this.totalCiphertextBytes,
+      displayName: data.displayName.present
+          ? data.displayName.value
+          : this.displayName,
+      mediaType: data.mediaType.present ? data.mediaType.value : this.mediaType,
+      localAssetId: data.localAssetId.present
+          ? data.localAssetId.value
+          : this.localAssetId,
+      stagingPath: data.stagingPath.present
+          ? data.stagingPath.value
+          : this.stagingPath,
+      finalPath: data.finalPath.present ? data.finalPath.value : this.finalPath,
+      nextChunkIndex: data.nextChunkIndex.present
+          ? data.nextChunkIndex.value
+          : this.nextChunkIndex,
+      confirmedPlaintextBytes: data.confirmedPlaintextBytes.present
+          ? data.confirmedPlaintextBytes.value
+          : this.confirmedPlaintextBytes,
+      leaseToken: data.leaseToken.present
+          ? data.leaseToken.value
+          : this.leaseToken,
+      leaseOwnerSessionId: data.leaseOwnerSessionId.present
+          ? data.leaseOwnerSessionId.value
+          : this.leaseOwnerSessionId,
+      leaseExpiresAt: data.leaseExpiresAt.present
+          ? data.leaseExpiresAt.value
+          : this.leaseExpiresAt,
+      transitionVersion: data.transitionVersion.present
+          ? data.transitionVersion.value
+          : this.transitionVersion,
+      attemptCount: data.attemptCount.present
+          ? data.attemptCount.value
+          : this.attemptCount,
+      consecutiveFailureCount: data.consecutiveFailureCount.present
+          ? data.consecutiveFailureCount.value
+          : this.consecutiveFailureCount,
+      nextAttemptAt: data.nextAttemptAt.present
+          ? data.nextAttemptAt.value
+          : this.nextAttemptAt,
+      lastFailureKind: data.lastFailureKind.present
+          ? data.lastFailureKind.value
+          : this.lastFailureKind,
+      terminalFailureKind: data.terminalFailureKind.present
+          ? data.terminalFailureKind.value
+          : this.terminalFailureKind,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeAttachmentDownloadRow(')
+          ..write('attachmentId: $attachmentId, ')
+          ..write('uploadId: $uploadId, ')
+          ..write('keyEpoch: $keyEpoch, ')
+          ..write('kind: $kind, ')
+          ..write('phase: $phase, ')
+          ..write('manifestCiphertext: $manifestCiphertext, ')
+          ..write('contentSha256: $contentSha256, ')
+          ..write('wrappedDataKey: $wrappedDataKey, ')
+          ..write('totalPlaintextBytes: $totalPlaintextBytes, ')
+          ..write('chunkCount: $chunkCount, ')
+          ..write('totalCiphertextBytes: $totalCiphertextBytes, ')
+          ..write('displayName: $displayName, ')
+          ..write('mediaType: $mediaType, ')
+          ..write('localAssetId: $localAssetId, ')
+          ..write('stagingPath: $stagingPath, ')
+          ..write('finalPath: $finalPath, ')
+          ..write('nextChunkIndex: $nextChunkIndex, ')
+          ..write('confirmedPlaintextBytes: $confirmedPlaintextBytes, ')
+          ..write('leaseToken: $leaseToken, ')
+          ..write('leaseOwnerSessionId: $leaseOwnerSessionId, ')
+          ..write('leaseExpiresAt: $leaseExpiresAt, ')
+          ..write('transitionVersion: $transitionVersion, ')
+          ..write('attemptCount: $attemptCount, ')
+          ..write('consecutiveFailureCount: $consecutiveFailureCount, ')
+          ..write('nextAttemptAt: $nextAttemptAt, ')
+          ..write('lastFailureKind: $lastFailureKind, ')
+          ..write('terminalFailureKind: $terminalFailureKind, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hashAll([
+    attachmentId,
+    uploadId,
+    keyEpoch,
+    kind,
+    phase,
+    $driftBlobEquality.hash(manifestCiphertext),
+    $driftBlobEquality.hash(contentSha256),
+    $driftBlobEquality.hash(wrappedDataKey),
+    totalPlaintextBytes,
+    chunkCount,
+    totalCiphertextBytes,
+    displayName,
+    mediaType,
+    localAssetId,
+    stagingPath,
+    finalPath,
+    nextChunkIndex,
+    confirmedPlaintextBytes,
+    leaseToken,
+    leaseOwnerSessionId,
+    leaseExpiresAt,
+    transitionVersion,
+    attemptCount,
+    consecutiveFailureCount,
+    nextAttemptAt,
+    lastFailureKind,
+    terminalFailureKind,
+    createdAt,
+    updatedAt,
+  ]);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeAttachmentDownloadRow &&
+          other.attachmentId == this.attachmentId &&
+          other.uploadId == this.uploadId &&
+          other.keyEpoch == this.keyEpoch &&
+          other.kind == this.kind &&
+          other.phase == this.phase &&
+          $driftBlobEquality.equals(
+            other.manifestCiphertext,
+            this.manifestCiphertext,
+          ) &&
+          $driftBlobEquality.equals(other.contentSha256, this.contentSha256) &&
+          $driftBlobEquality.equals(
+            other.wrappedDataKey,
+            this.wrappedDataKey,
+          ) &&
+          other.totalPlaintextBytes == this.totalPlaintextBytes &&
+          other.chunkCount == this.chunkCount &&
+          other.totalCiphertextBytes == this.totalCiphertextBytes &&
+          other.displayName == this.displayName &&
+          other.mediaType == this.mediaType &&
+          other.localAssetId == this.localAssetId &&
+          other.stagingPath == this.stagingPath &&
+          other.finalPath == this.finalPath &&
+          other.nextChunkIndex == this.nextChunkIndex &&
+          other.confirmedPlaintextBytes == this.confirmedPlaintextBytes &&
+          other.leaseToken == this.leaseToken &&
+          other.leaseOwnerSessionId == this.leaseOwnerSessionId &&
+          other.leaseExpiresAt == this.leaseExpiresAt &&
+          other.transitionVersion == this.transitionVersion &&
+          other.attemptCount == this.attemptCount &&
+          other.consecutiveFailureCount == this.consecutiveFailureCount &&
+          other.nextAttemptAt == this.nextAttemptAt &&
+          other.lastFailureKind == this.lastFailureKind &&
+          other.terminalFailureKind == this.terminalFailureKind &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeAttachmentDownloadRowsCompanion
+    extends UpdateCompanion<E2eeAttachmentDownloadRow> {
+  final Value<String> attachmentId;
+  final Value<String> uploadId;
+  final Value<int> keyEpoch;
+  final Value<String> kind;
+  final Value<String> phase;
+  final Value<Uint8List?> manifestCiphertext;
+  final Value<Uint8List?> contentSha256;
+  final Value<Uint8List?> wrappedDataKey;
+  final Value<int?> totalPlaintextBytes;
+  final Value<int?> chunkCount;
+  final Value<int?> totalCiphertextBytes;
+  final Value<String?> displayName;
+  final Value<String?> mediaType;
+  final Value<String?> localAssetId;
+  final Value<String?> stagingPath;
+  final Value<String?> finalPath;
+  final Value<int> nextChunkIndex;
+  final Value<int> confirmedPlaintextBytes;
+  final Value<String?> leaseToken;
+  final Value<String?> leaseOwnerSessionId;
+  final Value<DateTime?> leaseExpiresAt;
+  final Value<int> transitionVersion;
+  final Value<int> attemptCount;
+  final Value<int> consecutiveFailureCount;
+  final Value<DateTime> nextAttemptAt;
+  final Value<String?> lastFailureKind;
+  final Value<String?> terminalFailureKind;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const E2eeAttachmentDownloadRowsCompanion({
+    this.attachmentId = const Value.absent(),
+    this.uploadId = const Value.absent(),
+    this.keyEpoch = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.phase = const Value.absent(),
+    this.manifestCiphertext = const Value.absent(),
+    this.contentSha256 = const Value.absent(),
+    this.wrappedDataKey = const Value.absent(),
+    this.totalPlaintextBytes = const Value.absent(),
+    this.chunkCount = const Value.absent(),
+    this.totalCiphertextBytes = const Value.absent(),
+    this.displayName = const Value.absent(),
+    this.mediaType = const Value.absent(),
+    this.localAssetId = const Value.absent(),
+    this.stagingPath = const Value.absent(),
+    this.finalPath = const Value.absent(),
+    this.nextChunkIndex = const Value.absent(),
+    this.confirmedPlaintextBytes = const Value.absent(),
+    this.leaseToken = const Value.absent(),
+    this.leaseOwnerSessionId = const Value.absent(),
+    this.leaseExpiresAt = const Value.absent(),
+    this.transitionVersion = const Value.absent(),
+    this.attemptCount = const Value.absent(),
+    this.consecutiveFailureCount = const Value.absent(),
+    this.nextAttemptAt = const Value.absent(),
+    this.lastFailureKind = const Value.absent(),
+    this.terminalFailureKind = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeAttachmentDownloadRowsCompanion.insert({
+    required String attachmentId,
+    required String uploadId,
+    required int keyEpoch,
+    required String kind,
+    required String phase,
+    this.manifestCiphertext = const Value.absent(),
+    this.contentSha256 = const Value.absent(),
+    this.wrappedDataKey = const Value.absent(),
+    this.totalPlaintextBytes = const Value.absent(),
+    this.chunkCount = const Value.absent(),
+    this.totalCiphertextBytes = const Value.absent(),
+    this.displayName = const Value.absent(),
+    this.mediaType = const Value.absent(),
+    this.localAssetId = const Value.absent(),
+    this.stagingPath = const Value.absent(),
+    this.finalPath = const Value.absent(),
+    required int nextChunkIndex,
+    required int confirmedPlaintextBytes,
+    this.leaseToken = const Value.absent(),
+    this.leaseOwnerSessionId = const Value.absent(),
+    this.leaseExpiresAt = const Value.absent(),
+    required int transitionVersion,
+    required int attemptCount,
+    required int consecutiveFailureCount,
+    required DateTime nextAttemptAt,
+    this.lastFailureKind = const Value.absent(),
+    this.terminalFailureKind = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : attachmentId = Value(attachmentId),
+       uploadId = Value(uploadId),
+       keyEpoch = Value(keyEpoch),
+       kind = Value(kind),
+       phase = Value(phase),
+       nextChunkIndex = Value(nextChunkIndex),
+       confirmedPlaintextBytes = Value(confirmedPlaintextBytes),
+       transitionVersion = Value(transitionVersion),
+       attemptCount = Value(attemptCount),
+       consecutiveFailureCount = Value(consecutiveFailureCount),
+       nextAttemptAt = Value(nextAttemptAt),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeAttachmentDownloadRow> custom({
+    Expression<String>? attachmentId,
+    Expression<String>? uploadId,
+    Expression<int>? keyEpoch,
+    Expression<String>? kind,
+    Expression<String>? phase,
+    Expression<Uint8List>? manifestCiphertext,
+    Expression<Uint8List>? contentSha256,
+    Expression<Uint8List>? wrappedDataKey,
+    Expression<int>? totalPlaintextBytes,
+    Expression<int>? chunkCount,
+    Expression<int>? totalCiphertextBytes,
+    Expression<String>? displayName,
+    Expression<String>? mediaType,
+    Expression<String>? localAssetId,
+    Expression<String>? stagingPath,
+    Expression<String>? finalPath,
+    Expression<int>? nextChunkIndex,
+    Expression<int>? confirmedPlaintextBytes,
+    Expression<String>? leaseToken,
+    Expression<String>? leaseOwnerSessionId,
+    Expression<int>? leaseExpiresAt,
+    Expression<int>? transitionVersion,
+    Expression<int>? attemptCount,
+    Expression<int>? consecutiveFailureCount,
+    Expression<int>? nextAttemptAt,
+    Expression<String>? lastFailureKind,
+    Expression<String>? terminalFailureKind,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (attachmentId != null) 'attachment_id': attachmentId,
+      if (uploadId != null) 'upload_id': uploadId,
+      if (keyEpoch != null) 'key_epoch': keyEpoch,
+      if (kind != null) 'kind': kind,
+      if (phase != null) 'phase': phase,
+      if (manifestCiphertext != null) 'manifest_ciphertext': manifestCiphertext,
+      if (contentSha256 != null) 'content_sha256': contentSha256,
+      if (wrappedDataKey != null) 'wrapped_data_key': wrappedDataKey,
+      if (totalPlaintextBytes != null)
+        'total_plaintext_bytes': totalPlaintextBytes,
+      if (chunkCount != null) 'chunk_count': chunkCount,
+      if (totalCiphertextBytes != null)
+        'total_ciphertext_bytes': totalCiphertextBytes,
+      if (displayName != null) 'display_name': displayName,
+      if (mediaType != null) 'media_type': mediaType,
+      if (localAssetId != null) 'local_asset_id': localAssetId,
+      if (stagingPath != null) 'staging_path': stagingPath,
+      if (finalPath != null) 'final_path': finalPath,
+      if (nextChunkIndex != null) 'next_chunk_index': nextChunkIndex,
+      if (confirmedPlaintextBytes != null)
+        'confirmed_plaintext_bytes': confirmedPlaintextBytes,
+      if (leaseToken != null) 'lease_token': leaseToken,
+      if (leaseOwnerSessionId != null)
+        'lease_owner_session_id': leaseOwnerSessionId,
+      if (leaseExpiresAt != null) 'lease_expires_at': leaseExpiresAt,
+      if (transitionVersion != null) 'transition_version': transitionVersion,
+      if (attemptCount != null) 'attempt_count': attemptCount,
+      if (consecutiveFailureCount != null)
+        'consecutive_failure_count': consecutiveFailureCount,
+      if (nextAttemptAt != null) 'next_attempt_at': nextAttemptAt,
+      if (lastFailureKind != null) 'last_failure_kind': lastFailureKind,
+      if (terminalFailureKind != null)
+        'terminal_failure_kind': terminalFailureKind,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeAttachmentDownloadRowsCompanion copyWith({
+    Value<String>? attachmentId,
+    Value<String>? uploadId,
+    Value<int>? keyEpoch,
+    Value<String>? kind,
+    Value<String>? phase,
+    Value<Uint8List?>? manifestCiphertext,
+    Value<Uint8List?>? contentSha256,
+    Value<Uint8List?>? wrappedDataKey,
+    Value<int?>? totalPlaintextBytes,
+    Value<int?>? chunkCount,
+    Value<int?>? totalCiphertextBytes,
+    Value<String?>? displayName,
+    Value<String?>? mediaType,
+    Value<String?>? localAssetId,
+    Value<String?>? stagingPath,
+    Value<String?>? finalPath,
+    Value<int>? nextChunkIndex,
+    Value<int>? confirmedPlaintextBytes,
+    Value<String?>? leaseToken,
+    Value<String?>? leaseOwnerSessionId,
+    Value<DateTime?>? leaseExpiresAt,
+    Value<int>? transitionVersion,
+    Value<int>? attemptCount,
+    Value<int>? consecutiveFailureCount,
+    Value<DateTime>? nextAttemptAt,
+    Value<String?>? lastFailureKind,
+    Value<String?>? terminalFailureKind,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeAttachmentDownloadRowsCompanion(
+      attachmentId: attachmentId ?? this.attachmentId,
+      uploadId: uploadId ?? this.uploadId,
+      keyEpoch: keyEpoch ?? this.keyEpoch,
+      kind: kind ?? this.kind,
+      phase: phase ?? this.phase,
+      manifestCiphertext: manifestCiphertext ?? this.manifestCiphertext,
+      contentSha256: contentSha256 ?? this.contentSha256,
+      wrappedDataKey: wrappedDataKey ?? this.wrappedDataKey,
+      totalPlaintextBytes: totalPlaintextBytes ?? this.totalPlaintextBytes,
+      chunkCount: chunkCount ?? this.chunkCount,
+      totalCiphertextBytes: totalCiphertextBytes ?? this.totalCiphertextBytes,
+      displayName: displayName ?? this.displayName,
+      mediaType: mediaType ?? this.mediaType,
+      localAssetId: localAssetId ?? this.localAssetId,
+      stagingPath: stagingPath ?? this.stagingPath,
+      finalPath: finalPath ?? this.finalPath,
+      nextChunkIndex: nextChunkIndex ?? this.nextChunkIndex,
+      confirmedPlaintextBytes:
+          confirmedPlaintextBytes ?? this.confirmedPlaintextBytes,
+      leaseToken: leaseToken ?? this.leaseToken,
+      leaseOwnerSessionId: leaseOwnerSessionId ?? this.leaseOwnerSessionId,
+      leaseExpiresAt: leaseExpiresAt ?? this.leaseExpiresAt,
+      transitionVersion: transitionVersion ?? this.transitionVersion,
+      attemptCount: attemptCount ?? this.attemptCount,
+      consecutiveFailureCount:
+          consecutiveFailureCount ?? this.consecutiveFailureCount,
+      nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
+      lastFailureKind: lastFailureKind ?? this.lastFailureKind,
+      terminalFailureKind: terminalFailureKind ?? this.terminalFailureKind,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (attachmentId.present) {
+      map['attachment_id'] = Variable<String>(attachmentId.value);
+    }
+    if (uploadId.present) {
+      map['upload_id'] = Variable<String>(uploadId.value);
+    }
+    if (keyEpoch.present) {
+      map['key_epoch'] = Variable<int>(keyEpoch.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (phase.present) {
+      map['phase'] = Variable<String>(phase.value);
+    }
+    if (manifestCiphertext.present) {
+      map['manifest_ciphertext'] = Variable<Uint8List>(
+        manifestCiphertext.value,
+      );
+    }
+    if (contentSha256.present) {
+      map['content_sha256'] = Variable<Uint8List>(contentSha256.value);
+    }
+    if (wrappedDataKey.present) {
+      map['wrapped_data_key'] = Variable<Uint8List>(wrappedDataKey.value);
+    }
+    if (totalPlaintextBytes.present) {
+      map['total_plaintext_bytes'] = Variable<int>(totalPlaintextBytes.value);
+    }
+    if (chunkCount.present) {
+      map['chunk_count'] = Variable<int>(chunkCount.value);
+    }
+    if (totalCiphertextBytes.present) {
+      map['total_ciphertext_bytes'] = Variable<int>(totalCiphertextBytes.value);
+    }
+    if (displayName.present) {
+      map['display_name'] = Variable<String>(displayName.value);
+    }
+    if (mediaType.present) {
+      map['media_type'] = Variable<String>(mediaType.value);
+    }
+    if (localAssetId.present) {
+      map['local_asset_id'] = Variable<String>(localAssetId.value);
+    }
+    if (stagingPath.present) {
+      map['staging_path'] = Variable<String>(stagingPath.value);
+    }
+    if (finalPath.present) {
+      map['final_path'] = Variable<String>(finalPath.value);
+    }
+    if (nextChunkIndex.present) {
+      map['next_chunk_index'] = Variable<int>(nextChunkIndex.value);
+    }
+    if (confirmedPlaintextBytes.present) {
+      map['confirmed_plaintext_bytes'] = Variable<int>(
+        confirmedPlaintextBytes.value,
+      );
+    }
+    if (leaseToken.present) {
+      map['lease_token'] = Variable<String>(leaseToken.value);
+    }
+    if (leaseOwnerSessionId.present) {
+      map['lease_owner_session_id'] = Variable<String>(
+        leaseOwnerSessionId.value,
+      );
+    }
+    if (leaseExpiresAt.present) {
+      map['lease_expires_at'] = Variable<int>(
+        $E2eeAttachmentDownloadRowsTable.$converterleaseExpiresAtn.toSql(
+          leaseExpiresAt.value,
+        ),
+      );
+    }
+    if (transitionVersion.present) {
+      map['transition_version'] = Variable<int>(transitionVersion.value);
+    }
+    if (attemptCount.present) {
+      map['attempt_count'] = Variable<int>(attemptCount.value);
+    }
+    if (consecutiveFailureCount.present) {
+      map['consecutive_failure_count'] = Variable<int>(
+        consecutiveFailureCount.value,
+      );
+    }
+    if (nextAttemptAt.present) {
+      map['next_attempt_at'] = Variable<int>(
+        $E2eeAttachmentDownloadRowsTable.$converternextAttemptAt.toSql(
+          nextAttemptAt.value,
+        ),
+      );
+    }
+    if (lastFailureKind.present) {
+      map['last_failure_kind'] = Variable<String>(lastFailureKind.value);
+    }
+    if (terminalFailureKind.present) {
+      map['terminal_failure_kind'] = Variable<String>(
+        terminalFailureKind.value,
+      );
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(
+        $E2eeAttachmentDownloadRowsTable.$convertercreatedAt.toSql(
+          createdAt.value,
+        ),
+      );
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeAttachmentDownloadRowsTable.$converterupdatedAt.toSql(
+          updatedAt.value,
+        ),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeAttachmentDownloadRowsCompanion(')
+          ..write('attachmentId: $attachmentId, ')
+          ..write('uploadId: $uploadId, ')
+          ..write('keyEpoch: $keyEpoch, ')
+          ..write('kind: $kind, ')
+          ..write('phase: $phase, ')
+          ..write('manifestCiphertext: $manifestCiphertext, ')
+          ..write('contentSha256: $contentSha256, ')
+          ..write('wrappedDataKey: $wrappedDataKey, ')
+          ..write('totalPlaintextBytes: $totalPlaintextBytes, ')
+          ..write('chunkCount: $chunkCount, ')
+          ..write('totalCiphertextBytes: $totalCiphertextBytes, ')
+          ..write('displayName: $displayName, ')
+          ..write('mediaType: $mediaType, ')
+          ..write('localAssetId: $localAssetId, ')
+          ..write('stagingPath: $stagingPath, ')
+          ..write('finalPath: $finalPath, ')
+          ..write('nextChunkIndex: $nextChunkIndex, ')
+          ..write('confirmedPlaintextBytes: $confirmedPlaintextBytes, ')
+          ..write('leaseToken: $leaseToken, ')
+          ..write('leaseOwnerSessionId: $leaseOwnerSessionId, ')
+          ..write('leaseExpiresAt: $leaseExpiresAt, ')
+          ..write('transitionVersion: $transitionVersion, ')
+          ..write('attemptCount: $attemptCount, ')
+          ..write('consecutiveFailureCount: $consecutiveFailureCount, ')
+          ..write('nextAttemptAt: $nextAttemptAt, ')
+          ..write('lastFailureKind: $lastFailureKind, ')
+          ..write('terminalFailureKind: $terminalFailureKind, ')
           ..write('createdAt: $createdAt, ')
           ..write('updatedAt: $updatedAt, ')
           ..write('rowid: $rowid')
@@ -13265,6 +15191,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $E2eeConfigEntryRowsTable(this);
   late final $E2eeAttachmentUploadRowsTable e2eeAttachmentUploadRows =
       $E2eeAttachmentUploadRowsTable(this);
+  late final $E2eeAttachmentDownloadRowsTable e2eeAttachmentDownloadRows =
+      $E2eeAttachmentDownloadRowsTable(this);
   late final Index idxConversationsUpdatedAt = Index(
     'idx_conversations_updated_at',
     'CREATE INDEX idx_conversations_updated_at ON conversation_rows (updated_at DESC, id ASC)',
@@ -13341,6 +15269,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_e2ee_attachment_upload_due',
     'CREATE INDEX idx_e2ee_attachment_upload_due ON e2ee_attachment_upload_rows (phase, next_attempt_at, created_at, attachment_id)',
   );
+  late final Index idxE2eeAttachmentDownloadDue = Index(
+    'idx_e2ee_attachment_download_due',
+    'CREATE INDEX idx_e2ee_attachment_download_due ON e2ee_attachment_download_rows (phase, next_attempt_at, created_at, attachment_id)',
+  );
+  late final Index idxE2eeAttachmentDownloadLocalAsset = Index(
+    'idx_e2ee_attachment_download_local_asset',
+    'CREATE INDEX idx_e2ee_attachment_download_local_asset ON e2ee_attachment_download_rows (local_asset_id, attachment_id)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -13368,6 +15304,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     e2eeSyncPullCheckpointRows,
     e2eeConfigEntryRows,
     e2eeAttachmentUploadRows,
+    e2eeAttachmentDownloadRows,
     idxConversationsUpdatedAt,
     idxConversationsAssistant,
     idxMessagesConversationOrder,
@@ -13387,6 +15324,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxE2eeSyncOutboxPhaseDue,
     idxE2eeSyncRemoteRecordsGateUpdated,
     idxE2eeAttachmentUploadDue,
+    idxE2eeAttachmentDownloadDue,
+    idxE2eeAttachmentDownloadLocalAsset,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -21588,13 +23527,16 @@ typedef $$E2eeAttachmentUploadRowsTableCreateCompanionBuilder =
       Value<String?> pendingChunkMutationId,
       Value<String?> pendingChunkCiphertextPath,
       Value<int?> pendingChunkCiphertextBytes,
+      Value<Uint8List?> pendingChunkCiphertextSha256,
       Value<String?> leaseToken,
       Value<String?> leaseOwnerSessionId,
       Value<DateTime?> leaseExpiresAt,
       required int transitionVersion,
       required int attemptCount,
+      required int consecutiveFailureCount,
       required DateTime nextAttemptAt,
       Value<String?> lastFailureKind,
+      Value<String?> terminalFailureKind,
       required DateTime createdAt,
       required DateTime updatedAt,
       Value<int> rowid,
@@ -21623,13 +23565,16 @@ typedef $$E2eeAttachmentUploadRowsTableUpdateCompanionBuilder =
       Value<String?> pendingChunkMutationId,
       Value<String?> pendingChunkCiphertextPath,
       Value<int?> pendingChunkCiphertextBytes,
+      Value<Uint8List?> pendingChunkCiphertextSha256,
       Value<String?> leaseToken,
       Value<String?> leaseOwnerSessionId,
       Value<DateTime?> leaseExpiresAt,
       Value<int> transitionVersion,
       Value<int> attemptCount,
+      Value<int> consecutiveFailureCount,
       Value<DateTime> nextAttemptAt,
       Value<String?> lastFailureKind,
+      Value<String?> terminalFailureKind,
       Value<DateTime> createdAt,
       Value<DateTime> updatedAt,
       Value<int> rowid,
@@ -21754,6 +23699,12 @@ class $$E2eeAttachmentUploadRowsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<Uint8List> get pendingChunkCiphertextSha256 =>
+      $composableBuilder(
+        column: $table.pendingChunkCiphertextSha256,
+        builder: (column) => ColumnFilters(column),
+      );
+
   ColumnFilters<String> get leaseToken => $composableBuilder(
     column: $table.leaseToken,
     builder: (column) => ColumnFilters(column),
@@ -21780,6 +23731,11 @@ class $$E2eeAttachmentUploadRowsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
+  ColumnFilters<int> get consecutiveFailureCount => $composableBuilder(
+    column: $table.consecutiveFailureCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
   ColumnWithTypeConverterFilters<DateTime, DateTime, int> get nextAttemptAt =>
       $composableBuilder(
         column: $table.nextAttemptAt,
@@ -21788,6 +23744,11 @@ class $$E2eeAttachmentUploadRowsTableFilterComposer
 
   ColumnFilters<String> get lastFailureKind => $composableBuilder(
     column: $table.lastFailureKind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get terminalFailureKind => $composableBuilder(
+    column: $table.terminalFailureKind,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -21923,6 +23884,12 @@ class $$E2eeAttachmentUploadRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<Uint8List> get pendingChunkCiphertextSha256 =>
+      $composableBuilder(
+        column: $table.pendingChunkCiphertextSha256,
+        builder: (column) => ColumnOrderings(column),
+      );
+
   ColumnOrderings<String> get leaseToken => $composableBuilder(
     column: $table.leaseToken,
     builder: (column) => ColumnOrderings(column),
@@ -21948,6 +23915,11 @@ class $$E2eeAttachmentUploadRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<int> get consecutiveFailureCount => $composableBuilder(
+    column: $table.consecutiveFailureCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<int> get nextAttemptAt => $composableBuilder(
     column: $table.nextAttemptAt,
     builder: (column) => ColumnOrderings(column),
@@ -21955,6 +23927,11 @@ class $$E2eeAttachmentUploadRowsTableOrderingComposer
 
   ColumnOrderings<String> get lastFailureKind => $composableBuilder(
     column: $table.lastFailureKind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get terminalFailureKind => $composableBuilder(
+    column: $table.terminalFailureKind,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -22078,6 +24055,12 @@ class $$E2eeAttachmentUploadRowsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<Uint8List> get pendingChunkCiphertextSha256 =>
+      $composableBuilder(
+        column: $table.pendingChunkCiphertextSha256,
+        builder: (column) => column,
+      );
+
   GeneratedColumn<String> get leaseToken => $composableBuilder(
     column: $table.leaseToken,
     builder: (column) => column,
@@ -22104,6 +24087,11 @@ class $$E2eeAttachmentUploadRowsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<int> get consecutiveFailureCount => $composableBuilder(
+    column: $table.consecutiveFailureCount,
+    builder: (column) => column,
+  );
+
   GeneratedColumnWithTypeConverter<DateTime, int> get nextAttemptAt =>
       $composableBuilder(
         column: $table.nextAttemptAt,
@@ -22112,6 +24100,11 @@ class $$E2eeAttachmentUploadRowsTableAnnotationComposer
 
   GeneratedColumn<String> get lastFailureKind => $composableBuilder(
     column: $table.lastFailureKind,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get terminalFailureKind => $composableBuilder(
+    column: $table.terminalFailureKind,
     builder: (column) => column,
   );
 
@@ -22191,13 +24184,17 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 Value<String?> pendingChunkCiphertextPath =
                     const Value.absent(),
                 Value<int?> pendingChunkCiphertextBytes = const Value.absent(),
+                Value<Uint8List?> pendingChunkCiphertextSha256 =
+                    const Value.absent(),
                 Value<String?> leaseToken = const Value.absent(),
                 Value<String?> leaseOwnerSessionId = const Value.absent(),
                 Value<DateTime?> leaseExpiresAt = const Value.absent(),
                 Value<int> transitionVersion = const Value.absent(),
                 Value<int> attemptCount = const Value.absent(),
+                Value<int> consecutiveFailureCount = const Value.absent(),
                 Value<DateTime> nextAttemptAt = const Value.absent(),
                 Value<String?> lastFailureKind = const Value.absent(),
+                Value<String?> terminalFailureKind = const Value.absent(),
                 Value<DateTime> createdAt = const Value.absent(),
                 Value<DateTime> updatedAt = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
@@ -22224,13 +24221,16 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 pendingChunkMutationId: pendingChunkMutationId,
                 pendingChunkCiphertextPath: pendingChunkCiphertextPath,
                 pendingChunkCiphertextBytes: pendingChunkCiphertextBytes,
+                pendingChunkCiphertextSha256: pendingChunkCiphertextSha256,
                 leaseToken: leaseToken,
                 leaseOwnerSessionId: leaseOwnerSessionId,
                 leaseExpiresAt: leaseExpiresAt,
                 transitionVersion: transitionVersion,
                 attemptCount: attemptCount,
+                consecutiveFailureCount: consecutiveFailureCount,
                 nextAttemptAt: nextAttemptAt,
                 lastFailureKind: lastFailureKind,
+                terminalFailureKind: terminalFailureKind,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -22260,13 +24260,17 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 Value<String?> pendingChunkCiphertextPath =
                     const Value.absent(),
                 Value<int?> pendingChunkCiphertextBytes = const Value.absent(),
+                Value<Uint8List?> pendingChunkCiphertextSha256 =
+                    const Value.absent(),
                 Value<String?> leaseToken = const Value.absent(),
                 Value<String?> leaseOwnerSessionId = const Value.absent(),
                 Value<DateTime?> leaseExpiresAt = const Value.absent(),
                 required int transitionVersion,
                 required int attemptCount,
+                required int consecutiveFailureCount,
                 required DateTime nextAttemptAt,
                 Value<String?> lastFailureKind = const Value.absent(),
+                Value<String?> terminalFailureKind = const Value.absent(),
                 required DateTime createdAt,
                 required DateTime updatedAt,
                 Value<int> rowid = const Value.absent(),
@@ -22293,13 +24297,16 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 pendingChunkMutationId: pendingChunkMutationId,
                 pendingChunkCiphertextPath: pendingChunkCiphertextPath,
                 pendingChunkCiphertextBytes: pendingChunkCiphertextBytes,
+                pendingChunkCiphertextSha256: pendingChunkCiphertextSha256,
                 leaseToken: leaseToken,
                 leaseOwnerSessionId: leaseOwnerSessionId,
                 leaseExpiresAt: leaseExpiresAt,
                 transitionVersion: transitionVersion,
                 attemptCount: attemptCount,
+                consecutiveFailureCount: consecutiveFailureCount,
                 nextAttemptAt: nextAttemptAt,
                 lastFailureKind: lastFailureKind,
+                terminalFailureKind: terminalFailureKind,
                 createdAt: createdAt,
                 updatedAt: updatedAt,
                 rowid: rowid,
@@ -22331,6 +24338,729 @@ typedef $$E2eeAttachmentUploadRowsTableProcessedTableManager =
         >,
       ),
       E2eeAttachmentUploadRow,
+      PrefetchHooks Function()
+    >;
+typedef $$E2eeAttachmentDownloadRowsTableCreateCompanionBuilder =
+    E2eeAttachmentDownloadRowsCompanion Function({
+      required String attachmentId,
+      required String uploadId,
+      required int keyEpoch,
+      required String kind,
+      required String phase,
+      Value<Uint8List?> manifestCiphertext,
+      Value<Uint8List?> contentSha256,
+      Value<Uint8List?> wrappedDataKey,
+      Value<int?> totalPlaintextBytes,
+      Value<int?> chunkCount,
+      Value<int?> totalCiphertextBytes,
+      Value<String?> displayName,
+      Value<String?> mediaType,
+      Value<String?> localAssetId,
+      Value<String?> stagingPath,
+      Value<String?> finalPath,
+      required int nextChunkIndex,
+      required int confirmedPlaintextBytes,
+      Value<String?> leaseToken,
+      Value<String?> leaseOwnerSessionId,
+      Value<DateTime?> leaseExpiresAt,
+      required int transitionVersion,
+      required int attemptCount,
+      required int consecutiveFailureCount,
+      required DateTime nextAttemptAt,
+      Value<String?> lastFailureKind,
+      Value<String?> terminalFailureKind,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeAttachmentDownloadRowsTableUpdateCompanionBuilder =
+    E2eeAttachmentDownloadRowsCompanion Function({
+      Value<String> attachmentId,
+      Value<String> uploadId,
+      Value<int> keyEpoch,
+      Value<String> kind,
+      Value<String> phase,
+      Value<Uint8List?> manifestCiphertext,
+      Value<Uint8List?> contentSha256,
+      Value<Uint8List?> wrappedDataKey,
+      Value<int?> totalPlaintextBytes,
+      Value<int?> chunkCount,
+      Value<int?> totalCiphertextBytes,
+      Value<String?> displayName,
+      Value<String?> mediaType,
+      Value<String?> localAssetId,
+      Value<String?> stagingPath,
+      Value<String?> finalPath,
+      Value<int> nextChunkIndex,
+      Value<int> confirmedPlaintextBytes,
+      Value<String?> leaseToken,
+      Value<String?> leaseOwnerSessionId,
+      Value<DateTime?> leaseExpiresAt,
+      Value<int> transitionVersion,
+      Value<int> attemptCount,
+      Value<int> consecutiveFailureCount,
+      Value<DateTime> nextAttemptAt,
+      Value<String?> lastFailureKind,
+      Value<String?> terminalFailureKind,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$E2eeAttachmentDownloadRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeAttachmentDownloadRowsTable> {
+  $$E2eeAttachmentDownloadRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get attachmentId => $composableBuilder(
+    column: $table.attachmentId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get uploadId => $composableBuilder(
+    column: $table.uploadId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get keyEpoch => $composableBuilder(
+    column: $table.keyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get manifestCiphertext => $composableBuilder(
+    column: $table.manifestCiphertext,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get contentSha256 => $composableBuilder(
+    column: $table.contentSha256,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get wrappedDataKey => $composableBuilder(
+    column: $table.wrappedDataKey,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get totalPlaintextBytes => $composableBuilder(
+    column: $table.totalPlaintextBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get chunkCount => $composableBuilder(
+    column: $table.chunkCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get totalCiphertextBytes => $composableBuilder(
+    column: $table.totalCiphertextBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mediaType => $composableBuilder(
+    column: $table.mediaType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get localAssetId => $composableBuilder(
+    column: $table.localAssetId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get stagingPath => $composableBuilder(
+    column: $table.stagingPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get finalPath => $composableBuilder(
+    column: $table.finalPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get nextChunkIndex => $composableBuilder(
+    column: $table.nextChunkIndex,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get confirmedPlaintextBytes => $composableBuilder(
+    column: $table.confirmedPlaintextBytes,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get leaseOwnerSessionId => $composableBuilder(
+    column: $table.leaseOwnerSessionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime?, DateTime, int> get leaseExpiresAt =>
+      $composableBuilder(
+        column: $table.leaseExpiresAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnFilters<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get consecutiveFailureCount => $composableBuilder(
+    column: $table.consecutiveFailureCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get nextAttemptAt =>
+      $composableBuilder(
+        column: $table.nextAttemptAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnFilters<String> get lastFailureKind => $composableBuilder(
+    column: $table.lastFailureKind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get terminalFailureKind => $composableBuilder(
+    column: $table.terminalFailureKind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get createdAt =>
+      $composableBuilder(
+        column: $table.createdAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeAttachmentDownloadRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeAttachmentDownloadRowsTable> {
+  $$E2eeAttachmentDownloadRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get attachmentId => $composableBuilder(
+    column: $table.attachmentId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get uploadId => $composableBuilder(
+    column: $table.uploadId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get keyEpoch => $composableBuilder(
+    column: $table.keyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get manifestCiphertext => $composableBuilder(
+    column: $table.manifestCiphertext,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get contentSha256 => $composableBuilder(
+    column: $table.contentSha256,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get wrappedDataKey => $composableBuilder(
+    column: $table.wrappedDataKey,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get totalPlaintextBytes => $composableBuilder(
+    column: $table.totalPlaintextBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get chunkCount => $composableBuilder(
+    column: $table.chunkCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get totalCiphertextBytes => $composableBuilder(
+    column: $table.totalCiphertextBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get mediaType => $composableBuilder(
+    column: $table.mediaType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get localAssetId => $composableBuilder(
+    column: $table.localAssetId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get stagingPath => $composableBuilder(
+    column: $table.stagingPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get finalPath => $composableBuilder(
+    column: $table.finalPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get nextChunkIndex => $composableBuilder(
+    column: $table.nextChunkIndex,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get confirmedPlaintextBytes => $composableBuilder(
+    column: $table.confirmedPlaintextBytes,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get leaseOwnerSessionId => $composableBuilder(
+    column: $table.leaseOwnerSessionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get leaseExpiresAt => $composableBuilder(
+    column: $table.leaseExpiresAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get consecutiveFailureCount => $composableBuilder(
+    column: $table.consecutiveFailureCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get nextAttemptAt => $composableBuilder(
+    column: $table.nextAttemptAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastFailureKind => $composableBuilder(
+    column: $table.lastFailureKind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get terminalFailureKind => $composableBuilder(
+    column: $table.terminalFailureKind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeAttachmentDownloadRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeAttachmentDownloadRowsTable> {
+  $$E2eeAttachmentDownloadRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get attachmentId => $composableBuilder(
+    column: $table.attachmentId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get uploadId =>
+      $composableBuilder(column: $table.uploadId, builder: (column) => column);
+
+  GeneratedColumn<int> get keyEpoch =>
+      $composableBuilder(column: $table.keyEpoch, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get phase =>
+      $composableBuilder(column: $table.phase, builder: (column) => column);
+
+  GeneratedColumn<Uint8List> get manifestCiphertext => $composableBuilder(
+    column: $table.manifestCiphertext,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<Uint8List> get contentSha256 => $composableBuilder(
+    column: $table.contentSha256,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<Uint8List> get wrappedDataKey => $composableBuilder(
+    column: $table.wrappedDataKey,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get totalPlaintextBytes => $composableBuilder(
+    column: $table.totalPlaintextBytes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get chunkCount => $composableBuilder(
+    column: $table.chunkCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get totalCiphertextBytes => $composableBuilder(
+    column: $table.totalCiphertextBytes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get mediaType =>
+      $composableBuilder(column: $table.mediaType, builder: (column) => column);
+
+  GeneratedColumn<String> get localAssetId => $composableBuilder(
+    column: $table.localAssetId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get stagingPath => $composableBuilder(
+    column: $table.stagingPath,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get finalPath =>
+      $composableBuilder(column: $table.finalPath, builder: (column) => column);
+
+  GeneratedColumn<int> get nextChunkIndex => $composableBuilder(
+    column: $table.nextChunkIndex,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get confirmedPlaintextBytes => $composableBuilder(
+    column: $table.confirmedPlaintextBytes,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get leaseOwnerSessionId => $composableBuilder(
+    column: $table.leaseOwnerSessionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime?, int> get leaseExpiresAt =>
+      $composableBuilder(
+        column: $table.leaseExpiresAt,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get consecutiveFailureCount => $composableBuilder(
+    column: $table.consecutiveFailureCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get nextAttemptAt =>
+      $composableBuilder(
+        column: $table.nextAttemptAt,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<String> get lastFailureKind => $composableBuilder(
+    column: $table.lastFailureKind,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get terminalFailureKind => $composableBuilder(
+    column: $table.terminalFailureKind,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeAttachmentDownloadRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeAttachmentDownloadRowsTable,
+          E2eeAttachmentDownloadRow,
+          $$E2eeAttachmentDownloadRowsTableFilterComposer,
+          $$E2eeAttachmentDownloadRowsTableOrderingComposer,
+          $$E2eeAttachmentDownloadRowsTableAnnotationComposer,
+          $$E2eeAttachmentDownloadRowsTableCreateCompanionBuilder,
+          $$E2eeAttachmentDownloadRowsTableUpdateCompanionBuilder,
+          (
+            E2eeAttachmentDownloadRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeAttachmentDownloadRowsTable,
+              E2eeAttachmentDownloadRow
+            >,
+          ),
+          E2eeAttachmentDownloadRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeAttachmentDownloadRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeAttachmentDownloadRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeAttachmentDownloadRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeAttachmentDownloadRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeAttachmentDownloadRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> attachmentId = const Value.absent(),
+                Value<String> uploadId = const Value.absent(),
+                Value<int> keyEpoch = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<String> phase = const Value.absent(),
+                Value<Uint8List?> manifestCiphertext = const Value.absent(),
+                Value<Uint8List?> contentSha256 = const Value.absent(),
+                Value<Uint8List?> wrappedDataKey = const Value.absent(),
+                Value<int?> totalPlaintextBytes = const Value.absent(),
+                Value<int?> chunkCount = const Value.absent(),
+                Value<int?> totalCiphertextBytes = const Value.absent(),
+                Value<String?> displayName = const Value.absent(),
+                Value<String?> mediaType = const Value.absent(),
+                Value<String?> localAssetId = const Value.absent(),
+                Value<String?> stagingPath = const Value.absent(),
+                Value<String?> finalPath = const Value.absent(),
+                Value<int> nextChunkIndex = const Value.absent(),
+                Value<int> confirmedPlaintextBytes = const Value.absent(),
+                Value<String?> leaseToken = const Value.absent(),
+                Value<String?> leaseOwnerSessionId = const Value.absent(),
+                Value<DateTime?> leaseExpiresAt = const Value.absent(),
+                Value<int> transitionVersion = const Value.absent(),
+                Value<int> attemptCount = const Value.absent(),
+                Value<int> consecutiveFailureCount = const Value.absent(),
+                Value<DateTime> nextAttemptAt = const Value.absent(),
+                Value<String?> lastFailureKind = const Value.absent(),
+                Value<String?> terminalFailureKind = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeAttachmentDownloadRowsCompanion(
+                attachmentId: attachmentId,
+                uploadId: uploadId,
+                keyEpoch: keyEpoch,
+                kind: kind,
+                phase: phase,
+                manifestCiphertext: manifestCiphertext,
+                contentSha256: contentSha256,
+                wrappedDataKey: wrappedDataKey,
+                totalPlaintextBytes: totalPlaintextBytes,
+                chunkCount: chunkCount,
+                totalCiphertextBytes: totalCiphertextBytes,
+                displayName: displayName,
+                mediaType: mediaType,
+                localAssetId: localAssetId,
+                stagingPath: stagingPath,
+                finalPath: finalPath,
+                nextChunkIndex: nextChunkIndex,
+                confirmedPlaintextBytes: confirmedPlaintextBytes,
+                leaseToken: leaseToken,
+                leaseOwnerSessionId: leaseOwnerSessionId,
+                leaseExpiresAt: leaseExpiresAt,
+                transitionVersion: transitionVersion,
+                attemptCount: attemptCount,
+                consecutiveFailureCount: consecutiveFailureCount,
+                nextAttemptAt: nextAttemptAt,
+                lastFailureKind: lastFailureKind,
+                terminalFailureKind: terminalFailureKind,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String attachmentId,
+                required String uploadId,
+                required int keyEpoch,
+                required String kind,
+                required String phase,
+                Value<Uint8List?> manifestCiphertext = const Value.absent(),
+                Value<Uint8List?> contentSha256 = const Value.absent(),
+                Value<Uint8List?> wrappedDataKey = const Value.absent(),
+                Value<int?> totalPlaintextBytes = const Value.absent(),
+                Value<int?> chunkCount = const Value.absent(),
+                Value<int?> totalCiphertextBytes = const Value.absent(),
+                Value<String?> displayName = const Value.absent(),
+                Value<String?> mediaType = const Value.absent(),
+                Value<String?> localAssetId = const Value.absent(),
+                Value<String?> stagingPath = const Value.absent(),
+                Value<String?> finalPath = const Value.absent(),
+                required int nextChunkIndex,
+                required int confirmedPlaintextBytes,
+                Value<String?> leaseToken = const Value.absent(),
+                Value<String?> leaseOwnerSessionId = const Value.absent(),
+                Value<DateTime?> leaseExpiresAt = const Value.absent(),
+                required int transitionVersion,
+                required int attemptCount,
+                required int consecutiveFailureCount,
+                required DateTime nextAttemptAt,
+                Value<String?> lastFailureKind = const Value.absent(),
+                Value<String?> terminalFailureKind = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeAttachmentDownloadRowsCompanion.insert(
+                attachmentId: attachmentId,
+                uploadId: uploadId,
+                keyEpoch: keyEpoch,
+                kind: kind,
+                phase: phase,
+                manifestCiphertext: manifestCiphertext,
+                contentSha256: contentSha256,
+                wrappedDataKey: wrappedDataKey,
+                totalPlaintextBytes: totalPlaintextBytes,
+                chunkCount: chunkCount,
+                totalCiphertextBytes: totalCiphertextBytes,
+                displayName: displayName,
+                mediaType: mediaType,
+                localAssetId: localAssetId,
+                stagingPath: stagingPath,
+                finalPath: finalPath,
+                nextChunkIndex: nextChunkIndex,
+                confirmedPlaintextBytes: confirmedPlaintextBytes,
+                leaseToken: leaseToken,
+                leaseOwnerSessionId: leaseOwnerSessionId,
+                leaseExpiresAt: leaseExpiresAt,
+                transitionVersion: transitionVersion,
+                attemptCount: attemptCount,
+                consecutiveFailureCount: consecutiveFailureCount,
+                nextAttemptAt: nextAttemptAt,
+                lastFailureKind: lastFailureKind,
+                terminalFailureKind: terminalFailureKind,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeAttachmentDownloadRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeAttachmentDownloadRowsTable,
+      E2eeAttachmentDownloadRow,
+      $$E2eeAttachmentDownloadRowsTableFilterComposer,
+      $$E2eeAttachmentDownloadRowsTableOrderingComposer,
+      $$E2eeAttachmentDownloadRowsTableAnnotationComposer,
+      $$E2eeAttachmentDownloadRowsTableCreateCompanionBuilder,
+      $$E2eeAttachmentDownloadRowsTableUpdateCompanionBuilder,
+      (
+        E2eeAttachmentDownloadRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeAttachmentDownloadRowsTable,
+          E2eeAttachmentDownloadRow
+        >,
+      ),
+      E2eeAttachmentDownloadRow,
       PrefetchHooks Function()
     >;
 
@@ -22406,5 +25136,11 @@ class $AppDatabaseManager {
       $$E2eeAttachmentUploadRowsTableTableManager(
         _db,
         _db.e2eeAttachmentUploadRows,
+      );
+  $$E2eeAttachmentDownloadRowsTableTableManager
+  get e2eeAttachmentDownloadRows =>
+      $$E2eeAttachmentDownloadRowsTableTableManager(
+        _db,
+        _db.e2eeAttachmentDownloadRows,
       );
 }
