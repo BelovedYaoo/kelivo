@@ -12,12 +12,12 @@ import 'cloud_sync_attachment_types.dart';
 const _attachmentOwnedRootName = 'e2ee';
 const _memoryRoot = 'memory://kelivo-e2ee-attachments/';
 const _sha256Bytes = 32;
+const _downloadPlaintextFileName = 'plaintext.part';
 
 final _canonicalUuidV4Pattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
 final _sha256HexPattern = RegExp(r'^[0-9a-f]{64}$');
-final _downloadChunkFilePattern = RegExp(r'^(0|[1-9][0-9]{0,2})\.ciphertext$');
 final _uploadChunkFilePattern = RegExp(
   r'^(0|[1-9][0-9]{0,2})-([0-9a-f-]{36})\.ciphertext$',
 );
@@ -43,22 +43,6 @@ final class E2eeAttachmentFileLocation {
         identity.keyEpoch.toString(),
       ],
       fileName: '${chunk.chunkIndex}-$mutation.ciphertext',
-    );
-  }
-
-  factory E2eeAttachmentFileLocation.stagingDownloadChunk({
-    required CloudSyncAttachmentChunkIdentity chunk,
-  }) {
-    final identity = chunk.identity;
-    return E2eeAttachmentFileLocation._(
-      directorySegments: <String>[
-        'staging',
-        'download',
-        identity.attachmentId,
-        identity.uploadId,
-        identity.keyEpoch.toString(),
-      ],
-      fileName: '${chunk.chunkIndex}.ciphertext',
     );
   }
 
@@ -112,6 +96,26 @@ abstract interface class E2eeAttachmentFileStore {
   });
 
   Future<void> verifyContent(E2eeAttachmentStoredFile storedFile);
+
+  Future<String> openDownloadPlaintextStaging({
+    required CloudSyncAttachmentIdentity identity,
+    required String? persistedStoragePath,
+    required int confirmedPlaintextBytes,
+  });
+
+  Future<void> appendDownloadPlaintextChunk({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedOffset,
+    required Uint8List plaintext,
+  });
+
+  Future<E2eeAttachmentStoredFile> publishDownloadPlaintext({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedPlaintextBytes,
+    required Uint8List expectedSha256,
+  });
 
   Future<void> deleteStaging({required String storagePath});
 }
@@ -268,6 +272,187 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
   }
 
   @override
+  Future<String> openDownloadPlaintextStaging({
+    required CloudSyncAttachmentIdentity identity,
+    required String? persistedStoragePath,
+    required int confirmedPlaintextBytes,
+  }) async {
+    final confirmed = _requirePlaintextLength(
+      confirmedPlaintextBytes,
+      'confirmedPlaintextBytes',
+    );
+    final target = await _downloadPlaintextTarget(
+      identity,
+      createMissingDirectories: true,
+    );
+    final canonicalPath = p.normalize(target.absolute.path);
+    if (persistedStoragePath != null) {
+      _requireExactPlatformStoragePath(persistedStoragePath, canonicalPath);
+    }
+
+    var type = await FileSystemEntity.type(canonicalPath, followLinks: false);
+    if (type == FileSystemEntityType.notFound) {
+      if (confirmed != 0) {
+        throw StateError('e2ee_attachment_staging_shorter_than_confirmed');
+      }
+      try {
+        await target.create(exclusive: true);
+      } on FileSystemException {
+        type = await FileSystemEntity.type(canonicalPath, followLinks: false);
+        if (type == FileSystemEntityType.notFound) rethrow;
+      }
+      type = await FileSystemEntity.type(canonicalPath, followLinks: false);
+      if (type != FileSystemEntityType.file) {
+        throw StateError('e2ee_attachment_plaintext_staging_unsafe');
+      }
+      await _durability.restrictFile(target);
+      await _durability.syncFile(target, fullBarrier: true);
+      await _durability.syncDirectory(target.parent, fullBarrier: true);
+    }
+    if (type != FileSystemEntityType.file) {
+      throw StateError('e2ee_attachment_plaintext_staging_unsafe');
+    }
+    await _requireCanonicalFile(target, target.parent);
+
+    final actualBytes = await target.length();
+    if (actualBytes < confirmed) {
+      throw StateError('e2ee_attachment_staging_shorter_than_confirmed');
+    }
+    if (actualBytes > confirmed) {
+      final output = await target.open(mode: FileMode.append);
+      try {
+        await output.truncate(confirmed);
+        await output.flush();
+      } finally {
+        await output.close();
+      }
+      await _durability.syncFile(target, fullBarrier: true);
+    }
+    if (await target.length() != confirmed) {
+      throw StateError('e2ee_attachment_staging_recovery_length');
+    }
+    await _requireCanonicalFile(target, target.parent);
+    return canonicalPath;
+  }
+
+  @override
+  Future<void> appendDownloadPlaintextChunk({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedOffset,
+    required Uint8List plaintext,
+  }) async {
+    final offset = _requirePlaintextLength(expectedOffset, 'expectedOffset');
+    final chunk = _copyPlaintextChunk(plaintext);
+    if (chunk.length >
+        cloudSyncMaximumAttachmentTotalCiphertextBytes - offset) {
+      throw const FormatException('e2ee_attachment_plaintext_total_too_large');
+    }
+    final file = await _requireDownloadPlaintextStaging(
+      identity: identity,
+      stagingPath: stagingPath,
+      allowMissing: false,
+    );
+    if (file == null) {
+      throw FileSystemException('e2ee_attachment_file_missing', stagingPath);
+    }
+    if (await file.length() != offset) {
+      throw StateError('e2ee_attachment_plaintext_offset_mismatch');
+    }
+    final output = await file.open(mode: FileMode.append);
+    try {
+      await output.writeFrom(chunk);
+      await output.flush();
+    } finally {
+      await output.close();
+    }
+    await _durability.syncFile(file, fullBarrier: true);
+    if (await file.length() != offset + chunk.length) {
+      throw StateError('e2ee_attachment_plaintext_append_length');
+    }
+    await _requireCanonicalFile(file, file.parent);
+  }
+
+  @override
+  Future<E2eeAttachmentStoredFile> publishDownloadPlaintext({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedPlaintextBytes,
+    required Uint8List expectedSha256,
+  }) async {
+    final expectedBytes = _requirePlaintextLength(
+      expectedPlaintextBytes,
+      'expectedPlaintextBytes',
+    );
+    final expectedDigest = _requireSha256(expectedSha256, 'expectedSha256');
+    final staging = await _requireDownloadPlaintextStaging(
+      identity: identity,
+      stagingPath: stagingPath,
+      allowMissing: true,
+    );
+    final contentDirectory = await _resolveLocationDirectory(const <String>[
+      'content',
+    ], createMissing: true);
+    if (contentDirectory == null) {
+      throw StateError('e2ee_attachment_directory_missing');
+    }
+    final target = File(p.join(contentDirectory.path, expectedDigest.toHex()));
+    final targetType = await FileSystemEntity.type(
+      target.path,
+      followLinks: false,
+    );
+    if (targetType != FileSystemEntityType.notFound) {
+      if (targetType != FileSystemEntityType.file) {
+        throw StateError('e2ee_attachment_publish_target_unsafe');
+      }
+      await _requireCanonicalFile(target, contentDirectory);
+      final existing = await _measureFile(target);
+      if (!_matchesIntegrity(
+        existing,
+        expectedBytes: expectedBytes,
+        expectedSha256: expectedDigest,
+      )) {
+        throw StateError('e2ee_attachment_publish_conflict');
+      }
+      if (staging != null) {
+        await staging.delete();
+        await _durability.syncDirectory(staging.parent, fullBarrier: true);
+      }
+      return E2eeAttachmentStoredFile(
+        storagePath: target.absolute.path,
+        bytes: existing.bytes,
+        sha256: existing.sha256,
+      );
+    }
+    if (staging == null) {
+      throw FileSystemException('e2ee_attachment_file_missing', stagingPath);
+    }
+    final staged = await _measureFile(staging);
+    if (!_matchesIntegrity(
+      staged,
+      expectedBytes: expectedBytes,
+      expectedSha256: expectedDigest,
+    )) {
+      throw const FormatException('e2ee_attachment_plaintext_integrity');
+    }
+    await _durability.renameAndSync(source: staging, targetPath: target.path);
+    await _requireCanonicalFile(target, contentDirectory);
+    final published = await _measureFile(target);
+    if (!_matchesIntegrity(
+      published,
+      expectedBytes: expectedBytes,
+      expectedSha256: expectedDigest,
+    )) {
+      throw StateError('e2ee_attachment_published_content_integrity');
+    }
+    return E2eeAttachmentStoredFile(
+      storagePath: target.absolute.path,
+      bytes: published.bytes,
+      sha256: published.sha256,
+    );
+  }
+
+  @override
   Future<void> deleteStaging({required String storagePath}) async {
     final resolved = await _resolveStoredPath(storagePath, allowMissing: true);
     if (!resolved.staging) {
@@ -277,6 +462,44 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
     if (file == null) return;
     await file.delete();
     await _durability.syncDirectory(file.parent, fullBarrier: true);
+  }
+
+  Future<File> _downloadPlaintextTarget(
+    CloudSyncAttachmentIdentity identity, {
+    required bool createMissingDirectories,
+  }) async {
+    final directory = await _resolveLocationDirectory(
+      _downloadPlaintextDirectorySegments(identity),
+      createMissing: createMissingDirectories,
+    );
+    if (directory == null) {
+      throw FileSystemException('e2ee_attachment_staging_directory_missing');
+    }
+    return File(p.join(directory.path, _downloadPlaintextFileName));
+  }
+
+  Future<File?> _requireDownloadPlaintextStaging({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required bool allowMissing,
+  }) async {
+    final root = await _ownedRoot();
+    final expected = p.normalize(
+      p.joinAll(<String>[
+        root.path,
+        ..._downloadPlaintextDirectorySegments(identity),
+        _downloadPlaintextFileName,
+      ]),
+    );
+    _requireExactPlatformStoragePath(stagingPath, expected);
+    final resolved = await _resolveStoredPath(
+      stagingPath,
+      allowMissing: allowMissing,
+    );
+    if (!resolved.staging) {
+      throw StateError('e2ee_attachment_plaintext_staging_required');
+    }
+    return resolved.file;
   }
 
   Future<_StoredPathResolution> _resolveStoredPath(
@@ -582,6 +805,112 @@ final class E2eeAttachmentMemoryFileStore implements E2eeAttachmentFileStore {
   }
 
   @override
+  Future<String> openDownloadPlaintextStaging({
+    required CloudSyncAttachmentIdentity identity,
+    required String? persistedStoragePath,
+    required int confirmedPlaintextBytes,
+  }) async {
+    final confirmed = _requirePlaintextLength(
+      confirmedPlaintextBytes,
+      'confirmedPlaintextBytes',
+    );
+    final storagePath = _memoryDownloadPlaintextPath(identity);
+    if (persistedStoragePath != null && persistedStoragePath != storagePath) {
+      throw StateError('e2ee_attachment_staging_identity_mismatch');
+    }
+    final existing = _files[storagePath];
+    if (existing == null) {
+      if (confirmed != 0) {
+        throw StateError('e2ee_attachment_staging_shorter_than_confirmed');
+      }
+      _files[storagePath] = Uint8List(0);
+      return storagePath;
+    }
+    if (existing.length < confirmed) {
+      throw StateError('e2ee_attachment_staging_shorter_than_confirmed');
+    }
+    if (existing.length > confirmed) {
+      _files[storagePath] = Uint8List.fromList(existing.sublist(0, confirmed));
+    }
+    return storagePath;
+  }
+
+  @override
+  Future<void> appendDownloadPlaintextChunk({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedOffset,
+    required Uint8List plaintext,
+  }) async {
+    final offset = _requirePlaintextLength(expectedOffset, 'expectedOffset');
+    final chunk = _copyPlaintextChunk(plaintext);
+    if (chunk.length >
+        cloudSyncMaximumAttachmentTotalCiphertextBytes - offset) {
+      throw const FormatException('e2ee_attachment_plaintext_total_too_large');
+    }
+    _requireExactMemoryDownloadPath(identity, stagingPath);
+    final existing = _files[stagingPath];
+    if (existing == null) {
+      throw FileSystemException('e2ee_attachment_file_missing', stagingPath);
+    }
+    if (existing.length != offset) {
+      throw StateError('e2ee_attachment_plaintext_offset_mismatch');
+    }
+    final appended = BytesBuilder(copy: true)
+      ..add(existing)
+      ..add(chunk);
+    _files[stagingPath] = appended.takeBytes();
+  }
+
+  @override
+  Future<E2eeAttachmentStoredFile> publishDownloadPlaintext({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedPlaintextBytes,
+    required Uint8List expectedSha256,
+  }) async {
+    final expectedBytes = _requirePlaintextLength(
+      expectedPlaintextBytes,
+      'expectedPlaintextBytes',
+    );
+    final expectedDigest = _requireSha256(expectedSha256, 'expectedSha256');
+    _requireExactMemoryDownloadPath(identity, stagingPath);
+    final contentPath = '${_memoryRoot}content/${expectedDigest.toHex()}';
+    final existingContent = _files[contentPath];
+    if (existingContent != null) {
+      final existingDigest = Uint8List.fromList(
+        sha256.convert(existingContent).bytes,
+      );
+      if (existingContent.length != expectedBytes ||
+          !_sameBytes(existingDigest, expectedDigest)) {
+        throw StateError('e2ee_attachment_publish_conflict');
+      }
+      _files.remove(stagingPath);
+      return E2eeAttachmentStoredFile(
+        storagePath: contentPath,
+        bytes: existingContent.length,
+        sha256: existingDigest,
+      );
+    }
+    final staged = _files[stagingPath];
+    if (staged == null) {
+      throw FileSystemException('e2ee_attachment_file_missing', stagingPath);
+    }
+    final stagedDigest = Uint8List.fromList(sha256.convert(staged).bytes);
+    if (staged.length != expectedBytes ||
+        !_sameBytes(stagedDigest, expectedDigest)) {
+      throw const FormatException('e2ee_attachment_plaintext_integrity');
+    }
+    _files.remove(stagingPath);
+    _files[contentPath] = staged;
+    return E2eeAttachmentStoredFile(
+      storagePath: contentPath,
+      bytes: staged.length,
+      sha256: stagedDigest,
+    );
+  }
+
+  @override
   Future<void> deleteStaging({required String storagePath}) async {
     final segments = _memoryRelativeSegments(storagePath);
     if (!_requireOwnedRelativeSegments(segments)) {
@@ -649,7 +978,9 @@ bool _requireOwnedRelativeSegments(List<String> segments) {
       !_canonicalUuidV4Pattern.hasMatch(segments[2]) ||
       !_canonicalUuidV4Pattern.hasMatch(segments[3]) ||
       !_isPositiveUint32(segments[4]) ||
-      !_isChunkFileName(segments[5], upload: segments[1] == 'upload')) {
+      (segments[1] == 'upload'
+          ? !_isUploadChunkFileName(segments[5])
+          : segments[5] != _downloadPlaintextFileName)) {
     throw StateError('e2ee_attachment_owned_path_unsafe');
   }
   return true;
@@ -663,18 +994,47 @@ bool _isPositiveUint32(String value) {
       parsed.toString() == value;
 }
 
-bool _isChunkFileName(String value, {required bool upload}) {
-  if (upload) {
-    final match = _uploadChunkFilePattern.firstMatch(value);
-    if (match == null || !_canonicalUuidV4Pattern.hasMatch(match.group(2)!)) {
-      return false;
-    }
-  } else if (!_downloadChunkFilePattern.hasMatch(value)) {
+bool _isUploadChunkFileName(String value) {
+  final match = _uploadChunkFilePattern.firstMatch(value);
+  if (match == null || !_canonicalUuidV4Pattern.hasMatch(match.group(2)!)) {
     return false;
   }
-  final separator = upload ? value.indexOf('-') : value.indexOf('.');
-  final chunkIndex = int.parse(value.substring(0, separator));
+  final chunkIndex = int.parse(value.substring(0, value.indexOf('-')));
   return chunkIndex < cloudSyncMaximumAttachmentChunkCount;
+}
+
+List<String> _downloadPlaintextDirectorySegments(
+  CloudSyncAttachmentIdentity identity,
+) => <String>[
+  'staging',
+  'download',
+  identity.attachmentId,
+  identity.uploadId,
+  identity.keyEpoch.toString(),
+];
+
+String _memoryDownloadPlaintextPath(CloudSyncAttachmentIdentity identity) =>
+    '$_memoryRoot${[..._downloadPlaintextDirectorySegments(identity), _downloadPlaintextFileName].join('/')}';
+
+void _requireExactMemoryDownloadPath(
+  CloudSyncAttachmentIdentity identity,
+  String storagePath,
+) {
+  _requireStoragePath(storagePath);
+  if (storagePath != _memoryDownloadPlaintextPath(identity)) {
+    throw StateError('e2ee_attachment_staging_identity_mismatch');
+  }
+  final segments = _memoryRelativeSegments(storagePath);
+  if (!_requireOwnedRelativeSegments(segments)) {
+    throw StateError('e2ee_attachment_plaintext_staging_required');
+  }
+}
+
+void _requireExactPlatformStoragePath(String storagePath, String expectedPath) {
+  final value = _requireStoragePath(storagePath);
+  if (!p.isAbsolute(value) || value != expectedPath) {
+    throw StateError('e2ee_attachment_staging_identity_mismatch');
+  }
 }
 
 String _requireCanonicalUuidV4(String value, String field) {
@@ -694,6 +1054,13 @@ String _requireStoragePath(String value) {
 int _requireByteLength(int value) {
   if (value < 0) {
     throw const FormatException('e2ee_attachment_file_length_invalid');
+  }
+  return value;
+}
+
+int _requirePlaintextLength(int value, String field) {
+  if (value < 0 || value > cloudSyncMaximumAttachmentTotalCiphertextBytes) {
+    throw FormatException('$field 超出附件明文范围');
   }
   return value;
 }
@@ -758,6 +1125,21 @@ Uint8List _copyByteChunk(List<int> value) {
   }
   return Uint8List.fromList(value);
 }
+
+Uint8List _copyPlaintextChunk(Uint8List value) {
+  if (value.length > cloudSyncMaximumAttachmentChunkCiphertextBytes) {
+    throw const FormatException('e2ee_attachment_plaintext_chunk_too_large');
+  }
+  return Uint8List.fromList(value);
+}
+
+bool _matchesIntegrity(
+  _FileIntegrity integrity, {
+  required int expectedBytes,
+  required Uint8List expectedSha256,
+}) =>
+    integrity.bytes == expectedBytes &&
+    _sameBytes(integrity.sha256, expectedSha256);
 
 extension on Uint8List {
   String toHex() =>

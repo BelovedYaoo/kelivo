@@ -5437,11 +5437,12 @@ void main() {
     );
     await expectLater(
       store.publish(
-        location: E2eeAttachmentFileLocation.stagingDownloadChunk(
+        location: E2eeAttachmentFileLocation.stagingUploadChunk(
           chunk: CloudSyncAttachmentChunkIdentity(
             identity: identity,
             chunkIndex: 1,
           ),
+          mutationId: _mutationId3,
         ),
         source: Stream<List<int>>.value(<int>[256]),
       ),
@@ -5625,14 +5626,10 @@ void main() {
     final downloadMarker = File(p.join(ownedRoot, 'staging', 'download'));
     await downloadMarker.writeAsString('not-a-directory', flush: true);
     await expectLater(
-      store.publish(
-        location: E2eeAttachmentFileLocation.stagingDownloadChunk(
-          chunk: CloudSyncAttachmentChunkIdentity(
-            identity: identity,
-            chunkIndex: 0,
-          ),
-        ),
-        source: Stream<List<int>>.value(ciphertext),
+      store.openDownloadPlaintextStaging(
+        identity: identity,
+        persistedStoragePath: null,
+        confirmedPlaintextBytes: 0,
       ),
       throwsA(isA<StateError>()),
     );
@@ -5706,6 +5703,414 @@ void main() {
       store.readVerified(stored),
       throwsA(isA<FileSystemException>()),
     );
+  });
+
+  test('E2EE 附件内存下载明文 staging 只按持久确认进度恢复并幂等发布', () async {
+    final store = E2eeAttachmentMemoryFileStore();
+    final identity = CloudSyncAttachmentIdentity(
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: 7,
+    );
+    final firstChunk = Uint8List.fromList(<int>[1, 2]);
+    final secondChunk = Uint8List.fromList(<int>[3, 4, 5]);
+    final plaintext = Uint8List.fromList(<int>[...firstChunk, ...secondChunk]);
+    final contentDigest = Uint8List.fromList(sha256.convert(plaintext).bytes);
+
+    final stagingPath = await store.openDownloadPlaintextStaging(
+      identity: identity,
+      persistedStoragePath: null,
+      confirmedPlaintextBytes: 0,
+    );
+    expect(
+      stagingPath,
+      'memory://kelivo-e2ee-attachments/staging/download/'
+      '$_attachmentId/$_uploadId/7/plaintext.part',
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: 0,
+      plaintext: firstChunk,
+    );
+
+    // 文件尾可能先于数据库确认落盘，恢复只能回退到数据库已确认位置。
+    expect(
+      await store.openDownloadPlaintextStaging(
+        identity: identity,
+        persistedStoragePath: stagingPath,
+        confirmedPlaintextBytes: 0,
+      ),
+      stagingPath,
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: 0,
+      plaintext: firstChunk,
+    );
+    await store.openDownloadPlaintextStaging(
+      identity: identity,
+      persistedStoragePath: stagingPath,
+      confirmedPlaintextBytes: firstChunk.length,
+    );
+    await expectLater(
+      store.appendDownloadPlaintextChunk(
+        identity: identity,
+        stagingPath: stagingPath,
+        expectedOffset: 0,
+        plaintext: secondChunk,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: firstChunk.length,
+      plaintext: secondChunk,
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: plaintext.length,
+      plaintext: Uint8List.fromList(<int>[99]),
+    );
+    await store.openDownloadPlaintextStaging(
+      identity: identity,
+      persistedStoragePath: stagingPath,
+      confirmedPlaintextBytes: plaintext.length,
+    );
+
+    final stored = await store.publishDownloadPlaintext(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedPlaintextBytes: plaintext.length,
+      expectedSha256: contentDigest,
+    );
+    expect(stored.bytes, plaintext.length);
+    expect(stored.sha256, contentDigest);
+    await store.verifyContent(stored);
+    final repeated = await store.publishDownloadPlaintext(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedPlaintextBytes: plaintext.length,
+      expectedSha256: contentDigest,
+    );
+    expect(repeated.storagePath, stored.storagePath);
+
+    final isolatedIdentity = CloudSyncAttachmentIdentity(
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: 8,
+    );
+    expect(
+      await store.openDownloadPlaintextStaging(
+        identity: isolatedIdentity,
+        persistedStoragePath: null,
+        confirmedPlaintextBytes: 0,
+      ),
+      isNot(stagingPath),
+    );
+    await expectLater(
+      store.openDownloadPlaintextStaging(
+        identity: isolatedIdentity,
+        persistedStoragePath:
+            'memory://kelivo-e2ee-attachments/staging/download/'
+            '$_attachmentId/$_uploadId/8/plaintext.part',
+        confirmedPlaintextBytes: 1,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      store.openDownloadPlaintextStaging(
+        identity: identity,
+        persistedStoragePath:
+            'memory://kelivo-e2ee-attachments/staging/download/'
+            '$_attachmentId/$_mutationId1/7/plaintext.part',
+        confirmedPlaintextBytes: 0,
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    final zeroIdentity = CloudSyncAttachmentIdentity(
+      attachmentId: _mutationId1,
+      uploadId: _mutationId2,
+      keyEpoch: 9,
+    );
+    final zeroStaging = await store.openDownloadPlaintextStaging(
+      identity: zeroIdentity,
+      persistedStoragePath: null,
+      confirmedPlaintextBytes: 0,
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: zeroIdentity,
+      stagingPath: zeroStaging,
+      expectedOffset: 0,
+      plaintext: Uint8List(0),
+    );
+    final emptyDigest = Uint8List.fromList(sha256.convert(const <int>[]).bytes);
+    final zeroStored = await store.publishDownloadPlaintext(
+      identity: zeroIdentity,
+      stagingPath: zeroStaging,
+      expectedPlaintextBytes: 0,
+      expectedSha256: emptyDigest,
+    );
+    expect(zeroStored.bytes, 0);
+    await store.verifyContent(zeroStored);
+
+    final corruptIdentity = CloudSyncAttachmentIdentity(
+      attachmentId: _mutationId2,
+      uploadId: _mutationId3,
+      keyEpoch: 10,
+    );
+    final corruptStaging = await store.openDownloadPlaintextStaging(
+      identity: corruptIdentity,
+      persistedStoragePath: null,
+      confirmedPlaintextBytes: 0,
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: corruptIdentity,
+      stagingPath: corruptStaging,
+      expectedOffset: 0,
+      plaintext: Uint8List.fromList(<int>[8, 8]),
+    );
+    await expectLater(
+      store.publishDownloadPlaintext(
+        identity: corruptIdentity,
+        stagingPath: corruptStaging,
+        expectedPlaintextBytes: 2,
+        expectedSha256: Uint8List.fromList(
+          sha256.convert(const <int>[8, 9]).bytes,
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      store.publishDownloadPlaintext(
+        identity: corruptIdentity,
+        stagingPath: corruptStaging,
+        expectedPlaintextBytes: 1,
+        expectedSha256: emptyDigest,
+      ),
+      throwsA(isA<StateError>()),
+    );
+  });
+
+  test('E2EE 附件平台下载明文 staging 流式验密并拒绝篡改与异常路径', () async {
+    final root = await Directory.current.createTemp(
+      'kelivo-e2ee-download-plaintext-store-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final installation = await Directory(
+      p.join(root.path, 'installation'),
+    ).create();
+    final workspace = await Directory(
+      p.join(root.path, 'account-workspace'),
+    ).create();
+    AppDirectories.bindWorkspaceRoot(
+      workspace,
+      installationRoot: installation,
+      accountWorkspace: true,
+    );
+
+    final store = E2eeAttachmentPlatformFileStore();
+    final identity = CloudSyncAttachmentIdentity(
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: 0xffffffff,
+    );
+    final firstChunk = Uint8List.fromList(<int>[11, 12]);
+    final secondChunk = Uint8List.fromList(<int>[13, 14, 15]);
+    final plaintext = Uint8List.fromList(<int>[...firstChunk, ...secondChunk]);
+    final contentDigest = Uint8List.fromList(sha256.convert(plaintext).bytes);
+    final stagingPath = await store.openDownloadPlaintextStaging(
+      identity: identity,
+      persistedStoragePath: null,
+      confirmedPlaintextBytes: 0,
+    );
+    expect(
+      p.equals(
+        stagingPath,
+        p.join(
+          workspace.path,
+          'upload',
+          'e2ee',
+          'staging',
+          'download',
+          _attachmentId,
+          _uploadId,
+          '4294967295',
+          'plaintext.part',
+        ),
+      ),
+      isTrue,
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: 0,
+      plaintext: firstChunk,
+    );
+    await store.openDownloadPlaintextStaging(
+      identity: identity,
+      persistedStoragePath: stagingPath,
+      confirmedPlaintextBytes: firstChunk.length,
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: firstChunk.length,
+      plaintext: secondChunk,
+    );
+    final crashTail = await File(stagingPath).open(mode: FileMode.append);
+    await crashTail.writeFrom(const <int>[99, 100]);
+    await crashTail.flush();
+    await crashTail.close();
+    await store.openDownloadPlaintextStaging(
+      identity: identity,
+      persistedStoragePath: stagingPath,
+      confirmedPlaintextBytes: plaintext.length,
+    );
+    expect(await File(stagingPath).length(), plaintext.length);
+    await expectLater(
+      store.appendDownloadPlaintextChunk(
+        identity: identity,
+        stagingPath: stagingPath,
+        expectedOffset: firstChunk.length,
+        plaintext: secondChunk,
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    final tampered = await File(stagingPath).readAsBytes();
+    tampered[1] = 0xff;
+    await File(stagingPath).writeAsBytes(tampered, flush: true);
+    await expectLater(
+      store.publishDownloadPlaintext(
+        identity: identity,
+        stagingPath: stagingPath,
+        expectedPlaintextBytes: plaintext.length,
+        expectedSha256: contentDigest,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    await store.deleteStaging(storagePath: stagingPath);
+    await store.openDownloadPlaintextStaging(
+      identity: identity,
+      persistedStoragePath: stagingPath,
+      confirmedPlaintextBytes: 0,
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: 0,
+      plaintext: firstChunk,
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: firstChunk.length,
+      plaintext: secondChunk,
+    );
+    final stored = await store.publishDownloadPlaintext(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedPlaintextBytes: plaintext.length,
+      expectedSha256: contentDigest,
+    );
+    expect(await File(stored.storagePath).length(), plaintext.length);
+    await store.verifyContent(stored);
+    final repeated = await store.publishDownloadPlaintext(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedPlaintextBytes: plaintext.length,
+      expectedSha256: contentDigest,
+    );
+    expect(repeated.storagePath, stored.storagePath);
+
+    await File(
+      stored.storagePath,
+    ).writeAsBytes(const <int>[11, 12, 13, 14, 16], flush: true);
+    await expectLater(
+      store.publishDownloadPlaintext(
+        identity: identity,
+        stagingPath: stagingPath,
+        expectedPlaintextBytes: plaintext.length,
+        expectedSha256: contentDigest,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      store.openDownloadPlaintextStaging(
+        identity: identity,
+        persistedStoragePath: p.join(root.path, 'outside.part'),
+        confirmedPlaintextBytes: 0,
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    final unsafeIdentity = CloudSyncAttachmentIdentity(
+      attachmentId: _mutationId1,
+      uploadId: _mutationId2,
+      keyEpoch: 1,
+    );
+    final unsafeParent = File(
+      p.join(
+        workspace.path,
+        'upload',
+        'e2ee',
+        'staging',
+        'download',
+        _mutationId1,
+      ),
+    );
+    await unsafeParent.parent.create(recursive: true);
+    await unsafeParent.writeAsString('not-a-directory', flush: true);
+    await expectLater(
+      store.openDownloadPlaintextStaging(
+        identity: unsafeIdentity,
+        persistedStoragePath: null,
+        confirmedPlaintextBytes: 0,
+      ),
+      throwsA(isA<StateError>()),
+    );
+
+    final zeroIdentity = CloudSyncAttachmentIdentity(
+      attachmentId: _mutationId2,
+      uploadId: _mutationId3,
+      keyEpoch: 2,
+    );
+    final zeroStaging = await store.openDownloadPlaintextStaging(
+      identity: zeroIdentity,
+      persistedStoragePath: null,
+      confirmedPlaintextBytes: 0,
+    );
+    await expectLater(
+      store.openDownloadPlaintextStaging(
+        identity: zeroIdentity,
+        persistedStoragePath: zeroStaging,
+        confirmedPlaintextBytes: 1,
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await store.appendDownloadPlaintextChunk(
+      identity: zeroIdentity,
+      stagingPath: zeroStaging,
+      expectedOffset: 0,
+      plaintext: Uint8List(0),
+    );
+    final emptyDigest = Uint8List.fromList(sha256.convert(const <int>[]).bytes);
+    final zeroStored = await store.publishDownloadPlaintext(
+      identity: zeroIdentity,
+      stagingPath: zeroStaging,
+      expectedPlaintextBytes: 0,
+      expectedSha256: emptyDigest,
+    );
+    expect(await File(zeroStored.storagePath).length(), 0);
+    await store.verifyContent(zeroStored);
   });
 }
 
