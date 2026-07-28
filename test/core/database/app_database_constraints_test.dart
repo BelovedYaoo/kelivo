@@ -7,6 +7,7 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/e2ee_sync_record_ledger.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
@@ -20,6 +21,7 @@ import 'package:drift/isolate.dart' show DriftRemoteException;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
+import 'package:uuid/uuid.dart';
 
 import 'test_database_cipher.dart';
 
@@ -51,6 +53,21 @@ String _syncUuid(int value) =>
 
 Uint8List _syncDigest(int value, {int length = 32}) =>
     Uint8List.fromList(List<int>.filled(length, value));
+
+bool _containsByteSequence(Uint8List source, List<int> target) {
+  if (target.isEmpty || target.length > source.length) return false;
+  for (var start = 0; start <= source.length - target.length; start++) {
+    var matches = true;
+    for (var offset = 0; offset < target.length; offset++) {
+      if (source[start + offset] != target[offset]) {
+        matches = false;
+        break;
+      }
+    }
+    if (matches) return true;
+  }
+  return false;
+}
 
 Map<String, Object?> _conversationPayload(String title) => <String, Object?>{
   'title': title,
@@ -4372,6 +4389,256 @@ void main() {
       final acceptedAfterRollback = await ledger.accept(genesis);
       expect(acceptedAfterRollback.kind, E2eeSyncRecordAcceptanceKind.genesis);
     });
+  });
+
+  test('附件清单密文往返并隐藏敏感元数据', () async {
+    const secureCore = KelivoSecureCore();
+    final accountRootKey = await secureCore.generateAccountRootKey();
+    final attachmentDataKey = await secureCore.generateAttachmentDataKey();
+    final attachmentId = Uuid.unparse(attachmentDataKey.attachmentId);
+    const uploadId = 'a0000000-0000-4000-8000-000000000001';
+    final attachmentContext = KelivoAttachmentContext(
+      userId: Uuid.parseAsByteList(_ledgerUserId),
+      attachmentId: attachmentDataKey.attachmentId,
+      keyEpoch: 7,
+    );
+    final wrappedDataKey = await secureCore.wrapAttachmentDataKey(
+      accountRootKey,
+      attachmentDataKey.key,
+      context: attachmentContext,
+    );
+    final contentDigest = Uint8List.fromList(List<int>.filled(32, 0x5a));
+    final manifest = E2eeAttachmentManifest(
+      attachmentId: attachmentId,
+      uploadId: uploadId,
+      keyEpoch: 7,
+      kind: E2eeAttachmentKind.file,
+      totalPlaintextBytes: KelivoAttachmentLimits.chunkPlaintextBytes + 1,
+      contentSha256: contentDigest,
+      wrappedDataKey: wrappedDataKey,
+      chunkCiphertextBytes: <int>[
+        KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+        KelivoAttachmentLimits.chunkEnvelopeOverheadBytes + 1,
+      ],
+      displayName: '计划.txt',
+      mediaType: 'text/plain',
+    );
+    final manifestCipher = E2eeAttachmentManifestCipher.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: secureCore,
+        accountRootKey: accountRootKey,
+        userId: _ledgerUserId,
+        currentKeyEpoch: 7,
+      ),
+    );
+
+    try {
+      final sealed = await manifestCipher.seal(manifest);
+      expect(
+        _containsByteSequence(sealed.ciphertext, utf8.encode('计划.txt')),
+        isFalse,
+      );
+      expect(
+        _containsByteSequence(sealed.ciphertext, ascii.encode('text/plain')),
+        isFalse,
+      );
+
+      final opened = await manifestCipher.open(
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+        keyEpoch: 7,
+        ciphertext: sealed.ciphertext,
+      );
+      expect(opened.attachmentId, attachmentId);
+      expect(opened.uploadId, uploadId);
+      expect(opened.keyEpoch, 7);
+      expect(opened.kind, E2eeAttachmentKind.file);
+      expect(opened.displayName, '计划.txt');
+      expect(opened.mediaType, 'text/plain');
+      expect(opened.contentSha256, orderedEquals(contentDigest));
+      expect(opened.wrappedDataKey, orderedEquals(wrappedDataKey));
+      expect(
+        opened.chunkCiphertextBytes,
+        orderedEquals(<int>[
+          KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+          KelivoAttachmentLimits.chunkEnvelopeOverheadBytes + 1,
+        ]),
+      );
+    } finally {
+      await secureCore.closeAttachmentDataKey(attachmentDataKey.key);
+      await manifestCipher.close();
+    }
+  });
+
+  test('附件清单拒绝篡改和外层身份错配', () async {
+    const secureCore = KelivoSecureCore();
+    final accountRootKey = await secureCore.generateAccountRootKey();
+    final attachmentDataKey = await secureCore.generateAttachmentDataKey();
+    final attachmentId = Uuid.unparse(attachmentDataKey.attachmentId);
+    const uploadId = 'a0000000-0000-4000-8000-000000000002';
+    final wrappedDataKey = await secureCore.wrapAttachmentDataKey(
+      accountRootKey,
+      attachmentDataKey.key,
+      context: KelivoAttachmentContext(
+        userId: Uuid.parseAsByteList(_ledgerUserId),
+        attachmentId: attachmentDataKey.attachmentId,
+        keyEpoch: 7,
+      ),
+    );
+    final manifestCipher = E2eeAttachmentManifestCipher.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: secureCore,
+        accountRootKey: accountRootKey,
+        userId: _ledgerUserId,
+        currentKeyEpoch: 7,
+      ),
+    );
+
+    try {
+      final sealed = await manifestCipher.seal(
+        E2eeAttachmentManifest(
+          attachmentId: attachmentId,
+          uploadId: uploadId,
+          keyEpoch: 7,
+          kind: E2eeAttachmentKind.image,
+          totalPlaintextBytes: 0,
+          contentSha256: Uint8List(32),
+          wrappedDataKey: wrappedDataKey,
+          chunkCiphertextBytes: <int>[
+            KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+          ],
+        ),
+      );
+      final tampered = Uint8List.fromList(sealed.ciphertext)
+        ..[sealed.ciphertext.length - 1] ^= 1;
+
+      await expectLater(
+        manifestCipher.open(
+          attachmentId: attachmentId,
+          uploadId: uploadId,
+          keyEpoch: 7,
+          ciphertext: tampered,
+        ),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.recordAuthenticationFailed,
+          ),
+        ),
+      );
+      await expectLater(
+        manifestCipher.open(
+          attachmentId: attachmentId,
+          uploadId: 'a0000000-0000-4000-8000-000000000003',
+          keyEpoch: 7,
+          ciphertext: sealed.ciphertext,
+        ),
+        throwsFormatException,
+      );
+      await expectLater(
+        manifestCipher.open(
+          attachmentId: attachmentId,
+          uploadId: uploadId,
+          keyEpoch: 7,
+          ciphertext: Uint8List.sublistView(
+            sealed.ciphertext,
+            0,
+            sealed.ciphertext.length - 1,
+          ),
+        ),
+        throwsA(isA<KelivoSecureCoreException>()),
+      );
+    } finally {
+      await secureCore.closeAttachmentDataKey(attachmentDataKey.key);
+      await manifestCipher.close();
+    }
+  });
+
+  test('附件清单严格校验边界、布局和文件元数据', () {
+    final maximumManifest = E2eeAttachmentManifest(
+      attachmentId: 'b0000000-0000-4000-8000-000000000001',
+      uploadId: 'c0000000-0000-4000-8000-000000000001',
+      keyEpoch: 0xffffffff,
+      kind: E2eeAttachmentKind.image,
+      totalPlaintextBytes: KelivoAttachmentLimits.maxTotalPlaintextBytes,
+      contentSha256: Uint8List(32),
+      wrappedDataKey: Uint8List(KelivoAttachmentLimits.wrappedDataKeyBytes),
+      chunkCiphertextBytes: List<int>.filled(
+        KelivoAttachmentLimits.maxChunkCount,
+        KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+      ),
+    );
+    expect(
+      maximumManifest.totalCiphertextBytes,
+      KelivoAttachmentLimits.maxChunkCount *
+          KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+    );
+
+    expect(
+      () => E2eeAttachmentManifest(
+        attachmentId: 'b0000000-0000-4000-8000-000000000002',
+        uploadId: 'c0000000-0000-4000-8000-000000000002',
+        keyEpoch: 7,
+        kind: E2eeAttachmentKind.file,
+        totalPlaintextBytes: 1,
+        contentSha256: Uint8List(32),
+        wrappedDataKey: Uint8List(KelivoAttachmentLimits.wrappedDataKeyBytes),
+        chunkCiphertextBytes: <int>[
+          KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+        ],
+        displayName: '../secret.txt',
+        mediaType: 'text/plain',
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => E2eeAttachmentManifest(
+        attachmentId: 'b0000000-0000-4000-8000-000000000003',
+        uploadId: 'c0000000-0000-4000-8000-000000000003',
+        keyEpoch: 7,
+        kind: E2eeAttachmentKind.file,
+        totalPlaintextBytes: 1,
+        contentSha256: Uint8List(32),
+        wrappedDataKey: Uint8List(
+          KelivoAttachmentLimits.wrappedDataKeyBytes - 1,
+        ),
+        chunkCiphertextBytes: <int>[
+          KelivoAttachmentLimits.chunkEnvelopeOverheadBytes + 1,
+        ],
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => E2eeAttachmentManifest(
+        attachmentId: 'b0000000-0000-4000-8000-000000000004',
+        uploadId: 'c0000000-0000-4000-8000-000000000004',
+        keyEpoch: 7,
+        kind: E2eeAttachmentKind.image,
+        totalPlaintextBytes: 1,
+        contentSha256: Uint8List(32),
+        wrappedDataKey: Uint8List(KelivoAttachmentLimits.wrappedDataKeyBytes),
+        chunkCiphertextBytes: <int>[
+          KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+        ],
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => E2eeAttachmentManifest(
+        attachmentId: 'b0000000-0000-4000-8000-000000000005',
+        uploadId: 'c0000000-0000-4000-8000-000000000005',
+        keyEpoch: 7,
+        kind: E2eeAttachmentKind.file,
+        totalPlaintextBytes: 1,
+        contentSha256: Uint8List(32),
+        wrappedDataKey: Uint8List(KelivoAttachmentLimits.wrappedDataKeyBytes),
+        chunkCiphertextBytes: <int>[
+          KelivoAttachmentLimits.chunkEnvelopeOverheadBytes + 1,
+        ],
+      ),
+      throwsFormatException,
+    );
   });
 
   test('DateTime values round-trip with microsecond precision', () async {

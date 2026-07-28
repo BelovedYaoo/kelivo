@@ -13,6 +13,7 @@ const _attachmentMaxChunkEnvelopeSize =
     native.KELIVO_ATTACHMENT_MAX_CHUNK_ENVELOPE_SIZE;
 
 abstract final class KelivoAttachmentLimits {
+  static const int wrappedDataKeyBytes = _attachmentWrappedKeyLength;
   static const int chunkPlaintextBytes = _attachmentChunkPlaintextSize;
   static const int chunkEnvelopeOverheadBytes =
       _attachmentChunkEnvelopeOverhead;

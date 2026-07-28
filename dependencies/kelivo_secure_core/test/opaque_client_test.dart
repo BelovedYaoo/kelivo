@@ -601,6 +601,7 @@ void main() {
       created.key,
       context: context,
     );
+    expect(wrapped, hasLength(KelivoAttachmentLimits.wrappedDataKeyBytes));
     final reopened = await core.unwrapAttachmentDataKey(
       ark,
       context: context,
