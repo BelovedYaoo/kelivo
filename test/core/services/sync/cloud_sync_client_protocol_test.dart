@@ -7,6 +7,7 @@ import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
+import 'package:path/path.dart' as p;
 
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
@@ -16,11 +17,13 @@ import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_key_lease.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_file_store.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
+import 'package:Kelivo/utils/app_directories.dart';
 
 const _mutationId1 = '00000000-0000-4000-8000-000000000001';
 const _mutationId2 = '00000000-0000-4000-8000-000000000002';
@@ -5231,6 +5234,303 @@ void main() {
             .having((error) => error.requestId, 'requestId', 'request-1')
             .having((error) => error.retryable, 'retryable', isFalse),
       ),
+    );
+  });
+
+  test('E2EE 附件内存文件 adapter 保持完整性合同与 staging 删除边界', () async {
+    final store = E2eeAttachmentMemoryFileStore();
+    final identity = CloudSyncAttachmentIdentity(
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: 7,
+    );
+    final location = E2eeAttachmentFileLocation.stagingChunk(
+      direction: E2eeAttachmentStagingDirection.upload,
+      chunk: CloudSyncAttachmentChunkIdentity(
+        identity: identity,
+        chunkIndex: 0,
+      ),
+    );
+    final ciphertext = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final stored = await store.publish(
+      location: location,
+      source: Stream<List<int>>.value(ciphertext),
+    );
+
+    expect(
+      stored.storagePath,
+      'memory://kelivo-e2ee-attachments/staging/upload/'
+      '$_attachmentId/$_uploadId/7/0.ciphertext',
+    );
+    expect(await store.readVerified(stored), ciphertext);
+    final repeated = await store.publish(
+      location: location,
+      source: Stream<List<int>>.value(ciphertext),
+    );
+    expect(repeated.storagePath, stored.storagePath);
+    await expectLater(
+      store.publish(
+        location: location,
+        source: Stream<List<int>>.value(<int>[9, 9, 9]),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      store.readVerified(
+        E2eeAttachmentStoredFile(
+          storagePath: stored.storagePath,
+          bytes: stored.bytes + 1,
+          sha256: stored.sha256,
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      store.readVerified(
+        E2eeAttachmentStoredFile(
+          storagePath: stored.storagePath,
+          bytes: stored.bytes,
+          sha256: _filledBytes(32, 0xff),
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      store.publish(
+        location: E2eeAttachmentFileLocation.stagingChunk(
+          direction: E2eeAttachmentStagingDirection.download,
+          chunk: CloudSyncAttachmentChunkIdentity(
+            identity: identity,
+            chunkIndex: 1,
+          ),
+        ),
+        source: Stream<List<int>>.value(<int>[256]),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    final content = Uint8List.fromList(<int>[5, 6, 7]);
+    final contentDigest = Uint8List.fromList(sha256.convert(content).bytes);
+    final contentStored = await store.publish(
+      location: E2eeAttachmentFileLocation.content(
+        contentSha256: contentDigest,
+      ),
+      source: Stream<List<int>>.value(content),
+    );
+    expect(await store.readVerified(contentStored), content);
+    await expectLater(
+      store.publish(
+        location: E2eeAttachmentFileLocation.content(
+          contentSha256: _filledBytes(32, 0x31),
+        ),
+        source: Stream<List<int>>.value(content),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      store.deleteStaging(storagePath: contentStored.storagePath),
+      throwsA(isA<StateError>()),
+    );
+
+    await store.deleteStaging(storagePath: stored.storagePath);
+    await store.deleteStaging(storagePath: stored.storagePath);
+    await expectLater(
+      store.readVerified(stored),
+      throwsA(isA<FileSystemException>()),
+    );
+  });
+
+  test('E2EE 附件平台文件 adapter 原子发布且拒绝越界与异常实体', () async {
+    final root = await Directory.current.createTemp(
+      'kelivo-e2ee-attachment-file-store-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final installation = await Directory(
+      p.join(root.path, 'installation'),
+    ).create();
+    final workspace = await Directory(
+      p.join(root.path, 'account-workspace'),
+    ).create();
+    AppDirectories.bindWorkspaceRoot(
+      workspace,
+      installationRoot: installation,
+      accountWorkspace: true,
+    );
+
+    final store = E2eeAttachmentPlatformFileStore();
+    final identity = CloudSyncAttachmentIdentity(
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: 0xffffffff,
+    );
+    final location = E2eeAttachmentFileLocation.stagingChunk(
+      direction: E2eeAttachmentStagingDirection.upload,
+      chunk: CloudSyncAttachmentChunkIdentity(
+        identity: identity,
+        chunkIndex: 999,
+      ),
+    );
+    final ciphertext = Uint8List.fromList(<int>[1, 2, 3, 4, 5]);
+    final stored = await store.publish(
+      location: location,
+      source: Stream<List<int>>.fromIterable(<List<int>>[
+        ciphertext.sublist(0, 2),
+        ciphertext.sublist(2),
+      ]),
+    );
+    final ownedRoot = p.join(workspace.path, 'upload', 'e2ee');
+    expect(
+      p.equals(
+        stored.storagePath,
+        p.join(
+          ownedRoot,
+          'staging',
+          'upload',
+          _attachmentId,
+          _uploadId,
+          '4294967295',
+          '999.ciphertext',
+        ),
+      ),
+      isTrue,
+    );
+    expect(await store.readVerified(stored), ciphertext);
+    expect(
+      (await store.publish(
+        location: location,
+        source: Stream<List<int>>.value(ciphertext),
+      )).storagePath,
+      stored.storagePath,
+    );
+    await expectLater(
+      store.publish(
+        location: location,
+        source: Stream<List<int>>.value(<int>[8, 8, 8]),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await File(stored.storagePath).parent
+          .list(followLinks: false)
+          .where((entity) => p.basename(entity.path).endsWith('.next'))
+          .isEmpty,
+      isTrue,
+    );
+    expect(await store.readVerified(stored), ciphertext);
+
+    final interruptedLocation = E2eeAttachmentFileLocation.stagingChunk(
+      direction: E2eeAttachmentStagingDirection.upload,
+      chunk: CloudSyncAttachmentChunkIdentity(
+        identity: identity,
+        chunkIndex: 998,
+      ),
+    );
+    await expectLater(
+      store.publish(
+        location: interruptedLocation,
+        source: Stream<List<int>>.error(StateError('source-interrupted')),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    final stagingDirectory = File(stored.storagePath).parent;
+    expect(
+      await File(p.join(stagingDirectory.path, '998.ciphertext')).exists(),
+      isFalse,
+    );
+    expect(
+      await stagingDirectory
+          .list(followLinks: false)
+          .where((entity) => p.basename(entity.path).endsWith('.next'))
+          .isEmpty,
+      isTrue,
+    );
+
+    await expectLater(
+      store.readVerified(
+        E2eeAttachmentStoredFile(
+          storagePath: p.join(root.path, 'outside.ciphertext'),
+          bytes: 0,
+          sha256: Uint8List.fromList(sha256.convert(const <int>[]).bytes),
+        ),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      store.readVerified(
+        E2eeAttachmentStoredFile(
+          storagePath: stored.storagePath,
+          bytes: stored.bytes,
+          sha256: _filledBytes(32, 0x41),
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    final downloadMarker = File(p.join(ownedRoot, 'staging', 'download'));
+    await downloadMarker.writeAsString('not-a-directory', flush: true);
+    await expectLater(
+      store.publish(
+        location: E2eeAttachmentFileLocation.stagingChunk(
+          direction: E2eeAttachmentStagingDirection.download,
+          chunk: CloudSyncAttachmentChunkIdentity(
+            identity: identity,
+            chunkIndex: 0,
+          ),
+        ),
+        source: Stream<List<int>>.value(ciphertext),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await downloadMarker.delete();
+
+    final content = Uint8List.fromList(<int>[11, 12, 13]);
+    final contentDigest = Uint8List.fromList(sha256.convert(content).bytes);
+    final contentStored = await store.publish(
+      location: E2eeAttachmentFileLocation.content(
+        contentSha256: contentDigest,
+      ),
+      source: Stream<List<int>>.value(content),
+    );
+    expect(
+      p.equals(
+        contentStored.storagePath,
+        p.join(
+          ownedRoot,
+          'content',
+          contentDigest
+              .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+              .join(),
+        ),
+      ),
+      isTrue,
+    );
+    expect(await store.readVerified(contentStored), content);
+    await expectLater(
+      store.publish(
+        location: E2eeAttachmentFileLocation.content(
+          contentSha256: _filledBytes(32, 0x51),
+        ),
+        source: Stream<List<int>>.value(content),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    await expectLater(
+      store.deleteStaging(storagePath: contentStored.storagePath),
+      throwsA(isA<StateError>()),
+    );
+
+    await File(stored.storagePath).writeAsBytes(<int>[1, 2, 3], flush: true);
+    await expectLater(
+      store.readVerified(stored),
+      throwsA(isA<FormatException>()),
+    );
+    await store.deleteStaging(storagePath: stored.storagePath);
+    await store.deleteStaging(storagePath: stored.storagePath);
+    await expectLater(
+      store.readVerified(stored),
+      throwsA(isA<FileSystemException>()),
     );
   });
 }
