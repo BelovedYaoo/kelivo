@@ -1226,6 +1226,22 @@ void main() {
     );
   });
 
+  test('持久账户会话恢复认证会话时保留设备密钥版本', () {
+    final persisted = _accountKeyLeaseSession(
+      baseUrl: defaultCloudSyncBaseUrl,
+      loginName: 'roundtrip-user',
+      deviceKeyVersion: 9,
+    );
+
+    final authenticated = persisted.toAuthenticatedSession();
+
+    expect(authenticated.token, same(persisted.token));
+    expect(authenticated.keyEpoch, persisted.keyEpoch);
+    expect(authenticated.user.id, persisted.userId);
+    expect(authenticated.device.id, persisted.deviceId);
+    expect(authenticated.deviceKeyVersion, 9);
+  });
+
   test('OPAQUE 注册开始规范化账户字段并保持固定长度二进制', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;

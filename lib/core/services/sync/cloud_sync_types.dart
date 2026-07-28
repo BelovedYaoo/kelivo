@@ -628,6 +628,30 @@ final class CloudSyncAccountSession {
     );
   }
 
+  CloudSyncAuthenticatedSession toAuthenticatedSession() {
+    return CloudSyncAuthenticatedSession(
+      token: token,
+      tokenExpiresAt: tokenExpiresAt,
+      keyEpoch: keyEpoch,
+      user: CloudSyncAuthenticatedUser(
+        id: userId,
+        loginName: loginName,
+        displayName: displayName,
+        role: role,
+        attachmentQuotaBytes: attachmentQuotaBytes,
+      ),
+      device: CloudSyncAuthenticatedDevice(
+        id: deviceId,
+        name: deviceName,
+        platform: platform,
+        clientVersion: clientVersion,
+        status: CloudSyncAuthenticatedDeviceStatus.active,
+        createdAt: deviceCreatedAt,
+      ),
+      deviceKeyVersion: deviceKeyVersion,
+    );
+  }
+
   final String baseUrl;
   final CloudSyncFullSessionToken token;
   final DateTime tokenExpiresAt;

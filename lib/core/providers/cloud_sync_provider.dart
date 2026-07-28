@@ -625,7 +625,7 @@ final class CloudSyncProvider extends ChangeNotifier {
         final authentication = _authenticationFactory(client);
         await authentication.approveScannedDevicePairing(
           loginName: session.loginName,
-          session: _authenticatedSession(session),
+          session: session.toAuthenticatedSession(),
           qrFrame: qrFrame,
         );
         return true;
@@ -802,31 +802,6 @@ final class CloudSyncProvider extends ChangeNotifier {
     _connect(session, client: client);
     if (!_disposed) _setStatus(CloudSyncProviderStatus.idle);
     return true;
-  }
-
-  CloudSyncAuthenticatedSession _authenticatedSession(
-    CloudSyncAccountSession session,
-  ) {
-    return CloudSyncAuthenticatedSession(
-      token: session.token,
-      tokenExpiresAt: session.tokenExpiresAt,
-      keyEpoch: session.keyEpoch,
-      user: CloudSyncAuthenticatedUser(
-        id: session.userId,
-        loginName: session.loginName,
-        displayName: session.displayName,
-        role: session.role,
-        attachmentQuotaBytes: session.attachmentQuotaBytes,
-      ),
-      device: CloudSyncAuthenticatedDevice(
-        id: session.deviceId,
-        name: session.deviceName,
-        platform: session.platform,
-        clientVersion: session.clientVersion,
-        status: CloudSyncAuthenticatedDeviceStatus.active,
-        createdAt: session.deviceCreatedAt,
-      ),
-    );
   }
 
   static void _clearMutableBytes(Uint8List? value) {
