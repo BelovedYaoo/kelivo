@@ -174,6 +174,7 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
 
   @override
   Future<Uint8List> readVerified(E2eeAttachmentStoredFile storedFile) async {
+    _requireBufferedReadSize(storedFile.bytes);
     final resolved = await _resolveStoredPath(
       storedFile.storagePath,
       allowMissing: false,
@@ -454,6 +455,7 @@ final class E2eeAttachmentMemoryFileStore implements E2eeAttachmentFileStore {
 
   @override
   Future<Uint8List> readVerified(E2eeAttachmentStoredFile storedFile) async {
+    _requireBufferedReadSize(storedFile.bytes);
     _memoryRelativeSegments(storedFile.storagePath);
     final bytes = _files[storedFile.storagePath];
     if (bytes == null) {
@@ -572,6 +574,13 @@ int _requireByteLength(int value) {
     throw const FormatException('e2ee_attachment_file_length_invalid');
   }
   return value;
+}
+
+void _requireBufferedReadSize(int value) {
+  // 只有单个密文分块允许进入内存；最终内容必须按路径或流消费。
+  if (value > cloudSyncMaximumAttachmentChunkCiphertextBytes) {
+    throw StateError('e2ee_attachment_buffered_read_too_large');
+  }
 }
 
 Uint8List _requireSha256(Uint8List value, String field) {

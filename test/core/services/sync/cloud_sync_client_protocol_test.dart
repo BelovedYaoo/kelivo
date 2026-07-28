@@ -3259,7 +3259,7 @@ void main() {
     expect(firstBytes, orderedEquals(secondBytes));
     expect(
       utf8.decode(firstBytes),
-      '{"payload":{"events":[{"a":"value","z":[3,null,true,1.5,{"a":"一","b":"二"}]}],"messageId":"message-1"},"recordType":"tool-event","version":1}',
+      '{"payload":{"events":[{"a":"value","z":[3,null,true,1.5,{"a":"一","b":"二"}]}],"messageId":"message-1"},"recordType":"tool-event","version":2}',
     );
     final decoded = E2eeSyncPayloadCodec.decode(
       entityKey: entityKey,
@@ -5263,6 +5263,16 @@ void main() {
       '$_attachmentId/$_uploadId/7/0.ciphertext',
     );
     expect(await store.readVerified(stored), ciphertext);
+    await expectLater(
+      store.readVerified(
+        E2eeAttachmentStoredFile(
+          storagePath: stored.storagePath,
+          bytes: cloudSyncMaximumAttachmentChunkCiphertextBytes + 1,
+          sha256: stored.sha256,
+        ),
+      ),
+      throwsA(isA<StateError>()),
+    );
     final repeated = await store.publish(
       location: location,
       source: Stream<List<int>>.value(ciphertext),
