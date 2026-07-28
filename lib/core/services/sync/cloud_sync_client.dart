@@ -624,6 +624,21 @@ final class CloudSyncClient
     List<CloudSyncRecordMutation> mutations,
   ) {
     _validatePushMutations(mutations);
+    return _pushValidatedRecords(mutations, token: _requireFullSessionToken());
+  }
+
+  Future<List<CloudSyncRecordMutationResult>> pushRecordsWithToken(
+    List<CloudSyncRecordMutation> mutations, {
+    required CloudSyncFullSessionToken token,
+  }) {
+    _validatePushMutations(mutations);
+    return _pushValidatedRecords(mutations, token: token);
+  }
+
+  Future<List<CloudSyncRecordMutationResult>> _pushValidatedRecords(
+    List<CloudSyncRecordMutation> mutations, {
+    required CloudSyncFullSessionToken token,
+  }) {
     final requestedMutationIds = <String>{
       for (final mutation in mutations) mutation.mutationId,
     };
@@ -636,7 +651,7 @@ final class CloudSyncClient
       final response = await _client.getSyncApi().pushEncryptedSyncRecords(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncPushRequest: request,
-        headers: _requireFullSessionHeaders(),
+        headers: _authorizationHeaders(token.value),
       );
       final data = _requireResponseData(response.data?.data);
       final results = data.results
@@ -776,6 +791,10 @@ final class CloudSyncClient
   }
 
   Map<String, String> _requireFullSessionHeaders() {
+    return _authorizationHeaders(_requireFullSessionToken().value);
+  }
+
+  CloudSyncFullSessionToken _requireFullSessionToken() {
     final token = _sessionToken;
     if (token == null) {
       throw const CloudSyncException(
@@ -783,7 +802,7 @@ final class CloudSyncClient
         retryable: false,
       );
     }
-    return _authorizationHeaders(token.value);
+    return token;
   }
 
   Future<T> _guard<T>(Future<T> Function() action) async {

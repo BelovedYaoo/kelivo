@@ -4,15 +4,21 @@ import 'dart:io';
 import 'package:crypto/crypto.dart';
 import 'package:drift/drift.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
+import 'package:uuid/uuid.dart';
 
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
+import '../services/sync/e2ee_account_record_cipher.dart';
+import '../services/sync/e2ee_account_record_state.dart';
+import '../services/sync/sync_codec.dart';
 import 'app_database.dart';
 import 'chat_database_observer.dart';
 import 'database_cipher.dart';
 import 'e2ee_sync_record_ledger.dart';
 import 'generation_run.dart';
 import 'generation_run_commands.dart';
+
+part 'e2ee_sync_outbox_commands.dart';
 
 typedef ChatDatabaseSnapshotInfo = ({
   int schemaVersion,
@@ -112,6 +118,8 @@ class ChatDatabaseRepository {
   final File? _databaseFile;
   final DatabaseCipher databaseCipher;
   final ChatDatabaseObserver _observer;
+  E2eeSyncOutboxCommands? _e2eeSyncOutboxCommands;
+  Future<E2eeSyncOutboxCommands>? _openingE2eeSyncOutboxCommands;
   bool _messageSearchFtsReady = false;
   bool _assetGcSchemaReady = false;
 
@@ -142,6 +150,31 @@ class ChatDatabaseRepository {
   }
 
   E2eeSyncRecordLedger get e2eeSyncRecordLedger => E2eeSyncRecordLedger(_db);
+
+  Future<E2eeSyncOutboxCommands> acquireE2eeSyncOutboxCommands({
+    required DateTime now,
+  }) async {
+    final active = _e2eeSyncOutboxCommands;
+    if (active != null) return active;
+    final opening = _openingE2eeSyncOutboxCommands ??=
+        _openE2eeSyncOutboxCommands(now);
+    try {
+      return await opening;
+    } finally {
+      if (identical(_openingE2eeSyncOutboxCommands, opening)) {
+        _openingE2eeSyncOutboxCommands = null;
+      }
+    }
+  }
+
+  Future<E2eeSyncOutboxCommands> _openE2eeSyncOutboxCommands(
+    DateTime now,
+  ) async {
+    final commands = E2eeSyncOutboxCommands._(_db);
+    await commands._recoverStartup(now: now);
+    _e2eeSyncOutboxCommands = commands;
+    return commands;
+  }
 
   Future<GenerationRun> createGenerationRun({
     required String id,
@@ -603,6 +636,10 @@ class ChatDatabaseRepository {
       'e2ee_sync_record_state_rows',
       'e2ee_sync_record_parent_rows',
       'e2ee_sync_record_head_rows',
+      'e2ee_sync_intent_rows',
+      'e2ee_sync_operation_rows',
+      'e2ee_sync_outbox_rows',
+      'e2ee_sync_remote_record_rows',
     };
     final tableRows = database.select(
       "SELECT name FROM sqlite_master WHERE type = 'table';",
@@ -740,6 +777,67 @@ class ChatDatabaseRepository {
         'parent_digest',
       ],
       'e2ee_sync_record_head_rows': ['digest'],
+      'e2ee_sync_intent_rows': [
+        'entity_type',
+        'entity_id',
+        'intent_id',
+        'generation',
+        'phase',
+        'writer_session_id',
+        'seal_lease_token',
+        'seal_owner_session_id',
+        'seal_lease_expires_at',
+        'created_at',
+        'updated_at',
+      ],
+      'e2ee_sync_operation_rows': [
+        'operation_id',
+        'state_digest',
+        'record_id',
+        'entity_type',
+        'entity_id',
+        'intent_id',
+        'intent_generation',
+        'expected_revision',
+        'account_user_id',
+        'actor_device_id',
+        'claimed_writer_key_version',
+        'outcome',
+        'result_revision',
+        'result_change_seq',
+        'current_revision',
+        'error_code',
+        'created_at',
+        'updated_at',
+      ],
+      'e2ee_sync_outbox_rows': [
+        'operation_id',
+        'record_id',
+        'envelope_version',
+        'key_epoch',
+        'ciphertext',
+        'phase',
+        'lease_token',
+        'lease_owner_session_id',
+        'lease_expires_at',
+        'transition_version',
+        'attempt_count',
+        'next_attempt_at',
+        'last_failure_kind',
+        'created_at',
+        'updated_at',
+      ],
+      'e2ee_sync_remote_record_rows': [
+        'record_id',
+        'revision',
+        'last_change_seq',
+        'state_digest',
+        'gate',
+        'observed_revision',
+        'error_code',
+        'created_at',
+        'updated_at',
+      ],
     };
     for (final entry in expectedColumns.entries) {
       final actual = database
@@ -751,6 +849,7 @@ class ChatDatabaseRepository {
         throw StateError('table_schema:${entry.key}');
       }
     }
+    _validateE2eeQueueSchema(database);
 
     const expectedForeignKeys = <String, Set<String>>{
       'conversation_mcp_server_rows': {
@@ -776,6 +875,10 @@ class ChatDatabaseRepository {
       'e2ee_sync_record_head_rows': {
         'digest->e2ee_sync_record_state_rows.digest:CASCADE',
       },
+      'e2ee_sync_outbox_rows': {
+        'operation_id->e2ee_sync_operation_rows.operation_id:NO ACTION',
+        'record_id->e2ee_sync_operation_rows.record_id:NO ACTION',
+      },
     };
     for (final entry in expectedForeignKeys.entries) {
       final actual = database
@@ -791,7 +894,276 @@ class ChatDatabaseRepository {
         throw StateError('foreign_key_schema:${entry.key}');
       }
     }
+    final outboxForeignKeys = database.select(
+      'PRAGMA foreign_key_list(e2ee_sync_outbox_rows);',
+    );
+    final outboxForeignKeyIds = outboxForeignKeys
+        .map((row) => row['id'])
+        .whereType<int>()
+        .toSet();
+    final outboxForeignKeySequences = outboxForeignKeys
+        .map((row) => row['seq'])
+        .whereType<int>()
+        .toSet();
+    final outboxForeignKeyOrder = <int, String>{
+      for (final row in outboxForeignKeys)
+        if (row['seq'] case final int sequence)
+          sequence:
+              '${row['from']}->${row['table']}.${row['to']}:'
+              '${row['on_delete']}',
+    };
+    // 两列必须属于同一个复合外键，否则两个独立约束无法绑定 operation 与 record。
+    if (outboxForeignKeys.length != 2 ||
+        outboxForeignKeyIds.length != 1 ||
+        outboxForeignKeySequences.length != 2 ||
+        !outboxForeignKeySequences.containsAll(const {0, 1}) ||
+        outboxForeignKeyOrder[0] !=
+            'operation_id->e2ee_sync_operation_rows.operation_id:NO ACTION' ||
+        outboxForeignKeyOrder[1] !=
+            'record_id->e2ee_sync_operation_rows.record_id:NO ACTION') {
+      throw StateError('foreign_key_shape:e2ee_sync_outbox_rows');
+    }
   }
+
+  static void _validateE2eeQueueSchema(sqlite.Database database) {
+    const expectedColumns =
+        <String, Map<String, ({String type, int notNull, int primaryKey})>>{
+          'e2ee_sync_intent_rows': {
+            'entity_type': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'entity_id': (type: 'TEXT', notNull: 1, primaryKey: 2),
+            'intent_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'generation': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'phase': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'writer_session_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'seal_lease_token': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'seal_owner_session_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'seal_lease_expires_at': (
+              type: 'INTEGER',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'updated_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'e2ee_sync_operation_rows': {
+            'operation_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'state_digest': (type: 'BLOB', notNull: 1, primaryKey: 0),
+            'record_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'entity_type': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'entity_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'intent_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'intent_generation': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'expected_revision': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'account_user_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'actor_device_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'claimed_writer_key_version': (
+              type: 'INTEGER',
+              notNull: 1,
+              primaryKey: 0,
+            ),
+            'outcome': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'result_revision': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'result_change_seq': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'current_revision': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'error_code': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'updated_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'e2ee_sync_outbox_rows': {
+            'operation_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'record_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'envelope_version': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'ciphertext': (type: 'BLOB', notNull: 1, primaryKey: 0),
+            'phase': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'lease_token': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'lease_owner_session_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'lease_expires_at': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'transition_version': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'attempt_count': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'next_attempt_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'last_failure_kind': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'updated_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'e2ee_sync_remote_record_rows': {
+            'record_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'revision': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'last_change_seq': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'state_digest': (type: 'BLOB', notNull: 0, primaryKey: 0),
+            'gate': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'observed_revision': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'error_code': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'updated_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+        };
+    for (final table in expectedColumns.entries) {
+      final rows = database.select('PRAGMA table_info(${table.key});');
+      final actual = <String, sqlite.Row>{
+        for (final row in rows)
+          if (row['name'] case final String name) name: row,
+      };
+      for (final column in table.value.entries) {
+        final row = actual[column.key];
+        if (row == null ||
+            (row['type'] as String?)?.toUpperCase() != column.value.type ||
+            row['notnull'] != column.value.notNull ||
+            row['pk'] != column.value.primaryKey) {
+          throw StateError('column_contract:${table.key}.${column.key}');
+        }
+      }
+    }
+
+    const expectedUniqueKeys = <String, Set<String>>{
+      'e2ee_sync_intent_rows': {'intent_id'},
+      'e2ee_sync_operation_rows': {
+        'state_digest',
+        'operation_id\u0000record_id',
+      },
+      'e2ee_sync_outbox_rows': {'record_id'},
+      'e2ee_sync_remote_record_rows': {},
+    };
+    for (final table in expectedUniqueKeys.entries) {
+      final actual = <String>{};
+      for (final index in database.select('PRAGMA index_list(${table.key});')) {
+        if (index['unique'] != 1 || index['origin'] != 'u') continue;
+        final name = index['name'];
+        if (name is! String) {
+          throw StateError('unique_key_schema:${table.key}');
+        }
+        final columns = database
+            .select('SELECT name FROM pragma_index_info(?) ORDER BY seqno;', [
+              name,
+            ])
+            .map((row) => row['name'])
+            .whereType<String>()
+            .toList(growable: false);
+        actual.add(columns.join('\u0000'));
+      }
+      if (actual.length != table.value.length ||
+          !actual.containsAll(table.value)) {
+        throw StateError('unique_key_schema:${table.key}');
+      }
+    }
+
+    const expectedIndexes = <String, ({String table, List<String> columns})>{
+      'idx_e2ee_sync_intents_phase_updated': (
+        table: 'e2ee_sync_intent_rows',
+        columns: ['phase', 'updated_at', 'entity_type', 'entity_id'],
+      ),
+      'idx_e2ee_sync_operations_entity_generation': (
+        table: 'e2ee_sync_operation_rows',
+        columns: [
+          'entity_type',
+          'entity_id',
+          'intent_generation',
+          'operation_id',
+        ],
+      ),
+      'idx_e2ee_sync_operations_intent_generation': (
+        table: 'e2ee_sync_operation_rows',
+        columns: ['intent_id', 'intent_generation', 'operation_id'],
+      ),
+      'idx_e2ee_sync_outbox_phase_due': (
+        table: 'e2ee_sync_outbox_rows',
+        columns: ['phase', 'next_attempt_at', 'operation_id'],
+      ),
+      'idx_e2ee_sync_remote_records_gate_updated': (
+        table: 'e2ee_sync_remote_record_rows',
+        columns: ['gate', 'updated_at', 'record_id'],
+      ),
+    };
+    for (final index in expectedIndexes.entries) {
+      final definitions = database
+          .select('PRAGMA index_list(${index.value.table});')
+          .where((row) => row['name'] == index.key)
+          .toList(growable: false);
+      if (definitions.length != 1 ||
+          definitions.single['unique'] != 0 ||
+          definitions.single['origin'] != 'c' ||
+          definitions.single['partial'] != 0) {
+        throw StateError('index_schema:${index.key}');
+      }
+      final columns = database
+          .select('PRAGMA index_info(${index.key});')
+          .map((row) => row['name'])
+          .whereType<String>()
+          .toList(growable: false);
+      if (!_sameOrderedStrings(columns, index.value.columns)) {
+        throw StateError('index_schema:${index.key}');
+      }
+    }
+
+    const expectedChecks = <String, List<String>>{
+      'e2ee_sync_intent_rows': [
+        "CHECK (typeof(phase) = 'text' "
+            "AND phase IN ('preparing', 'dirty', 'sealing'))",
+        "CHECK ((phase = 'preparing' "
+            "AND typeof(writer_session_id) = 'text'",
+        "OR (phase = 'sealing' "
+            'AND writer_session_id IS NULL '
+            "AND typeof(seal_lease_token) = 'text'",
+      ],
+      'e2ee_sync_operation_rows': [
+        "CHECK (typeof(outcome) = 'text' "
+            "AND outcome IN ('active', 'applied', 'conflict', 'rejected'))",
+        "CHECK ((outcome = 'active' "
+            'AND result_revision IS NULL '
+            'AND result_change_seq IS NULL',
+        "OR (outcome = 'rejected' "
+            'AND result_revision IS NULL '
+            'AND result_change_seq IS NULL '
+            'AND current_revision IS NULL '
+            'AND error_code IS NOT NULL))',
+      ],
+      'e2ee_sync_outbox_rows': [
+        "CHECK (typeof(phase) = 'text' AND phase IN ('ready', 'sending'))",
+        "CHECK ((phase = 'ready' "
+            'AND lease_token IS NULL '
+            'AND lease_owner_session_id IS NULL '
+            'AND lease_expires_at IS NULL)',
+        "OR (phase = 'sending' "
+            "AND typeof(lease_token) = 'text'",
+      ],
+      'e2ee_sync_remote_record_rows': [
+        "CHECK (typeof(gate) = 'text' "
+            "AND gate IN ('ready', 'requires-pull', 'quarantined'))",
+        'CHECK ((revision IS NULL '
+            'AND last_change_seq IS NULL '
+            'AND state_digest IS NULL) '
+            'OR (revision IS NOT NULL '
+            'AND last_change_seq IS NOT NULL '
+            'AND state_digest IS NOT NULL))',
+        "CHECK ((gate = 'ready' "
+            'AND observed_revision IS NULL '
+            'AND error_code IS NULL)',
+        "OR (gate = 'quarantined' AND error_code IS NOT NULL))",
+      ],
+    };
+    for (final table in expectedChecks.entries) {
+      final definitions = database.select(
+        "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?;",
+        [table.key],
+      );
+      final sql = definitions.length == 1
+          ? definitions.single['sql'] as String?
+          : null;
+      if (sql == null) throw StateError('check_schema:${table.key}');
+      final normalizedSql = _normalizeRawSql(sql);
+      if (table.value.any(
+        (fragment) => !normalizedSql.contains(_normalizeRawSql(fragment)),
+      )) {
+        throw StateError('check_schema:${table.key}');
+      }
+    }
+  }
+
+  static String _normalizeRawSql(String value) => value
+      .replaceAll('"', '')
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .trim()
+      .toLowerCase();
 
   static bool _sameOrderedStrings(List<String> actual, List<String> expected) {
     if (actual.length != expected.length) return false;

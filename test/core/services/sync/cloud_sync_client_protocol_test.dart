@@ -32,10 +32,13 @@ const _accountContextId = '50000000-0000-4000-8000-000000000001';
 const _pairingId = '60000000-0000-4000-8000-000000000001';
 const _issuerDeviceId = '70000000-0000-4000-8000-000000000001';
 const _fullTokenValue = 'kelivo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
+const _otherFullTokenValue =
+    'kelivo_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 const _onboardingTokenValue =
     'kelivo_onboarding_BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB';
 
 final _fullToken = CloudSyncFullSessionToken.parse(_fullTokenValue);
+final _otherFullToken = CloudSyncFullSessionToken.parse(_otherFullTokenValue);
 final _onboardingToken = CloudSyncOnboardingToken.parse(_onboardingTokenValue);
 
 Uint8List _filledBytes(int length, [int value = 0]) {
@@ -3111,7 +3114,7 @@ void main() {
     }
   });
 
-  test('v3 推送只接受加密 put 并解析三类结果', () async {
+  test('v3 推送绑定显式令牌且只接受加密 put 并解析三类结果', () async {
     const core = KelivoSecureCore();
     final ark = await core.generateAccountRootKey();
     final cipher = E2eeAccountRecordCipher.takeOwnership(
@@ -3169,7 +3172,7 @@ void main() {
       await server.close(force: true);
     });
 
-    final pushFuture = client.pushRecords(<CloudSyncRecordMutation>[
+    final pushFuture = client.pushRecordsWithToken(<CloudSyncRecordMutation>[
       CloudSyncPutRecordMutation(
         mutationId: _mutationId1,
         expectedRevision: 0,
@@ -3185,10 +3188,15 @@ void main() {
         expectedRevision: 2,
         state: thirdState,
       ),
-    ]);
+    ], token: _fullToken);
+    client.setToken(_otherFullToken);
 
     final request = await requestFuture;
     expect(request.uri.path, '/api/sync/record/push');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
     expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
     expect(
       jsonDecode(await utf8.decoder.bind(request).join()),

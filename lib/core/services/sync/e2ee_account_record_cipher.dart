@@ -14,14 +14,11 @@ const _recordEnvelopeOverheadBytes = 80;
 const _recordFrameHeaderBytes = 24;
 const _recordMaxFrameBytes =
     e2eeAccountRecordMaxCiphertextBytes - _recordEnvelopeOverheadBytes;
-const _recordEntityTypeMaxBytes = 64;
-const _recordEntityIdMaxBytes = 1024;
 const _recordKeyHeaderBytes = 20;
 const _recordKeyFormatVersion = 1;
 const _recordFrameFormatVersion = 1;
 const _maxPositiveInt32 = 0x7fffffff;
 
-final _recordEntityTypePattern = RegExp(r'^[a-z][a-z0-9]*(?:-[a-z0-9]+)*$');
 final _recordKeyMagic = Uint8List.fromList(ascii.encode('KELVRK01'));
 final _recordFrameMagic = Uint8List.fromList(ascii.encode('KELVRF01'));
 final _recordAssociatedDataMagic = Uint8List.fromList(ascii.encode('KELVRA01'));
@@ -227,6 +224,46 @@ final class E2eeAccountRecordCipher {
     )
     decode,
   }) async {
+    final authenticated = await _openAuthenticated(
+      record,
+      retainEnvelope: false,
+      decode: decode,
+    );
+    return authenticated.decoded;
+  }
+
+  Future<({E2eeSealedAccountRecordEnvelope record, T decoded})>
+  authenticateAndDecode<T>(
+    E2eeUntrustedAccountRecordEnvelope record, {
+    required T Function(
+      E2eeAccountRecordId recordId,
+      SyncEntityKey entityKey,
+      Uint8List borrowedPayload,
+    )
+    decode,
+  }) async {
+    final authenticated = await _openAuthenticated(
+      record,
+      retainEnvelope: true,
+      decode: decode,
+    );
+    final sealedRecord = authenticated.record;
+    if (sealedRecord == null) {
+      throw StateError('认证记录未提升为可信信封');
+    }
+    return (record: sealedRecord, decoded: authenticated.decoded);
+  }
+
+  Future<_AuthenticatedRecordDecode<T>> _openAuthenticated<T>(
+    E2eeUntrustedAccountRecordEnvelope record, {
+    required bool retainEnvelope,
+    required T Function(
+      E2eeAccountRecordId recordId,
+      SyncEntityKey entityKey,
+      Uint8List borrowedPayload,
+    )
+    decode,
+  }) async {
     _requireOpen();
     if (record.keyEpoch > currentKeyEpoch) {
       throw const FormatException('账户记录使用了尚未获得的密钥世代');
@@ -261,7 +298,16 @@ final class E2eeAccountRecordCipher {
       if (result is Future<Object?>) {
         throw ArgumentError.value(decode, 'decode', '解码回调必须同步完成');
       }
-      return result;
+      return _AuthenticatedRecordDecode<T>(
+        record: retainEnvelope
+            ? E2eeSealedAccountRecordEnvelope._(
+                recordId: expectedRecordId,
+                keyEpoch: record.keyEpoch,
+                ciphertext: record.ciphertext,
+              )
+            : null,
+        decoded: result,
+      );
     } finally {
       encodedKey?.clear();
       _clearBytes(plaintext);
@@ -302,6 +348,16 @@ final class E2eeAccountRecordCipher {
   }
 }
 
+final class _AuthenticatedRecordDecode<T> {
+  const _AuthenticatedRecordDecode({
+    required this.record,
+    required this.decoded,
+  });
+
+  final E2eeSealedAccountRecordEnvelope? record;
+  final T decoded;
+}
+
 final class _EncodedEntityKey {
   _EncodedEntityKey({
     required this.typeBytes,
@@ -328,21 +384,16 @@ final class _DecodedRecordFrame {
 }
 
 _EncodedEntityKey _encodeEntityKey(SyncEntityKey key) {
-  if (!_recordEntityTypePattern.hasMatch(key.entityType)) {
-    throw const FormatException('同步实体类型必须为小写 kebab-case');
-  }
-  if (key.entityId.isEmpty || key.entityId.contains('\u0000')) {
-    throw const FormatException('同步实体 ID 不能为空或包含 NUL');
-  }
+  validateSyncEntityKey(key);
 
   final typeBytes = _encodeUtf8(key.entityType, 'entityType');
   final idBytes = _encodeUtf8(key.entityId, 'entityId');
-  if (typeBytes.isEmpty || typeBytes.length > _recordEntityTypeMaxBytes) {
+  if (typeBytes.isEmpty || typeBytes.length > syncEntityTypeMaxBytes) {
     _clearBytes(typeBytes);
     _clearBytes(idBytes);
     throw const FormatException('同步实体类型长度无效');
   }
-  if (idBytes.isEmpty || idBytes.length > _recordEntityIdMaxBytes) {
+  if (idBytes.isEmpty || idBytes.length > syncEntityIdMaxBytes) {
     _clearBytes(typeBytes);
     _clearBytes(idBytes);
     throw const FormatException('同步实体 ID 长度无效');
@@ -417,9 +468,9 @@ _DecodedRecordFrame _decodeRecordFrame(Uint8List frame) {
   final expectedLength =
       _recordFrameHeaderBytes + typeLength + idLength + payloadLength;
   if (typeLength < 1 ||
-      typeLength > _recordEntityTypeMaxBytes ||
+      typeLength > syncEntityTypeMaxBytes ||
       idLength < 1 ||
-      idLength > _recordEntityIdMaxBytes ||
+      idLength > syncEntityIdMaxBytes ||
       expectedLength != frame.length ||
       expectedLength > _recordMaxFrameBytes) {
     throw const FormatException('账户记录明文帧长度无效');

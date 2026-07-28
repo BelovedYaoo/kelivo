@@ -1331,8 +1331,623 @@ class E2eeSyncRecordHeadRows extends Table with TableInfo {
   ];
 }
 
-class DatabaseAtV13 extends GeneratedDatabase {
-  DatabaseAtV13(QueryExecutor e) : super(e);
+class E2eeSyncIntentRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  E2eeSyncIntentRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> intentId = GeneratedColumn<String>(
+    'intent_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> generation = GeneratedColumn<int>(
+    'generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> writerSessionId = GeneratedColumn<String>(
+    'writer_session_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> sealLeaseToken = GeneratedColumn<String>(
+    'seal_lease_token',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> sealOwnerSessionId =
+      GeneratedColumn<String>(
+        'seal_owner_session_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  late final GeneratedColumn<int> sealLeaseExpiresAt = GeneratedColumn<int>(
+    'seal_lease_expires_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    entityType,
+    entityId,
+    intentId,
+    generation,
+    phase,
+    writerSessionId,
+    sealLeaseToken,
+    sealOwnerSessionId,
+    sealLeaseExpiresAt,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_intent_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entityType, entityId};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {intentId},
+  ];
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  E2eeSyncIntentRows createAlias(String alias) {
+    return E2eeSyncIntentRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'CHECK (typeof(entity_type) = \'text\' AND length(CAST(entity_type AS BLOB)) BETWEEN 1 AND 64)',
+    'CHECK (typeof(entity_id) = \'text\' AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024)',
+    'CHECK (typeof(intent_id) = \'text\' AND length(intent_id) = 36 AND intent_id = lower(intent_id) AND intent_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(intent_id, 9, 1) = \'-\' AND substr(intent_id, 14, 1) = \'-\' AND substr(intent_id, 15, 1) = \'4\' AND substr(intent_id, 19, 1) = \'-\' AND substr(intent_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(intent_id, 24, 1) = \'-\' AND substr(intent_id, 1, 8) NOT GLOB \'*-*\' AND substr(intent_id, 10, 4) NOT GLOB \'*-*\' AND substr(intent_id, 15, 4) NOT GLOB \'*-*\' AND substr(intent_id, 20, 4) NOT GLOB \'*-*\' AND substr(intent_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (typeof(generation) = \'integer\' AND generation BETWEEN 1 AND 9223372036854775807)',
+    'CHECK (typeof(phase) = \'text\' AND phase IN (\'preparing\', \'dirty\', \'sealing\'))',
+    'CHECK ((phase = \'preparing\' AND typeof(writer_session_id) = \'text\' AND length(CAST(writer_session_id AS BLOB)) >= 1 AND seal_lease_token IS NULL AND seal_owner_session_id IS NULL AND seal_lease_expires_at IS NULL) OR (phase = \'dirty\' AND writer_session_id IS NULL AND seal_lease_token IS NULL AND seal_owner_session_id IS NULL AND seal_lease_expires_at IS NULL) OR (phase = \'sealing\' AND writer_session_id IS NULL AND typeof(seal_lease_token) = \'text\' AND length(CAST(seal_lease_token AS BLOB)) >= 1 AND typeof(seal_owner_session_id) = \'text\' AND length(CAST(seal_owner_session_id AS BLOB)) >= 1 AND typeof(seal_lease_expires_at) = \'integer\' AND seal_lease_expires_at >= 0))',
+    'CHECK (typeof(created_at) = \'integer\' AND created_at >= 0)',
+    'CHECK (typeof(updated_at) = \'integer\' AND updated_at >= created_at)',
+  ];
+}
+
+class E2eeSyncOperationRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  E2eeSyncOperationRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> operationId = GeneratedColumn<String>(
+    'operation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<i3.Uint8List> stateDigest =
+      GeneratedColumn<i3.Uint8List>(
+        'state_digest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+      );
+  late final GeneratedColumn<String> recordId = GeneratedColumn<String>(
+    'record_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> intentId = GeneratedColumn<String>(
+    'intent_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> intentGeneration = GeneratedColumn<int>(
+    'intent_generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> expectedRevision = GeneratedColumn<int>(
+    'expected_revision',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> accountUserId = GeneratedColumn<String>(
+    'account_user_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> actorDeviceId = GeneratedColumn<String>(
+    'actor_device_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> claimedWriterKeyVersion =
+      GeneratedColumn<int>(
+        'claimed_writer_key_version',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      );
+  late final GeneratedColumn<String> outcome = GeneratedColumn<String>(
+    'outcome',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> resultRevision = GeneratedColumn<int>(
+    'result_revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> resultChangeSeq = GeneratedColumn<int>(
+    'result_change_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> currentRevision = GeneratedColumn<int>(
+    'current_revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> errorCode = GeneratedColumn<String>(
+    'error_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    operationId,
+    stateDigest,
+    recordId,
+    entityType,
+    entityId,
+    intentId,
+    intentGeneration,
+    expectedRevision,
+    accountUserId,
+    actorDeviceId,
+    claimedWriterKeyVersion,
+    outcome,
+    resultRevision,
+    resultChangeSeq,
+    currentRevision,
+    errorCode,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_operation_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {operationId};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {stateDigest},
+    {operationId, recordId},
+  ];
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  E2eeSyncOperationRows createAlias(String alias) {
+    return E2eeSyncOperationRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'CHECK (typeof(operation_id) = \'text\' AND length(operation_id) = 36 AND operation_id = lower(operation_id) AND operation_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(operation_id, 9, 1) = \'-\' AND substr(operation_id, 14, 1) = \'-\' AND substr(operation_id, 15, 1) = \'4\' AND substr(operation_id, 19, 1) = \'-\' AND substr(operation_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(operation_id, 24, 1) = \'-\' AND substr(operation_id, 1, 8) NOT GLOB \'*-*\' AND substr(operation_id, 10, 4) NOT GLOB \'*-*\' AND substr(operation_id, 15, 4) NOT GLOB \'*-*\' AND substr(operation_id, 20, 4) NOT GLOB \'*-*\' AND substr(operation_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (typeof(state_digest) = \'blob\' AND length(state_digest) = 32)',
+    'CHECK (typeof(record_id) = \'text\' AND length(record_id) = 36 AND record_id = lower(record_id) AND record_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(record_id, 9, 1) = \'-\' AND substr(record_id, 14, 1) = \'-\' AND substr(record_id, 15, 1) = \'4\' AND substr(record_id, 19, 1) = \'-\' AND substr(record_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(record_id, 24, 1) = \'-\' AND substr(record_id, 1, 8) NOT GLOB \'*-*\' AND substr(record_id, 10, 4) NOT GLOB \'*-*\' AND substr(record_id, 15, 4) NOT GLOB \'*-*\' AND substr(record_id, 20, 4) NOT GLOB \'*-*\' AND substr(record_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (typeof(entity_type) = \'text\' AND length(CAST(entity_type AS BLOB)) BETWEEN 1 AND 64)',
+    'CHECK (typeof(entity_id) = \'text\' AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024)',
+    'CHECK (typeof(intent_id) = \'text\' AND length(intent_id) = 36 AND intent_id = lower(intent_id) AND intent_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(intent_id, 9, 1) = \'-\' AND substr(intent_id, 14, 1) = \'-\' AND substr(intent_id, 15, 1) = \'4\' AND substr(intent_id, 19, 1) = \'-\' AND substr(intent_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(intent_id, 24, 1) = \'-\' AND substr(intent_id, 1, 8) NOT GLOB \'*-*\' AND substr(intent_id, 10, 4) NOT GLOB \'*-*\' AND substr(intent_id, 15, 4) NOT GLOB \'*-*\' AND substr(intent_id, 20, 4) NOT GLOB \'*-*\' AND substr(intent_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (typeof(intent_generation) = \'integer\' AND intent_generation BETWEEN 1 AND 9223372036854775807)',
+    'CHECK (typeof(expected_revision) = \'integer\' AND expected_revision BETWEEN 0 AND 9223372036854775807)',
+    'CHECK (typeof(account_user_id) = \'text\' AND length(account_user_id) = 36 AND account_user_id = lower(account_user_id) AND account_user_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(account_user_id, 9, 1) = \'-\' AND substr(account_user_id, 14, 1) = \'-\' AND substr(account_user_id, 15, 1) = \'4\' AND substr(account_user_id, 19, 1) = \'-\' AND substr(account_user_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(account_user_id, 24, 1) = \'-\' AND substr(account_user_id, 1, 8) NOT GLOB \'*-*\' AND substr(account_user_id, 10, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 15, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 20, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (typeof(actor_device_id) = \'text\' AND length(actor_device_id) = 36 AND actor_device_id = lower(actor_device_id) AND actor_device_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(actor_device_id, 9, 1) = \'-\' AND substr(actor_device_id, 14, 1) = \'-\' AND substr(actor_device_id, 15, 1) = \'4\' AND substr(actor_device_id, 19, 1) = \'-\' AND substr(actor_device_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(actor_device_id, 24, 1) = \'-\' AND substr(actor_device_id, 1, 8) NOT GLOB \'*-*\' AND substr(actor_device_id, 10, 4) NOT GLOB \'*-*\' AND substr(actor_device_id, 15, 4) NOT GLOB \'*-*\' AND substr(actor_device_id, 20, 4) NOT GLOB \'*-*\' AND substr(actor_device_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (typeof(claimed_writer_key_version) = \'integer\' AND claimed_writer_key_version BETWEEN 1 AND 4294967295)',
+    'CHECK (typeof(outcome) = \'text\' AND outcome IN (\'active\', \'applied\', \'conflict\', \'rejected\'))',
+    'CHECK (result_revision IS NULL OR (typeof(result_revision) = \'integer\' AND result_revision >= 1))',
+    'CHECK (result_change_seq IS NULL OR (typeof(result_change_seq) = \'integer\' AND result_change_seq >= 0))',
+    'CHECK (current_revision IS NULL OR (typeof(current_revision) = \'integer\' AND current_revision >= 1))',
+    'CHECK (error_code IS NULL OR (typeof(error_code) = \'text\' AND length(CAST(error_code AS BLOB)) BETWEEN 1 AND 100))',
+    'CHECK ((outcome = \'active\' AND result_revision IS NULL AND result_change_seq IS NULL AND current_revision IS NULL AND error_code IS NULL) OR (outcome = \'applied\' AND result_revision IS NOT NULL AND result_change_seq IS NOT NULL AND current_revision IS NULL AND error_code IS NULL) OR (outcome = \'conflict\' AND result_revision IS NULL AND result_change_seq IS NULL AND error_code IS NULL) OR (outcome = \'rejected\' AND result_revision IS NULL AND result_change_seq IS NULL AND current_revision IS NULL AND error_code IS NOT NULL))',
+    'CHECK (typeof(created_at) = \'integer\' AND created_at >= 0)',
+    'CHECK (typeof(updated_at) = \'integer\' AND updated_at >= created_at)',
+  ];
+}
+
+class E2eeSyncOutboxRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  E2eeSyncOutboxRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> operationId = GeneratedColumn<String>(
+    'operation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> recordId = GeneratedColumn<String>(
+    'record_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> envelopeVersion = GeneratedColumn<int>(
+    'envelope_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
+    'key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<i3.Uint8List> ciphertext =
+      GeneratedColumn<i3.Uint8List>(
+        'ciphertext',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+      );
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> leaseToken = GeneratedColumn<String>(
+    'lease_token',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> leaseOwnerSessionId =
+      GeneratedColumn<String>(
+        'lease_owner_session_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  late final GeneratedColumn<int> leaseExpiresAt = GeneratedColumn<int>(
+    'lease_expires_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> transitionVersion = GeneratedColumn<int>(
+    'transition_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> attemptCount = GeneratedColumn<int>(
+    'attempt_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> nextAttemptAt = GeneratedColumn<int>(
+    'next_attempt_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> lastFailureKind = GeneratedColumn<String>(
+    'last_failure_kind',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    operationId,
+    recordId,
+    envelopeVersion,
+    keyEpoch,
+    ciphertext,
+    phase,
+    leaseToken,
+    leaseOwnerSessionId,
+    leaseExpiresAt,
+    transitionVersion,
+    attemptCount,
+    nextAttemptAt,
+    lastFailureKind,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_outbox_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {operationId};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {recordId},
+  ];
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  E2eeSyncOutboxRows createAlias(String alias) {
+    return E2eeSyncOutboxRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'FOREIGN KEY (operation_id, record_id) REFERENCES e2ee_sync_operation_rows (operation_id, record_id)',
+    'CHECK (typeof(operation_id) = \'text\' AND length(operation_id) = 36 AND operation_id = lower(operation_id) AND operation_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(operation_id, 9, 1) = \'-\' AND substr(operation_id, 14, 1) = \'-\' AND substr(operation_id, 15, 1) = \'4\' AND substr(operation_id, 19, 1) = \'-\' AND substr(operation_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(operation_id, 24, 1) = \'-\' AND substr(operation_id, 1, 8) NOT GLOB \'*-*\' AND substr(operation_id, 10, 4) NOT GLOB \'*-*\' AND substr(operation_id, 15, 4) NOT GLOB \'*-*\' AND substr(operation_id, 20, 4) NOT GLOB \'*-*\' AND substr(operation_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (typeof(record_id) = \'text\' AND length(record_id) = 36 AND record_id = lower(record_id) AND record_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(record_id, 9, 1) = \'-\' AND substr(record_id, 14, 1) = \'-\' AND substr(record_id, 15, 1) = \'4\' AND substr(record_id, 19, 1) = \'-\' AND substr(record_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(record_id, 24, 1) = \'-\' AND substr(record_id, 1, 8) NOT GLOB \'*-*\' AND substr(record_id, 10, 4) NOT GLOB \'*-*\' AND substr(record_id, 15, 4) NOT GLOB \'*-*\' AND substr(record_id, 20, 4) NOT GLOB \'*-*\' AND substr(record_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (typeof(envelope_version) = \'integer\' AND envelope_version = 1)',
+    'CHECK (typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 2147483647)',
+    'CHECK (typeof(ciphertext) = \'blob\' AND length(ciphertext) BETWEEN 1 AND 1048576)',
+    'CHECK (typeof(phase) = \'text\' AND phase IN (\'ready\', \'sending\'))',
+    'CHECK ((phase = \'ready\' AND lease_token IS NULL AND lease_owner_session_id IS NULL AND lease_expires_at IS NULL) OR (phase = \'sending\' AND typeof(lease_token) = \'text\' AND length(CAST(lease_token AS BLOB)) >= 1 AND typeof(lease_owner_session_id) = \'text\' AND length(CAST(lease_owner_session_id AS BLOB)) >= 1 AND typeof(lease_expires_at) = \'integer\' AND lease_expires_at >= 0))',
+    'CHECK (typeof(transition_version) = \'integer\' AND transition_version BETWEEN 1 AND 9223372036854775807)',
+    'CHECK (typeof(attempt_count) = \'integer\' AND attempt_count >= 0)',
+    'CHECK (typeof(next_attempt_at) = \'integer\' AND next_attempt_at >= 0)',
+    'CHECK (last_failure_kind IS NULL OR (typeof(last_failure_kind) = \'text\' AND length(CAST(last_failure_kind AS BLOB)) BETWEEN 1 AND 100))',
+    'CHECK (typeof(created_at) = \'integer\' AND created_at >= 0)',
+    'CHECK (typeof(updated_at) = \'integer\' AND updated_at >= created_at)',
+  ];
+}
+
+class E2eeSyncRemoteRecordRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  E2eeSyncRemoteRecordRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> recordId = GeneratedColumn<String>(
+    'record_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> revision = GeneratedColumn<int>(
+    'revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> lastChangeSeq = GeneratedColumn<int>(
+    'last_change_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<i3.Uint8List> stateDigest =
+      GeneratedColumn<i3.Uint8List>(
+        'state_digest',
+        aliasedName,
+        true,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: false,
+      );
+  late final GeneratedColumn<String> gate = GeneratedColumn<String>(
+    'gate',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> observedRevision = GeneratedColumn<int>(
+    'observed_revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> errorCode = GeneratedColumn<String>(
+    'error_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    recordId,
+    revision,
+    lastChangeSeq,
+    stateDigest,
+    gate,
+    observedRevision,
+    errorCode,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_remote_record_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {recordId};
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  E2eeSyncRemoteRecordRows createAlias(String alias) {
+    return E2eeSyncRemoteRecordRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'CHECK (typeof(record_id) = \'text\' AND length(record_id) = 36 AND record_id = lower(record_id) AND record_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(record_id, 9, 1) = \'-\' AND substr(record_id, 14, 1) = \'-\' AND substr(record_id, 15, 1) = \'4\' AND substr(record_id, 19, 1) = \'-\' AND substr(record_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(record_id, 24, 1) = \'-\' AND substr(record_id, 1, 8) NOT GLOB \'*-*\' AND substr(record_id, 10, 4) NOT GLOB \'*-*\' AND substr(record_id, 15, 4) NOT GLOB \'*-*\' AND substr(record_id, 20, 4) NOT GLOB \'*-*\' AND substr(record_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK (revision IS NULL OR (typeof(revision) = \'integer\' AND revision >= 1))',
+    'CHECK (last_change_seq IS NULL OR (typeof(last_change_seq) = \'integer\' AND last_change_seq >= 0))',
+    'CHECK (state_digest IS NULL OR (typeof(state_digest) = \'blob\' AND length(state_digest) = 32))',
+    'CHECK ((revision IS NULL AND last_change_seq IS NULL AND state_digest IS NULL) OR (revision IS NOT NULL AND last_change_seq IS NOT NULL AND state_digest IS NOT NULL))',
+    'CHECK (typeof(gate) = \'text\' AND gate IN (\'ready\', \'requires-pull\', \'quarantined\'))',
+    'CHECK (observed_revision IS NULL OR (typeof(observed_revision) = \'integer\' AND observed_revision >= 1))',
+    'CHECK (error_code IS NULL OR (typeof(error_code) = \'text\' AND length(CAST(error_code AS BLOB)) BETWEEN 1 AND 100))',
+    'CHECK ((gate = \'ready\' AND observed_revision IS NULL AND error_code IS NULL) OR (gate = \'requires-pull\' AND error_code IS NULL) OR (gate = \'quarantined\' AND error_code IS NOT NULL))',
+    'CHECK (typeof(created_at) = \'integer\' AND created_at >= 0)',
+    'CHECK (typeof(updated_at) = \'integer\' AND updated_at >= created_at)',
+  ];
+}
+
+class DatabaseAtV14 extends GeneratedDatabase {
+  DatabaseAtV14(QueryExecutor e) : super(e);
   late final ConversationRows conversationRows = ConversationRows(this);
   late final MessageRows messageRows = MessageRows(this);
   late final TurnRows turnRows = TurnRows(this);
@@ -1357,6 +1972,12 @@ class DatabaseAtV13 extends GeneratedDatabase {
       E2eeSyncRecordParentRows(this);
   late final E2eeSyncRecordHeadRows e2eeSyncRecordHeadRows =
       E2eeSyncRecordHeadRows(this);
+  late final E2eeSyncIntentRows e2eeSyncIntentRows = E2eeSyncIntentRows(this);
+  late final E2eeSyncOperationRows e2eeSyncOperationRows =
+      E2eeSyncOperationRows(this);
+  late final E2eeSyncOutboxRows e2eeSyncOutboxRows = E2eeSyncOutboxRows(this);
+  late final E2eeSyncRemoteRecordRows e2eeSyncRemoteRecordRows =
+      E2eeSyncRemoteRecordRows(this);
   late final Index idxConversationsUpdatedAt = Index(
     'idx_conversations_updated_at',
     'CREATE INDEX idx_conversations_updated_at ON conversation_rows (updated_at DESC, id ASC)',
@@ -1409,6 +2030,26 @@ class DatabaseAtV13 extends GeneratedDatabase {
     'idx_e2ee_sync_record_states_record_version',
     'CREATE INDEX idx_e2ee_sync_record_states_record_version ON e2ee_sync_record_state_rows (record_id, logical_version, digest)',
   );
+  late final Index idxE2eeSyncIntentsPhaseUpdated = Index(
+    'idx_e2ee_sync_intents_phase_updated',
+    'CREATE INDEX idx_e2ee_sync_intents_phase_updated ON e2ee_sync_intent_rows (phase, updated_at, entity_type, entity_id)',
+  );
+  late final Index idxE2eeSyncOperationsEntityGeneration = Index(
+    'idx_e2ee_sync_operations_entity_generation',
+    'CREATE INDEX idx_e2ee_sync_operations_entity_generation ON e2ee_sync_operation_rows (entity_type, entity_id, intent_generation, operation_id)',
+  );
+  late final Index idxE2eeSyncOperationsIntentGeneration = Index(
+    'idx_e2ee_sync_operations_intent_generation',
+    'CREATE INDEX idx_e2ee_sync_operations_intent_generation ON e2ee_sync_operation_rows (intent_id, intent_generation, operation_id)',
+  );
+  late final Index idxE2eeSyncOutboxPhaseDue = Index(
+    'idx_e2ee_sync_outbox_phase_due',
+    'CREATE INDEX idx_e2ee_sync_outbox_phase_due ON e2ee_sync_outbox_rows (phase, next_attempt_at, operation_id)',
+  );
+  late final Index idxE2eeSyncRemoteRecordsGateUpdated = Index(
+    'idx_e2ee_sync_remote_records_gate_updated',
+    'CREATE INDEX idx_e2ee_sync_remote_records_gate_updated ON e2ee_sync_remote_record_rows (gate, updated_at, record_id)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -1429,6 +2070,10 @@ class DatabaseAtV13 extends GeneratedDatabase {
     e2eeSyncRecordStateRows,
     e2eeSyncRecordParentRows,
     e2eeSyncRecordHeadRows,
+    e2eeSyncIntentRows,
+    e2eeSyncOperationRows,
+    e2eeSyncOutboxRows,
+    e2eeSyncRemoteRecordRows,
     idxConversationsUpdatedAt,
     idxConversationsAssistant,
     idxMessagesConversationOrder,
@@ -1442,7 +2087,12 @@ class DatabaseAtV13 extends GeneratedDatabase {
     idxGenerationRunsActiveTarget,
     idxGenerationRunsStateUpdated,
     idxE2eeSyncRecordStatesRecordVersion,
+    idxE2eeSyncIntentsPhaseUpdated,
+    idxE2eeSyncOperationsEntityGeneration,
+    idxE2eeSyncOperationsIntentGeneration,
+    idxE2eeSyncOutboxPhaseDue,
+    idxE2eeSyncRemoteRecordsGateUpdated,
   ];
   @override
-  int get schemaVersion => 13;
+  int get schemaVersion => 14;
 }
