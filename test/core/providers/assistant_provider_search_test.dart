@@ -3,8 +3,26 @@ import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'package:Kelivo/core/models/assistant.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
+import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
+
+final class _VaultConfigWriteExecutor implements E2eeConfigVaultWriteExecutor {
+  const _VaultConfigWriteExecutor();
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) => Future<T>.sync(write);
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) => Future<T>.sync(write);
+}
 
 Future<AssistantProvider> _createLoadedAssistantProvider({
   required List<Map<String, Object?>> assistants,
@@ -31,6 +49,35 @@ void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
   group('AssistantProvider per-assistant search', () {
+    test('账户 Vault 模式不读取或回写明文助手偏好', () async {
+      const stored = <Map<String, Object?>>[
+        <String, Object?>{'id': 'plaintext-assistant', 'name': 'Plaintext'},
+      ];
+      SharedPreferences.setMockInitialValues(<String, Object>{
+        'assistants_v1': jsonEncode(stored),
+        'current_assistant_id_v1': 'plaintext-assistant',
+      });
+      final provider = AssistantProvider(
+        syncWriteExecutor: const _VaultConfigWriteExecutor(),
+      );
+
+      await provider.ready;
+      expect(provider.assistants, isEmpty);
+
+      await provider.syncUpsertAssistant(
+        const Assistant(id: 'vault-assistant', name: 'Vault'),
+        position: 0,
+      );
+
+      final preferences = await SharedPreferences.getInstance();
+      expect(provider.assistants.single.id, 'vault-assistant');
+      expect(preferences.getString('assistants_v1'), jsonEncode(stored));
+      expect(
+        preferences.getString('current_assistant_id_v1'),
+        'plaintext-assistant',
+      );
+    });
+
     test(
       'loads missing assistant search from legacy global preference',
       () async {

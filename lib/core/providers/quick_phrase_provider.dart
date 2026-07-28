@@ -24,7 +24,7 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
 
   Future<void> initialize() async {
     if (_initialized) return;
-    await loadAll();
+    if (!usesE2eeConfigVault(_syncWrites)) await loadAll();
     _initialized = true;
   }
 
@@ -43,6 +43,11 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.quickPhrase(phrase.id),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          _phrases = <QuickPhrase>[..._phrases, phrase];
+          notifyListeners();
+          return;
+        }
         await QuickPhraseStore.add(phrase);
         await loadAll();
       },
@@ -53,6 +58,13 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.quickPhrase(phrase.id),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          final index = _phrases.indexWhere((item) => item.id == phrase.id);
+          if (index < 0) return;
+          _phrases = List<QuickPhrase>.of(_phrases)..[index] = phrase;
+          notifyListeners();
+          return;
+        }
         await QuickPhraseStore.update(phrase);
         await loadAll();
       },
@@ -68,6 +80,11 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
           .skip(index)
           .map((phrase) => ConfigSyncKeys.quickPhrase(phrase.id)),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          _phrases = List<QuickPhrase>.of(_phrases)..removeAt(index);
+          notifyListeners();
+          return;
+        }
         await QuickPhraseStore.delete(id);
         await loadAll();
       },
@@ -80,7 +97,9 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
     await _syncWrites.runLocalBatch(
       keys: _phrases.map((phrase) => ConfigSyncKeys.quickPhrase(phrase.id)),
       write: () async {
-        await QuickPhraseStore.clear();
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await QuickPhraseStore.clear();
+        }
         _phrases = [];
         notifyListeners();
       },
@@ -93,7 +112,9 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
       ..removeWhere((e) => e.id == phrase.id);
     phrases.insert(position.clamp(0, phrases.length), phrase);
     _phrases = phrases;
-    await QuickPhraseStore.save(_phrases);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      await QuickPhraseStore.save(_phrases);
+    }
     notifyListeners();
   }
 
@@ -104,7 +125,9 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
     phrases.removeWhere((e) => e.id == id);
     if (phrases.length == before) return;
     _phrases = phrases;
-    await QuickPhraseStore.save(_phrases);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      await QuickPhraseStore.save(_phrases);
+    }
     notifyListeners();
   }
 
@@ -179,7 +202,9 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
           assistantId: assistantId,
         );
         notifyListeners();
-        await QuickPhraseStore.save(_phrases);
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await QuickPhraseStore.save(_phrases);
+        }
       },
     );
   }

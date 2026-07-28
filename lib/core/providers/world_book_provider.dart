@@ -52,8 +52,21 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
 
   Future<void> initialize() async {
     if (_initialized) return;
-    await loadAll();
+    if (usesE2eeConfigVault(_syncWrites)) {
+      await _loadLocalCollapsedState();
+    } else {
+      await loadAll();
+    }
     _initialized = true;
+  }
+
+  Future<void> _loadLocalCollapsedState() async {
+    try {
+      _collapsedBooks = await WorldBookStore.getCollapsedBooksMap();
+    } catch (error) {
+      debugPrint('Failed to load local world book state: $error');
+      _collapsedBooks = const <String, bool>{};
+    }
   }
 
   Future<void> loadAll() async {
@@ -86,6 +99,11 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.worldBook(book.id),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          _books = List<WorldBook>.unmodifiable(<WorldBook>[..._books, book]);
+          notifyListeners();
+          return;
+        }
         await WorldBookStore.add(book);
         await loadAll();
       },
@@ -99,6 +117,23 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
         ConfigSyncKeys.worldBookActivity,
       ],
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          final index = _books.indexWhere(
+            (candidate) => candidate.id == book.id,
+          );
+          if (index < 0) return;
+          if (!book.enabled) {
+            _activeIdsByAssistant = <String, List<String>>{
+              for (final entry in _activeIdsByAssistant.entries)
+                entry.key: List<String>.unmodifiable(
+                  entry.value.where((id) => id != book.id),
+                ),
+            };
+          }
+          _books = List<WorldBook>.of(_books)..[index] = book;
+          notifyListeners();
+          return;
+        }
         if (!book.enabled) {
           try {
             final map = await WorldBookStore.getActiveIdsByAssistant();
@@ -132,6 +167,20 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
         ConfigSyncKeys.worldBookActivity,
       ],
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          _books = List<WorldBook>.unmodifiable(
+            _books.where((book) => book.id != id),
+          );
+          _activeIdsByAssistant = <String, List<String>>{
+            for (final entry in _activeIdsByAssistant.entries)
+              entry.key: List<String>.unmodifiable(
+                entry.value.where((activeId) => activeId != id),
+              ),
+          };
+          _collapsedBooks = Map<String, bool>.from(_collapsedBooks)..remove(id);
+          notifyListeners();
+          return;
+        }
         await WorldBookStore.delete(id);
         await loadAll();
       },
@@ -146,7 +195,9 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
         ConfigSyncKeys.worldBookActivity,
       ],
       write: () async {
-        await WorldBookStore.clear();
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await WorldBookStore.clear();
+        }
         _books = const <WorldBook>[];
         _activeIdsByAssistant = const <String, List<String>>{};
         _collapsedBooks = const <String, bool>{};
@@ -161,20 +212,38 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
       ..removeWhere((e) => e.id == book.id);
     books.insert(position.clamp(0, books.length), book);
     _books = List<WorldBook>.unmodifiable(books);
-    await WorldBookStore.save(_books);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      await WorldBookStore.save(_books);
+    }
     notifyListeners();
   }
 
   Future<void> syncDelete(String id) async {
     await initialize();
     if (!_books.any((e) => e.id == id)) return;
+    if (usesE2eeConfigVault(_syncWrites)) {
+      _books = List<WorldBook>.unmodifiable(
+        _books.where((book) => book.id != id),
+      );
+      _activeIdsByAssistant = <String, List<String>>{
+        for (final entry in _activeIdsByAssistant.entries)
+          entry.key: List<String>.unmodifiable(
+            entry.value.where((activeId) => activeId != id),
+          ),
+      };
+      _collapsedBooks = Map<String, bool>.from(_collapsedBooks)..remove(id);
+      notifyListeners();
+      return;
+    }
     await WorldBookStore.delete(id);
     await loadAll();
   }
 
   Future<void> syncReplaceActiveIds(Map<String, List<String>> activeIds) async {
     await initialize();
-    await WorldBookStore.setActiveIdsMap(activeIds);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      await WorldBookStore.setActiveIdsMap(activeIds);
+    }
     _activeIdsByAssistant = <String, List<String>>{
       for (final entry in activeIds.entries)
         entry.key: List<String>.unmodifiable(entry.value),
@@ -202,7 +271,9 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
         list.insert(newIndex, item);
         _books = list;
         notifyListeners();
-        await WorldBookStore.save(_books);
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await WorldBookStore.save(_books);
+        }
       },
     );
   }
@@ -230,7 +301,9 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
         nextBooks[bookIndex] = nextBook;
         _books = nextBooks;
         notifyListeners();
-        await WorldBookStore.save(_books);
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await WorldBookStore.save(_books);
+        }
       },
     );
   }
@@ -259,7 +332,9 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
         nextMap[key] = ids.toSet().toList(growable: false);
         _activeIdsByAssistant = nextMap;
         notifyListeners();
-        await WorldBookStore.setActiveIds(ids, assistantId: assistantId);
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await WorldBookStore.setActiveIds(ids, assistantId: assistantId);
+        }
       },
     );
   }

@@ -51,7 +51,9 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
     this.chatService,
     required SyncWriteExecutor syncWriteExecutor,
   }) : _syncWrites = syncWriteExecutor {
-    ready = _mutations.run(_load);
+    ready = usesE2eeConfigVault(_syncWrites)
+        ? Future<void>.value()
+        : _mutations.run(_load);
   }
 
   Future<void> _load() async {
@@ -538,6 +540,7 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> _writePreferencesTransaction(_AssistantState next) async {
+    if (usesE2eeConfigVault(_syncWrites)) return;
     final prefs = await SharedPreferences.getInstance();
     final previous = _StoredAssistantPreferences(
       hadAssistants: prefs.containsKey(_assistantsKey),

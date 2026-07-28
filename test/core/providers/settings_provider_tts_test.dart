@@ -1,8 +1,25 @@
 import 'package:Kelivo/core/providers/settings_provider.dart';
+import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/tts/tts_text_selection.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
+
+final class _VaultConfigWriteExecutor implements E2eeConfigVaultWriteExecutor {
+  const _VaultConfigWriteExecutor();
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) => Future<T>.sync(write);
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) => Future<T>.sync(write);
+}
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
@@ -41,6 +58,30 @@ void main() {
     await _waitUntil(() => settings.ttsAutoPlayAssistantReplies);
 
     expect(settings.ttsTextSelectionMode, TtsTextSelectionMode.fullText);
+  });
+
+  test('账户 Vault 模式忽略且不回写明文 TTS 同步偏好', () async {
+    SharedPreferences.setMockInitialValues(const <String, Object>{
+      'tts_auto_play_assistant_replies_v1': true,
+      'tts_text_selection_mode_v1': 'quotedOnly',
+    });
+
+    final settings = SettingsProvider(
+      syncWriteExecutor: const _VaultConfigWriteExecutor(),
+    );
+    await settings.ready;
+
+    expect(settings.ttsAutoPlayAssistantReplies, isFalse);
+    expect(settings.ttsTextSelectionMode, TtsTextSelectionMode.fullText);
+
+    await settings.setTtsAutoPlayAssistantReplies(true);
+    await settings.setTtsTextSelectionMode(TtsTextSelectionMode.nonItalic);
+
+    final preferences = await SharedPreferences.getInstance();
+    expect(settings.ttsAutoPlayAssistantReplies, isTrue);
+    expect(settings.ttsTextSelectionMode, TtsTextSelectionMode.nonItalic);
+    expect(preferences.getBool('tts_auto_play_assistant_replies_v1'), isTrue);
+    expect(preferences.getString('tts_text_selection_mode_v1'), 'quotedOnly');
   });
 }
 

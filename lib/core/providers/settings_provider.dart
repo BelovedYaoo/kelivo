@@ -685,13 +685,15 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       ungroupedPosition: _providerUngroupedPosition,
       providerConfigs: nextConfigs,
     );
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderCollection(
-      prefs,
-      providerConfigs: nextConfigs,
-      grouping: nextGrouping,
-      operation: '同步供应商配置',
-    );
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await _persistProviderCollection(
+        prefs,
+        providerConfigs: nextConfigs,
+        grouping: nextGrouping,
+        operation: '同步供应商配置',
+      );
+    }
     _publishProviderCollection(nextConfigs, nextGrouping);
     await _deleteManagedProviderAvatarIfUnused(
       previous?.avatarType == 'file' ? previous?.avatarValue : null,
@@ -778,15 +780,21 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
         ? -1
         : _searchServices.indexWhere((e) => e.id == selectedServiceId);
     _searchServiceSelected = selectedIndex < 0 ? 0 : selectedIndex;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_searchCommonKey, jsonEncode(commonOptions.toJson()));
-    await prefs.setInt(_searchSelectedKey, _searchServiceSelected);
-    await prefs.setBool(_searchEnabledKey, enabled);
-    await prefs.setBool(_searchAutoTestOnLaunchKey, autoTestOnLaunch);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _searchCommonKey,
+        jsonEncode(commonOptions.toJson()),
+      );
+      await prefs.setInt(_searchSelectedKey, _searchServiceSelected);
+      await prefs.setBool(_searchEnabledKey, enabled);
+      await prefs.setBool(_searchAutoTestOnLaunchKey, autoTestOnLaunch);
+    }
     notifyListeners();
   }
 
   Future<void> _persistSyncSearchServices() async {
+    if (usesE2eeConfigVault(_syncWrites)) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _searchServicesKey,
@@ -846,17 +854,20 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
         : _ttsServices.indexWhere((e) => e.id == selectedServiceId);
     _ttsAutoPlayAssistantReplies = autoPlayAssistantReplies;
     _ttsTextSelectionMode = textSelectionMode;
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
-    await prefs.setBool(
-      _ttsAutoPlayAssistantRepliesKey,
-      autoPlayAssistantReplies,
-    );
-    await prefs.setString(_ttsTextSelectionModeKey, textSelectionMode.name);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
+      await prefs.setBool(
+        _ttsAutoPlayAssistantRepliesKey,
+        autoPlayAssistantReplies,
+      );
+      await prefs.setString(_ttsTextSelectionModeKey, textSelectionMode.name);
+    }
     notifyListeners();
   }
 
   Future<void> _persistSyncTtsServices() async {
+    if (usesE2eeConfigVault(_syncWrites)) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(
       _ttsServicesKey,
@@ -942,7 +953,22 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<void> _load() async {
     final prefs = await SharedPreferences.getInstance();
-    _providersOrder = prefs.getStringList(_providersOrderKey) ?? [];
+    final useConfigVault = usesE2eeConfigVault(_syncWrites);
+    if (useConfigVault) {
+      _providerConfigs = <String, ProviderConfig>{};
+      _searchServices = const <SearchServiceOptions>[];
+      _searchServiceSelected = 0;
+      _searchCommonOptions = const SearchCommonOptions();
+      _searchEnabled = false;
+      _searchAutoTestOnLaunch = false;
+      _ttsServices = const <TtsServiceOptions>[];
+      _ttsServiceSelected = -1;
+      _ttsAutoPlayAssistantReplies = false;
+      _ttsTextSelectionMode = TtsTextSelectionMode.fullText;
+    }
+    _providersOrder = useConfigVault
+        ? const <String>[]
+        : prefs.getStringList(_providersOrderKey) ?? const <String>[];
     final m = prefs.getString(_themeModeKey);
     switch (m) {
       case 'light':
@@ -957,7 +983,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     _themePaletteId = prefs.getString(_themePaletteKey) ?? 'default';
     _useDynamicColor = prefs.getBool(_useDynamicColorKey) ?? true;
     var providerConfigsLoaded = false;
-    final cfgStr = prefs.getString(_providerConfigsKey);
+    final cfgStr = useConfigVault ? null : prefs.getString(_providerConfigsKey);
     if (cfgStr != null && cfgStr.isNotEmpty) {
       try {
         final raw = jsonDecode(cfgStr) as Map<String, dynamic>;
@@ -1051,25 +1077,33 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
         return true;
       }());
     }
-    // load provider grouping
-    try {
-      final groupsStr = prefs.getString(_providerGroupsKey) ?? '';
-      _providerGroups = groupsStr.isEmpty
-          ? const <ProviderGroup>[]
-          : ProviderGroup.decodeList(groupsStr);
-    } catch (_) {
+    // 账号模式只允许 Vault 提供分组真值；折叠状态仍是本机 UI 偏好。
+    if (useConfigVault) {
       _providerGroups = const <ProviderGroup>[];
-    }
-    try {
-      final mapStr = prefs.getString(_providerGroupMapKey) ?? '';
-      if (mapStr.isNotEmpty) {
-        final raw = jsonDecode(mapStr) as Map<String, dynamic>;
-        _providerGroupMap = raw.map((k, v) => MapEntry(k, v.toString()));
-      } else {
+      _providerGroupMap = <String, String>{};
+      _providerUngroupedPosition = 0;
+    } else {
+      try {
+        final groupsStr = prefs.getString(_providerGroupsKey) ?? '';
+        _providerGroups = groupsStr.isEmpty
+            ? const <ProviderGroup>[]
+            : ProviderGroup.decodeList(groupsStr);
+      } catch (_) {
+        _providerGroups = const <ProviderGroup>[];
+      }
+      try {
+        final mapStr = prefs.getString(_providerGroupMapKey) ?? '';
+        if (mapStr.isNotEmpty) {
+          final raw = jsonDecode(mapStr) as Map<String, dynamic>;
+          _providerGroupMap = raw.map((k, v) => MapEntry(k, v.toString()));
+        } else {
+          _providerGroupMap = <String, String>{};
+        }
+      } catch (_) {
         _providerGroupMap = <String, String>{};
       }
-    } catch (_) {
-      _providerGroupMap = <String, String>{};
+      _providerUngroupedPosition =
+          prefs.getInt(_providerUngroupedPositionKey) ?? _providerGroups.length;
     }
     try {
       final collapsedStr = prefs.getString(_providerGroupCollapsedKey) ?? '';
@@ -1088,8 +1122,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     } catch (_) {
       _providerGroupCollapsed.clear();
     }
-    _providerUngroupedPosition =
-        prefs.getInt(_providerUngroupedPositionKey) ?? _providerGroups.length;
     // load pinned models
     final pinned = prefs.getStringList(_pinnedModelsKey) ?? const <String>[];
     _pinnedModels
@@ -1460,7 +1492,9 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
         prefs.getBool(_iosBackgroundNotificationsEnabledKey) ?? false;
 
     // load search settings
-    final searchServicesStr = prefs.getString(_searchServicesKey);
+    final searchServicesStr = useConfigVault
+        ? null
+        : prefs.getString(_searchServicesKey);
     if (searchServicesStr != null && searchServicesStr.isNotEmpty) {
       try {
         final list = jsonDecode(searchServicesStr) as List;
@@ -1471,7 +1505,9 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
             .toList();
       } catch (_) {}
     }
-    final searchCommonStr = prefs.getString(_searchCommonKey);
+    final searchCommonStr = useConfigVault
+        ? null
+        : prefs.getString(_searchCommonKey);
     if (searchCommonStr != null && searchCommonStr.isNotEmpty) {
       try {
         _searchCommonOptions = SearchCommonOptions.fromJson(
@@ -1479,10 +1515,12 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
         );
       } catch (_) {}
     }
-    _searchServiceSelected = prefs.getInt(_searchSelectedKey) ?? 0;
-    _searchEnabled = prefs.getBool(_searchEnabledKey) ?? false;
-    _searchAutoTestOnLaunch =
-        prefs.getBool(_searchAutoTestOnLaunchKey) ?? false;
+    if (!useConfigVault) {
+      _searchServiceSelected = prefs.getInt(_searchSelectedKey) ?? 0;
+      _searchEnabled = prefs.getBool(_searchEnabledKey) ?? false;
+      _searchAutoTestOnLaunch =
+          prefs.getBool(_searchAutoTestOnLaunchKey) ?? false;
+    }
 
     // load global proxy
     _globalProxyEnabled = prefs.getBool(_globalProxyEnabledKey) ?? false;
@@ -1500,33 +1538,35 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     }
 
     // load network TTS services
-    try {
-      final ttsStr = prefs.getString(_ttsServicesKey) ?? '';
-      if (ttsStr.isNotEmpty) {
-        final list = jsonDecode(ttsStr) as List;
-        _ttsServices = [
-          for (final e in list)
-            if (e is Map<String, dynamic>)
-              TtsServiceOptions.fromJson(e)
-            else
-              TtsServiceOptions.fromJson(Map<String, dynamic>.from(e as Map)),
-        ];
-      } else {
+    if (!useConfigVault) {
+      try {
+        final ttsStr = prefs.getString(_ttsServicesKey) ?? '';
+        if (ttsStr.isNotEmpty) {
+          final list = jsonDecode(ttsStr) as List;
+          _ttsServices = [
+            for (final e in list)
+              if (e is Map<String, dynamic>)
+                TtsServiceOptions.fromJson(e)
+              else
+                TtsServiceOptions.fromJson(Map<String, dynamic>.from(e as Map)),
+          ];
+        } else {
+          _ttsServices = const <TtsServiceOptions>[];
+        }
+      } catch (_) {
         _ttsServices = const <TtsServiceOptions>[];
       }
-    } catch (_) {
-      _ttsServices = const <TtsServiceOptions>[];
+      _ttsServiceSelected = prefs.getInt(_ttsSelectedKey) ?? -1;
+      if (_ttsServiceSelected >= _ttsServices.length) {
+        _ttsServiceSelected = _ttsServices.isEmpty ? -1 : 0;
+        await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
+      }
+      _ttsAutoPlayAssistantReplies =
+          prefs.getBool(_ttsAutoPlayAssistantRepliesKey) ?? false;
+      _ttsTextSelectionMode = TtsTextSelectionModeStorage.fromStorageValue(
+        prefs.getString(_ttsTextSelectionModeKey),
+      );
     }
-    _ttsServiceSelected = prefs.getInt(_ttsSelectedKey) ?? -1;
-    if (_ttsServiceSelected >= _ttsServices.length) {
-      _ttsServiceSelected = _ttsServices.isEmpty ? -1 : 0;
-      await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
-    }
-    _ttsAutoPlayAssistantReplies =
-        prefs.getBool(_ttsAutoPlayAssistantRepliesKey) ?? false;
-    _ttsTextSelectionMode = TtsTextSelectionModeStorage.fromStorageValue(
-      prefs.getString(_ttsTextSelectionModeKey),
-    );
     // webdav config
     final webdavStr = prefs.getString(_webDavConfigKey);
     if (webdavStr != null && webdavStr.isNotEmpty) {
@@ -1545,7 +1585,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
         );
       } catch (_) {}
     }
-    if (_providerConfigs.isEmpty) {
+    if (!useConfigVault && _providerConfigs.isEmpty) {
       // Seed a couple of sensible defaults on first launch, but do not recreate
       // providers implicitly during later reads (e.g., when switching chats).
       ensureProviderConfig('KelivoIN', defaultName: 'KelivoIN');
@@ -1686,11 +1726,13 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   Future<void> _setTtsServices(List<TtsServiceOptions> v) async {
     _ttsServices = List.unmodifiable(v);
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    final list = v.map((e) => e.toJson()).toList();
-    await prefs.setString(_ttsServicesKey, jsonEncode(list));
     if (_ttsServiceSelected >= _ttsServices.length) {
       _ttsServiceSelected = _ttsServices.isEmpty ? -1 : 0;
+    }
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      final list = v.map((e) => e.toJson()).toList();
+      await prefs.setString(_ttsServicesKey, jsonEncode(list));
       await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
     }
   }
@@ -1705,8 +1747,10 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
   Future<void> _setTtsServiceSelected(int index) async {
     _ttsServiceSelected = index;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_ttsSelectedKey, _ttsServiceSelected);
+    }
   }
 
   Future<void> setTtsAutoPlayAssistantReplies(bool value) async {
@@ -1720,8 +1764,10 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     if (_ttsAutoPlayAssistantReplies == value) return;
     _ttsAutoPlayAssistantReplies = value;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_ttsAutoPlayAssistantRepliesKey, value);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_ttsAutoPlayAssistantRepliesKey, value);
+    }
   }
 
   Future<void> setTtsTextSelectionMode(TtsTextSelectionMode mode) async {
@@ -1735,8 +1781,10 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     if (_ttsTextSelectionMode == mode) return;
     _ttsTextSelectionMode = mode;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_ttsTextSelectionModeKey, mode.storageValue);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_ttsTextSelectionModeKey, mode.storageValue);
+    }
   }
 
   // ===== User Font Settings =====
@@ -2411,6 +2459,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     _ProviderGroupingSnapshot snapshot, {
     required String operation,
   }) {
+    if (usesE2eeConfigVault(_syncWrites)) return Future<void>.value();
     return _writePreferencesAtomically(
       prefs,
       _providerGroupingPreferenceValues(snapshot),
@@ -2425,6 +2474,14 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     Map<String, Object?> additionalValues = const <String, Object?>{},
     required String operation,
   }) {
+    if (usesE2eeConfigVault(_syncWrites)) {
+      if (additionalValues.isEmpty) return Future<void>.value();
+      return _writePreferencesAtomically(
+        prefs,
+        additionalValues,
+        operation: operation,
+      );
+    }
     final encodedConfigs = providerConfigs.map(
       (key, value) => MapEntry(key, value.toJson()),
     );
@@ -2439,12 +2496,14 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     _ProviderGroupingSnapshot snapshot, {
     required String operation,
   }) async {
-    final prefs = await SharedPreferences.getInstance();
-    await _persistProviderGroupingSnapshot(
-      prefs,
-      snapshot,
-      operation: operation,
-    );
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await _persistProviderGroupingSnapshot(
+        prefs,
+        snapshot,
+        operation: operation,
+      );
+    }
     _publishProviderGroupingSnapshot(snapshot);
   }
 
@@ -4941,12 +5000,14 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
           : 0;
     }
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _searchServicesKey,
-      jsonEncode(_searchServices.map((e) => e.toJson()).toList()),
-    );
-    await prefs.setInt(_searchSelectedKey, _searchServiceSelected);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        _searchServicesKey,
+        jsonEncode(_searchServices.map((e) => e.toJson()).toList()),
+      );
+      await prefs.setInt(_searchSelectedKey, _searchServiceSelected);
+    }
   }
 
   Future<void> setSearchCommonOptions(SearchCommonOptions options) async {
@@ -4959,8 +5020,10 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
   Future<void> _setSearchCommonOptions(SearchCommonOptions options) async {
     _searchCommonOptions = options;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_searchCommonKey, jsonEncode(options.toJson()));
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(_searchCommonKey, jsonEncode(options.toJson()));
+    }
   }
 
   Future<void> setSearchServiceSelected(int index) async {
@@ -4976,8 +5039,10 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
       _searchServices.isNotEmpty ? _searchServices.length - 1 : 0,
     );
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_searchSelectedKey, _searchServiceSelected);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setInt(_searchSelectedKey, _searchServiceSelected);
+    }
   }
 
   Future<void> setSearchEnabled(bool enabled) async {
@@ -4990,8 +5055,10 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
   Future<void> _setSearchEnabled(bool enabled) async {
     _searchEnabled = enabled;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_searchEnabledKey, enabled);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_searchEnabledKey, enabled);
+    }
   }
 
   Future<void> setSearchAutoTestOnLaunch(bool enabled) async {
@@ -5004,8 +5071,10 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
   Future<void> _setSearchAutoTestOnLaunch(bool enabled) async {
     _searchAutoTestOnLaunch = enabled;
     notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_searchAutoTestOnLaunchKey, enabled);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_searchAutoTestOnLaunchKey, enabled);
+    }
   }
 
   // Combined update for settings
@@ -5020,19 +5089,19 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
 
   Future<void> _updateSettings(SettingsProvider newSettings) async {
     if (!listEquals(_searchServices, newSettings._searchServices)) {
-      await setSearchServices(newSettings._searchServices);
+      await _setSearchServices(newSettings._searchServices);
     }
     if (_searchCommonOptions != newSettings._searchCommonOptions) {
-      await setSearchCommonOptions(newSettings._searchCommonOptions);
+      await _setSearchCommonOptions(newSettings._searchCommonOptions);
     }
     if (_searchServiceSelected != newSettings._searchServiceSelected) {
-      await setSearchServiceSelected(newSettings._searchServiceSelected);
+      await _setSearchServiceSelected(newSettings._searchServiceSelected);
     }
     if (_searchEnabled != newSettings._searchEnabled) {
-      await setSearchEnabled(newSettings._searchEnabled);
+      await _setSearchEnabled(newSettings._searchEnabled);
     }
     if (_searchAutoTestOnLaunch != newSettings._searchAutoTestOnLaunch) {
-      await setSearchAutoTestOnLaunch(newSettings._searchAutoTestOnLaunch);
+      await _setSearchAutoTestOnLaunch(newSettings._searchAutoTestOnLaunch);
     }
   }
 

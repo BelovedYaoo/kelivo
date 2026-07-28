@@ -247,6 +247,7 @@ class McpServerConfig {
 
 class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   static const String _prefsKey = 'mcp_servers_v1';
+  static const String _localServersPrefsKey = 'mcp_local_servers_v1';
   static const String _prefsTimeoutKey = 'mcp_request_timeout_ms_v1';
 
   final Map<String, mcp.Client> _clients = {};
@@ -304,22 +305,32 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   int get requestTimeoutSeconds => _requestTimeout.inSeconds;
 
   Future<void> _load() async {
+    final useConfigVault = usesE2eeConfigVault(_syncWrites);
     final prefs = await SharedPreferences.getInstance();
-    final timeoutMs = prefs.getInt(_prefsTimeoutKey);
-    if (timeoutMs != null && timeoutMs > 0) {
-      _requestTimeout = Duration(milliseconds: timeoutMs);
+    if (!useConfigVault) {
+      final timeoutMs = prefs.getInt(_prefsTimeoutKey);
+      if (timeoutMs != null && timeoutMs > 0) {
+        _requestTimeout = Duration(milliseconds: timeoutMs);
+      }
     }
-    final raw = prefs.getString(_prefsKey);
+    final raw = prefs.getString(
+      useConfigVault ? _localServersPrefsKey : _prefsKey,
+    );
     if (raw != null && raw.isNotEmpty) {
       try {
-        final list = (jsonDecode(raw) as List)
+        final decoded = (jsonDecode(raw) as List)
             .map(
               (e) =>
                   McpServerConfig.fromJson((e as Map).cast<String, dynamic>()),
             )
             .toList();
-        _servers = list;
-      } catch (_) {}
+        // stdio 命令依赖本机环境；账号模式只从本机键恢复这部分配置。
+        _servers = useConfigVault
+            ? decoded.where((server) => !_isPortable(server)).toList()
+            : decoded;
+      } catch (_) {
+        _servers = <McpServerConfig>[];
+      }
     }
     // Ensure built-in @kelivo/fetch is present by default
     _ensureBuiltinFetchServerPresent();
@@ -356,15 +367,22 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> _persist() async {
+    final useConfigVault = usesE2eeConfigVault(_syncWrites);
     final prefs = await SharedPreferences.getInstance();
+    final persistedServers = useConfigVault
+        ? _servers.where((server) => !_isPortable(server))
+        : _servers;
     await prefs.setString(
-      _prefsKey,
-      jsonEncode(_servers.map((e) => e.toJson()).toList()),
+      useConfigVault ? _localServersPrefsKey : _prefsKey,
+      jsonEncode(persistedServers.map((e) => e.toJson()).toList()),
     );
-    await prefs.setInt(_prefsTimeoutKey, _requestTimeout.inMilliseconds);
+    if (!useConfigVault) {
+      await prefs.setInt(_prefsTimeoutKey, _requestTimeout.inMilliseconds);
+    }
   }
 
   Future<void> _persistTimeout() async {
+    if (usesE2eeConfigVault(_syncWrites)) return;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setInt(_prefsTimeoutKey, _requestTimeout.inMilliseconds);
   }

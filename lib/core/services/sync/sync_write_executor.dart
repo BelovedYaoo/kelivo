@@ -12,6 +12,13 @@ abstract interface class SyncWriteExecutor {
   });
 }
 
+/// 标识配置业务真相由账户 SQLCipher Vault 持有，Provider 不得再读写明文存储。
+abstract interface class E2eeConfigVaultWriteExecutor
+    implements SyncWriteExecutor {}
+
+bool usesE2eeConfigVault(SyncWriteExecutor executor) =>
+    executor is E2eeConfigVaultWriteExecutor;
+
 final class LocalOnlySyncWriteExecutor implements SyncWriteExecutor {
   const LocalOnlySyncWriteExecutor();
 

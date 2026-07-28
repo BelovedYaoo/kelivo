@@ -41,6 +41,7 @@ import 'core/services/chat/chat_service.dart';
 import 'core/services/sync/cloud_sync_client.dart';
 import 'core/services/sync/cloud_sync_types.dart';
 import 'core/services/sync/e2ee_chat_content_runtime.dart';
+import 'core/services/sync/e2ee_config_provider_binding.dart';
 import 'core/services/sync/sync_write_executor.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
 import 'core/services/workspace/device_state_blob_store.dart';
@@ -399,17 +400,21 @@ class MyApp extends StatelessWidget {
   Widget build(BuildContext context) {
     const localSyncWriteExecutor = LocalOnlySyncWriteExecutor();
     final chatSyncWriteExecutor = chatContentRuntime ?? localSyncWriteExecutor;
+    final SyncWriteExecutor configSyncWriteExecutor =
+        chatContentRuntime ?? localSyncWriteExecutor;
     return MultiProvider(
       providers: [
         ChangeNotifierProvider(create: (_) => ChatProvider()),
         ChangeNotifierProvider(
+          lazy: false,
           create: (_) =>
-              UserProvider(syncWriteExecutor: localSyncWriteExecutor),
+              UserProvider(syncWriteExecutor: configSyncWriteExecutor),
         ),
         ChangeNotifierProvider(
+          lazy: false,
           create: (_) {
             final settings = SettingsProvider(
-              syncWriteExecutor: localSyncWriteExecutor,
+              syncWriteExecutor: configSyncWriteExecutor,
             );
             unawaited(settings.incrementAppLaunchCount());
             return settings;
@@ -429,38 +434,63 @@ class MyApp extends StatelessWidget {
         ),
         ChangeNotifierProvider(create: (_) => McpToolService()),
         ChangeNotifierProvider(
-          create: (_) => McpProvider(syncWriteExecutor: localSyncWriteExecutor),
+          lazy: false,
+          create: (_) =>
+              McpProvider(syncWriteExecutor: configSyncWriteExecutor),
         ),
         ChangeNotifierProvider(create: (_) => ToolApprovalService()),
         ChangeNotifierProvider(create: (_) => AskUserInteractionService()),
         ChangeNotifierProvider(
+          lazy: false,
           create: (ctx) => AssistantProvider(
             chatService: ctx.read<ChatService>(),
-            syncWriteExecutor: localSyncWriteExecutor,
+            syncWriteExecutor: configSyncWriteExecutor,
           ),
         ),
         ChangeNotifierProvider(create: (_) => TagProvider()),
         ChangeNotifierProvider(create: (_) => TtsProvider()),
         ChangeNotifierProvider(create: (_) => UpdateProvider()),
         ChangeNotifierProvider(
+          lazy: false,
           create: (_) =>
-              QuickPhraseProvider(syncWriteExecutor: localSyncWriteExecutor),
+              QuickPhraseProvider(syncWriteExecutor: configSyncWriteExecutor),
         ),
         ChangeNotifierProvider(
+          lazy: false,
           create: (_) => InstructionInjectionProvider(
-            syncWriteExecutor: localSyncWriteExecutor,
+            syncWriteExecutor: configSyncWriteExecutor,
           ),
         ),
         ChangeNotifierProvider(
           create: (_) => InstructionInjectionGroupProvider(),
         ),
         ChangeNotifierProvider(
+          lazy: false,
           create: (_) =>
-              WorldBookProvider(syncWriteExecutor: localSyncWriteExecutor),
+              WorldBookProvider(syncWriteExecutor: configSyncWriteExecutor),
         ),
         ChangeNotifierProvider(
+          lazy: false,
           create: (_) =>
-              MemoryProvider(syncWriteExecutor: localSyncWriteExecutor),
+              MemoryProvider(syncWriteExecutor: configSyncWriteExecutor),
+        ),
+        Provider<E2eeConfigProviderBinding>(
+          lazy: false,
+          create: (ctx) {
+            final binding = E2eeConfigProviderBinding(
+              settingsProvider: ctx.read<SettingsProvider>(),
+              assistantProvider: ctx.read<AssistantProvider>(),
+              memoryProvider: ctx.read<MemoryProvider>(),
+              mcpProvider: ctx.read<McpProvider>(),
+              quickPhraseProvider: ctx.read<QuickPhraseProvider>(),
+              instructionInjectionProvider: ctx
+                  .read<InstructionInjectionProvider>(),
+              worldBookProvider: ctx.read<WorldBookProvider>(),
+              userProvider: ctx.read<UserProvider>(),
+            );
+            chatContentRuntime?.bindConfigProviders(binding);
+            return binding;
+          },
         ),
         ChangeNotifierProvider(create: (_) => BackupReminderProvider()),
         // Desktop hotkeys provider
@@ -480,6 +510,7 @@ class MyApp extends StatelessWidget {
         ChangeNotifierProvider(
           lazy: false,
           create: (ctx) {
+            ctx.read<E2eeConfigProviderBinding>();
             final runtime = chatContentRuntime;
             final provider = runtime == null
                 ? CloudSyncProvider.controlPlaneOnly(workspaceRuntime)

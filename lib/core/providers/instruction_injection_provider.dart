@@ -65,7 +65,7 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
 
   Future<void> initialize() async {
     if (_initialized) return;
-    await loadAll();
+    if (!usesE2eeConfigVault(_syncWrites)) await loadAll();
     _initialized = true;
   }
 
@@ -87,6 +87,13 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.instructionInjection(item.id),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          _items = List<InstructionInjection>.unmodifiable(
+            <InstructionInjection>[..._items, item],
+          );
+          notifyListeners();
+          return;
+        }
         await InstructionInjectionStore.add(item);
         await loadAll();
       },
@@ -98,6 +105,13 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
     await _syncWrites.runLocalBatch(
       keys: items.map((item) => ConfigSyncKeys.instructionInjection(item.id)),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          _items = List<InstructionInjection>.unmodifiable(
+            <InstructionInjection>[..._items, ...items],
+          );
+          notifyListeners();
+          return;
+        }
         await InstructionInjectionStore.addMany(items);
         await loadAll();
       },
@@ -108,6 +122,15 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.instructionInjection(item.id),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          final index = _items.indexWhere(
+            (candidate) => candidate.id == item.id,
+          );
+          if (index < 0) return;
+          _items = List<InstructionInjection>.of(_items)..[index] = item;
+          notifyListeners();
+          return;
+        }
         await InstructionInjectionStore.update(item);
         await loadAll();
       },
@@ -126,6 +149,19 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
         ConfigSyncKeys.instructionActivity,
       ],
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          _items = List<InstructionInjection>.unmodifiable(
+            _items.where((item) => item.id != id),
+          );
+          _activeIdsByAssistant = <String, List<String>>{
+            for (final entry in _activeIdsByAssistant.entries)
+              entry.key: List<String>.unmodifiable(
+                entry.value.where((activeId) => activeId != id),
+              ),
+          };
+          notifyListeners();
+          return;
+        }
         await InstructionInjectionStore.delete(id);
         await loadAll();
       },
@@ -140,7 +176,9 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
         ConfigSyncKeys.instructionActivity,
       ],
       write: () async {
-        await InstructionInjectionStore.clear();
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await InstructionInjectionStore.clear();
+        }
         _items = const <InstructionInjection>[];
         _activeIdsByAssistant = const <String, List<String>>{};
         notifyListeners();
@@ -157,20 +195,37 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
       ..removeWhere((e) => e.id == item.id);
     items.insert(position.clamp(0, items.length), item);
     _items = List<InstructionInjection>.unmodifiable(items);
-    await InstructionInjectionStore.save(_items);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      await InstructionInjectionStore.save(_items);
+    }
     notifyListeners();
   }
 
   Future<void> syncDelete(String id) async {
     await initialize();
     if (!_items.any((e) => e.id == id)) return;
+    if (usesE2eeConfigVault(_syncWrites)) {
+      _items = List<InstructionInjection>.unmodifiable(
+        _items.where((item) => item.id != id),
+      );
+      _activeIdsByAssistant = <String, List<String>>{
+        for (final entry in _activeIdsByAssistant.entries)
+          entry.key: List<String>.unmodifiable(
+            entry.value.where((activeId) => activeId != id),
+          ),
+      };
+      notifyListeners();
+      return;
+    }
     await InstructionInjectionStore.delete(id);
     await loadAll();
   }
 
   Future<void> syncReplaceActiveIds(Map<String, List<String>> activeIds) async {
     await initialize();
-    await InstructionInjectionStore.setActiveIdsMap(activeIds);
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      await InstructionInjectionStore.setActiveIdsMap(activeIds);
+    }
     _activeIdsByAssistant = <String, List<String>>{
       for (final entry in activeIds.entries)
         entry.key: List<String>.unmodifiable(entry.value),
@@ -195,7 +250,9 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
         list.insert(newIndex, item);
         _items = list;
         notifyListeners();
-        await InstructionInjectionStore.save(_items);
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await InstructionInjectionStore.save(_items);
+        }
       },
     );
   }
@@ -245,7 +302,9 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
 
         _items = list;
         notifyListeners();
-        await InstructionInjectionStore.save(_items);
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await InstructionInjectionStore.save(_items);
+        }
       },
     );
   }
@@ -267,10 +326,12 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
         nextMap[key] = ids.toSet().toList(growable: false);
         _activeIdsByAssistant = nextMap;
         notifyListeners();
-        await InstructionInjectionStore.setActiveIds(
-          ids,
-          assistantId: assistantId,
-        );
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          await InstructionInjectionStore.setActiveIds(
+            ids,
+            assistantId: assistantId,
+          );
+        }
       },
     );
   }

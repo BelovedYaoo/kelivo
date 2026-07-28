@@ -56,7 +56,7 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
     _ManagedFileCopy? managedFileCopy,
   }) : _syncWrites = syncWriteExecutor,
        _managedFileCopy = managedFileCopy ?? _copyManagedFile {
-    ready = _load();
+    ready = usesE2eeConfigVault(_syncWrites) ? Future<void>.value() : _load();
   }
 
   Future<void> _load() async {
@@ -104,10 +104,12 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
     await _syncWrites.runLocal(
       key: ConfigSyncKeys.profile,
       write: () async {
-        final prefs = await SharedPreferences.getInstance();
-        await _writePreferencesAtomically(prefs, <String, Object?>{
-          _prefsUserNameKey: trimmed,
-        }, operation: '保存用户名');
+        if (!usesE2eeConfigVault(_syncWrites)) {
+          final prefs = await SharedPreferences.getInstance();
+          await _writePreferencesAtomically(prefs, <String, Object?>{
+            _prefsUserNameKey: trimmed,
+          }, operation: '保存用户名');
+        }
         _name = trimmed;
         _hasSavedName = true;
         notifyListeners();
@@ -212,11 +214,13 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
     required String? value,
   }) async {
     final previousAvatarPath = _avatarType == 'file' ? _avatarValue : null;
-    final prefs = await SharedPreferences.getInstance();
-    await _writePreferencesAtomically(prefs, <String, Object?>{
-      _prefsAvatarValueKey: value,
-      _prefsAvatarTypeKey: type,
-    }, operation: '保存用户头像');
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await _writePreferencesAtomically(prefs, <String, Object?>{
+        _prefsAvatarValueKey: value,
+        _prefsAvatarTypeKey: type,
+      }, operation: '保存用户头像');
+    }
     _avatarType = type;
     _avatarValue = value;
     notifyListeners();
@@ -261,6 +265,7 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<bool> _isReferencedByProviderConfiguration(String path) async {
+    if (usesE2eeConfigVault(_syncWrites)) return false;
     final preferences = await SharedPreferences.getInstance();
     final encoded = preferences.getString(_providerConfigsPreferenceKey);
     if (encoded == null || encoded.isEmpty) return false;
@@ -302,12 +307,14 @@ class UserProvider extends ChangeNotifier with BatchedChangeNotifier {
     final nextAvatarType = replaceAvatar ? avatarType : _avatarType;
     final nextAvatarValue = replaceAvatar ? avatarValue : _avatarValue;
     final previousAvatarPath = _avatarType == 'file' ? _avatarValue : null;
-    final prefs = await SharedPreferences.getInstance();
-    await _writePreferencesAtomically(prefs, <String, Object?>{
-      _prefsUserNameKey: nextName,
-      _prefsAvatarValueKey: nextAvatarValue,
-      _prefsAvatarTypeKey: nextAvatarType,
-    }, operation: '同步用户资料');
+    if (!usesE2eeConfigVault(_syncWrites)) {
+      final prefs = await SharedPreferences.getInstance();
+      await _writePreferencesAtomically(prefs, <String, Object?>{
+        _prefsUserNameKey: nextName,
+        _prefsAvatarValueKey: nextAvatarValue,
+        _prefsAvatarTypeKey: nextAvatarType,
+      }, operation: '同步用户资料');
+    }
     if (normalizedName.isNotEmpty) {
       _name = normalizedName;
       _hasSavedName = true;

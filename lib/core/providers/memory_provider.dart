@@ -20,7 +20,7 @@ class MemoryProvider extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<void> initialize() async {
     if (_initialized) return;
-    await loadAll();
+    if (!usesE2eeConfigVault(_syncWrites)) await loadAll();
     _initialized = true;
   }
 
@@ -47,6 +47,12 @@ class MemoryProvider extends ChangeNotifier with BatchedChangeNotifier {
     return _syncWrites.runLocal(
       key: ConfigSyncKeys.memory(draft.syncId),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          final memory = draft.copyWith(id: _nextId());
+          _memories = <AssistantMemory>[..._memories, memory];
+          notifyListeners();
+          return memory;
+        }
         final memory = await MemoryStore.add(
           assistantId: assistantId,
           content: content,
@@ -68,6 +74,13 @@ class MemoryProvider extends ChangeNotifier with BatchedChangeNotifier {
     return _syncWrites.runLocal(
       key: ConfigSyncKeys.memory(current.syncId),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          final index = _memories.indexWhere((memory) => memory.id == id);
+          final memory = _memories[index].copyWith(content: content);
+          _memories = List<AssistantMemory>.of(_memories)..[index] = memory;
+          notifyListeners();
+          return memory;
+        }
         final memory = await MemoryStore.update(id: id, content: content);
         await loadAll();
         return memory;
@@ -82,6 +95,13 @@ class MemoryProvider extends ChangeNotifier with BatchedChangeNotifier {
     return _syncWrites.runLocal(
       key: ConfigSyncKeys.memory(current.syncId),
       write: () async {
+        if (usesE2eeConfigVault(_syncWrites)) {
+          _memories = _memories
+              .where((memory) => memory.id != id)
+              .toList(growable: false);
+          notifyListeners();
+          return true;
+        }
         final deleted = await MemoryStore.delete(id: id);
         await loadAll();
         return deleted;
@@ -91,14 +111,46 @@ class MemoryProvider extends ChangeNotifier with BatchedChangeNotifier {
 
   Future<void> syncUpsert(AssistantMemory memory) async {
     await initialize();
+    if (usesE2eeConfigVault(_syncWrites)) {
+      final index = _memories.indexWhere(
+        (candidate) => candidate.syncId == memory.syncId,
+      );
+      final persisted = memory.copyWith(
+        id: index < 0 ? _nextId() : _memories[index].id,
+      );
+      if (index < 0) {
+        _memories = <AssistantMemory>[..._memories, persisted];
+      } else {
+        _memories = List<AssistantMemory>.of(_memories)..[index] = persisted;
+      }
+      notifyListeners();
+      return;
+    }
     await MemoryStore.upsertBySyncId(memory);
     await loadAll();
   }
 
   Future<void> syncDelete(String syncId) async {
     await initialize();
+    if (usesE2eeConfigVault(_syncWrites)) {
+      final next = _memories
+          .where((memory) => memory.syncId != syncId)
+          .toList(growable: false);
+      if (next.length == _memories.length) return;
+      _memories = next;
+      notifyListeners();
+      return;
+    }
     if (await MemoryStore.deleteBySyncId(syncId)) {
       await loadAll();
     }
+  }
+
+  int _nextId() {
+    var maximum = 0;
+    for (final memory in _memories) {
+      if (memory.id > maximum) maximum = memory.id;
+    }
+    return maximum + 1;
   }
 }

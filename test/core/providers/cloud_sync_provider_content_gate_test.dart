@@ -4,19 +4,35 @@ import 'dart:io';
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
+import 'package:Kelivo/core/database/chat_database_repository.dart';
+import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
+import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
+import 'package:Kelivo/core/providers/mcp_provider.dart';
+import 'package:Kelivo/core/providers/memory_provider.dart';
+import 'package:Kelivo/core/providers/quick_phrase_provider.dart';
+import 'package:Kelivo/core/providers/settings_provider.dart';
+import 'package:Kelivo/core/providers/user_provider.dart';
+import 'package:Kelivo/core/providers/world_book_provider.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
-import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_content_runtime.dart';
+import 'package:Kelivo/core/services/sync/e2ee_config_provider_binding.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_scheduler.dart';
+import 'package:Kelivo/core/services/sync/sync_codec.dart';
+import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:Kelivo/core/services/workspace/account_workspace_runtime.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
@@ -33,6 +49,7 @@ import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pretty_qr_code/pretty_qr_code.dart';
 import 'package:provider/provider.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import '../database/test_database_cipher.dart';
 
@@ -305,59 +322,10 @@ void main() {
     expect(timers.nextDelay, isNull);
   });
 
-  test('E2EE 内容运行时离线初始化不阻塞且关闭等待网络周期后释放所有权', () async {
+  test('E2EE 生产运行时缺少配置桥接时失败关闭且不启动网络', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
-    final first = harness.createInstance(blockInitialPull: true);
-
-    await first.runtime.initialize().timeout(const Duration(seconds: 15));
-    await _waitUntil(() => first.pull.pullCalls == 1);
-    expect(first.runtime.state, E2eeChatContentRuntimeState.ready);
-    expect(
-      first.transportSession?.deviceKeyVersion,
-      harness.session.deviceKeyVersion,
-    );
-
-    var closed = false;
-    final closeFuture = first.runtime.close().then((_) => closed = true);
-    await Future<void>.delayed(Duration.zero);
-    expect(closed, isFalse);
-
-    first.pull.failBlockedPull();
-    await closeFuture;
-    expect(first.runtime.state, E2eeChatContentRuntimeState.closed);
-
-    final reopened = harness.createInstance();
-    await reopened.runtime.initialize().timeout(const Duration(seconds: 15));
-    await _waitUntil(() => reopened.pull.pullCalls >= 2);
-    expect(reopened.runtime.state, E2eeChatContentRuntimeState.ready);
-    await reopened.runtime.close();
-  });
-
-  test('E2EE 内容运行时在本地事务提交后唤醒密文发送周期', () async {
-    final harness = await _E2eeRuntimeHarness.create();
-    addTearDown(harness.close);
-    final instance = harness.createInstance();
-    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
-    await _waitUntil(() => instance.pull.pullCalls >= 2);
-    final pullsBeforeWrite = instance.pull.pullCalls;
-
-    await instance.chatService.createConversation(title: '本地事务');
-
-    await _waitUntil(() => instance.records.pushCalls == 1);
-    await _waitUntil(() => instance.pull.pullCalls >= pullsBeforeWrite + 2);
-    expect(instance.records.mutationCount, 1);
-    expect(
-      instance.transportSession?.deviceKeyVersion,
-      harness.session.deviceKeyVersion,
-    );
-    await instance.runtime.close();
-  });
-
-  test('E2EE 内容运行时缺少本机密钥状态时失败关闭且不启动网络', () async {
-    final harness = await _E2eeRuntimeHarness.create(seedDeviceState: false);
-    addTearDown(harness.close);
-    final instance = harness.createInstance();
+    final instance = harness.createInstance(withConfigProviders: false);
 
     await expectLater(instance.runtime.initialize(), throwsStateError);
 
@@ -365,7 +333,6 @@ void main() {
     expect(instance.pull.pullCalls, 0);
     expect(instance.transportSession, isNull);
     await instance.runtime.close();
-    expect(instance.runtime.state, E2eeChatContentRuntimeState.closed);
   });
 
   test('内容同步硬关闭且不需要旧同步状态库', () async {
@@ -1017,6 +984,131 @@ void main() {
     await tester.runAsync(() => _waitUntil(() => pairing.cancelCalls == 1));
     expect(fixture.provider.pendingDeviceApproval, isNull);
   });
+
+  test('E2EE 内容运行时离线初始化不阻塞且关闭等待网络周期后释放所有权', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final first = harness.createInstance(blockInitialPull: true);
+
+    await first.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => first.pull.pullCalls == 1);
+    expect(first.runtime.state, E2eeChatContentRuntimeState.ready);
+    expect(
+      first.transportSession?.deviceKeyVersion,
+      harness.session.deviceKeyVersion,
+    );
+
+    var closed = false;
+    final closeFuture = first.runtime.close().then((_) => closed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isFalse);
+
+    first.pull.failBlockedPull();
+    await closeFuture;
+    expect(first.runtime.state, E2eeChatContentRuntimeState.closed);
+
+    final reopened = harness.createInstance();
+    await reopened.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => reopened.pull.pullCalls >= 2);
+    expect(reopened.runtime.state, E2eeChatContentRuntimeState.ready);
+    await reopened.runtime.close();
+  });
+
+  test('E2EE 内容运行时在本地事务提交后唤醒密文发送周期', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance();
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+    final pullsBeforeWrite = instance.pull.pullCalls;
+
+    await instance.chatService.createConversation(title: '本地事务');
+
+    await _waitUntil(() => instance.records.pushCalls == 1);
+    await _waitUntil(() => instance.pull.pullCalls >= pullsBeforeWrite + 2);
+    expect(instance.records.mutationCount, 1);
+    expect(
+      instance.transportSession?.deviceKeyVersion,
+      harness.session.deviceKeyVersion,
+    );
+    await instance.runtime.close();
+  });
+
+  test('E2EE 内容运行时缺少本机密钥状态时失败关闭且不启动网络', () async {
+    final harness = await _E2eeRuntimeHarness.create(seedDeviceState: false);
+    addTearDown(harness.close);
+    final instance = harness.createInstance();
+
+    await expectLater(instance.runtime.initialize(), throwsStateError);
+
+    expect(instance.runtime.state, E2eeChatContentRuntimeState.failed);
+    expect(instance.pull.pullCalls, 0);
+    expect(instance.transportSession, isNull);
+    await instance.runtime.close();
+    expect(instance.runtime.state, E2eeChatContentRuntimeState.closed);
+  });
+
+  test('E2EE 配置桥接从 Vault 水合且事务失败后恢复 Provider', () async {
+    final harness = await _E2eeConfigBindingHarness.create(
+      initialProfileName: 'Vault 用户',
+    );
+    addTearDown(harness.close);
+
+    expect(harness.providers.user.name, 'Vault 用户');
+
+    await expectLater(
+      harness.binding.runLocalWrite<void>(
+        configKeys: const <SyncEntityKey>[ConfigSyncKeys.profile],
+        transaction: (trackedWrite) {
+          return harness.repository.runInTransaction<void>(() async {
+            await trackedWrite();
+            throw StateError('模拟事务提交失败');
+          });
+        },
+        write: () => harness.providers.user.setName('未提交用户'),
+      ),
+      throwsStateError,
+    );
+
+    expect(harness.providers.user.name, 'Vault 用户');
+    expect(await harness.readProfileName(), 'Vault 用户');
+  });
+
+  test('E2EE 配置远端事务提交后刷新 Provider 且不产生本地 outbox', () async {
+    final harness = await _E2eeConfigBindingHarness.create(
+      initialProfileName: '旧用户',
+    );
+    addTearDown(harness.close);
+    final change = await harness.profileChange('远端用户');
+
+    await harness.binding.runRemotePull(
+      () => harness.repository.runInTransaction<void>(
+        () =>
+            harness.binding.applyTransactional(<E2eeSyncPulledChange>[change]),
+      ),
+    );
+
+    expect(harness.providers.user.name, '远端用户');
+    expect(await harness.readProfileName(), '远端用户');
+    final outbox = await harness.repository.acquireE2eeSyncOutboxCommands(
+      now: DateTime.utc(2026, 7, 29),
+    );
+    expect(await outbox.listDirtyIntents(limit: 10), isEmpty);
+  });
+
+  test('E2EE 生产运行时配置写入与 outbox 原子提交并触发发送', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(withConfigProviders: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+
+    await instance.configProviders!.user.setName('配置事务用户');
+
+    await _waitUntil(() => instance.records.pushCalls == 1);
+    expect(instance.records.mutationCount, 1);
+    await instance.runtime.close();
+  });
 }
 
 Future<_Fixture> _createSignedInFixture({
@@ -1190,6 +1282,224 @@ CloudSyncDeviceSession _otherDevice() {
   );
 }
 
+final class _E2eeConfigBindingHarness {
+  const _E2eeConfigBindingHarness._({
+    required this.directory,
+    required this.repository,
+    required this.providers,
+    required this.binding,
+  });
+
+  final Directory directory;
+  final ChatDatabaseRepository repository;
+  final _TestConfigProviders providers;
+  final E2eeConfigProviderBinding binding;
+
+  static Future<_E2eeConfigBindingHarness> create({
+    required String initialProfileName,
+  }) async {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+    final directory = await Directory.systemTemp.createTemp(
+      'kelivo_config_binding_',
+    );
+    final database = AppDatabase.open(
+      file: File(
+        '${directory.path}${Platform.pathSeparator}config-binding.sqlite',
+      ),
+      cipher: testDatabaseCipher,
+    );
+    await database.customSelect('SELECT 1;').getSingle();
+    final repository = ChatDatabaseRepository(
+      database,
+      databaseCipher: testDatabaseCipher,
+    );
+    try {
+      final providers = _TestConfigProviders.create(
+        const _VaultPassThroughWriteExecutor(),
+      );
+      final binding = providers.createBinding();
+      final encoded = E2eeSyncPayloadCodec.encode(
+        entityKey: ConfigSyncKeys.profile,
+        payload: _profilePayload(initialProfileName),
+      );
+      try {
+        await repository.e2eeConfigVaultCommands.put(
+          key: ConfigSyncKeys.profile,
+          payload: encoded,
+          updatedAt: DateTime.utc(2026, 7, 29),
+        );
+      } finally {
+        encoded.fillRange(0, encoded.length, 0);
+      }
+      await binding.initialize(repository.e2eeConfigVaultCommands);
+      return _E2eeConfigBindingHarness._(
+        directory: directory,
+        repository: repository,
+        providers: providers,
+        binding: binding,
+      );
+    } catch (_) {
+      await repository.close();
+      if (await directory.exists()) await directory.delete(recursive: true);
+      rethrow;
+    }
+  }
+
+  Future<String> readProfileName() async {
+    final entry = await repository.e2eeConfigVaultCommands.read(
+      ConfigSyncKeys.profile,
+    );
+    if (entry == null) throw StateError('测试配置 Vault 缺少用户资料');
+    return E2eeSyncPayloadCodec.decode(
+          entityKey: entry.key,
+          bytes: entry.payload,
+        )['name']
+        as String;
+  }
+
+  Future<E2eeSyncPulledValueChange> profileChange(String name) async {
+    const secureCore = KelivoSecureCore();
+    final codec = E2eeAccountRecordStateCodec.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: secureCore,
+        accountRootKey: await secureCore.generateAccountRootKey(),
+        userId: _userId,
+        currentKeyEpoch: 1,
+      ),
+    );
+    try {
+      final sealed = await codec.sealValue(
+        entityKey: ConfigSyncKeys.profile,
+        logicalVersion: 1,
+        parentDigests: const <E2eeAccountRecordStateDigest>[],
+        operationId: '50000000-0000-4000-8000-000000000001',
+        claimedWriterDeviceId: _otherDeviceId,
+        claimedWriterKeyVersion: 1,
+        payload: Uint8List.fromList(<int>[1]),
+      );
+      final authenticated = await codec.open(
+        E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: E2eeUntrustedAccountRecordId.fromTransport(
+            sealed.record.recordId.wireValue,
+          ),
+          envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+          keyEpoch: sealed.record.keyEpoch,
+          ciphertext: sealed.record.ciphertext,
+        ),
+        decode: (state, _) => state,
+      );
+      return E2eeSyncPulledValueChange(
+        untrustedServerMetadata: E2eeSyncUntrustedServerMetadata(
+          changeSeq: 1,
+          revision: 1,
+        ),
+        state: authenticated,
+        payload: _profilePayload(name),
+      );
+    } finally {
+      await codec.close();
+    }
+  }
+
+  Future<void> close() async {
+    providers.dispose();
+    await repository.close();
+    if (await directory.exists()) await directory.delete(recursive: true);
+  }
+}
+
+Map<String, Object?> _profilePayload(String name) => <String, Object?>{
+  'name': name,
+  'avatarType': null,
+  'avatarValue': null,
+};
+
+final class _TestConfigProviders {
+  const _TestConfigProviders._({
+    required this.settings,
+    required this.assistants,
+    required this.memories,
+    required this.mcp,
+    required this.quickPhrases,
+    required this.injections,
+    required this.worldBooks,
+    required this.user,
+  });
+
+  final SettingsProvider settings;
+  final AssistantProvider assistants;
+  final MemoryProvider memories;
+  final McpProvider mcp;
+  final QuickPhraseProvider quickPhrases;
+  final InstructionInjectionProvider injections;
+  final WorldBookProvider worldBooks;
+  final UserProvider user;
+
+  factory _TestConfigProviders.create(
+    SyncWriteExecutor executor, {
+    ChatService? chatService,
+  }) {
+    return _TestConfigProviders._(
+      settings: SettingsProvider(syncWriteExecutor: executor),
+      assistants: AssistantProvider(
+        chatService: chatService,
+        syncWriteExecutor: executor,
+      ),
+      memories: MemoryProvider(syncWriteExecutor: executor),
+      mcp: McpProvider(syncWriteExecutor: executor),
+      quickPhrases: QuickPhraseProvider(syncWriteExecutor: executor),
+      injections: InstructionInjectionProvider(syncWriteExecutor: executor),
+      worldBooks: WorldBookProvider(syncWriteExecutor: executor),
+      user: UserProvider(syncWriteExecutor: executor),
+    );
+  }
+
+  E2eeConfigProviderBinding createBinding() {
+    return E2eeConfigProviderBinding(
+      settingsProvider: settings,
+      assistantProvider: assistants,
+      memoryProvider: memories,
+      mcpProvider: mcp,
+      quickPhraseProvider: quickPhrases,
+      instructionInjectionProvider: injections,
+      worldBookProvider: worldBooks,
+      userProvider: user,
+    );
+  }
+
+  void dispose() {
+    settings.dispose();
+    assistants.dispose();
+    memories.dispose();
+    mcp.dispose();
+    quickPhrases.dispose();
+    injections.dispose();
+    worldBooks.dispose();
+    user.dispose();
+  }
+}
+
+final class _VaultPassThroughWriteExecutor
+    implements E2eeConfigVaultWriteExecutor {
+  const _VaultPassThroughWriteExecutor();
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) {
+    return Future<T>.sync(write);
+  }
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) {
+    return Future<T>.sync(write);
+  }
+}
+
 final class _E2eeRuntimeHarness {
   _E2eeRuntimeHarness._({
     required this.root,
@@ -1274,7 +1584,10 @@ final class _E2eeRuntimeHarness {
     );
   }
 
-  _E2eeRuntimeInstance createInstance({bool blockInitialPull = false}) {
+  _E2eeRuntimeInstance createInstance({
+    bool blockInitialPull = false,
+    bool withConfigProviders = true,
+  }) {
     final pull = _RuntimePullTransport(
       accountUserId: session.userId,
       blockInitialPull: blockInitialPull,
@@ -1284,6 +1597,14 @@ final class _E2eeRuntimeHarness {
       actorDeviceId: session.deviceId,
     );
     final capture = _TransportSessionCapture();
+    E2eeChatContentTransports createTransports({
+      required CloudSyncClient client,
+      required CloudSyncAuthenticatedSession session,
+    }) {
+      capture.session = session;
+      return E2eeChatContentTransports(records: records, pull: pull);
+    }
+
     final runtime = E2eeChatContentRuntime.takeOwnership(
       session: session,
       deviceStateStore: _deviceStateStore,
@@ -1291,16 +1612,23 @@ final class _E2eeRuntimeHarness {
       databaseGateway: _databaseGateway,
       databaseFile: _databaseFile,
       client: CloudSyncClient.forTesting(baseUrl: session.baseUrl),
-      transportFactory: ({required client, required session}) {
-        capture.session = session;
-        return E2eeChatContentTransports(records: records, pull: pull);
-      },
+      transportFactory: createTransports,
     );
     final chatService = ChatService(runtime, databaseGateway: _databaseGateway);
     runtime.bindChatService(chatService);
+    _TestConfigProviders? configProviders;
+    if (withConfigProviders) {
+      SharedPreferences.setMockInitialValues(<String, Object>{});
+      configProviders = _TestConfigProviders.create(
+        runtime,
+        chatService: chatService,
+      );
+      runtime.bindConfigProviders(configProviders.createBinding());
+    }
     final instance = _E2eeRuntimeInstance(
       runtime: runtime,
       chatService: chatService,
+      configProviders: configProviders,
       pull: pull,
       records: records,
       capture: capture,
@@ -1314,6 +1642,7 @@ final class _E2eeRuntimeHarness {
       instance.pull.failBlockedPull();
       await instance.runtime.close();
       instance.chatService.dispose();
+      instance.configProviders?.dispose();
     }
     _instances.clear();
     if (await root.exists()) await root.delete(recursive: true);
@@ -1324,6 +1653,7 @@ final class _E2eeRuntimeInstance {
   const _E2eeRuntimeInstance({
     required this.runtime,
     required this.chatService,
+    required this.configProviders,
     required this.pull,
     required this.records,
     required this._capture,
@@ -1331,6 +1661,7 @@ final class _E2eeRuntimeInstance {
 
   final E2eeChatContentRuntime runtime;
   final ChatService chatService;
+  final _TestConfigProviders? configProviders;
   final _RuntimePullTransport pull;
   final _RuntimeRecordTransport records;
   final _TransportSessionCapture _capture;

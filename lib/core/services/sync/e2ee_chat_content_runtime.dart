@@ -14,6 +14,8 @@ import 'e2ee_account_key_lease.dart';
 import 'e2ee_account_record_cipher.dart';
 import 'e2ee_account_record_state.dart';
 import 'e2ee_chat_sync_adapter.dart';
+import 'e2ee_config_provider_binding.dart';
+import 'config_sync_keys.dart';
 import 'e2ee_sync_outbox.dart';
 import 'e2ee_sync_pull.dart';
 import 'e2ee_sync_scheduler.dart';
@@ -44,16 +46,36 @@ enum E2eeChatContentRuntimeState {
 
 /// 组装聊天数据面，并集中持有密码学、数据库、网络和调度生命周期。
 final class E2eeChatContentRuntime
-    implements CloudSyncContentRuntime, SyncWriteExecutor {
-  E2eeChatContentRuntime.takeOwnership({
+    implements CloudSyncContentRuntime, E2eeConfigVaultWriteExecutor {
+  factory E2eeChatContentRuntime.takeOwnership({
+    required CloudSyncAccountSession session,
+    required DeviceStateBlobStore deviceStateStore,
+    required KelivoSecureCore secureCore,
+    required ChatDatabaseGateway databaseGateway,
+    required File databaseFile,
+    required CloudSyncClient client,
+    E2eeChatContentTransportFactory transportFactory = _defaultTransportFactory,
+    DateTime Function() utcNow = _defaultUtcNow,
+  }) => E2eeChatContentRuntime._(
+    session: session,
+    deviceStateStore: deviceStateStore,
+    secureCore: secureCore,
+    databaseGateway: databaseGateway,
+    databaseFile: databaseFile,
+    client: client,
+    transportFactory: transportFactory,
+    utcNow: utcNow,
+  );
+
+  E2eeChatContentRuntime._({
     required CloudSyncAccountSession session,
     required this._deviceStateStore,
     required this._secureCore,
     required this._databaseGateway,
     required File databaseFile,
     required CloudSyncClient client,
-    this._transportFactory = _defaultTransportFactory,
-    this._utcNow = _defaultUtcNow,
+    required this._transportFactory,
+    required this._utcNow,
   }) : _session = session,
        _databaseFile = databaseFile.absolute,
        _client = client {
@@ -73,6 +95,7 @@ final class E2eeChatContentRuntime
 
   E2eeChatContentRuntimeState _state = E2eeChatContentRuntimeState.created;
   ChatService? _chatService;
+  E2eeConfigProviderBinding? _configBinding;
   ChatDatabaseLease? _databaseLease;
   E2eeAccountKeyLease? _keyLease;
   E2eeAccountRecordCipher? _recordCipher;
@@ -102,6 +125,16 @@ final class E2eeChatContentRuntime
     _chatService = chatService;
   }
 
+  void bindConfigProviders(E2eeConfigProviderBinding binding) {
+    if (_state != E2eeChatContentRuntimeState.created) {
+      throw StateError('E2EE 内容运行时启动后不能绑定配置 Provider');
+    }
+    if (_configBinding != null) {
+      throw StateError('E2EE 内容运行时只能绑定一组配置 Provider');
+    }
+    _configBinding = binding;
+  }
+
   @override
   Future<void> initialize() {
     if (_state == E2eeChatContentRuntimeState.ready) {
@@ -118,6 +151,10 @@ final class E2eeChatContentRuntime
     }
     if (_chatService == null) {
       return Future<void>.error(StateError('E2EE 内容运行时尚未绑定聊天服务'));
+    }
+    if (_configBinding == null) {
+      _state = E2eeChatContentRuntimeState.failed;
+      return Future<void>.error(StateError('E2EE 内容运行时尚未绑定配置 Provider'));
     }
 
     _state = E2eeChatContentRuntimeState.initializing;
@@ -179,6 +216,12 @@ final class E2eeChatContentRuntime
       await outbox.initialize();
       _requireStillInitializing();
 
+      final configBinding = _configBinding;
+      if (configBinding != null) {
+        await configBinding.initialize(repository.e2eeConfigVaultCommands);
+        _requireStillInitializing();
+      }
+
       Future<T> runPullBatch<T>({
         required Future<T> Function() pull,
         required bool Function() shouldRefresh,
@@ -206,11 +249,36 @@ final class E2eeChatContentRuntime
         pullCommands: repository.e2eeSyncPullCommands,
         stateCodec: stateCodec,
         transport: transports.pull,
-        applyBusiness: adapter.applyTransactional,
+        applyBusiness: (changes) async {
+          final configChanges = <E2eeSyncPulledChange>[];
+          final chatChanges = <E2eeSyncPulledChange>[];
+          for (final change in changes) {
+            if (ConfigSyncKeys.entityTypes.contains(
+              change.state.entityKey.entityType,
+            )) {
+              configChanges.add(change);
+            } else {
+              chatChanges.add(change);
+            }
+          }
+          if (configChanges.isNotEmpty) {
+            final binding = configBinding;
+            if (binding == null) {
+              throw StateError('E2EE 配置变更缺少 Provider 桥接');
+            }
+            await binding.applyTransactional(configChanges);
+          }
+          await adapter.applyTransactional(chatChanges);
+        },
         utcNow: _utcNow,
       );
       final cycleRunner = E2eeSyncCycleRunner(
-        runPullBatch: adapter.runPullAndPublish,
+        runPullBatch: <T>(pull) {
+          Future<T> run() => adapter.runPullAndPublish(pull);
+          return configBinding == null
+              ? run()
+              : configBinding.runRemotePull(run);
+        },
         pullOnce: ({required int limit}) async {
           final report = await pullCoordinator.pullOnce(limit: limit);
           if (report.disposition ==
@@ -223,7 +291,18 @@ final class E2eeChatContentRuntime
           }
           return E2eeSyncPullStepDisposition.complete;
         },
-        sealNext: () => outbox.sealNext(readSnapshot: adapter.readSnapshot),
+        sealNext: () => outbox.sealNext(
+          readSnapshot: (entityKey) {
+            if (ConfigSyncKeys.entityTypes.contains(entityKey.entityType)) {
+              final binding = configBinding;
+              if (binding == null) {
+                throw StateError('E2EE 配置快照缺少 Provider 桥接');
+              }
+              return binding.readSnapshot(entityKey);
+            }
+            return adapter.readSnapshot(entityKey);
+          },
+        ),
         flushOnce: () => outbox.flushOnce(transport: transports.records),
       );
       final scheduler = E2eeSyncScheduler(cycleRunner: cycleRunner);
@@ -278,7 +357,27 @@ final class E2eeChatContentRuntime
       if (outbox == null) {
         throw StateError('E2EE 内容运行时缺少 outbox');
       }
-      final result = await outbox.runLocalBatch<T>(keys: keys, write: write);
+      final normalizedKeys = keys.toSet().toList(growable: false);
+      for (final key in normalizedKeys) {
+        validateSyncEntityKey(key);
+      }
+      final configKeys = normalizedKeys
+          .where((key) => ConfigSyncKeys.entityTypes.contains(key.entityType))
+          .toList(growable: false);
+      final configBinding = _configBinding;
+      if (configKeys.isNotEmpty && configBinding == null) {
+        throw StateError('E2EE 配置本地写入缺少 Provider 桥接');
+      }
+      final result = configBinding == null || configKeys.isEmpty
+          ? await outbox.runLocalBatch<T>(keys: normalizedKeys, write: write)
+          : await configBinding.runLocalWrite<T>(
+              configKeys: configKeys,
+              transaction: (trackedWrite) => outbox.runLocalBatch<T>(
+                keys: normalizedKeys,
+                write: trackedWrite,
+              ),
+              write: write,
+            );
       if (_state == E2eeChatContentRuntimeState.ready) {
         _scheduler?.wake();
       }
