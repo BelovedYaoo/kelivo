@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:collection';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -91,6 +92,33 @@ Map<String, Object?> _validMessagePayload() => <String, Object?>{
   'cachedTokens': 0,
   'durationMs': 1,
 };
+
+Map<String, Object?> _validMessageAttachment(int index) {
+  final suffix = (index + 1).toRadixString(16).padLeft(12, '0');
+  return <String, Object?>{
+    'attachmentId': '80000000-0000-4000-8000-$suffix',
+    'uploadId': '90000000-0000-4000-8000-$suffix',
+    'keyEpoch': 7,
+    'kind': index.isEven ? 'image' : 'file',
+    'order': index,
+  };
+}
+
+final class _LengthOnlyAttachments extends ListBase<Object?> {
+  @override
+  int get length => e2eeSyncMaximumMessageAttachmentCount + 1;
+
+  @override
+  set length(int value) => throw UnsupportedError('只用于验证附件数量前置门禁');
+
+  @override
+  Object? operator [](int index) => throw StateError('超限附件不应被读取');
+
+  @override
+  void operator []=(int index, Object? value) {
+    throw UnsupportedError('只用于验证附件数量前置门禁');
+  }
+}
 
 Map<String, Object?> _validMessageSelectionPayload() => <String, Object?>{
   'conversationId': 'conversation-1',
@@ -3352,6 +3380,97 @@ void main() {
         payload,
       );
     }
+  });
+
+  test('E2EE 消息 payload 接受上限内完整附件引用', () {
+    const entityKey = SyncEntityKey(
+      entityType: E2eeSyncChatRecordTypes.message,
+      entityId: 'message-1',
+    );
+    expect(e2eeSyncMaximumMessageAttachmentCount, 32);
+    final attachments = List<Object?>.generate(
+      e2eeSyncMaximumMessageAttachmentCount,
+      _validMessageAttachment,
+      growable: false,
+    );
+    final payload = <String, Object?>{
+      ..._validMessagePayload(),
+      'attachments': attachments,
+    };
+
+    final encoded = E2eeSyncPayloadCodec.encode(
+      entityKey: entityKey,
+      payload: payload,
+    );
+    final decoded = E2eeSyncPayloadCodec.decode(
+      entityKey: entityKey,
+      bytes: encoded,
+    );
+
+    expect(decoded['attachments'], attachments);
+  });
+
+  test('E2EE 消息 payload 在递归冻结前拒绝超限附件', () {
+    const entityKey = SyncEntityKey(
+      entityType: E2eeSyncChatRecordTypes.message,
+      entityId: 'message-1',
+    );
+    final attachmentLimitFailure = isA<FormatException>().having(
+      (error) => error.message,
+      'message',
+      contains('$e2eeSyncMaximumMessageAttachmentCount'),
+    );
+    final oversizedAttachments = List<Object?>.generate(
+      e2eeSyncMaximumMessageAttachmentCount + 1,
+      _validMessageAttachment,
+      growable: false,
+    );
+
+    expect(
+      () => E2eeSyncPayloadCodec.encode(
+        entityKey: entityKey,
+        payload: <String, Object?>{
+          ..._validMessagePayload(),
+          'attachments': oversizedAttachments,
+        },
+      ),
+      throwsA(attachmentLimitFailure),
+    );
+    expect(
+      () => E2eeSyncPayloadCodec.encode(
+        entityKey: entityKey,
+        payload: <String, Object?>{
+          ..._validMessagePayload(),
+          'attachments': _LengthOnlyAttachments(),
+        },
+      ),
+      throwsA(attachmentLimitFailure),
+    );
+
+    Object? deeplyNestedValue = true;
+    for (var depth = 0; depth < 100; depth++) {
+      deeplyNestedValue = <Object?>[deeplyNestedValue];
+    }
+    oversizedAttachments[0] = <String, Object?>{
+      'unexpected': deeplyNestedValue,
+    };
+    final source = utf8.encode(
+      jsonEncode(<String, Object?>{
+        'payload': <String, Object?>{
+          ..._validMessagePayload(),
+          'attachments': oversizedAttachments,
+        },
+        'recordType': E2eeSyncChatRecordTypes.message,
+        'version': e2eeSyncPayloadFormatVersion,
+      }),
+    );
+    expect(
+      () => E2eeSyncPayloadCodec.decode(
+        entityKey: entityKey,
+        bytes: Uint8List.fromList(source),
+      ),
+      throwsA(attachmentLimitFailure),
+    );
   });
 
   test('E2EE 同步 payload 拒绝非规范编码与非法信封', () {

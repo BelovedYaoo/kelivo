@@ -6,6 +6,7 @@ import 'e2ee_config_sync_payload_schema.dart';
 import 'sync_codec.dart';
 
 const e2eeSyncPayloadFormatVersion = 2;
+const e2eeSyncMaximumMessageAttachmentCount = 32;
 const _maximumPositiveInt63 = 0x7fffffffffffffff;
 const _minimumSignedInt64 = -0x8000000000000000;
 // 解密内容不可信，限制嵌套层数可避免恶意载荷耗尽客户端调用栈。
@@ -44,6 +45,7 @@ abstract final class E2eeSyncPayloadCodec {
     required Map<String, Object?> payload,
   }) {
     validateEntityKey(entityKey);
+    _rejectOversizedMessageAttachmentsBeforeFreeze(entityKey, payload);
     final frozenPayload = _freezeJsonValue(payload);
     if (frozenPayload is! Map<String, Object?>) {
       throw const FormatException('E2EE 同步 payload 必须为对象');
@@ -98,7 +100,9 @@ abstract final class E2eeSyncPayloadCodec {
       throw const FormatException('E2EE 同步 payload recordType 与记录身份不一致');
     }
 
-    final payload = _freezeJsonValue(decoded['payload']);
+    final rawPayload = decoded['payload'];
+    _rejectOversizedMessageAttachmentsBeforeFreeze(entityKey, rawPayload);
+    final payload = _freezeJsonValue(rawPayload);
     if (payload is! Map<String, Object?>) {
       throw const FormatException('E2EE 同步 payload 必须为对象');
     }
@@ -267,6 +271,7 @@ void _validateMessage(Map<String, Object?> payload) {
 }
 
 void _validateAttachments(List<Object?> attachments) {
+  _requireMessageAttachmentCountWithinLimit(attachments);
   final attachmentIds = <String>{};
   final uploadIds = <String>{};
   for (var index = 0; index < attachments.length; index++) {
@@ -303,6 +308,30 @@ void _validateAttachments(List<Object?> attachments) {
     if (order != index) {
       throw FormatException('message.attachments[$index].order 必须与数组顺序一致');
     }
+  }
+}
+
+void _rejectOversizedMessageAttachmentsBeforeFreeze(
+  SyncEntityKey entityKey,
+  Object? payload,
+) {
+  if (entityKey.entityType != E2eeSyncChatRecordTypes.message ||
+      payload is! Map<Object?, Object?>) {
+    return;
+  }
+  final attachments = payload['attachments'];
+  if (attachments is! List<Object?>) return;
+
+  // 冻结会复制整棵对象图，先做长度门禁可避免为必然拒绝的附件再分配一份内存。
+  _requireMessageAttachmentCountWithinLimit(attachments);
+}
+
+void _requireMessageAttachmentCountWithinLimit(List<Object?> attachments) {
+  if (attachments.length > e2eeSyncMaximumMessageAttachmentCount) {
+    throw FormatException(
+      'message.attachments 数量不得超过 '
+      '$e2eeSyncMaximumMessageAttachmentCount',
+    );
   }
 }
 
