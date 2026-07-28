@@ -2,23 +2,39 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:Kelivo/core/database/app_database.dart';
+import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
+import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_content_runtime.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/e2ee_chat_content_runtime.dart';
+import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_scheduler.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:Kelivo/core/services/workspace/account_workspace_runtime.dart';
+import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:Kelivo/features/settings/pages/cloud_sync_page.dart'
     hide CloudSyncPage;
 import 'package:Kelivo/l10n/app_localizations.dart';
+import 'package:Kelivo/utils/app_directories.dart';
+import 'package:Kelivo/utils/sandbox_path_resolver.dart';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:pretty_qr_code/pretty_qr_code.dart';
 import 'package:provider/provider.dart';
+
+import '../database/test_database_cipher.dart';
 
 const _userId = '40000000-0000-4000-8000-000000000001';
 const _deviceId = '20000000-0000-4000-8000-000000000001';
@@ -31,6 +47,326 @@ final _onboardingToken = CloudSyncOnboardingToken.parse(_onboardingTokenValue);
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+
+  test('E2EE 同步周期按有界拉取、封装、发送和最终拉取执行', () async {
+    final events = <String>[];
+    final pullSteps = <E2eeSyncPullStepDisposition>[
+      E2eeSyncPullStepDisposition.more,
+      E2eeSyncPullStepDisposition.more,
+      E2eeSyncPullStepDisposition.complete,
+    ];
+    final sealSteps = <E2eeSyncSealStatus>[
+      E2eeSyncSealStatus.sealed,
+      E2eeSyncSealStatus.sealed,
+      E2eeSyncSealStatus.idle,
+    ];
+    final runner = E2eeSyncCycleRunner(
+      maximumPullPagesPerPhase: 2,
+      maximumSealAttempts: 4,
+      runPullBatch: <T>(pull) async {
+        events.add('pull-batch-start');
+        final result = await pull();
+        events.add('pull-batch-end');
+        return result;
+      },
+      pullOnce: ({required int limit}) async {
+        expect(limit, 10);
+        events.add('pull');
+        return pullSteps.removeAt(0);
+      },
+      sealNext: () async {
+        events.add('seal');
+        return sealSteps.removeAt(0);
+      },
+      flushOnce: () async {
+        events.add('flush');
+        return const E2eeSyncFlushReport.idle();
+      },
+    );
+
+    final report = await runner.run();
+
+    expect(report.disposition, E2eeSyncCycleDisposition.completed);
+    expect(report.catchUpPullPages, 2);
+    expect(report.sealedRecords, 2);
+    expect(report.finalPullPages, 1);
+    expect(events, <String>[
+      'pull-batch-start',
+      'pull',
+      'pull',
+      'pull-batch-end',
+      'seal',
+      'seal',
+      'seal',
+      'flush',
+      'pull-batch-start',
+      'pull',
+      'pull-batch-end',
+    ]);
+  });
+
+  test('E2EE 调度器串行执行并将运行中唤醒合并为一个周期', () async {
+    final timers = _ManualTimerQueue();
+    final firstPull = Completer<void>();
+    var pullCalls = 0;
+    var activePullBatches = 0;
+    var maximumActivePullBatches = 0;
+    final runner = E2eeSyncCycleRunner(
+      runPullBatch: <T>(pull) async {
+        activePullBatches++;
+        if (activePullBatches > maximumActivePullBatches) {
+          maximumActivePullBatches = activePullBatches;
+        }
+        try {
+          return await pull();
+        } finally {
+          activePullBatches--;
+        }
+      },
+      pullOnce: ({required int limit}) async {
+        pullCalls++;
+        if (pullCalls == 1) await firstPull.future;
+        return E2eeSyncPullStepDisposition.complete;
+      },
+      sealNext: () async => E2eeSyncSealStatus.idle,
+      flushOnce: () async => const E2eeSyncFlushReport.idle(),
+    );
+    final scheduler = E2eeSyncScheduler(
+      cycleRunner: runner,
+      timerFactory: timers.create,
+    );
+    addTearDown(scheduler.close);
+
+    scheduler.start();
+    await _waitUntil(() => pullCalls == 1);
+    scheduler
+      ..wake()
+      ..wake()
+      ..wake();
+    firstPull.complete();
+    await _waitUntil(() => scheduler.state == E2eeSyncSchedulerState.polling);
+
+    expect(timers.nextDelay, Duration.zero);
+    timers.fireNext();
+    await _waitUntil(() => pullCalls == 4);
+    await _waitUntil(
+      () => scheduler.nextRunDelay == const Duration(seconds: 30),
+    );
+
+    expect(maximumActivePullBatches, 1);
+    expect(pullCalls, 4);
+  });
+
+  test('E2EE 调度器不会丢失周期完成边界上的本地唤醒', () async {
+    final timers = _ManualTimerQueue();
+    var pullCalls = 0;
+    var injectedWake = false;
+    late E2eeSyncScheduler scheduler;
+    final runner = E2eeSyncCycleRunner(
+      runPullBatch: <T>(pull) => pull(),
+      pullOnce: ({required int limit}) async {
+        pullCalls++;
+        return E2eeSyncPullStepDisposition.complete;
+      },
+      sealNext: () async => E2eeSyncSealStatus.idle,
+      flushOnce: () async => const E2eeSyncFlushReport.idle(),
+    );
+    scheduler = E2eeSyncScheduler(
+      cycleRunner: runner,
+      timerFactory: (delay, callback) {
+        final timer = timers.create(delay, callback);
+        if (!injectedWake && delay == const Duration(seconds: 30)) {
+          injectedWake = true;
+          scheduler.wake();
+        }
+        return timer;
+      },
+    );
+    addTearDown(scheduler.close);
+
+    scheduler.start();
+    await _waitUntil(() => pullCalls == 4);
+
+    expect(injectedWake, isTrue);
+    expect(scheduler.nextRunDelay, const Duration(seconds: 30));
+  });
+
+  test('E2EE 调度器连续失败指数退避且成功后恢复轮询', () async {
+    final timers = _ManualTimerQueue();
+    final errors = <Object>[];
+    var failuresRemaining = 2;
+    var pullCalls = 0;
+    final runner = E2eeSyncCycleRunner(
+      runPullBatch: <T>(pull) => pull(),
+      pullOnce: ({required int limit}) async {
+        pullCalls++;
+        if (failuresRemaining > 0) {
+          failuresRemaining--;
+          throw StateError('offline');
+        }
+        return E2eeSyncPullStepDisposition.complete;
+      },
+      sealNext: () async => E2eeSyncSealStatus.idle,
+      flushOnce: () async => const E2eeSyncFlushReport.idle(),
+    );
+    final scheduler = E2eeSyncScheduler(
+      cycleRunner: runner,
+      timerFactory: timers.create,
+      errorReporter: (error, _) => errors.add(error),
+    );
+    addTearDown(scheduler.close);
+
+    scheduler.start();
+    await _waitUntil(() => scheduler.state == E2eeSyncSchedulerState.retrying);
+    expect(scheduler.nextRunDelay, const Duration(seconds: 1));
+
+    timers.fireNext();
+    await _waitUntil(
+      () => scheduler.nextRunDelay == const Duration(seconds: 2),
+    );
+
+    timers.fireNext();
+    await _waitUntil(() => scheduler.state == E2eeSyncSchedulerState.polling);
+    expect(scheduler.nextRunDelay, const Duration(seconds: 30));
+    expect(pullCalls, 4);
+    expect(errors, hasLength(2));
+  });
+
+  test('E2EE 调度器遇到未来密钥世代后暂停且不响应普通唤醒', () async {
+    final timers = _ManualTimerQueue();
+    var keyEpochAvailable = false;
+    var pullCalls = 0;
+    final runner = E2eeSyncCycleRunner(
+      runPullBatch: <T>(pull) => pull(),
+      pullOnce: ({required int limit}) async {
+        pullCalls++;
+        return keyEpochAvailable
+            ? E2eeSyncPullStepDisposition.complete
+            : E2eeSyncPullStepDisposition.keyEpochUnavailable;
+      },
+      sealNext: () async => E2eeSyncSealStatus.idle,
+      flushOnce: () async => const E2eeSyncFlushReport.idle(),
+    );
+    final scheduler = E2eeSyncScheduler(
+      cycleRunner: runner,
+      timerFactory: timers.create,
+    );
+    addTearDown(scheduler.close);
+
+    scheduler.start();
+    await _waitUntil(
+      () => scheduler.state == E2eeSyncSchedulerState.keyEpochPaused,
+    );
+    scheduler
+      ..wake()
+      ..wake();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(pullCalls, 1);
+    expect(timers.nextDelay, isNull);
+
+    keyEpochAvailable = true;
+    scheduler.resumeAfterKeyEpochChange();
+    expect(timers.nextDelay, Duration.zero);
+    timers.fireNext();
+    await _waitUntil(() => scheduler.state == E2eeSyncSchedulerState.polling);
+    expect(pullCalls, 3);
+  });
+
+  test('E2EE 调度器关闭会取消定时器并等待在途周期', () async {
+    final timers = _ManualTimerQueue();
+    final blockedPull = Completer<void>();
+    var pullStarted = false;
+    final runner = E2eeSyncCycleRunner(
+      runPullBatch: <T>(pull) => pull(),
+      pullOnce: ({required int limit}) async {
+        pullStarted = true;
+        await blockedPull.future;
+        return E2eeSyncPullStepDisposition.complete;
+      },
+      sealNext: () async => E2eeSyncSealStatus.idle,
+      flushOnce: () async => const E2eeSyncFlushReport.idle(),
+    );
+    final scheduler = E2eeSyncScheduler(
+      cycleRunner: runner,
+      timerFactory: timers.create,
+    );
+    scheduler.start();
+    await _waitUntil(() => pullStarted);
+
+    var closed = false;
+    final closeFuture = scheduler.close().then((_) => closed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isFalse);
+
+    blockedPull.complete();
+    await closeFuture;
+    expect(scheduler.state, E2eeSyncSchedulerState.closed);
+    expect(timers.nextDelay, isNull);
+  });
+
+  test('E2EE 内容运行时离线初始化不阻塞且关闭等待网络周期后释放所有权', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final first = harness.createInstance(blockInitialPull: true);
+
+    await first.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => first.pull.pullCalls == 1);
+    expect(first.runtime.state, E2eeChatContentRuntimeState.ready);
+    expect(
+      first.transportSession?.deviceKeyVersion,
+      harness.session.deviceKeyVersion,
+    );
+
+    var closed = false;
+    final closeFuture = first.runtime.close().then((_) => closed = true);
+    await Future<void>.delayed(Duration.zero);
+    expect(closed, isFalse);
+
+    first.pull.failBlockedPull();
+    await closeFuture;
+    expect(first.runtime.state, E2eeChatContentRuntimeState.closed);
+
+    final reopened = harness.createInstance();
+    await reopened.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => reopened.pull.pullCalls >= 2);
+    expect(reopened.runtime.state, E2eeChatContentRuntimeState.ready);
+    await reopened.runtime.close();
+  });
+
+  test('E2EE 内容运行时在本地事务提交后唤醒密文发送周期', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance();
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+    final pullsBeforeWrite = instance.pull.pullCalls;
+
+    await instance.chatService.createConversation(title: '本地事务');
+
+    await _waitUntil(() => instance.records.pushCalls == 1);
+    await _waitUntil(() => instance.pull.pullCalls >= pullsBeforeWrite + 2);
+    expect(instance.records.mutationCount, 1);
+    expect(
+      instance.transportSession?.deviceKeyVersion,
+      harness.session.deviceKeyVersion,
+    );
+    await instance.runtime.close();
+  });
+
+  test('E2EE 内容运行时缺少本机密钥状态时失败关闭且不启动网络', () async {
+    final harness = await _E2eeRuntimeHarness.create(seedDeviceState: false);
+    addTearDown(harness.close);
+    final instance = harness.createInstance();
+
+    await expectLater(instance.runtime.initialize(), throwsStateError);
+
+    expect(instance.runtime.state, E2eeChatContentRuntimeState.failed);
+    expect(instance.pull.pullCalls, 0);
+    expect(instance.transportSession, isNull);
+    await instance.runtime.close();
+    expect(instance.runtime.state, E2eeChatContentRuntimeState.closed);
+  });
 
   test('内容同步硬关闭且不需要旧同步状态库', () async {
     final fixture = await _createSignedInFixture();
@@ -854,6 +1190,288 @@ CloudSyncDeviceSession _otherDevice() {
   );
 }
 
+final class _E2eeRuntimeHarness {
+  _E2eeRuntimeHarness._({
+    required this.root,
+    required this.session,
+    required this._deviceStateStore,
+    required this._databaseGateway,
+    required this._databaseFile,
+  });
+
+  final Directory root;
+  final CloudSyncAccountSession session;
+  final DeviceStateBlobStore _deviceStateStore;
+  final ChatDatabaseGateway _databaseGateway;
+  final File _databaseFile;
+  final List<_E2eeRuntimeInstance> _instances = <_E2eeRuntimeInstance>[];
+
+  static Future<_E2eeRuntimeHarness> create({
+    bool seedDeviceState = true,
+  }) async {
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}content_runtime_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('runtime-');
+    final installationRoot = Directory(
+      '${root.path}${Platform.pathSeparator}installation',
+    );
+    final workspaceRoot = Directory(
+      '${root.path}${Platform.pathSeparator}workspace',
+    );
+    await installationRoot.create(recursive: true);
+    await workspaceRoot.create(recursive: true);
+    AppDirectories.bindWorkspaceRoot(
+      workspaceRoot,
+      installationRoot: installationRoot,
+      accountWorkspace: true,
+    );
+    await SandboxPathResolver.init();
+
+    final nonce = sha256
+        .convert(utf8.encode(root.path))
+        .toString()
+        .substring(0, 16);
+    final session = CloudSyncAccountSession(
+      baseUrl: 'https://runtime-$nonce.example.com',
+      token: _fullToken,
+      tokenExpiresAt: DateTime.utc(2100),
+      keyEpoch: 1,
+      userId: _userId,
+      loginName: 'runtime-$nonce',
+      displayName: 'Runtime User',
+      role: CloudSyncUserRole.user,
+      attachmentQuotaBytes: maximumCloudSyncAttachmentSizeBytes,
+      deviceId: _deviceId,
+      deviceName: 'Runtime Device',
+      platform: CloudSyncPlatform.windows,
+      clientVersion: '1.1.17',
+      deviceKeyVersion: 1,
+      deviceCreatedAt: DateTime.utc(2026, 7, 29),
+    );
+    const secureCore = KelivoSecureCore();
+    final deviceStateStore = DeviceStateBlobStore(
+      installationRoot: installationRoot,
+    );
+    if (seedDeviceState) {
+      await _seedRuntimeDeviceState(
+        secureCore: secureCore,
+        store: deviceStateStore,
+        session: session,
+      );
+    }
+    return _E2eeRuntimeHarness._(
+      root: root,
+      session: session,
+      deviceStateStore: deviceStateStore,
+      databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+      databaseFile: File(
+        '${workspaceRoot.path}${Platform.pathSeparator}'
+        '${AppDatabase.databaseFileName}',
+      ),
+    );
+  }
+
+  _E2eeRuntimeInstance createInstance({bool blockInitialPull = false}) {
+    final pull = _RuntimePullTransport(
+      accountUserId: session.userId,
+      blockInitialPull: blockInitialPull,
+    );
+    final records = _RuntimeRecordTransport(
+      accountUserId: session.userId,
+      actorDeviceId: session.deviceId,
+    );
+    final capture = _TransportSessionCapture();
+    final runtime = E2eeChatContentRuntime.takeOwnership(
+      session: session,
+      deviceStateStore: _deviceStateStore,
+      secureCore: const KelivoSecureCore(),
+      databaseGateway: _databaseGateway,
+      databaseFile: _databaseFile,
+      client: CloudSyncClient.forTesting(baseUrl: session.baseUrl),
+      transportFactory: ({required client, required session}) {
+        capture.session = session;
+        return E2eeChatContentTransports(records: records, pull: pull);
+      },
+    );
+    final chatService = ChatService(runtime, databaseGateway: _databaseGateway);
+    runtime.bindChatService(chatService);
+    final instance = _E2eeRuntimeInstance(
+      runtime: runtime,
+      chatService: chatService,
+      pull: pull,
+      records: records,
+      capture: capture,
+    );
+    _instances.add(instance);
+    return instance;
+  }
+
+  Future<void> close() async {
+    for (final instance in _instances.reversed) {
+      instance.pull.failBlockedPull();
+      await instance.runtime.close();
+      instance.chatService.dispose();
+    }
+    _instances.clear();
+    if (await root.exists()) await root.delete(recursive: true);
+  }
+}
+
+final class _E2eeRuntimeInstance {
+  const _E2eeRuntimeInstance({
+    required this.runtime,
+    required this.chatService,
+    required this.pull,
+    required this.records,
+    required this._capture,
+  });
+
+  final E2eeChatContentRuntime runtime;
+  final ChatService chatService;
+  final _RuntimePullTransport pull;
+  final _RuntimeRecordTransport records;
+  final _TransportSessionCapture _capture;
+
+  CloudSyncAuthenticatedSession? get transportSession => _capture.session;
+}
+
+final class _TransportSessionCapture {
+  CloudSyncAuthenticatedSession? session;
+}
+
+final class _RuntimePullTransport
+    implements E2eeSyncAuthenticatedPullTransport {
+  _RuntimePullTransport({
+    required this.accountUserId,
+    required bool blockInitialPull,
+  }) : _blockedPull = blockInitialPull ? Completer<void>() : null;
+
+  @override
+  final String accountUserId;
+  final Completer<void>? _blockedPull;
+  int pullCalls = 0;
+
+  @override
+  Future<CloudSyncPullResult> pullChanges({
+    String? cursor,
+    int limit = 10,
+  }) async {
+    pullCalls++;
+    if (pullCalls == 1 && _blockedPull != null) {
+      await _blockedPull.future;
+    }
+    return CloudSyncChangePage(
+      changes: const <CloudSyncRecordChange>[],
+      nextCursor: 'runtime-cursor-$pullCalls',
+      hasMore: false,
+    );
+  }
+
+  @override
+  Future<CloudSyncSnapshotPage> pullSnapshot({
+    String? snapshotCursor,
+    int limit = 10,
+  }) {
+    throw StateError('runtime_snapshot_not_expected');
+  }
+
+  void failBlockedPull() {
+    final blockedPull = _blockedPull;
+    if (blockedPull == null || blockedPull.isCompleted) return;
+    blockedPull.completeError(
+      const CloudSyncException(
+        kind: CloudSyncFailureKind.network,
+        retryable: true,
+      ),
+    );
+  }
+}
+
+final class _RuntimeRecordTransport
+    implements E2eeSyncAuthenticatedRecordTransport {
+  _RuntimeRecordTransport({
+    required this.accountUserId,
+    required this.actorDeviceId,
+  });
+
+  @override
+  final String accountUserId;
+  @override
+  final String actorDeviceId;
+  int pushCalls = 0;
+  int mutationCount = 0;
+  int _changeSequence = 0;
+
+  @override
+  Future<List<CloudSyncRecordMutationResult>> pushRecords(
+    List<CloudSyncRecordMutation> mutations,
+  ) async {
+    pushCalls++;
+    mutationCount += mutations.length;
+    return <CloudSyncRecordMutationResult>[
+      for (final mutation in mutations)
+        CloudSyncAppliedMutationResult(
+          mutationId: mutation.mutationId,
+          revision: mutation.expectedRevision + 1,
+          changeSeq: ++_changeSequence,
+        ),
+    ];
+  }
+}
+
+Future<void> _seedRuntimeDeviceState({
+  required KelivoSecureCore secureCore,
+  required DeviceStateBlobStore store,
+  required CloudSyncAccountSession session,
+}) async {
+  final key = await secureCore.createSlot(
+    E2eeDeviceStateAccess.deriveSlotId(
+      normalizedBaseUrl: session.baseUrl,
+      normalizedLoginName: session.loginName,
+    ),
+  );
+  final identity = await secureCore.generateDeviceIdentity();
+  final ark = await secureCore.generateAccountRootKey();
+  Uint8List? blob;
+  try {
+    blob = Uint8List.fromList(
+      await secureCore.sealDeviceState(
+        key,
+        identity,
+        deviceId: _runtimeUuidBytes(session.deviceId),
+        keyVersion: session.deviceKeyVersion,
+        ark: ark,
+        account: KelivoDeviceStateAccountBinding(
+          userId: _runtimeUuidBytes(session.userId),
+          keyEpoch: session.keyEpoch,
+        ),
+      ),
+    );
+    await store.write(
+      normalizedBaseUrl: session.baseUrl,
+      normalizedLoginName: session.loginName,
+      blob: blob,
+    );
+  } finally {
+    final sealedBlob = blob;
+    if (sealedBlob != null) sealedBlob.fillRange(0, sealedBlob.length, 0);
+    await secureCore.closeAccountRootKey(ark);
+    await secureCore.closeDeviceIdentity(identity);
+    await secureCore.close(key);
+  }
+}
+
+Uint8List _runtimeUuidBytes(String value) {
+  final hex = value.replaceAll('-', '');
+  return Uint8List.fromList(<int>[
+    for (var offset = 0; offset < hex.length; offset += 2)
+      int.parse(hex.substring(offset, offset + 2), radix: 16),
+  ]);
+}
+
 final class _Fixture {
   const _Fixture({
     required this.root,
@@ -1255,6 +1873,57 @@ final class _MemoryAccountSessionTokenStore
   ) {
     return '${accountDirectory.absolute.path}|'
         '${reference.slot}|${reference.generation}';
+  }
+}
+
+final class _ManualTimerQueue {
+  final List<_ManualTimer> _timers = <_ManualTimer>[];
+
+  Duration? get nextDelay {
+    for (final timer in _timers) {
+      if (timer.isActive) return timer.delay;
+    }
+    return null;
+  }
+
+  Timer create(Duration delay, void Function() callback) {
+    final timer = _ManualTimer(delay, callback);
+    _timers.add(timer);
+    return timer;
+  }
+
+  void fireNext() {
+    for (final timer in _timers) {
+      if (!timer.isActive) continue;
+      timer.fire();
+      return;
+    }
+    fail('没有可触发的 E2EE 同步定时器');
+  }
+}
+
+final class _ManualTimer implements Timer {
+  _ManualTimer(this.delay, this._callback);
+
+  final Duration delay;
+  final void Function() _callback;
+  bool _active = true;
+
+  @override
+  bool get isActive => _active;
+
+  @override
+  int get tick => _active ? 0 : 1;
+
+  @override
+  void cancel() {
+    _active = false;
+  }
+
+  void fire() {
+    if (!_active) return;
+    _active = false;
+    _callback();
   }
 }
 

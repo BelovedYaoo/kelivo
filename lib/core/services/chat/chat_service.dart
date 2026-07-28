@@ -106,6 +106,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   final ChatDatabaseGateway? databaseGateway;
   final AssetContentHash _assetContentHash;
   final SyncWriteExecutor _syncWriteExecutor;
+
+  bool usesSyncWriteExecutor(SyncWriteExecutor executor) {
+    return identical(_syncWriteExecutor, executor);
+  }
+
   final String _assetGcLeaseOwnerToken = const Uuid().v4();
   ChatDatabaseLease? _databaseLease;
   Future<void>? _assetReferenceMaintenanceFuture;
