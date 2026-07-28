@@ -1466,12 +1466,7 @@ void _validatePushMutations(List<CloudSyncRecordMutation> mutations) {
     switch (mutation) {
       case CloudSyncPutRecordMutation():
         final record = mutation.state.record;
-        if (record.keyEpoch < 1 || record.keyEpoch > 2147483647) {
-          throw const CloudSyncException(
-            kind: CloudSyncFailureKind.validation,
-            retryable: false,
-          );
-        }
+        _requireClientKeyEpoch(record.keyEpoch);
         final ciphertextBytes = record.ciphertext.length;
         if (ciphertextBytes < 1 ||
             ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes) {
@@ -1595,7 +1590,7 @@ void _validateEncryptedRecord({
 }) {
   if (envelopeVersion != e2eeAccountRecordEnvelopeVersion ||
       keyEpoch < 1 ||
-      keyEpoch > 2147483647 ||
+      keyEpoch > 0xffffffff ||
       ciphertextBytes < 1 ||
       ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes ||
       _syncCiphertextByteLength(ciphertext) != ciphertextBytes) {

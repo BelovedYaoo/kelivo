@@ -3667,14 +3667,14 @@ void main() {
     }
   });
 
-  test('v3 推送绑定显式令牌且只接受加密 put 并解析三类结果', () async {
+  test('v3 推送接受完整 uint32 keyEpoch 并解析三类结果', () async {
     const core = KelivoSecureCore();
     final ark = await core.generateAccountRootKey();
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
       userId: _userId,
-      currentKeyEpoch: 7,
+      currentKeyEpoch: 0xffffffff,
     );
     final stateCodec = E2eeAccountRecordStateCodec.takeOwnership(cipher);
     addTearDown(stateCodec.close);
@@ -3761,7 +3761,7 @@ void main() {
             'expectedRevision': 0,
             'operation': 'put',
             'envelopeVersion': 1,
-            'keyEpoch': 7,
+            'keyEpoch': 0xffffffff,
             'ciphertext': _encodedRecordCiphertext(firstState.record),
           },
           <String, Object?>{
@@ -3770,7 +3770,7 @@ void main() {
             'expectedRevision': 3,
             'operation': 'put',
             'envelopeVersion': 1,
-            'keyEpoch': 7,
+            'keyEpoch': 0xffffffff,
             'ciphertext': _encodedRecordCiphertext(secondState.record),
           },
           <String, Object?>{
@@ -3779,7 +3779,7 @@ void main() {
             'expectedRevision': 2,
             'operation': 'put',
             'envelopeVersion': 1,
-            'keyEpoch': 7,
+            'keyEpoch': 0xffffffff,
             'ciphertext': _encodedRecordCiphertext(thirdState.record),
           },
         ],
@@ -3877,7 +3877,7 @@ void main() {
     );
   });
 
-  test('v3 增量拉取保持 put 密文不透明', () async {
+  test('v3 增量拉取接受完整 uint32 keyEpoch 并保持 put 密文不透明', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -3918,7 +3918,7 @@ void main() {
               'recordId': _recordId1,
               'revision': 2,
               'envelopeVersion': 1,
-              'keyEpoch': 7,
+              'keyEpoch': 0xffffffff,
               'ciphertext': 'AQID',
               'ciphertextBytes': 3,
               'updatedAt': '2026-07-19T05:00:00.000Z',
@@ -3944,7 +3944,7 @@ void main() {
           .having((change) => change.changeSeq, 'changeSeq', 12)
           .having((change) => change.recordId.wireValue, 'recordId', _recordId1)
           .having((change) => change.revision, 'revision', 2)
-          .having((change) => change.record.keyEpoch, 'keyEpoch', 7)
+          .having((change) => change.record.keyEpoch, 'keyEpoch', 0xffffffff)
           .having(
             (change) => change.record.ciphertext,
             'ciphertext',
