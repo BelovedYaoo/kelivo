@@ -10,6 +10,8 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path/path.dart' as p;
 
+import 'package:Kelivo/core/database/app_database.dart';
+import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
@@ -18,13 +20,18 @@ import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_key_lease.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_crypto_session.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_file_store.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_upload_coordinator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:Kelivo/utils/app_directories.dart';
+
+import '../../database/test_database_cipher.dart';
 
 const _mutationId1 = '00000000-0000-4000-8000-000000000001';
 const _mutationId2 = '00000000-0000-4000-8000-000000000002';
@@ -5356,6 +5363,510 @@ void main() {
     );
   });
 
+  test('E2EE 附件密码会话隔离清单与分块密钥并在关闭后失败关闭', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[1, 2, 3]),
+      openCoordinator: false,
+    );
+    addTearDown(fixture.close);
+    final session = await fixture.openCryptoSession();
+    final sealedManifest = await session.sealManifest(
+      descriptor: fixture.descriptor,
+      uploadId: _uploadId,
+    );
+    final openedManifest = await session.openManifest(
+      attachmentId: fixture.descriptor.attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: fixture.descriptor.keyEpoch,
+      ciphertext: sealedManifest.ciphertext,
+    );
+    final ciphertext = await session.sealChunk(
+      descriptor: fixture.descriptor,
+      uploadId: _uploadId,
+      chunkIndex: 0,
+      plaintext: fixture.plaintext,
+    );
+    final opened = await session.openChunk(
+      descriptor: fixture.descriptor,
+      uploadId: _uploadId,
+      chunkIndex: 0,
+      ciphertext: ciphertext,
+    );
+
+    expect(openedManifest.attachmentId, fixture.descriptor.attachmentId);
+    expect(openedManifest.contentSha256, fixture.descriptor.contentSha256);
+    expect(opened, fixture.plaintext);
+    await expectLater(
+      session.openManifest(
+        attachmentId: fixture.descriptor.attachmentId,
+        uploadId: _uploadId,
+        keyEpoch: fixture.descriptor.keyEpoch + 1,
+        ciphertext: sealedManifest.ciphertext,
+      ),
+      throwsFormatException,
+    );
+    final inFlight = session.sealChunk(
+      descriptor: fixture.descriptor,
+      uploadId: _uploadId,
+      chunkIndex: 0,
+      plaintext: fixture.plaintext,
+    );
+    final closing = session.close();
+    expect(await inFlight, isNotEmpty);
+    await closing;
+    await session.close();
+    await expectLater(
+      session.sealManifest(descriptor: fixture.descriptor, uploadId: _uploadId),
+      throwsStateError,
+    );
+  });
+
+  test('E2EE 附件上传协调器完成单块并提交认证清单', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[5, 6, 7]),
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(10), 3);
+    final state = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(state!.phase, E2eeAttachmentUploadPhase.committed);
+    expect(fixture.transport.createRequests, hasLength(1));
+    expect(fixture.transport.putAttempts, hasLength(1));
+    expect(fixture.transport.commitRequests, hasLength(1));
+    expect(fixture.transport.createRequests.single.mutationId, _mutationId1);
+    expect(fixture.transport.commitRequests.single.mutationId, _mutationId2);
+
+    final verifier = await fixture.openCryptoSession();
+    addTearDown(verifier.close);
+    final commit = fixture.transport.commitRequests.single;
+    final manifest = await verifier.openManifest(
+      attachmentId: fixture.descriptor.attachmentId,
+      uploadId: _uploadId,
+      keyEpoch: fixture.descriptor.keyEpoch,
+      ciphertext: commit.manifestCiphertext,
+    );
+    final plaintext = await verifier.openChunk(
+      descriptor: fixture.descriptor,
+      uploadId: _uploadId,
+      chunkIndex: 0,
+      ciphertext: fixture.transport.putAttempts.single.ciphertext,
+    );
+    expect(manifest.contentSha256, fixture.descriptor.contentSha256);
+    expect(plaintext, fixture.plaintext);
+  });
+
+  test('E2EE 附件上传协调器按布局完成多块且不拼接明文缓冲', () async {
+    final plaintext = Uint8List.fromList(<int>[
+      ...List<int>.filled(KelivoAttachmentLimits.chunkPlaintextBytes, 0x31),
+      0x32,
+      0x33,
+      0x34,
+    ]);
+    final fixture = await _AttachmentUploadFixture.create(plaintext: plaintext);
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(10), 4);
+    expect(fixture.transport.putAttempts, hasLength(2));
+    expect(fixture.fileStore.verifiedContentOpens, 1);
+    expect(fixture.fileStore.verifiedChunkReads, 2);
+    expect(fixture.fileStore.unverifiedRangeReads, 0);
+    final verifier = await fixture.openCryptoSession();
+    addTearDown(verifier.close);
+    final rebuilt = BytesBuilder(copy: true);
+    for (final attempt in fixture.transport.putAttempts) {
+      rebuilt.add(
+        await verifier.openChunk(
+          descriptor: fixture.descriptor,
+          uploadId: _uploadId,
+          chunkIndex: attempt.chunkIndex,
+          ciphertext: attempt.ciphertext,
+        ),
+      );
+    }
+    expect(rebuilt.takeBytes(), plaintext);
+  });
+
+  test('E2EE 附件上传协调器将零字节内容编码为一个认证空块', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List(0),
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(10), 3);
+    expect(fixture.transport.putAttempts, hasLength(1));
+    expect(
+      fixture.transport.putAttempts.single.ciphertext,
+      hasLength(KelivoAttachmentLimits.chunkEnvelopeOverheadBytes),
+    );
+    final verifier = await fixture.openCryptoSession();
+    addTearDown(verifier.close);
+    expect(
+      await verifier.openChunk(
+        descriptor: fixture.descriptor,
+        uploadId: _uploadId,
+        chunkIndex: 0,
+        ciphertext: fixture.transport.putAttempts.single.ciphertext,
+      ),
+      isEmpty,
+    );
+  });
+
+  test('E2EE 附件上传协调器严格服从远端步数预算', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[
+        ...List<int>.filled(KelivoAttachmentLimits.chunkPlaintextBytes, 0x41),
+        0x42,
+      ]),
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(0), 0);
+    expect(fixture.transport.remoteCalls, 0);
+    await expectLater(fixture.coordinator.advance(-1), throwsFormatException);
+    for (var expectedCalls = 1; expectedCalls <= 4; expectedCalls++) {
+      expect(await fixture.coordinator.advance(1), 1);
+      expect(fixture.transport.remoteCalls, expectedCalls);
+    }
+    expect(
+      (await fixture.commands.readByAttachmentId(
+        fixture.descriptor.attachmentId,
+      ))!.phase,
+      E2eeAttachmentUploadPhase.committed,
+    );
+    expect(await fixture.coordinator.advance(1), 0);
+  });
+
+  test('E2EE 附件上传协调器在源认证耗尽租约后重新 claim 才发起远端请求', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[5, 6]),
+    );
+    addTearDown(fixture.close);
+
+    fixture.fileStore.beforeOpenVerifiedContent = () {
+      fixture.clock.value = fixture.clock.value.add(const Duration(minutes: 6));
+    };
+    expect(await fixture.coordinator.advance(1), 1);
+    final released = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(released!.attemptCount, 2);
+    expect(fixture.transport.createRequests, hasLength(1));
+  });
+
+  test('E2EE 附件上传协调器清理租约过期前未被数据库接管的 staging', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[6, 7]),
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(1), 1);
+    E2eeAttachmentStoredFile? abandoned;
+    fixture.fileStore.afterPublish = (stored) {
+      if (abandoned != null) return;
+      abandoned = stored;
+      fixture.clock.value = fixture.clock.value.add(const Duration(minutes: 6));
+    };
+    expect(await fixture.coordinator.advance(1), 1);
+    expect(abandoned, isNotNull);
+    await expectLater(
+      fixture.fileStore.readVerified(abandoned!),
+      throwsA(isA<FileSystemException>()),
+    );
+    expect(fixture.transport.putAttempts, hasLength(1));
+  });
+
+  test('E2EE 附件上传协调器网络重试跨重启逐字节重放 pending 密文', () async {
+    final transport = _AttachmentUploadTransport(
+      retryablePutFailuresRemaining: 1,
+    );
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[7, 8, 9]),
+      transport: transport,
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(2), 2);
+    final deferred = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(deferred!.phase, E2eeAttachmentUploadPhase.uploading);
+    expect(deferred.pendingChunk, isNotNull);
+    expect(deferred.consecutiveFailureCount, 1);
+    expect(
+      deferred.nextAttemptAt,
+      fixture.clock.value.add(const Duration(seconds: 1)),
+    );
+    final first = transport.putAttempts.single;
+
+    await fixture.restartCoordinator();
+    fixture.clock.value = deferred.nextAttemptAt.subtract(
+      const Duration(microseconds: 1),
+    );
+    expect(await fixture.coordinator.advance(2), 0);
+    expect(transport.putAttempts, hasLength(1));
+    fixture.clock.value = deferred.nextAttemptAt;
+    expect(await fixture.coordinator.advance(2), 2);
+    expect(transport.putAttempts, hasLength(2));
+    final replay = transport.putAttempts.last;
+    expect(replay.mutationId, first.mutationId);
+    expect(replay.ciphertext, first.ciphertext);
+    expect(
+      (await fixture.commands.readByAttachmentId(
+        fixture.descriptor.attachmentId,
+      ))!.phase,
+      E2eeAttachmentUploadPhase.committed,
+    );
+  });
+
+  test('E2EE 附件上传协调器将不可重试响应固化为终止状态', () async {
+    final transport = _AttachmentUploadTransport(
+      permanentPutFailure: const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      ),
+    );
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[10, 11]),
+      transport: transport,
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(10), 2);
+    final terminal = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(terminal!.terminalFailureKind, 'remote-validation');
+    expect(terminal.pendingChunk, isNotNull);
+    fixture.clock.value = fixture.clock.value.add(const Duration(days: 1));
+    expect(await fixture.coordinator.advance(10), 0);
+    expect(transport.putAttempts, hasLength(1));
+  });
+
+  test('E2EE 附件上传协调器在任何远端写入前终止源摘要错配', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[12, 13]),
+      descriptorContentSha256: _filledBytes(32, 0xee),
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(10), 0);
+    final terminal = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(terminal!.terminalFailureKind, 'source-integrity-failed');
+    expect(fixture.transport.remoteCalls, 0);
+  });
+
+  test('E2EE 附件上传协调器对瞬时本地 IO 退避后继续', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[14, 15]),
+      transientVerifyFailures: 1,
+    );
+    addTearDown(fixture.close);
+
+    final firstAttemptAt = fixture.clock.value;
+    expect(await fixture.coordinator.advance(10), 0);
+    final deferred = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(deferred!.terminalFailureKind, isNull);
+    expect(deferred.lastFailureKind, 'local-io');
+    expect(deferred.consecutiveFailureCount, 1);
+    expect(
+      deferred.nextAttemptAt,
+      firstAttemptAt.add(const Duration(seconds: 1)),
+    );
+    fixture.clock.value = deferred.nextAttemptAt;
+    expect(await fixture.coordinator.advance(10), 3);
+    expect(
+      (await fixture.commands.readByAttachmentId(
+        fixture.descriptor.attachmentId,
+      ))!.phase,
+      E2eeAttachmentUploadPhase.committed,
+    );
+  });
+
+  test('E2EE 附件上传协调器不会因租约同时过期而吞掉未知本地错误', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[15, 16]),
+    );
+    addTearDown(fixture.close);
+
+    fixture.fileStore.beforeOpenVerifiedContent = () {
+      fixture.clock.value = fixture.clock.value.add(const Duration(minutes: 6));
+      throw StateError('unexpected-local-failure');
+    };
+
+    await expectLater(
+      fixture.coordinator.advance(1),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'unexpected-local-failure',
+        ),
+      ),
+    );
+    expect(fixture.transport.remoteCalls, 0);
+  });
+
+  test('E2EE 附件上传协调器在远端成功但租约过期后原样重放 mutation', () async {
+    final transport = _AttachmentUploadTransport();
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[16, 17]),
+      transport: transport,
+    );
+    addTearDown(fixture.close);
+
+    var expireCreate = true;
+    transport.afterCreate = () {
+      if (!expireCreate) return;
+      expireCreate = false;
+      fixture.clock.value = fixture.clock.value.add(const Duration(minutes: 6));
+    };
+    expect(await fixture.coordinator.advance(1), 1);
+    expect(
+      (await fixture.commands.readByAttachmentId(
+        fixture.descriptor.attachmentId,
+      ))!.phase,
+      E2eeAttachmentUploadPhase.createPending,
+    );
+    expect(await fixture.coordinator.advance(1), 1);
+    expect(transport.createRequests, hasLength(2));
+    expect(
+      transport.createRequests.last.mutationId,
+      transport.createRequests.first.mutationId,
+    );
+
+    var expirePut = true;
+    transport.afterPut = () {
+      if (!expirePut) return;
+      expirePut = false;
+      fixture.clock.value = fixture.clock.value.add(const Duration(minutes: 6));
+    };
+    expect(await fixture.coordinator.advance(1), 1);
+    final chunkPending = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(chunkPending!.phase, E2eeAttachmentUploadPhase.uploading);
+    expect(chunkPending.pendingChunk, isNotNull);
+    expect(await fixture.coordinator.advance(1), 1);
+    expect(transport.putAttempts, hasLength(2));
+    expect(
+      transport.putAttempts.last.mutationId,
+      transport.putAttempts.first.mutationId,
+    );
+    expect(
+      transport.putAttempts.last.ciphertext,
+      transport.putAttempts.first.ciphertext,
+    );
+
+    var expireCommit = true;
+    transport.afterCommit = () {
+      if (!expireCommit) return;
+      expireCommit = false;
+      fixture.clock.value = fixture.clock.value.add(const Duration(minutes: 6));
+    };
+    expect(await fixture.coordinator.advance(1), 1);
+    final commitPending = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(commitPending!.phase, E2eeAttachmentUploadPhase.commitPending);
+    expect(await fixture.coordinator.advance(1), 1);
+    expect(transport.commitRequests, hasLength(2));
+    expect(
+      transport.commitRequests.last.mutationId,
+      transport.commitRequests.first.mutationId,
+    );
+    expect(
+      transport.commitRequests.last.manifestCiphertext,
+      transport.commitRequests.first.manifestCiphertext,
+    );
+    expect(
+      (await fixture.commands.readByAttachmentId(
+        fixture.descriptor.attachmentId,
+      ))!.phase,
+      E2eeAttachmentUploadPhase.committed,
+    );
+  });
+
+  test('E2EE 附件上传协调器拒绝被篡改的 pending 密文', () async {
+    final transport = _AttachmentUploadTransport(
+      retryablePutFailuresRemaining: 1,
+    );
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[18, 19]),
+      transport: transport,
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(2), 2);
+    final deferred = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    fixture.fileStore.rejectPendingReads = true;
+    fixture.clock.value = deferred!.nextAttemptAt;
+    expect(await fixture.coordinator.advance(10), 0);
+    final terminal = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(
+      terminal!.terminalFailureKind,
+      'pending-ciphertext-integrity-failed',
+    );
+    expect(transport.putAttempts, hasLength(1));
+  });
+
+  test('E2EE 附件上传协调器将丢失的 pending 密文固化为终止状态', () async {
+    final transport = _AttachmentUploadTransport(
+      retryablePutFailuresRemaining: 1,
+    );
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[20, 21]),
+      transport: transport,
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(2), 2);
+    final deferred = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    fixture.fileStore
+      ..rejectPendingReads = true
+      ..reportPendingMissing = true;
+    fixture.clock.value = deferred!.nextAttemptAt;
+    expect(await fixture.coordinator.advance(10), 0);
+    final terminal = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(
+      terminal!.terminalFailureKind,
+      'pending-ciphertext-integrity-failed',
+    );
+    expect(transport.putAttempts, hasLength(1));
+  });
+
+  test('E2EE 附件上传协调器关闭失败后保留资源并允许重试关闭', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[22, 23]),
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(1), 1);
+    fixture.fileStore.verifiedContentCloseFailures = 1;
+    await expectLater(
+      fixture.coordinator.close(),
+      throwsA(isA<FileSystemException>()),
+    );
+    await fixture.coordinator.close();
+    await expectLater(
+      fixture.coordinator.advance(1),
+      throwsA(isA<StateError>()),
+    );
+  });
+
   test('E2EE 附件内存文件 adapter 保持完整性合同与 staging 删除边界', () async {
     final store = E2eeAttachmentMemoryFileStore();
     final identity = CloudSyncAttachmentIdentity(
@@ -5466,6 +5977,13 @@ void main() {
       ),
       orderedEquals(<int>[6, 7]),
     );
+    final contentReader = await store.openVerifiedContent(
+      storedFile: contentStored,
+      chunkPlaintextBytes: <int>[1, 2],
+    );
+    expect(await contentReader.readChunk(1), orderedEquals(<int>[6, 7]));
+    await contentReader.close();
+    await expectLater(contentReader.readChunk(0), throwsA(isA<StateError>()));
     await store.verifyContent(contentStored);
     await expectLater(
       store.readContentRange(storedFile: contentStored, offset: 2, length: 2),
@@ -5665,6 +6183,12 @@ void main() {
       ),
       orderedEquals(<int>[12, 13]),
     );
+    final contentReader = await store.openVerifiedContent(
+      storedFile: contentStored,
+      chunkPlaintextBytes: <int>[1, 2],
+    );
+    expect(await contentReader.readChunk(1), orderedEquals(<int>[12, 13]));
+    await contentReader.close();
     await store.verifyContent(contentStored);
     await expectLater(
       store.readContentRange(storedFile: contentStored, offset: -1, length: 1),
@@ -6112,6 +6636,436 @@ void main() {
     expect(await File(zeroStored.storagePath).length(), 0);
     await store.verifyContent(zeroStored);
   });
+}
+
+final class _AttachmentUploadFixture {
+  _AttachmentUploadFixture._({
+    required this.directory,
+    required this.repository,
+    required this.commands,
+    required this.fileStore,
+    required this.deviceStateStore,
+    required this.session,
+    required this.descriptor,
+    required Uint8List plaintext,
+    required this.transport,
+    required this.clock,
+  }) : plaintext = Uint8List.fromList(plaintext).asUnmodifiableView();
+
+  final Directory directory;
+  final ChatDatabaseRepository repository;
+  final E2eeAttachmentUploadCommands commands;
+  final _AttachmentTestFileStore fileStore;
+  final DeviceStateBlobStore deviceStateStore;
+  final CloudSyncAccountSession session;
+  final E2eeAttachmentDescriptor descriptor;
+  final Uint8List plaintext;
+  final _AttachmentUploadTransport transport;
+  final _MutableAttachmentClock clock;
+  final KelivoSecureCore _secureCore = const KelivoSecureCore();
+
+  E2eeAttachmentUploadCoordinator? _coordinator;
+  var _uuidSequence = 0;
+  var _closed = false;
+
+  E2eeAttachmentUploadCoordinator get coordinator {
+    final value = _coordinator;
+    if (value == null) throw StateError('附件上传测试协调器尚未打开');
+    return value;
+  }
+
+  static Future<_AttachmentUploadFixture> create({
+    required Uint8List plaintext,
+    _AttachmentUploadTransport? transport,
+    Uint8List? descriptorContentSha256,
+    bool openCoordinator = true,
+    int transientVerifyFailures = 0,
+  }) async {
+    final directory = await Directory.current.createTemp(
+      'kelivo_attachment_upload_coordinator_',
+    );
+    ChatDatabaseRepository? repository;
+    try {
+      final database = AppDatabase.open(
+        file: File(p.join(directory.path, 'upload.sqlite')),
+        cipher: testDatabaseCipher,
+      );
+      await database.customSelect('SELECT 1;').getSingle();
+      repository = ChatDatabaseRepository(
+        database,
+        databaseCipher: testDatabaseCipher,
+      );
+      const secureCore = KelivoSecureCore();
+      final deviceStateStore = DeviceStateBlobStore(
+        installationRoot: directory,
+      );
+      final nonce = sha256
+          .convert(utf8.encode(directory.path))
+          .toString()
+          .substring(0, 16);
+      final session = await _seedAccountKeyLeaseState(
+        core: secureCore,
+        store: deviceStateStore,
+        baseUrl: 'https://upload-$nonce.example.com',
+        loginName: 'upload-$nonce',
+      );
+      final dataKey = await secureCore.generateAttachmentDataKey();
+      final attachmentId = _uuidStringForTest(dataKey.attachmentId);
+      final keyLease = await E2eeAccountKeyLease.open(
+        session: session,
+        deviceStateStore: deviceStateStore,
+        secureCore: secureCore,
+      );
+      final ark = keyLease.takeAccountRootKeyOwnership();
+      late Uint8List wrappedDataKey;
+      try {
+        wrappedDataKey = await secureCore.wrapAttachmentDataKey(
+          ark,
+          dataKey.key,
+          context: KelivoAttachmentContext(
+            userId: _rawUuid(session.userId),
+            attachmentId: dataKey.attachmentId,
+            keyEpoch: session.keyEpoch,
+          ),
+        );
+      } finally {
+        await secureCore.closeAttachmentDataKey(dataKey.key);
+        await secureCore.closeAccountRootKey(ark);
+        await keyLease.close();
+      }
+
+      final baseFileStore = E2eeAttachmentMemoryFileStore();
+      final actualDigest = Uint8List.fromList(sha256.convert(plaintext).bytes);
+      final source = await baseFileStore.publish(
+        location: E2eeAttachmentFileLocation.content(
+          contentSha256: actualDigest,
+        ),
+        source: Stream<List<int>>.value(plaintext),
+      );
+      final fileStore = _AttachmentTestFileStore(
+        baseFileStore,
+        transientVerifyFailures: transientVerifyFailures,
+      );
+      final layout = KelivoAttachmentLayout(
+        totalPlaintextBytes: plaintext.length,
+      );
+      final descriptor = E2eeAttachmentDescriptor(
+        attachmentId: attachmentId,
+        keyEpoch: session.keyEpoch,
+        kind: E2eeAttachmentKind.file,
+        totalPlaintextBytes: plaintext.length,
+        contentSha256: descriptorContentSha256 ?? actualDigest,
+        wrappedDataKey: wrappedDataKey,
+        chunkCiphertextBytes: <int>[
+          for (var index = 0; index < layout.chunkCount; index++)
+            layout.plaintextLengthForChunk(index) +
+                KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+        ],
+        displayName: 'upload.bin',
+        mediaType: 'application/octet-stream',
+      );
+      final commands = repository.e2eeAttachmentUploadCommands;
+      final clock = _MutableAttachmentClock(DateTime.utc(2026, 7, 29, 8));
+      await commands.create(
+        draft: E2eeAttachmentUploadDraft(
+          descriptor: descriptor,
+          localAssetId: 'attachment-upload-test',
+          sourcePath: source.storagePath,
+          createMutationId: _mutationId1,
+          commitMutationId: _mutationId2,
+        ),
+        now: clock.value,
+      );
+      final fixture = _AttachmentUploadFixture._(
+        directory: directory,
+        repository: repository,
+        commands: commands,
+        fileStore: fileStore,
+        deviceStateStore: deviceStateStore,
+        session: session,
+        descriptor: descriptor,
+        plaintext: plaintext,
+        transport: transport ?? _AttachmentUploadTransport(),
+        clock: clock,
+      );
+      if (openCoordinator) await fixture._openCoordinator();
+      return fixture;
+    } catch (_) {
+      if (repository != null) await repository.close();
+      if (await directory.exists()) await directory.delete(recursive: true);
+      rethrow;
+    }
+  }
+
+  Future<E2eeAttachmentCryptoSession> openCryptoSession() {
+    return E2eeAttachmentCryptoSession.open(
+      session: session,
+      deviceStateStore: deviceStateStore,
+      secureCore: _secureCore,
+    );
+  }
+
+  Future<void> restartCoordinator() async {
+    await _coordinator?.close();
+    _coordinator = null;
+    await _openCoordinator();
+  }
+
+  Future<void> _openCoordinator() async {
+    final cryptoSession = await openCryptoSession();
+    _coordinator = E2eeAttachmentUploadCoordinator.takeOwnership(
+      commands: commands,
+      fileStore: fileStore,
+      transport: transport,
+      token: session.token,
+      cryptoSession: cryptoSession,
+      utcNow: clock.call,
+      newUuid: _nextUuid,
+    );
+  }
+
+  String _nextUuid() {
+    _uuidSequence++;
+    return 'a0000000-0000-4000-8000-'
+        '${_uuidSequence.toRadixString(16).padLeft(12, '0')}';
+  }
+
+  Future<void> close() async {
+    if (_closed) return;
+    _closed = true;
+    await _coordinator?.close();
+    await repository.close();
+    if (await directory.exists()) await directory.delete(recursive: true);
+  }
+}
+
+final class _MutableAttachmentClock {
+  _MutableAttachmentClock(this.value);
+
+  DateTime value;
+
+  DateTime call() => value;
+}
+
+final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
+  _AttachmentTestFileStore(this._delegate, {this.transientVerifyFailures = 0});
+
+  final E2eeAttachmentFileStore _delegate;
+  int transientVerifyFailures;
+  bool rejectPendingReads = false;
+  bool reportPendingMissing = false;
+  void Function()? beforeOpenVerifiedContent;
+  void Function(E2eeAttachmentStoredFile stored)? afterPublish;
+  int verifiedContentCloseFailures = 0;
+  int verifiedContentOpens = 0;
+  int verifiedChunkReads = 0;
+  int unverifiedRangeReads = 0;
+
+  @override
+  Future<E2eeAttachmentStoredFile> publish({
+    required E2eeAttachmentFileLocation location,
+    required Stream<List<int>> source,
+  }) async {
+    final stored = await _delegate.publish(location: location, source: source);
+    afterPublish?.call(stored);
+    return stored;
+  }
+
+  @override
+  Future<Uint8List> readVerified(E2eeAttachmentStoredFile storedFile) {
+    if (rejectPendingReads) {
+      if (reportPendingMissing) {
+        throw FileSystemException(
+          'e2ee_attachment_file_missing',
+          storedFile.storagePath,
+        );
+      }
+      throw const FormatException('e2ee_attachment_file_integrity');
+    }
+    return _delegate.readVerified(storedFile);
+  }
+
+  @override
+  Future<Uint8List> readContentRange({
+    required E2eeAttachmentStoredFile storedFile,
+    required int offset,
+    required int length,
+  }) {
+    unverifiedRangeReads++;
+    return _delegate.readContentRange(
+      storedFile: storedFile,
+      offset: offset,
+      length: length,
+    );
+  }
+
+  @override
+  Future<E2eeAttachmentVerifiedContent> openVerifiedContent({
+    required E2eeAttachmentStoredFile storedFile,
+    required List<int> chunkPlaintextBytes,
+  }) async {
+    beforeOpenVerifiedContent?.call();
+    if (transientVerifyFailures > 0) {
+      transientVerifyFailures--;
+      throw FileSystemException('temporary-sharing-violation');
+    }
+    final reader = await _delegate.openVerifiedContent(
+      storedFile: storedFile,
+      chunkPlaintextBytes: chunkPlaintextBytes,
+    );
+    verifiedContentOpens++;
+    return _AttachmentTestVerifiedContent(reader, this);
+  }
+
+  @override
+  Future<void> verifyContent(E2eeAttachmentStoredFile storedFile) {
+    return _delegate.verifyContent(storedFile);
+  }
+
+  @override
+  Future<void> deleteStaging({required String storagePath}) {
+    return _delegate.deleteStaging(storagePath: storagePath);
+  }
+}
+
+final class _AttachmentTestVerifiedContent
+    implements E2eeAttachmentVerifiedContent {
+  const _AttachmentTestVerifiedContent(this._delegate, this._owner);
+
+  final E2eeAttachmentVerifiedContent _delegate;
+  final _AttachmentTestFileStore _owner;
+
+  @override
+  Future<Uint8List> readChunk(int chunkIndex) {
+    _owner.verifiedChunkReads++;
+    return _delegate.readChunk(chunkIndex);
+  }
+
+  @override
+  Future<void> close() {
+    if (_owner.verifiedContentCloseFailures > 0) {
+      _owner.verifiedContentCloseFailures--;
+      throw FileSystemException('temporary-close-failure');
+    }
+    return _delegate.close();
+  }
+}
+
+final class _AttachmentPutAttempt {
+  _AttachmentPutAttempt({
+    required this.mutationId,
+    required this.chunkIndex,
+    required Uint8List ciphertext,
+  }) : ciphertext = Uint8List.fromList(ciphertext).asUnmodifiableView();
+
+  final String mutationId;
+  final int chunkIndex;
+  final Uint8List ciphertext;
+}
+
+final class _AttachmentUploadTransport implements CloudSyncAttachmentTransport {
+  _AttachmentUploadTransport({
+    this.retryablePutFailuresRemaining = 0,
+    this.permanentPutFailure,
+  });
+
+  int retryablePutFailuresRemaining;
+  final CloudSyncException? permanentPutFailure;
+  void Function()? afterCreate;
+  void Function()? afterPut;
+  void Function()? afterCommit;
+  final List<CloudSyncAttachmentCreateUploadRequest> createRequests =
+      <CloudSyncAttachmentCreateUploadRequest>[];
+  final List<_AttachmentPutAttempt> putAttempts = <_AttachmentPutAttempt>[];
+  final List<CloudSyncAttachmentCommitUploadRequest> commitRequests =
+      <CloudSyncAttachmentCommitUploadRequest>[];
+
+  int get remoteCalls =>
+      createRequests.length + putAttempts.length + commitRequests.length;
+
+  @override
+  Future<CloudSyncAttachmentUpload> createAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCreateUploadRequest request,
+  }) async {
+    createRequests.add(request);
+    afterCreate?.call();
+    return CloudSyncAttachmentUpload(
+      identity: CloudSyncAttachmentIdentity(
+        attachmentId: request.attachmentId,
+        uploadId: _uploadId,
+        keyEpoch: request.keyEpoch,
+      ),
+      chunkCount: request.chunkCount,
+      totalCiphertextBytes: request.totalCiphertextBytes,
+      createdAt: DateTime.utc(2026, 7, 29, 8),
+    );
+  }
+
+  @override
+  Future<CloudSyncAttachmentStoredChunk> putAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentPutChunkRequest request,
+  }) async {
+    putAttempts.add(
+      _AttachmentPutAttempt(
+        mutationId: request.mutationId,
+        chunkIndex: request.chunk.chunkIndex,
+        ciphertext: request.ciphertext,
+      ),
+    );
+    afterPut?.call();
+    if (retryablePutFailuresRemaining > 0) {
+      retryablePutFailuresRemaining--;
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.network,
+        retryable: true,
+      );
+    }
+    final permanent = permanentPutFailure;
+    if (permanent != null) throw permanent;
+    return CloudSyncAttachmentStoredChunk(
+      chunk: request.chunk,
+      ciphertextBytes: request.ciphertext.length,
+    );
+  }
+
+  @override
+  Future<CloudSyncAttachmentCommittedUpload> commitAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCommitUploadRequest request,
+  }) async {
+    commitRequests.add(request);
+    afterCommit?.call();
+    return CloudSyncAttachmentCommittedUpload(
+      identity: request.identity,
+      committedAt: DateTime.utc(2026, 7, 29, 8, 1),
+    );
+  }
+
+  @override
+  Future<CloudSyncAttachmentManifest> getAttachmentManifest({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentIdentity identity,
+  }) {
+    throw UnsupportedError('上传协调器测试不读取远端清单');
+  }
+
+  @override
+  Future<CloudSyncAttachmentChunk> getAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentChunkIdentity chunk,
+  }) {
+    throw UnsupportedError('上传协调器测试不下载远端分块');
+  }
+
+  @override
+  Future<CloudSyncAttachmentDeleted> deleteAttachment({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentDeleteRequest request,
+  }) {
+    throw UnsupportedError('上传协调器测试不删除远端附件');
+  }
 }
 
 Future<HttpRequest> _nextAttachmentRequest(
