@@ -1,44 +1,43 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'sync_pull_response_data.dart';
+part of 'sync_pull_page_data.dart';
 
 // **************************************************************************
 // BuiltValueGenerator
 // **************************************************************************
 
-class _$SyncPullResponseData extends SyncPullResponseData {
+class _$SyncPullPageData extends SyncPullPageData {
   @override
   final BuiltList<SyncChange> changes;
   @override
-  final String? nextCursor;
+  final String nextCursor;
   @override
   final bool hasMore;
   @override
   final bool resetRequired;
 
-  factory _$SyncPullResponseData([
-    void Function(SyncPullResponseDataBuilder)? updates,
-  ]) => (SyncPullResponseDataBuilder()..update(updates))._build();
+  factory _$SyncPullPageData([
+    void Function(SyncPullPageDataBuilder)? updates,
+  ]) => (SyncPullPageDataBuilder()..update(updates))._build();
 
-  _$SyncPullResponseData._({
+  _$SyncPullPageData._({
     required this.changes,
-    this.nextCursor,
+    required this.nextCursor,
     required this.hasMore,
     required this.resetRequired,
   }) : super._();
   @override
-  SyncPullResponseData rebuild(
-    void Function(SyncPullResponseDataBuilder) updates,
-  ) => (toBuilder()..update(updates)).build();
+  SyncPullPageData rebuild(void Function(SyncPullPageDataBuilder) updates) =>
+      (toBuilder()..update(updates)).build();
 
   @override
-  SyncPullResponseDataBuilder toBuilder() =>
-      SyncPullResponseDataBuilder()..replace(this);
+  SyncPullPageDataBuilder toBuilder() =>
+      SyncPullPageDataBuilder()..replace(this);
 
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is SyncPullResponseData &&
+    return other is SyncPullPageData &&
         changes == other.changes &&
         nextCursor == other.nextCursor &&
         hasMore == other.hasMore &&
@@ -58,7 +57,7 @@ class _$SyncPullResponseData extends SyncPullResponseData {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'SyncPullResponseData')
+    return (newBuiltValueToStringHelper(r'SyncPullPageData')
           ..add('changes', changes)
           ..add('nextCursor', nextCursor)
           ..add('hasMore', hasMore)
@@ -67,9 +66,9 @@ class _$SyncPullResponseData extends SyncPullResponseData {
   }
 }
 
-class SyncPullResponseDataBuilder
-    implements Builder<SyncPullResponseData, SyncPullResponseDataBuilder> {
-  _$SyncPullResponseData? _$v;
+class SyncPullPageDataBuilder
+    implements Builder<SyncPullPageData, SyncPullPageDataBuilder> {
+  _$SyncPullPageData? _$v;
 
   ListBuilder<SyncChange>? _changes;
   ListBuilder<SyncChange> get changes =>
@@ -89,11 +88,11 @@ class SyncPullResponseDataBuilder
   set resetRequired(bool? resetRequired) =>
       _$this._resetRequired = resetRequired;
 
-  SyncPullResponseDataBuilder() {
-    SyncPullResponseData._defaults(this);
+  SyncPullPageDataBuilder() {
+    SyncPullPageData._defaults(this);
   }
 
-  SyncPullResponseDataBuilder get _$this {
+  SyncPullPageDataBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
       _changes = $v.changes.toBuilder();
@@ -106,34 +105,38 @@ class SyncPullResponseDataBuilder
   }
 
   @override
-  void replace(SyncPullResponseData other) {
-    _$v = other as _$SyncPullResponseData;
+  void replace(SyncPullPageData other) {
+    _$v = other as _$SyncPullPageData;
   }
 
   @override
-  void update(void Function(SyncPullResponseDataBuilder)? updates) {
+  void update(void Function(SyncPullPageDataBuilder)? updates) {
     if (updates != null) updates(this);
   }
 
   @override
-  SyncPullResponseData build() => _build();
+  SyncPullPageData build() => _build();
 
-  _$SyncPullResponseData _build() {
-    _$SyncPullResponseData _$result;
+  _$SyncPullPageData _build() {
+    _$SyncPullPageData _$result;
     try {
       _$result =
           _$v ??
-          _$SyncPullResponseData._(
+          _$SyncPullPageData._(
             changes: changes.build(),
-            nextCursor: nextCursor,
+            nextCursor: BuiltValueNullFieldError.checkNotNull(
+              nextCursor,
+              r'SyncPullPageData',
+              'nextCursor',
+            ),
             hasMore: BuiltValueNullFieldError.checkNotNull(
               hasMore,
-              r'SyncPullResponseData',
+              r'SyncPullPageData',
               'hasMore',
             ),
             resetRequired: BuiltValueNullFieldError.checkNotNull(
               resetRequired,
-              r'SyncPullResponseData',
+              r'SyncPullPageData',
               'resetRequired',
             ),
           );
@@ -144,7 +147,7 @@ class SyncPullResponseDataBuilder
         changes.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-          r'SyncPullResponseData',
+          r'SyncPullPageData',
           _$failedField,
           e.toString(),
         );

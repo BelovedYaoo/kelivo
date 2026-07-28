@@ -72,21 +72,17 @@ import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_response.da
 import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_data.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_request.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_response.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_active_record.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_applied_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_change.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_conflict_mutation_result.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_delete_change.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_delete_mutation.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_deleted_record.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_mutation.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_mutation_result.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_pull_page_data.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_pull_request.dart';
+import 'package:kelivo_sync_api_client/src/model/sync_pull_reset_data.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_pull_response_data.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_push_request.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_push_response_data.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_put_change.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_put_mutation.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_record.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_rejected_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_snapshot_request.dart';
@@ -161,21 +157,17 @@ part 'serializers.g.dart';
   RevokeTrustedDeviceData,
   RevokeTrustedDeviceRequest,
   RevokeTrustedDeviceResponse,
-  SyncActiveRecord,
   SyncAppliedMutationResult,
   SyncChange,
   SyncConflictMutationResult,
-  SyncDeleteChange,
-  SyncDeleteMutation,
-  SyncDeletedRecord,
   SyncMutation,
   SyncMutationResult,
+  SyncPullPageData,
   SyncPullRequest,
+  SyncPullResetData,
   SyncPullResponseData,
   SyncPushRequest,
   SyncPushResponseData,
-  SyncPutChange,
-  SyncPutMutation,
   SyncRecord,
   SyncRejectedMutationResult,
   SyncSnapshotRequest,

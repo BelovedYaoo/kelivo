@@ -915,6 +915,105 @@ class E2eeSyncRemoteRecordRows extends Table {
   ];
 }
 
+class E2eeSyncPullCheckpointRows extends Table {
+  TextColumn get accountUserId => text()();
+  TextColumn get phase => text()();
+  TextColumn get syncCursor => text().nullable()();
+  IntColumn get lastChangeSeq => integer()();
+  TextColumn get snapshotRunId => text().nullable()();
+  TextColumn get snapshotCursor => text().nullable()();
+  TextColumn get snapshotLastRecordId => text().nullable()();
+  IntColumn get snapshotMaxChangeSeq => integer().nullable()();
+  IntColumn get transitionVersion => integer()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {accountUserId};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(account_user_id) = 'text' "
+        'AND length(account_user_id) = 36 '
+        'AND account_user_id = lower(account_user_id) '
+        "AND account_user_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(account_user_id, 9, 1) = '-' "
+        "AND substr(account_user_id, 14, 1) = '-' "
+        "AND substr(account_user_id, 15, 1) = '4' "
+        "AND substr(account_user_id, 19, 1) = '-' "
+        "AND substr(account_user_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(account_user_id, 24, 1) = '-' "
+        "AND substr(account_user_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(phase) = 'text' "
+        "AND phase IN ('incremental', 'snapshot'))",
+    'CHECK (sync_cursor IS NULL OR '
+        "(typeof(sync_cursor) = 'text' "
+        'AND length(CAST(sync_cursor AS BLOB)) BETWEEN 1 AND 4096))',
+    "CHECK (typeof(last_change_seq) = 'integer' "
+        'AND last_change_seq BETWEEN 0 AND 9223372036854775807)',
+    'CHECK (snapshot_run_id IS NULL OR '
+        "(typeof(snapshot_run_id) = 'text' "
+        'AND length(snapshot_run_id) = 36 '
+        'AND snapshot_run_id = lower(snapshot_run_id) '
+        "AND snapshot_run_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(snapshot_run_id, 9, 1) = '-' "
+        "AND substr(snapshot_run_id, 14, 1) = '-' "
+        "AND substr(snapshot_run_id, 15, 1) = '4' "
+        "AND substr(snapshot_run_id, 19, 1) = '-' "
+        "AND substr(snapshot_run_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(snapshot_run_id, 24, 1) = '-' "
+        "AND substr(snapshot_run_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(snapshot_run_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(snapshot_run_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(snapshot_run_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(snapshot_run_id, 25, 12) NOT GLOB '*-*'))",
+    'CHECK (snapshot_cursor IS NULL OR '
+        "(typeof(snapshot_cursor) = 'text' "
+        'AND length(CAST(snapshot_cursor AS BLOB)) BETWEEN 1 AND 4096))',
+    'CHECK (snapshot_last_record_id IS NULL OR '
+        "(typeof(snapshot_last_record_id) = 'text' "
+        'AND length(snapshot_last_record_id) = 36 '
+        'AND snapshot_last_record_id = lower(snapshot_last_record_id) '
+        "AND snapshot_last_record_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(snapshot_last_record_id, 9, 1) = '-' "
+        "AND substr(snapshot_last_record_id, 14, 1) = '-' "
+        "AND substr(snapshot_last_record_id, 15, 1) = '4' "
+        "AND substr(snapshot_last_record_id, 19, 1) = '-' "
+        "AND substr(snapshot_last_record_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(snapshot_last_record_id, 24, 1) = '-' "
+        "AND substr(snapshot_last_record_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(snapshot_last_record_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(snapshot_last_record_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(snapshot_last_record_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(snapshot_last_record_id, 25, 12) NOT GLOB '*-*'))",
+    'CHECK (snapshot_max_change_seq IS NULL OR '
+        "(typeof(snapshot_max_change_seq) = 'integer' "
+        'AND snapshot_max_change_seq BETWEEN 0 AND 9223372036854775807))',
+    "CHECK (typeof(transition_version) = 'integer' "
+        'AND transition_version BETWEEN 1 AND 9223372036854775807)',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+    "CHECK ((phase = 'incremental' "
+        'AND snapshot_run_id IS NULL '
+        'AND snapshot_cursor IS NULL '
+        'AND snapshot_last_record_id IS NULL '
+        'AND snapshot_max_change_seq IS NULL) '
+        "OR (phase = 'snapshot' "
+        'AND sync_cursor IS NULL '
+        'AND snapshot_run_id IS NOT NULL '
+        'AND snapshot_max_change_seq IS NOT NULL '
+        'AND ((snapshot_cursor IS NULL AND snapshot_last_record_id IS NULL) '
+        'OR (snapshot_cursor IS NOT NULL '
+        'AND snapshot_last_record_id IS NOT NULL))))',
+  ];
+}
+
 @DriftDatabase(
   tables: [
     ConversationRows,
@@ -936,6 +1035,7 @@ class E2eeSyncRemoteRecordRows extends Table {
     E2eeSyncOperationRows,
     E2eeSyncOutboxRows,
     E2eeSyncRemoteRecordRows,
+    E2eeSyncPullCheckpointRows,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -944,7 +1044,7 @@ class AppDatabase extends _$AppDatabase {
   static const databaseFileName = 'kelivo.db';
 
   // 认证状态账本是防回滚的信任锚，不能在缺少可信历史的旧库上伪造迁移结果。
-  static const currentSchemaVersion = 14;
+  static const currentSchemaVersion = 15;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

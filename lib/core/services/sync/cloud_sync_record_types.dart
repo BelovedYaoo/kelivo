@@ -107,45 +107,40 @@ final class CloudSyncPutRecordChange extends CloudSyncRecordChange {
   final E2eeUntrustedAccountRecordEnvelope record;
 }
 
-final class CloudSyncChangePage {
+sealed class CloudSyncPullResult {
+  const CloudSyncPullResult();
+}
+
+final class CloudSyncChangePage extends CloudSyncPullResult {
   const CloudSyncChangePage({
     required this.changes,
     required this.nextCursor,
     required this.hasMore,
-    required this.resetRequired,
   });
 
   final List<CloudSyncRecordChange> changes;
   final String nextCursor;
   final bool hasMore;
-  final bool resetRequired;
 }
 
-sealed class CloudSyncRecordState {
-  const CloudSyncRecordState({
-    required this.recordId,
+final class CloudSyncResetRequired extends CloudSyncPullResult {
+  const CloudSyncResetRequired();
+}
+
+final class CloudSyncEncryptedRecord {
+  CloudSyncEncryptedRecord({
     required this.revision,
     required this.updatedAt,
     required this.updatedByDeviceId,
     required this.lastChangeSeq,
-  });
+    required this.record,
+  }) : recordId = record.recordId;
 
   final E2eeUntrustedAccountRecordId recordId;
   final int revision;
   final DateTime updatedAt;
   final String? updatedByDeviceId;
   final int lastChangeSeq;
-}
-
-final class CloudSyncActiveRecord extends CloudSyncRecordState {
-  CloudSyncActiveRecord({
-    required super.revision,
-    required super.updatedAt,
-    required super.updatedByDeviceId,
-    required super.lastChangeSeq,
-    required this.record,
-  }) : super(recordId: record.recordId);
-
   final E2eeUntrustedAccountRecordEnvelope record;
 }
 
@@ -157,7 +152,7 @@ final class CloudSyncSnapshotPage {
     required this.hasMore,
   });
 
-  final List<CloudSyncRecordState> records;
+  final List<CloudSyncEncryptedRecord> records;
   final String? nextSnapshotCursor;
   final String? syncCursor;
   final bool hasMore;

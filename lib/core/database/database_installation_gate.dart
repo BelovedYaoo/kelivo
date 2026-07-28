@@ -64,12 +64,14 @@ final class DatabaseInstallationGate {
     final databaseFile = File(
       p.join(appDataDirectory.path, AppDatabase.databaseFileName),
     );
-    final receipts = await _readReceipts(appDataDirectory);
+    final receiptFiles = await _listReceiptFiles(appDataDirectory);
+    var receipts = const <({File file, DatabaseInstallationReceipt receipt})>[];
     final databaseType = await FileSystemEntity.type(
       databaseFile.path,
       followLinks: false,
     );
-    if (receipts.isNotEmpty && databaseType == FileSystemEntityType.notFound) {
+    if (receiptFiles.isNotEmpty &&
+        databaseType == FileSystemEntityType.notFound) {
       throw StateError('database_missing');
     }
     if (databaseType != FileSystemEntityType.notFound &&
@@ -90,10 +92,29 @@ final class DatabaseInstallationGate {
           await repository.close();
         }
       } else {
-        await ChatDatabaseRepository.migrateInstalledDatabase(
-          databaseFile,
-          cipher: cipher,
-        );
+        final requiresHardCut =
+            ChatDatabaseRepository.requiresInstalledDatabaseHardCut(
+              databaseFile,
+              cipher: cipher,
+            );
+        if (requiresHardCut) {
+          await _discardObsoleteDatabase(
+            appDataDirectory: appDataDirectory,
+            databaseFile: databaseFile,
+            durability: resolvedDurability,
+          );
+          final repository = ChatDatabaseRepository.open(
+            file: databaseFile,
+            cipher: cipher,
+          );
+          try {
+            await repository.ensureReady();
+          } finally {
+            await repository.close();
+          }
+        } else {
+          receipts = await _readReceiptFiles(receiptFiles);
+        }
       }
 
       info = ChatDatabaseRepository.inspectInstalledDatabase(
@@ -209,9 +230,42 @@ final class DatabaseInstallationGate {
     }
   }
 
+  static Future<void> _discardObsoleteDatabase({
+    required Directory appDataDirectory,
+    required File databaseFile,
+    required RestoreDurability durability,
+  }) async {
+    const suffixes = ['-wal', '-shm', '-journal', ''];
+    final files = <File>[];
+    for (final suffix in suffixes) {
+      final file = File('${databaseFile.path}$suffix');
+      final type = await FileSystemEntity.type(file.path, followLinks: false);
+      if (type == FileSystemEntityType.notFound) continue;
+      if (type != FileSystemEntityType.file) {
+        throw StateError('database_schema_cutover_database_type');
+      }
+      files.add(file);
+    }
+
+    // 先移除回执，再按侧车到主库的顺序删除；任一步中断都能在下次启动重试，
+    // 不会留下“回执存在但主库已消失”或“新主库复用旧 WAL”的状态。
+    await discardReceiptsForEncryptionCutover(
+      appDataDirectory: appDataDirectory,
+      durability: durability,
+    );
+    for (final file in files) {
+      await file.delete();
+    }
+    await durability.syncDirectory(appDataDirectory, fullBarrier: true);
+  }
+
   static Future<List<({File file, DatabaseInstallationReceipt receipt})>>
   _readReceipts(Directory directory) async {
-    final receipts = <({File file, DatabaseInstallationReceipt receipt})>[];
+    return _readReceiptFiles(await _listReceiptFiles(directory));
+  }
+
+  static Future<List<File>> _listReceiptFiles(Directory directory) async {
+    final files = <File>[];
     await for (final entity in directory.list(followLinks: false)) {
       final name = p.basename(entity.path);
       if (!name.startsWith(_receiptPrefix) || !name.endsWith(_receiptSuffix)) {
@@ -221,7 +275,16 @@ final class DatabaseInstallationGate {
           FileSystemEntityType.file) {
         throw StateError('database_installation_receipt_type');
       }
-      final file = File(entity.path);
+      files.add(File(entity.path));
+    }
+    return files;
+  }
+
+  static Future<List<({File file, DatabaseInstallationReceipt receipt})>>
+  _readReceiptFiles(Iterable<File> files) async {
+    final receipts = <({File file, DatabaseInstallationReceipt receipt})>[];
+    for (final file in files) {
+      final name = p.basename(file.path);
       final receipt = await _readReceipt(file);
       if (name != '$_receiptPrefix${receipt.databaseId}$_receiptSuffix') {
         throw const FormatException('database_installation_receipt_name');

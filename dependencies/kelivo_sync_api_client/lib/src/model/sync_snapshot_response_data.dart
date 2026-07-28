@@ -10,7 +10,7 @@ import 'package:built_value/serializer.dart';
 
 part 'sync_snapshot_response_data.g.dart';
 
-/// SyncSnapshotResponseData
+/// 固定水位下按 lastChangeSeq 严格递增返回完整密文历史；同一 recordId 的多个版本会分别返回
 ///
 /// Properties:
 /// * [records]

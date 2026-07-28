@@ -10313,6 +10313,741 @@ class E2eeSyncRemoteRecordRowsCompanion
   }
 }
 
+class $E2eeSyncPullCheckpointRowsTable extends E2eeSyncPullCheckpointRows
+    with
+        TableInfo<$E2eeSyncPullCheckpointRowsTable, E2eeSyncPullCheckpointRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeSyncPullCheckpointRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _accountUserIdMeta = const VerificationMeta(
+    'accountUserId',
+  );
+  @override
+  late final GeneratedColumn<String> accountUserId = GeneratedColumn<String>(
+    'account_user_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _phaseMeta = const VerificationMeta('phase');
+  @override
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _syncCursorMeta = const VerificationMeta(
+    'syncCursor',
+  );
+  @override
+  late final GeneratedColumn<String> syncCursor = GeneratedColumn<String>(
+    'sync_cursor',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastChangeSeqMeta = const VerificationMeta(
+    'lastChangeSeq',
+  );
+  @override
+  late final GeneratedColumn<int> lastChangeSeq = GeneratedColumn<int>(
+    'last_change_seq',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _snapshotRunIdMeta = const VerificationMeta(
+    'snapshotRunId',
+  );
+  @override
+  late final GeneratedColumn<String> snapshotRunId = GeneratedColumn<String>(
+    'snapshot_run_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _snapshotCursorMeta = const VerificationMeta(
+    'snapshotCursor',
+  );
+  @override
+  late final GeneratedColumn<String> snapshotCursor = GeneratedColumn<String>(
+    'snapshot_cursor',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _snapshotLastRecordIdMeta =
+      const VerificationMeta('snapshotLastRecordId');
+  @override
+  late final GeneratedColumn<String> snapshotLastRecordId =
+      GeneratedColumn<String>(
+        'snapshot_last_record_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _snapshotMaxChangeSeqMeta =
+      const VerificationMeta('snapshotMaxChangeSeq');
+  @override
+  late final GeneratedColumn<int> snapshotMaxChangeSeq = GeneratedColumn<int>(
+    'snapshot_max_change_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _transitionVersionMeta = const VerificationMeta(
+    'transitionVersion',
+  );
+  @override
+  late final GeneratedColumn<int> transitionVersion = GeneratedColumn<int>(
+    'transition_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
+      GeneratedColumn<int>(
+        'created_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeSyncPullCheckpointRowsTable.$convertercreatedAt,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeSyncPullCheckpointRowsTable.$converterupdatedAt,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    accountUserId,
+    phase,
+    syncCursor,
+    lastChangeSeq,
+    snapshotRunId,
+    snapshotCursor,
+    snapshotLastRecordId,
+    snapshotMaxChangeSeq,
+    transitionVersion,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_pull_checkpoint_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeSyncPullCheckpointRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('account_user_id')) {
+      context.handle(
+        _accountUserIdMeta,
+        accountUserId.isAcceptableOrUnknown(
+          data['account_user_id']!,
+          _accountUserIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_accountUserIdMeta);
+    }
+    if (data.containsKey('phase')) {
+      context.handle(
+        _phaseMeta,
+        phase.isAcceptableOrUnknown(data['phase']!, _phaseMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_phaseMeta);
+    }
+    if (data.containsKey('sync_cursor')) {
+      context.handle(
+        _syncCursorMeta,
+        syncCursor.isAcceptableOrUnknown(data['sync_cursor']!, _syncCursorMeta),
+      );
+    }
+    if (data.containsKey('last_change_seq')) {
+      context.handle(
+        _lastChangeSeqMeta,
+        lastChangeSeq.isAcceptableOrUnknown(
+          data['last_change_seq']!,
+          _lastChangeSeqMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_lastChangeSeqMeta);
+    }
+    if (data.containsKey('snapshot_run_id')) {
+      context.handle(
+        _snapshotRunIdMeta,
+        snapshotRunId.isAcceptableOrUnknown(
+          data['snapshot_run_id']!,
+          _snapshotRunIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('snapshot_cursor')) {
+      context.handle(
+        _snapshotCursorMeta,
+        snapshotCursor.isAcceptableOrUnknown(
+          data['snapshot_cursor']!,
+          _snapshotCursorMeta,
+        ),
+      );
+    }
+    if (data.containsKey('snapshot_last_record_id')) {
+      context.handle(
+        _snapshotLastRecordIdMeta,
+        snapshotLastRecordId.isAcceptableOrUnknown(
+          data['snapshot_last_record_id']!,
+          _snapshotLastRecordIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('snapshot_max_change_seq')) {
+      context.handle(
+        _snapshotMaxChangeSeqMeta,
+        snapshotMaxChangeSeq.isAcceptableOrUnknown(
+          data['snapshot_max_change_seq']!,
+          _snapshotMaxChangeSeqMeta,
+        ),
+      );
+    }
+    if (data.containsKey('transition_version')) {
+      context.handle(
+        _transitionVersionMeta,
+        transitionVersion.isAcceptableOrUnknown(
+          data['transition_version']!,
+          _transitionVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_transitionVersionMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {accountUserId};
+  @override
+  E2eeSyncPullCheckpointRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeSyncPullCheckpointRow(
+      accountUserId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_user_id'],
+      )!,
+      phase: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phase'],
+      )!,
+      syncCursor: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}sync_cursor'],
+      ),
+      lastChangeSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_change_seq'],
+      )!,
+      snapshotRunId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}snapshot_run_id'],
+      ),
+      snapshotCursor: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}snapshot_cursor'],
+      ),
+      snapshotLastRecordId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}snapshot_last_record_id'],
+      ),
+      snapshotMaxChangeSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}snapshot_max_change_seq'],
+      ),
+      transitionVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}transition_version'],
+      )!,
+      createdAt: $E2eeSyncPullCheckpointRowsTable.$convertercreatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}created_at'],
+        )!,
+      ),
+      updatedAt: $E2eeSyncPullCheckpointRowsTable.$converterupdatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}updated_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeSyncPullCheckpointRowsTable createAlias(String alias) {
+    return $E2eeSyncPullCheckpointRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $convertercreatedAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeSyncPullCheckpointRow extends DataClass
+    implements Insertable<E2eeSyncPullCheckpointRow> {
+  final String accountUserId;
+  final String phase;
+  final String? syncCursor;
+  final int lastChangeSeq;
+  final String? snapshotRunId;
+  final String? snapshotCursor;
+  final String? snapshotLastRecordId;
+  final int? snapshotMaxChangeSeq;
+  final int transitionVersion;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const E2eeSyncPullCheckpointRow({
+    required this.accountUserId,
+    required this.phase,
+    this.syncCursor,
+    required this.lastChangeSeq,
+    this.snapshotRunId,
+    this.snapshotCursor,
+    this.snapshotLastRecordId,
+    this.snapshotMaxChangeSeq,
+    required this.transitionVersion,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['account_user_id'] = Variable<String>(accountUserId);
+    map['phase'] = Variable<String>(phase);
+    if (!nullToAbsent || syncCursor != null) {
+      map['sync_cursor'] = Variable<String>(syncCursor);
+    }
+    map['last_change_seq'] = Variable<int>(lastChangeSeq);
+    if (!nullToAbsent || snapshotRunId != null) {
+      map['snapshot_run_id'] = Variable<String>(snapshotRunId);
+    }
+    if (!nullToAbsent || snapshotCursor != null) {
+      map['snapshot_cursor'] = Variable<String>(snapshotCursor);
+    }
+    if (!nullToAbsent || snapshotLastRecordId != null) {
+      map['snapshot_last_record_id'] = Variable<String>(snapshotLastRecordId);
+    }
+    if (!nullToAbsent || snapshotMaxChangeSeq != null) {
+      map['snapshot_max_change_seq'] = Variable<int>(snapshotMaxChangeSeq);
+    }
+    map['transition_version'] = Variable<int>(transitionVersion);
+    {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncPullCheckpointRowsTable.$convertercreatedAt.toSql(createdAt),
+      );
+    }
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncPullCheckpointRowsTable.$converterupdatedAt.toSql(updatedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeSyncPullCheckpointRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeSyncPullCheckpointRowsCompanion(
+      accountUserId: Value(accountUserId),
+      phase: Value(phase),
+      syncCursor: syncCursor == null && nullToAbsent
+          ? const Value.absent()
+          : Value(syncCursor),
+      lastChangeSeq: Value(lastChangeSeq),
+      snapshotRunId: snapshotRunId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(snapshotRunId),
+      snapshotCursor: snapshotCursor == null && nullToAbsent
+          ? const Value.absent()
+          : Value(snapshotCursor),
+      snapshotLastRecordId: snapshotLastRecordId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(snapshotLastRecordId),
+      snapshotMaxChangeSeq: snapshotMaxChangeSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(snapshotMaxChangeSeq),
+      transitionVersion: Value(transitionVersion),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeSyncPullCheckpointRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeSyncPullCheckpointRow(
+      accountUserId: serializer.fromJson<String>(json['accountUserId']),
+      phase: serializer.fromJson<String>(json['phase']),
+      syncCursor: serializer.fromJson<String?>(json['syncCursor']),
+      lastChangeSeq: serializer.fromJson<int>(json['lastChangeSeq']),
+      snapshotRunId: serializer.fromJson<String?>(json['snapshotRunId']),
+      snapshotCursor: serializer.fromJson<String?>(json['snapshotCursor']),
+      snapshotLastRecordId: serializer.fromJson<String?>(
+        json['snapshotLastRecordId'],
+      ),
+      snapshotMaxChangeSeq: serializer.fromJson<int?>(
+        json['snapshotMaxChangeSeq'],
+      ),
+      transitionVersion: serializer.fromJson<int>(json['transitionVersion']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'accountUserId': serializer.toJson<String>(accountUserId),
+      'phase': serializer.toJson<String>(phase),
+      'syncCursor': serializer.toJson<String?>(syncCursor),
+      'lastChangeSeq': serializer.toJson<int>(lastChangeSeq),
+      'snapshotRunId': serializer.toJson<String?>(snapshotRunId),
+      'snapshotCursor': serializer.toJson<String?>(snapshotCursor),
+      'snapshotLastRecordId': serializer.toJson<String?>(snapshotLastRecordId),
+      'snapshotMaxChangeSeq': serializer.toJson<int?>(snapshotMaxChangeSeq),
+      'transitionVersion': serializer.toJson<int>(transitionVersion),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeSyncPullCheckpointRow copyWith({
+    String? accountUserId,
+    String? phase,
+    Value<String?> syncCursor = const Value.absent(),
+    int? lastChangeSeq,
+    Value<String?> snapshotRunId = const Value.absent(),
+    Value<String?> snapshotCursor = const Value.absent(),
+    Value<String?> snapshotLastRecordId = const Value.absent(),
+    Value<int?> snapshotMaxChangeSeq = const Value.absent(),
+    int? transitionVersion,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => E2eeSyncPullCheckpointRow(
+    accountUserId: accountUserId ?? this.accountUserId,
+    phase: phase ?? this.phase,
+    syncCursor: syncCursor.present ? syncCursor.value : this.syncCursor,
+    lastChangeSeq: lastChangeSeq ?? this.lastChangeSeq,
+    snapshotRunId: snapshotRunId.present
+        ? snapshotRunId.value
+        : this.snapshotRunId,
+    snapshotCursor: snapshotCursor.present
+        ? snapshotCursor.value
+        : this.snapshotCursor,
+    snapshotLastRecordId: snapshotLastRecordId.present
+        ? snapshotLastRecordId.value
+        : this.snapshotLastRecordId,
+    snapshotMaxChangeSeq: snapshotMaxChangeSeq.present
+        ? snapshotMaxChangeSeq.value
+        : this.snapshotMaxChangeSeq,
+    transitionVersion: transitionVersion ?? this.transitionVersion,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeSyncPullCheckpointRow copyWithCompanion(
+    E2eeSyncPullCheckpointRowsCompanion data,
+  ) {
+    return E2eeSyncPullCheckpointRow(
+      accountUserId: data.accountUserId.present
+          ? data.accountUserId.value
+          : this.accountUserId,
+      phase: data.phase.present ? data.phase.value : this.phase,
+      syncCursor: data.syncCursor.present
+          ? data.syncCursor.value
+          : this.syncCursor,
+      lastChangeSeq: data.lastChangeSeq.present
+          ? data.lastChangeSeq.value
+          : this.lastChangeSeq,
+      snapshotRunId: data.snapshotRunId.present
+          ? data.snapshotRunId.value
+          : this.snapshotRunId,
+      snapshotCursor: data.snapshotCursor.present
+          ? data.snapshotCursor.value
+          : this.snapshotCursor,
+      snapshotLastRecordId: data.snapshotLastRecordId.present
+          ? data.snapshotLastRecordId.value
+          : this.snapshotLastRecordId,
+      snapshotMaxChangeSeq: data.snapshotMaxChangeSeq.present
+          ? data.snapshotMaxChangeSeq.value
+          : this.snapshotMaxChangeSeq,
+      transitionVersion: data.transitionVersion.present
+          ? data.transitionVersion.value
+          : this.transitionVersion,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncPullCheckpointRow(')
+          ..write('accountUserId: $accountUserId, ')
+          ..write('phase: $phase, ')
+          ..write('syncCursor: $syncCursor, ')
+          ..write('lastChangeSeq: $lastChangeSeq, ')
+          ..write('snapshotRunId: $snapshotRunId, ')
+          ..write('snapshotCursor: $snapshotCursor, ')
+          ..write('snapshotLastRecordId: $snapshotLastRecordId, ')
+          ..write('snapshotMaxChangeSeq: $snapshotMaxChangeSeq, ')
+          ..write('transitionVersion: $transitionVersion, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    accountUserId,
+    phase,
+    syncCursor,
+    lastChangeSeq,
+    snapshotRunId,
+    snapshotCursor,
+    snapshotLastRecordId,
+    snapshotMaxChangeSeq,
+    transitionVersion,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeSyncPullCheckpointRow &&
+          other.accountUserId == this.accountUserId &&
+          other.phase == this.phase &&
+          other.syncCursor == this.syncCursor &&
+          other.lastChangeSeq == this.lastChangeSeq &&
+          other.snapshotRunId == this.snapshotRunId &&
+          other.snapshotCursor == this.snapshotCursor &&
+          other.snapshotLastRecordId == this.snapshotLastRecordId &&
+          other.snapshotMaxChangeSeq == this.snapshotMaxChangeSeq &&
+          other.transitionVersion == this.transitionVersion &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeSyncPullCheckpointRowsCompanion
+    extends UpdateCompanion<E2eeSyncPullCheckpointRow> {
+  final Value<String> accountUserId;
+  final Value<String> phase;
+  final Value<String?> syncCursor;
+  final Value<int> lastChangeSeq;
+  final Value<String?> snapshotRunId;
+  final Value<String?> snapshotCursor;
+  final Value<String?> snapshotLastRecordId;
+  final Value<int?> snapshotMaxChangeSeq;
+  final Value<int> transitionVersion;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const E2eeSyncPullCheckpointRowsCompanion({
+    this.accountUserId = const Value.absent(),
+    this.phase = const Value.absent(),
+    this.syncCursor = const Value.absent(),
+    this.lastChangeSeq = const Value.absent(),
+    this.snapshotRunId = const Value.absent(),
+    this.snapshotCursor = const Value.absent(),
+    this.snapshotLastRecordId = const Value.absent(),
+    this.snapshotMaxChangeSeq = const Value.absent(),
+    this.transitionVersion = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeSyncPullCheckpointRowsCompanion.insert({
+    required String accountUserId,
+    required String phase,
+    this.syncCursor = const Value.absent(),
+    required int lastChangeSeq,
+    this.snapshotRunId = const Value.absent(),
+    this.snapshotCursor = const Value.absent(),
+    this.snapshotLastRecordId = const Value.absent(),
+    this.snapshotMaxChangeSeq = const Value.absent(),
+    required int transitionVersion,
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : accountUserId = Value(accountUserId),
+       phase = Value(phase),
+       lastChangeSeq = Value(lastChangeSeq),
+       transitionVersion = Value(transitionVersion),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeSyncPullCheckpointRow> custom({
+    Expression<String>? accountUserId,
+    Expression<String>? phase,
+    Expression<String>? syncCursor,
+    Expression<int>? lastChangeSeq,
+    Expression<String>? snapshotRunId,
+    Expression<String>? snapshotCursor,
+    Expression<String>? snapshotLastRecordId,
+    Expression<int>? snapshotMaxChangeSeq,
+    Expression<int>? transitionVersion,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (accountUserId != null) 'account_user_id': accountUserId,
+      if (phase != null) 'phase': phase,
+      if (syncCursor != null) 'sync_cursor': syncCursor,
+      if (lastChangeSeq != null) 'last_change_seq': lastChangeSeq,
+      if (snapshotRunId != null) 'snapshot_run_id': snapshotRunId,
+      if (snapshotCursor != null) 'snapshot_cursor': snapshotCursor,
+      if (snapshotLastRecordId != null)
+        'snapshot_last_record_id': snapshotLastRecordId,
+      if (snapshotMaxChangeSeq != null)
+        'snapshot_max_change_seq': snapshotMaxChangeSeq,
+      if (transitionVersion != null) 'transition_version': transitionVersion,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeSyncPullCheckpointRowsCompanion copyWith({
+    Value<String>? accountUserId,
+    Value<String>? phase,
+    Value<String?>? syncCursor,
+    Value<int>? lastChangeSeq,
+    Value<String?>? snapshotRunId,
+    Value<String?>? snapshotCursor,
+    Value<String?>? snapshotLastRecordId,
+    Value<int?>? snapshotMaxChangeSeq,
+    Value<int>? transitionVersion,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeSyncPullCheckpointRowsCompanion(
+      accountUserId: accountUserId ?? this.accountUserId,
+      phase: phase ?? this.phase,
+      syncCursor: syncCursor ?? this.syncCursor,
+      lastChangeSeq: lastChangeSeq ?? this.lastChangeSeq,
+      snapshotRunId: snapshotRunId ?? this.snapshotRunId,
+      snapshotCursor: snapshotCursor ?? this.snapshotCursor,
+      snapshotLastRecordId: snapshotLastRecordId ?? this.snapshotLastRecordId,
+      snapshotMaxChangeSeq: snapshotMaxChangeSeq ?? this.snapshotMaxChangeSeq,
+      transitionVersion: transitionVersion ?? this.transitionVersion,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (accountUserId.present) {
+      map['account_user_id'] = Variable<String>(accountUserId.value);
+    }
+    if (phase.present) {
+      map['phase'] = Variable<String>(phase.value);
+    }
+    if (syncCursor.present) {
+      map['sync_cursor'] = Variable<String>(syncCursor.value);
+    }
+    if (lastChangeSeq.present) {
+      map['last_change_seq'] = Variable<int>(lastChangeSeq.value);
+    }
+    if (snapshotRunId.present) {
+      map['snapshot_run_id'] = Variable<String>(snapshotRunId.value);
+    }
+    if (snapshotCursor.present) {
+      map['snapshot_cursor'] = Variable<String>(snapshotCursor.value);
+    }
+    if (snapshotLastRecordId.present) {
+      map['snapshot_last_record_id'] = Variable<String>(
+        snapshotLastRecordId.value,
+      );
+    }
+    if (snapshotMaxChangeSeq.present) {
+      map['snapshot_max_change_seq'] = Variable<int>(
+        snapshotMaxChangeSeq.value,
+      );
+    }
+    if (transitionVersion.present) {
+      map['transition_version'] = Variable<int>(transitionVersion.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncPullCheckpointRowsTable.$convertercreatedAt.toSql(
+          createdAt.value,
+        ),
+      );
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncPullCheckpointRowsTable.$converterupdatedAt.toSql(
+          updatedAt.value,
+        ),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncPullCheckpointRowsCompanion(')
+          ..write('accountUserId: $accountUserId, ')
+          ..write('phase: $phase, ')
+          ..write('syncCursor: $syncCursor, ')
+          ..write('lastChangeSeq: $lastChangeSeq, ')
+          ..write('snapshotRunId: $snapshotRunId, ')
+          ..write('snapshotCursor: $snapshotCursor, ')
+          ..write('snapshotLastRecordId: $snapshotLastRecordId, ')
+          ..write('snapshotMaxChangeSeq: $snapshotMaxChangeSeq, ')
+          ..write('transitionVersion: $transitionVersion, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -10354,6 +11089,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $E2eeSyncOutboxRowsTable(this);
   late final $E2eeSyncRemoteRecordRowsTable e2eeSyncRemoteRecordRows =
       $E2eeSyncRemoteRecordRowsTable(this);
+  late final $E2eeSyncPullCheckpointRowsTable e2eeSyncPullCheckpointRows =
+      $E2eeSyncPullCheckpointRowsTable(this);
   late final Index idxConversationsUpdatedAt = Index(
     'idx_conversations_updated_at',
     'CREATE INDEX idx_conversations_updated_at ON conversation_rows (updated_at DESC, id ASC)',
@@ -10450,6 +11187,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     e2eeSyncOperationRows,
     e2eeSyncOutboxRows,
     e2eeSyncRemoteRecordRows,
+    e2eeSyncPullCheckpointRows,
     idxConversationsUpdatedAt,
     idxConversationsAssistant,
     idxMessagesConversationOrder,
@@ -18094,6 +18832,357 @@ typedef $$E2eeSyncRemoteRecordRowsTableProcessedTableManager =
       E2eeSyncRemoteRecordRow,
       PrefetchHooks Function()
     >;
+typedef $$E2eeSyncPullCheckpointRowsTableCreateCompanionBuilder =
+    E2eeSyncPullCheckpointRowsCompanion Function({
+      required String accountUserId,
+      required String phase,
+      Value<String?> syncCursor,
+      required int lastChangeSeq,
+      Value<String?> snapshotRunId,
+      Value<String?> snapshotCursor,
+      Value<String?> snapshotLastRecordId,
+      Value<int?> snapshotMaxChangeSeq,
+      required int transitionVersion,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeSyncPullCheckpointRowsTableUpdateCompanionBuilder =
+    E2eeSyncPullCheckpointRowsCompanion Function({
+      Value<String> accountUserId,
+      Value<String> phase,
+      Value<String?> syncCursor,
+      Value<int> lastChangeSeq,
+      Value<String?> snapshotRunId,
+      Value<String?> snapshotCursor,
+      Value<String?> snapshotLastRecordId,
+      Value<int?> snapshotMaxChangeSeq,
+      Value<int> transitionVersion,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$E2eeSyncPullCheckpointRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeSyncPullCheckpointRowsTable> {
+  $$E2eeSyncPullCheckpointRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get syncCursor => $composableBuilder(
+    column: $table.syncCursor,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastChangeSeq => $composableBuilder(
+    column: $table.lastChangeSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get snapshotRunId => $composableBuilder(
+    column: $table.snapshotRunId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get snapshotCursor => $composableBuilder(
+    column: $table.snapshotCursor,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get snapshotLastRecordId => $composableBuilder(
+    column: $table.snapshotLastRecordId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get snapshotMaxChangeSeq => $composableBuilder(
+    column: $table.snapshotMaxChangeSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get createdAt =>
+      $composableBuilder(
+        column: $table.createdAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeSyncPullCheckpointRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeSyncPullCheckpointRowsTable> {
+  $$E2eeSyncPullCheckpointRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get syncCursor => $composableBuilder(
+    column: $table.syncCursor,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get lastChangeSeq => $composableBuilder(
+    column: $table.lastChangeSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get snapshotRunId => $composableBuilder(
+    column: $table.snapshotRunId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get snapshotCursor => $composableBuilder(
+    column: $table.snapshotCursor,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get snapshotLastRecordId => $composableBuilder(
+    column: $table.snapshotLastRecordId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get snapshotMaxChangeSeq => $composableBuilder(
+    column: $table.snapshotMaxChangeSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeSyncPullCheckpointRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeSyncPullCheckpointRowsTable> {
+  $$E2eeSyncPullCheckpointRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get phase =>
+      $composableBuilder(column: $table.phase, builder: (column) => column);
+
+  GeneratedColumn<String> get syncCursor => $composableBuilder(
+    column: $table.syncCursor,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get lastChangeSeq => $composableBuilder(
+    column: $table.lastChangeSeq,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get snapshotRunId => $composableBuilder(
+    column: $table.snapshotRunId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get snapshotCursor => $composableBuilder(
+    column: $table.snapshotCursor,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get snapshotLastRecordId => $composableBuilder(
+    column: $table.snapshotLastRecordId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get snapshotMaxChangeSeq => $composableBuilder(
+    column: $table.snapshotMaxChangeSeq,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeSyncPullCheckpointRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeSyncPullCheckpointRowsTable,
+          E2eeSyncPullCheckpointRow,
+          $$E2eeSyncPullCheckpointRowsTableFilterComposer,
+          $$E2eeSyncPullCheckpointRowsTableOrderingComposer,
+          $$E2eeSyncPullCheckpointRowsTableAnnotationComposer,
+          $$E2eeSyncPullCheckpointRowsTableCreateCompanionBuilder,
+          $$E2eeSyncPullCheckpointRowsTableUpdateCompanionBuilder,
+          (
+            E2eeSyncPullCheckpointRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeSyncPullCheckpointRowsTable,
+              E2eeSyncPullCheckpointRow
+            >,
+          ),
+          E2eeSyncPullCheckpointRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeSyncPullCheckpointRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeSyncPullCheckpointRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeSyncPullCheckpointRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeSyncPullCheckpointRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeSyncPullCheckpointRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> accountUserId = const Value.absent(),
+                Value<String> phase = const Value.absent(),
+                Value<String?> syncCursor = const Value.absent(),
+                Value<int> lastChangeSeq = const Value.absent(),
+                Value<String?> snapshotRunId = const Value.absent(),
+                Value<String?> snapshotCursor = const Value.absent(),
+                Value<String?> snapshotLastRecordId = const Value.absent(),
+                Value<int?> snapshotMaxChangeSeq = const Value.absent(),
+                Value<int> transitionVersion = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncPullCheckpointRowsCompanion(
+                accountUserId: accountUserId,
+                phase: phase,
+                syncCursor: syncCursor,
+                lastChangeSeq: lastChangeSeq,
+                snapshotRunId: snapshotRunId,
+                snapshotCursor: snapshotCursor,
+                snapshotLastRecordId: snapshotLastRecordId,
+                snapshotMaxChangeSeq: snapshotMaxChangeSeq,
+                transitionVersion: transitionVersion,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String accountUserId,
+                required String phase,
+                Value<String?> syncCursor = const Value.absent(),
+                required int lastChangeSeq,
+                Value<String?> snapshotRunId = const Value.absent(),
+                Value<String?> snapshotCursor = const Value.absent(),
+                Value<String?> snapshotLastRecordId = const Value.absent(),
+                Value<int?> snapshotMaxChangeSeq = const Value.absent(),
+                required int transitionVersion,
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncPullCheckpointRowsCompanion.insert(
+                accountUserId: accountUserId,
+                phase: phase,
+                syncCursor: syncCursor,
+                lastChangeSeq: lastChangeSeq,
+                snapshotRunId: snapshotRunId,
+                snapshotCursor: snapshotCursor,
+                snapshotLastRecordId: snapshotLastRecordId,
+                snapshotMaxChangeSeq: snapshotMaxChangeSeq,
+                transitionVersion: transitionVersion,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeSyncPullCheckpointRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeSyncPullCheckpointRowsTable,
+      E2eeSyncPullCheckpointRow,
+      $$E2eeSyncPullCheckpointRowsTableFilterComposer,
+      $$E2eeSyncPullCheckpointRowsTableOrderingComposer,
+      $$E2eeSyncPullCheckpointRowsTableAnnotationComposer,
+      $$E2eeSyncPullCheckpointRowsTableCreateCompanionBuilder,
+      $$E2eeSyncPullCheckpointRowsTableUpdateCompanionBuilder,
+      (
+        E2eeSyncPullCheckpointRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeSyncPullCheckpointRowsTable,
+          E2eeSyncPullCheckpointRow
+        >,
+      ),
+      E2eeSyncPullCheckpointRow,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -18154,5 +19243,11 @@ class $AppDatabaseManager {
       $$E2eeSyncRemoteRecordRowsTableTableManager(
         _db,
         _db.e2eeSyncRemoteRecordRows,
+      );
+  $$E2eeSyncPullCheckpointRowsTableTableManager
+  get e2eeSyncPullCheckpointRows =>
+      $$E2eeSyncPullCheckpointRowsTableTableManager(
+        _db,
+        _db.e2eeSyncPullCheckpointRows,
       );
 }

@@ -5,7 +5,6 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:kelivo_sync_api_client/kelivo_sync_api_client.dart' as api;
-import 'package:one_of/one_of.dart';
 
 import 'cloud_sync_record_types.dart';
 import 'cloud_sync_types.dart';
@@ -16,7 +15,7 @@ abstract interface class CloudSyncRecordTransport {
     List<CloudSyncRecordMutation> mutations,
   );
 
-  Future<CloudSyncChangePage> pullChanges({String? cursor, int limit = 10});
+  Future<CloudSyncPullResult> pullChanges({String? cursor, int limit = 10});
 
   Future<CloudSyncSnapshotPage> pullSnapshot({
     String? snapshotCursor,
@@ -663,9 +662,29 @@ final class CloudSyncClient
   }
 
   @override
-  Future<CloudSyncChangePage> pullChanges({String? cursor, int limit = 10}) {
+  Future<CloudSyncPullResult> pullChanges({String? cursor, int limit = 10}) {
     _validatePullArguments(cursor: cursor, limit: limit);
+    return _pullValidatedChanges(
+      cursor: cursor,
+      limit: limit,
+      token: _requireFullSessionToken(),
+    );
+  }
 
+  Future<CloudSyncPullResult> pullChangesWithToken({
+    required CloudSyncFullSessionToken token,
+    String? cursor,
+    int limit = 10,
+  }) {
+    _validatePullArguments(cursor: cursor, limit: limit);
+    return _pullValidatedChanges(cursor: cursor, limit: limit, token: token);
+  }
+
+  Future<CloudSyncPullResult> _pullValidatedChanges({
+    required String? cursor,
+    required int limit,
+    required CloudSyncFullSessionToken token,
+  }) {
     return _guard(() async {
       final request = api.SyncPullRequest((builder) {
         builder.limit = limit;
@@ -676,15 +695,23 @@ final class CloudSyncClient
       final response = await _client.getSyncApi().pullEncryptedSyncChanges(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncPullRequest: request,
-        headers: _requireFullSessionHeaders(),
+        headers: _authorizationHeaders(token.value),
       );
       final data = _requireResponseData(response.data?.data);
-      _validateChangePage(
+      if (data.resetRequired) {
+        _validateResetRequired(
+          changeCount: data.changes.length,
+          nextCursor: data.nextCursor,
+          hasMore: data.hasMore,
+        );
+        return const CloudSyncResetRequired();
+      }
+      final nextCursor = _requireValidChangePage(
         changeCount: data.changes.length,
         pageLimit: limit,
+        requestedCursor: cursor,
         nextCursor: data.nextCursor,
         hasMore: data.hasMore,
-        resetRequired: data.resetRequired,
       );
       final changes = data.changes
           .map(_fromRecordChange)
@@ -692,9 +719,8 @@ final class CloudSyncClient
       _validateChangeOrdering(changes);
       return CloudSyncChangePage(
         changes: List<CloudSyncRecordChange>.unmodifiable(changes),
-        nextCursor: data.nextCursor,
+        nextCursor: nextCursor,
         hasMore: data.hasMore,
-        resetRequired: data.resetRequired,
       );
     });
   }
@@ -705,7 +731,31 @@ final class CloudSyncClient
     int limit = 10,
   }) {
     _validatePullArguments(cursor: snapshotCursor, limit: limit);
+    return _pullValidatedSnapshot(
+      snapshotCursor: snapshotCursor,
+      limit: limit,
+      token: _requireFullSessionToken(),
+    );
+  }
 
+  Future<CloudSyncSnapshotPage> pullSnapshotWithToken({
+    required CloudSyncFullSessionToken token,
+    String? snapshotCursor,
+    int limit = 10,
+  }) {
+    _validatePullArguments(cursor: snapshotCursor, limit: limit);
+    return _pullValidatedSnapshot(
+      snapshotCursor: snapshotCursor,
+      limit: limit,
+      token: token,
+    );
+  }
+
+  Future<CloudSyncSnapshotPage> _pullValidatedSnapshot({
+    required String? snapshotCursor,
+    required int limit,
+    required CloudSyncFullSessionToken token,
+  }) {
     return _guard(() async {
       final request = api.SyncSnapshotRequest((builder) {
         builder.limit = limit;
@@ -716,12 +766,13 @@ final class CloudSyncClient
       final response = await _client.getSyncApi().pullEncryptedSyncSnapshot(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         syncSnapshotRequest: request,
-        headers: _requireFullSessionHeaders(),
+        headers: _authorizationHeaders(token.value),
       );
       final data = _requireResponseData(response.data?.data);
       _validateSnapshotPage(
         recordCount: data.records.length,
         pageLimit: limit,
+        requestedSnapshotCursor: snapshotCursor,
         nextSnapshotCursor: data.nextSnapshotCursor,
         syncCursor: data.syncCursor,
         hasMore: data.hasMore,
@@ -729,8 +780,9 @@ final class CloudSyncClient
       final records = data.records
           .map(_fromRecordState)
           .toList(growable: false);
+      _validateSnapshotOrdering(records);
       return CloudSyncSnapshotPage(
-        records: List<CloudSyncRecordState>.unmodifiable(records),
+        records: List<CloudSyncEncryptedRecord>.unmodifiable(records),
         nextSnapshotCursor: data.nextSnapshotCursor,
         syncCursor: data.syncCursor,
         hasMore: data.hasMore,
@@ -829,22 +881,15 @@ api.SyncMutation _toGeneratedMutation(CloudSyncRecordMutation mutation) {
 
 api.SyncMutation _toGeneratedPutMutation(CloudSyncPutRecordMutation mutation) {
   final record = mutation.state.record;
-  final value = api.SyncPutMutation(
+  return api.SyncMutation(
     (builder) => builder
       ..mutationId = mutation.mutationId
       ..recordId = mutation.recordId.wireValue
       ..expectedRevision = mutation.expectedRevision
-      ..operation = api.SyncPutMutationOperationEnum.put
+      ..operation = api.SyncMutationOperationEnum.put
       ..envelopeVersion = e2eeAccountRecordEnvelopeVersion
       ..keyEpoch = record.keyEpoch
       ..ciphertext = _encodeSyncCiphertext(record.ciphertext),
-  );
-  return api.SyncMutation(
-    (builder) =>
-        builder.oneOf = OneOf2<api.SyncDeleteMutation, api.SyncPutMutation>(
-          value: value,
-          typeIndex: 1,
-        ),
   );
 }
 
@@ -888,91 +933,70 @@ CloudSyncRecordMutationResult _fromMutationResult(
 }
 
 CloudSyncRecordChange _fromRecordChange(api.SyncChange change) {
-  final value = change.oneOf.value;
-  if (value is api.SyncPutChange) {
-    _validateRecordMetadata(
-      recordId: value.recordId,
-      revision: value.revision,
-      sequence: value.changeSeq,
-      updatedByDeviceId: value.updatedByDeviceId,
-    );
-    if (value.envelopeVersion != e2eeAccountRecordEnvelopeVersion ||
-        value.keyEpoch < 1 ||
-        value.keyEpoch > 2147483647 ||
-        value.ciphertextBytes < 1 ||
-        value.ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes ||
-        _syncCiphertextByteLength(value.ciphertext) != value.ciphertextBytes ||
-        value.deletedAt != null) {
-      throw const FormatException('服务端返回了无效的 put 增量');
-    }
-    final ciphertext = _decodeSyncCiphertext(
-      value.ciphertext,
-      value.ciphertextBytes,
-    );
-    return CloudSyncPutRecordChange(
-      changeSeq: value.changeSeq,
-      revision: value.revision,
-      updatedAt: value.updatedAt.toUtc(),
-      updatedByDeviceId: value.updatedByDeviceId,
-      record: E2eeUntrustedAccountRecordEnvelope.fromTransport(
-        recordId: E2eeUntrustedAccountRecordId.fromTransport(value.recordId),
-        envelopeVersion: value.envelopeVersion,
-        keyEpoch: value.keyEpoch,
-        ciphertext: ciphertext,
-      ),
-    );
+  if (change.operation != api.SyncChangeOperationEnum.put) {
+    throw const FormatException('服务端返回了未知的同步增量');
   }
-  if (value is api.SyncDeleteChange) {
-    throw const FormatException('服务端返回了不受信任的 delete 增量');
-  }
-  throw const FormatException('服务端返回了未知的同步增量');
+  _validateRecordMetadata(
+    recordId: change.recordId,
+    revision: change.revision,
+    sequence: change.changeSeq,
+    updatedByDeviceId: change.updatedByDeviceId,
+  );
+  _validateEncryptedRecord(
+    envelopeVersion: change.envelopeVersion,
+    keyEpoch: change.keyEpoch,
+    ciphertext: change.ciphertext,
+    ciphertextBytes: change.ciphertextBytes,
+    description: 'put 增量',
+  );
+  final ciphertext = _decodeSyncCiphertext(
+    change.ciphertext,
+    change.ciphertextBytes,
+  );
+  return CloudSyncPutRecordChange(
+    changeSeq: change.changeSeq,
+    revision: change.revision,
+    updatedAt: change.updatedAt.toUtc(),
+    updatedByDeviceId: change.updatedByDeviceId,
+    record: E2eeUntrustedAccountRecordEnvelope.fromTransport(
+      recordId: E2eeUntrustedAccountRecordId.fromTransport(change.recordId),
+      envelopeVersion: change.envelopeVersion,
+      keyEpoch: change.keyEpoch,
+      ciphertext: ciphertext,
+    ),
+  );
 }
 
-CloudSyncRecordState _fromRecordState(api.SyncRecord record) {
-  final values = record.anyOf.values.values.whereType<Object>().toList(
-    growable: false,
+CloudSyncEncryptedRecord _fromRecordState(api.SyncRecord record) {
+  _validateRecordMetadata(
+    recordId: record.recordId,
+    revision: record.revision,
+    sequence: record.lastChangeSeq,
+    updatedByDeviceId: record.updatedByDeviceId,
   );
-  if (values.length != 1) {
-    throw const FormatException('服务端返回了歧义的同步记录');
-  }
-  final value = values.single;
-  if (value is api.SyncActiveRecord) {
-    _validateRecordMetadata(
-      recordId: value.recordId,
-      revision: value.revision,
-      sequence: value.lastChangeSeq,
-      updatedByDeviceId: value.updatedByDeviceId,
-    );
-    if (value.envelopeVersion != e2eeAccountRecordEnvelopeVersion ||
-        value.keyEpoch < 1 ||
-        value.keyEpoch > 2147483647 ||
-        value.ciphertextBytes < 1 ||
-        value.ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes ||
-        _syncCiphertextByteLength(value.ciphertext) != value.ciphertextBytes ||
-        value.deletedAt != null) {
-      throw const FormatException('服务端返回了无效的 active 记录');
-    }
-    final ciphertext = _decodeSyncCiphertext(
-      value.ciphertext,
-      value.ciphertextBytes,
-    );
-    return CloudSyncActiveRecord(
-      revision: value.revision,
-      updatedAt: value.updatedAt.toUtc(),
-      updatedByDeviceId: value.updatedByDeviceId,
-      lastChangeSeq: value.lastChangeSeq,
-      record: E2eeUntrustedAccountRecordEnvelope.fromTransport(
-        recordId: E2eeUntrustedAccountRecordId.fromTransport(value.recordId),
-        envelopeVersion: value.envelopeVersion,
-        keyEpoch: value.keyEpoch,
-        ciphertext: ciphertext,
-      ),
-    );
-  }
-  if (value is api.SyncDeletedRecord) {
-    throw const FormatException('服务端返回了不受信任的 deleted 记录');
-  }
-  throw const FormatException('服务端返回了未知的同步记录');
+  _validateEncryptedRecord(
+    envelopeVersion: record.envelopeVersion,
+    keyEpoch: record.keyEpoch,
+    ciphertext: record.ciphertext,
+    ciphertextBytes: record.ciphertextBytes,
+    description: '快照记录',
+  );
+  final ciphertext = _decodeSyncCiphertext(
+    record.ciphertext,
+    record.ciphertextBytes,
+  );
+  return CloudSyncEncryptedRecord(
+    revision: record.revision,
+    updatedAt: record.updatedAt.toUtc(),
+    updatedByDeviceId: record.updatedByDeviceId,
+    lastChangeSeq: record.lastChangeSeq,
+    record: E2eeUntrustedAccountRecordEnvelope.fromTransport(
+      recordId: E2eeUntrustedAccountRecordId.fromTransport(record.recordId),
+      envelopeVersion: record.envelopeVersion,
+      keyEpoch: record.keyEpoch,
+      ciphertext: ciphertext,
+    ),
+  );
 }
 
 void _validatePushMutations(List<CloudSyncRecordMutation> mutations) {
@@ -1069,19 +1093,30 @@ bool _isValidSyncCursor(String value) {
   return value.isNotEmpty && value.length <= 4096;
 }
 
-void _validateChangePage({
+String _requireValidChangePage({
   required int changeCount,
   required int pageLimit,
-  required String nextCursor,
+  required String? requestedCursor,
+  required String? nextCursor,
   required bool hasMore,
-  required bool resetRequired,
 }) {
-  final resetStateIsValid = !resetRequired || (changeCount == 0 && !hasMore);
   if (changeCount > pageLimit ||
+      nextCursor == null ||
       !_isValidSyncCursor(nextCursor) ||
       (hasMore && changeCount == 0) ||
-      !resetStateIsValid) {
+      (changeCount > 0 && nextCursor == requestedCursor)) {
     throw const FormatException('服务端返回了无效的增量分页数据');
+  }
+  return nextCursor;
+}
+
+void _validateResetRequired({
+  required int changeCount,
+  required String? nextCursor,
+  required bool hasMore,
+}) {
+  if (changeCount != 0 || nextCursor != null || hasMore) {
+    throw const FormatException('服务端返回了无效的游标重置数据');
   }
 }
 
@@ -1096,9 +1131,38 @@ void _validateChangeOrdering(List<CloudSyncRecordChange> changes) {
   }
 }
 
+void _validateSnapshotOrdering(List<CloudSyncEncryptedRecord> records) {
+  int? previousSequence;
+  for (final record in records) {
+    final previous = previousSequence;
+    if (previous != null && record.lastChangeSeq <= previous) {
+      throw const FormatException('服务端返回了乱序的快照历史');
+    }
+    previousSequence = record.lastChangeSeq;
+  }
+}
+
+void _validateEncryptedRecord({
+  required int envelopeVersion,
+  required int keyEpoch,
+  required String ciphertext,
+  required int ciphertextBytes,
+  required String description,
+}) {
+  if (envelopeVersion != e2eeAccountRecordEnvelopeVersion ||
+      keyEpoch < 1 ||
+      keyEpoch > 2147483647 ||
+      ciphertextBytes < 1 ||
+      ciphertextBytes > e2eeAccountRecordMaxCiphertextBytes ||
+      _syncCiphertextByteLength(ciphertext) != ciphertextBytes) {
+    throw FormatException('服务端返回了无效的$description');
+  }
+}
+
 void _validateSnapshotPage({
   required int recordCount,
   required int pageLimit,
+  required String? requestedSnapshotCursor,
   required String? nextSnapshotCursor,
   required String? syncCursor,
   required bool hasMore,
@@ -1112,6 +1176,9 @@ void _validateSnapshotPage({
       : nextSnapshotCursor == null && syncCursor != null;
   if (recordCount > pageLimit ||
       (hasMore && recordCount == 0) ||
+      (hasMore &&
+          recordCount > 0 &&
+          nextSnapshotCursor == requestedSnapshotCursor) ||
       !nextCursorIsValid ||
       !syncCursorIsValid ||
       !cursorsMatchPageState) {

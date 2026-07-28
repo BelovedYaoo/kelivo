@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:Kelivo/core/database/app_database.dart';
@@ -7,6 +8,8 @@ import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
@@ -45,6 +48,19 @@ String _syncUuid(int value) =>
 Uint8List _syncDigest(int value, {int length = 32}) =>
     Uint8List.fromList(List<int>.filled(length, value));
 
+Map<String, Object?> _conversationPayload(String title) => <String, Object?>{
+  'title': title,
+  'createdAt': '2026-07-28T00:00:00.000Z',
+  'updatedAt': '2026-07-28T00:00:00.000Z',
+  'isPinned': false,
+  'assistantId': null,
+  'mcpServerIds': const <Object?>[],
+  'truncateIndex': -1,
+  'summary': null,
+  'lastSummarizedMessageCount': 0,
+  'chatSuggestions': const <Object?>[],
+};
+
 void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
@@ -54,6 +70,7 @@ void main() {
   late E2eeAccountRecordStateCodec stateCodec;
   late E2eeSyncRecordLedger ledger;
   late E2eeSyncOutboxCommands outboxCommands;
+  late E2eeSyncPullCommands pullCommands;
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp(
@@ -81,6 +98,7 @@ void main() {
     outboxCommands = await repository.acquireE2eeSyncOutboxCommands(
       now: DateTime.utc(2026, 7, 28),
     );
+    pullCommands = repository.e2eeSyncPullCommands;
   });
 
   tearDown(() async {
@@ -114,6 +132,140 @@ void main() {
         ciphertext: sealed.record.ciphertext,
       ),
       decode: (state, _) => state,
+    );
+  }
+
+  Future<CloudSyncPutRecordChange> createPullValueChange({
+    required int changeSeq,
+    required int revision,
+    required int operation,
+    Map<String, Object?>? payload,
+    Uint8List? encodedPayload,
+    int? keyEpoch,
+    SyncEntityKey? entityKey,
+    int logicalVersion = 1,
+    List<E2eeAccountRecordStateDigest> parentDigests = const [],
+  }) async {
+    final resolvedEntityKey =
+        entityKey ??
+        SyncEntityKey(
+          entityType: 'conversation',
+          entityId: 'pull-value-$operation',
+        );
+    final sealed = await stateCodec.sealValue(
+      entityKey: resolvedEntityKey,
+      logicalVersion: logicalVersion,
+      parentDigests: parentDigests,
+      operationId: _ledgerOperationId(operation),
+      claimedWriterDeviceId: _ledgerClaimedWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload:
+          encodedPayload ??
+          E2eeSyncPayloadCodec.encode(
+            entityKey: resolvedEntityKey,
+            payload: payload ?? _conversationPayload('远端会话'),
+          ),
+    );
+    return CloudSyncPutRecordChange(
+      changeSeq: changeSeq,
+      revision: revision,
+      updatedAt: DateTime.utc(2026, 7, 28),
+      updatedByDeviceId: _syncActorDeviceId,
+      record: E2eeUntrustedAccountRecordEnvelope.fromTransport(
+        recordId: E2eeUntrustedAccountRecordId.fromTransport(
+          sealed.record.recordId.wireValue,
+        ),
+        envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+        keyEpoch: keyEpoch ?? sealed.record.keyEpoch,
+        ciphertext: sealed.record.ciphertext,
+      ),
+    );
+  }
+
+  Future<E2eeAuthenticatedAccountRecordState> authenticatePullChange(
+    CloudSyncPutRecordChange change,
+  ) {
+    return stateCodec.open(change.record, decode: (state, _) => state);
+  }
+
+  Future<E2eeSyncPulledValueChange> authenticatePulledValueChange(
+    CloudSyncPutRecordChange change,
+  ) {
+    return stateCodec.open(
+      change.record,
+      decode: (state, borrowedPayload) => E2eeSyncPulledValueChange(
+        untrustedServerMetadata: E2eeSyncUntrustedServerMetadata(
+          changeSeq: change.changeSeq,
+          revision: change.revision,
+        ),
+        state: state,
+        payload: E2eeSyncPayloadCodec.decode(
+          entityKey: state.entityKey,
+          bytes: borrowedPayload,
+        ),
+      ),
+    );
+  }
+
+  CloudSyncEncryptedRecord snapshotRecordFromChange(
+    CloudSyncPutRecordChange change,
+  ) {
+    return CloudSyncEncryptedRecord(
+      revision: change.revision,
+      updatedAt: change.updatedAt,
+      updatedByDeviceId: change.updatedByDeviceId,
+      lastChangeSeq: change.changeSeq,
+      record: change.record,
+    );
+  }
+
+  Future<CloudSyncPutRecordChange> createPullTombstoneChange({
+    required int changeSeq,
+    required int revision,
+    required int operation,
+    SyncEntityKey? entityKey,
+  }) async {
+    final sealed = await stateCodec.sealTombstone(
+      entityKey:
+          entityKey ??
+          SyncEntityKey(
+            entityType: 'conversation',
+            entityId: 'pull-tombstone-$operation',
+          ),
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _ledgerOperationId(operation),
+      claimedWriterDeviceId: _ledgerClaimedWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+    );
+    return CloudSyncPutRecordChange(
+      changeSeq: changeSeq,
+      revision: revision,
+      updatedAt: DateTime.utc(2026, 7, 28),
+      updatedByDeviceId: _syncActorDeviceId,
+      record: E2eeUntrustedAccountRecordEnvelope.fromTransport(
+        recordId: E2eeUntrustedAccountRecordId.fromTransport(
+          sealed.record.recordId.wireValue,
+        ),
+        envelopeVersion: e2eeAccountRecordEnvelopeVersion,
+        keyEpoch: sealed.record.keyEpoch,
+        ciphertext: sealed.record.ciphertext,
+      ),
+    );
+  }
+
+  E2eeSyncPullCoordinator createPullCoordinator({
+    required E2eeSyncAuthenticatedPullTransport transport,
+    required E2eeSyncTransactionalBusinessApplier applyPage,
+  }) {
+    var clockTick = 0;
+    return E2eeSyncPullCoordinator(
+      pullCommands: pullCommands,
+      stateCodec: stateCodec,
+      transport: transport,
+      applyBusiness: applyPage,
+      utcNow: () =>
+          DateTime.utc(2026, 7, 28).add(Duration(microseconds: clockTick++)),
     );
   }
 
@@ -760,6 +912,1432 @@ void main() {
         );
       },
     );
+  });
+
+  group('E2EE sync pull checkpoint boundary', () {
+    test('增量页业务写入与游标最后原子提交', () async {
+      final wireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 90,
+      );
+      final change = await authenticatePulledValueChange(wireChange);
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      expect(initial.phase, E2eeSyncPullPhase.incremental);
+      expect(initial.syncCursor, equals(null));
+      expect(initial.lastChangeSeq, 0);
+      expect(initial.transitionVersion, 1);
+
+      final committed = await pullCommands.applyIncrementalPage(
+        expected: initial,
+        nextCursor: 'cursor-1',
+        lastChangeSeq: 1,
+        changes: <E2eeSyncPulledChange>[change],
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+        applyBusiness: (_) async {
+          await insertConversation(id: 'pulled-conversation');
+        },
+      );
+
+      expect(committed.value.businessApplyCount, 1);
+      expect(committed.checkpoint.syncCursor, 'cursor-1');
+      expect(committed.checkpoint.lastChangeSeq, 1);
+      expect(committed.checkpoint.transitionVersion, 2);
+      expect(
+        await database.select(database.conversationRows).getSingle(),
+        isA<ConversationRow>().having(
+          (row) => row.id,
+          'id',
+          'pulled-conversation',
+        ),
+      );
+    });
+
+    test('业务写入失败时回滚整页且旧 checkpoint 仍可重试', () async {
+      final wireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 91,
+      );
+      final change = await authenticatePulledValueChange(wireChange);
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+
+      await expectLater(
+        pullCommands.applyIncrementalPage(
+          expected: initial,
+          nextCursor: 'cursor-failed',
+          lastChangeSeq: 1,
+          changes: <E2eeSyncPulledChange>[change],
+          now: DateTime.utc(2026, 7, 28, 0, 1),
+          applyBusiness: (_) async {
+            await insertConversation(id: 'rolled-back-conversation');
+            throw StateError('apply-failed');
+          },
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      final persisted = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+      );
+      expect(persisted.transitionVersion, initial.transitionVersion);
+      expect(persisted.syncCursor, equals(null));
+      expect(await database.select(database.conversationRows).get(), isEmpty);
+    });
+
+    test('CAS 拒绝旧 checkpoint 且不会执行回调', () async {
+      final firstWireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 92,
+      );
+      final secondWireChange = await createPullValueChange(
+        changeSeq: 2,
+        revision: 1,
+        operation: 93,
+      );
+      final firstChange = await authenticatePulledValueChange(firstWireChange);
+      final secondChange = await authenticatePulledValueChange(
+        secondWireChange,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      await pullCommands.applyIncrementalPage(
+        expected: initial,
+        nextCursor: 'cursor-current',
+        lastChangeSeq: 1,
+        changes: <E2eeSyncPulledChange>[firstChange],
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+        applyBusiness: (_) async {},
+      );
+      var callbackRan = false;
+
+      await expectLater(
+        pullCommands.applyIncrementalPage(
+          expected: initial,
+          nextCursor: 'cursor-stale',
+          lastChangeSeq: 2,
+          changes: <E2eeSyncPulledChange>[secondChange],
+          now: DateTime.utc(2026, 7, 28, 0, 2),
+          applyBusiness: (_) async {
+            callbackRan = true;
+          },
+        ),
+        throwsA(isA<E2eeSyncPullCheckpointStale>()),
+      );
+      expect(callbackRan, isFalse);
+    });
+
+    test('reset、快照续传与末页游标切换保持单一状态', () async {
+      final wireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 94,
+      );
+      final change = await authenticatePulledValueChange(wireChange);
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final snapshot = await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(70),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      expect(snapshot.phase, E2eeSyncPullPhase.snapshot);
+      expect(snapshot.syncCursor, equals(null));
+      expect(snapshot.snapshotRunId, _syncUuid(70));
+      expect(snapshot.snapshotMaxChangeSeq, 0);
+
+      final middle = await pullCommands.applySnapshotPage(
+        expected: snapshot,
+        nextSnapshotCursor: 'snapshot-cursor-1',
+        snapshotLastRecordId: change.state.recordId.wireValue,
+        snapshotMaxChangeSeq: 1,
+        finalSyncCursor: null,
+        changes: <E2eeSyncPulledChange>[change],
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+        applyBusiness: (_) async {},
+      );
+      expect(middle.checkpoint.phase, E2eeSyncPullPhase.snapshot);
+      expect(middle.checkpoint.snapshotCursor, 'snapshot-cursor-1');
+      expect(
+        middle.checkpoint.snapshotLastRecordId,
+        change.state.recordId.wireValue,
+      );
+      expect(middle.checkpoint.snapshotMaxChangeSeq, 1);
+
+      final completed = await pullCommands.applySnapshotPage(
+        expected: middle.checkpoint,
+        nextSnapshotCursor: null,
+        snapshotLastRecordId: change.state.recordId.wireValue,
+        snapshotMaxChangeSeq: 1,
+        finalSyncCursor: 'sync-cursor-9',
+        changes: const <E2eeSyncPulledChange>[],
+        now: DateTime.utc(2026, 7, 28, 0, 3),
+        applyBusiness: (_) async {},
+      );
+      expect(completed.checkpoint.phase, E2eeSyncPullPhase.incremental);
+      expect(completed.checkpoint.syncCursor, 'sync-cursor-9');
+      expect(completed.checkpoint.lastChangeSeq, 1);
+      expect(completed.checkpoint.snapshotRunId, equals(null));
+      expect(completed.checkpoint.snapshotCursor, equals(null));
+      expect(completed.checkpoint.snapshotLastRecordId, equals(null));
+      expect(completed.checkpoint.snapshotMaxChangeSeq, equals(null));
+    });
+
+    test('SQLite 约束拒绝增量与快照字段混合', () async {
+      final createdAt = DateTime.utc(2026, 7, 28);
+      await expectLater(
+        database
+            .into(database.e2eeSyncPullCheckpointRows)
+            .insert(
+              E2eeSyncPullCheckpointRowsCompanion.insert(
+                accountUserId: _syncAccountUserId,
+                phase: 'incremental',
+                syncCursor: const Value('cursor'),
+                lastChangeSeq: 0,
+                snapshotRunId: Value(_syncUuid(72)),
+                snapshotMaxChangeSeq: const Value(0),
+                transitionVersion: 1,
+                createdAt: createdAt,
+                updatedAt: createdAt,
+              ),
+            ),
+        throwsRemoteSqliteException(),
+      );
+    });
+  });
+
+  group('E2EE sync authenticated snapshot pull commands', () {
+    test('中间页原子应用且空终页切回增量阶段', () async {
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final snapshot = await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(73),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      final wireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 73,
+      );
+      final change = await authenticatePulledValueChange(wireChange);
+      final middle = await pullCommands.applySnapshotPage(
+        expected: snapshot,
+        nextSnapshotCursor: 'snapshot-page-1',
+        snapshotLastRecordId: change.state.recordId.wireValue,
+        snapshotMaxChangeSeq: 1,
+        finalSyncCursor: null,
+        changes: <E2eeSyncPulledChange>[change],
+        applyBusiness: (_) => insertConversation(id: 'snapshot-middle'),
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+      );
+
+      expect(middle.checkpoint.phase, E2eeSyncPullPhase.snapshot);
+      expect(middle.checkpoint.snapshotCursor, 'snapshot-page-1');
+      expect(
+        middle.checkpoint.snapshotLastRecordId,
+        change.state.recordId.wireValue,
+      );
+      expect(middle.checkpoint.snapshotMaxChangeSeq, 1);
+      expect(middle.value.receivedCount, 1);
+      expect(middle.value.businessApplyCount, 1);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(1),
+      );
+      expect(
+        (await database.select(database.conversationRows).getSingle()).id,
+        'snapshot-middle',
+      );
+
+      final completed = await pullCommands.applySnapshotPage(
+        expected: middle.checkpoint,
+        nextSnapshotCursor: null,
+        snapshotLastRecordId: change.state.recordId.wireValue,
+        snapshotMaxChangeSeq: 1,
+        finalSyncCursor: 'sync-after-snapshot',
+        changes: const <E2eeSyncPulledChange>[],
+        applyBusiness: (_) async {
+          fail('空终页不得执行业务 apply');
+        },
+        now: DateTime.utc(2026, 7, 28, 0, 3),
+      );
+
+      expect(completed.checkpoint.phase, E2eeSyncPullPhase.incremental);
+      expect(completed.checkpoint.syncCursor, 'sync-after-snapshot');
+      expect(completed.checkpoint.lastChangeSeq, 1);
+      expect(completed.checkpoint.snapshotRunId, equals(null));
+      expect(completed.checkpoint.snapshotCursor, equals(null));
+      expect(completed.checkpoint.snapshotLastRecordId, equals(null));
+      expect(completed.checkpoint.snapshotMaxChangeSeq, equals(null));
+      expect(completed.value.receivedCount, 0);
+      expect(completed.value.businessApplyCount, 0);
+    });
+
+    test('同 record 多版本历史严格推进且业务只应用最终状态', () async {
+      const entityKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'snapshot-history',
+      );
+      final firstWireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 74,
+        entityKey: entityKey,
+        payload: _conversationPayload('v1'),
+      );
+      final firstChange = await authenticatePulledValueChange(firstWireChange);
+      final secondWireChange = await createPullValueChange(
+        changeSeq: 2,
+        revision: 2,
+        operation: 75,
+        entityKey: entityKey,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[firstChange.state.digest],
+        payload: _conversationPayload('v2'),
+      );
+      final secondChange = await authenticatePulledValueChange(
+        secondWireChange,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final snapshot = await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(74),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+
+      final completed = await pullCommands.applySnapshotPage(
+        expected: snapshot,
+        nextSnapshotCursor: null,
+        snapshotLastRecordId: secondChange.state.recordId.wireValue,
+        snapshotMaxChangeSeq: 2,
+        finalSyncCursor: 'sync-after-history',
+        changes: <E2eeSyncPulledChange>[firstChange, secondChange],
+        applyBusiness: (changes) async {
+          expect(changes, hasLength(1));
+          expect(changes.single.state.digest, secondChange.state.digest);
+          await insertConversation(id: 'snapshot-history-final');
+        },
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+      );
+
+      expect(completed.checkpoint.phase, E2eeSyncPullPhase.incremental);
+      expect(completed.checkpoint.syncCursor, 'sync-after-history');
+      expect(completed.checkpoint.lastChangeSeq, 2);
+      expect(completed.value.receivedCount, 2);
+      expect(completed.value.businessApplyCount, 1);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(2),
+      );
+      final remote = await database
+          .select(database.e2eeSyncRemoteRecordRows)
+          .getSingle();
+      expect(remote.revision, 2);
+      expect(remote.lastChangeSeq, 2);
+      expect(
+        remote.stateDigest,
+        orderedEquals(secondChange.state.digest.bytes),
+      );
+      expect(
+        (await database.select(database.conversationRows).getSingle()).id,
+        'snapshot-history-final',
+      );
+    });
+
+    test('同 record 页内冲突保留冲突前最后可应用状态', () async {
+      const entityKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'snapshot-conflict-history',
+      );
+      final genesisWireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 83,
+        entityKey: entityKey,
+        payload: _conversationPayload('base'),
+      );
+      final genesisChange = await authenticatePulledValueChange(
+        genesisWireChange,
+      );
+      final firstWireChange = await createPullValueChange(
+        changeSeq: 2,
+        revision: 2,
+        operation: 84,
+        entityKey: entityKey,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[
+          genesisChange.state.digest,
+        ],
+        payload: _conversationPayload('stable'),
+      );
+      final firstChange = await authenticatePulledValueChange(firstWireChange);
+      final conflictWireChange = await createPullValueChange(
+        changeSeq: 3,
+        revision: 3,
+        operation: 88,
+        entityKey: entityKey,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[
+          genesisChange.state.digest,
+        ],
+        payload: _conversationPayload('conflict'),
+      );
+      final conflictChange = await authenticatePulledValueChange(
+        conflictWireChange,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final snapshot = await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(80),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+
+      final completed = await pullCommands.applySnapshotPage(
+        expected: snapshot,
+        nextSnapshotCursor: null,
+        snapshotLastRecordId: conflictChange.state.recordId.wireValue,
+        snapshotMaxChangeSeq: 3,
+        finalSyncCursor: 'sync-after-conflict-history',
+        changes: <E2eeSyncPulledChange>[
+          genesisChange,
+          firstChange,
+          conflictChange,
+        ],
+        applyBusiness: (changes) async {
+          expect(changes, hasLength(1));
+          expect(changes.single.state.digest, firstChange.state.digest);
+          expect(
+            (changes.single as E2eeSyncPulledValueChange).payload['title'],
+            'stable',
+          );
+        },
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+      );
+
+      expect(completed.value.businessApplyCount, 1);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(3),
+      );
+      expect(
+        await database.select(database.e2eeSyncRecordHeadRows).get(),
+        hasLength(2),
+      );
+    });
+
+    test('页内 changeSeq 乱序时拒绝整页且保持快照 checkpoint', () async {
+      final firstWireChange = await createPullValueChange(
+        changeSeq: 2,
+        revision: 1,
+        operation: 76,
+      );
+      final secondWireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 77,
+      );
+      final firstChange = await authenticatePulledValueChange(firstWireChange);
+      final secondChange = await authenticatePulledValueChange(
+        secondWireChange,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final snapshot = await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(75),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      var businessApplyRan = false;
+
+      expect(
+        () => pullCommands.applySnapshotPage(
+          expected: snapshot,
+          nextSnapshotCursor: null,
+          snapshotLastRecordId: secondChange.state.recordId.wireValue,
+          snapshotMaxChangeSeq: 1,
+          finalSyncCursor: 'sync-must-not-commit',
+          changes: <E2eeSyncPulledChange>[firstChange, secondChange],
+          applyBusiness: (_) async {
+            businessApplyRan = true;
+          },
+          now: DateTime.utc(2026, 7, 28, 0, 2),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+
+      final unchanged = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 3),
+      );
+      expect(unchanged.phase, E2eeSyncPullPhase.snapshot);
+      expect(unchanged.snapshotCursor, equals(null));
+      expect(unchanged.snapshotMaxChangeSeq, 0);
+      expect(unchanged.transitionVersion, snapshot.transitionVersion);
+      expect(businessApplyRan, isFalse);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        isEmpty,
+      );
+    });
+
+    test('业务 apply 异常时回滚快照整页与 checkpoint', () async {
+      final wireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 78,
+      );
+      final change = await authenticatePulledValueChange(wireChange);
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final snapshot = await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(76),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+
+      await expectLater(
+        pullCommands.applySnapshotPage(
+          expected: snapshot,
+          nextSnapshotCursor: 'snapshot-must-not-commit',
+          snapshotLastRecordId: change.state.recordId.wireValue,
+          snapshotMaxChangeSeq: 1,
+          finalSyncCursor: null,
+          changes: <E2eeSyncPulledChange>[change],
+          applyBusiness: (_) async {
+            await insertConversation(id: 'snapshot-rolled-back');
+            throw StateError('snapshot-apply-failed');
+          },
+          now: DateTime.utc(2026, 7, 28, 0, 2),
+        ),
+        throwsA(isA<StateError>()),
+      );
+
+      final unchanged = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 3),
+      );
+      expect(unchanged.phase, E2eeSyncPullPhase.snapshot);
+      expect(unchanged.snapshotCursor, equals(null));
+      expect(unchanged.snapshotMaxChangeSeq, 0);
+      expect(unchanged.transitionVersion, snapshot.transitionVersion);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        isEmpty,
+      );
+      expect(await database.select(database.conversationRows).get(), isEmpty);
+    });
+  });
+
+  group('E2EE sync authenticated pull coordinator', () {
+    test('认证整页后原子提交 ledger、业务数据与 checkpoint', () async {
+      final valueChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 60,
+        payload: _conversationPayload('pulled-conversation'),
+      );
+      final tombstoneChange = await createPullTombstoneChange(
+        changeSeq: 2,
+        revision: 1,
+        operation: 61,
+      );
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (cursor, limit) async {
+          expect(cursor, equals(null));
+          expect(limit, 10);
+          return CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[valueChange, tombstoneChange],
+            nextCursor: 'cursor-pull-2',
+            hasMore: false,
+          );
+        },
+      );
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (changes) async {
+          expect(changes, hasLength(2));
+          final value = changes.first;
+          expect(value, isA<E2eeSyncPulledValueChange>());
+          expect(
+            (value as E2eeSyncPulledValueChange).payload['title'],
+            'pulled-conversation',
+          );
+          expect(changes.last, isA<E2eeSyncPulledTombstoneChange>());
+          await insertConversation(id: 'pulled-conversation');
+        },
+      );
+
+      final report = await coordinator.pullOnce();
+
+      expect(report.disposition, E2eeSyncPullDisposition.applied);
+      expect(report.received, 2);
+      expect(report.hasMore, isFalse);
+      expect(report.checkpoint.syncCursor, 'cursor-pull-2');
+      expect(report.checkpoint.lastChangeSeq, 2);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(2),
+      );
+      expect(
+        (await database.select(database.conversationRows).getSingle()).id,
+        'pulled-conversation',
+      );
+    });
+
+    test('本地 ledger 已推进时旧增量只推进 checkpoint 且不回滚业务', () async {
+      const entityKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'pull-stale-replay',
+      );
+      final firstChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 65,
+        entityKey: entityKey,
+        payload: _conversationPayload('v1'),
+      );
+      final firstState = await authenticatePullChange(firstChange);
+      final secondChange = await createPullValueChange(
+        changeSeq: 2,
+        revision: 2,
+        operation: 66,
+        entityKey: entityKey,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[firstState.digest],
+        payload: _conversationPayload('v2'),
+      );
+      final secondState = await authenticatePullChange(secondChange);
+      await ledger.accept(firstState);
+      await ledger.accept(secondState);
+      await insertSyncRemoteRecord(
+        recordId: secondState.recordId.wireValue,
+        revision: 2,
+        lastChangeSeq: 2,
+        stateDigest: secondState.digest.bytes,
+      );
+      var businessApplyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: _FakeAuthenticatedPullTransport(
+          accountUserId: _syncAccountUserId,
+          onPull: (_, _) async => CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[firstChange],
+            nextCursor: 'cursor-stale-replay',
+            hasMore: false,
+          ),
+        ),
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+
+      final report = await coordinator.pullOnce();
+
+      expect(businessApplyRan, isFalse);
+      expect(report.checkpoint.syncCursor, 'cursor-stale-replay');
+      expect(report.checkpoint.lastChangeSeq, 1);
+      final remote = await database
+          .select(database.e2eeSyncRemoteRecordRows)
+          .getSingle();
+      expect(remote.revision, 2);
+      expect(remote.lastChangeSeq, 2);
+      expect(remote.stateDigest, orderedEquals(secondState.digest.bytes));
+    });
+
+    test('同实体 intent 或同 record outbox 存在时保留本地业务值', () async {
+      const intentEntityKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'pull-pending-intent',
+      );
+      const outboxEntityKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'pull-pending-outbox',
+      );
+      final intentChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 67,
+        entityKey: intentEntityKey,
+      );
+      final outboxChange = await createPullValueChange(
+        changeSeq: 2,
+        revision: 1,
+        operation: 68,
+        entityKey: outboxEntityKey,
+      );
+      final outboxState = await authenticatePullChange(outboxChange);
+      await insertSyncIntent(
+        entityType: intentEntityKey.entityType,
+        entityId: intentEntityKey.entityId,
+        intentId: _syncUuid(601),
+      );
+      final pendingOperationId = _syncUuid(602);
+      await insertSyncOperation(
+        operationId: pendingOperationId,
+        stateDigest: _syncDigest(22),
+        recordId: outboxState.recordId.wireValue,
+        entityType: outboxEntityKey.entityType,
+        entityId: outboxEntityKey.entityId,
+        intentId: _syncUuid(603),
+      );
+      await insertSyncOutbox(
+        operationId: pendingOperationId,
+        recordId: outboxState.recordId.wireValue,
+      );
+      var businessApplyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: _FakeAuthenticatedPullTransport(
+          accountUserId: _syncAccountUserId,
+          onPull: (_, _) async => CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[intentChange, outboxChange],
+            nextCursor: 'cursor-local-pending',
+            hasMore: false,
+          ),
+        ),
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+
+      final report = await coordinator.pullOnce();
+
+      expect(businessApplyRan, isFalse);
+      expect(report.checkpoint.lastChangeSeq, 2);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(2),
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        hasLength(2),
+      );
+      expect(
+        await database.select(database.e2eeSyncIntentRows).get(),
+        hasLength(1),
+      );
+      expect(
+        await database.select(database.e2eeSyncOutboxRows).get(),
+        hasLength(1),
+      );
+    });
+
+    test('同 record 的远端 revision 跳号时整页 ledger 与 checkpoint 回滚', () async {
+      const entityKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'pull-invalid-metadata',
+      );
+      final firstChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 69,
+        entityKey: entityKey,
+      );
+      final firstState = await authenticatePullChange(firstChange);
+      final skippedRevision = await createPullValueChange(
+        changeSeq: 2,
+        revision: 3,
+        operation: 70,
+        entityKey: entityKey,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[firstState.digest],
+      );
+      var businessApplyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: _FakeAuthenticatedPullTransport(
+          accountUserId: _syncAccountUserId,
+          onPull: (_, _) async => CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[firstChange, skippedRevision],
+            nextCursor: 'cursor-invalid-metadata',
+            hasMore: false,
+          ),
+        ),
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+
+      await expectLater(
+        coordinator.pullOnce(),
+        throwsA(isA<FormatException>()),
+      );
+
+      expect(businessApplyRan, isFalse);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        isEmpty,
+      );
+      final checkpoint = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      expect(checkpoint.syncCursor, equals(null));
+      expect(checkpoint.lastChangeSeq, 0);
+      expect(checkpoint.transitionVersion, 1);
+    });
+
+    test('业务 apply 抛错时回滚 ledger、业务数据与 checkpoint', () async {
+      final change = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 62,
+      );
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (_, _) async => CloudSyncChangePage(
+          changes: <CloudSyncRecordChange>[change],
+          nextCursor: 'cursor-must-rollback',
+          hasMore: false,
+        ),
+      );
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (changes) async {
+          await insertConversation(id: 'rolled-back-pull');
+          throw StateError('apply-failed');
+        },
+      );
+
+      await expectLater(coordinator.pullOnce(), throwsA(isA<StateError>()));
+
+      final checkpoint = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      expect(checkpoint.syncCursor, equals(null));
+      expect(checkpoint.lastChangeSeq, 0);
+      expect(checkpoint.transitionVersion, 1);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(await database.select(database.conversationRows).get(), isEmpty);
+    });
+
+    test('reset 后按快照游标续传同 record 历史并切回增量', () async {
+      const entityKey = SyncEntityKey(
+        entityType: 'conversation',
+        entityId: 'coordinator-snapshot-history',
+      );
+      final firstWireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 79,
+        entityKey: entityKey,
+      );
+      final firstState = await authenticatePullChange(firstWireChange);
+      final secondWireChange = await createPullValueChange(
+        changeSeq: 2,
+        revision: 2,
+        operation: 80,
+        entityKey: entityKey,
+        logicalVersion: 2,
+        parentDigests: <E2eeAccountRecordStateDigest>[firstState.digest],
+      );
+      final firstRecord = snapshotRecordFromChange(firstWireChange);
+      final secondRecord = snapshotRecordFromChange(secondWireChange);
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (_, _) async => const CloudSyncResetRequired(),
+        onSnapshot: (cursor, limit) async {
+          expect(limit, 10);
+          if (cursor == null) {
+            return CloudSyncSnapshotPage(
+              records: <CloudSyncEncryptedRecord>[firstRecord],
+              nextSnapshotCursor: 'snapshot-page-1',
+              syncCursor: null,
+              hasMore: true,
+            );
+          }
+          expect(cursor, 'snapshot-page-1');
+          return CloudSyncSnapshotPage(
+            records: <CloudSyncEncryptedRecord>[secondRecord],
+            nextSnapshotCursor: null,
+            syncCursor: 'snapshot-ready-cursor',
+            hasMore: false,
+          );
+        },
+      );
+      final appliedVersions = <int>[];
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (changes) async {
+          expect(changes, hasLength(1));
+          appliedVersions.add(changes.single.state.logicalVersion);
+        },
+      );
+
+      final reset = await coordinator.pullOnce();
+      final middle = await coordinator.pullOnce();
+      final completed = await coordinator.pullOnce();
+
+      expect(reset.disposition, E2eeSyncPullDisposition.resetToSnapshot);
+      expect(reset.checkpoint.phase, E2eeSyncPullPhase.snapshot);
+      expect(reset.checkpoint.syncCursor, equals(null));
+      expect(reset.checkpoint.snapshotRunId, isA<String>());
+      expect(middle.disposition, E2eeSyncPullDisposition.snapshotApplied);
+      expect(middle.checkpoint.phase, E2eeSyncPullPhase.snapshot);
+      expect(middle.checkpoint.snapshotCursor, 'snapshot-page-1');
+      expect(middle.checkpoint.snapshotMaxChangeSeq, 1);
+      expect(completed.disposition, E2eeSyncPullDisposition.snapshotCompleted);
+      expect(completed.checkpoint.phase, E2eeSyncPullPhase.incremental);
+      expect(completed.checkpoint.syncCursor, 'snapshot-ready-cursor');
+      expect(completed.checkpoint.lastChangeSeq, 2);
+      expect(appliedVersions, <int>[1, 2]);
+      expect(transport.callCount, 1);
+      expect(transport.snapshotCallCount, 2);
+      expect(transport.snapshotCursors, <String?>[null, 'snapshot-page-1']);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(2),
+      );
+      final remote = await database
+          .select(database.e2eeSyncRemoteRecordRows)
+          .getSingle();
+      expect(remote.revision, 2);
+      expect(remote.lastChangeSeq, 2);
+    });
+
+    test('快照遇到未来 key epoch 时保持 checkpoint 不变', () async {
+      final wireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 81,
+        keyEpoch: stateCodec.currentKeyEpoch + 1,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final snapshot = await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(77),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      var businessApplyRan = false;
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (_, _) async => throw StateError('快照阶段不得拉取增量'),
+        onSnapshot: (_, _) async => CloudSyncSnapshotPage(
+          records: <CloudSyncEncryptedRecord>[
+            snapshotRecordFromChange(wireChange),
+          ],
+          nextSnapshotCursor: null,
+          syncCursor: 'future-epoch-must-not-commit',
+          hasMore: false,
+        ),
+      );
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+
+      final report = await coordinator.pullOnce();
+
+      expect(report.disposition, E2eeSyncPullDisposition.keyEpochUnavailable);
+      expect(report.checkpoint.phase, E2eeSyncPullPhase.snapshot);
+      expect(report.checkpoint.snapshotCursor, snapshot.snapshotCursor);
+      expect(
+        report.checkpoint.snapshotMaxChangeSeq,
+        snapshot.snapshotMaxChangeSeq,
+      );
+      expect(report.checkpoint.transitionVersion, snapshot.transitionVersion);
+      expect(transport.callCount, 0);
+      expect(transport.snapshotCallCount, 1);
+      expect(businessApplyRan, isFalse);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        isEmpty,
+      );
+    });
+
+    test('快照空中间页在认证前拒绝且不推进 checkpoint', () async {
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      final snapshot = await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(78),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      var businessApplyRan = false;
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (_, _) async => throw StateError('快照阶段不得拉取增量'),
+        onSnapshot: (_, _) async => const CloudSyncSnapshotPage(
+          records: <CloudSyncEncryptedRecord>[],
+          nextSnapshotCursor: 'invalid-empty-middle',
+          syncCursor: null,
+          hasMore: true,
+        ),
+      );
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+
+      await expectLater(
+        coordinator.pullOnce(),
+        throwsA(isA<FormatException>()),
+      );
+
+      final unchanged = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+      );
+      expect(unchanged.phase, E2eeSyncPullPhase.snapshot);
+      expect(unchanged.snapshotCursor, equals(null));
+      expect(unchanged.snapshotMaxChangeSeq, 0);
+      expect(unchanged.transitionVersion, snapshot.transitionVersion);
+      expect(transport.snapshotCallCount, 1);
+      expect(businessApplyRan, isFalse);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+    });
+
+    test('快照跨页 changeSeq 回退时保留上一页原子结果', () async {
+      final wireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 82,
+      );
+      final record = snapshotRecordFromChange(wireChange);
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(79),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (_, _) async => throw StateError('快照阶段不得拉取增量'),
+        onSnapshot: (cursor, _) async {
+          if (cursor == null) {
+            return CloudSyncSnapshotPage(
+              records: <CloudSyncEncryptedRecord>[record],
+              nextSnapshotCursor: 'snapshot-cross-page-1',
+              syncCursor: null,
+              hasMore: true,
+            );
+          }
+          expect(cursor, 'snapshot-cross-page-1');
+          return CloudSyncSnapshotPage(
+            records: <CloudSyncEncryptedRecord>[record],
+            nextSnapshotCursor: null,
+            syncCursor: 'cross-page-must-not-commit',
+            hasMore: false,
+          );
+        },
+      );
+      var businessApplyCount = 0;
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (_) async {
+          businessApplyCount++;
+        },
+      );
+
+      final firstPage = await coordinator.pullOnce();
+      await expectLater(
+        coordinator.pullOnce(),
+        throwsA(isA<FormatException>()),
+      );
+
+      final unchanged = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 3),
+      );
+      expect(firstPage.disposition, E2eeSyncPullDisposition.snapshotApplied);
+      expect(unchanged.phase, E2eeSyncPullPhase.snapshot);
+      expect(unchanged.snapshotCursor, 'snapshot-cross-page-1');
+      expect(unchanged.snapshotMaxChangeSeq, 1);
+      expect(
+        unchanged.transitionVersion,
+        firstPage.checkpoint.transitionVersion,
+      );
+      expect(transport.snapshotCursors, <String?>[
+        null,
+        'snapshot-cross-page-1',
+      ]);
+      expect(businessApplyCount, 1);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(1),
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        hasLength(1),
+      );
+    });
+
+    test('未来 key epoch 保留旧 checkpoint 且不进入业务 apply', () async {
+      final change = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 63,
+        keyEpoch: stateCodec.currentKeyEpoch + 1,
+      );
+      var applyRan = false;
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (_, _) async => CloudSyncChangePage(
+          changes: <CloudSyncRecordChange>[change],
+          nextCursor: 'future-key-cursor',
+          hasMore: false,
+        ),
+      );
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (_) async {
+          applyRan = true;
+        },
+      );
+
+      final report = await coordinator.pullOnce();
+
+      expect(report.disposition, E2eeSyncPullDisposition.keyEpochUnavailable);
+      expect(report.checkpoint.syncCursor, equals(null));
+      expect(report.checkpoint.lastChangeSeq, 0);
+      expect(applyRan, isFalse);
+    });
+
+    test('认证通过但 payload 非规范时拒绝整页且不推进 checkpoint', () async {
+      final change = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 64,
+        encodedPayload: Uint8List.fromList(
+          '{"payload":{"id":"bad"},"recordType":"conversation","version":1}'
+              .codeUnits,
+        ),
+      );
+      var applyRan = false;
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (_, _) async => CloudSyncChangePage(
+          changes: <CloudSyncRecordChange>[change],
+          nextCursor: 'malformed-payload-cursor',
+          hasMore: false,
+        ),
+      );
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (_) async {
+          applyRan = true;
+        },
+      );
+
+      await expectLater(
+        coordinator.pullOnce(),
+        throwsA(isA<FormatException>()),
+      );
+
+      final checkpoint = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      expect(checkpoint.syncCursor, equals(null));
+      expect(checkpoint.lastChangeSeq, 0);
+      expect(applyRan, isFalse);
+    });
+
+    test('认证墓碑的未知实体类型拒绝整页且不进入业务 apply', () async {
+      final change = await createPullTombstoneChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 95,
+        entityKey: const SyncEntityKey(
+          entityType: 'unknown-record',
+          entityId: 'unknown-1',
+        ),
+      );
+      var applyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: _FakeAuthenticatedPullTransport(
+          accountUserId: _syncAccountUserId,
+          onPull: (_, _) async => CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[change],
+            nextCursor: 'unknown-tombstone-must-not-commit',
+            hasMore: false,
+          ),
+        ),
+        applyPage: (_) async {
+          applyRan = true;
+        },
+      );
+
+      await expectLater(
+        coordinator.pullOnce(),
+        throwsA(isA<FormatException>()),
+      );
+
+      final checkpoint = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      expect(checkpoint.syncCursor, equals(null));
+      expect(checkpoint.lastChangeSeq, 0);
+      expect(applyRan, isFalse);
+    });
+
+    test('抽象 transport 拒绝空续页', () async {
+      const invalidPage = CloudSyncChangePage(
+        changes: <CloudSyncRecordChange>[],
+        nextCursor: 'invalid-empty-page-cursor',
+        hasMore: true,
+      );
+      var applyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: _FakeAuthenticatedPullTransport(
+          accountUserId: _syncAccountUserId,
+          onPull: (_, _) async => invalidPage,
+        ),
+        applyPage: (_) async {
+          applyRan = true;
+        },
+      );
+
+      await expectLater(
+        coordinator.pullOnce(),
+        throwsA(isA<FormatException>()),
+      );
+
+      final checkpoint = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      expect(checkpoint.syncCursor, equals(null));
+      expect(checkpoint.lastChangeSeq, 0);
+      expect(applyRan, isFalse);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        isEmpty,
+      );
+    });
+
+    test('非空增量页拒绝原地游标且保持已提交 checkpoint', () async {
+      final change = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 85,
+      );
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (cursor, _) async {
+          if (cursor == null) {
+            return const CloudSyncChangePage(
+              changes: <CloudSyncRecordChange>[],
+              nextCursor: 'incremental-stuck',
+              hasMore: false,
+            );
+          }
+          expect(cursor, 'incremental-stuck');
+          return CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[change],
+            nextCursor: 'incremental-stuck',
+            hasMore: false,
+          );
+        },
+      );
+      var businessApplyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+
+      final idle = await coordinator.pullOnce();
+      await expectLater(
+        coordinator.pullOnce(),
+        throwsA(isA<FormatException>()),
+      );
+
+      final unchanged = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+      );
+      expect(idle.disposition, E2eeSyncPullDisposition.idle);
+      expect(unchanged.syncCursor, 'incremental-stuck');
+      expect(unchanged.lastChangeSeq, 0);
+      expect(unchanged.transitionVersion, idle.checkpoint.transitionVersion);
+      expect(businessApplyRan, isFalse);
+    });
+
+    test('非空快照页拒绝原地游标且保留上一页结果', () async {
+      final firstWireChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 86,
+      );
+      final secondWireChange = await createPullValueChange(
+        changeSeq: 2,
+        revision: 1,
+        operation: 87,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+      await pullCommands.enterSnapshot(
+        expected: initial,
+        snapshotRunId: _syncUuid(81),
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (_, _) async => throw StateError('快照阶段不得拉取增量'),
+        onSnapshot: (cursor, _) async {
+          if (cursor == null) {
+            return CloudSyncSnapshotPage(
+              records: <CloudSyncEncryptedRecord>[
+                snapshotRecordFromChange(firstWireChange),
+              ],
+              nextSnapshotCursor: 'snapshot-stuck',
+              syncCursor: null,
+              hasMore: true,
+            );
+          }
+          expect(cursor, 'snapshot-stuck');
+          return CloudSyncSnapshotPage(
+            records: <CloudSyncEncryptedRecord>[
+              snapshotRecordFromChange(secondWireChange),
+            ],
+            nextSnapshotCursor: 'snapshot-stuck',
+            syncCursor: null,
+            hasMore: true,
+          );
+        },
+      );
+      var businessApplyCount = 0;
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (_) async {
+          businessApplyCount++;
+        },
+      );
+
+      final first = await coordinator.pullOnce();
+      await expectLater(
+        coordinator.pullOnce(),
+        throwsA(isA<FormatException>()),
+      );
+
+      final unchanged = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 3),
+      );
+      expect(first.disposition, E2eeSyncPullDisposition.snapshotApplied);
+      expect(unchanged.snapshotCursor, 'snapshot-stuck');
+      expect(unchanged.snapshotMaxChangeSeq, 1);
+      expect(unchanged.transitionVersion, first.checkpoint.transitionVersion);
+      expect(businessApplyCount, 1);
+    });
+
+    test('并发 pull 严格串行且后一个请求使用已提交游标', () async {
+      final firstChange = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 71,
+      );
+      final firstStarted = Completer<void>();
+      final releaseFirst = Completer<void>();
+      final transport = _FakeAuthenticatedPullTransport(
+        accountUserId: _syncAccountUserId,
+        onPull: (cursor, _) async {
+          if (cursor == null) {
+            firstStarted.complete();
+            await releaseFirst.future;
+            return CloudSyncChangePage(
+              changes: <CloudSyncRecordChange>[firstChange],
+              nextCursor: 'serialized-cursor-1',
+              hasMore: true,
+            );
+          }
+          expect(cursor, 'serialized-cursor-1');
+          return const CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[],
+            nextCursor: 'serialized-cursor-2',
+            hasMore: false,
+          );
+        },
+      );
+      final coordinator = createPullCoordinator(
+        transport: transport,
+        applyPage: (_) async {},
+      );
+
+      final first = coordinator.pullOnce();
+      await firstStarted.future;
+      final second = coordinator.pullOnce();
+      await Future<void>.delayed(Duration.zero);
+      expect(transport.callCount, 1);
+
+      releaseFirst.complete();
+      await Future.wait(<Future<E2eeSyncPullReport>>[first, second]);
+
+      expect(transport.cursors, <String?>[null, 'serialized-cursor-1']);
+      final checkpoint = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 1),
+      );
+      expect(checkpoint.syncCursor, 'serialized-cursor-2');
+      expect(checkpoint.transitionVersion, 3);
+    });
   });
 
   group('E2EE sync outbox commands', () {
@@ -1541,6 +3119,49 @@ void main() {
       contains('idx_messages_group'),
     );
   });
+}
+
+typedef _PullHandler =
+    Future<CloudSyncPullResult> Function(String? cursor, int limit);
+typedef _SnapshotPullHandler =
+    Future<CloudSyncSnapshotPage> Function(String? cursor, int limit);
+
+final class _FakeAuthenticatedPullTransport
+    implements E2eeSyncAuthenticatedPullTransport {
+  _FakeAuthenticatedPullTransport({
+    required this.accountUserId,
+    required this.onPull,
+    this.onSnapshot,
+  });
+
+  @override
+  final String accountUserId;
+
+  final _PullHandler onPull;
+  final _SnapshotPullHandler? onSnapshot;
+  final List<String?> cursors = <String?>[];
+  final List<String?> snapshotCursors = <String?>[];
+  int callCount = 0;
+  int snapshotCallCount = 0;
+
+  @override
+  Future<CloudSyncPullResult> pullChanges({String? cursor, int limit = 10}) {
+    callCount++;
+    cursors.add(cursor);
+    return onPull(cursor, limit);
+  }
+
+  @override
+  Future<CloudSyncSnapshotPage> pullSnapshot({
+    String? snapshotCursor,
+    int limit = 10,
+  }) {
+    final handler = onSnapshot;
+    if (handler == null) throw StateError('测试未配置快照 pull');
+    snapshotCallCount++;
+    snapshotCursors.add(snapshotCursor);
+    return handler(snapshotCursor, limit);
+  }
 }
 
 final class _ApplyingOutboxTransport

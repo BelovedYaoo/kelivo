@@ -11,6 +11,7 @@ import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/generation_run.dart';
+import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
@@ -1055,6 +1056,253 @@ void main() {
       }
     },
   );
+
+  group('ChatService remote batch serialization', () {
+    test('nested remote batch reenters without waiting for itself', () async {
+      final service = createService();
+      await service.init();
+      final events = <String>[];
+      final conversation = Conversation(
+        id: 'nested-remote-conversation',
+        title: 'Nested remote batch',
+        createdAt: DateTime.utc(2026, 1, 1),
+        updatedAt: DateTime.utc(2026, 1, 1),
+      );
+
+      await service
+          .runRemoteBatch(() async {
+            events.add('outer-start');
+            await service.runRemoteBatch(() async {
+              events.add('inner');
+              await service.upsertConversationFromSync(conversation);
+            });
+            events.add('outer-end');
+          })
+          .timeout(const Duration(seconds: 2));
+
+      expect(events, <String>['outer-start', 'inner', 'outer-end']);
+      expect(
+        (await service.loadConversationForSync(conversation.id))?.title,
+        conversation.title,
+      );
+    });
+
+    test('concurrent remote batches never interleave', () async {
+      final service = createService();
+      await service.init();
+      final events = <String>[];
+      final firstEntered = Completer<void>();
+      final releaseFirst = Completer<void>();
+      final secondEntered = Completer<void>();
+      final firstConversation = Conversation(
+        id: 'first-remote-conversation',
+        title: 'First remote batch',
+        createdAt: DateTime.utc(2026, 1, 1),
+        updatedAt: DateTime.utc(2026, 1, 1),
+      );
+      final secondConversation = Conversation(
+        id: 'second-remote-conversation',
+        title: 'Second remote batch',
+        createdAt: DateTime.utc(2026, 1, 2),
+        updatedAt: DateTime.utc(2026, 1, 2),
+      );
+
+      final first = service.runRemoteBatch(() async {
+        events.add('first-start');
+        await service.upsertConversationFromSync(firstConversation);
+        firstEntered.complete();
+        await releaseFirst.future;
+        events.add('first-end');
+      });
+      await firstEntered.future;
+
+      final second = service.runRemoteBatch(() async {
+        events.add('second-start');
+        secondEntered.complete();
+        await service.upsertConversationFromSync(secondConversation);
+        events.add('second-end');
+      });
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(secondEntered.isCompleted, isFalse);
+      releaseFirst.complete();
+      await Future.wait<void>(<Future<void>>[first, second]);
+
+      expect(events, <String>[
+        'first-start',
+        'first-end',
+        'second-start',
+        'second-end',
+      ]);
+      expect(
+        await service.loadConversationForSync(firstConversation.id),
+        isNotNull,
+      );
+      expect(
+        await service.loadConversationForSync(secondConversation.id),
+        isNotNull,
+      );
+    });
+
+    test('failed remote batch releases the next queued batch', () async {
+      final service = createService();
+      await service.init();
+      final firstEntered = Completer<void>();
+      final releaseFirst = Completer<void>();
+      final secondEntered = Completer<void>();
+      final rolledBackConversation = Conversation(
+        id: 'rolled-back-remote-conversation',
+        title: 'Rolled back remote batch',
+        createdAt: DateTime.utc(2026, 1, 1),
+        updatedAt: DateTime.utc(2026, 1, 1),
+      );
+      final committedConversation = Conversation(
+        id: 'committed-remote-conversation',
+        title: 'Committed remote batch',
+        createdAt: DateTime.utc(2026, 1, 2),
+        updatedAt: DateTime.utc(2026, 1, 2),
+      );
+
+      final failing = service.runRemoteBatch<void>(() async {
+        await service.upsertConversationFromSync(rolledBackConversation);
+        firstEntered.complete();
+        await releaseFirst.future;
+        throw StateError('expected remote batch failure');
+      });
+      final failingExpectation = expectLater(
+        failing,
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'expected remote batch failure',
+          ),
+        ),
+      );
+      await firstEntered.future;
+
+      final succeeding = service.runRemoteBatch(() async {
+        secondEntered.complete();
+        await service.upsertConversationFromSync(committedConversation);
+      });
+
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(secondEntered.isCompleted, isFalse);
+      releaseFirst.complete();
+      await failingExpectation;
+      await succeeding.timeout(const Duration(seconds: 2));
+
+      expect(
+        await service.loadConversationForSync(rolledBackConversation.id),
+        isNull,
+      );
+      expect(
+        await service.loadConversationForSync(committedConversation.id),
+        isNotNull,
+      );
+    });
+
+    test(
+      'close waits for running and queued batches and rejects new batches',
+      () async {
+        final service = createService();
+        await service.init();
+        final events = <String>[];
+        final firstEntered = Completer<void>();
+        final releaseFirst = Completer<void>();
+        final secondEntered = Completer<void>();
+        final releaseSecond = Completer<void>();
+
+        final first = service.runRemoteBatch(() async {
+          events.add('first-start');
+          firstEntered.complete();
+          await releaseFirst.future;
+          events.add('first-end');
+        });
+        await firstEntered.future;
+        final second = service.runRemoteBatch(() async {
+          events.add('second-start');
+          secondEntered.complete();
+          await releaseSecond.future;
+          events.add('second-end');
+        });
+
+        var closeCompleted = false;
+        final closing = service.close();
+        final sameClosing = service.close();
+        expect(identical(closing, sameClosing), isTrue);
+        final trackedClosing = closing.whenComplete(() {
+          closeCompleted = true;
+        });
+
+        var rejectedApplyRan = false;
+        await expectLater(
+          service.runRemoteBatch(() async {
+            rejectedApplyRan = true;
+          }),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              '聊天服务正在关闭，不能开始新的远端同步批次',
+            ),
+          ),
+        );
+        expect(rejectedApplyRan, isFalse);
+        expect(closeCompleted, isFalse);
+        expect(secondEntered.isCompleted, isFalse);
+
+        releaseFirst.complete();
+        await secondEntered.future;
+        expect(closeCompleted, isFalse);
+
+        releaseSecond.complete();
+        await Future.wait<void>(<Future<void>>[first, second, trackedClosing]);
+
+        expect(events, <String>[
+          'first-start',
+          'first-end',
+          'second-start',
+          'second-end',
+        ]);
+        expect(closeCompleted, isTrue);
+        expect(service.initialized, isFalse);
+
+        await service.init();
+        await service.runRemoteBatch(() async {
+          events.add('reopened');
+        });
+        expect(events.last, 'reopened');
+      },
+    );
+
+    test(
+      'close inside a remote batch is rejected without poisoning close',
+      () async {
+        final service = createService();
+        await service.init();
+
+        await service
+            .runRemoteBatch(() async {
+              await expectLater(
+                service.close(),
+                throwsA(
+                  isA<StateError>().having(
+                    (error) => error.message,
+                    'message',
+                    '远端同步批次内不能关闭聊天服务',
+                  ),
+                ),
+              );
+            })
+            .timeout(const Duration(seconds: 2));
+
+        expect(service.initialized, isTrue);
+        await service.close().timeout(const Duration(seconds: 2));
+        expect(service.initialized, isFalse);
+      },
+    );
+  });
 
   group('ChatService temporary conversations', () {
     test('ordinary draft persists when its first message is added', () async {

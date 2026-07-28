@@ -35,61 +35,99 @@ void main() {
     },
   );
 
-  test(
-    'installation gate rejects every unpublished SQLite schema without mutation',
-    () async {
-      for (
-        var schemaVersion = 1;
-        schemaVersion < AppDatabase.currentSchemaVersion;
-        schemaVersion++
-      ) {
-        final directory = await Directory.systemTemp.createTemp(
-          'kelivo_reject_schema_${schemaVersion}_',
-        );
-        addTearDown(() async {
-          if (await directory.exists()) {
-            await directory.delete(recursive: true);
-          }
-        });
-        final file = File(p.join(directory.path, AppDatabase.databaseFileName));
-        final database = sqlite.sqlite3.open(file.path);
-        testDatabaseCipher.apply(database, createSlotIfMissing: true);
-        database.execute('CREATE TABLE intermediate_only (value TEXT);');
-        database.userVersion = schemaVersion;
-        database.close();
-
-        await expectLater(
-          DatabaseInstallationGate.ensureReady(
-            appDataDirectory: directory,
-            cipher: testDatabaseCipher,
-          ),
-          throwsA(
-            isA<StateError>().having(
-              (error) => error.message,
-              'message',
-              'database_schema_version',
-            ),
-          ),
-        );
-
-        final after = sqlite.sqlite3.open(
-          file.path,
-          mode: sqlite.OpenMode.readOnly,
-        );
-        try {
-          testDatabaseCipher.apply(after, createSlotIfMissing: false);
-          expect(after.userVersion, schemaVersion);
-          expect(
-            after.select(
-              "SELECT name FROM sqlite_master WHERE type='table' AND name=?;",
-              ['intermediate_only'],
-            ),
-            hasLength(1),
-          );
-        } finally {
-          after.close();
+  test('installation gate hard-cuts every obsolete SQLite schema', () async {
+    for (
+      var schemaVersion = 1;
+      schemaVersion < AppDatabase.currentSchemaVersion;
+      schemaVersion++
+    ) {
+      final directory = await Directory.systemTemp.createTemp(
+        'kelivo_reject_schema_${schemaVersion}_',
+      );
+      addTearDown(() async {
+        if (await directory.exists()) {
+          await directory.delete(recursive: true);
         }
+      });
+      final file = File(p.join(directory.path, AppDatabase.databaseFileName));
+      final database = sqlite.sqlite3.open(file.path);
+      testDatabaseCipher.apply(database, createSlotIfMissing: true);
+      database.execute('CREATE TABLE intermediate_only (value TEXT);');
+      database.userVersion = schemaVersion;
+      database.close();
+
+      final receipt = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+        cipher: testDatabaseCipher,
+      );
+
+      final after = sqlite.sqlite3.open(
+        file.path,
+        mode: sqlite.OpenMode.readOnly,
+      );
+      try {
+        testDatabaseCipher.apply(after, createSlotIfMissing: false);
+        expect(after.userVersion, AppDatabase.currentSchemaVersion);
+        expect(
+          after.select(
+            "SELECT name FROM sqlite_master WHERE type='table' AND name=?;",
+            ['intermediate_only'],
+          ),
+          isEmpty,
+        );
+      } finally {
+        after.close();
       }
+      expect(
+        ChatDatabaseRepository.inspectInstalledDatabase(
+          file,
+          cipher: testDatabaseCipher,
+        ).databaseId,
+        receipt.databaseId,
+      );
+    }
+  });
+
+  test(
+    'obsolete schema hard-cut discards unreadable receipts before rebuild',
+    () async {
+      final directory = await Directory.systemTemp.createTemp(
+        'kelivo_obsolete_schema_bad_receipts_',
+      );
+      addTearDown(() async {
+        if (await directory.exists()) await directory.delete(recursive: true);
+      });
+      final file = File(p.join(directory.path, AppDatabase.databaseFileName));
+      final database = sqlite.sqlite3.open(file.path);
+      testDatabaseCipher.apply(database, createSlotIfMissing: true);
+      database.execute('CREATE TABLE obsolete_only (value TEXT);');
+      database.userVersion = AppDatabase.currentSchemaVersion - 1;
+      database.close();
+      final brokenReceipt = File(
+        p.join(directory.path, 'database_installation_receipt_broken.json'),
+      );
+      final oversizedReceipt = File(
+        p.join(directory.path, 'database_installation_receipt_oversized.json'),
+      );
+      await brokenReceipt.writeAsString('{broken', flush: true);
+      await oversizedReceipt.writeAsString(
+        List<String>.filled(4097, 'x').join(),
+        flush: true,
+      );
+
+      final receipt = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+        cipher: testDatabaseCipher,
+      );
+
+      expect(await brokenReceipt.exists(), isFalse);
+      expect(await oversizedReceipt.exists(), isFalse);
+      final installed = ChatDatabaseRepository.inspectInstalledDatabase(
+        file,
+        cipher: testDatabaseCipher,
+      );
+      expect(installed.schemaVersion, AppDatabase.currentSchemaVersion);
+      expect(installed.databaseId, receipt.databaseId);
     },
   );
 }

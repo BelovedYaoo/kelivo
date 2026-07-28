@@ -8,9 +8,9 @@ import 'package:built_collection/built_collection.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'sync_pull_response_data.g.dart';
+part 'sync_pull_reset_data.g.dart';
 
-/// SyncPullResponseData
+/// SyncPullResetData
 ///
 /// Properties:
 /// * [changes]
@@ -18,13 +18,14 @@ part 'sync_pull_response_data.g.dart';
 /// * [hasMore]
 /// * [resetRequired]
 @BuiltValue()
-abstract class SyncPullResponseData
-    implements Built<SyncPullResponseData, SyncPullResponseDataBuilder> {
+abstract class SyncPullResetData
+    implements Built<SyncPullResetData, SyncPullResetDataBuilder> {
   @BuiltValueField(wireName: r'changes')
   BuiltList<SyncChange> get changes;
 
   @BuiltValueField(wireName: r'nextCursor')
-  String? get nextCursor;
+  SyncPullResetDataNextCursorEnum? get nextCursor;
+  // enum nextCursorEnum {  ,  };
 
   @BuiltValueField(wireName: r'hasMore')
   bool get hasMore;
@@ -32,33 +33,30 @@ abstract class SyncPullResponseData
   @BuiltValueField(wireName: r'resetRequired')
   bool get resetRequired;
 
-  SyncPullResponseData._();
+  SyncPullResetData._();
 
-  factory SyncPullResponseData([void updates(SyncPullResponseDataBuilder b)]) =
-      _$SyncPullResponseData;
+  factory SyncPullResetData([void updates(SyncPullResetDataBuilder b)]) =
+      _$SyncPullResetData;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(SyncPullResponseDataBuilder b) => b;
+  static void _defaults(SyncPullResetDataBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<SyncPullResponseData> get serializer =>
-      _$SyncPullResponseDataSerializer();
+  static Serializer<SyncPullResetData> get serializer =>
+      _$SyncPullResetDataSerializer();
 }
 
-class _$SyncPullResponseDataSerializer
-    implements PrimitiveSerializer<SyncPullResponseData> {
+class _$SyncPullResetDataSerializer
+    implements PrimitiveSerializer<SyncPullResetData> {
   @override
-  final Iterable<Type> types = const [
-    SyncPullResponseData,
-    _$SyncPullResponseData,
-  ];
+  final Iterable<Type> types = const [SyncPullResetData, _$SyncPullResetData];
 
   @override
-  final String wireName = r'SyncPullResponseData';
+  final String wireName = r'SyncPullResetData';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    SyncPullResponseData object, {
+    SyncPullResetData object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'changes';
@@ -71,7 +69,9 @@ class _$SyncPullResponseDataSerializer
         ? null
         : serializers.serialize(
             object.nextCursor,
-            specifiedType: const FullType.nullable(String),
+            specifiedType: const FullType.nullable(
+              SyncPullResetDataNextCursorEnum,
+            ),
           );
     yield r'hasMore';
     yield serializers.serialize(
@@ -88,7 +88,7 @@ class _$SyncPullResponseDataSerializer
   @override
   Object serialize(
     Serializers serializers,
-    SyncPullResponseData object, {
+    SyncPullResetData object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -103,7 +103,7 @@ class _$SyncPullResponseDataSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required SyncPullResponseDataBuilder result,
+    required SyncPullResetDataBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -125,9 +125,11 @@ class _$SyncPullResponseDataSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType.nullable(String),
+                    specifiedType: const FullType.nullable(
+                      SyncPullResetDataNextCursorEnum,
+                    ),
                   )
-                  as String?;
+                  as SyncPullResetDataNextCursorEnum?;
           if (valueDes == null) continue;
           result.nextCursor = valueDes;
           break;
@@ -158,12 +160,12 @@ class _$SyncPullResponseDataSerializer
   }
 
   @override
-  SyncPullResponseData deserialize(
+  SyncPullResetData deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = SyncPullResponseDataBuilder();
+    final result = SyncPullResetDataBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(
@@ -176,4 +178,16 @@ class _$SyncPullResponseDataSerializer
     );
     return result.build();
   }
+}
+
+class SyncPullResetDataNextCursorEnum extends EnumClass {
+  static Serializer<SyncPullResetDataNextCursorEnum> get serializer =>
+      _$syncPullResetDataNextCursorEnumSerializer;
+
+  const SyncPullResetDataNextCursorEnum._(String name) : super(name);
+
+  static BuiltSet<SyncPullResetDataNextCursorEnum> get values =>
+      _$syncPullResetDataNextCursorEnumValues;
+  static SyncPullResetDataNextCursorEnum valueOf(String name) =>
+      _$syncPullResetDataNextCursorEnumValueOf(name);
 }

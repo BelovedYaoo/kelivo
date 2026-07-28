@@ -37,15 +37,45 @@ function Convert-SingleIntegerEnums {
       }
     }
     foreach ($value in @($Node.Values)) {
-      Convert-SingleIntegerEnums -Node $value
+      if ($null -ne $value) {
+        Convert-SingleIntegerEnums -Node $value
+      }
     }
     return
   }
 
   if ($Node -is [Collections.IEnumerable] -and $Node -isnot [string]) {
     foreach ($value in $Node) {
-      Convert-SingleIntegerEnums -Node $value
+      if ($null -ne $value) {
+        Convert-SingleIntegerEnums -Node $value
+      }
     }
+  }
+}
+
+function Convert-SyncPullResponseForDartGenerator {
+  param([Parameter(Mandatory)] [Collections.IDictionary] $Document)
+
+  $schemas = $Document['components']['schemas']
+  $pageProperties = $schemas['SyncPullPageData']['properties']
+
+  # Dart 生成器会把布尔 discriminator 当作字符串读取，因此仅在生成输入中
+  # 展平响应；公开 OpenAPI 仍保留精确的判别联合，条件约束由手写边界校验。
+  $schemas['SyncPullResponseData'] = [ordered]@{
+    type = 'object'
+    properties = [ordered]@{
+      changes = $pageProperties['changes']
+      nextCursor = [ordered]@{
+        type = 'string'
+        nullable = $true
+        minLength = 1
+        maxLength = 4096
+      }
+      hasMore = [ordered]@{ type = 'boolean' }
+      resetRequired = [ordered]@{ type = 'boolean' }
+    }
+    required = @('changes', 'nextCursor', 'hasMore', 'resetRequired')
+    additionalProperties = $false
   }
 }
 
@@ -74,6 +104,7 @@ $generatorSpec = Join-Path $TempPath 'kelivo-openapi-generator-input.json'
 $specDocument = Get-Content -Raw -LiteralPath $resolvedSpec |
   ConvertFrom-Json -AsHashtable -Depth 100
 Convert-SingleIntegerEnums -Node $specDocument
+Convert-SyncPullResponseForDartGenerator -Document $specDocument
 $specDocument |
   ConvertTo-Json -Depth 100 |
   Set-Content -LiteralPath $generatorSpec -Encoding utf8NoBOM

@@ -4,12 +4,8 @@
 
 // ignore_for_file: unused_element
 import 'package:built_collection/built_collection.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_put_change.dart';
-import 'package:built_value/json_object.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_delete_change.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
-import 'package:one_of/one_of.dart';
 
 part 'sync_change.g.dart';
 
@@ -22,22 +18,43 @@ part 'sync_change.g.dart';
 /// * [revision]
 /// * [envelopeVersion]
 /// * [keyEpoch]
-/// * [ciphertext]
+/// * [ciphertext] - 客户端生成的完整加密信封，使用无填充 Base64URL 编码，解码后最大 1 MiB
 /// * [ciphertextBytes]
-/// * [deletedAt]
 /// * [updatedAt]
 /// * [updatedByDeviceId]
 @BuiltValue()
 abstract class SyncChange implements Built<SyncChange, SyncChangeBuilder> {
-  /// One Of [SyncDeleteChange], [SyncPutChange]
-  OneOf get oneOf;
+  @BuiltValueField(wireName: r'changeSeq')
+  int get changeSeq;
 
-  static const String discriminatorFieldName = r'operation';
+  @BuiltValueField(wireName: r'operation')
+  SyncChangeOperationEnum get operation;
+  // enum operationEnum {  put,  };
 
-  static const Map<String, Type> discriminatorMapping = {
-    r'delete': SyncDeleteChange,
-    r'put': SyncPutChange,
-  };
+  @BuiltValueField(wireName: r'recordId')
+  String get recordId;
+
+  @BuiltValueField(wireName: r'revision')
+  int get revision;
+
+  @BuiltValueField(wireName: r'envelopeVersion')
+  int get envelopeVersion;
+
+  @BuiltValueField(wireName: r'keyEpoch')
+  int get keyEpoch;
+
+  /// 客户端生成的完整加密信封，使用无填充 Base64URL 编码，解码后最大 1 MiB
+  @BuiltValueField(wireName: r'ciphertext')
+  String get ciphertext;
+
+  @BuiltValueField(wireName: r'ciphertextBytes')
+  int get ciphertextBytes;
+
+  @BuiltValueField(wireName: r'updatedAt')
+  DateTime get updatedAt;
+
+  @BuiltValueField(wireName: r'updatedByDeviceId')
+  String? get updatedByDeviceId;
 
   SyncChange._();
 
@@ -48,30 +65,6 @@ abstract class SyncChange implements Built<SyncChange, SyncChangeBuilder> {
 
   @BuiltValueSerializer(custom: true)
   static Serializer<SyncChange> get serializer => _$SyncChangeSerializer();
-}
-
-extension SyncChangeDiscriminatorExt on SyncChange {
-  String? get discriminatorValue {
-    if (this is SyncDeleteChange) {
-      return r'delete';
-    }
-    if (this is SyncPutChange) {
-      return r'put';
-    }
-    return null;
-  }
-}
-
-extension SyncChangeBuilderDiscriminatorExt on SyncChangeBuilder {
-  String? get discriminatorValue {
-    if (this is SyncDeleteChangeBuilder) {
-      return r'delete';
-    }
-    if (this is SyncPutChangeBuilder) {
-      return r'put';
-    }
-    return null;
-  }
 }
 
 class _$SyncChangeSerializer implements PrimitiveSerializer<SyncChange> {
@@ -85,7 +78,60 @@ class _$SyncChangeSerializer implements PrimitiveSerializer<SyncChange> {
     Serializers serializers,
     SyncChange object, {
     FullType specifiedType = FullType.unspecified,
-  }) sync* {}
+  }) sync* {
+    yield r'changeSeq';
+    yield serializers.serialize(
+      object.changeSeq,
+      specifiedType: const FullType(int),
+    );
+    yield r'operation';
+    yield serializers.serialize(
+      object.operation,
+      specifiedType: const FullType(SyncChangeOperationEnum),
+    );
+    yield r'recordId';
+    yield serializers.serialize(
+      object.recordId,
+      specifiedType: const FullType(String),
+    );
+    yield r'revision';
+    yield serializers.serialize(
+      object.revision,
+      specifiedType: const FullType(int),
+    );
+    yield r'envelopeVersion';
+    yield serializers.serialize(
+      object.envelopeVersion,
+      specifiedType: const FullType(int),
+    );
+    yield r'keyEpoch';
+    yield serializers.serialize(
+      object.keyEpoch,
+      specifiedType: const FullType(int),
+    );
+    yield r'ciphertext';
+    yield serializers.serialize(
+      object.ciphertext,
+      specifiedType: const FullType(String),
+    );
+    yield r'ciphertextBytes';
+    yield serializers.serialize(
+      object.ciphertextBytes,
+      specifiedType: const FullType(int),
+    );
+    yield r'updatedAt';
+    yield serializers.serialize(
+      object.updatedAt,
+      specifiedType: const FullType(DateTime),
+    );
+    yield r'updatedByDeviceId';
+    yield object.updatedByDeviceId == null
+        ? null
+        : serializers.serialize(
+            object.updatedByDeviceId,
+            specifiedType: const FullType.nullable(String),
+          );
+  }
 
   @override
   Object serialize(
@@ -93,11 +139,107 @@ class _$SyncChangeSerializer implements PrimitiveSerializer<SyncChange> {
     SyncChange object, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final oneOf = object.oneOf;
-    return serializers.serialize(
-      oneOf.value,
-      specifiedType: FullType(oneOf.valueType),
-    )!;
+    return _serializeProperties(
+      serializers,
+      object,
+      specifiedType: specifiedType,
+    ).toList();
+  }
+
+  void _deserializeProperties(
+    Serializers serializers,
+    Object serialized, {
+    FullType specifiedType = FullType.unspecified,
+    required List<Object?> serializedList,
+    required SyncChangeBuilder result,
+    required List<Object?> unhandled,
+  }) {
+    for (var i = 0; i < serializedList.length; i += 2) {
+      final key = serializedList[i] as String;
+      final value = serializedList[i + 1];
+      switch (key) {
+        case r'changeSeq':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.changeSeq = valueDes;
+          break;
+        case r'operation':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(SyncChangeOperationEnum),
+                  )
+                  as SyncChangeOperationEnum;
+          result.operation = valueDes;
+          break;
+        case r'recordId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.recordId = valueDes;
+          break;
+        case r'revision':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.revision = valueDes;
+          break;
+        case r'envelopeVersion':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.envelopeVersion = valueDes;
+          break;
+        case r'keyEpoch':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.keyEpoch = valueDes;
+          break;
+        case r'ciphertext':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.ciphertext = valueDes;
+          break;
+        case r'ciphertextBytes':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.ciphertextBytes = valueDes;
+          break;
+        case r'updatedAt':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(DateTime),
+                  )
+                  as DateTime;
+          result.updatedAt = valueDes;
+          break;
+        case r'updatedByDeviceId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(String),
+                  )
+                  as String?;
+          if (valueDes == null) continue;
+          result.updatedByDeviceId = valueDes;
+          break;
+        default:
+          unhandled.add(key);
+          unhandled.add(value);
+          break;
+      }
+    }
   }
 
   @override
@@ -107,57 +249,23 @@ class _$SyncChangeSerializer implements PrimitiveSerializer<SyncChange> {
     FullType specifiedType = FullType.unspecified,
   }) {
     final result = SyncChangeBuilder();
-    Object? oneOfDataSrc;
     final serializedList = (serialized as Iterable<Object?>).toList();
-    final discIndex =
-        serializedList.indexOf(SyncChange.discriminatorFieldName) + 1;
-    final discValue =
-        serializers.deserialize(
-              serializedList[discIndex],
-              specifiedType: FullType(String),
-            )
-            as String;
-    oneOfDataSrc = serialized;
-    final oneOfTypes = [SyncDeleteChange, SyncPutChange];
-    Object oneOfResult;
-    Type oneOfType;
-    switch (discValue) {
-      case r'delete':
-        oneOfResult =
-            serializers.deserialize(
-                  oneOfDataSrc,
-                  specifiedType: FullType(SyncDeleteChange),
-                )
-                as SyncDeleteChange;
-        oneOfType = SyncDeleteChange;
-        break;
-      case r'put':
-        oneOfResult =
-            serializers.deserialize(
-                  oneOfDataSrc,
-                  specifiedType: FullType(SyncPutChange),
-                )
-                as SyncPutChange;
-        oneOfType = SyncPutChange;
-        break;
-      default:
-        throw UnsupportedError(
-          "Couldn't deserialize oneOf for the discriminator value: ${discValue}",
-        );
-    }
-    result.oneOf = OneOfDynamic(
-      typeIndex: oneOfTypes.indexOf(oneOfType),
-      types: oneOfTypes,
-      value: oneOfResult,
+    final unhandled = <Object?>[];
+    _deserializeProperties(
+      serializers,
+      serialized,
+      specifiedType: specifiedType,
+      serializedList: serializedList,
+      unhandled: unhandled,
+      result: result,
     );
     return result.build();
   }
 }
 
 class SyncChangeOperationEnum extends EnumClass {
-  @BuiltValueEnumConst(wireName: r'delete')
-  static const SyncChangeOperationEnum delete =
-      _$syncChangeOperationEnum_delete;
+  @BuiltValueEnumConst(wireName: r'put')
+  static const SyncChangeOperationEnum put = _$syncChangeOperationEnum_put;
 
   static Serializer<SyncChangeOperationEnum> get serializer =>
       _$syncChangeOperationEnumSerializer;

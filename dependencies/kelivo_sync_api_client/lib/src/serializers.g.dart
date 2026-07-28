@@ -91,27 +91,22 @@ Serializers _$serializers =
           ..add(RevokeTrustedDeviceData.serializer)
           ..add(RevokeTrustedDeviceRequest.serializer)
           ..add(RevokeTrustedDeviceResponse.serializer)
-          ..add(SyncActiveRecord.serializer)
           ..add(SyncAppliedMutationResult.serializer)
           ..add(SyncAppliedMutationResultStatusEnum.serializer)
           ..add(SyncChange.serializer)
+          ..add(SyncChangeOperationEnum.serializer)
           ..add(SyncConflictMutationResult.serializer)
           ..add(SyncConflictMutationResultStatusEnum.serializer)
-          ..add(SyncDeleteChange.serializer)
-          ..add(SyncDeleteChangeOperationEnum.serializer)
-          ..add(SyncDeleteMutation.serializer)
-          ..add(SyncDeleteMutationOperationEnum.serializer)
-          ..add(SyncDeletedRecord.serializer)
           ..add(SyncMutation.serializer)
+          ..add(SyncMutationOperationEnum.serializer)
           ..add(SyncMutationResult.serializer)
+          ..add(SyncPullPageData.serializer)
           ..add(SyncPullRequest.serializer)
+          ..add(SyncPullResetData.serializer)
+          ..add(SyncPullResetDataNextCursorEnum.serializer)
           ..add(SyncPullResponseData.serializer)
           ..add(SyncPushRequest.serializer)
           ..add(SyncPushResponseData.serializer)
-          ..add(SyncPutChange.serializer)
-          ..add(SyncPutChangeOperationEnum.serializer)
-          ..add(SyncPutMutation.serializer)
-          ..add(SyncPutMutationOperationEnum.serializer)
           ..add(SyncRecord.serializer)
           ..add(SyncRejectedMutationResult.serializer)
           ..add(SyncRejectedMutationResultStatusEnum.serializer)
@@ -139,6 +134,14 @@ Serializers _$serializers =
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(AdminUserSummary)]),
             () => ListBuilder<AdminUserSummary>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(SyncChange)]),
+            () => ListBuilder<SyncChange>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(SyncChange)]),
+            () => ListBuilder<SyncChange>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncChange)]),

@@ -15,6 +15,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 
@@ -40,6 +41,67 @@ const _onboardingTokenValue =
 final _fullToken = CloudSyncFullSessionToken.parse(_fullTokenValue);
 final _otherFullToken = CloudSyncFullSessionToken.parse(_otherFullTokenValue);
 final _onboardingToken = CloudSyncOnboardingToken.parse(_onboardingTokenValue);
+
+Map<String, Object?> _validConversationPayload() => <String, Object?>{
+  'title': '会话',
+  'createdAt': '2026-07-28T00:00:00.000Z',
+  'updatedAt': '2026-07-28T00:00:01.000Z',
+  'isPinned': false,
+  'assistantId': null,
+  'mcpServerIds': const <Object?>['mcp-1'],
+  'truncateIndex': -1,
+  'summary': null,
+  'lastSummarizedMessageCount': 0,
+  'chatSuggestions': const <Object?>['继续'],
+};
+
+Map<String, Object?> _validTurnPayload() => <String, Object?>{
+  'conversationId': 'conversation-1',
+  'createdAt': '2026-07-28T00:00:00.000Z',
+};
+
+Map<String, Object?> _validMessagePayload() => <String, Object?>{
+  'conversationId': 'conversation-1',
+  'turnId': 'turn-1',
+  'role': 'assistant',
+  'content': '完成',
+  'attachments': const <Object?>[],
+  'timestamp': '2026-07-28T00:00:01.000Z',
+  'groupId': 'group-1',
+  'version': 0,
+  'status': 'completed',
+  'modelId': null,
+  'providerId': null,
+  'totalTokens': 1,
+  'reasoningText': null,
+  'reasoningSegmentsJson': null,
+  'translation': null,
+  'reasoningStartAt': null,
+  'reasoningFinishedAt': null,
+  'promptTokens': 1,
+  'completionTokens': 0,
+  'cachedTokens': 0,
+  'durationMs': 1,
+};
+
+Map<String, Object?> _validMessageSelectionPayload() => <String, Object?>{
+  'conversationId': 'conversation-1',
+  'groupId': 'group-1',
+  'selectedVersion': 0,
+};
+
+Map<String, Object?> _validToolEventPayload({Object? value = true}) =>
+    <String, Object?>{
+      'messageId': 'message-1',
+      'events': <Object?>[
+        <String, Object?>{'value': value},
+      ],
+    };
+
+Map<String, Object?> _validThoughtSignaturePayload() => <String, Object?>{
+  'messageId': 'message-1',
+  'signature': 'signature',
+};
 
 Uint8List _filledBytes(int length, [int value = 0]) {
   return Uint8List.fromList(List<int>.filled(length, value));
@@ -2927,6 +2989,274 @@ void main() {
     expect(payload, orderedEquals(<int>[1, 2, 3]));
   });
 
+  test('E2EE 同步 payload 递归排序对象键并保留数组顺序', () {
+    const entityKey = SyncEntityKey(
+      entityType: E2eeSyncChatRecordTypes.toolEvent,
+      entityId: 'message-1',
+    );
+    final first = <String, Object?>{
+      'messageId': 'message-1',
+      'events': <Object?>[
+        <String, Object?>{
+          'z': <Object?>[
+            3,
+            null,
+            true,
+            1.5,
+            <String, Object?>{'b': '二', 'a': '一'},
+          ],
+          'a': 'value',
+        },
+      ],
+    };
+    final second = <String, Object?>{
+      'events': <Object?>[
+        <String, Object?>{
+          'a': 'value',
+          'z': <Object?>[
+            3,
+            null,
+            true,
+            1.5,
+            <String, Object?>{'a': '一', 'b': '二'},
+          ],
+        },
+      ],
+      'messageId': 'message-1',
+    };
+
+    final firstBytes = E2eeSyncPayloadCodec.encode(
+      entityKey: entityKey,
+      payload: first,
+    );
+    final secondBytes = E2eeSyncPayloadCodec.encode(
+      entityKey: entityKey,
+      payload: second,
+    );
+
+    expect(firstBytes, orderedEquals(secondBytes));
+    expect(
+      utf8.decode(firstBytes),
+      '{"payload":{"events":[{"a":"value","z":[3,null,true,1.5,{"a":"一","b":"二"}]}],"messageId":"message-1"},"recordType":"tool-event","version":1}',
+    );
+    final decoded = E2eeSyncPayloadCodec.decode(
+      entityKey: entityKey,
+      bytes: firstBytes,
+    );
+    expect(decoded, equals(second));
+    expect(
+      E2eeSyncPayloadCodec.encode(entityKey: entityKey, payload: decoded),
+      orderedEquals(firstBytes),
+    );
+  });
+
+  test('E2EE 同步 payload 解码结果递归不可变且不借用输入', () {
+    const entityKey = SyncEntityKey(
+      entityType: E2eeSyncChatRecordTypes.toolEvent,
+      entityId: 'message-1',
+    );
+    final bytes = E2eeSyncPayloadCodec.encode(
+      entityKey: entityKey,
+      payload: _validToolEventPayload(value: <String, Object?>{'nested': 1}),
+    );
+    final decoded = E2eeSyncPayloadCodec.decode(
+      entityKey: entityKey,
+      bytes: bytes,
+    );
+    bytes.fillRange(0, bytes.length, 0);
+
+    final events = decoded['events'] as List<Object?>;
+    final event = events.single as Map<String, Object?>;
+    final value = event['value'] as Map<String, Object?>;
+    expect(value['nested'], 1);
+    expect(() => decoded['other'] = 2, throwsUnsupportedError);
+    expect(() => events.add(2), throwsUnsupportedError);
+    expect(() => value['nested'] = 2, throwsUnsupportedError);
+  });
+
+  test('E2EE 同步 payload 严格覆盖六类聊天记录 schema', () {
+    final cases = <(SyncEntityKey, Map<String, Object?>)>[
+      (
+        const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.conversation,
+          entityId: 'conversation-1',
+        ),
+        _validConversationPayload(),
+      ),
+      (
+        const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.turn,
+          entityId: 'turn-1',
+        ),
+        _validTurnPayload(),
+      ),
+      (
+        const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.message,
+          entityId: 'message-1',
+        ),
+        _validMessagePayload(),
+      ),
+      (
+        const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.messageSelection,
+          entityId: 'group-1',
+        ),
+        _validMessageSelectionPayload(),
+      ),
+      (
+        const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.toolEvent,
+          entityId: 'message-1',
+        ),
+        _validToolEventPayload(),
+      ),
+      (
+        const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.thoughtSignature,
+          entityId: 'message-1',
+        ),
+        _validThoughtSignaturePayload(),
+      ),
+    ];
+
+    for (final (entityKey, payload) in cases) {
+      final encoded = E2eeSyncPayloadCodec.encode(
+        entityKey: entityKey,
+        payload: payload,
+      );
+      expect(
+        E2eeSyncPayloadCodec.decode(entityKey: entityKey, bytes: encoded),
+        payload,
+      );
+    }
+  });
+
+  test('E2EE 同步 payload 拒绝非规范编码与非法信封', () {
+    const entityKey = SyncEntityKey(
+      entityType: E2eeSyncChatRecordTypes.thoughtSignature,
+      entityId: 'message-1',
+    );
+    final invalidSources = <List<int>>[
+      <int>[0xc3, 0x28],
+      utf8.encode(
+        '{"payload":{"messageId":"message-1","signature":"signature"}, "recordType":"thought-signature","version":1}',
+      ),
+      utf8.encode(
+        '{"recordType":"thought-signature","payload":{"messageId":"message-1","signature":"signature"},"version":1}',
+      ),
+      utf8.encode(
+        '{"payload":null,"recordType":"thought-signature","version":1}',
+      ),
+      utf8.encode(
+        '{"extra":null,"payload":{},"recordType":"thought-signature","version":1}',
+      ),
+      utf8.encode(
+        '{"payload":{},"recordType":"thought-signature","version":2}',
+      ),
+      utf8.encode(
+        '{"payload":{},"recordType":"thought-signature","version":1.0}',
+      ),
+      utf8.encode(
+        '{"payload":{"messageId":"message-1","signature":"signature"},"recordType":"tool-event","version":1}',
+      ),
+      utf8.encode('[]'),
+    ];
+
+    for (final source in invalidSources) {
+      expect(
+        () => E2eeSyncPayloadCodec.decode(
+          entityKey: entityKey,
+          bytes: Uint8List.fromList(source),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+  });
+
+  test('E2EE 同步 payload 拒绝非法值类型、键与非有限数值', () {
+    const entityKey = SyncEntityKey(
+      entityType: E2eeSyncChatRecordTypes.toolEvent,
+      entityId: 'message-1',
+    );
+    Object? deeplyNested = true;
+    for (var depth = 0; depth < 100; depth++) {
+      deeplyNested = <Object?>[deeplyNested];
+    }
+    final invalidValues = <Object?>[
+      DateTime.utc(2026),
+      <Object?, Object?>{1: 'value'},
+      double.nan,
+      double.infinity,
+      double.negativeInfinity,
+      String.fromCharCode(0xd800),
+      <String, Object?>{String.fromCharCode(0xdc00): true},
+      deeplyNested,
+    ];
+
+    for (final value in invalidValues) {
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: entityKey,
+          payload: _validToolEventPayload(value: value),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+    }
+
+    final nestedPrefix = List<String>.filled(100, '[').join();
+    final nestedSuffix = List<String>.filled(100, ']').join();
+    expect(
+      () => E2eeSyncPayloadCodec.decode(
+        entityKey: entityKey,
+        bytes: Uint8List.fromList(
+          utf8.encode(
+            '{"payload":{"events":[{"value":$nestedPrefix'
+            'true$nestedSuffix}],"messageId":"message-1"},'
+            '"recordType":"tool-event","version":1}',
+          ),
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('E2EE 同步 payload 拒绝未知类型、额外字段与身份错配', () {
+    expect(
+      () => E2eeSyncPayloadCodec.encode(
+        entityKey: const SyncEntityKey(
+          entityType: 'unknown-record',
+          entityId: 'record-1',
+        ),
+        payload: const <String, Object?>{},
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => E2eeSyncPayloadCodec.encode(
+        entityKey: const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.conversation,
+          entityId: 'conversation-1',
+        ),
+        payload: <String, Object?>{
+          ..._validConversationPayload(),
+          'extra': true,
+        },
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => E2eeSyncPayloadCodec.encode(
+        entityKey: const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.messageSelection,
+          entityId: 'other-group',
+        ),
+        payload: _validMessageSelectionPayload(),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
   test('账户记录加密器拒绝篡改、错误标识、未来世代与越界内容', () async {
     const core = KelivoSecureCore();
     final ark = await core.generateAccountRootKey();
@@ -3336,10 +3666,19 @@ void main() {
       await server.close(force: true);
     });
 
-    final pullFuture = client.pullChanges(cursor: 'cursor-1', limit: 1);
+    final pullFuture = client.pullChangesWithToken(
+      token: _fullToken,
+      cursor: 'cursor-1',
+      limit: 1,
+    );
+    client.setToken(_otherFullToken);
 
     final request = await requestFuture;
     expect(request.uri.path, '/api/sync/change/pull');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
     expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
     expect(
       jsonDecode(await utf8.decoder.bind(request).join()),
@@ -3359,7 +3698,6 @@ void main() {
               'keyEpoch': 7,
               'ciphertext': 'AQID',
               'ciphertextBytes': 3,
-              'deletedAt': null,
               'updatedAt': '2026-07-19T05:00:00.000Z',
               'updatedByDeviceId': _deviceId1,
             },
@@ -3372,10 +3710,11 @@ void main() {
     );
     await request.response.close();
 
-    final page = await pullFuture;
+    final result = await pullFuture;
+    expect(result, isA<CloudSyncChangePage>());
+    final page = result as CloudSyncChangePage;
     expect(page.nextCursor, 'cursor-2');
     expect(page.hasMore, isTrue);
-    expect(page.resetRequired, isFalse);
     expect(
       page.changes[0],
       isA<CloudSyncPutRecordChange>()
@@ -3425,7 +3764,6 @@ void main() {
               'keyEpoch': 7,
               'ciphertext': 'AQID',
               'ciphertextBytes': 3,
-              'deletedAt': null,
               'updatedAt': '2026-07-19T05:00:00.000Z',
               'updatedByDeviceId': _deviceId1,
             },
@@ -3488,7 +3826,7 @@ void main() {
       jsonEncode(<String, Object?>{
         'data': <String, Object?>{
           'changes': <Object?>[],
-          'nextCursor': 'reset-cursor',
+          'nextCursor': null,
           'hasMore': false,
           'resetRequired': true,
         },
@@ -3496,14 +3834,10 @@ void main() {
     );
     await request.response.close();
 
-    final page = await pullFuture;
-    expect(page.changes, isEmpty);
-    expect(page.nextCursor, 'reset-cursor');
-    expect(page.hasMore, isFalse);
-    expect(page.resetRequired, isTrue);
+    expect(await pullFuture, isA<CloudSyncResetRequired>());
   });
 
-  test('v3 快照拉取解析 active 并返回固定水位游标', () async {
+  test('v3 增量拉取拒绝携带伪游标的 reset 响应', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requestFuture = server.first;
     final client = CloudSyncClient.forTesting(
@@ -3515,17 +3849,64 @@ void main() {
       await server.close(force: true);
     });
 
-    final pullFuture = client.pullSnapshot(
-      snapshotCursor: 'snapshot-1',
-      limit: 1,
+    final pullFuture = client.pullChanges();
+    final request = await requestFuture;
+    await utf8.decoder.bind(request).join();
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'changes': <Object?>[],
+          'nextCursor': 'forged-reset-cursor',
+          'hasMore': false,
+          'resetRequired': true,
+        },
+      }),
     );
+    await request.response.close();
+
+    await expectLater(
+      pullFuture,
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
+    );
+  });
+
+  test('v3 快照首次拉取允许同一记录的非空完整有序历史', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final pullFuture = client.pullSnapshotWithToken(
+      token: _fullToken,
+      limit: 2,
+    );
+    client.setToken(_otherFullToken);
 
     final request = await requestFuture;
     expect(request.uri.path, '/api/sync/snapshot/pull');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
     expect(request.headers.value('x-kelivo-sync-protocol-version'), '3');
     expect(
       jsonDecode(await utf8.decoder.bind(request).join()),
-      <String, Object?>{'snapshotCursor': 'snapshot-1', 'limit': 1},
+      <String, Object?>{'limit': 2},
     );
     request.response.headers.contentType = ContentType.json;
     request.response.write(
@@ -3534,12 +3915,22 @@ void main() {
           'records': <Object?>[
             <String, Object?>{
               'recordId': _recordId1,
+              'revision': 1,
+              'envelopeVersion': 1,
+              'keyEpoch': 7,
+              'ciphertext': 'AQID',
+              'ciphertextBytes': 3,
+              'updatedAt': '2026-07-19T04:59:00.000Z',
+              'updatedByDeviceId': _deviceId1,
+              'lastChangeSeq': 11,
+            },
+            <String, Object?>{
+              'recordId': _recordId1,
               'revision': 2,
               'envelopeVersion': 1,
               'keyEpoch': 7,
               'ciphertext': 'BAUG',
               'ciphertextBytes': 3,
-              'deletedAt': null,
               'updatedAt': '2026-07-19T05:00:00.000Z',
               'updatedByDeviceId': _deviceId1,
               'lastChangeSeq': 12,
@@ -3558,8 +3949,8 @@ void main() {
     expect(page.syncCursor, 'sync-13');
     expect(page.hasMore, isFalse);
     expect(
-      page.records[0],
-      isA<CloudSyncActiveRecord>()
+      page.records[1],
+      isA<CloudSyncEncryptedRecord>()
           .having((record) => record.recordId.wireValue, 'recordId', _recordId1)
           .having((record) => record.revision, 'revision', 2)
           .having((record) => record.lastChangeSeq, 'lastChangeSeq', 12)
@@ -3569,6 +3960,61 @@ void main() {
             'ciphertext',
             orderedEquals(<int>[4, 5, 6]),
           ),
+    );
+  });
+
+  test('v3 快照拉取拒绝乱序历史', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final pullFuture = client.pullSnapshot(limit: 2);
+    final request = await requestFuture;
+    await utf8.decoder.bind(request).join();
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'records': <Object?>[
+            for (final sequence in <int>[12, 11])
+              <String, Object?>{
+                'recordId': _recordId1,
+                'revision': sequence - 10,
+                'envelopeVersion': 1,
+                'keyEpoch': 7,
+                'ciphertext': 'AQID',
+                'ciphertextBytes': 3,
+                'updatedAt': '2026-07-19T05:00:00.000Z',
+                'updatedByDeviceId': _deviceId1,
+                'lastChangeSeq': sequence,
+              },
+          ],
+          'nextSnapshotCursor': null,
+          'syncCursor': 'sync-12',
+          'hasMore': false,
+        },
+      }),
+    );
+    await request.response.close();
+
+    await expectLater(
+      pullFuture,
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
     );
   });
 
@@ -3602,7 +4048,6 @@ void main() {
               'keyEpoch': 7,
               'ciphertext': 'BAUG',
               'ciphertextBytes': 3,
-              'deletedAt': null,
               'updatedAt': '2026-07-19T05:00:00.000Z',
               'updatedByDeviceId': _deviceId1,
               'lastChangeSeq': 12,
@@ -3639,6 +4084,90 @@ void main() {
             )
             .having((error) => error.retryable, 'retryable', isFalse),
       ),
+    );
+  });
+
+  test('v3 HTTP 边界拒绝非空增量页与快照页原地游标', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await utf8.decoder.bind(request).join();
+      request.response.headers.contentType = ContentType.json;
+      if (request.uri.path == '/api/sync/change/pull') {
+        request.response.write(
+          jsonEncode(<String, Object?>{
+            'data': <String, Object?>{
+              'changes': <Object?>[
+                <String, Object?>{
+                  'changeSeq': 12,
+                  'operation': 'put',
+                  'recordId': _recordId1,
+                  'revision': 2,
+                  'envelopeVersion': 1,
+                  'keyEpoch': 7,
+                  'ciphertext': 'AQID',
+                  'ciphertextBytes': 3,
+                  'updatedAt': '2026-07-19T05:00:00.000Z',
+                  'updatedByDeviceId': _deviceId1,
+                },
+              ],
+              'nextCursor': 'cursor-stuck',
+              'hasMore': true,
+              'resetRequired': false,
+            },
+          }),
+        );
+      } else {
+        request.response.write(
+          jsonEncode(<String, Object?>{
+            'data': <String, Object?>{
+              'records': <Object?>[
+                <String, Object?>{
+                  'recordId': _recordId1,
+                  'revision': 2,
+                  'envelopeVersion': 1,
+                  'keyEpoch': 7,
+                  'ciphertext': 'AQID',
+                  'ciphertextBytes': 3,
+                  'updatedAt': '2026-07-19T05:00:00.000Z',
+                  'updatedByDeviceId': _deviceId1,
+                  'lastChangeSeq': 12,
+                },
+              ],
+              'nextSnapshotCursor': 'snapshot-stuck',
+              'syncCursor': null,
+              'hasMore': true,
+            },
+          }),
+        );
+      }
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final invalidResponse = throwsA(
+      isA<CloudSyncException>()
+          .having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.invalidResponse,
+          )
+          .having((error) => error.retryable, 'retryable', isFalse),
+    );
+
+    await expectLater(
+      client.pullChanges(cursor: 'cursor-stuck', limit: 1),
+      invalidResponse,
+    );
+    await expectLater(
+      client.pullSnapshot(snapshotCursor: 'snapshot-stuck', limit: 1),
+      invalidResponse,
     );
   });
 
@@ -3780,7 +4309,6 @@ void main() {
                   'keyEpoch': 7,
                   'ciphertext': changeRequestCount == 2 ? 'AQID=' : 'AQID',
                   'ciphertextBytes': changeRequestCount == 1 ? 4 : 3,
-                  'deletedAt': null,
                   'updatedAt': '2026-07-19T05:00:00.000Z',
                   'updatedByDeviceId': _deviceId1,
                 },

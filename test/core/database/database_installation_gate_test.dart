@@ -156,6 +156,51 @@ void main() {
       }
     });
 
+    test('旧 schema 硬切会替换数据库身份并清除旧回执与数据', () async {
+      final original = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+      );
+      final file = databaseFile(directory);
+      final before = sqlite.sqlite3.open(file.path);
+      try {
+        testDatabaseCipher.apply(before, createSlotIfMissing: false);
+        before.execute(
+          'INSERT INTO chat_storage_meta_rows (key, value) VALUES (?, ?);',
+          ['schema_cutover_sentinel', 'discard'],
+        );
+        before.userVersion = AppDatabase.currentSchemaVersion - 1;
+      } finally {
+        before.close();
+      }
+      final staleJournal = File('${file.path}-journal');
+      await staleJournal.writeAsBytes(const [], flush: true);
+
+      final replacement = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+      );
+
+      expect(replacement.installationId, isNot(original.installationId));
+      expect(replacement.databaseId, isNot(original.databaseId));
+      expect(await staleJournal.exists(), isFalse);
+      final after = sqlite.sqlite3.open(
+        file.path,
+        mode: sqlite.OpenMode.readOnly,
+      );
+      try {
+        testDatabaseCipher.apply(after, createSlotIfMissing: false);
+        expect(after.userVersion, AppDatabase.currentSchemaVersion);
+        expect(
+          after.select(
+            'SELECT value FROM chat_storage_meta_rows WHERE key = ?;',
+            ['schema_cutover_sentinel'],
+          ),
+          isEmpty,
+        );
+      } finally {
+        after.close();
+      }
+    });
+
     test('已有 receipt 但数据库缺失时拒绝且不创建空库', () async {
       await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
       await databaseFile(directory).delete();

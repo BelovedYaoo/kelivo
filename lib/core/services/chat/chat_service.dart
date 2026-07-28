@@ -62,6 +62,12 @@ typedef _AssetGcQuarantine = ({
   Directory root,
 });
 
+final class _RemoteBatchContext {
+  final Set<String> rebuildConversationIds = <String>{};
+  bool needsAssetMaintenance = false;
+  bool active = true;
+}
+
 class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   ChatService(
     this._syncWriteExecutor, {
@@ -107,10 +113,10 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   Future<void>? _assetGcRecoveryFuture;
   Future<void>? _postStartupAssetMaintenanceFuture;
   bool _assetGcRecoveryComplete = false;
-  int _remoteBatchDepth = 0;
+  final Object _remoteBatchZoneKey = Object();
+  Future<void> _remoteBatchTail = Future<void>.value();
+  Future<void>? _closeFuture;
   final Object _importBatchZoneKey = Object();
-  final Set<String> _remoteRebuildConversationIds = <String>{};
-  bool _remoteNeedsAssetMaintenance = false;
 
   String? _currentConversationId;
   final Map<String, List<ChatMessage>> _messagesCache = {};
@@ -216,7 +222,21 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     }
   }
 
-  Future<void> close() async {
+  Future<void> close() {
+    if (_activeRemoteBatchContext != null) {
+      return Future<void>.error(StateError('远端同步批次内不能关闭聊天服务'));
+    }
+    final active = _closeFuture;
+    if (active != null) return active;
+    late final Future<void> closing;
+    closing = _close().whenComplete(() {
+      if (identical(_closeFuture, closing)) _closeFuture = null;
+    });
+    _closeFuture = closing;
+    return closing;
+  }
+
+  Future<void> _close() async {
     final initialization = _initFuture;
     if (initialization != null) {
       try {
@@ -233,6 +253,8 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         return;
       }
     }
+    // close 已经封闭入口，因此此处捕获的队尾包含关闭前获准的全部批次。
+    await _remoteBatchTail;
     if (!_initialized) return;
     final postStartupMaintenance = _postStartupAssetMaintenanceFuture;
     if (postStartupMaintenance != null) {
@@ -440,28 +462,61 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     await _loadConversationsCache();
   }
 
+  _RemoteBatchContext? get _activeRemoteBatchContext {
+    final context = Zone.current[_remoteBatchZoneKey];
+    return context is _RemoteBatchContext && context.active ? context : null;
+  }
+
+  _RemoteBatchContext get _requiredRemoteBatchContext {
+    return _activeRemoteBatchContext ?? (throw StateError('当前操作必须位于远端同步事务中'));
+  }
+
   Future<T> runRemoteBatch<T>(Future<T> Function() apply) async {
+    // Zone 令牌只认可同一异步调用链，避免并发请求借用另一个批次的事务状态。
+    if (_activeRemoteBatchContext != null) return apply();
+    if (_closeFuture != null) {
+      throw StateError('聊天服务正在关闭，不能开始新的远端同步批次');
+    }
     if (!_initialized) await init();
-    if (_remoteBatchDepth > 0) return apply();
+    // 初始化期间可能同时开始关闭；进入队列前必须再次核对关闭闸门。
+    if (_closeFuture != null) {
+      throw StateError('聊天服务正在关闭，不能开始新的远端同步批次');
+    }
+
+    final previous = _remoteBatchTail;
+    final release = Completer<void>();
+    // 门尾不承载批次结果，避免一次失败让后续批次永久继承异常。
+    _remoteBatchTail = release.future;
+    await previous;
+    try {
+      return await _runRemoteBatch(apply);
+    } finally {
+      release.complete();
+    }
+  }
+
+  Future<T> _runRemoteBatch<T>(Future<T> Function() apply) {
+    final context = _RemoteBatchContext();
     return runNotificationBatch<T>(() async {
       var committed = false;
-      _remoteBatchDepth = 1;
       try {
-        final result = await _repo.runInTransaction(() async {
-          final value = await apply();
-          final conversations = _remoteRebuildConversationIds.toList()..sort();
-          for (final conversationId in conversations) {
-            await _repo.rebuildSyncedMessageOrder(conversationId);
-          }
-          return value;
-        });
+        final result = await runZoned<Future<T>>(
+          () => _repo.runInTransaction(() async {
+            final value = await apply();
+            final conversations = context.rebuildConversationIds.toList()
+              ..sort();
+            for (final conversationId in conversations) {
+              await _repo.rebuildSyncedMessageOrder(conversationId);
+            }
+            return value;
+          }),
+          zoneValues: <Object?, Object?>{_remoteBatchZoneKey: context},
+        );
         committed = true;
         return result;
       } finally {
-        final runAssetMaintenance = committed && _remoteNeedsAssetMaintenance;
-        _remoteBatchDepth = 0;
-        _remoteRebuildConversationIds.clear();
-        _remoteNeedsAssetMaintenance = false;
+        context.active = false;
+        final runAssetMaintenance = committed && context.needsAssetMaintenance;
         await _refreshPersistedCachesAfterRemoteBatch();
         if (runAssetMaintenance) await _cleanupOrphanUploads();
         notifyListeners();
@@ -530,18 +585,18 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<Conversation> upsertConversationFromSync(Conversation incoming) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(() => upsertConversationFromSync(incoming));
     }
     _requireSyncIdentifier(incoming.id, 'conversationId');
     _discardTemporaryConversation(incoming.id);
     _draftConversations.remove(incoming.id);
-    _remoteRebuildConversationIds.add(incoming.id);
+    _requiredRemoteBatchContext.rebuildConversationIds.add(incoming.id);
     return _repo.upsertConversationFromSync(incoming);
   }
 
   Future<ChatMessage> upsertMessageFromSync(ChatMessage incoming) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(() => upsertMessageFromSync(incoming));
     }
     _validateSyncedMessage(incoming);
@@ -558,7 +613,9 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     if (_messageCanOwnAssets(persisted)) {
       await _synchronizeMessageAssetsBestEffort(persisted);
     }
-    _remoteRebuildConversationIds.add(incoming.conversationId);
+    _requiredRemoteBatchContext.rebuildConversationIds.add(
+      incoming.conversationId,
+    );
     return persisted;
   }
 
@@ -567,7 +624,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required String turnId,
     required DateTime createdAt,
   }) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(
         () => applyTurnFromSync(
           conversationId: conversationId,
@@ -600,7 +657,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       turnId: turnId,
       createdAt: createdAt,
     );
-    _remoteRebuildConversationIds.add(conversationId);
+    _requiredRemoteBatchContext.rebuildConversationIds.add(conversationId);
   }
 
   Future<void> upsertMessageSelectionFromSync({
@@ -608,7 +665,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required String groupId,
     required int selectedVersion,
   }) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(
         () => upsertMessageSelectionFromSync(
           conversationId: conversationId,
@@ -643,14 +700,14 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       groupId: groupId,
       version: selectedVersion,
     );
-    _remoteRebuildConversationIds.add(conversationId);
+    _requiredRemoteBatchContext.rebuildConversationIds.add(conversationId);
   }
 
   Future<void> upsertToolEventsFromSync({
     required String messageId,
     required List<Map<String, Object?>> events,
   }) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(
         () => upsertToolEventsFromSync(messageId: messageId, events: events),
       );
@@ -675,7 +732,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required String messageId,
     required String signature,
   }) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(
         () => upsertThoughtSignatureFromSync(
           messageId: messageId,
@@ -704,7 +761,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> deleteMessageSelectionFromSync(String groupId) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(() => deleteMessageSelectionFromSync(groupId));
     }
     return _deleteMessageSelectionFromSync(groupId);
@@ -719,11 +776,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       groupId: groupId,
       version: null,
     );
-    _remoteRebuildConversationIds.add(conversationId);
+    _requiredRemoteBatchContext.rebuildConversationIds.add(conversationId);
   }
 
   Future<void> deleteToolEventsFromSync(String messageId) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(() => deleteToolEventsFromSync(messageId));
     }
     _requireSyncIdentifier(messageId, 'messageId');
@@ -731,7 +788,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   }
 
   Future<void> deleteThoughtSignatureFromSync(String messageId) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(() => deleteThoughtSignatureFromSync(messageId));
     }
     _requireSyncIdentifier(messageId, 'messageId');
@@ -742,7 +799,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required String conversationId,
     required String turnId,
   }) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(
         () =>
             deleteTurnFromSync(conversationId: conversationId, turnId: turnId),
@@ -761,12 +818,14 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       conversationId: conversationId,
       turnId: turnId,
     );
-    if (result != null) _remoteNeedsAssetMaintenance = true;
-    _remoteRebuildConversationIds.add(conversationId);
+    if (result != null) {
+      _requiredRemoteBatchContext.needsAssetMaintenance = true;
+    }
+    _requiredRemoteBatchContext.rebuildConversationIds.add(conversationId);
   }
 
   Future<void> deleteMessageFromSync(String messageId) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(() => deleteMessageFromSync(messageId));
     }
     return _deleteMessageFromSync(messageId);
@@ -777,17 +836,19 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     final message = await _repo.getMessage(messageId);
     if (message == null) return;
     await _repo.deleteMessage(messageId);
-    _remoteRebuildConversationIds.add(message.conversationId);
-    _remoteNeedsAssetMaintenance = true;
+    final context = _requiredRemoteBatchContext;
+    context.rebuildConversationIds.add(message.conversationId);
+    context.needsAssetMaintenance = true;
   }
 
   Future<void> deleteConversationFromSync(String conversationId) {
-    if (_remoteBatchDepth == 0) {
+    if (_activeRemoteBatchContext == null) {
       return runRemoteBatch(() => deleteConversationFromSync(conversationId));
     }
     _requireSyncIdentifier(conversationId, 'conversationId');
-    _remoteNeedsAssetMaintenance = true;
-    _remoteRebuildConversationIds.remove(conversationId);
+    final context = _requiredRemoteBatchContext;
+    context.needsAssetMaintenance = true;
+    context.rebuildConversationIds.remove(conversationId);
     return _repo.deleteConversation(conversationId);
   }
 

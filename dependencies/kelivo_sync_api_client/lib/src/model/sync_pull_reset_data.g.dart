@@ -1,44 +1,84 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'sync_pull_response_data.dart';
+part of 'sync_pull_reset_data.dart';
 
 // **************************************************************************
 // BuiltValueGenerator
 // **************************************************************************
 
-class _$SyncPullResponseData extends SyncPullResponseData {
+SyncPullResetDataNextCursorEnum _$syncPullResetDataNextCursorEnumValueOf(
+  String name,
+) {
+  switch (name) {
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<SyncPullResetDataNextCursorEnum>
+_$syncPullResetDataNextCursorEnumValues =
+    BuiltSet<SyncPullResetDataNextCursorEnum>(
+      const <SyncPullResetDataNextCursorEnum>[],
+    );
+
+Serializer<SyncPullResetDataNextCursorEnum>
+_$syncPullResetDataNextCursorEnumSerializer =
+    _$SyncPullResetDataNextCursorEnumSerializer();
+
+class _$SyncPullResetDataNextCursorEnumSerializer
+    implements PrimitiveSerializer<SyncPullResetDataNextCursorEnum> {
+  @override
+  final Iterable<Type> types = const <Type>[SyncPullResetDataNextCursorEnum];
+  @override
+  final String wireName = 'SyncPullResetDataNextCursorEnum';
+
+  @override
+  Object serialize(
+    Serializers serializers,
+    SyncPullResetDataNextCursorEnum object, {
+    FullType specifiedType = FullType.unspecified,
+  }) => object.name;
+
+  @override
+  SyncPullResetDataNextCursorEnum deserialize(
+    Serializers serializers,
+    Object serialized, {
+    FullType specifiedType = FullType.unspecified,
+  }) => SyncPullResetDataNextCursorEnum.valueOf(serialized as String);
+}
+
+class _$SyncPullResetData extends SyncPullResetData {
   @override
   final BuiltList<SyncChange> changes;
   @override
-  final String? nextCursor;
+  final SyncPullResetDataNextCursorEnum? nextCursor;
   @override
   final bool hasMore;
   @override
   final bool resetRequired;
 
-  factory _$SyncPullResponseData([
-    void Function(SyncPullResponseDataBuilder)? updates,
-  ]) => (SyncPullResponseDataBuilder()..update(updates))._build();
+  factory _$SyncPullResetData([
+    void Function(SyncPullResetDataBuilder)? updates,
+  ]) => (SyncPullResetDataBuilder()..update(updates))._build();
 
-  _$SyncPullResponseData._({
+  _$SyncPullResetData._({
     required this.changes,
     this.nextCursor,
     required this.hasMore,
     required this.resetRequired,
   }) : super._();
   @override
-  SyncPullResponseData rebuild(
-    void Function(SyncPullResponseDataBuilder) updates,
-  ) => (toBuilder()..update(updates)).build();
+  SyncPullResetData rebuild(void Function(SyncPullResetDataBuilder) updates) =>
+      (toBuilder()..update(updates)).build();
 
   @override
-  SyncPullResponseDataBuilder toBuilder() =>
-      SyncPullResponseDataBuilder()..replace(this);
+  SyncPullResetDataBuilder toBuilder() =>
+      SyncPullResetDataBuilder()..replace(this);
 
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is SyncPullResponseData &&
+    return other is SyncPullResetData &&
         changes == other.changes &&
         nextCursor == other.nextCursor &&
         hasMore == other.hasMore &&
@@ -58,7 +98,7 @@ class _$SyncPullResponseData extends SyncPullResponseData {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'SyncPullResponseData')
+    return (newBuiltValueToStringHelper(r'SyncPullResetData')
           ..add('changes', changes)
           ..add('nextCursor', nextCursor)
           ..add('hasMore', hasMore)
@@ -67,18 +107,19 @@ class _$SyncPullResponseData extends SyncPullResponseData {
   }
 }
 
-class SyncPullResponseDataBuilder
-    implements Builder<SyncPullResponseData, SyncPullResponseDataBuilder> {
-  _$SyncPullResponseData? _$v;
+class SyncPullResetDataBuilder
+    implements Builder<SyncPullResetData, SyncPullResetDataBuilder> {
+  _$SyncPullResetData? _$v;
 
   ListBuilder<SyncChange>? _changes;
   ListBuilder<SyncChange> get changes =>
       _$this._changes ??= ListBuilder<SyncChange>();
   set changes(ListBuilder<SyncChange>? changes) => _$this._changes = changes;
 
-  String? _nextCursor;
-  String? get nextCursor => _$this._nextCursor;
-  set nextCursor(String? nextCursor) => _$this._nextCursor = nextCursor;
+  SyncPullResetDataNextCursorEnum? _nextCursor;
+  SyncPullResetDataNextCursorEnum? get nextCursor => _$this._nextCursor;
+  set nextCursor(SyncPullResetDataNextCursorEnum? nextCursor) =>
+      _$this._nextCursor = nextCursor;
 
   bool? _hasMore;
   bool? get hasMore => _$this._hasMore;
@@ -89,11 +130,11 @@ class SyncPullResponseDataBuilder
   set resetRequired(bool? resetRequired) =>
       _$this._resetRequired = resetRequired;
 
-  SyncPullResponseDataBuilder() {
-    SyncPullResponseData._defaults(this);
+  SyncPullResetDataBuilder() {
+    SyncPullResetData._defaults(this);
   }
 
-  SyncPullResponseDataBuilder get _$this {
+  SyncPullResetDataBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
       _changes = $v.changes.toBuilder();
@@ -106,34 +147,34 @@ class SyncPullResponseDataBuilder
   }
 
   @override
-  void replace(SyncPullResponseData other) {
-    _$v = other as _$SyncPullResponseData;
+  void replace(SyncPullResetData other) {
+    _$v = other as _$SyncPullResetData;
   }
 
   @override
-  void update(void Function(SyncPullResponseDataBuilder)? updates) {
+  void update(void Function(SyncPullResetDataBuilder)? updates) {
     if (updates != null) updates(this);
   }
 
   @override
-  SyncPullResponseData build() => _build();
+  SyncPullResetData build() => _build();
 
-  _$SyncPullResponseData _build() {
-    _$SyncPullResponseData _$result;
+  _$SyncPullResetData _build() {
+    _$SyncPullResetData _$result;
     try {
       _$result =
           _$v ??
-          _$SyncPullResponseData._(
+          _$SyncPullResetData._(
             changes: changes.build(),
             nextCursor: nextCursor,
             hasMore: BuiltValueNullFieldError.checkNotNull(
               hasMore,
-              r'SyncPullResponseData',
+              r'SyncPullResetData',
               'hasMore',
             ),
             resetRequired: BuiltValueNullFieldError.checkNotNull(
               resetRequired,
-              r'SyncPullResponseData',
+              r'SyncPullResetData',
               'resetRequired',
             ),
           );
@@ -144,7 +185,7 @@ class SyncPullResponseDataBuilder
         changes.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-          r'SyncPullResponseData',
+          r'SyncPullResetData',
           _$failedField,
           e.toString(),
         );

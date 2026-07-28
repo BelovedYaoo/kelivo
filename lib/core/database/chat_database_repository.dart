@@ -10,6 +10,7 @@ import '../models/chat_message.dart';
 import '../models/conversation.dart';
 import '../services/sync/e2ee_account_record_cipher.dart';
 import '../services/sync/e2ee_account_record_state.dart';
+import '../services/sync/e2ee_sync_pull_types.dart';
 import '../services/sync/sync_codec.dart';
 import 'app_database.dart';
 import 'chat_database_observer.dart';
@@ -19,6 +20,8 @@ import 'generation_run.dart';
 import 'generation_run_commands.dart';
 
 part 'e2ee_sync_outbox_commands.dart';
+part 'e2ee_sync_pull_commands.dart';
+part 'e2ee_sync_pull_checkpoint_commands.dart';
 
 typedef ChatDatabaseSnapshotInfo = ({
   int schemaVersion,
@@ -151,6 +154,8 @@ class ChatDatabaseRepository {
 
   E2eeSyncRecordLedger get e2eeSyncRecordLedger => E2eeSyncRecordLedger(_db);
 
+  E2eeSyncPullCommands get e2eeSyncPullCommands => E2eeSyncPullCommands._(_db);
+
   Future<E2eeSyncOutboxCommands> acquireE2eeSyncOutboxCommands({
     required DateTime now,
   }) async {
@@ -258,10 +263,10 @@ class ChatDatabaseRepository {
     );
   }
 
-  static Future<bool> migrateInstalledDatabase(
+  static bool requiresInstalledDatabaseHardCut(
     File file, {
     required DatabaseCipher cipher,
-  }) async {
+  }) {
     final database = sqlite.sqlite3.open(
       file.absolute.path,
       mode: sqlite.OpenMode.readOnly,
@@ -270,17 +275,19 @@ class ChatDatabaseRepository {
     try {
       cipher.apply(database, createSlotIfMissing: false);
       schemaVersion = database.userVersion;
-      if (schemaVersion != AppDatabase.currentSchemaVersion) {
+      if (schemaVersion > AppDatabase.currentSchemaVersion) {
         throw StateError('database_schema_version');
       }
-      _validateRawStructure(database);
+      if (schemaVersion == AppDatabase.currentSchemaVersion) {
+        _validateRawStructure(database);
+      }
     } on sqlite.SqliteException {
       throw StateError('database_corrupt');
     } finally {
       database.close();
     }
 
-    return false;
+    return schemaVersion < AppDatabase.currentSchemaVersion;
   }
 
   static InstalledChatDatabaseInfo inspectInstalledDatabase(

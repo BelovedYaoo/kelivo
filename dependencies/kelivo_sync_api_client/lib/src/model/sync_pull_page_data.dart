@@ -8,9 +8,9 @@ import 'package:built_collection/built_collection.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'sync_pull_response_data.g.dart';
+part 'sync_pull_page_data.g.dart';
 
-/// SyncPullResponseData
+/// SyncPullPageData
 ///
 /// Properties:
 /// * [changes]
@@ -18,13 +18,13 @@ part 'sync_pull_response_data.g.dart';
 /// * [hasMore]
 /// * [resetRequired]
 @BuiltValue()
-abstract class SyncPullResponseData
-    implements Built<SyncPullResponseData, SyncPullResponseDataBuilder> {
+abstract class SyncPullPageData
+    implements Built<SyncPullPageData, SyncPullPageDataBuilder> {
   @BuiltValueField(wireName: r'changes')
   BuiltList<SyncChange> get changes;
 
   @BuiltValueField(wireName: r'nextCursor')
-  String? get nextCursor;
+  String get nextCursor;
 
   @BuiltValueField(wireName: r'hasMore')
   bool get hasMore;
@@ -32,33 +32,30 @@ abstract class SyncPullResponseData
   @BuiltValueField(wireName: r'resetRequired')
   bool get resetRequired;
 
-  SyncPullResponseData._();
+  SyncPullPageData._();
 
-  factory SyncPullResponseData([void updates(SyncPullResponseDataBuilder b)]) =
-      _$SyncPullResponseData;
+  factory SyncPullPageData([void updates(SyncPullPageDataBuilder b)]) =
+      _$SyncPullPageData;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(SyncPullResponseDataBuilder b) => b;
+  static void _defaults(SyncPullPageDataBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<SyncPullResponseData> get serializer =>
-      _$SyncPullResponseDataSerializer();
+  static Serializer<SyncPullPageData> get serializer =>
+      _$SyncPullPageDataSerializer();
 }
 
-class _$SyncPullResponseDataSerializer
-    implements PrimitiveSerializer<SyncPullResponseData> {
+class _$SyncPullPageDataSerializer
+    implements PrimitiveSerializer<SyncPullPageData> {
   @override
-  final Iterable<Type> types = const [
-    SyncPullResponseData,
-    _$SyncPullResponseData,
-  ];
+  final Iterable<Type> types = const [SyncPullPageData, _$SyncPullPageData];
 
   @override
-  final String wireName = r'SyncPullResponseData';
+  final String wireName = r'SyncPullPageData';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    SyncPullResponseData object, {
+    SyncPullPageData object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'changes';
@@ -67,12 +64,10 @@ class _$SyncPullResponseDataSerializer
       specifiedType: const FullType(BuiltList, [FullType(SyncChange)]),
     );
     yield r'nextCursor';
-    yield object.nextCursor == null
-        ? null
-        : serializers.serialize(
-            object.nextCursor,
-            specifiedType: const FullType.nullable(String),
-          );
+    yield serializers.serialize(
+      object.nextCursor,
+      specifiedType: const FullType(String),
+    );
     yield r'hasMore';
     yield serializers.serialize(
       object.hasMore,
@@ -88,7 +83,7 @@ class _$SyncPullResponseDataSerializer
   @override
   Object serialize(
     Serializers serializers,
-    SyncPullResponseData object, {
+    SyncPullPageData object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -103,7 +98,7 @@ class _$SyncPullResponseDataSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required SyncPullResponseDataBuilder result,
+    required SyncPullPageDataBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -125,10 +120,9 @@ class _$SyncPullResponseDataSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType.nullable(String),
+                    specifiedType: const FullType(String),
                   )
-                  as String?;
-          if (valueDes == null) continue;
+                  as String;
           result.nextCursor = valueDes;
           break;
         case r'hasMore':
@@ -158,12 +152,12 @@ class _$SyncPullResponseDataSerializer
   }
 
   @override
-  SyncPullResponseData deserialize(
+  SyncPullPageData deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = SyncPullResponseDataBuilder();
+    final result = SyncPullPageDataBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(
