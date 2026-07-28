@@ -473,7 +473,7 @@ class E2eeSyncRecordStateRows extends Table {
     "CHECK (typeof(claimed_writer_key_version) = 'integer' "
         'AND claimed_writer_key_version BETWEEN 1 AND 4294967295)',
     "CHECK (typeof(key_epoch) = 'integer' "
-        'AND key_epoch BETWEEN 1 AND 2147483647)',
+        'AND key_epoch BETWEEN 1 AND 4294967295)',
     "CHECK (typeof(accepted_at) = 'integer' AND accepted_at >= 0)",
   ];
 }
@@ -823,7 +823,7 @@ class E2eeSyncOutboxRows extends Table {
         "AND substr(record_id, 25, 12) NOT GLOB '*-*')",
     "CHECK (typeof(envelope_version) = 'integer' AND envelope_version = 1)",
     "CHECK (typeof(key_epoch) = 'integer' "
-        'AND key_epoch BETWEEN 1 AND 2147483647)',
+        'AND key_epoch BETWEEN 1 AND 4294967295)',
     "CHECK (typeof(ciphertext) = 'blob' "
         'AND length(ciphertext) BETWEEN 1 AND 1048576)',
     "CHECK (typeof(phase) = 'text' AND phase IN ('ready', 'sending'))",
@@ -1044,6 +1044,239 @@ class E2eeConfigEntryRows extends Table {
   ];
 }
 
+@TableIndex(
+  name: 'idx_e2ee_attachment_upload_due',
+  columns: {#phase, #nextAttemptAt, #createdAt, #attachmentId},
+)
+class E2eeAttachmentUploadRows extends Table {
+  TextColumn get attachmentId => text()();
+  TextColumn get localAssetId => text()();
+  TextColumn get sourcePath => text()();
+  IntColumn get keyEpoch => integer()();
+  TextColumn get kind => text()();
+  TextColumn get displayName => text().nullable()();
+  TextColumn get mediaType => text().nullable()();
+  BlobColumn get contentSha256 => blob()();
+  BlobColumn get wrappedDataKey => blob()();
+  IntColumn get totalPlaintextBytes => integer()();
+  IntColumn get chunkCount => integer()();
+  IntColumn get totalCiphertextBytes => integer()();
+  TextColumn get phase => text()();
+  TextColumn get createMutationId => text()();
+  TextColumn get uploadId => text().nullable()();
+  BlobColumn get manifestCiphertext => blob().nullable()();
+  TextColumn get commitMutationId => text()();
+  IntColumn get nextChunkIndex => integer()();
+  IntColumn get pendingChunkIndex => integer().nullable()();
+  TextColumn get pendingChunkMutationId => text().nullable()();
+  TextColumn get pendingChunkCiphertextPath => text().nullable()();
+  IntColumn get pendingChunkCiphertextBytes => integer().nullable()();
+  TextColumn get leaseToken => text().nullable()();
+  TextColumn get leaseOwnerSessionId => text().nullable()();
+  IntColumn get leaseExpiresAt =>
+      integer().map(const MicrosecondDateTimeConverter()).nullable()();
+  IntColumn get transitionVersion => integer()();
+  IntColumn get attemptCount => integer()();
+  IntColumn get nextAttemptAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  TextColumn get lastFailureKind => text().nullable()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {attachmentId};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {localAssetId},
+    {uploadId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    // Drift 只验证字面 SQL；以下尺寸上限必须与安全核心 ABI v8 附件常量同步。
+    "CHECK (typeof(attachment_id) = 'text' AND length(attachment_id) = 36 "
+        'AND attachment_id = lower(attachment_id) '
+        "AND attachment_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(attachment_id, 9, 1) = '-' "
+        "AND substr(attachment_id, 14, 1) = '-' "
+        "AND substr(attachment_id, 15, 1) = '4' "
+        "AND substr(attachment_id, 19, 1) = '-' "
+        "AND substr(attachment_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(attachment_id, 24, 1) = '-' "
+        "AND substr(attachment_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(attachment_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(attachment_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(attachment_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(attachment_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(local_asset_id) = 'text' "
+        'AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(local_asset_id, char(0)) = 0)',
+    "CHECK (typeof(source_path) = 'text' "
+        'AND length(CAST(source_path AS BLOB)) BETWEEN 1 AND 32768 '
+        'AND instr(source_path, char(0)) = 0)',
+    "CHECK (typeof(key_epoch) = 'integer' "
+        'AND key_epoch BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(kind) = 'text' AND kind IN ('image', 'file'))",
+    'CHECK (display_name IS NULL OR '
+        "(typeof(display_name) = 'text' "
+        'AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(display_name, char(0)) = 0 '
+        "AND instr(display_name, '/') = 0 "
+        "AND instr(display_name, char(92)) = 0))",
+    'CHECK (media_type IS NULL OR '
+        "(typeof(media_type) = 'text' "
+        'AND length(CAST(media_type AS BLOB)) BETWEEN 3 AND 255 '
+        "AND instr(media_type, '/') BETWEEN 2 AND length(media_type) - 1))",
+    "CHECK (kind != 'file' OR "
+        '(display_name IS NOT NULL AND media_type IS NOT NULL))',
+    "CHECK (typeof(content_sha256) = 'blob' "
+        'AND length(content_sha256) = 32)',
+    "CHECK (typeof(wrapped_data_key) = 'blob' "
+        'AND length(wrapped_data_key) = 116)',
+    "CHECK (typeof(total_plaintext_bytes) = 'integer' "
+        'AND total_plaintext_bytes BETWEEN 0 AND 4194184000)',
+    "CHECK (typeof(chunk_count) = 'integer' "
+        'AND chunk_count BETWEEN 1 AND 1000)',
+    'CHECK ((total_plaintext_bytes = 0 AND chunk_count = 1) OR '
+        '(total_plaintext_bytes > 0 AND chunk_count = '
+        '((total_plaintext_bytes - 1) / 4194184) + 1))',
+    "CHECK (typeof(total_ciphertext_bytes) = 'integer' "
+        'AND total_ciphertext_bytes = total_plaintext_bytes + '
+        'chunk_count * 120)',
+    "CHECK (typeof(phase) = 'text' AND phase IN "
+        "('create-pending', 'manifest-pending', 'uploading', "
+        "'commit-pending', 'committed'))",
+    "CHECK (typeof(create_mutation_id) = 'text' "
+        'AND length(create_mutation_id) = 36 '
+        'AND create_mutation_id = lower(create_mutation_id) '
+        "AND create_mutation_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(create_mutation_id, 9, 1) = '-' "
+        "AND substr(create_mutation_id, 14, 1) = '-' "
+        "AND substr(create_mutation_id, 15, 1) = '4' "
+        "AND substr(create_mutation_id, 19, 1) = '-' "
+        "AND substr(create_mutation_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(create_mutation_id, 24, 1) = '-' "
+        "AND substr(create_mutation_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(create_mutation_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(create_mutation_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(create_mutation_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(create_mutation_id, 25, 12) NOT GLOB '*-*')",
+    'CHECK (upload_id IS NULL OR '
+        "(typeof(upload_id) = 'text' AND length(upload_id) = 36 "
+        'AND upload_id = lower(upload_id) '
+        "AND upload_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(upload_id, 9, 1) = '-' "
+        "AND substr(upload_id, 14, 1) = '-' "
+        "AND substr(upload_id, 15, 1) = '4' "
+        "AND substr(upload_id, 19, 1) = '-' "
+        "AND substr(upload_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(upload_id, 24, 1) = '-' "
+        "AND substr(upload_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(upload_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(upload_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(upload_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(upload_id, 25, 12) NOT GLOB '*-*'))",
+    'CHECK (manifest_ciphertext IS NULL OR '
+        "(typeof(manifest_ciphertext) = 'blob' "
+        'AND length(manifest_ciphertext) BETWEEN 1 AND 1048576))',
+    "CHECK (typeof(commit_mutation_id) = 'text' "
+        'AND length(commit_mutation_id) = 36 '
+        'AND commit_mutation_id = lower(commit_mutation_id) '
+        "AND commit_mutation_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(commit_mutation_id, 9, 1) = '-' "
+        "AND substr(commit_mutation_id, 14, 1) = '-' "
+        "AND substr(commit_mutation_id, 15, 1) = '4' "
+        "AND substr(commit_mutation_id, 19, 1) = '-' "
+        "AND substr(commit_mutation_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(commit_mutation_id, 24, 1) = '-' "
+        "AND substr(commit_mutation_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(commit_mutation_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(commit_mutation_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(commit_mutation_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(commit_mutation_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(next_chunk_index) = 'integer' "
+        'AND next_chunk_index BETWEEN 0 AND chunk_count)',
+    'CHECK (pending_chunk_index IS NULL OR '
+        "(typeof(pending_chunk_index) = 'integer' "
+        'AND pending_chunk_index BETWEEN 0 AND chunk_count - 1))',
+    'CHECK (pending_chunk_mutation_id IS NULL OR '
+        "(typeof(pending_chunk_mutation_id) = 'text' "
+        'AND length(pending_chunk_mutation_id) = 36 '
+        'AND pending_chunk_mutation_id = lower(pending_chunk_mutation_id) '
+        "AND pending_chunk_mutation_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(pending_chunk_mutation_id, 9, 1) = '-' "
+        "AND substr(pending_chunk_mutation_id, 14, 1) = '-' "
+        "AND substr(pending_chunk_mutation_id, 15, 1) = '4' "
+        "AND substr(pending_chunk_mutation_id, 19, 1) = '-' "
+        "AND substr(pending_chunk_mutation_id, 20, 1) "
+        "IN ('8', '9', 'a', 'b') "
+        "AND substr(pending_chunk_mutation_id, 24, 1) = '-' "
+        "AND substr(pending_chunk_mutation_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(pending_chunk_mutation_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(pending_chunk_mutation_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(pending_chunk_mutation_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(pending_chunk_mutation_id, 25, 12) NOT GLOB '*-*'))",
+    'CHECK (pending_chunk_ciphertext_path IS NULL OR '
+        "(typeof(pending_chunk_ciphertext_path) = 'text' "
+        'AND length(CAST(pending_chunk_ciphertext_path AS BLOB)) '
+        'BETWEEN 1 AND 32768 '
+        'AND instr(pending_chunk_ciphertext_path, char(0)) = 0))',
+    'CHECK (pending_chunk_ciphertext_bytes IS NULL OR '
+        "(typeof(pending_chunk_ciphertext_bytes) = 'integer' "
+        'AND pending_chunk_ciphertext_bytes BETWEEN 120 AND 4194304))',
+    'CHECK ((pending_chunk_index IS NULL '
+        'AND pending_chunk_mutation_id IS NULL '
+        'AND pending_chunk_ciphertext_path IS NULL '
+        'AND pending_chunk_ciphertext_bytes IS NULL) OR '
+        '(pending_chunk_index = next_chunk_index '
+        'AND pending_chunk_mutation_id IS NOT NULL '
+        'AND pending_chunk_ciphertext_path IS NOT NULL '
+        'AND pending_chunk_ciphertext_bytes = '
+        'CASE WHEN pending_chunk_index < chunk_count - 1 '
+        'THEN 4194304 '
+        'ELSE total_plaintext_bytes - pending_chunk_index * '
+        '4194184 + 120 END))',
+    'CHECK ((phase = \'create-pending\' '
+        'AND upload_id IS NULL AND manifest_ciphertext IS NULL '
+        'AND next_chunk_index = 0 AND pending_chunk_index IS NULL) OR '
+        '(phase = \'manifest-pending\' '
+        'AND upload_id IS NOT NULL AND manifest_ciphertext IS NULL '
+        'AND next_chunk_index = 0 AND pending_chunk_index IS NULL) OR '
+        '(phase = \'uploading\' '
+        'AND upload_id IS NOT NULL AND manifest_ciphertext IS NOT NULL '
+        'AND next_chunk_index < chunk_count) OR '
+        '(phase IN (\'commit-pending\', \'committed\') '
+        'AND upload_id IS NOT NULL AND manifest_ciphertext IS NOT NULL '
+        'AND next_chunk_index = chunk_count '
+        'AND pending_chunk_index IS NULL))',
+    "CHECK (lease_token IS NULL OR (typeof(lease_token) = 'text' "
+        'AND length(CAST(lease_token AS BLOB)) BETWEEN 1 AND 1024))',
+    'CHECK (lease_owner_session_id IS NULL OR '
+        "(typeof(lease_owner_session_id) = 'text' "
+        'AND length(CAST(lease_owner_session_id AS BLOB)) '
+        'BETWEEN 1 AND 1024))',
+    'CHECK ((lease_token IS NULL AND lease_owner_session_id IS NULL '
+        'AND lease_expires_at IS NULL) OR '
+        "(phase != 'committed' AND lease_token IS NOT NULL "
+        'AND lease_owner_session_id IS NOT NULL '
+        "AND typeof(lease_expires_at) = 'integer' "
+        'AND lease_expires_at >= 0))',
+    "CHECK (typeof(transition_version) = 'integer' "
+        'AND transition_version BETWEEN 1 AND 9223372036854775807)',
+    "CHECK (typeof(attempt_count) = 'integer' "
+        'AND attempt_count BETWEEN 0 AND 9223372036854775807)',
+    "CHECK (typeof(next_attempt_at) = 'integer' AND next_attempt_at >= 0)",
+    'CHECK (last_failure_kind IS NULL OR '
+        "(typeof(last_failure_kind) = 'text' "
+        'AND length(CAST(last_failure_kind AS BLOB)) BETWEEN 1 AND 100))',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+  ];
+}
+
 @DriftDatabase(
   tables: [
     ConversationRows,
@@ -1067,6 +1300,7 @@ class E2eeConfigEntryRows extends Table {
     E2eeSyncRemoteRecordRows,
     E2eeSyncPullCheckpointRows,
     E2eeConfigEntryRows,
+    E2eeAttachmentUploadRows,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -1074,8 +1308,8 @@ class AppDatabase extends _$AppDatabase {
 
   static const databaseFileName = 'kelivo.db';
 
-  // 配置已硬切进 SQLCipher Vault，旧库不能继续作为配置真相来源。
-  static const currentSchemaVersion = 16;
+  // 附件断点状态已硬切进 SQLCipher，旧库不能承担 E2EE 附件状态机。
+  static const currentSchemaVersion = 17;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

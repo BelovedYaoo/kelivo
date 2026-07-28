@@ -36,10 +36,9 @@ enum E2eeAttachmentKind {
   }
 }
 
-final class E2eeAttachmentManifest {
-  factory E2eeAttachmentManifest({
+final class E2eeAttachmentDescriptor {
+  factory E2eeAttachmentDescriptor({
     required String attachmentId,
-    required String uploadId,
     required int keyEpoch,
     required E2eeAttachmentKind kind,
     required int totalPlaintextBytes,
@@ -53,7 +52,6 @@ final class E2eeAttachmentManifest {
       attachmentId,
       'attachmentId',
     );
-    final canonicalUploadId = _canonicalUuidV4(uploadId, 'uploadId');
     _requirePositiveUint32(keyEpoch, 'keyEpoch');
     if (contentSha256.length != _manifestContentDigestBytes) {
       throw const FormatException('附件内容摘要长度无效');
@@ -84,9 +82,8 @@ final class E2eeAttachmentManifest {
       }
     }
 
-    return E2eeAttachmentManifest._(
+    return E2eeAttachmentDescriptor._(
       attachmentId: canonicalAttachmentId,
-      uploadId: canonicalUploadId,
       keyEpoch: keyEpoch,
       kind: kind,
       totalPlaintextBytes: totalPlaintextBytes,
@@ -98,9 +95,8 @@ final class E2eeAttachmentManifest {
     );
   }
 
-  E2eeAttachmentManifest._({
+  E2eeAttachmentDescriptor._({
     required this.attachmentId,
-    required this.uploadId,
     required this.keyEpoch,
     required this.kind,
     required this.totalPlaintextBytes,
@@ -113,7 +109,6 @@ final class E2eeAttachmentManifest {
        wrappedDataKey = Uint8List.fromList(wrappedDataKey).asUnmodifiableView();
 
   final String attachmentId;
-  final String uploadId;
   final int keyEpoch;
   final E2eeAttachmentKind kind;
   final int totalPlaintextBytes;
@@ -125,6 +120,65 @@ final class E2eeAttachmentManifest {
 
   int get totalCiphertextBytes =>
       chunkCiphertextBytes.fold(0, (total, length) => total + length);
+}
+
+final class E2eeAttachmentManifest {
+  factory E2eeAttachmentManifest({
+    required String attachmentId,
+    required String uploadId,
+    required int keyEpoch,
+    required E2eeAttachmentKind kind,
+    required int totalPlaintextBytes,
+    required Uint8List contentSha256,
+    required Uint8List wrappedDataKey,
+    required List<int> chunkCiphertextBytes,
+    String? displayName,
+    String? mediaType,
+  }) {
+    return E2eeAttachmentManifest.fromDescriptor(
+      descriptor: E2eeAttachmentDescriptor(
+        attachmentId: attachmentId,
+        keyEpoch: keyEpoch,
+        kind: kind,
+        totalPlaintextBytes: totalPlaintextBytes,
+        contentSha256: contentSha256,
+        wrappedDataKey: wrappedDataKey,
+        chunkCiphertextBytes: chunkCiphertextBytes,
+        displayName: displayName,
+        mediaType: mediaType,
+      ),
+      uploadId: uploadId,
+    );
+  }
+
+  factory E2eeAttachmentManifest.fromDescriptor({
+    required E2eeAttachmentDescriptor descriptor,
+    required String uploadId,
+  }) {
+    return E2eeAttachmentManifest._(
+      descriptor: descriptor,
+      uploadId: _canonicalUuidV4(uploadId, 'uploadId'),
+    );
+  }
+
+  const E2eeAttachmentManifest._({
+    required this.descriptor,
+    required this.uploadId,
+  });
+
+  final E2eeAttachmentDescriptor descriptor;
+  final String uploadId;
+
+  String get attachmentId => descriptor.attachmentId;
+  int get keyEpoch => descriptor.keyEpoch;
+  E2eeAttachmentKind get kind => descriptor.kind;
+  int get totalPlaintextBytes => descriptor.totalPlaintextBytes;
+  Uint8List get contentSha256 => descriptor.contentSha256;
+  Uint8List get wrappedDataKey => descriptor.wrappedDataKey;
+  List<int> get chunkCiphertextBytes => descriptor.chunkCiphertextBytes;
+  String? get displayName => descriptor.displayName;
+  String? get mediaType => descriptor.mediaType;
+  int get totalCiphertextBytes => descriptor.totalCiphertextBytes;
 }
 
 final class E2eeSealedAttachmentManifest {

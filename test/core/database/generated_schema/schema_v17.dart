@@ -1321,7 +1321,7 @@ class E2eeSyncRecordStateRows extends Table with TableInfo {
     'CHECK(typeof(operation_id) = \'text\' AND length(operation_id) = 36 AND operation_id = lower(operation_id) AND operation_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(operation_id, 9, 1) = \'-\' AND substr(operation_id, 14, 1) = \'-\' AND substr(operation_id, 15, 1) = \'4\' AND substr(operation_id, 19, 1) = \'-\' AND substr(operation_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(operation_id, 24, 1) = \'-\' AND substr(operation_id, 1, 8) NOT GLOB \'*-*\' AND substr(operation_id, 10, 4) NOT GLOB \'*-*\' AND substr(operation_id, 15, 4) NOT GLOB \'*-*\' AND substr(operation_id, 20, 4) NOT GLOB \'*-*\' AND substr(operation_id, 25, 12) NOT GLOB \'*-*\')',
     'CHECK(typeof(claimed_writer_device_id) = \'text\' AND length(claimed_writer_device_id) = 36 AND claimed_writer_device_id = lower(claimed_writer_device_id) AND claimed_writer_device_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(claimed_writer_device_id, 9, 1) = \'-\' AND substr(claimed_writer_device_id, 14, 1) = \'-\' AND substr(claimed_writer_device_id, 15, 1) = \'4\' AND substr(claimed_writer_device_id, 19, 1) = \'-\' AND substr(claimed_writer_device_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(claimed_writer_device_id, 24, 1) = \'-\' AND substr(claimed_writer_device_id, 1, 8) NOT GLOB \'*-*\' AND substr(claimed_writer_device_id, 10, 4) NOT GLOB \'*-*\' AND substr(claimed_writer_device_id, 15, 4) NOT GLOB \'*-*\' AND substr(claimed_writer_device_id, 20, 4) NOT GLOB \'*-*\' AND substr(claimed_writer_device_id, 25, 12) NOT GLOB \'*-*\')',
     'CHECK(typeof(claimed_writer_key_version) = \'integer\' AND claimed_writer_key_version BETWEEN 1 AND 4294967295)',
-    'CHECK(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 2147483647)',
+    'CHECK(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 4294967295)',
     'CHECK(typeof(accepted_at) = \'integer\' AND accepted_at >= 0)',
   ];
   @override
@@ -1983,7 +1983,7 @@ class E2eeSyncOutboxRows extends Table with TableInfo {
     'CHECK(typeof(operation_id) = \'text\' AND length(operation_id) = 36 AND operation_id = lower(operation_id) AND operation_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(operation_id, 9, 1) = \'-\' AND substr(operation_id, 14, 1) = \'-\' AND substr(operation_id, 15, 1) = \'4\' AND substr(operation_id, 19, 1) = \'-\' AND substr(operation_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(operation_id, 24, 1) = \'-\' AND substr(operation_id, 1, 8) NOT GLOB \'*-*\' AND substr(operation_id, 10, 4) NOT GLOB \'*-*\' AND substr(operation_id, 15, 4) NOT GLOB \'*-*\' AND substr(operation_id, 20, 4) NOT GLOB \'*-*\' AND substr(operation_id, 25, 12) NOT GLOB \'*-*\')',
     'CHECK(typeof(record_id) = \'text\' AND length(record_id) = 36 AND record_id = lower(record_id) AND record_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(record_id, 9, 1) = \'-\' AND substr(record_id, 14, 1) = \'-\' AND substr(record_id, 15, 1) = \'4\' AND substr(record_id, 19, 1) = \'-\' AND substr(record_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(record_id, 24, 1) = \'-\' AND substr(record_id, 1, 8) NOT GLOB \'*-*\' AND substr(record_id, 10, 4) NOT GLOB \'*-*\' AND substr(record_id, 15, 4) NOT GLOB \'*-*\' AND substr(record_id, 20, 4) NOT GLOB \'*-*\' AND substr(record_id, 25, 12) NOT GLOB \'*-*\')',
     'CHECK(typeof(envelope_version) = \'integer\' AND envelope_version = 1)',
-    'CHECK(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 2147483647)',
+    'CHECK(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 4294967295)',
     'CHECK(typeof(ciphertext) = \'blob\' AND length(ciphertext) BETWEEN 1 AND 1048576)',
     'CHECK(typeof(phase) = \'text\' AND phase IN (\'ready\', \'sending\'))',
     'CHECK((phase = \'ready\' AND lease_token IS NULL AND lease_owner_session_id IS NULL AND lease_expires_at IS NULL)OR(phase = \'sending\' AND typeof(lease_token) = \'text\' AND length(CAST(lease_token AS BLOB)) >= 1 AND typeof(lease_owner_session_id) = \'text\' AND length(CAST(lease_owner_session_id AS BLOB)) >= 1 AND typeof(lease_expires_at) = \'integer\' AND lease_expires_at >= 0))',
@@ -2269,8 +2269,444 @@ class E2eeSyncPullCheckpointRows extends Table with TableInfo {
   bool get dontWriteConstraints => true;
 }
 
-class DatabaseAtV15 extends GeneratedDatabase {
-  DatabaseAtV15(QueryExecutor e) : super(e);
+class E2eeConfigEntryRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  E2eeConfigEntryRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<i2.Uint8List> payload =
+      GeneratedColumn<i2.Uint8List>(
+        'payload',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+        $customConstraints: 'NOT NULL',
+      );
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    entityType,
+    entityId,
+    payload,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_config_entry_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entityType, entityId};
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  E2eeConfigEntryRows createAlias(String alias) {
+    return E2eeConfigEntryRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'PRIMARY KEY(entity_type, entity_id)',
+    'CHECK(typeof(entity_type) = \'text\' AND entity_type IN (\'provider\', \'assistant\', \'memory\', \'world-book\', \'quick-phrase\', \'search-service\', \'network-tts\', \'mcp-server\', \'instruction-injection\', \'user-preference\'))',
+    'CHECK(typeof(entity_id) = \'text\' AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(entity_id, char(0)) = 0)',
+    'CHECK(typeof(payload) = \'blob\' AND length(payload) BETWEEN 1 AND 1000000)',
+    'CHECK(typeof(updated_at) = \'integer\' AND updated_at >= 0)',
+    'CHECK(entity_type != \'user-preference\' OR entity_id IN (\'profile:default\', \'provider-grouping:default\', \'assistant-selection:default\', \'world-book-activity:default\', \'instruction-activity:default\', \'search-state:default\', \'tts-state:default\', \'mcp-state:default\'))',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class E2eeAttachmentUploadRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  E2eeAttachmentUploadRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> attachmentId = GeneratedColumn<String>(
+    'attachment_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> localAssetId = GeneratedColumn<String>(
+    'local_asset_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> sourcePath = GeneratedColumn<String>(
+    'source_path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
+    'key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<String> mediaType = GeneratedColumn<String>(
+    'media_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<i2.Uint8List> contentSha256 =
+      GeneratedColumn<i2.Uint8List>(
+        'content_sha256',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+        $customConstraints: 'NOT NULL',
+      );
+  late final GeneratedColumn<i2.Uint8List> wrappedDataKey =
+      GeneratedColumn<i2.Uint8List>(
+        'wrapped_data_key',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+        $customConstraints: 'NOT NULL',
+      );
+  late final GeneratedColumn<int> totalPlaintextBytes = GeneratedColumn<int>(
+    'total_plaintext_bytes',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> chunkCount = GeneratedColumn<int>(
+    'chunk_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> totalCiphertextBytes = GeneratedColumn<int>(
+    'total_ciphertext_bytes',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> createMutationId = GeneratedColumn<String>(
+    'create_mutation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> uploadId = GeneratedColumn<String>(
+    'upload_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<i2.Uint8List> manifestCiphertext =
+      GeneratedColumn<i2.Uint8List>(
+        'manifest_ciphertext',
+        aliasedName,
+        true,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: false,
+        $customConstraints: 'NULL',
+      );
+  late final GeneratedColumn<String> commitMutationId = GeneratedColumn<String>(
+    'commit_mutation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> nextChunkIndex = GeneratedColumn<int>(
+    'next_chunk_index',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> pendingChunkIndex = GeneratedColumn<int>(
+    'pending_chunk_index',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<String> pendingChunkMutationId =
+      GeneratedColumn<String>(
+        'pending_chunk_mutation_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        $customConstraints: 'NULL',
+      );
+  late final GeneratedColumn<String> pendingChunkCiphertextPath =
+      GeneratedColumn<String>(
+        'pending_chunk_ciphertext_path',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        $customConstraints: 'NULL',
+      );
+  late final GeneratedColumn<int> pendingChunkCiphertextBytes =
+      GeneratedColumn<int>(
+        'pending_chunk_ciphertext_bytes',
+        aliasedName,
+        true,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+        $customConstraints: 'NULL',
+      );
+  late final GeneratedColumn<String> leaseToken = GeneratedColumn<String>(
+    'lease_token',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<String> leaseOwnerSessionId =
+      GeneratedColumn<String>(
+        'lease_owner_session_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+        $customConstraints: 'NULL',
+      );
+  late final GeneratedColumn<int> leaseExpiresAt = GeneratedColumn<int>(
+    'lease_expires_at',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<int> transitionVersion = GeneratedColumn<int>(
+    'transition_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> attemptCount = GeneratedColumn<int>(
+    'attempt_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> nextAttemptAt = GeneratedColumn<int>(
+    'next_attempt_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> lastFailureKind = GeneratedColumn<String>(
+    'last_failure_kind',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    attachmentId,
+    localAssetId,
+    sourcePath,
+    keyEpoch,
+    kind,
+    displayName,
+    mediaType,
+    contentSha256,
+    wrappedDataKey,
+    totalPlaintextBytes,
+    chunkCount,
+    totalCiphertextBytes,
+    phase,
+    createMutationId,
+    uploadId,
+    manifestCiphertext,
+    commitMutationId,
+    nextChunkIndex,
+    pendingChunkIndex,
+    pendingChunkMutationId,
+    pendingChunkCiphertextPath,
+    pendingChunkCiphertextBytes,
+    leaseToken,
+    leaseOwnerSessionId,
+    leaseExpiresAt,
+    transitionVersion,
+    attemptCount,
+    nextAttemptAt,
+    lastFailureKind,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_attachment_upload_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {attachmentId};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {localAssetId},
+    {uploadId},
+  ];
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  E2eeAttachmentUploadRows createAlias(String alias) {
+    return E2eeAttachmentUploadRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'PRIMARY KEY(attachment_id)',
+    'UNIQUE(local_asset_id)',
+    'UNIQUE(upload_id)',
+    'CHECK(typeof(attachment_id) = \'text\' AND length(attachment_id) = 36 AND attachment_id = lower(attachment_id) AND attachment_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(attachment_id, 9, 1) = \'-\' AND substr(attachment_id, 14, 1) = \'-\' AND substr(attachment_id, 15, 1) = \'4\' AND substr(attachment_id, 19, 1) = \'-\' AND substr(attachment_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(attachment_id, 24, 1) = \'-\' AND substr(attachment_id, 1, 8) NOT GLOB \'*-*\' AND substr(attachment_id, 10, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 15, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 20, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK(typeof(local_asset_id) = \'text\' AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(local_asset_id, char(0)) = 0)',
+    'CHECK(typeof(source_path) = \'text\' AND length(CAST(source_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(source_path, char(0)) = 0)',
+    'CHECK(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 4294967295)',
+    'CHECK(typeof(kind) = \'text\' AND kind IN (\'image\', \'file\'))',
+    'CHECK(display_name IS NULL OR(typeof(display_name) = \'text\' AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024 AND instr(display_name, char(0)) = 0 AND instr(display_name, \'/\') = 0 AND instr(display_name, char(92)) = 0))',
+    'CHECK(media_type IS NULL OR(typeof(media_type) = \'text\' AND length(CAST(media_type AS BLOB)) BETWEEN 3 AND 255 AND instr(media_type, \'/\') BETWEEN 2 AND length(media_type) - 1))',
+    'CHECK(kind != \'file\' OR(display_name IS NOT NULL AND media_type IS NOT NULL))',
+    'CHECK(typeof(content_sha256) = \'blob\' AND length(content_sha256) = 32)',
+    'CHECK(typeof(wrapped_data_key) = \'blob\' AND length(wrapped_data_key) = 116)',
+    'CHECK(typeof(total_plaintext_bytes) = \'integer\' AND total_plaintext_bytes BETWEEN 0 AND 4194184000)',
+    'CHECK(typeof(chunk_count) = \'integer\' AND chunk_count BETWEEN 1 AND 1000)',
+    'CHECK((total_plaintext_bytes = 0 AND chunk_count = 1)OR(total_plaintext_bytes > 0 AND chunk_count =((total_plaintext_bytes - 1)/ 4194184)+ 1))',
+    'CHECK(typeof(total_ciphertext_bytes) = \'integer\' AND total_ciphertext_bytes = total_plaintext_bytes + chunk_count * 120)',
+    'CHECK(typeof(phase) = \'text\' AND phase IN (\'create-pending\', \'manifest-pending\', \'uploading\', \'commit-pending\', \'committed\'))',
+    'CHECK(typeof(create_mutation_id) = \'text\' AND length(create_mutation_id) = 36 AND create_mutation_id = lower(create_mutation_id) AND create_mutation_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(create_mutation_id, 9, 1) = \'-\' AND substr(create_mutation_id, 14, 1) = \'-\' AND substr(create_mutation_id, 15, 1) = \'4\' AND substr(create_mutation_id, 19, 1) = \'-\' AND substr(create_mutation_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(create_mutation_id, 24, 1) = \'-\' AND substr(create_mutation_id, 1, 8) NOT GLOB \'*-*\' AND substr(create_mutation_id, 10, 4) NOT GLOB \'*-*\' AND substr(create_mutation_id, 15, 4) NOT GLOB \'*-*\' AND substr(create_mutation_id, 20, 4) NOT GLOB \'*-*\' AND substr(create_mutation_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK(upload_id IS NULL OR(typeof(upload_id) = \'text\' AND length(upload_id) = 36 AND upload_id = lower(upload_id) AND upload_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(upload_id, 9, 1) = \'-\' AND substr(upload_id, 14, 1) = \'-\' AND substr(upload_id, 15, 1) = \'4\' AND substr(upload_id, 19, 1) = \'-\' AND substr(upload_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(upload_id, 24, 1) = \'-\' AND substr(upload_id, 1, 8) NOT GLOB \'*-*\' AND substr(upload_id, 10, 4) NOT GLOB \'*-*\' AND substr(upload_id, 15, 4) NOT GLOB \'*-*\' AND substr(upload_id, 20, 4) NOT GLOB \'*-*\' AND substr(upload_id, 25, 12) NOT GLOB \'*-*\'))',
+    'CHECK(manifest_ciphertext IS NULL OR(typeof(manifest_ciphertext) = \'blob\' AND length(manifest_ciphertext) BETWEEN 1 AND 1048576))',
+    'CHECK(typeof(commit_mutation_id) = \'text\' AND length(commit_mutation_id) = 36 AND commit_mutation_id = lower(commit_mutation_id) AND commit_mutation_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(commit_mutation_id, 9, 1) = \'-\' AND substr(commit_mutation_id, 14, 1) = \'-\' AND substr(commit_mutation_id, 15, 1) = \'4\' AND substr(commit_mutation_id, 19, 1) = \'-\' AND substr(commit_mutation_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(commit_mutation_id, 24, 1) = \'-\' AND substr(commit_mutation_id, 1, 8) NOT GLOB \'*-*\' AND substr(commit_mutation_id, 10, 4) NOT GLOB \'*-*\' AND substr(commit_mutation_id, 15, 4) NOT GLOB \'*-*\' AND substr(commit_mutation_id, 20, 4) NOT GLOB \'*-*\' AND substr(commit_mutation_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK(typeof(next_chunk_index) = \'integer\' AND next_chunk_index BETWEEN 0 AND chunk_count)',
+    'CHECK(pending_chunk_index IS NULL OR(typeof(pending_chunk_index) = \'integer\' AND pending_chunk_index BETWEEN 0 AND chunk_count - 1))',
+    'CHECK(pending_chunk_mutation_id IS NULL OR(typeof(pending_chunk_mutation_id) = \'text\' AND length(pending_chunk_mutation_id) = 36 AND pending_chunk_mutation_id = lower(pending_chunk_mutation_id) AND pending_chunk_mutation_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(pending_chunk_mutation_id, 9, 1) = \'-\' AND substr(pending_chunk_mutation_id, 14, 1) = \'-\' AND substr(pending_chunk_mutation_id, 15, 1) = \'4\' AND substr(pending_chunk_mutation_id, 19, 1) = \'-\' AND substr(pending_chunk_mutation_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(pending_chunk_mutation_id, 24, 1) = \'-\' AND substr(pending_chunk_mutation_id, 1, 8) NOT GLOB \'*-*\' AND substr(pending_chunk_mutation_id, 10, 4) NOT GLOB \'*-*\' AND substr(pending_chunk_mutation_id, 15, 4) NOT GLOB \'*-*\' AND substr(pending_chunk_mutation_id, 20, 4) NOT GLOB \'*-*\' AND substr(pending_chunk_mutation_id, 25, 12) NOT GLOB \'*-*\'))',
+    'CHECK(pending_chunk_ciphertext_path IS NULL OR(typeof(pending_chunk_ciphertext_path) = \'text\' AND length(CAST(pending_chunk_ciphertext_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(pending_chunk_ciphertext_path, char(0)) = 0))',
+    'CHECK(pending_chunk_ciphertext_bytes IS NULL OR(typeof(pending_chunk_ciphertext_bytes) = \'integer\' AND pending_chunk_ciphertext_bytes BETWEEN 120 AND 4194304))',
+    'CHECK((pending_chunk_index IS NULL AND pending_chunk_mutation_id IS NULL AND pending_chunk_ciphertext_path IS NULL AND pending_chunk_ciphertext_bytes IS NULL)OR(pending_chunk_index = next_chunk_index AND pending_chunk_mutation_id IS NOT NULL AND pending_chunk_ciphertext_path IS NOT NULL AND pending_chunk_ciphertext_bytes = CASE WHEN pending_chunk_index < chunk_count - 1 THEN 4194304 ELSE total_plaintext_bytes - pending_chunk_index * 4194184 + 120 END))',
+    'CHECK((phase = \'create-pending\' AND upload_id IS NULL AND manifest_ciphertext IS NULL AND next_chunk_index = 0 AND pending_chunk_index IS NULL)OR(phase = \'manifest-pending\' AND upload_id IS NOT NULL AND manifest_ciphertext IS NULL AND next_chunk_index = 0 AND pending_chunk_index IS NULL)OR(phase = \'uploading\' AND upload_id IS NOT NULL AND manifest_ciphertext IS NOT NULL AND next_chunk_index < chunk_count)OR(phase IN (\'commit-pending\', \'committed\') AND upload_id IS NOT NULL AND manifest_ciphertext IS NOT NULL AND next_chunk_index = chunk_count AND pending_chunk_index IS NULL))',
+    'CHECK(lease_token IS NULL OR(typeof(lease_token) = \'text\' AND length(CAST(lease_token AS BLOB)) BETWEEN 1 AND 1024))',
+    'CHECK(lease_owner_session_id IS NULL OR(typeof(lease_owner_session_id) = \'text\' AND length(CAST(lease_owner_session_id AS BLOB)) BETWEEN 1 AND 1024))',
+    'CHECK((lease_token IS NULL AND lease_owner_session_id IS NULL AND lease_expires_at IS NULL)OR(phase != \'committed\' AND lease_token IS NOT NULL AND lease_owner_session_id IS NOT NULL AND typeof(lease_expires_at) = \'integer\' AND lease_expires_at >= 0))',
+    'CHECK(typeof(transition_version) = \'integer\' AND transition_version BETWEEN 1 AND 9223372036854775807)',
+    'CHECK(typeof(attempt_count) = \'integer\' AND attempt_count BETWEEN 0 AND 9223372036854775807)',
+    'CHECK(typeof(next_attempt_at) = \'integer\' AND next_attempt_at >= 0)',
+    'CHECK(last_failure_kind IS NULL OR(typeof(last_failure_kind) = \'text\' AND length(CAST(last_failure_kind AS BLOB)) BETWEEN 1 AND 100))',
+    'CHECK(typeof(created_at) = \'integer\' AND created_at >= 0)',
+    'CHECK(typeof(updated_at) = \'integer\' AND updated_at >= created_at)',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class DatabaseAtV17 extends GeneratedDatabase {
+  DatabaseAtV17(QueryExecutor e) : super(e);
   late final ConversationRows conversationRows = ConversationRows(this);
   late final MessageRows messageRows = MessageRows(this);
   late final TurnRows turnRows = TurnRows(this);
@@ -2303,6 +2739,11 @@ class DatabaseAtV15 extends GeneratedDatabase {
       E2eeSyncRemoteRecordRows(this);
   late final E2eeSyncPullCheckpointRows e2eeSyncPullCheckpointRows =
       E2eeSyncPullCheckpointRows(this);
+  late final E2eeConfigEntryRows e2eeConfigEntryRows = E2eeConfigEntryRows(
+    this,
+  );
+  late final E2eeAttachmentUploadRows e2eeAttachmentUploadRows =
+      E2eeAttachmentUploadRows(this);
   late final Index idxConversationsUpdatedAt = Index(
     'idx_conversations_updated_at',
     'CREATE INDEX idx_conversations_updated_at ON conversation_rows (updated_at DESC, id ASC)',
@@ -2343,10 +2784,6 @@ class DatabaseAtV15 extends GeneratedDatabase {
     'idx_migration_issues_run_kind',
     'CREATE INDEX idx_migration_issues_run_kind ON migration_issue_rows (migration_run_id, kind, id)',
   );
-  late final Index idxGenerationRunsActiveTarget = Index(
-    'idx_generation_runs_active_target',
-    'CREATE UNIQUE INDEX idx_generation_runs_active_target ON generation_run_rows (conversation_id, target_revision_id) WHERE state IN (\'preparing\', \'requesting\', \'streaming\', \'waiting_tool\')',
-  );
   late final Index idxGenerationRunsStateUpdated = Index(
     'idx_generation_runs_state_updated',
     'CREATE INDEX idx_generation_runs_state_updated ON generation_run_rows (state, updated_at, id)',
@@ -2375,6 +2812,14 @@ class DatabaseAtV15 extends GeneratedDatabase {
     'idx_e2ee_sync_remote_records_gate_updated',
     'CREATE INDEX idx_e2ee_sync_remote_records_gate_updated ON e2ee_sync_remote_record_rows (gate, updated_at, record_id)',
   );
+  late final Index idxE2eeAttachmentUploadDue = Index(
+    'idx_e2ee_attachment_upload_due',
+    'CREATE INDEX idx_e2ee_attachment_upload_due ON e2ee_attachment_upload_rows (phase, next_attempt_at, created_at, attachment_id)',
+  );
+  late final Index idxGenerationRunsActiveTarget = Index(
+    'idx_generation_runs_active_target',
+    'CREATE UNIQUE INDEX idx_generation_runs_active_target ON generation_run_rows (conversation_id, target_revision_id) WHERE state IN (\'preparing\', \'requesting\', \'streaming\', \'waiting_tool\')',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -2400,6 +2845,8 @@ class DatabaseAtV15 extends GeneratedDatabase {
     e2eeSyncOutboxRows,
     e2eeSyncRemoteRecordRows,
     e2eeSyncPullCheckpointRows,
+    e2eeConfigEntryRows,
+    e2eeAttachmentUploadRows,
     idxConversationsUpdatedAt,
     idxConversationsAssistant,
     idxMessagesConversationOrder,
@@ -2410,7 +2857,6 @@ class DatabaseAtV15 extends GeneratedDatabase {
     idxMessagePartsRevisionOrdinal,
     idxProviderArtifactsRevisionKind,
     idxMigrationIssuesRunKind,
-    idxGenerationRunsActiveTarget,
     idxGenerationRunsStateUpdated,
     idxE2eeSyncRecordStatesRecordVersion,
     idxE2eeSyncIntentsPhaseUpdated,
@@ -2418,95 +2864,9 @@ class DatabaseAtV15 extends GeneratedDatabase {
     idxE2eeSyncOperationsIntentGeneration,
     idxE2eeSyncOutboxPhaseDue,
     idxE2eeSyncRemoteRecordsGateUpdated,
+    idxE2eeAttachmentUploadDue,
+    idxGenerationRunsActiveTarget,
   ];
   @override
-  StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('message_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('turn_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('conversation_mcp_server_rows', kind: UpdateKind.delete),
-      ],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('tool_event_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('gemini_thought_signature_rows', kind: UpdateKind.delete),
-      ],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('message_part_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('provider_artifact_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'migration_run_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('migration_issue_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('generation_run_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'e2ee_sync_record_state_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('e2ee_sync_record_parent_rows', kind: UpdateKind.delete),
-      ],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'e2ee_sync_record_state_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('e2ee_sync_record_head_rows', kind: UpdateKind.delete),
-      ],
-    ),
-  ]);
-  @override
-  int get schemaVersion => 15;
+  int get schemaVersion => 17;
 }

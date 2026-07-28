@@ -1,0 +1,669 @@
+part of 'chat_database_repository.dart';
+
+const _attachmentUploadMaxPositiveInt63 = 0x7fffffffffffffff;
+const _attachmentUploadPhases = <String>[
+  'create-pending',
+  'manifest-pending',
+  'uploading',
+  'commit-pending',
+];
+
+enum E2eeAttachmentUploadPhase {
+  createPending('create-pending'),
+  manifestPending('manifest-pending'),
+  uploading('uploading'),
+  commitPending('commit-pending'),
+  committed('committed');
+
+  const E2eeAttachmentUploadPhase(this.wireValue);
+
+  final String wireValue;
+
+  static E2eeAttachmentUploadPhase fromWireValue(String value) {
+    for (final phase in values) {
+      if (phase.wireValue == value) return phase;
+    }
+    throw StateError('附件上传阶段不受支持');
+  }
+}
+
+final class E2eeAttachmentUploadDraft {
+  E2eeAttachmentUploadDraft({
+    required this.descriptor,
+    required String localAssetId,
+    required String sourcePath,
+    required String createMutationId,
+    required String commitMutationId,
+  }) : localAssetId = _requireAttachmentStorageText(
+         localAssetId,
+         'localAssetId',
+         1024,
+       ),
+       sourcePath = _requireAttachmentStorageText(
+         sourcePath,
+         'sourcePath',
+         32768,
+       ),
+       createMutationId = _requireCanonicalUuidV4(
+         createMutationId,
+         'createMutationId',
+       ),
+       commitMutationId = _requireCanonicalUuidV4(
+         commitMutationId,
+         'commitMutationId',
+       ) {
+    if (this.createMutationId == this.commitMutationId) {
+      throw const FormatException('附件创建与提交 mutationId 不得相同');
+    }
+  }
+
+  final E2eeAttachmentDescriptor descriptor;
+  final String localAssetId;
+  final String sourcePath;
+  final String createMutationId;
+  final String commitMutationId;
+}
+
+final class E2eeAttachmentPendingChunk {
+  E2eeAttachmentPendingChunk._({
+    required this.index,
+    required this.mutationId,
+    required this.ciphertextPath,
+    required this.ciphertextBytes,
+  });
+
+  final int index;
+  final String mutationId;
+  final String ciphertextPath;
+  final int ciphertextBytes;
+}
+
+final class E2eeAttachmentUploadState {
+  E2eeAttachmentUploadState._({
+    required this.descriptor,
+    required this.localAssetId,
+    required this.sourcePath,
+    required this.phase,
+    required this.createMutationId,
+    required this.uploadId,
+    required Uint8List? manifestCiphertext,
+    required this.commitMutationId,
+    required this.nextChunkIndex,
+    required this.pendingChunk,
+    required this.transitionVersion,
+    required this.attemptCount,
+    required this.nextAttemptAt,
+    required this.lastFailureKind,
+    required this.createdAt,
+    required this.updatedAt,
+  }) : manifestCiphertext = manifestCiphertext == null
+           ? null
+           : Uint8List.fromList(manifestCiphertext).asUnmodifiableView();
+
+  final E2eeAttachmentDescriptor descriptor;
+  final String localAssetId;
+  final String sourcePath;
+  final E2eeAttachmentUploadPhase phase;
+  final String createMutationId;
+  final String? uploadId;
+  final Uint8List? manifestCiphertext;
+  final String commitMutationId;
+  final int nextChunkIndex;
+  final E2eeAttachmentPendingChunk? pendingChunk;
+  final int transitionVersion;
+  final int attemptCount;
+  final DateTime nextAttemptAt;
+  final String? lastFailureKind;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+
+  String get attachmentId => descriptor.attachmentId;
+}
+
+final class E2eeAttachmentUploadLease {
+  E2eeAttachmentUploadLease._({
+    required this.state,
+    required this.leaseToken,
+    required this.leaseOwner,
+    required this.leaseExpiresAt,
+  });
+
+  final E2eeAttachmentUploadState state;
+  final String leaseToken;
+  final String leaseOwner;
+  final DateTime leaseExpiresAt;
+}
+
+final class E2eeAttachmentUploadCommands {
+  E2eeAttachmentUploadCommands._(this._database);
+
+  final AppDatabase _database;
+
+  Future<E2eeAttachmentUploadState> create({
+    required E2eeAttachmentUploadDraft draft,
+    required DateTime now,
+  }) async {
+    final timestamp = _requireStorageTime(now, 'now');
+    final descriptor = draft.descriptor;
+    await _database
+        .into(_database.e2eeAttachmentUploadRows)
+        .insert(
+          E2eeAttachmentUploadRowsCompanion.insert(
+            attachmentId: descriptor.attachmentId,
+            localAssetId: draft.localAssetId,
+            sourcePath: draft.sourcePath,
+            keyEpoch: descriptor.keyEpoch,
+            kind: descriptor.kind.name,
+            displayName: Value(descriptor.displayName),
+            mediaType: Value(descriptor.mediaType),
+            contentSha256: descriptor.contentSha256,
+            wrappedDataKey: descriptor.wrappedDataKey,
+            totalPlaintextBytes: descriptor.totalPlaintextBytes,
+            chunkCount: descriptor.chunkCiphertextBytes.length,
+            totalCiphertextBytes: descriptor.totalCiphertextBytes,
+            phase: E2eeAttachmentUploadPhase.createPending.wireValue,
+            createMutationId: draft.createMutationId,
+            commitMutationId: draft.commitMutationId,
+            nextChunkIndex: 0,
+            transitionVersion: 1,
+            attemptCount: 0,
+            nextAttemptAt: timestamp,
+            createdAt: timestamp,
+            updatedAt: timestamp,
+          ),
+        );
+    return (await readByAttachmentId(descriptor.attachmentId))!;
+  }
+
+  Future<E2eeAttachmentUploadState?> readByAttachmentId(
+    String attachmentId,
+  ) async {
+    final id = _requireCanonicalUuidV4(attachmentId, 'attachmentId');
+    final row = await (_database.select(
+      _database.e2eeAttachmentUploadRows,
+    )..where((table) => table.attachmentId.equals(id))).getSingleOrNull();
+    return row == null ? null : _stateFromRow(row);
+  }
+
+  Future<E2eeAttachmentUploadState?> readByLocalAssetId(
+    String localAssetId,
+  ) async {
+    final id = _requireAttachmentStorageText(
+      localAssetId,
+      'localAssetId',
+      1024,
+    );
+    final row = await (_database.select(
+      _database.e2eeAttachmentUploadRows,
+    )..where((table) => table.localAssetId.equals(id))).getSingleOrNull();
+    return row == null ? null : _stateFromRow(row);
+  }
+
+  Future<E2eeAttachmentUploadLease?> claimDue({
+    required String leaseToken,
+    required String leaseOwner,
+    required DateTime leaseExpiresAt,
+    required DateTime now,
+  }) {
+    final token = _requireBoundedText(leaseToken, 'leaseToken');
+    final owner = _requireBoundedText(leaseOwner, 'leaseOwner');
+    final timestamp = _requireStorageTime(now, 'now');
+    final expiry = _requireStorageTime(leaseExpiresAt, 'leaseExpiresAt');
+    if (!expiry.isAfter(timestamp)) {
+      throw const FormatException('附件上传租约必须晚于当前时间');
+    }
+
+    return _database.transaction(() async {
+      final table = _database.e2eeAttachmentUploadRows;
+      final query = _database.select(table)
+        ..where(
+          (row) =>
+              row.phase.isIn(_attachmentUploadPhases) &
+              row.nextAttemptAt.isSmallerOrEqualValue(
+                timestamp.microsecondsSinceEpoch,
+              ) &
+              (row.leaseToken.isNull() |
+                  row.leaseExpiresAt.isSmallerOrEqualValue(
+                    timestamp.microsecondsSinceEpoch,
+                  )),
+        )
+        ..orderBy(<OrderClauseGenerator<$E2eeAttachmentUploadRowsTable>>[
+          (row) => OrderingTerm.asc(row.nextAttemptAt),
+          (row) => OrderingTerm.asc(row.createdAt),
+          (row) => OrderingTerm.asc(row.attachmentId),
+        ])
+        ..limit(1);
+      final candidate = await query.getSingleOrNull();
+      if (candidate == null) return null;
+      try {
+        if (candidate.transitionVersion >= _attachmentUploadMaxPositiveInt63 ||
+            candidate.attemptCount >= _attachmentUploadMaxPositiveInt63) {
+          throw StateError('附件上传状态计数已耗尽');
+        }
+        final nextTransitionVersion = candidate.transitionVersion + 1;
+        final nextAttemptCount = candidate.attemptCount + 1;
+        final updated =
+            await (_database.update(table)..where(
+                  (row) =>
+                      row.attachmentId.equals(candidate.attachmentId) &
+                      row.phase.equals(candidate.phase) &
+                      row.transitionVersion.equals(
+                        candidate.transitionVersion,
+                      ) &
+                      (row.leaseToken.isNull() |
+                          row.leaseExpiresAt.isSmallerOrEqualValue(
+                            timestamp.microsecondsSinceEpoch,
+                          )),
+                ))
+                .write(
+                  E2eeAttachmentUploadRowsCompanion(
+                    leaseToken: Value(token),
+                    leaseOwnerSessionId: Value(owner),
+                    leaseExpiresAt: Value(expiry),
+                    transitionVersion: Value(nextTransitionVersion),
+                    attemptCount: Value(nextAttemptCount),
+                    updatedAt: Value(timestamp),
+                  ),
+                );
+        if (updated == 0) return null;
+        if (updated != 1) throw StateError('附件上传 claim CAS 更新了多行');
+        final claimed = await _rowByAttachmentId(candidate.attachmentId);
+        return _leaseFromRow(
+          claimed,
+          leaseToken: token,
+          leaseOwner: owner,
+          leaseExpiresAt: expiry,
+        );
+      } finally {
+        _clearAttachmentUploadRowBytes(candidate);
+      }
+    });
+  }
+
+  Future<E2eeAttachmentUploadLease> acceptCreated({
+    required E2eeAttachmentUploadLease lease,
+    required String uploadId,
+    required DateTime now,
+  }) async {
+    if (lease.state.phase != E2eeAttachmentUploadPhase.createPending) {
+      throw StateError('附件上传当前不等待创建响应');
+    }
+    final id = _requireCanonicalUuidV4(uploadId, 'uploadId');
+    return _transitionLease(
+      lease: lease,
+      now: now,
+      changes: E2eeAttachmentUploadRowsCompanion(
+        phase: Value(E2eeAttachmentUploadPhase.manifestPending.wireValue),
+        uploadId: Value(id),
+      ),
+    );
+  }
+
+  Future<E2eeAttachmentUploadLease> attachManifest({
+    required E2eeAttachmentUploadLease lease,
+    required E2eeSealedAttachmentManifest sealedManifest,
+    required DateTime now,
+  }) async {
+    final state = lease.state;
+    if (state.phase != E2eeAttachmentUploadPhase.manifestPending ||
+        state.uploadId == null) {
+      throw StateError('附件上传当前不等待认证清单');
+    }
+    if (sealedManifest.attachmentId != state.attachmentId ||
+        sealedManifest.uploadId != state.uploadId ||
+        sealedManifest.keyEpoch != state.descriptor.keyEpoch) {
+      throw const FormatException('附件认证清单与持久上传身份不一致');
+    }
+    return _transitionLease(
+      lease: lease,
+      now: now,
+      changes: E2eeAttachmentUploadRowsCompanion(
+        phase: Value(E2eeAttachmentUploadPhase.uploading.wireValue),
+        manifestCiphertext: Value(sealedManifest.ciphertext),
+      ),
+    );
+  }
+
+  Future<E2eeAttachmentUploadLease> stageChunk({
+    required E2eeAttachmentUploadLease lease,
+    required int chunkIndex,
+    required String mutationId,
+    required String ciphertextPath,
+    required int ciphertextBytes,
+    required DateTime now,
+  }) async {
+    final state = lease.state;
+    if (state.phase != E2eeAttachmentUploadPhase.uploading ||
+        state.pendingChunk != null ||
+        chunkIndex != state.nextChunkIndex) {
+      throw StateError('附件上传当前不能暂存该分块');
+    }
+    final expectedBytes = state.descriptor.chunkCiphertextBytes[chunkIndex];
+    if (ciphertextBytes != expectedBytes) {
+      throw const FormatException('待上传附件分块密文长度不一致');
+    }
+    final mutation = _requireCanonicalUuidV4(mutationId, 'mutationId');
+    final path = _requireAttachmentStorageText(
+      ciphertextPath,
+      'ciphertextPath',
+      32768,
+    );
+    return _transitionLease(
+      lease: lease,
+      now: now,
+      changes: E2eeAttachmentUploadRowsCompanion(
+        pendingChunkIndex: Value(chunkIndex),
+        pendingChunkMutationId: Value(mutation),
+        pendingChunkCiphertextPath: Value(path),
+        pendingChunkCiphertextBytes: Value(ciphertextBytes),
+      ),
+    );
+  }
+
+  Future<E2eeAttachmentUploadLease> acknowledgeChunk({
+    required E2eeAttachmentUploadLease lease,
+    required DateTime now,
+  }) async {
+    final state = lease.state;
+    final pending = state.pendingChunk;
+    if (state.phase != E2eeAttachmentUploadPhase.uploading ||
+        pending == null ||
+        pending.index != state.nextChunkIndex) {
+      throw StateError('附件上传当前没有可确认分块');
+    }
+    final nextIndex = state.nextChunkIndex + 1;
+    final nextPhase = nextIndex == state.descriptor.chunkCiphertextBytes.length
+        ? E2eeAttachmentUploadPhase.commitPending
+        : E2eeAttachmentUploadPhase.uploading;
+    return _transitionLease(
+      lease: lease,
+      now: now,
+      changes: E2eeAttachmentUploadRowsCompanion(
+        phase: Value(nextPhase.wireValue),
+        nextChunkIndex: Value(nextIndex),
+        pendingChunkIndex: const Value(null),
+        pendingChunkMutationId: const Value(null),
+        pendingChunkCiphertextPath: const Value(null),
+        pendingChunkCiphertextBytes: const Value(null),
+      ),
+    );
+  }
+
+  Future<E2eeAttachmentUploadState> markCommitted({
+    required E2eeAttachmentUploadLease lease,
+    required DateTime now,
+  }) {
+    if (lease.state.phase != E2eeAttachmentUploadPhase.commitPending) {
+      throw StateError('附件上传当前不能提交完成');
+    }
+    final timestamp = _requireStorageTime(now, 'now');
+    _requireActiveAttachmentUploadLease(lease, timestamp);
+    return _database.transaction(() async {
+      if (lease.state.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
+        throw StateError('附件上传 transitionVersion 已耗尽');
+      }
+      final updated =
+          await (_database.update(
+            _database.e2eeAttachmentUploadRows,
+          )..where((row) => _matchesAttachmentUploadLease(row, lease))).write(
+            E2eeAttachmentUploadRowsCompanion(
+              phase: Value(E2eeAttachmentUploadPhase.committed.wireValue),
+              leaseToken: const Value(null),
+              leaseOwnerSessionId: const Value(null),
+              leaseExpiresAt: const Value(null),
+              transitionVersion: Value(lease.state.transitionVersion + 1),
+              nextAttemptAt: Value(timestamp),
+              lastFailureKind: const Value(null),
+              updatedAt: Value(timestamp),
+            ),
+          );
+      if (updated != 1) throw StateError('附件上传完成 CAS 失败');
+      return _stateFromRow(await _rowByAttachmentId(lease.state.attachmentId));
+    });
+  }
+
+  Future<bool> release({
+    required E2eeAttachmentUploadLease lease,
+    required DateTime now,
+  }) {
+    final timestamp = _requireStorageTime(now, 'now');
+    return _releaseLease(
+      lease: lease,
+      nextAttemptAt: timestamp,
+      lastFailureKind: null,
+      now: timestamp,
+    );
+  }
+
+  Future<bool> releaseAfterFailure({
+    required E2eeAttachmentUploadLease lease,
+    required DateTime nextAttemptAt,
+    required String failureKind,
+    required DateTime now,
+  }) {
+    final timestamp = _requireStorageTime(now, 'now');
+    final retryAt = _requireStorageTime(nextAttemptAt, 'nextAttemptAt');
+    final failure = _requireErrorCode(failureKind, 'failureKind');
+    if (retryAt.isBefore(timestamp)) {
+      throw const FormatException('附件上传重试时间不得早于当前时间');
+    }
+    return _releaseLease(
+      lease: lease,
+      nextAttemptAt: retryAt,
+      lastFailureKind: failure,
+      now: timestamp,
+    );
+  }
+
+  Future<E2eeAttachmentUploadLease> _transitionLease({
+    required E2eeAttachmentUploadLease lease,
+    required DateTime now,
+    required E2eeAttachmentUploadRowsCompanion changes,
+  }) {
+    final timestamp = _requireStorageTime(now, 'now');
+    _requireActiveAttachmentUploadLease(lease, timestamp);
+    return _database.transaction(() async {
+      if (lease.state.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
+        throw StateError('附件上传 transitionVersion 已耗尽');
+      }
+      final nextTransitionVersion = lease.state.transitionVersion + 1;
+      final updated =
+          await (_database.update(
+            _database.e2eeAttachmentUploadRows,
+          )..where((row) => _matchesAttachmentUploadLease(row, lease))).write(
+            changes.copyWith(
+              transitionVersion: Value(nextTransitionVersion),
+              updatedAt: Value(timestamp),
+            ),
+          );
+      if (updated != 1) throw StateError('附件上传阶段 CAS 失败');
+      final next = await _rowByAttachmentId(lease.state.attachmentId);
+      return _leaseFromRow(
+        next,
+        leaseToken: lease.leaseToken,
+        leaseOwner: lease.leaseOwner,
+        leaseExpiresAt: lease.leaseExpiresAt,
+      );
+    });
+  }
+
+  Future<bool> _releaseLease({
+    required E2eeAttachmentUploadLease lease,
+    required DateTime nextAttemptAt,
+    required String? lastFailureKind,
+    required DateTime now,
+  }) async {
+    if (!now.isBefore(lease.leaseExpiresAt)) return false;
+    if (lease.state.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
+      throw StateError('附件上传 transitionVersion 已耗尽');
+    }
+    final updated =
+        await (_database.update(
+          _database.e2eeAttachmentUploadRows,
+        )..where((row) => _matchesAttachmentUploadLease(row, lease))).write(
+          E2eeAttachmentUploadRowsCompanion(
+            leaseToken: const Value(null),
+            leaseOwnerSessionId: const Value(null),
+            leaseExpiresAt: const Value(null),
+            transitionVersion: Value(lease.state.transitionVersion + 1),
+            nextAttemptAt: Value(nextAttemptAt),
+            lastFailureKind: Value(lastFailureKind),
+            updatedAt: Value(now),
+          ),
+        );
+    if (updated > 1) throw StateError('附件上传 release CAS 更新了多行');
+    return updated == 1;
+  }
+
+  Future<E2eeAttachmentUploadRow> _rowByAttachmentId(String attachmentId) {
+    return (_database.select(
+      _database.e2eeAttachmentUploadRows,
+    )..where((row) => row.attachmentId.equals(attachmentId))).getSingle();
+  }
+}
+
+void _requireActiveAttachmentUploadLease(
+  E2eeAttachmentUploadLease lease,
+  DateTime now,
+) {
+  if (!now.isBefore(lease.leaseExpiresAt)) {
+    throw StateError('附件上传租约已过期');
+  }
+}
+
+Expression<bool> _matchesAttachmentUploadLease(
+  $E2eeAttachmentUploadRowsTable row,
+  E2eeAttachmentUploadLease lease,
+) {
+  return row.attachmentId.equals(lease.state.attachmentId) &
+      row.phase.equals(lease.state.phase.wireValue) &
+      row.transitionVersion.equals(lease.state.transitionVersion) &
+      row.leaseToken.equals(lease.leaseToken) &
+      row.leaseOwnerSessionId.equals(lease.leaseOwner) &
+      row.leaseExpiresAt.equalsValue(lease.leaseExpiresAt);
+}
+
+E2eeAttachmentUploadLease _leaseFromRow(
+  E2eeAttachmentUploadRow row, {
+  required String leaseToken,
+  required String leaseOwner,
+  required DateTime leaseExpiresAt,
+}) {
+  if (row.leaseToken != leaseToken ||
+      row.leaseOwnerSessionId != leaseOwner ||
+      row.leaseExpiresAt == null ||
+      !row.leaseExpiresAt!.isAtSameMomentAs(leaseExpiresAt)) {
+    throw StateError('附件上传租约持久状态不一致');
+  }
+  return E2eeAttachmentUploadLease._(
+    state: _stateFromRow(row),
+    leaseToken: leaseToken,
+    leaseOwner: leaseOwner,
+    leaseExpiresAt: leaseExpiresAt,
+  );
+}
+
+E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
+  try {
+    final layout = KelivoAttachmentLayout(
+      totalPlaintextBytes: row.totalPlaintextBytes,
+    );
+    if (row.chunkCount != layout.chunkCount ||
+        row.totalCiphertextBytes != layout.totalCiphertextBytes) {
+      throw StateError('附件上传持久布局不一致');
+    }
+    final chunkCiphertextBytes = List<int>.generate(
+      layout.chunkCount,
+      (index) =>
+          layout.plaintextLengthForChunk(index) +
+          KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+      growable: false,
+    );
+    final descriptor = E2eeAttachmentDescriptor(
+      attachmentId: row.attachmentId,
+      keyEpoch: row.keyEpoch,
+      kind: switch (row.kind) {
+        'image' => E2eeAttachmentKind.image,
+        'file' => E2eeAttachmentKind.file,
+        _ => throw StateError('附件上传持久类型不受支持'),
+      },
+      totalPlaintextBytes: row.totalPlaintextBytes,
+      contentSha256: row.contentSha256,
+      wrappedDataKey: row.wrappedDataKey,
+      chunkCiphertextBytes: chunkCiphertextBytes,
+      displayName: row.displayName,
+      mediaType: row.mediaType,
+    );
+    final pendingChunk = row.pendingChunkIndex == null
+        ? null
+        : E2eeAttachmentPendingChunk._(
+            index: row.pendingChunkIndex!,
+            mutationId: _requireCanonicalUuidV4(
+              row.pendingChunkMutationId!,
+              'pendingChunkMutationId',
+            ),
+            ciphertextPath: _requireAttachmentStorageText(
+              row.pendingChunkCiphertextPath!,
+              'pendingChunkCiphertextPath',
+              32768,
+            ),
+            ciphertextBytes: row.pendingChunkCiphertextBytes!,
+          );
+    final uploadId = row.uploadId == null
+        ? null
+        : _requireCanonicalUuidV4(row.uploadId!, 'uploadId');
+    return E2eeAttachmentUploadState._(
+      descriptor: descriptor,
+      localAssetId: _requireAttachmentStorageText(
+        row.localAssetId,
+        'localAssetId',
+        1024,
+      ),
+      sourcePath: _requireAttachmentStorageText(
+        row.sourcePath,
+        'sourcePath',
+        32768,
+      ),
+      phase: E2eeAttachmentUploadPhase.fromWireValue(row.phase),
+      createMutationId: _requireCanonicalUuidV4(
+        row.createMutationId,
+        'createMutationId',
+      ),
+      uploadId: uploadId,
+      manifestCiphertext: row.manifestCiphertext,
+      commitMutationId: _requireCanonicalUuidV4(
+        row.commitMutationId,
+        'commitMutationId',
+      ),
+      nextChunkIndex: row.nextChunkIndex,
+      pendingChunk: pendingChunk,
+      transitionVersion: row.transitionVersion,
+      attemptCount: row.attemptCount,
+      nextAttemptAt: row.nextAttemptAt.toUtc(),
+      lastFailureKind: row.lastFailureKind,
+      createdAt: row.createdAt.toUtc(),
+      updatedAt: row.updatedAt.toUtc(),
+    );
+  } finally {
+    _clearAttachmentUploadRowBytes(row);
+  }
+}
+
+void _clearAttachmentUploadRowBytes(E2eeAttachmentUploadRow row) {
+  row.contentSha256.fillRange(0, row.contentSha256.length, 0);
+  row.wrappedDataKey.fillRange(0, row.wrappedDataKey.length, 0);
+  final manifestCiphertext = row.manifestCiphertext;
+  manifestCiphertext?.fillRange(0, manifestCiphertext.length, 0);
+}
+
+String _requireAttachmentStorageText(
+  String value,
+  String name,
+  int maximumBytes,
+) {
+  final length = utf8.encode(value).length;
+  if (length < 1 || length > maximumBytes || value.contains('\u0000')) {
+    throw FormatException('$name UTF-8 长度或内容无效');
+  }
+  return value;
+}

@@ -448,6 +448,7 @@ void main() {
   late E2eeAccountRecordStateCodec stateCodec;
   late E2eeSyncRecordLedger ledger;
   late E2eeConfigVaultCommands configVault;
+  late E2eeAttachmentUploadCommands attachmentUploads;
   late E2eeSyncOutboxCommands outboxCommands;
   late E2eeSyncPullCommands pullCommands;
 
@@ -475,6 +476,7 @@ void main() {
     );
     ledger = E2eeSyncRecordLedger(database);
     configVault = repository.e2eeConfigVaultCommands;
+    attachmentUploads = repository.e2eeAttachmentUploadCommands;
     outboxCommands = await repository.acquireE2eeSyncOutboxCommands(
       now: DateTime.utc(2026, 7, 28),
     );
@@ -4388,6 +4390,253 @@ void main() {
 
       final acceptedAfterRollback = await ledger.accept(genesis);
       expect(acceptedAfterRollback.kind, E2eeSyncRecordAcceptanceKind.genesis);
+    });
+  });
+
+  group('E2EE 附件持久上传状态', () {
+    E2eeAttachmentUploadDraft uploadDraft({
+      String attachmentId = 'd0000000-0000-4000-8000-000000000001',
+      String localAssetId = 'asset-upload-1',
+    }) {
+      return E2eeAttachmentUploadDraft(
+        descriptor: E2eeAttachmentDescriptor(
+          attachmentId: attachmentId,
+          keyEpoch: 0xffffffff,
+          kind: E2eeAttachmentKind.file,
+          totalPlaintextBytes: KelivoAttachmentLimits.chunkPlaintextBytes + 1,
+          contentSha256: Uint8List.fromList(List<int>.filled(32, 0x5a)),
+          wrappedDataKey: Uint8List.fromList(
+            List<int>.filled(KelivoAttachmentLimits.wrappedDataKeyBytes, 0xa5),
+          ),
+          chunkCiphertextBytes: <int>[
+            KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+            KelivoAttachmentLimits.chunkEnvelopeOverheadBytes + 1,
+          ],
+          displayName: 'upload.txt',
+          mediaType: 'text/plain',
+        ),
+        localAssetId: localAssetId,
+        sourcePath: 'D:\\workspace\\upload\\asset.bin',
+        createMutationId: 'd1000000-0000-4000-8000-000000000001',
+        commitMutationId: 'd2000000-0000-4000-8000-000000000001',
+      );
+    }
+
+    test('失败重试保留同一分块密文并最终提交', () async {
+      final now = DateTime.utc(2026, 7, 29, 1);
+      final draft = uploadDraft();
+      final created = await attachmentUploads.create(draft: draft, now: now);
+      expect(created.phase, E2eeAttachmentUploadPhase.createPending);
+      expect(created.descriptor.keyEpoch, 0xffffffff);
+      expect(created.attemptCount, 0);
+
+      var lease = (await attachmentUploads.claimDue(
+        leaseToken: 'lease-upload-1',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now,
+      ))!;
+      expect(lease.state.attemptCount, 1);
+      expect(
+        await attachmentUploads.claimDue(
+          leaseToken: 'lease-upload-blocked',
+          leaseOwner: 'background-runtime',
+          leaseExpiresAt: now.add(const Duration(minutes: 5)),
+          now: now,
+        ),
+        equals(null),
+      );
+
+      const uploadId = 'e0000000-0000-4000-8000-000000000001';
+      lease = await attachmentUploads.acceptCreated(
+        lease: lease,
+        uploadId: uploadId,
+        now: now.add(const Duration(seconds: 1)),
+      );
+      expect(lease.state.phase, E2eeAttachmentUploadPhase.manifestPending);
+
+      const secureCore = KelivoSecureCore();
+      final manifestCipher = E2eeAttachmentManifestCipher.takeOwnership(
+        E2eeAccountRecordCipher.takeOwnership(
+          secureCore: secureCore,
+          accountRootKey: await secureCore.generateAccountRootKey(),
+          userId: _ledgerUserId,
+          currentKeyEpoch: 0xffffffff,
+        ),
+      );
+      try {
+        final sealedManifest = await manifestCipher.seal(
+          E2eeAttachmentManifest.fromDescriptor(
+            descriptor: draft.descriptor,
+            uploadId: uploadId,
+          ),
+        );
+        lease = await attachmentUploads.attachManifest(
+          lease: lease,
+          sealedManifest: sealedManifest,
+          now: now.add(const Duration(seconds: 2)),
+        );
+      } finally {
+        await manifestCipher.close();
+      }
+      expect(lease.state.phase, E2eeAttachmentUploadPhase.uploading);
+
+      lease = await attachmentUploads.stageChunk(
+        lease: lease,
+        chunkIndex: 0,
+        mutationId: 'd3000000-0000-4000-8000-000000000001',
+        ciphertextPath: 'D:\\workspace\\cache\\chunk-0.part',
+        ciphertextBytes: KelivoAttachmentLimits.maxChunkEnvelopeBytes,
+        now: now.add(const Duration(seconds: 3)),
+      );
+      final firstPending = lease.state.pendingChunk!;
+      final retryAt = now.add(const Duration(minutes: 10));
+      expect(
+        await attachmentUploads.releaseAfterFailure(
+          lease: lease,
+          nextAttemptAt: retryAt,
+          failureKind: 'network-timeout',
+          now: now.add(const Duration(seconds: 4)),
+        ),
+        isTrue,
+      );
+      final persisted = await attachmentUploads.readByAttachmentId(
+        draft.descriptor.attachmentId,
+      );
+      expect(persisted!.pendingChunk!.mutationId, firstPending.mutationId);
+      expect(
+        persisted.pendingChunk!.ciphertextPath,
+        firstPending.ciphertextPath,
+      );
+      expect(
+        await attachmentUploads.claimDue(
+          leaseToken: 'lease-upload-too-early',
+          leaseOwner: 'foreground-runtime',
+          leaseExpiresAt: retryAt.add(const Duration(minutes: 5)),
+          now: retryAt.subtract(const Duration(microseconds: 1)),
+        ),
+        equals(null),
+      );
+
+      lease = (await attachmentUploads.claimDue(
+        leaseToken: 'lease-upload-2',
+        leaseOwner: 'background-runtime',
+        leaseExpiresAt: retryAt.add(const Duration(minutes: 5)),
+        now: retryAt,
+      ))!;
+      expect(lease.state.pendingChunk!.mutationId, firstPending.mutationId);
+      expect(lease.state.attemptCount, 2);
+      lease = await attachmentUploads.acknowledgeChunk(
+        lease: lease,
+        now: retryAt.add(const Duration(seconds: 1)),
+      );
+      expect(lease.state.nextChunkIndex, 1);
+      expect(lease.state.pendingChunk, equals(null));
+
+      lease = await attachmentUploads.stageChunk(
+        lease: lease,
+        chunkIndex: 1,
+        mutationId: 'd3000000-0000-4000-8000-000000000002',
+        ciphertextPath: 'D:\\workspace\\cache\\chunk-1.part',
+        ciphertextBytes: KelivoAttachmentLimits.chunkEnvelopeOverheadBytes + 1,
+        now: retryAt.add(const Duration(seconds: 2)),
+      );
+      lease = await attachmentUploads.acknowledgeChunk(
+        lease: lease,
+        now: retryAt.add(const Duration(seconds: 3)),
+      );
+      expect(lease.state.phase, E2eeAttachmentUploadPhase.commitPending);
+      final committed = await attachmentUploads.markCommitted(
+        lease: lease,
+        now: retryAt.add(const Duration(seconds: 4)),
+      );
+      expect(committed.phase, E2eeAttachmentUploadPhase.committed);
+      expect(committed.nextChunkIndex, 2);
+      expect(committed.manifestCiphertext, isNotEmpty);
+      expect(
+        (await attachmentUploads.readByLocalAssetId(draft.localAssetId))!.phase,
+        E2eeAttachmentUploadPhase.committed,
+      );
+    });
+
+    test('过期租约可接管且旧租约不能再推进', () async {
+      final now = DateTime.utc(2026, 7, 29, 2);
+      await attachmentUploads.create(
+        draft: uploadDraft(
+          attachmentId: 'd0000000-0000-4000-8000-000000000002',
+          localAssetId: 'asset-upload-2',
+        ),
+        now: now,
+      );
+      final oldLease = (await attachmentUploads.claimDue(
+        leaseToken: 'expired-lease',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(seconds: 1)),
+        now: now,
+      ))!;
+      await expectLater(
+        attachmentUploads.acceptCreated(
+          lease: oldLease,
+          uploadId: 'e0000000-0000-4000-8000-000000000002',
+          now: now.add(const Duration(seconds: 1)),
+        ),
+        throwsStateError,
+      );
+      final takeoverTime = now.add(const Duration(seconds: 2));
+      final newLease = (await attachmentUploads.claimDue(
+        leaseToken: 'takeover-lease',
+        leaseOwner: 'background-runtime',
+        leaseExpiresAt: takeoverTime.add(const Duration(minutes: 5)),
+        now: takeoverTime,
+      ))!;
+      expect(newLease.state.attemptCount, 2);
+      expect(
+        await attachmentUploads.release(lease: oldLease, now: takeoverTime),
+        isFalse,
+      );
+      await expectLater(
+        attachmentUploads.acceptCreated(
+          lease: oldLease,
+          uploadId: 'e0000000-0000-4000-8000-000000000002',
+          now: takeoverTime,
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('非法布局和数据库阶段跃迁均被拒绝', () async {
+      final now = DateTime.utc(2026, 7, 29, 3);
+      final draft = uploadDraft(
+        attachmentId: 'd0000000-0000-4000-8000-000000000003',
+        localAssetId: 'asset-upload-3',
+      );
+      await attachmentUploads.create(draft: draft, now: now);
+      await expectLater(
+        database.customStatement(
+          "UPDATE e2ee_attachment_upload_rows SET phase = 'commit-pending' "
+          'WHERE attachment_id = ?;',
+          <Object?>[draft.descriptor.attachmentId],
+        ),
+        throwsRemoteSqliteException(),
+      );
+      await expectLater(
+        database.customStatement(
+          'UPDATE e2ee_attachment_upload_rows SET '
+          'pending_chunk_index = 0 WHERE attachment_id = ?;',
+          <Object?>[draft.descriptor.attachmentId],
+        ),
+        throwsRemoteSqliteException(),
+      );
+      expect(
+        () => E2eeAttachmentUploadDraft(
+          descriptor: draft.descriptor,
+          localAssetId: 'asset-invalid',
+          sourcePath: 'bad\u0000path',
+          createMutationId: 'd1000000-0000-4000-8000-000000000010',
+          commitMutationId: 'd2000000-0000-4000-8000-000000000010',
+        ),
+        throwsFormatException,
+      );
     });
   });
 

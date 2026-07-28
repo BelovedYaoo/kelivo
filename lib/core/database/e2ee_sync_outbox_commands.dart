@@ -113,7 +113,7 @@ final class E2eeSyncClaimedOutboxMutation {
     validateSyncEntityKey(entityKey);
     if (envelopeVersion != e2eeAccountRecordEnvelopeVersion ||
         keyEpoch < 1 ||
-        keyEpoch > 0x7fffffff ||
+        keyEpoch > _maxPositiveUint32 ||
         this.ciphertext.isEmpty ||
         this.ciphertext.length > e2eeAccountRecordMaxCiphertextBytes ||
         expectedRevision < 0 ||
