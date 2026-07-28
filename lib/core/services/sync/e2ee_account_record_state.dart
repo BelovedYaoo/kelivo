@@ -109,6 +109,12 @@ final class E2eeAccountRecordStateCodec {
 
   final E2eeAccountRecordCipher _recordCipher;
 
+  int get currentKeyEpoch => _recordCipher.currentKeyEpoch;
+
+  Future<E2eeAccountRecordId> deriveRecordId(SyncEntityKey entityKey) {
+    return _recordCipher.deriveRecordId(entityKey);
+  }
+
   Future<E2eeSealedAccountRecordState> sealValue({
     required SyncEntityKey entityKey,
     required int logicalVersion,
@@ -179,6 +185,54 @@ final class E2eeAccountRecordStateCodec {
           decoded.payload,
         );
       },
+    );
+  }
+
+  Future<
+    ({
+      E2eeSealedAccountRecordState sealed,
+      E2eeAuthenticatedAccountRecordState authenticated,
+    })
+  >
+  restoreForSend(
+    E2eeUntrustedAccountRecordEnvelope record, {
+    required E2eeAccountRecordStateDigest expectedDigest,
+  }) async {
+    final digest = _digestUntrustedEnvelope(record);
+    final opened = await _recordCipher.authenticateAndDecode(
+      record,
+      decode: (recordId, entityKey, borrowedStateFrame) {
+        final decoded = _decodeStateFrame(borrowedStateFrame);
+        return E2eeAuthenticatedAccountRecordState._(
+          recordId: recordId,
+          entityKey: entityKey,
+          digest: digest,
+          kind: decoded.kind,
+          logicalVersion: decoded.logicalVersion,
+          parentDigests: decoded.parentDigests,
+          operationId: decoded.operationId,
+          claimedWriterDeviceId: decoded.claimedWriterDeviceId,
+          claimedWriterKeyVersion: decoded.claimedWriterKeyVersion,
+          keyEpoch: record.keyEpoch,
+        );
+      },
+    );
+    if (digest != expectedDigest) {
+      throw const FormatException('账户记录状态摘要与持久化摘要不匹配');
+    }
+    final authenticated = opened.decoded;
+    return (
+      sealed: E2eeSealedAccountRecordState._(
+        record: opened.record,
+        digest: digest,
+        kind: authenticated.kind,
+        logicalVersion: authenticated.logicalVersion,
+        parentDigests: authenticated.parentDigests,
+        operationId: authenticated.operationId,
+        claimedWriterDeviceId: authenticated.claimedWriterDeviceId,
+        claimedWriterKeyVersion: authenticated.claimedWriterKeyVersion,
+      ),
+      authenticated: authenticated,
     );
   }
 

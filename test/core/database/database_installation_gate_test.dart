@@ -82,6 +82,32 @@ void main() {
       expect(second.databaseId, first.databaseId);
     });
 
+    test('E2EE 同步队列缺失关键索引时拒绝已安装数据库', () async {
+      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
+      final file = databaseFile(directory);
+      final raw = sqlite.sqlite3.open(file.path);
+      try {
+        testDatabaseCipher.apply(raw, createSlotIfMissing: false);
+        raw.execute('DROP INDEX idx_e2ee_sync_outbox_phase_due;');
+      } finally {
+        raw.close();
+      }
+
+      expect(
+        () => ChatDatabaseRepository.inspectInstalledDatabase(
+          file,
+          cipher: testDatabaseCipher,
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'index_schema:idx_e2ee_sync_outbox_phase_due',
+          ),
+        ),
+      );
+    });
+
     test('升级时 adoption 已有有效数据库且不清空数据', () async {
       final repository = ChatDatabaseRepository.open(
         file: databaseFile(directory),

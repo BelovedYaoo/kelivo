@@ -6991,6 +6991,3328 @@ class E2eeSyncRecordHeadRowsCompanion
   }
 }
 
+class $E2eeSyncIntentRowsTable extends E2eeSyncIntentRows
+    with TableInfo<$E2eeSyncIntentRowsTable, E2eeSyncIntentRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeSyncIntentRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _entityTypeMeta = const VerificationMeta(
+    'entityType',
+  );
+  @override
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entityIdMeta = const VerificationMeta(
+    'entityId',
+  );
+  @override
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _intentIdMeta = const VerificationMeta(
+    'intentId',
+  );
+  @override
+  late final GeneratedColumn<String> intentId = GeneratedColumn<String>(
+    'intent_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _generationMeta = const VerificationMeta(
+    'generation',
+  );
+  @override
+  late final GeneratedColumn<int> generation = GeneratedColumn<int>(
+    'generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _phaseMeta = const VerificationMeta('phase');
+  @override
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _writerSessionIdMeta = const VerificationMeta(
+    'writerSessionId',
+  );
+  @override
+  late final GeneratedColumn<String> writerSessionId = GeneratedColumn<String>(
+    'writer_session_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sealLeaseTokenMeta = const VerificationMeta(
+    'sealLeaseToken',
+  );
+  @override
+  late final GeneratedColumn<String> sealLeaseToken = GeneratedColumn<String>(
+    'seal_lease_token',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _sealOwnerSessionIdMeta =
+      const VerificationMeta('sealOwnerSessionId');
+  @override
+  late final GeneratedColumn<String> sealOwnerSessionId =
+      GeneratedColumn<String>(
+        'seal_owner_session_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime?, int>
+  sealLeaseExpiresAt =
+      GeneratedColumn<int>(
+        'seal_lease_expires_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+      ).withConverter<DateTime?>(
+        $E2eeSyncIntentRowsTable.$convertersealLeaseExpiresAtn,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
+      GeneratedColumn<int>(
+        'created_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>($E2eeSyncIntentRowsTable.$convertercreatedAt);
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>($E2eeSyncIntentRowsTable.$converterupdatedAt);
+  @override
+  List<GeneratedColumn> get $columns => [
+    entityType,
+    entityId,
+    intentId,
+    generation,
+    phase,
+    writerSessionId,
+    sealLeaseToken,
+    sealOwnerSessionId,
+    sealLeaseExpiresAt,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_intent_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeSyncIntentRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('entity_type')) {
+      context.handle(
+        _entityTypeMeta,
+        entityType.isAcceptableOrUnknown(data['entity_type']!, _entityTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityTypeMeta);
+    }
+    if (data.containsKey('entity_id')) {
+      context.handle(
+        _entityIdMeta,
+        entityId.isAcceptableOrUnknown(data['entity_id']!, _entityIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityIdMeta);
+    }
+    if (data.containsKey('intent_id')) {
+      context.handle(
+        _intentIdMeta,
+        intentId.isAcceptableOrUnknown(data['intent_id']!, _intentIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_intentIdMeta);
+    }
+    if (data.containsKey('generation')) {
+      context.handle(
+        _generationMeta,
+        generation.isAcceptableOrUnknown(data['generation']!, _generationMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_generationMeta);
+    }
+    if (data.containsKey('phase')) {
+      context.handle(
+        _phaseMeta,
+        phase.isAcceptableOrUnknown(data['phase']!, _phaseMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_phaseMeta);
+    }
+    if (data.containsKey('writer_session_id')) {
+      context.handle(
+        _writerSessionIdMeta,
+        writerSessionId.isAcceptableOrUnknown(
+          data['writer_session_id']!,
+          _writerSessionIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('seal_lease_token')) {
+      context.handle(
+        _sealLeaseTokenMeta,
+        sealLeaseToken.isAcceptableOrUnknown(
+          data['seal_lease_token']!,
+          _sealLeaseTokenMeta,
+        ),
+      );
+    }
+    if (data.containsKey('seal_owner_session_id')) {
+      context.handle(
+        _sealOwnerSessionIdMeta,
+        sealOwnerSessionId.isAcceptableOrUnknown(
+          data['seal_owner_session_id']!,
+          _sealOwnerSessionIdMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entityType, entityId};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {intentId},
+  ];
+  @override
+  E2eeSyncIntentRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeSyncIntentRow(
+      entityType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_type'],
+      )!,
+      entityId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_id'],
+      )!,
+      intentId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}intent_id'],
+      )!,
+      generation: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}generation'],
+      )!,
+      phase: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phase'],
+      )!,
+      writerSessionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}writer_session_id'],
+      ),
+      sealLeaseToken: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}seal_lease_token'],
+      ),
+      sealOwnerSessionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}seal_owner_session_id'],
+      ),
+      sealLeaseExpiresAt: $E2eeSyncIntentRowsTable.$convertersealLeaseExpiresAtn
+          .fromSql(
+            attachedDatabase.typeMapping.read(
+              DriftSqlType.int,
+              data['${effectivePrefix}seal_lease_expires_at'],
+            ),
+          ),
+      createdAt: $E2eeSyncIntentRowsTable.$convertercreatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}created_at'],
+        )!,
+      ),
+      updatedAt: $E2eeSyncIntentRowsTable.$converterupdatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}updated_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeSyncIntentRowsTable createAlias(String alias) {
+    return $E2eeSyncIntentRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $convertersealLeaseExpiresAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime?, int?> $convertersealLeaseExpiresAtn =
+      NullAwareTypeConverter.wrap($convertersealLeaseExpiresAt);
+  static TypeConverter<DateTime, int> $convertercreatedAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeSyncIntentRow extends DataClass
+    implements Insertable<E2eeSyncIntentRow> {
+  final String entityType;
+  final String entityId;
+  final String intentId;
+  final int generation;
+  final String phase;
+  final String? writerSessionId;
+  final String? sealLeaseToken;
+  final String? sealOwnerSessionId;
+  final DateTime? sealLeaseExpiresAt;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const E2eeSyncIntentRow({
+    required this.entityType,
+    required this.entityId,
+    required this.intentId,
+    required this.generation,
+    required this.phase,
+    this.writerSessionId,
+    this.sealLeaseToken,
+    this.sealOwnerSessionId,
+    this.sealLeaseExpiresAt,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['entity_type'] = Variable<String>(entityType);
+    map['entity_id'] = Variable<String>(entityId);
+    map['intent_id'] = Variable<String>(intentId);
+    map['generation'] = Variable<int>(generation);
+    map['phase'] = Variable<String>(phase);
+    if (!nullToAbsent || writerSessionId != null) {
+      map['writer_session_id'] = Variable<String>(writerSessionId);
+    }
+    if (!nullToAbsent || sealLeaseToken != null) {
+      map['seal_lease_token'] = Variable<String>(sealLeaseToken);
+    }
+    if (!nullToAbsent || sealOwnerSessionId != null) {
+      map['seal_owner_session_id'] = Variable<String>(sealOwnerSessionId);
+    }
+    if (!nullToAbsent || sealLeaseExpiresAt != null) {
+      map['seal_lease_expires_at'] = Variable<int>(
+        $E2eeSyncIntentRowsTable.$convertersealLeaseExpiresAtn.toSql(
+          sealLeaseExpiresAt,
+        ),
+      );
+    }
+    {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncIntentRowsTable.$convertercreatedAt.toSql(createdAt),
+      );
+    }
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncIntentRowsTable.$converterupdatedAt.toSql(updatedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeSyncIntentRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeSyncIntentRowsCompanion(
+      entityType: Value(entityType),
+      entityId: Value(entityId),
+      intentId: Value(intentId),
+      generation: Value(generation),
+      phase: Value(phase),
+      writerSessionId: writerSessionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(writerSessionId),
+      sealLeaseToken: sealLeaseToken == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sealLeaseToken),
+      sealOwnerSessionId: sealOwnerSessionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sealOwnerSessionId),
+      sealLeaseExpiresAt: sealLeaseExpiresAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sealLeaseExpiresAt),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeSyncIntentRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeSyncIntentRow(
+      entityType: serializer.fromJson<String>(json['entityType']),
+      entityId: serializer.fromJson<String>(json['entityId']),
+      intentId: serializer.fromJson<String>(json['intentId']),
+      generation: serializer.fromJson<int>(json['generation']),
+      phase: serializer.fromJson<String>(json['phase']),
+      writerSessionId: serializer.fromJson<String?>(json['writerSessionId']),
+      sealLeaseToken: serializer.fromJson<String?>(json['sealLeaseToken']),
+      sealOwnerSessionId: serializer.fromJson<String?>(
+        json['sealOwnerSessionId'],
+      ),
+      sealLeaseExpiresAt: serializer.fromJson<DateTime?>(
+        json['sealLeaseExpiresAt'],
+      ),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'entityType': serializer.toJson<String>(entityType),
+      'entityId': serializer.toJson<String>(entityId),
+      'intentId': serializer.toJson<String>(intentId),
+      'generation': serializer.toJson<int>(generation),
+      'phase': serializer.toJson<String>(phase),
+      'writerSessionId': serializer.toJson<String?>(writerSessionId),
+      'sealLeaseToken': serializer.toJson<String?>(sealLeaseToken),
+      'sealOwnerSessionId': serializer.toJson<String?>(sealOwnerSessionId),
+      'sealLeaseExpiresAt': serializer.toJson<DateTime?>(sealLeaseExpiresAt),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeSyncIntentRow copyWith({
+    String? entityType,
+    String? entityId,
+    String? intentId,
+    int? generation,
+    String? phase,
+    Value<String?> writerSessionId = const Value.absent(),
+    Value<String?> sealLeaseToken = const Value.absent(),
+    Value<String?> sealOwnerSessionId = const Value.absent(),
+    Value<DateTime?> sealLeaseExpiresAt = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => E2eeSyncIntentRow(
+    entityType: entityType ?? this.entityType,
+    entityId: entityId ?? this.entityId,
+    intentId: intentId ?? this.intentId,
+    generation: generation ?? this.generation,
+    phase: phase ?? this.phase,
+    writerSessionId: writerSessionId.present
+        ? writerSessionId.value
+        : this.writerSessionId,
+    sealLeaseToken: sealLeaseToken.present
+        ? sealLeaseToken.value
+        : this.sealLeaseToken,
+    sealOwnerSessionId: sealOwnerSessionId.present
+        ? sealOwnerSessionId.value
+        : this.sealOwnerSessionId,
+    sealLeaseExpiresAt: sealLeaseExpiresAt.present
+        ? sealLeaseExpiresAt.value
+        : this.sealLeaseExpiresAt,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeSyncIntentRow copyWithCompanion(E2eeSyncIntentRowsCompanion data) {
+    return E2eeSyncIntentRow(
+      entityType: data.entityType.present
+          ? data.entityType.value
+          : this.entityType,
+      entityId: data.entityId.present ? data.entityId.value : this.entityId,
+      intentId: data.intentId.present ? data.intentId.value : this.intentId,
+      generation: data.generation.present
+          ? data.generation.value
+          : this.generation,
+      phase: data.phase.present ? data.phase.value : this.phase,
+      writerSessionId: data.writerSessionId.present
+          ? data.writerSessionId.value
+          : this.writerSessionId,
+      sealLeaseToken: data.sealLeaseToken.present
+          ? data.sealLeaseToken.value
+          : this.sealLeaseToken,
+      sealOwnerSessionId: data.sealOwnerSessionId.present
+          ? data.sealOwnerSessionId.value
+          : this.sealOwnerSessionId,
+      sealLeaseExpiresAt: data.sealLeaseExpiresAt.present
+          ? data.sealLeaseExpiresAt.value
+          : this.sealLeaseExpiresAt,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncIntentRow(')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('intentId: $intentId, ')
+          ..write('generation: $generation, ')
+          ..write('phase: $phase, ')
+          ..write('writerSessionId: $writerSessionId, ')
+          ..write('sealLeaseToken: $sealLeaseToken, ')
+          ..write('sealOwnerSessionId: $sealOwnerSessionId, ')
+          ..write('sealLeaseExpiresAt: $sealLeaseExpiresAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    entityType,
+    entityId,
+    intentId,
+    generation,
+    phase,
+    writerSessionId,
+    sealLeaseToken,
+    sealOwnerSessionId,
+    sealLeaseExpiresAt,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeSyncIntentRow &&
+          other.entityType == this.entityType &&
+          other.entityId == this.entityId &&
+          other.intentId == this.intentId &&
+          other.generation == this.generation &&
+          other.phase == this.phase &&
+          other.writerSessionId == this.writerSessionId &&
+          other.sealLeaseToken == this.sealLeaseToken &&
+          other.sealOwnerSessionId == this.sealOwnerSessionId &&
+          other.sealLeaseExpiresAt == this.sealLeaseExpiresAt &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeSyncIntentRowsCompanion extends UpdateCompanion<E2eeSyncIntentRow> {
+  final Value<String> entityType;
+  final Value<String> entityId;
+  final Value<String> intentId;
+  final Value<int> generation;
+  final Value<String> phase;
+  final Value<String?> writerSessionId;
+  final Value<String?> sealLeaseToken;
+  final Value<String?> sealOwnerSessionId;
+  final Value<DateTime?> sealLeaseExpiresAt;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const E2eeSyncIntentRowsCompanion({
+    this.entityType = const Value.absent(),
+    this.entityId = const Value.absent(),
+    this.intentId = const Value.absent(),
+    this.generation = const Value.absent(),
+    this.phase = const Value.absent(),
+    this.writerSessionId = const Value.absent(),
+    this.sealLeaseToken = const Value.absent(),
+    this.sealOwnerSessionId = const Value.absent(),
+    this.sealLeaseExpiresAt = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeSyncIntentRowsCompanion.insert({
+    required String entityType,
+    required String entityId,
+    required String intentId,
+    required int generation,
+    required String phase,
+    this.writerSessionId = const Value.absent(),
+    this.sealLeaseToken = const Value.absent(),
+    this.sealOwnerSessionId = const Value.absent(),
+    this.sealLeaseExpiresAt = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : entityType = Value(entityType),
+       entityId = Value(entityId),
+       intentId = Value(intentId),
+       generation = Value(generation),
+       phase = Value(phase),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeSyncIntentRow> custom({
+    Expression<String>? entityType,
+    Expression<String>? entityId,
+    Expression<String>? intentId,
+    Expression<int>? generation,
+    Expression<String>? phase,
+    Expression<String>? writerSessionId,
+    Expression<String>? sealLeaseToken,
+    Expression<String>? sealOwnerSessionId,
+    Expression<int>? sealLeaseExpiresAt,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (entityType != null) 'entity_type': entityType,
+      if (entityId != null) 'entity_id': entityId,
+      if (intentId != null) 'intent_id': intentId,
+      if (generation != null) 'generation': generation,
+      if (phase != null) 'phase': phase,
+      if (writerSessionId != null) 'writer_session_id': writerSessionId,
+      if (sealLeaseToken != null) 'seal_lease_token': sealLeaseToken,
+      if (sealOwnerSessionId != null)
+        'seal_owner_session_id': sealOwnerSessionId,
+      if (sealLeaseExpiresAt != null)
+        'seal_lease_expires_at': sealLeaseExpiresAt,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeSyncIntentRowsCompanion copyWith({
+    Value<String>? entityType,
+    Value<String>? entityId,
+    Value<String>? intentId,
+    Value<int>? generation,
+    Value<String>? phase,
+    Value<String?>? writerSessionId,
+    Value<String?>? sealLeaseToken,
+    Value<String?>? sealOwnerSessionId,
+    Value<DateTime?>? sealLeaseExpiresAt,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeSyncIntentRowsCompanion(
+      entityType: entityType ?? this.entityType,
+      entityId: entityId ?? this.entityId,
+      intentId: intentId ?? this.intentId,
+      generation: generation ?? this.generation,
+      phase: phase ?? this.phase,
+      writerSessionId: writerSessionId ?? this.writerSessionId,
+      sealLeaseToken: sealLeaseToken ?? this.sealLeaseToken,
+      sealOwnerSessionId: sealOwnerSessionId ?? this.sealOwnerSessionId,
+      sealLeaseExpiresAt: sealLeaseExpiresAt ?? this.sealLeaseExpiresAt,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (entityType.present) {
+      map['entity_type'] = Variable<String>(entityType.value);
+    }
+    if (entityId.present) {
+      map['entity_id'] = Variable<String>(entityId.value);
+    }
+    if (intentId.present) {
+      map['intent_id'] = Variable<String>(intentId.value);
+    }
+    if (generation.present) {
+      map['generation'] = Variable<int>(generation.value);
+    }
+    if (phase.present) {
+      map['phase'] = Variable<String>(phase.value);
+    }
+    if (writerSessionId.present) {
+      map['writer_session_id'] = Variable<String>(writerSessionId.value);
+    }
+    if (sealLeaseToken.present) {
+      map['seal_lease_token'] = Variable<String>(sealLeaseToken.value);
+    }
+    if (sealOwnerSessionId.present) {
+      map['seal_owner_session_id'] = Variable<String>(sealOwnerSessionId.value);
+    }
+    if (sealLeaseExpiresAt.present) {
+      map['seal_lease_expires_at'] = Variable<int>(
+        $E2eeSyncIntentRowsTable.$convertersealLeaseExpiresAtn.toSql(
+          sealLeaseExpiresAt.value,
+        ),
+      );
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncIntentRowsTable.$convertercreatedAt.toSql(createdAt.value),
+      );
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncIntentRowsTable.$converterupdatedAt.toSql(updatedAt.value),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncIntentRowsCompanion(')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('intentId: $intentId, ')
+          ..write('generation: $generation, ')
+          ..write('phase: $phase, ')
+          ..write('writerSessionId: $writerSessionId, ')
+          ..write('sealLeaseToken: $sealLeaseToken, ')
+          ..write('sealOwnerSessionId: $sealOwnerSessionId, ')
+          ..write('sealLeaseExpiresAt: $sealLeaseExpiresAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $E2eeSyncOperationRowsTable extends E2eeSyncOperationRows
+    with TableInfo<$E2eeSyncOperationRowsTable, E2eeSyncOperationRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeSyncOperationRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _operationIdMeta = const VerificationMeta(
+    'operationId',
+  );
+  @override
+  late final GeneratedColumn<String> operationId = GeneratedColumn<String>(
+    'operation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _stateDigestMeta = const VerificationMeta(
+    'stateDigest',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> stateDigest =
+      GeneratedColumn<Uint8List>(
+        'state_digest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _recordIdMeta = const VerificationMeta(
+    'recordId',
+  );
+  @override
+  late final GeneratedColumn<String> recordId = GeneratedColumn<String>(
+    'record_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entityTypeMeta = const VerificationMeta(
+    'entityType',
+  );
+  @override
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entityIdMeta = const VerificationMeta(
+    'entityId',
+  );
+  @override
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _intentIdMeta = const VerificationMeta(
+    'intentId',
+  );
+  @override
+  late final GeneratedColumn<String> intentId = GeneratedColumn<String>(
+    'intent_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _intentGenerationMeta = const VerificationMeta(
+    'intentGeneration',
+  );
+  @override
+  late final GeneratedColumn<int> intentGeneration = GeneratedColumn<int>(
+    'intent_generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _expectedRevisionMeta = const VerificationMeta(
+    'expectedRevision',
+  );
+  @override
+  late final GeneratedColumn<int> expectedRevision = GeneratedColumn<int>(
+    'expected_revision',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _accountUserIdMeta = const VerificationMeta(
+    'accountUserId',
+  );
+  @override
+  late final GeneratedColumn<String> accountUserId = GeneratedColumn<String>(
+    'account_user_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _actorDeviceIdMeta = const VerificationMeta(
+    'actorDeviceId',
+  );
+  @override
+  late final GeneratedColumn<String> actorDeviceId = GeneratedColumn<String>(
+    'actor_device_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _claimedWriterKeyVersionMeta =
+      const VerificationMeta('claimedWriterKeyVersion');
+  @override
+  late final GeneratedColumn<int> claimedWriterKeyVersion =
+      GeneratedColumn<int>(
+        'claimed_writer_key_version',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _outcomeMeta = const VerificationMeta(
+    'outcome',
+  );
+  @override
+  late final GeneratedColumn<String> outcome = GeneratedColumn<String>(
+    'outcome',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _resultRevisionMeta = const VerificationMeta(
+    'resultRevision',
+  );
+  @override
+  late final GeneratedColumn<int> resultRevision = GeneratedColumn<int>(
+    'result_revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _resultChangeSeqMeta = const VerificationMeta(
+    'resultChangeSeq',
+  );
+  @override
+  late final GeneratedColumn<int> resultChangeSeq = GeneratedColumn<int>(
+    'result_change_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _currentRevisionMeta = const VerificationMeta(
+    'currentRevision',
+  );
+  @override
+  late final GeneratedColumn<int> currentRevision = GeneratedColumn<int>(
+    'current_revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _errorCodeMeta = const VerificationMeta(
+    'errorCode',
+  );
+  @override
+  late final GeneratedColumn<String> errorCode = GeneratedColumn<String>(
+    'error_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
+      GeneratedColumn<int>(
+        'created_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeSyncOperationRowsTable.$convertercreatedAt,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeSyncOperationRowsTable.$converterupdatedAt,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    operationId,
+    stateDigest,
+    recordId,
+    entityType,
+    entityId,
+    intentId,
+    intentGeneration,
+    expectedRevision,
+    accountUserId,
+    actorDeviceId,
+    claimedWriterKeyVersion,
+    outcome,
+    resultRevision,
+    resultChangeSeq,
+    currentRevision,
+    errorCode,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_operation_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeSyncOperationRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('operation_id')) {
+      context.handle(
+        _operationIdMeta,
+        operationId.isAcceptableOrUnknown(
+          data['operation_id']!,
+          _operationIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_operationIdMeta);
+    }
+    if (data.containsKey('state_digest')) {
+      context.handle(
+        _stateDigestMeta,
+        stateDigest.isAcceptableOrUnknown(
+          data['state_digest']!,
+          _stateDigestMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_stateDigestMeta);
+    }
+    if (data.containsKey('record_id')) {
+      context.handle(
+        _recordIdMeta,
+        recordId.isAcceptableOrUnknown(data['record_id']!, _recordIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_recordIdMeta);
+    }
+    if (data.containsKey('entity_type')) {
+      context.handle(
+        _entityTypeMeta,
+        entityType.isAcceptableOrUnknown(data['entity_type']!, _entityTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityTypeMeta);
+    }
+    if (data.containsKey('entity_id')) {
+      context.handle(
+        _entityIdMeta,
+        entityId.isAcceptableOrUnknown(data['entity_id']!, _entityIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityIdMeta);
+    }
+    if (data.containsKey('intent_id')) {
+      context.handle(
+        _intentIdMeta,
+        intentId.isAcceptableOrUnknown(data['intent_id']!, _intentIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_intentIdMeta);
+    }
+    if (data.containsKey('intent_generation')) {
+      context.handle(
+        _intentGenerationMeta,
+        intentGeneration.isAcceptableOrUnknown(
+          data['intent_generation']!,
+          _intentGenerationMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_intentGenerationMeta);
+    }
+    if (data.containsKey('expected_revision')) {
+      context.handle(
+        _expectedRevisionMeta,
+        expectedRevision.isAcceptableOrUnknown(
+          data['expected_revision']!,
+          _expectedRevisionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_expectedRevisionMeta);
+    }
+    if (data.containsKey('account_user_id')) {
+      context.handle(
+        _accountUserIdMeta,
+        accountUserId.isAcceptableOrUnknown(
+          data['account_user_id']!,
+          _accountUserIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_accountUserIdMeta);
+    }
+    if (data.containsKey('actor_device_id')) {
+      context.handle(
+        _actorDeviceIdMeta,
+        actorDeviceId.isAcceptableOrUnknown(
+          data['actor_device_id']!,
+          _actorDeviceIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_actorDeviceIdMeta);
+    }
+    if (data.containsKey('claimed_writer_key_version')) {
+      context.handle(
+        _claimedWriterKeyVersionMeta,
+        claimedWriterKeyVersion.isAcceptableOrUnknown(
+          data['claimed_writer_key_version']!,
+          _claimedWriterKeyVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_claimedWriterKeyVersionMeta);
+    }
+    if (data.containsKey('outcome')) {
+      context.handle(
+        _outcomeMeta,
+        outcome.isAcceptableOrUnknown(data['outcome']!, _outcomeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_outcomeMeta);
+    }
+    if (data.containsKey('result_revision')) {
+      context.handle(
+        _resultRevisionMeta,
+        resultRevision.isAcceptableOrUnknown(
+          data['result_revision']!,
+          _resultRevisionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('result_change_seq')) {
+      context.handle(
+        _resultChangeSeqMeta,
+        resultChangeSeq.isAcceptableOrUnknown(
+          data['result_change_seq']!,
+          _resultChangeSeqMeta,
+        ),
+      );
+    }
+    if (data.containsKey('current_revision')) {
+      context.handle(
+        _currentRevisionMeta,
+        currentRevision.isAcceptableOrUnknown(
+          data['current_revision']!,
+          _currentRevisionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('error_code')) {
+      context.handle(
+        _errorCodeMeta,
+        errorCode.isAcceptableOrUnknown(data['error_code']!, _errorCodeMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {operationId};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {stateDigest},
+    {operationId, recordId},
+  ];
+  @override
+  E2eeSyncOperationRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeSyncOperationRow(
+      operationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operation_id'],
+      )!,
+      stateDigest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}state_digest'],
+      )!,
+      recordId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}record_id'],
+      )!,
+      entityType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_type'],
+      )!,
+      entityId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_id'],
+      )!,
+      intentId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}intent_id'],
+      )!,
+      intentGeneration: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}intent_generation'],
+      )!,
+      expectedRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}expected_revision'],
+      )!,
+      accountUserId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_user_id'],
+      )!,
+      actorDeviceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}actor_device_id'],
+      )!,
+      claimedWriterKeyVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}claimed_writer_key_version'],
+      )!,
+      outcome: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}outcome'],
+      )!,
+      resultRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}result_revision'],
+      ),
+      resultChangeSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}result_change_seq'],
+      ),
+      currentRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}current_revision'],
+      ),
+      errorCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_code'],
+      ),
+      createdAt: $E2eeSyncOperationRowsTable.$convertercreatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}created_at'],
+        )!,
+      ),
+      updatedAt: $E2eeSyncOperationRowsTable.$converterupdatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}updated_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeSyncOperationRowsTable createAlias(String alias) {
+    return $E2eeSyncOperationRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $convertercreatedAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeSyncOperationRow extends DataClass
+    implements Insertable<E2eeSyncOperationRow> {
+  final String operationId;
+  final Uint8List stateDigest;
+  final String recordId;
+  final String entityType;
+  final String entityId;
+  final String intentId;
+  final int intentGeneration;
+  final int expectedRevision;
+  final String accountUserId;
+  final String actorDeviceId;
+  final int claimedWriterKeyVersion;
+  final String outcome;
+  final int? resultRevision;
+  final int? resultChangeSeq;
+  final int? currentRevision;
+  final String? errorCode;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const E2eeSyncOperationRow({
+    required this.operationId,
+    required this.stateDigest,
+    required this.recordId,
+    required this.entityType,
+    required this.entityId,
+    required this.intentId,
+    required this.intentGeneration,
+    required this.expectedRevision,
+    required this.accountUserId,
+    required this.actorDeviceId,
+    required this.claimedWriterKeyVersion,
+    required this.outcome,
+    this.resultRevision,
+    this.resultChangeSeq,
+    this.currentRevision,
+    this.errorCode,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['operation_id'] = Variable<String>(operationId);
+    map['state_digest'] = Variable<Uint8List>(stateDigest);
+    map['record_id'] = Variable<String>(recordId);
+    map['entity_type'] = Variable<String>(entityType);
+    map['entity_id'] = Variable<String>(entityId);
+    map['intent_id'] = Variable<String>(intentId);
+    map['intent_generation'] = Variable<int>(intentGeneration);
+    map['expected_revision'] = Variable<int>(expectedRevision);
+    map['account_user_id'] = Variable<String>(accountUserId);
+    map['actor_device_id'] = Variable<String>(actorDeviceId);
+    map['claimed_writer_key_version'] = Variable<int>(claimedWriterKeyVersion);
+    map['outcome'] = Variable<String>(outcome);
+    if (!nullToAbsent || resultRevision != null) {
+      map['result_revision'] = Variable<int>(resultRevision);
+    }
+    if (!nullToAbsent || resultChangeSeq != null) {
+      map['result_change_seq'] = Variable<int>(resultChangeSeq);
+    }
+    if (!nullToAbsent || currentRevision != null) {
+      map['current_revision'] = Variable<int>(currentRevision);
+    }
+    if (!nullToAbsent || errorCode != null) {
+      map['error_code'] = Variable<String>(errorCode);
+    }
+    {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncOperationRowsTable.$convertercreatedAt.toSql(createdAt),
+      );
+    }
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncOperationRowsTable.$converterupdatedAt.toSql(updatedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeSyncOperationRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeSyncOperationRowsCompanion(
+      operationId: Value(operationId),
+      stateDigest: Value(stateDigest),
+      recordId: Value(recordId),
+      entityType: Value(entityType),
+      entityId: Value(entityId),
+      intentId: Value(intentId),
+      intentGeneration: Value(intentGeneration),
+      expectedRevision: Value(expectedRevision),
+      accountUserId: Value(accountUserId),
+      actorDeviceId: Value(actorDeviceId),
+      claimedWriterKeyVersion: Value(claimedWriterKeyVersion),
+      outcome: Value(outcome),
+      resultRevision: resultRevision == null && nullToAbsent
+          ? const Value.absent()
+          : Value(resultRevision),
+      resultChangeSeq: resultChangeSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(resultChangeSeq),
+      currentRevision: currentRevision == null && nullToAbsent
+          ? const Value.absent()
+          : Value(currentRevision),
+      errorCode: errorCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(errorCode),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeSyncOperationRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeSyncOperationRow(
+      operationId: serializer.fromJson<String>(json['operationId']),
+      stateDigest: serializer.fromJson<Uint8List>(json['stateDigest']),
+      recordId: serializer.fromJson<String>(json['recordId']),
+      entityType: serializer.fromJson<String>(json['entityType']),
+      entityId: serializer.fromJson<String>(json['entityId']),
+      intentId: serializer.fromJson<String>(json['intentId']),
+      intentGeneration: serializer.fromJson<int>(json['intentGeneration']),
+      expectedRevision: serializer.fromJson<int>(json['expectedRevision']),
+      accountUserId: serializer.fromJson<String>(json['accountUserId']),
+      actorDeviceId: serializer.fromJson<String>(json['actorDeviceId']),
+      claimedWriterKeyVersion: serializer.fromJson<int>(
+        json['claimedWriterKeyVersion'],
+      ),
+      outcome: serializer.fromJson<String>(json['outcome']),
+      resultRevision: serializer.fromJson<int?>(json['resultRevision']),
+      resultChangeSeq: serializer.fromJson<int?>(json['resultChangeSeq']),
+      currentRevision: serializer.fromJson<int?>(json['currentRevision']),
+      errorCode: serializer.fromJson<String?>(json['errorCode']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'operationId': serializer.toJson<String>(operationId),
+      'stateDigest': serializer.toJson<Uint8List>(stateDigest),
+      'recordId': serializer.toJson<String>(recordId),
+      'entityType': serializer.toJson<String>(entityType),
+      'entityId': serializer.toJson<String>(entityId),
+      'intentId': serializer.toJson<String>(intentId),
+      'intentGeneration': serializer.toJson<int>(intentGeneration),
+      'expectedRevision': serializer.toJson<int>(expectedRevision),
+      'accountUserId': serializer.toJson<String>(accountUserId),
+      'actorDeviceId': serializer.toJson<String>(actorDeviceId),
+      'claimedWriterKeyVersion': serializer.toJson<int>(
+        claimedWriterKeyVersion,
+      ),
+      'outcome': serializer.toJson<String>(outcome),
+      'resultRevision': serializer.toJson<int?>(resultRevision),
+      'resultChangeSeq': serializer.toJson<int?>(resultChangeSeq),
+      'currentRevision': serializer.toJson<int?>(currentRevision),
+      'errorCode': serializer.toJson<String?>(errorCode),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeSyncOperationRow copyWith({
+    String? operationId,
+    Uint8List? stateDigest,
+    String? recordId,
+    String? entityType,
+    String? entityId,
+    String? intentId,
+    int? intentGeneration,
+    int? expectedRevision,
+    String? accountUserId,
+    String? actorDeviceId,
+    int? claimedWriterKeyVersion,
+    String? outcome,
+    Value<int?> resultRevision = const Value.absent(),
+    Value<int?> resultChangeSeq = const Value.absent(),
+    Value<int?> currentRevision = const Value.absent(),
+    Value<String?> errorCode = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => E2eeSyncOperationRow(
+    operationId: operationId ?? this.operationId,
+    stateDigest: stateDigest ?? this.stateDigest,
+    recordId: recordId ?? this.recordId,
+    entityType: entityType ?? this.entityType,
+    entityId: entityId ?? this.entityId,
+    intentId: intentId ?? this.intentId,
+    intentGeneration: intentGeneration ?? this.intentGeneration,
+    expectedRevision: expectedRevision ?? this.expectedRevision,
+    accountUserId: accountUserId ?? this.accountUserId,
+    actorDeviceId: actorDeviceId ?? this.actorDeviceId,
+    claimedWriterKeyVersion:
+        claimedWriterKeyVersion ?? this.claimedWriterKeyVersion,
+    outcome: outcome ?? this.outcome,
+    resultRevision: resultRevision.present
+        ? resultRevision.value
+        : this.resultRevision,
+    resultChangeSeq: resultChangeSeq.present
+        ? resultChangeSeq.value
+        : this.resultChangeSeq,
+    currentRevision: currentRevision.present
+        ? currentRevision.value
+        : this.currentRevision,
+    errorCode: errorCode.present ? errorCode.value : this.errorCode,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeSyncOperationRow copyWithCompanion(E2eeSyncOperationRowsCompanion data) {
+    return E2eeSyncOperationRow(
+      operationId: data.operationId.present
+          ? data.operationId.value
+          : this.operationId,
+      stateDigest: data.stateDigest.present
+          ? data.stateDigest.value
+          : this.stateDigest,
+      recordId: data.recordId.present ? data.recordId.value : this.recordId,
+      entityType: data.entityType.present
+          ? data.entityType.value
+          : this.entityType,
+      entityId: data.entityId.present ? data.entityId.value : this.entityId,
+      intentId: data.intentId.present ? data.intentId.value : this.intentId,
+      intentGeneration: data.intentGeneration.present
+          ? data.intentGeneration.value
+          : this.intentGeneration,
+      expectedRevision: data.expectedRevision.present
+          ? data.expectedRevision.value
+          : this.expectedRevision,
+      accountUserId: data.accountUserId.present
+          ? data.accountUserId.value
+          : this.accountUserId,
+      actorDeviceId: data.actorDeviceId.present
+          ? data.actorDeviceId.value
+          : this.actorDeviceId,
+      claimedWriterKeyVersion: data.claimedWriterKeyVersion.present
+          ? data.claimedWriterKeyVersion.value
+          : this.claimedWriterKeyVersion,
+      outcome: data.outcome.present ? data.outcome.value : this.outcome,
+      resultRevision: data.resultRevision.present
+          ? data.resultRevision.value
+          : this.resultRevision,
+      resultChangeSeq: data.resultChangeSeq.present
+          ? data.resultChangeSeq.value
+          : this.resultChangeSeq,
+      currentRevision: data.currentRevision.present
+          ? data.currentRevision.value
+          : this.currentRevision,
+      errorCode: data.errorCode.present ? data.errorCode.value : this.errorCode,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncOperationRow(')
+          ..write('operationId: $operationId, ')
+          ..write('stateDigest: $stateDigest, ')
+          ..write('recordId: $recordId, ')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('intentId: $intentId, ')
+          ..write('intentGeneration: $intentGeneration, ')
+          ..write('expectedRevision: $expectedRevision, ')
+          ..write('accountUserId: $accountUserId, ')
+          ..write('actorDeviceId: $actorDeviceId, ')
+          ..write('claimedWriterKeyVersion: $claimedWriterKeyVersion, ')
+          ..write('outcome: $outcome, ')
+          ..write('resultRevision: $resultRevision, ')
+          ..write('resultChangeSeq: $resultChangeSeq, ')
+          ..write('currentRevision: $currentRevision, ')
+          ..write('errorCode: $errorCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    operationId,
+    $driftBlobEquality.hash(stateDigest),
+    recordId,
+    entityType,
+    entityId,
+    intentId,
+    intentGeneration,
+    expectedRevision,
+    accountUserId,
+    actorDeviceId,
+    claimedWriterKeyVersion,
+    outcome,
+    resultRevision,
+    resultChangeSeq,
+    currentRevision,
+    errorCode,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeSyncOperationRow &&
+          other.operationId == this.operationId &&
+          $driftBlobEquality.equals(other.stateDigest, this.stateDigest) &&
+          other.recordId == this.recordId &&
+          other.entityType == this.entityType &&
+          other.entityId == this.entityId &&
+          other.intentId == this.intentId &&
+          other.intentGeneration == this.intentGeneration &&
+          other.expectedRevision == this.expectedRevision &&
+          other.accountUserId == this.accountUserId &&
+          other.actorDeviceId == this.actorDeviceId &&
+          other.claimedWriterKeyVersion == this.claimedWriterKeyVersion &&
+          other.outcome == this.outcome &&
+          other.resultRevision == this.resultRevision &&
+          other.resultChangeSeq == this.resultChangeSeq &&
+          other.currentRevision == this.currentRevision &&
+          other.errorCode == this.errorCode &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeSyncOperationRowsCompanion
+    extends UpdateCompanion<E2eeSyncOperationRow> {
+  final Value<String> operationId;
+  final Value<Uint8List> stateDigest;
+  final Value<String> recordId;
+  final Value<String> entityType;
+  final Value<String> entityId;
+  final Value<String> intentId;
+  final Value<int> intentGeneration;
+  final Value<int> expectedRevision;
+  final Value<String> accountUserId;
+  final Value<String> actorDeviceId;
+  final Value<int> claimedWriterKeyVersion;
+  final Value<String> outcome;
+  final Value<int?> resultRevision;
+  final Value<int?> resultChangeSeq;
+  final Value<int?> currentRevision;
+  final Value<String?> errorCode;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const E2eeSyncOperationRowsCompanion({
+    this.operationId = const Value.absent(),
+    this.stateDigest = const Value.absent(),
+    this.recordId = const Value.absent(),
+    this.entityType = const Value.absent(),
+    this.entityId = const Value.absent(),
+    this.intentId = const Value.absent(),
+    this.intentGeneration = const Value.absent(),
+    this.expectedRevision = const Value.absent(),
+    this.accountUserId = const Value.absent(),
+    this.actorDeviceId = const Value.absent(),
+    this.claimedWriterKeyVersion = const Value.absent(),
+    this.outcome = const Value.absent(),
+    this.resultRevision = const Value.absent(),
+    this.resultChangeSeq = const Value.absent(),
+    this.currentRevision = const Value.absent(),
+    this.errorCode = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeSyncOperationRowsCompanion.insert({
+    required String operationId,
+    required Uint8List stateDigest,
+    required String recordId,
+    required String entityType,
+    required String entityId,
+    required String intentId,
+    required int intentGeneration,
+    required int expectedRevision,
+    required String accountUserId,
+    required String actorDeviceId,
+    required int claimedWriterKeyVersion,
+    required String outcome,
+    this.resultRevision = const Value.absent(),
+    this.resultChangeSeq = const Value.absent(),
+    this.currentRevision = const Value.absent(),
+    this.errorCode = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : operationId = Value(operationId),
+       stateDigest = Value(stateDigest),
+       recordId = Value(recordId),
+       entityType = Value(entityType),
+       entityId = Value(entityId),
+       intentId = Value(intentId),
+       intentGeneration = Value(intentGeneration),
+       expectedRevision = Value(expectedRevision),
+       accountUserId = Value(accountUserId),
+       actorDeviceId = Value(actorDeviceId),
+       claimedWriterKeyVersion = Value(claimedWriterKeyVersion),
+       outcome = Value(outcome),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeSyncOperationRow> custom({
+    Expression<String>? operationId,
+    Expression<Uint8List>? stateDigest,
+    Expression<String>? recordId,
+    Expression<String>? entityType,
+    Expression<String>? entityId,
+    Expression<String>? intentId,
+    Expression<int>? intentGeneration,
+    Expression<int>? expectedRevision,
+    Expression<String>? accountUserId,
+    Expression<String>? actorDeviceId,
+    Expression<int>? claimedWriterKeyVersion,
+    Expression<String>? outcome,
+    Expression<int>? resultRevision,
+    Expression<int>? resultChangeSeq,
+    Expression<int>? currentRevision,
+    Expression<String>? errorCode,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (operationId != null) 'operation_id': operationId,
+      if (stateDigest != null) 'state_digest': stateDigest,
+      if (recordId != null) 'record_id': recordId,
+      if (entityType != null) 'entity_type': entityType,
+      if (entityId != null) 'entity_id': entityId,
+      if (intentId != null) 'intent_id': intentId,
+      if (intentGeneration != null) 'intent_generation': intentGeneration,
+      if (expectedRevision != null) 'expected_revision': expectedRevision,
+      if (accountUserId != null) 'account_user_id': accountUserId,
+      if (actorDeviceId != null) 'actor_device_id': actorDeviceId,
+      if (claimedWriterKeyVersion != null)
+        'claimed_writer_key_version': claimedWriterKeyVersion,
+      if (outcome != null) 'outcome': outcome,
+      if (resultRevision != null) 'result_revision': resultRevision,
+      if (resultChangeSeq != null) 'result_change_seq': resultChangeSeq,
+      if (currentRevision != null) 'current_revision': currentRevision,
+      if (errorCode != null) 'error_code': errorCode,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeSyncOperationRowsCompanion copyWith({
+    Value<String>? operationId,
+    Value<Uint8List>? stateDigest,
+    Value<String>? recordId,
+    Value<String>? entityType,
+    Value<String>? entityId,
+    Value<String>? intentId,
+    Value<int>? intentGeneration,
+    Value<int>? expectedRevision,
+    Value<String>? accountUserId,
+    Value<String>? actorDeviceId,
+    Value<int>? claimedWriterKeyVersion,
+    Value<String>? outcome,
+    Value<int?>? resultRevision,
+    Value<int?>? resultChangeSeq,
+    Value<int?>? currentRevision,
+    Value<String?>? errorCode,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeSyncOperationRowsCompanion(
+      operationId: operationId ?? this.operationId,
+      stateDigest: stateDigest ?? this.stateDigest,
+      recordId: recordId ?? this.recordId,
+      entityType: entityType ?? this.entityType,
+      entityId: entityId ?? this.entityId,
+      intentId: intentId ?? this.intentId,
+      intentGeneration: intentGeneration ?? this.intentGeneration,
+      expectedRevision: expectedRevision ?? this.expectedRevision,
+      accountUserId: accountUserId ?? this.accountUserId,
+      actorDeviceId: actorDeviceId ?? this.actorDeviceId,
+      claimedWriterKeyVersion:
+          claimedWriterKeyVersion ?? this.claimedWriterKeyVersion,
+      outcome: outcome ?? this.outcome,
+      resultRevision: resultRevision ?? this.resultRevision,
+      resultChangeSeq: resultChangeSeq ?? this.resultChangeSeq,
+      currentRevision: currentRevision ?? this.currentRevision,
+      errorCode: errorCode ?? this.errorCode,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (operationId.present) {
+      map['operation_id'] = Variable<String>(operationId.value);
+    }
+    if (stateDigest.present) {
+      map['state_digest'] = Variable<Uint8List>(stateDigest.value);
+    }
+    if (recordId.present) {
+      map['record_id'] = Variable<String>(recordId.value);
+    }
+    if (entityType.present) {
+      map['entity_type'] = Variable<String>(entityType.value);
+    }
+    if (entityId.present) {
+      map['entity_id'] = Variable<String>(entityId.value);
+    }
+    if (intentId.present) {
+      map['intent_id'] = Variable<String>(intentId.value);
+    }
+    if (intentGeneration.present) {
+      map['intent_generation'] = Variable<int>(intentGeneration.value);
+    }
+    if (expectedRevision.present) {
+      map['expected_revision'] = Variable<int>(expectedRevision.value);
+    }
+    if (accountUserId.present) {
+      map['account_user_id'] = Variable<String>(accountUserId.value);
+    }
+    if (actorDeviceId.present) {
+      map['actor_device_id'] = Variable<String>(actorDeviceId.value);
+    }
+    if (claimedWriterKeyVersion.present) {
+      map['claimed_writer_key_version'] = Variable<int>(
+        claimedWriterKeyVersion.value,
+      );
+    }
+    if (outcome.present) {
+      map['outcome'] = Variable<String>(outcome.value);
+    }
+    if (resultRevision.present) {
+      map['result_revision'] = Variable<int>(resultRevision.value);
+    }
+    if (resultChangeSeq.present) {
+      map['result_change_seq'] = Variable<int>(resultChangeSeq.value);
+    }
+    if (currentRevision.present) {
+      map['current_revision'] = Variable<int>(currentRevision.value);
+    }
+    if (errorCode.present) {
+      map['error_code'] = Variable<String>(errorCode.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncOperationRowsTable.$convertercreatedAt.toSql(createdAt.value),
+      );
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncOperationRowsTable.$converterupdatedAt.toSql(updatedAt.value),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncOperationRowsCompanion(')
+          ..write('operationId: $operationId, ')
+          ..write('stateDigest: $stateDigest, ')
+          ..write('recordId: $recordId, ')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('intentId: $intentId, ')
+          ..write('intentGeneration: $intentGeneration, ')
+          ..write('expectedRevision: $expectedRevision, ')
+          ..write('accountUserId: $accountUserId, ')
+          ..write('actorDeviceId: $actorDeviceId, ')
+          ..write('claimedWriterKeyVersion: $claimedWriterKeyVersion, ')
+          ..write('outcome: $outcome, ')
+          ..write('resultRevision: $resultRevision, ')
+          ..write('resultChangeSeq: $resultChangeSeq, ')
+          ..write('currentRevision: $currentRevision, ')
+          ..write('errorCode: $errorCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $E2eeSyncOutboxRowsTable extends E2eeSyncOutboxRows
+    with TableInfo<$E2eeSyncOutboxRowsTable, E2eeSyncOutboxRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeSyncOutboxRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _operationIdMeta = const VerificationMeta(
+    'operationId',
+  );
+  @override
+  late final GeneratedColumn<String> operationId = GeneratedColumn<String>(
+    'operation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _recordIdMeta = const VerificationMeta(
+    'recordId',
+  );
+  @override
+  late final GeneratedColumn<String> recordId = GeneratedColumn<String>(
+    'record_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _envelopeVersionMeta = const VerificationMeta(
+    'envelopeVersion',
+  );
+  @override
+  late final GeneratedColumn<int> envelopeVersion = GeneratedColumn<int>(
+    'envelope_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _keyEpochMeta = const VerificationMeta(
+    'keyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
+    'key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _ciphertextMeta = const VerificationMeta(
+    'ciphertext',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> ciphertext = GeneratedColumn<Uint8List>(
+    'ciphertext',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _phaseMeta = const VerificationMeta('phase');
+  @override
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _leaseTokenMeta = const VerificationMeta(
+    'leaseToken',
+  );
+  @override
+  late final GeneratedColumn<String> leaseToken = GeneratedColumn<String>(
+    'lease_token',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _leaseOwnerSessionIdMeta =
+      const VerificationMeta('leaseOwnerSessionId');
+  @override
+  late final GeneratedColumn<String> leaseOwnerSessionId =
+      GeneratedColumn<String>(
+        'lease_owner_session_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime?, int> leaseExpiresAt =
+      GeneratedColumn<int>(
+        'lease_expires_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+      ).withConverter<DateTime?>(
+        $E2eeSyncOutboxRowsTable.$converterleaseExpiresAtn,
+      );
+  static const VerificationMeta _transitionVersionMeta = const VerificationMeta(
+    'transitionVersion',
+  );
+  @override
+  late final GeneratedColumn<int> transitionVersion = GeneratedColumn<int>(
+    'transition_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _attemptCountMeta = const VerificationMeta(
+    'attemptCount',
+  );
+  @override
+  late final GeneratedColumn<int> attemptCount = GeneratedColumn<int>(
+    'attempt_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> nextAttemptAt =
+      GeneratedColumn<int>(
+        'next_attempt_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeSyncOutboxRowsTable.$converternextAttemptAt,
+      );
+  static const VerificationMeta _lastFailureKindMeta = const VerificationMeta(
+    'lastFailureKind',
+  );
+  @override
+  late final GeneratedColumn<String> lastFailureKind = GeneratedColumn<String>(
+    'last_failure_kind',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
+      GeneratedColumn<int>(
+        'created_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>($E2eeSyncOutboxRowsTable.$convertercreatedAt);
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>($E2eeSyncOutboxRowsTable.$converterupdatedAt);
+  @override
+  List<GeneratedColumn> get $columns => [
+    operationId,
+    recordId,
+    envelopeVersion,
+    keyEpoch,
+    ciphertext,
+    phase,
+    leaseToken,
+    leaseOwnerSessionId,
+    leaseExpiresAt,
+    transitionVersion,
+    attemptCount,
+    nextAttemptAt,
+    lastFailureKind,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_outbox_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeSyncOutboxRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('operation_id')) {
+      context.handle(
+        _operationIdMeta,
+        operationId.isAcceptableOrUnknown(
+          data['operation_id']!,
+          _operationIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_operationIdMeta);
+    }
+    if (data.containsKey('record_id')) {
+      context.handle(
+        _recordIdMeta,
+        recordId.isAcceptableOrUnknown(data['record_id']!, _recordIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_recordIdMeta);
+    }
+    if (data.containsKey('envelope_version')) {
+      context.handle(
+        _envelopeVersionMeta,
+        envelopeVersion.isAcceptableOrUnknown(
+          data['envelope_version']!,
+          _envelopeVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_envelopeVersionMeta);
+    }
+    if (data.containsKey('key_epoch')) {
+      context.handle(
+        _keyEpochMeta,
+        keyEpoch.isAcceptableOrUnknown(data['key_epoch']!, _keyEpochMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_keyEpochMeta);
+    }
+    if (data.containsKey('ciphertext')) {
+      context.handle(
+        _ciphertextMeta,
+        ciphertext.isAcceptableOrUnknown(data['ciphertext']!, _ciphertextMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_ciphertextMeta);
+    }
+    if (data.containsKey('phase')) {
+      context.handle(
+        _phaseMeta,
+        phase.isAcceptableOrUnknown(data['phase']!, _phaseMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_phaseMeta);
+    }
+    if (data.containsKey('lease_token')) {
+      context.handle(
+        _leaseTokenMeta,
+        leaseToken.isAcceptableOrUnknown(data['lease_token']!, _leaseTokenMeta),
+      );
+    }
+    if (data.containsKey('lease_owner_session_id')) {
+      context.handle(
+        _leaseOwnerSessionIdMeta,
+        leaseOwnerSessionId.isAcceptableOrUnknown(
+          data['lease_owner_session_id']!,
+          _leaseOwnerSessionIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('transition_version')) {
+      context.handle(
+        _transitionVersionMeta,
+        transitionVersion.isAcceptableOrUnknown(
+          data['transition_version']!,
+          _transitionVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_transitionVersionMeta);
+    }
+    if (data.containsKey('attempt_count')) {
+      context.handle(
+        _attemptCountMeta,
+        attemptCount.isAcceptableOrUnknown(
+          data['attempt_count']!,
+          _attemptCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_attemptCountMeta);
+    }
+    if (data.containsKey('last_failure_kind')) {
+      context.handle(
+        _lastFailureKindMeta,
+        lastFailureKind.isAcceptableOrUnknown(
+          data['last_failure_kind']!,
+          _lastFailureKindMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {operationId};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {recordId},
+  ];
+  @override
+  E2eeSyncOutboxRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeSyncOutboxRow(
+      operationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operation_id'],
+      )!,
+      recordId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}record_id'],
+      )!,
+      envelopeVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}envelope_version'],
+      )!,
+      keyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}key_epoch'],
+      )!,
+      ciphertext: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}ciphertext'],
+      )!,
+      phase: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phase'],
+      )!,
+      leaseToken: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}lease_token'],
+      ),
+      leaseOwnerSessionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}lease_owner_session_id'],
+      ),
+      leaseExpiresAt: $E2eeSyncOutboxRowsTable.$converterleaseExpiresAtn
+          .fromSql(
+            attachedDatabase.typeMapping.read(
+              DriftSqlType.int,
+              data['${effectivePrefix}lease_expires_at'],
+            ),
+          ),
+      transitionVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}transition_version'],
+      )!,
+      attemptCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}attempt_count'],
+      )!,
+      nextAttemptAt: $E2eeSyncOutboxRowsTable.$converternextAttemptAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}next_attempt_at'],
+        )!,
+      ),
+      lastFailureKind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}last_failure_kind'],
+      ),
+      createdAt: $E2eeSyncOutboxRowsTable.$convertercreatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}created_at'],
+        )!,
+      ),
+      updatedAt: $E2eeSyncOutboxRowsTable.$converterupdatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}updated_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeSyncOutboxRowsTable createAlias(String alias) {
+    return $E2eeSyncOutboxRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $converterleaseExpiresAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime?, int?> $converterleaseExpiresAtn =
+      NullAwareTypeConverter.wrap($converterleaseExpiresAt);
+  static TypeConverter<DateTime, int> $converternextAttemptAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $convertercreatedAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeSyncOutboxRow extends DataClass
+    implements Insertable<E2eeSyncOutboxRow> {
+  final String operationId;
+  final String recordId;
+  final int envelopeVersion;
+  final int keyEpoch;
+  final Uint8List ciphertext;
+  final String phase;
+  final String? leaseToken;
+  final String? leaseOwnerSessionId;
+  final DateTime? leaseExpiresAt;
+  final int transitionVersion;
+  final int attemptCount;
+  final DateTime nextAttemptAt;
+  final String? lastFailureKind;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const E2eeSyncOutboxRow({
+    required this.operationId,
+    required this.recordId,
+    required this.envelopeVersion,
+    required this.keyEpoch,
+    required this.ciphertext,
+    required this.phase,
+    this.leaseToken,
+    this.leaseOwnerSessionId,
+    this.leaseExpiresAt,
+    required this.transitionVersion,
+    required this.attemptCount,
+    required this.nextAttemptAt,
+    this.lastFailureKind,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['operation_id'] = Variable<String>(operationId);
+    map['record_id'] = Variable<String>(recordId);
+    map['envelope_version'] = Variable<int>(envelopeVersion);
+    map['key_epoch'] = Variable<int>(keyEpoch);
+    map['ciphertext'] = Variable<Uint8List>(ciphertext);
+    map['phase'] = Variable<String>(phase);
+    if (!nullToAbsent || leaseToken != null) {
+      map['lease_token'] = Variable<String>(leaseToken);
+    }
+    if (!nullToAbsent || leaseOwnerSessionId != null) {
+      map['lease_owner_session_id'] = Variable<String>(leaseOwnerSessionId);
+    }
+    if (!nullToAbsent || leaseExpiresAt != null) {
+      map['lease_expires_at'] = Variable<int>(
+        $E2eeSyncOutboxRowsTable.$converterleaseExpiresAtn.toSql(
+          leaseExpiresAt,
+        ),
+      );
+    }
+    map['transition_version'] = Variable<int>(transitionVersion);
+    map['attempt_count'] = Variable<int>(attemptCount);
+    {
+      map['next_attempt_at'] = Variable<int>(
+        $E2eeSyncOutboxRowsTable.$converternextAttemptAt.toSql(nextAttemptAt),
+      );
+    }
+    if (!nullToAbsent || lastFailureKind != null) {
+      map['last_failure_kind'] = Variable<String>(lastFailureKind);
+    }
+    {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncOutboxRowsTable.$convertercreatedAt.toSql(createdAt),
+      );
+    }
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncOutboxRowsTable.$converterupdatedAt.toSql(updatedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeSyncOutboxRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeSyncOutboxRowsCompanion(
+      operationId: Value(operationId),
+      recordId: Value(recordId),
+      envelopeVersion: Value(envelopeVersion),
+      keyEpoch: Value(keyEpoch),
+      ciphertext: Value(ciphertext),
+      phase: Value(phase),
+      leaseToken: leaseToken == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaseToken),
+      leaseOwnerSessionId: leaseOwnerSessionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaseOwnerSessionId),
+      leaseExpiresAt: leaseExpiresAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaseExpiresAt),
+      transitionVersion: Value(transitionVersion),
+      attemptCount: Value(attemptCount),
+      nextAttemptAt: Value(nextAttemptAt),
+      lastFailureKind: lastFailureKind == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastFailureKind),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeSyncOutboxRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeSyncOutboxRow(
+      operationId: serializer.fromJson<String>(json['operationId']),
+      recordId: serializer.fromJson<String>(json['recordId']),
+      envelopeVersion: serializer.fromJson<int>(json['envelopeVersion']),
+      keyEpoch: serializer.fromJson<int>(json['keyEpoch']),
+      ciphertext: serializer.fromJson<Uint8List>(json['ciphertext']),
+      phase: serializer.fromJson<String>(json['phase']),
+      leaseToken: serializer.fromJson<String?>(json['leaseToken']),
+      leaseOwnerSessionId: serializer.fromJson<String?>(
+        json['leaseOwnerSessionId'],
+      ),
+      leaseExpiresAt: serializer.fromJson<DateTime?>(json['leaseExpiresAt']),
+      transitionVersion: serializer.fromJson<int>(json['transitionVersion']),
+      attemptCount: serializer.fromJson<int>(json['attemptCount']),
+      nextAttemptAt: serializer.fromJson<DateTime>(json['nextAttemptAt']),
+      lastFailureKind: serializer.fromJson<String?>(json['lastFailureKind']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'operationId': serializer.toJson<String>(operationId),
+      'recordId': serializer.toJson<String>(recordId),
+      'envelopeVersion': serializer.toJson<int>(envelopeVersion),
+      'keyEpoch': serializer.toJson<int>(keyEpoch),
+      'ciphertext': serializer.toJson<Uint8List>(ciphertext),
+      'phase': serializer.toJson<String>(phase),
+      'leaseToken': serializer.toJson<String?>(leaseToken),
+      'leaseOwnerSessionId': serializer.toJson<String?>(leaseOwnerSessionId),
+      'leaseExpiresAt': serializer.toJson<DateTime?>(leaseExpiresAt),
+      'transitionVersion': serializer.toJson<int>(transitionVersion),
+      'attemptCount': serializer.toJson<int>(attemptCount),
+      'nextAttemptAt': serializer.toJson<DateTime>(nextAttemptAt),
+      'lastFailureKind': serializer.toJson<String?>(lastFailureKind),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeSyncOutboxRow copyWith({
+    String? operationId,
+    String? recordId,
+    int? envelopeVersion,
+    int? keyEpoch,
+    Uint8List? ciphertext,
+    String? phase,
+    Value<String?> leaseToken = const Value.absent(),
+    Value<String?> leaseOwnerSessionId = const Value.absent(),
+    Value<DateTime?> leaseExpiresAt = const Value.absent(),
+    int? transitionVersion,
+    int? attemptCount,
+    DateTime? nextAttemptAt,
+    Value<String?> lastFailureKind = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => E2eeSyncOutboxRow(
+    operationId: operationId ?? this.operationId,
+    recordId: recordId ?? this.recordId,
+    envelopeVersion: envelopeVersion ?? this.envelopeVersion,
+    keyEpoch: keyEpoch ?? this.keyEpoch,
+    ciphertext: ciphertext ?? this.ciphertext,
+    phase: phase ?? this.phase,
+    leaseToken: leaseToken.present ? leaseToken.value : this.leaseToken,
+    leaseOwnerSessionId: leaseOwnerSessionId.present
+        ? leaseOwnerSessionId.value
+        : this.leaseOwnerSessionId,
+    leaseExpiresAt: leaseExpiresAt.present
+        ? leaseExpiresAt.value
+        : this.leaseExpiresAt,
+    transitionVersion: transitionVersion ?? this.transitionVersion,
+    attemptCount: attemptCount ?? this.attemptCount,
+    nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
+    lastFailureKind: lastFailureKind.present
+        ? lastFailureKind.value
+        : this.lastFailureKind,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeSyncOutboxRow copyWithCompanion(E2eeSyncOutboxRowsCompanion data) {
+    return E2eeSyncOutboxRow(
+      operationId: data.operationId.present
+          ? data.operationId.value
+          : this.operationId,
+      recordId: data.recordId.present ? data.recordId.value : this.recordId,
+      envelopeVersion: data.envelopeVersion.present
+          ? data.envelopeVersion.value
+          : this.envelopeVersion,
+      keyEpoch: data.keyEpoch.present ? data.keyEpoch.value : this.keyEpoch,
+      ciphertext: data.ciphertext.present
+          ? data.ciphertext.value
+          : this.ciphertext,
+      phase: data.phase.present ? data.phase.value : this.phase,
+      leaseToken: data.leaseToken.present
+          ? data.leaseToken.value
+          : this.leaseToken,
+      leaseOwnerSessionId: data.leaseOwnerSessionId.present
+          ? data.leaseOwnerSessionId.value
+          : this.leaseOwnerSessionId,
+      leaseExpiresAt: data.leaseExpiresAt.present
+          ? data.leaseExpiresAt.value
+          : this.leaseExpiresAt,
+      transitionVersion: data.transitionVersion.present
+          ? data.transitionVersion.value
+          : this.transitionVersion,
+      attemptCount: data.attemptCount.present
+          ? data.attemptCount.value
+          : this.attemptCount,
+      nextAttemptAt: data.nextAttemptAt.present
+          ? data.nextAttemptAt.value
+          : this.nextAttemptAt,
+      lastFailureKind: data.lastFailureKind.present
+          ? data.lastFailureKind.value
+          : this.lastFailureKind,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncOutboxRow(')
+          ..write('operationId: $operationId, ')
+          ..write('recordId: $recordId, ')
+          ..write('envelopeVersion: $envelopeVersion, ')
+          ..write('keyEpoch: $keyEpoch, ')
+          ..write('ciphertext: $ciphertext, ')
+          ..write('phase: $phase, ')
+          ..write('leaseToken: $leaseToken, ')
+          ..write('leaseOwnerSessionId: $leaseOwnerSessionId, ')
+          ..write('leaseExpiresAt: $leaseExpiresAt, ')
+          ..write('transitionVersion: $transitionVersion, ')
+          ..write('attemptCount: $attemptCount, ')
+          ..write('nextAttemptAt: $nextAttemptAt, ')
+          ..write('lastFailureKind: $lastFailureKind, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    operationId,
+    recordId,
+    envelopeVersion,
+    keyEpoch,
+    $driftBlobEquality.hash(ciphertext),
+    phase,
+    leaseToken,
+    leaseOwnerSessionId,
+    leaseExpiresAt,
+    transitionVersion,
+    attemptCount,
+    nextAttemptAt,
+    lastFailureKind,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeSyncOutboxRow &&
+          other.operationId == this.operationId &&
+          other.recordId == this.recordId &&
+          other.envelopeVersion == this.envelopeVersion &&
+          other.keyEpoch == this.keyEpoch &&
+          $driftBlobEquality.equals(other.ciphertext, this.ciphertext) &&
+          other.phase == this.phase &&
+          other.leaseToken == this.leaseToken &&
+          other.leaseOwnerSessionId == this.leaseOwnerSessionId &&
+          other.leaseExpiresAt == this.leaseExpiresAt &&
+          other.transitionVersion == this.transitionVersion &&
+          other.attemptCount == this.attemptCount &&
+          other.nextAttemptAt == this.nextAttemptAt &&
+          other.lastFailureKind == this.lastFailureKind &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeSyncOutboxRowsCompanion extends UpdateCompanion<E2eeSyncOutboxRow> {
+  final Value<String> operationId;
+  final Value<String> recordId;
+  final Value<int> envelopeVersion;
+  final Value<int> keyEpoch;
+  final Value<Uint8List> ciphertext;
+  final Value<String> phase;
+  final Value<String?> leaseToken;
+  final Value<String?> leaseOwnerSessionId;
+  final Value<DateTime?> leaseExpiresAt;
+  final Value<int> transitionVersion;
+  final Value<int> attemptCount;
+  final Value<DateTime> nextAttemptAt;
+  final Value<String?> lastFailureKind;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const E2eeSyncOutboxRowsCompanion({
+    this.operationId = const Value.absent(),
+    this.recordId = const Value.absent(),
+    this.envelopeVersion = const Value.absent(),
+    this.keyEpoch = const Value.absent(),
+    this.ciphertext = const Value.absent(),
+    this.phase = const Value.absent(),
+    this.leaseToken = const Value.absent(),
+    this.leaseOwnerSessionId = const Value.absent(),
+    this.leaseExpiresAt = const Value.absent(),
+    this.transitionVersion = const Value.absent(),
+    this.attemptCount = const Value.absent(),
+    this.nextAttemptAt = const Value.absent(),
+    this.lastFailureKind = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeSyncOutboxRowsCompanion.insert({
+    required String operationId,
+    required String recordId,
+    required int envelopeVersion,
+    required int keyEpoch,
+    required Uint8List ciphertext,
+    required String phase,
+    this.leaseToken = const Value.absent(),
+    this.leaseOwnerSessionId = const Value.absent(),
+    this.leaseExpiresAt = const Value.absent(),
+    required int transitionVersion,
+    required int attemptCount,
+    required DateTime nextAttemptAt,
+    this.lastFailureKind = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : operationId = Value(operationId),
+       recordId = Value(recordId),
+       envelopeVersion = Value(envelopeVersion),
+       keyEpoch = Value(keyEpoch),
+       ciphertext = Value(ciphertext),
+       phase = Value(phase),
+       transitionVersion = Value(transitionVersion),
+       attemptCount = Value(attemptCount),
+       nextAttemptAt = Value(nextAttemptAt),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeSyncOutboxRow> custom({
+    Expression<String>? operationId,
+    Expression<String>? recordId,
+    Expression<int>? envelopeVersion,
+    Expression<int>? keyEpoch,
+    Expression<Uint8List>? ciphertext,
+    Expression<String>? phase,
+    Expression<String>? leaseToken,
+    Expression<String>? leaseOwnerSessionId,
+    Expression<int>? leaseExpiresAt,
+    Expression<int>? transitionVersion,
+    Expression<int>? attemptCount,
+    Expression<int>? nextAttemptAt,
+    Expression<String>? lastFailureKind,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (operationId != null) 'operation_id': operationId,
+      if (recordId != null) 'record_id': recordId,
+      if (envelopeVersion != null) 'envelope_version': envelopeVersion,
+      if (keyEpoch != null) 'key_epoch': keyEpoch,
+      if (ciphertext != null) 'ciphertext': ciphertext,
+      if (phase != null) 'phase': phase,
+      if (leaseToken != null) 'lease_token': leaseToken,
+      if (leaseOwnerSessionId != null)
+        'lease_owner_session_id': leaseOwnerSessionId,
+      if (leaseExpiresAt != null) 'lease_expires_at': leaseExpiresAt,
+      if (transitionVersion != null) 'transition_version': transitionVersion,
+      if (attemptCount != null) 'attempt_count': attemptCount,
+      if (nextAttemptAt != null) 'next_attempt_at': nextAttemptAt,
+      if (lastFailureKind != null) 'last_failure_kind': lastFailureKind,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeSyncOutboxRowsCompanion copyWith({
+    Value<String>? operationId,
+    Value<String>? recordId,
+    Value<int>? envelopeVersion,
+    Value<int>? keyEpoch,
+    Value<Uint8List>? ciphertext,
+    Value<String>? phase,
+    Value<String?>? leaseToken,
+    Value<String?>? leaseOwnerSessionId,
+    Value<DateTime?>? leaseExpiresAt,
+    Value<int>? transitionVersion,
+    Value<int>? attemptCount,
+    Value<DateTime>? nextAttemptAt,
+    Value<String?>? lastFailureKind,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeSyncOutboxRowsCompanion(
+      operationId: operationId ?? this.operationId,
+      recordId: recordId ?? this.recordId,
+      envelopeVersion: envelopeVersion ?? this.envelopeVersion,
+      keyEpoch: keyEpoch ?? this.keyEpoch,
+      ciphertext: ciphertext ?? this.ciphertext,
+      phase: phase ?? this.phase,
+      leaseToken: leaseToken ?? this.leaseToken,
+      leaseOwnerSessionId: leaseOwnerSessionId ?? this.leaseOwnerSessionId,
+      leaseExpiresAt: leaseExpiresAt ?? this.leaseExpiresAt,
+      transitionVersion: transitionVersion ?? this.transitionVersion,
+      attemptCount: attemptCount ?? this.attemptCount,
+      nextAttemptAt: nextAttemptAt ?? this.nextAttemptAt,
+      lastFailureKind: lastFailureKind ?? this.lastFailureKind,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (operationId.present) {
+      map['operation_id'] = Variable<String>(operationId.value);
+    }
+    if (recordId.present) {
+      map['record_id'] = Variable<String>(recordId.value);
+    }
+    if (envelopeVersion.present) {
+      map['envelope_version'] = Variable<int>(envelopeVersion.value);
+    }
+    if (keyEpoch.present) {
+      map['key_epoch'] = Variable<int>(keyEpoch.value);
+    }
+    if (ciphertext.present) {
+      map['ciphertext'] = Variable<Uint8List>(ciphertext.value);
+    }
+    if (phase.present) {
+      map['phase'] = Variable<String>(phase.value);
+    }
+    if (leaseToken.present) {
+      map['lease_token'] = Variable<String>(leaseToken.value);
+    }
+    if (leaseOwnerSessionId.present) {
+      map['lease_owner_session_id'] = Variable<String>(
+        leaseOwnerSessionId.value,
+      );
+    }
+    if (leaseExpiresAt.present) {
+      map['lease_expires_at'] = Variable<int>(
+        $E2eeSyncOutboxRowsTable.$converterleaseExpiresAtn.toSql(
+          leaseExpiresAt.value,
+        ),
+      );
+    }
+    if (transitionVersion.present) {
+      map['transition_version'] = Variable<int>(transitionVersion.value);
+    }
+    if (attemptCount.present) {
+      map['attempt_count'] = Variable<int>(attemptCount.value);
+    }
+    if (nextAttemptAt.present) {
+      map['next_attempt_at'] = Variable<int>(
+        $E2eeSyncOutboxRowsTable.$converternextAttemptAt.toSql(
+          nextAttemptAt.value,
+        ),
+      );
+    }
+    if (lastFailureKind.present) {
+      map['last_failure_kind'] = Variable<String>(lastFailureKind.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncOutboxRowsTable.$convertercreatedAt.toSql(createdAt.value),
+      );
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncOutboxRowsTable.$converterupdatedAt.toSql(updatedAt.value),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncOutboxRowsCompanion(')
+          ..write('operationId: $operationId, ')
+          ..write('recordId: $recordId, ')
+          ..write('envelopeVersion: $envelopeVersion, ')
+          ..write('keyEpoch: $keyEpoch, ')
+          ..write('ciphertext: $ciphertext, ')
+          ..write('phase: $phase, ')
+          ..write('leaseToken: $leaseToken, ')
+          ..write('leaseOwnerSessionId: $leaseOwnerSessionId, ')
+          ..write('leaseExpiresAt: $leaseExpiresAt, ')
+          ..write('transitionVersion: $transitionVersion, ')
+          ..write('attemptCount: $attemptCount, ')
+          ..write('nextAttemptAt: $nextAttemptAt, ')
+          ..write('lastFailureKind: $lastFailureKind, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
+class $E2eeSyncRemoteRecordRowsTable extends E2eeSyncRemoteRecordRows
+    with TableInfo<$E2eeSyncRemoteRecordRowsTable, E2eeSyncRemoteRecordRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeSyncRemoteRecordRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _recordIdMeta = const VerificationMeta(
+    'recordId',
+  );
+  @override
+  late final GeneratedColumn<String> recordId = GeneratedColumn<String>(
+    'record_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _revisionMeta = const VerificationMeta(
+    'revision',
+  );
+  @override
+  late final GeneratedColumn<int> revision = GeneratedColumn<int>(
+    'revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _lastChangeSeqMeta = const VerificationMeta(
+    'lastChangeSeq',
+  );
+  @override
+  late final GeneratedColumn<int> lastChangeSeq = GeneratedColumn<int>(
+    'last_change_seq',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _stateDigestMeta = const VerificationMeta(
+    'stateDigest',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> stateDigest =
+      GeneratedColumn<Uint8List>(
+        'state_digest',
+        aliasedName,
+        true,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _gateMeta = const VerificationMeta('gate');
+  @override
+  late final GeneratedColumn<String> gate = GeneratedColumn<String>(
+    'gate',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _observedRevisionMeta = const VerificationMeta(
+    'observedRevision',
+  );
+  @override
+  late final GeneratedColumn<int> observedRevision = GeneratedColumn<int>(
+    'observed_revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _errorCodeMeta = const VerificationMeta(
+    'errorCode',
+  );
+  @override
+  late final GeneratedColumn<String> errorCode = GeneratedColumn<String>(
+    'error_code',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
+      GeneratedColumn<int>(
+        'created_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeSyncRemoteRecordRowsTable.$convertercreatedAt,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeSyncRemoteRecordRowsTable.$converterupdatedAt,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    recordId,
+    revision,
+    lastChangeSeq,
+    stateDigest,
+    gate,
+    observedRevision,
+    errorCode,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_sync_remote_record_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeSyncRemoteRecordRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('record_id')) {
+      context.handle(
+        _recordIdMeta,
+        recordId.isAcceptableOrUnknown(data['record_id']!, _recordIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_recordIdMeta);
+    }
+    if (data.containsKey('revision')) {
+      context.handle(
+        _revisionMeta,
+        revision.isAcceptableOrUnknown(data['revision']!, _revisionMeta),
+      );
+    }
+    if (data.containsKey('last_change_seq')) {
+      context.handle(
+        _lastChangeSeqMeta,
+        lastChangeSeq.isAcceptableOrUnknown(
+          data['last_change_seq']!,
+          _lastChangeSeqMeta,
+        ),
+      );
+    }
+    if (data.containsKey('state_digest')) {
+      context.handle(
+        _stateDigestMeta,
+        stateDigest.isAcceptableOrUnknown(
+          data['state_digest']!,
+          _stateDigestMeta,
+        ),
+      );
+    }
+    if (data.containsKey('gate')) {
+      context.handle(
+        _gateMeta,
+        gate.isAcceptableOrUnknown(data['gate']!, _gateMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_gateMeta);
+    }
+    if (data.containsKey('observed_revision')) {
+      context.handle(
+        _observedRevisionMeta,
+        observedRevision.isAcceptableOrUnknown(
+          data['observed_revision']!,
+          _observedRevisionMeta,
+        ),
+      );
+    }
+    if (data.containsKey('error_code')) {
+      context.handle(
+        _errorCodeMeta,
+        errorCode.isAcceptableOrUnknown(data['error_code']!, _errorCodeMeta),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {recordId};
+  @override
+  E2eeSyncRemoteRecordRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeSyncRemoteRecordRow(
+      recordId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}record_id'],
+      )!,
+      revision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}revision'],
+      ),
+      lastChangeSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}last_change_seq'],
+      ),
+      stateDigest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}state_digest'],
+      ),
+      gate: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}gate'],
+      )!,
+      observedRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}observed_revision'],
+      ),
+      errorCode: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}error_code'],
+      ),
+      createdAt: $E2eeSyncRemoteRecordRowsTable.$convertercreatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}created_at'],
+        )!,
+      ),
+      updatedAt: $E2eeSyncRemoteRecordRowsTable.$converterupdatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}updated_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeSyncRemoteRecordRowsTable createAlias(String alias) {
+    return $E2eeSyncRemoteRecordRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $convertercreatedAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeSyncRemoteRecordRow extends DataClass
+    implements Insertable<E2eeSyncRemoteRecordRow> {
+  final String recordId;
+  final int? revision;
+  final int? lastChangeSeq;
+  final Uint8List? stateDigest;
+  final String gate;
+  final int? observedRevision;
+  final String? errorCode;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const E2eeSyncRemoteRecordRow({
+    required this.recordId,
+    this.revision,
+    this.lastChangeSeq,
+    this.stateDigest,
+    required this.gate,
+    this.observedRevision,
+    this.errorCode,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['record_id'] = Variable<String>(recordId);
+    if (!nullToAbsent || revision != null) {
+      map['revision'] = Variable<int>(revision);
+    }
+    if (!nullToAbsent || lastChangeSeq != null) {
+      map['last_change_seq'] = Variable<int>(lastChangeSeq);
+    }
+    if (!nullToAbsent || stateDigest != null) {
+      map['state_digest'] = Variable<Uint8List>(stateDigest);
+    }
+    map['gate'] = Variable<String>(gate);
+    if (!nullToAbsent || observedRevision != null) {
+      map['observed_revision'] = Variable<int>(observedRevision);
+    }
+    if (!nullToAbsent || errorCode != null) {
+      map['error_code'] = Variable<String>(errorCode);
+    }
+    {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncRemoteRecordRowsTable.$convertercreatedAt.toSql(createdAt),
+      );
+    }
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncRemoteRecordRowsTable.$converterupdatedAt.toSql(updatedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeSyncRemoteRecordRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeSyncRemoteRecordRowsCompanion(
+      recordId: Value(recordId),
+      revision: revision == null && nullToAbsent
+          ? const Value.absent()
+          : Value(revision),
+      lastChangeSeq: lastChangeSeq == null && nullToAbsent
+          ? const Value.absent()
+          : Value(lastChangeSeq),
+      stateDigest: stateDigest == null && nullToAbsent
+          ? const Value.absent()
+          : Value(stateDigest),
+      gate: Value(gate),
+      observedRevision: observedRevision == null && nullToAbsent
+          ? const Value.absent()
+          : Value(observedRevision),
+      errorCode: errorCode == null && nullToAbsent
+          ? const Value.absent()
+          : Value(errorCode),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeSyncRemoteRecordRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeSyncRemoteRecordRow(
+      recordId: serializer.fromJson<String>(json['recordId']),
+      revision: serializer.fromJson<int?>(json['revision']),
+      lastChangeSeq: serializer.fromJson<int?>(json['lastChangeSeq']),
+      stateDigest: serializer.fromJson<Uint8List?>(json['stateDigest']),
+      gate: serializer.fromJson<String>(json['gate']),
+      observedRevision: serializer.fromJson<int?>(json['observedRevision']),
+      errorCode: serializer.fromJson<String?>(json['errorCode']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'recordId': serializer.toJson<String>(recordId),
+      'revision': serializer.toJson<int?>(revision),
+      'lastChangeSeq': serializer.toJson<int?>(lastChangeSeq),
+      'stateDigest': serializer.toJson<Uint8List?>(stateDigest),
+      'gate': serializer.toJson<String>(gate),
+      'observedRevision': serializer.toJson<int?>(observedRevision),
+      'errorCode': serializer.toJson<String?>(errorCode),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeSyncRemoteRecordRow copyWith({
+    String? recordId,
+    Value<int?> revision = const Value.absent(),
+    Value<int?> lastChangeSeq = const Value.absent(),
+    Value<Uint8List?> stateDigest = const Value.absent(),
+    String? gate,
+    Value<int?> observedRevision = const Value.absent(),
+    Value<String?> errorCode = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => E2eeSyncRemoteRecordRow(
+    recordId: recordId ?? this.recordId,
+    revision: revision.present ? revision.value : this.revision,
+    lastChangeSeq: lastChangeSeq.present
+        ? lastChangeSeq.value
+        : this.lastChangeSeq,
+    stateDigest: stateDigest.present ? stateDigest.value : this.stateDigest,
+    gate: gate ?? this.gate,
+    observedRevision: observedRevision.present
+        ? observedRevision.value
+        : this.observedRevision,
+    errorCode: errorCode.present ? errorCode.value : this.errorCode,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeSyncRemoteRecordRow copyWithCompanion(
+    E2eeSyncRemoteRecordRowsCompanion data,
+  ) {
+    return E2eeSyncRemoteRecordRow(
+      recordId: data.recordId.present ? data.recordId.value : this.recordId,
+      revision: data.revision.present ? data.revision.value : this.revision,
+      lastChangeSeq: data.lastChangeSeq.present
+          ? data.lastChangeSeq.value
+          : this.lastChangeSeq,
+      stateDigest: data.stateDigest.present
+          ? data.stateDigest.value
+          : this.stateDigest,
+      gate: data.gate.present ? data.gate.value : this.gate,
+      observedRevision: data.observedRevision.present
+          ? data.observedRevision.value
+          : this.observedRevision,
+      errorCode: data.errorCode.present ? data.errorCode.value : this.errorCode,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncRemoteRecordRow(')
+          ..write('recordId: $recordId, ')
+          ..write('revision: $revision, ')
+          ..write('lastChangeSeq: $lastChangeSeq, ')
+          ..write('stateDigest: $stateDigest, ')
+          ..write('gate: $gate, ')
+          ..write('observedRevision: $observedRevision, ')
+          ..write('errorCode: $errorCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    recordId,
+    revision,
+    lastChangeSeq,
+    $driftBlobEquality.hash(stateDigest),
+    gate,
+    observedRevision,
+    errorCode,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeSyncRemoteRecordRow &&
+          other.recordId == this.recordId &&
+          other.revision == this.revision &&
+          other.lastChangeSeq == this.lastChangeSeq &&
+          $driftBlobEquality.equals(other.stateDigest, this.stateDigest) &&
+          other.gate == this.gate &&
+          other.observedRevision == this.observedRevision &&
+          other.errorCode == this.errorCode &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeSyncRemoteRecordRowsCompanion
+    extends UpdateCompanion<E2eeSyncRemoteRecordRow> {
+  final Value<String> recordId;
+  final Value<int?> revision;
+  final Value<int?> lastChangeSeq;
+  final Value<Uint8List?> stateDigest;
+  final Value<String> gate;
+  final Value<int?> observedRevision;
+  final Value<String?> errorCode;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const E2eeSyncRemoteRecordRowsCompanion({
+    this.recordId = const Value.absent(),
+    this.revision = const Value.absent(),
+    this.lastChangeSeq = const Value.absent(),
+    this.stateDigest = const Value.absent(),
+    this.gate = const Value.absent(),
+    this.observedRevision = const Value.absent(),
+    this.errorCode = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeSyncRemoteRecordRowsCompanion.insert({
+    required String recordId,
+    this.revision = const Value.absent(),
+    this.lastChangeSeq = const Value.absent(),
+    this.stateDigest = const Value.absent(),
+    required String gate,
+    this.observedRevision = const Value.absent(),
+    this.errorCode = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : recordId = Value(recordId),
+       gate = Value(gate),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeSyncRemoteRecordRow> custom({
+    Expression<String>? recordId,
+    Expression<int>? revision,
+    Expression<int>? lastChangeSeq,
+    Expression<Uint8List>? stateDigest,
+    Expression<String>? gate,
+    Expression<int>? observedRevision,
+    Expression<String>? errorCode,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (recordId != null) 'record_id': recordId,
+      if (revision != null) 'revision': revision,
+      if (lastChangeSeq != null) 'last_change_seq': lastChangeSeq,
+      if (stateDigest != null) 'state_digest': stateDigest,
+      if (gate != null) 'gate': gate,
+      if (observedRevision != null) 'observed_revision': observedRevision,
+      if (errorCode != null) 'error_code': errorCode,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeSyncRemoteRecordRowsCompanion copyWith({
+    Value<String>? recordId,
+    Value<int?>? revision,
+    Value<int?>? lastChangeSeq,
+    Value<Uint8List?>? stateDigest,
+    Value<String>? gate,
+    Value<int?>? observedRevision,
+    Value<String?>? errorCode,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeSyncRemoteRecordRowsCompanion(
+      recordId: recordId ?? this.recordId,
+      revision: revision ?? this.revision,
+      lastChangeSeq: lastChangeSeq ?? this.lastChangeSeq,
+      stateDigest: stateDigest ?? this.stateDigest,
+      gate: gate ?? this.gate,
+      observedRevision: observedRevision ?? this.observedRevision,
+      errorCode: errorCode ?? this.errorCode,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (recordId.present) {
+      map['record_id'] = Variable<String>(recordId.value);
+    }
+    if (revision.present) {
+      map['revision'] = Variable<int>(revision.value);
+    }
+    if (lastChangeSeq.present) {
+      map['last_change_seq'] = Variable<int>(lastChangeSeq.value);
+    }
+    if (stateDigest.present) {
+      map['state_digest'] = Variable<Uint8List>(stateDigest.value);
+    }
+    if (gate.present) {
+      map['gate'] = Variable<String>(gate.value);
+    }
+    if (observedRevision.present) {
+      map['observed_revision'] = Variable<int>(observedRevision.value);
+    }
+    if (errorCode.present) {
+      map['error_code'] = Variable<String>(errorCode.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(
+        $E2eeSyncRemoteRecordRowsTable.$convertercreatedAt.toSql(
+          createdAt.value,
+        ),
+      );
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeSyncRemoteRecordRowsTable.$converterupdatedAt.toSql(
+          updatedAt.value,
+        ),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeSyncRemoteRecordRowsCompanion(')
+          ..write('recordId: $recordId, ')
+          ..write('revision: $revision, ')
+          ..write('lastChangeSeq: $lastChangeSeq, ')
+          ..write('stateDigest: $stateDigest, ')
+          ..write('gate: $gate, ')
+          ..write('observedRevision: $observedRevision, ')
+          ..write('errorCode: $errorCode, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -7024,6 +10346,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $E2eeSyncRecordParentRowsTable(this);
   late final $E2eeSyncRecordHeadRowsTable e2eeSyncRecordHeadRows =
       $E2eeSyncRecordHeadRowsTable(this);
+  late final $E2eeSyncIntentRowsTable e2eeSyncIntentRows =
+      $E2eeSyncIntentRowsTable(this);
+  late final $E2eeSyncOperationRowsTable e2eeSyncOperationRows =
+      $E2eeSyncOperationRowsTable(this);
+  late final $E2eeSyncOutboxRowsTable e2eeSyncOutboxRows =
+      $E2eeSyncOutboxRowsTable(this);
+  late final $E2eeSyncRemoteRecordRowsTable e2eeSyncRemoteRecordRows =
+      $E2eeSyncRemoteRecordRowsTable(this);
   late final Index idxConversationsUpdatedAt = Index(
     'idx_conversations_updated_at',
     'CREATE INDEX idx_conversations_updated_at ON conversation_rows (updated_at DESC, id ASC)',
@@ -7076,6 +10406,26 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_e2ee_sync_record_states_record_version',
     'CREATE INDEX idx_e2ee_sync_record_states_record_version ON e2ee_sync_record_state_rows (record_id, logical_version, digest)',
   );
+  late final Index idxE2eeSyncIntentsPhaseUpdated = Index(
+    'idx_e2ee_sync_intents_phase_updated',
+    'CREATE INDEX idx_e2ee_sync_intents_phase_updated ON e2ee_sync_intent_rows (phase, updated_at, entity_type, entity_id)',
+  );
+  late final Index idxE2eeSyncOperationsEntityGeneration = Index(
+    'idx_e2ee_sync_operations_entity_generation',
+    'CREATE INDEX idx_e2ee_sync_operations_entity_generation ON e2ee_sync_operation_rows (entity_type, entity_id, intent_generation, operation_id)',
+  );
+  late final Index idxE2eeSyncOperationsIntentGeneration = Index(
+    'idx_e2ee_sync_operations_intent_generation',
+    'CREATE INDEX idx_e2ee_sync_operations_intent_generation ON e2ee_sync_operation_rows (intent_id, intent_generation, operation_id)',
+  );
+  late final Index idxE2eeSyncOutboxPhaseDue = Index(
+    'idx_e2ee_sync_outbox_phase_due',
+    'CREATE INDEX idx_e2ee_sync_outbox_phase_due ON e2ee_sync_outbox_rows (phase, next_attempt_at, operation_id)',
+  );
+  late final Index idxE2eeSyncRemoteRecordsGateUpdated = Index(
+    'idx_e2ee_sync_remote_records_gate_updated',
+    'CREATE INDEX idx_e2ee_sync_remote_records_gate_updated ON e2ee_sync_remote_record_rows (gate, updated_at, record_id)',
+  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -7096,6 +10446,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     e2eeSyncRecordStateRows,
     e2eeSyncRecordParentRows,
     e2eeSyncRecordHeadRows,
+    e2eeSyncIntentRows,
+    e2eeSyncOperationRows,
+    e2eeSyncOutboxRows,
+    e2eeSyncRemoteRecordRows,
     idxConversationsUpdatedAt,
     idxConversationsAssistant,
     idxMessagesConversationOrder,
@@ -7109,6 +10463,11 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxGenerationRunsActiveTarget,
     idxGenerationRunsStateUpdated,
     idxE2eeSyncRecordStatesRecordVersion,
+    idxE2eeSyncIntentsPhaseUpdated,
+    idxE2eeSyncOperationsEntityGeneration,
+    idxE2eeSyncOperationsIntentGeneration,
+    idxE2eeSyncOutboxPhaseDue,
+    idxE2eeSyncRemoteRecordsGateUpdated,
   ];
   @override
   StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
@@ -13170,6 +16529,1571 @@ typedef $$E2eeSyncRecordHeadRowsTableProcessedTableManager =
       E2eeSyncRecordHeadRow,
       PrefetchHooks Function({bool digest})
     >;
+typedef $$E2eeSyncIntentRowsTableCreateCompanionBuilder =
+    E2eeSyncIntentRowsCompanion Function({
+      required String entityType,
+      required String entityId,
+      required String intentId,
+      required int generation,
+      required String phase,
+      Value<String?> writerSessionId,
+      Value<String?> sealLeaseToken,
+      Value<String?> sealOwnerSessionId,
+      Value<DateTime?> sealLeaseExpiresAt,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeSyncIntentRowsTableUpdateCompanionBuilder =
+    E2eeSyncIntentRowsCompanion Function({
+      Value<String> entityType,
+      Value<String> entityId,
+      Value<String> intentId,
+      Value<int> generation,
+      Value<String> phase,
+      Value<String?> writerSessionId,
+      Value<String?> sealLeaseToken,
+      Value<String?> sealOwnerSessionId,
+      Value<DateTime?> sealLeaseExpiresAt,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$E2eeSyncIntentRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeSyncIntentRowsTable> {
+  $$E2eeSyncIntentRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get intentId => $composableBuilder(
+    column: $table.intentId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get writerSessionId => $composableBuilder(
+    column: $table.writerSessionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sealLeaseToken => $composableBuilder(
+    column: $table.sealLeaseToken,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sealOwnerSessionId => $composableBuilder(
+    column: $table.sealOwnerSessionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime?, DateTime, int>
+  get sealLeaseExpiresAt => $composableBuilder(
+    column: $table.sealLeaseExpiresAt,
+    builder: (column) => ColumnWithTypeConverterFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get createdAt =>
+      $composableBuilder(
+        column: $table.createdAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeSyncIntentRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeSyncIntentRowsTable> {
+  $$E2eeSyncIntentRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get intentId => $composableBuilder(
+    column: $table.intentId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get writerSessionId => $composableBuilder(
+    column: $table.writerSessionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sealLeaseToken => $composableBuilder(
+    column: $table.sealLeaseToken,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sealOwnerSessionId => $composableBuilder(
+    column: $table.sealOwnerSessionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sealLeaseExpiresAt => $composableBuilder(
+    column: $table.sealLeaseExpiresAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeSyncIntentRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeSyncIntentRowsTable> {
+  $$E2eeSyncIntentRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get entityId =>
+      $composableBuilder(column: $table.entityId, builder: (column) => column);
+
+  GeneratedColumn<String> get intentId =>
+      $composableBuilder(column: $table.intentId, builder: (column) => column);
+
+  GeneratedColumn<int> get generation => $composableBuilder(
+    column: $table.generation,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get phase =>
+      $composableBuilder(column: $table.phase, builder: (column) => column);
+
+  GeneratedColumn<String> get writerSessionId => $composableBuilder(
+    column: $table.writerSessionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sealLeaseToken => $composableBuilder(
+    column: $table.sealLeaseToken,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sealOwnerSessionId => $composableBuilder(
+    column: $table.sealOwnerSessionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime?, int> get sealLeaseExpiresAt =>
+      $composableBuilder(
+        column: $table.sealLeaseExpiresAt,
+        builder: (column) => column,
+      );
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeSyncIntentRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeSyncIntentRowsTable,
+          E2eeSyncIntentRow,
+          $$E2eeSyncIntentRowsTableFilterComposer,
+          $$E2eeSyncIntentRowsTableOrderingComposer,
+          $$E2eeSyncIntentRowsTableAnnotationComposer,
+          $$E2eeSyncIntentRowsTableCreateCompanionBuilder,
+          $$E2eeSyncIntentRowsTableUpdateCompanionBuilder,
+          (
+            E2eeSyncIntentRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeSyncIntentRowsTable,
+              E2eeSyncIntentRow
+            >,
+          ),
+          E2eeSyncIntentRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeSyncIntentRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeSyncIntentRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeSyncIntentRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$E2eeSyncIntentRowsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$E2eeSyncIntentRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> entityType = const Value.absent(),
+                Value<String> entityId = const Value.absent(),
+                Value<String> intentId = const Value.absent(),
+                Value<int> generation = const Value.absent(),
+                Value<String> phase = const Value.absent(),
+                Value<String?> writerSessionId = const Value.absent(),
+                Value<String?> sealLeaseToken = const Value.absent(),
+                Value<String?> sealOwnerSessionId = const Value.absent(),
+                Value<DateTime?> sealLeaseExpiresAt = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncIntentRowsCompanion(
+                entityType: entityType,
+                entityId: entityId,
+                intentId: intentId,
+                generation: generation,
+                phase: phase,
+                writerSessionId: writerSessionId,
+                sealLeaseToken: sealLeaseToken,
+                sealOwnerSessionId: sealOwnerSessionId,
+                sealLeaseExpiresAt: sealLeaseExpiresAt,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String entityType,
+                required String entityId,
+                required String intentId,
+                required int generation,
+                required String phase,
+                Value<String?> writerSessionId = const Value.absent(),
+                Value<String?> sealLeaseToken = const Value.absent(),
+                Value<String?> sealOwnerSessionId = const Value.absent(),
+                Value<DateTime?> sealLeaseExpiresAt = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncIntentRowsCompanion.insert(
+                entityType: entityType,
+                entityId: entityId,
+                intentId: intentId,
+                generation: generation,
+                phase: phase,
+                writerSessionId: writerSessionId,
+                sealLeaseToken: sealLeaseToken,
+                sealOwnerSessionId: sealOwnerSessionId,
+                sealLeaseExpiresAt: sealLeaseExpiresAt,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeSyncIntentRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeSyncIntentRowsTable,
+      E2eeSyncIntentRow,
+      $$E2eeSyncIntentRowsTableFilterComposer,
+      $$E2eeSyncIntentRowsTableOrderingComposer,
+      $$E2eeSyncIntentRowsTableAnnotationComposer,
+      $$E2eeSyncIntentRowsTableCreateCompanionBuilder,
+      $$E2eeSyncIntentRowsTableUpdateCompanionBuilder,
+      (
+        E2eeSyncIntentRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeSyncIntentRowsTable,
+          E2eeSyncIntentRow
+        >,
+      ),
+      E2eeSyncIntentRow,
+      PrefetchHooks Function()
+    >;
+typedef $$E2eeSyncOperationRowsTableCreateCompanionBuilder =
+    E2eeSyncOperationRowsCompanion Function({
+      required String operationId,
+      required Uint8List stateDigest,
+      required String recordId,
+      required String entityType,
+      required String entityId,
+      required String intentId,
+      required int intentGeneration,
+      required int expectedRevision,
+      required String accountUserId,
+      required String actorDeviceId,
+      required int claimedWriterKeyVersion,
+      required String outcome,
+      Value<int?> resultRevision,
+      Value<int?> resultChangeSeq,
+      Value<int?> currentRevision,
+      Value<String?> errorCode,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeSyncOperationRowsTableUpdateCompanionBuilder =
+    E2eeSyncOperationRowsCompanion Function({
+      Value<String> operationId,
+      Value<Uint8List> stateDigest,
+      Value<String> recordId,
+      Value<String> entityType,
+      Value<String> entityId,
+      Value<String> intentId,
+      Value<int> intentGeneration,
+      Value<int> expectedRevision,
+      Value<String> accountUserId,
+      Value<String> actorDeviceId,
+      Value<int> claimedWriterKeyVersion,
+      Value<String> outcome,
+      Value<int?> resultRevision,
+      Value<int?> resultChangeSeq,
+      Value<int?> currentRevision,
+      Value<String?> errorCode,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$E2eeSyncOperationRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeSyncOperationRowsTable> {
+  $$E2eeSyncOperationRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get stateDigest => $composableBuilder(
+    column: $table.stateDigest,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get recordId => $composableBuilder(
+    column: $table.recordId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get intentId => $composableBuilder(
+    column: $table.intentId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get intentGeneration => $composableBuilder(
+    column: $table.intentGeneration,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get expectedRevision => $composableBuilder(
+    column: $table.expectedRevision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get actorDeviceId => $composableBuilder(
+    column: $table.actorDeviceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get claimedWriterKeyVersion => $composableBuilder(
+    column: $table.claimedWriterKeyVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get outcome => $composableBuilder(
+    column: $table.outcome,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get resultRevision => $composableBuilder(
+    column: $table.resultRevision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get resultChangeSeq => $composableBuilder(
+    column: $table.resultChangeSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get currentRevision => $composableBuilder(
+    column: $table.currentRevision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get createdAt =>
+      $composableBuilder(
+        column: $table.createdAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeSyncOperationRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeSyncOperationRowsTable> {
+  $$E2eeSyncOperationRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get stateDigest => $composableBuilder(
+    column: $table.stateDigest,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get recordId => $composableBuilder(
+    column: $table.recordId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get intentId => $composableBuilder(
+    column: $table.intentId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get intentGeneration => $composableBuilder(
+    column: $table.intentGeneration,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get expectedRevision => $composableBuilder(
+    column: $table.expectedRevision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get actorDeviceId => $composableBuilder(
+    column: $table.actorDeviceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get claimedWriterKeyVersion => $composableBuilder(
+    column: $table.claimedWriterKeyVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get outcome => $composableBuilder(
+    column: $table.outcome,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get resultRevision => $composableBuilder(
+    column: $table.resultRevision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get resultChangeSeq => $composableBuilder(
+    column: $table.resultChangeSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get currentRevision => $composableBuilder(
+    column: $table.currentRevision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeSyncOperationRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeSyncOperationRowsTable> {
+  $$E2eeSyncOperationRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<Uint8List> get stateDigest => $composableBuilder(
+    column: $table.stateDigest,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get recordId =>
+      $composableBuilder(column: $table.recordId, builder: (column) => column);
+
+  GeneratedColumn<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get entityId =>
+      $composableBuilder(column: $table.entityId, builder: (column) => column);
+
+  GeneratedColumn<String> get intentId =>
+      $composableBuilder(column: $table.intentId, builder: (column) => column);
+
+  GeneratedColumn<int> get intentGeneration => $composableBuilder(
+    column: $table.intentGeneration,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get expectedRevision => $composableBuilder(
+    column: $table.expectedRevision,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get actorDeviceId => $composableBuilder(
+    column: $table.actorDeviceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get claimedWriterKeyVersion => $composableBuilder(
+    column: $table.claimedWriterKeyVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get outcome =>
+      $composableBuilder(column: $table.outcome, builder: (column) => column);
+
+  GeneratedColumn<int> get resultRevision => $composableBuilder(
+    column: $table.resultRevision,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get resultChangeSeq => $composableBuilder(
+    column: $table.resultChangeSeq,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get currentRevision => $composableBuilder(
+    column: $table.currentRevision,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get errorCode =>
+      $composableBuilder(column: $table.errorCode, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeSyncOperationRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeSyncOperationRowsTable,
+          E2eeSyncOperationRow,
+          $$E2eeSyncOperationRowsTableFilterComposer,
+          $$E2eeSyncOperationRowsTableOrderingComposer,
+          $$E2eeSyncOperationRowsTableAnnotationComposer,
+          $$E2eeSyncOperationRowsTableCreateCompanionBuilder,
+          $$E2eeSyncOperationRowsTableUpdateCompanionBuilder,
+          (
+            E2eeSyncOperationRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeSyncOperationRowsTable,
+              E2eeSyncOperationRow
+            >,
+          ),
+          E2eeSyncOperationRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeSyncOperationRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeSyncOperationRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeSyncOperationRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeSyncOperationRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeSyncOperationRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> operationId = const Value.absent(),
+                Value<Uint8List> stateDigest = const Value.absent(),
+                Value<String> recordId = const Value.absent(),
+                Value<String> entityType = const Value.absent(),
+                Value<String> entityId = const Value.absent(),
+                Value<String> intentId = const Value.absent(),
+                Value<int> intentGeneration = const Value.absent(),
+                Value<int> expectedRevision = const Value.absent(),
+                Value<String> accountUserId = const Value.absent(),
+                Value<String> actorDeviceId = const Value.absent(),
+                Value<int> claimedWriterKeyVersion = const Value.absent(),
+                Value<String> outcome = const Value.absent(),
+                Value<int?> resultRevision = const Value.absent(),
+                Value<int?> resultChangeSeq = const Value.absent(),
+                Value<int?> currentRevision = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncOperationRowsCompanion(
+                operationId: operationId,
+                stateDigest: stateDigest,
+                recordId: recordId,
+                entityType: entityType,
+                entityId: entityId,
+                intentId: intentId,
+                intentGeneration: intentGeneration,
+                expectedRevision: expectedRevision,
+                accountUserId: accountUserId,
+                actorDeviceId: actorDeviceId,
+                claimedWriterKeyVersion: claimedWriterKeyVersion,
+                outcome: outcome,
+                resultRevision: resultRevision,
+                resultChangeSeq: resultChangeSeq,
+                currentRevision: currentRevision,
+                errorCode: errorCode,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String operationId,
+                required Uint8List stateDigest,
+                required String recordId,
+                required String entityType,
+                required String entityId,
+                required String intentId,
+                required int intentGeneration,
+                required int expectedRevision,
+                required String accountUserId,
+                required String actorDeviceId,
+                required int claimedWriterKeyVersion,
+                required String outcome,
+                Value<int?> resultRevision = const Value.absent(),
+                Value<int?> resultChangeSeq = const Value.absent(),
+                Value<int?> currentRevision = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncOperationRowsCompanion.insert(
+                operationId: operationId,
+                stateDigest: stateDigest,
+                recordId: recordId,
+                entityType: entityType,
+                entityId: entityId,
+                intentId: intentId,
+                intentGeneration: intentGeneration,
+                expectedRevision: expectedRevision,
+                accountUserId: accountUserId,
+                actorDeviceId: actorDeviceId,
+                claimedWriterKeyVersion: claimedWriterKeyVersion,
+                outcome: outcome,
+                resultRevision: resultRevision,
+                resultChangeSeq: resultChangeSeq,
+                currentRevision: currentRevision,
+                errorCode: errorCode,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeSyncOperationRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeSyncOperationRowsTable,
+      E2eeSyncOperationRow,
+      $$E2eeSyncOperationRowsTableFilterComposer,
+      $$E2eeSyncOperationRowsTableOrderingComposer,
+      $$E2eeSyncOperationRowsTableAnnotationComposer,
+      $$E2eeSyncOperationRowsTableCreateCompanionBuilder,
+      $$E2eeSyncOperationRowsTableUpdateCompanionBuilder,
+      (
+        E2eeSyncOperationRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeSyncOperationRowsTable,
+          E2eeSyncOperationRow
+        >,
+      ),
+      E2eeSyncOperationRow,
+      PrefetchHooks Function()
+    >;
+typedef $$E2eeSyncOutboxRowsTableCreateCompanionBuilder =
+    E2eeSyncOutboxRowsCompanion Function({
+      required String operationId,
+      required String recordId,
+      required int envelopeVersion,
+      required int keyEpoch,
+      required Uint8List ciphertext,
+      required String phase,
+      Value<String?> leaseToken,
+      Value<String?> leaseOwnerSessionId,
+      Value<DateTime?> leaseExpiresAt,
+      required int transitionVersion,
+      required int attemptCount,
+      required DateTime nextAttemptAt,
+      Value<String?> lastFailureKind,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeSyncOutboxRowsTableUpdateCompanionBuilder =
+    E2eeSyncOutboxRowsCompanion Function({
+      Value<String> operationId,
+      Value<String> recordId,
+      Value<int> envelopeVersion,
+      Value<int> keyEpoch,
+      Value<Uint8List> ciphertext,
+      Value<String> phase,
+      Value<String?> leaseToken,
+      Value<String?> leaseOwnerSessionId,
+      Value<DateTime?> leaseExpiresAt,
+      Value<int> transitionVersion,
+      Value<int> attemptCount,
+      Value<DateTime> nextAttemptAt,
+      Value<String?> lastFailureKind,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$E2eeSyncOutboxRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeSyncOutboxRowsTable> {
+  $$E2eeSyncOutboxRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get recordId => $composableBuilder(
+    column: $table.recordId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get envelopeVersion => $composableBuilder(
+    column: $table.envelopeVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get keyEpoch => $composableBuilder(
+    column: $table.keyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get ciphertext => $composableBuilder(
+    column: $table.ciphertext,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get leaseOwnerSessionId => $composableBuilder(
+    column: $table.leaseOwnerSessionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime?, DateTime, int> get leaseExpiresAt =>
+      $composableBuilder(
+        column: $table.leaseExpiresAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnFilters<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get nextAttemptAt =>
+      $composableBuilder(
+        column: $table.nextAttemptAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnFilters<String> get lastFailureKind => $composableBuilder(
+    column: $table.lastFailureKind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get createdAt =>
+      $composableBuilder(
+        column: $table.createdAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeSyncOutboxRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeSyncOutboxRowsTable> {
+  $$E2eeSyncOutboxRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get recordId => $composableBuilder(
+    column: $table.recordId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get envelopeVersion => $composableBuilder(
+    column: $table.envelopeVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get keyEpoch => $composableBuilder(
+    column: $table.keyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get ciphertext => $composableBuilder(
+    column: $table.ciphertext,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get leaseOwnerSessionId => $composableBuilder(
+    column: $table.leaseOwnerSessionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get leaseExpiresAt => $composableBuilder(
+    column: $table.leaseExpiresAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get nextAttemptAt => $composableBuilder(
+    column: $table.nextAttemptAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get lastFailureKind => $composableBuilder(
+    column: $table.lastFailureKind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeSyncOutboxRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeSyncOutboxRowsTable> {
+  $$E2eeSyncOutboxRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get recordId =>
+      $composableBuilder(column: $table.recordId, builder: (column) => column);
+
+  GeneratedColumn<int> get envelopeVersion => $composableBuilder(
+    column: $table.envelopeVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get keyEpoch =>
+      $composableBuilder(column: $table.keyEpoch, builder: (column) => column);
+
+  GeneratedColumn<Uint8List> get ciphertext => $composableBuilder(
+    column: $table.ciphertext,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get phase =>
+      $composableBuilder(column: $table.phase, builder: (column) => column);
+
+  GeneratedColumn<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get leaseOwnerSessionId => $composableBuilder(
+    column: $table.leaseOwnerSessionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime?, int> get leaseExpiresAt =>
+      $composableBuilder(
+        column: $table.leaseExpiresAt,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get attemptCount => $composableBuilder(
+    column: $table.attemptCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get nextAttemptAt =>
+      $composableBuilder(
+        column: $table.nextAttemptAt,
+        builder: (column) => column,
+      );
+
+  GeneratedColumn<String> get lastFailureKind => $composableBuilder(
+    column: $table.lastFailureKind,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeSyncOutboxRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeSyncOutboxRowsTable,
+          E2eeSyncOutboxRow,
+          $$E2eeSyncOutboxRowsTableFilterComposer,
+          $$E2eeSyncOutboxRowsTableOrderingComposer,
+          $$E2eeSyncOutboxRowsTableAnnotationComposer,
+          $$E2eeSyncOutboxRowsTableCreateCompanionBuilder,
+          $$E2eeSyncOutboxRowsTableUpdateCompanionBuilder,
+          (
+            E2eeSyncOutboxRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeSyncOutboxRowsTable,
+              E2eeSyncOutboxRow
+            >,
+          ),
+          E2eeSyncOutboxRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeSyncOutboxRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeSyncOutboxRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeSyncOutboxRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$E2eeSyncOutboxRowsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$E2eeSyncOutboxRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> operationId = const Value.absent(),
+                Value<String> recordId = const Value.absent(),
+                Value<int> envelopeVersion = const Value.absent(),
+                Value<int> keyEpoch = const Value.absent(),
+                Value<Uint8List> ciphertext = const Value.absent(),
+                Value<String> phase = const Value.absent(),
+                Value<String?> leaseToken = const Value.absent(),
+                Value<String?> leaseOwnerSessionId = const Value.absent(),
+                Value<DateTime?> leaseExpiresAt = const Value.absent(),
+                Value<int> transitionVersion = const Value.absent(),
+                Value<int> attemptCount = const Value.absent(),
+                Value<DateTime> nextAttemptAt = const Value.absent(),
+                Value<String?> lastFailureKind = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncOutboxRowsCompanion(
+                operationId: operationId,
+                recordId: recordId,
+                envelopeVersion: envelopeVersion,
+                keyEpoch: keyEpoch,
+                ciphertext: ciphertext,
+                phase: phase,
+                leaseToken: leaseToken,
+                leaseOwnerSessionId: leaseOwnerSessionId,
+                leaseExpiresAt: leaseExpiresAt,
+                transitionVersion: transitionVersion,
+                attemptCount: attemptCount,
+                nextAttemptAt: nextAttemptAt,
+                lastFailureKind: lastFailureKind,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String operationId,
+                required String recordId,
+                required int envelopeVersion,
+                required int keyEpoch,
+                required Uint8List ciphertext,
+                required String phase,
+                Value<String?> leaseToken = const Value.absent(),
+                Value<String?> leaseOwnerSessionId = const Value.absent(),
+                Value<DateTime?> leaseExpiresAt = const Value.absent(),
+                required int transitionVersion,
+                required int attemptCount,
+                required DateTime nextAttemptAt,
+                Value<String?> lastFailureKind = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncOutboxRowsCompanion.insert(
+                operationId: operationId,
+                recordId: recordId,
+                envelopeVersion: envelopeVersion,
+                keyEpoch: keyEpoch,
+                ciphertext: ciphertext,
+                phase: phase,
+                leaseToken: leaseToken,
+                leaseOwnerSessionId: leaseOwnerSessionId,
+                leaseExpiresAt: leaseExpiresAt,
+                transitionVersion: transitionVersion,
+                attemptCount: attemptCount,
+                nextAttemptAt: nextAttemptAt,
+                lastFailureKind: lastFailureKind,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeSyncOutboxRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeSyncOutboxRowsTable,
+      E2eeSyncOutboxRow,
+      $$E2eeSyncOutboxRowsTableFilterComposer,
+      $$E2eeSyncOutboxRowsTableOrderingComposer,
+      $$E2eeSyncOutboxRowsTableAnnotationComposer,
+      $$E2eeSyncOutboxRowsTableCreateCompanionBuilder,
+      $$E2eeSyncOutboxRowsTableUpdateCompanionBuilder,
+      (
+        E2eeSyncOutboxRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeSyncOutboxRowsTable,
+          E2eeSyncOutboxRow
+        >,
+      ),
+      E2eeSyncOutboxRow,
+      PrefetchHooks Function()
+    >;
+typedef $$E2eeSyncRemoteRecordRowsTableCreateCompanionBuilder =
+    E2eeSyncRemoteRecordRowsCompanion Function({
+      required String recordId,
+      Value<int?> revision,
+      Value<int?> lastChangeSeq,
+      Value<Uint8List?> stateDigest,
+      required String gate,
+      Value<int?> observedRevision,
+      Value<String?> errorCode,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeSyncRemoteRecordRowsTableUpdateCompanionBuilder =
+    E2eeSyncRemoteRecordRowsCompanion Function({
+      Value<String> recordId,
+      Value<int?> revision,
+      Value<int?> lastChangeSeq,
+      Value<Uint8List?> stateDigest,
+      Value<String> gate,
+      Value<int?> observedRevision,
+      Value<String?> errorCode,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$E2eeSyncRemoteRecordRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRemoteRecordRowsTable> {
+  $$E2eeSyncRemoteRecordRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get recordId => $composableBuilder(
+    column: $table.recordId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get revision => $composableBuilder(
+    column: $table.revision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get lastChangeSeq => $composableBuilder(
+    column: $table.lastChangeSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get stateDigest => $composableBuilder(
+    column: $table.stateDigest,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get gate => $composableBuilder(
+    column: $table.gate,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get observedRevision => $composableBuilder(
+    column: $table.observedRevision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get createdAt =>
+      $composableBuilder(
+        column: $table.createdAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeSyncRemoteRecordRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRemoteRecordRowsTable> {
+  $$E2eeSyncRemoteRecordRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get recordId => $composableBuilder(
+    column: $table.recordId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get revision => $composableBuilder(
+    column: $table.revision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get lastChangeSeq => $composableBuilder(
+    column: $table.lastChangeSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get stateDigest => $composableBuilder(
+    column: $table.stateDigest,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get gate => $composableBuilder(
+    column: $table.gate,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get observedRevision => $composableBuilder(
+    column: $table.observedRevision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get errorCode => $composableBuilder(
+    column: $table.errorCode,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeSyncRemoteRecordRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeSyncRemoteRecordRowsTable> {
+  $$E2eeSyncRemoteRecordRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get recordId =>
+      $composableBuilder(column: $table.recordId, builder: (column) => column);
+
+  GeneratedColumn<int> get revision =>
+      $composableBuilder(column: $table.revision, builder: (column) => column);
+
+  GeneratedColumn<int> get lastChangeSeq => $composableBuilder(
+    column: $table.lastChangeSeq,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<Uint8List> get stateDigest => $composableBuilder(
+    column: $table.stateDigest,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get gate =>
+      $composableBuilder(column: $table.gate, builder: (column) => column);
+
+  GeneratedColumn<int> get observedRevision => $composableBuilder(
+    column: $table.observedRevision,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get errorCode =>
+      $composableBuilder(column: $table.errorCode, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeSyncRemoteRecordRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeSyncRemoteRecordRowsTable,
+          E2eeSyncRemoteRecordRow,
+          $$E2eeSyncRemoteRecordRowsTableFilterComposer,
+          $$E2eeSyncRemoteRecordRowsTableOrderingComposer,
+          $$E2eeSyncRemoteRecordRowsTableAnnotationComposer,
+          $$E2eeSyncRemoteRecordRowsTableCreateCompanionBuilder,
+          $$E2eeSyncRemoteRecordRowsTableUpdateCompanionBuilder,
+          (
+            E2eeSyncRemoteRecordRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeSyncRemoteRecordRowsTable,
+              E2eeSyncRemoteRecordRow
+            >,
+          ),
+          E2eeSyncRemoteRecordRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeSyncRemoteRecordRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeSyncRemoteRecordRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeSyncRemoteRecordRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeSyncRemoteRecordRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeSyncRemoteRecordRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> recordId = const Value.absent(),
+                Value<int?> revision = const Value.absent(),
+                Value<int?> lastChangeSeq = const Value.absent(),
+                Value<Uint8List?> stateDigest = const Value.absent(),
+                Value<String> gate = const Value.absent(),
+                Value<int?> observedRevision = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncRemoteRecordRowsCompanion(
+                recordId: recordId,
+                revision: revision,
+                lastChangeSeq: lastChangeSeq,
+                stateDigest: stateDigest,
+                gate: gate,
+                observedRevision: observedRevision,
+                errorCode: errorCode,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String recordId,
+                Value<int?> revision = const Value.absent(),
+                Value<int?> lastChangeSeq = const Value.absent(),
+                Value<Uint8List?> stateDigest = const Value.absent(),
+                required String gate,
+                Value<int?> observedRevision = const Value.absent(),
+                Value<String?> errorCode = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeSyncRemoteRecordRowsCompanion.insert(
+                recordId: recordId,
+                revision: revision,
+                lastChangeSeq: lastChangeSeq,
+                stateDigest: stateDigest,
+                gate: gate,
+                observedRevision: observedRevision,
+                errorCode: errorCode,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeSyncRemoteRecordRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeSyncRemoteRecordRowsTable,
+      E2eeSyncRemoteRecordRow,
+      $$E2eeSyncRemoteRecordRowsTableFilterComposer,
+      $$E2eeSyncRemoteRecordRowsTableOrderingComposer,
+      $$E2eeSyncRemoteRecordRowsTableAnnotationComposer,
+      $$E2eeSyncRemoteRecordRowsTableCreateCompanionBuilder,
+      $$E2eeSyncRemoteRecordRowsTableUpdateCompanionBuilder,
+      (
+        E2eeSyncRemoteRecordRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeSyncRemoteRecordRowsTable,
+          E2eeSyncRemoteRecordRow
+        >,
+      ),
+      E2eeSyncRemoteRecordRow,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -13219,5 +18143,16 @@ class $AppDatabaseManager {
       $$E2eeSyncRecordHeadRowsTableTableManager(
         _db,
         _db.e2eeSyncRecordHeadRows,
+      );
+  $$E2eeSyncIntentRowsTableTableManager get e2eeSyncIntentRows =>
+      $$E2eeSyncIntentRowsTableTableManager(_db, _db.e2eeSyncIntentRows);
+  $$E2eeSyncOperationRowsTableTableManager get e2eeSyncOperationRows =>
+      $$E2eeSyncOperationRowsTableTableManager(_db, _db.e2eeSyncOperationRows);
+  $$E2eeSyncOutboxRowsTableTableManager get e2eeSyncOutboxRows =>
+      $$E2eeSyncOutboxRowsTableTableManager(_db, _db.e2eeSyncOutboxRows);
+  $$E2eeSyncRemoteRecordRowsTableTableManager get e2eeSyncRemoteRecordRows =>
+      $$E2eeSyncRemoteRecordRowsTableTableManager(
+        _db,
+        _db.e2eeSyncRemoteRecordRows,
       );
 }

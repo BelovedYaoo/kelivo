@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -319,6 +320,206 @@ void main() {
     expect(openedTombstone.payloadLength, 0);
   });
 
+  test('认证记录状态从持久化信封重建发送态并逐字节复用密文', () async {
+    final codec = await _createStateCodec();
+    addTearDown(codec.close);
+    final sealed = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final persistedCiphertext = Uint8List.fromList(sealed.record.ciphertext);
+
+    final restored = await codec.restoreForSend(
+      _untrustedStateRecord(sealed, ciphertext: persistedCiphertext),
+      expectedDigest: sealed.digest,
+    );
+
+    expect(codec.currentKeyEpoch, 7);
+    expect(
+      await codec.deriveRecordId(_stateTestEntityKey),
+      sealed.record.recordId,
+    );
+    expect(restored.sealed.record.recordId, sealed.record.recordId);
+    expect(restored.sealed.record.keyEpoch, sealed.record.keyEpoch);
+    expect(
+      restored.sealed.record.ciphertext,
+      orderedEquals(persistedCiphertext),
+    );
+    expect(restored.sealed.record.ciphertext, isNot(same(persistedCiphertext)));
+    expect(restored.sealed.digest, sealed.digest);
+    expect(restored.sealed.kind, sealed.kind);
+    expect(restored.sealed.logicalVersion, sealed.logicalVersion);
+    expect(restored.sealed.parentDigests, sealed.parentDigests);
+    expect(restored.sealed.operationId, sealed.operationId);
+    expect(restored.sealed.claimedWriterDeviceId, sealed.claimedWriterDeviceId);
+    expect(
+      restored.sealed.claimedWriterKeyVersion,
+      sealed.claimedWriterKeyVersion,
+    );
+    expect(restored.authenticated.entityKey, _stateTestEntityKey);
+    expect(restored.authenticated.digest, sealed.digest);
+    expect(persistedCiphertext, orderedEquals(sealed.record.ciphertext));
+  });
+
+  test('当前密钥世代可恢复并打开同一 ARK 的历史世代状态', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+
+    final random = Random.secure();
+    final slot = await core.createSlot(
+      Uint8List.fromList(List<int>.generate(16, (_) => random.nextInt(256))),
+    );
+    addTearDown(() => core.close(slot));
+    final identity = await core.generateDeviceIdentity();
+    addTearDown(() => core.closeDeviceIdentity(identity));
+
+    KelivoAccountRootKeyHandle? sourceArk = await core.generateAccountRootKey();
+    addTearDown(() async {
+      final handle = sourceArk;
+      if (handle != null) await core.closeAccountRootKey(handle);
+    });
+    final stateBlob = await core.sealDeviceState(
+      slot,
+      identity,
+      deviceId: _rawStateUuid(_stateTestWriterDeviceId),
+      keyVersion: 1,
+      ark: sourceArk,
+      account: KelivoDeviceStateAccountBinding(
+        userId: _rawStateUuid(_stateTestUserId),
+        keyEpoch: 7,
+      ),
+    );
+    final reopened = await core.openDeviceState(slot, stateBlob: stateBlob);
+    addTearDown(() => core.closeDeviceIdentity(reopened.identity));
+    KelivoAccountRootKeyHandle? reopenedArk = reopened.ark;
+    addTearDown(() async {
+      final handle = reopenedArk;
+      if (handle != null) await core.closeAccountRootKey(handle);
+    });
+    expect(reopenedArk, isNotNull);
+
+    final epoch6Ark = sourceArk;
+    final epoch6Codec = E2eeAccountRecordStateCodec.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: core,
+        accountRootKey: epoch6Ark,
+        userId: _stateTestUserId,
+        currentKeyEpoch: 6,
+      ),
+    );
+    sourceArk = null;
+    addTearDown(epoch6Codec.close);
+
+    final epoch7Ark = reopenedArk!;
+    final epoch7Codec = E2eeAccountRecordStateCodec.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: core,
+        accountRootKey: epoch7Ark,
+        userId: _stateTestUserId,
+        currentKeyEpoch: 7,
+      ),
+    );
+    reopenedArk = null;
+    addTearDown(epoch7Codec.close);
+
+    final payload = Uint8List.fromList(<int>[6, 7, 8]);
+    final sealed = await epoch6Codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: payload,
+    );
+    final persistedCiphertext = Uint8List.fromList(sealed.record.ciphertext);
+    final envelope = _untrustedStateRecord(
+      sealed,
+      ciphertext: persistedCiphertext,
+    );
+
+    final restored = await epoch7Codec.restoreForSend(
+      envelope,
+      expectedDigest: sealed.digest,
+    );
+    final opened = await epoch7Codec.open(
+      envelope,
+      decode: (state, borrowedPayload) =>
+          (state: state, payload: Uint8List.fromList(borrowedPayload)),
+    );
+
+    expect(epoch7Codec.currentKeyEpoch, 7);
+    expect(sealed.record.keyEpoch, 6);
+    expect(restored.sealed.record.keyEpoch, 6);
+    expect(restored.authenticated.keyEpoch, 6);
+    expect(
+      restored.sealed.record.ciphertext,
+      orderedEquals(persistedCiphertext),
+    );
+    expect(restored.sealed.digest, sealed.digest);
+    expect(opened.state.keyEpoch, 6);
+    expect(opened.state.digest, sealed.digest);
+    expect(opened.payload, orderedEquals(payload));
+  });
+
+  test('认证记录状态重建发送态拒绝摘要与信封篡改', () async {
+    final codec = await _createStateCodec();
+    addTearDown(codec.close);
+    final sealed = await codec.sealValue(
+      entityKey: _stateTestEntityKey,
+      logicalVersion: 1,
+      parentDigests: const [],
+      operationId: _stateTestOperationId1,
+      claimedWriterDeviceId: _stateTestWriterDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList(<int>[1, 2, 3]),
+    );
+    final wrongDigest = E2eeAccountRecordStateDigest.fromTrustedStorage(
+      Uint8List.fromList(
+        List<int>.filled(e2eeAccountRecordStateDigestBytes, 0x5a),
+      ),
+    );
+    await expectLater(
+      codec.restoreForSend(
+        _untrustedStateRecord(sealed),
+        expectedDigest: wrongDigest,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    final tamperedCiphertext = Uint8List.fromList(sealed.record.ciphertext);
+    tamperedCiphertext[tamperedCiphertext.length - 1] ^= 1;
+    await expectLater(
+      codec.restoreForSend(
+        _untrustedStateRecord(sealed, ciphertext: tamperedCiphertext),
+        expectedDigest: sealed.digest,
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+    await expectLater(
+      codec.restoreForSend(
+        _untrustedStateRecord(
+          sealed,
+          recordId: '10000000-0000-4000-8000-000000000002',
+        ),
+        expectedDigest: sealed.digest,
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+    await expectLater(
+      codec.restoreForSend(
+        _untrustedStateRecord(sealed, keyEpoch: 6),
+        expectedDigest: sealed.digest,
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+  });
+
   test('认证记录状态规范化双父摘要并表达显式合并', () async {
     final codec = await _createStateCodec();
     addTearDown(codec.close);
@@ -589,16 +790,26 @@ Future<E2eeAccountRecordStateCodec> _createStateCodec() async {
   );
 }
 
+Uint8List _rawStateUuid(String value) {
+  final hex = value.replaceAll('-', '');
+  return Uint8List.fromList(<int>[
+    for (var offset = 0; offset < hex.length; offset += 2)
+      int.parse(hex.substring(offset, offset + 2), radix: 16),
+  ]);
+}
+
 E2eeUntrustedAccountRecordEnvelope _untrustedStateRecord(
   E2eeSealedAccountRecordState state, {
+  String? recordId,
+  int? keyEpoch,
   Uint8List? ciphertext,
 }) {
   return E2eeUntrustedAccountRecordEnvelope.fromTransport(
     recordId: E2eeUntrustedAccountRecordId.fromTransport(
-      state.record.recordId.wireValue,
+      recordId ?? state.record.recordId.wireValue,
     ),
     envelopeVersion: e2eeAccountRecordEnvelopeVersion,
-    keyEpoch: state.record.keyEpoch,
+    keyEpoch: keyEpoch ?? state.record.keyEpoch,
     ciphertext: ciphertext ?? state.record.ciphertext,
   );
 }

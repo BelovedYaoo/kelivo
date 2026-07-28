@@ -523,6 +523,398 @@ class E2eeSyncRecordHeadRows extends Table {
   ];
 }
 
+@TableIndex(
+  name: 'idx_e2ee_sync_intents_phase_updated',
+  columns: {#phase, #updatedAt, #entityType, #entityId},
+)
+class E2eeSyncIntentRows extends Table {
+  TextColumn get entityType => text()();
+  TextColumn get entityId => text()();
+  TextColumn get intentId => text()();
+  IntColumn get generation => integer()();
+  TextColumn get phase => text()();
+  TextColumn get writerSessionId => text().nullable()();
+  TextColumn get sealLeaseToken => text().nullable()();
+  TextColumn get sealOwnerSessionId => text().nullable()();
+  IntColumn get sealLeaseExpiresAt =>
+      integer().map(const MicrosecondDateTimeConverter()).nullable()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {entityType, entityId};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {intentId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(entity_type) = 'text' "
+        'AND length(CAST(entity_type AS BLOB)) BETWEEN 1 AND 64)',
+    "CHECK (typeof(entity_id) = 'text' "
+        'AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024)',
+    "CHECK (typeof(intent_id) = 'text' AND length(intent_id) = 36 "
+        'AND intent_id = lower(intent_id) '
+        "AND intent_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(intent_id, 9, 1) = '-' "
+        "AND substr(intent_id, 14, 1) = '-' "
+        "AND substr(intent_id, 15, 1) = '4' "
+        "AND substr(intent_id, 19, 1) = '-' "
+        "AND substr(intent_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(intent_id, 24, 1) = '-' "
+        "AND substr(intent_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(intent_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(intent_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(intent_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(intent_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(generation) = 'integer' "
+        'AND generation BETWEEN 1 AND 9223372036854775807)',
+    "CHECK (typeof(phase) = 'text' "
+        "AND phase IN ('preparing', 'dirty', 'sealing'))",
+    "CHECK ((phase = 'preparing' "
+        "AND typeof(writer_session_id) = 'text' "
+        'AND length(CAST(writer_session_id AS BLOB)) >= 1 '
+        'AND seal_lease_token IS NULL '
+        'AND seal_owner_session_id IS NULL '
+        'AND seal_lease_expires_at IS NULL) '
+        "OR (phase = 'dirty' "
+        'AND writer_session_id IS NULL '
+        'AND seal_lease_token IS NULL '
+        'AND seal_owner_session_id IS NULL '
+        'AND seal_lease_expires_at IS NULL) '
+        "OR (phase = 'sealing' "
+        'AND writer_session_id IS NULL '
+        "AND typeof(seal_lease_token) = 'text' "
+        'AND length(CAST(seal_lease_token AS BLOB)) >= 1 '
+        "AND typeof(seal_owner_session_id) = 'text' "
+        'AND length(CAST(seal_owner_session_id AS BLOB)) >= 1 '
+        "AND typeof(seal_lease_expires_at) = 'integer' "
+        'AND seal_lease_expires_at >= 0))',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+  ];
+}
+
+@TableIndex(
+  name: 'idx_e2ee_sync_operations_entity_generation',
+  columns: {#entityType, #entityId, #intentGeneration, #operationId},
+)
+@TableIndex(
+  name: 'idx_e2ee_sync_operations_intent_generation',
+  columns: {#intentId, #intentGeneration, #operationId},
+)
+class E2eeSyncOperationRows extends Table {
+  TextColumn get operationId => text()();
+  BlobColumn get stateDigest => blob()();
+  TextColumn get recordId => text()();
+  TextColumn get entityType => text()();
+  TextColumn get entityId => text()();
+  TextColumn get intentId => text()();
+  IntColumn get intentGeneration => integer()();
+  IntColumn get expectedRevision => integer()();
+  TextColumn get accountUserId => text()();
+  TextColumn get actorDeviceId => text()();
+  IntColumn get claimedWriterKeyVersion => integer()();
+  TextColumn get outcome => text()();
+  IntColumn get resultRevision => integer().nullable()();
+  IntColumn get resultChangeSeq => integer().nullable()();
+  IntColumn get currentRevision => integer().nullable()();
+  TextColumn get errorCode => text().nullable()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {operationId};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {stateDigest},
+    {operationId, recordId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(operation_id) = 'text' AND length(operation_id) = 36 "
+        'AND operation_id = lower(operation_id) '
+        "AND operation_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(operation_id, 9, 1) = '-' "
+        "AND substr(operation_id, 14, 1) = '-' "
+        "AND substr(operation_id, 15, 1) = '4' "
+        "AND substr(operation_id, 19, 1) = '-' "
+        "AND substr(operation_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(operation_id, 24, 1) = '-' "
+        "AND substr(operation_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(operation_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(state_digest) = 'blob' AND length(state_digest) = 32)",
+    "CHECK (typeof(record_id) = 'text' AND length(record_id) = 36 "
+        'AND record_id = lower(record_id) '
+        "AND record_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(record_id, 9, 1) = '-' "
+        "AND substr(record_id, 14, 1) = '-' "
+        "AND substr(record_id, 15, 1) = '4' "
+        "AND substr(record_id, 19, 1) = '-' "
+        "AND substr(record_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(record_id, 24, 1) = '-' "
+        "AND substr(record_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(record_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(entity_type) = 'text' "
+        'AND length(CAST(entity_type AS BLOB)) BETWEEN 1 AND 64)',
+    "CHECK (typeof(entity_id) = 'text' "
+        'AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024)',
+    "CHECK (typeof(intent_id) = 'text' AND length(intent_id) = 36 "
+        'AND intent_id = lower(intent_id) '
+        "AND intent_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(intent_id, 9, 1) = '-' "
+        "AND substr(intent_id, 14, 1) = '-' "
+        "AND substr(intent_id, 15, 1) = '4' "
+        "AND substr(intent_id, 19, 1) = '-' "
+        "AND substr(intent_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(intent_id, 24, 1) = '-' "
+        "AND substr(intent_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(intent_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(intent_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(intent_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(intent_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(intent_generation) = 'integer' "
+        'AND intent_generation BETWEEN 1 AND 9223372036854775807)',
+    "CHECK (typeof(expected_revision) = 'integer' "
+        'AND expected_revision BETWEEN 0 AND 9223372036854775807)',
+    "CHECK (typeof(account_user_id) = 'text' AND length(account_user_id) = 36 "
+        'AND account_user_id = lower(account_user_id) '
+        "AND account_user_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(account_user_id, 9, 1) = '-' "
+        "AND substr(account_user_id, 14, 1) = '-' "
+        "AND substr(account_user_id, 15, 1) = '4' "
+        "AND substr(account_user_id, 19, 1) = '-' "
+        "AND substr(account_user_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(account_user_id, 24, 1) = '-' "
+        "AND substr(account_user_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(actor_device_id) = 'text' AND length(actor_device_id) = 36 "
+        'AND actor_device_id = lower(actor_device_id) '
+        "AND actor_device_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(actor_device_id, 9, 1) = '-' "
+        "AND substr(actor_device_id, 14, 1) = '-' "
+        "AND substr(actor_device_id, 15, 1) = '4' "
+        "AND substr(actor_device_id, 19, 1) = '-' "
+        "AND substr(actor_device_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(actor_device_id, 24, 1) = '-' "
+        "AND substr(actor_device_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(actor_device_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(actor_device_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(actor_device_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(actor_device_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(claimed_writer_key_version) = 'integer' "
+        'AND claimed_writer_key_version BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(outcome) = 'text' "
+        "AND outcome IN ('active', 'applied', 'conflict', 'rejected'))",
+    'CHECK (result_revision IS NULL OR '
+        "(typeof(result_revision) = 'integer' AND result_revision >= 1))",
+    'CHECK (result_change_seq IS NULL OR '
+        "(typeof(result_change_seq) = 'integer' AND result_change_seq >= 0))",
+    'CHECK (current_revision IS NULL OR '
+        "(typeof(current_revision) = 'integer' AND current_revision >= 1))",
+    'CHECK (error_code IS NULL OR '
+        "(typeof(error_code) = 'text' "
+        'AND length(CAST(error_code AS BLOB)) BETWEEN 1 AND 100))',
+    "CHECK ((outcome = 'active' "
+        'AND result_revision IS NULL '
+        'AND result_change_seq IS NULL '
+        'AND current_revision IS NULL '
+        'AND error_code IS NULL) '
+        "OR (outcome = 'applied' "
+        'AND result_revision IS NOT NULL '
+        'AND result_change_seq IS NOT NULL '
+        'AND current_revision IS NULL '
+        'AND error_code IS NULL) '
+        "OR (outcome = 'conflict' "
+        'AND result_revision IS NULL '
+        'AND result_change_seq IS NULL '
+        'AND error_code IS NULL) '
+        "OR (outcome = 'rejected' "
+        'AND result_revision IS NULL '
+        'AND result_change_seq IS NULL '
+        'AND current_revision IS NULL '
+        'AND error_code IS NOT NULL))',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+  ];
+}
+
+@TableIndex(
+  name: 'idx_e2ee_sync_outbox_phase_due',
+  columns: {#phase, #nextAttemptAt, #operationId},
+)
+class E2eeSyncOutboxRows extends Table {
+  TextColumn get operationId => text()();
+  TextColumn get recordId => text()();
+  IntColumn get envelopeVersion => integer()();
+  IntColumn get keyEpoch => integer()();
+  BlobColumn get ciphertext => blob()();
+  TextColumn get phase => text()();
+  TextColumn get leaseToken => text().nullable()();
+  TextColumn get leaseOwnerSessionId => text().nullable()();
+  IntColumn get leaseExpiresAt =>
+      integer().map(const MicrosecondDateTimeConverter()).nullable()();
+  IntColumn get transitionVersion => integer()();
+  IntColumn get attemptCount => integer()();
+  IntColumn get nextAttemptAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  TextColumn get lastFailureKind => text().nullable()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {operationId};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {recordId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    'FOREIGN KEY (operation_id, record_id) '
+        'REFERENCES e2ee_sync_operation_rows (operation_id, record_id)',
+    "CHECK (typeof(operation_id) = 'text' AND length(operation_id) = 36 "
+        'AND operation_id = lower(operation_id) '
+        "AND operation_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(operation_id, 9, 1) = '-' "
+        "AND substr(operation_id, 14, 1) = '-' "
+        "AND substr(operation_id, 15, 1) = '4' "
+        "AND substr(operation_id, 19, 1) = '-' "
+        "AND substr(operation_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(operation_id, 24, 1) = '-' "
+        "AND substr(operation_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(operation_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(record_id) = 'text' AND length(record_id) = 36 "
+        'AND record_id = lower(record_id) '
+        "AND record_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(record_id, 9, 1) = '-' "
+        "AND substr(record_id, 14, 1) = '-' "
+        "AND substr(record_id, 15, 1) = '4' "
+        "AND substr(record_id, 19, 1) = '-' "
+        "AND substr(record_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(record_id, 24, 1) = '-' "
+        "AND substr(record_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(record_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(envelope_version) = 'integer' AND envelope_version = 1)",
+    "CHECK (typeof(key_epoch) = 'integer' "
+        'AND key_epoch BETWEEN 1 AND 2147483647)',
+    "CHECK (typeof(ciphertext) = 'blob' "
+        'AND length(ciphertext) BETWEEN 1 AND 1048576)',
+    "CHECK (typeof(phase) = 'text' AND phase IN ('ready', 'sending'))",
+    "CHECK ((phase = 'ready' "
+        'AND lease_token IS NULL '
+        'AND lease_owner_session_id IS NULL '
+        'AND lease_expires_at IS NULL) '
+        "OR (phase = 'sending' "
+        "AND typeof(lease_token) = 'text' "
+        'AND length(CAST(lease_token AS BLOB)) >= 1 '
+        "AND typeof(lease_owner_session_id) = 'text' "
+        'AND length(CAST(lease_owner_session_id AS BLOB)) >= 1 '
+        "AND typeof(lease_expires_at) = 'integer' "
+        'AND lease_expires_at >= 0))',
+    "CHECK (typeof(transition_version) = 'integer' "
+        'AND transition_version BETWEEN 1 AND 9223372036854775807)',
+    "CHECK (typeof(attempt_count) = 'integer' AND attempt_count >= 0)",
+    "CHECK (typeof(next_attempt_at) = 'integer' AND next_attempt_at >= 0)",
+    'CHECK (last_failure_kind IS NULL OR '
+        "(typeof(last_failure_kind) = 'text' "
+        'AND length(CAST(last_failure_kind AS BLOB)) BETWEEN 1 AND 100))',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+  ];
+}
+
+@TableIndex(
+  name: 'idx_e2ee_sync_remote_records_gate_updated',
+  columns: {#gate, #updatedAt, #recordId},
+)
+class E2eeSyncRemoteRecordRows extends Table {
+  TextColumn get recordId => text()();
+  IntColumn get revision => integer().nullable()();
+  IntColumn get lastChangeSeq => integer().nullable()();
+  BlobColumn get stateDigest => blob().nullable()();
+  TextColumn get gate => text()();
+  IntColumn get observedRevision => integer().nullable()();
+  TextColumn get errorCode => text().nullable()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {recordId};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(record_id) = 'text' AND length(record_id) = 36 "
+        'AND record_id = lower(record_id) '
+        "AND record_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(record_id, 9, 1) = '-' "
+        "AND substr(record_id, 14, 1) = '-' "
+        "AND substr(record_id, 15, 1) = '4' "
+        "AND substr(record_id, 19, 1) = '-' "
+        "AND substr(record_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(record_id, 24, 1) = '-' "
+        "AND substr(record_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(record_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(record_id, 25, 12) NOT GLOB '*-*')",
+    'CHECK (revision IS NULL OR '
+        "(typeof(revision) = 'integer' AND revision >= 1))",
+    'CHECK (last_change_seq IS NULL OR '
+        "(typeof(last_change_seq) = 'integer' AND last_change_seq >= 0))",
+    'CHECK (state_digest IS NULL OR '
+        "(typeof(state_digest) = 'blob' AND length(state_digest) = 32))",
+    'CHECK ((revision IS NULL '
+        'AND last_change_seq IS NULL '
+        'AND state_digest IS NULL) '
+        'OR (revision IS NOT NULL '
+        'AND last_change_seq IS NOT NULL '
+        'AND state_digest IS NOT NULL))',
+    "CHECK (typeof(gate) = 'text' "
+        "AND gate IN ('ready', 'requires-pull', 'quarantined'))",
+    'CHECK (observed_revision IS NULL OR '
+        "(typeof(observed_revision) = 'integer' AND observed_revision >= 1))",
+    'CHECK (error_code IS NULL OR '
+        "(typeof(error_code) = 'text' "
+        'AND length(CAST(error_code AS BLOB)) BETWEEN 1 AND 100))',
+    "CHECK ((gate = 'ready' "
+        'AND observed_revision IS NULL '
+        'AND error_code IS NULL) '
+        "OR (gate = 'requires-pull' AND error_code IS NULL) "
+        "OR (gate = 'quarantined' AND error_code IS NOT NULL))",
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+  ];
+}
+
 @DriftDatabase(
   tables: [
     ConversationRows,
@@ -540,6 +932,10 @@ class E2eeSyncRecordHeadRows extends Table {
     E2eeSyncRecordStateRows,
     E2eeSyncRecordParentRows,
     E2eeSyncRecordHeadRows,
+    E2eeSyncIntentRows,
+    E2eeSyncOperationRows,
+    E2eeSyncOutboxRows,
+    E2eeSyncRemoteRecordRows,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -548,7 +944,7 @@ class AppDatabase extends _$AppDatabase {
   static const databaseFileName = 'kelivo.db';
 
   // 认证状态账本是防回滚的信任锚，不能在缺少可信历史的旧库上伪造迁移结果。
-  static const currentSchemaVersion = 13;
+  static const currentSchemaVersion = 14;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

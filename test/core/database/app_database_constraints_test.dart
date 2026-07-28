@@ -1,9 +1,12 @@
 import 'dart:io';
 
 import 'package:Kelivo/core/database/app_database.dart';
+import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/e2ee_sync_record_ledger.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
@@ -27,17 +30,30 @@ const _ledgerEntityKey = SyncEntityKey(
 );
 const _ledgerUserId = '10000000-0000-4000-8000-000000000001';
 const _ledgerClaimedWriterDeviceId = '30000000-0000-4000-8000-000000000001';
+const _syncIntentId = '40000000-0000-4000-8000-000000000001';
+const _syncOperationId = '50000000-0000-4000-8000-000000000001';
+const _syncRecordId = '60000000-0000-4000-8000-000000000001';
+const _syncAccountUserId = '70000000-0000-4000-8000-000000000001';
+const _syncActorDeviceId = '80000000-0000-4000-8000-000000000001';
 
 String _ledgerOperationId(int value) =>
     '20000000-0000-4000-8000-${value.toString().padLeft(12, '0')}';
+
+String _syncUuid(int value) =>
+    '90000000-0000-4000-8000-${value.toString().padLeft(12, '0')}';
+
+Uint8List _syncDigest(int value, {int length = 32}) =>
+    Uint8List.fromList(List<int>.filled(length, value));
 
 void main() {
   driftRuntimeOptions.dontWarnAboutMultipleDatabases = true;
 
   late Directory directory;
   late AppDatabase database;
+  late ChatDatabaseRepository repository;
   late E2eeAccountRecordStateCodec stateCodec;
   late E2eeSyncRecordLedger ledger;
+  late E2eeSyncOutboxCommands outboxCommands;
 
   setUp(() async {
     directory = await Directory.systemTemp.createTemp(
@@ -48,6 +64,10 @@ void main() {
       cipher: testDatabaseCipher,
     );
     await database.customSelect('SELECT 1;').getSingle();
+    repository = ChatDatabaseRepository(
+      database,
+      databaseCipher: testDatabaseCipher,
+    );
     const secureCore = KelivoSecureCore();
     stateCodec = E2eeAccountRecordStateCodec.takeOwnership(
       E2eeAccountRecordCipher.takeOwnership(
@@ -58,11 +78,14 @@ void main() {
       ),
     );
     ledger = E2eeSyncRecordLedger(database);
+    outboxCommands = await repository.acquireE2eeSyncOutboxCommands(
+      now: DateTime.utc(2026, 7, 28),
+    );
   });
 
   tearDown(() async {
     await stateCodec.close();
-    await database.close();
+    await repository.close();
     await directory.delete(recursive: true);
   });
 
@@ -138,6 +161,216 @@ void main() {
             messageOrder: messageOrder,
           ),
         );
+  }
+
+  Future<void> insertSyncIntent({
+    String entityType = 'conversation',
+    String entityId = 'conversation-1',
+    String intentId = _syncIntentId,
+    int generation = 1,
+    String phase = 'dirty',
+    String? writerSessionId,
+    String? sealLeaseToken,
+    String? sealOwnerSessionId,
+    DateTime? sealLeaseExpiresAt,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) async {
+    final created = createdAt ?? DateTime.utc(2026, 7, 27);
+    await database
+        .into(database.e2eeSyncIntentRows)
+        .insert(
+          E2eeSyncIntentRowsCompanion.insert(
+            entityType: entityType,
+            entityId: entityId,
+            intentId: intentId,
+            generation: generation,
+            phase: phase,
+            writerSessionId: Value(writerSessionId),
+            sealLeaseToken: Value(sealLeaseToken),
+            sealOwnerSessionId: Value(sealOwnerSessionId),
+            sealLeaseExpiresAt: Value(sealLeaseExpiresAt),
+            createdAt: created,
+            updatedAt: updatedAt ?? created,
+          ),
+        );
+  }
+
+  Future<void> insertSyncOperation({
+    String operationId = _syncOperationId,
+    Uint8List? stateDigest,
+    String recordId = _syncRecordId,
+    String entityType = 'conversation',
+    String entityId = 'conversation-1',
+    String intentId = _syncIntentId,
+    int intentGeneration = 1,
+    int expectedRevision = 0,
+    String accountUserId = _syncAccountUserId,
+    String actorDeviceId = _syncActorDeviceId,
+    int claimedWriterKeyVersion = 1,
+    String outcome = 'active',
+    int? resultRevision,
+    int? resultChangeSeq,
+    int? currentRevision,
+    String? errorCode,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) async {
+    final created = createdAt ?? DateTime.utc(2026, 7, 27);
+    await database
+        .into(database.e2eeSyncOperationRows)
+        .insert(
+          E2eeSyncOperationRowsCompanion.insert(
+            operationId: operationId,
+            stateDigest: stateDigest ?? _syncDigest(1),
+            recordId: recordId,
+            entityType: entityType,
+            entityId: entityId,
+            intentId: intentId,
+            intentGeneration: intentGeneration,
+            expectedRevision: expectedRevision,
+            accountUserId: accountUserId,
+            actorDeviceId: actorDeviceId,
+            claimedWriterKeyVersion: claimedWriterKeyVersion,
+            outcome: outcome,
+            resultRevision: Value(resultRevision),
+            resultChangeSeq: Value(resultChangeSeq),
+            currentRevision: Value(currentRevision),
+            errorCode: Value(errorCode),
+            createdAt: created,
+            updatedAt: updatedAt ?? created,
+          ),
+        );
+  }
+
+  Future<void> insertSyncOutbox({
+    String operationId = _syncOperationId,
+    String recordId = _syncRecordId,
+    int envelopeVersion = 1,
+    int keyEpoch = 1,
+    Uint8List? ciphertext,
+    String phase = 'ready',
+    String? leaseToken,
+    String? leaseOwnerSessionId,
+    DateTime? leaseExpiresAt,
+    int transitionVersion = 1,
+    int attemptCount = 0,
+    DateTime? nextAttemptAt,
+    String? lastFailureKind,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) async {
+    final created = createdAt ?? DateTime.utc(2026, 7, 27);
+    await database
+        .into(database.e2eeSyncOutboxRows)
+        .insert(
+          E2eeSyncOutboxRowsCompanion.insert(
+            operationId: operationId,
+            recordId: recordId,
+            envelopeVersion: envelopeVersion,
+            keyEpoch: keyEpoch,
+            ciphertext: ciphertext ?? Uint8List.fromList(const [1]),
+            phase: phase,
+            leaseToken: Value(leaseToken),
+            leaseOwnerSessionId: Value(leaseOwnerSessionId),
+            leaseExpiresAt: Value(leaseExpiresAt),
+            transitionVersion: transitionVersion,
+            attemptCount: attemptCount,
+            nextAttemptAt: nextAttemptAt ?? created,
+            lastFailureKind: Value(lastFailureKind),
+            createdAt: created,
+            updatedAt: updatedAt ?? created,
+          ),
+        );
+  }
+
+  Future<void> insertSyncRemoteRecord({
+    String recordId = _syncRecordId,
+    int? revision,
+    int? lastChangeSeq,
+    Uint8List? stateDigest,
+    String gate = 'ready',
+    int? observedRevision,
+    String? errorCode,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) async {
+    final created = createdAt ?? DateTime.utc(2026, 7, 27);
+    await database
+        .into(database.e2eeSyncRemoteRecordRows)
+        .insert(
+          E2eeSyncRemoteRecordRowsCompanion.insert(
+            recordId: recordId,
+            revision: Value(revision),
+            lastChangeSeq: Value(lastChangeSeq),
+            stateDigest: Value(stateDigest),
+            gate: gate,
+            observedRevision: Value(observedRevision),
+            errorCode: Value(errorCode),
+            createdAt: created,
+            updatedAt: updatedAt ?? created,
+          ),
+        );
+  }
+
+  Future<E2eeSealedAccountRecordState> createCommittedOutbox({
+    required int discriminator,
+    required DateTime now,
+  }) async {
+    final entityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'outbox-state-$discriminator',
+    );
+    final refs = await outboxCommands.beginLocalWrite(
+      intents: [
+        E2eeSyncLocalWriteIntent(
+          intentId: _syncUuid(100 + discriminator),
+          entityKey: entityKey,
+        ),
+      ],
+      writerSessionId: 'writer-$discriminator',
+      now: now,
+    );
+    expect(
+      await outboxCommands.finishLocalWrite(
+        writerSessionId: 'writer-$discriminator',
+        now: now.add(const Duration(seconds: 1)),
+      ),
+      1,
+    );
+    final lease = await outboxCommands.claimSealIntent(
+      intent: refs.single,
+      leaseToken: 'seal-token-$discriminator',
+      leaseOwner: 'seal-owner-$discriminator',
+      leaseExpiresAt: now.add(const Duration(minutes: 1)),
+      now: now.add(const Duration(seconds: 2)),
+    );
+    expect(lease, isA<E2eeSyncSealLease>());
+    final recordId = await stateCodec.deriveRecordId(entityKey);
+    final plan = await outboxCommands.readSealPlan(
+      lease: lease!,
+      recordId: recordId,
+    );
+    final sealed = await stateCodec.sealValue(
+      entityKey: entityKey,
+      logicalVersion: plan.logicalVersion,
+      parentDigests: plan.parentDigests,
+      operationId: _syncUuid(200 + discriminator),
+      claimedWriterDeviceId: _syncActorDeviceId,
+      claimedWriterKeyVersion: 1,
+      payload: Uint8List.fromList([discriminator]),
+    );
+    expect(
+      await outboxCommands.commitSealed(
+        plan: plan,
+        state: sealed,
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        now: now.add(const Duration(seconds: 3)),
+      ),
+      isTrue,
+    );
+    return sealed;
   }
 
   group('schema invariants', () {
@@ -221,6 +454,681 @@ void main() {
             ),
         throwsRemoteSqliteException(),
       );
+    });
+  });
+
+  group('E2EE sync durable queue schema', () {
+    test('accepts every valid state and nonnegative change sequence', () async {
+      final leaseExpiry = DateTime.utc(2026, 7, 27, 0, 1);
+      await insertSyncIntent();
+      await insertSyncIntent(
+        entityId: 'conversation-2',
+        intentId: _syncUuid(2),
+        phase: 'preparing',
+        writerSessionId: 'writer-session',
+      );
+      await insertSyncIntent(
+        entityId: 'conversation-3',
+        intentId: _syncUuid(3),
+        phase: 'sealing',
+        sealLeaseToken: 'seal-token',
+        sealOwnerSessionId: 'seal-owner',
+        sealLeaseExpiresAt: leaseExpiry,
+      );
+
+      await insertSyncOperation();
+      await insertSyncOperation(
+        operationId: _syncUuid(12),
+        stateDigest: _syncDigest(2),
+        recordId: _syncUuid(22),
+        intentId: _syncUuid(2),
+        outcome: 'applied',
+        resultRevision: 1,
+        resultChangeSeq: 0,
+      );
+      await insertSyncOperation(
+        operationId: _syncUuid(13),
+        stateDigest: _syncDigest(3),
+        recordId: _syncUuid(23),
+        intentId: _syncUuid(3),
+        outcome: 'conflict',
+      );
+      await insertSyncOperation(
+        operationId: _syncUuid(14),
+        stateDigest: _syncDigest(4),
+        recordId: _syncUuid(24),
+        intentId: _syncUuid(4),
+        outcome: 'rejected',
+        errorCode: 'permission-denied',
+      );
+
+      await insertSyncOutbox();
+      await insertSyncOutbox(
+        operationId: _syncUuid(12),
+        recordId: _syncUuid(22),
+        phase: 'sending',
+        leaseToken: 'send-token',
+        leaseOwnerSessionId: 'send-owner',
+        leaseExpiresAt: leaseExpiry,
+        attemptCount: 1,
+        lastFailureKind: 'timeout',
+      );
+
+      await insertSyncRemoteRecord(
+        revision: 1,
+        lastChangeSeq: 0,
+        stateDigest: _syncDigest(10),
+      );
+      await insertSyncRemoteRecord(
+        recordId: _syncUuid(32),
+        gate: 'requires-pull',
+      );
+      await insertSyncRemoteRecord(
+        recordId: _syncUuid(33),
+        revision: 2,
+        lastChangeSeq: 1,
+        stateDigest: _syncDigest(11),
+        gate: 'quarantined',
+        observedRevision: 3,
+        errorCode: 'state-mismatch',
+      );
+
+      expect(
+        await database.select(database.e2eeSyncIntentRows).get(),
+        hasLength(3),
+      );
+      expect(
+        await database.select(database.e2eeSyncOperationRows).get(),
+        hasLength(4),
+      );
+      expect(
+        await database.select(database.e2eeSyncOutboxRows).get(),
+        hasLength(2),
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        hasLength(3),
+      );
+    });
+
+    test(
+      'intent constraints reject malformed identities and lease states',
+      () async {
+        final createdAt = DateTime.utc(2026, 7, 27);
+        final invalidWrites = <Future<void> Function()>[
+          () => insertSyncIntent(entityType: ''),
+          () =>
+              insertSyncIntent(entityId: List<String>.filled(1025, 'x').join()),
+          () => insertSyncIntent(
+            intentId: _syncIntentId.replaceFirst('-4000-', '-5000-'),
+          ),
+          () => insertSyncIntent(generation: 0),
+          () => insertSyncIntent(phase: 'unknown'),
+          () => insertSyncIntent(phase: 'preparing'),
+          () => insertSyncIntent(phase: 'preparing', writerSessionId: ''),
+          () => insertSyncIntent(phase: 'dirty', writerSessionId: 'writer'),
+          () => insertSyncIntent(
+            phase: 'sealing',
+            sealLeaseToken: 'token',
+            sealOwnerSessionId: 'owner',
+          ),
+          () => insertSyncIntent(
+            createdAt: createdAt,
+            updatedAt: createdAt.subtract(const Duration(microseconds: 1)),
+          ),
+        ];
+        for (final write in invalidWrites) {
+          await expectLater(write(), throwsRemoteSqliteException());
+        }
+
+        await insertSyncIntent();
+        await expectLater(
+          insertSyncIntent(entityId: 'conversation-2', intentId: _syncIntentId),
+          throwsRemoteSqliteException(),
+        );
+        expect(
+          await database.select(database.e2eeSyncIntentRows).get(),
+          hasLength(1),
+        );
+      },
+    );
+
+    test('operation constraints keep outcomes mutually exclusive', () async {
+      final createdAt = DateTime.utc(2026, 7, 27);
+      final invalidWrites = <Future<void> Function()>[
+        () => insertSyncOperation(
+          operationId: _syncOperationId.replaceFirst('-4000-', '-5000-'),
+        ),
+        () => insertSyncOperation(stateDigest: _syncDigest(1, length: 31)),
+        () => insertSyncOperation(
+          recordId: _syncRecordId.replaceFirst('-4000-', '-5000-'),
+        ),
+        () => insertSyncOperation(entityType: ''),
+        () => insertSyncOperation(
+          intentId: _syncIntentId.replaceFirst('-4000-', '-5000-'),
+        ),
+        () => insertSyncOperation(intentGeneration: 0),
+        () => insertSyncOperation(expectedRevision: -1),
+        () => insertSyncOperation(
+          accountUserId: _syncAccountUserId.replaceFirst('-4000-', '-5000-'),
+        ),
+        () => insertSyncOperation(
+          actorDeviceId: _syncActorDeviceId.replaceFirst('-4000-', '-5000-'),
+        ),
+        () => insertSyncOperation(claimedWriterKeyVersion: 0),
+        () => insertSyncOperation(claimedWriterKeyVersion: 4294967296),
+        () => insertSyncOperation(outcome: 'unknown'),
+        () => insertSyncOperation(outcome: 'active', resultRevision: 1),
+        () => insertSyncOperation(outcome: 'applied', resultRevision: 1),
+        () => insertSyncOperation(
+          outcome: 'applied',
+          resultRevision: 1,
+          resultChangeSeq: -1,
+        ),
+        () => insertSyncOperation(outcome: 'conflict', resultRevision: 1),
+        () => insertSyncOperation(outcome: 'conflict', errorCode: 'conflict'),
+        () => insertSyncOperation(outcome: 'rejected'),
+        () => insertSyncOperation(
+          outcome: 'rejected',
+          errorCode: List<String>.filled(101, 'x').join(),
+        ),
+        () => insertSyncOperation(
+          createdAt: createdAt,
+          updatedAt: createdAt.subtract(const Duration(microseconds: 1)),
+        ),
+      ];
+      for (final write in invalidWrites) {
+        await expectLater(write(), throwsRemoteSqliteException());
+      }
+
+      await insertSyncOperation();
+      await expectLater(
+        insertSyncOperation(
+          operationId: _syncUuid(42),
+          stateDigest: _syncDigest(1),
+          recordId: _syncUuid(43),
+        ),
+        throwsRemoteSqliteException(),
+      );
+      expect(
+        await database.select(database.e2eeSyncOperationRows).get(),
+        hasLength(1),
+      );
+    });
+
+    test(
+      'outbox constraints reject reseal shape and invalid send leases',
+      () async {
+        await insertSyncOperation();
+        final createdAt = DateTime.utc(2026, 7, 27);
+        final invalidWrites = <Future<void> Function()>[
+          () => insertSyncOutbox(operationId: _syncUuid(51)),
+          () => insertSyncOutbox(
+            recordId: _syncRecordId.replaceFirst('-4000-', '-5000-'),
+          ),
+          () => insertSyncOutbox(envelopeVersion: 2),
+          () => insertSyncOutbox(keyEpoch: 0),
+          () => insertSyncOutbox(ciphertext: Uint8List(0)),
+          () => insertSyncOutbox(ciphertext: Uint8List(1048577)),
+          () => insertSyncOutbox(phase: 'unknown'),
+          () => insertSyncOutbox(phase: 'ready', leaseToken: 'token'),
+          () => insertSyncOutbox(phase: 'sending'),
+          () => insertSyncOutbox(
+            phase: 'sending',
+            leaseToken: '',
+            leaseOwnerSessionId: 'owner',
+            leaseExpiresAt: createdAt,
+          ),
+          () => insertSyncOutbox(transitionVersion: 0),
+          () => insertSyncOutbox(attemptCount: -1),
+          () => insertSyncOutbox(lastFailureKind: ''),
+          () => insertSyncOutbox(
+            lastFailureKind: List<String>.filled(101, 'x').join(),
+          ),
+          () => insertSyncOutbox(
+            createdAt: createdAt,
+            updatedAt: createdAt.subtract(const Duration(microseconds: 1)),
+          ),
+        ];
+        for (final write in invalidWrites) {
+          await expectLater(write(), throwsRemoteSqliteException());
+        }
+
+        await insertSyncOutbox();
+        await insertSyncOperation(
+          operationId: _syncUuid(52),
+          stateDigest: _syncDigest(52),
+          recordId: _syncUuid(53),
+        );
+        await expectLater(
+          insertSyncOutbox(operationId: _syncUuid(52), recordId: _syncUuid(54)),
+          throwsRemoteSqliteException(),
+        );
+        expect(
+          await database.select(database.e2eeSyncOutboxRows).get(),
+          hasLength(1),
+        );
+      },
+    );
+
+    test(
+      'remote record constraints reject partial state and invalid gates',
+      () async {
+        final createdAt = DateTime.utc(2026, 7, 27);
+        final invalidWrites = <Future<void> Function()>[
+          () => insertSyncRemoteRecord(
+            recordId: _syncRecordId.replaceFirst('-4000-', '-5000-'),
+          ),
+          () => insertSyncRemoteRecord(revision: 1),
+          () => insertSyncRemoteRecord(
+            revision: 0,
+            lastChangeSeq: 0,
+            stateDigest: _syncDigest(1),
+          ),
+          () => insertSyncRemoteRecord(
+            revision: 1,
+            lastChangeSeq: -1,
+            stateDigest: _syncDigest(1),
+          ),
+          () => insertSyncRemoteRecord(
+            revision: 1,
+            lastChangeSeq: 0,
+            stateDigest: _syncDigest(1, length: 31),
+          ),
+          () => insertSyncRemoteRecord(gate: 'unknown'),
+          () => insertSyncRemoteRecord(gate: 'ready', observedRevision: 1),
+          () => insertSyncRemoteRecord(gate: 'ready', errorCode: 'error'),
+          () =>
+              insertSyncRemoteRecord(gate: 'requires-pull', errorCode: 'error'),
+          () => insertSyncRemoteRecord(gate: 'quarantined'),
+          () => insertSyncRemoteRecord(
+            gate: 'quarantined',
+            errorCode: List<String>.filled(101, 'x').join(),
+          ),
+          () => insertSyncRemoteRecord(
+            createdAt: createdAt,
+            updatedAt: createdAt.subtract(const Duration(microseconds: 1)),
+          ),
+        ];
+        for (final write in invalidWrites) {
+          await expectLater(write(), throwsRemoteSqliteException());
+        }
+
+        expect(
+          await database.select(database.e2eeSyncRemoteRecordRows).get(),
+          isEmpty,
+        );
+      },
+    );
+  });
+
+  group('E2EE sync outbox commands', () {
+    test('值快照复制只读输入并持有独立可写缓冲区', () {
+      final input = Uint8List.fromList(<int>[1, 2, 3]).asUnmodifiableView();
+      final snapshot = E2eeSyncValueSnapshot.copyFrom(input);
+
+      snapshot.payload[0] = 9;
+
+      expect(input, orderedEquals(<int>[1, 2, 3]));
+      expect(snapshot.payload, orderedEquals(<int>[9, 2, 3]));
+    });
+
+    test('本地写成功或抛错都从 preparing 收口为 dirty', () async {
+      final now = DateTime.utc(2026, 7, 28);
+
+      Future<void> runLocalWrite({
+        required int discriminator,
+        required bool shouldThrow,
+      }) async {
+        final entityKey = SyncEntityKey(
+          entityType: 'conversation',
+          entityId: 'local-write-$discriminator',
+        );
+        final sessionId = 'writer-$discriminator';
+        await outboxCommands.beginLocalWrite(
+          intents: [
+            E2eeSyncLocalWriteIntent(
+              intentId: _syncUuid(discriminator),
+              entityKey: entityKey,
+            ),
+          ],
+          writerSessionId: sessionId,
+          now: now,
+        );
+        final preparing =
+            await (database.select(database.e2eeSyncIntentRows)..where(
+                  (row) =>
+                      row.entityType.equals(entityKey.entityType) &
+                      row.entityId.equals(entityKey.entityId),
+                ))
+                .getSingle();
+        expect(preparing.phase, 'preparing');
+        expect(preparing.writerSessionId, sessionId);
+
+        try {
+          if (shouldThrow) throw StateError('模拟本地写入失败');
+        } finally {
+          expect(
+            await outboxCommands.finishLocalWrite(
+              writerSessionId: sessionId,
+              now: now.add(const Duration(seconds: 1)),
+            ),
+            1,
+          );
+        }
+      }
+
+      await runLocalWrite(discriminator: 301, shouldThrow: false);
+      await expectLater(
+        runLocalWrite(discriminator: 302, shouldThrow: true),
+        throwsStateError,
+      );
+
+      final intents = await database.select(database.e2eeSyncIntentRows).get();
+      expect(intents, hasLength(2));
+      expect(intents.every((row) => row.phase == 'dirty'), isTrue);
+      expect(intents.every((row) => row.writerSessionId == null), isTrue);
+    });
+
+    test('seal commit 持久化认证密文且 unknown 重试逐字节不变', () async {
+      final now = DateTime.utc(2026, 7, 28, 1);
+      final sealed = await createCommittedOutbox(discriminator: 1, now: now);
+
+      expect(await database.select(database.e2eeSyncIntentRows).get(), isEmpty);
+      final operation = await database
+          .select(database.e2eeSyncOperationRows)
+          .getSingle();
+      final stored = await database
+          .select(database.e2eeSyncOutboxRows)
+          .getSingle();
+      expect(operation.operationId, sealed.operationId);
+      expect(operation.expectedRevision, 0);
+      expect(operation.stateDigest, orderedEquals(sealed.digest.bytes));
+      expect(stored.operationId, sealed.operationId);
+      expect(stored.ciphertext, orderedEquals(sealed.record.ciphertext));
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+
+      final firstClaim = (await outboxCommands.claimSendBatch(
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        leaseOwner: 'send-owner-first',
+        leaseExpiresAt: now.add(const Duration(minutes: 2)),
+        now: now.add(const Duration(minutes: 1)),
+      )).single;
+      expect(
+        await outboxCommands.releaseUnknownResult(
+          claim: firstClaim,
+          nextAttemptAt: now.add(const Duration(minutes: 3)),
+          errorKind: 'transport-unknown',
+          now: now.add(const Duration(minutes: 2)),
+        ),
+        isTrue,
+      );
+      expect(
+        await outboxCommands.claimSendBatch(
+          accountUserId: _syncAccountUserId,
+          actorDeviceId: _syncActorDeviceId,
+          leaseOwner: 'send-owner-too-early',
+          leaseExpiresAt: now.add(const Duration(minutes: 4)),
+          now: now.add(const Duration(minutes: 2, seconds: 59)),
+        ),
+        isEmpty,
+      );
+      final retryClaim = (await outboxCommands.claimSendBatch(
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        leaseOwner: 'send-owner-retry',
+        leaseExpiresAt: now.add(const Duration(minutes: 4)),
+        now: now.add(const Duration(minutes: 3)),
+      )).single;
+
+      expect(retryClaim.operationId, firstClaim.operationId);
+      expect(retryClaim.expectedRevision, firstClaim.expectedRevision);
+      expect(retryClaim.ciphertext, orderedEquals(firstClaim.ciphertext));
+      expect(retryClaim.digest, firstClaim.digest);
+    });
+
+    test('过期租约可重领且旧 claim stale，applied 后才写入 ledger', () async {
+      final now = DateTime.utc(2026, 7, 28, 2);
+      await createCommittedOutbox(discriminator: 2, now: now);
+      final oldClaim = (await outboxCommands.claimSendBatch(
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        leaseOwner: 'send-owner-old',
+        leaseExpiresAt: now.add(const Duration(minutes: 2)),
+        now: now.add(const Duration(minutes: 1)),
+      )).single;
+      final newClaim = (await outboxCommands.claimSendBatch(
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        leaseOwner: 'send-owner-new',
+        leaseExpiresAt: now.add(const Duration(minutes: 4)),
+        now: now.add(const Duration(minutes: 2)),
+      )).single;
+      final restored = await stateCodec.restoreForSend(
+        E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: E2eeUntrustedAccountRecordId.fromTransport(
+            newClaim.recordId,
+          ),
+          envelopeVersion: newClaim.envelopeVersion,
+          keyEpoch: newClaim.keyEpoch,
+          ciphertext: newClaim.ciphertext,
+        ),
+        expectedDigest: newClaim.digest,
+      );
+
+      expect(newClaim.operationId, oldClaim.operationId);
+      expect(newClaim.expectedRevision, oldClaim.expectedRevision);
+      expect(newClaim.ciphertext, orderedEquals(oldClaim.ciphertext));
+      expect(
+        await outboxCommands.settleApplied(
+          claim: oldClaim,
+          state: restored.authenticated,
+          revision: 1,
+          changeSeq: 0,
+          now: now.add(const Duration(minutes: 2, seconds: 1)),
+        ),
+        isFalse,
+      );
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+
+      expect(
+        await outboxCommands.settleApplied(
+          claim: newClaim,
+          state: restored.authenticated,
+          revision: 1,
+          changeSeq: 0,
+          now: now.add(const Duration(minutes: 3)),
+        ),
+        isTrue,
+      );
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(1),
+      );
+      expect(await database.select(database.e2eeSyncOutboxRows).get(), isEmpty);
+      final operation = await database
+          .select(database.e2eeSyncOperationRows)
+          .getSingle();
+      expect(operation.outcome, 'applied');
+      expect(operation.resultRevision, 1);
+      expect(operation.resultChangeSeq, 0);
+    });
+
+    test('远端确认无记录后的 genesis applied 可推进 ready 状态', () async {
+      final now = DateTime.utc(2026, 7, 28, 3);
+      await createCommittedOutbox(discriminator: 3, now: now);
+      final claim = (await outboxCommands.claimSendBatch(
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        leaseOwner: 'send-owner-genesis',
+        leaseExpiresAt: now.add(const Duration(minutes: 2)),
+        now: now.add(const Duration(minutes: 1)),
+      )).single;
+      await insertSyncRemoteRecord(recordId: claim.recordId, createdAt: now);
+      final restored = await stateCodec.restoreForSend(
+        E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: E2eeUntrustedAccountRecordId.fromTransport(claim.recordId),
+          envelopeVersion: claim.envelopeVersion,
+          keyEpoch: claim.keyEpoch,
+          ciphertext: claim.ciphertext,
+        ),
+        expectedDigest: claim.digest,
+      );
+
+      expect(
+        await outboxCommands.settleApplied(
+          claim: claim,
+          state: restored.authenticated,
+          revision: 1,
+          changeSeq: 4,
+          now: now.add(const Duration(minutes: 1, seconds: 1)),
+        ),
+        isTrue,
+      );
+      final remote = await database
+          .select(database.e2eeSyncRemoteRecordRows)
+          .getSingle();
+      expect(remote.gate, 'ready');
+      expect(remote.revision, 1);
+      expect(remote.lastChangeSeq, 4);
+      expect(remote.stateDigest, orderedEquals(claim.digest.bytes));
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        hasLength(1),
+      );
+    });
+
+    test('迟到的 applied 与 conflict 不降低远端安全门', () async {
+      final now = DateTime.utc(2026, 7, 28, 4);
+      await createCommittedOutbox(discriminator: 4, now: now);
+      final appliedClaim = (await outboxCommands.claimSendBatch(
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        leaseOwner: 'send-owner-blocked-applied',
+        leaseExpiresAt: now.add(const Duration(minutes: 2)),
+        now: now.add(const Duration(minutes: 1)),
+      )).single;
+      await insertSyncRemoteRecord(
+        recordId: appliedClaim.recordId,
+        gate: 'requires-pull',
+        observedRevision: 3,
+        createdAt: now,
+      );
+      final restored = await stateCodec.restoreForSend(
+        E2eeUntrustedAccountRecordEnvelope.fromTransport(
+          recordId: E2eeUntrustedAccountRecordId.fromTransport(
+            appliedClaim.recordId,
+          ),
+          envelopeVersion: appliedClaim.envelopeVersion,
+          keyEpoch: appliedClaim.keyEpoch,
+          ciphertext: appliedClaim.ciphertext,
+        ),
+        expectedDigest: appliedClaim.digest,
+      );
+      expect(
+        await outboxCommands.settleApplied(
+          claim: appliedClaim,
+          state: restored.authenticated,
+          revision: 1,
+          changeSeq: 5,
+          now: now.add(const Duration(minutes: 1, seconds: 1)),
+        ),
+        isTrue,
+      );
+      var remote =
+          await (database.select(database.e2eeSyncRemoteRecordRows)
+                ..where((row) => row.recordId.equals(appliedClaim.recordId)))
+              .getSingle();
+      expect(remote.gate, 'requires-pull');
+      expect(remote.observedRevision, 3);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+
+      await createCommittedOutbox(discriminator: 5, now: now);
+      final conflictClaim = (await outboxCommands.claimSendBatch(
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        leaseOwner: 'send-owner-blocked-conflict',
+        leaseExpiresAt: now.add(const Duration(minutes: 3)),
+        now: now.add(const Duration(minutes: 2)),
+      )).single;
+      await insertSyncRemoteRecord(
+        recordId: conflictClaim.recordId,
+        gate: 'quarantined',
+        observedRevision: 8,
+        errorCode: 'REMOTE_AUTHENTICATION_FAILED',
+        createdAt: now,
+      );
+      expect(
+        await outboxCommands.settleConflict(
+          claim: conflictClaim,
+          currentRevision: 2,
+          newIntentId: _syncUuid(505),
+          now: now.add(const Duration(minutes: 2, seconds: 1)),
+        ),
+        isTrue,
+      );
+      remote =
+          await (database.select(database.e2eeSyncRemoteRecordRows)
+                ..where((row) => row.recordId.equals(conflictClaim.recordId)))
+              .getSingle();
+      expect(remote.gate, 'quarantined');
+      expect(remote.observedRevision, 8);
+      expect(remote.errorCode, 'REMOTE_AUTHENTICATION_FAILED');
+    });
+
+    test('未来密钥世代仅延迟自身且不阻塞同批当前世代', () async {
+      final now = DateTime.now().toUtc().subtract(const Duration(minutes: 10));
+      final futureState = await createCommittedOutbox(
+        discriminator: 6,
+        now: now,
+      );
+      final currentState = await createCommittedOutbox(
+        discriminator: 7,
+        now: now.add(const Duration(seconds: 1)),
+      );
+      await (database.update(database.e2eeSyncOutboxRows)
+            ..where((row) => row.operationId.equals(futureState.operationId)))
+          .write(const E2eeSyncOutboxRowsCompanion(keyEpoch: Value(8)));
+      final outbox = E2eeSyncOutbox.takeOwnership(
+        commands: outboxCommands,
+        stateCodec: stateCodec,
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        claimedWriterKeyVersion: 1,
+      );
+      addTearDown(outbox.close);
+      await outbox.initialize();
+      final transport = _ApplyingOutboxTransport(
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+      );
+
+      final report = await outbox.flushOnce(transport: transport);
+
+      expect(report.claimed, 2);
+      expect(report.sent, 1);
+      expect(report.applied, 1);
+      expect(report.deferred, 1);
+      expect(report.quarantined, 0);
+      expect(report.stale, 0);
+      expect(transport.mutations, hasLength(1));
+      expect(transport.mutations.single.mutationId, currentState.operationId);
+      final remaining = await database
+          .select(database.e2eeSyncOutboxRows)
+          .getSingle();
+      expect(remaining.operationId, futureState.operationId);
+      expect(remaining.phase, 'ready');
+      expect(remaining.lastFailureKind, 'key-epoch-unavailable');
     });
   });
 
@@ -633,4 +1541,35 @@ void main() {
       contains('idx_messages_group'),
     );
   });
+}
+
+final class _ApplyingOutboxTransport
+    implements E2eeSyncAuthenticatedRecordTransport {
+  _ApplyingOutboxTransport({
+    required this.accountUserId,
+    required this.actorDeviceId,
+  });
+
+  @override
+  final String accountUserId;
+
+  @override
+  final String actorDeviceId;
+
+  List<CloudSyncRecordMutation> mutations = const [];
+
+  @override
+  Future<List<CloudSyncRecordMutationResult>> pushRecords(
+    List<CloudSyncRecordMutation> mutations,
+  ) async {
+    this.mutations = List.unmodifiable(mutations);
+    return <CloudSyncRecordMutationResult>[
+      for (var index = 0; index < mutations.length; index++)
+        CloudSyncAppliedMutationResult(
+          mutationId: mutations[index].mutationId,
+          revision: mutations[index].expectedRevision + 1,
+          changeSeq: 100 + index,
+        ),
+    ];
+  }
 }
