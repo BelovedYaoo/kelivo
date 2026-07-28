@@ -1014,6 +1014,36 @@ class E2eeSyncPullCheckpointRows extends Table {
   ];
 }
 
+class E2eeConfigEntryRows extends Table {
+  TextColumn get entityType => text()();
+  TextColumn get entityId => text()();
+  BlobColumn get payload => blob()();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {entityType, entityId};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(entity_type) = 'text' "
+        "AND entity_type IN ('provider', 'assistant', 'memory', "
+        "'world-book', 'quick-phrase', 'search-service', 'network-tts', "
+        "'mcp-server', 'instruction-injection', 'user-preference'))",
+    "CHECK (typeof(entity_id) = 'text' "
+        'AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(entity_id, char(0)) = 0)',
+    "CHECK (typeof(payload) = 'blob' "
+        'AND length(payload) BETWEEN 1 AND 1000000)',
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= 0)",
+    "CHECK (entity_type != 'user-preference' OR entity_id IN ("
+        "'profile:default', 'provider-grouping:default', "
+        "'assistant-selection:default', 'world-book-activity:default', "
+        "'instruction-activity:default', 'search-state:default', "
+        "'tts-state:default', 'mcp-state:default'))",
+  ];
+}
+
 @DriftDatabase(
   tables: [
     ConversationRows,
@@ -1036,6 +1066,7 @@ class E2eeSyncPullCheckpointRows extends Table {
     E2eeSyncOutboxRows,
     E2eeSyncRemoteRecordRows,
     E2eeSyncPullCheckpointRows,
+    E2eeConfigEntryRows,
   ],
 )
 class AppDatabase extends _$AppDatabase {
@@ -1043,8 +1074,8 @@ class AppDatabase extends _$AppDatabase {
 
   static const databaseFileName = 'kelivo.db';
 
-  // 认证状态账本是防回滚的信任锚，不能在缺少可信历史的旧库上伪造迁移结果。
-  static const currentSchemaVersion = 15;
+  // 配置已硬切进 SQLCipher Vault，旧库不能继续作为配置真相来源。
+  static const currentSchemaVersion = 16;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

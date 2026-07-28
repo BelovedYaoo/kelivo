@@ -11048,6 +11048,335 @@ class E2eeSyncPullCheckpointRowsCompanion
   }
 }
 
+class $E2eeConfigEntryRowsTable extends E2eeConfigEntryRows
+    with TableInfo<$E2eeConfigEntryRowsTable, E2eeConfigEntryRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeConfigEntryRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _entityTypeMeta = const VerificationMeta(
+    'entityType',
+  );
+  @override
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entityIdMeta = const VerificationMeta(
+    'entityId',
+  );
+  @override
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _payloadMeta = const VerificationMeta(
+    'payload',
+  );
+  @override
+  late final GeneratedColumn<Uint8List> payload = GeneratedColumn<Uint8List>(
+    'payload',
+    aliasedName,
+    false,
+    type: DriftSqlType.blob,
+    requiredDuringInsert: true,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>($E2eeConfigEntryRowsTable.$converterupdatedAt);
+  @override
+  List<GeneratedColumn> get $columns => [
+    entityType,
+    entityId,
+    payload,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_config_entry_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeConfigEntryRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('entity_type')) {
+      context.handle(
+        _entityTypeMeta,
+        entityType.isAcceptableOrUnknown(data['entity_type']!, _entityTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityTypeMeta);
+    }
+    if (data.containsKey('entity_id')) {
+      context.handle(
+        _entityIdMeta,
+        entityId.isAcceptableOrUnknown(data['entity_id']!, _entityIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityIdMeta);
+    }
+    if (data.containsKey('payload')) {
+      context.handle(
+        _payloadMeta,
+        payload.isAcceptableOrUnknown(data['payload']!, _payloadMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_payloadMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entityType, entityId};
+  @override
+  E2eeConfigEntryRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeConfigEntryRow(
+      entityType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_type'],
+      )!,
+      entityId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_id'],
+      )!,
+      payload: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}payload'],
+      )!,
+      updatedAt: $E2eeConfigEntryRowsTable.$converterupdatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}updated_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeConfigEntryRowsTable createAlias(String alias) {
+    return $E2eeConfigEntryRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeConfigEntryRow extends DataClass
+    implements Insertable<E2eeConfigEntryRow> {
+  final String entityType;
+  final String entityId;
+  final Uint8List payload;
+  final DateTime updatedAt;
+  const E2eeConfigEntryRow({
+    required this.entityType,
+    required this.entityId,
+    required this.payload,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['entity_type'] = Variable<String>(entityType);
+    map['entity_id'] = Variable<String>(entityId);
+    map['payload'] = Variable<Uint8List>(payload);
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeConfigEntryRowsTable.$converterupdatedAt.toSql(updatedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeConfigEntryRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeConfigEntryRowsCompanion(
+      entityType: Value(entityType),
+      entityId: Value(entityId),
+      payload: Value(payload),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeConfigEntryRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeConfigEntryRow(
+      entityType: serializer.fromJson<String>(json['entityType']),
+      entityId: serializer.fromJson<String>(json['entityId']),
+      payload: serializer.fromJson<Uint8List>(json['payload']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'entityType': serializer.toJson<String>(entityType),
+      'entityId': serializer.toJson<String>(entityId),
+      'payload': serializer.toJson<Uint8List>(payload),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeConfigEntryRow copyWith({
+    String? entityType,
+    String? entityId,
+    Uint8List? payload,
+    DateTime? updatedAt,
+  }) => E2eeConfigEntryRow(
+    entityType: entityType ?? this.entityType,
+    entityId: entityId ?? this.entityId,
+    payload: payload ?? this.payload,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeConfigEntryRow copyWithCompanion(E2eeConfigEntryRowsCompanion data) {
+    return E2eeConfigEntryRow(
+      entityType: data.entityType.present
+          ? data.entityType.value
+          : this.entityType,
+      entityId: data.entityId.present ? data.entityId.value : this.entityId,
+      payload: data.payload.present ? data.payload.value : this.payload,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeConfigEntryRow(')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('payload: $payload, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    entityType,
+    entityId,
+    $driftBlobEquality.hash(payload),
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeConfigEntryRow &&
+          other.entityType == this.entityType &&
+          other.entityId == this.entityId &&
+          $driftBlobEquality.equals(other.payload, this.payload) &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeConfigEntryRowsCompanion extends UpdateCompanion<E2eeConfigEntryRow> {
+  final Value<String> entityType;
+  final Value<String> entityId;
+  final Value<Uint8List> payload;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const E2eeConfigEntryRowsCompanion({
+    this.entityType = const Value.absent(),
+    this.entityId = const Value.absent(),
+    this.payload = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeConfigEntryRowsCompanion.insert({
+    required String entityType,
+    required String entityId,
+    required Uint8List payload,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : entityType = Value(entityType),
+       entityId = Value(entityId),
+       payload = Value(payload),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeConfigEntryRow> custom({
+    Expression<String>? entityType,
+    Expression<String>? entityId,
+    Expression<Uint8List>? payload,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (entityType != null) 'entity_type': entityType,
+      if (entityId != null) 'entity_id': entityId,
+      if (payload != null) 'payload': payload,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeConfigEntryRowsCompanion copyWith({
+    Value<String>? entityType,
+    Value<String>? entityId,
+    Value<Uint8List>? payload,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeConfigEntryRowsCompanion(
+      entityType: entityType ?? this.entityType,
+      entityId: entityId ?? this.entityId,
+      payload: payload ?? this.payload,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (entityType.present) {
+      map['entity_type'] = Variable<String>(entityType.value);
+    }
+    if (entityId.present) {
+      map['entity_id'] = Variable<String>(entityId.value);
+    }
+    if (payload.present) {
+      map['payload'] = Variable<Uint8List>(payload.value);
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeConfigEntryRowsTable.$converterupdatedAt.toSql(updatedAt.value),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeConfigEntryRowsCompanion(')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('payload: $payload, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 abstract class _$AppDatabase extends GeneratedDatabase {
   _$AppDatabase(QueryExecutor e) : super(e);
   $AppDatabaseManager get managers => $AppDatabaseManager(this);
@@ -11091,6 +11420,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $E2eeSyncRemoteRecordRowsTable(this);
   late final $E2eeSyncPullCheckpointRowsTable e2eeSyncPullCheckpointRows =
       $E2eeSyncPullCheckpointRowsTable(this);
+  late final $E2eeConfigEntryRowsTable e2eeConfigEntryRows =
+      $E2eeConfigEntryRowsTable(this);
   late final Index idxConversationsUpdatedAt = Index(
     'idx_conversations_updated_at',
     'CREATE INDEX idx_conversations_updated_at ON conversation_rows (updated_at DESC, id ASC)',
@@ -11188,6 +11519,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     e2eeSyncOutboxRows,
     e2eeSyncRemoteRecordRows,
     e2eeSyncPullCheckpointRows,
+    e2eeConfigEntryRows,
     idxConversationsUpdatedAt,
     idxConversationsAssistant,
     idxMessagesConversationOrder,
@@ -19183,6 +19515,206 @@ typedef $$E2eeSyncPullCheckpointRowsTableProcessedTableManager =
       E2eeSyncPullCheckpointRow,
       PrefetchHooks Function()
     >;
+typedef $$E2eeConfigEntryRowsTableCreateCompanionBuilder =
+    E2eeConfigEntryRowsCompanion Function({
+      required String entityType,
+      required String entityId,
+      required Uint8List payload,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeConfigEntryRowsTableUpdateCompanionBuilder =
+    E2eeConfigEntryRowsCompanion Function({
+      Value<String> entityType,
+      Value<String> entityId,
+      Value<Uint8List> payload,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$E2eeConfigEntryRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeConfigEntryRowsTable> {
+  $$E2eeConfigEntryRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeConfigEntryRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeConfigEntryRowsTable> {
+  $$E2eeConfigEntryRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get payload => $composableBuilder(
+    column: $table.payload,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeConfigEntryRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeConfigEntryRowsTable> {
+  $$E2eeConfigEntryRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get entityId =>
+      $composableBuilder(column: $table.entityId, builder: (column) => column);
+
+  GeneratedColumn<Uint8List> get payload =>
+      $composableBuilder(column: $table.payload, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeConfigEntryRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeConfigEntryRowsTable,
+          E2eeConfigEntryRow,
+          $$E2eeConfigEntryRowsTableFilterComposer,
+          $$E2eeConfigEntryRowsTableOrderingComposer,
+          $$E2eeConfigEntryRowsTableAnnotationComposer,
+          $$E2eeConfigEntryRowsTableCreateCompanionBuilder,
+          $$E2eeConfigEntryRowsTableUpdateCompanionBuilder,
+          (
+            E2eeConfigEntryRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeConfigEntryRowsTable,
+              E2eeConfigEntryRow
+            >,
+          ),
+          E2eeConfigEntryRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeConfigEntryRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeConfigEntryRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeConfigEntryRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$E2eeConfigEntryRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeConfigEntryRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> entityType = const Value.absent(),
+                Value<String> entityId = const Value.absent(),
+                Value<Uint8List> payload = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeConfigEntryRowsCompanion(
+                entityType: entityType,
+                entityId: entityId,
+                payload: payload,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String entityType,
+                required String entityId,
+                required Uint8List payload,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeConfigEntryRowsCompanion.insert(
+                entityType: entityType,
+                entityId: entityId,
+                payload: payload,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeConfigEntryRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeConfigEntryRowsTable,
+      E2eeConfigEntryRow,
+      $$E2eeConfigEntryRowsTableFilterComposer,
+      $$E2eeConfigEntryRowsTableOrderingComposer,
+      $$E2eeConfigEntryRowsTableAnnotationComposer,
+      $$E2eeConfigEntryRowsTableCreateCompanionBuilder,
+      $$E2eeConfigEntryRowsTableUpdateCompanionBuilder,
+      (
+        E2eeConfigEntryRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeConfigEntryRowsTable,
+          E2eeConfigEntryRow
+        >,
+      ),
+      E2eeConfigEntryRow,
+      PrefetchHooks Function()
+    >;
 
 class $AppDatabaseManager {
   final _$AppDatabase _db;
@@ -19250,4 +19782,6 @@ class $AppDatabaseManager {
         _db,
         _db.e2eeSyncPullCheckpointRows,
       );
+  $$E2eeConfigEntryRowsTableTableManager get e2eeConfigEntryRows =>
+      $$E2eeConfigEntryRowsTableTableManager(_db, _db.e2eeConfigEntryRows);
 }

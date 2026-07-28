@@ -8,6 +8,7 @@ import 'package:uuid/uuid.dart';
 
 import '../models/chat_message.dart';
 import '../models/conversation.dart';
+import '../services/sync/config_sync_keys.dart';
 import '../services/sync/e2ee_account_record_cipher.dart';
 import '../services/sync/e2ee_account_record_state.dart';
 import '../services/sync/e2ee_sync_pull_types.dart';
@@ -22,6 +23,7 @@ import 'generation_run_commands.dart';
 part 'e2ee_sync_outbox_commands.dart';
 part 'e2ee_sync_pull_commands.dart';
 part 'e2ee_sync_pull_checkpoint_commands.dart';
+part 'e2ee_config_vault_commands.dart';
 
 typedef ChatDatabaseSnapshotInfo = ({
   int schemaVersion,
@@ -153,6 +155,9 @@ class ChatDatabaseRepository {
   }
 
   E2eeSyncRecordLedger get e2eeSyncRecordLedger => E2eeSyncRecordLedger(_db);
+
+  E2eeConfigVaultCommands get e2eeConfigVaultCommands =>
+      E2eeConfigVaultCommands._(_db);
 
   E2eeSyncPullCommands get e2eeSyncPullCommands => E2eeSyncPullCommands._(_db);
 

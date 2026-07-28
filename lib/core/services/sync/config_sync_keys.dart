@@ -12,6 +12,19 @@ abstract final class ConfigSyncKeys {
   static const String instructionInjectionType = 'instruction-injection';
   static const String preferenceType = 'user-preference';
 
+  static const Set<String> entityTypes = <String>{
+    providerType,
+    assistantType,
+    memoryType,
+    worldBookType,
+    quickPhraseType,
+    searchServiceType,
+    networkTtsType,
+    mcpServerType,
+    instructionInjectionType,
+    preferenceType,
+  };
+
   static const SyncEntityKey profile = SyncEntityKey(
     entityType: preferenceType,
     entityId: 'profile:default',
@@ -45,6 +58,17 @@ abstract final class ConfigSyncKeys {
     entityId: 'mcp-state:default',
   );
 
+  static const Set<String> preferenceEntityIds = <String>{
+    'profile:default',
+    'provider-grouping:default',
+    'assistant-selection:default',
+    'world-book-activity:default',
+    'instruction-activity:default',
+    'search-state:default',
+    'tts-state:default',
+    'mcp-state:default',
+  };
+
   static SyncEntityKey provider(String id) => _entity(providerType, id);
   static SyncEntityKey assistant(String id) => _entity(assistantType, id);
   static SyncEntityKey memory(String id) => _entity(memoryType, id);
@@ -56,6 +80,17 @@ abstract final class ConfigSyncKeys {
   static SyncEntityKey mcpServer(String id) => _entity(mcpServerType, id);
   static SyncEntityKey instructionInjection(String id) =>
       _entity(instructionInjectionType, id);
+
+  static void validate(SyncEntityKey key) {
+    validateSyncEntityKey(key);
+    if (!entityTypes.contains(key.entityType)) {
+      throw const FormatException('配置同步实体类型无效');
+    }
+    if (key.entityType == preferenceType &&
+        !preferenceEntityIds.contains(key.entityId)) {
+      throw const FormatException('配置同步偏好实体 ID 无效');
+    }
+  }
 
   static SyncEntityKey _entity(String type, String id) =>
       SyncEntityKey(entityType: type, entityId: id);

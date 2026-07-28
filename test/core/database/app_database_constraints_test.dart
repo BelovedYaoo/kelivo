@@ -8,6 +8,7 @@ import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
+import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
@@ -105,6 +106,7 @@ void main() {
   late ChatDatabaseRepository repository;
   late E2eeAccountRecordStateCodec stateCodec;
   late E2eeSyncRecordLedger ledger;
+  late E2eeConfigVaultCommands configVault;
   late E2eeSyncOutboxCommands outboxCommands;
   late E2eeSyncPullCommands pullCommands;
 
@@ -131,6 +133,7 @@ void main() {
       ),
     );
     ledger = E2eeSyncRecordLedger(database);
+    configVault = repository.e2eeConfigVaultCommands;
     outboxCommands = await repository.acquireE2eeSyncOutboxCommands(
       now: DateTime.utc(2026, 7, 28),
     );
@@ -3130,6 +3133,188 @@ void main() {
       expect(remaining.operationId, futureState.operationId);
       expect(remaining.phase, 'ready');
       expect(remaining.lastFailureKind, 'key-epoch-unavailable');
+    });
+  });
+
+  group('E2EE config vault commands', () {
+    test('配置写入与 dirty intent 同事务提交或回滚', () async {
+      final outbox = E2eeSyncOutbox.takeOwnership(
+        commands: outboxCommands,
+        stateCodec: stateCodec,
+        accountUserId: _syncAccountUserId,
+        actorDeviceId: _syncActorDeviceId,
+        claimedWriterKeyVersion: 1,
+      );
+      addTearDown(outbox.close);
+      await outbox.initialize();
+
+      final committedKey = ConfigSyncKeys.provider('provider-vault-1');
+      final sourcePayload = Uint8List.fromList(<int>[1, 2, 3]);
+      await outbox.runLocal<void>(
+        key: committedKey,
+        write: () => configVault.put(
+          key: committedKey,
+          payload: sourcePayload,
+          updatedAt: DateTime.utc(2026, 7, 29),
+        ),
+      );
+      sourcePayload[0] = 9;
+
+      final committed = await configVault.read(committedKey);
+      expect(committed, isNot(equals(null)));
+      expect(committed!.key, committedKey);
+      expect(committed.payload, orderedEquals(<int>[1, 2, 3]));
+      expect(committed.updatedAt, DateTime.utc(2026, 7, 29));
+
+      final rolledBackKey = ConfigSyncKeys.provider('provider-vault-2');
+      await expectLater(
+        outbox.runLocal<void>(
+          key: rolledBackKey,
+          write: () async {
+            await configVault.put(
+              key: rolledBackKey,
+              payload: Uint8List.fromList(<int>[4, 5, 6]),
+              updatedAt: DateTime.utc(2026, 7, 29, 0, 1),
+            );
+            throw StateError('模拟配置写入失败');
+          },
+        ),
+        throwsStateError,
+      );
+
+      expect(await configVault.read(rolledBackKey), equals(null));
+      final intents = await database.select(database.e2eeSyncIntentRows).get();
+      expect(intents, hasLength(1));
+      expect(intents.single.entityType, committedKey.entityType);
+      expect(intents.single.entityId, committedKey.entityId);
+
+      await expectLater(
+        configVault.put(
+          key: const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.conversation,
+            entityId: 'not-config',
+          ),
+          payload: Uint8List.fromList(<int>[1]),
+          updatedAt: DateTime.utc(2026, 7, 29),
+        ),
+        throwsFormatException,
+      );
+      await expectLater(
+        configVault.put(
+          key: committedKey,
+          payload: Uint8List(0),
+          updatedAt: DateTime.utc(2026, 7, 29),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('配置查询稳定排序并支持更新与幂等删除', () async {
+      final laterKey = ConfigSyncKeys.provider('provider-vault-b');
+      final earlierKey = ConfigSyncKeys.provider('provider-vault-a');
+      await configVault.put(
+        key: laterKey,
+        payload: Uint8List.fromList(<int>[2]),
+        updatedAt: DateTime.utc(2026, 7, 29, 1),
+      );
+      await configVault.put(
+        key: earlierKey,
+        payload: Uint8List.fromList(<int>[1]),
+        updatedAt: DateTime.utc(2026, 7, 29, 2),
+      );
+      await configVault.put(
+        key: laterKey,
+        payload: Uint8List.fromList(<int>[3]),
+        updatedAt: DateTime.utc(2026, 7, 29, 3),
+      );
+
+      final entries = await configVault.readByType(ConfigSyncKeys.providerType);
+      expect(entries.map((entry) => entry.key), <SyncEntityKey>[
+        earlierKey,
+        laterKey,
+      ]);
+      expect(entries.last.payload, orderedEquals(<int>[3]));
+      expect(entries.last.updatedAt, DateTime.utc(2026, 7, 29, 3));
+      expect(
+        () => entries.last.payload[0] = 8,
+        throwsA(isA<UnsupportedError>()),
+      );
+
+      expect(await configVault.delete(laterKey), isTrue);
+      expect(await configVault.delete(laterKey), isFalse);
+      expect(await configVault.read(laterKey), equals(null));
+
+      await expectLater(
+        configVault.put(
+          key: const SyncEntityKey(
+            entityType: ConfigSyncKeys.preferenceType,
+            entityId: 'unknown:default',
+          ),
+          payload: Uint8List.fromList(<int>[1]),
+          updatedAt: DateTime.utc(2026, 7, 29),
+        ),
+        throwsFormatException,
+      );
+      await expectLater(
+        configVault.put(
+          key: earlierKey,
+          payload: Uint8List(e2eeConfigVaultMaxPayloadBytes + 1),
+          updatedAt: DateTime.utc(2026, 7, 29),
+        ),
+        throwsFormatException,
+      );
+      await expectLater(
+        configVault.put(
+          key: earlierKey,
+          payload: Uint8List.fromList(<int>[1]),
+          updatedAt: DateTime(2026, 7, 29),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('配置表约束拒绝绕过命令层的非法记录', () async {
+      Future<void> insert({
+        required String entityType,
+        required String entityId,
+        required Uint8List payload,
+      }) {
+        return database
+            .into(database.e2eeConfigEntryRows)
+            .insert(
+              E2eeConfigEntryRowsCompanion.insert(
+                entityType: entityType,
+                entityId: entityId,
+                payload: payload,
+                updatedAt: DateTime.utc(2026, 7, 29),
+              ),
+            );
+      }
+
+      await expectLater(
+        insert(
+          entityType: E2eeSyncChatRecordTypes.conversation,
+          entityId: 'not-config',
+          payload: Uint8List.fromList(<int>[1]),
+        ),
+        throwsRemoteSqliteException(),
+      );
+      await expectLater(
+        insert(
+          entityType: ConfigSyncKeys.preferenceType,
+          entityId: 'unknown:default',
+          payload: Uint8List.fromList(<int>[1]),
+        ),
+        throwsRemoteSqliteException(),
+      );
+      await expectLater(
+        insert(
+          entityType: ConfigSyncKeys.providerType,
+          entityId: 'empty-payload',
+          payload: Uint8List(0),
+        ),
+        throwsRemoteSqliteException(),
+      );
     });
   });
 
