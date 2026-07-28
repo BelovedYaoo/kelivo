@@ -396,6 +396,600 @@ class MessageRows extends Table with TableInfo {
   bool get dontWriteConstraints => true;
 }
 
+class AssetRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  AssetRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> id = GeneratedColumn<String>(
+    'id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> contentHash = GeneratedColumn<String>(
+    'content_hash',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> path = GeneratedColumn<String>(
+    'path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> byteSize = GeneratedColumn<int>(
+    'byte_size',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> width = GeneratedColumn<int>(
+    'width',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<int> height = GeneratedColumn<int>(
+    'height',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<String> thumbnailPath = GeneratedColumn<String>(
+    'thumbnail_path',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> lastReferencedAt = GeneratedColumn<int>(
+    'last_referenced_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    id,
+    contentHash,
+    path,
+    byteSize,
+    width,
+    height,
+    thumbnailPath,
+    createdAt,
+    lastReferencedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'asset_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {contentHash},
+  ];
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  AssetRows createAlias(String alias) {
+    return AssetRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'PRIMARY KEY(id)',
+    'UNIQUE(content_hash)',
+    'CHECK(typeof(id) = \'text\' AND length(CAST(id AS BLOB)) BETWEEN 1 AND 1024 AND instr(id, char(0)) = 0)',
+    'CHECK(typeof(content_hash) = \'text\' AND length(content_hash) = 64 AND content_hash = lower(content_hash) AND content_hash NOT GLOB \'*[^0-9a-f]*\')',
+    'CHECK(typeof(path) = \'text\' AND length(CAST(path AS BLOB)) BETWEEN 1 AND 32768 AND instr(path, char(0)) = 0)',
+    'CHECK(typeof(byte_size) = \'integer\' AND byte_size BETWEEN 0 AND 9223372036854775807)',
+    'CHECK(width IS NULL OR(typeof(width) = \'integer\' AND width BETWEEN 1 AND 2147483647))',
+    'CHECK(height IS NULL OR(typeof(height) = \'integer\' AND height BETWEEN 1 AND 2147483647))',
+    'CHECK(thumbnail_path IS NULL OR(typeof(thumbnail_path) = \'text\' AND length(CAST(thumbnail_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(thumbnail_path, char(0)) = 0))',
+    'CHECK(typeof(created_at) = \'integer\' AND created_at >= 0)',
+    'CHECK(typeof(last_referenced_at) = \'integer\' AND last_referenced_at >= created_at)',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class MessageAssetRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  MessageAssetRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> revisionId = GeneratedColumn<String>(
+    'revision_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL REFERENCES message_rows(id)ON DELETE CASCADE',
+  );
+  late final GeneratedColumn<int> ordinal = GeneratedColumn<int>(
+    'ordinal',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> assetId = GeneratedColumn<String>(
+    'asset_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL REFERENCES asset_rows(id)ON DELETE CASCADE',
+  );
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<String> mediaType = GeneratedColumn<String>(
+    'media_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<String> attachmentId = GeneratedColumn<String>(
+    'attachment_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<String> uploadId = GeneratedColumn<String>(
+    'upload_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
+    'key_epoch',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NULL',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    revisionId,
+    ordinal,
+    assetId,
+    kind,
+    displayName,
+    mediaType,
+    attachmentId,
+    uploadId,
+    keyEpoch,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'message_asset_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {revisionId, ordinal};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {revisionId, attachmentId},
+    {revisionId, uploadId},
+  ];
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  MessageAssetRows createAlias(String alias) {
+    return MessageAssetRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'PRIMARY KEY(revision_id, ordinal)',
+    'UNIQUE(revision_id, attachment_id)',
+    'UNIQUE(revision_id, upload_id)',
+    'CHECK(typeof(ordinal) = \'integer\' AND ordinal BETWEEN 0 AND 31)',
+    'CHECK(typeof(kind) = \'text\' AND kind IN (\'image\', \'file\'))',
+    'CHECK(display_name IS NULL OR(typeof(display_name) = \'text\' AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024 AND instr(display_name, char(0)) = 0 AND instr(display_name, \'/\') = 0 AND instr(display_name, char(92)) = 0))',
+    'CHECK(media_type IS NULL OR(typeof(media_type) = \'text\' AND length(CAST(media_type AS BLOB)) BETWEEN 3 AND 255 AND instr(media_type, \'/\') BETWEEN 2 AND length(media_type) - 1))',
+    'CHECK(kind != \'file\' OR(display_name IS NOT NULL AND media_type IS NOT NULL))',
+    'CHECK(attachment_id IS NULL OR(typeof(attachment_id) = \'text\' AND length(attachment_id) = 36 AND attachment_id = lower(attachment_id) AND attachment_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(attachment_id, 9, 1) = \'-\' AND substr(attachment_id, 14, 1) = \'-\' AND substr(attachment_id, 15, 1) = \'4\' AND substr(attachment_id, 19, 1) = \'-\' AND substr(attachment_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(attachment_id, 24, 1) = \'-\'))',
+    'CHECK(upload_id IS NULL OR(typeof(upload_id) = \'text\' AND length(upload_id) = 36 AND upload_id = lower(upload_id) AND upload_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(upload_id, 9, 1) = \'-\' AND substr(upload_id, 14, 1) = \'-\' AND substr(upload_id, 15, 1) = \'4\' AND substr(upload_id, 19, 1) = \'-\' AND substr(upload_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(upload_id, 24, 1) = \'-\'))',
+    'CHECK(key_epoch IS NULL OR(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 4294967295))',
+    'CHECK((attachment_id IS NULL AND upload_id IS NULL AND key_epoch IS NULL)OR(attachment_id IS NOT NULL AND upload_id IS NOT NULL AND key_epoch IS NOT NULL))',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class AssetGcRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  AssetGcRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> assetId = GeneratedColumn<String>(
+    'asset_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL REFERENCES asset_rows(id)ON DELETE CASCADE',
+  );
+  late final GeneratedColumn<int> notBefore = GeneratedColumn<int>(
+    'not_before',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> attempts = GeneratedColumn<int>(
+    'attempts',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT 0',
+    defaultValue: const CustomExpression('0'),
+  );
+  late final GeneratedColumn<int> generation = GeneratedColumn<int>(
+    'generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL DEFAULT 0',
+    defaultValue: const CustomExpression('0'),
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    assetId,
+    notBefore,
+    attempts,
+    generation,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'asset_gc_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {assetId};
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  AssetGcRows createAlias(String alias) {
+    return AssetGcRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'PRIMARY KEY(asset_id)',
+    'CHECK(typeof(not_before) = \'integer\' AND not_before >= 0)',
+    'CHECK(typeof(attempts) = \'integer\' AND attempts BETWEEN 0 AND 9223372036854775807)',
+    'CHECK(typeof(generation) = \'integer\' AND generation BETWEEN 0 AND 9223372036854775807)',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class GcAuditRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  GcAuditRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<int> id = GeneratedColumn<int>(
+    'id',
+    aliasedName,
+    false,
+    hasAutoIncrement: true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    $customConstraints: 'NOT NULL PRIMARY KEY AUTOINCREMENT',
+  );
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> completedAt = GeneratedColumn<int>(
+    'completed_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [id, kind, entityId, completedAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'gc_audit_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {id};
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  GcAuditRows createAlias(String alias) {
+    return GcAuditRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'CHECK(typeof(kind) = \'text\' AND kind = \'asset\')',
+    'CHECK(typeof(entity_id) = \'text\' AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(entity_id, char(0)) = 0)',
+    'CHECK(typeof(completed_at) = \'integer\' AND completed_at >= 0)',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class AssetGcQuarantineRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  AssetGcQuarantineRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> quarantinePath = GeneratedColumn<String>(
+    'quarantine_path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> assetId = GeneratedColumn<String>(
+    'asset_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> generation = GeneratedColumn<int>(
+    'generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> originalPath = GeneratedColumn<String>(
+    'original_path',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> state = GeneratedColumn<String>(
+    'state',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    quarantinePath,
+    assetId,
+    generation,
+    originalPath,
+    state,
+    createdAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'asset_gc_quarantine_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {quarantinePath};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {assetId, generation, originalPath},
+  ];
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  AssetGcQuarantineRows createAlias(String alias) {
+    return AssetGcQuarantineRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'PRIMARY KEY(quarantine_path)',
+    'UNIQUE(asset_id, generation, original_path)',
+    'CHECK(typeof(quarantine_path) = \'text\' AND length(CAST(quarantine_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(quarantine_path, char(0)) = 0)',
+    'CHECK(typeof(asset_id) = \'text\' AND length(CAST(asset_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(asset_id, char(0)) = 0)',
+    'CHECK(typeof(generation) = \'integer\' AND generation BETWEEN 0 AND 9223372036854775807)',
+    'CHECK(typeof(original_path) = \'text\' AND length(CAST(original_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(original_path, char(0)) = 0)',
+    'CHECK(typeof(state) = \'text\' AND state IN (\'pending\', \'completed\'))',
+    'CHECK(typeof(created_at) = \'integer\' AND created_at >= 0)',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class AssetGcLeaseRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  AssetGcLeaseRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> leaseName = GeneratedColumn<String>(
+    'lease_name',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<String> ownerToken = GeneratedColumn<String>(
+    'owner_token',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> expiresAt = GeneratedColumn<int>(
+    'expires_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [leaseName, ownerToken, expiresAt];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'asset_gc_lease_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {leaseName};
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  AssetGcLeaseRows createAlias(String alias) {
+    return AssetGcLeaseRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'PRIMARY KEY(lease_name)',
+    'CHECK(typeof(lease_name) = \'text\' AND length(CAST(lease_name AS BLOB)) BETWEEN 1 AND 1024 AND instr(lease_name, char(0)) = 0)',
+    'CHECK(typeof(owner_token) = \'text\' AND length(CAST(owner_token AS BLOB)) BETWEEN 1 AND 1024 AND instr(owner_token, char(0)) = 0)',
+    'CHECK(typeof(expires_at) = \'integer\' AND expires_at >= 0)',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
+class AssetReferenceDirtyRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  AssetReferenceDirtyRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> revisionId = GeneratedColumn<String>(
+    'revision_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL REFERENCES message_rows(id)ON DELETE CASCADE',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [revisionId];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'asset_reference_dirty_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {revisionId};
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  AssetReferenceDirtyRows createAlias(String alias) {
+    return AssetReferenceDirtyRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const ['PRIMARY KEY(revision_id)'];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
 class TurnRows extends Table with TableInfo {
   @override
   final GeneratedDatabase attachedDatabase;
@@ -2677,7 +3271,6 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
   Set<GeneratedColumn> get $primaryKey => {attachmentId};
   @override
   List<Set<GeneratedColumn>> get uniqueKeys => [
-    {localAssetId},
     {uploadId},
   ];
   @override
@@ -2693,7 +3286,6 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
   @override
   List<String> get customConstraints => const [
     'PRIMARY KEY(attachment_id)',
-    'UNIQUE(local_asset_id)',
     'UNIQUE(upload_id)',
     'CHECK(typeof(attachment_id) = \'text\' AND length(attachment_id) = 36 AND attachment_id = lower(attachment_id) AND attachment_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(attachment_id, 9, 1) = \'-\' AND substr(attachment_id, 14, 1) = \'-\' AND substr(attachment_id, 15, 1) = \'4\' AND substr(attachment_id, 19, 1) = \'-\' AND substr(attachment_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(attachment_id, 24, 1) = \'-\' AND substr(attachment_id, 1, 8) NOT GLOB \'*-*\' AND substr(attachment_id, 10, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 15, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 20, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 25, 12) NOT GLOB \'*-*\')',
     'CHECK(typeof(local_asset_id) = \'text\' AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(local_asset_id, char(0)) = 0)',
@@ -3082,10 +3674,19 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
   bool get dontWriteConstraints => true;
 }
 
-class DatabaseAtV18 extends GeneratedDatabase {
-  DatabaseAtV18(QueryExecutor e) : super(e);
+class DatabaseAtV19 extends GeneratedDatabase {
+  DatabaseAtV19(QueryExecutor e) : super(e);
   late final ConversationRows conversationRows = ConversationRows(this);
   late final MessageRows messageRows = MessageRows(this);
+  late final AssetRows assetRows = AssetRows(this);
+  late final MessageAssetRows messageAssetRows = MessageAssetRows(this);
+  late final AssetGcRows assetGcRows = AssetGcRows(this);
+  late final GcAuditRows gcAuditRows = GcAuditRows(this);
+  late final AssetGcQuarantineRows assetGcQuarantineRows =
+      AssetGcQuarantineRows(this);
+  late final AssetGcLeaseRows assetGcLeaseRows = AssetGcLeaseRows(this);
+  late final AssetReferenceDirtyRows assetReferenceDirtyRows =
+      AssetReferenceDirtyRows(this);
   late final TurnRows turnRows = TurnRows(this);
   late final ConversationMcpServerRows conversationMcpServerRows =
       ConversationMcpServerRows(this);
@@ -3146,6 +3747,18 @@ class DatabaseAtV18 extends GeneratedDatabase {
   late final Index idxMessagesTurn = Index(
     'idx_messages_turn',
     'CREATE INDEX idx_messages_turn ON message_rows (conversation_id, turn_id, message_order, id)',
+  );
+  late final Index idxMessageAssetsAsset = Index(
+    'idx_message_assets_asset',
+    'CREATE INDEX idx_message_assets_asset ON message_asset_rows (asset_id, revision_id, ordinal)',
+  );
+  late final Index idxMessageAssetsRemoteIdentity = Index(
+    'idx_message_assets_remote_identity',
+    'CREATE INDEX idx_message_assets_remote_identity ON message_asset_rows (attachment_id, upload_id, key_epoch, revision_id, ordinal)',
+  );
+  late final Index idxAssetGcQuarantineClaim = Index(
+    'idx_asset_gc_quarantine_claim',
+    'CREATE INDEX idx_asset_gc_quarantine_claim ON asset_gc_quarantine_rows (asset_id, generation, state)',
   );
   late final Index idxTurnsConversationCreated = Index(
     'idx_turns_conversation_created',
@@ -3214,6 +3827,13 @@ class DatabaseAtV18 extends GeneratedDatabase {
   List<DatabaseSchemaEntity> get allSchemaEntities => [
     conversationRows,
     messageRows,
+    assetRows,
+    messageAssetRows,
+    assetGcRows,
+    gcAuditRows,
+    assetGcQuarantineRows,
+    assetGcLeaseRows,
+    assetReferenceDirtyRows,
     turnRows,
     conversationMcpServerRows,
     toolEventRows,
@@ -3241,6 +3861,9 @@ class DatabaseAtV18 extends GeneratedDatabase {
     idxMessagesConversationTimestamp,
     idxMessagesGroup,
     idxMessagesTurn,
+    idxMessageAssetsAsset,
+    idxMessageAssetsRemoteIdentity,
+    idxAssetGcQuarantineClaim,
     idxTurnsConversationCreated,
     idxMessagePartsRevisionOrdinal,
     idxProviderArtifactsRevisionKind,
@@ -3258,5 +3881,5 @@ class DatabaseAtV18 extends GeneratedDatabase {
     idxGenerationRunsActiveTarget,
   ];
   @override
-  int get schemaVersion => 18;
+  int get schemaVersion => 19;
 }

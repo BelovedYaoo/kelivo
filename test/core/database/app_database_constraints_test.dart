@@ -720,6 +720,22 @@ void main() {
         );
   }
 
+  Future<void> insertAsset({required String id, required String contentHash}) {
+    final now = DateTime.utc(2026, 7, 11);
+    return database
+        .into(database.assetRows)
+        .insert(
+          AssetRowsCompanion.insert(
+            id: id,
+            contentHash: contentHash,
+            path: 'D:\\workspace\\assets\\$id.bin',
+            byteSize: 1,
+            createdAt: now,
+            lastReferencedAt: now,
+          ),
+        );
+  }
+
   Future<void> insertSyncIntent({
     String entityType = 'conversation',
     String entityId = 'conversation-1',
@@ -4475,10 +4491,135 @@ void main() {
     });
   });
 
+  group('消息附件一等引用约束', () {
+    Future<void> prepareMessageAssets() async {
+      await insertConversation();
+      await insertMessage();
+      await insertAsset(
+        id: 'asset-reference-1',
+        contentHash:
+            '1111111111111111111111111111111111111111111111111111111111111111',
+      );
+      await insertAsset(
+        id: 'asset-reference-2',
+        contentHash:
+            '2222222222222222222222222222222222222222222222222222222222222222',
+      );
+    }
+
+    test('接受本地引用与完整远端身份的序号边界', () async {
+      await prepareMessageAssets();
+
+      await database
+          .into(database.messageAssetRows)
+          .insert(
+            MessageAssetRowsCompanion.insert(
+              revisionId: 'message-1',
+              ordinal: 0,
+              assetId: 'asset-reference-1',
+              kind: 'image',
+            ),
+          );
+      await database
+          .into(database.messageAssetRows)
+          .insert(
+            MessageAssetRowsCompanion.insert(
+              revisionId: 'message-1',
+              ordinal: 31,
+              assetId: 'asset-reference-2',
+              kind: 'file',
+              displayName: const Value('report.txt'),
+              mediaType: const Value('text/plain'),
+              attachmentId: const Value('d0000000-0000-4000-8000-000000000011'),
+              uploadId: const Value('e0000000-0000-4000-8000-000000000011'),
+              keyEpoch: const Value(0xffffffff),
+            ),
+          );
+
+      final rows = await database.select(database.messageAssetRows).get();
+      expect(rows.map((row) => row.ordinal), <int>[0, 31]);
+      expect(rows.last.attachmentId, 'd0000000-0000-4000-8000-000000000011');
+      expect(rows.last.keyEpoch, 0xffffffff);
+    });
+
+    test('拒绝越界序号、重复序号与不完整远端身份', () async {
+      await prepareMessageAssets();
+
+      Future<void> insertReference({
+        required int ordinal,
+        required String assetId,
+        Value<String?> attachmentId = const Value.absent(),
+        Value<String?> uploadId = const Value.absent(),
+        Value<int?> keyEpoch = const Value.absent(),
+      }) {
+        return database
+            .into(database.messageAssetRows)
+            .insert(
+              MessageAssetRowsCompanion.insert(
+                revisionId: 'message-1',
+                ordinal: ordinal,
+                assetId: assetId,
+                kind: 'image',
+                attachmentId: attachmentId,
+                uploadId: uploadId,
+                keyEpoch: keyEpoch,
+              ),
+            );
+      }
+
+      await expectLater(
+        insertReference(ordinal: 32, assetId: 'asset-reference-1'),
+        throwsRemoteSqliteException(),
+      );
+      await expectLater(
+        insertReference(
+          ordinal: 0,
+          assetId: 'asset-reference-1',
+          attachmentId: const Value('d0000000-0000-4000-8000-000000000012'),
+        ),
+        throwsRemoteSqliteException(),
+      );
+      await insertReference(ordinal: 0, assetId: 'asset-reference-1');
+      await expectLater(
+        insertReference(ordinal: 0, assetId: 'asset-reference-2'),
+        throwsRemoteSqliteException(),
+      );
+      await insertReference(
+        ordinal: 1,
+        assetId: 'asset-reference-2',
+        attachmentId: const Value('d0000000-0000-4000-8000-000000000013'),
+        uploadId: const Value('e0000000-0000-4000-8000-000000000013'),
+        keyEpoch: const Value(1),
+      );
+      await expectLater(
+        insertReference(
+          ordinal: 2,
+          assetId: 'asset-reference-1',
+          attachmentId: const Value('d0000000-0000-4000-8000-000000000013'),
+          uploadId: const Value('e0000000-0000-4000-8000-000000000014'),
+          keyEpoch: const Value(1),
+        ),
+        throwsRemoteSqliteException(),
+      );
+      await expectLater(
+        insertReference(
+          ordinal: 2,
+          assetId: 'asset-reference-1',
+          attachmentId: const Value('d0000000-0000-4000-8000-000000000014'),
+          uploadId: const Value('e0000000-0000-4000-8000-000000000013'),
+          keyEpoch: const Value(1),
+        ),
+        throwsRemoteSqliteException(),
+      );
+    });
+  });
+
   group('E2EE 附件持久上传状态', () {
     E2eeAttachmentUploadDraft uploadDraft({
       String attachmentId = 'd0000000-0000-4000-8000-000000000001',
       String localAssetId = 'asset-upload-1',
+      String createMutationId = 'd1000000-0000-4000-8000-000000000001',
+      String commitMutationId = 'd2000000-0000-4000-8000-000000000001',
     }) {
       return E2eeAttachmentUploadDraft(
         descriptor: E2eeAttachmentDescriptor(
@@ -4499,10 +4640,39 @@ void main() {
         ),
         localAssetId: localAssetId,
         sourcePath: 'D:\\workspace\\upload\\asset.bin',
-        createMutationId: 'd1000000-0000-4000-8000-000000000001',
-        commitMutationId: 'd2000000-0000-4000-8000-000000000001',
+        createMutationId: createMutationId,
+        commitMutationId: commitMutationId,
       );
     }
+
+    test('同一本地资产可创建多个独立远端身份', () async {
+      final now = DateTime.utc(2026, 7, 29);
+      final first = await attachmentUploads.create(
+        draft: uploadDraft(localAssetId: 'shared-local-asset'),
+        now: now,
+      );
+      final second = await attachmentUploads.create(
+        draft: uploadDraft(
+          attachmentId: 'd0000000-0000-4000-8000-000000000002',
+          localAssetId: 'shared-local-asset',
+          createMutationId: 'd1000000-0000-4000-8000-000000000002',
+          commitMutationId: 'd2000000-0000-4000-8000-000000000002',
+        ),
+        now: now,
+      );
+
+      expect(first.localAssetId, second.localAssetId);
+      expect(
+        first.descriptor.attachmentId,
+        isNot(second.descriptor.attachmentId),
+      );
+      expect(
+        await attachmentUploads.readByAttachmentId(
+          second.descriptor.attachmentId,
+        ),
+        isA<E2eeAttachmentUploadState>(),
+      );
+    });
 
     test('失败重试保留同一分块密文并最终提交', () async {
       final now = DateTime.utc(2026, 7, 29, 1);
@@ -4671,7 +4841,9 @@ void main() {
       expect(committed.nextChunkIndex, 2);
       expect(committed.manifestCiphertext, isNotEmpty);
       expect(
-        (await attachmentUploads.readByLocalAssetId(draft.localAssetId))!.phase,
+        (await attachmentUploads.readByAttachmentId(
+          draft.descriptor.attachmentId,
+        ))!.phase,
         E2eeAttachmentUploadPhase.committed,
       );
     });

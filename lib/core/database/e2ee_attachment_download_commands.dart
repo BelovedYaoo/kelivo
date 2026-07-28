@@ -103,10 +103,9 @@ final class E2eeAttachmentDownloadLease {
 }
 
 final class E2eeAttachmentDownloadCommands {
-  E2eeAttachmentDownloadCommands._(this._repository)
-    : _database = _repository._db;
+  E2eeAttachmentDownloadCommands._(ChatDatabaseRepository repository)
+    : _database = repository._db;
 
-  final ChatDatabaseRepository _repository;
   final AppDatabase _database;
 
   Future<E2eeAttachmentDownloadState> ensure({
@@ -297,7 +296,6 @@ final class E2eeAttachmentDownloadCommands {
     }
     final localAssetId =
         'asset_${_attachmentDigestHex(manifest.contentSha256)}';
-    await _repository._ensureAssetGcSchema();
     return _transitionDownloadLease(
       lease: lease,
       now: now,
@@ -382,7 +380,6 @@ final class E2eeAttachmentDownloadCommands {
     }
     final timestamp = _requireStorageTime(now, 'now');
     _requireActiveAttachmentDownloadLease(lease, timestamp);
-    await _repository._ensureAssetGcSchema();
     return _database.transaction(() async {
       if (lease.state.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
         throw StateError('附件下载 transitionVersion 已耗尽');

@@ -150,6 +150,237 @@ class MessageRows extends Table {
   ];
 }
 
+class AssetRows extends Table {
+  TextColumn get id => text()();
+  TextColumn get contentHash => text()();
+  TextColumn get path => text()();
+  IntColumn get byteSize => integer()();
+  IntColumn get width => integer().nullable()();
+  IntColumn get height => integer().nullable()();
+  TextColumn get thumbnailPath => text().nullable()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get lastReferencedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {id};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {contentHash},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(id) = 'text' "
+        'AND length(CAST(id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(id, char(0)) = 0)',
+    "CHECK (typeof(content_hash) = 'text' AND length(content_hash) = 64 "
+        'AND content_hash = lower(content_hash) '
+        "AND content_hash NOT GLOB '*[^0-9a-f]*')",
+    "CHECK (typeof(path) = 'text' "
+        'AND length(CAST(path AS BLOB)) BETWEEN 1 AND 32768 '
+        'AND instr(path, char(0)) = 0)',
+    "CHECK (typeof(byte_size) = 'integer' "
+        'AND byte_size BETWEEN 0 AND 9223372036854775807)',
+    'CHECK (width IS NULL OR '
+        "(typeof(width) = 'integer' AND width BETWEEN 1 AND 2147483647))",
+    'CHECK (height IS NULL OR '
+        "(typeof(height) = 'integer' AND height BETWEEN 1 AND 2147483647))",
+    'CHECK (thumbnail_path IS NULL OR '
+        "(typeof(thumbnail_path) = 'text' "
+        'AND length(CAST(thumbnail_path AS BLOB)) BETWEEN 1 AND 32768 '
+        'AND instr(thumbnail_path, char(0)) = 0))',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(last_referenced_at) = 'integer' "
+        'AND last_referenced_at >= created_at)',
+  ];
+}
+
+@TableIndex(
+  name: 'idx_message_assets_asset',
+  columns: {#assetId, #revisionId, #ordinal},
+)
+@TableIndex(
+  name: 'idx_message_assets_remote_identity',
+  columns: {#attachmentId, #uploadId, #keyEpoch, #revisionId, #ordinal},
+)
+class MessageAssetRows extends Table {
+  TextColumn get revisionId =>
+      text().references(MessageRows, #id, onDelete: KeyAction.cascade)();
+  IntColumn get ordinal => integer()();
+  TextColumn get assetId =>
+      text().references(AssetRows, #id, onDelete: KeyAction.cascade)();
+  TextColumn get kind => text()();
+  TextColumn get displayName => text().nullable()();
+  TextColumn get mediaType => text().nullable()();
+  TextColumn get attachmentId => text().nullable()();
+  TextColumn get uploadId => text().nullable()();
+  IntColumn get keyEpoch => integer().nullable()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {revisionId, ordinal};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {revisionId, attachmentId},
+    {revisionId, uploadId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(ordinal) = 'integer' AND ordinal BETWEEN 0 AND 31)",
+    "CHECK (typeof(kind) = 'text' AND kind IN ('image', 'file'))",
+    'CHECK (display_name IS NULL OR '
+        "(typeof(display_name) = 'text' "
+        'AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(display_name, char(0)) = 0 '
+        "AND instr(display_name, '/') = 0 "
+        'AND instr(display_name, char(92)) = 0))',
+    'CHECK (media_type IS NULL OR '
+        "(typeof(media_type) = 'text' "
+        'AND length(CAST(media_type AS BLOB)) BETWEEN 3 AND 255 '
+        "AND instr(media_type, '/') BETWEEN 2 AND length(media_type) - 1))",
+    "CHECK (kind != 'file' OR "
+        '(display_name IS NOT NULL AND media_type IS NOT NULL))',
+    'CHECK (attachment_id IS NULL OR '
+        "(typeof(attachment_id) = 'text' AND length(attachment_id) = 36 "
+        'AND attachment_id = lower(attachment_id) '
+        "AND attachment_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(attachment_id, 9, 1) = '-' "
+        "AND substr(attachment_id, 14, 1) = '-' "
+        "AND substr(attachment_id, 15, 1) = '4' "
+        "AND substr(attachment_id, 19, 1) = '-' "
+        "AND substr(attachment_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(attachment_id, 24, 1) = '-'))",
+    'CHECK (upload_id IS NULL OR '
+        "(typeof(upload_id) = 'text' AND length(upload_id) = 36 "
+        'AND upload_id = lower(upload_id) '
+        "AND upload_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(upload_id, 9, 1) = '-' "
+        "AND substr(upload_id, 14, 1) = '-' "
+        "AND substr(upload_id, 15, 1) = '4' "
+        "AND substr(upload_id, 19, 1) = '-' "
+        "AND substr(upload_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(upload_id, 24, 1) = '-'))",
+    'CHECK (key_epoch IS NULL OR '
+        "(typeof(key_epoch) = 'integer' "
+        'AND key_epoch BETWEEN 1 AND 4294967295))',
+    'CHECK ((attachment_id IS NULL AND upload_id IS NULL '
+        'AND key_epoch IS NULL) OR '
+        '(attachment_id IS NOT NULL AND upload_id IS NOT NULL '
+        'AND key_epoch IS NOT NULL))',
+  ];
+}
+
+class AssetGcRows extends Table {
+  TextColumn get assetId =>
+      text().references(AssetRows, #id, onDelete: KeyAction.cascade)();
+  IntColumn get notBefore =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get attempts => integer().withDefault(const Constant(0))();
+  IntColumn get generation => integer().withDefault(const Constant(0))();
+
+  @override
+  Set<Column<Object>> get primaryKey => {assetId};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(not_before) = 'integer' AND not_before >= 0)",
+    "CHECK (typeof(attempts) = 'integer' "
+        'AND attempts BETWEEN 0 AND 9223372036854775807)',
+    "CHECK (typeof(generation) = 'integer' "
+        'AND generation BETWEEN 0 AND 9223372036854775807)',
+  ];
+}
+
+class GcAuditRows extends Table {
+  IntColumn get id => integer().autoIncrement()();
+  TextColumn get kind => text()();
+  TextColumn get entityId => text()();
+  IntColumn get completedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(kind) = 'text' AND kind = 'asset')",
+    "CHECK (typeof(entity_id) = 'text' "
+        'AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(entity_id, char(0)) = 0)',
+    "CHECK (typeof(completed_at) = 'integer' AND completed_at >= 0)",
+  ];
+}
+
+@TableIndex(
+  name: 'idx_asset_gc_quarantine_claim',
+  columns: {#assetId, #generation, #state},
+)
+class AssetGcQuarantineRows extends Table {
+  TextColumn get quarantinePath => text()();
+  TextColumn get assetId => text()();
+  IntColumn get generation => integer()();
+  TextColumn get originalPath => text()();
+  TextColumn get state => text()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {quarantinePath};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {assetId, generation, originalPath},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(quarantine_path) = 'text' "
+        'AND length(CAST(quarantine_path AS BLOB)) BETWEEN 1 AND 32768 '
+        'AND instr(quarantine_path, char(0)) = 0)',
+    "CHECK (typeof(asset_id) = 'text' "
+        'AND length(CAST(asset_id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(asset_id, char(0)) = 0)',
+    "CHECK (typeof(generation) = 'integer' "
+        'AND generation BETWEEN 0 AND 9223372036854775807)',
+    "CHECK (typeof(original_path) = 'text' "
+        'AND length(CAST(original_path AS BLOB)) BETWEEN 1 AND 32768 '
+        'AND instr(original_path, char(0)) = 0)',
+    "CHECK (typeof(state) = 'text' "
+        "AND state IN ('pending', 'completed'))",
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+  ];
+}
+
+class AssetGcLeaseRows extends Table {
+  TextColumn get leaseName => text()();
+  TextColumn get ownerToken => text()();
+  IntColumn get expiresAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {leaseName};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(lease_name) = 'text' "
+        'AND length(CAST(lease_name AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(lease_name, char(0)) = 0)',
+    "CHECK (typeof(owner_token) = 'text' "
+        'AND length(CAST(owner_token AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(owner_token, char(0)) = 0)',
+    "CHECK (typeof(expires_at) = 'integer' AND expires_at >= 0)",
+  ];
+}
+
+class AssetReferenceDirtyRows extends Table {
+  TextColumn get revisionId =>
+      text().references(MessageRows, #id, onDelete: KeyAction.cascade)();
+
+  @override
+  Set<Column<Object>> get primaryKey => {revisionId};
+}
+
 @TableIndex(
   name: 'idx_turns_conversation_created',
   columns: {#conversationId, #createdAt, #id},
@@ -1093,7 +1324,6 @@ class E2eeAttachmentUploadRows extends Table {
 
   @override
   List<Set<Column<Object>>> get uniqueKeys => [
-    {localAssetId},
     {uploadId},
   ];
 
@@ -1523,6 +1753,13 @@ class E2eeAttachmentDownloadRows extends Table {
   tables: [
     ConversationRows,
     MessageRows,
+    AssetRows,
+    MessageAssetRows,
+    AssetGcRows,
+    GcAuditRows,
+    AssetGcQuarantineRows,
+    AssetGcLeaseRows,
+    AssetReferenceDirtyRows,
     TurnRows,
     ConversationMcpServerRows,
     ToolEventRows,
@@ -1551,8 +1788,8 @@ class AppDatabase extends _$AppDatabase {
 
   static const databaseFileName = 'kelivo.db';
 
-  // 附件上传摘要与下载断点已硬切进 SQLCipher，旧库不能承担 E2EE 附件状态机。
-  static const currentSchemaVersion = 18;
+  // 消息附件身份已成为 SQLCipher 一等模型，schema 18 无法无损表达有序远端引用。
+  static const currentSchemaVersion = 19;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

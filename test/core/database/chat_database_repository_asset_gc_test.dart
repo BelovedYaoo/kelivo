@@ -56,6 +56,7 @@ void main() {
       await repository.linkMessageAsset(
         conversationId: conversation.id,
         revisionId: message.id,
+        ordinal: 0,
         assetId: 'asset-1',
         kind: 'image',
       );
@@ -89,6 +90,7 @@ void main() {
       await repository.linkMessageAsset(
         conversationId: conversation.id,
         revisionId: message.id,
+        ordinal: 0,
         assetId: 'asset-1',
         kind: 'image',
       );
@@ -260,6 +262,7 @@ void main() {
       await repository.linkMessageAsset(
         conversationId: conversation.id,
         revisionId: message.id,
+        ordinal: 0,
         assetId: 'asset-current',
         kind: 'image',
       );
@@ -340,6 +343,7 @@ void main() {
       await repository.linkMessageAsset(
         conversationId: conversation.id,
         revisionId: message.id,
+        ordinal: 0,
         assetId: 'asset-delay-new',
         kind: 'image',
       );
@@ -445,8 +449,11 @@ void main() {
       await repository.linkMessageAsset(
         conversationId: conversation.id,
         revisionId: message.id,
+        ordinal: 0,
         assetId: 'asset-completed-new',
         kind: 'file',
+        displayName: 'completed.txt',
+        mediaType: 'text/plain',
       );
       await repository.unlinkMessageAsset(
         revisionId: message.id,
@@ -561,41 +568,38 @@ void main() {
     },
   );
 
-  test(
-    'an existing database creates the quarantine receipt table on demand',
-    () async {
-      final root = await Directory.systemTemp.createTemp(
-        'asset_gc_schema_upgrade_test_',
-      );
-      final databaseFile = File('${root.path}/assets.sqlite');
-      ChatDatabaseRepository? repository = ChatDatabaseRepository.open(
-        file: databaseFile,
-        cipher: testDatabaseCipher,
-      );
-      addTearDown(() async {
-        await repository?.close();
-        await root.delete(recursive: true);
-      });
-      expect(await repository.listAssetGcQuarantines(), isEmpty);
+  test('schema 19 缺少资产隔离回执表时失败关闭', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'asset_gc_schema_upgrade_test_',
+    );
+    final databaseFile = File('${root.path}/assets.sqlite');
+    ChatDatabaseRepository? repository = ChatDatabaseRepository.open(
+      file: databaseFile,
+      cipher: testDatabaseCipher,
+    );
+    addTearDown(() async {
+      await repository?.close();
+      await root.delete(recursive: true);
+    });
+    expect(await repository.listAssetGcQuarantines(), isEmpty);
 
-      final initializedRepository = repository;
-      repository = null;
-      await initializedRepository.close();
-      final database = sqlite.sqlite3.open(databaseFile.path);
-      try {
-        testDatabaseCipher.apply(database, createSlotIfMissing: false);
-        database.execute('DROP TABLE asset_gc_quarantine_rows;');
-      } finally {
-        database.close();
-      }
+    final initializedRepository = repository;
+    repository = null;
+    await initializedRepository.close();
+    final database = sqlite.sqlite3.open(databaseFile.path);
+    try {
+      testDatabaseCipher.apply(database, createSlotIfMissing: false);
+      database.execute('DROP TABLE asset_gc_quarantine_rows;');
+    } finally {
+      database.close();
+    }
 
-      repository = ChatDatabaseRepository.open(
-        file: databaseFile,
-        cipher: testDatabaseCipher,
-      );
-      expect(await repository.listAssetGcQuarantines(), isEmpty);
-    },
-  );
+    repository = ChatDatabaseRepository.open(
+      file: databaseFile,
+      cipher: testDatabaseCipher,
+    );
+    await expectLater(repository.listAssetGcQuarantines(), throwsA(anything));
+  });
 
   test(
     'asset GC lease fences another repository until release or expiry',

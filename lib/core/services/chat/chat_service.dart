@@ -1886,8 +1886,13 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     notifyListeners();
   }
 
-  List<({String path, String kind})> _extractLocalAttachments(String content) {
-    final out = <String, ({String path, String kind})>{};
+  List<({String path, String kind, String? displayName, String? mediaType})>
+  _extractLocalAttachments(String content) {
+    final out =
+        <
+          String,
+          ({String path, String kind, String? displayName, String? mediaType})
+        >{};
     final imgRe = RegExp(r"\[image:(.+?)\]");
     for (final m in imgRe.allMatches(content)) {
       final pth = m.group(1)?.trim();
@@ -1896,18 +1901,34 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           !pth.startsWith('http') &&
           !pth.startsWith('data:')) {
         final fixed = SandboxPathResolver.fix(pth);
-        out['image:$fixed'] = (path: fixed, kind: 'image');
+        out['image:$fixed'] = (
+          path: fixed,
+          kind: 'image',
+          displayName: null,
+          mediaType: null,
+        );
       }
     }
     final fileRe = RegExp(r"\[file:(.+?)\|(.+?)\|(.+?)\]");
     for (final m in fileRe.allMatches(content)) {
       final pth = m.group(1)?.trim();
+      final displayName = m.group(2)?.trim();
+      final mediaType = m.group(3)?.trim();
       if (pth != null &&
           pth.isNotEmpty &&
+          displayName != null &&
+          displayName.isNotEmpty &&
+          mediaType != null &&
+          mediaType.isNotEmpty &&
           !pth.startsWith('http') &&
           !pth.startsWith('data:')) {
         final fixed = SandboxPathResolver.fix(pth);
-        out['file:$fixed'] = (path: fixed, kind: 'file');
+        out['file:$fixed'] = (
+          path: fixed,
+          kind: 'file',
+          displayName: displayName,
+          mediaType: mediaType,
+        );
       }
     }
     return List.unmodifiable(out.values);
@@ -2017,6 +2038,8 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
               path: normalizedPath,
               byteSize: await file.length(),
               kind: attachment.kind,
+              displayName: attachment.displayName,
+              mediaType: attachment.mediaType,
             ),
           );
         }

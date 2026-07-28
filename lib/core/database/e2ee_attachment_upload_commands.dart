@@ -194,20 +194,6 @@ final class E2eeAttachmentUploadCommands {
     return row == null ? null : _stateFromRow(row);
   }
 
-  Future<E2eeAttachmentUploadState?> readByLocalAssetId(
-    String localAssetId,
-  ) async {
-    final id = _requireAttachmentStorageText(
-      localAssetId,
-      'localAssetId',
-      1024,
-    );
-    final row = await (_database.select(
-      _database.e2eeAttachmentUploadRows,
-    )..where((table) => table.localAssetId.equals(id))).getSingleOrNull();
-    return row == null ? null : _stateFromRow(row);
-  }
-
   Future<E2eeAttachmentUploadLease?> claimDue({
     required String leaseToken,
     required String leaseOwner,

@@ -130,7 +130,6 @@ class ChatDatabaseRepository {
   E2eeSyncOutboxCommands? _e2eeSyncOutboxCommands;
   Future<E2eeSyncOutboxCommands>? _openingE2eeSyncOutboxCommands;
   bool _messageSearchFtsReady = false;
-  bool _assetGcSchemaReady = false;
 
   static ChatDatabaseRepository open({
     required File file,
@@ -646,6 +645,13 @@ class ChatDatabaseRepository {
       'conversation_rows',
       'conversation_mcp_server_rows',
       'message_rows',
+      'asset_rows',
+      'message_asset_rows',
+      'asset_gc_rows',
+      'gc_audit_rows',
+      'asset_gc_quarantine_rows',
+      'asset_gc_lease_rows',
+      'asset_reference_dirty_rows',
       'turn_rows',
       'tool_event_rows',
       'gemini_thought_signature_rows',
@@ -731,6 +737,40 @@ class ChatDatabaseRepository {
         'duration_ms',
         'message_order',
       ],
+      'asset_rows': [
+        'id',
+        'content_hash',
+        'path',
+        'byte_size',
+        'width',
+        'height',
+        'thumbnail_path',
+        'created_at',
+        'last_referenced_at',
+      ],
+      'message_asset_rows': [
+        'revision_id',
+        'ordinal',
+        'asset_id',
+        'kind',
+        'display_name',
+        'media_type',
+        'attachment_id',
+        'upload_id',
+        'key_epoch',
+      ],
+      'asset_gc_rows': ['asset_id', 'not_before', 'attempts', 'generation'],
+      'gc_audit_rows': ['id', 'kind', 'entity_id', 'completed_at'],
+      'asset_gc_quarantine_rows': [
+        'quarantine_path',
+        'asset_id',
+        'generation',
+        'original_path',
+        'state',
+        'created_at',
+      ],
+      'asset_gc_lease_rows': ['lease_name', 'owner_token', 'expires_at'],
+      'asset_reference_dirty_rows': ['revision_id'],
       'turn_rows': ['id', 'conversation_id', 'created_at'],
       'tool_event_rows': ['message_id', 'events_json'],
       'gemini_thought_signature_rows': ['message_id', 'signature'],
@@ -947,6 +987,12 @@ class ChatDatabaseRepository {
         'conversation_id->conversation_rows.id:CASCADE',
       },
       'message_rows': {'conversation_id->conversation_rows.id:CASCADE'},
+      'message_asset_rows': {
+        'revision_id->message_rows.id:CASCADE',
+        'asset_id->asset_rows.id:CASCADE',
+      },
+      'asset_gc_rows': {'asset_id->asset_rows.id:CASCADE'},
+      'asset_reference_dirty_rows': {'revision_id->message_rows.id:CASCADE'},
       'turn_rows': {'conversation_id->conversation_rows.id:CASCADE'},
       'tool_event_rows': {'message_id->message_rows.id:CASCADE'},
       'gemini_thought_signature_rows': {'message_id->message_rows.id:CASCADE'},
@@ -1088,6 +1134,56 @@ class ChatDatabaseRepository {
             'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'updated_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
           },
+          'asset_rows': {
+            'id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'content_hash': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'path': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'byte_size': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'width': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'height': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'thumbnail_path': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'last_referenced_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'message_asset_rows': {
+            'revision_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'ordinal': (type: 'INTEGER', notNull: 1, primaryKey: 2),
+            'asset_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'kind': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'display_name': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'media_type': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'attachment_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'upload_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'key_epoch': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+          },
+          'asset_gc_rows': {
+            'asset_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'not_before': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'attempts': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'generation': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'gc_audit_rows': {
+            'id': (type: 'INTEGER', notNull: 1, primaryKey: 1),
+            'kind': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'entity_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'completed_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'asset_gc_quarantine_rows': {
+            'quarantine_path': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'asset_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'generation': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'original_path': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'state': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'created_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'asset_gc_lease_rows': {
+            'lease_name': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'owner_token': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'expires_at': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+          },
+          'asset_reference_dirty_rows': {
+            'revision_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
+          },
           'e2ee_attachment_upload_rows': {
             'attachment_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
             'local_asset_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
@@ -1225,7 +1321,19 @@ class ChatDatabaseRepository {
       },
       'e2ee_sync_outbox_rows': {'record_id'},
       'e2ee_sync_remote_record_rows': {},
-      'e2ee_attachment_upload_rows': {'local_asset_id', 'upload_id'},
+      'asset_rows': {'content_hash'},
+      'message_asset_rows': {
+        'revision_id\u0000attachment_id',
+        'revision_id\u0000upload_id',
+      },
+      'asset_gc_rows': {},
+      'gc_audit_rows': {},
+      'asset_gc_quarantine_rows': {
+        'asset_id\u0000generation\u0000original_path',
+      },
+      'asset_gc_lease_rows': {},
+      'asset_reference_dirty_rows': {},
+      'e2ee_attachment_upload_rows': {'upload_id'},
       'e2ee_attachment_download_rows': {'upload_id'},
     };
     for (final table in expectedUniqueKeys.entries) {
@@ -1276,6 +1384,24 @@ class ChatDatabaseRepository {
       'idx_e2ee_sync_remote_records_gate_updated': (
         table: 'e2ee_sync_remote_record_rows',
         columns: ['gate', 'updated_at', 'record_id'],
+      ),
+      'idx_message_assets_asset': (
+        table: 'message_asset_rows',
+        columns: ['asset_id', 'revision_id', 'ordinal'],
+      ),
+      'idx_message_assets_remote_identity': (
+        table: 'message_asset_rows',
+        columns: [
+          'attachment_id',
+          'upload_id',
+          'key_epoch',
+          'revision_id',
+          'ordinal',
+        ],
+      ),
+      'idx_asset_gc_quarantine_claim': (
+        table: 'asset_gc_quarantine_rows',
+        columns: ['asset_id', 'generation', 'state'],
       ),
       'idx_e2ee_attachment_upload_due': (
         table: 'e2ee_attachment_upload_rows',
@@ -1355,6 +1481,38 @@ class ChatDatabaseRepository {
             'AND observed_revision IS NULL '
             'AND error_code IS NULL)',
         "OR (gate = 'quarantined' AND error_code IS NOT NULL))",
+      ],
+      'asset_rows': [
+        "CHECK (typeof(content_hash) = 'text' AND length(content_hash) = 64",
+        "CHECK (typeof(byte_size) = 'integer' "
+            'AND byte_size BETWEEN 0 AND 9223372036854775807)',
+        "CHECK (typeof(last_referenced_at) = 'integer' "
+            'AND last_referenced_at >= created_at)',
+      ],
+      'message_asset_rows': [
+        "CHECK (typeof(ordinal) = 'integer' AND ordinal BETWEEN 0 AND 31)",
+        "CHECK (typeof(kind) = 'text' AND kind IN ('image', 'file'))",
+        "CHECK (kind != 'file' OR "
+            '(display_name IS NOT NULL AND media_type IS NOT NULL))',
+        'CHECK ((attachment_id IS NULL AND upload_id IS NULL '
+            'AND key_epoch IS NULL) OR '
+            '(attachment_id IS NOT NULL AND upload_id IS NOT NULL '
+            'AND key_epoch IS NOT NULL))',
+      ],
+      'asset_gc_rows': [
+        "CHECK (typeof(attempts) = 'integer' "
+            'AND attempts BETWEEN 0 AND 9223372036854775807)',
+        "CHECK (typeof(generation) = 'integer' "
+            'AND generation BETWEEN 0 AND 9223372036854775807)',
+      ],
+      'gc_audit_rows': ["CHECK (typeof(kind) = 'text' AND kind = 'asset')"],
+      'asset_gc_quarantine_rows': [
+        "CHECK (typeof(state) = 'text' "
+            "AND state IN ('pending', 'completed'))",
+      ],
+      'asset_gc_lease_rows': [
+        "CHECK (typeof(owner_token) = 'text'",
+        "CHECK (typeof(expires_at) = 'integer' AND expires_at >= 0)",
       ],
       'e2ee_attachment_upload_rows': [
         "CHECK (typeof(phase) = 'text' AND phase IN "
@@ -1694,7 +1852,6 @@ class ChatDatabaseRepository {
     int limit = 360,
   }) async {
     if (limit <= 0) return const <ChatMessage>[];
-    await _ensureAssetGcSchema();
     final rows = await _db
         .customSelect(
           '''
@@ -1728,7 +1885,6 @@ class ChatDatabaseRepository {
   }
 
   Future<bool> hasPendingAssetReferenceSync() async {
-    await _ensureAssetGcSchema();
     return await _db
             .customSelect('SELECT 1 FROM asset_reference_dirty_rows LIMIT 1;')
             .getSingleOrNull() !=
@@ -1736,7 +1892,6 @@ class ChatDatabaseRepository {
   }
 
   Future<void> markMessageAssetReferencesDirty(String revisionId) async {
-    await _ensureAssetGcSchema();
     await _db.customStatement(
       'INSERT OR IGNORE INTO asset_reference_dirty_rows(revision_id) '
       'SELECT id FROM message_rows WHERE id = ?;',
@@ -1749,7 +1904,6 @@ class ChatDatabaseRepository {
     required DateTime now,
     required Duration leaseDuration,
   }) async {
-    await _ensureAssetGcSchema();
     final cleanOwnerToken = ownerToken.trim();
     if (cleanOwnerToken.isEmpty) {
       throw ArgumentError.value(ownerToken, 'ownerToken');
@@ -1793,7 +1947,6 @@ class ChatDatabaseRepository {
   }
 
   Future<bool> releaseAssetGcLease({required String ownerToken}) async {
-    await _ensureAssetGcSchema();
     final cleanOwnerToken = ownerToken.trim();
     if (cleanOwnerToken.isEmpty) return false;
     return _db.transaction(() async {
@@ -2987,7 +3140,6 @@ LIMIT 1;
     String? thumbnailPath,
     DateTime? createdAt,
   }) async {
-    await _ensureAssetGcSchema();
     final timestamp = (createdAt ?? DateTime.now()).microsecondsSinceEpoch;
     await _db.customStatement(
       '''
@@ -3018,7 +3170,6 @@ LIMIT 1;
   }
 
   Future<bool> hasMessageAssetReferences(String messageId) async {
-    await _ensureAssetGcSchema();
     final row = await _db
         .customSelect(
           'SELECT 1 FROM message_asset_rows WHERE revision_id = ? LIMIT 1;',
@@ -3031,19 +3182,45 @@ LIMIT 1;
   Future<void> linkMessageAsset({
     required String conversationId,
     required String revisionId,
+    required int ordinal,
     required String assetId,
     required String kind,
+    String? displayName,
+    String? mediaType,
+    String? attachmentId,
+    String? uploadId,
+    int? keyEpoch,
   }) async {
-    await _ensureAssetGcSchema();
     await _db.transaction(() async {
       await _db.customStatement(
         '''
-        INSERT OR IGNORE INTO message_asset_rows(
-          conversation_id, revision_id, asset_id, kind
-        ) VALUES (?, ?, ?, ?);
+        INSERT INTO message_asset_rows(
+          revision_id, ordinal, asset_id, kind, display_name, media_type,
+          attachment_id, upload_id, key_epoch
+        )
+        SELECT id, ?, ?, ?, ?, ?, ?, ?, ?
+        FROM message_rows
+        WHERE id = ? AND conversation_id = ?;
       ''',
-        [conversationId, revisionId, assetId, kind],
+        [
+          ordinal,
+          assetId,
+          kind,
+          displayName,
+          mediaType,
+          attachmentId,
+          uploadId,
+          keyEpoch,
+          revisionId,
+          conversationId,
+        ],
       );
+      final inserted =
+          (await _db.customSelect('SELECT changes() AS changed;').getSingle())
+              .read<int>('changed');
+      if (inserted != 1) {
+        throw StateError('message_asset_link_identity_mismatch');
+      }
       await _db.customStatement(
         'UPDATE asset_rows SET last_referenced_at = '
         'MAX(last_referenced_at + 1, ?) WHERE id = ?;',
@@ -3062,7 +3239,6 @@ LIMIT 1;
     required String expectedContent,
     required List<MessageAssetRegistration> assets,
   }) async {
-    await _ensureAssetGcSchema();
     return _db.transaction(() async {
       final current = await (_db.select(
         _db.messageRows,
@@ -3077,7 +3253,8 @@ LIMIT 1;
         [revisionId],
       );
       final now = DateTime.now().microsecondsSinceEpoch;
-      for (final asset in assets) {
+      for (var ordinal = 0; ordinal < assets.length; ordinal++) {
+        final asset = assets[ordinal];
         await _db.customStatement(
           '''
           INSERT INTO asset_rows(
@@ -3109,11 +3286,22 @@ LIMIT 1;
         );
         await _db.customStatement(
           '''
-          INSERT OR IGNORE INTO message_asset_rows(
-            conversation_id, revision_id, asset_id, kind
-          ) VALUES (?, ?, ?, ?);
+          INSERT INTO message_asset_rows(
+            revision_id, ordinal, asset_id, kind, display_name, media_type,
+            attachment_id, upload_id, key_epoch
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
         ''',
-          [conversationId, revisionId, asset.assetId, asset.kind],
+          [
+            revisionId,
+            ordinal,
+            asset.assetId,
+            asset.kind,
+            asset.displayName,
+            asset.mediaType,
+            asset.attachmentId,
+            asset.uploadId,
+            asset.keyEpoch,
+          ],
         );
         await _db.customStatement(
           'DELETE FROM asset_gc_rows WHERE asset_id = ?;',
@@ -3132,7 +3320,6 @@ LIMIT 1;
     required String revisionId,
     required String assetId,
   }) async {
-    await _ensureAssetGcSchema();
     await _db.customStatement(
       'DELETE FROM message_asset_rows WHERE revision_id = ? AND asset_id = ?;',
       [revisionId, assetId],
@@ -3140,7 +3327,6 @@ LIMIT 1;
   }
 
   Future<int> scheduleUnreferencedAssetGc({required DateTime notBefore}) async {
-    await _ensureAssetGcSchema();
     await _db.customStatement(
       '''
       INSERT OR IGNORE INTO asset_gc_rows(
@@ -3169,7 +3355,6 @@ LIMIT 1;
     required DateTime now,
     int limit = 50,
   }) async {
-    await _ensureAssetGcSchema();
     if (limit <= 0) return const <AssetGcCandidate>[];
     return _db.transaction(() async {
       final dueRows = await _db
@@ -3310,7 +3495,6 @@ LIMIT 1;
     AssetGcCandidate candidate, {
     required DateTime now,
   }) async {
-    await _ensureAssetGcSchema();
     final row = await _db
         .customSelect(
           '''
@@ -3420,7 +3604,6 @@ LIMIT 1;
     required String quarantinePath,
     DateTime? createdAt,
   }) async {
-    await _ensureAssetGcSchema();
     await _db.customStatement(
       '''
       INSERT INTO asset_gc_quarantine_rows(
@@ -3438,7 +3621,6 @@ LIMIT 1;
   }
 
   Future<List<AssetGcQuarantineRecord>> listAssetGcQuarantines() async {
-    await _ensureAssetGcSchema();
     final rows = await _db.customSelect('''
           SELECT quarantine_path, asset_id, generation, original_path, state
           FROM asset_gc_quarantine_rows
@@ -3459,7 +3641,6 @@ LIMIT 1;
   Future<AssetGcQuarantineRecord?> getAssetGcQuarantine(
     String quarantinePath,
   ) async {
-    await _ensureAssetGcSchema();
     final row = await _db
         .customSelect(
           '''
@@ -3486,7 +3667,6 @@ LIMIT 1;
     required Future<void> Function(AssetGcCompletedDisposition disposition)
     settleFile,
   }) async {
-    await _ensureAssetGcSchema();
     return _db.transaction(() async {
       await _db.customStatement(
         '''
@@ -3574,7 +3754,6 @@ LIMIT 1;
   }
 
   Future<void> deleteAssetGcQuarantine(String quarantinePath) async {
-    await _ensureAssetGcSchema();
     await _db.customStatement(
       'DELETE FROM asset_gc_quarantine_rows WHERE quarantine_path = ?;',
       [quarantinePath],
@@ -3588,7 +3767,6 @@ LIMIT 1;
     required DateTime now,
     DateTime? completedAt,
   }) async {
-    await _ensureAssetGcSchema();
     return _db.transaction(() async {
       final quarantineRows = await _db
           .customSelect(
@@ -3751,95 +3929,6 @@ LIMIT 1;
       );
       return true;
     });
-  }
-
-  Future<void> _ensureAssetGcSchema() async {
-    if (_assetGcSchemaReady) return;
-    await _db.customStatement('''
-      CREATE TABLE IF NOT EXISTS asset_rows(
-        id TEXT PRIMARY KEY NOT NULL,
-        content_hash TEXT NOT NULL UNIQUE,
-        path TEXT NOT NULL,
-        byte_size INTEGER NOT NULL CHECK(byte_size >= 0),
-        width INTEGER CHECK(width IS NULL OR width > 0),
-        height INTEGER CHECK(height IS NULL OR height > 0),
-        thumbnail_path TEXT,
-        created_at INTEGER NOT NULL,
-        last_referenced_at INTEGER NOT NULL
-      );
-    ''');
-    await _db.customStatement('''
-      CREATE TABLE IF NOT EXISTS message_asset_rows(
-        conversation_id TEXT NOT NULL,
-        revision_id TEXT NOT NULL,
-        asset_id TEXT NOT NULL REFERENCES asset_rows(id) ON DELETE CASCADE,
-        kind TEXT NOT NULL CHECK(kind <> ''),
-        PRIMARY KEY(revision_id, asset_id, kind),
-        FOREIGN KEY(revision_id)
-          REFERENCES message_rows(id) ON DELETE CASCADE
-      );
-    ''');
-    await _db.customStatement(
-      'CREATE INDEX IF NOT EXISTS idx_message_assets_asset '
-      'ON message_asset_rows(asset_id, revision_id);',
-    );
-    await _db.customStatement('''
-      CREATE TABLE IF NOT EXISTS asset_gc_rows(
-        asset_id TEXT PRIMARY KEY NOT NULL
-          REFERENCES asset_rows(id) ON DELETE CASCADE,
-        not_before INTEGER NOT NULL,
-        attempts INTEGER NOT NULL DEFAULT 0 CHECK(attempts >= 0),
-        generation INTEGER NOT NULL DEFAULT 0 CHECK(generation >= 0)
-      );
-    ''');
-    final assetGcColumns = await _db
-        .customSelect('PRAGMA table_info(asset_gc_rows);')
-        .get();
-    if (!assetGcColumns.any(
-      (row) => row.read<String>('name') == 'generation',
-    )) {
-      await _db.customStatement(
-        'ALTER TABLE asset_gc_rows ADD COLUMN generation '
-        'INTEGER NOT NULL DEFAULT 0 CHECK(generation >= 0);',
-      );
-    }
-    await _db.customStatement('''
-      CREATE TABLE IF NOT EXISTS gc_audit_rows(
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        kind TEXT NOT NULL,
-        entity_id TEXT NOT NULL,
-        completed_at INTEGER NOT NULL
-      );
-    ''');
-    await _db.customStatement('''
-      CREATE TABLE IF NOT EXISTS asset_gc_quarantine_rows(
-        quarantine_path TEXT PRIMARY KEY NOT NULL,
-        asset_id TEXT NOT NULL,
-        generation INTEGER NOT NULL CHECK(generation >= 0),
-        original_path TEXT NOT NULL,
-        state TEXT NOT NULL CHECK(state IN ('pending', 'completed')),
-        created_at INTEGER NOT NULL,
-        UNIQUE(asset_id, generation, original_path)
-      );
-    ''');
-    await _db.customStatement(
-      'CREATE INDEX IF NOT EXISTS idx_asset_gc_quarantine_claim '
-      'ON asset_gc_quarantine_rows(asset_id, generation, state);',
-    );
-    await _db.customStatement('''
-      CREATE TABLE IF NOT EXISTS asset_gc_lease_rows(
-        lease_name TEXT PRIMARY KEY NOT NULL,
-        owner_token TEXT NOT NULL CHECK(owner_token <> ''),
-        expires_at INTEGER NOT NULL
-      );
-    ''');
-    await _db.customStatement('''
-      CREATE TABLE IF NOT EXISTS asset_reference_dirty_rows(
-        revision_id TEXT PRIMARY KEY NOT NULL
-          REFERENCES message_rows(id) ON DELETE CASCADE
-      );
-    ''');
-    _assetGcSchemaReady = true;
   }
 
   AssetGcQuarantineState _decodeAssetGcQuarantineState(String raw) {
@@ -5432,7 +5521,6 @@ LIMIT 1;
     return _observer.measure(
       ChatDatabaseOperation.commandDeleteMessages,
       () async {
-        await _ensureAssetGcSchema();
         return _deleteMessages(
           conversationId: conversationId,
           messageIds: messageIds,
@@ -6282,6 +6370,11 @@ final class MessageAssetRegistration {
     required this.path,
     required this.byteSize,
     required this.kind,
+    this.displayName,
+    this.mediaType,
+    this.attachmentId,
+    this.uploadId,
+    this.keyEpoch,
     this.width,
     this.height,
     this.thumbnailPath,
@@ -6292,6 +6385,11 @@ final class MessageAssetRegistration {
   final String path;
   final int byteSize;
   final String kind;
+  final String? displayName;
+  final String? mediaType;
+  final String? attachmentId;
+  final String? uploadId;
+  final int? keyEpoch;
   final int? width;
   final int? height;
   final String? thumbnailPath;
