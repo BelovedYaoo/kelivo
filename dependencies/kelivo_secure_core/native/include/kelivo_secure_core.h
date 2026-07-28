@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(7)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(8)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -64,6 +64,9 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_INVALID_PENDING_PAIRING_HANDLE INT32_C(33)
 #define KELIVO_STATUS_PAIRING_EXPIRED INT32_C(34)
 #define KELIVO_STATUS_PENDING_PAIRING_STATE_INVALID INT32_C(35)
+#define KELIVO_STATUS_INVALID_ATTACHMENT_DATA_KEY_HANDLE INT32_C(36)
+#define KELIVO_STATUS_ATTACHMENT_ENVELOPE_INVALID INT32_C(37)
+#define KELIVO_STATUS_ATTACHMENT_AUTHENTICATION_FAILED INT32_C(38)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
@@ -78,6 +81,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_SQLCIPHER_DATABASE_ATTACH (UINT64_C(1) << 4)
 #define KELIVO_CAPABILITY_OPAQUE_CLIENT (UINT64_C(1) << 5)
 #define KELIVO_CAPABILITY_DEVICE_E2EE_CORE (UINT64_C(1) << 6)
+#define KELIVO_CAPABILITY_ATTACHMENT_CRYPTO (UINT64_C(1) << 7)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_ENTITY_KEY_MAX_SIZE ((size_t)2048)
@@ -112,6 +116,15 @@ typedef int32_t KelivoStatus;
 #define KELIVO_DEVICE_STATE_BLOB_SIZE ((size_t)188)
 #define KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE UINT32_C(48)
 #define KELIVO_DEVICE_STATE_BINDING_FLAG_ACCOUNT (UINT32_C(1) << 0)
+#define KELIVO_ATTACHMENT_ID_SIZE ((size_t)16)
+#define KELIVO_ATTACHMENT_WRAPPED_KEY_SIZE ((size_t)116)
+#define KELIVO_ATTACHMENT_MAX_CHUNK_ENVELOPE_SIZE ((size_t)(4 * 1024 * 1024))
+#define KELIVO_ATTACHMENT_CHUNK_ENVELOPE_OVERHEAD ((size_t)120)
+#define KELIVO_ATTACHMENT_CHUNK_PLAINTEXT_SIZE \
+    ((size_t)(KELIVO_ATTACHMENT_MAX_CHUNK_ENVELOPE_SIZE - \
+              KELIVO_ATTACHMENT_CHUNK_ENVELOPE_OVERHEAD))
+#define KELIVO_ATTACHMENT_MAX_CHUNK_COUNT UINT32_C(1000)
+#define KELIVO_ATTACHMENT_MAX_TOTAL_PLAINTEXT_BYTES UINT64_C(4194184000)
 
 typedef struct KelivoDeviceStateBinding {
     uint32_t struct_size;
@@ -299,6 +312,98 @@ KELIVO_CORE_API KelivoStatus kelivo_account_record_open(
     uint32_t key_epoch,
     const uint8_t *associated_data,
     size_t associated_data_length,
+    const uint8_t *envelope,
+    size_t envelope_length,
+    uint8_t *out_plaintext,
+    size_t out_plaintext_capacity,
+    size_t *out_plaintext_length);
+
+/*
+ * 原子生成随机 UUIDv4 附件标识和随机附件数据密钥。密钥只以当前进程内的
+ * 不透明句柄返回；容量不足时不读取随机源，也不创建句柄。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_attachment_data_key_generate(
+    uint64_t *out_handle,
+    uint8_t *out_attachment_id,
+    size_t out_attachment_id_capacity,
+    size_t *out_attachment_id_length);
+
+/*
+ * 幂等关闭附件数据密钥句柄。关闭后所有加密、解密和包装操作必须失败关闭。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_attachment_data_key_handle_close(
+    uint64_t handle);
+
+/*
+ * 使用 ARK 包装附件数据密钥。上下文严格绑定 UUIDv4 用户、随机 UUIDv4 附件
+ * 标识与正 uint32 key epoch；输出容量查询不消耗随机数。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_attachment_data_key_wrap(
+    uint64_t ark_handle,
+    uint64_t data_key_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *attachment_id,
+    size_t attachment_id_length,
+    uint32_t key_epoch,
+    uint8_t *out_wrapped_key,
+    size_t out_wrapped_key_capacity,
+    size_t *out_wrapped_key_length);
+
+/*
+ * 认证并解包附件数据密钥。任何 ARK 或上下文错配、截断或篡改均不得创建句柄。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_attachment_data_key_unwrap(
+    uint64_t ark_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *attachment_id,
+    size_t attachment_id_length,
+    uint32_t key_epoch,
+    const uint8_t *wrapped_key,
+    size_t wrapped_key_length,
+    uint64_t *out_handle);
+
+/*
+ * 独立密封规范附件块。上下文绑定账户、附件、epoch、块序号、块总数、总明文
+ * 长度和本块明文长度；upload_id 是 create 后返回的 UUIDv4。非末块固定为
+ * 4194184 字节，使完整密文不超过服务端 4 MiB 上限；空附件固定为一个零长度块。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_attachment_chunk_seal(
+    uint64_t data_key_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *attachment_id,
+    size_t attachment_id_length,
+    const uint8_t *upload_id,
+    size_t upload_id_length,
+    uint32_t key_epoch,
+    uint32_t chunk_index,
+    uint32_t chunk_count,
+    uint64_t total_plaintext_bytes,
+    const uint8_t *plaintext,
+    size_t plaintext_length,
+    uint8_t *out_envelope,
+    size_t out_envelope_capacity,
+    size_t *out_envelope_length);
+
+/*
+ * 认证并开启单个附件块。调用方必须提供全部预期上下文；错误块、重排、替换、
+ * 截断、跨账户、跨 upload 或跨 epoch 均不得写出明文。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_attachment_chunk_open(
+    uint64_t data_key_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *attachment_id,
+    size_t attachment_id_length,
+    const uint8_t *upload_id,
+    size_t upload_id_length,
+    uint32_t key_epoch,
+    uint32_t chunk_index,
+    uint32_t chunk_count,
+    uint64_t total_plaintext_bytes,
+    size_t plaintext_length,
     const uint8_t *envelope,
     size_t envelope_length,
     uint8_t *out_plaintext,

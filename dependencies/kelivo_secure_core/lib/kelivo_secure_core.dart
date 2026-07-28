@@ -10,8 +10,9 @@ import 'package:ffi/ffi.dart';
 import 'kelivo_secure_core_bindings_generated.dart' as native;
 
 part 'src/device_core.dart';
+part 'src/attachment_crypto.dart';
 
-const _expectedAbiVersion = 7;
+const _expectedAbiVersion = 8;
 const _keySlotIdLength = 16;
 const _keyPolicyVersion = 1;
 const _keySlotsCapability = 1 << 0;
@@ -21,6 +22,7 @@ const _sqlCipherKeyApplicationCapability = 1 << 3;
 const _sqlCipherDatabaseAttachCapability = 1 << 4;
 const _opaqueClientCapability = 1 << 5;
 const _deviceE2eeCoreCapability = 1 << 6;
+const _attachmentCryptoCapability = 1 << 7;
 const _secureStorageCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
@@ -30,7 +32,8 @@ const _secureStorageCapabilityFlags =
 const _knownCapabilityFlags =
     _secureStorageCapabilityFlags |
     _opaqueClientCapability |
-    _deviceE2eeCoreCapability;
+    _deviceE2eeCoreCapability |
+    _attachmentCryptoCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
@@ -114,6 +117,9 @@ enum KelivoSecureCoreStatus {
   invalidPendingPairingHandle(33),
   pairingExpired(34),
   pendingPairingStateInvalid(35),
+  invalidAttachmentDataKeyHandle(36),
+  attachmentEnvelopeInvalid(37),
+  attachmentAuthenticationFailed(38),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);
@@ -139,6 +145,7 @@ final class KelivoCoreCapabilities {
     required this.supportsSqlCipherDatabaseAttach,
     required this.supportsOpaqueClient,
     required this.supportsDeviceE2eeCore,
+    required this.supportsAttachmentCrypto,
   });
 
   final int abiVersion;
@@ -150,6 +157,7 @@ final class KelivoCoreCapabilities {
   final bool supportsSqlCipherDatabaseAttach;
   final bool supportsOpaqueClient;
   final bool supportsDeviceE2eeCore;
+  final bool supportsAttachmentCrypto;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -1049,6 +1057,10 @@ KelivoCoreCapabilities _readCapabilities() {
             capabilities.flags & _backgroundAccessCapability == 0)) {
       throw StateError('安全核心在缺少后台密钥槽位时声明了设备 E2EE 能力');
     }
+    if (capabilities.flags & _attachmentCryptoCapability != 0 &&
+        capabilities.flags & _deviceE2eeCoreCapability == 0) {
+      throw StateError('安全核心在缺少设备 E2EE 核心时声明了附件加密能力');
+    }
 
     return KelivoCoreCapabilities(
       abiVersion: capabilities.abi_version,
@@ -1065,6 +1077,8 @@ KelivoCoreCapabilities _readCapabilities() {
       supportsOpaqueClient: capabilities.flags & _opaqueClientCapability != 0,
       supportsDeviceE2eeCore:
           capabilities.flags & _deviceE2eeCoreCapability != 0,
+      supportsAttachmentCrypto:
+          capabilities.flags & _attachmentCryptoCapability != 0,
     );
   } finally {
     calloc.free(output);

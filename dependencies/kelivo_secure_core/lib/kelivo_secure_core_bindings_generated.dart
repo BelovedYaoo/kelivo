@@ -220,6 +220,156 @@ external int kelivo_account_record_open(
 
 @ffi.Native<
   KelivoStatus Function(
+    ffi.Pointer<ffi.Uint64>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_attachment_data_key_generate(
+  ffi.Pointer<ffi.Uint64> out_handle,
+  ffi.Pointer<ffi.Uint8> out_attachment_id,
+  int out_attachment_id_capacity,
+  ffi.Pointer<ffi.Size> out_attachment_id_length,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Uint64)>()
+external int kelivo_attachment_data_key_handle_close(int handle);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_attachment_data_key_wrap(
+  int ark_handle,
+  int data_key_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> attachment_id,
+  int attachment_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> out_wrapped_key,
+  int out_wrapped_key_capacity,
+  ffi.Pointer<ffi.Size> out_wrapped_key_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint64>,
+  )
+>()
+external int kelivo_attachment_data_key_unwrap(
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> attachment_id,
+  int attachment_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> wrapped_key,
+  int wrapped_key_length,
+  ffi.Pointer<ffi.Uint64> out_handle,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_attachment_chunk_seal(
+  int data_key_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> attachment_id,
+  int attachment_id_length,
+  ffi.Pointer<ffi.Uint8> upload_id,
+  int upload_id_length,
+  int key_epoch,
+  int chunk_index,
+  int chunk_count,
+  int total_plaintext_bytes,
+  ffi.Pointer<ffi.Uint8> plaintext,
+  int plaintext_length,
+  ffi.Pointer<ffi.Uint8> out_envelope,
+  int out_envelope_capacity,
+  ffi.Pointer<ffi.Size> out_envelope_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Uint64,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_attachment_chunk_open(
+  int data_key_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> attachment_id,
+  int attachment_id_length,
+  ffi.Pointer<ffi.Uint8> upload_id,
+  int upload_id_length,
+  int key_epoch,
+  int chunk_index,
+  int chunk_count,
+  int total_plaintext_bytes,
+  int plaintext_length,
+  ffi.Pointer<ffi.Uint8> envelope,
+  int envelope_length,
+  ffi.Pointer<ffi.Uint8> out_plaintext,
+  int out_plaintext_capacity,
+  ffi.Pointer<ffi.Size> out_plaintext_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
     ffi.Pointer<ffi.Uint64>,
@@ -791,7 +941,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 7;
+const int KELIVO_CORE_ABI_VERSION = 8;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -873,6 +1023,12 @@ const int KELIVO_STATUS_PAIRING_EXPIRED = 34;
 
 const int KELIVO_STATUS_PENDING_PAIRING_STATE_INVALID = 35;
 
+const int KELIVO_STATUS_INVALID_ATTACHMENT_DATA_KEY_HANDLE = 36;
+
+const int KELIVO_STATUS_ATTACHMENT_ENVELOPE_INVALID = 37;
+
+const int KELIVO_STATUS_ATTACHMENT_AUTHENTICATION_FAILED = 38;
+
 const int KELIVO_STATUS_UNSUPPORTED_PLATFORM = 100;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_NONE = 0;
@@ -898,6 +1054,8 @@ const int KELIVO_CAPABILITY_SQLCIPHER_DATABASE_ATTACH = 16;
 const int KELIVO_CAPABILITY_OPAQUE_CLIENT = 32;
 
 const int KELIVO_CAPABILITY_DEVICE_E2EE_CORE = 64;
+
+const int KELIVO_CAPABILITY_ATTACHMENT_CRYPTO = 128;
 
 const int KELIVO_RECORD_ID_SIZE = 16;
 
@@ -964,3 +1122,17 @@ const int KELIVO_DEVICE_STATE_BLOB_SIZE = 188;
 const int KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE = 48;
 
 const int KELIVO_DEVICE_STATE_BINDING_FLAG_ACCOUNT = 1;
+
+const int KELIVO_ATTACHMENT_ID_SIZE = 16;
+
+const int KELIVO_ATTACHMENT_WRAPPED_KEY_SIZE = 116;
+
+const int KELIVO_ATTACHMENT_MAX_CHUNK_ENVELOPE_SIZE = 4194304;
+
+const int KELIVO_ATTACHMENT_CHUNK_ENVELOPE_OVERHEAD = 120;
+
+const int KELIVO_ATTACHMENT_CHUNK_PLAINTEXT_SIZE = 4194184;
+
+const int KELIVO_ATTACHMENT_MAX_CHUNK_COUNT = 1000;
+
+const int KELIVO_ATTACHMENT_MAX_TOTAL_PLAINTEXT_BYTES = 4194184000;

@@ -7,10 +7,17 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+mod attachment;
 mod database;
 mod device_core;
 mod opaque_client;
 mod record;
+
+pub use attachment::{
+    kelivo_attachment_chunk_open, kelivo_attachment_chunk_seal,
+    kelivo_attachment_data_key_generate, kelivo_attachment_data_key_handle_close,
+    kelivo_attachment_data_key_unwrap, kelivo_attachment_data_key_wrap,
+};
 
 pub use device_core::{
     KelivoDeviceStateBinding, kelivo_account_record_id_derive, kelivo_account_root_key_generate,
@@ -36,7 +43,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 7;
+const ABI_VERSION: u32 = 8;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -51,6 +58,7 @@ const OPAQUE_STATE_HANDLE_TAG: u64 = 0b010 << 60;
 const DEVICE_IDENTITY_HANDLE_TAG: u64 = 0b011 << 60;
 const ACCOUNT_ROOT_KEY_HANDLE_TAG: u64 = 0b100 << 60;
 const PENDING_PAIRING_HANDLE_TAG: u64 = 0b101 << 60;
+const ATTACHMENT_DATA_KEY_HANDLE_TAG: u64 = 0b110 << 60;
 const MAX_ACTIVE_KEY_HANDLES: usize = 1024;
 const MAX_ACTIVE_OPAQUE_STATES: usize = 64;
 const MAX_IN_FLIGHT_OPAQUE_FINISHES: usize = 1;
@@ -79,6 +87,7 @@ const SQLCIPHER_KEY_APPLICATION_CAPABILITY: u64 = 1 << 3;
 const SQLCIPHER_DATABASE_ATTACH_CAPABILITY: u64 = 1 << 4;
 const OPAQUE_CLIENT_CAPABILITY: u64 = 1 << 5;
 const DEVICE_E2EE_CORE_CAPABILITY: u64 = 1 << 6;
+const ATTACHMENT_CRYPTO_CAPABILITY: u64 = 1 << 7;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
@@ -158,6 +167,9 @@ pub(crate) enum KelivoStatus {
     InvalidPendingPairingHandle = 33,
     PairingExpired = 34,
     PendingPairingStateInvalid = 35,
+    InvalidAttachmentDataKeyHandle = 36,
+    AttachmentEnvelopeInvalid = 37,
+    AttachmentAuthenticationFailed = 38,
     UnsupportedPlatform = 100,
 }
 
@@ -381,7 +393,7 @@ pub unsafe extern "C" fn kelivo_core_get_capabilities(
         flags: platform::CAPABILITY_FLAGS
             | OPAQUE_CLIENT_CAPABILITY
             | if cfg!(any(target_os = "android", target_os = "windows")) {
-                DEVICE_E2EE_CORE_CAPABILITY
+                DEVICE_E2EE_CORE_CAPABILITY | ATTACHMENT_CRYPTO_CAPABILITY
             } else {
                 0
             },
@@ -1023,7 +1035,7 @@ mod tests {
             platform::CAPABILITY_FLAGS
                 | OPAQUE_CLIENT_CAPABILITY
                 | if cfg!(any(target_os = "android", target_os = "windows")) {
-                    DEVICE_E2EE_CORE_CAPABILITY
+                    DEVICE_E2EE_CORE_CAPABILITY | ATTACHMENT_CRYPTO_CAPABILITY
                 } else {
                     0
                 }
@@ -1055,6 +1067,7 @@ mod tests {
                 | SQLCIPHER_DATABASE_ATTACH_CAPABILITY
                 | OPAQUE_CLIENT_CAPABILITY
                 | DEVICE_E2EE_CORE_CAPABILITY
+                | ATTACHMENT_CRYPTO_CAPABILITY
         );
     }
 

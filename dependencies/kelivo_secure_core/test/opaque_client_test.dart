@@ -24,13 +24,17 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v7 OPAQUE 与设备 E2EE 支持', () async {
+  test('能力门禁声明 ABI v8 OPAQUE、设备 E2EE 与附件加密支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 7);
+    expect(capabilities.abiVersion, 8);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
+      Platform.isWindows || Platform.isAndroid,
+    );
+    expect(
+      capabilities.supportsAttachmentCrypto,
       Platform.isWindows || Platform.isAndroid,
     );
   });
@@ -568,5 +572,396 @@ void main() {
     await core.closeAccountRootKey(issuerArk);
     await core.closeDeviceIdentity(issuerIdentity);
     await core.close(key);
+  });
+
+  test('附件数据密钥全程保持不透明并可经 ARK 包装后跨句柄解密', () async {
+    if (!(await core.getCapabilities()).supportsAttachmentCrypto) return;
+    final ark = await core.generateAccountRootKey();
+    final created = await core.generateAttachmentDataKey();
+    final context = KelivoAttachmentContext(
+      userId: accountId(0x81),
+      attachmentId: created.attachmentId,
+      keyEpoch: 7,
+    );
+    final uploadContext = KelivoAttachmentUploadContext(
+      attachment: context,
+      uploadId: accountId(0x91),
+    );
+    final plaintext = Uint8List.fromList('encrypted attachment'.codeUnits);
+    final layout = KelivoAttachmentLayout(
+      totalPlaintextBytes: plaintext.length,
+    );
+
+    expect(created.attachmentId[6] & 0xf0, 0x40);
+    expect(created.attachmentId[8] & 0xc0, 0x80);
+    expect(created.key.toString(), 'KelivoAttachmentDataKeyHandle(opaque)');
+
+    final wrapped = await core.wrapAttachmentDataKey(
+      ark,
+      created.key,
+      context: context,
+    );
+    final reopened = await core.unwrapAttachmentDataKey(
+      ark,
+      context: context,
+      wrappedKey: wrapped,
+    );
+    final chunk = await core.sealAttachmentChunk(
+      created.key,
+      uploadContext: uploadContext,
+      layout: layout,
+      chunkIndex: 0,
+      plaintext: plaintext,
+    );
+    final storedChunk = Uint8List.fromList(chunk);
+
+    expect(
+      await core.openAttachmentChunk(
+        reopened,
+        uploadContext: uploadContext,
+        layout: layout,
+        chunkIndex: 0,
+        envelope: chunk,
+      ),
+      orderedEquals(plaintext),
+    );
+    expect(chunk, orderedEquals(storedChunk));
+
+    await core.closeAttachmentDataKey(created.key);
+    await core.closeAttachmentDataKey(created.key);
+    await expectLater(
+      core.sealAttachmentChunk(
+        created.key,
+        uploadContext: uploadContext,
+        layout: layout,
+        chunkIndex: 0,
+        plaintext: plaintext,
+      ),
+      throwsStateError,
+    );
+    await core.closeAttachmentDataKey(reopened);
+    await core.closeAccountRootKey(ark);
+  });
+
+  test('附件块拒绝篡改、截断、替换及所有认证上下文错配', () async {
+    if (!(await core.getCapabilities()).supportsAttachmentCrypto) return;
+    final ark = await core.generateAccountRootKey();
+    final otherArk = await core.generateAccountRootKey();
+    final created = await core.generateAttachmentDataKey();
+    final replacement = await core.generateAttachmentDataKey();
+    final context = KelivoAttachmentContext(
+      userId: accountId(0x82),
+      attachmentId: created.attachmentId,
+      keyEpoch: 11,
+    );
+    final uploadId = accountId(0x92);
+    final uploadContext = KelivoAttachmentUploadContext(
+      attachment: context,
+      uploadId: uploadId,
+    );
+    final wrongContexts = <KelivoAttachmentContext>[
+      KelivoAttachmentContext(
+        userId: accountId(0x83),
+        attachmentId: created.attachmentId,
+        keyEpoch: 11,
+      ),
+      KelivoAttachmentContext(
+        userId: accountId(0x82),
+        attachmentId: replacement.attachmentId,
+        keyEpoch: 11,
+      ),
+      KelivoAttachmentContext(
+        userId: accountId(0x82),
+        attachmentId: created.attachmentId,
+        keyEpoch: 12,
+      ),
+    ];
+    final plaintext = Uint8List.fromList('authenticated chunk'.codeUnits);
+    final layout = KelivoAttachmentLayout(
+      totalPlaintextBytes: plaintext.length,
+    );
+    final wrapped = await core.wrapAttachmentDataKey(
+      ark,
+      created.key,
+      context: context,
+    );
+    final chunk = await core.sealAttachmentChunk(
+      created.key,
+      uploadContext: uploadContext,
+      layout: layout,
+      chunkIndex: 0,
+      plaintext: plaintext,
+    );
+    final authenticationFailure = throwsA(
+      isA<KelivoSecureCoreException>().having(
+        (error) => error.status,
+        'status',
+        KelivoSecureCoreStatus.attachmentAuthenticationFailed,
+      ),
+    );
+
+    await expectLater(
+      core.unwrapAttachmentDataKey(
+        otherArk,
+        context: context,
+        wrappedKey: wrapped,
+      ),
+      authenticationFailure,
+    );
+    for (final wrongContext in wrongContexts) {
+      await expectLater(
+        core.unwrapAttachmentDataKey(
+          ark,
+          context: wrongContext,
+          wrappedKey: wrapped,
+        ),
+        authenticationFailure,
+      );
+      await expectLater(
+        core.openAttachmentChunk(
+          created.key,
+          uploadContext: KelivoAttachmentUploadContext(
+            attachment: wrongContext,
+            uploadId: uploadId,
+          ),
+          layout: layout,
+          chunkIndex: 0,
+          envelope: chunk,
+        ),
+        authenticationFailure,
+      );
+    }
+    await expectLater(
+      core.openAttachmentChunk(
+        created.key,
+        uploadContext: KelivoAttachmentUploadContext(
+          attachment: context,
+          uploadId: accountId(0x93),
+        ),
+        layout: layout,
+        chunkIndex: 0,
+        envelope: chunk,
+      ),
+      authenticationFailure,
+    );
+
+    final tamperedWrapped = Uint8List.fromList(wrapped)
+      ..[wrapped.length - 1] ^= 1;
+    await expectLater(
+      core.unwrapAttachmentDataKey(
+        ark,
+        context: context,
+        wrappedKey: tamperedWrapped,
+      ),
+      authenticationFailure,
+    );
+    await expectLater(
+      core.unwrapAttachmentDataKey(
+        ark,
+        context: context,
+        wrappedKey: Uint8List.sublistView(wrapped, 0, wrapped.length - 1),
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.attachmentEnvelopeInvalid,
+        ),
+      ),
+    );
+
+    final tampered = Uint8List.fromList(chunk)..[chunk.length - 1] ^= 1;
+    await expectLater(
+      core.openAttachmentChunk(
+        created.key,
+        uploadContext: uploadContext,
+        layout: layout,
+        chunkIndex: 0,
+        envelope: tampered,
+      ),
+      authenticationFailure,
+    );
+    await expectLater(
+      core.openAttachmentChunk(
+        created.key,
+        uploadContext: uploadContext,
+        layout: layout,
+        chunkIndex: 0,
+        envelope: Uint8List.sublistView(chunk, 0, chunk.length - 1),
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.attachmentEnvelopeInvalid,
+        ),
+      ),
+    );
+    await expectLater(
+      core.openAttachmentChunk(
+        replacement.key,
+        uploadContext: uploadContext,
+        layout: layout,
+        chunkIndex: 0,
+        envelope: chunk,
+      ),
+      authenticationFailure,
+    );
+
+    await core.closeAttachmentDataKey(replacement.key);
+    await core.closeAttachmentDataKey(created.key);
+    await core.closeAccountRootKey(otherArk);
+    await core.closeAccountRootKey(ark);
+  });
+
+  test('附件固定分块覆盖空块、最大块、重排与非法边界', () async {
+    if (!(await core.getCapabilities()).supportsAttachmentCrypto) return;
+    final created = await core.generateAttachmentDataKey();
+    final context = KelivoAttachmentContext(
+      userId: accountId(0x84),
+      attachmentId: created.attachmentId,
+      keyEpoch: 0xffffffff,
+    );
+    final uploadContext = KelivoAttachmentUploadContext(
+      attachment: context,
+      uploadId: accountId(0x94),
+    );
+    final emptyLayout = KelivoAttachmentLayout(totalPlaintextBytes: 0);
+    expect(emptyLayout.chunkCount, 1);
+    expect(
+      emptyLayout.totalCiphertextBytes,
+      KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+    );
+
+    final emptyEnvelope = await core.sealAttachmentChunk(
+      created.key,
+      uploadContext: uploadContext,
+      layout: emptyLayout,
+      chunkIndex: 0,
+      plaintext: Uint8List(0),
+    );
+    expect(
+      await core.openAttachmentChunk(
+        created.key,
+        uploadContext: uploadContext,
+        layout: emptyLayout,
+        chunkIndex: 0,
+        envelope: emptyEnvelope,
+      ),
+      isEmpty,
+    );
+
+    final maximumChunk = Uint8List(KelivoAttachmentLimits.chunkPlaintextBytes)
+      ..fillRange(0, KelivoAttachmentLimits.chunkPlaintextBytes, 0xa5);
+    final twoChunkLayout = KelivoAttachmentLayout(
+      totalPlaintextBytes: KelivoAttachmentLimits.chunkPlaintextBytes + 1,
+    );
+    expect(twoChunkLayout.chunkCount, 2);
+    expect(
+      twoChunkLayout.totalCiphertextBytes,
+      twoChunkLayout.totalPlaintextBytes +
+          2 * KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+    );
+    final firstEnvelope = await core.sealAttachmentChunk(
+      created.key,
+      uploadContext: uploadContext,
+      layout: twoChunkLayout,
+      chunkIndex: 0,
+      plaintext: maximumChunk,
+    );
+    expect(
+      firstEnvelope,
+      hasLength(KelivoAttachmentLimits.maxChunkEnvelopeBytes),
+    );
+    expect(
+      await core.openAttachmentChunk(
+        created.key,
+        uploadContext: uploadContext,
+        layout: twoChunkLayout,
+        chunkIndex: 0,
+        envelope: firstEnvelope,
+      ),
+      orderedEquals(maximumChunk),
+    );
+    final lastPlaintext = Uint8List.fromList([0x5a]);
+    final lastEnvelope = await core.sealAttachmentChunk(
+      created.key,
+      uploadContext: uploadContext,
+      layout: twoChunkLayout,
+      chunkIndex: 1,
+      plaintext: lastPlaintext,
+    );
+    expect(
+      await core.openAttachmentChunk(
+        created.key,
+        uploadContext: uploadContext,
+        layout: twoChunkLayout,
+        chunkIndex: 1,
+        envelope: lastEnvelope,
+      ),
+      orderedEquals(lastPlaintext),
+    );
+    expect(
+      firstEnvelope.length + lastEnvelope.length,
+      twoChunkLayout.totalCiphertextBytes,
+    );
+    await expectLater(
+      core.openAttachmentChunk(
+        created.key,
+        uploadContext: uploadContext,
+        layout: twoChunkLayout,
+        chunkIndex: 1,
+        envelope: firstEnvelope,
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.attachmentAuthenticationFailed,
+        ),
+      ),
+    );
+
+    expect(
+      () => KelivoAttachmentLayout(
+        totalPlaintextBytes: KelivoAttachmentLimits.maxTotalPlaintextBytes + 1,
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      core.sealAttachmentChunk(
+        created.key,
+        uploadContext: uploadContext,
+        layout: KelivoAttachmentLayout(totalPlaintextBytes: 1),
+        chunkIndex: 0,
+        plaintext: Uint8List(0),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => KelivoAttachmentContext(
+        userId: Uint8List(16),
+        attachmentId: created.attachmentId,
+        keyEpoch: 1,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => KelivoAttachmentUploadContext(
+        attachment: context,
+        uploadId: Uint8List(16),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => KelivoAttachmentContext(
+        userId: accountId(0x85),
+        attachmentId: created.attachmentId,
+        keyEpoch: 0,
+      ),
+      throwsArgumentError,
+    );
+
+    await core.closeAttachmentDataKey(created.key);
   });
 }
