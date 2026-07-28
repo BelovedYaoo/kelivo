@@ -5244,12 +5244,12 @@ void main() {
       uploadId: _uploadId,
       keyEpoch: 7,
     );
-    final location = E2eeAttachmentFileLocation.stagingChunk(
-      direction: E2eeAttachmentStagingDirection.upload,
+    final location = E2eeAttachmentFileLocation.stagingUploadChunk(
       chunk: CloudSyncAttachmentChunkIdentity(
         identity: identity,
         chunkIndex: 0,
       ),
+      mutationId: _mutationId1,
     );
     final ciphertext = Uint8List.fromList(<int>[1, 2, 3, 4]);
     final stored = await store.publish(
@@ -5260,7 +5260,7 @@ void main() {
     expect(
       stored.storagePath,
       'memory://kelivo-e2ee-attachments/staging/upload/'
-      '$_attachmentId/$_uploadId/7/0.ciphertext',
+      '$_attachmentId/$_uploadId/7/0-$_mutationId1.ciphertext',
     );
     expect(await store.readVerified(stored), ciphertext);
     await expectLater(
@@ -5285,6 +5285,17 @@ void main() {
       ),
       throwsA(isA<StateError>()),
     );
+    final alternateMutation = await store.publish(
+      location: E2eeAttachmentFileLocation.stagingUploadChunk(
+        chunk: CloudSyncAttachmentChunkIdentity(
+          identity: identity,
+          chunkIndex: 0,
+        ),
+        mutationId: _mutationId2,
+      ),
+      source: Stream<List<int>>.value(<int>[9, 9, 9]),
+    );
+    expect(alternateMutation.storagePath, isNot(stored.storagePath));
     await expectLater(
       store.readVerified(
         E2eeAttachmentStoredFile(
@@ -5307,8 +5318,7 @@ void main() {
     );
     await expectLater(
       store.publish(
-        location: E2eeAttachmentFileLocation.stagingChunk(
-          direction: E2eeAttachmentStagingDirection.download,
+        location: E2eeAttachmentFileLocation.stagingDownloadChunk(
           chunk: CloudSyncAttachmentChunkIdentity(
             identity: identity,
             chunkIndex: 1,
@@ -5328,6 +5338,19 @@ void main() {
       source: Stream<List<int>>.value(content),
     );
     expect(await store.readVerified(contentStored), content);
+    expect(
+      await store.readContentRange(
+        storedFile: contentStored,
+        offset: 1,
+        length: 2,
+      ),
+      orderedEquals(<int>[6, 7]),
+    );
+    await store.verifyContent(contentStored);
+    await expectLater(
+      store.readContentRange(storedFile: contentStored, offset: 2, length: 2),
+      throwsA(isA<FormatException>()),
+    );
     await expectLater(
       store.publish(
         location: E2eeAttachmentFileLocation.content(
@@ -5375,12 +5398,12 @@ void main() {
       uploadId: _uploadId,
       keyEpoch: 0xffffffff,
     );
-    final location = E2eeAttachmentFileLocation.stagingChunk(
-      direction: E2eeAttachmentStagingDirection.upload,
+    final location = E2eeAttachmentFileLocation.stagingUploadChunk(
       chunk: CloudSyncAttachmentChunkIdentity(
         identity: identity,
         chunkIndex: 999,
       ),
+      mutationId: _mutationId1,
     );
     final ciphertext = Uint8List.fromList(<int>[1, 2, 3, 4, 5]);
     final stored = await store.publish(
@@ -5401,7 +5424,7 @@ void main() {
           _attachmentId,
           _uploadId,
           '4294967295',
-          '999.ciphertext',
+          '999-$_mutationId1.ciphertext',
         ),
       ),
       isTrue,
@@ -5430,12 +5453,12 @@ void main() {
     );
     expect(await store.readVerified(stored), ciphertext);
 
-    final interruptedLocation = E2eeAttachmentFileLocation.stagingChunk(
-      direction: E2eeAttachmentStagingDirection.upload,
+    final interruptedLocation = E2eeAttachmentFileLocation.stagingUploadChunk(
       chunk: CloudSyncAttachmentChunkIdentity(
         identity: identity,
         chunkIndex: 998,
       ),
+      mutationId: _mutationId2,
     );
     await expectLater(
       store.publish(
@@ -5446,7 +5469,9 @@ void main() {
     );
     final stagingDirectory = File(stored.storagePath).parent;
     expect(
-      await File(p.join(stagingDirectory.path, '998.ciphertext')).exists(),
+      await File(
+        p.join(stagingDirectory.path, '998-$_mutationId2.ciphertext'),
+      ).exists(),
       isFalse,
     );
     expect(
@@ -5482,8 +5507,7 @@ void main() {
     await downloadMarker.writeAsString('not-a-directory', flush: true);
     await expectLater(
       store.publish(
-        location: E2eeAttachmentFileLocation.stagingChunk(
-          direction: E2eeAttachmentStagingDirection.download,
+        location: E2eeAttachmentFileLocation.stagingDownloadChunk(
           chunk: CloudSyncAttachmentChunkIdentity(
             identity: identity,
             chunkIndex: 0,
@@ -5517,6 +5541,19 @@ void main() {
       isTrue,
     );
     expect(await store.readVerified(contentStored), content);
+    expect(
+      await store.readContentRange(
+        storedFile: contentStored,
+        offset: 1,
+        length: 2,
+      ),
+      orderedEquals(<int>[12, 13]),
+    );
+    await store.verifyContent(contentStored);
+    await expectLater(
+      store.readContentRange(storedFile: contentStored, offset: -1, length: 1),
+      throwsA(isA<FormatException>()),
+    );
     await expectLater(
       store.publish(
         location: E2eeAttachmentFileLocation.content(
@@ -5529,6 +5566,14 @@ void main() {
     await expectLater(
       store.deleteStaging(storagePath: contentStored.storagePath),
       throwsA(isA<StateError>()),
+    );
+
+    await File(
+      contentStored.storagePath,
+    ).writeAsBytes(<int>[11, 12, 14], flush: true);
+    await expectLater(
+      store.verifyContent(contentStored),
+      throwsA(isA<FormatException>()),
     );
 
     await File(stored.storagePath).writeAsBytes(<int>[1, 2, 3], flush: true);

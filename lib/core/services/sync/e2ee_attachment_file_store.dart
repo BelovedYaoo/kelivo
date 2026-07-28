@@ -17,16 +17,10 @@ final _canonicalUuidV4Pattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
 final _sha256HexPattern = RegExp(r'^[0-9a-f]{64}$');
-final _chunkFilePattern = RegExp(r'^(0|[1-9][0-9]{0,2})\.ciphertext$');
-
-enum E2eeAttachmentStagingDirection {
-  upload('upload'),
-  download('download');
-
-  const E2eeAttachmentStagingDirection(this._pathSegment);
-
-  final String _pathSegment;
-}
+final _downloadChunkFilePattern = RegExp(r'^(0|[1-9][0-9]{0,2})\.ciphertext$');
+final _uploadChunkFilePattern = RegExp(
+  r'^(0|[1-9][0-9]{0,2})-([0-9a-f-]{36})\.ciphertext$',
+);
 
 final class E2eeAttachmentFileLocation {
   E2eeAttachmentFileLocation._({
@@ -34,15 +28,32 @@ final class E2eeAttachmentFileLocation {
     required this._fileName,
   }) : _directorySegments = List<String>.unmodifiable(directorySegments);
 
-  factory E2eeAttachmentFileLocation.stagingChunk({
-    required E2eeAttachmentStagingDirection direction,
+  factory E2eeAttachmentFileLocation.stagingUploadChunk({
+    required CloudSyncAttachmentChunkIdentity chunk,
+    required String mutationId,
+  }) {
+    final identity = chunk.identity;
+    final mutation = _requireCanonicalUuidV4(mutationId, 'mutationId');
+    return E2eeAttachmentFileLocation._(
+      directorySegments: <String>[
+        'staging',
+        'upload',
+        identity.attachmentId,
+        identity.uploadId,
+        identity.keyEpoch.toString(),
+      ],
+      fileName: '${chunk.chunkIndex}-$mutation.ciphertext',
+    );
+  }
+
+  factory E2eeAttachmentFileLocation.stagingDownloadChunk({
     required CloudSyncAttachmentChunkIdentity chunk,
   }) {
     final identity = chunk.identity;
     return E2eeAttachmentFileLocation._(
       directorySegments: <String>[
         'staging',
-        direction._pathSegment,
+        'download',
         identity.attachmentId,
         identity.uploadId,
         identity.keyEpoch.toString(),
@@ -93,6 +104,14 @@ abstract interface class E2eeAttachmentFileStore {
   });
 
   Future<Uint8List> readVerified(E2eeAttachmentStoredFile storedFile);
+
+  Future<Uint8List> readContentRange({
+    required E2eeAttachmentStoredFile storedFile,
+    required int offset,
+    required int length,
+  });
+
+  Future<void> verifyContent(E2eeAttachmentStoredFile storedFile);
 
   Future<void> deleteStaging({required String storagePath});
 }
@@ -195,6 +214,57 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
       throw const FormatException('e2ee_attachment_file_integrity');
     }
     return Uint8List.fromList(bytes);
+  }
+
+  @override
+  Future<Uint8List> readContentRange({
+    required E2eeAttachmentStoredFile storedFile,
+    required int offset,
+    required int length,
+  }) async {
+    _requireContentRange(storedFile, offset: offset, length: length);
+    final resolved = await _resolveStoredPath(
+      storedFile.storagePath,
+      allowMissing: false,
+    );
+    if (resolved.staging) {
+      throw StateError('e2ee_attachment_content_path_required');
+    }
+    final file = resolved.file!;
+    _requireContentDigestPath(storedFile, file.path);
+    final before = await file.length();
+    if (before != storedFile.bytes) {
+      throw const FormatException('e2ee_attachment_file_integrity');
+    }
+    final input = await file.open(mode: FileMode.read);
+    try {
+      await input.setPosition(offset);
+      final bytes = await input.read(length);
+      if (bytes.length != length || await file.length() != before) {
+        throw const FormatException('e2ee_attachment_file_integrity');
+      }
+      return Uint8List.fromList(bytes);
+    } finally {
+      await input.close();
+    }
+  }
+
+  @override
+  Future<void> verifyContent(E2eeAttachmentStoredFile storedFile) async {
+    final resolved = await _resolveStoredPath(
+      storedFile.storagePath,
+      allowMissing: false,
+    );
+    if (resolved.staging) {
+      throw StateError('e2ee_attachment_content_path_required');
+    }
+    final file = resolved.file!;
+    _requireContentDigestPath(storedFile, file.path);
+    final measured = await _measureFile(file);
+    if (measured.bytes != storedFile.bytes ||
+        !_sameBytes(measured.sha256, storedFile.sha256)) {
+      throw const FormatException('e2ee_attachment_file_integrity');
+    }
   }
 
   @override
@@ -475,6 +545,43 @@ final class E2eeAttachmentMemoryFileStore implements E2eeAttachmentFileStore {
   }
 
   @override
+  Future<Uint8List> readContentRange({
+    required E2eeAttachmentStoredFile storedFile,
+    required int offset,
+    required int length,
+  }) async {
+    _requireContentRange(storedFile, offset: offset, length: length);
+    final segments = _memoryRelativeSegments(storedFile.storagePath);
+    if (segments.first != 'content') {
+      throw StateError('e2ee_attachment_content_path_required');
+    }
+    _requireContentDigestPath(storedFile, segments.last);
+    final bytes = _files[storedFile.storagePath];
+    if (bytes == null || bytes.length != storedFile.bytes) {
+      throw const FormatException('e2ee_attachment_file_integrity');
+    }
+    return Uint8List.fromList(bytes.sublist(offset, offset + length));
+  }
+
+  @override
+  Future<void> verifyContent(E2eeAttachmentStoredFile storedFile) async {
+    final segments = _memoryRelativeSegments(storedFile.storagePath);
+    if (segments.first != 'content') {
+      throw StateError('e2ee_attachment_content_path_required');
+    }
+    _requireContentDigestPath(storedFile, segments.last);
+    final bytes = _files[storedFile.storagePath];
+    if (bytes == null ||
+        bytes.length != storedFile.bytes ||
+        !_sameBytes(
+          Uint8List.fromList(sha256.convert(bytes).bytes),
+          storedFile.sha256,
+        )) {
+      throw const FormatException('e2ee_attachment_file_integrity');
+    }
+  }
+
+  @override
   Future<void> deleteStaging({required String storagePath}) async {
     final segments = _memoryRelativeSegments(storagePath);
     if (!_requireOwnedRelativeSegments(segments)) {
@@ -542,7 +649,7 @@ bool _requireOwnedRelativeSegments(List<String> segments) {
       !_canonicalUuidV4Pattern.hasMatch(segments[2]) ||
       !_canonicalUuidV4Pattern.hasMatch(segments[3]) ||
       !_isPositiveUint32(segments[4]) ||
-      !_isChunkFileName(segments[5])) {
+      !_isChunkFileName(segments[5], upload: segments[1] == 'upload')) {
     throw StateError('e2ee_attachment_owned_path_unsafe');
   }
   return true;
@@ -556,10 +663,25 @@ bool _isPositiveUint32(String value) {
       parsed.toString() == value;
 }
 
-bool _isChunkFileName(String value) {
-  if (!_chunkFilePattern.hasMatch(value)) return false;
-  final chunkIndex = int.parse(value.substring(0, value.indexOf('.')));
+bool _isChunkFileName(String value, {required bool upload}) {
+  if (upload) {
+    final match = _uploadChunkFilePattern.firstMatch(value);
+    if (match == null || !_canonicalUuidV4Pattern.hasMatch(match.group(2)!)) {
+      return false;
+    }
+  } else if (!_downloadChunkFilePattern.hasMatch(value)) {
+    return false;
+  }
+  final separator = upload ? value.indexOf('-') : value.indexOf('.');
+  final chunkIndex = int.parse(value.substring(0, separator));
   return chunkIndex < cloudSyncMaximumAttachmentChunkCount;
+}
+
+String _requireCanonicalUuidV4(String value, String field) {
+  if (!_canonicalUuidV4Pattern.hasMatch(value)) {
+    throw FormatException('$field 必须为规范的小写 UUID v4');
+  }
+  return value;
 }
 
 String _requireStoragePath(String value) {
@@ -580,6 +702,29 @@ void _requireBufferedReadSize(int value) {
   // 只有单个密文分块允许进入内存；最终内容必须按路径或流消费。
   if (value > cloudSyncMaximumAttachmentChunkCiphertextBytes) {
     throw StateError('e2ee_attachment_buffered_read_too_large');
+  }
+}
+
+void _requireContentRange(
+  E2eeAttachmentStoredFile storedFile, {
+  required int offset,
+  required int length,
+}) {
+  if (offset < 0 ||
+      length < 0 ||
+      length > cloudSyncMaximumAttachmentChunkCiphertextBytes ||
+      offset > storedFile.bytes ||
+      length > storedFile.bytes - offset) {
+    throw const FormatException('e2ee_attachment_content_range_invalid');
+  }
+}
+
+void _requireContentDigestPath(
+  E2eeAttachmentStoredFile storedFile,
+  String path,
+) {
+  if (p.basename(path) != storedFile.sha256.toHex()) {
+    throw const FormatException('e2ee_attachment_content_digest_path');
   }
 }
 
