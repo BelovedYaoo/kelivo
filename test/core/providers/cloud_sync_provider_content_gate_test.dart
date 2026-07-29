@@ -2969,6 +2969,7 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
     required CloudSyncFullSessionToken token,
     required String pairingId,
     required int keyEpoch,
+    required CloudSyncDevicePairingMembershipCommit membershipCommit,
     required Uint8List accountKeyEnvelope,
     required Uint8List deviceProof,
     required Uint8List pairingAuthenticator,
@@ -2980,6 +2981,7 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
   Future<CloudSyncAuthenticatedSession> consumeDevicePairing({
     required CloudSyncOnboardingToken token,
     required String pairingId,
+    required CloudSyncFullSessionToken sessionToken,
   }) {
     throw UnsupportedError('unexpected_pairing_consume');
   }

@@ -102,6 +102,7 @@ abstract interface class CloudSyncAccountClient {
     required CloudSyncFullSessionToken token,
     required String pairingId,
     required int keyEpoch,
+    required CloudSyncDevicePairingMembershipCommit membershipCommit,
     required Uint8List accountKeyEnvelope,
     required Uint8List deviceProof,
     required Uint8List pairingAuthenticator,
@@ -110,6 +111,7 @@ abstract interface class CloudSyncAccountClient {
   Future<CloudSyncAuthenticatedSession> consumeDevicePairing({
     required CloudSyncOnboardingToken token,
     required String pairingId,
+    required CloudSyncFullSessionToken sessionToken,
   });
 
   Future<CloudSyncDevicePairingCancellation> cancelDevicePairing({
@@ -564,6 +566,7 @@ final class CloudSyncClient
     required CloudSyncFullSessionToken token,
     required String pairingId,
     required int keyEpoch,
+    required CloudSyncDevicePairingMembershipCommit membershipCommit,
     required Uint8List accountKeyEnvelope,
     required Uint8List deviceProof,
     required Uint8List pairingAuthenticator,
@@ -589,6 +592,17 @@ final class CloudSyncClient
           ..protocolVersion = cloudSyncOpaqueProtocolVersion
           ..pairingId = pairingId
           ..keyEpoch = keyEpoch
+          ..expectedSecurityGeneration =
+              membershipCommit.expectedSecurityGeneration
+          ..expectedMembershipManifestDigest =
+              membershipCommit.expectedMembershipManifestDigest.encoded
+          ..nextMembershipManifestVersion =
+              membershipCommit.nextMembershipManifestVersion
+          ..nextMembershipManifest = _encodeBinaryForRequest(
+            membershipCommit.nextMembershipManifest,
+          )
+          ..nextMembershipManifestDigest =
+              membershipCommit.nextMembershipManifestDigest.encoded
           ..accountKeyEnvelope = encodedAccountKeyEnvelope
           ..deviceProof = encodedDeviceProof
           ..pairingAuthenticator = encodedPairingAuthenticator,
@@ -613,6 +627,7 @@ final class CloudSyncClient
   Future<CloudSyncAuthenticatedSession> consumeDevicePairing({
     required CloudSyncOnboardingToken token,
     required String pairingId,
+    required CloudSyncFullSessionToken sessionToken,
   }) {
     _requireClientIdentifier(pairingId);
 
@@ -620,7 +635,8 @@ final class CloudSyncClient
       final request = api.DevicePairingConsumeRequest(
         (builder) => builder
           ..protocolVersion = cloudSyncOpaqueProtocolVersion
-          ..pairingId = pairingId,
+          ..pairingId = pairingId
+          ..sessionToken = sessionToken.value,
       );
       final response = await _client.getAuthApi().consumeDevicePairing(
         devicePairingConsumeRequest: request,
@@ -631,7 +647,7 @@ final class CloudSyncClient
       if (data.result.name != 'authenticated') {
         throw const FormatException('服务端返回了未知的配对消费结果');
       }
-      return _authenticatedSessionFromPairing(data);
+      return _authenticatedSessionFromPairing(data, sessionToken);
     });
   }
 
@@ -1162,18 +1178,13 @@ final class CloudSyncClient
   }
 
   @override
-  Future<CloudSyncDeviceSession> revokeDevice(String deviceId) {
+  Future<CloudSyncDeviceSession> revokeDevice(String deviceId) async {
     _requireClientIdentifier(deviceId);
-    return _guard(() async {
-      final request = api.RevokeTrustedDeviceRequest(
-        (builder) => builder.deviceId = deviceId,
-      );
-      final response = await _client.getDeviceApi().revokeTrustedDevice(
-        revokeTrustedDeviceRequest: request,
-        headers: _requireFullSessionHeaders(),
-      );
-      return _fromDevice(_requireResponseData(response.data?.data).device);
-    });
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.conflict,
+      retryable: false,
+      serverCode: 'SYNC_DEVICE_ROTATION_REQUIRED',
+    );
   }
 
   Map<String, String> _requireFullSessionHeaders() {
@@ -1717,7 +1728,13 @@ CloudSyncAuthenticatedSession _authenticatedSessionFromLogin(
 
 CloudSyncAuthenticatedSession _authenticatedSessionFromPairing(
   api.DevicePairingConsumeData data,
+  CloudSyncFullSessionToken expectedToken,
 ) {
+  if (data.token != expectedToken.value) {
+    throw const FormatException('服务端返回了其他完整会话令牌');
+  }
+  _requireServerPositiveInt32(data.securityGeneration);
+  CloudSyncMembershipManifestDigest.parse(data.membershipManifestDigest);
   return _authenticatedSession(
     token: data.token,
     tokenExpiresAt: data.tokenExpiresAt,
@@ -1940,6 +1957,12 @@ void _requireClientKeyEpoch(int value) {
   }
 }
 
+void _requireServerPositiveInt32(int value) {
+  if (value < 1 || value > 0x7fffffff) {
+    throw const FormatException('服务端返回了无效的安全状态代次');
+  }
+}
+
 String _encodeFixedBinaryForRequest(Uint8List value, int expectedBytes) {
   if (value.length != expectedBytes) {
     throw const CloudSyncException(
@@ -1947,6 +1970,10 @@ String _encodeFixedBinaryForRequest(Uint8List value, int expectedBytes) {
       retryable: false,
     );
   }
+  return base64Url.encode(value).replaceAll('=', '');
+}
+
+String _encodeBinaryForRequest(Uint8List value) {
   return base64Url.encode(value).replaceAll('=', '');
 }
 

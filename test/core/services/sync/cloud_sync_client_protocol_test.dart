@@ -307,6 +307,32 @@ Map<String, Object?> _authenticatedData({
   };
 }
 
+Map<String, Object?> _pairingAuthenticatedData({
+  required String token,
+  int keyEpoch = 7,
+  String deviceId = _deviceId1,
+  String loginName = 'alice',
+}) {
+  return <String, Object?>{
+    ..._authenticatedData(
+      token: token,
+      keyEpoch: keyEpoch,
+      deviceId: deviceId,
+      loginName: loginName,
+    ),
+    'securityGeneration': 2,
+    'membershipManifestDigest': _encodedBytes(32, 31),
+  };
+}
+
+String _requiredTestString(CloudSyncJsonMap json, String key) {
+  final value = json[key];
+  if (value is! String) {
+    throw StateError('$key 不是字符串');
+  }
+  return value;
+}
+
 Map<String, Object?> _pairingTargetJson() {
   return <String, Object?>{
     'id': _deviceId2,
@@ -1250,6 +1276,9 @@ void main() {
   });
 
   test('完整会话令牌与设备引导令牌不可混淆且不会被日志输出', () {
+    final generated = CloudSyncFullSessionToken.generate();
+    final anotherGenerated = CloudSyncFullSessionToken.generate();
+
     expect(_fullToken.value, _fullTokenValue);
     expect(_onboardingToken.value, _onboardingTokenValue);
     expect(_fullToken.toString(), isNot(contains(_fullTokenValue)));
@@ -1266,6 +1295,70 @@ void main() {
       () => CloudSyncFullSessionToken.parse('kelivo_short'),
       throwsFormatException,
     );
+    expect(
+      CloudSyncFullSessionToken.parse(generated.value).value,
+      generated.value,
+    );
+    expect(anotherGenerated.value, isNot(generated.value));
+  });
+
+  test('配对成员清单提交严格绑定代次、清单字节与摘要', () {
+    final currentDigestBytes = _filledBytes(
+      cloudSyncMembershipManifestDigestBytes,
+      9,
+    );
+    final manifest = Uint8List.fromList(utf8.encode('manifest-envelope'));
+    final commit = CloudSyncDevicePairingMembershipCommit(
+      expectedSecurityGeneration: 7,
+      expectedMembershipManifestDigest:
+          CloudSyncMembershipManifestDigest.fromBytes(currentDigestBytes),
+      nextMembershipManifestVersion: 8,
+      nextMembershipManifest: manifest,
+    );
+    manifest.fillRange(0, manifest.length, 0);
+
+    expect(commit.expectedSecurityGeneration, 7);
+    expect(commit.nextMembershipManifestVersion, 8);
+    expect(commit.nextMembershipManifest, utf8.encode('manifest-envelope'));
+    expect(
+      commit.nextMembershipManifestDigest.bytes,
+      sha256.convert(commit.nextMembershipManifest).bytes,
+    );
+    expect(
+      CloudSyncMembershipManifestDigest.parse(
+        commit.nextMembershipManifestDigest.encoded,
+      ).bytes,
+      commit.nextMembershipManifestDigest.bytes,
+    );
+
+    for (final invalidFactory in <Object? Function()>[
+      () => CloudSyncDevicePairingMembershipCommit(
+        expectedSecurityGeneration: 0,
+        expectedMembershipManifestDigest:
+            commit.expectedMembershipManifestDigest,
+        nextMembershipManifestVersion: 8,
+        nextMembershipManifest: commit.nextMembershipManifest,
+      ),
+      () => CloudSyncDevicePairingMembershipCommit(
+        expectedSecurityGeneration: 7,
+        expectedMembershipManifestDigest:
+            commit.expectedMembershipManifestDigest,
+        nextMembershipManifestVersion: 0,
+        nextMembershipManifest: commit.nextMembershipManifest,
+      ),
+      () => CloudSyncDevicePairingMembershipCommit(
+        expectedSecurityGeneration: 7,
+        expectedMembershipManifestDigest:
+            commit.expectedMembershipManifestDigest,
+        nextMembershipManifestVersion: 8,
+        nextMembershipManifest: Uint8List(0),
+      ),
+      () => CloudSyncMembershipManifestDigest.parse(
+        '${commit.nextMembershipManifestDigest.encoded}=',
+      ),
+    ]) {
+      expect(invalidFactory, throwsFormatException);
+    }
   });
 
   test('持久账户会话恢复认证会话时保留设备密钥版本', () {
@@ -1724,7 +1817,7 @@ void main() {
     await expectLater(rejectedStart, throwsStateError);
   });
 
-  test('移动可信设备批准响应丢失后原样重试并清零扫码帧', () async {
+  test('移动可信设备在签名成员清单接入前拒绝批准并清零扫码帧', () async {
     const core = KelivoSecureCore();
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -1812,46 +1905,14 @@ void main() {
       ),
     );
 
-    final approvalFuture = authenticator.approveScannedDevicePairing(
-      loginName: loginName,
-      session: session,
-      qrFrame: qrFrame,
+    await expectLater(
+      authenticator.approveScannedDevicePairing(
+        loginName: loginName,
+        session: session,
+        qrFrame: qrFrame,
+      ),
+      throwsUnsupportedError,
     );
-    expect(await requests.moveNext(), isTrue);
-    final firstRequest = requests.current;
-    expect(firstRequest.uri.path, '/api/auth/device-pairing/approve');
-    final firstBody = copyCloudSyncJsonMap(
-      jsonDecode(await utf8.decoder.bind(firstRequest).join()),
-    );
-    final firstSocket = await firstRequest.response.detachSocket();
-    firstSocket.destroy();
-
-    expect(await requests.moveNext(), isTrue);
-    final secondRequest = requests.current;
-    expect(secondRequest.uri.path, '/api/auth/device-pairing/approve');
-    expect(
-      secondRequest.headers.value(HttpHeaders.authorizationHeader),
-      'Bearer $_fullTokenValue',
-    );
-    final secondBody = copyCloudSyncJsonMap(
-      jsonDecode(await utf8.decoder.bind(secondRequest).join()),
-    );
-    expect(secondBody, firstBody);
-    secondRequest.response.headers.contentType = ContentType.json;
-    secondRequest.response.write(
-      jsonEncode(<String, Object?>{
-        'data': <String, Object?>{
-          'protocolVersion': cloudSyncOpaqueProtocolVersion,
-          'pairingId': _pairingId,
-          'result': 'approved',
-          'approvedAt': now.toIso8601String(),
-        },
-      }),
-    );
-    await secondRequest.response.close();
-
-    final approval = await approvalFuture;
-    expect(approval.pairingId, _pairingId);
     expect(qrFrame, everyElement(0));
 
     Uint8List createQrFrame({
@@ -2100,6 +2161,14 @@ void main() {
     final firstConsumeBody = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(consumeRequest).join()),
     );
+    final finalSessionToken = _requiredTestString(
+      firstConsumeBody,
+      'sessionToken',
+    );
+    expect(
+      CloudSyncFullSessionToken.parse(finalSessionToken).value,
+      isNotEmpty,
+    );
     expect(
       await store.readPendingPairingEnvelope(
         normalizedBaseUrl: baseUrl,
@@ -2159,7 +2228,8 @@ void main() {
     retriedConsumeRequest.response.headers.contentType = ContentType.json;
     retriedConsumeRequest.response.write(
       jsonEncode(<String, Object?>{
-        'data': _authenticatedData(
+        'data': _pairingAuthenticatedData(
+          token: finalSessionToken,
           keyEpoch: 7,
           deviceId: _deviceId2,
           loginName: loginName,
@@ -2252,7 +2322,8 @@ void main() {
           'result': 'approved',
           'approvedAt': '2026-07-26T05:01:00.000Z',
         },
-        '/api/auth/device-pairing/consume' => _authenticatedData(
+        '/api/auth/device-pairing/consume' => _pairingAuthenticatedData(
+          token: _requiredTestString(body, 'sessionToken'),
           keyEpoch: 23,
           deviceId: _deviceId2,
         ),
@@ -2295,24 +2366,15 @@ void main() {
       token: _onboardingToken,
       pairingId: _pairingId,
     );
-    final approval = await client.approveDevicePairing(
-      token: _fullToken,
-      pairingId: _pairingId,
-      keyEpoch: 23,
-      accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 21),
-      deviceProof: _filledBytes(cloudSyncDeviceProofBytes, 22),
-      pairingAuthenticator: _filledBytes(
-        cloudSyncPairingAuthenticatorBytes,
-        23,
-      ),
-    );
     final approved = await client.queryDevicePairing(
       token: _onboardingToken,
       pairingId: _pairingId,
     );
+    final finalSessionToken = CloudSyncFullSessionToken.generate();
     final session = await client.consumeDevicePairing(
       token: _onboardingToken,
       pairingId: _pairingId,
+      sessionToken: finalSessionToken,
     );
     await expectLater(
       client.listDevices(),
@@ -2329,7 +2391,16 @@ void main() {
       status: CloudSyncDeviceStatus.active,
       pageSize: 10,
     );
-    final revoked = await client.revokeDevice(_deviceId2);
+    await expectLater(
+      client.revokeDevice(_deviceId2),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.serverCode,
+          'serverCode',
+          'SYNC_DEVICE_ROTATION_REQUIRED',
+        ),
+      ),
+    );
     final cancellation = await client.cancelDevicePairing(
       token: _onboardingToken,
       pairingId: _pairingId,
@@ -2338,7 +2409,6 @@ void main() {
     expect(created.targetDevice.id, _deviceId2);
     expect(created.challenge, everyElement(18));
     expect(pending, isA<CloudSyncDevicePairingPending>());
-    expect(approval.pairingId, _pairingId);
     expect(
       approved,
       isA<CloudSyncDevicePairingApproved>()
@@ -2356,17 +2426,15 @@ void main() {
     );
     expect(session.keyEpoch, 23);
     expect(session.device.id, _deviceId2);
+    expect(session.token.value, finalSessionToken.value);
     expect(devices.items.single.id, _deviceId2);
-    expect(revoked.status, CloudSyncDeviceStatus.revoked);
     expect(cancellation.pairingId, _pairingId);
 
     final onboardingHeader = 'Bearer $_onboardingTokenValue';
-    final fullHeader = 'Bearer $_fullTokenValue';
+    final pairedSessionHeader = 'Bearer ${finalSessionToken.value}';
     for (final request in requests) {
       final expectedHeader = switch (request.$1) {
-        '/api/auth/device-pairing/approve' ||
-        '/api/device/trusted/list' ||
-        '/api/device/trusted/revoke' => fullHeader,
+        '/api/device/trusted/list' => pairedSessionHeader,
         _ => onboardingHeader,
       };
       expect(request.$2, expectedHeader, reason: request.$1);
@@ -2376,16 +2444,63 @@ void main() {
       'pairingId': _pairingId,
       'pairingSecretHash': _encodedBytes(cloudSyncPairingSecretHashBytes, 24),
     });
-    expect(requests[2].$3['keyEpoch'], 23);
-    expect(
-      requests[2].$3['accountKeyEnvelope'],
-      _encodedBytes(cloudSyncAccountKeyEnvelopeBytes, 21),
-    );
-    expect(requests[5].$3, <String, Object?>{
+    expect(requests[3].$3['sessionToken'], finalSessionToken.value);
+    expect(requests[4].$3, <String, Object?>{
       'status': 'active',
       'pageIndex': 1,
       'pageSize': 10,
     });
+    expect(
+      requests.any(
+        (request) => request.$1 == '/api/auth/device-pairing/approve',
+      ),
+      isFalse,
+    );
+  });
+
+  test('设备配对消费拒绝服务端替换客户端会话令牌', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    late final CloudSyncJsonMap requestBody;
+    final subscription = server.listen((request) async {
+      requestBody = copyCloudSyncJsonMap(
+        jsonDecode(await utf8.decoder.bind(request).join()),
+      );
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'data': _pairingAuthenticatedData(
+            token: _otherFullTokenValue,
+            deviceId: _deviceId2,
+          ),
+        }),
+      );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final expectedToken = CloudSyncFullSessionToken.generate();
+
+    await expectLater(
+      client.consumeDevicePairing(
+        token: _onboardingToken,
+        pairingId: _pairingId,
+        sessionToken: expectedToken,
+      ),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+    expect(requestBody['sessionToken'], expectedToken.value);
   });
 
   test('设备配对 QR 完整 transcript 规范编码并转移敏感缓冲区所有权', () {
@@ -2830,32 +2945,6 @@ void main() {
           token: _onboardingToken,
           pairingId: _pairingId,
           pairingSecretHash: _filledBytes(cloudSyncPairingSecretHashBytes + 1),
-        ),
-      ),
-      (
-        'key epoch 下界',
-        () => client.approveDevicePairing(
-          token: _fullToken,
-          pairingId: _pairingId,
-          keyEpoch: 0,
-          accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes),
-          deviceProof: _filledBytes(cloudSyncDeviceProofBytes),
-          pairingAuthenticator: _filledBytes(
-            cloudSyncPairingAuthenticatorBytes,
-          ),
-        ),
-      ),
-      (
-        'key epoch 上界',
-        () => client.approveDevicePairing(
-          token: _fullToken,
-          pairingId: _pairingId,
-          keyEpoch: 0x100000000,
-          accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes),
-          deviceProof: _filledBytes(cloudSyncDeviceProofBytes),
-          pairingAuthenticator: _filledBytes(
-            cloudSyncPairingAuthenticatorBytes,
-          ),
         ),
       ),
     ];

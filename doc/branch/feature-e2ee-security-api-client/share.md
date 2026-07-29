@@ -1,0 +1,9 @@
+# 协作摘要
+
+- 已从 `kelivo-api/main@1218803` 的 OpenAPI 重新生成客户端，纯生成提交为 `11fd9d2f`；生成包 `dart analyze` 通过。
+- 配对最终会话令牌由目标客户端使用 CSPRNG 生成，并在首次 consume 前写入加密恢复事务；响应丢失后的进程恢复会逐字重放同一令牌，服务端回显不同令牌时失败关闭。
+- 配对恢复帧已硬切为 `KELVPT02` / v2，不读取旧帧。
+- approve 的安全代次、旧清单摘要、下一版清单及其本地计算摘要已聚合为必填强类型 `CloudSyncDevicePairingMembershipCommit`。
+- 账户信任模块尚未提供真实签名清单，E2EE 批准入口因此在读取 pairing secret 与生成批准 bundle 前失败关闭；后续必须在 `_requirePairingMembershipCommit` 接入真实清单，不得传占位值。
+- 服务端已移除直接可信设备撤销接口，手写旧入口明确返回 `SYNC_DEVICE_ROTATION_REQUIRED`；后续必须改接签名成员清单与 ARK 轮换事务。
+- 定向分析通过；协议测试 118/118、Provider/设置测试 62/62 通过。首次测试曾因 `R:\Temp` 空间不足失败，改用 `%LOCALAPPDATA%\Temp` 后原生构建与测试通过。

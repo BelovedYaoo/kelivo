@@ -418,6 +418,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
             final recoveredSession = await _accountClient.consumeDevicePairing(
               token: pendingPairing.transaction.onboardingToken,
               pairingId: pendingPairing.transaction.pairingId,
+              sessionToken: pendingPairing.transaction.sessionToken,
             );
             E2eeDevicePairingAuthentication(this)._validatePairingSession(
               normalizedLoginName: normalizedLoginName,

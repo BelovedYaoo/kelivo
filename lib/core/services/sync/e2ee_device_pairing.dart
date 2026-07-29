@@ -6,16 +6,18 @@ const _pairingQueryInterval = Duration(seconds: 1);
 const _pairingRecordDomain = 'kelivo.e2ee.pairing-transaction.record.v1';
 const _pairingAssociatedDataDomain = 'kelivo.e2ee.pairing-transaction.aad.v1';
 const _pairingRecordEpoch = 1;
-const _pairingFrameVersion = 1;
+const _pairingFrameVersion = 2;
 const _pairingOnboardingTokenLength = 61;
+const _pairingSessionTokenLength = 50;
 const _pairingOnboardingTokenOffset = 96;
-const _pairingOriginalStateOffset = 160;
+const _pairingSessionTokenOffset = 160;
+const _pairingOriginalStateOffset = 216;
 const _pairingFullStateOffset =
     _pairingOriginalStateOffset + DeviceStateBlobStore.blobLength;
 const _pairingFrameLength =
     _pairingFullStateOffset + DeviceStateBlobStore.blobLength;
 final Uint8List _pairingFrameMagic = Uint8List.fromList(
-  ascii.encode('KELVPT01'),
+  ascii.encode('KELVPT02'),
 );
 
 enum _E2eePendingPairingState {
@@ -189,12 +191,16 @@ Uint8List _encodePairingRecoveryTransaction(
   final tokenBytes = Uint8List.fromList(
     ascii.encode(transaction.onboardingToken.value),
   );
+  final sessionTokenBytes = Uint8List.fromList(
+    ascii.encode(transaction.sessionToken.value),
+  );
   try {
     if (transaction.keyVersion <= 0 ||
         transaction.keyVersion > 0xffffffff ||
         transaction.keyEpoch <= 0 ||
         transaction.keyEpoch > 0xffffffff ||
         tokenBytes.length != _pairingOnboardingTokenLength ||
+        sessionTokenBytes.length != _pairingSessionTokenLength ||
         transaction.onboardingTokenExpiresAt.millisecondsSinceEpoch <= 0 ||
         transaction.pairingExpiresAt.millisecondsSinceEpoch <= 0 ||
         transaction.pairingExpiresAt.isAfter(
@@ -240,10 +246,16 @@ Uint8List _encodePairingRecoveryTransaction(
       E2eeAccountAuthenticator._uuidBytes(transaction.deviceId),
     );
     fields.setUint16(88, tokenBytes.length, Endian.big);
+    fields.setUint16(90, sessionTokenBytes.length, Endian.big);
     frame.setRange(
       _pairingOnboardingTokenOffset,
       _pairingOnboardingTokenOffset + tokenBytes.length,
       tokenBytes,
+    );
+    frame.setRange(
+      _pairingSessionTokenOffset,
+      _pairingSessionTokenOffset + sessionTokenBytes.length,
+      sessionTokenBytes,
     );
     frame.setRange(
       _pairingOriginalStateOffset,
@@ -258,6 +270,7 @@ Uint8List _encodePairingRecoveryTransaction(
     return frame;
   } finally {
     tokenBytes.fillRange(0, tokenBytes.length, 0);
+    sessionTokenBytes.fillRange(0, sessionTokenBytes.length, 0);
   }
 }
 
@@ -272,6 +285,7 @@ _PairingRecoveryTransaction _decodePairingRecoveryTransaction(Uint8List frame) {
   final onboardingExpiresAtMs = fields.getUint64(24, Endian.big);
   final pairingExpiresAtMs = fields.getUint64(32, Endian.big);
   final tokenLength = fields.getUint16(88, Endian.big);
+  final sessionTokenLength = fields.getUint16(90, Endian.big);
   if (fields.getUint16(8, Endian.big) != _pairingFrameVersion ||
       fields.getUint16(10, Endian.big) != 0 ||
       keyEpoch <= 0 ||
@@ -280,10 +294,16 @@ _PairingRecoveryTransaction _decodePairingRecoveryTransaction(Uint8List frame) {
       onboardingExpiresAtMs <= 0 ||
       pairingExpiresAtMs <= 0 ||
       tokenLength != _pairingOnboardingTokenLength ||
-      !_allZero(frame, 90, _pairingOnboardingTokenOffset) ||
+      sessionTokenLength != _pairingSessionTokenLength ||
+      fields.getUint32(92, Endian.big) != 0 ||
       !_allZero(
         frame,
         _pairingOnboardingTokenOffset + tokenLength,
+        _pairingSessionTokenOffset,
+      ) ||
+      !_allZero(
+        frame,
+        _pairingSessionTokenOffset + sessionTokenLength,
         _pairingOriginalStateOffset,
       )) {
     throw const FormatException('配对恢复事务帧元数据无效');
@@ -303,6 +323,14 @@ _PairingRecoveryTransaction _decodePairingRecoveryTransaction(Uint8List frame) {
     ),
     allowInvalid: false,
   );
+  final sessionToken = ascii.decode(
+    Uint8List.sublistView(
+      frame,
+      _pairingSessionTokenOffset,
+      _pairingSessionTokenOffset + sessionTokenLength,
+    ),
+    allowInvalid: false,
+  );
   return _PairingRecoveryTransaction(
     pairingId: _pairingUuidFromFrame(frame, 40),
     userId: _pairingUuidFromFrame(frame, 56),
@@ -310,6 +338,7 @@ _PairingRecoveryTransaction _decodePairingRecoveryTransaction(Uint8List frame) {
     keyVersion: keyVersion,
     keyEpoch: keyEpoch,
     onboardingToken: CloudSyncOnboardingToken.parse(token),
+    sessionToken: CloudSyncFullSessionToken.parse(sessionToken),
     onboardingTokenExpiresAt: onboardingTokenExpiresAt,
     pairingExpiresAt: pairingExpiresAt,
     originalStateBlob: Uint8List.fromList(
@@ -350,6 +379,7 @@ final class _PairingRecoveryTransaction {
     required this.keyVersion,
     required this.keyEpoch,
     required this.onboardingToken,
+    required this.sessionToken,
     required DateTime onboardingTokenExpiresAt,
     required DateTime pairingExpiresAt,
     required Uint8List originalStateBlob,
@@ -365,6 +395,7 @@ final class _PairingRecoveryTransaction {
   final int keyVersion;
   final int keyEpoch;
   final CloudSyncOnboardingToken onboardingToken;
+  final CloudSyncFullSessionToken sessionToken;
   final DateTime onboardingTokenExpiresAt;
   final DateTime pairingExpiresAt;
   final Uint8List originalStateBlob;
@@ -609,6 +640,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         keyVersion: approved.targetDevice.keyVersion,
         keyEpoch: approved.keyEpoch,
         onboardingToken: pairing._onboardingToken,
+        sessionToken: CloudSyncFullSessionToken.generate(),
         onboardingTokenExpiresAt: pairing._onboardingTokenExpiresAt,
         pairingExpiresAt: approved.expiresAt,
         originalStateBlob: originalState,
@@ -630,6 +662,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
       final session = await _accountClient.consumeDevicePairing(
         token: pairing._onboardingToken,
         pairingId: pairing._pairingId,
+        sessionToken: transaction.sessionToken,
       );
       _validatePairingSession(
         normalizedLoginName: pairing.loginName,
@@ -821,6 +854,10 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         now: now,
       );
       payload.requireAccountContextMatchesLocalUserId(session.user.id);
+      final membershipCommit = _requirePairingMembershipCommit(
+        session: session,
+        payload: payload,
+      );
       pairingSecret = payload.takePairingSecret();
       late final KelivoPairingApprovalBundle bundle;
       try {
@@ -849,6 +886,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         session: session,
         payload: payload,
         bundle: bundle,
+        membershipCommit: membershipCommit,
       );
       if (approval.pairingId != payload.pairingId) {
         throw StateError('服务端批准结果与扫码配对不匹配');
@@ -881,6 +919,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
     required CloudSyncAuthenticatedSession session,
     required CloudSyncDevicePairingQrPayload payload,
     required KelivoPairingApprovalBundle bundle,
+    required CloudSyncDevicePairingMembershipCommit membershipCommit,
   }) async {
     final retryDeadline = payload.expiresAt.isBefore(session.tokenExpiresAt)
         ? payload.expiresAt
@@ -891,6 +930,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
           token: session.token,
           pairingId: payload.pairingId,
           keyEpoch: session.keyEpoch,
+          membershipCommit: membershipCommit,
           accountKeyEnvelope: bundle.envelope,
           deviceProof: bundle.signature,
           pairingAuthenticator: bundle.authenticator,
@@ -906,6 +946,14 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         await Future<void>.delayed(_pairingApprovalRetryDelay);
       }
     }
+  }
+
+  CloudSyncDevicePairingMembershipCommit _requirePairingMembershipCommit({
+    required CloudSyncAuthenticatedSession session,
+    required CloudSyncDevicePairingQrPayload payload,
+  }) {
+    // 配对 CAS 必须使用账户信任模块签发的完整清单；接入前只能失败关闭。
+    throw UnsupportedError('账户信任成员清单尚未接入设备配对批准');
   }
 
   Future<CloudSyncDevicePairingApproved> _waitForPairingApproval(

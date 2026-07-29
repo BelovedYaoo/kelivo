@@ -1,4 +1,8 @@
+import 'dart:convert';
+import 'dart:math';
 import 'dart:typed_data';
+
+import 'package:crypto/crypto.dart';
 
 typedef CloudSyncJsonMap = Map<String, Object?>;
 
@@ -17,6 +21,8 @@ const cloudSyncDeviceProofBytes = 64;
 const cloudSyncAccountKeyEnvelopeBytes = 336;
 const cloudSyncPairingSecretHashBytes = 32;
 const cloudSyncPairingAuthenticatorBytes = 32;
+const cloudSyncMembershipManifestDigestBytes = 32;
+const cloudSyncMembershipManifestMaximumBytes = 65536;
 
 bool isAllowedCloudSyncTransportUri(Uri uri) {
   if (uri.scheme == 'https') return uri.host.isNotEmpty;
@@ -123,6 +129,20 @@ final class CloudSyncException implements Exception {
 final class CloudSyncFullSessionToken {
   CloudSyncFullSessionToken._(this.value);
 
+  factory CloudSyncFullSessionToken.generate() {
+    final random = Random.secure();
+    final tokenBytes = Uint8List(32);
+    try {
+      for (var index = 0; index < tokenBytes.length; index++) {
+        tokenBytes[index] = random.nextInt(256);
+      }
+      final encoded = base64Url.encode(tokenBytes).replaceAll('=', '');
+      return CloudSyncFullSessionToken.parse('kelivo_$encoded');
+    } finally {
+      tokenBytes.fillRange(0, tokenBytes.length, 0);
+    }
+  }
+
   factory CloudSyncFullSessionToken.parse(String value) {
     if (!_fullSessionTokenPattern.hasMatch(value)) {
       throw const FormatException('完整会话令牌格式无效');
@@ -150,6 +170,90 @@ final class CloudSyncOnboardingToken {
 
   @override
   String toString() => 'CloudSyncOnboardingToken(<已隐藏>)';
+}
+
+final class CloudSyncMembershipManifestDigest {
+  CloudSyncMembershipManifestDigest._(this.bytes, this.encoded);
+
+  factory CloudSyncMembershipManifestDigest.fromBytes(Uint8List value) {
+    final bytes = _copyFixedBytes(
+      value,
+      cloudSyncMembershipManifestDigestBytes,
+      'membershipManifestDigest',
+    );
+    return CloudSyncMembershipManifestDigest._(
+      bytes,
+      base64Url.encode(bytes).replaceAll('=', ''),
+    );
+  }
+
+  factory CloudSyncMembershipManifestDigest.parse(String value) {
+    if (value.length != 43 || !_canonicalBase64UrlPattern.hasMatch(value)) {
+      throw const FormatException('成员清单摘要格式无效');
+    }
+    try {
+      final decoded = base64Url.decode('$value=');
+      final canonical = base64Url.encode(decoded).replaceAll('=', '');
+      if (decoded.length != cloudSyncMembershipManifestDigestBytes ||
+          canonical != value) {
+        throw const FormatException('成员清单摘要不是规范编码');
+      }
+      return CloudSyncMembershipManifestDigest.fromBytes(
+        Uint8List.fromList(decoded),
+      );
+    } on FormatException {
+      throw const FormatException('成员清单摘要格式无效');
+    }
+  }
+
+  final Uint8List bytes;
+  final String encoded;
+}
+
+// 该提交只承载账户信任模块的签名产物，传输层不具备替代签名验证的权限。
+final class CloudSyncDevicePairingMembershipCommit {
+  factory CloudSyncDevicePairingMembershipCommit({
+    required int expectedSecurityGeneration,
+    required CloudSyncMembershipManifestDigest expectedMembershipManifestDigest,
+    required int nextMembershipManifestVersion,
+    required Uint8List nextMembershipManifest,
+  }) {
+    final manifestCopy = _copyBoundedBytes(
+      nextMembershipManifest,
+      cloudSyncMembershipManifestMaximumBytes,
+      'nextMembershipManifest',
+    );
+    return CloudSyncDevicePairingMembershipCommit._(
+      expectedSecurityGeneration: _requireBoundedInt(
+        expectedSecurityGeneration,
+        'expectedSecurityGeneration',
+        maximum: 0x7ffffffe,
+      ),
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      nextMembershipManifestVersion: _requirePositiveInt32(
+        nextMembershipManifestVersion,
+        'nextMembershipManifestVersion',
+      ),
+      nextMembershipManifest: manifestCopy,
+      nextMembershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+        Uint8List.fromList(sha256.convert(manifestCopy).bytes),
+      ),
+    );
+  }
+
+  CloudSyncDevicePairingMembershipCommit._({
+    required this.expectedSecurityGeneration,
+    required this.expectedMembershipManifestDigest,
+    required this.nextMembershipManifestVersion,
+    required this.nextMembershipManifest,
+    required this.nextMembershipManifestDigest,
+  });
+
+  final int expectedSecurityGeneration;
+  final CloudSyncMembershipManifestDigest expectedMembershipManifestDigest;
+  final int nextMembershipManifestVersion;
+  final Uint8List nextMembershipManifest;
+  final CloudSyncMembershipManifestDigest nextMembershipManifestDigest;
 }
 
 final class CloudSyncOpaqueDeviceIdentity {
@@ -794,6 +898,7 @@ final _canonicalUuidV4Pattern = RegExp(
 );
 final _normalizedLoginNamePattern = RegExp(r'^[a-z0-9][a-z0-9._-]*$');
 final _clientVersionPattern = RegExp(r'^[0-9A-Za-z][0-9A-Za-z.+_-]*$');
+final _canonicalBase64UrlPattern = RegExp(r'^[A-Za-z0-9_-]+$');
 final _fullSessionTokenPattern = RegExp(r'^kelivo_[A-Za-z0-9_-]{43}$');
 final _onboardingTokenPattern = RegExp(
   r'^kelivo_onboarding_[A-Za-z0-9_-]{43}$',
@@ -839,6 +944,13 @@ int _requirePositiveInt32(int value, String field) {
   return value;
 }
 
+int _requireBoundedInt(int value, String field, {required int maximum}) {
+  if (value < 1 || value > maximum) {
+    throw FormatException('$field 必须位于 1 到 $maximum');
+  }
+  return value;
+}
+
 int _requireNonNegativeInt32(int value, String field) {
   if (value < 0 || value > 0x7fffffff) {
     throw FormatException('$field 必须位于非负 int32 范围');
@@ -863,6 +975,13 @@ int _requireNonNegativeSafeInteger(int value, String field) {
 Uint8List _copyFixedBytes(Uint8List value, int length, String field) {
   if (value.length != length) {
     throw FormatException('$field 必须为 $length 字节');
+  }
+  return Uint8List.fromList(value).asUnmodifiableView();
+}
+
+Uint8List _copyBoundedBytes(Uint8List value, int maximumLength, String field) {
+  if (value.isEmpty || value.length > maximumLength) {
+    throw FormatException('$field 长度无效');
   }
   return Uint8List.fromList(value).asUnmodifiableView();
 }
