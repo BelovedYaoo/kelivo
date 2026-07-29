@@ -19,15 +19,18 @@ import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_terminal_session_retirement.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/e2ee_background_sync_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_provider_binding.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_scheduler.dart';
@@ -385,6 +388,488 @@ void main() {
     await closeFuture;
     expect(scheduler.state, E2eeSyncSchedulerState.closed);
     expect(timers.nextDelay, isNull);
+  });
+
+  test('E2EE 后台同步无持久会话时不打开内容运行时并释放工作区', () async {
+    final events = <String>[];
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: null,
+      contentAcquisition: const E2eeBackgroundContentBusy(),
+    );
+    final runner = E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+    );
+
+    final outcome = await runner.run();
+
+    expect(outcome.disposition, E2eeBackgroundSyncDisposition.noSession);
+    expect(workspace.contentAcquisitionCalls, 0);
+    expect(events, <String>['workspace-close']);
+  });
+
+  test('E2EE 后台同步在前台持有租约时不打开 SQLCipher 或网络', () async {
+    final runner = E2eeBackgroundSyncRunner.forTesting(
+      const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+    );
+
+    final outcome = await runner.run();
+
+    expect(outcome.disposition, E2eeBackgroundSyncDisposition.workspaceBusy);
+  });
+
+  test('E2EE 后台同步入口已取消时抛给平台且不获取工作区', () async {
+    final cancellation = Completer<void>()..complete();
+    final host = _DelayedBackgroundHost(
+      const E2eeBackgroundWorkspaceBusy(),
+      Duration.zero,
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(
+        host,
+      ).run(cancellationSignal: cancellation.future),
+      throwsA(isA<E2eeSyncExecutionCancelled>()),
+    );
+
+    expect(host.acquisitionCalls, 0);
+  });
+
+  test('E2EE 后台同步总截止覆盖工作区前置阶段并在开库前抛给平台', () async {
+    final events = <String>[];
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: const E2eeBackgroundContentBusy(),
+    );
+    final host = _DelayedBackgroundHost(
+      E2eeBackgroundWorkspaceAcquired(workspace),
+      const Duration(milliseconds: 40),
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(host).run(
+        limits: const E2eeBackgroundSyncLimits(
+          maximumDuration: Duration(milliseconds: 10),
+        ),
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
+    expect(host.acquisitionCalls, 1);
+    expect(workspace.contentAcquisitionCalls, 0);
+    expect(events, <String>['workspace-close']);
+  });
+
+  test('E2EE 后台同步账户租约占用时释放工作区且不创建内容运行时', () async {
+    final events = <String>[];
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: const E2eeBackgroundContentBusy(),
+    );
+    final runner = E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+    );
+
+    final outcome = await runner.run();
+
+    expect(outcome.disposition, E2eeBackgroundSyncDisposition.workspaceBusy);
+    expect(workspace.contentAcquisitionCalls, 1);
+    expect(events, <String>['content-acquire', 'workspace-close']);
+  });
+
+  test('E2EE 后台同步正常有界执行并按所有权逆序关闭', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (executionBudget) async {
+        expect(executionBudget.maximumNetworkSteps, 7);
+        expect(executionBudget.maximumAttachmentBytes, 2 * 1024 * 1024);
+        expect(executionBudget.maximumDuration, const Duration(seconds: 3));
+        return _backgroundCycleReport(E2eeSyncCycleDisposition.completed);
+      },
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+    );
+    final runner = E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+    );
+
+    final outcome = await runner.run(
+      limits: const E2eeBackgroundSyncLimits(
+        maximumNetworkSteps: 7,
+        maximumAttachmentBytes: 2 * 1024 * 1024,
+        maximumDuration: Duration(seconds: 3),
+      ),
+    );
+
+    expect(outcome.disposition, E2eeBackgroundSyncDisposition.completed);
+    expect(content.runCalls, 1);
+    expect(events, <String>[
+      'content-acquire',
+      'run',
+      'runtime-close',
+      'account-lease-close',
+      'workspace-close',
+    ]);
+  });
+
+  test('E2EE 后台同步未来密钥世代返回阻塞且不归类成功', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) async =>
+          _backgroundCycleReport(E2eeSyncCycleDisposition.keyEpochUnavailable),
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+    );
+
+    final outcome = await E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+    ).run();
+
+    expect(
+      outcome.disposition,
+      E2eeBackgroundSyncDisposition.blockedByKeyEpoch,
+    );
+    expect(
+      outcome.report?.disposition,
+      E2eeSyncCycleDisposition.keyEpochUnavailable,
+    );
+    expect(events.sublist(events.length - 3), <String>[
+      'runtime-close',
+      'account-lease-close',
+      'workspace-close',
+    ]);
+  });
+
+  test('E2EE 后台同步预算耗尽保留进度并正常释放所有权', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) async {
+        throw const E2eeSyncBudgetExhausted(
+          E2eeSyncBudgetExhaustion.networkSteps,
+        );
+      },
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+    );
+
+    final outcome = await E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+    ).run();
+
+    expect(outcome.disposition, E2eeBackgroundSyncDisposition.budgetExhausted);
+    expect(outcome.budgetExhaustion, E2eeSyncBudgetExhaustion.networkSteps);
+    expect(events.sublist(events.length - 3), <String>[
+      'runtime-close',
+      'account-lease-close',
+      'workspace-close',
+    ]);
+  });
+
+  test('E2EE 后台同步初始化失败不伪成功且仍关闭全部资源', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) => Future<E2eeSyncCycleReport>.error(
+        StateError('background-runtime-init-failed'),
+      ),
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(
+        _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      ).run(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'background-runtime-init-failed',
+        ),
+      ),
+    );
+
+    expect(events.sublist(events.length - 3), <String>[
+      'runtime-close',
+      'account-lease-close',
+      'workspace-close',
+    ]);
+  });
+
+  test('E2EE 后台内容初始化与账户租约关闭同时失败时保留初始化根因', () async {
+    final initializationFailure = StateError('background-init-primary');
+    final leaseCloseFailure = StateError('background-lease-close-secondary');
+    var closeCalls = 0;
+
+    await expectLater(
+      rethrowCloudSyncPrimaryAfterCleanup(
+        primaryError: initializationFailure,
+        primaryStackTrace: StackTrace.current,
+        cleanupOperation: '测试账户租约关闭失败',
+        cleanup: () async {
+          closeCalls++;
+          throw leaseCloseFailure;
+        },
+      ),
+      throwsA(same(initializationFailure)),
+    );
+
+    expect(closeCalls, 1);
+  });
+
+  test('E2EE 后台同步终止认证先提交 tombstone 再关闭资源', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) => Future<E2eeSyncCycleReport>.error(
+        const CloudSyncException(
+          kind: CloudSyncFailureKind.unauthenticated,
+          retryable: false,
+        ),
+      ),
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+    );
+
+    final outcome = await E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+    ).run();
+
+    expect(
+      outcome.disposition,
+      E2eeBackgroundSyncDisposition.authenticationRetired,
+    );
+    expect(workspace.session, isNull);
+    expect(events, <String>[
+      'content-acquire',
+      'run',
+      'session-tombstone',
+      'runtime-close',
+      'account-lease-close',
+      'workspace-close',
+    ]);
+  });
+
+  test('E2EE 后台同步异常、截止和取消均执行 finally 清理', () async {
+    final failures = <Object>[
+      StateError('sync-failed'),
+      const E2eeSyncDeadlineExceeded(),
+      const E2eeSyncExecutionCancelled(),
+    ];
+    for (final failure in failures) {
+      final events = <String>[];
+      final content = _FakeBackgroundContent(
+        events: events,
+        run: (_) => Future<E2eeSyncCycleReport>.error(failure),
+      );
+      final workspace = _FakeBackgroundWorkspace(
+        events: events,
+        session: _session(),
+        contentAcquisition: E2eeBackgroundContentAcquired(content),
+      );
+
+      await expectLater(
+        E2eeBackgroundSyncRunner.forTesting(
+          _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+        ).run(),
+        throwsA(same(failure)),
+      );
+      expect(events.sublist(events.length - 3), <String>[
+        'runtime-close',
+        'account-lease-close',
+        'workspace-close',
+      ]);
+    }
+  });
+
+  test('E2EE 单调预算截止会中止并等待在途网络 Future 结算', () async {
+    final network = Completer<int>();
+    var abortCalls = 0;
+    var networkSettled = false;
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 1,
+      maximumAttachmentBytes: 0,
+      maximumDuration: const Duration(milliseconds: 20),
+      abortInFlightNetwork: () {
+        abortCalls++;
+        network.completeError(StateError('network-aborted'));
+      },
+    );
+
+    await expectLater(
+      budget.runNetworkStep(
+        operation: (_) async {
+          try {
+            return await network.future;
+          } finally {
+            networkSettled = true;
+          }
+        },
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
+    expect(abortCalls, 1);
+    expect(networkSettled, isTrue);
+  });
+
+  test('E2EE 单调预算取消会中止并等待在途网络 Future 结算', () async {
+    final cancellation = Completer<void>();
+    final network = Completer<int>();
+    var abortCalls = 0;
+    var networkSettled = false;
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 1,
+      maximumAttachmentBytes: 0,
+      maximumDuration: const Duration(seconds: 5),
+      abortInFlightNetwork: () {
+        abortCalls++;
+        network.completeError(StateError('network-aborted'));
+      },
+      cancellationSignal: cancellation.future,
+    );
+    final run = budget.runNetworkStep(
+      operation: (_) async {
+        try {
+          return await network.future;
+        } finally {
+          networkSettled = true;
+        }
+      },
+    );
+
+    cancellation.complete();
+
+    await expectLater(run, throwsA(isA<E2eeSyncExecutionCancelled>()));
+    expect(abortCalls, 1);
+    expect(networkSettled, isTrue);
+  });
+
+  test('E2EE 单调预算中止回调失败时仍等待在途网络 Future 结算', () async {
+    final network = Completer<void>();
+    var operationSettled = false;
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 1,
+      maximumAttachmentBytes: 0,
+      maximumDuration: const Duration(milliseconds: 20),
+      abortInFlightNetwork: () {
+        Future<void>.delayed(const Duration(milliseconds: 10), () {
+          operationSettled = true;
+          network.completeError(StateError('network-settled'));
+        });
+        throw StateError('abort-failed');
+      },
+    );
+
+    await expectLater(
+      budget.runNetworkStep(operation: (_) => network.future),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
+    expect(operationSettled, isTrue);
+  });
+
+  test('E2EE 后台同步同一账户并发只允许一个执行', () async {
+    final events = <String>[];
+    final started = Completer<void>();
+    final release = Completer<void>();
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) async {
+        started.complete();
+        await release.future;
+        return _backgroundCycleReport(E2eeSyncCycleDisposition.completed);
+      },
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+    );
+    final host = _ExclusiveBackgroundHost(workspace);
+    final firstRunner = E2eeBackgroundSyncRunner.forTesting(host);
+    final secondRunner = E2eeBackgroundSyncRunner.forTesting(host);
+
+    final first = firstRunner.run();
+    await started.future;
+    final second = await secondRunner.run();
+    release.complete();
+    final firstOutcome = await first;
+
+    expect(second.disposition, E2eeBackgroundSyncDisposition.workspaceBusy);
+    expect(firstOutcome.disposition, E2eeBackgroundSyncDisposition.completed);
+    expect(content.runCalls, 1);
+    expect(host.maximumConcurrentWorkspaces, 1);
+  });
+
+  test('E2EE headless 运行时直接使用 Vault 完成单次周期且不启动轮询', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    final pull = _RuntimePullTransport(
+      accountUserId: harness.session.userId,
+      blockInitialPull: false,
+    );
+    final records = _RuntimeRecordTransport(
+      accountUserId: harness.session.userId,
+      actorDeviceId: harness.session.deviceId,
+    );
+    final client = CloudSyncClient.forTesting(baseUrl: harness.session.baseUrl);
+    E2eeChatContentTransports createTransports({
+      required CloudSyncClient client,
+      required CloudSyncAuthenticatedSession session,
+    }) {
+      return E2eeChatContentTransports(records: records, pull: pull);
+    }
+
+    final runtime = E2eeChatContentRuntime.takeHeadlessOwnership(
+      session: harness.session,
+      deviceStateStore: harness._deviceStateStore,
+      secureCore: const KelivoSecureCore(),
+      databaseGateway: harness._databaseGateway,
+      databaseFile: harness._databaseFile,
+      client: client,
+      transportFactory: createTransports,
+    );
+    try {
+      final report = await runtime.runSingleCycle(
+        E2eeSyncExecutionBudget(
+          maximumNetworkSteps: 17,
+          maximumAttachmentBytes: 16 * 1024 * 1024,
+          maximumDuration: const Duration(seconds: 5),
+          abortInFlightNetwork: () => client.close(force: true),
+        ),
+      );
+
+      expect(report.disposition, E2eeSyncCycleDisposition.completed);
+      expect(pull.pullCalls, 2);
+      expect(records.pushCalls, 0);
+      expect(runtime.state, E2eeChatContentRuntimeState.ready);
+      await Future<void>.delayed(const Duration(milliseconds: 20));
+      expect(pull.pullCalls, 2);
+    } finally {
+      await runtime.close();
+      await harness.close();
+    }
+    expect(runtime.state, E2eeChatContentRuntimeState.closed);
   });
 
   test('E2EE 生产运行时缺少配置桥接时失败关闭且不启动网络', () async {
@@ -2738,6 +3223,192 @@ final class _MemoryAccountSessionTokenStore
     return '${accountDirectory.absolute.path}|'
         '${reference.slot}|${reference.generation}';
   }
+}
+
+final class _FixedBackgroundHost implements E2eeBackgroundSyncHost {
+  const _FixedBackgroundHost(this.acquisition);
+
+  final E2eeBackgroundWorkspaceAcquisition acquisition;
+
+  @override
+  Future<E2eeBackgroundWorkspaceAcquisition> tryAcquireWorkspace(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
+    return acquisition;
+  }
+}
+
+final class _DelayedBackgroundHost implements E2eeBackgroundSyncHost {
+  _DelayedBackgroundHost(this.acquisition, this.delay);
+
+  final E2eeBackgroundWorkspaceAcquisition acquisition;
+  final Duration delay;
+  int acquisitionCalls = 0;
+
+  @override
+  Future<E2eeBackgroundWorkspaceAcquisition> tryAcquireWorkspace(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
+    acquisitionCalls++;
+    await Future<void>.delayed(delay);
+    return acquisition;
+  }
+}
+
+final class _ExclusiveBackgroundHost implements E2eeBackgroundSyncHost {
+  _ExclusiveBackgroundHost(this._workspace);
+
+  final E2eeBackgroundSyncWorkspace _workspace;
+  bool _held = false;
+  int _concurrentWorkspaces = 0;
+  int maximumConcurrentWorkspaces = 0;
+
+  @override
+  Future<E2eeBackgroundWorkspaceAcquisition> tryAcquireWorkspace(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
+    if (_held) return const E2eeBackgroundWorkspaceBusy();
+    _held = true;
+    _concurrentWorkspaces++;
+    if (_concurrentWorkspaces > maximumConcurrentWorkspaces) {
+      maximumConcurrentWorkspaces = _concurrentWorkspaces;
+    }
+    return E2eeBackgroundWorkspaceAcquired(
+      _TrackedBackgroundWorkspace(
+        _workspace,
+        onClose: () {
+          _concurrentWorkspaces--;
+          _held = false;
+        },
+      ),
+    );
+  }
+}
+
+final class _TrackedBackgroundWorkspace implements E2eeBackgroundSyncWorkspace {
+  _TrackedBackgroundWorkspace(this._delegate, {required this.onClose});
+
+  final E2eeBackgroundSyncWorkspace _delegate;
+  final void Function() onClose;
+  bool _closed = false;
+
+  @override
+  CloudSyncAccountSession? get session => _delegate.session;
+
+  @override
+  Future<E2eeBackgroundContentAcquisition> tryAcquireContent(
+    E2eeSyncExecutionBudget executionBudget,
+  ) {
+    return _delegate.tryAcquireContent(executionBudget);
+  }
+
+  @override
+  Future<void> persistSessionTombstone() {
+    return _delegate.persistSessionTombstone();
+  }
+
+  @override
+  Future<void> closeWorkspaceLease() async {
+    if (_closed) return;
+    _closed = true;
+    try {
+      await _delegate.closeWorkspaceLease();
+    } finally {
+      onClose();
+    }
+  }
+}
+
+final class _FakeBackgroundWorkspace implements E2eeBackgroundSyncWorkspace {
+  _FakeBackgroundWorkspace({
+    required this.events,
+    required this.session,
+    required this.contentAcquisition,
+  });
+
+  final List<String> events;
+  final E2eeBackgroundContentAcquisition contentAcquisition;
+  @override
+  CloudSyncAccountSession? session;
+  int contentAcquisitionCalls = 0;
+  bool _closed = false;
+
+  @override
+  Future<E2eeBackgroundContentAcquisition> tryAcquireContent(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
+    contentAcquisitionCalls++;
+    events.add('content-acquire');
+    return contentAcquisition;
+  }
+
+  @override
+  Future<void> persistSessionTombstone() async {
+    events.add('session-tombstone');
+    session = null;
+  }
+
+  @override
+  Future<void> closeWorkspaceLease() async {
+    if (_closed) return;
+    _closed = true;
+    events.add('workspace-close');
+  }
+}
+
+typedef _FakeBackgroundRun =
+    Future<E2eeSyncCycleReport> Function(
+      E2eeSyncExecutionBudget executionBudget,
+    );
+
+final class _FakeBackgroundContent implements E2eeBackgroundSyncContent {
+  _FakeBackgroundContent({required this.events, required this.run});
+
+  final List<String> events;
+  final _FakeBackgroundRun run;
+  int runCalls = 0;
+  bool _runtimeClosed = false;
+  bool _accountLeaseClosed = false;
+
+  @override
+  Future<E2eeSyncCycleReport> runOnce({
+    required E2eeSyncExecutionBudget executionBudget,
+  }) {
+    runCalls++;
+    events.add('run');
+    return run(executionBudget);
+  }
+
+  @override
+  void abortInFlightNetwork() {
+    events.add('network-abort');
+  }
+
+  @override
+  Future<void> closeRuntime() async {
+    if (_runtimeClosed) return;
+    _runtimeClosed = true;
+    events.add('runtime-close');
+  }
+
+  @override
+  Future<void> closeAccountLease() async {
+    if (_accountLeaseClosed) return;
+    _accountLeaseClosed = true;
+    events.add('account-lease-close');
+  }
+}
+
+E2eeSyncCycleReport _backgroundCycleReport(
+  E2eeSyncCycleDisposition disposition,
+) {
+  return E2eeSyncCycleReport(
+    disposition: disposition,
+    catchUpPullPages: 1,
+    sealedRecords: 0,
+    flushReport: const E2eeSyncFlushReport.idle(),
+    finalPullPages: disposition == E2eeSyncCycleDisposition.completed ? 1 : 0,
+  );
 }
 
 final class _ManualTimerQueue {

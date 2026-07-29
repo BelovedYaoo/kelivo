@@ -8,6 +8,7 @@ import 'cloud_sync_record_types.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_record_cipher.dart';
 import 'e2ee_account_record_state.dart';
+import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_payload_codec.dart';
 import 'e2ee_sync_pull_types.dart';
 
@@ -82,6 +83,7 @@ abstract interface class E2eeSyncPullPagePreparer {
   Future<E2eeSyncPullPagePreparationDisposition> preparePage(
     List<E2eeSyncPulledChange> authenticatedChanges, {
     required int maximumRemoteSteps,
+    E2eeSyncExecutionBudget? executionBudget,
   });
 }
 
@@ -92,6 +94,7 @@ final class E2eeNoopSyncPullPagePreparer implements E2eeSyncPullPagePreparer {
   Future<E2eeSyncPullPagePreparationDisposition> preparePage(
     List<E2eeSyncPulledChange> authenticatedChanges, {
     required int maximumRemoteSteps,
+    E2eeSyncExecutionBudget? executionBudget,
   }) async {
     if (maximumRemoteSteps < 1) {
       throw RangeError.range(maximumRemoteSteps, 1, null, 'maximumRemoteSteps');
@@ -155,21 +158,27 @@ final class E2eeSyncPullCoordinator {
   final DateTime Function() _utcNow;
   Future<void> _tail = Future<void>.value();
 
-  Future<E2eeSyncPullReport> pullOnce({int limit = 10}) {
+  Future<E2eeSyncPullReport> pullOnce({
+    int limit = 10,
+    E2eeSyncExecutionBudget? executionBudget,
+  }) {
     final previous = _tail;
     final completion = Completer<void>();
     _tail = completion.future;
     return () async {
       await previous;
       try {
-        return await _pullOnce(limit: limit);
+        return await _pullOnce(limit: limit, executionBudget: executionBudget);
       } finally {
         completion.complete();
       }
     }();
   }
 
-  Future<E2eeSyncPullReport> _pullOnce({required int limit}) async {
+  Future<E2eeSyncPullReport> _pullOnce({
+    required int limit,
+    required E2eeSyncExecutionBudget? executionBudget,
+  }) async {
     if (limit < 1 || limit > 10) {
       throw RangeError.range(limit, 1, 10, 'limit');
     }
@@ -178,12 +187,16 @@ final class E2eeSyncPullCoordinator {
       now: _utcNow(),
     );
     if (checkpoint.phase == E2eeSyncPullPhase.snapshot) {
-      return _pullSnapshotPage(checkpoint: checkpoint, limit: limit);
+      return _pullSnapshotPage(
+        checkpoint: checkpoint,
+        limit: limit,
+        executionBudget: executionBudget,
+      );
     }
 
-    final pullResult = await _transport.pullChanges(
-      cursor: checkpoint.syncCursor,
-      limit: limit,
+    final pullResult = await _runBudgetedNetworkStep(
+      executionBudget,
+      () => _transport.pullChanges(cursor: checkpoint.syncCursor, limit: limit),
     );
     final CloudSyncChangePage page;
     switch (pullResult) {
@@ -232,6 +245,7 @@ final class E2eeSyncPullCoordinator {
     final preparation = await _pagePreparer.preparePage(
       immutableChanges,
       maximumRemoteSteps: maximumPreparationRemoteSteps,
+      executionBudget: executionBudget,
     );
     if (preparation != E2eeSyncPullPagePreparationDisposition.ready) {
       return E2eeSyncPullReport(
@@ -271,10 +285,14 @@ final class E2eeSyncPullCoordinator {
   Future<E2eeSyncPullReport> _pullSnapshotPage({
     required E2eeSyncPullCheckpoint checkpoint,
     required int limit,
+    required E2eeSyncExecutionBudget? executionBudget,
   }) async {
-    final page = await _transport.pullSnapshot(
-      snapshotCursor: checkpoint.snapshotCursor,
-      limit: limit,
+    final page = await _runBudgetedNetworkStep(
+      executionBudget,
+      () => _transport.pullSnapshot(
+        snapshotCursor: checkpoint.snapshotCursor,
+        limit: limit,
+      ),
     );
     _validateSnapshotPageShape(
       page,
@@ -303,6 +321,7 @@ final class E2eeSyncPullCoordinator {
     final preparation = await _pagePreparer.preparePage(
       immutableChanges,
       maximumRemoteSteps: maximumPreparationRemoteSteps,
+      executionBudget: executionBudget,
     );
     if (preparation != E2eeSyncPullPagePreparationDisposition.ready) {
       return E2eeSyncPullReport(
@@ -396,6 +415,14 @@ final class E2eeSyncPullCoordinator {
       },
     );
   }
+}
+
+Future<T> _runBudgetedNetworkStep<T>(
+  E2eeSyncExecutionBudget? executionBudget,
+  Future<T> Function() operation,
+) {
+  if (executionBudget == null) return operation();
+  return executionBudget.runNetworkStep(operation: (_) => operation());
 }
 
 void _validateSnapshotPageShape(

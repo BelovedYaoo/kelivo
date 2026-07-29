@@ -13,6 +13,7 @@ import 'e2ee_attachment_crypto_session.dart';
 import 'e2ee_attachment_file_store.dart';
 import 'e2ee_attachment_manifest.dart';
 import 'e2ee_message_attachment_readiness.dart';
+import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_payload_codec.dart';
 import 'e2ee_sync_pull.dart';
 
@@ -72,6 +73,7 @@ final class E2eeAttachmentDownloadCoordinator
   Future<E2eeSyncPullPagePreparationDisposition> preparePage(
     List<E2eeSyncPulledChange> authenticatedChanges, {
     required int maximumRemoteSteps,
+    E2eeSyncExecutionBudget? executionBudget,
   }) {
     if (maximumRemoteSteps < 1) {
       return Future<E2eeSyncPullPagePreparationDisposition>.error(
@@ -93,7 +95,11 @@ final class E2eeAttachmentDownloadCoordinator
 
       final budget = _RemoteStepBudget(maximumRemoteSteps);
       for (final reference in references) {
-        final disposition = await _materializeReference(reference, budget);
+        final disposition = await _materializeReference(
+          reference,
+          budget,
+          executionBudget,
+        );
         if (disposition != E2eeSyncPullPagePreparationDisposition.ready) {
           return disposition;
         }
@@ -138,6 +144,7 @@ final class E2eeAttachmentDownloadCoordinator
   Future<E2eeSyncPullPagePreparationDisposition> _materializeReference(
     E2eeAttachmentDownloadReference reference,
     _RemoteStepBudget budget,
+    E2eeSyncExecutionBudget? executionBudget,
   ) async {
     while (true) {
       final current = await _commands.read(reference);
@@ -163,8 +170,14 @@ final class E2eeAttachmentDownloadCoordinator
 
       late final _DownloadAdvance advanced;
       try {
-        advanced = await _advanceLease(lease, budget);
+        advanced = await _advanceLease(lease, budget, executionBudget);
       } catch (error, stackTrace) {
+        if (error is E2eeSyncBudgetExhausted ||
+            error is E2eeSyncDeadlineExceeded ||
+            error is E2eeSyncExecutionCancelled) {
+          await _commands.release(lease: lease, now: _utcNow());
+          Error.throwWithStackTrace(error, stackTrace);
+        }
         final resolution = _classifyDownloadFailure(error, lease.state.phase);
         if (resolution.permanent) {
           await _commands.markPermanentlyFailed(
@@ -206,15 +219,18 @@ final class E2eeAttachmentDownloadCoordinator
   Future<_DownloadAdvance> _advanceLease(
     E2eeAttachmentDownloadLease lease,
     _RemoteStepBudget budget,
+    E2eeSyncExecutionBudget? executionBudget,
   ) async {
     return switch (lease.state.phase) {
       E2eeAttachmentDownloadPhase.manifestPending => _downloadManifest(
         lease,
         budget,
+        executionBudget,
       ),
       E2eeAttachmentDownloadPhase.downloading => _downloadNextChunk(
         lease,
         budget,
+        executionBudget,
       ),
       E2eeAttachmentDownloadPhase.verifying => _publishPlaintext(lease),
       E2eeAttachmentDownloadPhase.ready => throw StateError(
@@ -226,14 +242,25 @@ final class E2eeAttachmentDownloadCoordinator
   Future<_DownloadAdvance> _downloadManifest(
     E2eeAttachmentDownloadLease lease,
     _RemoteStepBudget budget,
+    E2eeSyncExecutionBudget? executionBudget,
   ) async {
     if (!budget.tryConsume()) return const _DownloadBudgetExhausted();
     final reference = lease.state.reference;
     final identity = _cloudIdentity(reference);
-    final remote = await _transport.getAttachmentManifest(
-      token: _token,
-      identity: identity,
-    );
+    final remote = executionBudget == null
+        ? await _transport.getAttachmentManifest(
+            token: _token,
+            identity: identity,
+          )
+        : await executionBudget.runNetworkStep(
+            attachmentByteReservation:
+                cloudSyncMaximumAttachmentManifestCiphertextBytes,
+            actualAttachmentBytes: (result) => result.manifestCiphertextBytes,
+            operation: (_) => _transport.getAttachmentManifest(
+              token: _token,
+              identity: identity,
+            ),
+          );
     _requireMatchingCloudIdentity(identity, remote.identity);
     final manifest = await _crypto.openManifest(
       attachmentId: reference.attachmentId,
@@ -265,6 +292,7 @@ final class E2eeAttachmentDownloadCoordinator
   Future<_DownloadAdvance> _downloadNextChunk(
     E2eeAttachmentDownloadLease lease,
     _RemoteStepBudget budget,
+    E2eeSyncExecutionBudget? executionBudget,
   ) async {
     var activeLease = lease;
     final state = activeLease.state;
@@ -291,15 +319,25 @@ final class E2eeAttachmentDownloadCoordinator
       identity: identity,
       chunkIndex: state.nextChunkIndex,
     );
-    final remote = await _transport.getAttachmentChunk(
-      token: _token,
-      chunk: chunkIdentity,
-    );
+    final expectedCiphertextBytes =
+        descriptor.chunkCiphertextBytes[state.nextChunkIndex];
+    final remote = executionBudget == null
+        ? await _transport.getAttachmentChunk(
+            token: _token,
+            chunk: chunkIdentity,
+          )
+        : await executionBudget.runNetworkStep(
+            attachmentByteReservation: expectedCiphertextBytes,
+            actualAttachmentBytes: (result) => result.ciphertextBytes,
+            operation: (_) => _transport.getAttachmentChunk(
+              token: _token,
+              chunk: chunkIdentity,
+            ),
+          );
     _requireMatchingChunk(
       expected: chunkIdentity,
       downloaded: remote,
-      expectedCiphertextBytes:
-          descriptor.chunkCiphertextBytes[state.nextChunkIndex],
+      expectedCiphertextBytes: expectedCiphertextBytes,
     );
 
     Uint8List? plaintext;

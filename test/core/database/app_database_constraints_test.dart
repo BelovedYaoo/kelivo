@@ -21,6 +21,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
@@ -2219,6 +2220,66 @@ void main() {
       expect(preparer.maximumRemoteSteps, <int>[3]);
       expect(preparer.pages.single, hasLength(1));
       expect(businessApplyRan, isFalse);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        isEmpty,
+      );
+    });
+
+    test('事务前网络预算耗尽时不调用下一网络步骤且保持 checkpoint', () async {
+      final change = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 164,
+      );
+      final preparer = _BudgetConsumingPullPagePreparer();
+      var businessApplyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: _FakeAuthenticatedPullTransport(
+          accountUserId: _syncAccountUserId,
+          onPull: (_, _) async => CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[change],
+            nextCursor: 'budget-exhausted-must-not-commit',
+            hasMore: false,
+          ),
+        ),
+        pagePreparer: preparer,
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+      final budget = E2eeSyncExecutionBudget(
+        maximumNetworkSteps: 1,
+        maximumAttachmentBytes: 0,
+        maximumDuration: const Duration(seconds: 5),
+        abortInFlightNetwork: () {},
+      );
+
+      await expectLater(
+        coordinator.pullOnce(executionBudget: budget),
+        throwsA(
+          isA<E2eeSyncBudgetExhausted>().having(
+            (error) => error.reason,
+            'reason',
+            E2eeSyncBudgetExhaustion.networkSteps,
+          ),
+        ),
+      );
+
+      expect(budget.networkStepsConsumed, 1);
+      expect(preparer.remoteCalls, 0);
+      expect(businessApplyRan, isFalse);
+      final checkpoint = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28, 0, 2),
+      );
+      expect(checkpoint.syncCursor, equals(null));
+      expect(checkpoint.lastChangeSeq, 0);
+      expect(checkpoint.transitionVersion, 1);
       expect(
         await database.select(database.e2eeSyncRecordStateRows).get(),
         isEmpty,
@@ -6478,10 +6539,34 @@ final class _FakePullPagePreparer implements E2eeSyncPullPagePreparer {
   Future<E2eeSyncPullPagePreparationDisposition> preparePage(
     List<E2eeSyncPulledChange> authenticatedChanges, {
     required int maximumRemoteSteps,
+    E2eeSyncExecutionBudget? executionBudget,
   }) async {
     pages.add(List<E2eeSyncPulledChange>.unmodifiable(authenticatedChanges));
     this.maximumRemoteSteps.add(maximumRemoteSteps);
     return disposition;
+  }
+}
+
+final class _BudgetConsumingPullPagePreparer
+    implements E2eeSyncPullPagePreparer {
+  int remoteCalls = 0;
+
+  @override
+  Future<E2eeSyncPullPagePreparationDisposition> preparePage(
+    List<E2eeSyncPulledChange> authenticatedChanges, {
+    required int maximumRemoteSteps,
+    E2eeSyncExecutionBudget? executionBudget,
+  }) async {
+    final budget = executionBudget;
+    if (budget == null) {
+      throw StateError('测试缺少 E2EE 同步执行预算');
+    }
+    await budget.runNetworkStep<void>(
+      operation: (_) async {
+        remoteCalls++;
+      },
+    );
+    return E2eeSyncPullPagePreparationDisposition.ready;
   }
 }
 

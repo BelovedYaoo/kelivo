@@ -9,6 +9,7 @@ import '../chat/chat_service.dart';
 import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_content_runtime.dart';
+import 'cloud_sync_terminal_session_retirement.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_key_lease.dart';
 import 'e2ee_account_record_cipher.dart';
@@ -17,9 +18,10 @@ import 'e2ee_attachment_crypto_session.dart';
 import 'e2ee_attachment_download_coordinator.dart';
 import 'e2ee_attachment_file_store.dart';
 import 'e2ee_chat_sync_adapter.dart';
-import 'e2ee_config_provider_binding.dart';
 import 'config_sync_keys.dart';
+import 'e2ee_config_sync_binding.dart';
 import 'e2ee_sync_outbox.dart';
+import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_pull.dart';
 import 'e2ee_sync_scheduler.dart';
 import 'sync_codec.dart';
@@ -47,6 +49,8 @@ enum E2eeChatContentRuntimeState {
   closed,
 }
 
+enum E2eeChatContentRuntimeMode { continuous, singleCycle }
+
 /// 组装聊天数据面，并集中持有密码学、数据库、网络和调度生命周期。
 final class E2eeChatContentRuntime
     implements CloudSyncContentRuntime, E2eeConfigVaultWriteExecutor {
@@ -68,7 +72,36 @@ final class E2eeChatContentRuntime
     client: client,
     transportFactory: transportFactory,
     utcNow: utcNow,
+    mode: E2eeChatContentRuntimeMode.continuous,
   );
+
+  factory E2eeChatContentRuntime.takeHeadlessOwnership({
+    required CloudSyncAccountSession session,
+    required DeviceStateBlobStore deviceStateStore,
+    required KelivoSecureCore secureCore,
+    required ChatDatabaseGateway databaseGateway,
+    required File databaseFile,
+    required CloudSyncClient client,
+    E2eeChatContentTransportFactory transportFactory = _defaultTransportFactory,
+    DateTime Function() utcNow = _defaultUtcNow,
+  }) {
+    final runtime = E2eeChatContentRuntime._(
+      session: session,
+      deviceStateStore: deviceStateStore,
+      secureCore: secureCore,
+      databaseGateway: databaseGateway,
+      databaseFile: databaseFile,
+      client: client,
+      transportFactory: transportFactory,
+      utcNow: utcNow,
+      mode: E2eeChatContentRuntimeMode.singleCycle,
+    );
+    runtime.bindChatService(
+      ChatService(runtime, databaseGateway: databaseGateway),
+    );
+    runtime.bindConfigProviders(E2eeHeadlessConfigSyncBinding());
+    return runtime;
+  }
 
   E2eeChatContentRuntime._({
     required CloudSyncAccountSession session,
@@ -79,6 +112,7 @@ final class E2eeChatContentRuntime
     required CloudSyncClient client,
     required this._transportFactory,
     required this._utcNow,
+    required this._mode,
   }) : _session = session,
        _databaseFile = databaseFile.absolute,
        _client = client {
@@ -95,10 +129,11 @@ final class E2eeChatContentRuntime
   final CloudSyncClient _client;
   final E2eeChatContentTransportFactory _transportFactory;
   final DateTime Function() _utcNow;
+  final E2eeChatContentRuntimeMode _mode;
 
   E2eeChatContentRuntimeState _state = E2eeChatContentRuntimeState.created;
   ChatService? _chatService;
-  E2eeConfigProviderBinding? _configBinding;
+  E2eeConfigSyncBinding? _configBinding;
   ChatDatabaseLease? _databaseLease;
   E2eeAccountKeyLease? _keyLease;
   E2eeAccountRecordCipher? _recordCipher;
@@ -106,6 +141,8 @@ final class E2eeChatContentRuntime
   E2eeSyncOutbox? _outbox;
   E2eeAttachmentDownloadCoordinator? _attachmentDownloads;
   E2eeSyncScheduler? _scheduler;
+  E2eeSyncCycleRunner Function(E2eeSyncExecutionBudget?)? _cycleRunnerFactory;
+  Future<E2eeSyncCycleReport>? _activeSingleCycle;
   Future<void>? _initializationFuture;
   Future<void>? _closeFuture;
   CloudSyncTerminalAuthenticationHandler? _terminalAuthenticationHandler;
@@ -143,7 +180,7 @@ final class E2eeChatContentRuntime
     _chatService = chatService;
   }
 
-  void bindConfigProviders(E2eeConfigProviderBinding binding) {
+  void bindConfigProviders(E2eeConfigSyncBinding binding) {
     if (_state != E2eeChatContentRuntimeState.created) {
       throw StateError('E2EE 内容运行时启动后不能绑定配置 Provider');
     }
@@ -311,52 +348,83 @@ final class E2eeChatContentRuntime
         },
         utcNow: _utcNow,
       );
-      final cycleRunner = E2eeSyncCycleRunner(
-        runPullBatch: <T>(pull) {
-          Future<T> run() => adapter.runPullAndPublish(pull);
-          return configBinding == null
-              ? run()
-              : configBinding.runRemotePull(run);
-        },
-        pullOnce: ({required int limit}) async {
-          final report = await pullCoordinator.pullOnce(limit: limit);
-          if (report.disposition ==
-              E2eeSyncPullDisposition.keyEpochUnavailable) {
-            return E2eeSyncPullStepDisposition.keyEpochUnavailable;
-          }
-          if (report.hasMore ||
-              report.disposition == E2eeSyncPullDisposition.resetToSnapshot) {
-            return E2eeSyncPullStepDisposition.more;
-          }
-          return E2eeSyncPullStepDisposition.complete;
-        },
-        sealNext: () => outbox.sealNext(
-          readSnapshot: (entityKey) {
-            if (ConfigSyncKeys.entityTypes.contains(entityKey.entityType)) {
-              final binding = configBinding;
-              if (binding == null) {
-                throw StateError('E2EE 配置快照缺少 Provider 桥接');
-              }
-              return binding.readSnapshot(entityKey);
-            }
-            return adapter.readSnapshot(entityKey);
+      E2eeSyncCycleRunner createCycleRunner(
+        E2eeSyncExecutionBudget? executionBudget,
+      ) {
+        Future<T> runBudgeted<T>(Future<T> Function() action) async {
+          executionBudget?.checkCanContinue();
+          final result = await action();
+          executionBudget?.checkCanContinue();
+          return result;
+        }
+
+        return E2eeSyncCycleRunner(
+          runPullBatch: <T>(pull) {
+            return runBudgeted<T>(() {
+              Future<T> run() => adapter.runPullAndPublish(pull);
+              return configBinding == null
+                  ? run()
+                  : configBinding.runRemotePull(run);
+            });
           },
-        ),
-        flushOnce: () => outbox.flushOnce(transport: transports.records),
-      );
-      final scheduler = E2eeSyncScheduler(
-        cycleRunner: cycleRunner,
-        isTerminalFailure: _isTerminalAuthenticationFailure,
-        onTerminalFailure: _handleTerminalAuthenticationFailure,
-      );
-      _scheduler = scheduler;
+          pullOnce: ({required int limit}) {
+            return runBudgeted<E2eeSyncPullStepDisposition>(() async {
+              final report = await pullCoordinator.pullOnce(
+                limit: limit,
+                executionBudget: executionBudget,
+              );
+              if (report.disposition ==
+                  E2eeSyncPullDisposition.keyEpochUnavailable) {
+                return E2eeSyncPullStepDisposition.keyEpochUnavailable;
+              }
+              if (report.hasMore ||
+                  report.disposition ==
+                      E2eeSyncPullDisposition.resetToSnapshot) {
+                return E2eeSyncPullStepDisposition.more;
+              }
+              return E2eeSyncPullStepDisposition.complete;
+            });
+          },
+          sealNext: () => runBudgeted<E2eeSyncSealStatus>(
+            () => outbox.sealNext(
+              readSnapshot: (entityKey) {
+                if (ConfigSyncKeys.entityTypes.contains(entityKey.entityType)) {
+                  final binding = configBinding;
+                  if (binding == null) {
+                    throw StateError('E2EE 配置快照缺少 Provider 桥接');
+                  }
+                  return binding.readSnapshot(entityKey);
+                }
+                return adapter.readSnapshot(entityKey);
+              },
+            ),
+          ),
+          flushOnce: () => runBudgeted<E2eeSyncFlushReport>(
+            () => outbox.flushOnce(
+              transport: transports.records,
+              executionBudget: executionBudget,
+            ),
+          ),
+        );
+      }
+
+      _cycleRunnerFactory = createCycleRunner;
+      E2eeSyncScheduler? scheduler;
+      if (_mode == E2eeChatContentRuntimeMode.continuous) {
+        scheduler = E2eeSyncScheduler(
+          cycleRunner: createCycleRunner(null),
+          isTerminalFailure: isTerminalCloudSyncAuthenticationFailure,
+          onTerminalFailure: _handleTerminalAuthenticationFailure,
+        );
+        _scheduler = scheduler;
+      }
 
       await keyLease.close();
       _keyLease = null;
       _requireStillInitializing();
 
       _state = E2eeChatContentRuntimeState.ready;
-      scheduler.start();
+      scheduler?.start();
     } catch (error, stackTrace) {
       if (unownedArk != null) {
         try {
@@ -375,6 +443,38 @@ final class E2eeChatContentRuntime
       await _cleanupAfterInitializationFailure();
       Error.throwWithStackTrace(error, stackTrace);
     }
+  }
+
+  Future<E2eeSyncCycleReport> runSingleCycle(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
+    if (_mode != E2eeChatContentRuntimeMode.singleCycle) {
+      throw StateError('E2EE 持续运行时不接受外部单次同步');
+    }
+    executionBudget.checkCanContinue();
+    await initialize();
+    // 初始化可能包含不可中断的本地数据库和安全核心步骤；其完成后必须在
+    // 第一个远端调用前重新核对总截止时间。
+    executionBudget.checkCanContinue();
+    if (_state != E2eeChatContentRuntimeState.ready) {
+      throw StateError('E2EE 内容运行时不接受新的单次同步');
+    }
+    if (_activeSingleCycle != null) {
+      throw StateError('E2EE 内容运行时已有单次同步正在执行');
+    }
+    final factory = _cycleRunnerFactory;
+    if (factory == null) {
+      throw StateError('E2EE 内容运行时缺少单次同步执行器');
+    }
+
+    late final Future<E2eeSyncCycleReport> tracked;
+    tracked = factory(executionBudget).run().whenComplete(() {
+      if (identical(_activeSingleCycle, tracked)) {
+        _activeSingleCycle = null;
+      }
+    });
+    _activeSingleCycle = tracked;
+    return tracked;
   }
 
   @override
@@ -472,6 +572,14 @@ final class E2eeChatContentRuntime
       await cleanup.run('等待 E2EE 同步周期结束', () => schedulerClose);
       if (cleanup.lastStepSucceeded) _scheduler = null;
     }
+    final singleCycle = _activeSingleCycle;
+    if (singleCycle != null) {
+      try {
+        await singleCycle;
+      } catch (_) {
+        // 单次执行的调用方接收原始错误；关闭只等待网络 Future 完成结算。
+      }
+    }
     await _waitForLocalWrites();
 
     final chatService = _chatService;
@@ -509,7 +617,7 @@ final class E2eeChatContentRuntime
     StackTrace stackTrace,
   ) {
     if (error is! CloudSyncException ||
-        !_isTerminalAuthenticationFailure(error)) {
+        !isTerminalCloudSyncAuthenticationFailure(error)) {
       throw StateError('E2EE 同步调度器提交了非终止认证错误');
     }
     final handler = _terminalAuthenticationHandler;
@@ -623,12 +731,6 @@ final class _CleanupAccumulator {
     }
     Error.throwWithStackTrace(primary, primaryStackTrace);
   }
-}
-
-bool _isTerminalAuthenticationFailure(Object error) {
-  if (error is! CloudSyncException || error.retryable) return false;
-  return error.kind == CloudSyncFailureKind.unauthenticated ||
-      error.kind == CloudSyncFailureKind.forbidden;
 }
 
 E2eeChatContentTransports _defaultTransportFactory({

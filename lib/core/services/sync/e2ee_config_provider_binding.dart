@@ -19,6 +19,7 @@ import '../search/search_service.dart';
 import '../tts/network_tts.dart';
 import '../tts/tts_text_selection.dart';
 import 'config_sync_keys.dart';
+import 'e2ee_config_sync_binding.dart';
 import 'e2ee_config_sync_payload_schema.dart';
 import 'e2ee_config_sync_adapter.dart';
 import 'e2ee_sync_outbox.dart';
@@ -29,7 +30,7 @@ import 'sync_codec.dart';
 typedef E2eeConfigProviderClock = DateTime Function();
 
 /// 将十类账户配置的 Provider 内存态绑定到唯一 SQLCipher Vault 真相。
-final class E2eeConfigProviderBinding {
+final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
   E2eeConfigProviderBinding({
     required SettingsProvider settingsProvider,
     required AssistantProvider assistantProvider,
@@ -70,6 +71,7 @@ final class E2eeConfigProviderBinding {
 
   bool get initialized => _initialized && !_failed;
 
+  @override
   Future<void> initialize(E2eeConfigVaultCommands commands) {
     return _operationLock.run(() async {
       if (_failed) throw StateError('E2EE 配置 Provider 桥接已经失败');
@@ -109,11 +111,13 @@ final class E2eeConfigProviderBinding {
     });
   }
 
+  @override
   Future<E2eeSyncEntitySnapshot> readSnapshot(SyncEntityKey entityKey) {
     _requireReady();
     return _adapter!.readSnapshot(entityKey);
   }
 
+  @override
   Future<T> runLocalWrite<T>({
     required Iterable<SyncEntityKey> configKeys,
     required Future<T> Function(Future<T> Function() write) transaction,
@@ -136,6 +140,7 @@ final class E2eeConfigProviderBinding {
     });
   }
 
+  @override
   Future<T> runRemotePull<T>(Future<T> Function() pull) {
     return _operationLock.run(() async {
       _requireReady();
@@ -156,6 +161,7 @@ final class E2eeConfigProviderBinding {
   }
 
   /// 必须由 pull coordinator 放在 Vault、ledger 与 checkpoint 的同一事务中。
+  @override
   Future<void> applyTransactional(
     List<E2eeSyncPulledChange> applicableChanges,
   ) async {

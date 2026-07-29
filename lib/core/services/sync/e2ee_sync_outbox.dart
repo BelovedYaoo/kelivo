@@ -11,6 +11,7 @@ import 'cloud_sync_record_types.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_record_cipher.dart';
 import 'e2ee_account_record_state.dart';
+import 'e2ee_sync_execution_budget.dart';
 import 'sync_codec.dart';
 import 'sync_write_executor.dart';
 
@@ -302,6 +303,7 @@ final class E2eeSyncOutbox implements SyncWriteExecutor {
 
   Future<E2eeSyncFlushReport> flushOnce({
     required E2eeSyncAuthenticatedRecordTransport transport,
+    E2eeSyncExecutionBudget? executionBudget,
   }) {
     return _runWhileOpen<E2eeSyncFlushReport>(() {
       return _flushLock.run(() async {
@@ -381,9 +383,14 @@ final class E2eeSyncOutbox implements SyncWriteExecutor {
 
         late List<CloudSyncRecordMutationResult> results;
         try {
-          results = await transport.pushRecords(
-            prepared.map((item) => item.mutation).toList(growable: false),
-          );
+          final mutations = prepared
+              .map((item) => item.mutation)
+              .toList(growable: false);
+          results = executionBudget == null
+              ? await transport.pushRecords(mutations)
+              : await executionBudget.runNetworkStep(
+                  operation: (_) => transport.pushRecords(mutations),
+                );
           _requireCompleteResults(results, prepared);
         } catch (error, stackTrace) {
           await _releaseUnknownClaims(

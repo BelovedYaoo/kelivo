@@ -8,6 +8,7 @@ import 'package:package_info_plus/package_info_plus.dart';
 
 import '../services/sync/cloud_sync_client.dart';
 import '../services/sync/cloud_sync_content_runtime.dart';
+import '../services/sync/cloud_sync_terminal_session_retirement.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/sync/e2ee_account_authenticator.dart';
 import '../services/workspace/account_workspace_runtime.dart';
@@ -711,56 +712,27 @@ final class CloudSyncProvider extends ChangeNotifier {
     _client?.close(force: true);
     _client = null;
 
-    Object? primaryError;
-    StackTrace? primaryStackTrace;
-    void retainCleanupFailure(
-      String operation,
-      Object error,
-      StackTrace stackTrace,
-    ) {
-      if (primaryError == null) {
-        primaryError = error;
-        primaryStackTrace = stackTrace;
-        return;
-      }
-      developer.log(
-        operation,
-        name: 'Kelivo.CloudSyncProvider',
-        level: 1000,
-        error: error,
-        stackTrace: stackTrace,
-      );
-    }
-
     // 持久 tombstone 必须先于可能等待本地写入的 runtime 关闭，避免崩溃后
     // 旧会话再次被启动流程接回。
     try {
-      await _workspaceRuntime.signOut();
+      await retireTerminalCloudSyncSession(
+        persistSessionTombstone: () async {
+          await _workspaceRuntime.signOut();
+        },
+        closeContentRuntime: _closeContentRuntime,
+        releaseAccountLease: () async {},
+        releaseWorkspaceLease: _workspaceRuntime.prepareRestartHandoff,
+      );
     } catch (error, stackTrace) {
-      retainCleanupFailure('终止认证后持久清除账户会话失败', error, stackTrace);
-    }
-    try {
-      await _closeContentRuntime();
-    } catch (error, stackTrace) {
-      retainCleanupFailure('终止认证后关闭内容运行时失败', error, stackTrace);
-    }
-    try {
-      await _workspaceRuntime.prepareRestartHandoff();
-    } catch (error, stackTrace) {
-      retainCleanupFailure('终止认证后释放工作区租约失败', error, stackTrace);
-    } finally {
-      _endSessionMutation();
-    }
-
-    final cleanupError = primaryError;
-    if (cleanupError != null) {
       _recordFailure(
-        cleanupError,
-        primaryStackTrace!,
+        error,
+        stackTrace,
         operation: '终止认证后清理云同步会话',
         status: CloudSyncProviderStatus.workspaceChangePending,
       );
-      Error.throwWithStackTrace(cleanupError, primaryStackTrace!);
+      Error.throwWithStackTrace(error, stackTrace);
+    } finally {
+      _endSessionMutation();
     }
 
     debugPrint('云同步会话因终止认证失效：$failure\n$failureStackTrace');
