@@ -6,6 +6,7 @@ import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:crypto/crypto.dart';
+import 'package:drift/drift.dart' show Value;
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path/path.dart' as p;
@@ -6764,12 +6765,67 @@ final class _AttachmentUploadFixture {
         displayName: 'upload.bin',
         mediaType: 'application/octet-stream',
       );
+      const targetRevisionId = 'attachment-upload-message';
+      const localAssetId = 'attachment-upload-test';
+      final assetTimestamp = DateTime.utc(2026, 7, 29, 8);
+      await database
+          .into(database.conversationRows)
+          .insert(
+            ConversationRowsCompanion.insert(
+              id: 'attachment-upload-conversation',
+              title: 'Attachment upload',
+              createdAt: assetTimestamp,
+              updatedAt: assetTimestamp,
+            ),
+          );
+      await database
+          .into(database.messageRows)
+          .insert(
+            MessageRowsCompanion.insert(
+              id: targetRevisionId,
+              conversationId: 'attachment-upload-conversation',
+              role: 'user',
+              content: '',
+              timestamp: assetTimestamp,
+              turnId: 'attachment-upload-turn',
+              generationStatus: 'completed',
+              messageOrder: 0,
+            ),
+          );
+      await database
+          .into(database.assetRows)
+          .insert(
+            AssetRowsCompanion.insert(
+              id: localAssetId,
+              contentHash: descriptor.contentSha256
+                  .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+                  .join(),
+              path: source.storagePath,
+              byteSize: plaintext.length,
+              createdAt: assetTimestamp,
+              lastReferencedAt: assetTimestamp,
+            ),
+          );
+      await database
+          .into(database.messageAssetRows)
+          .insert(
+            MessageAssetRowsCompanion.insert(
+              revisionId: targetRevisionId,
+              ordinal: 0,
+              assetId: localAssetId,
+              kind: E2eeAttachmentKind.file.name,
+              displayName: const Value('upload.bin'),
+              mediaType: const Value('application/octet-stream'),
+            ),
+          );
       final commands = repository.e2eeAttachmentUploadCommands;
       final clock = _MutableAttachmentClock(DateTime.utc(2026, 7, 29, 8));
       await commands.create(
         draft: E2eeAttachmentUploadDraft(
           descriptor: descriptor,
-          localAssetId: 'attachment-upload-test',
+          localAssetId: localAssetId,
+          targetRevisionId: targetRevisionId,
+          targetOrdinal: 0,
           sourcePath: source.storagePath,
           createMutationId: _mutationId1,
           commitMutationId: _mutationId2,

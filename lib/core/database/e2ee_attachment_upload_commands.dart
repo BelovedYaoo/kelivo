@@ -31,6 +31,8 @@ final class E2eeAttachmentUploadDraft {
   E2eeAttachmentUploadDraft({
     required this.descriptor,
     required String localAssetId,
+    required String targetRevisionId,
+    required int targetOrdinal,
     required String sourcePath,
     required String createMutationId,
     required String commitMutationId,
@@ -39,6 +41,12 @@ final class E2eeAttachmentUploadDraft {
          'localAssetId',
          1024,
        ),
+       targetRevisionId = _requireAttachmentStorageText(
+         targetRevisionId,
+         'targetRevisionId',
+         1024,
+       ),
+       targetOrdinal = _requireAttachmentTargetOrdinal(targetOrdinal),
        sourcePath = _requireAttachmentStorageText(
          sourcePath,
          'sourcePath',
@@ -59,6 +67,8 @@ final class E2eeAttachmentUploadDraft {
 
   final E2eeAttachmentDescriptor descriptor;
   final String localAssetId;
+  final String targetRevisionId;
+  final int targetOrdinal;
   final String sourcePath;
   final String createMutationId;
   final String commitMutationId;
@@ -86,6 +96,8 @@ final class E2eeAttachmentUploadState {
   E2eeAttachmentUploadState._({
     required this.descriptor,
     required this.localAssetId,
+    required this.targetRevisionId,
+    required this.targetOrdinal,
     required this.sourcePath,
     required this.phase,
     required this.createMutationId,
@@ -108,6 +120,8 @@ final class E2eeAttachmentUploadState {
 
   final E2eeAttachmentDescriptor descriptor;
   final String localAssetId;
+  final String targetRevisionId;
+  final int targetOrdinal;
   final String sourcePath;
   final E2eeAttachmentUploadPhase phase;
   final String createMutationId;
@@ -153,35 +167,67 @@ final class E2eeAttachmentUploadCommands {
   }) async {
     final timestamp = _requireStorageTime(now, 'now');
     final descriptor = draft.descriptor;
-    await _database
-        .into(_database.e2eeAttachmentUploadRows)
-        .insert(
-          E2eeAttachmentUploadRowsCompanion.insert(
-            attachmentId: descriptor.attachmentId,
-            localAssetId: draft.localAssetId,
-            sourcePath: draft.sourcePath,
-            keyEpoch: descriptor.keyEpoch,
-            kind: descriptor.kind.name,
-            displayName: Value(descriptor.displayName),
-            mediaType: Value(descriptor.mediaType),
-            contentSha256: descriptor.contentSha256,
-            wrappedDataKey: descriptor.wrappedDataKey,
-            totalPlaintextBytes: descriptor.totalPlaintextBytes,
-            chunkCount: descriptor.chunkCiphertextBytes.length,
-            totalCiphertextBytes: descriptor.totalCiphertextBytes,
-            phase: E2eeAttachmentUploadPhase.createPending.wireValue,
-            createMutationId: draft.createMutationId,
-            commitMutationId: draft.commitMutationId,
-            nextChunkIndex: 0,
-            transitionVersion: 1,
-            attemptCount: 0,
-            consecutiveFailureCount: 0,
-            nextAttemptAt: timestamp,
-            createdAt: timestamp,
-            updatedAt: timestamp,
-          ),
-        );
-    return (await readByAttachmentId(descriptor.attachmentId))!;
+    return _database.transaction(() async {
+      final target =
+          await (_database.select(_database.messageAssetRows)..where(
+                (row) =>
+                    row.revisionId.equals(draft.targetRevisionId) &
+                    row.ordinal.equals(draft.targetOrdinal),
+              ))
+              .getSingleOrNull();
+      if (target == null) {
+        throw StateError('附件上传目标消息引用不存在');
+      }
+      if (target.assetId != draft.localAssetId ||
+          target.attachmentId != null ||
+          target.uploadId != null ||
+          target.keyEpoch != null ||
+          target.kind != descriptor.kind.name ||
+          target.displayName != descriptor.displayName ||
+          target.mediaType != descriptor.mediaType) {
+        throw StateError('附件上传目标消息引用与草稿不一致');
+      }
+      final asset = await (_database.select(
+        _database.assetRows,
+      )..where((row) => row.id.equals(draft.localAssetId))).getSingleOrNull();
+      if (asset == null ||
+          asset.contentHash != _attachmentDigestHex(descriptor.contentSha256) ||
+          asset.path != draft.sourcePath ||
+          asset.byteSize != descriptor.totalPlaintextBytes) {
+        throw StateError('附件上传本地资产与认证描述不一致');
+      }
+      await _database
+          .into(_database.e2eeAttachmentUploadRows)
+          .insert(
+            E2eeAttachmentUploadRowsCompanion.insert(
+              attachmentId: descriptor.attachmentId,
+              localAssetId: draft.localAssetId,
+              targetRevisionId: draft.targetRevisionId,
+              targetOrdinal: draft.targetOrdinal,
+              sourcePath: draft.sourcePath,
+              keyEpoch: descriptor.keyEpoch,
+              kind: descriptor.kind.name,
+              displayName: Value(descriptor.displayName),
+              mediaType: Value(descriptor.mediaType),
+              contentSha256: descriptor.contentSha256,
+              wrappedDataKey: descriptor.wrappedDataKey,
+              totalPlaintextBytes: descriptor.totalPlaintextBytes,
+              chunkCount: descriptor.chunkCiphertextBytes.length,
+              totalCiphertextBytes: descriptor.totalCiphertextBytes,
+              phase: E2eeAttachmentUploadPhase.createPending.wireValue,
+              createMutationId: draft.createMutationId,
+              commitMutationId: draft.commitMutationId,
+              nextChunkIndex: 0,
+              transitionVersion: 1,
+              attemptCount: 0,
+              consecutiveFailureCount: 0,
+              nextAttemptAt: timestamp,
+              createdAt: timestamp,
+              updatedAt: timestamp,
+            ),
+          );
+      return _stateFromRow(await _rowByAttachmentId(descriptor.attachmentId));
+    });
   }
 
   Future<E2eeAttachmentUploadState?> readByAttachmentId(
@@ -411,6 +457,26 @@ final class E2eeAttachmentUploadCommands {
       if (lease.state.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
         throw StateError('附件上传 transitionVersion 已耗尽');
       }
+      final uploadId = lease.state.uploadId;
+      if (uploadId == null) throw StateError('附件上传缺少远端 uploadId');
+      final targetUpdated =
+          await (_database.update(_database.messageAssetRows)..where(
+                (row) =>
+                    row.revisionId.equals(lease.state.targetRevisionId) &
+                    row.ordinal.equals(lease.state.targetOrdinal) &
+                    row.assetId.equals(lease.state.localAssetId) &
+                    row.attachmentId.isNull() &
+                    row.uploadId.isNull() &
+                    row.keyEpoch.isNull(),
+              ))
+              .write(
+                MessageAssetRowsCompanion(
+                  attachmentId: Value(lease.state.attachmentId),
+                  uploadId: Value(uploadId),
+                  keyEpoch: Value(lease.state.descriptor.keyEpoch),
+                ),
+              );
+      if (targetUpdated != 1) throw StateError('附件上传目标消息引用 CAS 失败');
       final updated =
           await (_database.update(
             _database.e2eeAttachmentUploadRows,
@@ -720,6 +786,12 @@ E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
         'localAssetId',
         1024,
       ),
+      targetRevisionId: _requireAttachmentStorageText(
+        row.targetRevisionId,
+        'targetRevisionId',
+        1024,
+      ),
+      targetOrdinal: _requireAttachmentTargetOrdinal(row.targetOrdinal),
       sourcePath: _requireAttachmentStorageText(
         row.sourcePath,
         'sourcePath',
@@ -750,6 +822,13 @@ E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
   } finally {
     _clearAttachmentUploadRowBytes(row);
   }
+}
+
+int _requireAttachmentTargetOrdinal(int value) {
+  if (value < 0 || value > 31) {
+    throw const FormatException('附件目标 ordinal 必须位于 0 到 31');
+  }
+  return value;
 }
 
 void _clearAttachmentUploadRowBytes(E2eeAttachmentUploadRow row) {

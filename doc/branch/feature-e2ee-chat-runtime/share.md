@@ -24,8 +24,10 @@
 - 已完成：上传 staging 路径硬切绑定分块 mutationId，消除随机 AEAD 密文在“文件发布后、DB 记账前”崩溃后的重建冲突；内容寻址文件支持受限分块读取与全量流式校验。
 - 已完成：schema 19 将资产、消息有序附件引用与 GC 状态纳入正式 Drift/SQLCipher 结构；远端身份三元组必须完整，同一消息的 attachmentId/uploadId 不得重复，同一本地资产允许建立多个独立远端上传身份，旧 schema 不迁移且运行时不再动态补表。
 - 已完成：下载明文暂存按 attachmentId/uploadId/keyEpoch 隔离为单一 plaintext.part，以数据库确认偏移恢复和截断；发布前流式核对长度与 SHA-256，并以内容摘要原子发布。
+- 已完成：附件上传协调器按持久草稿有界推进 create、manifest、chunk 与 commit，支持精确 mutation 重放、租约接管、源文件一次认证和失败关闭。
+- 已完成：上传草稿与 `message_asset_rows(revision_id, ordinal)` 建立唯一复合外键；创建前严格核对本地资产与消息元数据，commit 在同一事务内回填远端三元组并完成上传租约 CAS，任一步失败整体回滚。
 - 已完成：`kelivo-api/main@02dce9e` 已推送 D1/R2 密文附件六端点、原子配额、幂等状态机及完整 uint32 keyEpoch；未部署。
-- 下一步：合入上传协调器，接通下载校验/checkpoint 门禁和结构化消息附件，移除本地路径 marker 对同步的阻塞。
+- 下一步：合入下载校验/checkpoint 门禁，接通结构化消息附件并移除本地路径 marker 对同步的阻塞。
 - 审计关键路径：移动端首账户注册、二维码/恢复文件、撤销设备后的 ARK keyring/epoch 轮换、Android 静默后台同步、D1 硬重建及 Worker 部署尚未完成。
 - 已知边界：客户端非空附件仍明确失败关闭，直到附件传输和本地模型闭环后解除。
 - 约束：不保留旧数据、旧 payload 或双写兼容路径；业务接线完成并验证前不提前开启内容同步。

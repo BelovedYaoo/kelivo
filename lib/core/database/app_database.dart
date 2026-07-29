@@ -1282,6 +1282,8 @@ class E2eeConfigEntryRows extends Table {
 class E2eeAttachmentUploadRows extends Table {
   TextColumn get attachmentId => text()();
   TextColumn get localAssetId => text()();
+  TextColumn get targetRevisionId => text()();
+  IntColumn get targetOrdinal => integer()();
   TextColumn get sourcePath => text()();
   IntColumn get keyEpoch => integer()();
   TextColumn get kind => text()();
@@ -1325,10 +1327,14 @@ class E2eeAttachmentUploadRows extends Table {
   @override
   List<Set<Column<Object>>> get uniqueKeys => [
     {uploadId},
+    {targetRevisionId, targetOrdinal},
   ];
 
   @override
   List<String> get customConstraints => [
+    'FOREIGN KEY (target_revision_id, target_ordinal) '
+        'REFERENCES message_asset_rows (revision_id, ordinal) '
+        'ON DELETE CASCADE',
     // Drift 只验证字面 SQL；以下尺寸上限必须与安全核心 ABI v8 附件常量同步。
     "CHECK (typeof(attachment_id) = 'text' AND length(attachment_id) = 36 "
         'AND attachment_id = lower(attachment_id) '
@@ -1347,6 +1353,11 @@ class E2eeAttachmentUploadRows extends Table {
     "CHECK (typeof(local_asset_id) = 'text' "
         'AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 '
         'AND instr(local_asset_id, char(0)) = 0)',
+    "CHECK (typeof(target_revision_id) = 'text' "
+        'AND length(CAST(target_revision_id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(target_revision_id, char(0)) = 0)',
+    "CHECK (typeof(target_ordinal) = 'integer' "
+        'AND target_ordinal BETWEEN 0 AND 31)',
     "CHECK (typeof(source_path) = 'text' "
         'AND length(CAST(source_path AS BLOB)) BETWEEN 1 AND 32768 '
         'AND instr(source_path, char(0)) = 0)',

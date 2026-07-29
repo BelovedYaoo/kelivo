@@ -905,6 +905,8 @@ class ChatDatabaseRepository {
       'e2ee_attachment_upload_rows': [
         'attachment_id',
         'local_asset_id',
+        'target_revision_id',
+        'target_ordinal',
         'source_path',
         'key_epoch',
         'kind',
@@ -1016,6 +1018,10 @@ class ChatDatabaseRepository {
         'operation_id->e2ee_sync_operation_rows.operation_id:NO ACTION',
         'record_id->e2ee_sync_operation_rows.record_id:NO ACTION',
       },
+      'e2ee_attachment_upload_rows': {
+        'target_revision_id->message_asset_rows.revision_id:CASCADE',
+        'target_ordinal->message_asset_rows.ordinal:CASCADE',
+      },
     };
     for (final entry in expectedForeignKeys.entries) {
       final actual = database
@@ -1059,6 +1065,35 @@ class ChatDatabaseRepository {
         outboxForeignKeyOrder[1] !=
             'record_id->e2ee_sync_operation_rows.record_id:NO ACTION') {
       throw StateError('foreign_key_shape:e2ee_sync_outbox_rows');
+    }
+    final uploadTargetForeignKeys = database.select(
+      'PRAGMA foreign_key_list(e2ee_attachment_upload_rows);',
+    );
+    final uploadTargetForeignKeyIds = uploadTargetForeignKeys
+        .map((row) => row['id'])
+        .whereType<int>()
+        .toSet();
+    final uploadTargetForeignKeySequences = uploadTargetForeignKeys
+        .map((row) => row['seq'])
+        .whereType<int>()
+        .toSet();
+    final uploadTargetForeignKeyOrder = <int, String>{
+      for (final row in uploadTargetForeignKeys)
+        if (row['seq'] case final int sequence)
+          sequence:
+              '${row['from']}->${row['table']}.${row['to']}:'
+              '${row['on_delete']}',
+    };
+    // 两列必须共同绑定唯一消息附件引用，避免上传恢复时猜测写回目标。
+    if (uploadTargetForeignKeys.length != 2 ||
+        uploadTargetForeignKeyIds.length != 1 ||
+        uploadTargetForeignKeySequences.length != 2 ||
+        !uploadTargetForeignKeySequences.containsAll(const {0, 1}) ||
+        uploadTargetForeignKeyOrder[0] !=
+            'target_revision_id->message_asset_rows.revision_id:CASCADE' ||
+        uploadTargetForeignKeyOrder[1] !=
+            'target_ordinal->message_asset_rows.ordinal:CASCADE') {
+      throw StateError('foreign_key_shape:e2ee_attachment_upload_rows');
     }
   }
 
@@ -1187,6 +1222,8 @@ class ChatDatabaseRepository {
           'e2ee_attachment_upload_rows': {
             'attachment_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
             'local_asset_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'target_revision_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'target_ordinal': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'source_path': (type: 'TEXT', notNull: 1, primaryKey: 0),
             'key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'kind': (type: 'TEXT', notNull: 1, primaryKey: 0),
@@ -1333,7 +1370,10 @@ class ChatDatabaseRepository {
       },
       'asset_gc_lease_rows': {},
       'asset_reference_dirty_rows': {},
-      'e2ee_attachment_upload_rows': {'upload_id'},
+      'e2ee_attachment_upload_rows': {
+        'upload_id',
+        'target_revision_id\u0000target_ordinal',
+      },
       'e2ee_attachment_download_rows': {'upload_id'},
     };
     for (final table in expectedUniqueKeys.entries) {
@@ -1515,6 +1555,8 @@ class ChatDatabaseRepository {
         "CHECK (typeof(expires_at) = 'integer' AND expires_at >= 0)",
       ],
       'e2ee_attachment_upload_rows': [
+        "CHECK (typeof(target_ordinal) = 'integer' "
+            'AND target_ordinal BETWEEN 0 AND 31)',
         "CHECK (typeof(phase) = 'text' AND phase IN "
             "('create-pending', 'manifest-pending', 'uploading', "
             "'commit-pending', 'committed'))",

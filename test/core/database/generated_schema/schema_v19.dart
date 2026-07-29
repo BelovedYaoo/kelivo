@@ -2959,6 +2959,22 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
     requiredDuringInsert: true,
     $customConstraints: 'NOT NULL',
   );
+  late final GeneratedColumn<String> targetRevisionId = GeneratedColumn<String>(
+    'target_revision_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> targetOrdinal = GeneratedColumn<int>(
+    'target_ordinal',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
   late final GeneratedColumn<String> sourcePath = GeneratedColumn<String>(
     'source_path',
     aliasedName,
@@ -3229,6 +3245,8 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
   List<GeneratedColumn> get $columns => [
     attachmentId,
     localAssetId,
+    targetRevisionId,
+    targetOrdinal,
     sourcePath,
     keyEpoch,
     kind,
@@ -3272,6 +3290,7 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
   @override
   List<Set<GeneratedColumn>> get uniqueKeys => [
     {uploadId},
+    {targetRevisionId, targetOrdinal},
   ];
   @override
   Never map(Map<String, dynamic> data, {String? tablePrefix}) {
@@ -3287,8 +3306,12 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
   List<String> get customConstraints => const [
     'PRIMARY KEY(attachment_id)',
     'UNIQUE(upload_id)',
+    'UNIQUE(target_revision_id, target_ordinal)',
+    'FOREIGN KEY(target_revision_id, target_ordinal)REFERENCES message_asset_rows(revision_id, ordinal)ON DELETE CASCADE',
     'CHECK(typeof(attachment_id) = \'text\' AND length(attachment_id) = 36 AND attachment_id = lower(attachment_id) AND attachment_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(attachment_id, 9, 1) = \'-\' AND substr(attachment_id, 14, 1) = \'-\' AND substr(attachment_id, 15, 1) = \'4\' AND substr(attachment_id, 19, 1) = \'-\' AND substr(attachment_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(attachment_id, 24, 1) = \'-\' AND substr(attachment_id, 1, 8) NOT GLOB \'*-*\' AND substr(attachment_id, 10, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 15, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 20, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 25, 12) NOT GLOB \'*-*\')',
     'CHECK(typeof(local_asset_id) = \'text\' AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(local_asset_id, char(0)) = 0)',
+    'CHECK(typeof(target_revision_id) = \'text\' AND length(CAST(target_revision_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(target_revision_id, char(0)) = 0)',
+    'CHECK(typeof(target_ordinal) = \'integer\' AND target_ordinal BETWEEN 0 AND 31)',
     'CHECK(typeof(source_path) = \'text\' AND length(CAST(source_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(source_path, char(0)) = 0)',
     'CHECK(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 4294967295)',
     'CHECK(typeof(kind) = \'text\' AND kind IN (\'image\', \'file\'))',

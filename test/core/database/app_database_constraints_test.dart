@@ -4618,6 +4618,8 @@ void main() {
     E2eeAttachmentUploadDraft uploadDraft({
       String attachmentId = 'd0000000-0000-4000-8000-000000000001',
       String localAssetId = 'asset-upload-1',
+      String targetRevisionId = 'message-upload-1',
+      int targetOrdinal = 0,
       String createMutationId = 'd1000000-0000-4000-8000-000000000001',
       String commitMutationId = 'd2000000-0000-4000-8000-000000000001',
     }) {
@@ -4639,29 +4641,76 @@ void main() {
           mediaType: 'text/plain',
         ),
         localAssetId: localAssetId,
+        targetRevisionId: targetRevisionId,
+        targetOrdinal: targetOrdinal,
         sourcePath: 'D:\\workspace\\upload\\asset.bin',
         createMutationId: createMutationId,
         commitMutationId: commitMutationId,
       );
     }
 
+    Future<void> prepareUploadTarget(
+      E2eeAttachmentUploadDraft draft, {
+      bool insertGraph = true,
+    }) async {
+      final now = DateTime.utc(2026, 7, 29);
+      if (insertGraph) {
+        await insertConversation(id: 'conversation-upload-1');
+        await insertMessage(
+          id: draft.targetRevisionId,
+          conversationId: 'conversation-upload-1',
+          groupId: 'group-upload-1',
+        );
+        await database
+            .into(database.assetRows)
+            .insert(
+              AssetRowsCompanion.insert(
+                id: draft.localAssetId,
+                contentHash: draft.descriptor.contentSha256
+                    .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+                    .join(),
+                path: draft.sourcePath,
+                byteSize: draft.descriptor.totalPlaintextBytes,
+                createdAt: now,
+                lastReferencedAt: now,
+              ),
+            );
+      }
+      await database
+          .into(database.messageAssetRows)
+          .insert(
+            MessageAssetRowsCompanion.insert(
+              revisionId: draft.targetRevisionId,
+              ordinal: draft.targetOrdinal,
+              assetId: draft.localAssetId,
+              kind: draft.descriptor.kind.name,
+              displayName: Value(draft.descriptor.displayName),
+              mediaType: Value(draft.descriptor.mediaType),
+            ),
+          );
+    }
+
     test('同一本地资产可创建多个独立远端身份', () async {
       final now = DateTime.utc(2026, 7, 29);
-      final first = await attachmentUploads.create(
-        draft: uploadDraft(localAssetId: 'shared-local-asset'),
-        now: now,
+      final firstDraft = uploadDraft(localAssetId: 'shared-local-asset');
+      await prepareUploadTarget(firstDraft);
+      final first = await attachmentUploads.create(draft: firstDraft, now: now);
+      final secondDraft = uploadDraft(
+        attachmentId: 'd0000000-0000-4000-8000-000000000002',
+        localAssetId: 'shared-local-asset',
+        targetOrdinal: 31,
+        createMutationId: 'd1000000-0000-4000-8000-000000000002',
+        commitMutationId: 'd2000000-0000-4000-8000-000000000002',
       );
+      await prepareUploadTarget(secondDraft, insertGraph: false);
       final second = await attachmentUploads.create(
-        draft: uploadDraft(
-          attachmentId: 'd0000000-0000-4000-8000-000000000002',
-          localAssetId: 'shared-local-asset',
-          createMutationId: 'd1000000-0000-4000-8000-000000000002',
-          commitMutationId: 'd2000000-0000-4000-8000-000000000002',
-        ),
+        draft: secondDraft,
         now: now,
       );
 
       expect(first.localAssetId, second.localAssetId);
+      expect(first.targetOrdinal, 0);
+      expect(second.targetOrdinal, 31);
       expect(
         first.descriptor.attachmentId,
         isNot(second.descriptor.attachmentId),
@@ -4674,9 +4723,77 @@ void main() {
       );
     });
 
+    test('创建只接受存在、未远端化且资产一致的目标', () async {
+      final now = DateTime.utc(2026, 7, 29, 0, 30);
+      final draft = uploadDraft();
+      await expectLater(
+        attachmentUploads.create(draft: draft, now: now),
+        throwsStateError,
+      );
+
+      await prepareUploadTarget(draft);
+      await (database.update(database.messageAssetRows)..where(
+            (row) =>
+                row.revisionId.equals(draft.targetRevisionId) &
+                row.ordinal.equals(draft.targetOrdinal),
+          ))
+          .write(
+            const MessageAssetRowsCompanion(
+              attachmentId: Value('d0000000-0000-4000-8000-000000000010'),
+              uploadId: Value('e0000000-0000-4000-8000-000000000010'),
+              keyEpoch: Value(1),
+            ),
+          );
+      await expectLater(
+        attachmentUploads.create(draft: draft, now: now),
+        throwsStateError,
+      );
+
+      final mismatchedAssetDraft = uploadDraft(
+        attachmentId: 'd0000000-0000-4000-8000-000000000011',
+        targetOrdinal: 1,
+        createMutationId: 'd1000000-0000-4000-8000-000000000011',
+        commitMutationId: 'd2000000-0000-4000-8000-000000000011',
+      );
+      await prepareUploadTarget(mismatchedAssetDraft, insertGraph: false);
+      await (database.update(database.assetRows)
+            ..where((row) => row.id.equals(mismatchedAssetDraft.localAssetId)))
+          .write(
+            const AssetRowsCompanion(
+              path: Value('D:\\workspace\\upload\\other.bin'),
+            ),
+          );
+      await expectLater(
+        attachmentUploads.create(draft: mismatchedAssetDraft, now: now),
+        throwsStateError,
+      );
+    });
+
+    test('删除目标引用会级联清除未完成上传', () async {
+      final now = DateTime.utc(2026, 7, 29, 0, 45);
+      final draft = uploadDraft();
+      await prepareUploadTarget(draft);
+      await attachmentUploads.create(draft: draft, now: now);
+
+      await (database.delete(database.messageAssetRows)..where(
+            (row) =>
+                row.revisionId.equals(draft.targetRevisionId) &
+                row.ordinal.equals(draft.targetOrdinal),
+          ))
+          .go();
+
+      expect(
+        await attachmentUploads.readByAttachmentId(
+          draft.descriptor.attachmentId,
+        ),
+        equals(null),
+      );
+    });
+
     test('失败重试保留同一分块密文并最终提交', () async {
       final now = DateTime.utc(2026, 7, 29, 1);
       final draft = uploadDraft();
+      await prepareUploadTarget(draft);
       final created = await attachmentUploads.create(draft: draft, now: now);
       expect(created.phase, E2eeAttachmentUploadPhase.createPending);
       expect(created.descriptor.keyEpoch, 0xffffffff);
@@ -4833,9 +4950,43 @@ void main() {
         now: retryAt.add(const Duration(seconds: 3)),
       );
       expect(lease.state.phase, E2eeAttachmentUploadPhase.commitPending);
+      await database.customStatement(
+        'UPDATE e2ee_attachment_upload_rows SET '
+        'transition_version = transition_version + 1 '
+        'WHERE attachment_id = ?;',
+        <Object?>[draft.descriptor.attachmentId],
+      );
+      await expectLater(
+        attachmentUploads.markCommitted(
+          lease: lease,
+          now: retryAt.add(const Duration(seconds: 4)),
+        ),
+        throwsStateError,
+      );
+      final targetAfterStaleLease =
+          await (database.select(database.messageAssetRows)..where(
+                (row) =>
+                    row.revisionId.equals(draft.targetRevisionId) &
+                    row.ordinal.equals(draft.targetOrdinal),
+              ))
+              .getSingle();
+      expect(targetAfterStaleLease.attachmentId, equals(null));
+      expect(targetAfterStaleLease.uploadId, equals(null));
+      expect(targetAfterStaleLease.keyEpoch, equals(null));
+      expect(
+        (await attachmentUploads.readByAttachmentId(
+          draft.descriptor.attachmentId,
+        ))!.phase,
+        E2eeAttachmentUploadPhase.commitPending,
+      );
+      await database.customStatement(
+        'UPDATE e2ee_attachment_upload_rows SET transition_version = ? '
+        'WHERE attachment_id = ?;',
+        <Object?>[lease.state.transitionVersion, draft.descriptor.attachmentId],
+      );
       final committed = await attachmentUploads.markCommitted(
         lease: lease,
-        now: retryAt.add(const Duration(seconds: 4)),
+        now: retryAt.add(const Duration(seconds: 5)),
       );
       expect(committed.phase, E2eeAttachmentUploadPhase.committed);
       expect(committed.nextChunkIndex, 2);
@@ -4846,17 +4997,26 @@ void main() {
         ))!.phase,
         E2eeAttachmentUploadPhase.committed,
       );
+      final committedTarget =
+          await (database.select(database.messageAssetRows)..where(
+                (row) =>
+                    row.revisionId.equals(draft.targetRevisionId) &
+                    row.ordinal.equals(draft.targetOrdinal),
+              ))
+              .getSingle();
+      expect(committedTarget.attachmentId, draft.descriptor.attachmentId);
+      expect(committedTarget.uploadId, uploadId);
+      expect(committedTarget.keyEpoch, draft.descriptor.keyEpoch);
     });
 
     test('过期租约可接管且旧租约不能再推进', () async {
       final now = DateTime.utc(2026, 7, 29, 2);
-      await attachmentUploads.create(
-        draft: uploadDraft(
-          attachmentId: 'd0000000-0000-4000-8000-000000000002',
-          localAssetId: 'asset-upload-2',
-        ),
-        now: now,
+      final draft = uploadDraft(
+        attachmentId: 'd0000000-0000-4000-8000-000000000002',
+        localAssetId: 'asset-upload-2',
       );
+      await prepareUploadTarget(draft);
+      await attachmentUploads.create(draft: draft, now: now);
       final oldLease = (await attachmentUploads.claimDue(
         leaseToken: 'expired-lease',
         leaseOwner: 'foreground-runtime',
@@ -4899,6 +5059,7 @@ void main() {
         attachmentId: 'd0000000-0000-4000-8000-000000000003',
         localAssetId: 'asset-upload-3',
       );
+      await prepareUploadTarget(draft);
       await attachmentUploads.create(draft: draft, now: now);
       await expectLater(
         database.customStatement(
@@ -4920,12 +5081,15 @@ void main() {
         () => E2eeAttachmentUploadDraft(
           descriptor: draft.descriptor,
           localAssetId: 'asset-invalid',
+          targetRevisionId: draft.targetRevisionId,
+          targetOrdinal: draft.targetOrdinal,
           sourcePath: 'bad\u0000path',
           createMutationId: 'd1000000-0000-4000-8000-000000000010',
           commitMutationId: 'd2000000-0000-4000-8000-000000000010',
         ),
         throwsFormatException,
       );
+      expect(() => uploadDraft(targetOrdinal: 32), throwsFormatException);
     });
 
     test('永久失败保留待发分块并只允许精确 CAS 重建', () async {
@@ -4934,6 +5098,7 @@ void main() {
         attachmentId: 'd0000000-0000-4000-8000-000000000004',
         localAssetId: 'asset-upload-4',
       );
+      await prepareUploadTarget(draft);
       await attachmentUploads.create(draft: draft, now: now);
       var lease = (await attachmentUploads.claimDue(
         leaseToken: 'terminal-upload-lease',

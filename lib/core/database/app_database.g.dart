@@ -14087,6 +14087,28 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
+  static const VerificationMeta _targetRevisionIdMeta = const VerificationMeta(
+    'targetRevisionId',
+  );
+  @override
+  late final GeneratedColumn<String> targetRevisionId = GeneratedColumn<String>(
+    'target_revision_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetOrdinalMeta = const VerificationMeta(
+    'targetOrdinal',
+  );
+  @override
+  late final GeneratedColumn<int> targetOrdinal = GeneratedColumn<int>(
+    'target_ordinal',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
   static const VerificationMeta _sourcePathMeta = const VerificationMeta(
     'sourcePath',
   );
@@ -14439,6 +14461,8 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
   List<GeneratedColumn> get $columns => [
     attachmentId,
     localAssetId,
+    targetRevisionId,
+    targetOrdinal,
     sourcePath,
     keyEpoch,
     kind,
@@ -14505,6 +14529,28 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
       );
     } else if (isInserting) {
       context.missing(_localAssetIdMeta);
+    }
+    if (data.containsKey('target_revision_id')) {
+      context.handle(
+        _targetRevisionIdMeta,
+        targetRevisionId.isAcceptableOrUnknown(
+          data['target_revision_id']!,
+          _targetRevisionIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_targetRevisionIdMeta);
+    }
+    if (data.containsKey('target_ordinal')) {
+      context.handle(
+        _targetOrdinalMeta,
+        targetOrdinal.isAcceptableOrUnknown(
+          data['target_ordinal']!,
+          _targetOrdinalMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_targetOrdinalMeta);
     }
     if (data.containsKey('source_path')) {
       context.handle(
@@ -14772,6 +14818,7 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
   @override
   List<Set<GeneratedColumn>> get uniqueKeys => [
     {uploadId},
+    {targetRevisionId, targetOrdinal},
   ];
   @override
   E2eeAttachmentUploadRow map(
@@ -14787,6 +14834,14 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
       localAssetId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}local_asset_id'],
+      )!,
+      targetRevisionId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_revision_id'],
+      )!,
+      targetOrdinal: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}target_ordinal'],
       )!,
       sourcePath: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -14950,6 +15005,8 @@ class E2eeAttachmentUploadRow extends DataClass
     implements Insertable<E2eeAttachmentUploadRow> {
   final String attachmentId;
   final String localAssetId;
+  final String targetRevisionId;
+  final int targetOrdinal;
   final String sourcePath;
   final int keyEpoch;
   final String kind;
@@ -14985,6 +15042,8 @@ class E2eeAttachmentUploadRow extends DataClass
   const E2eeAttachmentUploadRow({
     required this.attachmentId,
     required this.localAssetId,
+    required this.targetRevisionId,
+    required this.targetOrdinal,
     required this.sourcePath,
     required this.keyEpoch,
     required this.kind,
@@ -15023,6 +15082,8 @@ class E2eeAttachmentUploadRow extends DataClass
     final map = <String, Expression>{};
     map['attachment_id'] = Variable<String>(attachmentId);
     map['local_asset_id'] = Variable<String>(localAssetId);
+    map['target_revision_id'] = Variable<String>(targetRevisionId);
+    map['target_ordinal'] = Variable<int>(targetOrdinal);
     map['source_path'] = Variable<String>(sourcePath);
     map['key_epoch'] = Variable<int>(keyEpoch);
     map['kind'] = Variable<String>(kind);
@@ -15116,6 +15177,8 @@ class E2eeAttachmentUploadRow extends DataClass
     return E2eeAttachmentUploadRowsCompanion(
       attachmentId: Value(attachmentId),
       localAssetId: Value(localAssetId),
+      targetRevisionId: Value(targetRevisionId),
+      targetOrdinal: Value(targetOrdinal),
       sourcePath: Value(sourcePath),
       keyEpoch: Value(keyEpoch),
       kind: Value(kind),
@@ -15190,6 +15253,8 @@ class E2eeAttachmentUploadRow extends DataClass
     return E2eeAttachmentUploadRow(
       attachmentId: serializer.fromJson<String>(json['attachmentId']),
       localAssetId: serializer.fromJson<String>(json['localAssetId']),
+      targetRevisionId: serializer.fromJson<String>(json['targetRevisionId']),
+      targetOrdinal: serializer.fromJson<int>(json['targetOrdinal']),
       sourcePath: serializer.fromJson<String>(json['sourcePath']),
       keyEpoch: serializer.fromJson<int>(json['keyEpoch']),
       kind: serializer.fromJson<String>(json['kind']),
@@ -15250,6 +15315,8 @@ class E2eeAttachmentUploadRow extends DataClass
     return <String, dynamic>{
       'attachmentId': serializer.toJson<String>(attachmentId),
       'localAssetId': serializer.toJson<String>(localAssetId),
+      'targetRevisionId': serializer.toJson<String>(targetRevisionId),
+      'targetOrdinal': serializer.toJson<int>(targetOrdinal),
       'sourcePath': serializer.toJson<String>(sourcePath),
       'keyEpoch': serializer.toJson<int>(keyEpoch),
       'kind': serializer.toJson<String>(kind),
@@ -15298,6 +15365,8 @@ class E2eeAttachmentUploadRow extends DataClass
   E2eeAttachmentUploadRow copyWith({
     String? attachmentId,
     String? localAssetId,
+    String? targetRevisionId,
+    int? targetOrdinal,
     String? sourcePath,
     int? keyEpoch,
     String? kind,
@@ -15333,6 +15402,8 @@ class E2eeAttachmentUploadRow extends DataClass
   }) => E2eeAttachmentUploadRow(
     attachmentId: attachmentId ?? this.attachmentId,
     localAssetId: localAssetId ?? this.localAssetId,
+    targetRevisionId: targetRevisionId ?? this.targetRevisionId,
+    targetOrdinal: targetOrdinal ?? this.targetOrdinal,
     sourcePath: sourcePath ?? this.sourcePath,
     keyEpoch: keyEpoch ?? this.keyEpoch,
     kind: kind ?? this.kind,
@@ -15397,6 +15468,12 @@ class E2eeAttachmentUploadRow extends DataClass
       localAssetId: data.localAssetId.present
           ? data.localAssetId.value
           : this.localAssetId,
+      targetRevisionId: data.targetRevisionId.present
+          ? data.targetRevisionId.value
+          : this.targetRevisionId,
+      targetOrdinal: data.targetOrdinal.present
+          ? data.targetOrdinal.value
+          : this.targetOrdinal,
       sourcePath: data.sourcePath.present
           ? data.sourcePath.value
           : this.sourcePath,
@@ -15487,6 +15564,8 @@ class E2eeAttachmentUploadRow extends DataClass
     return (StringBuffer('E2eeAttachmentUploadRow(')
           ..write('attachmentId: $attachmentId, ')
           ..write('localAssetId: $localAssetId, ')
+          ..write('targetRevisionId: $targetRevisionId, ')
+          ..write('targetOrdinal: $targetOrdinal, ')
           ..write('sourcePath: $sourcePath, ')
           ..write('keyEpoch: $keyEpoch, ')
           ..write('kind: $kind, ')
@@ -15529,6 +15608,8 @@ class E2eeAttachmentUploadRow extends DataClass
   int get hashCode => Object.hashAll([
     attachmentId,
     localAssetId,
+    targetRevisionId,
+    targetOrdinal,
     sourcePath,
     keyEpoch,
     kind,
@@ -15568,6 +15649,8 @@ class E2eeAttachmentUploadRow extends DataClass
       (other is E2eeAttachmentUploadRow &&
           other.attachmentId == this.attachmentId &&
           other.localAssetId == this.localAssetId &&
+          other.targetRevisionId == this.targetRevisionId &&
+          other.targetOrdinal == this.targetOrdinal &&
           other.sourcePath == this.sourcePath &&
           other.keyEpoch == this.keyEpoch &&
           other.kind == this.kind &&
@@ -15616,6 +15699,8 @@ class E2eeAttachmentUploadRowsCompanion
     extends UpdateCompanion<E2eeAttachmentUploadRow> {
   final Value<String> attachmentId;
   final Value<String> localAssetId;
+  final Value<String> targetRevisionId;
+  final Value<int> targetOrdinal;
   final Value<String> sourcePath;
   final Value<int> keyEpoch;
   final Value<String> kind;
@@ -15652,6 +15737,8 @@ class E2eeAttachmentUploadRowsCompanion
   const E2eeAttachmentUploadRowsCompanion({
     this.attachmentId = const Value.absent(),
     this.localAssetId = const Value.absent(),
+    this.targetRevisionId = const Value.absent(),
+    this.targetOrdinal = const Value.absent(),
     this.sourcePath = const Value.absent(),
     this.keyEpoch = const Value.absent(),
     this.kind = const Value.absent(),
@@ -15689,6 +15776,8 @@ class E2eeAttachmentUploadRowsCompanion
   E2eeAttachmentUploadRowsCompanion.insert({
     required String attachmentId,
     required String localAssetId,
+    required String targetRevisionId,
+    required int targetOrdinal,
     required String sourcePath,
     required int keyEpoch,
     required String kind,
@@ -15724,6 +15813,8 @@ class E2eeAttachmentUploadRowsCompanion
     this.rowid = const Value.absent(),
   }) : attachmentId = Value(attachmentId),
        localAssetId = Value(localAssetId),
+       targetRevisionId = Value(targetRevisionId),
+       targetOrdinal = Value(targetOrdinal),
        sourcePath = Value(sourcePath),
        keyEpoch = Value(keyEpoch),
        kind = Value(kind),
@@ -15745,6 +15836,8 @@ class E2eeAttachmentUploadRowsCompanion
   static Insertable<E2eeAttachmentUploadRow> custom({
     Expression<String>? attachmentId,
     Expression<String>? localAssetId,
+    Expression<String>? targetRevisionId,
+    Expression<int>? targetOrdinal,
     Expression<String>? sourcePath,
     Expression<int>? keyEpoch,
     Expression<String>? kind,
@@ -15782,6 +15875,8 @@ class E2eeAttachmentUploadRowsCompanion
     return RawValuesInsertable({
       if (attachmentId != null) 'attachment_id': attachmentId,
       if (localAssetId != null) 'local_asset_id': localAssetId,
+      if (targetRevisionId != null) 'target_revision_id': targetRevisionId,
+      if (targetOrdinal != null) 'target_ordinal': targetOrdinal,
       if (sourcePath != null) 'source_path': sourcePath,
       if (keyEpoch != null) 'key_epoch': keyEpoch,
       if (kind != null) 'kind': kind,
@@ -15830,6 +15925,8 @@ class E2eeAttachmentUploadRowsCompanion
   E2eeAttachmentUploadRowsCompanion copyWith({
     Value<String>? attachmentId,
     Value<String>? localAssetId,
+    Value<String>? targetRevisionId,
+    Value<int>? targetOrdinal,
     Value<String>? sourcePath,
     Value<int>? keyEpoch,
     Value<String>? kind,
@@ -15867,6 +15964,8 @@ class E2eeAttachmentUploadRowsCompanion
     return E2eeAttachmentUploadRowsCompanion(
       attachmentId: attachmentId ?? this.attachmentId,
       localAssetId: localAssetId ?? this.localAssetId,
+      targetRevisionId: targetRevisionId ?? this.targetRevisionId,
+      targetOrdinal: targetOrdinal ?? this.targetOrdinal,
       sourcePath: sourcePath ?? this.sourcePath,
       keyEpoch: keyEpoch ?? this.keyEpoch,
       kind: kind ?? this.kind,
@@ -15916,6 +16015,12 @@ class E2eeAttachmentUploadRowsCompanion
     }
     if (localAssetId.present) {
       map['local_asset_id'] = Variable<String>(localAssetId.value);
+    }
+    if (targetRevisionId.present) {
+      map['target_revision_id'] = Variable<String>(targetRevisionId.value);
+    }
+    if (targetOrdinal.present) {
+      map['target_ordinal'] = Variable<int>(targetOrdinal.value);
     }
     if (sourcePath.present) {
       map['source_path'] = Variable<String>(sourcePath.value);
@@ -16056,6 +16161,8 @@ class E2eeAttachmentUploadRowsCompanion
     return (StringBuffer('E2eeAttachmentUploadRowsCompanion(')
           ..write('attachmentId: $attachmentId, ')
           ..write('localAssetId: $localAssetId, ')
+          ..write('targetRevisionId: $targetRevisionId, ')
+          ..write('targetOrdinal: $targetOrdinal, ')
           ..write('sourcePath: $sourcePath, ')
           ..write('keyEpoch: $keyEpoch, ')
           ..write('kind: $kind, ')
@@ -28590,6 +28697,8 @@ typedef $$E2eeAttachmentUploadRowsTableCreateCompanionBuilder =
     E2eeAttachmentUploadRowsCompanion Function({
       required String attachmentId,
       required String localAssetId,
+      required String targetRevisionId,
+      required int targetOrdinal,
       required String sourcePath,
       required int keyEpoch,
       required String kind,
@@ -28628,6 +28737,8 @@ typedef $$E2eeAttachmentUploadRowsTableUpdateCompanionBuilder =
     E2eeAttachmentUploadRowsCompanion Function({
       Value<String> attachmentId,
       Value<String> localAssetId,
+      Value<String> targetRevisionId,
+      Value<int> targetOrdinal,
       Value<String> sourcePath,
       Value<int> keyEpoch,
       Value<String> kind,
@@ -28679,6 +28790,16 @@ class $$E2eeAttachmentUploadRowsTableFilterComposer
 
   ColumnFilters<String> get localAssetId => $composableBuilder(
     column: $table.localAssetId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get targetRevisionId => $composableBuilder(
+    column: $table.targetRevisionId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get targetOrdinal => $composableBuilder(
+    column: $table.targetOrdinal,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -28867,6 +28988,16 @@ class $$E2eeAttachmentUploadRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get targetRevisionId => $composableBuilder(
+    column: $table.targetRevisionId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get targetOrdinal => $composableBuilder(
+    column: $table.targetOrdinal,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get sourcePath => $composableBuilder(
     column: $table.sourcePath,
     builder: (column) => ColumnOrderings(column),
@@ -29045,6 +29176,16 @@ class $$E2eeAttachmentUploadRowsTableAnnotationComposer
 
   GeneratedColumn<String> get localAssetId => $composableBuilder(
     column: $table.localAssetId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get targetRevisionId => $composableBuilder(
+    column: $table.targetRevisionId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get targetOrdinal => $composableBuilder(
+    column: $table.targetOrdinal,
     builder: (column) => column,
   );
 
@@ -29246,6 +29387,8 @@ class $$E2eeAttachmentUploadRowsTableTableManager
               ({
                 Value<String> attachmentId = const Value.absent(),
                 Value<String> localAssetId = const Value.absent(),
+                Value<String> targetRevisionId = const Value.absent(),
+                Value<int> targetOrdinal = const Value.absent(),
                 Value<String> sourcePath = const Value.absent(),
                 Value<int> keyEpoch = const Value.absent(),
                 Value<String> kind = const Value.absent(),
@@ -29284,6 +29427,8 @@ class $$E2eeAttachmentUploadRowsTableTableManager
               }) => E2eeAttachmentUploadRowsCompanion(
                 attachmentId: attachmentId,
                 localAssetId: localAssetId,
+                targetRevisionId: targetRevisionId,
+                targetOrdinal: targetOrdinal,
                 sourcePath: sourcePath,
                 keyEpoch: keyEpoch,
                 kind: kind,
@@ -29322,6 +29467,8 @@ class $$E2eeAttachmentUploadRowsTableTableManager
               ({
                 required String attachmentId,
                 required String localAssetId,
+                required String targetRevisionId,
+                required int targetOrdinal,
                 required String sourcePath,
                 required int keyEpoch,
                 required String kind,
@@ -29360,6 +29507,8 @@ class $$E2eeAttachmentUploadRowsTableTableManager
               }) => E2eeAttachmentUploadRowsCompanion.insert(
                 attachmentId: attachmentId,
                 localAssetId: localAssetId,
+                targetRevisionId: targetRevisionId,
+                targetOrdinal: targetOrdinal,
                 sourcePath: sourcePath,
                 keyEpoch: keyEpoch,
                 kind: kind,
