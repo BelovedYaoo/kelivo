@@ -2,7 +2,6 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
-import 'package:uuid/uuid.dart';
 import '../../../core/models/assistant.dart';
 import '../../../core/models/chat_input_data.dart';
 import '../../../core/models/chat_message.dart';
@@ -40,11 +39,9 @@ import '../../../utils/markdown_media_sanitizer.dart';
 /// - Inlining local images for model context
 class MessageBuilderService {
   static const String internalMediaPathsKey = multimodalInternalMediaPathsKey;
-
-  final String _structuredAttachmentMarkerNonce = const Uuid().v4();
-  late final RegExp _structuredAttachmentMarkerPattern = RegExp(
-    '\\[kelivo-attachment:${RegExp.escape(_structuredAttachmentMarkerNonce)}:([A-Za-z0-9_-]+)\\]',
-  );
+  // 仅在请求预处理前存在，避免把本地路径重新编码进正文协议。
+  static const String _structuredAttachmentsKey =
+      '__kelivo_structured_attachments';
 
   MessageBuilderService({
     required this.chatService,
@@ -200,19 +197,17 @@ class MessageBuilderService {
       }
 
       var content = m.content;
-      if (m.role == 'user' && m.attachments.isNotEmpty) {
-        final markers = m.attachments
-            .map(_encodeStructuredAttachmentMarker)
-            .join('\n');
-        content = content.isEmpty ? markers : '$content\n$markers';
-      }
+      final attachments = m.role == 'user'
+          ? List<ChatMessageAttachment>.unmodifiable(m.attachments)
+          : const <ChatMessageAttachment>[];
       if (m.role == 'assistant' && geminiThoughtSignatureHandler != null) {
         content = geminiThoughtSignatureHandler!(m, content);
       }
-      if (content.isEmpty) continue;
+      if (content.isEmpty && attachments.isEmpty) continue;
       final message = <String, dynamic>{
         'role': m.role == 'assistant' ? 'assistant' : 'user',
         'content': content,
+        if (attachments.isNotEmpty) _structuredAttachmentsKey: attachments,
       };
       if (toolContinuationReasoningContent?.isNotEmpty == true) {
         message['reasoning_content'] = toolContinuationReasoningContent;
@@ -269,6 +264,7 @@ class MessageBuilderService {
   /// Parse input data from raw message content (extracts images and documents).
   ChatInputData parseInputFromRaw(
     String raw, {
+    List<ChatMessageAttachment> attachments = const [],
     bool includeMediaFilePathsAsImages = true,
   }) {
     final imgRe = RegExp(r"\[image:([^\]]+)\]");
@@ -277,38 +273,7 @@ class MessageBuilderService {
     final buffer = StringBuffer();
     int idx = 0;
     while (idx < raw.length) {
-      final attachmentMatch = _structuredAttachmentMarkerPattern.matchAsPrefix(
-        raw,
-        idx,
-      );
       final imgMatch = imgRe.matchAsPrefix(raw, idx);
-      if (attachmentMatch != null) {
-        final attachment = _decodeStructuredAttachmentMarker(
-          attachmentMatch.group(1) ?? '',
-        );
-        if (attachment == null) {
-          buffer.write(attachmentMatch.group(0));
-          idx = attachmentMatch.end;
-          continue;
-        }
-        if (attachment.kind == 'image') {
-          images.add(attachment.path);
-        } else {
-          final document = DocumentAttachment(
-            path: attachment.path,
-            fileName: attachment.displayName!,
-            mime: attachment.mediaType!,
-          );
-          docs.add(document);
-          final effectiveMime = _effectiveAttachmentMime(document);
-          if (includeMediaFilePathsAsImages &&
-              (isVideoMime(effectiveMime) || isAudioMime(effectiveMime))) {
-            images.add(attachment.path);
-          }
-        }
-        idx = attachmentMatch.end;
-        continue;
-      }
       if (imgMatch != null) {
         final p = imgMatch.group(1)?.trim();
         if (p != null && p.isNotEmpty && isRemoteInlineImageSource(p)) {
@@ -320,6 +285,23 @@ class MessageBuilderService {
       buffer.write(raw[idx]);
       idx++;
     }
+    for (final attachment in attachments) {
+      if (attachment.kind == 'image') {
+        images.add(attachment.path);
+        continue;
+      }
+      final document = DocumentAttachment(
+        path: attachment.path,
+        fileName: attachment.displayName!,
+        mime: attachment.mediaType!,
+      );
+      docs.add(document);
+      final effectiveMime = _effectiveAttachmentMime(document);
+      if (includeMediaFilePathsAsImages &&
+          (isVideoMime(effectiveMime) || isAudioMime(effectiveMime))) {
+        images.add(attachment.path);
+      }
+    }
     return ChatInputData(
       text: buffer.toString().trim(),
       imagePaths: images,
@@ -327,54 +309,26 @@ class MessageBuilderService {
     );
   }
 
-  String _encodeStructuredAttachmentMarker(ChatMessageAttachment attachment) {
-    final payload = jsonEncode(<String, Object?>{
-      'kind': attachment.kind,
-      'path': attachment.path,
-      'displayName': attachment.displayName,
-      'mediaType': attachment.mediaType,
-    });
-    final encoded = base64UrlEncode(utf8.encode(payload)).replaceAll('=', '');
-    return '[kelivo-attachment:$_structuredAttachmentMarkerNonce:$encoded]';
+  ChatInputData parseInputFromApiMessage(
+    Map<String, dynamic> message, {
+    bool includeMediaFilePathsAsImages = true,
+  }) {
+    return parseInputFromRaw(
+      (message['content'] ?? '').toString(),
+      attachments: _structuredAttachmentsFrom(message),
+      includeMediaFilePathsAsImages: includeMediaFilePathsAsImages,
+    );
   }
 
-  _StructuredAttachmentInput? _decodeStructuredAttachmentMarker(
-    String encoded,
+  List<ChatMessageAttachment> _structuredAttachmentsFrom(
+    Map<String, dynamic> message,
   ) {
-    try {
-      final paddedLength = ((encoded.length + 3) ~/ 4) * 4;
-      final payload = utf8.decode(
-        base64Url.decode(encoded.padRight(paddedLength, '=')),
-      );
-      final decoded = jsonDecode(payload);
-      if (decoded is! Map) return null;
-
-      final kind = decoded['kind'];
-      final path = decoded['path'];
-      final displayName = decoded['displayName'];
-      final mediaType = decoded['mediaType'];
-      if (kind is! String ||
-          path is! String ||
-          path.isEmpty ||
-          (kind != 'image' && kind != 'file')) {
-        return null;
-      }
-      if (kind == 'file' &&
-          (displayName is! String ||
-              displayName.isEmpty ||
-              mediaType is! String ||
-              mediaType.isEmpty)) {
-        return null;
-      }
-      return _StructuredAttachmentInput(
-        kind: kind,
-        path: path,
-        displayName: displayName is String ? displayName : null,
-        mediaType: mediaType is String ? mediaType : null,
-      );
-    } catch (_) {
-      return null;
+    final value = message[_structuredAttachmentsKey];
+    if (value == null) return const [];
+    if (value is! List<ChatMessageAttachment>) {
+      throw StateError('invalid_structured_message_attachments');
     }
+    return value;
   }
 
   String _effectiveAttachmentMime(DocumentAttachment attachment) {
@@ -449,8 +403,8 @@ class MessageBuilderService {
 
     for (int i = 0; i < apiMessages.length; i++) {
       if (apiMessages[i]['role'] != 'user') continue;
-      final rawUser = (apiMessages[i]['content'] ?? '').toString();
-      final parsedUser = parseInputFromRaw(rawUser);
+      final parsedUser = parseInputFromApiMessage(apiMessages[i]);
+      apiMessages[i].remove(_structuredAttachmentsKey);
       final videoPaths = <String>{
         for (final d in parsedUser.documents)
           if (isVideoMime(_effectiveAttachmentMime(d))) d.path.trim(),
@@ -1073,18 +1027,4 @@ class _DocTextCacheEntry {
   final String? text;
   final int modifiedMs;
   final int size;
-}
-
-final class _StructuredAttachmentInput {
-  const _StructuredAttachmentInput({
-    required this.kind,
-    required this.path,
-    required this.displayName,
-    required this.mediaType,
-  });
-
-  final String kind;
-  final String path;
-  final String? displayName;
-  final String? mediaType;
 }

@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/widgets.dart';
@@ -84,7 +83,7 @@ void main() {
   });
 
   group('MessageBuilderService.parseInputFromRaw', () {
-    test('只解析本次请求生成的结构化附件标记', () {
+    test('从请求内结构字段读取附件且不解析本地旧标记', () {
       final service = MessageBuilderService(
         chatService: _FakeChatService(const {}),
         contextProvider: _FakeBuildContext(),
@@ -117,9 +116,7 @@ void main() {
         versionSelections: const {},
         currentConversation: Conversation(title: 'test'),
       );
-      final input = service.parseInputFromRaw(
-        apiMessages.single['content'] as String,
-      );
+      final input = service.parseInputFromApiMessage(apiMessages.single);
 
       expect(input.text, 'media');
       expect(input.imagePaths, ['C:/tmp/clip.mp4', 'C:/tmp/audio.wav']);
@@ -127,6 +124,41 @@ void main() {
         'clip.mp4',
         'audio.wav',
       ]);
+    });
+
+    test('请求内附件结构损坏时失败关闭', () {
+      final service = MessageBuilderService(
+        chatService: _FakeChatService(const {}),
+        contextProvider: _FakeBuildContext(),
+      );
+      final apiMessages = service.buildApiMessages(
+        messages: [
+          _message(
+            id: 'u1',
+            role: 'user',
+            content: 'media',
+            attachments: [
+              _attachment(
+                assetId: 'image',
+                path: 'C:/tmp/image.png',
+                kind: 'image',
+              ),
+            ],
+          ),
+        ],
+        versionSelections: const {},
+        currentConversation: Conversation(title: 'test'),
+      );
+      final message = apiMessages.single;
+      final attachmentKey = message.keys.singleWhere(
+        (key) => key != 'role' && key != 'content',
+      );
+      message[attachmentKey] = const <Object>[];
+
+      expect(
+        () => service.parseInputFromApiMessage(message),
+        throwsA(isA<StateError>()),
+      );
     });
 
     test('本地旧标记按普通文本保留，远程图片标记继续解析', () {
@@ -185,18 +217,10 @@ void main() {
       );
 
       expect(apiMessages, hasLength(1));
-      final content = apiMessages.single['content'] as String;
-      final kinds = RegExp(r'\[kelivo-attachment:[^:]+:([A-Za-z0-9_-]+)\]')
-          .allMatches(content)
-          .map((match) {
-            final encoded = match.group(1)!;
-            final paddedLength = ((encoded.length + 3) ~/ 4) * 4;
-            final payload = utf8.decode(
-              base64Url.decode(encoded.padRight(paddedLength, '=')),
-            );
-            return (jsonDecode(payload) as Map<String, dynamic>)['kind'];
-          });
-      expect(kinds, ['image', 'file', 'image']);
+      expect(apiMessages.single['content'], isEmpty);
+      final input = service.parseInputFromApiMessage(apiMessages.single);
+      expect(input.imagePaths, ['C:/tmp/a.png', 'C:/tmp/c.png']);
+      expect(input.documents.map((document) => document.fileName), ['b.txt']);
     });
 
     test('结构化附件进入 API 内容且不会遗留内部标记', () async {

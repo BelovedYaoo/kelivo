@@ -640,9 +640,7 @@ class MessageGenerationService {
   bool apiMessagesContainAudioAttachments(List<Map<String, dynamic>> messages) {
     for (final message in messages) {
       if ((message['role'] ?? '').toString() != 'user') continue;
-      final parsed = messageBuilderService.parseInputFromRaw(
-        (message['content'] ?? '').toString(),
-      );
+      final parsed = messageBuilderService.parseInputFromApiMessage(message);
       if (parsed.documents.any(
         (attachment) => isAudioMime(_effectiveAttachmentMime(attachment)),
       )) {
