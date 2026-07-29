@@ -2166,7 +2166,7 @@ void main() {
           'targetKeyEpoch': 3,
           'sourceRecordCount': 1,
           'sourceAttachmentCount': 1,
-          'sourceMaximumChangeSeq': 15,
+          'sourceMaximumChangeSeq': 16,
           'sourceRecordCursorEnd': _recordId1,
           'sourceAttachmentCursorEnd': <String, Object?>{
             'attachmentId': _attachmentId,
@@ -2209,7 +2209,7 @@ void main() {
           'targetKeyEpoch': 3,
           'sourceRecordCount': sourceRecordCount,
           'sourceAttachmentCount': 0,
-          'sourceMaximumChangeSeq': 15,
+          'sourceMaximumChangeSeq': 16,
           'sourceRecordCursorEnd': _recordId1,
           'sourceAttachmentCursorEnd': null,
           'lease': null,
@@ -2223,6 +2223,10 @@ void main() {
         'unknownField': true,
       },
       pendingState(sourceRecordCount: 0),
+      <String, Object?>{
+        ...pendingState(sourceRecordCount: 1),
+        'sourceMaximumChangeSeq': 15,
+      },
     ];
     var responseIndex = 0;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -2249,6 +2253,7 @@ void main() {
       CloudSyncFailureKind.invalidResponse,
     );
 
+    await expectLater(client.getDataRekeyState(), throwsA(invalidResponse));
     await expectLater(client.getDataRekeyState(), throwsA(invalidResponse));
     await expectLater(client.getDataRekeyState(), throwsA(invalidResponse));
   });

@@ -381,6 +381,17 @@ final class CloudSyncDataRekeyPendingState extends CloudSyncDataRekeyState {
       json,
       'sourceAttachmentCursorEnd',
     );
+    final changeWatermark = _requireNonNegativeSafeInteger(
+      _requireInt(json, 'changeWatermark'),
+      'changeWatermark',
+    );
+    final sourceMaximumChangeSeq = _requireNonNegativeSafeInteger(
+      _requireInt(json, 'sourceMaximumChangeSeq'),
+      'sourceMaximumChangeSeq',
+    );
+    if (changeWatermark != sourceMaximumChangeSeq) {
+      throw const FormatException('data-rekey 冻结水位与账户水位不一致');
+    }
     _requireCountCursorPair(
       count: sourceRecordCount,
       hasCursor: sourceRecordCursorEnd != null,
@@ -394,10 +405,7 @@ final class CloudSyncDataRekeyPendingState extends CloudSyncDataRekeyState {
     return CloudSyncDataRekeyPendingState._(
       dataGeneration: dataGeneration,
       dataKeyEpoch: dataKeyEpoch,
-      changeWatermark: _requireNonNegativeSafeInteger(
-        _requireInt(json, 'changeWatermark'),
-        'changeWatermark',
-      ),
+      changeWatermark: changeWatermark,
       operationId: _requireCanonicalUuid(
         _requireString(json, 'operationId'),
         'operationId',
@@ -405,10 +413,7 @@ final class CloudSyncDataRekeyPendingState extends CloudSyncDataRekeyState {
       targetKeyEpoch: targetKeyEpoch,
       sourceRecordCount: sourceRecordCount,
       sourceAttachmentCount: sourceAttachmentCount,
-      sourceMaximumChangeSeq: _requireNonNegativeSafeInteger(
-        _requireInt(json, 'sourceMaximumChangeSeq'),
-        'sourceMaximumChangeSeq',
-      ),
+      sourceMaximumChangeSeq: sourceMaximumChangeSeq,
       sourceRecordCursorEnd: sourceRecordCursorEnd,
       sourceAttachmentCursorEnd: sourceAttachmentCursorEnd,
       lease: _optionalDataRekeyLease(json, 'lease'),
