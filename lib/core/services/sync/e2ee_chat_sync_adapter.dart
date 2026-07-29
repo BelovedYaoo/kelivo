@@ -349,6 +349,21 @@ final class E2eeChatSyncAdapter {
       id: key.entityId,
       role: payload['role'] as String,
       content: content,
+      attachments: [
+        for (final attachment in attachments)
+          ChatMessageAttachment(
+            assetId: attachment.assetId,
+            path: attachment.path,
+            contentHash: attachment.contentHash,
+            byteSize: attachment.byteSize,
+            kind: attachment.kind,
+            displayName: attachment.displayName,
+            mediaType: attachment.mediaType,
+            attachmentId: attachment.attachmentId,
+            uploadId: attachment.uploadId,
+            keyEpoch: attachment.keyEpoch,
+          ),
+      ],
       timestamp: DateTime.parse(payload['timestamp'] as String),
       modelId: payload['modelId'] as String?,
       providerId: payload['providerId'] as String?,
@@ -373,15 +388,6 @@ final class E2eeChatSyncAdapter {
     );
     _requireTerminalMessage(message);
     await _repository.upsertMessageFromSync(message);
-    final replaced = await _repository.replaceMessageAssetReferences(
-      conversationId: conversationId,
-      revisionId: message.id,
-      expectedContent: message.content,
-      assets: attachments,
-    );
-    if (!replaced) {
-      throw StateError('sync_message_attachment_reference_replace_failed');
-    }
     return conversationId;
   }
 

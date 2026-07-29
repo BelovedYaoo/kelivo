@@ -3077,7 +3077,23 @@ void main() {
 
       expect(committed.checkpoint.syncCursor, 'ready-attachment-committed');
       expect(readiness.messageIds, <String>[messageId]);
-      expect(await repository.getMessage(messageId), isNot(equals(null)));
+      final persistedMessage = await repository.getMessage(messageId);
+      expect(persistedMessage, isNot(equals(null)));
+      expect(persistedMessage!.attachments, hasLength(1));
+      final persistedAttachment = persistedMessage.attachments.single;
+      expect(persistedAttachment.assetId, 'asset_$contentHash');
+      expect(persistedAttachment.contentHash, contentHash);
+      expect(
+        persistedAttachment.path,
+        'memory://kelivo-e2ee-attachments/content/$contentHash',
+      );
+      expect(persistedAttachment.byteSize, 3);
+      expect(persistedAttachment.kind, 'file');
+      expect(persistedAttachment.displayName, 'ready.txt');
+      expect(persistedAttachment.mediaType, 'text/plain');
+      expect(persistedAttachment.attachmentId, attachmentId);
+      expect(persistedAttachment.uploadId, uploadId);
+      expect(persistedAttachment.keyEpoch, 7);
       final reference = await database
           .customSelect(
             'SELECT ordinal, asset_id, kind, display_name, media_type, '
