@@ -8,6 +8,7 @@ pub mod attachment_crypto;
 pub mod device_crypto;
 #[cfg(feature = "device-crypto")]
 pub mod recovery_crypto;
+mod recovery_history;
 
 use std::fmt;
 use std::ops::Deref;

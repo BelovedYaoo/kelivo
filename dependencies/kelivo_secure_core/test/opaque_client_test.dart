@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
@@ -25,10 +26,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v14 OPAQUE、设备 E2EE、附件加密与账户信任签名支持', () async {
+  test('能力门禁声明 ABI v15 及恢复介质支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 14);
+    expect(capabilities.abiVersion, 15);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -42,6 +43,10 @@ void main() {
       capabilities.supportsAccountTrustSigning,
       Platform.isWindows || Platform.isAndroid || Platform.isIOS,
     );
+    expect(
+      capabilities.supportsRecoveryMedia,
+      Platform.isWindows || Platform.isAndroid || Platform.isIOS,
+    );
   });
 
   test('安全存储后端代码包含 iOS Keychain', () {
@@ -49,6 +54,44 @@ void main() {
       KelivoSecureStorageBackend.fromCode(4),
       KelivoSecureStorageBackend.iosKeychain,
     );
+  });
+
+  test('恢复口令在参数校验失败时仍被消费清零', () async {
+    final passphrase = Uint8List.fromList(utf8.encode('甲乙丙丁戊己庚辛壬癸子丑'));
+
+    await expectLater(
+      core.recoverAccountRootKey(
+        media: Uint8List(643),
+        passphrase: passphrase,
+        serviceOriginSha256: Uint8List(32),
+        membershipHistory: <Uint8List>[Uint8List(444)],
+        currentCapsule: Uint8List(156),
+      ),
+      throwsArgumentError,
+    );
+    expect(passphrase, everyElement(0));
+  });
+
+  test('恢复口令按原始 UTF-8 标量校验且拒绝畸形编码', () async {
+    final malformedPassphrase = Uint8List.fromList(<int>[
+      0xf0,
+      0x80,
+      0x80,
+      0x80,
+      ...List<int>.filled(12, 0x61),
+    ]);
+
+    await expectLater(
+      core.recoverAccountRootKey(
+        media: Uint8List(644),
+        passphrase: malformedPassphrase,
+        serviceOriginSha256: Uint8List(32),
+        membershipHistory: <Uint8List>[Uint8List(444)],
+        currentCapsule: Uint8List(156),
+      ),
+      throwsArgumentError,
+    );
+    expect(malformedPassphrase, everyElement(0));
   });
 
   test('本机密钥槽删除要求关闭句柄并可幂等重试', () async {

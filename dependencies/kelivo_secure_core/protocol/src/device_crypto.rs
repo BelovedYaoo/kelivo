@@ -1381,7 +1381,8 @@ where
     }
 
     let target_public_key = binding.target_key_agreement_public_key.hpke_public_key()?;
-    let mut rng = HpkeRngAdapter(rng);
+    let mut rng =
+        HpkeRngAdapter::from_rng(rng).map_err(|_| DeviceCryptoError::RandomnessUnavailable)?;
     let (encapsulated_key, mut sender_context) =
         setup_sender_with_rng::<HpkeAead, HpkeKdf, HpkeKem>(
             &OpModeS::Base,
@@ -1763,7 +1764,55 @@ pub fn open_device_state(
     Ok((binding, identity, keyring))
 }
 
-struct HpkeRngAdapter<'a, R>(&'a mut R);
+const HPKE_RNG_SEED_LENGTH: usize = 32;
+const HPKE_RNG_EXPANSION_DOMAIN: &[u8] = b"kelivo.hpke-rng-adapter.expand.v1";
+
+pub(super) struct HpkeRngAdapter {
+    seed: Zeroizing<[u8; HPKE_RNG_SEED_LENGTH]>,
+    position: usize,
+}
+
+impl HpkeRngAdapter {
+    pub(super) fn from_rng<R>(rng: &mut R) -> Result<Self, rand::Error>
+    where
+        R: RngCore,
+    {
+        let mut seed = Zeroizing::new([0_u8; HPKE_RNG_SEED_LENGTH]);
+        rng.try_fill_bytes(seed.as_mut_slice())?;
+        Ok(Self { seed, position: 0 })
+    }
+
+    fn fill_deterministic(&mut self, destination: &mut [u8]) {
+        let mut written = 0;
+        if self.position < HPKE_RNG_SEED_LENGTH {
+            let available = HPKE_RNG_SEED_LENGTH - self.position;
+            let copied = available.min(destination.len());
+            destination[..copied]
+                .copy_from_slice(&self.seed[self.position..self.position + copied]);
+            self.position += copied;
+            written = copied;
+        }
+        while written < destination.len() {
+            let expanded_position = self.position - HPKE_RNG_SEED_LENGTH;
+            let block_number = (expanded_position / HPKE_RNG_SEED_LENGTH) as u64;
+            let block_offset = expanded_position % HPKE_RNG_SEED_LENGTH;
+            let block = self.expanded_block(block_number);
+            let copied = (HPKE_RNG_SEED_LENGTH - block_offset).min(destination.len() - written);
+            destination[written..written + copied]
+                .copy_from_slice(&block[block_offset..block_offset + copied]);
+            self.position += copied;
+            written += copied;
+        }
+    }
+
+    fn expanded_block(&self, block_number: u64) -> Zeroizing<[u8; HPKE_RNG_SEED_LENGTH]> {
+        let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(self.seed.as_slice())
+            .expect("固定长度 HPKE 随机种子必须可用于 HMAC");
+        Mac::update(&mut mac, HPKE_RNG_EXPANSION_DOMAIN);
+        Mac::update(&mut mac, &block_number.to_be_bytes());
+        Zeroizing::new(mac.finalize().into_bytes().into())
+    }
+}
 
 struct PublicKeyValidationRng;
 
@@ -1786,27 +1835,28 @@ impl hpke::rand_core::TryRng for PublicKeyValidationRng {
 
 impl hpke::rand_core::TryCryptoRng for PublicKeyValidationRng {}
 
-impl<R> hpke::rand_core::TryRng for HpkeRngAdapter<'_, R>
-where
-    R: RngCore,
-{
+impl hpke::rand_core::TryRng for HpkeRngAdapter {
     type Error = Infallible;
 
     fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        Ok(self.0.next_u32())
+        let mut bytes = [0_u8; 4];
+        self.fill_deterministic(&mut bytes);
+        Ok(u32::from_le_bytes(bytes))
     }
 
     fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(self.0.next_u64())
+        let mut bytes = [0_u8; 8];
+        self.fill_deterministic(&mut bytes);
+        Ok(u64::from_le_bytes(bytes))
     }
 
     fn try_fill_bytes(&mut self, destination: &mut [u8]) -> Result<(), Self::Error> {
-        self.0.fill_bytes(destination);
+        self.fill_deterministic(destination);
         Ok(())
     }
 }
 
-impl<R> hpke::rand_core::TryCryptoRng for HpkeRngAdapter<'_, R> where R: CryptoRng + RngCore {}
+impl hpke::rand_core::TryCryptoRng for HpkeRngAdapter {}
 
 fn copy_array<const LENGTH: usize>(bytes: &[u8]) -> [u8; LENGTH] {
     let mut result = [0_u8; LENGTH];

@@ -40,9 +40,9 @@ pub use opaque_client::{
     kelivo_opaque_client_state_close,
 };
 pub use recovery::{
-    KelivoRecoveryCapsuleBinding, KelivoRecoveryImportBinding, kelivo_recovery_capsule_open,
-    kelivo_recovery_capsule_seal, kelivo_recovery_handle_close, kelivo_recovery_identity_generate,
-    kelivo_recovery_media_export, kelivo_recovery_media_import,
+    KelivoRecoveryCapsuleBinding, KelivoRecoveryMediaExportAuthority, kelivo_recovery_capsule_seal,
+    kelivo_recovery_handle_close, kelivo_recovery_identity_generate, kelivo_recovery_media_export,
+    kelivo_recovery_media_import_history_verify_and_capsule_open,
 };
 
 #[cfg(target_os = "windows")]
@@ -202,6 +202,8 @@ pub(crate) enum KelivoStatus {
     RecoveryGenesisInvalid = 45,
     RecoveryOriginMismatch = 46,
     RecoveryPassphraseInvalid = 47,
+    RecoveryHistoryInvalid = 48,
+    RecoveryHistoryAuthenticationFailed = 49,
     UnsupportedPlatform = 100,
 }
 
@@ -1136,14 +1138,6 @@ mod tests {
         RECOVERY_TEST_LOCK.lock().expect("恢复介质测试门禁不得中毒")
     }
 
-    fn sentinel_recovery_import_binding() -> KelivoRecoveryImportBinding {
-        KelivoRecoveryImportBinding {
-            struct_size: u32::MAX,
-            user_id: [0xa5; 16],
-            recovery_public_key_version: u32::MAX,
-        }
-    }
-
     fn sentinel_recovery_capsule_binding() -> KelivoRecoveryCapsuleBinding {
         KelivoRecoveryCapsuleBinding {
             struct_size: u32::MAX,
@@ -1204,6 +1198,17 @@ mod tests {
         );
         assert_eq!(capsule_length, capsule.len());
         capsule
+    }
+
+    fn recovery_media_export_authority(
+        ark_handle: u64,
+        initial_capsule: [u8; recovery_protocol::RECOVERY_CAPSULE_LENGTH],
+    ) -> KelivoRecoveryMediaExportAuthority {
+        KelivoRecoveryMediaExportAuthority {
+            struct_size: recovery::RECOVERY_MEDIA_EXPORT_AUTHORITY_STRUCT_SIZE,
+            initial_capsule,
+            local_epoch_one_ark_handle: ark_handle,
+        }
     }
 
     fn build_test_recovery_genesis(
@@ -4886,7 +4891,7 @@ mod tests {
     }
 
     #[test]
-    fn recovery_media_round_trip_retries_then_atomically_consumes_import_handle() {
+    fn recovery_media_one_shot_publishes_ark_only_after_history_verification() {
         let _guard = recovery_test_guard();
         assert_eq!(recovery::active_recovery_handles(), 0);
         let user_id = account_id(0x71);
@@ -4903,6 +4908,7 @@ mod tests {
             seal_test_recovery_capsule(source_ark_handle, &user_id, 1, 1, &recovery_public_key);
         let genesis =
             build_test_recovery_genesis(ark_bytes, user_id, recovery_public_key, &capsule);
+        let export_authority = recovery_media_export_authority(source_ark_handle, capsule);
         let passphrase = "甲乙丙丁戊己庚辛壬癸子丑".as_bytes();
         let origin = [0x73; recovery_protocol::RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH];
         let mut media = [0xa5; recovery_protocol::RECOVERY_MEDIA_LENGTH];
@@ -4911,6 +4917,7 @@ mod tests {
             unsafe {
                 kelivo_recovery_media_export(
                     recovery_handle,
+                    &export_authority,
                     genesis.as_ptr(),
                     genesis.len(),
                     passphrase.as_ptr(),
@@ -4930,85 +4937,57 @@ mod tests {
             KelivoStatus::Ok.code()
         );
 
-        let mut wrong_password_handle = u64::MAX;
-        let mut wrong_password_binding = sentinel_recovery_import_binding();
-        let mut wrong_password_genesis = [0xa5; recovery_protocol::RECOVERY_GENESIS_LENGTH];
-        let mut wrong_password_genesis_length = usize::MAX;
         let wrong_password = b"incorrect-password";
+        let mut failed_binding = sentinel_recovery_capsule_binding();
+        let mut failed_ark_handle = u64::MAX;
         assert_eq!(
             unsafe {
-                kelivo_recovery_media_import(
+                kelivo_recovery_media_import_history_verify_and_capsule_open(
                     media.as_ptr(),
                     media.len(),
                     wrong_password.as_ptr(),
                     wrong_password.len(),
                     origin.as_ptr(),
                     origin.len(),
-                    &mut wrong_password_handle,
-                    &mut wrong_password_binding,
-                    wrong_password_genesis.as_mut_ptr(),
-                    wrong_password_genesis.len(),
-                    &mut wrong_password_genesis_length,
+                    genesis.as_ptr(),
+                    genesis.len(),
+                    ptr::null(),
+                    0,
+                    capsule.as_ptr(),
+                    capsule.len(),
+                    &mut failed_binding,
+                    &mut failed_ark_handle,
                 )
             },
             KelivoStatus::RecoveryMediaAuthenticationFailed.code()
         );
-        assert_eq!(wrong_password_handle, INVALID_KEY_HANDLE);
-        assert_eq!(
-            wrong_password_binding,
-            KelivoRecoveryImportBinding::default()
-        );
-        assert_eq!(wrong_password_genesis_length, 0);
-        assert!(wrong_password_genesis.iter().all(|byte| *byte == 0));
+        assert_eq!(failed_binding, KelivoRecoveryCapsuleBinding::default());
+        assert_eq!(failed_ark_handle, INVALID_KEY_HANDLE);
 
-        let mut imported_handle = u64::MAX;
-        let mut imported_binding = sentinel_recovery_import_binding();
-        let mut imported_genesis = [0xa5; recovery_protocol::RECOVERY_GENESIS_LENGTH];
-        let mut imported_genesis_length = usize::MAX;
+        let mut wrong_history = genesis;
+        wrong_history[20] ^= 1;
+        failed_binding = sentinel_recovery_capsule_binding();
+        failed_ark_handle = u64::MAX;
         assert_eq!(
             unsafe {
-                kelivo_recovery_media_import(
+                kelivo_recovery_media_import_history_verify_and_capsule_open(
                     media.as_ptr(),
                     media.len(),
                     passphrase.as_ptr(),
                     passphrase.len(),
                     origin.as_ptr(),
                     origin.len(),
-                    &mut imported_handle,
-                    &mut imported_binding,
-                    imported_genesis.as_mut_ptr(),
-                    imported_genesis.len(),
-                    &mut imported_genesis_length,
-                )
-            },
-            KelivoStatus::Ok.code()
-        );
-        assert_eq!(
-            imported_binding,
-            KelivoRecoveryImportBinding {
-                struct_size: recovery::RECOVERY_IMPORT_BINDING_STRUCT_SIZE,
-                user_id,
-                recovery_public_key_version: 1,
-            }
-        );
-        assert_eq!(imported_genesis_length, genesis.len());
-        assert_eq!(imported_genesis, genesis);
-
-        let mut tampered_capsule = capsule;
-        tampered_capsule[recovery_protocol::RECOVERY_CAPSULE_HEADER_LENGTH + 4] ^= 1;
-        let mut failed_binding = sentinel_recovery_capsule_binding();
-        let mut failed_ark_handle = u64::MAX;
-        assert_eq!(
-            unsafe {
-                kelivo_recovery_capsule_open(
-                    imported_handle,
-                    tampered_capsule.as_ptr(),
-                    tampered_capsule.len(),
+                    wrong_history.as_ptr(),
+                    wrong_history.len(),
+                    ptr::null(),
+                    0,
+                    capsule.as_ptr(),
+                    capsule.len(),
                     &mut failed_binding,
                     &mut failed_ark_handle,
                 )
             },
-            KelivoStatus::RecoveryCapsuleAuthenticationFailed.code()
+            KelivoStatus::RecoveryHistoryInvalid.code()
         );
         assert_eq!(failed_binding, KelivoRecoveryCapsuleBinding::default());
         assert_eq!(failed_ark_handle, INVALID_KEY_HANDLE);
@@ -5017,8 +4996,17 @@ mod tests {
         let mut opened_ark_handle = u64::MAX;
         assert_eq!(
             unsafe {
-                kelivo_recovery_capsule_open(
-                    imported_handle,
+                kelivo_recovery_media_import_history_verify_and_capsule_open(
+                    media.as_ptr(),
+                    media.len(),
+                    passphrase.as_ptr(),
+                    passphrase.len(),
+                    origin.as_ptr(),
+                    origin.len(),
+                    genesis.as_ptr(),
+                    genesis.len(),
+                    ptr::null(),
+                    0,
                     capsule.as_ptr(),
                     capsule.len(),
                     &mut opened_binding,
@@ -5040,23 +5028,6 @@ mod tests {
             device_core::ark_for_account_handle(opened_ark_handle, protocol_user_id, 1)
                 .expect("恢复 ARK 应可用");
         assert_eq!(opened_ark.as_bytes(), &ark_bytes);
-
-        let mut consumed_binding = sentinel_recovery_capsule_binding();
-        let mut consumed_ark_handle = u64::MAX;
-        assert_eq!(
-            unsafe {
-                kelivo_recovery_capsule_open(
-                    imported_handle,
-                    capsule.as_ptr(),
-                    capsule.len(),
-                    &mut consumed_binding,
-                    &mut consumed_ark_handle,
-                )
-            },
-            KelivoStatus::InvalidRecoveryHandle.code()
-        );
-        assert_eq!(consumed_binding, KelivoRecoveryCapsuleBinding::default());
-        assert_eq!(consumed_ark_handle, INVALID_KEY_HANDLE);
         assert_eq!(recovery::active_recovery_handles(), 0);
         assert_eq!(
             kelivo_account_root_key_handle_close(opened_ark_handle),
@@ -5065,6 +5036,45 @@ mod tests {
         assert_eq!(
             kelivo_account_root_key_handle_close(source_ark_handle),
             KelivoStatus::Ok.code()
+        );
+    }
+
+    #[test]
+    fn recovered_keyring_registers_only_adjacent_epochs() {
+        let user_id = crypto::UserId::new(account_id(0x79)).expect("测试账户应有效");
+        let handle = device_core::register_recovered_ark_keyring(
+            user_id,
+            Some((1, crypto::AccountRootKey::from_bytes([0x7a; 32]))),
+            2,
+            crypto::AccountRootKey::from_bytes([0x7b; 32]),
+        )
+        .expect("相邻两代恢复 ARK 应原子注册");
+        assert_eq!(
+            device_core::ark_for_account_handle(handle, user_id, 1)
+                .expect("源代次应存在")
+                .as_bytes(),
+            &[0x7a; 32]
+        );
+        assert_eq!(
+            device_core::ark_for_account_handle(handle, user_id, 2)
+                .expect("当前代次应存在")
+                .as_bytes(),
+            &[0x7b; 32]
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(handle),
+            KelivoStatus::Ok.code()
+        );
+
+        assert_eq!(
+            device_core::register_recovered_ark_keyring(
+                user_id,
+                Some((1, crypto::AccountRootKey::from_bytes([0x7c; 32]))),
+                3,
+                crypto::AccountRootKey::from_bytes([0x7d; 32]),
+            )
+            .expect_err("非相邻恢复代次必须失败"),
+            KelivoStatus::RecoveryHistoryInvalid
         );
     }
 
@@ -5141,34 +5151,33 @@ mod tests {
         assert_eq!(invalid_public_key_length, 0);
         assert!(invalid_public_key.iter().all(|byte| *byte == 0));
 
-        let mut short_media_handle = u64::MAX;
-        let mut short_media_binding = sentinel_recovery_import_binding();
-        let mut short_media_genesis = [0xa5; recovery_protocol::RECOVERY_GENESIS_LENGTH];
-        let mut short_media_genesis_length = usize::MAX;
+        let mut short_media_ark_handle = u64::MAX;
+        let mut short_media_binding = sentinel_recovery_capsule_binding();
         let passphrase = b"recovery-password-v1";
         let origin = [0x82; recovery_protocol::RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH];
         let short_media = [0_u8; recovery_protocol::RECOVERY_MEDIA_LENGTH - 1];
         assert_eq!(
             unsafe {
-                kelivo_recovery_media_import(
+                kelivo_recovery_media_import_history_verify_and_capsule_open(
                     short_media.as_ptr(),
                     short_media.len(),
                     passphrase.as_ptr(),
                     passphrase.len(),
                     origin.as_ptr(),
                     origin.len(),
-                    &mut short_media_handle,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    0,
+                    ptr::null(),
+                    0,
                     &mut short_media_binding,
-                    short_media_genesis.as_mut_ptr(),
-                    short_media_genesis.len(),
-                    &mut short_media_genesis_length,
+                    &mut short_media_ark_handle,
                 )
             },
             KelivoStatus::RecoveryMediaInvalid.code()
         );
-        assert_eq!(short_media_handle, INVALID_KEY_HANDLE);
-        assert_eq!(short_media_binding, KelivoRecoveryImportBinding::default());
-        assert_eq!(short_media_genesis_length, 0);
-        assert!(short_media_genesis.iter().all(|byte| *byte == 0));
+        assert_eq!(short_media_ark_handle, INVALID_KEY_HANDLE);
+        assert_eq!(short_media_binding, KelivoRecoveryCapsuleBinding::default());
     }
 }

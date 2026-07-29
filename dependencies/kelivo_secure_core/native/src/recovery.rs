@@ -15,32 +15,13 @@ use crate::{
 pub(super) const RECOVERY_PUBLIC_KEY_LENGTH: usize = recovery::RECOVERY_PUBLIC_KEY_LENGTH;
 pub(super) const RECOVERY_CAPSULE_LENGTH: usize = recovery::RECOVERY_CAPSULE_LENGTH;
 pub(super) const RECOVERY_MEDIA_LENGTH: usize = recovery::RECOVERY_MEDIA_LENGTH;
-pub(super) const RECOVERY_GENESIS_LENGTH: usize = recovery::RECOVERY_GENESIS_LENGTH;
 pub(super) const RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH: usize =
     recovery::RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH;
-pub(super) const RECOVERY_IMPORT_BINDING_STRUCT_SIZE: u32 = 24;
 pub(super) const RECOVERY_CAPSULE_BINDING_STRUCT_SIZE: u32 = 28;
+pub(super) const RECOVERY_MEDIA_EXPORT_AUTHORITY_STRUCT_SIZE: u32 = 168;
 
 const UUID_LENGTH: usize = 16;
 const MAX_ACTIVE_RECOVERY_HANDLES: usize = 64;
-
-#[repr(C)]
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub struct KelivoRecoveryImportBinding {
-    pub struct_size: u32,
-    pub user_id: [u8; UUID_LENGTH],
-    pub recovery_public_key_version: u32,
-}
-
-impl KelivoRecoveryImportBinding {
-    const fn empty() -> Self {
-        Self {
-            struct_size: 0,
-            user_id: [0; UUID_LENGTH],
-            recovery_public_key_version: 0,
-        }
-    }
-}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -62,14 +43,32 @@ impl KelivoRecoveryCapsuleBinding {
     }
 }
 
+#[repr(C)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct KelivoRecoveryMediaExportAuthority {
+    pub struct_size: u32,
+    pub initial_capsule: [u8; RECOVERY_CAPSULE_LENGTH],
+    pub local_epoch_one_ark_handle: u64,
+}
+
+impl Default for KelivoRecoveryMediaExportAuthority {
+    fn default() -> Self {
+        Self {
+            struct_size: 0,
+            initial_capsule: [0; RECOVERY_CAPSULE_LENGTH],
+            local_epoch_one_ark_handle: INVALID_KEY_HANDLE,
+        }
+    }
+}
+
 const _: () = {
-    assert!(
-        core::mem::size_of::<KelivoRecoveryImportBinding>()
-            == RECOVERY_IMPORT_BINDING_STRUCT_SIZE as usize
-    );
     assert!(
         core::mem::size_of::<KelivoRecoveryCapsuleBinding>()
             == RECOVERY_CAPSULE_BINDING_STRUCT_SIZE as usize
+    );
+    assert!(
+        core::mem::size_of::<KelivoRecoveryMediaExportAuthority>()
+            == RECOVERY_MEDIA_EXPORT_AUTHORITY_STRUCT_SIZE as usize
     );
 };
 
@@ -79,13 +78,8 @@ struct BoundRecoveryIdentity {
     identity: recovery::RecoveryIdentity,
 }
 
-enum RecoveryEntry {
-    Available(Arc<BoundRecoveryIdentity>),
-    Consuming,
-}
-
 struct RecoveryRegistry {
-    active: HashMap<u64, RecoveryEntry>,
+    active: HashMap<u64, Arc<BoundRecoveryIdentity>>,
     next_sequence: u64,
 }
 
@@ -111,9 +105,7 @@ fn register_recovery(value: BoundRecoveryIdentity) -> Result<u64, KelivoStatus> 
         return Err(KelivoStatus::TooManyActiveHandles);
     }
     let handle = issue_typed_handle(RECOVERY_HANDLE_TAG, &mut registry.next_sequence)?;
-    let replaced = registry
-        .active
-        .insert(handle, RecoveryEntry::Available(Arc::new(value)));
+    let replaced = registry.active.insert(handle, Arc::new(value));
     debug_assert!(replaced.is_none());
     Ok(handle)
 }
@@ -125,11 +117,11 @@ fn recovery_for_handle(handle: u64) -> Result<Arc<BoundRecoveryIdentity>, Kelivo
     let registry = recovery_registry()
         .lock()
         .map_err(|_| KelivoStatus::InternalState)?;
-    match registry.active.get(&handle) {
-        Some(RecoveryEntry::Available(value)) => Ok(Arc::clone(value)),
-        Some(RecoveryEntry::Consuming) => Err(KelivoStatus::SlotInUse),
-        None => Err(KelivoStatus::InvalidRecoveryHandle),
-    }
+    registry
+        .active
+        .get(&handle)
+        .map(Arc::clone)
+        .ok_or(KelivoStatus::InvalidRecoveryHandle)
 }
 
 fn close_recovery(handle: u64) -> Result<(), KelivoStatus> {
@@ -143,11 +135,8 @@ fn close_recovery(handle: u64) -> Result<(), KelivoStatus> {
         .active
         .get(&handle)
         .ok_or(KelivoStatus::InvalidRecoveryHandle)?;
-    match entry {
-        RecoveryEntry::Available(value) if Arc::strong_count(value) == 1 => {}
-        RecoveryEntry::Available(_) | RecoveryEntry::Consuming => {
-            return Err(KelivoStatus::SlotInUse);
-        }
+    if Arc::strong_count(entry) != 1 {
+        return Err(KelivoStatus::SlotInUse);
     }
     let removed = registry
         .active
@@ -155,79 +144,6 @@ fn close_recovery(handle: u64) -> Result<(), KelivoStatus> {
         .ok_or(KelivoStatus::InternalState)?;
     drop(removed);
     Ok(())
-}
-
-struct RecoveryConsumePermit {
-    handle: u64,
-    value: Option<BoundRecoveryIdentity>,
-}
-
-impl RecoveryConsumePermit {
-    fn take(handle: u64) -> Result<Self, KelivoStatus> {
-        if !handle_has_tag(handle, RECOVERY_HANDLE_TAG) {
-            return Err(KelivoStatus::InvalidRecoveryHandle);
-        }
-        let mut registry = recovery_registry()
-            .lock()
-            .map_err(|_| KelivoStatus::InternalState)?;
-        let entry = registry
-            .active
-            .get_mut(&handle)
-            .ok_or(KelivoStatus::InvalidRecoveryHandle)?;
-        let value = match entry {
-            RecoveryEntry::Available(value) if Arc::strong_count(value) == 1 => {
-                let value = Arc::clone(value);
-                *entry = RecoveryEntry::Consuming;
-                Arc::try_unwrap(value).map_err(|_| KelivoStatus::InternalState)?
-            }
-            RecoveryEntry::Available(_) | RecoveryEntry::Consuming => {
-                return Err(KelivoStatus::SlotInUse);
-            }
-        };
-        Ok(Self {
-            handle,
-            value: Some(value),
-        })
-    }
-
-    fn value(&self) -> &BoundRecoveryIdentity {
-        self.value.as_ref().expect("恢复消费许可仍持有秘密")
-    }
-
-    fn commit(mut self) -> Result<(), KelivoStatus> {
-        let mut registry = recovery_registry()
-            .lock()
-            .map_err(|_| KelivoStatus::InternalState)?;
-        if !matches!(
-            registry.active.get(&self.handle),
-            Some(RecoveryEntry::Consuming)
-        ) {
-            return Err(KelivoStatus::InternalState);
-        }
-        registry
-            .active
-            .remove(&self.handle)
-            .ok_or(KelivoStatus::InternalState)?;
-        drop(registry);
-        let value = self.value.take().ok_or(KelivoStatus::InternalState)?;
-        drop(value);
-        Ok(())
-    }
-}
-
-impl Drop for RecoveryConsumePermit {
-    fn drop(&mut self) {
-        let Some(value) = self.value.take() else {
-            return;
-        };
-        let Ok(mut registry) = recovery_registry().lock() else {
-            return;
-        };
-        let entry = registry.active.get_mut(&self.handle);
-        if matches!(entry, Some(RecoveryEntry::Consuming)) {
-            *entry.expect("已确认恢复消费占位存在") = RecoveryEntry::Available(Arc::new(value));
-        }
-    }
 }
 
 fn read_user_id(input: *const u8, input_length: usize) -> Result<UserId, KelivoStatus> {
@@ -261,7 +177,10 @@ fn recovery_error_status(error: recovery::RecoveryCryptoError) -> KelivoStatus {
         | Error::UnsupportedCapsuleReserved(_) => KelivoStatus::RecoveryCapsuleInvalid,
         Error::InvalidRecoveryPrivateKey
         | Error::RecoveryKeyMismatch
+        | Error::CapsuleBindingMismatch
+        | Error::InitialCapsuleArkMismatch
         | Error::CapsuleOpenFailed => KelivoStatus::RecoveryCapsuleAuthenticationFailed,
+        Error::InitialCapsuleMismatch => KelivoStatus::RecoveryCapsuleInvalid,
         Error::CapsuleSealFailed => KelivoStatus::InternalState,
         Error::RandomnessUnavailable => KelivoStatus::RandomSourceFailure,
         Error::InvalidPassphraseUtf8 | Error::PassphraseTooShort | Error::PassphraseTooLong => {
@@ -277,11 +196,33 @@ fn recovery_error_status(error: recovery::RecoveryCryptoError) -> KelivoStatus {
         | Error::InvalidMediaPlaintextLength(_) => KelivoStatus::RecoveryMediaInvalid,
         Error::MediaOriginMismatch => KelivoStatus::RecoveryOriginMismatch,
         Error::MediaAuthenticationFailed => KelivoStatus::RecoveryMediaAuthenticationFailed,
-        Error::InvalidGenesis | Error::GenesisDigestMismatch | Error::GenesisSignatureInvalid => {
-            KelivoStatus::RecoveryGenesisInvalid
+        Error::InvalidGenesis
+        | Error::GenesisDigestMismatch
+        | Error::GenesisTrustRootMismatch
+        | Error::GenesisCapsuleDigestMismatch
+        | Error::GenesisSignatureInvalid => KelivoStatus::RecoveryGenesisInvalid,
+        Error::InvalidMembershipHistory
+        | Error::MembershipHistoryAnchorMismatch
+        | Error::MembershipHistoryTransitionInvalid
+        | Error::MembershipHistoryHeadMismatch => KelivoStatus::RecoveryHistoryInvalid,
+        Error::MembershipHistorySignatureInvalid => {
+            KelivoStatus::RecoveryHistoryAuthenticationFailed
         }
         Error::MediaKdfFailed | Error::MediaSealFailed => KelivoStatus::InternalState,
     }
+}
+
+unsafe fn read_media_export_authority(
+    input: *const KelivoRecoveryMediaExportAuthority,
+) -> Result<KelivoRecoveryMediaExportAuthority, KelivoStatus> {
+    if input.is_null() {
+        return Err(KelivoStatus::NullPointer);
+    }
+    let value = unsafe { input.read_unaligned() };
+    if value.struct_size != RECOVERY_MEDIA_EXPORT_AUTHORITY_STRUCT_SIZE {
+        return Err(KelivoStatus::InvalidArgument);
+    }
+    Ok(value)
 }
 
 unsafe fn reset_fixed_bytes<const LENGTH: usize>(
@@ -494,6 +435,7 @@ pub unsafe extern "C" fn kelivo_recovery_capsule_seal(
 #[allow(clippy::too_many_arguments)]
 pub unsafe extern "C" fn kelivo_recovery_media_export(
     recovery_handle: u64,
+    authority: *const KelivoRecoveryMediaExportAuthority,
     genesis: *const u8,
     genesis_length: usize,
     passphrase: *const u8,
@@ -523,6 +465,22 @@ pub unsafe extern "C" fn kelivo_recovery_media_export(
         Ok(value) => value,
         Err(status) => return status.code(),
     };
+    let authority = match unsafe { read_media_export_authority(authority) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let initial_capsule = match recovery::RecoveryCapsule::from_bytes(&authority.initial_capsule) {
+        Ok(value) => value,
+        Err(error) => return recovery_error_status(error).code(),
+    };
+    let local_epoch_one_ark = match crate::device_core::ark_for_account_handle(
+        authority.local_epoch_one_ark_handle,
+        bound.user_id,
+        1,
+    ) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
     let genesis = match unsafe { read_input(genesis, genesis_length) } {
         Ok(value) => value,
         Err(status) => return status.code(),
@@ -544,7 +502,11 @@ pub unsafe extern "C" fn kelivo_recovery_media_export(
         &bound.identity,
         bound.user_id,
         bound.recovery_public_key_version,
-        genesis,
+        recovery::RecoveryMediaExportAuthority::new(
+            &local_epoch_one_ark,
+            &initial_capsule,
+            genesis,
+        ),
         passphrase,
         &origin,
     ) {
@@ -569,43 +531,27 @@ pub unsafe extern "C" fn kelivo_recovery_media_export(
 /// 所有输入指针必须覆盖声明长度；输出指针必须指向对应容量的可写内存。
 #[unsafe(no_mangle)]
 #[allow(clippy::too_many_arguments)]
-pub unsafe extern "C" fn kelivo_recovery_media_import(
+pub unsafe extern "C" fn kelivo_recovery_media_import_history_verify_and_capsule_open(
     media: *const u8,
     media_length: usize,
     passphrase: *const u8,
     passphrase_length: usize,
     expected_service_origin_sha256: *const u8,
     expected_service_origin_sha256_length: usize,
-    out_handle: *mut u64,
-    out_binding: *mut KelivoRecoveryImportBinding,
-    out_genesis: *mut u8,
-    out_genesis_capacity: usize,
-    out_genesis_length: *mut usize,
+    membership_history: *const u8,
+    membership_history_length: usize,
+    source_capsule: *const u8,
+    source_capsule_length: usize,
+    current_capsule: *const u8,
+    current_capsule_length: usize,
+    out_binding: *mut KelivoRecoveryCapsuleBinding,
+    out_ark_handle: *mut u64,
 ) -> i32 {
-    if let Err(status) = unsafe { write_output(out_handle, INVALID_KEY_HANDLE) } {
-        return status.code();
-    }
-    if let Err(status) = unsafe { write_output(out_binding, KelivoRecoveryImportBinding::empty()) }
+    if let Err(status) = unsafe { write_output(out_binding, KelivoRecoveryCapsuleBinding::empty()) }
     {
         return status.code();
     }
-    if let Err(status) = unsafe {
-        reset_fixed_bytes::<RECOVERY_GENESIS_LENGTH>(
-            out_genesis,
-            out_genesis_capacity,
-            out_genesis_length,
-        )
-    } {
-        return status.code();
-    }
-    if let Err(status) = unsafe {
-        crate::device_core::prepare_fixed_output(
-            out_genesis,
-            out_genesis_capacity,
-            out_genesis_length,
-            RECOVERY_GENESIS_LENGTH,
-        )
-    } {
+    if let Err(status) = unsafe { write_output(out_ark_handle, INVALID_KEY_HANDLE) } {
         return status.code();
     }
     let media = match unsafe { read_input(media, media_length) } {
@@ -626,101 +572,64 @@ pub unsafe extern "C" fn kelivo_recovery_media_import(
         Ok(value) => value,
         Err(status) => return status.code(),
     };
-    let imported = match recovery::open_recovery_media(&media, passphrase, &origin) {
-        Ok(value) => value,
-        Err(error) => return recovery_error_status(error).code(),
-    };
-    let binding = KelivoRecoveryImportBinding {
-        struct_size: RECOVERY_IMPORT_BINDING_STRUCT_SIZE,
-        user_id: *imported.user_id.as_bytes(),
-        recovery_public_key_version: imported.recovery_public_key_version,
-    };
-    let genesis = *imported.genesis.as_bytes();
-    let handle = match register_recovery(BoundRecoveryIdentity {
-        user_id: imported.user_id,
-        recovery_public_key_version: imported.recovery_public_key_version,
-        identity: imported.identity,
-    }) {
-        Ok(value) => value,
-        Err(status) => return status.code(),
-    };
-    if let Err(status) = unsafe {
-        write_bytes(
-            out_genesis,
-            out_genesis_capacity,
-            &genesis,
-            out_genesis_length,
-        )
-    } {
-        let _ = close_recovery(handle);
-        return status.code();
-    }
-    if let Err(status) = unsafe { write_output(out_binding, binding) } {
-        let _ = close_recovery(handle);
-        return status.code();
-    }
-    match unsafe { write_output(out_handle, handle) } {
-        Ok(()) => KelivoStatus::Ok.code(),
-        Err(status) => {
-            let _ = close_recovery(handle);
-            status.code()
+    let source_capsule = if source_capsule_length == 0 {
+        if !source_capsule.is_null() {
+            return KelivoStatus::InvalidArgument.code();
         }
-    }
-}
-
-/// # Safety
-///
-/// 所有输入指针必须覆盖声明长度；输出指针必须指向可写结构和句柄内存。
-#[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelivo_recovery_capsule_open(
-    recovery_handle: u64,
-    capsule: *const u8,
-    capsule_length: usize,
-    out_binding: *mut KelivoRecoveryCapsuleBinding,
-    out_ark_handle: *mut u64,
-) -> i32 {
-    if let Err(status) = unsafe { write_output(out_binding, KelivoRecoveryCapsuleBinding::empty()) }
-    {
-        return status.code();
-    }
-    if let Err(status) = unsafe { write_output(out_ark_handle, INVALID_KEY_HANDLE) } {
-        return status.code();
-    }
-    let capsule = match unsafe { read_input(capsule, capsule_length) } {
+        None
+    } else {
+        match unsafe { read_input(source_capsule, source_capsule_length) } {
+            Ok(value) => match recovery::RecoveryCapsule::from_bytes(value) {
+                Ok(value) => Some(value),
+                Err(error) => return recovery_error_status(error).code(),
+            },
+            Err(status) => return status.code(),
+        }
+    };
+    let current_capsule = match unsafe { read_input(current_capsule, current_capsule_length) } {
         Ok(value) => match recovery::RecoveryCapsule::from_bytes(value) {
             Ok(value) => value,
             Err(error) => return recovery_error_status(error).code(),
         },
         Err(status) => return status.code(),
     };
-    let permit = match RecoveryConsumePermit::take(recovery_handle) {
+    let membership_history =
+        match unsafe { read_input(membership_history, membership_history_length) } {
+            Ok(value) => value,
+            Err(status) => return status.code(),
+        };
+    let imported = match recovery::open_recovery_media(&media, passphrase, &origin) {
         Ok(value) => value,
-        Err(status) => return status.code(),
+        Err(error) => return recovery_error_status(error).code(),
     };
-    let opened = match recovery::open_recovery_capsule(
-        &permit.value().identity,
-        permit.value().user_id,
-        permit.value().recovery_public_key_version,
-        &capsule,
+    let opened = match recovery::verify_recovery_history_and_open_capsules(
+        &imported.identity,
+        imported.user_id,
+        imported.recovery_public_key_version,
+        &imported.genesis,
+        membership_history,
+        source_capsule.as_ref(),
+        &current_capsule,
     ) {
         Ok(value) => value,
         Err(error) => return recovery_error_status(error).code(),
     };
     let binding = KelivoRecoveryCapsuleBinding {
         struct_size: RECOVERY_CAPSULE_BINDING_STRUCT_SIZE,
-        user_id: *opened.user_id.as_bytes(),
-        key_epoch: opened.key_epoch,
-        capsule_version: opened.capsule_version,
+        user_id: *opened.current.user_id.as_bytes(),
+        key_epoch: opened.current.key_epoch,
+        capsule_version: opened.current.capsule_version,
     };
-    let ark_handle =
-        match crate::device_core::register_ark(opened.user_id, opened.key_epoch, opened.ark) {
-            Ok(value) => value,
-            Err(status) => return status.code(),
-        };
-    if let Err(status) = permit.commit() {
-        let _ = crate::device_core::close_ark(ark_handle);
-        return status.code();
-    }
+    let source = opened.source.map(|source| (source.key_epoch, source.ark));
+    let ark_handle = match crate::device_core::register_recovered_ark_keyring(
+        opened.current.user_id,
+        source,
+        opened.current.key_epoch,
+        opened.current.ark,
+    ) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
     if let Err(status) = unsafe { write_output(out_binding, binding) } {
         let _ = crate::device_core::close_ark(ark_handle);
         return status.code();

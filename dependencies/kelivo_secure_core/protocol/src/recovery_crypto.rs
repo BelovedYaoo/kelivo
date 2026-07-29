@@ -1,6 +1,6 @@
 //! 账户恢复 capsule 与独立口令恢复介质的唯一 v1 线格式。
 
-use std::{convert::Infallible, fmt, str};
+use std::{fmt, str};
 
 use chacha20poly1305::{
     Tag, XChaCha20Poly1305, XNonce,
@@ -24,8 +24,8 @@ use crate::{
     ARGON2_ITERATIONS, ARGON2_MEMORY_KIB, ARGON2_PARALLELISM,
     device_crypto::{
         AccountRootKey, AccountTrustBinding, AccountTrustPublicKey, AccountTrustSignature,
-        DeviceId, DeviceKeyAgreementPublicKey, DeviceSigningPublicKey, UserId,
-        verify_account_trust_payload,
+        DeviceId, DeviceKeyAgreementPublicKey, DeviceSigningPublicKey, HpkeRngAdapter, UserId,
+        derive_account_trust_public_key, verify_account_trust_payload,
     },
 };
 
@@ -40,6 +40,7 @@ pub const RECOVERY_CAPSULE_ENCAPSULATED_KEY_LENGTH: usize = 32;
 pub const RECOVERY_CAPSULE_CIPHERTEXT_LENGTH: usize = 32;
 pub const RECOVERY_CAPSULE_TAG_LENGTH: usize = 16;
 pub const RECOVERY_CAPSULE_LENGTH: usize = 156;
+pub const RECOVERY_CAPSULE_SHA256_LENGTH: usize = 32;
 const RECOVERY_CAPSULE_INFO_DOMAIN: &[u8] = b"kelivo.recovery-capsule.hpke-info.v1";
 
 const RECOVERY_MEDIA_MAGIC: [u8; 8] = *b"KELVRM01";
@@ -119,6 +120,9 @@ pub enum RecoveryCryptoError {
     UnsupportedCapsuleReserved(u32),
     CapsuleSealFailed,
     CapsuleOpenFailed,
+    CapsuleBindingMismatch,
+    InitialCapsuleMismatch,
+    InitialCapsuleArkMismatch,
     InvalidMediaLength { expected: usize, actual: usize },
     InvalidMediaMagic,
     UnsupportedMediaVersion(u16),
@@ -133,7 +137,14 @@ pub enum RecoveryCryptoError {
     MediaAuthenticationFailed,
     InvalidGenesis,
     GenesisDigestMismatch,
+    GenesisTrustRootMismatch,
+    GenesisCapsuleDigestMismatch,
     GenesisSignatureInvalid,
+    InvalidMembershipHistory,
+    MembershipHistoryAnchorMismatch,
+    MembershipHistoryTransitionInvalid,
+    MembershipHistorySignatureInvalid,
+    MembershipHistoryHeadMismatch,
 }
 
 impl fmt::Display for RecoveryCryptoError {
@@ -164,6 +175,11 @@ impl fmt::Display for RecoveryCryptoError {
             }
             Self::CapsuleSealFailed => formatter.write_str("恢复 capsule 密封失败"),
             Self::CapsuleOpenFailed => formatter.write_str("恢复 capsule 认证或解密失败"),
+            Self::CapsuleBindingMismatch => formatter.write_str("恢复 capsule 历史头绑定不匹配"),
+            Self::InitialCapsuleMismatch => formatter.write_str("恢复初始 capsule 绑定不匹配"),
+            Self::InitialCapsuleArkMismatch => {
+                formatter.write_str("恢复初始 capsule 与本地账户根密钥不匹配")
+            }
             Self::InvalidMediaLength { expected, actual } => write!(
                 formatter,
                 "恢复介质长度无效，预期 {expected}，实际 {actual}"
@@ -193,7 +209,24 @@ impl fmt::Display for RecoveryCryptoError {
             Self::MediaAuthenticationFailed => formatter.write_str("恢复介质口令或认证信息无效"),
             Self::InvalidGenesis => formatter.write_str("恢复介质 genesis 清单无效"),
             Self::GenesisDigestMismatch => formatter.write_str("恢复介质 genesis 摘要不匹配"),
+            Self::GenesisTrustRootMismatch => {
+                formatter.write_str("恢复介质 genesis 与本地账户信任根不匹配")
+            }
+            Self::GenesisCapsuleDigestMismatch => {
+                formatter.write_str("恢复介质 genesis 与初始 capsule 摘要不匹配")
+            }
             Self::GenesisSignatureInvalid => formatter.write_str("恢复介质 genesis 签名无效"),
+            Self::InvalidMembershipHistory => formatter.write_str("恢复成员历史线格式无效"),
+            Self::MembershipHistoryAnchorMismatch => {
+                formatter.write_str("恢复成员历史与介质 genesis 锚不匹配")
+            }
+            Self::MembershipHistoryTransitionInvalid => {
+                formatter.write_str("恢复成员历史状态转换无效")
+            }
+            Self::MembershipHistorySignatureInvalid => formatter.write_str("恢复成员历史签名无效"),
+            Self::MembershipHistoryHeadMismatch => {
+                formatter.write_str("恢复成员历史链头与当前 capsule 不匹配")
+            }
         }
     }
 }
@@ -328,6 +361,57 @@ impl RecoveryCapsule {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) struct RecoveryCapsuleExpectation {
+    user_id: UserId,
+    key_epoch: u32,
+    recovery_public_key_version: u32,
+    capsule_version: u32,
+    capsule_sha256: [u8; RECOVERY_CAPSULE_SHA256_LENGTH],
+}
+
+impl RecoveryCapsuleExpectation {
+    pub(crate) fn new(
+        user_id: UserId,
+        key_epoch: u32,
+        recovery_public_key_version: u32,
+        capsule_version: u32,
+        capsule_sha256: [u8; RECOVERY_CAPSULE_SHA256_LENGTH],
+    ) -> Result<Self, RecoveryCryptoError> {
+        require_positive(key_epoch)?;
+        require_positive(recovery_public_key_version)?;
+        require_positive(capsule_version)?;
+        Ok(Self {
+            user_id,
+            key_epoch,
+            recovery_public_key_version,
+            capsule_version,
+            capsule_sha256,
+        })
+    }
+}
+
+#[derive(Clone, Copy)]
+pub struct RecoveryMediaExportAuthority<'a> {
+    local_epoch_one_ark: &'a AccountRootKey,
+    initial_capsule: &'a RecoveryCapsule,
+    genesis: &'a [u8],
+}
+
+impl<'a> RecoveryMediaExportAuthority<'a> {
+    pub const fn new(
+        local_epoch_one_ark: &'a AccountRootKey,
+        initial_capsule: &'a RecoveryCapsule,
+        genesis: &'a [u8],
+    ) -> Self {
+        Self {
+            local_epoch_one_ark,
+            initial_capsule,
+            genesis,
+        }
+    }
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct RecoveryMedia([u8; RECOVERY_MEDIA_LENGTH]);
 
@@ -356,6 +440,11 @@ pub struct OpenedRecoveryCapsule {
     pub ark: AccountRootKey,
 }
 
+pub struct OpenedRecoveryKeyring {
+    pub current: OpenedRecoveryCapsule,
+    pub source: Option<OpenedRecoveryCapsule>,
+}
+
 pub fn seal_recovery_capsule<R>(
     rng: &mut R,
     ark: &AccountRootKey,
@@ -380,7 +469,8 @@ where
     );
     let info = capsule_info(&header);
     let public_key = recovery_public_key.hpke_public_key()?;
-    let mut rng = HpkeRngAdapter(rng);
+    let mut rng =
+        HpkeRngAdapter::from_rng(rng).map_err(|_| RecoveryCryptoError::RandomnessUnavailable)?;
     let (encapsulated_key, mut sender_context) =
         setup_sender_with_rng::<HpkeAead, HpkeKdf, HpkeKem>(
             &OpModeS::Base,
@@ -403,19 +493,23 @@ where
     Ok(RecoveryCapsule(bytes))
 }
 
-pub fn open_recovery_capsule(
+fn open_recovery_capsule(
     identity: &RecoveryIdentity,
-    expected_user_id: UserId,
-    expected_recovery_public_key_version: u32,
+    expectation: RecoveryCapsuleExpectation,
     capsule: &RecoveryCapsule,
 ) -> Result<OpenedRecoveryCapsule, RecoveryCryptoError> {
-    require_positive(expected_recovery_public_key_version)?;
     let user_id = capsule.user_id()?;
     let recovery_public_key = capsule.recovery_public_key()?;
-    if user_id != expected_user_id
-        || capsule.recovery_public_key_version() != expected_recovery_public_key_version
-        || recovery_public_key != identity.public_key()?
+    let capsule_sha256 = Sha256::digest(capsule.as_bytes());
+    if user_id != expectation.user_id
+        || capsule.key_epoch() != expectation.key_epoch
+        || capsule.recovery_public_key_version() != expectation.recovery_public_key_version
+        || capsule.capsule_version() != expectation.capsule_version
+        || !same_bytes(&capsule_sha256, &expectation.capsule_sha256)
     {
+        return Err(RecoveryCryptoError::CapsuleBindingMismatch);
+    }
+    if recovery_public_key != identity.public_key()? {
         return Err(RecoveryCryptoError::RecoveryKeyMismatch);
     }
 
@@ -451,12 +545,62 @@ pub fn open_recovery_capsule(
     })
 }
 
+pub fn verify_recovery_history_and_open_capsules(
+    identity: &RecoveryIdentity,
+    user_id: UserId,
+    recovery_public_key_version: u32,
+    genesis: &RecoveryGenesisCapability,
+    membership_history: &[u8],
+    source_capsule: Option<&RecoveryCapsule>,
+    current_capsule: &RecoveryCapsule,
+) -> Result<OpenedRecoveryKeyring, RecoveryCryptoError> {
+    let expectations = crate::recovery_history::verify_history_head(
+        identity.public_key()?,
+        user_id,
+        recovery_public_key_version,
+        genesis,
+        membership_history,
+        source_capsule,
+        current_capsule,
+    )?;
+    let current = open_recovery_capsule(identity, expectations.current, current_capsule)?;
+    let source = match (expectations.source, source_capsule) {
+        (Some(expectation), Some(capsule)) => {
+            Some(open_recovery_capsule(identity, expectation, capsule)?)
+        }
+        (None, None) => None,
+        _ => return Err(RecoveryCryptoError::MembershipHistoryHeadMismatch),
+    };
+    Ok(OpenedRecoveryKeyring { current, source })
+}
+
+#[cfg(test)]
+fn verify_recovery_history_and_open_current_capsule(
+    identity: &RecoveryIdentity,
+    user_id: UserId,
+    recovery_public_key_version: u32,
+    genesis: &RecoveryGenesisCapability,
+    membership_history: &[u8],
+    current_capsule: &RecoveryCapsule,
+) -> Result<OpenedRecoveryCapsule, RecoveryCryptoError> {
+    verify_recovery_history_and_open_capsules(
+        identity,
+        user_id,
+        recovery_public_key_version,
+        genesis,
+        membership_history,
+        None,
+        current_capsule,
+    )
+    .map(|opened| opened.current)
+}
+
 pub fn seal_recovery_media<R>(
     rng: &mut R,
     identity: &RecoveryIdentity,
     user_id: UserId,
     recovery_public_key_version: u32,
-    genesis: &[u8],
+    authority: RecoveryMediaExportAuthority<'_>,
     passphrase: &[u8],
     service_origin_sha256: &[u8; RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH],
 ) -> Result<RecoveryMedia, RecoveryCryptoError>
@@ -466,12 +610,55 @@ where
     require_positive(recovery_public_key_version)?;
     validate_passphrase(passphrase)?;
     let recovery_public_key = identity.public_key()?;
+    let initial_capsule = authority.initial_capsule;
+    let genesis = authority.genesis;
+    if initial_capsule.user_id()? != user_id
+        || initial_capsule.key_epoch() != 1
+        || initial_capsule.recovery_public_key_version() != recovery_public_key_version
+        || initial_capsule.capsule_version() != 1
+        || initial_capsule.recovery_public_key()? != recovery_public_key
+    {
+        return Err(RecoveryCryptoError::InitialCapsuleMismatch);
+    }
+    let initial_capsule_sha256: [u8; RECOVERY_CAPSULE_SHA256_LENGTH] =
+        Sha256::digest(initial_capsule.as_bytes()).into();
+    let opened_initial_capsule = open_recovery_capsule(
+        identity,
+        RecoveryCapsuleExpectation::new(
+            user_id,
+            1,
+            recovery_public_key_version,
+            1,
+            initial_capsule_sha256,
+        )?,
+        initial_capsule,
+    )?;
+    if !same_bytes(
+        opened_initial_capsule.ark.as_bytes(),
+        authority.local_epoch_one_ark.as_bytes(),
+    ) {
+        return Err(RecoveryCryptoError::InitialCapsuleArkMismatch);
+    }
+    let trust_public_key = derive_account_trust_public_key(
+        authority.local_epoch_one_ark,
+        AccountTrustBinding {
+            user_id,
+            key_epoch: 1,
+        },
+    )
+    .map_err(|_| RecoveryCryptoError::GenesisTrustRootMismatch)?;
     let capability = validate_genesis(
         genesis,
         user_id,
         recovery_public_key_version,
         recovery_public_key,
     )?;
+    if !same_bytes(&genesis[68..100], trust_public_key.as_bytes()) {
+        return Err(RecoveryCryptoError::GenesisTrustRootMismatch);
+    }
+    if !same_bytes(&genesis[140..172], &initial_capsule_sha256) {
+        return Err(RecoveryCryptoError::GenesisCapsuleDigestMismatch);
+    }
 
     let mut bytes = [0_u8; RECOVERY_MEDIA_LENGTH];
     encode_media_header(&mut bytes[..RECOVERY_MEDIA_HEADER_LENGTH]);
@@ -836,32 +1023,10 @@ fn copy_array<const LENGTH: usize>(bytes: &[u8]) -> [u8; LENGTH] {
     output
 }
 
-struct HpkeRngAdapter<'a, R>(&'a mut R);
-
-impl<R> hpke::rand_core::TryRng for HpkeRngAdapter<'_, R>
-where
-    R: RngCore,
-{
-    type Error = Infallible;
-
-    fn try_next_u32(&mut self) -> Result<u32, Self::Error> {
-        Ok(self.0.next_u32())
-    }
-
-    fn try_next_u64(&mut self) -> Result<u64, Self::Error> {
-        Ok(self.0.next_u64())
-    }
-
-    fn try_fill_bytes(&mut self, destination: &mut [u8]) -> Result<(), Self::Error> {
-        self.0.fill_bytes(destination);
-        Ok(())
-    }
-}
-
-impl<R> hpke::rand_core::TryCryptoRng for HpkeRngAdapter<'_, R> where R: CryptoRng + RngCore {}
-
 #[cfg(test)]
 mod tests {
+    use std::num::NonZeroU32;
+
     use super::*;
     use crate::device_crypto::{
         AccountTrustBinding, DeviceIdentity, derive_account_trust_public_key,
@@ -897,6 +1062,29 @@ mod tests {
     }
 
     impl CryptoRng for TestRng {}
+
+    struct FailingRng;
+
+    impl RngCore for FailingRng {
+        fn next_u32(&mut self) -> u32 {
+            panic!("失败随机源不得回退到不可失败接口")
+        }
+
+        fn next_u64(&mut self) -> u64 {
+            panic!("失败随机源不得回退到不可失败接口")
+        }
+
+        fn fill_bytes(&mut self, _destination: &mut [u8]) {
+            panic!("失败随机源不得回退到不可失败接口")
+        }
+
+        fn try_fill_bytes(&mut self, _destination: &mut [u8]) -> Result<(), rand::Error> {
+            let code = NonZeroU32::new(rand::Error::CUSTOM_START).expect("随机错误码必须有效");
+            Err(rand::Error::from(code))
+        }
+    }
+
+    impl CryptoRng for FailingRng {}
 
     fn uuid(seed: u8) -> [u8; 16] {
         let mut bytes = [seed; 16];
@@ -946,6 +1134,321 @@ mod tests {
         bytes
     }
 
+    fn expectation(capsule: &RecoveryCapsule) -> RecoveryCapsuleExpectation {
+        RecoveryCapsuleExpectation::new(
+            capsule.user_id().expect("capsule 账户应有效"),
+            capsule.key_epoch(),
+            capsule.recovery_public_key_version(),
+            capsule.capsule_version(),
+            Sha256::digest(capsule.as_bytes()).into(),
+        )
+        .expect("capsule 历史头绑定应有效")
+    }
+
+    struct RecoveryHistoryFixture {
+        user_id: UserId,
+        epoch_one: AccountRootKey,
+        epoch_two: AccountRootKey,
+        epoch_three: AccountRootKey,
+        identity: RecoveryIdentity,
+        capsule_one: RecoveryCapsule,
+        capsule_two: RecoveryCapsule,
+        capsule_three: RecoveryCapsule,
+        genesis: [u8; RECOVERY_GENESIS_LENGTH],
+        genesis_capability: RecoveryGenesisCapability,
+        add_device: Vec<u8>,
+        revoke_rotate: Vec<u8>,
+        recover_resume: Vec<u8>,
+        recover_replace: Vec<u8>,
+    }
+
+    impl RecoveryHistoryFixture {
+        fn new() -> Self {
+            let user_id = UserId::new(uuid(0x81)).expect("账户应有效");
+            let epoch_one = AccountRootKey::from_bytes([0x82; 32]);
+            let epoch_two = AccountRootKey::from_bytes([0x83; 32]);
+            let identity = RecoveryIdentity::generate(&mut TestRng(0x84)).expect("恢复身份应生成");
+            let public_key = identity.public_key().expect("恢复公钥应派生");
+            let capsule_one =
+                seal_recovery_capsule(&mut TestRng(0x85), &epoch_one, user_id, 1, 1, 1, public_key)
+                    .expect("初始 capsule 应密封");
+            let genesis = genesis(&epoch_one, user_id, public_key, &capsule_one);
+            let genesis_capability =
+                validate_genesis(&genesis, user_id, 1, public_key).expect("genesis 应验证");
+            let add_device = build_add_device_manifest(&genesis, &epoch_one, user_id);
+            let capsule_two =
+                seal_recovery_capsule(&mut TestRng(0x86), &epoch_two, user_id, 2, 1, 2, public_key)
+                    .expect("轮换 capsule 应密封");
+            let revoke_rotate = build_revoke_rotate_manifest(
+                &add_device,
+                &epoch_one,
+                &epoch_two,
+                user_id,
+                &capsule_two,
+            );
+            let recover_resume =
+                build_recover_resume_manifest(&revoke_rotate, &epoch_two, user_id, 0x73, 0x74);
+            let epoch_three = AccountRootKey::from_bytes([0x87; 32]);
+            let capsule_three = seal_recovery_capsule(
+                &mut TestRng(0x88),
+                &epoch_three,
+                user_id,
+                3,
+                1,
+                3,
+                public_key,
+            )
+            .expect("恢复替换 capsule 应密封");
+            let recover_replace = build_recover_replace_manifest(
+                &recover_resume,
+                &epoch_two,
+                &epoch_three,
+                user_id,
+                &capsule_three,
+                None,
+            );
+            Self {
+                user_id,
+                epoch_one,
+                epoch_two,
+                epoch_three,
+                identity,
+                capsule_one,
+                capsule_two,
+                capsule_three,
+                genesis,
+                genesis_capability,
+                add_device,
+                revoke_rotate,
+                recover_resume,
+                recover_replace,
+            }
+        }
+
+        fn history(&self, successors: &[&[u8]]) -> Vec<u8> {
+            let mut history = Vec::from(self.genesis);
+            for successor in successors {
+                history.extend_from_slice(successor);
+            }
+            history
+        }
+    }
+
+    fn build_add_device_manifest(
+        previous: &[u8; RECOVERY_GENESIS_LENGTH],
+        ark: &AccountRootKey,
+        user_id: UserId,
+    ) -> Vec<u8> {
+        const HEADER_LENGTH: usize = 228;
+        const MEMBER_LENGTH: usize = 88;
+        const SIGNATURE_SECTION_LENGTH: usize = 128;
+        let payload_length = HEADER_LENGTH + 2 * MEMBER_LENGTH;
+        let mut manifest = vec![0_u8; payload_length + SIGNATURE_SECTION_LENGTH];
+        manifest[..HEADER_LENGTH].copy_from_slice(&previous[..HEADER_LENGTH]);
+        manifest[28..32].copy_from_slice(&2_u32.to_be_bytes());
+        manifest[36..68].copy_from_slice(&Sha256::digest(previous));
+        manifest[172..176].copy_from_slice(&2_u32.to_be_bytes());
+        manifest[176..192].copy_from_slice(&uuid(0x61));
+        manifest[192..208].copy_from_slice(&previous[228..244]);
+        let subject_id = uuid(0x63);
+        manifest[208..224].copy_from_slice(&subject_id);
+        manifest[224..228].copy_from_slice(&2_u32.to_be_bytes());
+        manifest[228..316].copy_from_slice(&previous[228..316]);
+
+        let subject = DeviceIdentity::generate(&mut TestRng(0x64)).expect("新增设备身份应生成");
+        let subject_public = subject.public_keys();
+        manifest[316..332].copy_from_slice(&subject_id);
+        manifest[332..336].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[336..340].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[340..372].copy_from_slice(subject_public.signing.as_bytes());
+        manifest[372..404].copy_from_slice(subject_public.key_agreement.as_bytes());
+        sign_history_manifest(&mut manifest, user_id, None, (ark, 1));
+        manifest
+    }
+
+    fn build_revoke_rotate_manifest(
+        previous: &[u8],
+        previous_ark: &AccountRootKey,
+        current_ark: &AccountRootKey,
+        user_id: UserId,
+        capsule: &RecoveryCapsule,
+    ) -> Vec<u8> {
+        const HEADER_LENGTH: usize = 228;
+        const MEMBER_LENGTH: usize = 88;
+        const SIGNATURE_SECTION_LENGTH: usize = 128;
+        let payload_length = HEADER_LENGTH + MEMBER_LENGTH;
+        let mut manifest = vec![0_u8; payload_length + SIGNATURE_SECTION_LENGTH];
+        manifest[..HEADER_LENGTH].copy_from_slice(&previous[..HEADER_LENGTH]);
+        manifest[28..32].copy_from_slice(&3_u32.to_be_bytes());
+        manifest[32..36].copy_from_slice(&2_u32.to_be_bytes());
+        manifest[36..68].copy_from_slice(&Sha256::digest(previous));
+        let trust_public = derive_account_trust_public_key(
+            current_ark,
+            AccountTrustBinding {
+                user_id,
+                key_epoch: 2,
+            },
+        )
+        .expect("轮换信任公钥应派生");
+        manifest[68..100].copy_from_slice(trust_public.as_bytes());
+        manifest[136..140].copy_from_slice(&2_u32.to_be_bytes());
+        manifest[140..172].copy_from_slice(&Sha256::digest(capsule.as_bytes()));
+        manifest[172..176].copy_from_slice(&3_u32.to_be_bytes());
+        manifest[176..192].copy_from_slice(&uuid(0x65));
+        manifest[192..208].copy_from_slice(&previous[228..244]);
+        manifest[208..224].copy_from_slice(&previous[316..332]);
+        manifest[224..228].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[228..316].copy_from_slice(&previous[228..316]);
+        sign_history_manifest(
+            &mut manifest,
+            user_id,
+            Some((previous_ark, 1)),
+            (current_ark, 2),
+        );
+        manifest
+    }
+
+    fn build_recover_resume_manifest(
+        previous: &[u8],
+        ark: &AccountRootKey,
+        user_id: UserId,
+        subject_id_seed: u8,
+        subject_key_seed: u8,
+    ) -> Vec<u8> {
+        const HEADER_LENGTH: usize = 228;
+        const MEMBER_LENGTH: usize = 88;
+        const SIGNATURE_SECTION_LENGTH: usize = 128;
+        let previous_member_count = u32::from_be_bytes(copy_array(&previous[224..228])) as usize;
+        let previous_payload_length = previous.len() - SIGNATURE_SECTION_LENGTH;
+        let payload_length = HEADER_LENGTH + (previous_member_count + 1) * MEMBER_LENGTH;
+        let mut manifest = vec![0_u8; payload_length + SIGNATURE_SECTION_LENGTH];
+        manifest[..HEADER_LENGTH].copy_from_slice(&previous[..HEADER_LENGTH]);
+        let next_generation = u32::from_be_bytes(copy_array(&previous[28..32])) + 1;
+        let key_epoch = u32::from_be_bytes(copy_array(&previous[32..36]));
+        manifest[28..32].copy_from_slice(&next_generation.to_be_bytes());
+        manifest[36..68].copy_from_slice(&Sha256::digest(previous));
+        manifest[172..176].copy_from_slice(&4_u32.to_be_bytes());
+        manifest[176..192].copy_from_slice(&uuid(subject_id_seed.wrapping_add(1)));
+        let subject_id = uuid(subject_id_seed);
+        manifest[192..208].copy_from_slice(&subject_id);
+        manifest[208..224].copy_from_slice(&subject_id);
+        manifest[224..228].copy_from_slice(&((previous_member_count + 1) as u32).to_be_bytes());
+        manifest[HEADER_LENGTH..previous_payload_length]
+            .copy_from_slice(&previous[HEADER_LENGTH..previous_payload_length]);
+
+        let subject =
+            DeviceIdentity::generate(&mut TestRng(subject_key_seed)).expect("恢复设备身份应生成");
+        let subject_public = subject.public_keys();
+        let subject_offset = previous_payload_length;
+        manifest[subject_offset..subject_offset + 16].copy_from_slice(&subject_id);
+        manifest[subject_offset + 16..subject_offset + 20].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[subject_offset + 20..subject_offset + 24].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[subject_offset + 24..subject_offset + 56]
+            .copy_from_slice(subject_public.signing.as_bytes());
+        manifest[subject_offset + 56..subject_offset + MEMBER_LENGTH]
+            .copy_from_slice(subject_public.key_agreement.as_bytes());
+        sign_history_manifest(&mut manifest, user_id, None, (ark, key_epoch));
+        manifest
+    }
+
+    fn build_recover_replace_manifest(
+        previous: &[u8],
+        previous_ark: &AccountRootKey,
+        current_ark: &AccountRootKey,
+        user_id: UserId,
+        capsule: &RecoveryCapsule,
+        direct_subject: Option<(u8, u8)>,
+    ) -> Vec<u8> {
+        const HEADER_LENGTH: usize = 228;
+        const MEMBER_LENGTH: usize = 88;
+        const SIGNATURE_SECTION_LENGTH: usize = 128;
+        let payload_length = HEADER_LENGTH + MEMBER_LENGTH;
+        let mut manifest = vec![0_u8; payload_length + SIGNATURE_SECTION_LENGTH];
+        manifest[..HEADER_LENGTH].copy_from_slice(&previous[..HEADER_LENGTH]);
+        let next_generation = u32::from_be_bytes(copy_array(&previous[28..32])) + 1;
+        let previous_epoch = u32::from_be_bytes(copy_array(&previous[32..36]));
+        let current_epoch = previous_epoch + 1;
+        let previous_capsule_version = u32::from_be_bytes(copy_array(&previous[136..140]));
+        manifest[28..32].copy_from_slice(&next_generation.to_be_bytes());
+        manifest[32..36].copy_from_slice(&current_epoch.to_be_bytes());
+        manifest[36..68].copy_from_slice(&Sha256::digest(previous));
+        let trust_public = derive_account_trust_public_key(
+            current_ark,
+            AccountTrustBinding {
+                user_id,
+                key_epoch: current_epoch,
+            },
+        )
+        .expect("恢复替换信任公钥应派生");
+        manifest[68..100].copy_from_slice(trust_public.as_bytes());
+        manifest[136..140].copy_from_slice(&(previous_capsule_version + 1).to_be_bytes());
+        manifest[140..172].copy_from_slice(&Sha256::digest(capsule.as_bytes()));
+        manifest[172..176].copy_from_slice(&5_u32.to_be_bytes());
+        manifest[176..192].copy_from_slice(&uuid(0x76));
+        manifest[224..228].copy_from_slice(&1_u32.to_be_bytes());
+
+        let member = match direct_subject {
+            Some((subject_id_seed, subject_key_seed)) => {
+                let subject_id = uuid(subject_id_seed);
+                let subject = DeviceIdentity::generate(&mut TestRng(subject_key_seed))
+                    .expect("直接恢复替换身份应生成");
+                let public = subject.public_keys();
+                let mut member = [0_u8; MEMBER_LENGTH];
+                member[..16].copy_from_slice(&subject_id);
+                member[16..20].copy_from_slice(&1_u32.to_be_bytes());
+                member[20..24].copy_from_slice(&1_u32.to_be_bytes());
+                member[24..56].copy_from_slice(public.signing.as_bytes());
+                member[56..].copy_from_slice(public.key_agreement.as_bytes());
+                member
+            }
+            None => {
+                let previous_payload_length = previous.len() - SIGNATURE_SECTION_LENGTH;
+                copy_array(
+                    &previous[previous_payload_length - MEMBER_LENGTH..previous_payload_length],
+                )
+            }
+        };
+        manifest[192..208].copy_from_slice(&member[..16]);
+        manifest[208..224].copy_from_slice(&member[..16]);
+        manifest[HEADER_LENGTH..payload_length].copy_from_slice(&member);
+        sign_history_manifest(
+            &mut manifest,
+            user_id,
+            Some((previous_ark, previous_epoch)),
+            (current_ark, current_epoch),
+        );
+        manifest
+    }
+
+    fn sign_history_manifest(
+        manifest: &mut [u8],
+        user_id: UserId,
+        transition: Option<(&AccountRootKey, u32)>,
+        current: (&AccountRootKey, u32),
+    ) {
+        let payload_length = manifest.len() - 128;
+        manifest[payload_length..].fill(0);
+        if let Some((ark, key_epoch)) = transition {
+            let signature = sign_account_trust_payload(
+                ark,
+                AccountTrustBinding { user_id, key_epoch },
+                &manifest[..payload_length],
+            )
+            .expect("历史过渡签名应生成");
+            manifest[payload_length..payload_length + 64].copy_from_slice(signature.as_bytes());
+        }
+        let signature = sign_account_trust_payload(
+            current.0,
+            AccountTrustBinding {
+                user_id,
+                key_epoch: current.1,
+            },
+            &manifest[..payload_length],
+        )
+        .expect("历史当前签名应生成");
+        manifest[payload_length + 64..].copy_from_slice(signature.as_bytes());
+    }
+
     #[test]
     fn capsule_and_media_round_trip_preserve_fixed_bindings() {
         let user_id = UserId::new(uuid(0x11)).expect("账户应有效");
@@ -962,7 +1465,7 @@ mod tests {
             &identity,
             user_id,
             1,
-            &genesis,
+            RecoveryMediaExportAuthority::new(&ark, &capsule, &genesis),
             passphrase,
             &origin,
         )
@@ -972,7 +1475,7 @@ mod tests {
         assert_eq!(media.as_bytes().len(), RECOVERY_MEDIA_LENGTH);
         let imported = open_recovery_media(&media, passphrase, &origin).expect("介质应打开");
         assert_eq!(imported.genesis.as_bytes(), &genesis);
-        let opened = open_recovery_capsule(&imported.identity, user_id, 1, &capsule)
+        let opened = open_recovery_capsule(&imported.identity, expectation(&capsule), &capsule)
             .expect("capsule 应打开");
         assert_eq!(opened.user_id, user_id);
         assert_eq!(opened.key_epoch, 1);
@@ -998,7 +1501,7 @@ mod tests {
             &identity,
             user_id,
             1,
-            &genesis,
+            RecoveryMediaExportAuthority::new(&epoch_one, &capsule_one, &genesis),
             passphrase,
             &origin,
         )
@@ -1007,8 +1510,9 @@ mod tests {
             seal_recovery_capsule(&mut TestRng(0x38), &epoch_two, user_id, 2, 1, 2, public_key)
                 .expect("新 capsule 应密封");
         let imported = open_recovery_media(&media, passphrase, &origin).expect("旧介质应导入");
-        let opened = open_recovery_capsule(&imported.identity, user_id, 1, &capsule_two)
-            .expect("旧介质应打开新 capsule");
+        let opened =
+            open_recovery_capsule(&imported.identity, expectation(&capsule_two), &capsule_two)
+                .expect("旧介质应打开新 capsule");
         assert_eq!(opened.key_epoch, 2);
         assert_eq!(opened.capsule_version, 2);
         assert_eq!(opened.ark.as_bytes(), epoch_two.as_bytes());
@@ -1030,7 +1534,7 @@ mod tests {
             &identity,
             user_id,
             1,
-            &genesis,
+            RecoveryMediaExportAuthority::new(&ark, &capsule, &genesis),
             password,
             &origin,
         )
@@ -1065,12 +1569,560 @@ mod tests {
                 &identity,
                 user_id,
                 1,
-                &invalid_genesis,
+                RecoveryMediaExportAuthority::new(&ark, &capsule, &invalid_genesis),
                 password,
                 &origin,
             )
             .unwrap_err(),
             RecoveryCryptoError::InvalidGenesis
+        );
+    }
+
+    #[test]
+    fn media_rejects_self_signed_genesis_without_local_ark_authority() {
+        let user_id = UserId::new(uuid(0x51)).expect("账户应有效");
+        let local_ark = AccountRootKey::from_bytes([0x52; 32]);
+        let attacker_ark = AccountRootKey::from_bytes([0x53; 32]);
+        let identity = RecoveryIdentity::generate(&mut TestRng(0x54)).expect("恢复身份应生成");
+        let public_key = identity.public_key().expect("恢复公钥应派生");
+        let attacker_capsule = seal_recovery_capsule(
+            &mut TestRng(0x55),
+            &attacker_ark,
+            user_id,
+            1,
+            1,
+            1,
+            public_key,
+        )
+        .expect("攻击者 capsule 应能独立构造");
+        let attacker_genesis = genesis(&attacker_ark, user_id, public_key, &attacker_capsule);
+
+        assert_ne!(local_ark.as_bytes(), attacker_ark.as_bytes());
+        assert_eq!(
+            seal_recovery_media(
+                &mut TestRng(0x56),
+                &identity,
+                user_id,
+                1,
+                RecoveryMediaExportAuthority::new(
+                    &local_ark,
+                    &attacker_capsule,
+                    &attacker_genesis,
+                ),
+                b"recovery-passphrase-v1",
+                &[0x57; 32],
+            )
+            .unwrap_err(),
+            RecoveryCryptoError::InitialCapsuleArkMismatch
+        );
+    }
+
+    #[test]
+    fn media_rejects_genesis_bound_to_a_different_initial_capsule() {
+        let user_id = UserId::new(uuid(0x61)).expect("账户应有效");
+        let ark = AccountRootKey::from_bytes([0x62; 32]);
+        let identity = RecoveryIdentity::generate(&mut TestRng(0x63)).expect("恢复身份应生成");
+        let public_key = identity.public_key().expect("恢复公钥应派生");
+        let expected_capsule =
+            seal_recovery_capsule(&mut TestRng(0x64), &ark, user_id, 1, 1, 1, public_key)
+                .expect("初始 capsule 应密封");
+        let other_capsule =
+            seal_recovery_capsule(&mut TestRng(0x65), &ark, user_id, 1, 1, 1, public_key)
+                .expect("另一个 capsule 应密封");
+        let mismatched_genesis = genesis(&ark, user_id, public_key, &other_capsule);
+
+        assert_ne!(expected_capsule.as_bytes(), other_capsule.as_bytes());
+        assert_eq!(
+            seal_recovery_media(
+                &mut TestRng(0x66),
+                &identity,
+                user_id,
+                1,
+                RecoveryMediaExportAuthority::new(&ark, &expected_capsule, &mismatched_genesis,),
+                b"recovery-passphrase-v1",
+                &[0x67; 32],
+            )
+            .unwrap_err(),
+            RecoveryCryptoError::GenesisCapsuleDigestMismatch
+        );
+    }
+
+    #[test]
+    fn capsule_open_rejects_untrusted_history_head_binding() {
+        let user_id = UserId::new(uuid(0x68)).expect("账户应有效");
+        let ark = AccountRootKey::from_bytes([0x69; 32]);
+        let identity = RecoveryIdentity::generate(&mut TestRng(0x6a)).expect("恢复身份应生成");
+        let public_key = identity.public_key().expect("恢复公钥应派生");
+        let capsule = seal_recovery_capsule(&mut TestRng(0x6b), &ark, user_id, 2, 1, 3, public_key)
+            .expect("capsule 应密封");
+        let wrong_expectation = RecoveryCapsuleExpectation::new(
+            user_id,
+            2,
+            1,
+            3,
+            [0x6c; RECOVERY_CAPSULE_SHA256_LENGTH],
+        )
+        .expect("历史头绑定应有效");
+
+        assert_eq!(
+            open_recovery_capsule(&identity, wrong_expectation, &capsule)
+                .err()
+                .expect("未获历史头授权的 capsule 必须失败"),
+            RecoveryCryptoError::CapsuleBindingMismatch
+        );
+    }
+
+    #[test]
+    fn capsule_seal_preserves_fallible_rng_errors() {
+        let user_id = UserId::new(uuid(0x71)).expect("账户应有效");
+        let ark = AccountRootKey::from_bytes([0x72; 32]);
+        let identity = RecoveryIdentity::generate(&mut TestRng(0x73)).expect("恢复身份应生成");
+        let public_key = identity.public_key().expect("恢复公钥应派生");
+
+        assert_eq!(
+            seal_recovery_capsule(&mut FailingRng, &ark, user_id, 1, 1, 1, public_key).unwrap_err(),
+            RecoveryCryptoError::RandomnessUnavailable
+        );
+    }
+
+    #[test]
+    fn recovery_history_opens_genesis_and_rotated_heads() {
+        let fixture = RecoveryHistoryFixture::new();
+        let genesis_history = fixture.history(&[]);
+        let opened_genesis = verify_recovery_history_and_open_current_capsule(
+            &fixture.identity,
+            fixture.user_id,
+            1,
+            &fixture.genesis_capability,
+            &genesis_history,
+            &fixture.capsule_one,
+        )
+        .expect("genesis 链头应打开初始 capsule");
+        assert_eq!(opened_genesis.key_epoch, 1);
+        assert_eq!(opened_genesis.ark.as_bytes(), fixture.epoch_one.as_bytes());
+
+        let rotated_history = fixture.history(&[
+            fixture.add_device.as_slice(),
+            fixture.revoke_rotate.as_slice(),
+        ]);
+        let opened_rotated = verify_recovery_history_and_open_capsules(
+            &fixture.identity,
+            fixture.user_id,
+            1,
+            &fixture.genesis_capability,
+            &rotated_history,
+            Some(&fixture.capsule_one),
+            &fixture.capsule_two,
+        )
+        .expect("完整 add/revokeRotate 历史应打开当前 capsule");
+        assert_eq!(opened_rotated.current.key_epoch, 2);
+        assert_eq!(opened_rotated.current.capsule_version, 2);
+        assert_eq!(opened_rotated.current.ark.as_bytes(), &[0x83; 32]);
+        assert_eq!(
+            opened_rotated
+                .source
+                .expect("轮换历史必须同时打开直接前驱 ARK")
+                .ark
+                .as_bytes(),
+            fixture.epoch_one.as_bytes()
+        );
+    }
+
+    #[test]
+    fn recovery_history_opens_exact_adjacent_keyring() {
+        let fixture = RecoveryHistoryFixture::new();
+        let genesis_history = fixture.history(&[]);
+        assert_eq!(
+            verify_recovery_history_and_open_capsules(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &genesis_history,
+                Some(&fixture.capsule_one),
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("epoch 一不得接受多余源 capsule"),
+            RecoveryCryptoError::MembershipHistoryHeadMismatch
+        );
+        let rotated_history = fixture.history(&[
+            fixture.add_device.as_slice(),
+            fixture.revoke_rotate.as_slice(),
+            fixture.recover_resume.as_slice(),
+        ]);
+        let opened = verify_recovery_history_and_open_capsules(
+            &fixture.identity,
+            fixture.user_id,
+            1,
+            &fixture.genesis_capability,
+            &rotated_history,
+            Some(&fixture.capsule_one),
+            &fixture.capsule_two,
+        )
+        .expect("应打开最近轮换直接前驱与当前两代 capsule");
+        assert_eq!(opened.current.key_epoch, 2);
+        assert_eq!(opened.current.ark.as_bytes(), fixture.epoch_two.as_bytes());
+        let source = opened.source.expect("轮换历史应返回源 ARK");
+        assert_eq!(source.key_epoch, 1);
+        assert_eq!(source.ark.as_bytes(), fixture.epoch_one.as_bytes());
+
+        assert_eq!(
+            verify_recovery_history_and_open_capsules(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &rotated_history,
+                Some(&fixture.capsule_two),
+                &fixture.capsule_two,
+            )
+            .err()
+            .expect("源 capsule 必须精确绑定轮换直接前驱"),
+            RecoveryCryptoError::MembershipHistoryHeadMismatch
+        );
+        assert_eq!(
+            verify_recovery_history_and_open_capsules(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &rotated_history,
+                None,
+                &fixture.capsule_two,
+            )
+            .err()
+            .expect("epoch 大于一时不得省略源 capsule"),
+            RecoveryCryptoError::MembershipHistoryHeadMismatch
+        );
+    }
+
+    #[test]
+    fn recovery_history_accepts_resume_replace_and_direct_replace() {
+        let fixture = RecoveryHistoryFixture::new();
+        let recovered_history = fixture.history(&[
+            fixture.add_device.as_slice(),
+            fixture.revoke_rotate.as_slice(),
+            fixture.recover_resume.as_slice(),
+            fixture.recover_replace.as_slice(),
+        ]);
+        let opened_pending = verify_recovery_history_and_open_capsules(
+            &fixture.identity,
+            fixture.user_id,
+            1,
+            &fixture.genesis_capability,
+            &recovered_history,
+            Some(&fixture.capsule_two),
+            &fixture.capsule_three,
+        )
+        .expect("resume/replace 历史应打开相邻两代 capsule");
+        assert_eq!(opened_pending.current.key_epoch, 3);
+        assert_eq!(
+            opened_pending.current.ark.as_bytes(),
+            fixture.epoch_three.as_bytes()
+        );
+        assert_eq!(
+            opened_pending
+                .source
+                .expect("replace pending 应返回源 ARK")
+                .ark
+                .as_bytes(),
+            fixture.epoch_two.as_bytes()
+        );
+
+        let direct_replace = build_recover_replace_manifest(
+            &fixture.genesis,
+            &fixture.epoch_one,
+            &fixture.epoch_two,
+            fixture.user_id,
+            &fixture.capsule_two,
+            Some((0x75, 0x76)),
+        );
+        let direct_history = fixture.history(&[&direct_replace]);
+        let opened_direct = verify_recovery_history_and_open_capsules(
+            &fixture.identity,
+            fixture.user_id,
+            1,
+            &fixture.genesis_capability,
+            &direct_history,
+            Some(&fixture.capsule_one),
+            &fixture.capsule_two,
+        )
+        .expect("新材料直接 replace 应打开相邻两代");
+        assert_eq!(opened_direct.current.key_epoch, 2);
+        assert_eq!(
+            opened_direct
+                .source
+                .expect("直接 replace 必须保留前一代")
+                .key_epoch,
+            1
+        );
+    }
+
+    #[test]
+    fn recovery_history_rejects_replayed_resume_and_accepts_valid_post_rotation_add() {
+        let fixture = RecoveryHistoryFixture::new();
+        let mut second_resume = build_recover_resume_manifest(
+            &fixture.recover_resume,
+            &fixture.epoch_two,
+            fixture.user_id,
+            0x75,
+            0x76,
+        );
+        second_resume[176..192].copy_from_slice(&fixture.recover_resume[176..192]);
+        sign_history_manifest(
+            &mut second_resume,
+            fixture.user_id,
+            None,
+            (&fixture.epoch_two, 2),
+        );
+        let replayed_history = fixture.history(&[
+            &fixture.add_device,
+            &fixture.revoke_rotate,
+            &fixture.recover_resume,
+            &second_resume,
+        ]);
+        assert_eq!(
+            verify_recovery_history_and_open_capsules(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &replayed_history,
+                Some(&fixture.capsule_one),
+                &fixture.capsule_two,
+            )
+            .err()
+            .expect("重复 operationId 必须失败"),
+            RecoveryCryptoError::MembershipHistoryTransitionInvalid
+        );
+
+        let mut ordinary_add = build_recover_resume_manifest(
+            &fixture.revoke_rotate,
+            &fixture.epoch_two,
+            fixture.user_id,
+            0x77,
+            0x78,
+        );
+        ordinary_add[172..176].copy_from_slice(&2_u32.to_be_bytes());
+        ordinary_add[192..208].copy_from_slice(&fixture.revoke_rotate[228..244]);
+        sign_history_manifest(
+            &mut ordinary_add,
+            fixture.user_id,
+            None,
+            (&fixture.epoch_two, 2),
+        );
+        let ordinary_add_history =
+            fixture.history(&[&fixture.add_device, &fixture.revoke_rotate, &ordinary_add]);
+        verify_recovery_history_and_open_capsules(
+            &fixture.identity,
+            fixture.user_id,
+            1,
+            &fixture.genesis_capability,
+            &ordinary_add_history,
+            Some(&fixture.capsule_one),
+            &fixture.capsule_two,
+        )
+        .expect("不依赖未签名 phase 时，合法轮换后 addDevice 仍应可恢复");
+    }
+
+    #[test]
+    fn recovery_history_rejects_anchor_skip_fork_and_malformed_members() {
+        let fixture = RecoveryHistoryFixture::new();
+
+        let mut wrong_anchor = fixture.history(&[]);
+        wrong_anchor[20] ^= 1;
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &wrong_anchor,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("错配 genesis 锚必须失败"),
+            RecoveryCryptoError::MembershipHistoryAnchorMismatch
+        );
+
+        let mut skipped = fixture.add_device.clone();
+        skipped[28..32].copy_from_slice(&3_u32.to_be_bytes());
+        sign_history_manifest(&mut skipped, fixture.user_id, None, (&fixture.epoch_one, 1));
+        let skipped_history = fixture.history(&[&skipped]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &skipped_history,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("跳代历史必须失败"),
+            RecoveryCryptoError::MembershipHistoryTransitionInvalid
+        );
+
+        let mut forked = fixture.add_device.clone();
+        forked[36] ^= 1;
+        sign_history_manifest(&mut forked, fixture.user_id, None, (&fixture.epoch_one, 1));
+        let forked_history = fixture.history(&[&forked]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &forked_history,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("分叉历史必须失败"),
+            RecoveryCryptoError::MembershipHistoryTransitionInvalid
+        );
+
+        let mut unordered = fixture.add_device.clone();
+        let first_member: [u8; 88] = copy_array(&unordered[228..316]);
+        let second_member: [u8; 88] = copy_array(&unordered[316..404]);
+        unordered[228..316].copy_from_slice(&second_member);
+        unordered[316..404].copy_from_slice(&first_member);
+        sign_history_manifest(
+            &mut unordered,
+            fixture.user_id,
+            None,
+            (&fixture.epoch_one, 1),
+        );
+        let unordered_history = fixture.history(&[&unordered]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &unordered_history,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("非规范成员顺序必须失败"),
+            RecoveryCryptoError::InvalidMembershipHistory
+        );
+
+        let truncated = fixture.history(&[&fixture.add_device[..fixture.add_device.len() - 1]]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &truncated,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("截断成员历史必须失败"),
+            RecoveryCryptoError::InvalidMembershipHistory
+        );
+    }
+
+    #[test]
+    fn recovery_history_rejects_state_replacement_and_signature_attacks() {
+        let fixture = RecoveryHistoryFixture::new();
+
+        let mut replaced_recovery_state = fixture.add_device.clone();
+        replaced_recovery_state[100..104].copy_from_slice(&2_u32.to_be_bytes());
+        sign_history_manifest(
+            &mut replaced_recovery_state,
+            fixture.user_id,
+            None,
+            (&fixture.epoch_one, 1),
+        );
+        let replaced_history = fixture.history(&[&replaced_recovery_state]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &replaced_history,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("add 不得替换恢复状态"),
+            RecoveryCryptoError::MembershipHistoryTransitionInvalid
+        );
+
+        let mut add_with_transition = fixture.add_device.clone();
+        sign_history_manifest(
+            &mut add_with_transition,
+            fixture.user_id,
+            Some((&fixture.epoch_one, 1)),
+            (&fixture.epoch_one, 1),
+        );
+        let add_with_transition_history = fixture.history(&[&add_with_transition]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &add_with_transition_history,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("add 不得携带 transition 签名"),
+            RecoveryCryptoError::MembershipHistoryTransitionInvalid
+        );
+
+        let mut invalid_transition = fixture.revoke_rotate.clone();
+        let revoke_payload_length = invalid_transition.len() - 128;
+        invalid_transition[revoke_payload_length] ^= 1;
+        let invalid_transition_history =
+            fixture.history(&[&fixture.add_device, &invalid_transition]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &invalid_transition_history,
+                &fixture.capsule_two,
+            )
+            .err()
+            .expect("伪造旧 epoch 过渡签名必须失败"),
+            RecoveryCryptoError::MembershipHistorySignatureInvalid
+        );
+
+        let mut invalid_current = fixture.revoke_rotate.clone();
+        let last = invalid_current.len() - 1;
+        invalid_current[last] ^= 1;
+        let invalid_current_history = fixture.history(&[&fixture.add_device, &invalid_current]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &invalid_current_history,
+                &fixture.capsule_two,
+            )
+            .err()
+            .expect("伪造新 epoch 当前签名必须失败"),
+            RecoveryCryptoError::MembershipHistorySignatureInvalid
+        );
+
+        let full_history = fixture.history(&[&fixture.add_device, &fixture.revoke_rotate]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &full_history,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("链头不得打开旧 capsule"),
+            RecoveryCryptoError::MembershipHistoryHeadMismatch
         );
     }
 

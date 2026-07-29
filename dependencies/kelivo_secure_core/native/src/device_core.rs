@@ -407,6 +407,31 @@ pub(super) fn register_ark(
     register_keyring(user_id, keyring)
 }
 
+pub(super) fn register_recovered_ark_keyring(
+    user_id: crypto::UserId,
+    source: Option<(u32, crypto::AccountRootKey)>,
+    current_epoch: u32,
+    current: crypto::AccountRootKey,
+) -> Result<u64, KelivoStatus> {
+    let keyring = match source {
+        Some((source_epoch, source)) => {
+            if source_epoch.checked_add(1) != Some(current_epoch) {
+                return Err(KelivoStatus::RecoveryHistoryInvalid);
+            }
+            let mut keyring = crypto::AccountRootKeyring::new(source_epoch, source)
+                .map_err(device_error_status)?;
+            keyring
+                .add_current(current_epoch, current)
+                .map_err(device_error_status)?;
+            keyring
+        }
+        None => {
+            crypto::AccountRootKeyring::new(current_epoch, current).map_err(device_error_status)?
+        }
+    };
+    register_keyring(user_id, keyring)
+}
+
 fn register_keyring(
     user_id: crypto::UserId,
     keyring: crypto::AccountRootKeyring,
