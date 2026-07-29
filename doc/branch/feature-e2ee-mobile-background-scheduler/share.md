@@ -18,6 +18,6 @@
 ## 结果
 
 - 已补齐结算后截止的所有权转移、迟到内容取得结算屏障、严格 `runtime -> account -> workspace` 单次释放；有界清理失败会在 Runner 返回前同步调用现有错误上报，密钥世代阻塞会向平台返回失败。
-- Android 使用独立调度线程保证取消后 4 秒内结算平台任务，并以单一生命周期状态分别领取 Dart 初始化与任务发送，终态先赢时迟到 Loader 回调不会再启动 Dart；iOS Operation 与 legacy fetch 共用单一 `pending/executing/terminal` 生命周期状态机，各自保证 4 秒硬终态，平台完成不再等待主线程引擎销毁。iOS 最低版本保持 14。
+- Android 在取消 4 秒时由独立线程封闭新 effect 并请求终态；`terminalRequest + inFlightEffects` 门闩仅等待截止前已领取的同步原生 dispatch 返回，不等待 Dart 回复、网络或业务任务，确保平台 completer 发布后不再有迟到的 STARTED、Dart 启动、任务或取消发送。取消使用单一状态机至多发送一次，错误上报器抛错也会在 `finally` 中请求终态；iOS Operation 与 legacy fetch 共用单一 `pending/executing/terminal` 生命周期状态机，iOS 最低版本保持 14。
 - 生产 Runner 工厂继续返回 `null`；schema 21 原子验证绑定完成前不启用真实后台内容同步，Issue #56 保持开启。
-- 验证通过：专项测试 85/85、`flutter analyze lib`、改动测试文件分析、四个 Workmanager 包分析、Android debug APK 构建和原生静态接线契约。根目录全量分析仍受既有 #33 影响；根目录全量测试命中既有 #53 挂起后已停止并清理残留进程。Windows 无法执行 Xcode/iOS 生命周期竞态或实机构建，静态字符串断言不替代该覆盖，仍需 macOS CI 或真机验证。
+- 验证通过：专项测试 85/85、`flutter analyze lib`、改动测试文件分析、四个 Workmanager 包分析、Android debug APK 构建和原生静态接线契约。根目录全量分析仍受既有 #33 影响；根目录全量测试命中既有 #53 挂起后已停止并清理残留进程。Android 静态源码契约不替代真实队列与同步 Pigeon 回调竞态测试；若 engine/Pigeon/debug 的同步调用本身永久阻塞，OS 线程卡死时无法同时保证绝对 4 秒结算与终态顺序安全。Windows 无法执行 Xcode/iOS 生命周期竞态或实机构建，仍需 macOS CI 或真机验证。

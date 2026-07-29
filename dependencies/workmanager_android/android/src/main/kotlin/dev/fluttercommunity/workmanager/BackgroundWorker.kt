@@ -32,10 +32,33 @@ class BackgroundWorker(
 
     private enum class LifecycleState {
         INITIALIZING,
-        EXECUTING,
+        WAITING_FOR_BACKGROUND_CHANNEL,
         TASK_EXECUTING,
         TERMINAL,
     }
+
+    private enum class CancellationState {
+        NONE,
+        REQUESTED,
+        WAKEUP_POSTED,
+        DISPATCH_CLAIMED,
+    }
+
+    private data class TerminalRequest(
+        val result: ListenableWorker.Result,
+        val errorMessage: String?,
+    )
+
+    private data class TerminalCompletion(
+        val result: ListenableWorker.Result,
+        val errorMessage: String?,
+        val pendingForcedStop: ScheduledFuture<*>?,
+    )
+
+    private data class DartCancellationEffect(
+        val flutterApi: WorkmanagerFlutterApi,
+        val taskName: String,
+    )
 
     companion object {
         const val PAYLOAD_KEY = "dev.fluttercommunity.workmanager.INPUT_DATA"
@@ -63,11 +86,12 @@ class BackgroundWorker(
     private val runAttemptCount = workerParams.runAttemptCount
     private val randomThreadIdentifier = Random().nextInt()
     private var engine: FlutterEngine? = null
-    @Volatile
-    private var backgroundChannelReady = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lifecycleLock = Any()
     private var lifecycleState = LifecycleState.INITIALIZING
+    private var cancellationState = CancellationState.NONE
+    private var terminalRequest: TerminalRequest? = null
+    private var inFlightEffects = 0
     private var forcedStop: ScheduledFuture<*>? = null
     private val cancellationScheduler: ScheduledExecutorService =
         ScheduledThreadPoolExecutor(1) { runnable ->
@@ -103,17 +127,12 @@ class BackgroundWorker(
             null,
             mainHandler,
         ) {
-            if (!claimDartExecution()) {
-                return@ensureInitializationCompleteAsync
-            }
-
             val callbackHandle = SharedPreferenceHelper.getCallbackHandle(applicationContext)
             val callbackInfo = FlutterCallbackInformation.lookupCallbackInformation(callbackHandle)
 
             if (callbackInfo == null) {
                 val exception = IllegalStateException("Failed to resolve Dart callback for handle $callbackHandle")
-                WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
-                stopEngine(Result.failure(), exception.message)
+                reportFailureAndStop(exception)
                 return@ensureInitializationCompleteAsync
             }
 
@@ -121,8 +140,7 @@ class BackgroundWorker(
 
             if (localDartTask == null) {
                 val exception = IllegalStateException("Dart task is null")
-                WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
-                stopEngine(Result.failure(), exception.message)
+                reportFailureAndStop(exception)
                 return@ensureInitializationCompleteAsync
             }
 
@@ -138,78 +156,158 @@ class BackgroundWorker(
                 )
 
             val startStatus = if (runAttemptCount > 0) TaskStatus.RETRYING else TaskStatus.STARTED
-            WorkmanagerDebug.onTaskStatusUpdate(applicationContext, taskInfo, startStatus)
-
-            engine?.let { engine ->
-                flutterApi = WorkmanagerFlutterApi(engine.dartExecutor.binaryMessenger)
-
-                engine.dartExecutor.executeDartCallback(
-                    DartExecutor.DartCallback(
-                        applicationContext.assets,
-                        dartBundlePath,
-                        callbackInfo,
-                    ),
-                )
-
-                // Initialize the background channel
-                flutterApi.backgroundChannelInitialized {
-                    if (!claimBackgroundTaskExecution()) {
-                        return@backgroundChannelInitialized
-                    }
-                    backgroundChannelReady = true
-                    // Channel is initialized, now execute the task
-                    executeBackgroundTask()
-                    if (isStopped) {
-                        notifyDartCancellation()
-                    }
-                }
-            }
+            startDartExecutionIfActive(
+                callbackInfo = callbackInfo,
+                dartBundlePath = dartBundlePath,
+                localDartTask = localDartTask,
+                taskInfo = taskInfo,
+                startStatus = startStatus,
+            )
         }
 
         return resolvableFuture
     }
 
     override fun onStopped() {
-        notifyDartCancellation()
+        requestDartCancellation()
         scheduleForcedStop()
     }
 
-    // 阶段领取与终态共用同一锁，防止迟到回调跨过已经完成的平台任务。
-    private fun claimDartExecution(): Boolean =
-        synchronized(lifecycleLock) {
-            when (lifecycleState) {
-                LifecycleState.INITIALIZING -> {
-                    lifecycleState = LifecycleState.EXECUTING
-                    true
-                }
-                LifecycleState.EXECUTING,
-                LifecycleState.TASK_EXECUTING,
-                LifecycleState.TERMINAL,
-                -> false
-            }
+    // 在途门闩让终态先封门、再等已领取的原生调用返回，避免平台完成后出现迟到副作用。
+    private fun startDartExecutionIfActive(
+        callbackInfo: FlutterCallbackInformation,
+        dartBundlePath: String,
+        localDartTask: String,
+        taskInfo: TaskDebugInfo,
+        startStatus: TaskStatus,
+    ): Boolean {
+        if (
+            !beginLifecycleEffect(
+                expectedState = LifecycleState.INITIALIZING,
+                nextState = LifecycleState.WAITING_FOR_BACKGROUND_CHANNEL,
+            )
+        ) {
+            return false
         }
 
-    private fun claimBackgroundTaskExecution(): Boolean =
-        synchronized(lifecycleLock) {
-            when (lifecycleState) {
-                LifecycleState.EXECUTING -> {
-                    lifecycleState = LifecycleState.TASK_EXECUTING
-                    true
+        return try {
+            val localEngine =
+                engine ?: throw IllegalStateException("Flutter engine is unavailable")
+            WorkmanagerDebug.onTaskStatusUpdate(applicationContext, taskInfo, startStatus)
+            flutterApi = WorkmanagerFlutterApi(localEngine.dartExecutor.binaryMessenger)
+            localEngine.dartExecutor.executeDartCallback(
+                DartExecutor.DartCallback(
+                    applicationContext.assets,
+                    dartBundlePath,
+                    callbackInfo,
+                ),
+            )
+            flutterApi.backgroundChannelInitialized { result ->
+                result.exceptionOrNull()?.let { exception ->
+                    reportFailureAndStop(exception)
+                    return@backgroundChannelInitialized
                 }
-                LifecycleState.INITIALIZING,
-                LifecycleState.TASK_EXECUTING,
-                LifecycleState.TERMINAL,
-                -> false
+                startBackgroundTaskIfActive(localDartTask)
             }
+            true
+        } catch (exception: Exception) {
+            reportFailureAndStop(exception)
+            false
+        } finally {
+            finishLifecycleEffect()
+        }
+    }
+
+    private fun startBackgroundTaskIfActive(localDartTask: String): Boolean {
+        if (
+            !beginLifecycleEffect(
+                expectedState = LifecycleState.WAITING_FOR_BACKGROUND_CHANNEL,
+                nextState = LifecycleState.TASK_EXECUTING,
+            )
+        ) {
+            return false
         }
 
-    private fun notifyDartCancellation() {
-        mainHandler.post {
-            val localDartTask = dartTask ?: return@post
-            if (!backgroundChannelReady || engine == null || !this::flutterApi.isInitialized) {
-                return@post
+        return try {
+            val pigeonPayload = payload.mapKeys { it.key as String? }.mapValues { it.value as Object? }
+            flutterApi.executeTask(localDartTask, pigeonPayload) { result ->
+                if (isStopped) {
+                    stopEngine(Result.failure(), "Task was cancelled")
+                    return@executeTask
+                }
+                when {
+                    result.isSuccess -> {
+                        val wasSuccessful = result.getOrNull() ?: false
+                        stopEngine(if (wasSuccessful) Result.success() else Result.retry())
+                    }
+                    result.isFailure -> {
+                        val exception = result.exceptionOrNull()
+                        // Don't call onExceptionEncountered for Dart task failures
+                        // These are handled as normal failures via onTaskStatusUpdate
+                        stopEngine(Result.failure(), exception?.message)
+                    }
+                }
             }
-            flutterApi.taskCancelled(localDartTask) { result ->
+
+            markDartCancellationRequestedIfStopped()
+            sendDartCancellationIfReady()
+            true
+        } catch (exception: Exception) {
+            reportFailureAndStop(exception)
+            false
+        } finally {
+            finishLifecycleEffect()
+        }
+    }
+
+    private fun requestDartCancellation() {
+        val shouldDispatch =
+            synchronized(lifecycleLock) {
+                if (
+                    terminalRequest != null ||
+                        lifecycleState == LifecycleState.TERMINAL
+                ) {
+                    return@synchronized false
+                }
+                when (cancellationState) {
+                    CancellationState.NONE,
+                    CancellationState.REQUESTED,
+                    -> {
+                        cancellationState = CancellationState.WAKEUP_POSTED
+                        true
+                    }
+                    CancellationState.WAKEUP_POSTED,
+                    CancellationState.DISPATCH_CLAIMED,
+                    -> false
+                }
+            }
+
+        if (shouldDispatch) {
+            mainHandler.post { sendDartCancellationIfReady() }
+        }
+    }
+
+    private fun markDartCancellationRequestedIfStopped() {
+        if (!isStopped) return
+
+        synchronized(lifecycleLock) {
+            if (
+                terminalRequest != null ||
+                    lifecycleState == LifecycleState.TERMINAL
+            ) {
+                return
+            }
+            if (cancellationState == CancellationState.NONE) {
+                cancellationState = CancellationState.REQUESTED
+            }
+        }
+    }
+
+    private fun sendDartCancellationIfReady() {
+        val effect = beginDartCancellationEffect() ?: return
+
+        try {
+            effect.flutterApi.taskCancelled(effect.taskName) { result ->
                 result.exceptionOrNull()?.let { exception ->
                     WorkmanagerDebug.onExceptionEncountered(
                         applicationContext,
@@ -218,16 +316,88 @@ class BackgroundWorker(
                     )
                 }
             }
+        } catch (exception: Exception) {
+            reportFailureAndStop(exception)
+        } finally {
+            finishLifecycleEffect()
         }
+    }
+
+    private fun beginDartCancellationEffect(): DartCancellationEffect? =
+        synchronized(lifecycleLock) {
+            if (
+                terminalRequest != null ||
+                    lifecycleState != LifecycleState.TASK_EXECUTING ||
+                    cancellationState == CancellationState.NONE ||
+                    cancellationState == CancellationState.DISPATCH_CLAIMED ||
+                    engine == null ||
+                    !this::flutterApi.isInitialized
+            ) {
+                return@synchronized null
+            }
+            val localDartTask = dartTask ?: return@synchronized null
+
+            cancellationState = CancellationState.DISPATCH_CLAIMED
+            inFlightEffects += 1
+            DartCancellationEffect(flutterApi, localDartTask)
+        }
+
+    private fun beginLifecycleEffect(
+        expectedState: LifecycleState,
+        nextState: LifecycleState,
+    ): Boolean =
+        synchronized(lifecycleLock) {
+            if (
+                terminalRequest != null ||
+                    lifecycleState == LifecycleState.TERMINAL ||
+                    lifecycleState != expectedState
+            ) {
+                return@synchronized false
+            }
+
+            lifecycleState = nextState
+            inFlightEffects += 1
+            true
+        }
+
+    private fun finishLifecycleEffect() {
+        val completion =
+            synchronized(lifecycleLock) {
+                check(inFlightEffects > 0) { "Lifecycle effect counter underflow" }
+                inFlightEffects -= 1
+                takeTerminalCompletionLocked()
+            }
+        completion?.let(::completeTerminal)
+    }
+
+    private fun takeTerminalCompletionLocked(): TerminalCompletion? {
+        val request = terminalRequest ?: return null
+        if (inFlightEffects != 0 || lifecycleState == LifecycleState.TERMINAL) {
+            return null
+        }
+
+        lifecycleState = LifecycleState.TERMINAL
+        terminalRequest = null
+        val pendingForcedStop = forcedStop
+        forcedStop = null
+        return TerminalCompletion(
+            result = request.result,
+            errorMessage = request.errorMessage,
+            pendingForcedStop = pendingForcedStop,
+        )
     }
 
     private fun scheduleForcedStop() {
         synchronized(lifecycleLock) {
-            if (lifecycleState == LifecycleState.TERMINAL || forcedStop != null) {
+            if (
+                terminalRequest != null ||
+                    lifecycleState == LifecycleState.TERMINAL ||
+                    forcedStop != null
+            ) {
                 return
             }
 
-            // 独立计时线程避免主线程阻塞使硬截止失效；主线程只负责最终的引擎销毁。
+            // 独立计时线程确保 4 秒时封闭新 effect；终态只等待此前已领取的原生 dispatch 返回。
             forcedStop =
                 cancellationScheduler.schedule(
                     {
@@ -246,14 +416,35 @@ class BackgroundWorker(
         result: Result,
         errorMessage: String? = null,
     ) {
-        val pendingForcedStop: ScheduledFuture<*>?
-        synchronized(lifecycleLock) {
-            if (lifecycleState == LifecycleState.TERMINAL) return
-            lifecycleState = LifecycleState.TERMINAL
-            pendingForcedStop = forcedStop
-            forcedStop = null
+        val completion =
+            synchronized(lifecycleLock) {
+                if (
+                    lifecycleState == LifecycleState.TERMINAL ||
+                        terminalRequest != null
+                ) {
+                    return@synchronized null
+                }
+                terminalRequest = TerminalRequest(result, errorMessage)
+                takeTerminalCompletionLocked()
+            }
+        completion?.let(::completeTerminal)
+    }
+
+    private fun reportFailureAndStop(exception: Throwable) {
+        try {
+            WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
+        } finally {
+            stopEngine(Result.failure(), exception.message)
         }
-        pendingForcedStop?.cancel(false)
+    }
+
+    private fun completeTerminal(completion: TerminalCompletion) {
+        check(!Thread.holdsLock(lifecycleLock)) {
+            "Terminal completion must run outside the lifecycle lock"
+        }
+        val result = completion.result
+        val errorMessage = completion.errorMessage
+        completion.pendingForcedStop?.cancel(false)
 
         val localDartTask = dartTask
         completer?.set(result)
@@ -296,45 +487,15 @@ class BackgroundWorker(
     }
 
     private fun scheduleEngineDestruction() {
-        // FlutterEngine 必须在主线程销毁；硬截止只保证结果结算，此处属于尽力清理。
+        // FlutterEngine 必须在主线程销毁；平台结果结算不等待这一尽力清理。
         mainHandler.post {
-            backgroundChannelReady = false
-            engine?.destroy()
-            engine = null
-        }
-    }
-
-    private fun executeBackgroundTask() {
-        // Convert payload to the format expected by Pigeon (Map<String?, Object?>)
-        val pigeonPayload = payload.mapKeys { it.key as String? }.mapValues { it.value as Object? }
-
-        val localDartTask = dartTask
-
-        if (localDartTask == null) {
-            val exception = IllegalStateException("Dart task is null")
-            WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
-
-            stopEngine(Result.failure(), exception.message)
-            return
-        }
-
-        flutterApi.executeTask(localDartTask, pigeonPayload) { result ->
-            if (isStopped) {
-                stopEngine(Result.failure(), "Task was cancelled")
-                return@executeTask
-            }
-            when {
-                result.isSuccess -> {
-                    val wasSuccessful = result.getOrNull() ?: false
-                    stopEngine(if (wasSuccessful) Result.success() else Result.retry())
+            val localEngine =
+                synchronized(lifecycleLock) {
+                    val currentEngine = engine
+                    engine = null
+                    currentEngine
                 }
-                result.isFailure -> {
-                    val exception = result.exceptionOrNull()
-                    // Don't call onExceptionEncountered for Dart task failures
-                    // These are handled as normal failures via onTaskStatusUpdate
-                    stopEngine(Result.failure(), exception?.message)
-                }
-            }
+            localEngine?.destroy()
         }
     }
 }

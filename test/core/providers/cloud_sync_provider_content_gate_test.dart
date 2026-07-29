@@ -1223,76 +1223,174 @@ void main() {
     );
   });
 
-  test('Android 原生生命周期静态契约线性化初始化领取与终态', () async {
+  test('Android 原生生命周期静态契约线性化副作用与终态', () async {
     final androidWorker = await File(
       'dependencies/workmanager_android/android/src/main/kotlin/'
       'dev/fluttercommunity/workmanager/BackgroundWorker.kt',
     ).readAsString();
 
+    final dartExecutionStart = androidWorker.indexOf(
+      'private fun startDartExecutionIfActive(',
+    );
+    final taskExecutionStart = androidWorker.indexOf(
+      'private fun startBackgroundTaskIfActive(',
+    );
+    final cancellationRequestStart = androidWorker.indexOf(
+      'private fun requestDartCancellation()',
+    );
+    final cancellationSendStart = androidWorker.indexOf(
+      'private fun sendDartCancellationIfReady()',
+    );
+    final cancellationEffectStart = androidWorker.indexOf(
+      'private fun beginDartCancellationEffect()',
+    );
+    final lifecycleEffectStart = androidWorker.indexOf(
+      'private fun beginLifecycleEffect(',
+    );
+    final forcedStopStart = androidWorker.indexOf(
+      'private fun scheduleForcedStop()',
+    );
+
+    expect(dartExecutionStart, greaterThanOrEqualTo(0));
+    expect(taskExecutionStart, greaterThan(dartExecutionStart));
+    expect(cancellationRequestStart, greaterThan(taskExecutionStart));
+    expect(cancellationSendStart, greaterThan(cancellationRequestStart));
+    expect(cancellationEffectStart, greaterThan(cancellationSendStart));
+    expect(lifecycleEffectStart, greaterThan(cancellationEffectStart));
+    expect(forcedStopStart, greaterThan(lifecycleEffectStart));
+
+    final dartExecution = androidWorker.substring(
+      dartExecutionStart,
+      taskExecutionStart,
+    );
+    final taskExecution = androidWorker.substring(
+      taskExecutionStart,
+      cancellationRequestStart,
+    );
+    final cancellationRequest = androidWorker.substring(
+      cancellationRequestStart,
+      cancellationSendStart,
+    );
+    final cancellationSend = androidWorker.substring(
+      cancellationSendStart,
+      cancellationEffectStart,
+    );
+    final cancellationEffect = androidWorker.substring(
+      cancellationEffectStart,
+      lifecycleEffectStart,
+    );
+    final lifecycleEffect = androidWorker.substring(
+      lifecycleEffectStart,
+      forcedStopStart,
+    );
+
+    expect(dartExecution, contains('beginLifecycleEffect('));
+    expect(dartExecution, contains('LifecycleState.INITIALIZING'));
     expect(
-      androidWorker,
+      dartExecution,
+      contains('LifecycleState.WAITING_FOR_BACKGROUND_CHANNEL'),
+    );
+    expect(dartExecution, contains('WorkmanagerDebug.onTaskStatusUpdate('));
+    expect(dartExecution, contains('flutterApi = WorkmanagerFlutterApi('));
+    expect(dartExecution, contains('executeDartCallback('));
+    expect(dartExecution, contains('flutterApi.backgroundChannelInitialized'));
+    expect(dartExecution, contains('finally'));
+    expect(dartExecution, contains('finishLifecycleEffect()'));
+    expect(dartExecution, isNot(contains('synchronized(lifecycleLock)')));
+
+    expect(taskExecution, contains('beginLifecycleEffect('));
+    expect(
+      taskExecution,
+      contains('LifecycleState.WAITING_FOR_BACKGROUND_CHANNEL'),
+    );
+    expect(taskExecution, contains('LifecycleState.TASK_EXECUTING'));
+    expect(taskExecution, contains('flutterApi.executeTask('));
+    expect(taskExecution, contains('sendDartCancellationIfReady()'));
+    expect(taskExecution, contains('finally'));
+    expect(taskExecution, contains('finishLifecycleEffect()'));
+    expect(taskExecution, isNot(contains('synchronized(lifecycleLock)')));
+
+    expect(
+      cancellationRequest,
       matches(
         RegExp(
-          r'ensureInitializationCompleteAsync\([\s\S]*?'
-          r'\)\s*\{\s*'
-          r'if \(!claimDartExecution\(\)\) \{\s*'
-          r'return@ensureInitializationCompleteAsync\s*'
-          r'\}\s*'
-          r'val callbackHandle',
+          r'private fun requestDartCancellation\(\)[\s\S]*?'
+          r'synchronized\(lifecycleLock\)\s*\{',
         ),
       ),
     );
+    expect(cancellationRequest, contains('CancellationState.WAKEUP_POSTED'));
+    expect(cancellationRequest, contains('mainHandler.post'));
     expect(
-      androidWorker,
-      matches(
-        RegExp(
-          r'flutterApi\.backgroundChannelInitialized\s*\{\s*'
-          r'if \(!claimBackgroundTaskExecution\(\)\) \{\s*'
-          r'return@backgroundChannelInitialized\s*'
-          r'\}\s*'
-          r'backgroundChannelReady = true',
-        ),
-      ),
+      cancellationSend,
+      contains('val effect = beginDartCancellationEffect() ?: return'),
     );
+    expect(cancellationSend, contains('effect.flutterApi.taskCancelled('));
+    expect(cancellationSend, contains('finally'));
+    expect(cancellationSend, contains('finishLifecycleEffect()'));
+    expect(cancellationSend, isNot(contains('synchronized(lifecycleLock)')));
+
+    expect(cancellationEffect, contains('synchronized(lifecycleLock)'));
+    expect(cancellationEffect, contains('terminalRequest != null'));
+    expect(cancellationEffect, contains('LifecycleState.TASK_EXECUTING'));
+    expect(cancellationEffect, contains('CancellationState.DISPATCH_CLAIMED'));
+    expect(cancellationEffect, contains('inFlightEffects += 1'));
+
+    expect(lifecycleEffect, contains('synchronized(lifecycleLock)'));
+    expect(lifecycleEffect, contains('terminalRequest != null'));
+    expect(lifecycleEffect, contains('lifecycleState != expectedState'));
+    expect(lifecycleEffect, contains('lifecycleState = nextState'));
+    expect(lifecycleEffect, contains('inFlightEffects += 1'));
+    expect(lifecycleEffect, contains('inFlightEffects -= 1'));
+    expect(lifecycleEffect, contains('takeTerminalCompletionLocked()'));
     expect(
-      androidWorker,
-      matches(
-        RegExp(
-          r'private fun claimBackgroundTaskExecution\(\): Boolean\s*=\s*'
-          r'synchronized\(lifecycleLock\)\s*\{[\s\S]*?'
-          r'LifecycleState\.EXECUTING\s*->\s*\{\s*'
-          r'lifecycleState\s*=\s*LifecycleState\.TASK_EXECUTING\s*'
-          r'true',
-        ),
-      ),
+      lifecycleEffect,
+      contains('lifecycleState = LifecycleState.TERMINAL'),
     );
-    expect(
-      androidWorker,
-      matches(
-        RegExp(
-          r'private fun claimDartExecution\(\): Boolean\s*=\s*'
-          r'synchronized\(lifecycleLock\)\s*\{[\s\S]*?'
-          r'LifecycleState\.INITIALIZING\s*->\s*\{\s*'
-          r'lifecycleState\s*=\s*LifecycleState\.EXECUTING\s*'
-          r'true',
-        ),
-      ),
-    );
+    expect(androidWorker, contains('check(!Thread.holdsLock(lifecycleLock))'));
     expect(
       androidWorker,
       matches(
         RegExp(
           r'private fun stopEngine\([\s\S]*?'
           r'synchronized\(lifecycleLock\)\s*\{\s*'
-          r'if \(lifecycleState == LifecycleState\.TERMINAL\) return\s*'
-          r'lifecycleState = LifecycleState\.TERMINAL',
+          r'if \([\s\S]*?terminalRequest != null[\s\S]*?'
+          r'terminalRequest = TerminalRequest\([\s\S]*?'
+          r'takeTerminalCompletionLocked\(\)',
         ),
       ),
     );
+    expect(
+      androidWorker,
+      matches(
+        RegExp(
+          r'private fun reportFailureAndStop\(exception: Throwable\)\s*\{\s*'
+          r'try\s*\{\s*'
+          r'WorkmanagerDebug\.onExceptionEncountered\([\s\S]*?'
+          r'\}\s*finally\s*\{\s*'
+          r'stopEngine\(Result\.failure\(\), exception\.message\)',
+        ),
+      ),
+    );
+    expect(
+      RegExp(r'reportFailureAndStop\(exception\)').allMatches(androidWorker),
+      hasLength(6),
+    );
+    expect(
+      RegExp(r'executeDartCallback\(').allMatches(androidWorker),
+      hasLength(1),
+    );
+    expect(RegExp(r'\.executeTask\(').allMatches(androidWorker), hasLength(1));
+    expect(
+      RegExp(r'\.taskCancelled\(').allMatches(androidWorker),
+      hasLength(1),
+    );
     expect(androidWorker, isNot(contains('private var engineStopped')));
+    expect(androidWorker, isNot(contains('claimDartExecution')));
+    expect(androidWorker, isNot(contains('claimBackgroundTaskExecution')));
   });
 
-  test('移动后台原生桥静态包含独立硬截止与单一终态状态机', () async {
+  test('移动后台原生桥静态包含独立截止请求与单一终态状态机', () async {
     final androidWorker = await File(
       'dependencies/workmanager_android/android/src/main/kotlin/'
       'dev/fluttercommunity/workmanager/BackgroundWorker.kt',
