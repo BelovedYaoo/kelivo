@@ -15,20 +15,15 @@ const _mobileBackgroundSyncLimits = E2eeBackgroundSyncLimits(
   maximumDuration: Duration(seconds: 20),
 );
 
-typedef E2eeBackgroundSyncRunnerFactory =
-    E2eeBackgroundSyncRunner Function(
-      E2eeBackgroundSyncTrustedCapabilityGate capabilityGate,
-    );
+typedef E2eeBackgroundSyncRunnerFactory = E2eeBackgroundSyncRunner Function();
 
 final class E2eeMobileBackgroundTaskExecutor {
   factory E2eeMobileBackgroundTaskExecutor({
-    required E2eeBackgroundSyncTrustedCapabilityGate capabilityGate,
     required E2eeBackgroundSyncRunnerFactory runnerFactory,
     required Future<void> Function() cancelScheduledTask,
     E2eeBackgroundSyncLimits limits = _mobileBackgroundSyncLimits,
   }) {
     return E2eeMobileBackgroundTaskExecutor._(
-      capabilityGate,
       runnerFactory,
       cancelScheduledTask,
       limits,
@@ -36,13 +31,11 @@ final class E2eeMobileBackgroundTaskExecutor {
   }
 
   E2eeMobileBackgroundTaskExecutor._(
-    this._capabilityGate,
     this._runnerFactory,
     this._cancelScheduledTask,
     this._limits,
   );
 
-  final E2eeBackgroundSyncTrustedCapabilityGate _capabilityGate;
   final E2eeBackgroundSyncRunnerFactory _runnerFactory;
   final Future<void> Function() _cancelScheduledTask;
   final E2eeBackgroundSyncLimits _limits;
@@ -84,9 +77,10 @@ final class E2eeMobileBackgroundTaskExecutor {
   }
 
   Future<bool> _executeOnce(E2eeSyncCancellationSignal cancellation) async {
-    final outcome = await _runnerFactory(
-      _capabilityGate,
-    ).run(limits: _limits, cancellationSignal: cancellation);
+    final outcome = await _runnerFactory().run(
+      limits: _limits,
+      cancellationSignal: cancellation,
+    );
     switch (outcome.disposition) {
       case E2eeBackgroundSyncDisposition.noSession:
       case E2eeBackgroundSyncDisposition.authenticationRetired:
@@ -107,43 +101,32 @@ final class E2eeMobileBackgroundTaskExecutor {
   }
 }
 
-final class _MissingPersistentTrustedCapabilityGate
-    implements E2eeBackgroundSyncTrustedCapabilityGate {
-  const _MissingPersistentTrustedCapabilityGate();
+E2eeMobileBackgroundTaskExecutor? _productionTaskExecutor;
 
-  @override
-  Future<E2eeBackgroundSyncCapability> loadVerifiedCapability(
-    E2eeSyncExecutionBudget executionBudget,
-  ) async {
-    executionBudget.checkCanContinue();
-    throw StateError(
-      'e2ee_background_sync_trusted_capability_dependency_missing',
-    );
+Future<bool> _executeProductionBackgroundTask(
+  String taskName,
+  BackgroundTaskContext context,
+) async {
+  final productionFactory = E2eeBackgroundProductionRunnerFactory.tryCreate();
+  if (productionFactory == null) {
+    await Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName);
+    return false;
   }
+  final executor = _productionTaskExecutor ??= E2eeMobileBackgroundTaskExecutor(
+    runnerFactory: productionFactory.createRunner,
+    cancelScheduledTask: () =>
+        Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName),
+  );
+  return executor.execute(
+    taskName,
+    cancellationSignal: _WorkmanagerCancellationSignal(context),
+  );
 }
-
-E2eeBackgroundSyncTrustedCapabilityGate
-_createProductionBackgroundSyncCapabilityGate() {
-  // schema 21 必须在此构造只依赖设备密钥封存状态的读取器，禁止前台 setter 注入。
-  return const _MissingPersistentTrustedCapabilityGate();
-}
-
-final E2eeMobileBackgroundTaskExecutor _productionTaskExecutor =
-    E2eeMobileBackgroundTaskExecutor(
-      capabilityGate: _createProductionBackgroundSyncCapabilityGate(),
-      runnerFactory: (capabilityGate) =>
-          E2eeBackgroundSyncRunner(capabilityGate: capabilityGate),
-      cancelScheduledTask: () =>
-          Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName),
-    );
 
 @pragma('vm:entry-point')
 void e2eeMobileBackgroundCallbackDispatcher() {
   Workmanager().executeTask((taskName, _, context) {
-    return _productionTaskExecutor.execute(
-      taskName,
-      cancellationSignal: _WorkmanagerCancellationSignal(context),
-    );
+    return _executeProductionBackgroundTask(taskName, context);
   });
 }
 
@@ -260,6 +243,9 @@ final class _WorkmanagerMobileBackgroundSchedulerPlatform
 
   @override
   Future<void> enable() async {
+    if (E2eeBackgroundProductionRunnerFactory.tryCreate() == null) {
+      throw StateError('e2ee_background_verified_binding_factory_unavailable');
+    }
     await _initialize();
     await Workmanager().registerPeriodicTask(
       e2eeMobileBackgroundTaskUniqueName,

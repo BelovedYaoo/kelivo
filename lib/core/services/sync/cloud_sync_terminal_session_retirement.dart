@@ -3,6 +3,8 @@ import 'dart:developer' as developer;
 import 'cloud_sync_types.dart';
 
 typedef CloudSyncRetirementStep = Future<void> Function();
+typedef CloudSyncRetirementStepExecutor =
+    Future<void> Function(CloudSyncRetirementStep step);
 
 final class CloudSyncFailureCleanupStep {
   const CloudSyncFailureCleanupStep({
@@ -48,13 +50,19 @@ Future<void> retireTerminalCloudSyncSession({
   required CloudSyncRetirementStep closeContentRuntime,
   required CloudSyncRetirementStep releaseAccountLease,
   required CloudSyncRetirementStep releaseWorkspaceLease,
+  CloudSyncRetirementStepExecutor? executeStep,
 }) async {
   Object? primaryError;
   StackTrace? primaryStackTrace;
 
   Future<void> run(String operation, CloudSyncRetirementStep action) async {
     try {
-      await action();
+      final executor = executeStep;
+      if (executor == null) {
+        await action();
+      } else {
+        await executor(action);
+      }
     } catch (error, stackTrace) {
       if (primaryError == null) {
         primaryError = error;

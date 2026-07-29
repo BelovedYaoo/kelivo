@@ -29,6 +29,7 @@ class BackgroundWorker(
     companion object {
         const val PAYLOAD_KEY = "dev.fluttercommunity.workmanager.INPUT_DATA"
         const val DART_TASK_KEY = "dev.fluttercommunity.workmanager.DART_TASK"
+        private const val CANCELLATION_GRACE_MILLIS = 4_000L
 
         private val flutterLoader = FlutterLoader()
     }
@@ -53,6 +54,11 @@ class BackgroundWorker(
     private var engine: FlutterEngine? = null
     @Volatile
     private var backgroundChannelReady = false
+    @Volatile
+    private var engineStopped = false
+    private val mainHandler = Handler(Looper.getMainLooper())
+    private val lifecycleLock = Any()
+    private var forcedStop: Runnable? = null
 
     private var startTime: Long = 0
 
@@ -76,7 +82,7 @@ class BackgroundWorker(
         flutterLoader.ensureInitializationCompleteAsync(
             applicationContext,
             null,
-            Handler(Looper.getMainLooper()),
+            mainHandler,
         ) {
             val callbackHandle = SharedPreferenceHelper.getCallbackHandle(applicationContext)
             val callbackInfo = FlutterCallbackInformation.lookupCallbackInformation(callbackHandle)
@@ -124,11 +130,13 @@ class BackgroundWorker(
 
                 // Initialize the background channel
                 flutterApi.backgroundChannelInitialized {
-                    backgroundChannelReady = true
-                    // Channel is initialized, now execute the task
-                    executeBackgroundTask()
-                    if (isStopped) {
-                        notifyDartCancellation()
+                    if (!engineStopped) {
+                        backgroundChannelReady = true
+                        // Channel is initialized, now execute the task
+                        executeBackgroundTask()
+                        if (isStopped) {
+                            notifyDartCancellation()
+                        }
                     }
                 }
             }
@@ -139,10 +147,11 @@ class BackgroundWorker(
 
     override fun onStopped() {
         notifyDartCancellation()
+        scheduleForcedStop()
     }
 
     private fun notifyDartCancellation() {
-        Handler(Looper.getMainLooper()).post {
+        mainHandler.post {
             val localDartTask = dartTask ?: return@post
             if (!backgroundChannelReady || engine == null || !this::flutterApi.isInitialized) {
                 return@post
@@ -159,10 +168,35 @@ class BackgroundWorker(
         }
     }
 
+    private fun scheduleForcedStop() {
+        mainHandler.post {
+            val stop =
+                synchronized(lifecycleLock) {
+                    if (engineStopped || forcedStop != null) {
+                        null
+                    } else {
+                        // Dart 关闭预算为 2 秒，额外余量只用于平台通道和 finally 调度。
+                        Runnable { stopEngine(null) }.also { forcedStop = it }
+                    }
+                }
+            if (stop != null) {
+                mainHandler.postDelayed(stop, CANCELLATION_GRACE_MILLIS)
+            }
+        }
+    }
+
     private fun stopEngine(
         result: Result?,
         errorMessage: String? = null,
     ) {
+        val pendingForcedStop: Runnable?
+        synchronized(lifecycleLock) {
+            if (engineStopped) return
+            engineStopped = true
+            pendingForcedStop = forcedStop
+            forcedStop = null
+        }
+        pendingForcedStop?.let { mainHandler.removeCallbacks(it) }
         val fetchDuration = System.currentTimeMillis() - startTime
 
         val localDartTask = dartTask
@@ -171,6 +205,11 @@ class BackgroundWorker(
             val exception = IllegalStateException("Dart task is null")
             WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
             completer?.set(Result.failure())
+            mainHandler.post {
+                backgroundChannelReady = false
+                engine?.destroy()
+                engine = null
+            }
             return
         }
 
@@ -207,7 +246,7 @@ class BackgroundWorker(
         }
 
         // If stopEngine is called from `onStopped`, it may not be from the main thread.
-        Handler(Looper.getMainLooper()).post {
+        mainHandler.post {
             backgroundChannelReady = false
             engine?.destroy()
             engine = null

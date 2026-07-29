@@ -56,6 +56,8 @@ class BackgroundWorker {
     private let cancellationLock = NSLock()
     private var cancellationRequested = false
     private var cancellationNotifier: (() -> Void)?
+    private var forceCancellationRequested = false
+    private var forceCancellationCompleter: (() -> Void)?
 
     init(
         mode: BackgroundMode, inputData: [String: Any]?,
@@ -72,23 +74,53 @@ class BackgroundWorker {
         cancellationRequested = true
         notifier = cancellationNotifier
         cancellationLock.unlock()
-        notifier?()
+        if let notifier {
+            DispatchQueue.main.async(execute: notifier)
+        }
     }
 
-    private func installCancellationNotifier(_ notifier: @escaping () -> Void) {
+    func requestForcedCancellationCleanup() {
+        let completer: (() -> Void)?
+        cancellationLock.lock()
+        forceCancellationRequested = true
+        completer = forceCancellationCompleter
+        cancellationLock.unlock()
+        completer?()
+    }
+
+    private func installCancellationNotifier(_ notifier: @escaping () -> Void) -> Bool {
         let shouldNotify: Bool
         cancellationLock.lock()
+        if forceCancellationRequested {
+            cancellationLock.unlock()
+            return false
+        }
         cancellationNotifier = notifier
         shouldNotify = cancellationRequested
         cancellationLock.unlock()
         if shouldNotify {
-            notifier()
+            DispatchQueue.main.async(execute: notifier)
+        }
+        return true
+    }
+
+    private func installForceCancellationCompleter(_ completer: @escaping () -> Void) {
+        let shouldComplete: Bool
+        cancellationLock.lock()
+        forceCancellationCompleter = completer
+        shouldComplete = forceCancellationRequested
+        cancellationLock.unlock()
+        if shouldComplete {
+            completer()
         }
     }
 
-    private func clearCancellationNotifier() {
+    private func clearCancellationHandlers() {
         cancellationLock.lock()
         cancellationNotifier = nil
+        forceCancellationCompleter = nil
+        cancellationRequested = false
+        forceCancellationRequested = false
         cancellationLock.unlock()
     }
 
@@ -136,16 +168,43 @@ class BackgroundWorker {
         flutterPluginRegistrantCallback?(flutterEngine!)
 
         var flutterApi: WorkmanagerFlutterApi? = WorkmanagerFlutterApi(binaryMessenger: flutterEngine!.binaryMessenger)
+        let completionLock = NSLock()
+        var completionDelivered = false
+
+        func claimCompletion() -> Bool {
+            completionLock.lock()
+            defer { completionLock.unlock() }
+            if completionDelivered { return false }
+            completionDelivered = true
+            return true
+        }
+
+        func isCompletionDelivered() -> Bool {
+            completionLock.lock()
+            defer { completionLock.unlock() }
+            return completionDelivered
+        }
 
         func cleanupFlutterResources() {
-            self.clearCancellationNotifier()
+            self.clearCancellationHandlers()
             flutterEngine?.destroyContext()
             flutterApi = nil
             flutterEngine = nil
         }
 
+        self.installForceCancellationCompleter {
+            guard claimCompletion() else { return }
+            DispatchQueue.main.async {
+                cleanupFlutterResources()
+                completionHandler(.failed)
+            }
+        }
+
+        guard !isCompletionDelivered() else { return true }
+
         // Initialize the background channel and execute the task
         flutterApi?.backgroundChannelInitialized { result in
+            guard !isCompletionDelivered() else { return }
             switch result {
             case .success:
                 // Get the task name from backgroundMode
@@ -157,16 +216,18 @@ class BackgroundWorker {
                     pigeonInputData = Dictionary(uniqueKeysWithValues: inputData.map { ($0.key as String?, $0.value as Any?) })
                 }
 
-                self.installCancellationNotifier {
+                guard self.installCancellationNotifier({
                     flutterApi?.taskCancelled(taskName: taskName) { result in
                         if case .failure(let error) = result {
                             logError("Notify Dart cancellation failed: \(error)")
                         }
                     }
-                }
+                }) else { return }
+                guard !isCompletionDelivered() else { return }
 
                 // Execute the task
                 flutterApi?.executeTask(taskName: taskName, inputData: pigeonInputData) { taskResult in
+                    guard claimCompletion() else { return }
                     cleanupFlutterResources()
                     let taskSessionCompleter = Date()
 
@@ -205,6 +266,7 @@ class BackgroundWorker {
                     completionHandler(fetchResult)
                 }
             case .failure(let error):
+                guard claimCompletion() else { return }
                 logError("Background channel initialization failed: \(error)")
                 cleanupFlutterResources()
                 completionHandler(UIBackgroundFetchResult.failed)

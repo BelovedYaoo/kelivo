@@ -17,11 +17,17 @@ import FlutterMacOS
 
 class BackgroundTaskOperation: Operation, @unchecked Sendable {
 
+    private static let cancellationGrace: TimeInterval = 4
+
     private let identifier: String
     private let flutterPluginRegistrantCallback: FlutterPluginRegistrantCallback?
     private let inputData: [String: Any]?
     private let backgroundMode: BackgroundMode
     private let worker: BackgroundWorker
+    private let completionSemaphore = DispatchSemaphore(value: 0)
+    private let lifecycleLock = NSLock()
+    private var completed = false
+    private var forcedCancellation: DispatchWorkItem?
 
     init(_ identifier: String,
          inputData: [String: Any]?,
@@ -40,18 +46,51 @@ class BackgroundTaskOperation: Operation, @unchecked Sendable {
     }
 
     override func main() {
-        let semaphore = DispatchSemaphore(value: 0)
         DispatchQueue.main.async {
             self.worker.performBackgroundRequest { _ in
-                semaphore.signal()
+                self.finish()
             }
         }
 
-        semaphore.wait()
+        completionSemaphore.wait()
     }
 
     override func cancel() {
-        worker.requestCancellation()
         super.cancel()
+        DispatchQueue.main.async {
+            self.worker.requestCancellation()
+        }
+        let forcedCancellation = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.worker.requestForcedCancellationCleanup()
+            self.finish()
+        }
+        lifecycleLock.lock()
+        if completed || self.forcedCancellation != nil {
+            lifecycleLock.unlock()
+            return
+        }
+        self.forcedCancellation = forcedCancellation
+        lifecycleLock.unlock()
+        // 平台任务必须独立于主线程和引擎销毁完成，避免系统取消永久占用执行槽。
+        DispatchQueue.global(qos: .utility).asyncAfter(
+            deadline: .now() + Self.cancellationGrace,
+            execute: forcedCancellation
+        )
+    }
+
+    private func finish() {
+        let pendingCancellation: DispatchWorkItem?
+        lifecycleLock.lock()
+        if completed {
+            lifecycleLock.unlock()
+            return
+        }
+        completed = true
+        pendingCancellation = forcedCancellation
+        forcedCancellation = nil
+        lifecycleLock.unlock()
+        pendingCancellation?.cancel()
+        completionSemaphore.signal()
     }
 }
