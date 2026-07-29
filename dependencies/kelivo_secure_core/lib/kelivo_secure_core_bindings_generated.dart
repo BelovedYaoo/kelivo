@@ -583,6 +583,90 @@ external int kelivo_account_root_key_handle_close(int ark_handle);
 @ffi.Native<
   KelivoStatus Function(
     ffi.Uint64,
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_root_key_envelope_seal(
+  int issuer_identity_handle,
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> issuer_device_id,
+  int issuer_device_id_length,
+  ffi.Pointer<ffi.Uint8> target_device_id,
+  int target_device_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> target_signing_public_key,
+  int target_signing_public_key_length,
+  ffi.Pointer<ffi.Uint8> target_key_agreement_public_key,
+  int target_key_agreement_public_key_length,
+  ffi.Pointer<ffi.Uint8> out_envelope,
+  int out_envelope_capacity,
+  ffi.Pointer<ffi.Size> out_envelope_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint64>,
+  )
+>()
+external int kelivo_account_root_key_envelope_open(
+  int target_identity_handle,
+  ffi.Pointer<ffi.Uint8> envelope,
+  int envelope_length,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  ffi.Pointer<ffi.Uint8> issuer_device_id,
+  int issuer_device_id_length,
+  ffi.Pointer<ffi.Uint8> target_device_id,
+  int target_device_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> issuer_signing_public_key,
+  int issuer_signing_public_key_length,
+  ffi.Pointer<ffi.Uint8> issuer_key_agreement_public_key,
+  int issuer_key_agreement_public_key_length,
+  ffi.Pointer<ffi.Uint8> target_signing_public_key,
+  int target_signing_public_key_length,
+  ffi.Pointer<ffi.Uint8> target_key_agreement_public_key,
+  int target_key_agreement_public_key_length,
+  ffi.Pointer<ffi.Uint64> out_ark_handle,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
     ffi.Pointer<ffi.Uint8>,
@@ -941,7 +1025,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 8;
+const int KELIVO_CORE_ABI_VERSION = 9;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 

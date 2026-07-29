@@ -658,6 +658,27 @@ unsafe fn prepare_fixed_output(
     Ok(())
 }
 
+unsafe fn prepare_zeroed_fixed_output(
+    output: *mut u8,
+    output_capacity: usize,
+    output_length: *mut usize,
+    expected_length: usize,
+) -> Result<(), KelivoStatus> {
+    unsafe { write_output(output_length, 0)? };
+    if output_capacity < expected_length {
+        if !output.is_null() && output_capacity != 0 {
+            unsafe { core::ptr::write_bytes(output, 0, output_capacity) };
+        }
+        unsafe { write_output(output_length, expected_length)? };
+        return Err(KelivoStatus::OutputBufferTooSmall);
+    }
+    if output.is_null() {
+        return Err(KelivoStatus::NullPointer);
+    }
+    unsafe { core::ptr::write_bytes(output, 0, expected_length) };
+    Ok(())
+}
+
 fn create_pending_pairing_at(
     identity: &crypto::DeviceIdentity,
     target_device_id: crypto::DeviceId,
@@ -1001,6 +1022,215 @@ pub extern "C" fn kelivo_account_root_key_handle_close(ark_handle: u64) -> i32 {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(status) => status.code(),
     }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// 所有输入指针必须覆盖声明长度；输出缓冲区和长度指针必须可写且互不重叠。
+pub unsafe extern "C" fn kelivo_account_root_key_envelope_seal(
+    issuer_identity_handle: u64,
+    ark_handle: u64,
+    user_id: *const u8,
+    user_id_length: usize,
+    issuer_device_id: *const u8,
+    issuer_device_id_length: usize,
+    target_device_id: *const u8,
+    target_device_id_length: usize,
+    key_epoch: u32,
+    target_signing_public_key: *const u8,
+    target_signing_public_key_length: usize,
+    target_key_agreement_public_key: *const u8,
+    target_key_agreement_public_key_length: usize,
+    out_envelope: *mut u8,
+    out_envelope_capacity: usize,
+    out_envelope_length: *mut usize,
+) -> i32 {
+    if let Err(status) = unsafe {
+        prepare_zeroed_fixed_output(
+            out_envelope,
+            out_envelope_capacity,
+            out_envelope_length,
+            crypto::ARK_ENVELOPE_LENGTH,
+        )
+    } {
+        return status.code();
+    }
+    if key_epoch == 0 {
+        return KelivoStatus::DeviceMessageInvalid.code();
+    }
+    let user_id = match unsafe { read_user_id(user_id, user_id_length) } {
+        Ok(user_id) => user_id,
+        Err(status) => return status.code(),
+    };
+    let issuer_device_id =
+        match unsafe { read_device_id(issuer_device_id, issuer_device_id_length) } {
+            Ok(device_id) => device_id,
+            Err(status) => return status.code(),
+        };
+    let target_device_id =
+        match unsafe { read_device_id(target_device_id, target_device_id_length) } {
+            Ok(device_id) => device_id,
+            Err(status) => return status.code(),
+        };
+    let target_public_keys = match unsafe {
+        read_public_keys(
+            target_signing_public_key,
+            target_signing_public_key_length,
+            target_key_agreement_public_key,
+            target_key_agreement_public_key_length,
+        )
+    } {
+        Ok(public_keys) => public_keys,
+        Err(status) => return status.code(),
+    };
+    let identity = match identity_for_handle(issuer_identity_handle) {
+        Ok(identity) => identity,
+        Err(status) => return status.code(),
+    };
+    let ark = match ark_for_handle(ark_handle) {
+        Ok(ark) => ark,
+        Err(status) => return status.code(),
+    };
+    let issuer_public_keys = identity.public_keys();
+    let mut rng = match protocol::system_rng() {
+        Ok(rng) => rng,
+        Err(_) => return KelivoStatus::RandomSourceFailure.code(),
+    };
+    let envelope = match identity.seal_ark_envelope(
+        &mut rng,
+        &ark,
+        crypto::ArkEnvelopeBinding {
+            user_id,
+            issuer_device_id,
+            target_device_id,
+            key_epoch,
+            issuer_signing_public_key: issuer_public_keys.signing,
+            issuer_key_agreement_public_key: issuer_public_keys.key_agreement,
+            target_signing_public_key: target_public_keys.signing,
+            target_key_agreement_public_key: target_public_keys.key_agreement,
+        },
+    ) {
+        Ok(envelope) => envelope,
+        Err(error) => return device_error_status(error).code(),
+    };
+    unsafe {
+        write_bytes(
+            out_envelope,
+            out_envelope_capacity,
+            envelope.as_bytes(),
+            out_envelope_length,
+        )
+        .expect("已清零且验证的 ARK 信封输出必须可写")
+    };
+    KelivoStatus::Ok.code()
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// 所有输入指针必须覆盖声明长度；`out_ark_handle` 必须指向可写的 `uint64_t`。
+pub unsafe extern "C" fn kelivo_account_root_key_envelope_open(
+    target_identity_handle: u64,
+    envelope: *const u8,
+    envelope_length: usize,
+    user_id: *const u8,
+    user_id_length: usize,
+    issuer_device_id: *const u8,
+    issuer_device_id_length: usize,
+    target_device_id: *const u8,
+    target_device_id_length: usize,
+    key_epoch: u32,
+    issuer_signing_public_key: *const u8,
+    issuer_signing_public_key_length: usize,
+    issuer_key_agreement_public_key: *const u8,
+    issuer_key_agreement_public_key_length: usize,
+    target_signing_public_key: *const u8,
+    target_signing_public_key_length: usize,
+    target_key_agreement_public_key: *const u8,
+    target_key_agreement_public_key_length: usize,
+    out_ark_handle: *mut u64,
+) -> i32 {
+    if let Err(status) = unsafe { reset_handle(out_ark_handle) } {
+        return status.code();
+    }
+    if key_epoch == 0 {
+        return KelivoStatus::DeviceMessageInvalid.code();
+    }
+    if envelope_length != crypto::ARK_ENVELOPE_LENGTH {
+        return KelivoStatus::DeviceMessageInvalid.code();
+    }
+    let envelope = match unsafe { read_input(envelope, envelope_length) } {
+        Ok(envelope) => envelope,
+        Err(status) => return status.code(),
+    };
+    let user_id = match unsafe { read_user_id(user_id, user_id_length) } {
+        Ok(user_id) => user_id,
+        Err(status) => return status.code(),
+    };
+    let issuer_device_id =
+        match unsafe { read_device_id(issuer_device_id, issuer_device_id_length) } {
+            Ok(device_id) => device_id,
+            Err(status) => return status.code(),
+        };
+    let target_device_id =
+        match unsafe { read_device_id(target_device_id, target_device_id_length) } {
+            Ok(device_id) => device_id,
+            Err(status) => return status.code(),
+        };
+    let issuer_public_keys = match unsafe {
+        read_public_keys(
+            issuer_signing_public_key,
+            issuer_signing_public_key_length,
+            issuer_key_agreement_public_key,
+            issuer_key_agreement_public_key_length,
+        )
+    } {
+        Ok(public_keys) => public_keys,
+        Err(status) => return status.code(),
+    };
+    let target_public_keys = match unsafe {
+        read_public_keys(
+            target_signing_public_key,
+            target_signing_public_key_length,
+            target_key_agreement_public_key,
+            target_key_agreement_public_key_length,
+        )
+    } {
+        Ok(public_keys) => public_keys,
+        Err(status) => return status.code(),
+    };
+    let identity = match identity_for_handle(target_identity_handle) {
+        Ok(identity) => identity,
+        Err(status) => return status.code(),
+    };
+    if identity.public_keys() != target_public_keys {
+        return KelivoStatus::DeviceAuthenticationFailed.code();
+    }
+    let ark = match identity.open_ark_envelope(
+        envelope,
+        crypto::ArkEnvelopeBinding {
+            user_id,
+            issuer_device_id,
+            target_device_id,
+            key_epoch,
+            issuer_signing_public_key: issuer_public_keys.signing,
+            issuer_key_agreement_public_key: issuer_public_keys.key_agreement,
+            target_signing_public_key: target_public_keys.signing,
+            target_key_agreement_public_key: target_public_keys.key_agreement,
+        },
+    ) {
+        Ok(ark) => ark,
+        Err(error) => return device_error_status(error).code(),
+    };
+    let ark_handle = match register_ark(ark) {
+        Ok(handle) => handle,
+        Err(status) => return status.code(),
+    };
+    unsafe {
+        write_output(out_ark_handle, ark_handle).expect("已验证的轮换 ARK 句柄输出必须可写")
+    };
+    KelivoStatus::Ok.code()
 }
 
 #[unsafe(no_mangle)]

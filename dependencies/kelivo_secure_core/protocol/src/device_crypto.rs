@@ -602,6 +602,15 @@ impl DeviceIdentity {
         seal_ark_envelope(rng, ark, binding, &self.signing)
     }
 
+    pub fn open_ark_envelope(
+        &self,
+        envelope: &[u8],
+        expected_binding: ArkEnvelopeBinding,
+    ) -> Result<AccountRootKey, DeviceCryptoError> {
+        let envelope = ArkEnvelope::from_bytes(envelope)?;
+        crate::device_crypto::open_ark_envelope(&envelope, expected_binding, &self.key_agreement)
+    }
+
     pub fn open_pairing_approval(
         &self,
         expected: PairingApprovalExpected,

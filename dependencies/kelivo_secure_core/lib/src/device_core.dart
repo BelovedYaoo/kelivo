@@ -189,6 +189,17 @@ final class KelivoDevicePublicKeys {
   final Uint8List keyAgreementPublicKey;
 }
 
+final class KelivoAccountRootKeyEnvelope {
+  factory KelivoAccountRootKeyEnvelope(Uint8List bytes) {
+    _requireLength(bytes, _accountKeyEnvelopeLength, 'bytes');
+    return KelivoAccountRootKeyEnvelope._(_immutableDeviceBytes(bytes));
+  }
+
+  const KelivoAccountRootKeyEnvelope._(this.bytes);
+
+  final Uint8List bytes;
+}
+
 final class KelivoDeviceStateAccountBinding {
   factory KelivoDeviceStateAccountBinding({
     required Uint8List userId,
@@ -362,6 +373,75 @@ extension KelivoDeviceCore on KelivoSecureCore {
         close: native.kelivo_account_root_key_handle_close,
         invalidStatus: KelivoSecureCoreStatus.invalidAccountRootKeyHandle,
       );
+
+  Future<KelivoAccountRootKeyEnvelope> sealAccountRootKeyEnvelope(
+    KelivoDeviceIdentityHandle issuerIdentity,
+    KelivoAccountRootKeyHandle ark, {
+    required Uint8List userId,
+    required Uint8List issuerDeviceId,
+    required Uint8List targetDeviceId,
+    required int keyEpoch,
+    required KelivoDevicePublicKeys targetPublicKeys,
+  }) async {
+    _validateUuidV4(userId, 'userId');
+    _validateUuidV4(issuerDeviceId, 'issuerDeviceId');
+    _validateUuidV4(targetDeviceId, 'targetDeviceId');
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    final handles = _beginDeviceHandlePair(issuerIdentity._state, ark._state);
+    try {
+      final envelope = await Isolate.run(
+        () => _sealAccountRootKeyEnvelope(
+          handles.$1,
+          handles.$2,
+          Uint8List.fromList(userId),
+          Uint8List.fromList(issuerDeviceId),
+          Uint8List.fromList(targetDeviceId),
+          keyEpoch,
+          Uint8List.fromList(targetPublicKeys.signingPublicKey),
+          Uint8List.fromList(targetPublicKeys.keyAgreementPublicKey),
+        ),
+      );
+      return KelivoAccountRootKeyEnvelope(envelope);
+    } finally {
+      _completeDeviceHandlePair(issuerIdentity._state, ark._state);
+    }
+  }
+
+  Future<KelivoAccountRootKeyHandle> openAccountRootKeyEnvelope(
+    KelivoDeviceIdentityHandle targetIdentity, {
+    required KelivoAccountRootKeyEnvelope envelope,
+    required Uint8List userId,
+    required Uint8List issuerDeviceId,
+    required Uint8List targetDeviceId,
+    required int keyEpoch,
+    required KelivoDevicePublicKeys issuerPublicKeys,
+    required KelivoDevicePublicKeys targetPublicKeys,
+  }) async {
+    _validateUuidV4(userId, 'userId');
+    _validateUuidV4(issuerDeviceId, 'issuerDeviceId');
+    _validateUuidV4(targetDeviceId, 'targetDeviceId');
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    final identityValue = targetIdentity._state.beginUse();
+    try {
+      final arkHandle = await Isolate.run(
+        () => _openAccountRootKeyEnvelope(
+          identityValue,
+          Uint8List.fromList(envelope.bytes),
+          Uint8List.fromList(userId),
+          Uint8List.fromList(issuerDeviceId),
+          Uint8List.fromList(targetDeviceId),
+          keyEpoch,
+          Uint8List.fromList(issuerPublicKeys.signingPublicKey),
+          Uint8List.fromList(issuerPublicKeys.keyAgreementPublicKey),
+          Uint8List.fromList(targetPublicKeys.signingPublicKey),
+          Uint8List.fromList(targetPublicKeys.keyAgreementPublicKey),
+        ),
+      );
+      return KelivoAccountRootKeyHandle._(arkHandle);
+    } finally {
+      targetIdentity._state.completeUse();
+    }
+  }
 
   Future<Uint8List> deriveAccountRecordId(
     KelivoAccountRootKeyHandle ark, {
@@ -1082,6 +1162,157 @@ Uint8List _deriveAccountRecordId(int arkHandle, Uint8List canonicalEntityKey) {
   } finally {
     _clearAndFree(entityKeyPointer, canonicalEntityKey.length);
     canonicalEntityKey.fillRange(0, canonicalEntityKey.length, 0);
+  }
+}
+
+Uint8List _sealAccountRootKeyEnvelope(
+  int issuerIdentityHandle,
+  int arkHandle,
+  Uint8List userId,
+  Uint8List issuerDeviceId,
+  Uint8List targetDeviceId,
+  int keyEpoch,
+  Uint8List targetSigningPublicKey,
+  Uint8List targetKeyAgreementPublicKey,
+) {
+  final userIdPointer = _copyToNative(userId);
+  final issuerDeviceIdPointer = _copyToNative(issuerDeviceId);
+  final targetDeviceIdPointer = _copyToNative(targetDeviceId);
+  final targetSigningKeyPointer = _copyToNative(targetSigningPublicKey);
+  final targetAgreementKeyPointer = _copyToNative(targetKeyAgreementPublicKey);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'account_root_key_envelope_seal',
+      expectedLength: _accountKeyEnvelopeLength,
+      call: (output, capacity, outputLength) =>
+          native.kelivo_account_root_key_envelope_seal(
+            issuerIdentityHandle,
+            arkHandle,
+            userIdPointer,
+            userId.length,
+            issuerDeviceIdPointer,
+            issuerDeviceId.length,
+            targetDeviceIdPointer,
+            targetDeviceId.length,
+            keyEpoch,
+            targetSigningKeyPointer,
+            targetSigningPublicKey.length,
+            targetAgreementKeyPointer,
+            targetKeyAgreementPublicKey.length,
+            output,
+            capacity,
+            outputLength,
+          ),
+    );
+  } finally {
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(issuerDeviceIdPointer, issuerDeviceId.length);
+    _clearAndFree(targetDeviceIdPointer, targetDeviceId.length);
+    _clearAndFree(targetSigningKeyPointer, targetSigningPublicKey.length);
+    _clearAndFree(
+      targetAgreementKeyPointer,
+      targetKeyAgreementPublicKey.length,
+    );
+    userId.fillRange(0, userId.length, 0);
+    issuerDeviceId.fillRange(0, issuerDeviceId.length, 0);
+    targetDeviceId.fillRange(0, targetDeviceId.length, 0);
+    targetSigningPublicKey.fillRange(0, targetSigningPublicKey.length, 0);
+    targetKeyAgreementPublicKey.fillRange(
+      0,
+      targetKeyAgreementPublicKey.length,
+      0,
+    );
+  }
+}
+
+int _openAccountRootKeyEnvelope(
+  int targetIdentityHandle,
+  Uint8List envelope,
+  Uint8List userId,
+  Uint8List issuerDeviceId,
+  Uint8List targetDeviceId,
+  int keyEpoch,
+  Uint8List issuerSigningPublicKey,
+  Uint8List issuerKeyAgreementPublicKey,
+  Uint8List targetSigningPublicKey,
+  Uint8List targetKeyAgreementPublicKey,
+) {
+  final envelopePointer = _copyToNative(envelope);
+  final userIdPointer = _copyToNative(userId);
+  final issuerDeviceIdPointer = _copyToNative(issuerDeviceId);
+  final targetDeviceIdPointer = _copyToNative(targetDeviceId);
+  final issuerSigningKeyPointer = _copyToNative(issuerSigningPublicKey);
+  final issuerAgreementKeyPointer = _copyToNative(issuerKeyAgreementPublicKey);
+  final targetSigningKeyPointer = _copyToNative(targetSigningPublicKey);
+  final targetAgreementKeyPointer = _copyToNative(targetKeyAgreementPublicKey);
+  final outputHandle = calloc<ffi.Uint64>();
+  var published = false;
+  try {
+    _throwOnError(
+      operation: 'account_root_key_envelope_open',
+      statusCode: native.kelivo_account_root_key_envelope_open(
+        targetIdentityHandle,
+        envelopePointer,
+        envelope.length,
+        userIdPointer,
+        userId.length,
+        issuerDeviceIdPointer,
+        issuerDeviceId.length,
+        targetDeviceIdPointer,
+        targetDeviceId.length,
+        keyEpoch,
+        issuerSigningKeyPointer,
+        issuerSigningPublicKey.length,
+        issuerAgreementKeyPointer,
+        issuerKeyAgreementPublicKey.length,
+        targetSigningKeyPointer,
+        targetSigningPublicKey.length,
+        targetAgreementKeyPointer,
+        targetKeyAgreementPublicKey.length,
+        outputHandle,
+      ),
+    );
+    if (outputHandle.value == native.KELIVO_DEVICE_INVALID_HANDLE) {
+      throw StateError('account_root_key_envelope_open 成功返回了无效 ARK 句柄');
+    }
+    published = true;
+    return outputHandle.value;
+  } finally {
+    if (!published &&
+        outputHandle.value != native.KELIVO_DEVICE_INVALID_HANDLE) {
+      native.kelivo_account_root_key_handle_close(outputHandle.value);
+    }
+    _clearAndFree(envelopePointer, envelope.length);
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(issuerDeviceIdPointer, issuerDeviceId.length);
+    _clearAndFree(targetDeviceIdPointer, targetDeviceId.length);
+    _clearAndFree(issuerSigningKeyPointer, issuerSigningPublicKey.length);
+    _clearAndFree(
+      issuerAgreementKeyPointer,
+      issuerKeyAgreementPublicKey.length,
+    );
+    _clearAndFree(targetSigningKeyPointer, targetSigningPublicKey.length);
+    _clearAndFree(
+      targetAgreementKeyPointer,
+      targetKeyAgreementPublicKey.length,
+    );
+    envelope.fillRange(0, envelope.length, 0);
+    userId.fillRange(0, userId.length, 0);
+    issuerDeviceId.fillRange(0, issuerDeviceId.length, 0);
+    targetDeviceId.fillRange(0, targetDeviceId.length, 0);
+    issuerSigningPublicKey.fillRange(0, issuerSigningPublicKey.length, 0);
+    issuerKeyAgreementPublicKey.fillRange(
+      0,
+      issuerKeyAgreementPublicKey.length,
+      0,
+    );
+    targetSigningPublicKey.fillRange(0, targetSigningPublicKey.length, 0);
+    targetKeyAgreementPublicKey.fillRange(
+      0,
+      targetKeyAgreementPublicKey.length,
+      0,
+    );
+    calloc.free(outputHandle);
   }
 }
 

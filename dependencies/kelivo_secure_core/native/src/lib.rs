@@ -20,13 +20,14 @@ pub use attachment::{
 };
 
 pub use device_core::{
-    KelivoDeviceStateBinding, kelivo_account_record_id_derive, kelivo_account_root_key_generate,
-    kelivo_account_root_key_handle_close, kelivo_device_identity_generate,
-    kelivo_device_identity_handle_close, kelivo_device_identity_public_keys,
-    kelivo_device_login_proof_sign, kelivo_device_pairing_approval_accept,
-    kelivo_device_pairing_approval_create, kelivo_device_registration_finish_create,
-    kelivo_device_state_open, kelivo_device_state_seal, kelivo_pending_pairing_bind,
-    kelivo_pending_pairing_handle_close, kelivo_pending_pairing_start,
+    KelivoDeviceStateBinding, kelivo_account_record_id_derive,
+    kelivo_account_root_key_envelope_open, kelivo_account_root_key_envelope_seal,
+    kelivo_account_root_key_generate, kelivo_account_root_key_handle_close,
+    kelivo_device_identity_generate, kelivo_device_identity_handle_close,
+    kelivo_device_identity_public_keys, kelivo_device_login_proof_sign,
+    kelivo_device_pairing_approval_accept, kelivo_device_pairing_approval_create,
+    kelivo_device_registration_finish_create, kelivo_device_state_open, kelivo_device_state_seal,
+    kelivo_pending_pairing_bind, kelivo_pending_pairing_handle_close, kelivo_pending_pairing_start,
 };
 pub use opaque_client::{
     kelivo_opaque_client_login_finish, kelivo_opaque_client_login_start,
@@ -43,7 +44,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 8;
+const ABI_VERSION: u32 = 9;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -3357,5 +3358,451 @@ mod tests {
             KelivoStatus::Ok.code()
         );
         assert_eq!(close_key_handle(key_handle), Ok(()));
+    }
+
+    fn seal_rotation_envelope(
+        issuer_identity: u64,
+        ark: u64,
+        user_id: &[u8; 16],
+        issuer_device_id: &[u8; 16],
+        target_device_id: &[u8; 16],
+        key_epoch: u32,
+        target_public_keys: &[u8; device_core::DEVICE_PUBLIC_KEYS_LENGTH],
+    ) -> [u8; crypto::ARK_ENVELOPE_LENGTH] {
+        let mut envelope = [0xa5_u8; crypto::ARK_ENVELOPE_LENGTH];
+        let mut envelope_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_root_key_envelope_seal(
+                    issuer_identity,
+                    ark,
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    issuer_device_id.as_ptr(),
+                    issuer_device_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    key_epoch,
+                    target_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    envelope.as_mut_ptr(),
+                    envelope.len(),
+                    &mut envelope_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(envelope_length, envelope.len());
+        envelope
+    }
+
+    #[test]
+    fn ark_rotation_envelope_round_trips_maximum_epoch_without_exporting_ark() {
+        let issuer_identity = generate_device_identity();
+        let target_identity = generate_device_identity();
+        let issuer_ark = generate_ark();
+        let issuer_public_keys = device_public_keys(issuer_identity);
+        let target_public_keys = device_public_keys(target_identity);
+        let user_id = account_id(0x91);
+        let issuer_device_id = account_id(0x92);
+        let target_device_id = account_id(0x93);
+        let envelope = seal_rotation_envelope(
+            issuer_identity,
+            issuer_ark,
+            &user_id,
+            &issuer_device_id,
+            &target_device_id,
+            u32::MAX,
+            &target_public_keys,
+        );
+
+        let mut opened_ark = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_root_key_envelope_open(
+                    target_identity,
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    issuer_device_id.as_ptr(),
+                    issuer_device_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    u32::MAX,
+                    issuer_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    issuer_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    &mut opened_ark,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert!(handle_has_tag(opened_ark, ACCOUNT_ROOT_KEY_HANDLE_TAG));
+
+        let canonical_key = b"chat-message/ark-rotation-proof";
+        let mut original_record_id = [0_u8; device_core::DERIVED_RECORD_ID_LENGTH];
+        let mut original_length = 0_usize;
+        let mut opened_record_id = [0_u8; device_core::DERIVED_RECORD_ID_LENGTH];
+        let mut opened_length = 0_usize;
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    issuer_ark,
+                    canonical_key.as_ptr(),
+                    canonical_key.len(),
+                    original_record_id.as_mut_ptr(),
+                    original_record_id.len(),
+                    &mut original_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    opened_ark,
+                    canonical_key.as_ptr(),
+                    canonical_key.len(),
+                    opened_record_id.as_mut_ptr(),
+                    opened_record_id.len(),
+                    &mut opened_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(original_length, original_record_id.len());
+        assert_eq!(opened_length, opened_record_id.len());
+        assert_eq!(opened_record_id, original_record_id);
+
+        assert_eq!(
+            kelivo_account_root_key_handle_close(opened_ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(issuer_ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(target_identity),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(issuer_identity),
+            KelivoStatus::Ok.code()
+        );
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn open_rotation_envelope(
+        identity: u64,
+        envelope: &[u8],
+        user_id: &[u8; 16],
+        issuer_device_id: &[u8; 16],
+        target_device_id: &[u8; 16],
+        key_epoch: u32,
+        issuer_public_keys: &[u8; device_core::DEVICE_PUBLIC_KEYS_LENGTH],
+        target_public_keys: &[u8; device_core::DEVICE_PUBLIC_KEYS_LENGTH],
+    ) -> (i32, u64) {
+        let mut output = u64::MAX;
+        let status = unsafe {
+            kelivo_account_root_key_envelope_open(
+                identity,
+                envelope.as_ptr(),
+                envelope.len(),
+                user_id.as_ptr(),
+                user_id.len(),
+                issuer_device_id.as_ptr(),
+                issuer_device_id.len(),
+                target_device_id.as_ptr(),
+                target_device_id.len(),
+                key_epoch,
+                issuer_public_keys.as_ptr(),
+                crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                issuer_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                target_public_keys.as_ptr(),
+                crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                &mut output,
+            )
+        };
+        (status, output)
+    }
+
+    #[test]
+    fn ark_rotation_envelope_rejects_binding_tampering_and_invalid_handles() {
+        let issuer_identity = generate_device_identity();
+        let target_identity = generate_device_identity();
+        let other_identity = generate_device_identity();
+        let issuer_ark = generate_ark();
+        let issuer_public_keys = device_public_keys(issuer_identity);
+        let target_public_keys = device_public_keys(target_identity);
+        let other_public_keys = device_public_keys(other_identity);
+        let user_id = account_id(0xa1);
+        let issuer_device_id = account_id(0xa2);
+        let target_device_id = account_id(0xa3);
+        let envelope = seal_rotation_envelope(
+            issuer_identity,
+            issuer_ark,
+            &user_id,
+            &issuer_device_id,
+            &target_device_id,
+            7,
+            &target_public_keys,
+        );
+
+        let mut undersized_output = [0xa5_u8; crypto::ARK_ENVELOPE_LENGTH - 1];
+        let mut required_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_root_key_envelope_seal(
+                    issuer_identity,
+                    issuer_ark,
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    issuer_device_id.as_ptr(),
+                    issuer_device_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    7,
+                    target_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    undersized_output.as_mut_ptr(),
+                    undersized_output.len(),
+                    &mut required_length,
+                )
+            },
+            KelivoStatus::OutputBufferTooSmall.code()
+        );
+        assert_eq!(required_length, crypto::ARK_ENVELOPE_LENGTH);
+        assert!(undersized_output.iter().all(|byte| *byte == 0));
+
+        for (identity, ark, epoch, expected_status) in [
+            (
+                issuer_identity,
+                issuer_identity,
+                7,
+                KelivoStatus::InvalidAccountRootKeyHandle,
+            ),
+            (
+                issuer_ark,
+                issuer_ark,
+                7,
+                KelivoStatus::InvalidDeviceIdentityHandle,
+            ),
+            (
+                issuer_identity,
+                issuer_ark,
+                0,
+                KelivoStatus::DeviceMessageInvalid,
+            ),
+        ] {
+            let mut rejected_envelope = [0xa5_u8; crypto::ARK_ENVELOPE_LENGTH];
+            let mut rejected_length = usize::MAX;
+            assert_eq!(
+                unsafe {
+                    kelivo_account_root_key_envelope_seal(
+                        identity,
+                        ark,
+                        user_id.as_ptr(),
+                        user_id.len(),
+                        issuer_device_id.as_ptr(),
+                        issuer_device_id.len(),
+                        target_device_id.as_ptr(),
+                        target_device_id.len(),
+                        epoch,
+                        target_public_keys.as_ptr(),
+                        crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                        target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                        crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                        rejected_envelope.as_mut_ptr(),
+                        rejected_envelope.len(),
+                        &mut rejected_length,
+                    )
+                },
+                expected_status.code()
+            );
+            assert_eq!(rejected_length, 0);
+            assert!(rejected_envelope.iter().all(|byte| *byte == 0));
+        }
+
+        let changed_bindings = [
+            (account_id(0xb1), issuer_device_id, target_device_id, 7),
+            (user_id, account_id(0xb2), target_device_id, 7),
+            (user_id, issuer_device_id, account_id(0xb3), 7),
+            (user_id, issuer_device_id, target_device_id, 8),
+        ];
+        for (candidate_user, candidate_issuer, candidate_target, candidate_epoch) in
+            changed_bindings
+        {
+            let (status, output) = open_rotation_envelope(
+                target_identity,
+                &envelope,
+                &candidate_user,
+                &candidate_issuer,
+                &candidate_target,
+                candidate_epoch,
+                &issuer_public_keys,
+                &target_public_keys,
+            );
+            assert_eq!(status, KelivoStatus::DeviceAuthenticationFailed.code());
+            assert_eq!(output, INVALID_KEY_HANDLE);
+        }
+
+        let mut wrong_issuer_signing = issuer_public_keys;
+        wrong_issuer_signing[..crypto::DEVICE_PUBLIC_KEY_LENGTH]
+            .copy_from_slice(&other_public_keys[..crypto::DEVICE_PUBLIC_KEY_LENGTH]);
+        let mut wrong_issuer_agreement = issuer_public_keys;
+        wrong_issuer_agreement[crypto::DEVICE_PUBLIC_KEY_LENGTH..]
+            .copy_from_slice(&other_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..]);
+        let mut wrong_target_signing = target_public_keys;
+        wrong_target_signing[..crypto::DEVICE_PUBLIC_KEY_LENGTH]
+            .copy_from_slice(&other_public_keys[..crypto::DEVICE_PUBLIC_KEY_LENGTH]);
+        let mut wrong_target_agreement = target_public_keys;
+        wrong_target_agreement[crypto::DEVICE_PUBLIC_KEY_LENGTH..]
+            .copy_from_slice(&other_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..]);
+        for (candidate_issuer_keys, candidate_target_keys) in [
+            (&wrong_issuer_signing, &target_public_keys),
+            (&wrong_issuer_agreement, &target_public_keys),
+            (&issuer_public_keys, &wrong_target_signing),
+            (&issuer_public_keys, &wrong_target_agreement),
+        ] {
+            let (status, output) = open_rotation_envelope(
+                target_identity,
+                &envelope,
+                &user_id,
+                &issuer_device_id,
+                &target_device_id,
+                7,
+                candidate_issuer_keys,
+                candidate_target_keys,
+            );
+            assert_eq!(status, KelivoStatus::DeviceAuthenticationFailed.code());
+            assert_eq!(output, INVALID_KEY_HANDLE);
+        }
+
+        let mut tampered_envelope = envelope;
+        tampered_envelope[crypto::ARK_ENVELOPE_LENGTH - 1] ^= 1;
+        for (identity, candidate_envelope, expected_status) in [
+            (
+                target_identity,
+                tampered_envelope.as_slice(),
+                KelivoStatus::DeviceAuthenticationFailed,
+            ),
+            (
+                target_identity,
+                &envelope[..crypto::ARK_ENVELOPE_LENGTH - 1],
+                KelivoStatus::DeviceMessageInvalid,
+            ),
+            (
+                issuer_ark,
+                envelope.as_slice(),
+                KelivoStatus::InvalidDeviceIdentityHandle,
+            ),
+            (
+                other_identity,
+                envelope.as_slice(),
+                KelivoStatus::DeviceAuthenticationFailed,
+            ),
+        ] {
+            let (status, output) = open_rotation_envelope(
+                identity,
+                candidate_envelope,
+                &user_id,
+                &issuer_device_id,
+                &target_device_id,
+                7,
+                &issuer_public_keys,
+                &target_public_keys,
+            );
+            assert_eq!(status, expected_status.code());
+            assert_eq!(output, INVALID_KEY_HANDLE);
+        }
+
+        let invalid_uuid = [0_u8; 16];
+        for (candidate_user, epoch) in [(invalid_uuid, 7), (user_id, 0)] {
+            let (status, output) = open_rotation_envelope(
+                target_identity,
+                &envelope,
+                &candidate_user,
+                &issuer_device_id,
+                &target_device_id,
+                epoch,
+                &issuer_public_keys,
+                &target_public_keys,
+            );
+            assert_eq!(status, KelivoStatus::DeviceMessageInvalid.code());
+            assert_eq!(output, INVALID_KEY_HANDLE);
+        }
+
+        let mut invalid_key_output = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_root_key_envelope_open(
+                    target_identity,
+                    envelope.as_ptr(),
+                    envelope.len(),
+                    user_id.as_ptr(),
+                    user_id.len(),
+                    issuer_device_id.as_ptr(),
+                    issuer_device_id.len(),
+                    target_device_id.as_ptr(),
+                    target_device_id.len(),
+                    7,
+                    issuer_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH - 1,
+                    issuer_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys.as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    target_public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..].as_ptr(),
+                    crypto::DEVICE_PUBLIC_KEY_LENGTH,
+                    &mut invalid_key_output,
+                )
+            },
+            KelivoStatus::DeviceMessageInvalid.code()
+        );
+        assert_eq!(invalid_key_output, INVALID_KEY_HANDLE);
+
+        assert_eq!(
+            kelivo_device_identity_handle_close(target_identity),
+            KelivoStatus::Ok.code()
+        );
+        let (status, output) = open_rotation_envelope(
+            target_identity,
+            &envelope,
+            &user_id,
+            &issuer_device_id,
+            &target_device_id,
+            7,
+            &issuer_public_keys,
+            &target_public_keys,
+        );
+        assert_eq!(status, KelivoStatus::InvalidDeviceIdentityHandle.code());
+        assert_eq!(output, INVALID_KEY_HANDLE);
+
+        assert_eq!(
+            kelivo_account_root_key_handle_close(issuer_ark),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(other_identity),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(issuer_identity),
+            KelivoStatus::Ok.code()
+        );
     }
 }

@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(8)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(9)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -562,6 +562,55 @@ KELIVO_CORE_API KelivoStatus kelivo_account_record_id_derive(
 
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_handle_close(
     uint64_t ark_handle);
+
+/*
+ * 签发设备将不透明 ARK 封装给任意目标设备。签发公钥由 identity_handle
+ * 内部取得；调用方只提供目标公钥与完整可信绑定。成功固定输出 336 字节；
+ * 其他验证失败将保持长度为零并清零可写输出，容量不足返回所需长度 336。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_root_key_envelope_seal(
+    uint64_t issuer_identity_handle,
+    uint64_t ark_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *issuer_device_id,
+    size_t issuer_device_id_length,
+    const uint8_t *target_device_id,
+    size_t target_device_id_length,
+    uint32_t key_epoch,
+    const uint8_t *target_signing_public_key,
+    size_t target_signing_public_key_length,
+    const uint8_t *target_key_agreement_public_key,
+    size_t target_key_agreement_public_key_length,
+    uint8_t *out_envelope,
+    size_t out_envelope_capacity,
+    size_t *out_envelope_length);
+
+/*
+ * 目标 identity 使用调用方提供的预期账户、设备、epoch 与双方公钥先验证
+ * 336 字节信封的签名和完整绑定，再开启为新的不透明 ARK 句柄。目标公钥
+ * 必须与 identity_handle 一致；任何失败都将输出句柄保持为零。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_root_key_envelope_open(
+    uint64_t target_identity_handle,
+    const uint8_t *envelope,
+    size_t envelope_length,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    const uint8_t *issuer_device_id,
+    size_t issuer_device_id_length,
+    const uint8_t *target_device_id,
+    size_t target_device_id_length,
+    uint32_t key_epoch,
+    const uint8_t *issuer_signing_public_key,
+    size_t issuer_signing_public_key_length,
+    const uint8_t *issuer_key_agreement_public_key,
+    size_t issuer_key_agreement_public_key_length,
+    const uint8_t *target_signing_public_key,
+    size_t target_signing_public_key_length,
+    const uint8_t *target_key_agreement_public_key,
+    size_t target_key_agreement_public_key_length,
+    uint64_t *out_ark_handle);
 
 /*
  * 对严格 80 字节 CredentialFinalization 生成 LoginFinish KDPF 签名。

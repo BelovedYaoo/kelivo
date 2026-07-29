@@ -24,10 +24,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v8 OPAQUE、设备 E2EE 与附件加密支持', () async {
+  test('能力门禁声明 ABI v9 OPAQUE、设备 E2EE 与附件加密支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 8);
+    expect(capabilities.abiVersion, 9);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -254,6 +254,199 @@ void main() {
       core.deriveAccountRecordId(ark, canonicalEntityKey: canonicalKey),
       throwsStateError,
     );
+  });
+
+  test('ARK 轮换信封严格绑定双方设备并保持句柄生命周期关闭', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final issuerIdentity = await core.generateDeviceIdentity();
+    final targetIdentity = await core.generateDeviceIdentity();
+    final otherIdentity = await core.generateDeviceIdentity();
+    final ark = await core.generateAccountRootKey();
+    final issuerPublicKeys = await core.readDevicePublicKeys(issuerIdentity);
+    final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
+    final otherPublicKeys = await core.readDevicePublicKeys(otherIdentity);
+    final userId = accountId(0x61);
+    final issuerDeviceId = accountId(0x62);
+    final targetDeviceId = accountId(0x63);
+    const keyEpoch = 0xffffffff;
+
+    final sealing = core.sealAccountRootKeyEnvelope(
+      issuerIdentity,
+      ark,
+      userId: userId,
+      issuerDeviceId: issuerDeviceId,
+      targetDeviceId: targetDeviceId,
+      keyEpoch: keyEpoch,
+      targetPublicKeys: targetPublicKeys,
+    );
+    await expectLater(core.closeAccountRootKey(ark), throwsStateError);
+    final envelope = await sealing;
+    expect(envelope.bytes, hasLength(336));
+    expect(
+      () => KelivoAccountRootKeyEnvelope(Uint8List(335)),
+      throwsArgumentError,
+    );
+
+    final opening = core.openAccountRootKeyEnvelope(
+      targetIdentity,
+      envelope: envelope,
+      userId: userId,
+      issuerDeviceId: issuerDeviceId,
+      targetDeviceId: targetDeviceId,
+      keyEpoch: keyEpoch,
+      issuerPublicKeys: issuerPublicKeys,
+      targetPublicKeys: targetPublicKeys,
+    );
+    await expectLater(
+      core.closeDeviceIdentity(targetIdentity),
+      throwsStateError,
+    );
+    final openedArk = await opening;
+    final canonicalKey = Uint8List.fromList(
+      'chat-message/ark-rotation-proof'.codeUnits,
+    );
+    expect(
+      await core.deriveAccountRecordId(
+        openedArk,
+        canonicalEntityKey: canonicalKey,
+      ),
+      orderedEquals(
+        await core.deriveAccountRecordId(ark, canonicalEntityKey: canonicalKey),
+      ),
+    );
+
+    final authenticationFailure = throwsA(
+      isA<KelivoSecureCoreException>().having(
+        (error) => error.status,
+        'status',
+        KelivoSecureCoreStatus.deviceAuthenticationFailed,
+      ),
+    );
+    await expectLater(
+      core.openAccountRootKeyEnvelope(
+        targetIdentity,
+        envelope: envelope,
+        userId: accountId(0x64),
+        issuerDeviceId: issuerDeviceId,
+        targetDeviceId: targetDeviceId,
+        keyEpoch: keyEpoch,
+        issuerPublicKeys: issuerPublicKeys,
+        targetPublicKeys: targetPublicKeys,
+      ),
+      authenticationFailure,
+    );
+    await expectLater(
+      core.openAccountRootKeyEnvelope(
+        targetIdentity,
+        envelope: envelope,
+        userId: userId,
+        issuerDeviceId: issuerDeviceId,
+        targetDeviceId: targetDeviceId,
+        keyEpoch: keyEpoch,
+        issuerPublicKeys: otherPublicKeys,
+        targetPublicKeys: targetPublicKeys,
+      ),
+      authenticationFailure,
+    );
+    await expectLater(
+      core.openAccountRootKeyEnvelope(
+        targetIdentity,
+        envelope: envelope,
+        userId: userId,
+        issuerDeviceId: issuerDeviceId,
+        targetDeviceId: targetDeviceId,
+        keyEpoch: keyEpoch,
+        issuerPublicKeys: issuerPublicKeys,
+        targetPublicKeys: otherPublicKeys,
+      ),
+      authenticationFailure,
+    );
+    await expectLater(
+      core.openAccountRootKeyEnvelope(
+        otherIdentity,
+        envelope: envelope,
+        userId: userId,
+        issuerDeviceId: issuerDeviceId,
+        targetDeviceId: targetDeviceId,
+        keyEpoch: keyEpoch,
+        issuerPublicKeys: issuerPublicKeys,
+        targetPublicKeys: targetPublicKeys,
+      ),
+      authenticationFailure,
+    );
+    final tamperedBytes = Uint8List.fromList(envelope.bytes);
+    tamperedBytes[tamperedBytes.length - 1] ^= 1;
+    await expectLater(
+      core.openAccountRootKeyEnvelope(
+        targetIdentity,
+        envelope: KelivoAccountRootKeyEnvelope(tamperedBytes),
+        userId: userId,
+        issuerDeviceId: issuerDeviceId,
+        targetDeviceId: targetDeviceId,
+        keyEpoch: keyEpoch,
+        issuerPublicKeys: issuerPublicKeys,
+        targetPublicKeys: targetPublicKeys,
+      ),
+      authenticationFailure,
+    );
+
+    await expectLater(
+      core.sealAccountRootKeyEnvelope(
+        issuerIdentity,
+        ark,
+        userId: Uint8List(16),
+        issuerDeviceId: issuerDeviceId,
+        targetDeviceId: targetDeviceId,
+        keyEpoch: keyEpoch,
+        targetPublicKeys: targetPublicKeys,
+      ),
+      throwsArgumentError,
+    );
+    for (final invalidEpoch in [0, 0x100000000]) {
+      await expectLater(
+        core.sealAccountRootKeyEnvelope(
+          issuerIdentity,
+          ark,
+          userId: userId,
+          issuerDeviceId: issuerDeviceId,
+          targetDeviceId: targetDeviceId,
+          keyEpoch: invalidEpoch,
+          targetPublicKeys: targetPublicKeys,
+        ),
+        throwsArgumentError,
+      );
+    }
+
+    await core.closeAccountRootKey(openedArk);
+    await core.closeDeviceIdentity(targetIdentity);
+    await expectLater(
+      core.openAccountRootKeyEnvelope(
+        targetIdentity,
+        envelope: envelope,
+        userId: userId,
+        issuerDeviceId: issuerDeviceId,
+        targetDeviceId: targetDeviceId,
+        keyEpoch: keyEpoch,
+        issuerPublicKeys: issuerPublicKeys,
+        targetPublicKeys: targetPublicKeys,
+      ),
+      throwsStateError,
+    );
+    await core.closeAccountRootKey(ark);
+    await expectLater(
+      core.sealAccountRootKeyEnvelope(
+        issuerIdentity,
+        ark,
+        userId: userId,
+        issuerDeviceId: issuerDeviceId,
+        targetDeviceId: targetDeviceId,
+        keyEpoch: keyEpoch,
+        targetPublicKeys: targetPublicKeys,
+      ),
+      throwsStateError,
+    );
+    await core.closeDeviceIdentity(otherIdentity);
+    await core.closeDeviceIdentity(issuerIdentity);
   });
 
   test('账户根密钥记录可跨句柄互解并严格绑定上下文', () async {
