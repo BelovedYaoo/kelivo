@@ -596,8 +596,6 @@ final class CloudSyncClient
               membershipCommit.expectedSecurityGeneration
           ..expectedMembershipManifestDigest =
               membershipCommit.expectedMembershipManifestDigest.encoded
-          ..nextMembershipManifestVersion =
-              membershipCommit.nextMembershipManifestVersion
           ..nextMembershipManifest = _encodeBinaryForRequest(
             membershipCommit.nextMembershipManifest,
           )
@@ -690,7 +688,9 @@ final class CloudSyncClient
         (builder) => builder
           ..mutationId = request.mutationId
           ..attachmentId = request.attachmentId
-          ..keyEpoch = request.keyEpoch
+          ..chunkKeyEpoch = request.keyEpoch
+          ..manifestKeyEpoch = request.keyEpoch
+          ..manifestRevision = 1
           ..chunkCount = request.chunkCount
           ..totalCiphertextBytes = request.totalCiphertextBytes,
       );
@@ -713,8 +713,12 @@ final class CloudSyncClient
       final identity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
+      if (data.manifestKeyEpoch != request.keyEpoch ||
+          data.manifestRevision != 1) {
+        throw const FormatException('服务端返回的附件清单身份与请求不一致');
+      }
       _requireAttachmentCreateResponseMatches(
         request: request,
         identity: identity,
@@ -742,7 +746,7 @@ final class CloudSyncClient
           ..mutationId = request.mutationId
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch
+          ..chunkKeyEpoch = identity.keyEpoch
           ..chunkIndex = request.chunk.chunkIndex
           ..ciphertext = _encodeSyncCiphertext(request.ciphertext),
       );
@@ -762,6 +766,7 @@ final class CloudSyncClient
       if (data.status.name != 'stored' ||
           data.attachmentId != identity.attachmentId ||
           data.uploadId != identity.uploadId ||
+          data.chunkKeyEpoch != identity.keyEpoch ||
           data.chunkIndex != request.chunk.chunkIndex ||
           data.ciphertextBytes != request.ciphertext.length) {
         throw const FormatException('服务端返回的附件分块写入结果与请求不一致');
@@ -785,7 +790,8 @@ final class CloudSyncClient
           ..mutationId = request.mutationId
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch
+          ..manifestKeyEpoch = identity.keyEpoch
+          ..manifestRevision = 1
           ..manifestCiphertext = _encodeSyncCiphertext(
             request.manifestCiphertext,
           )
@@ -807,9 +813,11 @@ final class CloudSyncClient
       final responseIdentity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
-      if (data.status.name != 'committed') {
+      if (data.status.name != 'committed' ||
+          data.manifestKeyEpoch != identity.keyEpoch ||
+          data.manifestRevision != 1) {
         throw const FormatException('服务端返回了未知的附件提交状态');
       }
       _requireMatchingAttachmentIdentity(identity, responseIdentity);
@@ -830,7 +838,8 @@ final class CloudSyncClient
         (builder) => builder
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch,
+          ..manifestKeyEpoch = identity.keyEpoch
+          ..manifestRevision = 1,
       );
       final response = await _client
           .getSyncAttachmentApi()
@@ -849,9 +858,13 @@ final class CloudSyncClient
       final responseIdentity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
       _requireMatchingAttachmentIdentity(identity, responseIdentity);
+      if (data.manifestKeyEpoch != identity.keyEpoch ||
+          data.manifestRevision != 1) {
+        throw const FormatException('服务端返回了其他附件清单版本');
+      }
       final manifestCiphertext = _decodeCanonicalAttachmentCiphertext(
         data.manifestCiphertext,
         expectedLength: data.manifestCiphertextBytes,
@@ -887,7 +900,7 @@ final class CloudSyncClient
         (builder) => builder
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch
+          ..chunkKeyEpoch = identity.keyEpoch
           ..chunkIndex = chunk.chunkIndex,
       );
       final response = await _client
@@ -906,7 +919,7 @@ final class CloudSyncClient
       final responseIdentity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
       _requireMatchingAttachmentIdentity(identity, responseIdentity);
       if (data.chunkIndex != chunk.chunkIndex) {
@@ -937,7 +950,8 @@ final class CloudSyncClient
           ..mutationId = request.mutationId
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch,
+          ..manifestKeyEpoch = identity.keyEpoch
+          ..manifestRevision = 1,
       );
       final response = await _client
           .getSyncAttachmentApi()
@@ -955,9 +969,11 @@ final class CloudSyncClient
       final responseIdentity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
-      if (data.status.name != 'deleted') {
+      if (data.status.name != 'deleted' ||
+          data.manifestKeyEpoch != identity.keyEpoch ||
+          data.manifestRevision != 1) {
         throw const FormatException('服务端返回了未知的附件删除状态');
       }
       _requireMatchingAttachmentIdentity(identity, responseIdentity);
@@ -1690,7 +1706,7 @@ CloudSyncAuthenticatedSession _authenticatedSessionFromRegistration(
   return _authenticatedSession(
     token: data.token,
     tokenExpiresAt: data.tokenExpiresAt,
-    keyEpoch: data.keyEpoch,
+    keyEpoch: data.securityState.keyEpoch,
     userId: data.user.id,
     loginName: data.user.loginName,
     displayName: data.user.displayName,
@@ -2097,7 +2113,9 @@ const _attachmentResponseEnvelopeKeys = <String>{'data'};
 const _attachmentUploadResponseKeys = <String>{
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'chunkCount',
   'totalCiphertextBytes',
   'status',
@@ -2106,6 +2124,7 @@ const _attachmentUploadResponseKeys = <String>{
 const _attachmentStoredChunkResponseKeys = <String>{
   'attachmentId',
   'uploadId',
+  'chunkKeyEpoch',
   'chunkIndex',
   'ciphertextBytes',
   'status',
@@ -2113,14 +2132,19 @@ const _attachmentStoredChunkResponseKeys = <String>{
 const _attachmentCommittedResponseKeys = <String>{
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'status',
   'committedAt',
 };
 const _attachmentManifestResponseKeys = <String>{
+  'dataRekeyPhase',
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'chunkCount',
   'totalCiphertextBytes',
   'manifestCiphertext',
@@ -2129,9 +2153,10 @@ const _attachmentManifestResponseKeys = <String>{
   'committedAt',
 };
 const _attachmentChunkResponseKeys = <String>{
+  'dataRekeyPhase',
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
   'chunkIndex',
   'ciphertext',
   'ciphertextBytes',
@@ -2139,7 +2164,9 @@ const _attachmentChunkResponseKeys = <String>{
 const _attachmentDeletedResponseKeys = <String>{
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'status',
   'deletedAt',
 };
