@@ -17,7 +17,7 @@
 
 ## 结果
 
-- 已补齐结算后截止的所有权转移、迟到内容取得结算屏障、严格 `runtime -> account -> workspace` 单次释放，以及迟到清理失败的异步错误上报；密钥世代阻塞会向平台返回失败。
-- Android 使用独立调度线程保证取消后 4 秒内结算平台任务；iOS Operation 与 legacy fetch 各自保证 4 秒硬终态，平台完成不再等待主线程引擎销毁。iOS 最低版本保持 14。
+- 已补齐结算后截止的所有权转移、迟到内容取得结算屏障、严格 `runtime -> account -> workspace` 单次释放；有界清理失败会在 Runner 返回前同步调用现有错误上报，密钥世代阻塞会向平台返回失败。
+- Android 使用独立调度线程保证取消后 4 秒内结算平台任务；iOS Operation 与 legacy fetch 共用单一 `pending/executing/terminal` 生命周期状态机，各自保证 4 秒硬终态，平台完成不再等待主线程引擎销毁。iOS 最低版本保持 14。
 - 生产 Runner 工厂继续返回 `null`；schema 21 原子验证绑定完成前不启用真实后台内容同步，Issue #56 保持开启。
-- 验证通过：专项测试 83/83、`flutter analyze lib`、改动测试文件分析、四个 Workmanager 包分析、Android debug APK 构建和最终原生契约测试。根目录全量分析仍受既有 #33 影响；根目录全量测试命中既有 #53 挂起后已停止并清理残留进程。Windows 无法执行 Xcode/iOS 实机构建，仍需 macOS CI 或真机覆盖。
+- 验证通过：专项测试 84/84、`flutter analyze lib`、改动测试文件分析、四个 Workmanager 包分析、Android debug APK 构建和原生静态接线契约。根目录全量分析仍受既有 #33 影响；根目录全量测试命中既有 #53 挂起后已停止并清理残留进程。Windows 无法执行 Xcode/iOS 生命周期竞态或实机构建，静态字符串断言不替代该覆盖，仍需 macOS CI 或真机验证。

@@ -485,28 +485,24 @@ final class E2eeSyncExecutionBudget {
     try {
       await release(value);
     } catch (error, stackTrace) {
-      unawaited(
-        Future<void>(() {
-          try {
-            FlutterError.reportError(
-              FlutterErrorDetails(
-                exception: error,
-                stack: stackTrace,
-                library: 'Kelivo E2EE 后台同步',
-                context: ErrorDescription('释放截止后才返回的后台同步所有权失败'),
-              ),
-            );
-          } catch (reportError, reportStackTrace) {
-            developer.log(
-              '上报后台同步迟到所有权释放失败时发生异常',
-              name: 'Kelivo.E2eeSyncExecutionBudget',
-              level: 1000,
-              error: reportError,
-              stackTrace: reportStackTrace,
-            );
-          }
-        }),
-      );
+      try {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'Kelivo E2EE 后台同步',
+            context: ErrorDescription('释放截止后才返回的后台同步所有权失败'),
+          ),
+        );
+      } catch (reportError, reportStackTrace) {
+        developer.log(
+          '上报后台同步迟到所有权释放失败时发生异常',
+          name: 'Kelivo.E2eeSyncExecutionBudget',
+          level: 1000,
+          error: reportError,
+          stackTrace: reportStackTrace,
+        );
+      }
     }
   }
 

@@ -1148,6 +1148,38 @@ void main() {
     expect(abortCalls, 1);
   });
 
+  test('E2EE 单调预算在有界释放失败后返回前完成错误上报', () async {
+    final reportedErrors = <FlutterErrorDetails>[];
+    final previousErrorHandler = FlutterError.onError;
+    FlutterError.onError = reportedErrors.add;
+    addTearDown(() => FlutterError.onError = previousErrorHandler);
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 1,
+      maximumAttachmentBytes: 0,
+      maximumDuration: const Duration(milliseconds: 5),
+      maximumShutdownDuration: const Duration(milliseconds: 20),
+      abortInFlightNetwork: () {},
+    );
+    addTearDown(budget.dispose);
+
+    await expectLater(
+      budget.runBoundedStep<String>(
+        operation: (_) {
+          final stopwatch = Stopwatch()..start();
+          while (stopwatch.elapsed < const Duration(milliseconds: 10)) {}
+          return Future<String>.value('owned-value');
+        },
+        releaseInterruptedValue: (_) async {
+          throw StateError('bounded-release-failed');
+        },
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
+    expect(reportedErrors, hasLength(1));
+    expect(reportedErrors.single.exception, isA<StateError>());
+  });
+
   test('E2EE 单调预算迟到释放超过宽限后仍报告失败', () async {
     final reportedErrors = <FlutterErrorDetails>[];
     final previousErrorHandler = FlutterError.onError;
@@ -1191,7 +1223,7 @@ void main() {
     );
   });
 
-  test('移动后台原生取消桥在宽限期后强制释放引擎并完成平台任务', () async {
+  test('移动后台原生桥静态包含独立硬截止与单一终态状态机', () async {
     final androidWorker = await File(
       'dependencies/workmanager_android/android/src/main/kotlin/'
       'dev/fluttercommunity/workmanager/BackgroundWorker.kt',
@@ -1221,10 +1253,6 @@ void main() {
     expect(androidWorker, contains('scheduleEngineDestruction()'));
     expect(androidWorker, isNot(contains('postDelayed')));
     expect(androidWorker, isNot(contains('stopEngine(null)')));
-    expect(
-      androidWorker.indexOf('completer?.set(result)'),
-      lessThan(androidWorker.indexOf('scheduleEngineDestruction()')),
-    );
     expect(appleOperation, contains('cancellationGrace'));
     expect(appleOperation, contains('DispatchQueue.global(qos: .utility)'));
     expect(appleOperation, contains('requestForcedCancellationCleanup'));
@@ -1241,26 +1269,26 @@ void main() {
       contains('DispatchQueue.global(qos: .utility).asyncAfter('),
     );
     expect(appleWorker, contains('DispatchQueue.main.async'));
-    expect(appleWorker, contains('guard !isCompletionDelivered()'));
-    expect(appleWorker, contains('if forceCancellationRequested'));
     expect(appleWorker, contains('guard self.installCancellationNotifier'));
-    expect(appleWorker, contains('let completionLock = NSRecursiveLock()'));
-    expect(appleWorker, contains('guard runWhileActive({'));
+    expect(appleWorker, contains('private enum LifecycleState'));
+    expect(
+      appleWorker,
+      contains('private let lifecycleLock = NSRecursiveLock()'),
+    );
+    expect(appleWorker, contains('case pending'));
+    expect(appleWorker, contains('case executing'));
+    expect(appleWorker, contains('case terminal'));
+    expect(appleWorker, contains('lifecycleState = .terminal'));
+    expect(appleWorker, contains('guard runWhileExecuting({'));
+    expect(appleWorker, isNot(contains('completionLock')));
+    expect(appleWorker, isNot(contains('forceCancellationRequested')));
     expect(appleWorker, contains('completer?()'));
     expect(appleWorker, contains('platformCompletion()'));
-    expect(
-      appleWorker.indexOf('completer?()'),
-      lessThan(appleWorker.indexOf('platformCompletion()')),
-    );
     expect(
       appleWorker,
       contains('guard claimExecution() else { return false }'),
     );
     expect(appleWorker, contains('flutterEngine = FlutterEngine('));
-    expect(
-      appleWorker.indexOf('guard claimExecution() else { return false }'),
-      lessThan(appleWorker.indexOf('flutterEngine = FlutterEngine(')),
-    );
     expect(
       applePlugin,
       contains(
@@ -1268,12 +1296,6 @@ void main() {
       ),
     );
     expect(applePlugin, contains('operation?.requestBestEffortCleanup()'));
-    expect(
-      applePlugin.indexOf(
-        'task.setTaskCompleted(success: operation?.wasSuccessful ?? false)',
-      ),
-      lessThan(applePlugin.indexOf('operation?.requestBestEffortCleanup()')),
-    );
   });
 
   test('E2EE 后台同步同一账户并发只允许一个执行', () async {

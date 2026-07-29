@@ -52,15 +52,20 @@ class BackgroundWorker {
 
     private static let legacyFetchHardBound: TimeInterval = 4
 
+    private enum LifecycleState {
+        case pending
+        case executing
+        case terminal
+    }
+
     let backgroundMode: BackgroundMode
     let flutterPluginRegistrantCallback: FlutterPluginRegistrantCallback?
     let inputData: [String: Any]?
-    private let cancellationLock = NSLock()
+    private let lifecycleLock = NSRecursiveLock()
+    private var lifecycleState = LifecycleState.pending
     private var cancellationRequested = false
     private var cancellationNotifier: (() -> Void)?
-    private var forceCancellationRequested = false
     private var forceCancellationCompleter: (() -> Void)?
-    private var executionClaimed = false
     private var bestEffortCleanup: (() -> Void)?
     private var cleanupRequested = false
     private var cleanupReady = false
@@ -77,10 +82,10 @@ class BackgroundWorker {
 
     func requestCancellation() {
         let notifier: (() -> Void)?
-        cancellationLock.lock()
+        lifecycleLock.lock()
         cancellationRequested = true
         notifier = cancellationNotifier
-        cancellationLock.unlock()
+        lifecycleLock.unlock()
         if let notifier {
             DispatchQueue.main.async(execute: notifier)
         }
@@ -88,53 +93,90 @@ class BackgroundWorker {
 
     func requestForcedCancellationCleanup(platformCompletion: () -> Void) {
         let completer: (() -> Void)?
-        cancellationLock.lock()
-        forceCancellationRequested = true
-        completer = forceCancellationCompleter
-        cancellationLock.unlock()
+        lifecycleLock.lock()
+        switch lifecycleState {
+        case .terminal:
+            completer = nil
+        case .pending, .executing:
+            lifecycleState = .terminal
+            completer = forceCancellationCompleter
+            forceCancellationCompleter = nil
+            cancellationNotifier = nil
+        }
+        lifecycleLock.unlock()
         // 先封闭 Worker 终态，避免平台完成后迟到的 Dart 结果反向改写状态。
         completer?()
         platformCompletion()
     }
 
     private func claimExecution() -> Bool {
-        cancellationLock.lock()
-        defer { cancellationLock.unlock() }
-        guard !forceCancellationRequested, !executionClaimed else { return false }
-        executionClaimed = true
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        switch lifecycleState {
+        case .pending:
+            lifecycleState = .executing
+            return true
+        case .executing, .terminal:
+            return false
+        }
+    }
+
+    private func isExecuting() -> Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        if case .executing = lifecycleState { return true }
+        return false
+    }
+
+    private func isTerminal() -> Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        if case .terminal = lifecycleState { return true }
+        return false
+    }
+
+    private func runWhileExecuting(_ operation: () -> Void) -> Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        guard case .executing = lifecycleState else { return false }
+        operation()
         return true
     }
 
     private func installCancellationNotifier(_ notifier: @escaping () -> Void) -> Bool {
         let shouldNotify: Bool
-        cancellationLock.lock()
-        if forceCancellationRequested {
-            cancellationLock.unlock()
+        lifecycleLock.lock()
+        guard case .executing = lifecycleState else {
+            lifecycleLock.unlock()
             return false
         }
         cancellationNotifier = notifier
         shouldNotify = cancellationRequested
-        cancellationLock.unlock()
+        lifecycleLock.unlock()
         if shouldNotify {
             DispatchQueue.main.async(execute: notifier)
         }
         return true
     }
 
-    private func installForceCancellationCompleter(_ completer: @escaping () -> Void) {
-        let shouldComplete: Bool
-        cancellationLock.lock()
-        forceCancellationCompleter = completer
-        shouldComplete = forceCancellationRequested
-        cancellationLock.unlock()
-        if shouldComplete {
-            completer()
+    private func installForceCancellationCompleter(_ completer: @escaping () -> Void) -> Bool {
+        lifecycleLock.lock()
+        guard case .pending = lifecycleState else {
+            lifecycleLock.unlock()
+            return false
         }
+        forceCancellationCompleter = completer
+        lifecycleLock.unlock()
+        return true
     }
 
-    private func installBestEffortCleanup(_ cleanup: @escaping () -> Void) {
+    private func installBestEffortCleanup(_ cleanup: @escaping () -> Void) -> Bool {
         let cleanupToSchedule: (() -> Void)?
-        cancellationLock.lock()
+        lifecycleLock.lock()
+        if case .terminal = lifecycleState {
+            lifecycleLock.unlock()
+            return false
+        }
         bestEffortCleanup = cleanup
         if cleanupRequested && cleanupReady && !cleanupScheduled {
             cleanupScheduled = true
@@ -142,15 +184,16 @@ class BackgroundWorker {
         } else {
             cleanupToSchedule = nil
         }
-        cancellationLock.unlock()
+        lifecycleLock.unlock()
         if let cleanupToSchedule {
             DispatchQueue.main.async(execute: cleanupToSchedule)
         }
+        return true
     }
 
     func requestBestEffortCleanup() {
         let cleanupToSchedule: (() -> Void)?
-        cancellationLock.lock()
+        lifecycleLock.lock()
         cleanupRequested = true
         if cleanupReady, let bestEffortCleanup, !cleanupScheduled {
             cleanupScheduled = true
@@ -158,7 +201,7 @@ class BackgroundWorker {
         } else {
             cleanupToSchedule = nil
         }
-        cancellationLock.unlock()
+        lifecycleLock.unlock()
         if let cleanupToSchedule {
             DispatchQueue.main.async(execute: cleanupToSchedule)
         }
@@ -166,7 +209,7 @@ class BackgroundWorker {
 
     private func markBestEffortCleanupReady() {
         let cleanupToSchedule: (() -> Void)?
-        cancellationLock.lock()
+        lifecycleLock.lock()
         cleanupReady = true
         if cleanupRequested, let bestEffortCleanup, !cleanupScheduled {
             cleanupScheduled = true
@@ -174,18 +217,18 @@ class BackgroundWorker {
         } else {
             cleanupToSchedule = nil
         }
-        cancellationLock.unlock()
+        lifecycleLock.unlock()
         if let cleanupToSchedule {
             DispatchQueue.main.async(execute: cleanupToSchedule)
         }
     }
 
     private func clearCancellationHandlers() {
-        cancellationLock.lock()
+        lifecycleLock.lock()
         cancellationNotifier = nil
         forceCancellationCompleter = nil
         bestEffortCleanup = nil
-        cancellationLock.unlock()
+        lifecycleLock.unlock()
     }
 
     private struct BackgroundChannel {
@@ -200,23 +243,13 @@ class BackgroundWorker {
         -> Bool {
         var flutterEngine: FlutterEngine?
         var flutterApi: WorkmanagerFlutterApi?
-        let completionLock = NSRecursiveLock()
-        var completionDelivered = false
         var legacyFetchDeadline: DispatchWorkItem?
 
-        func isCompletionDelivered() -> Bool {
-            completionLock.lock()
-            defer { completionLock.unlock() }
-            return completionDelivered
-        }
-
-        func runWhileActive(_ operation: () -> Void) -> Bool {
-            completionLock.lock()
-            defer { completionLock.unlock() }
-            if completionDelivered { return false }
-            // Pigeon 注册必须与终态领取互斥，但锁不跨越异步任务本身。
-            operation()
-            return true
+        func finishCompletionDelivery() {
+            markBestEffortCleanupReady()
+            if case .backgroundFetch = backgroundMode {
+                requestBestEffortCleanup()
+            }
         }
 
         func cleanupFlutterResources() {
@@ -226,45 +259,62 @@ class BackgroundWorker {
             flutterEngine = nil
         }
 
-        installBestEffortCleanup(cleanupFlutterResources)
+        guard installBestEffortCleanup(cleanupFlutterResources) else { return false }
+
+        func deliverForcedCompletion() {
+            let pendingDeadline: DispatchWorkItem?
+            lifecycleLock.lock()
+            pendingDeadline = legacyFetchDeadline
+            legacyFetchDeadline = nil
+            lifecycleLock.unlock()
+            pendingDeadline?.cancel()
+            completionHandler(.failed)
+            finishCompletionDelivery()
+        }
 
         @discardableResult
         func complete(_ result: UIBackgroundFetchResult) -> Bool {
             let pendingDeadline: DispatchWorkItem?
-            completionLock.lock()
-            if completionDelivered {
-                completionLock.unlock()
+            lifecycleLock.lock()
+            if case .terminal = lifecycleState {
+                lifecycleLock.unlock()
                 return false
             }
-            completionDelivered = true
+            lifecycleState = .terminal
+            forceCancellationCompleter = nil
+            cancellationNotifier = nil
             pendingDeadline = legacyFetchDeadline
             legacyFetchDeadline = nil
-            completionLock.unlock()
-
             pendingDeadline?.cancel()
             // legacy fetch 的回调就是平台终态；Operation 则由 completionBlock 在平台终态后触发清理。
             completionHandler(result)
-            markBestEffortCleanupReady()
-            if case .backgroundFetch = backgroundMode {
-                requestBestEffortCleanup()
-            }
+            lifecycleLock.unlock()
+            finishCompletionDelivery()
             return true
         }
 
-        self.installForceCancellationCompleter {
-            complete(.failed)
+        guard self.installForceCancellationCompleter({
+            deliverForcedCompletion()
+        }) else {
+            clearCancellationHandlers()
+            return false
         }
 
         if case .backgroundFetch = backgroundMode {
             let deadline = DispatchWorkItem {
                 complete(.failed)
             }
-            completionLock.lock()
-            if !completionDelivered {
+            lifecycleLock.lock()
+            if case .pending = lifecycleState {
                 legacyFetchDeadline = deadline
             }
-            let shouldScheduleDeadline = !completionDelivered
-            completionLock.unlock()
+            let shouldScheduleDeadline: Bool
+            if case .pending = lifecycleState {
+                shouldScheduleDeadline = true
+            } else {
+                shouldScheduleDeadline = false
+            }
+            lifecycleLock.unlock()
             if shouldScheduleDeadline {
                 DispatchQueue.global(qos: .utility).asyncAfter(
                     deadline: .now() + Self.legacyFetchHardBound,
@@ -273,7 +323,7 @@ class BackgroundWorker {
             }
         }
 
-        guard !isCompletionDelivered() else { return false }
+        guard !isTerminal() else { return false }
 
         guard let callbackHandle = UserDefaultsHelper.getStoredCallbackHandle(),
             let flutterCallbackInformation = FlutterCallbackCache.lookupCallbackInformation(
@@ -294,10 +344,7 @@ class BackgroundWorker {
             callbackInfo: flutterCallbackInformation.callbackName
         )
 
-        WorkmanagerDebug.onTaskStatusUpdate(taskInfo: taskInfo, status: .started)
-
-        guard !isCompletionDelivered() else { return true }
-        // 强制终态与主线程启动竞争时，只允许最后领取执行权的一方创建引擎。
+        // 领取成功即视为任务已开始；先到的终态会在同一状态锁内拒绝领取。
         guard claimExecution() else { return false }
         flutterEngine = FlutterEngine(
             name: backgroundMode.flutterThreadlabelPrefix,
@@ -305,20 +352,21 @@ class BackgroundWorker {
             allowHeadlessExecution: true
         )
 
-        guard !isCompletionDelivered(), let flutterEngine else { return true }
+        guard isExecuting(), let flutterEngine else { return true }
+        WorkmanagerDebug.onTaskStatusUpdate(taskInfo: taskInfo, status: .started)
         flutterEngine.run(
             withEntrypoint: flutterCallbackInformation.callbackName,
             libraryURI: flutterCallbackInformation.callbackLibraryPath
         )
-        guard !isCompletionDelivered() else { return true }
+        guard isExecuting() else { return true }
         flutterPluginRegistrantCallback?(flutterEngine)
-        guard !isCompletionDelivered() else { return true }
+        guard isExecuting() else { return true }
         flutterApi = WorkmanagerFlutterApi(binaryMessenger: flutterEngine.binaryMessenger)
 
         // Initialize the background channel and execute the task
-        guard runWhileActive({
+        guard runWhileExecuting({
             flutterApi?.backgroundChannelInitialized { result in
-                guard !isCompletionDelivered() else { return }
+                guard isExecuting() else { return }
                 switch result {
                 case .success:
                     // Get the task name from backgroundMode
@@ -337,10 +385,10 @@ class BackgroundWorker {
                             }
                         }
                     }) else { return }
-                    guard !isCompletionDelivered() else { return }
+                    guard isExecuting() else { return }
 
                     // 先领取发送权；终态若随后到达，会由一次性 completion 丢弃迟到结果。
-                    guard runWhileActive({
+                    guard runWhileExecuting({
                         flutterApi?.executeTask(taskName: taskName, inputData: pigeonInputData) { taskResult in
                             let taskSessionCompleter = Date()
 
