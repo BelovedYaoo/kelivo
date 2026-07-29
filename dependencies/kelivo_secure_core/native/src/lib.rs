@@ -105,9 +105,7 @@ const OPAQUE_CLIENT_CAPABILITY: u64 = 1 << 5;
 const DEVICE_E2EE_CORE_CAPABILITY: u64 = 1 << 6;
 const ATTACHMENT_CRYPTO_CAPABILITY: u64 = 1 << 7;
 const ACCOUNT_TRUST_SIGNING_CAPABILITY: u64 = 1 << 8;
-#[cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))]
 const RECOVERY_MEDIA_CAPABILITY: u64 = 1 << 9;
-#[cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
 type LocalKey = Zeroizing<Box<[u8]>>;
@@ -483,7 +481,11 @@ pub unsafe extern "C" fn kelivo_core_get_capabilities(
                 DEVICE_E2EE_CORE_CAPABILITY
                     | ATTACHMENT_CRYPTO_CAPABILITY
                     | ACCOUNT_TRUST_SIGNING_CAPABILITY
-                    | RECOVERY_MEDIA_CAPABILITY
+            } else {
+                0
+            }
+            | if cfg!(any(target_os = "android", target_os = "ios")) {
+                RECOVERY_MEDIA_CAPABILITY
             } else {
                 0
             },
@@ -1302,7 +1304,11 @@ mod tests {
                     DEVICE_E2EE_CORE_CAPABILITY
                         | ATTACHMENT_CRYPTO_CAPABILITY
                         | ACCOUNT_TRUST_SIGNING_CAPABILITY
-                        | RECOVERY_MEDIA_CAPABILITY
+                } else {
+                    0
+                }
+                | if cfg!(any(target_os = "android", target_os = "ios")) {
+                    RECOVERY_MEDIA_CAPABILITY
                 } else {
                     0
                 }
@@ -1336,7 +1342,6 @@ mod tests {
                 | DEVICE_E2EE_CORE_CAPABILITY
                 | ATTACHMENT_CRYPTO_CAPABILITY
                 | ACCOUNT_TRUST_SIGNING_CAPABILITY
-                | RECOVERY_MEDIA_CAPABILITY
         );
     }
 
@@ -4979,6 +4984,33 @@ mod tests {
                     origin.len(),
                     wrong_history.as_ptr(),
                     wrong_history.len(),
+                    ptr::null(),
+                    0,
+                    capsule.as_ptr(),
+                    capsule.len(),
+                    &mut failed_binding,
+                    &mut failed_ark_handle,
+                )
+            },
+            KelivoStatus::RecoveryHistoryInvalid.code()
+        );
+        assert_eq!(failed_binding, KelivoRecoveryCapsuleBinding::default());
+        assert_eq!(failed_ark_handle, INVALID_KEY_HANDLE);
+
+        let oversized_history = vec![0_u8; recovery_protocol::RECOVERY_HISTORY_MAX_BYTES + 1];
+        failed_binding = sentinel_recovery_capsule_binding();
+        failed_ark_handle = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_recovery_media_import_history_verify_and_capsule_open(
+                    media.as_ptr(),
+                    media.len(),
+                    passphrase.as_ptr(),
+                    passphrase.len(),
+                    origin.as_ptr(),
+                    origin.len(),
+                    oversized_history.as_ptr(),
+                    oversized_history.len(),
                     ptr::null(),
                     0,
                     capsule.as_ptr(),

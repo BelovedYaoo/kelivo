@@ -2,11 +2,15 @@
 
 use std::{fmt, str};
 
+use argon2::{Algorithm, Argon2, Block, Params, Version};
 use chacha20poly1305::{
     Tag, XChaCha20Poly1305, XNonce,
     aead::{AeadInOut, KeyInit},
 };
-use hkdf::Hkdf;
+use hmac::{
+    Hmac, KeyInit as HmacKeyInit, Mac,
+    digest::{FixedOutput, Output},
+};
 use hpke::{
     Deserializable, Kem as HpkeKemTrait, OpModeR, OpModeS, Serializable,
     aead::{AeadTag, ChaCha20Poly1305 as HpkeAead},
@@ -15,7 +19,6 @@ use hpke::{
     kem::X25519HkdfSha256 as HpkeKem,
     setup_receiver, setup_sender_with_rng,
 };
-use opaque_ke::argon2::{Algorithm, Argon2, Params, Version};
 use rand::{CryptoRng, RngCore};
 use sha2_device::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
@@ -56,6 +59,7 @@ pub const RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH: usize = 32;
 pub const RECOVERY_GENESIS_LENGTH: usize = 444;
 pub const RECOVERY_MEDIA_TAG_LENGTH: usize = 16;
 pub const RECOVERY_MEDIA_LENGTH: usize = 644;
+pub const RECOVERY_HISTORY_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const RECOVERY_PASSPHRASE_MIN_SCALARS: usize = 12;
 pub const RECOVERY_PASSPHRASE_MAX_UTF8_LENGTH: usize = 128;
 const RECOVERY_MEDIA_WRAP_KEY_INFO: &[u8] = b"kelivo.recovery-media.wrap-key.v1";
@@ -902,15 +906,41 @@ fn derive_media_key(
         Some(RECOVERY_MEDIA_KEY_LENGTH),
     )
     .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
+    let block_count = params.block_count();
     let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
+    let mut memory = Zeroizing::new(Vec::<Block>::new());
+    memory
+        .try_reserve_exact(block_count)
+        .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
+    memory.resize(block_count, Block::default());
     let mut intermediate = Zeroizing::new([0_u8; RECOVERY_MEDIA_KEY_LENGTH]);
     argon2
-        .hash_password_into(passphrase, salt, intermediate.as_mut_slice())
+        .hash_password_into_with_memory(
+            passphrase,
+            salt,
+            intermediate.as_mut_slice(),
+            memory.as_mut_slice(),
+        )
         .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
+
+    type HmacSha256 = Hmac<Sha256>;
+    let zero_salt = [0_u8; RECOVERY_MEDIA_KEY_LENGTH];
+    let mut extract = <HmacSha256 as HmacKeyInit>::new_from_slice(&zero_salt)
+        .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
+    Mac::update(&mut extract, intermediate.as_slice());
+    let mut prk = Zeroizing::new([0_u8; RECOVERY_MEDIA_KEY_LENGTH]);
+    let prk_output = <&mut Output<HmacSha256>>::try_from(prk.as_mut_slice())
+        .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
+    FixedOutput::finalize_into(extract, prk_output);
+
+    let mut expand = <HmacSha256 as HmacKeyInit>::new_from_slice(prk.as_slice())
+        .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
+    Mac::update(&mut expand, RECOVERY_MEDIA_WRAP_KEY_INFO);
+    Mac::update(&mut expand, &[1]);
     let mut key = Zeroizing::new([0_u8; RECOVERY_MEDIA_KEY_LENGTH]);
-    Hkdf::<Sha256>::new(None, intermediate.as_slice())
-        .expand(RECOVERY_MEDIA_WRAP_KEY_INFO, key.as_mut_slice())
+    let key_output = <&mut Output<HmacSha256>>::try_from(key.as_mut_slice())
         .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
+    FixedOutput::finalize_into(expand, key_output);
     Ok(key)
 }
 
@@ -1085,6 +1115,23 @@ mod tests {
     }
 
     impl CryptoRng for FailingRng {}
+
+    #[test]
+    fn recovery_media_kdf_v1_vector_remains_stable() {
+        let key = derive_media_key(
+            b"recovery-passphrase-v1",
+            &[0x5a; RECOVERY_MEDIA_SALT_LENGTH],
+        )
+        .expect("恢复介质 KDF 固定向量应派生");
+        assert_eq!(
+            key.as_slice(),
+            &[
+                0xd4, 0xcf, 0x3c, 0xc0, 0x35, 0x5a, 0x7a, 0xf7, 0x88, 0x99, 0xaa, 0x7c, 0xa8, 0xb2,
+                0x52, 0x12, 0xff, 0x47, 0xe8, 0x18, 0xf4, 0x8a, 0x1d, 0xa6, 0xa6, 0xf9, 0xad, 0xd4,
+                0xbc, 0xda, 0xbe, 0x38,
+            ]
+        );
+    }
 
     fn uuid(seed: u8) -> [u8; 16] {
         let mut bytes = [seed; 16];

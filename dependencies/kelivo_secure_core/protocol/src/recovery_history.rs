@@ -8,8 +8,9 @@ use crate::{
         DeviceKeyAgreementPublicKey, DeviceSigningPublicKey, UserId, verify_account_trust_payload,
     },
     recovery_crypto::{
-        RECOVERY_CAPSULE_SHA256_LENGTH, RecoveryCapsule, RecoveryCapsuleExpectation,
-        RecoveryCryptoError, RecoveryGenesisCapability, RecoveryPublicKey,
+        RECOVERY_CAPSULE_SHA256_LENGTH, RECOVERY_HISTORY_MAX_BYTES, RecoveryCapsule,
+        RecoveryCapsuleExpectation, RecoveryCryptoError, RecoveryGenesisCapability,
+        RecoveryPublicKey,
     },
 };
 
@@ -120,7 +121,7 @@ pub(crate) fn verify_history_head(
     source_capsule: Option<&RecoveryCapsule>,
     current_capsule: &RecoveryCapsule,
 ) -> Result<RecoveryCapsuleExpectations, RecoveryCryptoError> {
-    if history.is_empty() {
+    if history.is_empty() || history.len() > RECOVERY_HISTORY_MAX_BYTES {
         return Err(RecoveryCryptoError::InvalidMembershipHistory);
     }
     let mut offset = 0;
@@ -644,4 +645,51 @@ fn copy_array<const LENGTH: usize>(bytes: &[u8]) -> [u8; LENGTH] {
     let mut output = [0_u8; LENGTH];
     output.copy_from_slice(bytes);
     output
+}
+
+#[cfg(test)]
+mod tests {
+    use base64ct::{Base64Url, Encoding};
+
+    use super::*;
+
+    const DART_INIT: &str = "S0VMSVZPTU0AAAABQAAAAAAAQACAAAAAAAAAAQAAAAEAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADGHSkFajyxbwsbKWkNdkklTTVS__6Bs0ejGBN-MHvDAgAAAAHfVNqwWv7RqwRrc0szZMev_O7jhY2I_HRKSBIvmg_YMQAAAAHCD5VhgzzZ7ZbOr7lhZc375fUE-ufPWvn7Zr9m2kUNiwAAAAEAAAAAAABAAIAAAAAAAAABcAAAAAAAQACAAAAAAAAAAXAAAAAAAEAAgAAAAAAAAAEAAAABcAAAAAAAQACAAAAAAAAAAQAAAAEAAAAAtWvvDeAws9sX9cb6Im9F-3plAylR9XYVLOUNPRpbs20GxMGf803Qvr2uzr0Th7Gw2SR_3oCJZfy4O21PiED4SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADuigVvwhjBNJMy1-1z1wyeAljP98DqITrDWL9wEXbAI7ErKb2gaFlqUf5oKhK_V64TIakoYp3-a46xwjUeqAAN";
+    const DART_INIT_DIGEST: &str = "KykHjnWRVeTpi2XXnHnV6ChtvluFcGGH7YADubeAwo0=";
+    const DART_RESUME_ONE: &str = "S0VMSVZPTU0AAAABQAAAAAAAQACAAAAAAAAAAQAAAAIAAAABKykHjnWRVeTpi2XXnHnV6ChtvluFcGGH7YADubeAwo3GHSkFajyxbwsbKWkNdkklTTVS__6Bs0ejGBN-MHvDAgAAAAHfVNqwWv7RqwRrc0szZMev_O7jhY2I_HRKSBIvmg_YMQAAAAHCD5VhgzzZ7ZbOr7lhZc375fUE-ufPWvn7Zr9m2kUNiwAAAAQAAAAAAABAAIAAAAAAAAAEIAAAAAAAQACAAAAAAAAAAyAAAAAAAEAAgAAAAAAAAAMAAAACIAAAAAAAQACAAAAAAAAAAwAAAAEAAAAB1zhxXjFE26drDkMiH0u5D-l2f7tr04E2N1U_slt6mknOf8WHi0B3idHxCx3kuiul45WaAJm3wehIWoGNsyL7QHAAAAAAAEAAgAAAAAAAAAEAAAABAAAAALVr7w3gMLPbF_XG-iJvRft6ZQMpUfV2FSzlDT0aW7NtBsTBn_NN0L69rs69E4exsNkkf96AiWX8uDttT4hA-EgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0kxKlOnWb0K7xfNEej4tu9cDZA9tr6GYn59Ksuv9ckpiOQXlZH9WZlmndomA-ZA8LpeObMlj3ZmxW6DfsUSpDw==";
+    const DART_RESUME_ONE_DIGEST: &str = "GG9f-w5Wj9JlxkXQFiIqCs-ADhUcY48yxS6zON8zUyY=";
+    const DART_RESUME_TWO: &str = "S0VMSVZPTU0AAAABQAAAAAAAQACAAAAAAAAAAQAAAAMAAAABGG9f-w5Wj9JlxkXQFiIqCs-ADhUcY48yxS6zON8zUybGHSkFajyxbwsbKWkNdkklTTVS__6Bs0ejGBN-MHvDAgAAAAHfVNqwWv7RqwRrc0szZMev_O7jhY2I_HRKSBIvmg_YMQAAAAHCD5VhgzzZ7ZbOr7lhZc375fUE-ufPWvn7Zr9m2kUNiwAAAAQAAAAAAABAAIAAAAAAAAAFIAAAAAAAQACAAAAAAAAABCAAAAAAAEAAgAAAAAAAAAQAAAADIAAAAAAAQACAAAAAAAAAAwAAAAEAAAAB1zhxXjFE26drDkMiH0u5D-l2f7tr04E2N1U_slt6mknOf8WHi0B3idHxCx3kuiul45WaAJm3wehIWoGNsyL7QCAAAAAAAEAAgAAAAAAAAAQAAAABAAAAAdBCVBWhfiBic9ttTMttnZyJV-PgljWLbv9M5QCiHmaVYjfQ8GcjdSX2uhC_JK1aEtPMxy8bFEdA0D3xxUwb3FBwAAAAAABAAIAAAAAAAAABAAAAAQAAAAC1a-8N4DCz2xf1xvoib0X7emUDKVH1dhUs5Q09GluzbQbEwZ_zTdC-va7OvROHsbDZJH_egIll_Lg7bU-IQPhIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABKLNlTnp1HfoN-RBCxrGLk5om2rZDH8FVU5GqPC1MXCGV0fHotsPg4H6foBRyzWrn-MgFVGW_-IgkdfnxRX6wk=";
+    const DART_RESUME_TWO_DIGEST: &str = "IQcZI1hwAnrJtBp6UO61k189npXhY_jfK0ccl45aEOw=";
+    const DART_REPLACE: &str = "S0VMSVZPTU0AAAABQAAAAAAAQACAAAAAAAAAAQAAAAQAAAACIQcZI1hwAnrJtBp6UO61k189npXhY_jfK0ccl45aEOyd4lvUUTM2C-OYqOUMiGcDxZnLkrwTTa0oYjK_6ev1CQAAAAHfVNqwWv7RqwRrc0szZMev_O7jhY2I_HRKSBIvmg_YMQAAAAIRMY7psxnoZO_lT_ybZhlbZhQSuBwPGGAS5ZMH2uDeygAAAAUAAAAAAABAAIAAAAAAAAAGIAAAAAAAQACAAAAAAAAABCAAAAAAAEAAgAAAAAAAAAQAAAABIAAAAAAAQACAAAAAAAAABAAAAAEAAAAB0EJUFaF-IGJz221My22dnIlX4-CWNYtu_0zlAKIeZpViN9DwZyN1Jfa6EL8krVoS08zHLxsUR0DQPfHFTBvcUFLCzbkR2hYZ4yYy2qK6i9jsg9lJsTKQiMc5NdVq2fFDPcqPIorjc_puBVnY-BnquqHwk-UOLeq37E8yZSCtDAuld1zWW25-EO_mXJNbDMXJEU0bxNrZHUg4tjQTImW494Y5UIGrb4moMFcVG11LJ5hrPPVSIFFgbyF1cBEZS88J";
+    const DART_REPLACE_DIGEST: &str = "q2Q8Cw5LZLiVrf3KTLXdcBATHEEay4Ur2w67R1DI8EU=";
+
+    #[test]
+    fn dart_recovery_operations_match_rust_wire_and_signatures() {
+        let init = parse_dart_manifest(DART_INIT, DART_INIT_DIGEST);
+        let resume_one = parse_dart_manifest(DART_RESUME_ONE, DART_RESUME_ONE_DIGEST);
+        let resume_two = parse_dart_manifest(DART_RESUME_TWO, DART_RESUME_TWO_DIGEST);
+        let replace = parse_dart_manifest(DART_REPLACE, DART_REPLACE_DIGEST);
+
+        validate_genesis(
+            &init,
+            init.user_id,
+            init.recovery_public_key_version,
+            init.recovery_public_key,
+        )
+        .expect("Dart 初始化清单应通过 Rust 验证");
+        validate_successor(&init, &resume_one).expect("第一次恢复接续应通过 Rust 验证");
+        validate_successor(&resume_one, &resume_two).expect("第二次恢复接续应通过 Rust 验证");
+        validate_successor(&resume_two, &replace).expect("恢复替换应通过 Rust 验证");
+        assert_eq!(resume_one.operation, MembershipOperation::RecoverResume);
+        assert_eq!(resume_two.operation, MembershipOperation::RecoverResume);
+        assert_eq!(replace.operation, MembershipOperation::RecoverReplace);
+    }
+
+    fn parse_dart_manifest(encoded: &str, encoded_digest: &str) -> MembershipManifest {
+        let bytes = Base64Url::decode_vec(encoded).expect("Dart 清单固定向量应是规范 base64url");
+        let expected_digest =
+            Base64Url::decode_vec(encoded_digest).expect("Dart 摘要固定向量应是规范 base64url");
+        let manifest = parse_manifest(&bytes).expect("Dart 清单固定向量应由 Rust 解析");
+        assert_eq!(manifest.digest.as_slice(), expected_digest);
+        manifest
+    }
 }

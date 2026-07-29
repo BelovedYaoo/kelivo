@@ -9,6 +9,9 @@ const _recoveryOriginDigestLength =
 const _recoveryPassphraseMinimumScalars = 12;
 const _recoveryPassphraseMaximumUtf8Length = 128;
 const _recoveryHistoryMaximumEntries = 4096;
+// 历史在恢复期间最多同时存在调用方、可转移缓冲区与 FFI 三份，以此将总工作集控制在约 112 MiB。
+const _recoveryHistoryMaximumTotalLength =
+    native.KELIVO_RECOVERY_HISTORY_MAX_BYTES;
 const _recoveryManifestMinimumLength = 444;
 const _recoveryManifestMaximumLength = 228 + 256 * 88 + 128;
 
@@ -184,18 +187,20 @@ extension KelivoRecoveryCore on KelivoSecureCore {
       if (sourceCapsule != null) {
         _requireLength(sourceCapsule, _recoveryCapsuleLength, 'sourceCapsule');
       }
-      final history = _copyRecoveryHistory(membershipHistory);
-      final result = await _runWithTransferredPassword(
-        passphrase,
-        (workerPassphrase) => _recoverAccountRootKey(
+      final history = _transferRecoveryHistory(membershipHistory);
+      final result = await _runWithTransferredPassword(passphrase, (
+        workerPassphrase,
+      ) {
+        final workerHistory = history.materialize().asUint8List();
+        return _recoverAccountRootKey(
           Uint8List.fromList(media),
           workerPassphrase,
           Uint8List.fromList(serviceOriginSha256),
-          history,
+          workerHistory,
           sourceCapsule == null ? null : Uint8List.fromList(sourceCapsule),
           Uint8List.fromList(currentCapsule),
-        ),
-      );
+        );
+      });
       return KelivoRecoveryCapsuleOpen._(
         ark: KelivoAccountRootKeyHandle._(result.arkHandle, result.userId),
         keyEpoch: result.keyEpoch,
@@ -309,7 +314,7 @@ void _requireUtf8Range(Uint8List bytes, int offset, int minimum, int maximum) {
   }
 }
 
-Uint8List _copyRecoveryHistory(List<Uint8List> entries) {
+TransferableTypedData _transferRecoveryHistory(List<Uint8List> entries) {
   if (entries.isEmpty) {
     throw ArgumentError('成员历史不能为空');
   }
@@ -323,14 +328,15 @@ Uint8List _copyRecoveryHistory(List<Uint8List> entries) {
       throw ArgumentError.value(entry.length, 'membershipHistory', '成员清单长度无效');
     }
     totalLength += entry.length;
+    if (totalLength > _recoveryHistoryMaximumTotalLength) {
+      throw ArgumentError.value(
+        totalLength,
+        'membershipHistory',
+        '成员历史总长度不得超过 $_recoveryHistoryMaximumTotalLength 字节',
+      );
+    }
   }
-  final history = Uint8List(totalLength);
-  var offset = 0;
-  for (final entry in entries) {
-    history.setRange(offset, offset + entry.length, entry);
-    offset += entry.length;
-  }
-  return history;
+  return TransferableTypedData.fromList(entries);
 }
 
 _RecoveryIdentityNativeResult _generateRecoveryIdentity(

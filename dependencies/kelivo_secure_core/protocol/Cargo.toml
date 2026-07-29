@@ -7,6 +7,7 @@ publish = false
 [features]
 default = ["system-rng", "device-crypto"]
 device-crypto = [
+  "dep:argon2",
   "dep:curve25519-dalek",
   "dep:ed25519-dalek",
   "dep:hkdf",
@@ -18,6 +19,10 @@ device-crypto = [
 system-rng = ["rand/getrandom", "dep:getrandom"]
 
 [dependencies]
+argon2 = { version = "=0.5.3", default-features = false, optional = true, features = [
+  "alloc",
+  "zeroize",
+] }
 chacha20poly1305 = { version = "=0.11.0", default-features = false, features = [
   "alloc",
   "zeroize",
@@ -31,18 +36,25 @@ hpke = { version = "=0.14.0", default-features = false, optional = true, feature
   "x25519",
 ] }
 hkdf = { version = "=0.13.0", default-features = false, optional = true }
-hmac = { version = "=0.13.0", default-features = false, optional = true }
+hmac = { version = "=0.13.0", default-features = false, optional = true, features = [
+  "zeroize",
+] }
 opaque-ke = { version = "=4.0.1", default-features = false, features = [
   "argon2",
   "ristretto255",
 ] }
 rand = { version = "=0.8.5", default-features = false }
-sha2_device = { package = "sha2", version = "=0.11.0", default-features = false, optional = true }
+sha2_device = { package = "sha2", version = "=0.11.0", default-features = false, optional = true, features = [
+  "zeroize",
+] }
 sha2_opaque = { package = "sha2", version = "=0.10.9", default-features = false }
 x25519-dalek = { version = "=3.0.0", default-features = false, optional = true, features = [
   "zeroize",
 ] }
 zeroize = { version = "=1.9.0", default-features = false, features = ["alloc"] }
+
+[dev-dependencies]
+base64ct = { version = "=1.8.3", default-features = false, features = ["alloc"] }
 
 [target.'cfg(target_arch = "wasm32")'.dependencies]
 getrandom = { version = "=0.2.17", optional = true, features = ["js"] }

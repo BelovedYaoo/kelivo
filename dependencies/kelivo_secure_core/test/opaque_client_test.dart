@@ -45,7 +45,7 @@ void main() {
     );
     expect(
       capabilities.supportsRecoveryMedia,
-      Platform.isWindows || Platform.isAndroid || Platform.isIOS,
+      Platform.isAndroid || Platform.isIOS,
     );
   });
 
@@ -92,6 +92,32 @@ void main() {
       throwsArgumentError,
     );
     expect(malformedPassphrase, everyElement(0));
+  });
+
+  test('恢复历史总量超过移动端工作集边界时在进入原生层前拒绝', () async {
+    final passphrase = Uint8List.fromList(
+      utf8.encode('recovery-passphrase-v1'),
+    );
+    final maximumManifest = Uint8List(228 + 256 * 88 + 128);
+    final oversizedHistory = List<Uint8List>.filled(734, maximumManifest);
+
+    await expectLater(
+      core.recoverAccountRootKey(
+        media: Uint8List(644),
+        passphrase: passphrase,
+        serviceOriginSha256: Uint8List(32),
+        membershipHistory: oversizedHistory,
+        currentCapsule: Uint8List(156),
+      ),
+      throwsA(
+        isA<ArgumentError>().having(
+          (error) => error.name,
+          'name',
+          'membershipHistory',
+        ),
+      ),
+    );
+    expect(passphrase, everyElement(0));
   });
 
   test('本机密钥槽删除要求关闭句柄并可幂等重试', () async {

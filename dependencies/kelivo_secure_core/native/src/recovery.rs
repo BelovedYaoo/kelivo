@@ -15,6 +15,7 @@ use crate::{
 pub(super) const RECOVERY_PUBLIC_KEY_LENGTH: usize = recovery::RECOVERY_PUBLIC_KEY_LENGTH;
 pub(super) const RECOVERY_CAPSULE_LENGTH: usize = recovery::RECOVERY_CAPSULE_LENGTH;
 pub(super) const RECOVERY_MEDIA_LENGTH: usize = recovery::RECOVERY_MEDIA_LENGTH;
+pub(super) const RECOVERY_HISTORY_MAX_BYTES: usize = recovery::RECOVERY_HISTORY_MAX_BYTES;
 pub(super) const RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH: usize =
     recovery::RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH;
 pub(super) const RECOVERY_CAPSULE_BINDING_STRUCT_SIZE: u32 = 28;
@@ -22,6 +23,16 @@ pub(super) const RECOVERY_MEDIA_EXPORT_AUTHORITY_STRUCT_SIZE: u32 = 168;
 
 const UUID_LENGTH: usize = 16;
 const MAX_ACTIVE_RECOVERY_HANDLES: usize = 64;
+const RECOVERY_USER_FLOW_AVAILABLE: bool =
+    cfg!(any(target_os = "android", target_os = "ios", test));
+
+fn require_recovery_user_flow() -> Result<(), KelivoStatus> {
+    if RECOVERY_USER_FLOW_AVAILABLE {
+        Ok(())
+    } else {
+        Err(KelivoStatus::UnsupportedPlatform)
+    }
+}
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -288,6 +299,9 @@ pub unsafe extern "C" fn kelivo_recovery_identity_generate(
     } {
         return status.code();
     }
+    if let Err(status) = require_recovery_user_flow() {
+        return status.code();
+    }
     if recovery_public_key_version == 0 {
         return KelivoStatus::InvalidArgument.code();
     }
@@ -461,6 +475,9 @@ pub unsafe extern "C" fn kelivo_recovery_media_export(
     } {
         return status.code();
     }
+    if let Err(status) = require_recovery_user_flow() {
+        return status.code();
+    }
     let bound = match recovery_for_handle(recovery_handle) {
         Ok(value) => value,
         Err(status) => return status.code(),
@@ -554,6 +571,9 @@ pub unsafe extern "C" fn kelivo_recovery_media_import_history_verify_and_capsule
     if let Err(status) = unsafe { write_output(out_ark_handle, INVALID_KEY_HANDLE) } {
         return status.code();
     }
+    if let Err(status) = require_recovery_user_flow() {
+        return status.code();
+    }
     let media = match unsafe { read_input(media, media_length) } {
         Ok(value) => match recovery::RecoveryMedia::from_bytes(value) {
             Ok(value) => value,
@@ -593,6 +613,9 @@ pub unsafe extern "C" fn kelivo_recovery_media_import_history_verify_and_capsule
         },
         Err(status) => return status.code(),
     };
+    if membership_history_length == 0 || membership_history_length > RECOVERY_HISTORY_MAX_BYTES {
+        return KelivoStatus::RecoveryHistoryInvalid.code();
+    }
     let membership_history =
         match unsafe { read_input(membership_history, membership_history_length) } {
             Ok(value) => value,
