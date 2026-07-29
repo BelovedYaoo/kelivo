@@ -71,6 +71,7 @@ final class AccountWorkspaceRuntime {
     this.installationRoot,
     this._workspaceRoot,
     this._canonicalWorkspaceRoot,
+    this._localDataDirectory,
     this._lease,
     this._durability,
     this._sessionTokenStore,
@@ -81,6 +82,7 @@ final class AccountWorkspaceRuntime {
   );
 
   static const _workspaceDirectoryName = '.kelivo-workspaces';
+  static const _localDirectoryName = 'local';
   static const _accountsDirectoryName = 'accounts';
   static const _dataDirectoryName = 'data';
   static const _localWorkspaceKey = 'local';
@@ -93,6 +95,7 @@ final class AccountWorkspaceRuntime {
   final Directory installationRoot;
   final Directory _workspaceRoot;
   final String _canonicalWorkspaceRoot;
+  final Directory _localDataDirectory;
   final RestoreBusinessLease _lease;
   final RestoreDurability _durability;
   final AccountSessionTokenStore _sessionTokenStore;
@@ -107,6 +110,10 @@ final class AccountWorkspaceRuntime {
 
   Future<void> discardPlaintextLocalState() async {
     _requireOpen();
+    await _ensureTrustedInstallationRoot(
+      directory: installationRoot,
+      createMissing: false,
+    );
     final dataDirectories = await _existingDataDirectories();
     // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
     for (final dataDirectory in dataDirectories) {
@@ -117,6 +124,11 @@ final class AccountWorkspaceRuntime {
         appDataDirectory: dataDirectory,
       );
     }
+    // 拓扑检查与删除之间不能复用旧路径结论，否则运行期重解析替换会越过安装边界。
+    await _ensureTrustedInstallationRoot(
+      directory: installationRoot,
+      createMissing: false,
+    );
     for (final dataDirectory in dataDirectories) {
       await DatabaseEncryptionCutover.discardPlaintextState(
         appDataDirectory: dataDirectory,
@@ -127,6 +139,14 @@ final class AccountWorkspaceRuntime {
         durability: _durability,
       );
     }
+    await _ensureTrustedInstallationRoot(
+      directory: installationRoot,
+      createMissing: false,
+    );
+    await DatabaseEncryptionCutover.discardLegacyDatabaseFamily(
+      appDataDirectory: installationRoot,
+      durability: _durability,
+    );
   }
 
   static Future<AccountWorkspaceRuntime> bootstrap({
@@ -136,18 +156,20 @@ final class AccountWorkspaceRuntime {
   }) async {
     final resolvedSessionTokenStore =
         sessionTokenStore ?? const SecureAccountSessionTokenStore();
-    final resolvedInstallationRoot = Directory(
-      p.normalize(
-        p.absolute(
-          (installationRoot ??
-                  await AppDirectories.getInstallationRootDirectory())
-              .path,
+    final resolvedInstallationRoot = await _ensureTrustedInstallationRoot(
+      directory: Directory(
+        p.normalize(
+          p.absolute(
+            (installationRoot ??
+                    await AppDirectories.getInstallationRootDirectory())
+                .path,
+          ),
         ),
       ),
+      createMissing: true,
     );
-    await resolvedInstallationRoot.create(recursive: true);
     final canonicalInstallationRoot = p.normalize(
-      await resolvedInstallationRoot.resolveSymbolicLinks(),
+      resolvedInstallationRoot.path,
     );
     final workspaceRoot = Directory(
       p.join(resolvedInstallationRoot.path, _workspaceDirectoryName),
@@ -161,12 +183,15 @@ final class AccountWorkspaceRuntime {
       createMissing: true,
       errorCode: 'account_workspace_root_unsafe',
     );
-
     final lease = await RestoreBusinessLease.acquire(
       appDataDirectory: workspaceRoot,
     );
     final durability = RestorePlatformDurability();
     try {
+      final localDataDirectory = await _ensureLocalDataDirectoryPath(
+        workspaceRoot: workspaceRoot,
+        canonicalWorkspaceRoot: canonicalWorkspaceRoot,
+      );
       final now = (utcNow ?? DateTime.now)().toUtc();
       var registry = await _readLatestRecord(
         directory: workspaceRoot,
@@ -188,7 +213,7 @@ final class AccountWorkspaceRuntime {
       }
       late AccountWorkspaceContext current;
       if (activeWorkspaceKey == null) {
-        current = _localContext(resolvedInstallationRoot);
+        current = _localContext(localDataDirectory);
       } else {
         final accountDirectory = await _ensureAccountDirectoryPath(
           workspaceRoot: workspaceRoot,
@@ -230,7 +255,7 @@ final class AccountWorkspaceRuntime {
             ),
             durability: durability,
           );
-          current = _localContext(resolvedInstallationRoot);
+          current = _localContext(localDataDirectory);
         } else {
           final accountRead = await _readAccountContext(
             workspaceRoot: workspaceRoot,
@@ -281,7 +306,7 @@ final class AccountWorkspaceRuntime {
           durability: durability,
         );
         activeWorkspaceKey = null;
-        current = _localContext(resolvedInstallationRoot);
+        current = _localContext(localDataDirectory);
       }
       final persistedPendingTokenCleanup = _parsePendingTokenCleanup(
         registry?.payload,
@@ -309,7 +334,11 @@ final class AccountWorkspaceRuntime {
       // 其他账号命名空间，因此启动顺序错误必须直接失败。
       SharedPreferences.setPrefix(current.preferencesPrefix);
       final canonicalDataRoot = current.isLocal
-          ? canonicalInstallationRoot
+          ? p.join(
+              canonicalWorkspaceRoot,
+              _localDirectoryName,
+              _dataDirectoryName,
+            )
           : p.join(
               canonicalWorkspaceRoot,
               _accountsDirectoryName,
@@ -327,6 +356,7 @@ final class AccountWorkspaceRuntime {
         resolvedInstallationRoot,
         workspaceRoot,
         canonicalWorkspaceRoot,
+        localDataDirectory,
         lease,
         durability,
         resolvedSessionTokenStore,
@@ -388,7 +418,7 @@ final class AccountWorkspaceRuntime {
     );
     _current = _current._withoutSession();
     await _writeRegistry(null);
-    return AccountWorkspaceRestartRequired(_localContext(installationRoot));
+    return AccountWorkspaceRestartRequired(_localContext(_localDataDirectory));
   }
 
   Future<void> close() async {
@@ -597,10 +627,10 @@ final class AccountWorkspaceRuntime {
     if (_closed) throw StateError('account_workspace_runtime_closed');
   }
 
-  static AccountWorkspaceContext _localContext(Directory installationRoot) {
+  static AccountWorkspaceContext _localContext(Directory dataDirectory) {
     return AccountWorkspaceContext._(
       workspaceKey: _localWorkspaceKey,
-      dataDirectory: installationRoot,
+      dataDirectory: dataDirectory,
       preferencesPrefix: _localPreferencesPrefix,
       accountScope: null,
       session: null,
@@ -763,13 +793,21 @@ final class AccountWorkspaceRuntime {
 
   Future<List<Directory>> _existingDataDirectories() async {
     final canonicalInstallationRoot = p.dirname(_canonicalWorkspaceRoot);
-    final localDataDirectory = await _ensureOwnedDirectory(
+    final legacyInstallationDirectory = await _ensureOwnedDirectory(
       directory: installationRoot,
       expectedCanonicalPath: canonicalInstallationRoot,
       createMissing: false,
       errorCode: 'account_workspace_installation_root_unsafe',
     );
-    final dataDirectories = <Directory>[localDataDirectory];
+    final localDataDirectory = await _ensureLocalDataDirectoryPath(
+      workspaceRoot: _workspaceRoot,
+      canonicalWorkspaceRoot: _canonicalWorkspaceRoot,
+      createMissing: false,
+    );
+    final dataDirectories = <Directory>[
+      legacyInstallationDirectory,
+      localDataDirectory,
+    ];
     final accountsDirectory = Directory(
       p.join(_workspaceRoot.path, _accountsDirectoryName),
     );
@@ -847,6 +885,38 @@ final class AccountWorkspaceRuntime {
       canonicalWorkspaceRoot: _canonicalWorkspaceRoot,
       workspaceKey: workspaceKey,
       createAccount: createAccount,
+    );
+  }
+
+  static Future<Directory> _ensureLocalDataDirectoryPath({
+    required Directory workspaceRoot,
+    required String canonicalWorkspaceRoot,
+    bool createMissing = true,
+  }) async {
+    await _ensureOwnedDirectory(
+      directory: workspaceRoot,
+      expectedCanonicalPath: canonicalWorkspaceRoot,
+      createMissing: false,
+      errorCode: 'account_workspace_root_unsafe',
+    );
+    final localDirectory = await _ensureOwnedDirectory(
+      directory: Directory(p.join(workspaceRoot.path, _localDirectoryName)),
+      expectedCanonicalPath: p.join(
+        canonicalWorkspaceRoot,
+        _localDirectoryName,
+      ),
+      createMissing: createMissing,
+      errorCode: 'account_workspace_local_unsafe',
+    );
+    return _ensureOwnedDirectory(
+      directory: Directory(p.join(localDirectory.path, _dataDirectoryName)),
+      expectedCanonicalPath: p.join(
+        canonicalWorkspaceRoot,
+        _localDirectoryName,
+        _dataDirectoryName,
+      ),
+      createMissing: createMissing,
+      errorCode: 'account_workspace_local_data_unsafe',
     );
   }
 
@@ -931,6 +1001,67 @@ final class AccountWorkspaceRuntime {
       throw StateError(errorCode);
     }
     return directory;
+  }
+
+  static Future<Directory> _ensureTrustedInstallationRoot({
+    required Directory directory,
+    required bool createMissing,
+  }) async {
+    const errorCode = 'account_workspace_installation_root_unsafe';
+    final normalizedDirectory = Directory(
+      p.normalize(p.absolute(directory.path)),
+    );
+    // 信任边界只能由调用方给出的词法绝对路径形成，不能由重解析目标反向定义。
+    await _validateInstallationRootChain(
+      normalizedDirectory.path,
+      allowMissingTail: createMissing,
+      errorCode: errorCode,
+    );
+    final type = await FileSystemEntity.type(
+      normalizedDirectory.path,
+      followLinks: false,
+    );
+    if (type == FileSystemEntityType.notFound) {
+      if (!createMissing) throw StateError('${errorCode}_missing');
+      await normalizedDirectory.create(recursive: true);
+    }
+    await _validateInstallationRootChain(
+      normalizedDirectory.path,
+      allowMissingTail: false,
+      errorCode: errorCode,
+    );
+    return normalizedDirectory;
+  }
+
+  static Future<void> _validateInstallationRootChain(
+    String path, {
+    required bool allowMissingTail,
+    required String errorCode,
+  }) async {
+    var current = p.normalize(p.absolute(path));
+    var missingTailAllowed = allowMissingTail;
+    while (true) {
+      final type = await FileSystemEntity.type(current, followLinks: false);
+      if (type == FileSystemEntityType.notFound) {
+        if (!missingTailAllowed) throw StateError('${errorCode}_missing');
+      } else {
+        missingTailAllowed = false;
+        if (type != FileSystemEntityType.directory) {
+          throw StateError(errorCode);
+        }
+        try {
+          final canonical = p.normalize(
+            await Directory(current).resolveSymbolicLinks(),
+          );
+          if (!p.equals(canonical, current)) throw StateError(errorCode);
+        } on FileSystemException {
+          throw StateError(errorCode);
+        }
+      }
+      final parent = p.dirname(current);
+      if (p.equals(parent, current)) return;
+      current = parent;
+    }
   }
 
   static String _workspaceKey(String accountScope) {

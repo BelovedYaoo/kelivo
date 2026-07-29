@@ -1725,10 +1725,16 @@ void main() {
     await expectLater(bootstrap(), throwsA(isA<StateError>()));
   });
 
-  test('匿名工作区保留既有根目录且账号 A/B 的路径与配置前缀互不重叠', () async {
+  test('匿名 LocalVault 与账号 A/B 的路径和配置前缀互不重叠', () async {
     var runtime = await bootstrap();
+    final localDataDirectory = p.join(
+      installationRoot.path,
+      '.kelivo-workspaces',
+      'local',
+      'data',
+    );
     expect(runtime.current.isLocal, isTrue);
-    expect(runtime.current.dataDirectory.path, installationRoot.path);
+    expect(runtime.current.dataDirectory.path, localDataDirectory);
     expect(runtime.current.preferencesPrefix, 'flutter.');
 
     final accountA = _session(userId: 'account-a', token: 'token-a');
@@ -1738,7 +1744,7 @@ void main() {
     final targetA = (bindA as AccountWorkspaceRestartRequired).target;
     expect(runtime.current.isLocal, isTrue);
     expect(targetA.isLocal, isFalse);
-    expect(targetA.dataDirectory.path, isNot(installationRoot.path));
+    expect(targetA.dataDirectory.path, isNot(localDataDirectory));
     expect(targetA.preferencesPrefix, startsWith('kelivo.account.'));
 
     await close(runtime);
@@ -1759,8 +1765,26 @@ void main() {
     expect(runtime.current.dataDirectory.path, targetB.dataDirectory.path);
   });
 
+  test('匿名 LocalVault 目录链接不能把数据重定向到其他位置', () async {
+    final workspaceRoot = Directory(
+      p.join(installationRoot.path, '.kelivo-workspaces'),
+    );
+    await workspaceRoot.create();
+    final redirectedLocal = Directory(
+      p.join(installationRoot.path, 'redirected-local'),
+    );
+    await redirectedLocal.create();
+    await _createDirectoryLink(
+      p.join(workspaceRoot.path, 'local'),
+      redirectedLocal.path,
+    );
+
+    await expectLater(bootstrap(), throwsA(isA<StateError>()));
+  });
+
   test('硬切清理本地与所有账号工作区的明文同步状态并保留密文凭证', () async {
     var runtime = await bootstrap();
+    final localDataDirectory = runtime.current.dataDirectory;
     final bindA = await runtime.bindAccount(
       _session(userId: 'account-a', token: 'token-a'),
     );
@@ -1783,6 +1807,12 @@ void main() {
       ),
       File(
         p.join(
+          localDataDirectory.path,
+          '${CloudSyncStateRetirement.legacyBoxName}.lock',
+        ),
+      ),
+      File(
+        p.join(
           targetA.dataDirectory.path,
           '${CloudSyncStateRetirement.legacyBoxName}.hivec',
         ),
@@ -1799,6 +1829,7 @@ void main() {
     }
     final legacyHiveArtifacts = <File>[
       File(p.join(installationRoot.path, 'conversations.hive')),
+      File(p.join(localDataDirectory.path, 'messages.hive')),
       File(p.join(targetA.dataDirectory.path, 'messages.hivec')),
       File(p.join(targetB.dataDirectory.path, 'tool_events_v1.lock')),
     ];
@@ -1808,6 +1839,7 @@ void main() {
     final databaseArtifacts = <File>[
       for (final dataDirectory in <Directory>[
         installationRoot,
+        localDataDirectory,
         targetA.dataDirectory,
         targetB.dataDirectory,
       ])
@@ -1851,6 +1883,209 @@ void main() {
       expect(await sessionRecord.exists(), isTrue, reason: sessionRecord.path);
     }
     expect(sessionTokenStore.tokenCount, 2);
+  });
+
+  test('硬切无条件删除旧安装根数据库族并保留当前密文 Vault', () async {
+    final runtime = await bootstrap();
+    final localDataDirectory = runtime.current.dataDirectory;
+    final bind = await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'token-a'),
+    );
+    final accountDataDirectory =
+        (bind as AccountWorkspaceRestartRequired).target.dataDirectory;
+
+    final legacyDatabase = File(
+      p.join(installationRoot.path, AppDatabase.databaseFileName),
+    );
+    final legacyDatabaseFamily = <File>[
+      legacyDatabase,
+      File('${legacyDatabase.path}-wal'),
+      File('${legacyDatabase.path}-shm'),
+      File('${legacyDatabase.path}-journal'),
+    ];
+    for (final file in legacyDatabaseFamily) {
+      await file.writeAsBytes([1, 2, 3, 4], flush: true);
+    }
+    final legacyReceipt = File(
+      p.join(
+        installationRoot.path,
+        'database_installation_receipt_legacy.json',
+      ),
+    );
+    await legacyReceipt.writeAsString('{legacy}', flush: true);
+
+    final currentVaultFiles = <File>[
+      File(p.join(localDataDirectory.path, AppDatabase.databaseFileName)),
+      File(p.join(accountDataDirectory.path, AppDatabase.databaseFileName)),
+    ];
+    for (final file in currentVaultFiles) {
+      await file.writeAsBytes([9, 8, 7, 6], flush: true);
+    }
+
+    await runtime.discardPlaintextLocalState();
+
+    for (final file in legacyDatabaseFamily) {
+      expect(await file.exists(), isFalse, reason: file.path);
+    }
+    expect(await legacyReceipt.exists(), isFalse);
+    for (final file in currentVaultFiles) {
+      expect(await file.readAsBytes(), [9, 8, 7, 6], reason: file.path);
+    }
+  });
+
+  test('Windows 安装根祖先 junction 必须失败关闭且不得删除外部明文库', () async {
+    if (!Platform.isWindows) return;
+
+    final caseRoot = Directory(
+      p.join(installationRoot.path, 'installation-root-junction'),
+    );
+    final externalRoot = Directory(
+      p.join(installationRoot.parent.path, 'external-${const Uuid().v4()}'),
+    );
+    final externalInstallationRoot = Directory(
+      p.join(externalRoot.path, 'kelivo'),
+    );
+    final junctionPath = p.join(caseRoot.path, 'redirected-parent');
+    await caseRoot.create(recursive: true);
+    await externalInstallationRoot.create(recursive: true);
+
+    final legacyDatabase = File(
+      p.join(externalInstallationRoot.path, AppDatabase.databaseFileName),
+    );
+    final protectedFiles = <File>[
+      legacyDatabase,
+      File('${legacyDatabase.path}-wal'),
+      File('${legacyDatabase.path}-shm'),
+      File('${legacyDatabase.path}-journal'),
+      File(
+        p.join(
+          externalInstallationRoot.path,
+          'database_installation_receipt_external.json',
+        ),
+      ),
+    ];
+    for (var index = 0; index < protectedFiles.length; index++) {
+      await protectedFiles[index].writeAsBytes(<int>[index + 1], flush: true);
+    }
+    await _createDirectoryLink(junctionPath, externalRoot.path);
+
+    Future<void> bootstrapAndDiscard() async {
+      final runtime = await AccountWorkspaceRuntime.bootstrap(
+        installationRoot: Directory(p.join(junctionPath, 'kelivo')),
+        sessionTokenStore: sessionTokenStore,
+      );
+      try {
+        await runtime.discardPlaintextLocalState();
+      } finally {
+        await runtime.close();
+      }
+    }
+
+    try {
+      await expectLater(
+        bootstrapAndDiscard(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'account_workspace_installation_root_unsafe',
+          ),
+        ),
+      );
+      for (var index = 0; index < protectedFiles.length; index++) {
+        expect(
+          await protectedFiles[index].readAsBytes(),
+          <int>[index + 1],
+          reason: protectedFiles[index].path,
+        );
+      }
+    } finally {
+      await _deleteDirectoryLink(junctionPath);
+      if (await externalRoot.exists()) {
+        await externalRoot.delete(recursive: true);
+      }
+    }
+  });
+
+  test('Windows 安装根自身为 junction 时不得创建外部工作区', () async {
+    if (!Platform.isWindows) return;
+
+    final caseRoot = Directory(
+      p.join(installationRoot.path, 'linked-installation-root'),
+    );
+    final externalRoot = Directory(
+      p.join(installationRoot.parent.path, 'external-${const Uuid().v4()}'),
+    );
+    final junctionPath = p.join(caseRoot.path, 'kelivo');
+    final sentinel = File(p.join(externalRoot.path, 'sentinel'));
+    await caseRoot.create(recursive: true);
+    await externalRoot.create(recursive: true);
+    await sentinel.writeAsString('external', flush: true);
+    await _createDirectoryLink(junctionPath, externalRoot.path);
+
+    Future<void> bootstrapAndClose() async {
+      final runtime = await AccountWorkspaceRuntime.bootstrap(
+        installationRoot: Directory(junctionPath),
+        sessionTokenStore: sessionTokenStore,
+      );
+      await runtime.close();
+    }
+
+    try {
+      await expectLater(
+        bootstrapAndClose(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'account_workspace_installation_root_unsafe',
+          ),
+        ),
+      );
+      expect(await sentinel.readAsString(), 'external');
+      expect(
+        await Directory(
+          p.join(externalRoot.path, '.kelivo-workspaces'),
+        ).exists(),
+        isFalse,
+      );
+    } finally {
+      await _deleteDirectoryLink(junctionPath);
+      if (await externalRoot.exists()) {
+        await externalRoot.delete(recursive: true);
+      }
+    }
+  });
+
+  test('普通安装根尾部目录缺失时按词法路径创建工作区', () async {
+    final absentInstallationRoot = Directory(
+      p.join(installationRoot.path, 'ordinary', 'kelivo'),
+    );
+    expect(await absentInstallationRoot.exists(), isFalse);
+
+    final runtime = await AccountWorkspaceRuntime.bootstrap(
+      installationRoot: absentInstallationRoot,
+      sessionTokenStore: sessionTokenStore,
+    );
+    try {
+      expect(
+        p.normalize(runtime.installationRoot.path),
+        p.normalize(absentInstallationRoot.path),
+      );
+      expect(
+        p.normalize(runtime.current.dataDirectory.path),
+        p.normalize(
+          p.join(
+            absentInstallationRoot.path,
+            '.kelivo-workspaces',
+            'local',
+            'data',
+          ),
+        ),
+      );
+    } finally {
+      await runtime.close();
+    }
   });
 
   test('任一非当前工作区存在未知同步拓扑时整批清理失败且不先删本地状态', () async {
@@ -2119,13 +2354,16 @@ void main() {
 
   test('退出只切回匿名工作区并保留账号目录', () async {
     var runtime = await bootstrap();
+    final localDataDirectory = runtime.current.dataDirectory;
+    final localMarker = File(p.join(localDataDirectory.path, 'local-only'));
+    await localMarker.writeAsString('local');
     await runtime.bindAccount(_session(userId: 'account-a', token: 'token-a'));
     await close(runtime);
 
     runtime = await bootstrap();
     final accountDirectory = runtime.current.dataDirectory;
-    final marker = File(p.join(accountDirectory.path, 'keep-me'));
-    await marker.writeAsString('account-a');
+    final accountMarker = File(p.join(accountDirectory.path, 'account-only'));
+    await accountMarker.writeAsString('account-a');
 
     final target = await runtime.signOut();
     expect(target.target.isLocal, isTrue);
@@ -2135,8 +2373,17 @@ void main() {
 
     runtime = await bootstrap();
     expect(runtime.current.isLocal, isTrue);
-    expect(runtime.current.dataDirectory.path, installationRoot.path);
-    expect(await marker.readAsString(), 'account-a');
+    expect(runtime.current.dataDirectory.path, localDataDirectory.path);
+    expect(await localMarker.readAsString(), 'local');
+    expect(await accountMarker.readAsString(), 'account-a');
+    expect(
+      await File(p.join(localDataDirectory.path, 'account-only')).exists(),
+      isFalse,
+    );
+    expect(
+      await File(p.join(accountDirectory.path, 'local-only')).exists(),
+      isFalse,
+    );
   });
 
   test('非官方服务会话在启动前失效并直接切回匿名工作区', () async {
@@ -4278,6 +4525,29 @@ Future<void> _createDirectoryLink(String linkPath, String targetPath) async {
   if (result.exitCode != 0) {
     throw StateError(
       'account_workspace_junction_setup_failed:${result.stderr}',
+    );
+  }
+}
+
+Future<void> _deleteDirectoryLink(String linkPath) async {
+  if (!Platform.isWindows) {
+    await Link(linkPath).delete();
+    return;
+  }
+  final result = await Process.run(
+    'pwsh',
+    <String>[
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      r'Remove-Item -LiteralPath $env:KELIVO_LINK_PATH -Force',
+    ],
+    environment: <String, String>{'KELIVO_LINK_PATH': linkPath},
+  );
+  if (result.exitCode != 0) {
+    throw StateError(
+      'account_workspace_junction_cleanup_failed:${result.stderr}',
     );
   }
 }

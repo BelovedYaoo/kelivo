@@ -135,6 +135,33 @@ final class DatabaseEncryptionCutover {
     });
   }
 
+  static Future<void> discardLegacyDatabaseFamily({
+    required Directory appDataDirectory,
+    RestoreDurability? durability,
+  }) async {
+    if (await FileSystemEntity.type(
+          appDataDirectory.path,
+          followLinks: false,
+        ) !=
+        FileSystemEntityType.directory) {
+      throw StateError('database_encryption_cutover_directory_type');
+    }
+    final databaseFile = File(
+      p.join(appDataDirectory.path, AppDatabase.databaseFileName),
+    );
+    await _validateDatabaseFamily(databaseFile);
+    await _validateInstallationReceiptTopology(appDataDirectory);
+    final resolvedDurability = durability ?? RestorePlatformDurability();
+
+    // 安装根已永久退役为数据库目录，因此不能根据文件头判断是否保留；
+    // 否则损坏明文库或孤立侧车会绕过硬切并继续留在磁盘上。
+    await DatabaseInstallationGate.discardReceiptsForEncryptionCutover(
+      appDataDirectory: appDataDirectory,
+      durability: resolvedDurability,
+    );
+    await _deleteDatabaseFamily(databaseFile, durability: resolvedDurability);
+  }
+
   static Future<void> _discardPlaintextDatabase({
     required Directory appDataDirectory,
     required File databaseFile,
