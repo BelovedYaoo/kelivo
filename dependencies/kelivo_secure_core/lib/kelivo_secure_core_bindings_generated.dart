@@ -45,6 +45,15 @@ external int kelivo_key_slot_open(
   ffi.Pointer<ffi.Uint64> out_handle,
 );
 
+@ffi.Native<
+  KelivoStatus Function(ffi.Pointer<ffi.Uint8>, ffi.Size, ffi.Uint32)
+>()
+external int kelivo_key_slot_delete(
+  ffi.Pointer<ffi.Uint8> slot_id,
+  int slot_id_length,
+  int policy_version,
+);
+
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_key_handle_close(int handle);
 
@@ -1132,7 +1141,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 13;
+const int KELIVO_CORE_ABI_VERSION = 14;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -1220,6 +1229,8 @@ const int KELIVO_STATUS_ATTACHMENT_ENVELOPE_INVALID = 37;
 
 const int KELIVO_STATUS_ATTACHMENT_AUTHENTICATION_FAILED = 38;
 
+const int KELIVO_STATUS_SLOT_IN_USE = 39;
+
 const int KELIVO_STATUS_UNSUPPORTED_PLATFORM = 100;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_NONE = 0;
@@ -1229,6 +1240,8 @@ const int KELIVO_SECURE_STORAGE_BACKEND_WINDOWS_DPAPI = 1;
 const int KELIVO_SECURE_STORAGE_BACKEND_ANDROID_KEYSTORE = 2;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_LINUX_SECRET_SERVICE = 3;
+
+const int KELIVO_SECURE_STORAGE_BACKEND_IOS_KEYCHAIN = 4;
 
 const int KELIVO_CAPABILITY_FLAGS_NONE = 0;
 

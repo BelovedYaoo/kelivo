@@ -45,6 +45,10 @@ pub(super) fn open_slot(slot_id: &[u8; 16]) -> Result<LocalKey, KelivoStatus> {
     default_store()?.open_slot(slot_id)
 }
 
+pub(super) fn delete_slot(slot_id: &[u8; 16]) -> Result<(), KelivoStatus> {
+    default_store()?.delete_slot(slot_id)
+}
+
 pub(super) fn fill_random(output: &mut [u8]) -> Result<(), KelivoStatus> {
     getrandom::getrandom(output).map_err(|_| KelivoStatus::RandomSourceFailure)
 }
@@ -83,6 +87,17 @@ impl SlotStore {
         let encoded = read_slot_file(&self.slot_path(slot_id))?;
         let protected_key = decode_slot_file(&encoded)?;
         unprotect_key(protected_key, slot_id)
+    }
+
+    fn delete_slot(&self, slot_id: &[u8; 16]) -> Result<(), KelivoStatus> {
+        self.ensure_root()?;
+        let _lock = StoreLock::acquire(&self.root)?;
+        // Keystore 主包装密钥由所有槽共享；删除它会误擦除其他账户，只移除本槽密文。
+        match fs::remove_file(self.slot_path(slot_id)) {
+            Ok(()) => sync_directory(&self.root),
+            Err(error) if error.kind() == ErrorKind::NotFound => sync_directory(&self.root),
+            Err(_) => Err(KelivoStatus::IoFailure),
+        }
     }
 
     fn ensure_root(&self) -> Result<(), KelivoStatus> {
@@ -503,4 +518,29 @@ fn encode_hex(input: &[u8]) -> String {
         encoded.push(HEX[(byte & 0x0f) as usize] as char);
     }
     encoded
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn slot_file_delete_is_idempotent_and_syncs_the_store() {
+        let mut suffix = [0_u8; 16];
+        fill_random(&mut suffix).expect("测试目录随机后缀应生成成功");
+        let root = std::env::temp_dir().join(format!(
+            "kelivo_secure_core_android_delete_{}",
+            encode_hex(&suffix)
+        ));
+        let store = SlotStore::new(root.clone());
+        let slot_id = [0x46; 16];
+        store.ensure_root().expect("测试槽位目录应创建成功");
+        fs::write(store.slot_path(&slot_id), b"wrapped-key").expect("测试槽位应写入成功");
+
+        store.delete_slot(&slot_id).expect("已有槽位应删除成功");
+        assert!(!store.slot_path(&slot_id).exists());
+        store.delete_slot(&slot_id).expect("缺失槽位应幂等成功");
+
+        fs::remove_dir_all(root).expect("测试目录应清理成功");
+    }
 }

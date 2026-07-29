@@ -13,7 +13,7 @@ use core_foundation_sys::data::CFDataCreateWithBytesNoCopy;
 use security_framework::{
     access_control::{ProtectionMode, SecAccessControl},
     base::Error,
-    passwords::{PasswordOptions, generic_password},
+    passwords::{PasswordOptions, delete_generic_password_options, generic_password},
 };
 use security_framework_sys::{
     base::{errSecAuthFailed, errSecDuplicateItem, errSecItemNotFound, errSecSuccess},
@@ -54,6 +54,10 @@ pub(super) fn open_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, Ke
         .map(Zeroizing::new)
         .map_err(map_open_error)?;
     copy_opened_key(&source)
+}
+
+pub(super) fn delete_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<(), KelivoStatus> {
+    delete_generic_password_options(slot_options(slot_id)).or_else(map_delete_error)
 }
 
 fn copy_opened_key(source: &[u8]) -> Result<LocalKey, KelivoStatus> {
@@ -125,6 +129,16 @@ fn map_open_error(error: Error) -> KelivoStatus {
     }
 }
 
+fn map_delete_error(error: Error) -> Result<(), KelivoStatus> {
+    if error.code() == errSecItemNotFound {
+        Ok(())
+    } else if error.code() == errSecAuthFailed {
+        Err(KelivoStatus::SlotUnwrapFailed)
+    } else {
+        Err(KelivoStatus::SecureStorageUnavailable)
+    }
+}
+
 fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
@@ -154,6 +168,18 @@ mod tests {
         assert_eq!(
             map_open_error(Error::from_code(errSecAuthFailed)),
             KelivoStatus::SlotUnwrapFailed
+        );
+        assert_eq!(
+            map_delete_error(Error::from_code(errSecItemNotFound)),
+            Ok(())
+        );
+        assert_eq!(
+            map_delete_error(Error::from_code(errSecAuthFailed)),
+            Err(KelivoStatus::SlotUnwrapFailed)
+        );
+        assert_eq!(
+            map_delete_error(Error::from_code(-50)),
+            Err(KelivoStatus::SecureStorageUnavailable)
         );
     }
 

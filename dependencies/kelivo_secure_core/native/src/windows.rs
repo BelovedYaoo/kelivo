@@ -45,6 +45,10 @@ pub(super) fn open_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, Ke
     default_store()?.open_slot(slot_id)
 }
 
+pub(super) fn delete_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<(), KelivoStatus> {
+    default_store()?.delete_slot(slot_id)
+}
+
 pub(super) fn fill_random(output: &mut [u8]) -> Result<(), KelivoStatus> {
     if output.is_empty() {
         return Ok(());
@@ -114,6 +118,15 @@ impl SlotStore {
         let encoded = read_slot_file(&self.slot_path(slot_id))?;
         let protected_key = decode_slot_file(&encoded)?;
         unprotect_key(protected_key, slot_id)
+    }
+
+    fn delete_slot(&self, slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<(), KelivoStatus> {
+        // DPAPI 没有独立的槽位对象；包装密文文件就是该槽唯一的持久材料。
+        match fs::remove_file(self.slot_path(slot_id)) {
+            Ok(()) => Ok(()),
+            Err(error) if error.kind() == ErrorKind::NotFound => Ok(()),
+            Err(_) => Err(KelivoStatus::IoFailure),
+        }
     }
 
     fn slot_path(&self, slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> PathBuf {
@@ -390,6 +403,13 @@ mod tests {
         }
     }
 
+    fn expect_empty_status(result: Result<(), KelivoStatus>, expected: KelivoStatus) {
+        match result {
+            Ok(()) => panic!("操作意外成功，期望状态：{expected:?}"),
+            Err(actual) => assert_eq!(actual, expected),
+        }
+    }
+
     #[test]
     fn dpapi_slot_round_trips_without_plaintext_and_binds_slot_id() {
         let (store, root) = create_test_store("round_trip");
@@ -426,6 +446,24 @@ mod tests {
         assert_eq!(after, before);
         expect_status(store.open_slot(&missing_id), KelivoStatus::SlotNotFound);
 
+        fs::remove_dir_all(root).expect("测试目录应清理成功");
+    }
+
+    #[test]
+    fn slot_delete_is_idempotent_and_preserves_io_failures() {
+        let (store, root) = create_test_store("delete");
+        let slot_id = [0x45; KEY_SLOT_ID_SIZE];
+        let slot_path = store.slot_path(&slot_id);
+
+        let _key = store.create_slot(&slot_id).expect("待删除槽位应创建成功");
+        store.delete_slot(&slot_id).expect("已有槽位应删除成功");
+        assert!(!slot_path.exists());
+        expect_status(store.open_slot(&slot_id), KelivoStatus::SlotNotFound);
+        store.delete_slot(&slot_id).expect("缺失槽位应幂等成功");
+
+        fs::create_dir(&slot_path).expect("故障槽位目录应创建成功");
+        expect_empty_status(store.delete_slot(&slot_id), KelivoStatus::IoFailure);
+        fs::remove_dir(&slot_path).expect("故障槽位目录应清理成功");
         fs::remove_dir_all(root).expect("测试目录应清理成功");
     }
 
