@@ -46,10 +46,13 @@
 - 已完成：记录 ID 派生强制使用记录自身 keyEpoch；与成员清单安全核心合并后统一 ABI 13，避免两份 ABI 12 动态库错误互认。native 49、protocol 41+doctest、依赖 20、根协议 120 项测试通过。
 - 已完成：iOS 安全密钥槽硬切 Keychain `AfterFirstUnlockThisDeviceOnly`、Data Protection 且禁止同步，无文件或偏好回退；Runner/CocoaPods 最低 iOS 14，ActivityKit 扩展保持 16.1。ABI 13 下 native 49、protocol 41+5 doctest、依赖 21、根协议 120 项通过，三个 Apple Rust target 的 check 与严格 Clippy 通过。
 - 已完成：`kelivo-api/main@02dce9e` 已推送 D1/R2 密文附件六端点、原子配额、幂等状态机及完整 uint32 keyEpoch；未部署。
+- 已完成：安全核心 ABI v15 使用独立恢复口令加密固定 644 字节恢复介质，二维码与文件共享同一密文字节协议；恢复私钥与 ARK 不进入 Dart，Argon2 64 MiB 工作区及可控 KDF 中间对象显式清零，历史总量以 16 MiB 双层门禁限制移动端工作集。
+- 已完成：恢复导入在单个 Native 调用内验证完整成员历史、打开当前及必要的相邻源 epoch capsule，并原子发布不透明 ARK keyring；生产恢复能力仅由 Android/iOS 声明，Windows ABI 对生成、导出和执行恢复失败关闭，同时保留普通 capsule 密封能力。
+- 已完成：Dart 成员清单支持 op4 恢复接续与 op5 恢复替换，严格验证完整历史 operationId 唯一性、成员差分、旧/新 ARK 双签名与恢复状态约束；Dart 生成的 INIT→RESUME→RESUME→REPLACE 固定 wire 已由 Rust 逐段验摘要、签名和转换。
 - 已确认：成员清单必须签名覆盖恢复公钥、恢复胶囊版本与摘要，并在 SQLCipher 持久化最后验证清单锚点；服务器投影只参与 CAS，不能成为信任来源。普通登录使用的会话代必须与签名成员的稳定认证代分离。
 - 已确认：恢复介质必须固定 genesis 完整清单；清单显式携带当前信任公钥，并以旧 epoch 过渡签名和当前 epoch 持有签名建立不可伪造的完整历史链，否则恶意服务器可向恢复设备替换为自选 ARK。撤销禁止由被撤销设备自发起；单一恶意服务器仍可隐藏或回放真实旧前缀，但不能构造服务器已知 ARK 的有效后继。
 - 已确认：ARK 轮换后必须冻结普通同步并完成全局 data-rekey；记录按精确 epoch 派生 ID，附件拆分分块 epoch 与 manifest epoch，服务端游标绑定 data generation，最终新 snapshot 完成后才可幂等裁剪旧 ARK。保证撤销后的新写前向隔离，不声称让旧设备忘记其已获得的历史明文或密钥。
-- 下一步：接入原子注册/成员历史安全 API、签名 data-rekey completion proof、移动端恢复介质 capability 与后台调度可信世代 gate。
+- 下一步：合入稳定安全控制面客户端与 data-rekey completion proof，接入移动端恢复二维码/文件 UI、服务端恢复挑战和后台调度可信世代 gate。
 - 审计关键路径：移动端首账户注册、二维码/恢复文件、撤销设备后的 ARK keyring/epoch 轮换、后台同步的平台调度与签名安全状态预检、D1 硬重建及 Worker 部署尚未完成。
 - 已知边界：结构化附件读写链路已经硬切完成；签名成员清单、撤销后的 ARK 轮换、恢复流程与平台后台调度尚未闭环，因此内容同步仍不能作为完整公开 E2EE 发布。
 - 约束：不保留旧数据、旧 payload 或双写兼容路径；业务接线完成并验证前不提前开启内容同步。
