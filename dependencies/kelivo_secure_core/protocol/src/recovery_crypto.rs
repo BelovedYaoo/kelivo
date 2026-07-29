@@ -7,10 +7,6 @@ use chacha20poly1305::{
     Tag, XChaCha20Poly1305, XNonce,
     aead::{AeadInOut, KeyInit},
 };
-use hmac::{
-    Hmac, KeyInit as HmacKeyInit, Mac,
-    digest::{FixedOutput, Output},
-};
 use hpke::{
     Deserializable, Kem as HpkeKemTrait, OpModeR, OpModeS, Serializable,
     aead::{AeadTag, ChaCha20Poly1305 as HpkeAead},
@@ -30,6 +26,7 @@ use crate::{
         DeviceId, DeviceKeyAgreementPublicKey, DeviceSigningPublicKey, HpkeRngAdapter, UserId,
         derive_account_trust_public_key, verify_account_trust_payload,
     },
+    zeroizing_hkdf::expand_hkdf_sha256_single_block,
 };
 
 const RECOVERY_CAPSULE_MAGIC: [u8; 8] = *b"KELVRCP1";
@@ -923,24 +920,14 @@ fn derive_media_key(
         )
         .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
 
-    type HmacSha256 = Hmac<Sha256>;
-    let zero_salt = [0_u8; RECOVERY_MEDIA_KEY_LENGTH];
-    let mut extract = <HmacSha256 as HmacKeyInit>::new_from_slice(&zero_salt)
-        .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
-    Mac::update(&mut extract, intermediate.as_slice());
-    let mut prk = Zeroizing::new([0_u8; RECOVERY_MEDIA_KEY_LENGTH]);
-    let prk_output = <&mut Output<HmacSha256>>::try_from(prk.as_mut_slice())
-        .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
-    FixedOutput::finalize_into(extract, prk_output);
-
-    let mut expand = <HmacSha256 as HmacKeyInit>::new_from_slice(prk.as_slice())
-        .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
-    Mac::update(&mut expand, RECOVERY_MEDIA_WRAP_KEY_INFO);
-    Mac::update(&mut expand, &[1]);
     let mut key = Zeroizing::new([0_u8; RECOVERY_MEDIA_KEY_LENGTH]);
-    let key_output = <&mut Output<HmacSha256>>::try_from(key.as_mut_slice())
-        .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
-    FixedOutput::finalize_into(expand, key_output);
+    expand_hkdf_sha256_single_block(
+        None,
+        intermediate.as_slice(),
+        RECOVERY_MEDIA_WRAP_KEY_INFO,
+        &mut key,
+    )
+    .map_err(|_| RecoveryCryptoError::MediaKdfFailed)?;
     Ok(key)
 }
 
