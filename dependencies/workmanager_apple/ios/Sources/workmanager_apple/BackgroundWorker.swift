@@ -168,7 +168,7 @@ class BackgroundWorker {
         flutterPluginRegistrantCallback?(flutterEngine!)
 
         var flutterApi: WorkmanagerFlutterApi? = WorkmanagerFlutterApi(binaryMessenger: flutterEngine!.binaryMessenger)
-        let completionLock = NSLock()
+        let completionLock = NSRecursiveLock()
         var completionDelivered = false
 
         func claimCompletion() -> Bool {
@@ -183,6 +183,14 @@ class BackgroundWorker {
             completionLock.lock()
             defer { completionLock.unlock() }
             return completionDelivered
+        }
+
+        func runWhileActive(_ operation: () -> Void) -> Bool {
+            completionLock.lock()
+            defer { completionLock.unlock() }
+            if completionDelivered { return false }
+            operation()
+            return true
         }
 
         func cleanupFlutterResources() {
@@ -225,46 +233,48 @@ class BackgroundWorker {
                 }) else { return }
                 guard !isCompletionDelivered() else { return }
 
-                // Execute the task
-                flutterApi?.executeTask(taskName: taskName, inputData: pigeonInputData) { taskResult in
-                    guard claimCompletion() else { return }
-                    cleanupFlutterResources()
-                    let taskSessionCompleter = Date()
+                // 检查与通道发送必须同锁，避免强制终态穿过二者之间的窗口。
+                guard runWhileActive({
+                    flutterApi?.executeTask(taskName: taskName, inputData: pigeonInputData) { taskResult in
+                        guard claimCompletion() else { return }
+                        cleanupFlutterResources()
+                        let taskSessionCompleter = Date()
 
-                    let fetchResult: UIBackgroundFetchResult
-                    let status: TaskStatus
-                    let errorMessage: String?
+                        let fetchResult: UIBackgroundFetchResult
+                        let status: TaskStatus
+                        let errorMessage: String?
 
-                    switch taskResult {
-                    case .success(let wasSuccessful):
-                        if wasSuccessful {
-                            fetchResult = .newData
-                            status = .completed
-                            errorMessage = nil
-                        } else {
+                        switch taskResult {
+                        case .success(let wasSuccessful):
+                            if wasSuccessful {
+                                fetchResult = .newData
+                                status = .completed
+                                errorMessage = nil
+                            } else {
+                                fetchResult = .failed
+                                status = .retrying
+                                errorMessage = nil
+                            }
+                        case .failure(let error):
                             fetchResult = .failed
-                            status = .retrying
-                            errorMessage = nil
+                            status = .failed
+                            errorMessage = error.localizedDescription
                         }
-                    case .failure(let error):
-                        fetchResult = .failed
-                        status = .failed
-                        errorMessage = error.localizedDescription
+
+                        let taskDuration = taskSessionCompleter.timeIntervalSince(taskSessionStart)
+                        logInfo(
+                            "[\(String(describing: self))] \(#function) -> performBackgroundRequest.\(fetchResult) (finished in \(taskDuration.formatToSeconds()))"
+                        )
+
+                        let taskResult = TaskResult(
+                            success: status == .completed,
+                            duration: Int64(taskDuration * 1000), // Convert to milliseconds
+                            error: errorMessage
+                        )
+                        WorkmanagerDebug.onTaskStatusUpdate(taskInfo: taskInfo, status: status, result: taskResult)
+                        completionHandler(fetchResult)
                     }
-
-                    let taskDuration = taskSessionCompleter.timeIntervalSince(taskSessionStart)
-                    logInfo(
-                        "[\(String(describing: self))] \(#function) -> performBackgroundRequest.\(fetchResult) (finished in \(taskDuration.formatToSeconds()))"
-                    )
-
-                    let taskResult = TaskResult(
-                        success: status == .completed,
-                        duration: Int64(taskDuration * 1000), // Convert to milliseconds
-                        error: errorMessage
-                    )
-                    WorkmanagerDebug.onTaskStatusUpdate(taskInfo: taskInfo, status: status, result: taskResult)
-                    completionHandler(fetchResult)
-                }
+                }) else { return }
             case .failure(let error):
                 guard claimCompletion() else { return }
                 logError("Background channel initialization failed: \(error)")

@@ -1050,6 +1050,8 @@ void main() {
     expect(appleWorker, contains('guard !isCompletionDelivered()'));
     expect(appleWorker, contains('if forceCancellationRequested'));
     expect(appleWorker, contains('guard self.installCancellationNotifier'));
+    expect(appleWorker, contains('let completionLock = NSRecursiveLock()'));
+    expect(appleWorker, contains('guard runWhileActive({'));
   });
 
   test('E2EE 后台同步同一账户并发只允许一个执行', () async {
