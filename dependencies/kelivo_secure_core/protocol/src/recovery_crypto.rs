@@ -240,9 +240,12 @@ impl RecoveryIdentity {
     pub fn from_private_bytes(
         bytes: [u8; RECOVERY_PRIVATE_KEY_LENGTH],
     ) -> Result<Self, RecoveryCryptoError> {
-        <<HpkeKem as HpkeKemTrait>::PrivateKey as Deserializable>::from_bytes(&bytes)
+        let bytes = Zeroizing::new(bytes);
+        <<HpkeKem as HpkeKemTrait>::PrivateKey as Deserializable>::from_bytes(bytes.as_slice())
             .map_err(|_| RecoveryCryptoError::InvalidRecoveryPrivateKey)?;
-        Ok(Self { private_key: bytes })
+        Ok(Self {
+            private_key: *bytes,
+        })
     }
 
     pub fn public_key(&self) -> Result<RecoveryPublicKey, RecoveryCryptoError> {
