@@ -602,6 +602,32 @@ void main() {
       expect(await receipt.readAsString(), '{unknown');
     });
 
+    test('退役目录硬切无条件删除未知主库、孤立侧车与回执', () async {
+      final mainFile = databaseFile(directory);
+      final databaseFamily = <File>[
+        mainFile,
+        File('${mainFile.path}-wal'),
+        File('${mainFile.path}-shm'),
+        File('${mainFile.path}-journal'),
+      ];
+      for (final file in databaseFamily) {
+        await file.writeAsBytes([1, 2, 3, 4], flush: true);
+      }
+      final receipt = File(
+        p.join(directory.path, 'database_installation_receipt_legacy.json'),
+      );
+      await receipt.writeAsString('{legacy', flush: true);
+
+      await DatabaseEncryptionCutover.discardLegacyDatabaseFamily(
+        appDataDirectory: directory,
+      );
+
+      for (final file in databaseFamily) {
+        expect(await file.exists(), isFalse, reason: file.path);
+      }
+      expect(await receipt.exists(), isFalse);
+    });
+
     test('硬切发现数据库侧车拓扑异常时不先删除明文主库', () async {
       final mainFile = databaseFile(directory);
       await mainFile.writeAsBytes([

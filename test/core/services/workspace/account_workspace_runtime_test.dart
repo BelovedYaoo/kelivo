@@ -1706,10 +1706,16 @@ void main() {
     await expectLater(bootstrap(), throwsA(isA<StateError>()));
   });
 
-  test('匿名工作区保留既有根目录且账号 A/B 的路径与配置前缀互不重叠', () async {
+  test('匿名 LocalVault 与账号 A/B 的路径和配置前缀互不重叠', () async {
     var runtime = await bootstrap();
+    final localDataDirectory = p.join(
+      installationRoot.path,
+      '.kelivo-workspaces',
+      'local',
+      'data',
+    );
     expect(runtime.current.isLocal, isTrue);
-    expect(runtime.current.dataDirectory.path, installationRoot.path);
+    expect(runtime.current.dataDirectory.path, localDataDirectory);
     expect(runtime.current.preferencesPrefix, 'flutter.');
 
     final accountA = _session(userId: 'account-a', token: 'token-a');
@@ -1719,7 +1725,7 @@ void main() {
     final targetA = (bindA as AccountWorkspaceRestartRequired).target;
     expect(runtime.current.isLocal, isTrue);
     expect(targetA.isLocal, isFalse);
-    expect(targetA.dataDirectory.path, isNot(installationRoot.path));
+    expect(targetA.dataDirectory.path, isNot(localDataDirectory));
     expect(targetA.preferencesPrefix, startsWith('kelivo.account.'));
 
     await close(runtime);
@@ -1740,8 +1746,26 @@ void main() {
     expect(runtime.current.dataDirectory.path, targetB.dataDirectory.path);
   });
 
+  test('匿名 LocalVault 目录链接不能把数据重定向到其他位置', () async {
+    final workspaceRoot = Directory(
+      p.join(installationRoot.path, '.kelivo-workspaces'),
+    );
+    await workspaceRoot.create();
+    final redirectedLocal = Directory(
+      p.join(installationRoot.path, 'redirected-local'),
+    );
+    await redirectedLocal.create();
+    await _createDirectoryLink(
+      p.join(workspaceRoot.path, 'local'),
+      redirectedLocal.path,
+    );
+
+    await expectLater(bootstrap(), throwsA(isA<StateError>()));
+  });
+
   test('硬切清理本地与所有账号工作区的明文同步状态并保留密文凭证', () async {
     var runtime = await bootstrap();
+    final localDataDirectory = runtime.current.dataDirectory;
     final bindA = await runtime.bindAccount(
       _session(userId: 'account-a', token: 'token-a'),
     );
@@ -1764,6 +1788,12 @@ void main() {
       ),
       File(
         p.join(
+          localDataDirectory.path,
+          '${CloudSyncStateRetirement.legacyBoxName}.lock',
+        ),
+      ),
+      File(
+        p.join(
           targetA.dataDirectory.path,
           '${CloudSyncStateRetirement.legacyBoxName}.hivec',
         ),
@@ -1780,6 +1810,7 @@ void main() {
     }
     final legacyHiveArtifacts = <File>[
       File(p.join(installationRoot.path, 'conversations.hive')),
+      File(p.join(localDataDirectory.path, 'messages.hive')),
       File(p.join(targetA.dataDirectory.path, 'messages.hivec')),
       File(p.join(targetB.dataDirectory.path, 'tool_events_v1.lock')),
     ];
@@ -1789,6 +1820,7 @@ void main() {
     final databaseArtifacts = <File>[
       for (final dataDirectory in <Directory>[
         installationRoot,
+        localDataDirectory,
         targetA.dataDirectory,
         targetB.dataDirectory,
       ])
@@ -1832,6 +1864,54 @@ void main() {
       expect(await sessionRecord.exists(), isTrue, reason: sessionRecord.path);
     }
     expect(sessionTokenStore.tokenCount, 2);
+  });
+
+  test('硬切无条件删除旧安装根数据库族并保留当前密文 Vault', () async {
+    final runtime = await bootstrap();
+    final localDataDirectory = runtime.current.dataDirectory;
+    final bind = await runtime.bindAccount(
+      _session(userId: 'account-a', token: 'token-a'),
+    );
+    final accountDataDirectory =
+        (bind as AccountWorkspaceRestartRequired).target.dataDirectory;
+
+    final legacyDatabase = File(
+      p.join(installationRoot.path, AppDatabase.databaseFileName),
+    );
+    final legacyDatabaseFamily = <File>[
+      legacyDatabase,
+      File('${legacyDatabase.path}-wal'),
+      File('${legacyDatabase.path}-shm'),
+      File('${legacyDatabase.path}-journal'),
+    ];
+    for (final file in legacyDatabaseFamily) {
+      await file.writeAsBytes([1, 2, 3, 4], flush: true);
+    }
+    final legacyReceipt = File(
+      p.join(
+        installationRoot.path,
+        'database_installation_receipt_legacy.json',
+      ),
+    );
+    await legacyReceipt.writeAsString('{legacy}', flush: true);
+
+    final currentVaultFiles = <File>[
+      File(p.join(localDataDirectory.path, AppDatabase.databaseFileName)),
+      File(p.join(accountDataDirectory.path, AppDatabase.databaseFileName)),
+    ];
+    for (final file in currentVaultFiles) {
+      await file.writeAsBytes([9, 8, 7, 6], flush: true);
+    }
+
+    await runtime.discardPlaintextLocalState();
+
+    for (final file in legacyDatabaseFamily) {
+      expect(await file.exists(), isFalse, reason: file.path);
+    }
+    expect(await legacyReceipt.exists(), isFalse);
+    for (final file in currentVaultFiles) {
+      expect(await file.readAsBytes(), [9, 8, 7, 6], reason: file.path);
+    }
   });
 
   test('任一非当前工作区存在未知同步拓扑时整批清理失败且不先删本地状态', () async {
@@ -2100,13 +2180,16 @@ void main() {
 
   test('退出只切回匿名工作区并保留账号目录', () async {
     var runtime = await bootstrap();
+    final localDataDirectory = runtime.current.dataDirectory;
+    final localMarker = File(p.join(localDataDirectory.path, 'local-only'));
+    await localMarker.writeAsString('local');
     await runtime.bindAccount(_session(userId: 'account-a', token: 'token-a'));
     await close(runtime);
 
     runtime = await bootstrap();
     final accountDirectory = runtime.current.dataDirectory;
-    final marker = File(p.join(accountDirectory.path, 'keep-me'));
-    await marker.writeAsString('account-a');
+    final accountMarker = File(p.join(accountDirectory.path, 'account-only'));
+    await accountMarker.writeAsString('account-a');
 
     final target = await runtime.signOut();
     expect(target.target.isLocal, isTrue);
@@ -2116,8 +2199,17 @@ void main() {
 
     runtime = await bootstrap();
     expect(runtime.current.isLocal, isTrue);
-    expect(runtime.current.dataDirectory.path, installationRoot.path);
-    expect(await marker.readAsString(), 'account-a');
+    expect(runtime.current.dataDirectory.path, localDataDirectory.path);
+    expect(await localMarker.readAsString(), 'local');
+    expect(await accountMarker.readAsString(), 'account-a');
+    expect(
+      await File(p.join(localDataDirectory.path, 'account-only')).exists(),
+      isFalse,
+    );
+    expect(
+      await File(p.join(accountDirectory.path, 'local-only')).exists(),
+      isFalse,
+    );
   });
 
   test('非官方服务会话在启动前失效并直接切回匿名工作区', () async {
