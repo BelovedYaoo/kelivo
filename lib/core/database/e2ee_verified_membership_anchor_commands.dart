@@ -233,10 +233,19 @@ void _requireSuccessor(
       if (next.keyEpoch != previous.keyEpoch) {
         throw const FormatException('新增设备不得推进 ARK 代次');
       }
+    case E2eeMembershipOperationKind.recoverResume:
+      if (next.keyEpoch != previous.keyEpoch) {
+        throw const FormatException('恢复接续不得推进 ARK 代次');
+      }
     case E2eeMembershipOperationKind.revokeRotate:
       if (previous.keyEpoch >= _maximumUint32 ||
           next.keyEpoch != previous.keyEpoch + 1) {
         throw const FormatException('撤销设备必须精确推进一个 ARK 代次');
+      }
+    case E2eeMembershipOperationKind.recoverReplace:
+      if (previous.keyEpoch >= _maximumUint32 ||
+          next.keyEpoch != previous.keyEpoch + 1) {
+        throw const FormatException('恢复替换必须精确推进一个 ARK 代次');
       }
   }
 }

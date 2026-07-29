@@ -514,6 +514,8 @@ void main() {
       E2eeVerifiedMembership initialized,
       E2eeVerifiedMembership paired,
       E2eeVerifiedMembership revoked,
+      E2eeVerifiedMembership resumed,
+      E2eeVerifiedMembership replaced,
     })
   >
   createMembershipChain() async {
@@ -576,11 +578,45 @@ void main() {
           nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x42),
         ),
       );
+      final recoveryDevice = await _newDatabaseMembershipDevice(
+        secureCore,
+        deviceId: _syncUuid(106),
+        authGeneration: 1,
+      );
+      final resumed = await manifestModule.create(
+        ark: ark,
+        change: E2eeRecoverResumeMembershipChange(
+          previous: revoked,
+          operationId: _syncUuid(107),
+          subject: recoveryDevice,
+        ),
+      );
+      final epoch3 = await secureCore.generateAccountRootKey(
+        userId: Uuid.parseAsByteList(_syncAccountUserId),
+        keyEpoch: 3,
+      );
+      try {
+        await secureCore.addAccountRootKeyEpoch(ark, source: epoch3);
+      } finally {
+        await secureCore.closeAccountRootKey(epoch3);
+      }
+      final replaced = await manifestModule.create(
+        ark: ark,
+        change: E2eeRecoverReplaceMembershipChange(
+          previous: resumed,
+          operationId: _syncUuid(108),
+          subject: recoveryDevice,
+          nextRecoveryCapsuleVersion: 3,
+          nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x43),
+        ),
+      );
       return (
         ark: ark,
         initialized: initialized,
         paired: paired,
         revoked: revoked,
+        resumed: resumed,
+        replaced: replaced,
       );
     } catch (_) {
       await secureCore.closeAccountRootKey(ark);
@@ -1208,6 +1244,7 @@ void main() {
   group('E2EE verified membership anchor commands', () {
     test('已验证清单安装、重启验签、推进与响应丢失重放闭环', () async {
       const secureCore = KelivoSecureCore();
+      const manifestModule = E2eeAccountTrustManifestModule();
       final chain = await createMembershipChain();
       addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
       var commands = repository.e2eeVerifiedMembershipAnchorCommands;
@@ -1289,6 +1326,58 @@ void main() {
       expect(
         reopenedRevoked.membership.digest,
         orderedEquals(chain.revoked.digest),
+      );
+      final unanchoredRecoveryDevice = await _newDatabaseMembershipDevice(
+        secureCore,
+        deviceId: _syncUuid(109),
+        authGeneration: 1,
+      );
+      await expectLater(
+        manifestModule.create(
+          ark: chain.ark,
+          change: E2eeRecoverResumeMembershipChange(
+            previous: reopenedRevoked.membership,
+            operationId: _syncUuid(110),
+            subject: unanchoredRecoveryDevice,
+          ),
+        ),
+        throwsStateError,
+      );
+
+      final resumed = await repository.e2eeVerifiedMembershipAnchorCommands
+          .advance(
+            expected: reopenedRevoked,
+            next: chain.resumed,
+            now: DateTime.utc(2026, 7, 29, 0, 0, 4),
+          );
+      expect(resumed.transitionVersion, 4);
+      expect(resumed.membership.keyEpoch, 2);
+      final replaced = await repository.e2eeVerifiedMembershipAnchorCommands
+          .advance(
+            expected: resumed,
+            next: chain.replaced,
+            now: DateTime.utc(2026, 7, 29, 0, 0, 5),
+          );
+      expect(replaced.transitionVersion, 5);
+      expect(replaced.membership.keyEpoch, 3);
+
+      await repository.close();
+      database = AppDatabase.open(
+        file: File('${directory.path}/constraints.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      await database.customSelect('SELECT 1;').getSingle();
+      repository = ChatDatabaseRepository(
+        database,
+        databaseCipher: testDatabaseCipher,
+      );
+      final reopenedReplaced = await repository
+          .e2eeVerifiedMembershipAnchorCommands
+          .readVerified(accountUserId: _syncAccountUserId, ark: chain.ark);
+      expect(reopenedReplaced!.transitionVersion, 5);
+      expect(
+        reopenedReplaced.membership.digest,
+        orderedEquals(chain.replaced.digest),
       );
     });
 
