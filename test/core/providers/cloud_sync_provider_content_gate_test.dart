@@ -1228,6 +1228,10 @@ void main() {
       'dependencies/workmanager_android/android/src/main/kotlin/'
       'dev/fluttercommunity/workmanager/BackgroundWorker.kt',
     ).readAsString();
+    final androidLifecycle = await File(
+      'dependencies/workmanager_android/android/src/main/kotlin/'
+      'dev/fluttercommunity/workmanager/BackgroundWorkerLifecycle.kt',
+    ).readAsString();
 
     final dartExecutionStart = androidWorker.indexOf(
       'private fun startDartExecutionIfActive(',
@@ -1241,23 +1245,35 @@ void main() {
     final cancellationSendStart = androidWorker.indexOf(
       'private fun sendDartCancellationIfReady()',
     );
-    final cancellationEffectStart = androidWorker.indexOf(
-      'private fun beginDartCancellationEffect()',
+    final finishEffectStart = androidWorker.indexOf(
+      'private fun finishLifecycleEffect(',
     );
-    final lifecycleEffectStart = androidWorker.indexOf(
-      'private fun beginLifecycleEffect(',
+    final failureDebugStart = androidWorker.indexOf(
+      'private fun reportFailureAndStop(',
     );
-    final forcedStopStart = androidWorker.indexOf(
-      'private fun scheduleForcedStop()',
+    final replyDebugStart = androidWorker.indexOf(
+      'private fun reportDebugIfActive(',
+    );
+    final terminalCompletionStart = androidWorker.indexOf(
+      'private fun completeTerminal(',
+    );
+    final terminalStatusStart = androidWorker.indexOf(
+      'private fun reportTerminalStatus(',
+    );
+    final detachedDestroyStart = androidWorker.indexOf(
+      'private fun scheduleDetachedEngineDestruction(',
     );
 
     expect(dartExecutionStart, greaterThanOrEqualTo(0));
     expect(taskExecutionStart, greaterThan(dartExecutionStart));
     expect(cancellationRequestStart, greaterThan(taskExecutionStart));
     expect(cancellationSendStart, greaterThan(cancellationRequestStart));
-    expect(cancellationEffectStart, greaterThan(cancellationSendStart));
-    expect(lifecycleEffectStart, greaterThan(cancellationEffectStart));
-    expect(forcedStopStart, greaterThan(lifecycleEffectStart));
+    expect(finishEffectStart, greaterThan(cancellationSendStart));
+    expect(failureDebugStart, greaterThan(finishEffectStart));
+    expect(replyDebugStart, greaterThan(failureDebugStart));
+    expect(terminalCompletionStart, greaterThan(replyDebugStart));
+    expect(terminalStatusStart, greaterThan(terminalCompletionStart));
+    expect(detachedDestroyStart, greaterThan(terminalStatusStart));
 
     final dartExecution = androidWorker.substring(
       dartExecutionStart,
@@ -1273,109 +1289,112 @@ void main() {
     );
     final cancellationSend = androidWorker.substring(
       cancellationSendStart,
-      cancellationEffectStart,
+      finishEffectStart,
     );
-    final cancellationEffect = androidWorker.substring(
-      cancellationEffectStart,
-      lifecycleEffectStart,
+    final failureDebug = androidWorker.substring(
+      failureDebugStart,
+      replyDebugStart,
     );
-    final lifecycleEffect = androidWorker.substring(
-      lifecycleEffectStart,
-      forcedStopStart,
+    final replyDebug = androidWorker.substring(
+      replyDebugStart,
+      terminalCompletionStart,
     );
+    final terminalCompletion = androidWorker.substring(
+      terminalCompletionStart,
+      terminalStatusStart,
+    );
+    final detachedDestroy = androidWorker.substring(detachedDestroyStart);
 
-    expect(dartExecution, contains('beginLifecycleEffect('));
-    expect(dartExecution, contains('LifecycleState.INITIALIZING'));
+    expect(
+      androidWorker,
+      contains('BackgroundWorkerLifecycleCoordinator<TerminalRequest'),
+    );
     expect(
       dartExecution,
-      contains('LifecycleState.WAITING_FOR_BACKGROUND_CHANNEL'),
+      contains('val effect = lifecycle.beginDartExecution() ?: return false'),
     );
     expect(dartExecution, contains('WorkmanagerDebug.onTaskStatusUpdate('));
     expect(dartExecution, contains('flutterApi = WorkmanagerFlutterApi('));
     expect(dartExecution, contains('executeDartCallback('));
     expect(dartExecution, contains('flutterApi.backgroundChannelInitialized'));
     expect(dartExecution, contains('finally'));
-    expect(dartExecution, contains('finishLifecycleEffect()'));
-    expect(dartExecution, isNot(contains('synchronized(lifecycleLock)')));
+    expect(dartExecution, contains('finishLifecycleEffect(effect)'));
 
-    expect(taskExecution, contains('beginLifecycleEffect('));
     expect(
       taskExecution,
-      contains('LifecycleState.WAITING_FOR_BACKGROUND_CHANNEL'),
+      contains('val effect = lifecycle.beginTaskExecution() ?: return false'),
     );
-    expect(taskExecution, contains('LifecycleState.TASK_EXECUTING'));
     expect(taskExecution, contains('flutterApi.executeTask('));
     expect(taskExecution, contains('sendDartCancellationIfReady()'));
     expect(taskExecution, contains('finally'));
-    expect(taskExecution, contains('finishLifecycleEffect()'));
-    expect(taskExecution, isNot(contains('synchronized(lifecycleLock)')));
+    expect(taskExecution, contains('finishLifecycleEffect(effect)'));
 
     expect(
       cancellationRequest,
-      matches(
-        RegExp(
-          r'private fun requestDartCancellation\(\)[\s\S]*?'
-          r'synchronized\(lifecycleLock\)\s*\{',
-        ),
-      ),
+      contains('lifecycle.requestCancellationWakeup()'),
     );
-    expect(cancellationRequest, contains('CancellationState.WAKEUP_POSTED'));
     expect(cancellationRequest, contains('mainHandler.post'));
     expect(
       cancellationSend,
-      contains('val effect = beginDartCancellationEffect() ?: return'),
+      contains('val effect = lifecycle.beginCancellationDispatch() ?: return'),
     );
-    expect(cancellationSend, contains('effect.flutterApi.taskCancelled('));
+    expect(cancellationSend, contains('localFlutterApi.taskCancelled('));
+    expect(cancellationSend, contains('reportDebugIfActive(exception)'));
     expect(cancellationSend, contains('finally'));
-    expect(cancellationSend, contains('finishLifecycleEffect()'));
-    expect(cancellationSend, isNot(contains('synchronized(lifecycleLock)')));
+    expect(cancellationSend, contains('finishLifecycleEffect(effect)'));
 
-    expect(cancellationEffect, contains('synchronized(lifecycleLock)'));
-    expect(cancellationEffect, contains('terminalRequest != null'));
-    expect(cancellationEffect, contains('LifecycleState.TASK_EXECUTING'));
-    expect(cancellationEffect, contains('CancellationState.DISPATCH_CLAIMED'));
-    expect(cancellationEffect, contains('inFlightEffects += 1'));
+    expect(
+      failureDebug,
+      contains('val debugEffect = lifecycle.beginDebugEffect() ?: return'),
+    );
+    expect(failureDebug, contains('WorkmanagerDebug.onExceptionEncountered('));
+    expect(failureDebug, contains('stopEngine(Result.failure()'));
+    expect(failureDebug, contains('finishLifecycleEffect(debugEffect)'));
+    expect(
+      replyDebug,
+      contains('val debugEffect = lifecycle.beginDebugEffect() ?: return'),
+    );
+    expect(replyDebug, contains('WorkmanagerDebug.onExceptionEncountered('));
+    expect(replyDebug, contains('finally'));
+    expect(replyDebug, contains('finishLifecycleEffect(debugEffect)'));
 
-    expect(lifecycleEffect, contains('synchronized(lifecycleLock)'));
-    expect(lifecycleEffect, contains('terminalRequest != null'));
-    expect(lifecycleEffect, contains('lifecycleState != expectedState'));
-    expect(lifecycleEffect, contains('lifecycleState = nextState'));
-    expect(lifecycleEffect, contains('inFlightEffects += 1'));
-    expect(lifecycleEffect, contains('inFlightEffects -= 1'));
-    expect(lifecycleEffect, contains('takeTerminalCompletionLocked()'));
-    expect(
-      lifecycleEffect,
-      contains('lifecycleState = LifecycleState.TERMINAL'),
+    final cancelIndex = terminalCompletion.indexOf('cancelForcedStop =');
+    final statusIndex = terminalCompletion.indexOf('reportFinalStatus =');
+    final shutdownIndex = terminalCompletion.indexOf('shutdownScheduler =');
+    final detachIndex = terminalCompletion.indexOf('detachEngine =');
+    final destroyIndex = terminalCompletion.indexOf(
+      'scheduleDetachedEngineDestruction =',
     );
-    expect(androidWorker, contains('check(!Thread.holdsLock(lifecycleLock))'));
+    final completerIndex = terminalCompletion.indexOf('completePlatform =');
+    expect(cancelIndex, greaterThanOrEqualTo(0));
+    expect(statusIndex, greaterThan(cancelIndex));
+    expect(shutdownIndex, greaterThan(statusIndex));
+    expect(detachIndex, greaterThan(shutdownIndex));
+    expect(destroyIndex, greaterThan(detachIndex));
+    expect(completerIndex, greaterThan(destroyIndex));
+    expect(terminalCompletion, contains('engine.getAndSet(null)'));
+    expect(terminalCompletion, contains('completer.set(result)'));
+
+    expect(detachedDestroy, contains('mainHandler.post'));
+    expect(detachedDestroy, contains('detachedEngine.destroy()'));
+    expect(detachedDestroy, isNot(contains('engine.get')));
+    expect(detachedDestroy, isNot(contains('WorkmanagerDebug')));
+    expect(detachedDestroy, isNot(contains('flutterApi')));
+    expect(detachedDestroy, isNot(contains('completer')));
+
     expect(
-      androidWorker,
-      matches(
-        RegExp(
-          r'private fun stopEngine\([\s\S]*?'
-          r'synchronized\(lifecycleLock\)\s*\{\s*'
-          r'if \([\s\S]*?terminalRequest != null[\s\S]*?'
-          r'terminalRequest = TerminalRequest\([\s\S]*?'
-          r'takeTerminalCompletionLocked\(\)',
-        ),
-      ),
+      androidLifecycle,
+      contains('internal class BackgroundWorkerLifecycleCoordinator'),
     );
+    expect(androidLifecycle, contains('private var terminalRequest'));
+    expect(androidLifecycle, contains('private var inFlightEffects = 0'));
+    expect(androidLifecycle, contains('fun beginDebugEffect(): Effect?'));
+    expect(androidLifecycle, contains('fun beginCancellationDispatch()'));
     expect(
-      androidWorker,
-      matches(
-        RegExp(
-          r'private fun reportFailureAndStop\(exception: Throwable\)\s*\{\s*'
-          r'try\s*\{\s*'
-          r'WorkmanagerDebug\.onExceptionEncountered\([\s\S]*?'
-          r'\}\s*finally\s*\{\s*'
-          r'stopEngine\(Result\.failure\(\), exception\.message\)',
-        ),
-      ),
+      androidLifecycle,
+      contains('internal class BackgroundWorkerTerminalFinalizer'),
     );
-    expect(
-      RegExp(r'reportFailureAndStop\(exception\)').allMatches(androidWorker),
-      hasLength(6),
-    );
+    expect(androidLifecycle, contains('completePlatform()'));
     expect(
       RegExp(r'executeDartCallback\(').allMatches(androidWorker),
       hasLength(1),
@@ -1385,6 +1404,7 @@ void main() {
       RegExp(r'\.taskCancelled\(').allMatches(androidWorker),
       hasLength(1),
     );
+    expect(RegExp(r'completer\.set\(').allMatches(androidWorker), hasLength(1));
     expect(androidWorker, isNot(contains('private var engineStopped')));
     expect(androidWorker, isNot(contains('claimDartExecution')));
     expect(androidWorker, isNot(contains('claimBackgroundTaskExecution')));
@@ -1394,6 +1414,10 @@ void main() {
     final androidWorker = await File(
       'dependencies/workmanager_android/android/src/main/kotlin/'
       'dev/fluttercommunity/workmanager/BackgroundWorker.kt',
+    ).readAsString();
+    final androidLifecycle = await File(
+      'dependencies/workmanager_android/android/src/main/kotlin/'
+      'dev/fluttercommunity/workmanager/BackgroundWorkerLifecycle.kt',
     ).readAsString();
     final appleOperation = await File(
       'dependencies/workmanager_apple/ios/Sources/workmanager_apple/'
@@ -1415,9 +1439,12 @@ void main() {
     expect(androidWorker, contains('cancellationScheduler.schedule('));
     expect(androidWorker, contains('TimeUnit.MILLISECONDS'));
     expect(androidWorker, contains('stopEngine(Result.failure()'));
-    expect(androidWorker, contains('pendingForcedStop?.cancel(false)'));
-    expect(androidWorker, contains('completer?.set(result)'));
-    expect(androidWorker, contains('scheduleEngineDestruction()'));
+    expect(androidWorker, contains('completion.forcedStop?.cancel(false)'));
+    expect(androidWorker, contains('completer.set(result)'));
+    expect(androidWorker, contains('scheduleDetachedEngineDestruction'));
+    expect(androidLifecycle, contains('private enum class LifecycleState'));
+    expect(androidLifecycle, contains('LifecycleState.TERMINAL'));
+    expect(androidLifecycle, contains('takeTerminalCompletionLocked()'));
     expect(androidWorker, isNot(contains('postDelayed')));
     expect(androidWorker, isNot(contains('stopEngine(null)')));
     expect(appleOperation, contains('cancellationGrace'));

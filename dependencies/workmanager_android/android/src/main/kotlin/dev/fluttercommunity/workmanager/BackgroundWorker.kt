@@ -18,6 +18,7 @@ import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.ScheduledThreadPoolExecutor
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * A simple worker that posts your input back to your Flutter application.
@@ -30,34 +31,9 @@ class BackgroundWorker(
 ) : ListenableWorker(applicationContext, workerParams) {
     private lateinit var flutterApi: WorkmanagerFlutterApi
 
-    private enum class LifecycleState {
-        INITIALIZING,
-        WAITING_FOR_BACKGROUND_CHANNEL,
-        TASK_EXECUTING,
-        TERMINAL,
-    }
-
-    private enum class CancellationState {
-        NONE,
-        REQUESTED,
-        WAKEUP_POSTED,
-        DISPATCH_CLAIMED,
-    }
-
     private data class TerminalRequest(
         val result: ListenableWorker.Result,
         val errorMessage: String?,
-    )
-
-    private data class TerminalCompletion(
-        val result: ListenableWorker.Result,
-        val errorMessage: String?,
-        val pendingForcedStop: ScheduledFuture<*>?,
-    )
-
-    private data class DartCancellationEffect(
-        val flutterApi: WorkmanagerFlutterApi,
-        val taskName: String,
     )
 
     companion object {
@@ -85,14 +61,10 @@ class BackgroundWorker(
 
     private val runAttemptCount = workerParams.runAttemptCount
     private val randomThreadIdentifier = Random().nextInt()
-    private var engine: FlutterEngine? = null
+    private val engine = AtomicReference<FlutterEngine?>()
     private val mainHandler = Handler(Looper.getMainLooper())
-    private val lifecycleLock = Any()
-    private var lifecycleState = LifecycleState.INITIALIZING
-    private var cancellationState = CancellationState.NONE
-    private var terminalRequest: TerminalRequest? = null
-    private var inFlightEffects = 0
-    private var forcedStop: ScheduledFuture<*>? = null
+    private val lifecycle =
+        BackgroundWorkerLifecycleCoordinator<TerminalRequest, ScheduledFuture<*>>()
     private val cancellationScheduler: ScheduledExecutorService =
         ScheduledThreadPoolExecutor(1) { runnable ->
             Thread(runnable, "workmanager-cancellation-timeout").apply {
@@ -105,9 +77,9 @@ class BackgroundWorker(
 
     private var startTime: Long = 0
 
-    private var completer: CallbackToFutureAdapter.Completer<Result>? = null
+    private lateinit var completer: CallbackToFutureAdapter.Completer<Result>
 
-    private var resolvableFuture =
+    private val resolvableFuture =
         CallbackToFutureAdapter.getFuture { completer ->
             this.completer = completer
             null
@@ -116,7 +88,7 @@ class BackgroundWorker(
     override fun startWork(): ListenableFuture<Result> {
         startTime = System.currentTimeMillis()
 
-        engine = FlutterEngine(applicationContext)
+        engine.set(FlutterEngine(applicationContext))
 
         if (!flutterLoader.initialized()) {
             flutterLoader.startInitialization(applicationContext)
@@ -181,18 +153,11 @@ class BackgroundWorker(
         taskInfo: TaskDebugInfo,
         startStatus: TaskStatus,
     ): Boolean {
-        if (
-            !beginLifecycleEffect(
-                expectedState = LifecycleState.INITIALIZING,
-                nextState = LifecycleState.WAITING_FOR_BACKGROUND_CHANNEL,
-            )
-        ) {
-            return false
-        }
+        val effect = lifecycle.beginDartExecution() ?: return false
 
         return try {
             val localEngine =
-                engine ?: throw IllegalStateException("Flutter engine is unavailable")
+                engine.get() ?: throw IllegalStateException("Flutter engine is unavailable")
             WorkmanagerDebug.onTaskStatusUpdate(applicationContext, taskInfo, startStatus)
             flutterApi = WorkmanagerFlutterApi(localEngine.dartExecutor.binaryMessenger)
             localEngine.dartExecutor.executeDartCallback(
@@ -214,19 +179,12 @@ class BackgroundWorker(
             reportFailureAndStop(exception)
             false
         } finally {
-            finishLifecycleEffect()
+            finishLifecycleEffect(effect)
         }
     }
 
     private fun startBackgroundTaskIfActive(localDartTask: String): Boolean {
-        if (
-            !beginLifecycleEffect(
-                expectedState = LifecycleState.WAITING_FOR_BACKGROUND_CHANNEL,
-                nextState = LifecycleState.TASK_EXECUTING,
-            )
-        ) {
-            return false
-        }
+        val effect = lifecycle.beginTaskExecution() ?: return false
 
         return try {
             val pigeonPayload = payload.mapKeys { it.key as String? }.mapValues { it.value as Object? }
@@ -256,149 +214,50 @@ class BackgroundWorker(
             reportFailureAndStop(exception)
             false
         } finally {
-            finishLifecycleEffect()
+            finishLifecycleEffect(effect)
         }
     }
 
     private fun requestDartCancellation() {
-        val shouldDispatch =
-            synchronized(lifecycleLock) {
-                if (
-                    terminalRequest != null ||
-                        lifecycleState == LifecycleState.TERMINAL
-                ) {
-                    return@synchronized false
-                }
-                when (cancellationState) {
-                    CancellationState.NONE,
-                    CancellationState.REQUESTED,
-                    -> {
-                        cancellationState = CancellationState.WAKEUP_POSTED
-                        true
-                    }
-                    CancellationState.WAKEUP_POSTED,
-                    CancellationState.DISPATCH_CLAIMED,
-                    -> false
-                }
-            }
-
-        if (shouldDispatch) {
+        if (lifecycle.requestCancellationWakeup()) {
             mainHandler.post { sendDartCancellationIfReady() }
         }
     }
 
     private fun markDartCancellationRequestedIfStopped() {
         if (!isStopped) return
-
-        synchronized(lifecycleLock) {
-            if (
-                terminalRequest != null ||
-                    lifecycleState == LifecycleState.TERMINAL
-            ) {
-                return
-            }
-            if (cancellationState == CancellationState.NONE) {
-                cancellationState = CancellationState.REQUESTED
-            }
-        }
+        lifecycle.markCancellationRequested()
     }
 
     private fun sendDartCancellationIfReady() {
-        val effect = beginDartCancellationEffect() ?: return
+        val localDartTask = dartTask ?: return
+        val effect = lifecycle.beginCancellationDispatch() ?: return
+        val localFlutterApi = flutterApi
 
         try {
-            effect.flutterApi.taskCancelled(effect.taskName) { result ->
+            localFlutterApi.taskCancelled(localDartTask) { result ->
                 result.exceptionOrNull()?.let { exception ->
-                    WorkmanagerDebug.onExceptionEncountered(
-                        applicationContext,
-                        null,
-                        exception,
-                    )
+                    reportDebugIfActive(exception)
                 }
             }
         } catch (exception: Exception) {
             reportFailureAndStop(exception)
         } finally {
-            finishLifecycleEffect()
+            finishLifecycleEffect(effect)
         }
     }
 
-    private fun beginDartCancellationEffect(): DartCancellationEffect? =
-        synchronized(lifecycleLock) {
-            if (
-                terminalRequest != null ||
-                    lifecycleState != LifecycleState.TASK_EXECUTING ||
-                    cancellationState == CancellationState.NONE ||
-                    cancellationState == CancellationState.DISPATCH_CLAIMED ||
-                    engine == null ||
-                    !this::flutterApi.isInitialized
-            ) {
-                return@synchronized null
-            }
-            val localDartTask = dartTask ?: return@synchronized null
-
-            cancellationState = CancellationState.DISPATCH_CLAIMED
-            inFlightEffects += 1
-            DartCancellationEffect(flutterApi, localDartTask)
-        }
-
-    private fun beginLifecycleEffect(
-        expectedState: LifecycleState,
-        nextState: LifecycleState,
-    ): Boolean =
-        synchronized(lifecycleLock) {
-            if (
-                terminalRequest != null ||
-                    lifecycleState == LifecycleState.TERMINAL ||
-                    lifecycleState != expectedState
-            ) {
-                return@synchronized false
-            }
-
-            lifecycleState = nextState
-            inFlightEffects += 1
-            true
-        }
-
-    private fun finishLifecycleEffect() {
-        val completion =
-            synchronized(lifecycleLock) {
-                check(inFlightEffects > 0) { "Lifecycle effect counter underflow" }
-                inFlightEffects -= 1
-                takeTerminalCompletionLocked()
-            }
+    private fun finishLifecycleEffect(
+        effect: BackgroundWorkerLifecycleCoordinator<TerminalRequest, ScheduledFuture<*>>.Effect,
+    ) {
+        val completion = effect.finish()
         completion?.let(::completeTerminal)
     }
 
-    private fun takeTerminalCompletionLocked(): TerminalCompletion? {
-        val request = terminalRequest ?: return null
-        if (inFlightEffects != 0 || lifecycleState == LifecycleState.TERMINAL) {
-            return null
-        }
-
-        lifecycleState = LifecycleState.TERMINAL
-        terminalRequest = null
-        val pendingForcedStop = forcedStop
-        forcedStop = null
-        return TerminalCompletion(
-            result = request.result,
-            errorMessage = request.errorMessage,
-            pendingForcedStop = pendingForcedStop,
-        )
-    }
-
     private fun scheduleForcedStop() {
-        synchronized(lifecycleLock) {
-            if (
-                terminalRequest != null ||
-                    lifecycleState == LifecycleState.TERMINAL ||
-                    forcedStop != null
-            ) {
-                return
-            }
-
+        try {
             // 独立计时线程确保 4 秒时封闭新 effect；终态只等待此前已领取的原生 dispatch 返回。
-            forcedStop =
+            lifecycle.scheduleForcedStop {
                 cancellationScheduler.schedule(
                     {
                         stopEngine(
@@ -409,6 +268,9 @@ class BackgroundWorker(
                     CANCELLATION_GRACE_MILLIS,
                     TimeUnit.MILLISECONDS,
                 )
+            }
+        } catch (exception: Exception) {
+            reportFailureAndStop(exception)
         }
     }
 
@@ -416,41 +278,52 @@ class BackgroundWorker(
         result: Result,
         errorMessage: String? = null,
     ) {
-        val completion =
-            synchronized(lifecycleLock) {
-                if (
-                    lifecycleState == LifecycleState.TERMINAL ||
-                        terminalRequest != null
-                ) {
-                    return@synchronized null
-                }
-                terminalRequest = TerminalRequest(result, errorMessage)
-                takeTerminalCompletionLocked()
-            }
+        val completion = lifecycle.requestTerminal(TerminalRequest(result, errorMessage))
         completion?.let(::completeTerminal)
     }
 
     private fun reportFailureAndStop(exception: Throwable) {
+        val debugEffect = lifecycle.beginDebugEffect() ?: return
         try {
             WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
         } finally {
-            stopEngine(Result.failure(), exception.message)
+            try {
+                stopEngine(Result.failure(), exception.message)
+            } finally {
+                finishLifecycleEffect(debugEffect)
+            }
         }
     }
 
-    private fun completeTerminal(completion: TerminalCompletion) {
-        check(!Thread.holdsLock(lifecycleLock)) {
-            "Terminal completion must run outside the lifecycle lock"
+    private fun reportDebugIfActive(exception: Throwable) {
+        val debugEffect = lifecycle.beginDebugEffect() ?: return
+        try {
+            WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
+        } finally {
+            finishLifecycleEffect(debugEffect)
         }
-        val result = completion.result
-        val errorMessage = completion.errorMessage
-        completion.pendingForcedStop?.cancel(false)
+    }
 
+    private fun completeTerminal(
+        completion: BackgroundWorkerTerminalCompletion<TerminalRequest, ScheduledFuture<*>>,
+    ) {
+        val result = completion.outcome.result
+        val errorMessage = completion.outcome.errorMessage
+        BackgroundWorkerTerminalFinalizer(
+            cancelForcedStop = { completion.forcedStop?.cancel(false) },
+            reportFinalStatus = { reportTerminalStatus(result, errorMessage) },
+            shutdownScheduler = cancellationScheduler::shutdown,
+            detachEngine = { engine.getAndSet(null) },
+            scheduleDetachedEngineDestruction = ::scheduleDetachedEngineDestruction,
+            completePlatform = { completer.set(result) },
+        ).finish()
+    }
+
+    private fun reportTerminalStatus(
+        result: Result,
+        errorMessage: String?,
+    ) {
         val localDartTask = dartTask
-        completer?.set(result)
-        scheduleEngineDestruction()
-        cancellationScheduler.shutdown()
-
         val fetchDuration = System.currentTimeMillis() - startTime
 
         if (localDartTask == null) {
@@ -486,16 +359,10 @@ class BackgroundWorker(
         WorkmanagerDebug.onTaskStatusUpdate(applicationContext, taskInfo, status, taskResult)
     }
 
-    private fun scheduleEngineDestruction() {
-        // FlutterEngine 必须在主线程销毁；平台结果结算不等待这一尽力清理。
+    private fun scheduleDetachedEngineDestruction(detachedEngine: FlutterEngine) {
+        // 平台完成后唯一允许迟到的是已脱离 Worker 的引擎主线程销毁。
         mainHandler.post {
-            val localEngine =
-                synchronized(lifecycleLock) {
-                    val currentEngine = engine
-                    engine = null
-                    currentEngine
-                }
-            localEngine?.destroy()
+            detachedEngine.destroy()
         }
     }
 }
