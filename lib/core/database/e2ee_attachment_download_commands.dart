@@ -29,15 +29,35 @@ final class E2eeAttachmentDownloadReference {
   E2eeAttachmentDownloadReference({
     required String attachmentId,
     required String uploadId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required this.kind,
   }) : attachmentId = _requireCanonicalUuidV4(attachmentId, 'attachmentId'),
        uploadId = _requireCanonicalUuidV4(uploadId, 'uploadId'),
-       keyEpoch = _requireAttachmentKeyEpoch(keyEpoch);
+       chunkKeyEpoch = _requireAttachmentKeyEpoch(
+         chunkKeyEpoch,
+         'chunkKeyEpoch',
+       ),
+       manifestKeyEpoch = _requireAttachmentKeyEpoch(
+         manifestKeyEpoch,
+         'manifestKeyEpoch',
+       ),
+       manifestRevision = _requireAttachmentKeyEpoch(
+         manifestRevision,
+         'manifestRevision',
+       ) {
+    if (this.manifestKeyEpoch - this.chunkKeyEpoch !=
+        this.manifestRevision - 1) {
+      throw const FormatException('附件下载代次与修订关系无效');
+    }
+  }
 
   final String attachmentId;
   final String uploadId;
-  final int keyEpoch;
+  final int chunkKeyEpoch;
+  final int manifestKeyEpoch;
+  final int manifestRevision;
   final E2eeAttachmentKind kind;
 }
 
@@ -84,8 +104,22 @@ final class E2eeAttachmentDownloadState {
 
   String get attachmentId => reference.attachmentId;
   String get uploadId => reference.uploadId;
-  int get keyEpoch => reference.keyEpoch;
+  int get chunkKeyEpoch => reference.chunkKeyEpoch;
+  int get manifestKeyEpoch => reference.manifestKeyEpoch;
+  int get manifestRevision => reference.manifestRevision;
   E2eeAttachmentKind get kind => reference.kind;
+
+  E2eeAttachmentManifest? get manifest {
+    final value = descriptor;
+    return value == null
+        ? null
+        : E2eeAttachmentManifest.fromDescriptor(
+            descriptor: value,
+            uploadId: uploadId,
+            manifestKeyEpoch: manifestKeyEpoch,
+            manifestRevision: manifestRevision,
+          );
+  }
 }
 
 final class E2eeAttachmentDownloadLease {
@@ -115,23 +149,94 @@ final class E2eeAttachmentDownloadCommands {
     final timestamp = _requireStorageTime(now, 'now');
     return _database.transaction(() async {
       final table = _database.e2eeAttachmentDownloadRows;
-      final existing =
+      final owners =
           await (_database.select(table)..where(
-                (row) => row.attachmentId.equals(reference.attachmentId),
+                (row) =>
+                    row.attachmentId.equals(reference.attachmentId) |
+                    row.uploadId.equals(reference.uploadId),
               ))
-              .getSingleOrNull();
-      if (existing != null) {
-        final state = _attachmentDownloadStateFromRow(existing);
-        _requireMatchingDownloadReference(reference, state.reference);
-        return state;
-      }
-      final uploadOwner =
-          await (_database.selectOnly(table)
-                ..addColumns([table.attachmentId])
-                ..where(table.uploadId.equals(reference.uploadId)))
-              .getSingleOrNull();
-      if (uploadOwner != null) {
+              .get();
+      if (owners.length > 1) {
+        for (final owner in owners) {
+          _clearAttachmentDownloadRowBytes(owner);
+        }
         throw StateError('attachment_download_identity_conflict');
+      }
+      if (owners case [final existing]) {
+        try {
+          final existingReference = _attachmentDownloadReferenceFromRow(
+            existing,
+          );
+          if (!_sameStableDownloadReference(existingReference, reference)) {
+            throw StateError('attachment_download_identity_conflict');
+          }
+          if (_sameDownloadReference(existingReference, reference)) {
+            return _attachmentDownloadStateFromRow(existing);
+          }
+          _requireForwardManifestTransition(existingReference, reference);
+          if (existing.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
+            throw StateError('附件下载 transitionVersion 已耗尽');
+          }
+          final retainReadyCandidate =
+              existing.phase == E2eeAttachmentDownloadPhase.ready.wireValue &&
+              existing.localAssetId != null &&
+              existing.finalPath != null;
+          final updated =
+              await (_database.update(table)..where(
+                    (row) =>
+                        _matchesAttachmentDownloadReference(
+                          row,
+                          existingReference,
+                        ) &
+                        row.phase.equals(existing.phase) &
+                        row.transitionVersion.equals(
+                          existing.transitionVersion,
+                        ),
+                  ))
+                  .write(
+                    E2eeAttachmentDownloadRowsCompanion(
+                      manifestKeyEpoch: Value(reference.manifestKeyEpoch),
+                      manifestRevision: Value(reference.manifestRevision),
+                      phase: Value(
+                        E2eeAttachmentDownloadPhase.manifestPending.wireValue,
+                      ),
+                      manifestCiphertext: const Value(null),
+                      contentSha256: const Value(null),
+                      wrappedDataKey: const Value(null),
+                      totalPlaintextBytes: const Value(null),
+                      chunkCount: const Value(null),
+                      totalCiphertextBytes: const Value(null),
+                      displayName: const Value(null),
+                      mediaType: const Value(null),
+                      localAssetId: Value(
+                        retainReadyCandidate ? existing.localAssetId : null,
+                      ),
+                      stagingPath: const Value(null),
+                      finalPath: Value(
+                        retainReadyCandidate ? existing.finalPath : null,
+                      ),
+                      nextChunkIndex: const Value(0),
+                      confirmedPlaintextBytes: const Value(0),
+                      leaseToken: const Value(null),
+                      leaseOwnerSessionId: const Value(null),
+                      leaseExpiresAt: const Value(null),
+                      transitionVersion: Value(existing.transitionVersion + 1),
+                      consecutiveFailureCount: const Value(0),
+                      nextAttemptAt: Value(timestamp),
+                      lastFailureKind: const Value(null),
+                      terminalFailureKind: const Value(null),
+                      updatedAt: Value(timestamp),
+                    ),
+                  );
+          if (updated != 1) {
+            throw StateError('附件下载清单换代 CAS 失败');
+          }
+          return _attachmentDownloadStateFromRow(
+            await _attachmentDownloadRow(reference),
+          );
+        } finally {
+          _clearAttachmentDownloadRowBytes(existing);
+        }
       }
       await _database
           .into(table)
@@ -139,7 +244,9 @@ final class E2eeAttachmentDownloadCommands {
             E2eeAttachmentDownloadRowsCompanion.insert(
               attachmentId: reference.attachmentId,
               uploadId: reference.uploadId,
-              keyEpoch: reference.keyEpoch,
+              chunkKeyEpoch: reference.chunkKeyEpoch,
+              manifestKeyEpoch: reference.manifestKeyEpoch,
+              manifestRevision: reference.manifestRevision,
               kind: reference.kind.name,
               phase: E2eeAttachmentDownloadPhase.manifestPending.wireValue,
               nextChunkIndex: 0,
@@ -153,7 +260,7 @@ final class E2eeAttachmentDownloadCommands {
             ),
           );
       return _attachmentDownloadStateFromRow(
-        await _attachmentDownloadRow(reference.attachmentId),
+        await _attachmentDownloadRow(reference),
       );
     });
   }
@@ -163,7 +270,7 @@ final class E2eeAttachmentDownloadCommands {
   ) async {
     final row =
         await (_database.select(_database.e2eeAttachmentDownloadRows)..where(
-              (table) => table.attachmentId.equals(reference.attachmentId),
+              (table) => _matchesAttachmentDownloadReference(table, reference),
             ))
             .getSingleOrNull();
     if (row == null) return null;
@@ -213,7 +320,9 @@ final class E2eeAttachmentDownloadCommands {
                 predicate &
                 row.attachmentId.equals(reference.attachmentId) &
                 row.uploadId.equals(reference.uploadId) &
-                row.keyEpoch.equals(reference.keyEpoch) &
+                row.chunkKeyEpoch.equals(reference.chunkKeyEpoch) &
+                row.manifestKeyEpoch.equals(reference.manifestKeyEpoch) &
+                row.manifestRevision.equals(reference.manifestRevision) &
                 row.kind.equals(reference.kind.name);
           }
           return predicate;
@@ -222,6 +331,8 @@ final class E2eeAttachmentDownloadCommands {
           (row) => OrderingTerm.asc(row.nextAttemptAt),
           (row) => OrderingTerm.asc(row.createdAt),
           (row) => OrderingTerm.asc(row.attachmentId),
+          (row) => OrderingTerm.asc(row.manifestKeyEpoch),
+          (row) => OrderingTerm.asc(row.manifestRevision),
         ])
         ..limit(1);
       final candidate = await query.getSingleOrNull();
@@ -234,10 +345,16 @@ final class E2eeAttachmentDownloadCommands {
           throw StateError('附件下载持久计数器已耗尽');
         }
         final nextTransitionVersion = candidate.transitionVersion + 1;
+        final candidateReference = _attachmentDownloadReferenceFromRow(
+          candidate,
+        );
         final updated =
             await (_database.update(table)..where(
                   (row) =>
-                      row.attachmentId.equals(candidate.attachmentId) &
+                      _matchesAttachmentDownloadReference(
+                        row,
+                        candidateReference,
+                      ) &
                       row.phase.equals(candidate.phase) &
                       row.transitionVersion.equals(
                         candidate.transitionVersion,
@@ -259,7 +376,7 @@ final class E2eeAttachmentDownloadCommands {
                 );
         if (updated == 0) return null;
         if (updated != 1) throw StateError('附件下载 claim CAS 更新了多行');
-        final claimed = await _attachmentDownloadRow(candidate.attachmentId);
+        final claimed = await _attachmentDownloadRow(candidateReference);
         return _attachmentDownloadLeaseFromRow(
           claimed,
           leaseToken: token,
@@ -328,6 +445,94 @@ final class E2eeAttachmentDownloadCommands {
     );
   }
 
+  Future<E2eeAttachmentDownloadState> reuseReadyAssetAfterManifest({
+    required E2eeAttachmentDownloadLease lease,
+    required E2eeAttachmentManifest manifest,
+    required Uint8List manifestCiphertext,
+    required String finalPath,
+    required DateTime now,
+  }) async {
+    final state = lease.state;
+    final candidateAssetId = state.localAssetId;
+    final candidatePath = state.finalPath;
+    if (state.phase != E2eeAttachmentDownloadPhase.manifestPending ||
+        candidateAssetId == null ||
+        candidatePath == null) {
+      throw StateError('附件下载当前没有可复用的完成资产');
+    }
+    _requireMatchingDownloadManifest(state.reference, manifest);
+    if (manifestCiphertext.isEmpty ||
+        manifestCiphertext.length >
+            _attachmentDownloadMaxManifestCiphertextBytes) {
+      throw const FormatException('附件下载清单密文长度无效');
+    }
+    final materialized = _requireAttachmentStorageText(
+      finalPath,
+      'finalPath',
+      32768,
+    );
+    final expectedAssetId =
+        'asset_${_attachmentDigestHex(manifest.contentSha256)}';
+    if (candidateAssetId != expectedAssetId || candidatePath != materialized) {
+      throw const FormatException('附件下载复用资产与新清单内容身份不一致');
+    }
+    final timestamp = _requireStorageTime(now, 'now');
+    _requireActiveAttachmentDownloadLease(lease, timestamp);
+    final persistedManifestCiphertext = Uint8List.fromList(manifestCiphertext);
+    return _database.transaction(() async {
+      if (state.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
+        throw StateError('附件下载 transitionVersion 已耗尽');
+      }
+      final asset = await (_database.select(
+        _database.assetRows,
+      )..where((row) => row.id.equals(candidateAssetId))).getSingleOrNull();
+      if (asset == null ||
+          asset.contentHash != _attachmentDigestHex(manifest.contentSha256) ||
+          asset.path != materialized ||
+          asset.byteSize != manifest.totalPlaintextBytes) {
+        throw const FormatException('附件下载复用资产注册与新清单不一致');
+      }
+      final updated =
+          await (_database.update(
+            _database.e2eeAttachmentDownloadRows,
+          )..where((row) => _matchesAttachmentDownloadLease(row, lease))).write(
+            E2eeAttachmentDownloadRowsCompanion(
+              phase: Value(E2eeAttachmentDownloadPhase.ready.wireValue),
+              manifestCiphertext: Value(persistedManifestCiphertext),
+              contentSha256: Value(manifest.contentSha256),
+              wrappedDataKey: Value(manifest.wrappedDataKey),
+              totalPlaintextBytes: Value(manifest.totalPlaintextBytes),
+              chunkCount: Value(manifest.chunkCiphertextBytes.length),
+              totalCiphertextBytes: Value(manifest.totalCiphertextBytes),
+              displayName: Value(manifest.displayName),
+              mediaType: Value(manifest.mediaType),
+              localAssetId: Value(candidateAssetId),
+              stagingPath: const Value(null),
+              finalPath: Value(materialized),
+              nextChunkIndex: Value(manifest.chunkCiphertextBytes.length),
+              confirmedPlaintextBytes: Value(manifest.totalPlaintextBytes),
+              leaseToken: const Value(null),
+              leaseOwnerSessionId: const Value(null),
+              leaseExpiresAt: const Value(null),
+              transitionVersion: Value(state.transitionVersion + 1),
+              consecutiveFailureCount: const Value(0),
+              nextAttemptAt: Value(timestamp),
+              lastFailureKind: const Value(null),
+              terminalFailureKind: const Value(null),
+              updatedAt: Value(timestamp),
+            ),
+          );
+      if (updated != 1) throw StateError('附件下载完成资产复用 CAS 失败');
+      await _database.customStatement(
+        'DELETE FROM asset_gc_rows WHERE asset_id = ?;',
+        [candidateAssetId],
+      );
+      return _attachmentDownloadStateFromRow(
+        await _attachmentDownloadRow(state.reference),
+      );
+    });
+  }
+
   Future<E2eeAttachmentDownloadLease> acknowledgeChunk({
     required E2eeAttachmentDownloadLease lease,
     required int chunkIndex,
@@ -390,7 +595,9 @@ final class E2eeAttachmentDownloadCommands {
         asset.mediaType != descriptor.mediaType ||
         asset.attachmentId != state.attachmentId ||
         asset.uploadId != state.uploadId ||
-        asset.keyEpoch != state.keyEpoch) {
+        asset.chunkKeyEpoch != state.chunkKeyEpoch ||
+        asset.manifestKeyEpoch != state.manifestKeyEpoch ||
+        asset.manifestRevision != state.manifestRevision) {
       throw const FormatException('附件下载资产注册与认证清单不一致');
     }
     final timestamp = _requireStorageTime(now, 'now');
@@ -453,7 +660,7 @@ final class E2eeAttachmentDownloadCommands {
           );
       if (updated != 1) throw StateError('附件下载完成 CAS 失败');
       return _attachmentDownloadStateFromRow(
-        await _attachmentDownloadRow(lease.state.attachmentId),
+        await _attachmentDownloadRow(lease.state.reference),
       );
     });
   }
@@ -565,7 +772,7 @@ final class E2eeAttachmentDownloadCommands {
           );
       if (updated != 1) throw StateError('附件下载失败终态 CAS 失败');
       return _attachmentDownloadStateFromRow(
-        await _attachmentDownloadRow(lease.state.attachmentId),
+        await _attachmentDownloadRow(lease.state.reference),
       );
     });
   }
@@ -584,7 +791,9 @@ final class E2eeAttachmentDownloadCommands {
               (row) =>
                   row.attachmentId.equals(reference.attachmentId) &
                   row.uploadId.equals(reference.uploadId) &
-                  row.keyEpoch.equals(reference.keyEpoch) &
+                  row.chunkKeyEpoch.equals(reference.chunkKeyEpoch) &
+                  row.manifestKeyEpoch.equals(reference.manifestKeyEpoch) &
+                  row.manifestRevision.equals(reference.manifestRevision) &
                   row.kind.equals(reference.kind.name) &
                   row.transitionVersion.equals(expectedTransitionVersion) &
                   row.terminalFailureKind.isNotNull() &
@@ -647,7 +856,7 @@ final class E2eeAttachmentDownloadCommands {
         );
       }
       return _attachmentDownloadLeaseFromRow(
-        await _attachmentDownloadRow(lease.state.attachmentId),
+        await _attachmentDownloadRow(lease.state.reference),
         leaseToken: lease.leaseToken,
         leaseOwner: lease.leaseOwner,
         leaseExpiresAt: lease.leaseExpiresAt,
@@ -695,11 +904,11 @@ final class E2eeAttachmentDownloadCommands {
   }
 
   Future<E2eeAttachmentDownloadRow> _attachmentDownloadRow(
-    String attachmentId,
+    E2eeAttachmentDownloadReference reference,
   ) {
-    return (_database.select(
-      _database.e2eeAttachmentDownloadRows,
-    )..where((row) => row.attachmentId.equals(attachmentId))).getSingle();
+    return (_database.select(_database.e2eeAttachmentDownloadRows)
+          ..where((row) => _matchesAttachmentDownloadReference(row, reference)))
+        .getSingle();
   }
 }
 
@@ -709,7 +918,9 @@ void _requireMatchingDownloadManifest(
 ) {
   if (manifest.attachmentId != reference.attachmentId ||
       manifest.uploadId != reference.uploadId ||
-      manifest.keyEpoch != reference.keyEpoch ||
+      manifest.chunkKeyEpoch != reference.chunkKeyEpoch ||
+      manifest.manifestKeyEpoch != reference.manifestKeyEpoch ||
+      manifest.manifestRevision != reference.manifestRevision ||
       manifest.kind != reference.kind) {
     throw const FormatException('附件下载清单与消息引用身份不一致');
   }
@@ -719,11 +930,41 @@ void _requireMatchingDownloadReference(
   E2eeAttachmentDownloadReference expected,
   E2eeAttachmentDownloadReference actual,
 ) {
-  if (actual.attachmentId != expected.attachmentId ||
-      actual.uploadId != expected.uploadId ||
-      actual.keyEpoch != expected.keyEpoch ||
-      actual.kind != expected.kind) {
+  if (!_sameDownloadReference(expected, actual)) {
     throw StateError('attachment_download_identity_conflict');
+  }
+}
+
+bool _sameStableDownloadReference(
+  E2eeAttachmentDownloadReference left,
+  E2eeAttachmentDownloadReference right,
+) =>
+    left.attachmentId == right.attachmentId &&
+    left.uploadId == right.uploadId &&
+    left.chunkKeyEpoch == right.chunkKeyEpoch &&
+    left.kind == right.kind;
+
+bool _sameDownloadReference(
+  E2eeAttachmentDownloadReference left,
+  E2eeAttachmentDownloadReference right,
+) =>
+    _sameStableDownloadReference(left, right) &&
+    left.manifestKeyEpoch == right.manifestKeyEpoch &&
+    left.manifestRevision == right.manifestRevision;
+
+void _requireForwardManifestTransition(
+  E2eeAttachmentDownloadReference current,
+  E2eeAttachmentDownloadReference next,
+) {
+  if (!_sameStableDownloadReference(current, next) ||
+      next.manifestKeyEpoch <= current.manifestKeyEpoch ||
+      next.manifestRevision <= current.manifestRevision) {
+    throw StateError('attachment_download_manifest_transition_invalid');
+  }
+  final epochDelta = next.manifestKeyEpoch - current.manifestKeyEpoch;
+  final revisionDelta = next.manifestRevision - current.manifestRevision;
+  if (epochDelta != revisionDelta) {
+    throw StateError('attachment_download_manifest_transition_invalid');
   }
 }
 
@@ -740,12 +981,24 @@ Expression<bool> _matchesAttachmentDownloadLease(
   $E2eeAttachmentDownloadRowsTable row,
   E2eeAttachmentDownloadLease lease,
 ) {
-  return row.attachmentId.equals(lease.state.attachmentId) &
+  return _matchesAttachmentDownloadReference(row, lease.state.reference) &
       row.phase.equals(lease.state.phase.wireValue) &
       row.transitionVersion.equals(lease.state.transitionVersion) &
       row.leaseToken.equals(lease.leaseToken) &
       row.leaseOwnerSessionId.equals(lease.leaseOwner) &
       row.leaseExpiresAt.equalsValue(lease.leaseExpiresAt);
+}
+
+Expression<bool> _matchesAttachmentDownloadReference(
+  $E2eeAttachmentDownloadRowsTable row,
+  E2eeAttachmentDownloadReference reference,
+) {
+  return row.attachmentId.equals(reference.attachmentId) &
+      row.uploadId.equals(reference.uploadId) &
+      row.chunkKeyEpoch.equals(reference.chunkKeyEpoch) &
+      row.manifestKeyEpoch.equals(reference.manifestKeyEpoch) &
+      row.manifestRevision.equals(reference.manifestRevision) &
+      row.kind.equals(reference.kind.name);
 }
 
 E2eeAttachmentDownloadLease _attachmentDownloadLeaseFromRow(
@@ -777,16 +1030,7 @@ E2eeAttachmentDownloadState _attachmentDownloadStateFromRow(
   E2eeAttachmentDownloadRow row,
 ) {
   try {
-    final reference = E2eeAttachmentDownloadReference(
-      attachmentId: row.attachmentId,
-      uploadId: row.uploadId,
-      keyEpoch: row.keyEpoch,
-      kind: switch (row.kind) {
-        'image' => E2eeAttachmentKind.image,
-        'file' => E2eeAttachmentKind.file,
-        _ => throw StateError('附件下载持久类型不受支持'),
-      },
-    );
+    final reference = _attachmentDownloadReferenceFromRow(row);
     final hasDescriptor = row.contentSha256 != null;
     final descriptor = hasDescriptor
         ? _attachmentDownloadDescriptorFromRow(row, reference)
@@ -815,6 +1059,23 @@ E2eeAttachmentDownloadState _attachmentDownloadStateFromRow(
   }
 }
 
+E2eeAttachmentDownloadReference _attachmentDownloadReferenceFromRow(
+  E2eeAttachmentDownloadRow row,
+) {
+  return E2eeAttachmentDownloadReference(
+    attachmentId: row.attachmentId,
+    uploadId: row.uploadId,
+    chunkKeyEpoch: row.chunkKeyEpoch,
+    manifestKeyEpoch: row.manifestKeyEpoch,
+    manifestRevision: row.manifestRevision,
+    kind: switch (row.kind) {
+      'image' => E2eeAttachmentKind.image,
+      'file' => E2eeAttachmentKind.file,
+      _ => throw StateError('附件下载持久类型不受支持'),
+    },
+  );
+}
+
 E2eeAttachmentDescriptor _attachmentDownloadDescriptorFromRow(
   E2eeAttachmentDownloadRow row,
   E2eeAttachmentDownloadReference reference,
@@ -840,7 +1101,7 @@ E2eeAttachmentDescriptor _attachmentDownloadDescriptorFromRow(
   }
   return E2eeAttachmentDescriptor(
     attachmentId: reference.attachmentId,
-    keyEpoch: reference.keyEpoch,
+    chunkKeyEpoch: reference.chunkKeyEpoch,
     kind: reference.kind,
     totalPlaintextBytes: totalPlaintextBytes,
     contentSha256: contentSha256,
@@ -863,9 +1124,9 @@ void _clearAttachmentDownloadRowBytes(E2eeAttachmentDownloadRow row) {
   row.wrappedDataKey?.fillRange(0, row.wrappedDataKey!.length, 0);
 }
 
-int _requireAttachmentKeyEpoch(int value) {
+int _requireAttachmentKeyEpoch(int value, String field) {
   if (value < 1 || value > 0xffffffff) {
-    throw const FormatException('keyEpoch 必须位于正 uint32 范围');
+    throw FormatException('$field 必须位于正 uint32 范围');
   }
   return value;
 }

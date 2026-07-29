@@ -3619,7 +3619,9 @@ void main() {
             <String, Object?>{
               'attachmentId': attachmentId,
               'uploadId': uploadId,
-              'keyEpoch': 7,
+              'chunkKeyEpoch': 7,
+              'manifestKeyEpoch': 7,
+              'manifestRevision': 1,
               'kind': 'file',
               'order': 0,
             },
@@ -3649,7 +3651,9 @@ void main() {
               mediaType: 'text/plain',
               attachmentId: attachmentId,
               uploadId: uploadId,
-              keyEpoch: 7,
+              chunkKeyEpoch: 7,
+              manifestKeyEpoch: 7,
+              manifestRevision: 1,
             ),
           ]);
       final adapter = E2eeChatSyncAdapter(
@@ -3696,11 +3700,14 @@ void main() {
       expect(persistedAttachment.mediaType, 'text/plain');
       expect(persistedAttachment.attachmentId, attachmentId);
       expect(persistedAttachment.uploadId, uploadId);
-      expect(persistedAttachment.keyEpoch, 7);
+      expect(persistedAttachment.chunkKeyEpoch, 7);
+      expect(persistedAttachment.manifestKeyEpoch, 7);
+      expect(persistedAttachment.manifestRevision, 1);
       final reference = await database
           .customSelect(
             'SELECT ordinal, asset_id, kind, display_name, media_type, '
-            'attachment_id, upload_id, key_epoch '
+            'attachment_id, upload_id, chunk_key_epoch, '
+            'manifest_key_epoch, manifest_revision '
             'FROM message_asset_rows WHERE revision_id = ?;',
             variables: const <Variable<Object>>[Variable<String>(messageId)],
           )
@@ -3712,7 +3719,9 @@ void main() {
       expect(reference.read<String>('media_type'), 'text/plain');
       expect(reference.read<String>('attachment_id'), attachmentId);
       expect(reference.read<String>('upload_id'), uploadId);
-      expect(reference.read<int>('key_epoch'), 7);
+      expect(reference.read<int>('chunk_key_epoch'), 7);
+      expect(reference.read<int>('manifest_key_epoch'), 7);
+      expect(reference.read<int>('manifest_revision'), 1);
     });
 
     test('附件拉取未就绪整页回滚且本地消息仅在远端身份完整后可封装', () async {
@@ -3743,7 +3752,9 @@ void main() {
             <String, Object?>{
               'attachmentId': '10000000-0000-4000-8000-000000000001',
               'uploadId': '20000000-0000-4000-8000-000000000001',
-              'keyEpoch': 1,
+              'chunkKeyEpoch': 1,
+              'manifestKeyEpoch': 1,
+              'manifestRevision': 1,
               'kind': 'file',
               'order': 0,
             },
@@ -3885,7 +3896,9 @@ void main() {
         mediaType: localAsset.mediaType,
         attachmentId: '10000000-0000-4000-8000-000000000002',
         uploadId: '20000000-0000-4000-8000-000000000002',
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
       );
       expect(
         await repository.replaceMessageAssetReferences(
@@ -3906,7 +3919,9 @@ void main() {
         <String, Object?>{
           'attachmentId': remoteAsset.attachmentId,
           'uploadId': remoteAsset.uploadId,
-          'keyEpoch': remoteAsset.keyEpoch,
+          'chunkKeyEpoch': remoteAsset.chunkKeyEpoch,
+          'manifestKeyEpoch': remoteAsset.manifestKeyEpoch,
+          'manifestRevision': remoteAsset.manifestRevision,
           'kind': 'file',
           'order': 0,
         },
@@ -3927,7 +3942,9 @@ void main() {
           <String, Object?>{
             'attachmentId': '30000000-0000-4000-8000-000000000001',
             'uploadId': '40000000-0000-4000-8000-000000000001',
-            'keyEpoch': 0xffffffff,
+            'chunkKeyEpoch': 0xffffffff,
+            'manifestKeyEpoch': 0xffffffff,
+            'manifestRevision': 1,
             'kind': 'image',
             'order': 0,
           },
@@ -3942,7 +3959,7 @@ void main() {
         E2eeSyncPayloadCodec.decode(entityKey: key, bytes: encoded),
         valid,
       );
-      expect(e2eeSyncPayloadFormatVersion, 2);
+      expect(e2eeSyncPayloadFormatVersion, 3);
 
       final legacyEnvelope = Map<String, Object?>.from(
         jsonDecode(utf8.decode(encoded)) as Map<String, Object?>,
@@ -3970,12 +3987,16 @@ void main() {
         <String, Object?>{
           ...oldAttachment,
           'uploadId': '40000000-0000-4000-8000-000000000001',
-          'keyEpoch': 0x100000000,
+          'chunkKeyEpoch': 0x100000000,
+          'manifestKeyEpoch': 0xffffffff,
+          'manifestRevision': 1,
         },
         <String, Object?>{
           ...oldAttachment,
           'uploadId': '40000000-0000-4000-8000-000000000001',
-          'keyEpoch': 1,
+          'chunkKeyEpoch': 1,
+          'manifestKeyEpoch': 3,
+          'manifestRevision': 2,
           'order': 1,
         },
       ]) {
@@ -5445,14 +5466,18 @@ void main() {
               mediaType: const Value('text/plain'),
               attachmentId: const Value('d0000000-0000-4000-8000-000000000011'),
               uploadId: const Value('e0000000-0000-4000-8000-000000000011'),
-              keyEpoch: const Value(0xffffffff),
+              chunkKeyEpoch: const Value(0xffffffff),
+              manifestKeyEpoch: const Value(0xffffffff),
+              manifestRevision: const Value(1),
             ),
           );
 
       final rows = await database.select(database.messageAssetRows).get();
       expect(rows.map((row) => row.ordinal), <int>[0, 31]);
       expect(rows.last.attachmentId, 'd0000000-0000-4000-8000-000000000011');
-      expect(rows.last.keyEpoch, 0xffffffff);
+      expect(rows.last.chunkKeyEpoch, 0xffffffff);
+      expect(rows.last.manifestKeyEpoch, 0xffffffff);
+      expect(rows.last.manifestRevision, 1);
     });
 
     test('拒绝越界序号、重复序号与不完整远端身份', () async {
@@ -5463,7 +5488,9 @@ void main() {
         required String assetId,
         Value<String?> attachmentId = const Value.absent(),
         Value<String?> uploadId = const Value.absent(),
-        Value<int?> keyEpoch = const Value.absent(),
+        Value<int?> chunkKeyEpoch = const Value.absent(),
+        Value<int?> manifestKeyEpoch = const Value.absent(),
+        Value<int?> manifestRevision = const Value.absent(),
       }) {
         return database
             .into(database.messageAssetRows)
@@ -5475,7 +5502,9 @@ void main() {
                 kind: 'image',
                 attachmentId: attachmentId,
                 uploadId: uploadId,
-                keyEpoch: keyEpoch,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
               ),
             );
       }
@@ -5502,7 +5531,9 @@ void main() {
         assetId: 'asset-reference-2',
         attachmentId: const Value('d0000000-0000-4000-8000-000000000013'),
         uploadId: const Value('e0000000-0000-4000-8000-000000000013'),
-        keyEpoch: const Value(1),
+        chunkKeyEpoch: const Value(1),
+        manifestKeyEpoch: const Value(1),
+        manifestRevision: const Value(1),
       );
       await expectLater(
         insertReference(
@@ -5510,7 +5541,9 @@ void main() {
           assetId: 'asset-reference-1',
           attachmentId: const Value('d0000000-0000-4000-8000-000000000013'),
           uploadId: const Value('e0000000-0000-4000-8000-000000000014'),
-          keyEpoch: const Value(1),
+          chunkKeyEpoch: const Value(1),
+          manifestKeyEpoch: const Value(1),
+          manifestRevision: const Value(1),
         ),
         throwsRemoteSqliteException(),
       );
@@ -5520,7 +5553,9 @@ void main() {
           assetId: 'asset-reference-1',
           attachmentId: const Value('d0000000-0000-4000-8000-000000000014'),
           uploadId: const Value('e0000000-0000-4000-8000-000000000013'),
-          keyEpoch: const Value(1),
+          chunkKeyEpoch: const Value(1),
+          manifestKeyEpoch: const Value(1),
+          manifestRevision: const Value(1),
         ),
         throwsRemoteSqliteException(),
       );
@@ -5540,7 +5575,7 @@ void main() {
       return E2eeAttachmentUploadDraft(
         descriptor: E2eeAttachmentDescriptor(
           attachmentId: attachmentId,
-          keyEpoch: 0xffffffff,
+          chunkKeyEpoch: 0xffffffff,
           kind: E2eeAttachmentKind.file,
           totalPlaintextBytes: KelivoAttachmentLimits.chunkPlaintextBytes + 1,
           contentSha256: Uint8List.fromList(List<int>.filled(32, contentByte)),
@@ -5716,7 +5751,9 @@ void main() {
             const MessageAssetRowsCompanion(
               attachmentId: Value('d0000000-0000-4000-8000-000000000010'),
               uploadId: Value('e0000000-0000-4000-8000-000000000010'),
-              keyEpoch: Value(1),
+              chunkKeyEpoch: Value(1),
+              manifestKeyEpoch: Value(1),
+              manifestRevision: Value(1),
             ),
           );
       await expectLater(
@@ -5771,7 +5808,7 @@ void main() {
       await prepareUploadTarget(draft);
       final created = await attachmentUploads.create(draft: draft, now: now);
       expect(created.phase, E2eeAttachmentUploadPhase.createPending);
-      expect(created.descriptor.keyEpoch, 0xffffffff);
+      expect(created.descriptor.chunkKeyEpoch, 0xffffffff);
       expect(created.attemptCount, 0);
 
       var lease = (await attachmentUploads.claimDue(
@@ -5816,6 +5853,8 @@ void main() {
           E2eeAttachmentManifest.fromDescriptor(
             descriptor: draft.descriptor,
             uploadId: uploadId,
+            manifestKeyEpoch: 0xffffffff,
+            manifestRevision: 1,
           ),
         );
         lease = await attachmentUploads.attachManifest(
@@ -5950,7 +5989,9 @@ void main() {
               .getSingle();
       expect(targetAfterStaleLease.attachmentId, equals(null));
       expect(targetAfterStaleLease.uploadId, equals(null));
-      expect(targetAfterStaleLease.keyEpoch, equals(null));
+      expect(targetAfterStaleLease.chunkKeyEpoch, equals(null));
+      expect(targetAfterStaleLease.manifestKeyEpoch, equals(null));
+      expect(targetAfterStaleLease.manifestRevision, equals(null));
       expect(
         (await attachmentUploads.readByAttachmentId(
           draft.descriptor.attachmentId,
@@ -5984,7 +6025,9 @@ void main() {
               .getSingle();
       expect(committedTarget.attachmentId, draft.descriptor.attachmentId);
       expect(committedTarget.uploadId, uploadId);
-      expect(committedTarget.keyEpoch, draft.descriptor.keyEpoch);
+      expect(committedTarget.chunkKeyEpoch, draft.descriptor.chunkKeyEpoch);
+      expect(committedTarget.manifestKeyEpoch, 0xffffffff);
+      expect(committedTarget.manifestRevision, 1);
     });
 
     test('过期租约可接管且旧租约不能再推进', () async {
@@ -6108,6 +6151,8 @@ void main() {
             E2eeAttachmentManifest.fromDescriptor(
               descriptor: draft.descriptor,
               uploadId: lease.state.uploadId!,
+              manifestKeyEpoch: 0xffffffff,
+              manifestRevision: 1,
             ),
           ),
           now: now.add(const Duration(seconds: 2)),
@@ -6185,11 +6230,16 @@ void main() {
     E2eeAttachmentDownloadReference downloadReference({
       String attachmentId = 'f0000000-0000-4000-8000-000000000001',
       String uploadId = 'f1000000-0000-4000-8000-000000000001',
+      int chunkKeyEpoch = 7,
+      int manifestKeyEpoch = 7,
+      int manifestRevision = 1,
     }) {
       return E2eeAttachmentDownloadReference(
         attachmentId: attachmentId,
         uploadId: uploadId,
-        keyEpoch: 0xffffffff,
+        chunkKeyEpoch: chunkKeyEpoch,
+        manifestKeyEpoch: manifestKeyEpoch,
+        manifestRevision: manifestRevision,
         kind: E2eeAttachmentKind.file,
       );
     }
@@ -6205,7 +6255,9 @@ void main() {
       return E2eeAttachmentManifest(
         attachmentId: reference.attachmentId,
         uploadId: reference.uploadId,
-        keyEpoch: reference.keyEpoch,
+        chunkKeyEpoch: reference.chunkKeyEpoch,
+        manifestKeyEpoch: reference.manifestKeyEpoch,
+        manifestRevision: reference.manifestRevision,
         kind: reference.kind,
         totalPlaintextBytes: totalPlaintextBytes,
         contentSha256: Uint8List.fromList(List<int>.filled(32, digestByte)),
@@ -6224,9 +6276,12 @@ void main() {
       );
     }
 
-    test('完整身份幂等且任一身份冲突均失败关闭', () async {
+    test('单行清单换代支持离线跨代并拒绝旧租约与回滚', () async {
       final now = DateTime.utc(2026, 7, 29, 5);
-      final reference = downloadReference();
+      final reference = downloadReference(
+        chunkKeyEpoch: 6,
+        manifestKeyEpoch: 6,
+      );
       final first = await attachmentDownloads.ensure(
         reference: reference,
         now: now,
@@ -6236,13 +6291,87 @@ void main() {
         now: now.add(const Duration(seconds: 1)),
       );
       expect(repeated.transitionVersion, first.transitionVersion);
+      var staleLease = (await attachmentDownloads.claimDue(
+        reference: reference,
+        leaseToken: 'download-stale-before-manifest-rotation',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now.add(const Duration(seconds: 2)),
+      ))!;
+      staleLease = await attachmentDownloads.attachManifest(
+        lease: staleLease,
+        manifest: downloadManifest(reference, totalPlaintextBytes: 1),
+        manifestCiphertext: Uint8List.fromList([1, 2, 3]),
+        stagingPath: 'D:\\workspace\\upload\\e2ee\\tmp\\stale.part',
+        finalPath: 'D:\\workspace\\upload\\e2ee\\content\\stale',
+        now: now.add(const Duration(seconds: 3)),
+      );
+      final rotatedReference = downloadReference(
+        chunkKeyEpoch: 6,
+        manifestKeyEpoch: 7,
+        manifestRevision: 2,
+      );
+      final rotated = await attachmentDownloads.ensure(
+        reference: rotatedReference,
+        now: now.add(const Duration(seconds: 4)),
+      );
+      expect(rotated.manifestKeyEpoch, 7);
+      expect(rotated.manifestRevision, 2);
+      expect(rotated.phase, E2eeAttachmentDownloadPhase.manifestPending);
+      expect(rotated.manifestCiphertext, equals(null));
+      expect(rotated.descriptor, equals(null));
+      expect(rotated.localAssetId, equals(null));
+      expect(rotated.stagingPath, equals(null));
+      expect(rotated.finalPath, equals(null));
+      expect(await attachmentDownloads.read(reference), equals(null));
+      expect(
+        await attachmentDownloads.read(rotatedReference),
+        isA<E2eeAttachmentDownloadState>(),
+      );
+      expect(
+        await database.select(database.e2eeAttachmentDownloadRows).get(),
+        hasLength(1),
+      );
+      expect(
+        await attachmentDownloads.release(
+          lease: staleLease,
+          now: now.add(const Duration(seconds: 5)),
+        ),
+        isFalse,
+      );
+
+      final offlineJumpReference = downloadReference(
+        chunkKeyEpoch: 6,
+        manifestKeyEpoch: 8,
+        manifestRevision: 3,
+      );
+      final offlineJump = await attachmentDownloads.ensure(
+        reference: offlineJumpReference,
+        now: now.add(const Duration(seconds: 6)),
+      );
+      expect(offlineJump.manifestKeyEpoch, 8);
+      expect(offlineJump.manifestRevision, 3);
+      expect(
+        await database.select(database.e2eeAttachmentDownloadRows).get(),
+        hasLength(1),
+      );
+      await expectLater(
+        attachmentDownloads.ensure(
+          reference: rotatedReference,
+          now: now.add(const Duration(seconds: 7)),
+        ),
+        throwsStateError,
+      );
 
       await expectLater(
         attachmentDownloads.ensure(
           reference: downloadReference(
             uploadId: 'f1000000-0000-4000-8000-000000000002',
+            chunkKeyEpoch: 6,
+            manifestKeyEpoch: 8,
+            manifestRevision: 3,
           ),
-          now: now.add(const Duration(seconds: 2)),
+          now: now.add(const Duration(seconds: 8)),
         ),
         throwsStateError,
       );
@@ -6250,8 +6379,11 @@ void main() {
         attachmentDownloads.ensure(
           reference: downloadReference(
             attachmentId: 'f0000000-0000-4000-8000-000000000002',
+            chunkKeyEpoch: 6,
+            manifestKeyEpoch: 8,
+            manifestRevision: 3,
           ),
-          now: now.add(const Duration(seconds: 3)),
+          now: now.add(const Duration(seconds: 9)),
         ),
         throwsStateError,
       );
@@ -6367,7 +6499,9 @@ void main() {
             mediaType: 'text/plain',
             attachmentId: reference.attachmentId,
             uploadId: reference.uploadId,
-            keyEpoch: reference.keyEpoch,
+            chunkKeyEpoch: reference.chunkKeyEpoch,
+            manifestKeyEpoch: reference.manifestKeyEpoch,
+            manifestRevision: reference.manifestRevision,
           ),
           now: now.add(const Duration(seconds: 3)),
         );
@@ -6385,6 +6519,22 @@ void main() {
           );
         }
       }
+
+      final reuseCandidateReference = downloadReference(
+        attachmentId: references.first.attachmentId,
+        uploadId: references.first.uploadId,
+        chunkKeyEpoch: references.first.chunkKeyEpoch,
+        manifestKeyEpoch: references.first.manifestKeyEpoch + 1,
+        manifestRevision: references.first.manifestRevision + 1,
+      );
+      final reuseCandidate = await attachmentDownloads.ensure(
+        reference: reuseCandidateReference,
+        now: now.add(const Duration(seconds: 4)),
+      );
+      expect(reuseCandidate.phase, E2eeAttachmentDownloadPhase.manifestPending);
+      expect(reuseCandidate.localAssetId, assetId);
+      expect(reuseCandidate.finalPath, finalPath);
+      expect(await repository.scheduleUnreferencedAssetGc(notBefore: now), 0);
 
       final assetCount = await database
           .customSelect(
@@ -6490,7 +6640,9 @@ void main() {
     );
 
     E2eeAttachmentManifest createManifest({
-      int keyEpoch = 7,
+      int chunkKeyEpoch = 7,
+      int manifestKeyEpoch = 7,
+      int manifestRevision = 1,
       List<Uint8List>? plaintextChunks,
     }) {
       final chunks =
@@ -6519,7 +6671,9 @@ void main() {
       return E2eeAttachmentManifest(
         attachmentId: attachmentId,
         uploadId: uploadId,
-        keyEpoch: keyEpoch,
+        chunkKeyEpoch: chunkKeyEpoch,
+        manifestKeyEpoch: manifestKeyEpoch,
+        manifestRevision: manifestRevision,
         kind: E2eeAttachmentKind.file,
         totalPlaintextBytes: totalPlaintextBytes,
         contentSha256: digest,
@@ -6538,19 +6692,26 @@ void main() {
       );
     }
 
-    Map<String, Object?> attachmentPayload({int keyEpoch = 7}) =>
-        <String, Object?>{
-          'attachmentId': attachmentId,
-          'uploadId': uploadId,
-          'keyEpoch': keyEpoch,
-          'kind': 'file',
-          'order': 0,
-        };
+    Map<String, Object?> attachmentPayload({
+      int chunkKeyEpoch = 7,
+      int manifestKeyEpoch = 7,
+      int manifestRevision = 1,
+    }) => <String, Object?>{
+      'attachmentId': attachmentId,
+      'uploadId': uploadId,
+      'chunkKeyEpoch': chunkKeyEpoch,
+      'manifestKeyEpoch': manifestKeyEpoch,
+      'manifestRevision': manifestRevision,
+      'kind': 'file',
+      'order': 0,
+    };
 
     Future<E2eeSyncPulledValueChange> createMessageChange({
       required int operation,
       required String messageId,
-      int keyEpoch = 7,
+      int chunkKeyEpoch = 7,
+      int manifestKeyEpoch = 7,
+      int manifestRevision = 1,
     }) async {
       final wire = await createPullValueChange(
         changeSeq: operation,
@@ -6564,7 +6725,13 @@ void main() {
           conversationId: 'download-conversation',
           turnId: 'download-turn',
           groupId: 'download-group-$operation',
-          attachments: <Object?>[attachmentPayload(keyEpoch: keyEpoch)],
+          attachments: <Object?>[
+            attachmentPayload(
+              chunkKeyEpoch: chunkKeyEpoch,
+              manifestKeyEpoch: manifestKeyEpoch,
+              manifestRevision: manifestRevision,
+            ),
+          ],
         ),
       );
       return authenticatePulledValueChange(wire);
@@ -6600,7 +6767,7 @@ void main() {
       final fileStore = E2eeAttachmentMemoryFileStore();
       var now = DateTime.utc(2026, 7, 29, 8);
       final firstCrypto = _FakeAttachmentCrypto(
-        keyEpoch: 7,
+        currentKeyEpoch: 7,
         manifest: manifest,
         plaintextChunks: plaintextChunks,
       );
@@ -6628,7 +6795,9 @@ void main() {
       final reference = E2eeAttachmentDownloadReference(
         attachmentId: attachmentId,
         uploadId: uploadId,
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
         kind: E2eeAttachmentKind.file,
       );
       final checkpoint = (await attachmentDownloads.read(reference))!;
@@ -6646,7 +6815,7 @@ void main() {
       final secondCoordinator = createCoordinator(
         transport: transport,
         crypto: _FakeAttachmentCrypto(
-          keyEpoch: 7,
+          currentKeyEpoch: 7,
           manifest: manifest,
           plaintextChunks: plaintextChunks,
         ),
@@ -6677,7 +6846,9 @@ void main() {
       expect(registration.mediaType, 'text/plain');
       expect(registration.attachmentId, attachmentId);
       expect(registration.uploadId, uploadId);
-      expect(registration.keyEpoch, 7);
+      expect(registration.chunkKeyEpoch, 7);
+      expect(registration.manifestKeyEpoch, 7);
+      expect(registration.manifestRevision, 1);
       expect(
         registration.path,
         'memory://kelivo-e2ee-attachments/content/'
@@ -6686,11 +6857,91 @@ void main() {
       await secondCoordinator.close();
     });
 
-    test('未来附件 keyEpoch 在建状态和发网前暂停', () async {
+    test('离线跨代仅认证新清单并复用已校验完成文件', () async {
+      final plaintextChunks = <Uint8List>[
+        Uint8List.fromList(<int>[1, 2, 3]),
+      ];
+      final oldManifest = createManifest(plaintextChunks: plaintextChunks);
+      final fileStore = E2eeAttachmentMemoryFileStore();
+      var now = DateTime.utc(2026, 7, 29, 8, 30);
+      final oldTransport = _FakeAttachmentTransport(oldManifest);
+      final oldCoordinator = createCoordinator(
+        transport: oldTransport,
+        crypto: _FakeAttachmentCrypto(
+          currentKeyEpoch: 7,
+          manifest: oldManifest,
+          plaintextChunks: plaintextChunks,
+        ),
+        fileStore: fileStore,
+        utcNow: () => now,
+      );
+      final oldRevision = await createMessageChange(
+        operation: 211,
+        messageId: 'download-old-manifest-revision',
+      );
+
+      expect(
+        await oldCoordinator.preparePage(<E2eeSyncPulledChange>[
+          oldRevision,
+        ], maximumRemoteSteps: 2),
+        E2eeSyncPullPagePreparationDisposition.ready,
+      );
+      expect(oldTransport.chunkRequests, <int>[0]);
+      await oldCoordinator.close();
+
+      now = now.add(const Duration(seconds: 1));
+      final rotatedManifest = createManifest(
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 9,
+        manifestRevision: 3,
+        plaintextChunks: plaintextChunks,
+      );
+      final rotatedTransport = _FakeAttachmentTransport(rotatedManifest);
+      final rotatedCoordinator = createCoordinator(
+        transport: rotatedTransport,
+        crypto: _FakeAttachmentCrypto(
+          currentKeyEpoch: 9,
+          manifest: rotatedManifest,
+          plaintextChunks: plaintextChunks,
+        ),
+        fileStore: fileStore,
+        utcNow: () => now,
+      );
+      final rotatedRevision = await createMessageChange(
+        operation: 212,
+        messageId: 'download-rotated-manifest-revision',
+        manifestKeyEpoch: 9,
+        manifestRevision: 3,
+      );
+
+      expect(
+        await rotatedCoordinator.preparePage(<E2eeSyncPulledChange>[
+          rotatedRevision,
+        ], maximumRemoteSteps: 1),
+        E2eeSyncPullPagePreparationDisposition.ready,
+      );
+      expect(rotatedTransport.manifestRequests, 1);
+      expect(rotatedTransport.chunkRequests, isEmpty);
+      final rows = await database
+          .select(database.e2eeAttachmentDownloadRows)
+          .get();
+      expect(rows, hasLength(1));
+      expect(rows.single.manifestKeyEpoch, 9);
+      expect(rows.single.manifestRevision, 3);
+      expect(rows.single.phase, E2eeAttachmentDownloadPhase.ready.wireValue);
+      final registrations = await rotatedCoordinator.requireReadyForApply(
+        rotatedRevision,
+      );
+      expect(registrations.single.manifestKeyEpoch, 9);
+      expect(registrations.single.manifestRevision, 3);
+      await rotatedCoordinator.close();
+    });
+
+    test('未来附件代次在建状态和发网前暂停', () async {
       final manifest = createManifest();
       final transport = _FakeAttachmentTransport(manifest);
       final crypto = _FakeAttachmentCrypto(
-        keyEpoch: 7,
+        currentKeyEpoch: 7,
         manifest: manifest,
         plaintextChunks: <Uint8List>[
           Uint8List.fromList(<int>[1, 2, 3]),
@@ -6705,7 +6956,8 @@ void main() {
       final change = await createMessageChange(
         operation: 203,
         messageId: 'download-future-epoch',
-        keyEpoch: 8,
+        chunkKeyEpoch: 8,
+        manifestKeyEpoch: 8,
       );
 
       final disposition = await coordinator.preparePage(<E2eeSyncPulledChange>[
@@ -6732,7 +6984,7 @@ void main() {
       );
       var now = DateTime.utc(2026, 7, 29, 10);
       final manifestCrypto = _FakeAttachmentCrypto(
-        keyEpoch: 7,
+        currentKeyEpoch: 7,
         manifest: manifest,
         plaintextChunks: <Uint8List>[
           Uint8List.fromList(<int>[1, 2, 3]),
@@ -6754,7 +7006,9 @@ void main() {
       final reference = E2eeAttachmentDownloadReference(
         attachmentId: attachmentId,
         uploadId: uploadId,
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
         kind: E2eeAttachmentKind.file,
       );
       expect(
@@ -6774,7 +7028,7 @@ void main() {
 
       now = now.add(const Duration(seconds: 1));
       final chunkCrypto = _FakeAttachmentCrypto(
-        keyEpoch: 7,
+        currentKeyEpoch: 7,
         manifest: manifest,
         plaintextChunks: <Uint8List>[
           Uint8List.fromList(<int>[1, 2, 3]),
@@ -6814,7 +7068,7 @@ void main() {
           retryable: true,
         );
       final crypto = _FakeAttachmentCrypto(
-        keyEpoch: 7,
+        currentKeyEpoch: 7,
         manifest: manifest,
         plaintextChunks: <Uint8List>[
           Uint8List.fromList(<int>[1, 2, 3]),
@@ -6859,7 +7113,9 @@ void main() {
       final reference = E2eeAttachmentDownloadReference(
         attachmentId: attachmentId,
         uploadId: uploadId,
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
         kind: E2eeAttachmentKind.file,
       );
       final state = (await attachmentDownloads.read(reference))!;
@@ -6892,7 +7148,9 @@ void main() {
     final manifest = E2eeAttachmentManifest(
       attachmentId: attachmentId,
       uploadId: uploadId,
-      keyEpoch: 7,
+      chunkKeyEpoch: 7,
+      manifestKeyEpoch: 7,
+      manifestRevision: 1,
       kind: E2eeAttachmentKind.file,
       totalPlaintextBytes: KelivoAttachmentLimits.chunkPlaintextBytes + 1,
       contentSha256: contentDigest,
@@ -6927,12 +7185,16 @@ void main() {
       final opened = await manifestCipher.open(
         attachmentId: attachmentId,
         uploadId: uploadId,
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
         ciphertext: sealed.ciphertext,
       );
       expect(opened.attachmentId, attachmentId);
       expect(opened.uploadId, uploadId);
-      expect(opened.keyEpoch, 7);
+      expect(opened.chunkKeyEpoch, 7);
+      expect(opened.manifestKeyEpoch, 7);
+      expect(opened.manifestRevision, 1);
       expect(opened.kind, E2eeAttachmentKind.file);
       expect(opened.displayName, '计划.txt');
       expect(opened.mediaType, 'text/plain');
@@ -6983,7 +7245,9 @@ void main() {
         E2eeAttachmentManifest(
           attachmentId: attachmentId,
           uploadId: uploadId,
-          keyEpoch: 7,
+          chunkKeyEpoch: 7,
+          manifestKeyEpoch: 7,
+          manifestRevision: 1,
           kind: E2eeAttachmentKind.image,
           totalPlaintextBytes: 0,
           contentSha256: Uint8List(32),
@@ -7000,7 +7264,9 @@ void main() {
         manifestCipher.open(
           attachmentId: attachmentId,
           uploadId: uploadId,
-          keyEpoch: 7,
+          chunkKeyEpoch: 7,
+          manifestKeyEpoch: 7,
+          manifestRevision: 1,
           ciphertext: tampered,
         ),
         throwsA(
@@ -7015,7 +7281,9 @@ void main() {
         manifestCipher.open(
           attachmentId: attachmentId,
           uploadId: 'a0000000-0000-4000-8000-000000000003',
-          keyEpoch: 7,
+          chunkKeyEpoch: 7,
+          manifestKeyEpoch: 7,
+          manifestRevision: 1,
           ciphertext: sealed.ciphertext,
         ),
         throwsFormatException,
@@ -7024,7 +7292,9 @@ void main() {
         manifestCipher.open(
           attachmentId: attachmentId,
           uploadId: uploadId,
-          keyEpoch: 7,
+          chunkKeyEpoch: 7,
+          manifestKeyEpoch: 7,
+          manifestRevision: 1,
           ciphertext: Uint8List.sublistView(
             sealed.ciphertext,
             0,
@@ -7043,7 +7313,9 @@ void main() {
     final maximumManifest = E2eeAttachmentManifest(
       attachmentId: 'b0000000-0000-4000-8000-000000000001',
       uploadId: 'c0000000-0000-4000-8000-000000000001',
-      keyEpoch: 0xffffffff,
+      chunkKeyEpoch: 0xffffffff,
+      manifestKeyEpoch: 0xffffffff,
+      manifestRevision: 1,
       kind: E2eeAttachmentKind.image,
       totalPlaintextBytes: KelivoAttachmentLimits.maxTotalPlaintextBytes,
       contentSha256: Uint8List(32),
@@ -7063,7 +7335,9 @@ void main() {
       () => E2eeAttachmentManifest(
         attachmentId: 'b0000000-0000-4000-8000-000000000002',
         uploadId: 'c0000000-0000-4000-8000-000000000002',
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
         kind: E2eeAttachmentKind.file,
         totalPlaintextBytes: 1,
         contentSha256: Uint8List(32),
@@ -7080,7 +7354,9 @@ void main() {
       () => E2eeAttachmentManifest(
         attachmentId: 'b0000000-0000-4000-8000-000000000003',
         uploadId: 'c0000000-0000-4000-8000-000000000003',
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
         kind: E2eeAttachmentKind.file,
         totalPlaintextBytes: 1,
         contentSha256: Uint8List(32),
@@ -7097,7 +7373,9 @@ void main() {
       () => E2eeAttachmentManifest(
         attachmentId: 'b0000000-0000-4000-8000-000000000004',
         uploadId: 'c0000000-0000-4000-8000-000000000004',
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
         kind: E2eeAttachmentKind.image,
         totalPlaintextBytes: 1,
         contentSha256: Uint8List(32),
@@ -7112,7 +7390,9 @@ void main() {
       () => E2eeAttachmentManifest(
         attachmentId: 'b0000000-0000-4000-8000-000000000005',
         uploadId: 'c0000000-0000-4000-8000-000000000005',
-        keyEpoch: 7,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 1,
         kind: E2eeAttachmentKind.file,
         totalPlaintextBytes: 1,
         contentSha256: Uint8List(32),
@@ -7284,7 +7564,7 @@ final class _FixedMessageAttachmentReadiness
 
 final class _FakeAttachmentCrypto implements E2eeAttachmentCrypto {
   _FakeAttachmentCrypto({
-    required this.keyEpoch,
+    required this.currentKeyEpoch,
     required this.manifest,
     required List<Uint8List> plaintextChunks,
   }) : _plaintextChunks = <Uint8List>[
@@ -7292,7 +7572,7 @@ final class _FakeAttachmentCrypto implements E2eeAttachmentCrypto {
        ];
 
   @override
-  final int keyEpoch;
+  final int currentKeyEpoch;
   final E2eeAttachmentManifest manifest;
   final List<Uint8List> _plaintextChunks;
   Object? manifestFailure;
@@ -7314,14 +7594,18 @@ final class _FakeAttachmentCrypto implements E2eeAttachmentCrypto {
   Future<E2eeAttachmentManifest> openManifest({
     required String attachmentId,
     required String uploadId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required Uint8List ciphertext,
   }) async {
     final failure = manifestFailure;
     if (failure != null) throw failure;
     if (attachmentId != manifest.attachmentId ||
         uploadId != manifest.uploadId ||
-        keyEpoch != manifest.keyEpoch) {
+        chunkKeyEpoch != manifest.chunkKeyEpoch ||
+        manifestKeyEpoch != manifest.manifestKeyEpoch ||
+        manifestRevision != manifest.manifestRevision) {
       throw const FormatException('测试清单身份不一致');
     }
     return manifest;
@@ -7329,16 +7613,15 @@ final class _FakeAttachmentCrypto implements E2eeAttachmentCrypto {
 
   @override
   Future<Uint8List> openChunk({
-    required E2eeAttachmentDescriptor descriptor,
-    required String uploadId,
+    required E2eeAttachmentManifest manifest,
     required int chunkIndex,
     required Uint8List ciphertext,
   }) async {
     if (chunkFailureIndex == chunkIndex) {
       throw const FormatException('chunk-tampered');
     }
-    if (descriptor.attachmentId != manifest.attachmentId ||
-        uploadId != manifest.uploadId ||
+    if (manifest.attachmentId != this.manifest.attachmentId ||
+        manifest.uploadId != this.manifest.uploadId ||
         chunkIndex < 0 ||
         chunkIndex >= _plaintextChunks.length) {
       throw const FormatException('测试分块身份不一致');
@@ -7350,8 +7633,17 @@ final class _FakeAttachmentCrypto implements E2eeAttachmentCrypto {
   Future<E2eeSealedAttachmentManifest> sealManifest({
     required E2eeAttachmentDescriptor descriptor,
     required String uploadId,
+    required int manifestRevision,
   }) => Future<E2eeSealedAttachmentManifest>.error(
     UnsupportedError('下载测试不得封装附件清单'),
+  );
+
+  @override
+  Future<E2eeSealedAttachmentManifest> rewrapManifest({
+    required E2eeAttachmentManifest source,
+    required int targetManifestRevision,
+  }) => Future<E2eeSealedAttachmentManifest>.error(
+    UnsupportedError('下载测试不得重包附件清单'),
   );
 
   @override
@@ -7379,7 +7671,9 @@ final class _FakeAttachmentTransport implements CloudSyncAttachmentTransport {
   CloudSyncAttachmentIdentity get _identity => CloudSyncAttachmentIdentity(
     attachmentId: manifest.attachmentId,
     uploadId: manifest.uploadId,
-    keyEpoch: manifest.keyEpoch,
+    chunkKeyEpoch: manifest.chunkKeyEpoch,
+    manifestKeyEpoch: manifest.manifestKeyEpoch,
+    manifestRevision: manifest.manifestRevision,
   );
 
   @override

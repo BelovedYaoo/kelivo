@@ -5,7 +5,7 @@ import 'config_sync_keys.dart';
 import 'e2ee_config_sync_payload_schema.dart';
 import 'sync_codec.dart';
 
-const e2eeSyncPayloadFormatVersion = 2;
+const e2eeSyncPayloadFormatVersion = 3;
 const e2eeSyncMaximumMessageAttachmentCount = 32;
 const _maximumPositiveInt63 = 0x7fffffffffffffff;
 const _minimumSignedInt64 = -0x8000000000000000;
@@ -162,7 +162,9 @@ const _messageKeys = <String>{
 const _attachmentKeys = <String>{
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'kind',
   'order',
 };
@@ -294,11 +296,26 @@ void _validateAttachments(List<Object?> attachments) {
         !uploadIds.add(uploadId)) {
       throw FormatException('message.attachments[$index].uploadId 无效或重复');
     }
-    final keyEpoch = _requiredInteger(attachment, 'keyEpoch');
-    if (keyEpoch < 1 || keyEpoch > 0xffffffff) {
+    final chunkKeyEpoch = _requiredInteger(attachment, 'chunkKeyEpoch');
+    final manifestKeyEpoch = _requiredInteger(attachment, 'manifestKeyEpoch');
+    final manifestRevision = _requiredInteger(attachment, 'manifestRevision');
+    if (chunkKeyEpoch < 1 || chunkKeyEpoch > 0xffffffff) {
       throw FormatException(
-        'message.attachments[$index].keyEpoch 超出正 uint32 范围',
+        'message.attachments[$index].chunkKeyEpoch 超出正 uint32 范围',
       );
+    }
+    if (manifestKeyEpoch < 1 || manifestKeyEpoch > 0xffffffff) {
+      throw FormatException(
+        'message.attachments[$index].manifestKeyEpoch 超出正 uint32 范围',
+      );
+    }
+    if (manifestRevision < 1 || manifestRevision > 0xffffffff) {
+      throw FormatException(
+        'message.attachments[$index].manifestRevision 超出正 uint32 范围',
+      );
+    }
+    if (manifestKeyEpoch - chunkKeyEpoch != manifestRevision - 1) {
+      throw FormatException('message.attachments[$index] 代次与修订关系无效');
     }
     final kind = _requiredString(attachment, 'kind');
     if (kind != 'image' && kind != 'file') {

@@ -16,7 +16,9 @@ final class ChatMessageAttachment {
     String? mediaType,
     String? attachmentId,
     String? uploadId,
-    int? keyEpoch,
+    int? chunkKeyEpoch,
+    int? manifestKeyEpoch,
+    int? manifestRevision,
   }) {
     if (assetId.trim().isEmpty || assetId.contains('\u0000')) {
       throw ArgumentError.value(assetId, 'assetId');
@@ -49,7 +51,13 @@ final class ChatMessageAttachment {
     if (kind == 'file' && (displayName == null || mediaType == null)) {
       throw ArgumentError.value((displayName, mediaType), 'fileMetadata');
     }
-    final remoteFields = <Object?>[attachmentId, uploadId, keyEpoch];
+    final remoteFields = <Object?>[
+      attachmentId,
+      uploadId,
+      chunkKeyEpoch,
+      manifestKeyEpoch,
+      manifestRevision,
+    ];
     final hasRemoteIdentity = remoteFields.every((value) => value != null);
     if (!hasRemoteIdentity && remoteFields.any((value) => value != null)) {
       throw ArgumentError.value(remoteFields, 'remoteIdentity');
@@ -61,8 +69,17 @@ final class ChatMessageAttachment {
       if (!_uuidV4Pattern.hasMatch(uploadId!)) {
         throw ArgumentError.value(uploadId, 'uploadId');
       }
-      if (keyEpoch! < 1 || keyEpoch > 0xffffffff) {
-        throw ArgumentError.value(keyEpoch, 'keyEpoch');
+      for (final entry in <(String, int)>[
+        ('chunkKeyEpoch', chunkKeyEpoch!),
+        ('manifestKeyEpoch', manifestKeyEpoch!),
+        ('manifestRevision', manifestRevision!),
+      ]) {
+        if (entry.$2 < 1 || entry.$2 > 0xffffffff) {
+          throw ArgumentError.value(entry.$2, entry.$1);
+        }
+      }
+      if (manifestKeyEpoch - chunkKeyEpoch != manifestRevision - 1) {
+        throw ArgumentError.value(remoteFields, 'remoteIdentity');
       }
     }
     return ChatMessageAttachment._(
@@ -75,7 +92,9 @@ final class ChatMessageAttachment {
       mediaType: mediaType,
       attachmentId: attachmentId,
       uploadId: uploadId,
-      keyEpoch: keyEpoch,
+      chunkKeyEpoch: chunkKeyEpoch,
+      manifestKeyEpoch: manifestKeyEpoch,
+      manifestRevision: manifestRevision,
     );
   }
 
@@ -89,7 +108,9 @@ final class ChatMessageAttachment {
     required this.mediaType,
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
   });
 
   final String assetId;
@@ -101,7 +122,9 @@ final class ChatMessageAttachment {
   final String? mediaType;
   final String? attachmentId;
   final String? uploadId;
-  final int? keyEpoch;
+  final int? chunkKeyEpoch;
+  final int? manifestKeyEpoch;
+  final int? manifestRevision;
 
   bool get hasRemoteIdentity => attachmentId != null;
 
@@ -115,10 +138,15 @@ final class ChatMessageAttachment {
     'mediaType': mediaType,
     'attachmentId': attachmentId,
     'uploadId': uploadId,
-    'keyEpoch': keyEpoch,
+    'chunkKeyEpoch': chunkKeyEpoch,
+    'manifestKeyEpoch': manifestKeyEpoch,
+    'manifestRevision': manifestRevision,
   };
 
   factory ChatMessageAttachment.fromJson(Map<String, Object?> json) {
+    if (json.containsKey('keyEpoch')) {
+      throw const FormatException('chat_attachment.keyEpoch');
+    }
     return ChatMessageAttachment(
       assetId: _requiredString(json, 'assetId'),
       path: _requiredString(json, 'path'),
@@ -129,7 +157,9 @@ final class ChatMessageAttachment {
       mediaType: _optionalString(json, 'mediaType'),
       attachmentId: _optionalString(json, 'attachmentId'),
       uploadId: _optionalString(json, 'uploadId'),
-      keyEpoch: _optionalInt(json, 'keyEpoch'),
+      chunkKeyEpoch: _optionalInt(json, 'chunkKeyEpoch'),
+      manifestKeyEpoch: _optionalInt(json, 'manifestKeyEpoch'),
+      manifestRevision: _optionalInt(json, 'manifestRevision'),
     );
   }
 

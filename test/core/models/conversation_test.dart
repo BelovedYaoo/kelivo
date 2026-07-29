@@ -95,7 +95,9 @@ void main() {
             mediaType: 'text/plain',
             attachmentId: 'a0000000-0000-4000-8000-000000000001',
             uploadId: 'b0000000-0000-4000-8000-000000000001',
-            keyEpoch: 7,
+            chunkKeyEpoch: 5,
+            manifestKeyEpoch: 7,
+            manifestRevision: 3,
           ),
         ];
         final message = ChatMessage(
@@ -124,7 +126,9 @@ void main() {
         expect(attachment.mediaType, 'text/plain');
         expect(attachment.attachmentId, 'a0000000-0000-4000-8000-000000000001');
         expect(attachment.uploadId, 'b0000000-0000-4000-8000-000000000001');
-        expect(attachment.keyEpoch, 7);
+        expect(attachment.chunkKeyEpoch, 5);
+        expect(attachment.manifestKeyEpoch, 7);
+        expect(attachment.manifestRevision, 3);
         expect(restored.copyWith(content: 'updated').attachments, hasLength(1));
         expect(restored.copyWith(attachments: const []).attachments, isEmpty);
       },
@@ -153,6 +157,21 @@ void main() {
           attachmentId: 'a0000000-0000-4000-8000-000000000001',
         ),
         throwsArgumentError,
+      );
+      expect(
+        () => ChatMessageAttachment.fromJson(<String, Object?>{
+          'assetId': 'asset-1',
+          'path': r'D:\workspace\assets\file.txt',
+          'contentHash': List<String>.filled(64, 'a').join(),
+          'byteSize': 42,
+          'kind': 'file',
+          'displayName': 'file.txt',
+          'mediaType': 'text/plain',
+          'attachmentId': 'a0000000-0000-4000-8000-000000000001',
+          'uploadId': 'b0000000-0000-4000-8000-000000000001',
+          'keyEpoch': 7,
+        }),
+        throwsA(isA<FormatException>()),
       );
       final attachment = ChatMessageAttachment(
         assetId: 'asset-1',

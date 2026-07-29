@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:developer' as developer;
 import 'dart:io';
 import 'dart:typed_data';
 
@@ -83,7 +84,9 @@ final class E2eeAttachmentDownloadCoordinator
     return _runWhileOpen(() async {
       final references = _uniqueAttachmentReferences(authenticatedChanges);
       if (references.any(
-        (reference) => reference.keyEpoch > _crypto.keyEpoch,
+        (reference) =>
+            reference.chunkKeyEpoch > _crypto.currentKeyEpoch ||
+            reference.manifestKeyEpoch > _crypto.currentKeyEpoch,
       )) {
         return E2eeSyncPullPagePreparationDisposition.keyEpochUnavailable;
       }
@@ -265,7 +268,9 @@ final class E2eeAttachmentDownloadCoordinator
     final manifest = await _crypto.openManifest(
       attachmentId: reference.attachmentId,
       uploadId: reference.uploadId,
-      keyEpoch: reference.keyEpoch,
+      chunkKeyEpoch: reference.chunkKeyEpoch,
+      manifestKeyEpoch: reference.manifestKeyEpoch,
+      manifestRevision: reference.manifestRevision,
       ciphertext: remote.manifestCiphertext,
     );
     _requireMatchingManifest(reference, remote, manifest);
@@ -273,6 +278,24 @@ final class E2eeAttachmentDownloadCoordinator
     final finalPath = await _fileStore.resolveContentStoragePath(
       manifest.contentSha256,
     );
+    final candidatePath = lease.state.finalPath;
+    if (lease.state.localAssetId != null && candidatePath == finalPath) {
+      final candidate = E2eeAttachmentStoredFile(
+        storagePath: candidatePath!,
+        bytes: manifest.totalPlaintextBytes,
+        sha256: manifest.contentSha256,
+      );
+      if (await _verifyReusableContent(candidate)) {
+        await _commands.reuseReadyAssetAfterManifest(
+          lease: lease,
+          manifest: manifest,
+          manifestCiphertext: remote.manifestCiphertext,
+          finalPath: finalPath,
+          now: _utcNow(),
+        );
+        return const _DownloadReady();
+      }
+    }
     final stagingPath = await _fileStore.openDownloadPlaintextStaging(
       identity: identity,
       persistedStoragePath: null,
@@ -289,6 +312,33 @@ final class E2eeAttachmentDownloadCoordinator
     return _DownloadProgressed(attached);
   }
 
+  Future<bool> _verifyReusableContent(
+    E2eeAttachmentStoredFile candidate,
+  ) async {
+    try {
+      await _fileStore.verifyContent(candidate);
+      return true;
+    } on FileSystemException catch (error, stackTrace) {
+      if (error.message != 'e2ee_attachment_file_missing') rethrow;
+      developer.log(
+        'E2EE 附件完成文件不存在，按新清单重新下载',
+        name: 'Kelivo.E2eeAttachmentDownloadCoordinator',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    } on FormatException catch (error, stackTrace) {
+      if (error.message != 'e2ee_attachment_file_integrity') rethrow;
+      developer.log(
+        'E2EE 附件完成文件未通过新清单内容校验，重新下载',
+        name: 'Kelivo.E2eeAttachmentDownloadCoordinator',
+        error: error,
+        stackTrace: stackTrace,
+      );
+      return false;
+    }
+  }
+
   Future<_DownloadAdvance> _downloadNextChunk(
     E2eeAttachmentDownloadLease lease,
     _RemoteStepBudget budget,
@@ -297,8 +347,9 @@ final class E2eeAttachmentDownloadCoordinator
     var activeLease = lease;
     final state = activeLease.state;
     final descriptor = state.descriptor;
+    final manifest = state.manifest;
     final stagingPath = state.stagingPath;
-    if (descriptor == null || stagingPath == null) {
+    if (descriptor == null || manifest == null || stagingPath == null) {
       throw StateError('attachment_download_descriptor_missing');
     }
     final identity = _cloudIdentity(state.reference);
@@ -343,8 +394,7 @@ final class E2eeAttachmentDownloadCoordinator
     Uint8List? plaintext;
     try {
       plaintext = await _crypto.openChunk(
-        descriptor: descriptor,
-        uploadId: state.uploadId,
+        manifest: manifest,
         chunkIndex: state.nextChunkIndex,
         ciphertext: remote.ciphertext,
       );
@@ -413,7 +463,9 @@ final class E2eeAttachmentDownloadCoordinator
         mediaType: descriptor.mediaType,
         attachmentId: state.attachmentId,
         uploadId: state.uploadId,
-        keyEpoch: state.keyEpoch,
+        chunkKeyEpoch: state.chunkKeyEpoch,
+        manifestKeyEpoch: state.manifestKeyEpoch,
+        manifestRevision: state.manifestRevision,
       ),
       now: _utcNow(),
     );
@@ -553,12 +605,16 @@ List<E2eeAttachmentDownloadReference> _messageAttachmentReferences(
     }
     final attachmentId = raw['attachmentId'];
     final uploadId = raw['uploadId'];
-    final keyEpoch = raw['keyEpoch'];
+    final chunkKeyEpoch = raw['chunkKeyEpoch'];
+    final manifestKeyEpoch = raw['manifestKeyEpoch'];
+    final manifestRevision = raw['manifestRevision'];
     final kind = raw['kind'];
     final order = raw['order'];
     if (attachmentId is! String ||
         uploadId is! String ||
-        keyEpoch is! int ||
+        chunkKeyEpoch is! int ||
+        manifestKeyEpoch is! int ||
+        manifestRevision is! int ||
         kind is! String ||
         order != index) {
       throw FormatException('message.attachments[$index] 身份字段无效');
@@ -567,7 +623,9 @@ List<E2eeAttachmentDownloadReference> _messageAttachmentReferences(
       E2eeAttachmentDownloadReference(
         attachmentId: attachmentId,
         uploadId: uploadId,
-        keyEpoch: keyEpoch,
+        chunkKeyEpoch: chunkKeyEpoch,
+        manifestKeyEpoch: manifestKeyEpoch,
+        manifestRevision: manifestRevision,
         kind: switch (kind) {
           'image' => E2eeAttachmentKind.image,
           'file' => E2eeAttachmentKind.file,
@@ -601,7 +659,9 @@ MessageAssetRegistration _registrationFromReadyState(
     mediaType: descriptor.mediaType,
     attachmentId: state.attachmentId,
     uploadId: state.uploadId,
-    keyEpoch: state.keyEpoch,
+    chunkKeyEpoch: state.chunkKeyEpoch,
+    manifestKeyEpoch: state.manifestKeyEpoch,
+    manifestRevision: state.manifestRevision,
   );
 }
 
@@ -617,7 +677,9 @@ CloudSyncAttachmentIdentity _cloudIdentity(
 ) => CloudSyncAttachmentIdentity(
   attachmentId: reference.attachmentId,
   uploadId: reference.uploadId,
-  keyEpoch: reference.keyEpoch,
+  chunkKeyEpoch: reference.chunkKeyEpoch,
+  manifestKeyEpoch: reference.manifestKeyEpoch,
+  manifestRevision: reference.manifestRevision,
 );
 
 void _requireMatchingCloudIdentity(
@@ -626,7 +688,9 @@ void _requireMatchingCloudIdentity(
 ) {
   if (expected.attachmentId != actual.attachmentId ||
       expected.uploadId != actual.uploadId ||
-      expected.keyEpoch != actual.keyEpoch) {
+      expected.chunkKeyEpoch != actual.chunkKeyEpoch ||
+      expected.manifestKeyEpoch != actual.manifestKeyEpoch ||
+      expected.manifestRevision != actual.manifestRevision) {
     throw const FormatException('attachment_download_remote_identity');
   }
 }
@@ -638,7 +702,9 @@ void _requireMatchingManifest(
 ) {
   if (manifest.attachmentId != reference.attachmentId ||
       manifest.uploadId != reference.uploadId ||
-      manifest.keyEpoch != reference.keyEpoch ||
+      manifest.chunkKeyEpoch != reference.chunkKeyEpoch ||
+      manifest.manifestKeyEpoch != reference.manifestKeyEpoch ||
+      manifest.manifestRevision != reference.manifestRevision ||
       manifest.kind != reference.kind ||
       remote.chunkCount != manifest.chunkCiphertextBytes.length ||
       remote.totalCiphertextBytes != manifest.totalCiphertextBytes) {
@@ -714,7 +780,9 @@ bool _sameReference(
 ) =>
     left.attachmentId == right.attachmentId &&
     left.uploadId == right.uploadId &&
-    left.keyEpoch == right.keyEpoch &&
+    left.chunkKeyEpoch == right.chunkKeyEpoch &&
+    left.manifestKeyEpoch == right.manifestKeyEpoch &&
+    left.manifestRevision == right.manifestRevision &&
     left.kind == right.kind;
 
 bool _isShorterThanConfirmed(StateError error) =>

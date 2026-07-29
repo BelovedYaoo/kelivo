@@ -204,7 +204,15 @@ class AssetRows extends Table {
 )
 @TableIndex(
   name: 'idx_message_assets_remote_identity',
-  columns: {#attachmentId, #uploadId, #keyEpoch, #revisionId, #ordinal},
+  columns: {
+    #attachmentId,
+    #uploadId,
+    #chunkKeyEpoch,
+    #manifestKeyEpoch,
+    #manifestRevision,
+    #revisionId,
+    #ordinal,
+  },
 )
 class MessageAssetRows extends Table {
   TextColumn get revisionId =>
@@ -217,7 +225,9 @@ class MessageAssetRows extends Table {
   TextColumn get mediaType => text().nullable()();
   TextColumn get attachmentId => text().nullable()();
   TextColumn get uploadId => text().nullable()();
-  IntColumn get keyEpoch => integer().nullable()();
+  IntColumn get chunkKeyEpoch => integer().nullable()();
+  IntColumn get manifestKeyEpoch => integer().nullable()();
+  IntColumn get manifestRevision => integer().nullable()();
 
   @override
   Set<Column<Object>> get primaryKey => {revisionId, ordinal};
@@ -264,13 +274,22 @@ class MessageAssetRows extends Table {
         "AND substr(upload_id, 19, 1) = '-' "
         "AND substr(upload_id, 20, 1) IN ('8', '9', 'a', 'b') "
         "AND substr(upload_id, 24, 1) = '-'))",
-    'CHECK (key_epoch IS NULL OR '
-        "(typeof(key_epoch) = 'integer' "
-        'AND key_epoch BETWEEN 1 AND 4294967295))',
+    'CHECK (chunk_key_epoch IS NULL OR '
+        "(typeof(chunk_key_epoch) = 'integer' "
+        'AND chunk_key_epoch BETWEEN 1 AND 4294967295))',
+    'CHECK (manifest_key_epoch IS NULL OR '
+        "(typeof(manifest_key_epoch) = 'integer' "
+        'AND manifest_key_epoch BETWEEN chunk_key_epoch AND 4294967295))',
+    'CHECK (manifest_revision IS NULL OR '
+        "(typeof(manifest_revision) = 'integer' "
+        'AND manifest_revision BETWEEN 1 AND 4294967295 '
+        'AND manifest_key_epoch - chunk_key_epoch = manifest_revision - 1))',
     'CHECK ((attachment_id IS NULL AND upload_id IS NULL '
-        'AND key_epoch IS NULL) OR '
+        'AND chunk_key_epoch IS NULL AND manifest_key_epoch IS NULL '
+        'AND manifest_revision IS NULL) OR '
         '(attachment_id IS NOT NULL AND upload_id IS NOT NULL '
-        'AND key_epoch IS NOT NULL))',
+        'AND chunk_key_epoch IS NOT NULL AND manifest_key_epoch IS NOT NULL '
+        'AND manifest_revision IS NOT NULL))',
   ];
 }
 
@@ -1334,7 +1353,9 @@ class E2eeAttachmentUploadRows extends Table {
   TextColumn get targetRevisionId => text()();
   IntColumn get targetOrdinal => integer()();
   TextColumn get sourcePath => text()();
-  IntColumn get keyEpoch => integer()();
+  IntColumn get chunkKeyEpoch => integer()();
+  IntColumn get manifestKeyEpoch => integer()();
+  IntColumn get manifestRevision => integer()();
   TextColumn get kind => text()();
   TextColumn get displayName => text().nullable()();
   TextColumn get mediaType => text().nullable()();
@@ -1410,8 +1431,12 @@ class E2eeAttachmentUploadRows extends Table {
     "CHECK (typeof(source_path) = 'text' "
         'AND length(CAST(source_path AS BLOB)) BETWEEN 1 AND 32768 '
         'AND instr(source_path, char(0)) = 0)',
-    "CHECK (typeof(key_epoch) = 'integer' "
-        'AND key_epoch BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(chunk_key_epoch) = 'integer' "
+        'AND chunk_key_epoch BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(manifest_key_epoch) = 'integer' "
+        'AND manifest_key_epoch = chunk_key_epoch)',
+    "CHECK (typeof(manifest_revision) = 'integer' "
+        'AND manifest_revision = 1)',
     "CHECK (typeof(kind) = 'text' AND kind IN ('image', 'file'))",
     'CHECK (display_name IS NULL OR '
         "(typeof(display_name) = 'text' "
@@ -1604,7 +1629,9 @@ class E2eeAttachmentUploadRows extends Table {
 class E2eeAttachmentDownloadRows extends Table {
   TextColumn get attachmentId => text()();
   TextColumn get uploadId => text()();
-  IntColumn get keyEpoch => integer()();
+  IntColumn get chunkKeyEpoch => integer()();
+  IntColumn get manifestKeyEpoch => integer()();
+  IntColumn get manifestRevision => integer()();
   TextColumn get kind => text()();
   TextColumn get phase => text()();
   BlobColumn get manifestCiphertext => blob().nullable()();
@@ -1674,8 +1701,13 @@ class E2eeAttachmentDownloadRows extends Table {
         "AND substr(upload_id, 15, 4) NOT GLOB '*-*' "
         "AND substr(upload_id, 20, 4) NOT GLOB '*-*' "
         "AND substr(upload_id, 25, 12) NOT GLOB '*-*')",
-    "CHECK (typeof(key_epoch) = 'integer' "
-        'AND key_epoch BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(chunk_key_epoch) = 'integer' "
+        'AND chunk_key_epoch BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(manifest_key_epoch) = 'integer' "
+        'AND manifest_key_epoch BETWEEN chunk_key_epoch AND 4294967295)',
+    "CHECK (typeof(manifest_revision) = 'integer' "
+        'AND manifest_revision BETWEEN 1 AND 4294967295 '
+        'AND manifest_key_epoch - chunk_key_epoch = manifest_revision - 1)',
     "CHECK (typeof(kind) = 'text' AND kind IN ('image', 'file'))",
     "CHECK (typeof(phase) = 'text' AND phase IN "
         "('manifest-pending', 'downloading', 'verifying', 'ready'))",
@@ -1737,8 +1769,10 @@ class E2eeAttachmentDownloadRows extends Table {
         'AND wrapped_data_key IS NULL AND total_plaintext_bytes IS NULL '
         'AND chunk_count IS NULL AND total_ciphertext_bytes IS NULL '
         'AND display_name IS NULL AND media_type IS NULL '
-        'AND local_asset_id IS NULL AND staging_path IS NULL '
-        'AND final_path IS NULL AND next_chunk_index = 0 '
+        'AND staging_path IS NULL '
+        'AND ((local_asset_id IS NULL AND final_path IS NULL) OR '
+        '(local_asset_id IS NOT NULL AND final_path IS NOT NULL)) '
+        'AND next_chunk_index = 0 '
         'AND confirmed_plaintext_bytes = 0) OR '
         '(phase = \'downloading\' '
         'AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL '
@@ -1850,7 +1884,7 @@ class AppDatabase extends _$AppDatabase {
   static const databaseFileName = 'kelivo.db';
 
   // 已验证成员清单锚点必须与内容数据库同受 SQLCipher 和硬切安装门保护。
-  static const currentSchemaVersion = 21;
+  static const currentSchemaVersion = 22;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

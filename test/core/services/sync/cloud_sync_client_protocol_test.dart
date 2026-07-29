@@ -7400,7 +7400,9 @@ void main() {
       request: CloudSyncAttachmentCreateUploadRequest(
         mutationId: _mutationId1,
         attachmentId: _attachmentId,
-        keyEpoch: 0xffffffff,
+        chunkKeyEpoch: 0xffffffff,
+        manifestKeyEpoch: 0xffffffff,
+        manifestRevision: 1,
         chunkCount: 2,
         totalCiphertextBytes: 5,
       ),
@@ -7447,7 +7449,9 @@ void main() {
     final upload = await createFuture;
     expect(upload.identity.attachmentId, _attachmentId);
     expect(upload.identity.uploadId, _uploadId);
-    expect(upload.identity.keyEpoch, 0xffffffff);
+    expect(upload.identity.chunkKeyEpoch, 0xffffffff);
+    expect(upload.identity.manifestKeyEpoch, 0xffffffff);
+    expect(upload.identity.manifestRevision, 1);
     expect(upload.chunkCount, 2);
     expect(upload.totalCiphertextBytes, 5);
     expect(upload.createdAt, DateTime.utc(2026, 7, 29));
@@ -7467,7 +7471,9 @@ void main() {
     final identity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
-      keyEpoch: 7,
+      chunkKeyEpoch: 5,
+      manifestKeyEpoch: 7,
+      manifestRevision: 3,
     );
     final chunk = CloudSyncAttachmentChunkIdentity(
       identity: identity,
@@ -7490,7 +7496,7 @@ void main() {
         'mutationId': _mutationId1,
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'chunkKeyEpoch': 7,
+        'chunkKeyEpoch': 5,
         'chunkIndex': 0,
         'ciphertext': 'AQID',
       },
@@ -7499,7 +7505,7 @@ void main() {
       'data': <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'chunkKeyEpoch': 7,
+        'chunkKeyEpoch': 5,
         'chunkIndex': 0,
         'ciphertextBytes': 3,
         'status': 'stored',
@@ -7529,7 +7535,7 @@ void main() {
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
         'manifestKeyEpoch': 7,
-        'manifestRevision': 1,
+        'manifestRevision': 3,
         'manifestCiphertext': 'BAU',
         'chunks': <Object?>[
           <String, Object?>{'chunkIndex': 0, 'ciphertextBytes': 3},
@@ -7540,9 +7546,9 @@ void main() {
       'data': <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'chunkKeyEpoch': 7,
+        'chunkKeyEpoch': 5,
         'manifestKeyEpoch': 7,
-        'manifestRevision': 1,
+        'manifestRevision': 3,
         'status': 'committed',
         'committedAt': '2026-07-29T00:01:00.000Z',
       },
@@ -7563,7 +7569,7 @@ void main() {
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
         'manifestKeyEpoch': 7,
-        'manifestRevision': 1,
+        'manifestRevision': 3,
       },
     );
     await _writeJsonResponse(manifestRequest, <String, Object?>{
@@ -7571,9 +7577,9 @@ void main() {
         'dataRekeyPhase': 'ready',
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'chunkKeyEpoch': 7,
+        'chunkKeyEpoch': 5,
         'manifestKeyEpoch': 7,
-        'manifestRevision': 1,
+        'manifestRevision': 3,
         'chunkCount': 1,
         'totalCiphertextBytes': 3,
         'manifestCiphertext': 'BAU',
@@ -7600,7 +7606,7 @@ void main() {
       body: <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'chunkKeyEpoch': 7,
+        'chunkKeyEpoch': 5,
         'chunkIndex': 0,
       },
     );
@@ -7609,7 +7615,7 @@ void main() {
         'dataRekeyPhase': 'ready',
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'chunkKeyEpoch': 7,
+        'chunkKeyEpoch': 5,
         'chunkIndex': 0,
         'ciphertext': 'AQID',
         'ciphertextBytes': 3,
@@ -7635,22 +7641,24 @@ void main() {
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
         'manifestKeyEpoch': 7,
-        'manifestRevision': 1,
+        'manifestRevision': 3,
       },
     );
     await _writeJsonResponse(deleteRequest, <String, Object?>{
       'data': <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'chunkKeyEpoch': 7,
+        'chunkKeyEpoch': 5,
         'manifestKeyEpoch': 7,
-        'manifestRevision': 1,
+        'manifestRevision': 3,
         'status': 'deleted',
         'deletedAt': '2026-07-29T00:02:00.000Z',
       },
     });
     final deleted = await deleteFuture;
-    expect(deleted.identity.keyEpoch, 7);
+    expect(deleted.identity.chunkKeyEpoch, 5);
+    expect(deleted.identity.manifestKeyEpoch, 7);
+    expect(deleted.identity.manifestRevision, 3);
     expect(deleted.deletedAt, DateTime.utc(2026, 7, 29, 0, 2));
   });
 
@@ -7658,16 +7666,22 @@ void main() {
     final identity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
-      keyEpoch: 0xffffffff,
+      chunkKeyEpoch: 0xffffffff,
+      manifestKeyEpoch: 0xffffffff,
+      manifestRevision: 1,
     );
     final maximumCreate = CloudSyncAttachmentCreateUploadRequest(
       mutationId: _mutationId1,
       attachmentId: _attachmentId,
-      keyEpoch: 0xffffffff,
+      chunkKeyEpoch: 0xffffffff,
+      manifestKeyEpoch: 0xffffffff,
+      manifestRevision: 1,
       chunkCount: cloudSyncMaximumAttachmentChunkCount,
       totalCiphertextBytes: cloudSyncMaximumAttachmentTotalCiphertextBytes,
     );
-    expect(maximumCreate.keyEpoch, 0xffffffff);
+    expect(maximumCreate.chunkKeyEpoch, 0xffffffff);
+    expect(maximumCreate.manifestKeyEpoch, 0xffffffff);
+    expect(maximumCreate.manifestRevision, 1);
     expect(maximumCreate.totalCiphertextBytes, 1000 * 4 * 1024 * 1024);
 
     final chunkSource = Uint8List(
@@ -7713,38 +7727,82 @@ void main() {
       () => CloudSyncAttachmentIdentity(
         attachmentId: _attachmentId,
         uploadId: _uploadId,
-        keyEpoch: 0,
+        chunkKeyEpoch: 0,
+        manifestKeyEpoch: 1,
+        manifestRevision: 2,
       ),
       () => CloudSyncAttachmentIdentity(
         attachmentId: _attachmentId,
         uploadId: _uploadId,
-        keyEpoch: 0x100000000,
+        chunkKeyEpoch: 0x100000000,
+        manifestKeyEpoch: 0x100000000,
+        manifestRevision: 1,
+      ),
+      () => CloudSyncAttachmentIdentity(
+        attachmentId: _attachmentId,
+        uploadId: _uploadId,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 8,
+        manifestRevision: 1,
+      ),
+      () => CloudSyncAttachmentIdentity(
+        attachmentId: _attachmentId,
+        uploadId: _uploadId,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 7,
+        manifestRevision: 0,
       ),
       () => CloudSyncAttachmentCreateUploadRequest(
         mutationId: _mutationId1,
         attachmentId: _attachmentId,
-        keyEpoch: 1,
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 2,
+        manifestRevision: 1,
+        chunkCount: 1,
+        totalCiphertextBytes: 1,
+      ),
+      () => CloudSyncAttachmentCreateUploadRequest(
+        mutationId: _mutationId1,
+        attachmentId: _attachmentId,
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 2,
+        chunkCount: 1,
+        totalCiphertextBytes: 1,
+      ),
+      () => CloudSyncAttachmentCreateUploadRequest(
+        mutationId: _mutationId1,
+        attachmentId: _attachmentId,
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 1,
         chunkCount: 0,
         totalCiphertextBytes: 1,
       ),
       () => CloudSyncAttachmentCreateUploadRequest(
         mutationId: _mutationId1,
         attachmentId: _attachmentId,
-        keyEpoch: 1,
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 1,
         chunkCount: cloudSyncMaximumAttachmentChunkCount + 1,
         totalCiphertextBytes: cloudSyncMaximumAttachmentChunkCount + 1,
       ),
       () => CloudSyncAttachmentCreateUploadRequest(
         mutationId: _mutationId1,
         attachmentId: _attachmentId,
-        keyEpoch: 1,
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 1,
         chunkCount: 2,
         totalCiphertextBytes: 1,
       ),
       () => CloudSyncAttachmentCreateUploadRequest(
         mutationId: _mutationId1,
         attachmentId: _attachmentId,
-        keyEpoch: 1,
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 1,
         chunkCount: 1,
         totalCiphertextBytes:
             cloudSyncMaximumAttachmentChunkCiphertextBytes + 1,
@@ -7825,14 +7883,18 @@ void main() {
     final createRequest = CloudSyncAttachmentCreateUploadRequest(
       mutationId: _mutationId1,
       attachmentId: _attachmentId,
-      keyEpoch: 7,
+      chunkKeyEpoch: 7,
+      manifestKeyEpoch: 7,
+      manifestRevision: 1,
       chunkCount: 1,
       totalCiphertextBytes: 3,
     );
     final identity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
-      keyEpoch: 7,
+      chunkKeyEpoch: 7,
+      manifestKeyEpoch: 7,
+      manifestRevision: 1,
     );
     final invalidResponse = throwsA(
       isA<CloudSyncException>()
@@ -7878,6 +7940,23 @@ void main() {
         'attachmentId': _recordId1,
       },
     });
+    await expectInvalidCreate(<String, Object?>{
+      'data': <String, Object?>{
+        ...validUploadData(),
+        'chunkKeyEpoch': 6,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 2,
+      },
+    });
+    await expectInvalidCreate(<String, Object?>{
+      'data': <String, Object?>{...validUploadData(), 'manifestRevision': 2},
+    });
+    final legacyUploadData = validUploadData()
+      ..remove('chunkKeyEpoch')
+      ..remove('manifestKeyEpoch')
+      ..remove('manifestRevision')
+      ..['keyEpoch'] = 7;
+    await expectInvalidCreate(<String, Object?>{'data': legacyUploadData});
 
     final manifestFuture = client.getAttachmentManifest(
       token: _fullToken,
@@ -7909,6 +7988,32 @@ void main() {
     });
     await expectLater(manifestFuture, invalidResponse);
 
+    final driftedManifestFuture = client.getAttachmentManifest(
+      token: _fullToken,
+      identity: identity,
+    );
+    final driftedManifestRequest = await _nextAttachmentRequest(requests);
+    await utf8.decoder.bind(driftedManifestRequest).join();
+    await _writeJsonResponse(driftedManifestRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'dataRekeyPhase': 'ready',
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'chunkKeyEpoch': 6,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 2,
+        'chunkCount': 1,
+        'totalCiphertextBytes': 3,
+        'manifestCiphertext': 'AQ',
+        'manifestCiphertextBytes': 1,
+        'chunks': <Object?>[
+          <String, Object?>{'chunkIndex': 0, 'ciphertextBytes': 3},
+        ],
+        'committedAt': '2026-07-29T00:01:00.000Z',
+      },
+    });
+    await expectLater(driftedManifestFuture, invalidResponse);
+
     final chunkFuture = client.getAttachmentChunk(
       token: _fullToken,
       chunk: CloudSyncAttachmentChunkIdentity(
@@ -7930,6 +8035,28 @@ void main() {
       },
     });
     await expectLater(chunkFuture, invalidResponse);
+
+    final driftedChunkFuture = client.getAttachmentChunk(
+      token: _fullToken,
+      chunk: CloudSyncAttachmentChunkIdentity(
+        identity: identity,
+        chunkIndex: 0,
+      ),
+    );
+    final driftedChunkRequest = await _nextAttachmentRequest(requests);
+    await utf8.decoder.bind(driftedChunkRequest).join();
+    await _writeJsonResponse(driftedChunkRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'dataRekeyPhase': 'ready',
+        'attachmentId': _attachmentId,
+        'uploadId': _uploadId,
+        'chunkKeyEpoch': 6,
+        'chunkIndex': 0,
+        'ciphertext': 'AQID',
+        'ciphertextBytes': 3,
+      },
+    });
+    await expectLater(driftedChunkFuture, invalidResponse);
   });
 
   test('v3 附件错误响应保留冲突代码与请求标识', () async {
@@ -7949,7 +8076,9 @@ void main() {
         identity: CloudSyncAttachmentIdentity(
           attachmentId: _attachmentId,
           uploadId: _uploadId,
-          keyEpoch: 7,
+          chunkKeyEpoch: 7,
+          manifestKeyEpoch: 7,
+          manifestRevision: 1,
         ),
       ),
     );
@@ -8050,11 +8179,14 @@ void main() {
     final sealedManifest = await session.sealManifest(
       descriptor: fixture.descriptor,
       uploadId: _uploadId,
+      manifestRevision: 1,
     );
     final openedManifest = await session.openManifest(
       attachmentId: fixture.descriptor.attachmentId,
       uploadId: _uploadId,
-      keyEpoch: fixture.descriptor.keyEpoch,
+      chunkKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+      manifestKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+      manifestRevision: 1,
       ciphertext: sealedManifest.ciphertext,
     );
     final ciphertext = await session.sealChunk(
@@ -8064,8 +8196,7 @@ void main() {
       plaintext: fixture.plaintext,
     );
     final opened = await session.openChunk(
-      descriptor: fixture.descriptor,
-      uploadId: _uploadId,
+      manifest: openedManifest,
       chunkIndex: 0,
       ciphertext: ciphertext,
     );
@@ -8077,7 +8208,9 @@ void main() {
       session.openManifest(
         attachmentId: fixture.descriptor.attachmentId,
         uploadId: _uploadId,
-        keyEpoch: fixture.descriptor.keyEpoch + 1,
+        chunkKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+        manifestKeyEpoch: fixture.descriptor.chunkKeyEpoch + 1,
+        manifestRevision: 2,
         ciphertext: sealedManifest.ciphertext,
       ),
       throwsFormatException,
@@ -8093,8 +8226,233 @@ void main() {
     await closing;
     await session.close();
     await expectLater(
-      session.sealManifest(descriptor: fixture.descriptor, uploadId: _uploadId),
+      session.sealManifest(
+        descriptor: fixture.descriptor,
+        uploadId: _uploadId,
+        manifestRevision: 1,
+      ),
       throwsStateError,
+    );
+  });
+
+  test('E2EE 附件清单重包推进清单代次且旧分块无需重传仍可解密', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[8, 9, 10]),
+      openCoordinator: false,
+      includePreviousKeyEpoch: true,
+    );
+    addTearDown(fixture.close);
+    const secureCore = KelivoSecureCore();
+    final userId = _rawUuid(fixture.session.userId);
+
+    final dataKeyLease = await E2eeAccountKeyLease.open(
+      session: fixture.session,
+      deviceStateStore: fixture.deviceStateStore,
+      secureCore: secureCore,
+    );
+    final dataKeyArk = dataKeyLease.takeAccountRootKeyOwnership();
+    final generated = await secureCore.generateAttachmentDataKey();
+    final attachmentId = _uuidStringForTest(generated.attachmentId);
+    late final E2eeAttachmentDescriptor sourceDescriptor;
+    late final Uint8List oldChunkCiphertext;
+    Uint8List? sourceWrappedDataKey;
+    try {
+      sourceWrappedDataKey = await secureCore.wrapAttachmentDataKey(
+        dataKeyArk,
+        generated.key,
+        context: KelivoAttachmentContext(
+          userId: userId,
+          attachmentId: generated.attachmentId,
+          keyEpoch: 6,
+        ),
+      );
+      final layout = KelivoAttachmentLayout(
+        totalPlaintextBytes: fixture.plaintext.length,
+      );
+      sourceDescriptor = E2eeAttachmentDescriptor(
+        attachmentId: attachmentId,
+        chunkKeyEpoch: 6,
+        kind: E2eeAttachmentKind.file,
+        totalPlaintextBytes: fixture.plaintext.length,
+        contentSha256: Uint8List.fromList(
+          sha256.convert(fixture.plaintext).bytes,
+        ),
+        wrappedDataKey: sourceWrappedDataKey,
+        chunkCiphertextBytes: <int>[
+          fixture.plaintext.length +
+              KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+        ],
+        displayName: 'legacy.bin',
+        mediaType: 'application/octet-stream',
+      );
+      oldChunkCiphertext = await secureCore.sealAttachmentChunk(
+        generated.key,
+        uploadContext: KelivoAttachmentUploadContext(
+          attachment: KelivoAttachmentContext(
+            userId: userId,
+            attachmentId: generated.attachmentId,
+            keyEpoch: 6,
+          ),
+          uploadId: _rawUuid(_uploadId),
+        ),
+        layout: layout,
+        chunkIndex: 0,
+        plaintext: fixture.plaintext,
+      );
+    } finally {
+      sourceWrappedDataKey?.fillRange(0, sourceWrappedDataKey.length, 0);
+      await secureCore.closeAttachmentDataKey(generated.key);
+      await secureCore.closeAccountRootKey(dataKeyArk);
+      await dataKeyLease.close();
+    }
+
+    final sourceManifestLease = await E2eeAccountKeyLease.open(
+      session: fixture.session,
+      deviceStateStore: fixture.deviceStateStore,
+      secureCore: secureCore,
+    );
+    final sourceManifestArk = sourceManifestLease.takeAccountRootKeyOwnership();
+    final sourceManifestCipher = E2eeAttachmentManifestCipher.takeOwnership(
+      E2eeAccountRecordCipher.takeOwnership(
+        secureCore: secureCore,
+        accountRootKey: sourceManifestArk,
+        userId: fixture.session.userId,
+        currentKeyEpoch: 6,
+      ),
+    );
+    late final E2eeSealedAttachmentManifest sourceSealed;
+    try {
+      sourceSealed = await sourceManifestCipher.seal(
+        E2eeAttachmentManifest.fromDescriptor(
+          descriptor: sourceDescriptor,
+          uploadId: _uploadId,
+          manifestKeyEpoch: 6,
+          manifestRevision: 1,
+        ),
+      );
+    } finally {
+      await sourceManifestCipher.close();
+      await sourceManifestLease.close();
+    }
+
+    final session = await fixture.openCryptoSession();
+    addTearDown(session.close);
+    final sourceOpened = await session.openManifest(
+      attachmentId: attachmentId,
+      uploadId: _uploadId,
+      chunkKeyEpoch: 6,
+      manifestKeyEpoch: 6,
+      manifestRevision: 1,
+      ciphertext: sourceSealed.ciphertext,
+    );
+    await expectLater(
+      session.rewrapManifest(source: sourceOpened, targetManifestRevision: 3),
+      throwsFormatException,
+    );
+    final targetSealed = await session.rewrapManifest(
+      source: sourceOpened,
+      targetManifestRevision: 2,
+    );
+    expect(targetSealed.chunkKeyEpoch, 6);
+    expect(targetSealed.manifestKeyEpoch, 7);
+    expect(targetSealed.manifestRevision, 2);
+
+    final targetOpened = await session.openManifest(
+      attachmentId: attachmentId,
+      uploadId: _uploadId,
+      chunkKeyEpoch: 6,
+      manifestKeyEpoch: 7,
+      manifestRevision: 2,
+      ciphertext: targetSealed.ciphertext,
+    );
+    expect(
+      targetOpened.wrappedDataKey,
+      isNot(orderedEquals(sourceOpened.wrappedDataKey)),
+    );
+
+    final verificationLease = await E2eeAccountKeyLease.open(
+      session: fixture.session,
+      deviceStateStore: fixture.deviceStateStore,
+      secureCore: secureCore,
+    );
+    final verificationArk = verificationLease.takeAccountRootKeyOwnership();
+    KelivoAttachmentDataKeyHandle? unwrapped;
+    try {
+      unwrapped = await secureCore.unwrapAttachmentDataKey(
+        verificationArk,
+        context: KelivoAttachmentContext(
+          userId: userId,
+          attachmentId: generated.attachmentId,
+          keyEpoch: 7,
+        ),
+        wrappedKey: targetOpened.wrappedDataKey,
+      );
+    } finally {
+      if (unwrapped != null) {
+        await secureCore.closeAttachmentDataKey(unwrapped);
+      }
+      await secureCore.closeAccountRootKey(verificationArk);
+      await verificationLease.close();
+    }
+
+    expect(
+      await session.openChunk(
+        manifest: targetOpened,
+        chunkIndex: 0,
+        ciphertext: oldChunkCiphertext,
+      ),
+      fixture.plaintext,
+    );
+  });
+
+  test('E2EE 附件清单拒绝旧 v1 明文帧', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[1, 3, 5]),
+      openCoordinator: false,
+    );
+    addTearDown(fixture.close);
+    const secureCore = KelivoSecureCore();
+    final lease = await E2eeAccountKeyLease.open(
+      session: fixture.session,
+      deviceStateStore: fixture.deviceStateStore,
+      secureCore: secureCore,
+    );
+    final ark = lease.takeAccountRootKeyOwnership();
+    final recordCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: secureCore,
+      accountRootKey: ark,
+      userId: fixture.session.userId,
+      currentKeyEpoch: fixture.session.keyEpoch,
+    );
+    late final E2eeSealedAccountRecordEnvelope legacyRecord;
+    try {
+      legacyRecord = await recordCipher.seal(
+        entityKey: SyncEntityKey(
+          entityType: e2eeAttachmentManifestEntityType,
+          entityId: fixture.descriptor.attachmentId,
+        ),
+        payload: _encodeLegacyAttachmentManifestV1(
+          descriptor: fixture.descriptor,
+          uploadId: _uploadId,
+        ),
+      );
+    } finally {
+      await recordCipher.close();
+      await lease.close();
+    }
+
+    final session = await fixture.openCryptoSession();
+    addTearDown(session.close);
+    await expectLater(
+      session.openManifest(
+        attachmentId: fixture.descriptor.attachmentId,
+        uploadId: _uploadId,
+        chunkKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+        manifestKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+        manifestRevision: 1,
+        ciphertext: legacyRecord.ciphertext,
+      ),
+      throwsFormatException,
     );
   });
 
@@ -8113,6 +8471,15 @@ void main() {
     expect(fixture.transport.putAttempts, hasLength(1));
     expect(fixture.transport.commitRequests, hasLength(1));
     expect(fixture.transport.createRequests.single.mutationId, _mutationId1);
+    expect(
+      fixture.transport.createRequests.single.chunkKeyEpoch,
+      fixture.descriptor.chunkKeyEpoch,
+    );
+    expect(
+      fixture.transport.createRequests.single.manifestKeyEpoch,
+      fixture.descriptor.chunkKeyEpoch,
+    );
+    expect(fixture.transport.createRequests.single.manifestRevision, 1);
     expect(fixture.transport.commitRequests.single.mutationId, _mutationId2);
 
     final verifier = await fixture.openCryptoSession();
@@ -8121,12 +8488,13 @@ void main() {
     final manifest = await verifier.openManifest(
       attachmentId: fixture.descriptor.attachmentId,
       uploadId: _uploadId,
-      keyEpoch: fixture.descriptor.keyEpoch,
+      chunkKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+      manifestKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+      manifestRevision: 1,
       ciphertext: commit.manifestCiphertext,
     );
     final plaintext = await verifier.openChunk(
-      descriptor: fixture.descriptor,
-      uploadId: _uploadId,
+      manifest: manifest,
       chunkIndex: 0,
       ciphertext: fixture.transport.putAttempts.single.ciphertext,
     );
@@ -8151,12 +8519,20 @@ void main() {
     expect(fixture.fileStore.unverifiedRangeReads, 0);
     final verifier = await fixture.openCryptoSession();
     addTearDown(verifier.close);
+    final commit = fixture.transport.commitRequests.single;
+    final manifest = await verifier.openManifest(
+      attachmentId: fixture.descriptor.attachmentId,
+      uploadId: _uploadId,
+      chunkKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+      manifestKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+      manifestRevision: 1,
+      ciphertext: commit.manifestCiphertext,
+    );
     final rebuilt = BytesBuilder(copy: true);
     for (final attempt in fixture.transport.putAttempts) {
       rebuilt.add(
         await verifier.openChunk(
-          descriptor: fixture.descriptor,
-          uploadId: _uploadId,
+          manifest: manifest,
           chunkIndex: attempt.chunkIndex,
           ciphertext: attempt.ciphertext,
         ),
@@ -8179,10 +8555,18 @@ void main() {
     );
     final verifier = await fixture.openCryptoSession();
     addTearDown(verifier.close);
+    final commit = fixture.transport.commitRequests.single;
+    final manifest = await verifier.openManifest(
+      attachmentId: fixture.descriptor.attachmentId,
+      uploadId: _uploadId,
+      chunkKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+      manifestKeyEpoch: fixture.descriptor.chunkKeyEpoch,
+      manifestRevision: 1,
+      ciphertext: commit.manifestCiphertext,
+    );
     expect(
       await verifier.openChunk(
-        descriptor: fixture.descriptor,
-        uploadId: _uploadId,
+        manifest: manifest,
         chunkIndex: 0,
         ciphertext: fixture.transport.putAttempts.single.ciphertext,
       ),
@@ -8899,7 +9283,9 @@ void main() {
     final identity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
-      keyEpoch: 7,
+      chunkKeyEpoch: 7,
+      manifestKeyEpoch: 7,
+      manifestRevision: 1,
     );
     final location = E2eeAttachmentFileLocation.stagingUploadChunk(
       chunk: CloudSyncAttachmentChunkIdentity(
@@ -8917,7 +9303,7 @@ void main() {
     expect(
       stored.storagePath,
       'memory://kelivo-e2ee-attachments/staging/upload/'
-      '$_attachmentId/$_uploadId/7/0-$_mutationId1.ciphertext',
+      '$_attachmentId/$_uploadId/7/7/1/0-$_mutationId1.ciphertext',
     );
     expect(await store.readVerified(stored), ciphertext);
     await expectLater(
@@ -9061,7 +9447,9 @@ void main() {
     final identity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
-      keyEpoch: 0xffffffff,
+      chunkKeyEpoch: 0xffffffff,
+      manifestKeyEpoch: 0xffffffff,
+      manifestRevision: 1,
     );
     final location = E2eeAttachmentFileLocation.stagingUploadChunk(
       chunk: CloudSyncAttachmentChunkIdentity(
@@ -9089,6 +9477,8 @@ void main() {
           _attachmentId,
           _uploadId,
           '4294967295',
+          '4294967295',
+          '1',
           '999-$_mutationId1.ciphertext',
         ),
       ),
@@ -9395,7 +9785,9 @@ void main() {
     final identity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
-      keyEpoch: 7,
+      chunkKeyEpoch: 7,
+      manifestKeyEpoch: 7,
+      manifestRevision: 1,
     );
     final firstChunk = Uint8List.fromList(<int>[1, 2]);
     final secondChunk = Uint8List.fromList(<int>[3, 4, 5]);
@@ -9422,7 +9814,7 @@ void main() {
     expect(
       stagingPath,
       'memory://kelivo-e2ee-attachments/staging/download/'
-      '$_attachmentId/$_uploadId/7/plaintext.part',
+      '$_attachmentId/$_uploadId/7/7/1/plaintext.part',
     );
     await store.appendDownloadPlaintextChunk(
       identity: identity,
@@ -9498,7 +9890,9 @@ void main() {
     final isolatedIdentity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
-      keyEpoch: 8,
+      chunkKeyEpoch: 8,
+      manifestKeyEpoch: 8,
+      manifestRevision: 1,
     );
     expect(
       await store.openDownloadPlaintextStaging(
@@ -9513,7 +9907,7 @@ void main() {
         identity: isolatedIdentity,
         persistedStoragePath:
             'memory://kelivo-e2ee-attachments/staging/download/'
-            '$_attachmentId/$_uploadId/8/plaintext.part',
+            '$_attachmentId/$_uploadId/8/8/1/plaintext.part',
         confirmedPlaintextBytes: 1,
       ),
       throwsA(isA<StateError>()),
@@ -9523,7 +9917,7 @@ void main() {
         identity: identity,
         persistedStoragePath:
             'memory://kelivo-e2ee-attachments/staging/download/'
-            '$_attachmentId/$_mutationId1/7/plaintext.part',
+            '$_attachmentId/$_mutationId1/7/7/1/plaintext.part',
         confirmedPlaintextBytes: 0,
       ),
       throwsA(isA<StateError>()),
@@ -9532,7 +9926,9 @@ void main() {
     final zeroIdentity = CloudSyncAttachmentIdentity(
       attachmentId: _mutationId1,
       uploadId: _mutationId2,
-      keyEpoch: 9,
+      chunkKeyEpoch: 9,
+      manifestKeyEpoch: 9,
+      manifestRevision: 1,
     );
     final zeroStaging = await store.openDownloadPlaintextStaging(
       identity: zeroIdentity,
@@ -9558,7 +9954,9 @@ void main() {
     final corruptIdentity = CloudSyncAttachmentIdentity(
       attachmentId: _mutationId2,
       uploadId: _mutationId3,
-      keyEpoch: 10,
+      chunkKeyEpoch: 10,
+      manifestKeyEpoch: 10,
+      manifestRevision: 1,
     );
     final corruptStaging = await store.openDownloadPlaintextStaging(
       identity: corruptIdentity,
@@ -9616,7 +10014,9 @@ void main() {
     final identity = CloudSyncAttachmentIdentity(
       attachmentId: _attachmentId,
       uploadId: _uploadId,
-      keyEpoch: 0xffffffff,
+      chunkKeyEpoch: 0xffffffff,
+      manifestKeyEpoch: 0xffffffff,
+      manifestRevision: 1,
     );
     final firstChunk = Uint8List.fromList(<int>[11, 12]);
     final secondChunk = Uint8List.fromList(<int>[13, 14, 15]);
@@ -9659,6 +10059,8 @@ void main() {
           _attachmentId,
           _uploadId,
           '4294967295',
+          '4294967295',
+          '1',
           'plaintext.part',
         ),
       ),
@@ -9773,7 +10175,9 @@ void main() {
     final unsafeIdentity = CloudSyncAttachmentIdentity(
       attachmentId: _mutationId1,
       uploadId: _mutationId2,
-      keyEpoch: 1,
+      chunkKeyEpoch: 1,
+      manifestKeyEpoch: 1,
+      manifestRevision: 1,
     );
     final unsafeParent = File(
       p.join(
@@ -9799,7 +10203,9 @@ void main() {
     final zeroIdentity = CloudSyncAttachmentIdentity(
       attachmentId: _mutationId2,
       uploadId: _mutationId3,
-      keyEpoch: 2,
+      chunkKeyEpoch: 2,
+      manifestKeyEpoch: 2,
+      manifestRevision: 1,
     );
     final zeroStaging = await store.openDownloadPlaintextStaging(
       identity: zeroIdentity,
@@ -10965,6 +11371,7 @@ final class _AttachmentUploadFixture {
     Uint8List? descriptorContentSha256,
     bool openCoordinator = true,
     int transientVerifyFailures = 0,
+    bool includePreviousKeyEpoch = false,
   }) async {
     final directory = await Directory.current.createTemp(
       'kelivo_attachment_upload_coordinator_',
@@ -10993,6 +11400,7 @@ final class _AttachmentUploadFixture {
         store: deviceStateStore,
         baseUrl: 'https://upload-$nonce.example.com',
         loginName: 'upload-$nonce',
+        includePreviousKeyEpoch: includePreviousKeyEpoch,
       );
       final dataKey = await secureCore.generateAttachmentDataKey();
       final attachmentId = _uuidStringForTest(dataKey.attachmentId);
@@ -11036,7 +11444,7 @@ final class _AttachmentUploadFixture {
       );
       final descriptor = E2eeAttachmentDescriptor(
         attachmentId: attachmentId,
-        keyEpoch: session.keyEpoch,
+        chunkKeyEpoch: session.keyEpoch,
         kind: E2eeAttachmentKind.file,
         totalPlaintextBytes: plaintext.length,
         contentSha256: descriptorContentSha256 ?? actualDigest,
@@ -11470,7 +11878,9 @@ final class _AttachmentUploadTransport implements CloudSyncAttachmentTransport {
             ? _mutationId3
             : request.attachmentId,
         uploadId: _uploadId,
-        keyEpoch: request.keyEpoch,
+        chunkKeyEpoch: request.chunkKeyEpoch,
+        manifestKeyEpoch: request.manifestKeyEpoch,
+        manifestRevision: request.manifestRevision,
       ),
       chunkCount: request.chunkCount,
       totalCiphertextBytes: request.totalCiphertextBytes,
@@ -11618,6 +12028,7 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
   required String baseUrl,
   required String loginName,
   bool bound = true,
+  bool includePreviousKeyEpoch = false,
 }) async {
   final key = await core.createSlot(
     E2eeDeviceStateAccess.deriveSlotId(
@@ -11627,12 +12038,20 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
   );
   final identity = await core.generateDeviceIdentity();
   KelivoAccountRootKeyHandle? ark;
+  KelivoAccountRootKeyHandle? nextArk;
   try {
     if (bound) {
       ark = await core.generateAccountRootKey(
         userId: _rawUuid(_userId),
-        keyEpoch: 7,
+        keyEpoch: includePreviousKeyEpoch ? 6 : 7,
       );
+      if (includePreviousKeyEpoch) {
+        nextArk = await core.generateAccountRootKey(
+          userId: _rawUuid(_userId),
+          keyEpoch: 7,
+        );
+        await core.addAccountRootKeyEpoch(ark, source: nextArk);
+      }
     }
     final blob = await core.sealDeviceState(
       key,
@@ -11653,6 +12072,7 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
       blob: blob,
     );
   } finally {
+    if (nextArk != null) await core.closeAccountRootKey(nextArk);
     if (ark != null) await core.closeAccountRootKey(ark);
     await core.closeDeviceIdentity(identity);
     await core.close(key);
@@ -11704,6 +12124,51 @@ String _uuidStringForTest(Uint8List value) {
   return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
       '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
       '${hex.substring(20)}';
+}
+
+Uint8List _encodeLegacyAttachmentManifestV1({
+  required E2eeAttachmentDescriptor descriptor,
+  required String uploadId,
+}) {
+  const wrappedDataKeyOffset = 94;
+  final headerBytes =
+      wrappedDataKeyOffset + KelivoAttachmentLimits.wrappedDataKeyBytes;
+  final displayNameBytes = descriptor.displayName == null
+      ? Uint8List(0)
+      : Uint8List.fromList(utf8.encode(descriptor.displayName!));
+  final mediaTypeBytes = descriptor.mediaType == null
+      ? Uint8List(0)
+      : Uint8List.fromList(ascii.encode(descriptor.mediaType!));
+  final frame = Uint8List(
+    headerBytes +
+        descriptor.chunkCiphertextBytes.length * 4 +
+        displayNameBytes.length +
+        mediaTypeBytes.length,
+  );
+  final fields = ByteData.sublistView(frame);
+  frame.setRange(0, 8, ascii.encode('KELVAM01'));
+  fields.setUint16(8, 1, Endian.big);
+  fields.setUint8(10, descriptor.kind.wireValue);
+  frame.setRange(12, 28, _rawUuid(descriptor.attachmentId));
+  frame.setRange(28, 44, _rawUuid(uploadId));
+  fields.setUint32(44, descriptor.chunkKeyEpoch, Endian.big);
+  fields.setUint64(48, descriptor.totalPlaintextBytes, Endian.big);
+  fields.setUint16(56, descriptor.chunkCiphertextBytes.length, Endian.big);
+  fields.setUint16(58, displayNameBytes.length, Endian.big);
+  fields.setUint16(60, mediaTypeBytes.length, Endian.big);
+  frame.setRange(62, wrappedDataKeyOffset, descriptor.contentSha256);
+  frame.setRange(wrappedDataKeyOffset, headerBytes, descriptor.wrappedDataKey);
+  var offset = headerBytes;
+  for (final chunkLength in descriptor.chunkCiphertextBytes) {
+    fields.setUint32(offset, chunkLength, Endian.big);
+    offset += 4;
+  }
+  frame.setRange(offset, offset + displayNameBytes.length, displayNameBytes);
+  offset += displayNameBytes.length;
+  frame.setRange(offset, offset + mediaTypeBytes.length, mediaTypeBytes);
+  displayNameBytes.fillRange(0, displayNameBytes.length, 0);
+  mediaTypeBytes.fillRange(0, mediaTypeBytes.length, 0);
+  return frame;
 }
 
 Future<

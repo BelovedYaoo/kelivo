@@ -11,14 +11,31 @@ final class CloudSyncAttachmentIdentity {
   CloudSyncAttachmentIdentity({
     required String attachmentId,
     required String uploadId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
   }) : attachmentId = _requireIdentifier(attachmentId, 'attachmentId'),
        uploadId = _requireIdentifier(uploadId, 'uploadId'),
-       keyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch');
+       chunkKeyEpoch = _requirePositiveUint32(chunkKeyEpoch, 'chunkKeyEpoch'),
+       manifestKeyEpoch = _requirePositiveUint32(
+         manifestKeyEpoch,
+         'manifestKeyEpoch',
+       ),
+       manifestRevision = _requirePositiveUint32(
+         manifestRevision,
+         'manifestRevision',
+       ) {
+    if (this.manifestKeyEpoch - this.chunkKeyEpoch !=
+        this.manifestRevision - 1) {
+      throw const FormatException('附件清单代次与修订关系无效');
+    }
+  }
 
   final String attachmentId;
   final String uploadId;
-  final int keyEpoch;
+  final int chunkKeyEpoch;
+  final int manifestKeyEpoch;
+  final int manifestRevision;
 }
 
 final class CloudSyncAttachmentChunkIdentity {
@@ -35,21 +52,38 @@ final class CloudSyncAttachmentCreateUploadRequest {
   CloudSyncAttachmentCreateUploadRequest({
     required String mutationId,
     required String attachmentId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required int chunkCount,
     required int totalCiphertextBytes,
   }) : mutationId = _requireIdentifier(mutationId, 'mutationId'),
        attachmentId = _requireIdentifier(attachmentId, 'attachmentId'),
-       keyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch'),
+       chunkKeyEpoch = _requirePositiveUint32(chunkKeyEpoch, 'chunkKeyEpoch'),
+       manifestKeyEpoch = _requirePositiveUint32(
+         manifestKeyEpoch,
+         'manifestKeyEpoch',
+       ),
+       manifestRevision = _requirePositiveUint32(
+         manifestRevision,
+         'manifestRevision',
+       ),
        chunkCount = _requireChunkCount(chunkCount),
        totalCiphertextBytes = _requireTotalCiphertextBytes(
          totalCiphertextBytes,
          chunkCount,
-       );
+       ) {
+    if (this.chunkKeyEpoch != this.manifestKeyEpoch ||
+        this.manifestRevision != 1) {
+      throw const FormatException('新附件必须从同一密钥世代和清单修订 1 开始');
+    }
+  }
 
   final String mutationId;
   final String attachmentId;
-  final int keyEpoch;
+  final int chunkKeyEpoch;
+  final int manifestKeyEpoch;
+  final int manifestRevision;
   final int chunkCount;
   final int totalCiphertextBytes;
 }

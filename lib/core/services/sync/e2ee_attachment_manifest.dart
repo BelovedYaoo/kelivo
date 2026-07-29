@@ -7,18 +7,26 @@ import 'package:uuid/uuid.dart';
 import 'e2ee_account_record_cipher.dart';
 import 'sync_codec.dart';
 
-const e2eeAttachmentManifestFormatVersion = 1;
+const e2eeAttachmentManifestFormatVersion = 2;
 const e2eeAttachmentManifestEntityType = 'attachment-manifest';
 
 const _manifestContentDigestBytes = 32;
 const _manifestDisplayNameMaxBytes = 1024;
 const _manifestMediaTypeMaxBytes = 255;
 const _maximumUint32 = 0xffffffff;
-const _manifestWrappedDataKeyOffset = 94;
+const _manifestChunkKeyEpochOffset = 44;
+const _manifestManifestKeyEpochOffset = 48;
+const _manifestRevisionOffset = 52;
+const _manifestTotalPlaintextBytesOffset = 56;
+const _manifestChunkCountOffset = 64;
+const _manifestDisplayNameLengthOffset = 66;
+const _manifestMediaTypeLengthOffset = 68;
+const _manifestContentDigestOffset = 70;
+const _manifestWrappedDataKeyOffset = 102;
 const _manifestHeaderBytes =
     _manifestWrappedDataKeyOffset + KelivoAttachmentLimits.wrappedDataKeyBytes;
 
-final _manifestMagic = Uint8List.fromList(ascii.encode('KELVAM01'));
+final _manifestMagic = Uint8List.fromList(ascii.encode('KELVAM02'));
 
 enum E2eeAttachmentKind {
   image(1),
@@ -39,7 +47,7 @@ enum E2eeAttachmentKind {
 final class E2eeAttachmentDescriptor {
   factory E2eeAttachmentDescriptor({
     required String attachmentId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
     required E2eeAttachmentKind kind,
     required int totalPlaintextBytes,
     required Uint8List contentSha256,
@@ -52,7 +60,7 @@ final class E2eeAttachmentDescriptor {
       attachmentId,
       'attachmentId',
     );
-    _requirePositiveUint32(keyEpoch, 'keyEpoch');
+    _requirePositiveUint32(chunkKeyEpoch, 'chunkKeyEpoch');
     if (contentSha256.length != _manifestContentDigestBytes) {
       throw const FormatException('附件内容摘要长度无效');
     }
@@ -84,7 +92,7 @@ final class E2eeAttachmentDescriptor {
 
     return E2eeAttachmentDescriptor._(
       attachmentId: canonicalAttachmentId,
-      keyEpoch: keyEpoch,
+      chunkKeyEpoch: chunkKeyEpoch,
       kind: kind,
       totalPlaintextBytes: totalPlaintextBytes,
       contentSha256: contentSha256,
@@ -97,7 +105,7 @@ final class E2eeAttachmentDescriptor {
 
   E2eeAttachmentDescriptor._({
     required this.attachmentId,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
     required this.kind,
     required this.totalPlaintextBytes,
     required Uint8List contentSha256,
@@ -109,7 +117,7 @@ final class E2eeAttachmentDescriptor {
        wrappedDataKey = Uint8List.fromList(wrappedDataKey).asUnmodifiableView();
 
   final String attachmentId;
-  final int keyEpoch;
+  final int chunkKeyEpoch;
   final E2eeAttachmentKind kind;
   final int totalPlaintextBytes;
   final Uint8List contentSha256;
@@ -126,7 +134,9 @@ final class E2eeAttachmentManifest {
   factory E2eeAttachmentManifest({
     required String attachmentId,
     required String uploadId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required E2eeAttachmentKind kind,
     required int totalPlaintextBytes,
     required Uint8List contentSha256,
@@ -138,7 +148,7 @@ final class E2eeAttachmentManifest {
     return E2eeAttachmentManifest.fromDescriptor(
       descriptor: E2eeAttachmentDescriptor(
         attachmentId: attachmentId,
-        keyEpoch: keyEpoch,
+        chunkKeyEpoch: chunkKeyEpoch,
         kind: kind,
         totalPlaintextBytes: totalPlaintextBytes,
         contentSha256: contentSha256,
@@ -148,29 +158,44 @@ final class E2eeAttachmentManifest {
         mediaType: mediaType,
       ),
       uploadId: uploadId,
+      manifestKeyEpoch: manifestKeyEpoch,
+      manifestRevision: manifestRevision,
     );
   }
 
   factory E2eeAttachmentManifest.fromDescriptor({
     required E2eeAttachmentDescriptor descriptor,
     required String uploadId,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
   }) {
+    _requirePositiveUint32(manifestKeyEpoch, 'manifestKeyEpoch');
+    _requirePositiveUint32(manifestRevision, 'manifestRevision');
+    if (manifestKeyEpoch - descriptor.chunkKeyEpoch != manifestRevision - 1) {
+      throw const FormatException('附件清单代次与修订关系无效');
+    }
     return E2eeAttachmentManifest._(
       descriptor: descriptor,
       uploadId: _canonicalUuidV4(uploadId, 'uploadId'),
+      manifestKeyEpoch: manifestKeyEpoch,
+      manifestRevision: manifestRevision,
     );
   }
 
   const E2eeAttachmentManifest._({
     required this.descriptor,
     required this.uploadId,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
   });
 
   final E2eeAttachmentDescriptor descriptor;
   final String uploadId;
+  final int manifestKeyEpoch;
+  final int manifestRevision;
 
   String get attachmentId => descriptor.attachmentId;
-  int get keyEpoch => descriptor.keyEpoch;
+  int get chunkKeyEpoch => descriptor.chunkKeyEpoch;
   E2eeAttachmentKind get kind => descriptor.kind;
   int get totalPlaintextBytes => descriptor.totalPlaintextBytes;
   Uint8List get contentSha256 => descriptor.contentSha256;
@@ -185,13 +210,17 @@ final class E2eeSealedAttachmentManifest {
   E2eeSealedAttachmentManifest._({
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
     required Uint8List ciphertext,
   }) : ciphertext = Uint8List.fromList(ciphertext).asUnmodifiableView();
 
   final String attachmentId;
   final String uploadId;
-  final int keyEpoch;
+  final int chunkKeyEpoch;
+  final int manifestKeyEpoch;
+  final int manifestRevision;
   final Uint8List ciphertext;
 }
 
@@ -203,7 +232,7 @@ final class E2eeAttachmentManifestCipher {
   Future<E2eeSealedAttachmentManifest> seal(
     E2eeAttachmentManifest manifest,
   ) async {
-    if (manifest.keyEpoch != _recordCipher.currentKeyEpoch) {
+    if (manifest.manifestKeyEpoch != _recordCipher.currentKeyEpoch) {
       throw const FormatException('附件清单密钥世代与当前账户密钥不一致');
     }
     final entityKey = _manifestEntityKey(manifest.attachmentId);
@@ -216,7 +245,9 @@ final class E2eeAttachmentManifestCipher {
       return E2eeSealedAttachmentManifest._(
         attachmentId: manifest.attachmentId,
         uploadId: manifest.uploadId,
-        keyEpoch: manifest.keyEpoch,
+        chunkKeyEpoch: manifest.chunkKeyEpoch,
+        manifestKeyEpoch: manifest.manifestKeyEpoch,
+        manifestRevision: manifest.manifestRevision,
         ciphertext: sealed.ciphertext,
       );
     } finally {
@@ -227,7 +258,9 @@ final class E2eeAttachmentManifestCipher {
   Future<E2eeAttachmentManifest> open({
     required String attachmentId,
     required String uploadId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required Uint8List ciphertext,
   }) async {
     final canonicalAttachmentId = _canonicalUuidV4(
@@ -235,13 +268,18 @@ final class E2eeAttachmentManifestCipher {
       'attachmentId',
     );
     final canonicalUploadId = _canonicalUuidV4(uploadId, 'uploadId');
-    _requirePositiveUint32(keyEpoch, 'keyEpoch');
+    _requirePositiveUint32(chunkKeyEpoch, 'chunkKeyEpoch');
+    _requirePositiveUint32(manifestKeyEpoch, 'manifestKeyEpoch');
+    _requirePositiveUint32(manifestRevision, 'manifestRevision');
     final entityKey = _manifestEntityKey(canonicalAttachmentId);
-    final recordId = await _recordCipher.deriveRecordId(entityKey);
+    final recordId = await _recordCipher.deriveRecordId(
+      entityKey,
+      keyEpoch: manifestKeyEpoch,
+    );
     final envelope = E2eeUntrustedAccountRecordEnvelope.fromTransport(
       recordId: E2eeUntrustedAccountRecordId.fromTransport(recordId.wireValue),
       envelopeVersion: e2eeAccountRecordEnvelopeVersion,
-      keyEpoch: keyEpoch,
+      keyEpoch: manifestKeyEpoch,
       ciphertext: ciphertext,
     );
     return _recordCipher.open(
@@ -253,7 +291,9 @@ final class E2eeAttachmentManifestCipher {
         final manifest = _decodeManifest(borrowedPayload);
         if (manifest.attachmentId != canonicalAttachmentId ||
             manifest.uploadId != canonicalUploadId ||
-            manifest.keyEpoch != keyEpoch) {
+            manifest.chunkKeyEpoch != chunkKeyEpoch ||
+            manifest.manifestKeyEpoch != manifestKeyEpoch ||
+            manifest.manifestRevision != manifestRevision) {
           throw const FormatException('附件清单认证上下文与请求不一致');
         }
         return manifest;
@@ -293,12 +333,46 @@ Uint8List _encodeManifest(E2eeAttachmentManifest manifest) {
   fields.setUint8(11, 0);
   frame.setRange(12, 28, Uuid.parseAsByteList(manifest.attachmentId));
   frame.setRange(28, 44, Uuid.parseAsByteList(manifest.uploadId));
-  fields.setUint32(44, manifest.keyEpoch, Endian.big);
-  fields.setUint64(48, manifest.totalPlaintextBytes, Endian.big);
-  fields.setUint16(56, manifest.chunkCiphertextBytes.length, Endian.big);
-  fields.setUint16(58, displayNameBytes.length, Endian.big);
-  fields.setUint16(60, mediaTypeBytes.length, Endian.big);
-  frame.setRange(62, 94, manifest.contentSha256);
+  fields.setUint32(
+    _manifestChunkKeyEpochOffset,
+    manifest.chunkKeyEpoch,
+    Endian.big,
+  );
+  fields.setUint32(
+    _manifestManifestKeyEpochOffset,
+    manifest.manifestKeyEpoch,
+    Endian.big,
+  );
+  fields.setUint32(
+    _manifestRevisionOffset,
+    manifest.manifestRevision,
+    Endian.big,
+  );
+  fields.setUint64(
+    _manifestTotalPlaintextBytesOffset,
+    manifest.totalPlaintextBytes,
+    Endian.big,
+  );
+  fields.setUint16(
+    _manifestChunkCountOffset,
+    manifest.chunkCiphertextBytes.length,
+    Endian.big,
+  );
+  fields.setUint16(
+    _manifestDisplayNameLengthOffset,
+    displayNameBytes.length,
+    Endian.big,
+  );
+  fields.setUint16(
+    _manifestMediaTypeLengthOffset,
+    mediaTypeBytes.length,
+    Endian.big,
+  );
+  frame.setRange(
+    _manifestContentDigestOffset,
+    _manifestWrappedDataKeyOffset,
+    manifest.contentSha256,
+  );
   frame.setRange(
     _manifestWrappedDataKeyOffset,
     _manifestHeaderBytes,
@@ -330,9 +404,15 @@ E2eeAttachmentManifest _decodeManifest(Uint8List frame) {
     throw const FormatException('附件清单保留位非零');
   }
   final kind = E2eeAttachmentKind.fromWireValue(fields.getUint8(10));
-  final chunkCount = fields.getUint16(56, Endian.big);
-  final displayNameLength = fields.getUint16(58, Endian.big);
-  final mediaTypeLength = fields.getUint16(60, Endian.big);
+  final chunkCount = fields.getUint16(_manifestChunkCountOffset, Endian.big);
+  final displayNameLength = fields.getUint16(
+    _manifestDisplayNameLengthOffset,
+    Endian.big,
+  );
+  final mediaTypeLength = fields.getUint16(
+    _manifestMediaTypeLengthOffset,
+    Endian.big,
+  );
   if (chunkCount < 1 ||
       chunkCount > KelivoAttachmentLimits.maxChunkCount ||
       displayNameLength > _manifestDisplayNameMaxBytes ||
@@ -370,10 +450,22 @@ E2eeAttachmentManifest _decodeManifest(Uint8List frame) {
     return E2eeAttachmentManifest(
       attachmentId: Uuid.unparse(Uint8List.sublistView(frame, 12, 28)),
       uploadId: Uuid.unparse(Uint8List.sublistView(frame, 28, 44)),
-      keyEpoch: fields.getUint32(44, Endian.big),
+      chunkKeyEpoch: fields.getUint32(_manifestChunkKeyEpochOffset, Endian.big),
+      manifestKeyEpoch: fields.getUint32(
+        _manifestManifestKeyEpochOffset,
+        Endian.big,
+      ),
+      manifestRevision: fields.getUint32(_manifestRevisionOffset, Endian.big),
       kind: kind,
-      totalPlaintextBytes: fields.getUint64(48, Endian.big),
-      contentSha256: Uint8List.sublistView(frame, 62, 94),
+      totalPlaintextBytes: fields.getUint64(
+        _manifestTotalPlaintextBytesOffset,
+        Endian.big,
+      ),
+      contentSha256: Uint8List.sublistView(
+        frame,
+        _manifestContentDigestOffset,
+        _manifestWrappedDataKeyOffset,
+      ),
       wrappedDataKey: Uint8List.sublistView(
         frame,
         _manifestWrappedDataKeyOffset,

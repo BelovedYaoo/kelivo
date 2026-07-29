@@ -145,13 +145,21 @@ final class E2eeAccountRecordCipher {
   final int currentKeyEpoch;
   _AccountRecordCipherPhase _phase = _AccountRecordCipherPhase.open;
 
-  Future<E2eeAccountRecordId> deriveRecordId(SyncEntityKey entityKey) async {
+  Future<E2eeAccountRecordId> deriveRecordId(
+    SyncEntityKey entityKey, {
+    int? keyEpoch,
+  }) async {
     _requireOpen();
+    final resolvedKeyEpoch = keyEpoch ?? currentKeyEpoch;
+    _requirePositiveUint32(resolvedKeyEpoch, 'keyEpoch');
+    if (resolvedKeyEpoch > currentKeyEpoch) {
+      throw const FormatException('账户记录标识使用了尚未获得的密钥世代');
+    }
     final encodedKey = _encodeEntityKey(entityKey);
     try {
       return await _deriveRecordId(
         encodedKey.canonicalBytes,
-        keyEpoch: currentKeyEpoch,
+        keyEpoch: resolvedKeyEpoch,
       );
     } finally {
       encodedKey.clear();

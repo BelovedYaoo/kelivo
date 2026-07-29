@@ -750,7 +750,9 @@ class ChatDatabaseRepository {
         'media_type',
         'attachment_id',
         'upload_id',
-        'key_epoch',
+        'chunk_key_epoch',
+        'manifest_key_epoch',
+        'manifest_revision',
       ],
       'asset_gc_rows': ['asset_id', 'not_before', 'attempts', 'generation'],
       'gc_audit_rows': ['id', 'kind', 'entity_id', 'completed_at'],
@@ -901,7 +903,9 @@ class ChatDatabaseRepository {
         'target_revision_id',
         'target_ordinal',
         'source_path',
-        'key_epoch',
+        'chunk_key_epoch',
+        'manifest_key_epoch',
+        'manifest_revision',
         'kind',
         'display_name',
         'media_type',
@@ -936,7 +940,9 @@ class ChatDatabaseRepository {
       'e2ee_attachment_download_rows': [
         'attachment_id',
         'upload_id',
-        'key_epoch',
+        'chunk_key_epoch',
+        'manifest_key_epoch',
+        'manifest_revision',
         'kind',
         'phase',
         'manifest_ciphertext',
@@ -1182,7 +1188,9 @@ class ChatDatabaseRepository {
             'media_type': (type: 'TEXT', notNull: 0, primaryKey: 0),
             'attachment_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
             'upload_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
-            'key_epoch': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'chunk_key_epoch': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'manifest_key_epoch': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'manifest_revision': (type: 'INTEGER', notNull: 0, primaryKey: 0),
           },
           'asset_gc_rows': {
             'asset_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
@@ -1218,7 +1226,9 @@ class ChatDatabaseRepository {
             'target_revision_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
             'target_ordinal': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'source_path': (type: 'TEXT', notNull: 1, primaryKey: 0),
-            'key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'chunk_key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'manifest_key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'manifest_revision': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'kind': (type: 'TEXT', notNull: 1, primaryKey: 0),
             'display_name': (type: 'TEXT', notNull: 0, primaryKey: 0),
             'media_type': (type: 'TEXT', notNull: 0, primaryKey: 0),
@@ -1281,7 +1291,9 @@ class ChatDatabaseRepository {
           'e2ee_attachment_download_rows': {
             'attachment_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
             'upload_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
-            'key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'chunk_key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'manifest_key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'manifest_revision': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'kind': (type: 'TEXT', notNull: 1, primaryKey: 0),
             'phase': (type: 'TEXT', notNull: 1, primaryKey: 0),
             'manifest_ciphertext': (type: 'BLOB', notNull: 0, primaryKey: 0),
@@ -1427,7 +1439,9 @@ class ChatDatabaseRepository {
         columns: [
           'attachment_id',
           'upload_id',
-          'key_epoch',
+          'chunk_key_epoch',
+          'manifest_key_epoch',
+          'manifest_revision',
           'revision_id',
           'ordinal',
         ],
@@ -1528,9 +1542,12 @@ class ChatDatabaseRepository {
         "CHECK (kind != 'file' OR "
             '(display_name IS NOT NULL AND media_type IS NOT NULL))',
         'CHECK ((attachment_id IS NULL AND upload_id IS NULL '
-            'AND key_epoch IS NULL) OR '
+            'AND chunk_key_epoch IS NULL AND manifest_key_epoch IS NULL '
+            'AND manifest_revision IS NULL) OR '
             '(attachment_id IS NOT NULL AND upload_id IS NOT NULL '
-            'AND key_epoch IS NOT NULL))',
+            'AND chunk_key_epoch IS NOT NULL '
+            'AND manifest_key_epoch IS NOT NULL '
+            'AND manifest_revision IS NOT NULL))',
       ],
       'asset_gc_rows': [
         "CHECK (typeof(attempts) = 'integer' "
@@ -1550,6 +1567,10 @@ class ChatDatabaseRepository {
       'e2ee_attachment_upload_rows': [
         "CHECK (typeof(target_ordinal) = 'integer' "
             'AND target_ordinal BETWEEN 0 AND 31)',
+        "CHECK (typeof(manifest_key_epoch) = 'integer' "
+            'AND manifest_key_epoch = chunk_key_epoch)',
+        "CHECK (typeof(manifest_revision) = 'integer' "
+            'AND manifest_revision = 1)',
         "CHECK (typeof(phase) = 'text' AND phase IN "
             "('create-pending', 'manifest-pending', 'uploading', "
             "'commit-pending', 'committed'))",
@@ -1565,6 +1586,10 @@ class ChatDatabaseRepository {
             "(phase != 'committed' AND lease_token IS NULL",
       ],
       'e2ee_attachment_download_rows': [
+        "CHECK (typeof(manifest_revision) = 'integer' "
+            'AND manifest_revision BETWEEN 1 AND 4294967295 '
+            'AND manifest_key_epoch - chunk_key_epoch = '
+            'manifest_revision - 1)',
         "CHECK (typeof(phase) = 'text' AND phase IN "
             "('manifest-pending', 'downloading', 'verifying', 'ready'))",
         'CHECK (staging_path IS NULL OR final_path IS NULL '
@@ -3057,16 +3082,19 @@ LIMIT 1;
     String? mediaType,
     String? attachmentId,
     String? uploadId,
-    int? keyEpoch,
+    int? chunkKeyEpoch,
+    int? manifestKeyEpoch,
+    int? manifestRevision,
   }) async {
     await _db.transaction(() async {
       await _db.customStatement(
         '''
         INSERT INTO message_asset_rows(
           revision_id, ordinal, asset_id, kind, display_name, media_type,
-          attachment_id, upload_id, key_epoch
+          attachment_id, upload_id, chunk_key_epoch, manifest_key_epoch,
+          manifest_revision
         )
-        SELECT id, ?, ?, ?, ?, ?, ?, ?, ?
+        SELECT id, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?
         FROM message_rows
         WHERE id = ? AND conversation_id = ?;
       ''',
@@ -3078,7 +3106,9 @@ LIMIT 1;
           mediaType,
           attachmentId,
           uploadId,
-          keyEpoch,
+          chunkKeyEpoch,
+          manifestKeyEpoch,
+          manifestRevision,
           revisionId,
           conversationId,
         ],
@@ -3174,8 +3204,9 @@ LIMIT 1;
           '''
           INSERT INTO message_asset_rows(
             revision_id, ordinal, asset_id, kind, display_name, media_type,
-            attachment_id, upload_id, key_epoch
-          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);
+            attachment_id, upload_id, chunk_key_epoch, manifest_key_epoch,
+            manifest_revision
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);
         ''',
           [
             revisionId,
@@ -3186,7 +3217,9 @@ LIMIT 1;
             asset.mediaType,
             asset.attachmentId,
             asset.uploadId,
-            asset.keyEpoch,
+            asset.chunkKeyEpoch,
+            asset.manifestKeyEpoch,
+            asset.manifestRevision,
           ],
         );
         await _db.customStatement(
@@ -3225,7 +3258,7 @@ LIMIT 1;
       AND NOT EXISTS (
         SELECT 1 FROM e2ee_attachment_download_rows d
         WHERE d.local_asset_id = a.id
-          AND d.phase IN ('downloading', 'verifying')
+          AND d.phase IN ('manifest-pending', 'downloading', 'verifying')
           AND d.terminal_failure_kind IS NULL
       );
     ''',
@@ -3257,7 +3290,9 @@ LIMIT 1;
               AND NOT EXISTS (
                 SELECT 1 FROM e2ee_attachment_download_rows d
                 WHERE d.local_asset_id = g.asset_id
-                  AND d.phase IN ('downloading', 'verifying')
+                  AND d.phase IN (
+                    'manifest-pending', 'downloading', 'verifying'
+                  )
                   AND d.terminal_failure_kind IS NULL
               )
               AND NOT EXISTS (SELECT 1 FROM asset_reference_dirty_rows)
@@ -3395,7 +3430,9 @@ LIMIT 1;
             AND NOT EXISTS (
               SELECT 1 FROM e2ee_attachment_download_rows d
               WHERE d.local_asset_id = g.asset_id
-                AND d.phase IN ('downloading', 'verifying')
+                AND d.phase IN (
+                  'manifest-pending', 'downloading', 'verifying'
+                )
                 AND d.terminal_failure_kind IS NULL
             )
             AND NOT EXISTS (SELECT 1 FROM asset_reference_dirty_rows)
@@ -3817,7 +3854,9 @@ LIMIT 1;
               AND NOT EXISTS (
                 SELECT 1 FROM e2ee_attachment_download_rows d
                 WHERE d.local_asset_id = g.asset_id
-                  AND d.phase IN ('downloading', 'verifying')
+                  AND d.phase IN (
+                    'manifest-pending', 'downloading', 'verifying'
+                  )
                   AND d.terminal_failure_kind IS NULL
               )
               AND NOT EXISTS (SELECT 1 FROM asset_reference_dirty_rows)
@@ -4511,7 +4550,9 @@ LIMIT 1;
             mediaType: attachment.mediaType,
             attachmentId: attachment.attachmentId,
             uploadId: attachment.uploadId,
-            keyEpoch: attachment.keyEpoch,
+            chunkKeyEpoch: attachment.chunkKeyEpoch,
+            manifestKeyEpoch: attachment.manifestKeyEpoch,
+            manifestRevision: attachment.manifestRevision,
           ),
       ],
     );
@@ -4540,7 +4581,9 @@ LIMIT 1;
       if (candidate.hasRemoteIdentity &&
           (persisted.attachmentId != candidate.attachmentId ||
               persisted.uploadId != candidate.uploadId ||
-              persisted.keyEpoch != candidate.keyEpoch)) {
+              persisted.chunkKeyEpoch != candidate.chunkKeyEpoch ||
+              persisted.manifestKeyEpoch != candidate.manifestKeyEpoch ||
+              persisted.manifestRevision != candidate.manifestRevision)) {
         return false;
       }
     }
@@ -6189,7 +6232,9 @@ LIMIT 1;
           mediaType: reference.mediaType,
           attachmentId: reference.attachmentId,
           uploadId: reference.uploadId,
-          keyEpoch: reference.keyEpoch,
+          chunkKeyEpoch: reference.chunkKeyEpoch,
+          manifestKeyEpoch: reference.manifestKeyEpoch,
+          manifestRevision: reference.manifestRevision,
         ),
       );
     }
@@ -6518,7 +6563,9 @@ final class MessageAssetRegistration {
     this.mediaType,
     this.attachmentId,
     this.uploadId,
-    this.keyEpoch,
+    this.chunkKeyEpoch,
+    this.manifestKeyEpoch,
+    this.manifestRevision,
     this.width,
     this.height,
     this.thumbnailPath,
@@ -6533,7 +6580,9 @@ final class MessageAssetRegistration {
   final String? mediaType;
   final String? attachmentId;
   final String? uploadId;
-  final int? keyEpoch;
+  final int? chunkKeyEpoch;
+  final int? manifestKeyEpoch;
+  final int? manifestRevision;
   final int? width;
   final int? height;
   final String? thumbnailPath;

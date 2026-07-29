@@ -12,7 +12,7 @@ import 'e2ee_account_record_cipher.dart';
 import 'e2ee_attachment_manifest.dart';
 
 abstract interface class E2eeAttachmentCrypto {
-  int get keyEpoch;
+  int get currentKeyEpoch;
 
   Future<E2eeAttachmentDescriptor> createUploadDescriptor({
     required E2eeAttachmentKind kind,
@@ -25,13 +25,21 @@ abstract interface class E2eeAttachmentCrypto {
   Future<E2eeSealedAttachmentManifest> sealManifest({
     required E2eeAttachmentDescriptor descriptor,
     required String uploadId,
+    required int manifestRevision,
   });
 
   Future<E2eeAttachmentManifest> openManifest({
     required String attachmentId,
     required String uploadId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required Uint8List ciphertext,
+  });
+
+  Future<E2eeSealedAttachmentManifest> rewrapManifest({
+    required E2eeAttachmentManifest source,
+    required int targetManifestRevision,
   });
 
   Future<Uint8List> sealChunk({
@@ -42,8 +50,7 @@ abstract interface class E2eeAttachmentCrypto {
   });
 
   Future<Uint8List> openChunk({
-    required E2eeAttachmentDescriptor descriptor,
-    required String uploadId,
+    required E2eeAttachmentManifest manifest,
     required int chunkIndex,
     required Uint8List ciphertext,
   });
@@ -57,7 +64,7 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
     required this._manifestCipher,
     required this._chunkAccountRootKey,
     required Uint8List userId,
-    required this.keyEpoch,
+    required this.currentKeyEpoch,
   }) : _userId = Uint8List.fromList(userId).asUnmodifiableView();
 
   final KelivoSecureCore _secureCore;
@@ -65,7 +72,7 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
   final KelivoAccountRootKeyHandle _chunkAccountRootKey;
   final Uint8List _userId;
   @override
-  final int keyEpoch;
+  final int currentKeyEpoch;
   final List<KelivoAttachmentDataKeyHandle> _retainedDataKeys =
       <KelivoAttachmentDataKeyHandle>[];
 
@@ -115,7 +122,7 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
         manifestCipher: manifestCipher,
         chunkAccountRootKey: chunkArk,
         userId: _canonicalUuidBytes(session.userId, 'userId'),
-        keyEpoch: session.keyEpoch,
+        currentKeyEpoch: session.keyEpoch,
       );
       manifestCipher = null;
       chunkArk = null;
@@ -160,12 +167,12 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
           context: KelivoAttachmentContext(
             userId: _userId,
             attachmentId: generated.attachmentId,
-            keyEpoch: keyEpoch,
+            keyEpoch: currentKeyEpoch,
           ),
         );
         descriptor = E2eeAttachmentDescriptor(
           attachmentId: Uuid.unparse(generated.attachmentId),
-          keyEpoch: keyEpoch,
+          chunkKeyEpoch: currentKeyEpoch,
           kind: kind,
           totalPlaintextBytes: totalPlaintextBytes,
           contentSha256: contentSha256,
@@ -209,6 +216,7 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
   Future<E2eeSealedAttachmentManifest> sealManifest({
     required E2eeAttachmentDescriptor descriptor,
     required String uploadId,
+    required int manifestRevision,
   }) {
     return _runWhileOpen(() {
       _requireCurrentDescriptorEpoch(descriptor);
@@ -216,6 +224,8 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
         E2eeAttachmentManifest.fromDescriptor(
           descriptor: descriptor,
           uploadId: uploadId,
+          manifestKeyEpoch: currentKeyEpoch,
+          manifestRevision: manifestRevision,
         ),
       );
     });
@@ -225,18 +235,85 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
   Future<E2eeAttachmentManifest> openManifest({
     required String attachmentId,
     required String uploadId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required Uint8List ciphertext,
   }) {
     return _runWhileOpen(() {
-      if (keyEpoch <= 0 || keyEpoch > this.keyEpoch) {
+      if (manifestKeyEpoch <= 0 || manifestKeyEpoch > currentKeyEpoch) {
         throw const FormatException('附件清单密钥世代晚于密码会话或无效');
+      }
+      if (chunkKeyEpoch <= 0 ||
+          chunkKeyEpoch > currentKeyEpoch ||
+          manifestKeyEpoch - chunkKeyEpoch != manifestRevision - 1) {
+        throw const FormatException('附件清单代次与修订关系无效');
       }
       return _manifestCipher.open(
         attachmentId: attachmentId,
         uploadId: uploadId,
-        keyEpoch: keyEpoch,
+        chunkKeyEpoch: chunkKeyEpoch,
+        manifestKeyEpoch: manifestKeyEpoch,
+        manifestRevision: manifestRevision,
         ciphertext: ciphertext,
+      );
+    });
+  }
+
+  @override
+  Future<E2eeSealedAttachmentManifest> rewrapManifest({
+    required E2eeAttachmentManifest source,
+    required int targetManifestRevision,
+  }) {
+    return _runWhileOpen(() async {
+      if (currentKeyEpoch != source.manifestKeyEpoch + 1 ||
+          source.manifestRevision == 0xffffffff ||
+          targetManifestRevision != source.manifestRevision + 1) {
+        throw const FormatException('附件清单重包目标身份无效');
+      }
+      return _withDataKey(
+        descriptor: source.descriptor,
+        wrappedDataKeyEpoch: source.manifestKeyEpoch,
+        uploadId: source.uploadId,
+        allowHistoricalEpoch: true,
+        operation: (dataKey, _, _) async {
+          Uint8List? rewrappedDataKey;
+          try {
+            rewrappedDataKey = await _secureCore.wrapAttachmentDataKey(
+              _chunkAccountRootKey,
+              dataKey,
+              context: KelivoAttachmentContext(
+                userId: _userId,
+                attachmentId: _canonicalUuidBytes(
+                  source.attachmentId,
+                  'attachmentId',
+                ),
+                keyEpoch: currentKeyEpoch,
+              ),
+            );
+            final targetDescriptor = E2eeAttachmentDescriptor(
+              attachmentId: source.attachmentId,
+              chunkKeyEpoch: source.chunkKeyEpoch,
+              kind: source.kind,
+              totalPlaintextBytes: source.totalPlaintextBytes,
+              contentSha256: source.contentSha256,
+              wrappedDataKey: rewrappedDataKey,
+              chunkCiphertextBytes: source.chunkCiphertextBytes,
+              displayName: source.displayName,
+              mediaType: source.mediaType,
+            );
+            return _manifestCipher.seal(
+              E2eeAttachmentManifest.fromDescriptor(
+                descriptor: targetDescriptor,
+                uploadId: source.uploadId,
+                manifestKeyEpoch: currentKeyEpoch,
+                manifestRevision: targetManifestRevision,
+              ),
+            );
+          } finally {
+            rewrappedDataKey?.fillRange(0, rewrappedDataKey.length, 0);
+          }
+        },
       );
     });
   }
@@ -251,6 +328,7 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
     return _runWhileOpen(() async {
       return _withDataKey(
         descriptor: descriptor,
+        wrappedDataKeyEpoch: currentKeyEpoch,
         uploadId: uploadId,
         allowHistoricalEpoch: false,
         operation: (dataKey, context, layout) {
@@ -268,15 +346,15 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
 
   @override
   Future<Uint8List> openChunk({
-    required E2eeAttachmentDescriptor descriptor,
-    required String uploadId,
+    required E2eeAttachmentManifest manifest,
     required int chunkIndex,
     required Uint8List ciphertext,
   }) {
     return _runWhileOpen(() async {
       return _withDataKey(
-        descriptor: descriptor,
-        uploadId: uploadId,
+        descriptor: manifest.descriptor,
+        wrappedDataKeyEpoch: manifest.manifestKeyEpoch,
+        uploadId: manifest.uploadId,
         allowHistoricalEpoch: true,
         operation: (dataKey, context, layout) {
           return _secureCore.openAttachmentChunk(
@@ -344,26 +422,27 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
           descriptor.attachmentId,
           'attachmentId',
         ),
-        keyEpoch: descriptor.keyEpoch,
+        keyEpoch: descriptor.chunkKeyEpoch,
       ),
       uploadId: _canonicalUuidBytes(uploadId, 'uploadId'),
     );
   }
 
   void _requireCurrentDescriptorEpoch(E2eeAttachmentDescriptor descriptor) {
-    if (descriptor.keyEpoch != keyEpoch) {
+    if (descriptor.chunkKeyEpoch != currentKeyEpoch) {
       throw const FormatException('附件描述密钥世代与密码会话不一致');
     }
   }
 
   void _requireReadableDescriptorEpoch(E2eeAttachmentDescriptor descriptor) {
-    if (descriptor.keyEpoch > keyEpoch) {
+    if (descriptor.chunkKeyEpoch > currentKeyEpoch) {
       throw const FormatException('附件描述密钥世代晚于密码会话');
     }
   }
 
   Future<T> _withDataKey<T>({
     required E2eeAttachmentDescriptor descriptor,
+    required int wrappedDataKeyEpoch,
     required String uploadId,
     required bool allowHistoricalEpoch,
     required Future<T> Function(
@@ -375,12 +454,22 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
   }) async {
     await _closeRetainedDataKeys();
     final context = _uploadContext(descriptor, uploadId, allowHistoricalEpoch);
+    if (wrappedDataKeyEpoch <= 0 || wrappedDataKeyEpoch > currentKeyEpoch) {
+      throw const FormatException('附件包装数据密钥世代晚于密码会话或无效');
+    }
     final layout = KelivoAttachmentLayout(
       totalPlaintextBytes: descriptor.totalPlaintextBytes,
     );
     final dataKey = await _secureCore.unwrapAttachmentDataKey(
       _chunkAccountRootKey,
-      context: context.attachment,
+      context: KelivoAttachmentContext(
+        userId: _userId,
+        attachmentId: _canonicalUuidBytes(
+          descriptor.attachmentId,
+          'attachmentId',
+        ),
+        keyEpoch: wrappedDataKeyEpoch,
+      ),
       wrappedKey: descriptor.wrappedDataKey,
     );
     try {

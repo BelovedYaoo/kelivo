@@ -2740,12 +2740,34 @@ class $MessageAssetRowsTable extends MessageAssetRows
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
-  static const VerificationMeta _keyEpochMeta = const VerificationMeta(
-    'keyEpoch',
+  static const VerificationMeta _chunkKeyEpochMeta = const VerificationMeta(
+    'chunkKeyEpoch',
   );
   @override
-  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
-    'key_epoch',
+  late final GeneratedColumn<int> chunkKeyEpoch = GeneratedColumn<int>(
+    'chunk_key_epoch',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _manifestKeyEpochMeta = const VerificationMeta(
+    'manifestKeyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> manifestKeyEpoch = GeneratedColumn<int>(
+    'manifest_key_epoch',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _manifestRevisionMeta = const VerificationMeta(
+    'manifestRevision',
+  );
+  @override
+  late final GeneratedColumn<int> manifestRevision = GeneratedColumn<int>(
+    'manifest_revision',
     aliasedName,
     true,
     type: DriftSqlType.int,
@@ -2761,7 +2783,9 @@ class $MessageAssetRowsTable extends MessageAssetRows
     mediaType,
     attachmentId,
     uploadId,
-    keyEpoch,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
   ];
   @override
   String get aliasedName => _alias ?? actualTableName;
@@ -2837,10 +2861,31 @@ class $MessageAssetRowsTable extends MessageAssetRows
         uploadId.isAcceptableOrUnknown(data['upload_id']!, _uploadIdMeta),
       );
     }
-    if (data.containsKey('key_epoch')) {
+    if (data.containsKey('chunk_key_epoch')) {
       context.handle(
-        _keyEpochMeta,
-        keyEpoch.isAcceptableOrUnknown(data['key_epoch']!, _keyEpochMeta),
+        _chunkKeyEpochMeta,
+        chunkKeyEpoch.isAcceptableOrUnknown(
+          data['chunk_key_epoch']!,
+          _chunkKeyEpochMeta,
+        ),
+      );
+    }
+    if (data.containsKey('manifest_key_epoch')) {
+      context.handle(
+        _manifestKeyEpochMeta,
+        manifestKeyEpoch.isAcceptableOrUnknown(
+          data['manifest_key_epoch']!,
+          _manifestKeyEpochMeta,
+        ),
+      );
+    }
+    if (data.containsKey('manifest_revision')) {
+      context.handle(
+        _manifestRevisionMeta,
+        manifestRevision.isAcceptableOrUnknown(
+          data['manifest_revision']!,
+          _manifestRevisionMeta,
+        ),
       );
     }
     return context;
@@ -2889,9 +2934,17 @@ class $MessageAssetRowsTable extends MessageAssetRows
         DriftSqlType.string,
         data['${effectivePrefix}upload_id'],
       ),
-      keyEpoch: attachedDatabase.typeMapping.read(
+      chunkKeyEpoch: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
-        data['${effectivePrefix}key_epoch'],
+        data['${effectivePrefix}chunk_key_epoch'],
+      ),
+      manifestKeyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}manifest_key_epoch'],
+      ),
+      manifestRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}manifest_revision'],
       ),
     );
   }
@@ -2911,7 +2964,9 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
   final String? mediaType;
   final String? attachmentId;
   final String? uploadId;
-  final int? keyEpoch;
+  final int? chunkKeyEpoch;
+  final int? manifestKeyEpoch;
+  final int? manifestRevision;
   const MessageAssetRow({
     required this.revisionId,
     required this.ordinal,
@@ -2921,7 +2976,9 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
     this.mediaType,
     this.attachmentId,
     this.uploadId,
-    this.keyEpoch,
+    this.chunkKeyEpoch,
+    this.manifestKeyEpoch,
+    this.manifestRevision,
   });
   @override
   Map<String, Expression> toColumns(bool nullToAbsent) {
@@ -2942,8 +2999,14 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
     if (!nullToAbsent || uploadId != null) {
       map['upload_id'] = Variable<String>(uploadId);
     }
-    if (!nullToAbsent || keyEpoch != null) {
-      map['key_epoch'] = Variable<int>(keyEpoch);
+    if (!nullToAbsent || chunkKeyEpoch != null) {
+      map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch);
+    }
+    if (!nullToAbsent || manifestKeyEpoch != null) {
+      map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch);
+    }
+    if (!nullToAbsent || manifestRevision != null) {
+      map['manifest_revision'] = Variable<int>(manifestRevision);
     }
     return map;
   }
@@ -2966,9 +3029,15 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
       uploadId: uploadId == null && nullToAbsent
           ? const Value.absent()
           : Value(uploadId),
-      keyEpoch: keyEpoch == null && nullToAbsent
+      chunkKeyEpoch: chunkKeyEpoch == null && nullToAbsent
           ? const Value.absent()
-          : Value(keyEpoch),
+          : Value(chunkKeyEpoch),
+      manifestKeyEpoch: manifestKeyEpoch == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manifestKeyEpoch),
+      manifestRevision: manifestRevision == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manifestRevision),
     );
   }
 
@@ -2986,7 +3055,9 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
       mediaType: serializer.fromJson<String?>(json['mediaType']),
       attachmentId: serializer.fromJson<String?>(json['attachmentId']),
       uploadId: serializer.fromJson<String?>(json['uploadId']),
-      keyEpoch: serializer.fromJson<int?>(json['keyEpoch']),
+      chunkKeyEpoch: serializer.fromJson<int?>(json['chunkKeyEpoch']),
+      manifestKeyEpoch: serializer.fromJson<int?>(json['manifestKeyEpoch']),
+      manifestRevision: serializer.fromJson<int?>(json['manifestRevision']),
     );
   }
   @override
@@ -3001,7 +3072,9 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
       'mediaType': serializer.toJson<String?>(mediaType),
       'attachmentId': serializer.toJson<String?>(attachmentId),
       'uploadId': serializer.toJson<String?>(uploadId),
-      'keyEpoch': serializer.toJson<int?>(keyEpoch),
+      'chunkKeyEpoch': serializer.toJson<int?>(chunkKeyEpoch),
+      'manifestKeyEpoch': serializer.toJson<int?>(manifestKeyEpoch),
+      'manifestRevision': serializer.toJson<int?>(manifestRevision),
     };
   }
 
@@ -3014,7 +3087,9 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
     Value<String?> mediaType = const Value.absent(),
     Value<String?> attachmentId = const Value.absent(),
     Value<String?> uploadId = const Value.absent(),
-    Value<int?> keyEpoch = const Value.absent(),
+    Value<int?> chunkKeyEpoch = const Value.absent(),
+    Value<int?> manifestKeyEpoch = const Value.absent(),
+    Value<int?> manifestRevision = const Value.absent(),
   }) => MessageAssetRow(
     revisionId: revisionId ?? this.revisionId,
     ordinal: ordinal ?? this.ordinal,
@@ -3024,7 +3099,15 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
     mediaType: mediaType.present ? mediaType.value : this.mediaType,
     attachmentId: attachmentId.present ? attachmentId.value : this.attachmentId,
     uploadId: uploadId.present ? uploadId.value : this.uploadId,
-    keyEpoch: keyEpoch.present ? keyEpoch.value : this.keyEpoch,
+    chunkKeyEpoch: chunkKeyEpoch.present
+        ? chunkKeyEpoch.value
+        : this.chunkKeyEpoch,
+    manifestKeyEpoch: manifestKeyEpoch.present
+        ? manifestKeyEpoch.value
+        : this.manifestKeyEpoch,
+    manifestRevision: manifestRevision.present
+        ? manifestRevision.value
+        : this.manifestRevision,
   );
   MessageAssetRow copyWithCompanion(MessageAssetRowsCompanion data) {
     return MessageAssetRow(
@@ -3042,7 +3125,15 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
           ? data.attachmentId.value
           : this.attachmentId,
       uploadId: data.uploadId.present ? data.uploadId.value : this.uploadId,
-      keyEpoch: data.keyEpoch.present ? data.keyEpoch.value : this.keyEpoch,
+      chunkKeyEpoch: data.chunkKeyEpoch.present
+          ? data.chunkKeyEpoch.value
+          : this.chunkKeyEpoch,
+      manifestKeyEpoch: data.manifestKeyEpoch.present
+          ? data.manifestKeyEpoch.value
+          : this.manifestKeyEpoch,
+      manifestRevision: data.manifestRevision.present
+          ? data.manifestRevision.value
+          : this.manifestRevision,
     );
   }
 
@@ -3057,7 +3148,9 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
           ..write('mediaType: $mediaType, ')
           ..write('attachmentId: $attachmentId, ')
           ..write('uploadId: $uploadId, ')
-          ..write('keyEpoch: $keyEpoch')
+          ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
+          ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
+          ..write('manifestRevision: $manifestRevision')
           ..write(')'))
         .toString();
   }
@@ -3072,7 +3165,9 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
     mediaType,
     attachmentId,
     uploadId,
-    keyEpoch,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
   );
   @override
   bool operator ==(Object other) =>
@@ -3086,7 +3181,9 @@ class MessageAssetRow extends DataClass implements Insertable<MessageAssetRow> {
           other.mediaType == this.mediaType &&
           other.attachmentId == this.attachmentId &&
           other.uploadId == this.uploadId &&
-          other.keyEpoch == this.keyEpoch);
+          other.chunkKeyEpoch == this.chunkKeyEpoch &&
+          other.manifestKeyEpoch == this.manifestKeyEpoch &&
+          other.manifestRevision == this.manifestRevision);
 }
 
 class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
@@ -3098,7 +3195,9 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
   final Value<String?> mediaType;
   final Value<String?> attachmentId;
   final Value<String?> uploadId;
-  final Value<int?> keyEpoch;
+  final Value<int?> chunkKeyEpoch;
+  final Value<int?> manifestKeyEpoch;
+  final Value<int?> manifestRevision;
   final Value<int> rowid;
   const MessageAssetRowsCompanion({
     this.revisionId = const Value.absent(),
@@ -3109,7 +3208,9 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
     this.mediaType = const Value.absent(),
     this.attachmentId = const Value.absent(),
     this.uploadId = const Value.absent(),
-    this.keyEpoch = const Value.absent(),
+    this.chunkKeyEpoch = const Value.absent(),
+    this.manifestKeyEpoch = const Value.absent(),
+    this.manifestRevision = const Value.absent(),
     this.rowid = const Value.absent(),
   });
   MessageAssetRowsCompanion.insert({
@@ -3121,7 +3222,9 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
     this.mediaType = const Value.absent(),
     this.attachmentId = const Value.absent(),
     this.uploadId = const Value.absent(),
-    this.keyEpoch = const Value.absent(),
+    this.chunkKeyEpoch = const Value.absent(),
+    this.manifestKeyEpoch = const Value.absent(),
+    this.manifestRevision = const Value.absent(),
     this.rowid = const Value.absent(),
   }) : revisionId = Value(revisionId),
        ordinal = Value(ordinal),
@@ -3136,7 +3239,9 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
     Expression<String>? mediaType,
     Expression<String>? attachmentId,
     Expression<String>? uploadId,
-    Expression<int>? keyEpoch,
+    Expression<int>? chunkKeyEpoch,
+    Expression<int>? manifestKeyEpoch,
+    Expression<int>? manifestRevision,
     Expression<int>? rowid,
   }) {
     return RawValuesInsertable({
@@ -3148,7 +3253,9 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
       if (mediaType != null) 'media_type': mediaType,
       if (attachmentId != null) 'attachment_id': attachmentId,
       if (uploadId != null) 'upload_id': uploadId,
-      if (keyEpoch != null) 'key_epoch': keyEpoch,
+      if (chunkKeyEpoch != null) 'chunk_key_epoch': chunkKeyEpoch,
+      if (manifestKeyEpoch != null) 'manifest_key_epoch': manifestKeyEpoch,
+      if (manifestRevision != null) 'manifest_revision': manifestRevision,
       if (rowid != null) 'rowid': rowid,
     });
   }
@@ -3162,7 +3269,9 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
     Value<String?>? mediaType,
     Value<String?>? attachmentId,
     Value<String?>? uploadId,
-    Value<int?>? keyEpoch,
+    Value<int?>? chunkKeyEpoch,
+    Value<int?>? manifestKeyEpoch,
+    Value<int?>? manifestRevision,
     Value<int>? rowid,
   }) {
     return MessageAssetRowsCompanion(
@@ -3174,7 +3283,9 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
       mediaType: mediaType ?? this.mediaType,
       attachmentId: attachmentId ?? this.attachmentId,
       uploadId: uploadId ?? this.uploadId,
-      keyEpoch: keyEpoch ?? this.keyEpoch,
+      chunkKeyEpoch: chunkKeyEpoch ?? this.chunkKeyEpoch,
+      manifestKeyEpoch: manifestKeyEpoch ?? this.manifestKeyEpoch,
+      manifestRevision: manifestRevision ?? this.manifestRevision,
       rowid: rowid ?? this.rowid,
     );
   }
@@ -3206,8 +3317,14 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
     if (uploadId.present) {
       map['upload_id'] = Variable<String>(uploadId.value);
     }
-    if (keyEpoch.present) {
-      map['key_epoch'] = Variable<int>(keyEpoch.value);
+    if (chunkKeyEpoch.present) {
+      map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch.value);
+    }
+    if (manifestKeyEpoch.present) {
+      map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch.value);
+    }
+    if (manifestRevision.present) {
+      map['manifest_revision'] = Variable<int>(manifestRevision.value);
     }
     if (rowid.present) {
       map['rowid'] = Variable<int>(rowid.value);
@@ -3226,7 +3343,9 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
           ..write('mediaType: $mediaType, ')
           ..write('attachmentId: $attachmentId, ')
           ..write('uploadId: $uploadId, ')
-          ..write('keyEpoch: $keyEpoch, ')
+          ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
+          ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
+          ..write('manifestRevision: $manifestRevision, ')
           ..write('rowid: $rowid')
           ..write(')'))
         .toString();
@@ -14709,12 +14828,34 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _keyEpochMeta = const VerificationMeta(
-    'keyEpoch',
+  static const VerificationMeta _chunkKeyEpochMeta = const VerificationMeta(
+    'chunkKeyEpoch',
   );
   @override
-  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
-    'key_epoch',
+  late final GeneratedColumn<int> chunkKeyEpoch = GeneratedColumn<int>(
+    'chunk_key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _manifestKeyEpochMeta = const VerificationMeta(
+    'manifestKeyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> manifestKeyEpoch = GeneratedColumn<int>(
+    'manifest_key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _manifestRevisionMeta = const VerificationMeta(
+    'manifestRevision',
+  );
+  @override
+  late final GeneratedColumn<int> manifestRevision = GeneratedColumn<int>(
+    'manifest_revision',
     aliasedName,
     false,
     type: DriftSqlType.int,
@@ -15053,7 +15194,9 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     targetRevisionId,
     targetOrdinal,
     sourcePath,
-    keyEpoch,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
     kind,
     displayName,
     mediaType,
@@ -15149,13 +15292,38 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     } else if (isInserting) {
       context.missing(_sourcePathMeta);
     }
-    if (data.containsKey('key_epoch')) {
+    if (data.containsKey('chunk_key_epoch')) {
       context.handle(
-        _keyEpochMeta,
-        keyEpoch.isAcceptableOrUnknown(data['key_epoch']!, _keyEpochMeta),
+        _chunkKeyEpochMeta,
+        chunkKeyEpoch.isAcceptableOrUnknown(
+          data['chunk_key_epoch']!,
+          _chunkKeyEpochMeta,
+        ),
       );
     } else if (isInserting) {
-      context.missing(_keyEpochMeta);
+      context.missing(_chunkKeyEpochMeta);
+    }
+    if (data.containsKey('manifest_key_epoch')) {
+      context.handle(
+        _manifestKeyEpochMeta,
+        manifestKeyEpoch.isAcceptableOrUnknown(
+          data['manifest_key_epoch']!,
+          _manifestKeyEpochMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_manifestKeyEpochMeta);
+    }
+    if (data.containsKey('manifest_revision')) {
+      context.handle(
+        _manifestRevisionMeta,
+        manifestRevision.isAcceptableOrUnknown(
+          data['manifest_revision']!,
+          _manifestRevisionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_manifestRevisionMeta);
     }
     if (data.containsKey('kind')) {
       context.handle(
@@ -15436,9 +15604,17 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
         DriftSqlType.string,
         data['${effectivePrefix}source_path'],
       )!,
-      keyEpoch: attachedDatabase.typeMapping.read(
+      chunkKeyEpoch: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
-        data['${effectivePrefix}key_epoch'],
+        data['${effectivePrefix}chunk_key_epoch'],
+      )!,
+      manifestKeyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}manifest_key_epoch'],
+      )!,
+      manifestRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}manifest_revision'],
       )!,
       kind: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -15597,7 +15773,9 @@ class E2eeAttachmentUploadRow extends DataClass
   final String targetRevisionId;
   final int targetOrdinal;
   final String sourcePath;
-  final int keyEpoch;
+  final int chunkKeyEpoch;
+  final int manifestKeyEpoch;
+  final int manifestRevision;
   final String kind;
   final String? displayName;
   final String? mediaType;
@@ -15634,7 +15812,9 @@ class E2eeAttachmentUploadRow extends DataClass
     required this.targetRevisionId,
     required this.targetOrdinal,
     required this.sourcePath,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
     required this.kind,
     this.displayName,
     this.mediaType,
@@ -15674,7 +15854,9 @@ class E2eeAttachmentUploadRow extends DataClass
     map['target_revision_id'] = Variable<String>(targetRevisionId);
     map['target_ordinal'] = Variable<int>(targetOrdinal);
     map['source_path'] = Variable<String>(sourcePath);
-    map['key_epoch'] = Variable<int>(keyEpoch);
+    map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch);
+    map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch);
+    map['manifest_revision'] = Variable<int>(manifestRevision);
     map['kind'] = Variable<String>(kind);
     if (!nullToAbsent || displayName != null) {
       map['display_name'] = Variable<String>(displayName);
@@ -15769,7 +15951,9 @@ class E2eeAttachmentUploadRow extends DataClass
       targetRevisionId: Value(targetRevisionId),
       targetOrdinal: Value(targetOrdinal),
       sourcePath: Value(sourcePath),
-      keyEpoch: Value(keyEpoch),
+      chunkKeyEpoch: Value(chunkKeyEpoch),
+      manifestKeyEpoch: Value(manifestKeyEpoch),
+      manifestRevision: Value(manifestRevision),
       kind: Value(kind),
       displayName: displayName == null && nullToAbsent
           ? const Value.absent()
@@ -15845,7 +16029,9 @@ class E2eeAttachmentUploadRow extends DataClass
       targetRevisionId: serializer.fromJson<String>(json['targetRevisionId']),
       targetOrdinal: serializer.fromJson<int>(json['targetOrdinal']),
       sourcePath: serializer.fromJson<String>(json['sourcePath']),
-      keyEpoch: serializer.fromJson<int>(json['keyEpoch']),
+      chunkKeyEpoch: serializer.fromJson<int>(json['chunkKeyEpoch']),
+      manifestKeyEpoch: serializer.fromJson<int>(json['manifestKeyEpoch']),
+      manifestRevision: serializer.fromJson<int>(json['manifestRevision']),
       kind: serializer.fromJson<String>(json['kind']),
       displayName: serializer.fromJson<String?>(json['displayName']),
       mediaType: serializer.fromJson<String?>(json['mediaType']),
@@ -15907,7 +16093,9 @@ class E2eeAttachmentUploadRow extends DataClass
       'targetRevisionId': serializer.toJson<String>(targetRevisionId),
       'targetOrdinal': serializer.toJson<int>(targetOrdinal),
       'sourcePath': serializer.toJson<String>(sourcePath),
-      'keyEpoch': serializer.toJson<int>(keyEpoch),
+      'chunkKeyEpoch': serializer.toJson<int>(chunkKeyEpoch),
+      'manifestKeyEpoch': serializer.toJson<int>(manifestKeyEpoch),
+      'manifestRevision': serializer.toJson<int>(manifestRevision),
       'kind': serializer.toJson<String>(kind),
       'displayName': serializer.toJson<String?>(displayName),
       'mediaType': serializer.toJson<String?>(mediaType),
@@ -15957,7 +16145,9 @@ class E2eeAttachmentUploadRow extends DataClass
     String? targetRevisionId,
     int? targetOrdinal,
     String? sourcePath,
-    int? keyEpoch,
+    int? chunkKeyEpoch,
+    int? manifestKeyEpoch,
+    int? manifestRevision,
     String? kind,
     Value<String?> displayName = const Value.absent(),
     Value<String?> mediaType = const Value.absent(),
@@ -15994,7 +16184,9 @@ class E2eeAttachmentUploadRow extends DataClass
     targetRevisionId: targetRevisionId ?? this.targetRevisionId,
     targetOrdinal: targetOrdinal ?? this.targetOrdinal,
     sourcePath: sourcePath ?? this.sourcePath,
-    keyEpoch: keyEpoch ?? this.keyEpoch,
+    chunkKeyEpoch: chunkKeyEpoch ?? this.chunkKeyEpoch,
+    manifestKeyEpoch: manifestKeyEpoch ?? this.manifestKeyEpoch,
+    manifestRevision: manifestRevision ?? this.manifestRevision,
     kind: kind ?? this.kind,
     displayName: displayName.present ? displayName.value : this.displayName,
     mediaType: mediaType.present ? mediaType.value : this.mediaType,
@@ -16066,7 +16258,15 @@ class E2eeAttachmentUploadRow extends DataClass
       sourcePath: data.sourcePath.present
           ? data.sourcePath.value
           : this.sourcePath,
-      keyEpoch: data.keyEpoch.present ? data.keyEpoch.value : this.keyEpoch,
+      chunkKeyEpoch: data.chunkKeyEpoch.present
+          ? data.chunkKeyEpoch.value
+          : this.chunkKeyEpoch,
+      manifestKeyEpoch: data.manifestKeyEpoch.present
+          ? data.manifestKeyEpoch.value
+          : this.manifestKeyEpoch,
+      manifestRevision: data.manifestRevision.present
+          ? data.manifestRevision.value
+          : this.manifestRevision,
       kind: data.kind.present ? data.kind.value : this.kind,
       displayName: data.displayName.present
           ? data.displayName.value
@@ -16156,7 +16356,9 @@ class E2eeAttachmentUploadRow extends DataClass
           ..write('targetRevisionId: $targetRevisionId, ')
           ..write('targetOrdinal: $targetOrdinal, ')
           ..write('sourcePath: $sourcePath, ')
-          ..write('keyEpoch: $keyEpoch, ')
+          ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
+          ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
+          ..write('manifestRevision: $manifestRevision, ')
           ..write('kind: $kind, ')
           ..write('displayName: $displayName, ')
           ..write('mediaType: $mediaType, ')
@@ -16200,7 +16402,9 @@ class E2eeAttachmentUploadRow extends DataClass
     targetRevisionId,
     targetOrdinal,
     sourcePath,
-    keyEpoch,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
     kind,
     displayName,
     mediaType,
@@ -16241,7 +16445,9 @@ class E2eeAttachmentUploadRow extends DataClass
           other.targetRevisionId == this.targetRevisionId &&
           other.targetOrdinal == this.targetOrdinal &&
           other.sourcePath == this.sourcePath &&
-          other.keyEpoch == this.keyEpoch &&
+          other.chunkKeyEpoch == this.chunkKeyEpoch &&
+          other.manifestKeyEpoch == this.manifestKeyEpoch &&
+          other.manifestRevision == this.manifestRevision &&
           other.kind == this.kind &&
           other.displayName == this.displayName &&
           other.mediaType == this.mediaType &&
@@ -16291,7 +16497,9 @@ class E2eeAttachmentUploadRowsCompanion
   final Value<String> targetRevisionId;
   final Value<int> targetOrdinal;
   final Value<String> sourcePath;
-  final Value<int> keyEpoch;
+  final Value<int> chunkKeyEpoch;
+  final Value<int> manifestKeyEpoch;
+  final Value<int> manifestRevision;
   final Value<String> kind;
   final Value<String?> displayName;
   final Value<String?> mediaType;
@@ -16329,7 +16537,9 @@ class E2eeAttachmentUploadRowsCompanion
     this.targetRevisionId = const Value.absent(),
     this.targetOrdinal = const Value.absent(),
     this.sourcePath = const Value.absent(),
-    this.keyEpoch = const Value.absent(),
+    this.chunkKeyEpoch = const Value.absent(),
+    this.manifestKeyEpoch = const Value.absent(),
+    this.manifestRevision = const Value.absent(),
     this.kind = const Value.absent(),
     this.displayName = const Value.absent(),
     this.mediaType = const Value.absent(),
@@ -16368,7 +16578,9 @@ class E2eeAttachmentUploadRowsCompanion
     required String targetRevisionId,
     required int targetOrdinal,
     required String sourcePath,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required String kind,
     this.displayName = const Value.absent(),
     this.mediaType = const Value.absent(),
@@ -16405,7 +16617,9 @@ class E2eeAttachmentUploadRowsCompanion
        targetRevisionId = Value(targetRevisionId),
        targetOrdinal = Value(targetOrdinal),
        sourcePath = Value(sourcePath),
-       keyEpoch = Value(keyEpoch),
+       chunkKeyEpoch = Value(chunkKeyEpoch),
+       manifestKeyEpoch = Value(manifestKeyEpoch),
+       manifestRevision = Value(manifestRevision),
        kind = Value(kind),
        contentSha256 = Value(contentSha256),
        wrappedDataKey = Value(wrappedDataKey),
@@ -16428,7 +16642,9 @@ class E2eeAttachmentUploadRowsCompanion
     Expression<String>? targetRevisionId,
     Expression<int>? targetOrdinal,
     Expression<String>? sourcePath,
-    Expression<int>? keyEpoch,
+    Expression<int>? chunkKeyEpoch,
+    Expression<int>? manifestKeyEpoch,
+    Expression<int>? manifestRevision,
     Expression<String>? kind,
     Expression<String>? displayName,
     Expression<String>? mediaType,
@@ -16467,7 +16683,9 @@ class E2eeAttachmentUploadRowsCompanion
       if (targetRevisionId != null) 'target_revision_id': targetRevisionId,
       if (targetOrdinal != null) 'target_ordinal': targetOrdinal,
       if (sourcePath != null) 'source_path': sourcePath,
-      if (keyEpoch != null) 'key_epoch': keyEpoch,
+      if (chunkKeyEpoch != null) 'chunk_key_epoch': chunkKeyEpoch,
+      if (manifestKeyEpoch != null) 'manifest_key_epoch': manifestKeyEpoch,
+      if (manifestRevision != null) 'manifest_revision': manifestRevision,
       if (kind != null) 'kind': kind,
       if (displayName != null) 'display_name': displayName,
       if (mediaType != null) 'media_type': mediaType,
@@ -16517,7 +16735,9 @@ class E2eeAttachmentUploadRowsCompanion
     Value<String>? targetRevisionId,
     Value<int>? targetOrdinal,
     Value<String>? sourcePath,
-    Value<int>? keyEpoch,
+    Value<int>? chunkKeyEpoch,
+    Value<int>? manifestKeyEpoch,
+    Value<int>? manifestRevision,
     Value<String>? kind,
     Value<String?>? displayName,
     Value<String?>? mediaType,
@@ -16556,7 +16776,9 @@ class E2eeAttachmentUploadRowsCompanion
       targetRevisionId: targetRevisionId ?? this.targetRevisionId,
       targetOrdinal: targetOrdinal ?? this.targetOrdinal,
       sourcePath: sourcePath ?? this.sourcePath,
-      keyEpoch: keyEpoch ?? this.keyEpoch,
+      chunkKeyEpoch: chunkKeyEpoch ?? this.chunkKeyEpoch,
+      manifestKeyEpoch: manifestKeyEpoch ?? this.manifestKeyEpoch,
+      manifestRevision: manifestRevision ?? this.manifestRevision,
       kind: kind ?? this.kind,
       displayName: displayName ?? this.displayName,
       mediaType: mediaType ?? this.mediaType,
@@ -16614,8 +16836,14 @@ class E2eeAttachmentUploadRowsCompanion
     if (sourcePath.present) {
       map['source_path'] = Variable<String>(sourcePath.value);
     }
-    if (keyEpoch.present) {
-      map['key_epoch'] = Variable<int>(keyEpoch.value);
+    if (chunkKeyEpoch.present) {
+      map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch.value);
+    }
+    if (manifestKeyEpoch.present) {
+      map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch.value);
+    }
+    if (manifestRevision.present) {
+      map['manifest_revision'] = Variable<int>(manifestRevision.value);
     }
     if (kind.present) {
       map['kind'] = Variable<String>(kind.value);
@@ -16753,7 +16981,9 @@ class E2eeAttachmentUploadRowsCompanion
           ..write('targetRevisionId: $targetRevisionId, ')
           ..write('targetOrdinal: $targetOrdinal, ')
           ..write('sourcePath: $sourcePath, ')
-          ..write('keyEpoch: $keyEpoch, ')
+          ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
+          ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
+          ..write('manifestRevision: $manifestRevision, ')
           ..write('kind: $kind, ')
           ..write('displayName: $displayName, ')
           ..write('mediaType: $mediaType, ')
@@ -16821,12 +17051,34 @@ class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
     type: DriftSqlType.string,
     requiredDuringInsert: true,
   );
-  static const VerificationMeta _keyEpochMeta = const VerificationMeta(
-    'keyEpoch',
+  static const VerificationMeta _chunkKeyEpochMeta = const VerificationMeta(
+    'chunkKeyEpoch',
   );
   @override
-  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
-    'key_epoch',
+  late final GeneratedColumn<int> chunkKeyEpoch = GeneratedColumn<int>(
+    'chunk_key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _manifestKeyEpochMeta = const VerificationMeta(
+    'manifestKeyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> manifestKeyEpoch = GeneratedColumn<int>(
+    'manifest_key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _manifestRevisionMeta = const VerificationMeta(
+    'manifestRevision',
+  );
+  @override
+  late final GeneratedColumn<int> manifestRevision = GeneratedColumn<int>(
+    'manifest_revision',
     aliasedName,
     false,
     type: DriftSqlType.int,
@@ -17118,7 +17370,9 @@ class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
   List<GeneratedColumn> get $columns => [
     attachmentId,
     uploadId,
-    keyEpoch,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
     kind,
     phase,
     manifestCiphertext,
@@ -17177,13 +17431,38 @@ class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
     } else if (isInserting) {
       context.missing(_uploadIdMeta);
     }
-    if (data.containsKey('key_epoch')) {
+    if (data.containsKey('chunk_key_epoch')) {
       context.handle(
-        _keyEpochMeta,
-        keyEpoch.isAcceptableOrUnknown(data['key_epoch']!, _keyEpochMeta),
+        _chunkKeyEpochMeta,
+        chunkKeyEpoch.isAcceptableOrUnknown(
+          data['chunk_key_epoch']!,
+          _chunkKeyEpochMeta,
+        ),
       );
     } else if (isInserting) {
-      context.missing(_keyEpochMeta);
+      context.missing(_chunkKeyEpochMeta);
+    }
+    if (data.containsKey('manifest_key_epoch')) {
+      context.handle(
+        _manifestKeyEpochMeta,
+        manifestKeyEpoch.isAcceptableOrUnknown(
+          data['manifest_key_epoch']!,
+          _manifestKeyEpochMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_manifestKeyEpochMeta);
+    }
+    if (data.containsKey('manifest_revision')) {
+      context.handle(
+        _manifestRevisionMeta,
+        manifestRevision.isAcceptableOrUnknown(
+          data['manifest_revision']!,
+          _manifestRevisionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_manifestRevisionMeta);
     }
     if (data.containsKey('kind')) {
       context.handle(
@@ -17403,9 +17682,17 @@ class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
         DriftSqlType.string,
         data['${effectivePrefix}upload_id'],
       )!,
-      keyEpoch: attachedDatabase.typeMapping.read(
+      chunkKeyEpoch: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
-        data['${effectivePrefix}key_epoch'],
+        data['${effectivePrefix}chunk_key_epoch'],
+      )!,
+      manifestKeyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}manifest_key_epoch'],
+      )!,
+      manifestRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}manifest_revision'],
       )!,
       kind: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
@@ -17545,7 +17832,9 @@ class E2eeAttachmentDownloadRow extends DataClass
     implements Insertable<E2eeAttachmentDownloadRow> {
   final String attachmentId;
   final String uploadId;
-  final int keyEpoch;
+  final int chunkKeyEpoch;
+  final int manifestKeyEpoch;
+  final int manifestRevision;
   final String kind;
   final String phase;
   final Uint8List? manifestCiphertext;
@@ -17575,7 +17864,9 @@ class E2eeAttachmentDownloadRow extends DataClass
   const E2eeAttachmentDownloadRow({
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
     required this.kind,
     required this.phase,
     this.manifestCiphertext,
@@ -17608,7 +17899,9 @@ class E2eeAttachmentDownloadRow extends DataClass
     final map = <String, Expression>{};
     map['attachment_id'] = Variable<String>(attachmentId);
     map['upload_id'] = Variable<String>(uploadId);
-    map['key_epoch'] = Variable<int>(keyEpoch);
+    map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch);
+    map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch);
+    map['manifest_revision'] = Variable<int>(manifestRevision);
     map['kind'] = Variable<String>(kind);
     map['phase'] = Variable<String>(phase);
     if (!nullToAbsent || manifestCiphertext != null) {
@@ -17692,7 +17985,9 @@ class E2eeAttachmentDownloadRow extends DataClass
     return E2eeAttachmentDownloadRowsCompanion(
       attachmentId: Value(attachmentId),
       uploadId: Value(uploadId),
-      keyEpoch: Value(keyEpoch),
+      chunkKeyEpoch: Value(chunkKeyEpoch),
+      manifestKeyEpoch: Value(manifestKeyEpoch),
+      manifestRevision: Value(manifestRevision),
       kind: Value(kind),
       phase: Value(phase),
       manifestCiphertext: manifestCiphertext == null && nullToAbsent
@@ -17762,7 +18057,9 @@ class E2eeAttachmentDownloadRow extends DataClass
     return E2eeAttachmentDownloadRow(
       attachmentId: serializer.fromJson<String>(json['attachmentId']),
       uploadId: serializer.fromJson<String>(json['uploadId']),
-      keyEpoch: serializer.fromJson<int>(json['keyEpoch']),
+      chunkKeyEpoch: serializer.fromJson<int>(json['chunkKeyEpoch']),
+      manifestKeyEpoch: serializer.fromJson<int>(json['manifestKeyEpoch']),
+      manifestRevision: serializer.fromJson<int>(json['manifestRevision']),
       kind: serializer.fromJson<String>(json['kind']),
       phase: serializer.fromJson<String>(json['phase']),
       manifestCiphertext: serializer.fromJson<Uint8List?>(
@@ -17811,7 +18108,9 @@ class E2eeAttachmentDownloadRow extends DataClass
     return <String, dynamic>{
       'attachmentId': serializer.toJson<String>(attachmentId),
       'uploadId': serializer.toJson<String>(uploadId),
-      'keyEpoch': serializer.toJson<int>(keyEpoch),
+      'chunkKeyEpoch': serializer.toJson<int>(chunkKeyEpoch),
+      'manifestKeyEpoch': serializer.toJson<int>(manifestKeyEpoch),
+      'manifestRevision': serializer.toJson<int>(manifestRevision),
       'kind': serializer.toJson<String>(kind),
       'phase': serializer.toJson<String>(phase),
       'manifestCiphertext': serializer.toJson<Uint8List?>(manifestCiphertext),
@@ -17848,7 +18147,9 @@ class E2eeAttachmentDownloadRow extends DataClass
   E2eeAttachmentDownloadRow copyWith({
     String? attachmentId,
     String? uploadId,
-    int? keyEpoch,
+    int? chunkKeyEpoch,
+    int? manifestKeyEpoch,
+    int? manifestRevision,
     String? kind,
     String? phase,
     Value<Uint8List?> manifestCiphertext = const Value.absent(),
@@ -17878,7 +18179,9 @@ class E2eeAttachmentDownloadRow extends DataClass
   }) => E2eeAttachmentDownloadRow(
     attachmentId: attachmentId ?? this.attachmentId,
     uploadId: uploadId ?? this.uploadId,
-    keyEpoch: keyEpoch ?? this.keyEpoch,
+    chunkKeyEpoch: chunkKeyEpoch ?? this.chunkKeyEpoch,
+    manifestKeyEpoch: manifestKeyEpoch ?? this.manifestKeyEpoch,
+    manifestRevision: manifestRevision ?? this.manifestRevision,
     kind: kind ?? this.kind,
     phase: phase ?? this.phase,
     manifestCiphertext: manifestCiphertext.present
@@ -17934,7 +18237,15 @@ class E2eeAttachmentDownloadRow extends DataClass
           ? data.attachmentId.value
           : this.attachmentId,
       uploadId: data.uploadId.present ? data.uploadId.value : this.uploadId,
-      keyEpoch: data.keyEpoch.present ? data.keyEpoch.value : this.keyEpoch,
+      chunkKeyEpoch: data.chunkKeyEpoch.present
+          ? data.chunkKeyEpoch.value
+          : this.chunkKeyEpoch,
+      manifestKeyEpoch: data.manifestKeyEpoch.present
+          ? data.manifestKeyEpoch.value
+          : this.manifestKeyEpoch,
+      manifestRevision: data.manifestRevision.present
+          ? data.manifestRevision.value
+          : this.manifestRevision,
       kind: data.kind.present ? data.kind.value : this.kind,
       phase: data.phase.present ? data.phase.value : this.phase,
       manifestCiphertext: data.manifestCiphertext.present
@@ -18009,7 +18320,9 @@ class E2eeAttachmentDownloadRow extends DataClass
     return (StringBuffer('E2eeAttachmentDownloadRow(')
           ..write('attachmentId: $attachmentId, ')
           ..write('uploadId: $uploadId, ')
-          ..write('keyEpoch: $keyEpoch, ')
+          ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
+          ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
+          ..write('manifestRevision: $manifestRevision, ')
           ..write('kind: $kind, ')
           ..write('phase: $phase, ')
           ..write('manifestCiphertext: $manifestCiphertext, ')
@@ -18044,7 +18357,9 @@ class E2eeAttachmentDownloadRow extends DataClass
   int get hashCode => Object.hashAll([
     attachmentId,
     uploadId,
-    keyEpoch,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
     kind,
     phase,
     $driftBlobEquality.hash(manifestCiphertext),
@@ -18078,7 +18393,9 @@ class E2eeAttachmentDownloadRow extends DataClass
       (other is E2eeAttachmentDownloadRow &&
           other.attachmentId == this.attachmentId &&
           other.uploadId == this.uploadId &&
-          other.keyEpoch == this.keyEpoch &&
+          other.chunkKeyEpoch == this.chunkKeyEpoch &&
+          other.manifestKeyEpoch == this.manifestKeyEpoch &&
+          other.manifestRevision == this.manifestRevision &&
           other.kind == this.kind &&
           other.phase == this.phase &&
           $driftBlobEquality.equals(
@@ -18117,7 +18434,9 @@ class E2eeAttachmentDownloadRowsCompanion
     extends UpdateCompanion<E2eeAttachmentDownloadRow> {
   final Value<String> attachmentId;
   final Value<String> uploadId;
-  final Value<int> keyEpoch;
+  final Value<int> chunkKeyEpoch;
+  final Value<int> manifestKeyEpoch;
+  final Value<int> manifestRevision;
   final Value<String> kind;
   final Value<String> phase;
   final Value<Uint8List?> manifestCiphertext;
@@ -18148,7 +18467,9 @@ class E2eeAttachmentDownloadRowsCompanion
   const E2eeAttachmentDownloadRowsCompanion({
     this.attachmentId = const Value.absent(),
     this.uploadId = const Value.absent(),
-    this.keyEpoch = const Value.absent(),
+    this.chunkKeyEpoch = const Value.absent(),
+    this.manifestKeyEpoch = const Value.absent(),
+    this.manifestRevision = const Value.absent(),
     this.kind = const Value.absent(),
     this.phase = const Value.absent(),
     this.manifestCiphertext = const Value.absent(),
@@ -18180,7 +18501,9 @@ class E2eeAttachmentDownloadRowsCompanion
   E2eeAttachmentDownloadRowsCompanion.insert({
     required String attachmentId,
     required String uploadId,
-    required int keyEpoch,
+    required int chunkKeyEpoch,
+    required int manifestKeyEpoch,
+    required int manifestRevision,
     required String kind,
     required String phase,
     this.manifestCiphertext = const Value.absent(),
@@ -18210,7 +18533,9 @@ class E2eeAttachmentDownloadRowsCompanion
     this.rowid = const Value.absent(),
   }) : attachmentId = Value(attachmentId),
        uploadId = Value(uploadId),
-       keyEpoch = Value(keyEpoch),
+       chunkKeyEpoch = Value(chunkKeyEpoch),
+       manifestKeyEpoch = Value(manifestKeyEpoch),
+       manifestRevision = Value(manifestRevision),
        kind = Value(kind),
        phase = Value(phase),
        nextChunkIndex = Value(nextChunkIndex),
@@ -18224,7 +18549,9 @@ class E2eeAttachmentDownloadRowsCompanion
   static Insertable<E2eeAttachmentDownloadRow> custom({
     Expression<String>? attachmentId,
     Expression<String>? uploadId,
-    Expression<int>? keyEpoch,
+    Expression<int>? chunkKeyEpoch,
+    Expression<int>? manifestKeyEpoch,
+    Expression<int>? manifestRevision,
     Expression<String>? kind,
     Expression<String>? phase,
     Expression<Uint8List>? manifestCiphertext,
@@ -18256,7 +18583,9 @@ class E2eeAttachmentDownloadRowsCompanion
     return RawValuesInsertable({
       if (attachmentId != null) 'attachment_id': attachmentId,
       if (uploadId != null) 'upload_id': uploadId,
-      if (keyEpoch != null) 'key_epoch': keyEpoch,
+      if (chunkKeyEpoch != null) 'chunk_key_epoch': chunkKeyEpoch,
+      if (manifestKeyEpoch != null) 'manifest_key_epoch': manifestKeyEpoch,
+      if (manifestRevision != null) 'manifest_revision': manifestRevision,
       if (kind != null) 'kind': kind,
       if (phase != null) 'phase': phase,
       if (manifestCiphertext != null) 'manifest_ciphertext': manifestCiphertext,
@@ -18296,7 +18625,9 @@ class E2eeAttachmentDownloadRowsCompanion
   E2eeAttachmentDownloadRowsCompanion copyWith({
     Value<String>? attachmentId,
     Value<String>? uploadId,
-    Value<int>? keyEpoch,
+    Value<int>? chunkKeyEpoch,
+    Value<int>? manifestKeyEpoch,
+    Value<int>? manifestRevision,
     Value<String>? kind,
     Value<String>? phase,
     Value<Uint8List?>? manifestCiphertext,
@@ -18328,7 +18659,9 @@ class E2eeAttachmentDownloadRowsCompanion
     return E2eeAttachmentDownloadRowsCompanion(
       attachmentId: attachmentId ?? this.attachmentId,
       uploadId: uploadId ?? this.uploadId,
-      keyEpoch: keyEpoch ?? this.keyEpoch,
+      chunkKeyEpoch: chunkKeyEpoch ?? this.chunkKeyEpoch,
+      manifestKeyEpoch: manifestKeyEpoch ?? this.manifestKeyEpoch,
+      manifestRevision: manifestRevision ?? this.manifestRevision,
       kind: kind ?? this.kind,
       phase: phase ?? this.phase,
       manifestCiphertext: manifestCiphertext ?? this.manifestCiphertext,
@@ -18370,8 +18703,14 @@ class E2eeAttachmentDownloadRowsCompanion
     if (uploadId.present) {
       map['upload_id'] = Variable<String>(uploadId.value);
     }
-    if (keyEpoch.present) {
-      map['key_epoch'] = Variable<int>(keyEpoch.value);
+    if (chunkKeyEpoch.present) {
+      map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch.value);
+    }
+    if (manifestKeyEpoch.present) {
+      map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch.value);
+    }
+    if (manifestRevision.present) {
+      map['manifest_revision'] = Variable<int>(manifestRevision.value);
     }
     if (kind.present) {
       map['kind'] = Variable<String>(kind.value);
@@ -18488,7 +18827,9 @@ class E2eeAttachmentDownloadRowsCompanion
     return (StringBuffer('E2eeAttachmentDownloadRowsCompanion(')
           ..write('attachmentId: $attachmentId, ')
           ..write('uploadId: $uploadId, ')
-          ..write('keyEpoch: $keyEpoch, ')
+          ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
+          ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
+          ..write('manifestRevision: $manifestRevision, ')
           ..write('kind: $kind, ')
           ..write('phase: $phase, ')
           ..write('manifestCiphertext: $manifestCiphertext, ')
@@ -18617,7 +18958,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   );
   late final Index idxMessageAssetsRemoteIdentity = Index(
     'idx_message_assets_remote_identity',
-    'CREATE INDEX idx_message_assets_remote_identity ON message_asset_rows (attachment_id, upload_id, key_epoch, revision_id, ordinal)',
+    'CREATE INDEX idx_message_assets_remote_identity ON message_asset_rows (attachment_id, upload_id, chunk_key_epoch, manifest_key_epoch, manifest_revision, revision_id, ordinal)',
   );
   late final Index idxAssetGcQuarantineClaim = Index(
     'idx_asset_gc_quarantine_claim',
@@ -21193,7 +21534,9 @@ typedef $$MessageAssetRowsTableCreateCompanionBuilder =
       Value<String?> mediaType,
       Value<String?> attachmentId,
       Value<String?> uploadId,
-      Value<int?> keyEpoch,
+      Value<int?> chunkKeyEpoch,
+      Value<int?> manifestKeyEpoch,
+      Value<int?> manifestRevision,
       Value<int> rowid,
     });
 typedef $$MessageAssetRowsTableUpdateCompanionBuilder =
@@ -21206,7 +21549,9 @@ typedef $$MessageAssetRowsTableUpdateCompanionBuilder =
       Value<String?> mediaType,
       Value<String?> attachmentId,
       Value<String?> uploadId,
-      Value<int?> keyEpoch,
+      Value<int?> chunkKeyEpoch,
+      Value<int?> manifestKeyEpoch,
+      Value<int?> manifestRevision,
       Value<int> rowid,
     });
 
@@ -21293,8 +21638,18 @@ class $$MessageAssetRowsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<int> get keyEpoch => $composableBuilder(
-    column: $table.keyEpoch,
+  ColumnFilters<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -21384,8 +21739,18 @@ class $$MessageAssetRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get keyEpoch => $composableBuilder(
-    column: $table.keyEpoch,
+  ColumnOrderings<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -21467,8 +21832,20 @@ class $$MessageAssetRowsTableAnnotationComposer
   GeneratedColumn<String> get uploadId =>
       $composableBuilder(column: $table.uploadId, builder: (column) => column);
 
-  GeneratedColumn<int> get keyEpoch =>
-      $composableBuilder(column: $table.keyEpoch, builder: (column) => column);
+  GeneratedColumn<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
+    builder: (column) => column,
+  );
 
   $$MessageRowsTableAnnotationComposer get revisionId {
     final $$MessageRowsTableAnnotationComposer composer = $composerBuilder(
@@ -21555,7 +21932,9 @@ class $$MessageAssetRowsTableTableManager
                 Value<String?> mediaType = const Value.absent(),
                 Value<String?> attachmentId = const Value.absent(),
                 Value<String?> uploadId = const Value.absent(),
-                Value<int?> keyEpoch = const Value.absent(),
+                Value<int?> chunkKeyEpoch = const Value.absent(),
+                Value<int?> manifestKeyEpoch = const Value.absent(),
+                Value<int?> manifestRevision = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MessageAssetRowsCompanion(
                 revisionId: revisionId,
@@ -21566,7 +21945,9 @@ class $$MessageAssetRowsTableTableManager
                 mediaType: mediaType,
                 attachmentId: attachmentId,
                 uploadId: uploadId,
-                keyEpoch: keyEpoch,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
                 rowid: rowid,
               ),
           createCompanionCallback:
@@ -21579,7 +21960,9 @@ class $$MessageAssetRowsTableTableManager
                 Value<String?> mediaType = const Value.absent(),
                 Value<String?> attachmentId = const Value.absent(),
                 Value<String?> uploadId = const Value.absent(),
-                Value<int?> keyEpoch = const Value.absent(),
+                Value<int?> chunkKeyEpoch = const Value.absent(),
+                Value<int?> manifestKeyEpoch = const Value.absent(),
+                Value<int?> manifestRevision = const Value.absent(),
                 Value<int> rowid = const Value.absent(),
               }) => MessageAssetRowsCompanion.insert(
                 revisionId: revisionId,
@@ -21590,7 +21973,9 @@ class $$MessageAssetRowsTableTableManager
                 mediaType: mediaType,
                 attachmentId: attachmentId,
                 uploadId: uploadId,
-                keyEpoch: keyEpoch,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
                 rowid: rowid,
               ),
           withReferenceMapper: (p0) => p0
@@ -29583,7 +29968,9 @@ typedef $$E2eeAttachmentUploadRowsTableCreateCompanionBuilder =
       required String targetRevisionId,
       required int targetOrdinal,
       required String sourcePath,
-      required int keyEpoch,
+      required int chunkKeyEpoch,
+      required int manifestKeyEpoch,
+      required int manifestRevision,
       required String kind,
       Value<String?> displayName,
       Value<String?> mediaType,
@@ -29623,7 +30010,9 @@ typedef $$E2eeAttachmentUploadRowsTableUpdateCompanionBuilder =
       Value<String> targetRevisionId,
       Value<int> targetOrdinal,
       Value<String> sourcePath,
-      Value<int> keyEpoch,
+      Value<int> chunkKeyEpoch,
+      Value<int> manifestKeyEpoch,
+      Value<int> manifestRevision,
       Value<String> kind,
       Value<String?> displayName,
       Value<String?> mediaType,
@@ -29691,8 +30080,18 @@ class $$E2eeAttachmentUploadRowsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<int> get keyEpoch => $composableBuilder(
-    column: $table.keyEpoch,
+  ColumnFilters<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -29886,8 +30285,18 @@ class $$E2eeAttachmentUploadRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get keyEpoch => $composableBuilder(
-    column: $table.keyEpoch,
+  ColumnOrderings<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -30077,8 +30486,20 @@ class $$E2eeAttachmentUploadRowsTableAnnotationComposer
     builder: (column) => column,
   );
 
-  GeneratedColumn<int> get keyEpoch =>
-      $composableBuilder(column: $table.keyEpoch, builder: (column) => column);
+  GeneratedColumn<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get kind =>
       $composableBuilder(column: $table.kind, builder: (column) => column);
@@ -30273,7 +30694,9 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 Value<String> targetRevisionId = const Value.absent(),
                 Value<int> targetOrdinal = const Value.absent(),
                 Value<String> sourcePath = const Value.absent(),
-                Value<int> keyEpoch = const Value.absent(),
+                Value<int> chunkKeyEpoch = const Value.absent(),
+                Value<int> manifestKeyEpoch = const Value.absent(),
+                Value<int> manifestRevision = const Value.absent(),
                 Value<String> kind = const Value.absent(),
                 Value<String?> displayName = const Value.absent(),
                 Value<String?> mediaType = const Value.absent(),
@@ -30313,7 +30736,9 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 targetRevisionId: targetRevisionId,
                 targetOrdinal: targetOrdinal,
                 sourcePath: sourcePath,
-                keyEpoch: keyEpoch,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
                 kind: kind,
                 displayName: displayName,
                 mediaType: mediaType,
@@ -30353,7 +30778,9 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 required String targetRevisionId,
                 required int targetOrdinal,
                 required String sourcePath,
-                required int keyEpoch,
+                required int chunkKeyEpoch,
+                required int manifestKeyEpoch,
+                required int manifestRevision,
                 required String kind,
                 Value<String?> displayName = const Value.absent(),
                 Value<String?> mediaType = const Value.absent(),
@@ -30393,7 +30820,9 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 targetRevisionId: targetRevisionId,
                 targetOrdinal: targetOrdinal,
                 sourcePath: sourcePath,
-                keyEpoch: keyEpoch,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
                 kind: kind,
                 displayName: displayName,
                 mediaType: mediaType,
@@ -30459,7 +30888,9 @@ typedef $$E2eeAttachmentDownloadRowsTableCreateCompanionBuilder =
     E2eeAttachmentDownloadRowsCompanion Function({
       required String attachmentId,
       required String uploadId,
-      required int keyEpoch,
+      required int chunkKeyEpoch,
+      required int manifestKeyEpoch,
+      required int manifestRevision,
       required String kind,
       required String phase,
       Value<Uint8List?> manifestCiphertext,
@@ -30492,7 +30923,9 @@ typedef $$E2eeAttachmentDownloadRowsTableUpdateCompanionBuilder =
     E2eeAttachmentDownloadRowsCompanion Function({
       Value<String> attachmentId,
       Value<String> uploadId,
-      Value<int> keyEpoch,
+      Value<int> chunkKeyEpoch,
+      Value<int> manifestKeyEpoch,
+      Value<int> manifestRevision,
       Value<String> kind,
       Value<String> phase,
       Value<Uint8List?> manifestCiphertext,
@@ -30541,8 +30974,18 @@ class $$E2eeAttachmentDownloadRowsTableFilterComposer
     builder: (column) => ColumnFilters(column),
   );
 
-  ColumnFilters<int> get keyEpoch => $composableBuilder(
-    column: $table.keyEpoch,
+  ColumnFilters<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -30700,8 +31143,18 @@ class $$E2eeAttachmentDownloadRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
-  ColumnOrderings<int> get keyEpoch => $composableBuilder(
-    column: $table.keyEpoch,
+  ColumnOrderings<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
     builder: (column) => ColumnOrderings(column),
   );
 
@@ -30853,8 +31306,20 @@ class $$E2eeAttachmentDownloadRowsTableAnnotationComposer
   GeneratedColumn<String> get uploadId =>
       $composableBuilder(column: $table.uploadId, builder: (column) => column);
 
-  GeneratedColumn<int> get keyEpoch =>
-      $composableBuilder(column: $table.keyEpoch, builder: (column) => column);
+  GeneratedColumn<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
+    builder: (column) => column,
+  );
 
   GeneratedColumn<String> get kind =>
       $composableBuilder(column: $table.kind, builder: (column) => column);
@@ -31025,7 +31490,9 @@ class $$E2eeAttachmentDownloadRowsTableTableManager
               ({
                 Value<String> attachmentId = const Value.absent(),
                 Value<String> uploadId = const Value.absent(),
-                Value<int> keyEpoch = const Value.absent(),
+                Value<int> chunkKeyEpoch = const Value.absent(),
+                Value<int> manifestKeyEpoch = const Value.absent(),
+                Value<int> manifestRevision = const Value.absent(),
                 Value<String> kind = const Value.absent(),
                 Value<String> phase = const Value.absent(),
                 Value<Uint8List?> manifestCiphertext = const Value.absent(),
@@ -31056,7 +31523,9 @@ class $$E2eeAttachmentDownloadRowsTableTableManager
               }) => E2eeAttachmentDownloadRowsCompanion(
                 attachmentId: attachmentId,
                 uploadId: uploadId,
-                keyEpoch: keyEpoch,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
                 kind: kind,
                 phase: phase,
                 manifestCiphertext: manifestCiphertext,
@@ -31089,7 +31558,9 @@ class $$E2eeAttachmentDownloadRowsTableTableManager
               ({
                 required String attachmentId,
                 required String uploadId,
-                required int keyEpoch,
+                required int chunkKeyEpoch,
+                required int manifestKeyEpoch,
+                required int manifestRevision,
                 required String kind,
                 required String phase,
                 Value<Uint8List?> manifestCiphertext = const Value.absent(),
@@ -31120,7 +31591,9 @@ class $$E2eeAttachmentDownloadRowsTableTableManager
               }) => E2eeAttachmentDownloadRowsCompanion.insert(
                 attachmentId: attachmentId,
                 uploadId: uploadId,
-                keyEpoch: keyEpoch,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
                 kind: kind,
                 phase: phase,
                 manifestCiphertext: manifestCiphertext,

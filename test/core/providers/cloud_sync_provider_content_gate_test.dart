@@ -4801,7 +4801,9 @@ final class _RuntimeAttachmentTransport
         uploadId:
             '50000000-0000-4000-8000-'
             '${_uploadSequence.toRadixString(16).padLeft(12, '0')}',
-        keyEpoch: request.keyEpoch,
+        chunkKeyEpoch: request.chunkKeyEpoch,
+        manifestKeyEpoch: request.manifestKeyEpoch,
+        manifestRevision: request.manifestRevision,
       ),
       chunkCount: request.chunkCount,
       totalCiphertextBytes: request.totalCiphertextBytes,

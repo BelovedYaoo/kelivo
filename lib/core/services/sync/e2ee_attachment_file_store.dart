@@ -46,7 +46,9 @@ final class E2eeAttachmentFileLocation {
         'upload',
         identity.attachmentId,
         identity.uploadId,
-        identity.keyEpoch.toString(),
+        identity.chunkKeyEpoch.toString(),
+        identity.manifestKeyEpoch.toString(),
+        identity.manifestRevision.toString(),
       ],
       fileName: '${chunk.chunkIndex}-$mutation.ciphertext',
     );
@@ -1595,15 +1597,19 @@ bool _requireOwnedRelativeSegments(List<String> segments) {
       _sha256HexPattern.hasMatch(segments.last)) {
     return false;
   }
-  if (segments.length != 6 ||
+  if (segments.length != 8 ||
       segments[0] != 'staging' ||
       (segments[1] != 'upload' && segments[1] != 'download') ||
       !_canonicalUuidV4Pattern.hasMatch(segments[2]) ||
       !_canonicalUuidV4Pattern.hasMatch(segments[3]) ||
       !_isPositiveUint32(segments[4]) ||
+      !_isPositiveUint32(segments[5]) ||
+      !_isPositiveUint32(segments[6]) ||
+      int.parse(segments[5]) - int.parse(segments[4]) !=
+          int.parse(segments[6]) - 1 ||
       (segments[1] == 'upload'
-          ? !_isUploadChunkFileName(segments[5])
-          : segments[5] != _downloadPlaintextFileName)) {
+          ? !_isUploadChunkFileName(segments[7])
+          : segments[7] != _downloadPlaintextFileName)) {
     throw StateError('e2ee_attachment_owned_path_unsafe');
   }
   return true;
@@ -1633,7 +1639,9 @@ List<String> _downloadPlaintextDirectorySegments(
   'download',
   identity.attachmentId,
   identity.uploadId,
-  identity.keyEpoch.toString(),
+  identity.chunkKeyEpoch.toString(),
+  identity.manifestKeyEpoch.toString(),
+  identity.manifestRevision.toString(),
 ];
 
 String _memoryDownloadPlaintextPath(CloudSyncAttachmentIdentity identity) =>

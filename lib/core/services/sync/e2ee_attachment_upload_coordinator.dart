@@ -171,7 +171,9 @@ final class E2eeAttachmentUploadCoordinator {
                   request: CloudSyncAttachmentCreateUploadRequest(
                     mutationId: lease.state.createMutationId,
                     attachmentId: lease.state.attachmentId,
-                    keyEpoch: lease.state.descriptor.keyEpoch,
+                    chunkKeyEpoch: lease.state.descriptor.chunkKeyEpoch,
+                    manifestKeyEpoch: lease.state.manifestKeyEpoch,
+                    manifestRevision: lease.state.manifestRevision,
                     chunkCount:
                         lease.state.descriptor.chunkCiphertextBytes.length,
                     totalCiphertextBytes:
@@ -207,6 +209,7 @@ final class E2eeAttachmentUploadCoordinator {
                 () => _cryptoSession.sealManifest(
                   descriptor: lease.state.descriptor,
                   uploadId: uploadId,
+                  manifestRevision: lease.state.manifestRevision,
                 ),
               );
               lease = await _commands.attachManifest(
@@ -239,7 +242,9 @@ final class E2eeAttachmentUploadCoordinator {
                 identity: CloudSyncAttachmentIdentity(
                   attachmentId: lease.state.attachmentId,
                   uploadId: uploadId,
-                  keyEpoch: lease.state.descriptor.keyEpoch,
+                  chunkKeyEpoch: lease.state.descriptor.chunkKeyEpoch,
+                  manifestKeyEpoch: lease.state.manifestKeyEpoch,
+                  manifestRevision: lease.state.manifestRevision,
                 ),
                 chunkIndex: pending.index,
               );
@@ -297,7 +302,9 @@ final class E2eeAttachmentUploadCoordinator {
               final identity = CloudSyncAttachmentIdentity(
                 attachmentId: lease.state.attachmentId,
                 uploadId: uploadId,
-                keyEpoch: lease.state.descriptor.keyEpoch,
+                chunkKeyEpoch: lease.state.descriptor.chunkKeyEpoch,
+                manifestKeyEpoch: lease.state.manifestKeyEpoch,
+                manifestRevision: lease.state.manifestRevision,
               );
               remoteSteps++;
               final committed = await _runRemote(
@@ -436,7 +443,9 @@ final class E2eeAttachmentUploadCoordinator {
       final identity = CloudSyncAttachmentIdentity(
         attachmentId: state.attachmentId,
         uploadId: uploadId,
-        keyEpoch: state.descriptor.keyEpoch,
+        chunkKeyEpoch: state.descriptor.chunkKeyEpoch,
+        manifestKeyEpoch: state.manifestKeyEpoch,
+        manifestRevision: state.manifestRevision,
       );
       final stored = await _runLocal(
         'staging-integrity-failed',
@@ -732,7 +741,9 @@ void _requireCreatedMatches(
 ) {
   final identity = created.identity;
   if (identity.attachmentId != state.attachmentId ||
-      identity.keyEpoch != state.descriptor.keyEpoch ||
+      identity.chunkKeyEpoch != state.descriptor.chunkKeyEpoch ||
+      identity.manifestKeyEpoch != state.manifestKeyEpoch ||
+      identity.manifestRevision != state.manifestRevision ||
       created.chunkCount != state.descriptor.chunkCiphertextBytes.length ||
       created.totalCiphertextBytes != state.descriptor.totalCiphertextBytes) {
     throw const _PermanentUploadFailure('remote-invalid-response');
@@ -767,7 +778,9 @@ bool _sameIdentity(
 ) {
   return left.attachmentId == right.attachmentId &&
       left.uploadId == right.uploadId &&
-      left.keyEpoch == right.keyEpoch;
+      left.chunkKeyEpoch == right.chunkKeyEpoch &&
+      left.manifestKeyEpoch == right.manifestKeyEpoch &&
+      left.manifestRevision == right.manifestRevision;
 }
 
 Duration _retryDelay(int consecutiveFailureCount) {

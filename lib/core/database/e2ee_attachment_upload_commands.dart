@@ -102,6 +102,8 @@ final class E2eeAttachmentUploadState {
     required this.phase,
     required this.createMutationId,
     required this.uploadId,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
     required Uint8List? manifestCiphertext,
     required this.commitMutationId,
     required this.nextChunkIndex,
@@ -126,6 +128,8 @@ final class E2eeAttachmentUploadState {
   final E2eeAttachmentUploadPhase phase;
   final String createMutationId;
   final String? uploadId;
+  final int manifestKeyEpoch;
+  final int manifestRevision;
   final Uint8List? manifestCiphertext;
   final String commitMutationId;
   final int nextChunkIndex;
@@ -188,7 +192,9 @@ final class E2eeAttachmentUploadCommands {
       if (target.assetId != draft.localAssetId ||
           target.attachmentId != null ||
           target.uploadId != null ||
-          target.keyEpoch != null ||
+          target.chunkKeyEpoch != null ||
+          target.manifestKeyEpoch != null ||
+          target.manifestRevision != null ||
           target.kind != descriptor.kind.name ||
           target.displayName != descriptor.displayName ||
           target.mediaType != descriptor.mediaType) {
@@ -212,7 +218,9 @@ final class E2eeAttachmentUploadCommands {
               targetRevisionId: draft.targetRevisionId,
               targetOrdinal: draft.targetOrdinal,
               sourcePath: draft.sourcePath,
-              keyEpoch: descriptor.keyEpoch,
+              chunkKeyEpoch: descriptor.chunkKeyEpoch,
+              manifestKeyEpoch: descriptor.chunkKeyEpoch,
+              manifestRevision: 1,
               kind: descriptor.kind.name,
               displayName: Value(descriptor.displayName),
               mediaType: Value(descriptor.mediaType),
@@ -395,7 +403,9 @@ final class E2eeAttachmentUploadCommands {
     }
     if (sealedManifest.attachmentId != state.attachmentId ||
         sealedManifest.uploadId != state.uploadId ||
-        sealedManifest.keyEpoch != state.descriptor.keyEpoch) {
+        sealedManifest.chunkKeyEpoch != state.descriptor.chunkKeyEpoch ||
+        sealedManifest.manifestKeyEpoch != state.manifestKeyEpoch ||
+        sealedManifest.manifestRevision != state.manifestRevision) {
       throw const FormatException('附件认证清单与持久上传身份不一致');
     }
     return _transitionLease(
@@ -506,13 +516,17 @@ final class E2eeAttachmentUploadCommands {
                     row.assetId.equals(lease.state.localAssetId) &
                     row.attachmentId.isNull() &
                     row.uploadId.isNull() &
-                    row.keyEpoch.isNull(),
+                    row.chunkKeyEpoch.isNull() &
+                    row.manifestKeyEpoch.isNull() &
+                    row.manifestRevision.isNull(),
               ))
               .write(
                 MessageAssetRowsCompanion(
                   attachmentId: Value(lease.state.attachmentId),
                   uploadId: Value(uploadId),
-                  keyEpoch: Value(lease.state.descriptor.keyEpoch),
+                  chunkKeyEpoch: Value(lease.state.descriptor.chunkKeyEpoch),
+                  manifestKeyEpoch: Value(lease.state.manifestKeyEpoch),
+                  manifestRevision: Value(lease.state.manifestRevision),
                 ),
               );
       if (targetUpdated != 1) throw StateError('附件上传目标消息引用 CAS 失败');
@@ -786,7 +800,7 @@ E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
     );
     final descriptor = E2eeAttachmentDescriptor(
       attachmentId: row.attachmentId,
-      keyEpoch: row.keyEpoch,
+      chunkKeyEpoch: row.chunkKeyEpoch,
       kind: switch (row.kind) {
         'image' => E2eeAttachmentKind.image,
         'file' => E2eeAttachmentKind.file,
@@ -842,6 +856,8 @@ E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
         'createMutationId',
       ),
       uploadId: uploadId,
+      manifestKeyEpoch: row.manifestKeyEpoch,
+      manifestRevision: row.manifestRevision,
       manifestCiphertext: row.manifestCiphertext,
       commitMutationId: _requireCanonicalUuidV4(
         row.commitMutationId,
@@ -874,7 +890,9 @@ E2eeAttachmentUploadState _requireSameUploadSource(
       existing.targetRevisionId != draft.targetRevisionId ||
       existing.targetOrdinal != draft.targetOrdinal ||
       existing.sourcePath != draft.sourcePath ||
-      persisted.keyEpoch != requested.keyEpoch ||
+      persisted.chunkKeyEpoch != requested.chunkKeyEpoch ||
+      existing.manifestKeyEpoch != requested.chunkKeyEpoch ||
+      existing.manifestRevision != 1 ||
       persisted.kind != requested.kind ||
       persisted.totalPlaintextBytes != requested.totalPlaintextBytes ||
       persisted.displayName != requested.displayName ||

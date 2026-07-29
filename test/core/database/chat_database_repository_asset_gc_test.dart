@@ -589,7 +589,9 @@ void main() {
       final reference = E2eeAttachmentDownloadReference(
         attachmentId: '76000000-0000-4000-8000-000000000001',
         uploadId: '76000000-0000-4000-8000-000000000002',
-        keyEpoch: 1,
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 1,
         kind: E2eeAttachmentKind.file,
       );
       final commands = repository.e2eeAttachmentDownloadCommands;
@@ -606,7 +608,9 @@ void main() {
         manifest: E2eeAttachmentManifest(
           attachmentId: reference.attachmentId,
           uploadId: reference.uploadId,
-          keyEpoch: reference.keyEpoch,
+          chunkKeyEpoch: reference.chunkKeyEpoch,
+          manifestKeyEpoch: reference.manifestKeyEpoch,
+          manifestRevision: reference.manifestRevision,
           kind: reference.kind,
           totalPlaintextBytes: 0,
           contentSha256: Uint8List(32),

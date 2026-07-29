@@ -67,7 +67,7 @@ void main() {
     String? assetId,
     String? contentHash,
     bool withRemoteIdentity = false,
-    int keyEpoch = 1,
+    int chunkKeyEpoch = 1,
   }) {
     final kind = index.isEven ? 'image' : 'file';
     final suffix = (index + 1).toString().padLeft(12, '0');
@@ -83,7 +83,9 @@ void main() {
           ? 'a0000000-0000-4000-8000-$suffix'
           : null,
       uploadId: withRemoteIdentity ? 'b0000000-0000-4000-8000-$suffix' : null,
-      keyEpoch: withRemoteIdentity ? keyEpoch : null,
+      chunkKeyEpoch: withRemoteIdentity ? chunkKeyEpoch : null,
+      manifestKeyEpoch: withRemoteIdentity ? chunkKeyEpoch : null,
+      manifestRevision: withRemoteIdentity ? 1 : null,
     );
   }
 
@@ -151,7 +153,7 @@ void main() {
       (index) => attachment(
         index,
         withRemoteIdentity: index == 0 || index == 31,
-        keyEpoch: index == 31 ? 0xffffffff : 7,
+        chunkKeyEpoch: index == 31 ? 0xffffffff : 7,
       ),
       growable: false,
     );
@@ -187,12 +189,16 @@ void main() {
       persisted.attachments.first.attachmentId,
       'a0000000-0000-4000-8000-000000000001',
     );
-    expect(persisted.attachments.first.keyEpoch, 7);
+    expect(persisted.attachments.first.chunkKeyEpoch, 7);
+    expect(persisted.attachments.first.manifestKeyEpoch, 7);
+    expect(persisted.attachments.first.manifestRevision, 1);
     expect(persisted.attachments.last.assetId, 'asset-31');
     expect(persisted.attachments.last.kind, 'file');
     expect(persisted.attachments.last.displayName, 'asset-31.bin');
     expect(persisted.attachments.last.mediaType, 'application/octet-stream');
-    expect(persisted.attachments.last.keyEpoch, 0xffffffff);
+    expect(persisted.attachments.last.chunkKeyEpoch, 0xffffffff);
+    expect(persisted.attachments.last.manifestKeyEpoch, 0xffffffff);
+    expect(persisted.attachments.last.manifestRevision, 1);
     expect(
       (await repository.getMessagesRange(
         structured.conversationId,
@@ -243,7 +249,7 @@ void main() {
     );
     final afterTextUpdate = (await repository.getMessage(structured.id))!;
     expect(afterTextUpdate.attachments.first.attachmentId, isNotNull);
-    expect(afterTextUpdate.attachments.last.keyEpoch, 0xffffffff);
+    expect(afterTextUpdate.attachments.last.chunkKeyEpoch, 0xffffffff);
 
     await repository.updateMessage(afterTextUpdate.copyWith(attachments: []));
     expect((await repository.getMessage(structured.id))!.attachments, isEmpty);
