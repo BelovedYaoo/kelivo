@@ -1,8 +1,8 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
-import 'dart:typed_data';
 
+import 'package:flutter/foundation.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 import '../../database/chat_database_gateway.dart';
@@ -50,6 +50,9 @@ typedef E2eeChatContentTransportFactory =
       required CloudSyncAuthenticatedSession session,
     });
 
+typedef E2eeAttachmentUploadWorkScanner =
+    Future<bool> Function(E2eeAttachmentUploadCommands commands);
+
 enum E2eeChatContentRuntimeState {
   created,
   initializing,
@@ -76,6 +79,9 @@ final class E2eeChatContentRuntime
     required CloudSyncClient client,
     E2eeChatContentTransportFactory transportFactory = _defaultTransportFactory,
     DateTime Function() utcNow = _defaultUtcNow,
+    @visibleForTesting
+    E2eeAttachmentUploadWorkScanner attachmentWorkScanner =
+        _defaultAttachmentUploadWorkScanner,
   }) => E2eeChatContentRuntime._(
     session: session,
     deviceStateStore: deviceStateStore,
@@ -85,6 +91,7 @@ final class E2eeChatContentRuntime
     client: client,
     transportFactory: transportFactory,
     utcNow: utcNow,
+    attachmentWorkScanner: attachmentWorkScanner,
     mode: E2eeChatContentRuntimeMode.continuous,
   );
 
@@ -97,6 +104,9 @@ final class E2eeChatContentRuntime
     required CloudSyncClient client,
     E2eeChatContentTransportFactory transportFactory = _defaultTransportFactory,
     DateTime Function() utcNow = _defaultUtcNow,
+    @visibleForTesting
+    E2eeAttachmentUploadWorkScanner attachmentWorkScanner =
+        _defaultAttachmentUploadWorkScanner,
   }) {
     final runtime = E2eeChatContentRuntime._(
       session: session,
@@ -107,6 +117,7 @@ final class E2eeChatContentRuntime
       client: client,
       transportFactory: transportFactory,
       utcNow: utcNow,
+      attachmentWorkScanner: attachmentWorkScanner,
       mode: E2eeChatContentRuntimeMode.singleCycle,
     );
     runtime.bindChatService(
@@ -125,6 +136,7 @@ final class E2eeChatContentRuntime
     required CloudSyncClient client,
     required this._transportFactory,
     required this._utcNow,
+    required this._attachmentWorkScanner,
     required this._mode,
   }) : _session = session,
        _databaseFile = databaseFile.absolute,
@@ -142,6 +154,7 @@ final class E2eeChatContentRuntime
   final CloudSyncClient _client;
   final E2eeChatContentTransportFactory _transportFactory;
   final DateTime Function() _utcNow;
+  final E2eeAttachmentUploadWorkScanner _attachmentWorkScanner;
   final E2eeChatContentRuntimeMode _mode;
 
   E2eeChatContentRuntimeState _state = E2eeChatContentRuntimeState.created;
@@ -157,6 +170,7 @@ final class E2eeChatContentRuntime
   E2eeAttachmentUploadCommands? _attachmentUploadCommands;
   E2eeAttachmentDownloadCoordinator? _attachmentDownloads;
   bool _hasAttachmentUploadWork = false;
+  int _attachmentUploadWorkGeneration = 0;
   E2eeSyncScheduler? _scheduler;
   E2eeSyncCycleRunner Function(E2eeSyncExecutionBudget?)? _cycleRunnerFactory;
   Future<E2eeSyncCycleReport>? _activeSingleCycle;
@@ -337,8 +351,7 @@ final class E2eeChatContentRuntime
       );
       _attachmentUploadCommands = attachmentUploadCommands;
       _attachmentUploads = attachmentUploads;
-      _hasAttachmentUploadWork = await attachmentUploadCommands
-          .hasRetryableWork();
+      await _refreshAttachmentUploadWork(attachmentUploadCommands);
       _requireStillInitializing();
 
       Future<T> runPullBatch<T>({
@@ -433,8 +446,7 @@ final class E2eeChatContentRuntime
                 executionBudget: executionBudget,
               );
               if (remoteSteps < maximumRemoteSteps) {
-                _hasAttachmentUploadWork = await attachmentUploadCommands
-                    .hasRetryableWork();
+                await _refreshAttachmentUploadWork(attachmentUploadCommands);
               }
             });
           },
@@ -642,7 +654,7 @@ final class E2eeChatContentRuntime
           return value;
         },
       );
-      if (persistedTarget) _hasAttachmentUploadWork = true;
+      if (persistedTarget) _markAttachmentUploadWork();
       if (_state == E2eeChatContentRuntimeState.ready) {
         _scheduler?.wake();
       }
@@ -698,6 +710,22 @@ final class E2eeChatContentRuntime
             ),
             write: write,
           );
+  }
+
+  void _markAttachmentUploadWork() {
+    _attachmentUploadWorkGeneration++;
+    _hasAttachmentUploadWork = true;
+  }
+
+  Future<void> _refreshAttachmentUploadWork(
+    E2eeAttachmentUploadCommands commands,
+  ) async {
+    final scannedGeneration = _attachmentUploadWorkGeneration;
+    final hasWork = await _attachmentWorkScanner(commands);
+    // 扫描期间提交的新草稿拥有更新世代，旧 false 无权清除它的唤醒。
+    if (hasWork || scannedGeneration == _attachmentUploadWorkGeneration) {
+      _hasAttachmentUploadWork = hasWork;
+    }
   }
 
   void _requireReadyForLocalOperation() {
@@ -941,6 +969,10 @@ E2eeChatContentTransports _defaultTransportFactory({
 }
 
 DateTime _defaultUtcNow() => DateTime.now().toUtc();
+
+Future<bool> _defaultAttachmentUploadWorkScanner(
+  E2eeAttachmentUploadCommands commands,
+) => commands.hasRetryableWork();
 
 Uint8List _decodeSha256Hex(String value) {
   if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(value)) {

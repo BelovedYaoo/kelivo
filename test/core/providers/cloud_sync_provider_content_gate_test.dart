@@ -2343,6 +2343,100 @@ void main() {
     expect(notifications, 0);
   });
 
+  test('附件旧扫描的 false 不会覆盖扫描期间提交的新上传工作', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final scanRead = Completer<void>();
+    final releaseScan = Completer<void>();
+    var armScanBarrier = false;
+    addTearDown(() {
+      if (!releaseScan.isCompleted) releaseScan.complete();
+    });
+    final instance = harness.createInstance(
+      blockInitialPull: true,
+      attachmentWorkScanner: (commands) async {
+        final result = await commands.hasRetryableWork();
+        if (armScanBarrier && !result && !scanRead.isCompleted) {
+          scanRead.complete();
+          await releaseScan.future;
+        }
+        return result;
+      },
+    );
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls == 1);
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final firstSource = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}scan-first.txt',
+    );
+    await firstSource.writeAsString('first attachment', flush: true);
+    final conversation = await instance.chatService.createConversation(
+      title: '扫描世代',
+    );
+    await instance.chatService.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '第一个附件',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.file(
+          path: firstSource.path,
+          displayName: 'scan-first.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+
+    armScanBarrier = true;
+    instance.pull.releaseBlockedPull();
+    await scanRead.future.timeout(const Duration(seconds: 15));
+    final secondSource = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}scan-second.txt',
+    );
+    await secondSource.writeAsString('second attachment', flush: true);
+    await instance.chatService.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '第二个附件',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.file(
+          path: secondSource.path,
+          displayName: 'scan-second.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    releaseScan.complete();
+
+    await _waitUntil(() => instance.pull.pullCalls >= 4);
+    expect(instance.attachments.createCalls, 2);
+    expect(instance.attachments.commitCalls, 2);
+  });
+
+  test('无附件本地写入唤醒同步周期时不会额外扫描附件表', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    var scanCalls = 0;
+    final instance = harness.createInstance(
+      attachmentWorkScanner: (commands) async {
+        scanCalls++;
+        return commands.hasRetryableWork();
+      },
+    );
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+    final scansAfterInitialization = scanCalls;
+    final pullsBeforeWrite = instance.pull.pullCalls;
+
+    await instance.chatService.createConversation(title: '纯文本唤醒');
+
+    await _waitUntil(() => instance.pull.pullCalls >= pullsBeforeWrite + 2);
+    expect(scansAfterInitialization, 1);
+    expect(scanCalls, scansAfterInitialization);
+    expect(instance.attachments.createCalls, 0);
+  });
+
   test('E2EE 附件草稿与消息 outbox 原子提交且远端提交后才发送记录', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -3047,6 +3141,8 @@ final class _E2eeRuntimeHarness {
     bool blockInitialPull = false,
     bool withConfigProviders = true,
     CloudSyncException? pullFailure,
+    E2eeAttachmentUploadWorkScanner attachmentWorkScanner =
+        _defaultRuntimeAttachmentWorkScanner,
   }) {
     final transportEvents = <String>[];
     final pull = _RuntimePullTransport(
@@ -3081,6 +3177,7 @@ final class _E2eeRuntimeHarness {
       databaseFile: _databaseFile,
       client: CloudSyncClient.forTesting(baseUrl: session.baseUrl),
       transportFactory: createTransports,
+      attachmentWorkScanner: attachmentWorkScanner,
     );
     final chatService = ChatService(runtime, databaseGateway: _databaseGateway);
     runtime.bindChatService(chatService);
@@ -3118,6 +3215,10 @@ final class _E2eeRuntimeHarness {
     if (await root.exists()) await root.delete(recursive: true);
   }
 }
+
+Future<bool> _defaultRuntimeAttachmentWorkScanner(
+  E2eeAttachmentUploadCommands commands,
+) => commands.hasRetryableWork();
 
 final class _RollbackAttachmentWriteHarness {
   const _RollbackAttachmentWriteHarness._({
