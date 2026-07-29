@@ -17,6 +17,8 @@ class _$OpaqueRegistrationFinishRequest
   @override
   final String accountKeyEnvelope;
   @override
+  final GenesisSecurityState securityState;
+  @override
   final String deviceProof;
 
   factory _$OpaqueRegistrationFinishRequest([
@@ -28,6 +30,7 @@ class _$OpaqueRegistrationFinishRequest
     required this.attemptId,
     required this.registrationUpload,
     required this.accountKeyEnvelope,
+    required this.securityState,
     required this.deviceProof,
   }) : super._();
   @override
@@ -47,6 +50,7 @@ class _$OpaqueRegistrationFinishRequest
         attemptId == other.attemptId &&
         registrationUpload == other.registrationUpload &&
         accountKeyEnvelope == other.accountKeyEnvelope &&
+        securityState == other.securityState &&
         deviceProof == other.deviceProof;
   }
 
@@ -57,6 +61,7 @@ class _$OpaqueRegistrationFinishRequest
     _$hash = $jc(_$hash, attemptId.hashCode);
     _$hash = $jc(_$hash, registrationUpload.hashCode);
     _$hash = $jc(_$hash, accountKeyEnvelope.hashCode);
+    _$hash = $jc(_$hash, securityState.hashCode);
     _$hash = $jc(_$hash, deviceProof.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -69,6 +74,7 @@ class _$OpaqueRegistrationFinishRequest
           ..add('attemptId', attemptId)
           ..add('registrationUpload', registrationUpload)
           ..add('accountKeyEnvelope', accountKeyEnvelope)
+          ..add('securityState', securityState)
           ..add('deviceProof', deviceProof))
         .toString();
   }
@@ -101,6 +107,12 @@ class OpaqueRegistrationFinishRequestBuilder
   set accountKeyEnvelope(String? accountKeyEnvelope) =>
       _$this._accountKeyEnvelope = accountKeyEnvelope;
 
+  GenesisSecurityStateBuilder? _securityState;
+  GenesisSecurityStateBuilder get securityState =>
+      _$this._securityState ??= GenesisSecurityStateBuilder();
+  set securityState(GenesisSecurityStateBuilder? securityState) =>
+      _$this._securityState = securityState;
+
   String? _deviceProof;
   String? get deviceProof => _$this._deviceProof;
   set deviceProof(String? deviceProof) => _$this._deviceProof = deviceProof;
@@ -116,6 +128,7 @@ class OpaqueRegistrationFinishRequestBuilder
       _attemptId = $v.attemptId;
       _registrationUpload = $v.registrationUpload;
       _accountKeyEnvelope = $v.accountKeyEnvelope;
+      _securityState = $v.securityState.toBuilder();
       _deviceProof = $v.deviceProof;
       _$v = null;
     }
@@ -136,35 +149,52 @@ class OpaqueRegistrationFinishRequestBuilder
   OpaqueRegistrationFinishRequest build() => _build();
 
   _$OpaqueRegistrationFinishRequest _build() {
-    final _$result =
-        _$v ??
-        _$OpaqueRegistrationFinishRequest._(
-          protocolVersion: BuiltValueNullFieldError.checkNotNull(
-            protocolVersion,
-            r'OpaqueRegistrationFinishRequest',
-            'protocolVersion',
-          ),
-          attemptId: BuiltValueNullFieldError.checkNotNull(
-            attemptId,
-            r'OpaqueRegistrationFinishRequest',
-            'attemptId',
-          ),
-          registrationUpload: BuiltValueNullFieldError.checkNotNull(
-            registrationUpload,
-            r'OpaqueRegistrationFinishRequest',
-            'registrationUpload',
-          ),
-          accountKeyEnvelope: BuiltValueNullFieldError.checkNotNull(
-            accountKeyEnvelope,
-            r'OpaqueRegistrationFinishRequest',
-            'accountKeyEnvelope',
-          ),
-          deviceProof: BuiltValueNullFieldError.checkNotNull(
-            deviceProof,
-            r'OpaqueRegistrationFinishRequest',
-            'deviceProof',
-          ),
+    _$OpaqueRegistrationFinishRequest _$result;
+    try {
+      _$result =
+          _$v ??
+          _$OpaqueRegistrationFinishRequest._(
+            protocolVersion: BuiltValueNullFieldError.checkNotNull(
+              protocolVersion,
+              r'OpaqueRegistrationFinishRequest',
+              'protocolVersion',
+            ),
+            attemptId: BuiltValueNullFieldError.checkNotNull(
+              attemptId,
+              r'OpaqueRegistrationFinishRequest',
+              'attemptId',
+            ),
+            registrationUpload: BuiltValueNullFieldError.checkNotNull(
+              registrationUpload,
+              r'OpaqueRegistrationFinishRequest',
+              'registrationUpload',
+            ),
+            accountKeyEnvelope: BuiltValueNullFieldError.checkNotNull(
+              accountKeyEnvelope,
+              r'OpaqueRegistrationFinishRequest',
+              'accountKeyEnvelope',
+            ),
+            securityState: securityState.build(),
+            deviceProof: BuiltValueNullFieldError.checkNotNull(
+              deviceProof,
+              r'OpaqueRegistrationFinishRequest',
+              'deviceProof',
+            ),
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'securityState';
+        securityState.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'OpaqueRegistrationFinishRequest',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

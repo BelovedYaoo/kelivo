@@ -6,7 +6,75 @@ part of 'sync_pull_page_data.dart';
 // BuiltValueGenerator
 // **************************************************************************
 
+const SyncPullPageDataDataRekeyPhaseEnum
+_$syncPullPageDataDataRekeyPhaseEnum_ready =
+    const SyncPullPageDataDataRekeyPhaseEnum._('ready');
+const SyncPullPageDataDataRekeyPhaseEnum
+_$syncPullPageDataDataRekeyPhaseEnum_rekeyPending =
+    const SyncPullPageDataDataRekeyPhaseEnum._('rekeyPending');
+
+SyncPullPageDataDataRekeyPhaseEnum _$syncPullPageDataDataRekeyPhaseEnumValueOf(
+  String name,
+) {
+  switch (name) {
+    case 'ready':
+      return _$syncPullPageDataDataRekeyPhaseEnum_ready;
+    case 'rekeyPending':
+      return _$syncPullPageDataDataRekeyPhaseEnum_rekeyPending;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<SyncPullPageDataDataRekeyPhaseEnum>
+_$syncPullPageDataDataRekeyPhaseEnumValues =
+    BuiltSet<SyncPullPageDataDataRekeyPhaseEnum>(
+      const <SyncPullPageDataDataRekeyPhaseEnum>[
+        _$syncPullPageDataDataRekeyPhaseEnum_ready,
+        _$syncPullPageDataDataRekeyPhaseEnum_rekeyPending,
+      ],
+    );
+
+Serializer<SyncPullPageDataDataRekeyPhaseEnum>
+_$syncPullPageDataDataRekeyPhaseEnumSerializer =
+    _$SyncPullPageDataDataRekeyPhaseEnumSerializer();
+
+class _$SyncPullPageDataDataRekeyPhaseEnumSerializer
+    implements PrimitiveSerializer<SyncPullPageDataDataRekeyPhaseEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'ready': 'ready',
+    'rekeyPending': 'rekey-pending',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'ready': 'ready',
+    'rekey-pending': 'rekeyPending',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[SyncPullPageDataDataRekeyPhaseEnum];
+  @override
+  final String wireName = 'SyncPullPageDataDataRekeyPhaseEnum';
+
+  @override
+  Object serialize(
+    Serializers serializers,
+    SyncPullPageDataDataRekeyPhaseEnum object, {
+    FullType specifiedType = FullType.unspecified,
+  }) => _toWire[object.name] ?? object.name;
+
+  @override
+  SyncPullPageDataDataRekeyPhaseEnum deserialize(
+    Serializers serializers,
+    Object serialized, {
+    FullType specifiedType = FullType.unspecified,
+  }) => SyncPullPageDataDataRekeyPhaseEnum.valueOf(
+    _fromWire[serialized] ?? (serialized is String ? serialized : ''),
+  );
+}
+
 class _$SyncPullPageData extends SyncPullPageData {
+  @override
+  final SyncPullPageDataDataRekeyPhaseEnum dataRekeyPhase;
   @override
   final BuiltList<SyncChange> changes;
   @override
@@ -21,6 +89,7 @@ class _$SyncPullPageData extends SyncPullPageData {
   ]) => (SyncPullPageDataBuilder()..update(updates))._build();
 
   _$SyncPullPageData._({
+    required this.dataRekeyPhase,
     required this.changes,
     required this.nextCursor,
     required this.hasMore,
@@ -38,6 +107,7 @@ class _$SyncPullPageData extends SyncPullPageData {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is SyncPullPageData &&
+        dataRekeyPhase == other.dataRekeyPhase &&
         changes == other.changes &&
         nextCursor == other.nextCursor &&
         hasMore == other.hasMore &&
@@ -47,6 +117,7 @@ class _$SyncPullPageData extends SyncPullPageData {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, dataRekeyPhase.hashCode);
     _$hash = $jc(_$hash, changes.hashCode);
     _$hash = $jc(_$hash, nextCursor.hashCode);
     _$hash = $jc(_$hash, hasMore.hashCode);
@@ -58,6 +129,7 @@ class _$SyncPullPageData extends SyncPullPageData {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'SyncPullPageData')
+          ..add('dataRekeyPhase', dataRekeyPhase)
           ..add('changes', changes)
           ..add('nextCursor', nextCursor)
           ..add('hasMore', hasMore)
@@ -69,6 +141,12 @@ class _$SyncPullPageData extends SyncPullPageData {
 class SyncPullPageDataBuilder
     implements Builder<SyncPullPageData, SyncPullPageDataBuilder> {
   _$SyncPullPageData? _$v;
+
+  SyncPullPageDataDataRekeyPhaseEnum? _dataRekeyPhase;
+  SyncPullPageDataDataRekeyPhaseEnum? get dataRekeyPhase =>
+      _$this._dataRekeyPhase;
+  set dataRekeyPhase(SyncPullPageDataDataRekeyPhaseEnum? dataRekeyPhase) =>
+      _$this._dataRekeyPhase = dataRekeyPhase;
 
   ListBuilder<SyncChange>? _changes;
   ListBuilder<SyncChange> get changes =>
@@ -95,6 +173,7 @@ class SyncPullPageDataBuilder
   SyncPullPageDataBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _dataRekeyPhase = $v.dataRekeyPhase;
       _changes = $v.changes.toBuilder();
       _nextCursor = $v.nextCursor;
       _hasMore = $v.hasMore;
@@ -123,6 +202,11 @@ class SyncPullPageDataBuilder
       _$result =
           _$v ??
           _$SyncPullPageData._(
+            dataRekeyPhase: BuiltValueNullFieldError.checkNotNull(
+              dataRekeyPhase,
+              r'SyncPullPageData',
+              'dataRekeyPhase',
+            ),
             changes: changes.build(),
             nextCursor: BuiltValueNullFieldError.checkNotNull(
               nextCursor,

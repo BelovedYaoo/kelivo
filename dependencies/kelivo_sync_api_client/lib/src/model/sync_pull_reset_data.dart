@@ -13,6 +13,7 @@ part 'sync_pull_reset_data.g.dart';
 /// SyncPullResetData
 ///
 /// Properties:
+/// * [dataRekeyPhase]
 /// * [changes]
 /// * [nextCursor]
 /// * [hasMore]
@@ -20,6 +21,10 @@ part 'sync_pull_reset_data.g.dart';
 @BuiltValue()
 abstract class SyncPullResetData
     implements Built<SyncPullResetData, SyncPullResetDataBuilder> {
+  @BuiltValueField(wireName: r'dataRekeyPhase')
+  SyncPullResetDataDataRekeyPhaseEnum get dataRekeyPhase;
+  // enum dataRekeyPhaseEnum {  ready,  rekey-pending,  };
+
   @BuiltValueField(wireName: r'changes')
   BuiltList<SyncChange> get changes;
 
@@ -59,6 +64,11 @@ class _$SyncPullResetDataSerializer
     SyncPullResetData object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'dataRekeyPhase';
+    yield serializers.serialize(
+      object.dataRekeyPhase,
+      specifiedType: const FullType(SyncPullResetDataDataRekeyPhaseEnum),
+    );
     yield r'changes';
     yield serializers.serialize(
       object.changes,
@@ -110,6 +120,17 @@ class _$SyncPullResetDataSerializer
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'dataRekeyPhase':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(
+                      SyncPullResetDataDataRekeyPhaseEnum,
+                    ),
+                  )
+                  as SyncPullResetDataDataRekeyPhaseEnum;
+          result.dataRekeyPhase = valueDes;
+          break;
         case r'changes':
           final valueDes =
               serializers.deserialize(
@@ -178,6 +199,25 @@ class _$SyncPullResetDataSerializer
     );
     return result.build();
   }
+}
+
+class SyncPullResetDataDataRekeyPhaseEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'ready')
+  static const SyncPullResetDataDataRekeyPhaseEnum ready =
+      _$syncPullResetDataDataRekeyPhaseEnum_ready;
+  @BuiltValueEnumConst(wireName: r'rekey-pending')
+  static const SyncPullResetDataDataRekeyPhaseEnum rekeyPending =
+      _$syncPullResetDataDataRekeyPhaseEnum_rekeyPending;
+
+  static Serializer<SyncPullResetDataDataRekeyPhaseEnum> get serializer =>
+      _$syncPullResetDataDataRekeyPhaseEnumSerializer;
+
+  const SyncPullResetDataDataRekeyPhaseEnum._(String name) : super(name);
+
+  static BuiltSet<SyncPullResetDataDataRekeyPhaseEnum> get values =>
+      _$syncPullResetDataDataRekeyPhaseEnumValues;
+  static SyncPullResetDataDataRekeyPhaseEnum valueOf(String name) =>
+      _$syncPullResetDataDataRekeyPhaseEnumValueOf(name);
 }
 
 class SyncPullResetDataNextCursorEnum extends EnumClass {

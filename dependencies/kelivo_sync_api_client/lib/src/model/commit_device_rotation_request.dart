@@ -4,7 +4,7 @@
 
 // ignore_for_file: unused_element
 import 'package:built_collection/built_collection.dart';
-import 'package:kelivo_sync_api_client/src/model/initialize_device_security_state_envelope.dart';
+import 'package:kelivo_sync_api_client/src/model/unsigned_account_security_state_envelope.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -18,7 +18,6 @@ part 'commit_device_rotation_request.g.dart';
 /// * [expectedMembershipManifestDigest]
 /// * [operationId]
 /// * [revokeDeviceId]
-/// * [nextMembershipManifestVersion]
 /// * [nextMembershipManifest]
 /// * [nextMembershipManifestDigest]
 /// * [nextRecoveryCapsuleVersion]
@@ -43,9 +42,6 @@ abstract class CommitDeviceRotationRequest
   @BuiltValueField(wireName: r'revokeDeviceId')
   String get revokeDeviceId;
 
-  @BuiltValueField(wireName: r'nextMembershipManifestVersion')
-  int get nextMembershipManifestVersion;
-
   @BuiltValueField(wireName: r'nextMembershipManifest')
   String get nextMembershipManifest;
 
@@ -59,7 +55,7 @@ abstract class CommitDeviceRotationRequest
   String get nextRecoveryCapsule;
 
   @BuiltValueField(wireName: r'envelopes')
-  BuiltList<InitializeDeviceSecurityStateEnvelope> get envelopes;
+  BuiltList<UnsignedAccountSecurityStateEnvelope> get envelopes;
 
   CommitDeviceRotationRequest._();
 
@@ -116,11 +112,6 @@ class _$CommitDeviceRotationRequestSerializer
       object.revokeDeviceId,
       specifiedType: const FullType(String),
     );
-    yield r'nextMembershipManifestVersion';
-    yield serializers.serialize(
-      object.nextMembershipManifestVersion,
-      specifiedType: const FullType(int),
-    );
     yield r'nextMembershipManifest';
     yield serializers.serialize(
       object.nextMembershipManifest,
@@ -145,7 +136,7 @@ class _$CommitDeviceRotationRequestSerializer
     yield serializers.serialize(
       object.envelopes,
       specifiedType: const FullType(BuiltList, [
-        FullType(InitializeDeviceSecurityStateEnvelope),
+        FullType(UnsignedAccountSecurityStateEnvelope),
       ]),
     );
   }
@@ -214,12 +205,6 @@ class _$CommitDeviceRotationRequestSerializer
                   as String;
           result.revokeDeviceId = valueDes;
           break;
-        case r'nextMembershipManifestVersion':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.nextMembershipManifestVersion = valueDes;
-          break;
         case r'nextMembershipManifest':
           final valueDes =
               serializers.deserialize(
@@ -258,10 +243,10 @@ class _$CommitDeviceRotationRequestSerializer
               serializers.deserialize(
                     value,
                     specifiedType: const FullType(BuiltList, [
-                      FullType(InitializeDeviceSecurityStateEnvelope),
+                      FullType(UnsignedAccountSecurityStateEnvelope),
                     ]),
                   )
-                  as BuiltList<InitializeDeviceSecurityStateEnvelope>;
+                  as BuiltList<UnsignedAccountSecurityStateEnvelope>;
           result.envelopes.replace(valueDes);
           break;
         default:

@@ -16,8 +16,10 @@ part 'opaque_registration_finish_data_device.g.dart';
 /// * [name]
 /// * [platform]
 /// * [clientVersion]
+/// * [authGeneration]
 /// * [status]
 /// * [createdAt]
+/// * [sessionGeneration]
 @BuiltValue()
 abstract class OpaqueRegistrationFinishDataDevice
     implements
@@ -38,12 +40,18 @@ abstract class OpaqueRegistrationFinishDataDevice
   @BuiltValueField(wireName: r'clientVersion')
   String get clientVersion;
 
+  @BuiltValueField(wireName: r'authGeneration')
+  int get authGeneration;
+
   @BuiltValueField(wireName: r'status')
   OpaqueRegistrationFinishDataDeviceStatusEnum get status;
   // enum statusEnum {  active,  };
 
   @BuiltValueField(wireName: r'createdAt')
   DateTime get createdAt;
+
+  @BuiltValueField(wireName: r'sessionGeneration')
+  int get sessionGeneration;
 
   OpaqueRegistrationFinishDataDevice._();
 
@@ -97,6 +105,11 @@ class _$OpaqueRegistrationFinishDataDeviceSerializer
       object.clientVersion,
       specifiedType: const FullType(String),
     );
+    yield r'authGeneration';
+    yield serializers.serialize(
+      object.authGeneration,
+      specifiedType: const FullType(int),
+    );
     yield r'status';
     yield serializers.serialize(
       object.status,
@@ -108,6 +121,11 @@ class _$OpaqueRegistrationFinishDataDeviceSerializer
     yield serializers.serialize(
       object.createdAt,
       specifiedType: const FullType(DateTime),
+    );
+    yield r'sessionGeneration';
+    yield serializers.serialize(
+      object.sessionGeneration,
+      specifiedType: const FullType(int),
     );
   }
 
@@ -174,6 +192,12 @@ class _$OpaqueRegistrationFinishDataDeviceSerializer
                   as String;
           result.clientVersion = valueDes;
           break;
+        case r'authGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.authGeneration = valueDes;
+          break;
         case r'status':
           final valueDes =
               serializers.deserialize(
@@ -193,6 +217,12 @@ class _$OpaqueRegistrationFinishDataDeviceSerializer
                   )
                   as DateTime;
           result.createdAt = valueDes;
+          break;
+        case r'sessionGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.sessionGeneration = valueDes;
           break;
         default:
           unhandled.add(key);

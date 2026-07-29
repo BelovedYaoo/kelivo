@@ -29,9 +29,34 @@ _$commitDeviceRotationDataResultEnumValues =
       ],
     );
 
+const CommitDeviceRotationDataDataRekeyPhaseEnum
+_$commitDeviceRotationDataDataRekeyPhaseEnum_rekeyPending =
+    const CommitDeviceRotationDataDataRekeyPhaseEnum._('rekeyPending');
+
+CommitDeviceRotationDataDataRekeyPhaseEnum
+_$commitDeviceRotationDataDataRekeyPhaseEnumValueOf(String name) {
+  switch (name) {
+    case 'rekeyPending':
+      return _$commitDeviceRotationDataDataRekeyPhaseEnum_rekeyPending;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<CommitDeviceRotationDataDataRekeyPhaseEnum>
+_$commitDeviceRotationDataDataRekeyPhaseEnumValues =
+    BuiltSet<CommitDeviceRotationDataDataRekeyPhaseEnum>(
+      const <CommitDeviceRotationDataDataRekeyPhaseEnum>[
+        _$commitDeviceRotationDataDataRekeyPhaseEnum_rekeyPending,
+      ],
+    );
+
 Serializer<CommitDeviceRotationDataResultEnum>
 _$commitDeviceRotationDataResultEnumSerializer =
     _$CommitDeviceRotationDataResultEnumSerializer();
+Serializer<CommitDeviceRotationDataDataRekeyPhaseEnum>
+_$commitDeviceRotationDataDataRekeyPhaseEnumSerializer =
+    _$CommitDeviceRotationDataDataRekeyPhaseEnumSerializer();
 
 class _$CommitDeviceRotationDataResultEnumSerializer
     implements PrimitiveSerializer<CommitDeviceRotationDataResultEnum> {
@@ -64,6 +89,39 @@ class _$CommitDeviceRotationDataResultEnumSerializer
   );
 }
 
+class _$CommitDeviceRotationDataDataRekeyPhaseEnumSerializer
+    implements PrimitiveSerializer<CommitDeviceRotationDataDataRekeyPhaseEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'rekeyPending': 'rekey-pending',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'rekey-pending': 'rekeyPending',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[
+    CommitDeviceRotationDataDataRekeyPhaseEnum,
+  ];
+  @override
+  final String wireName = 'CommitDeviceRotationDataDataRekeyPhaseEnum';
+
+  @override
+  Object serialize(
+    Serializers serializers,
+    CommitDeviceRotationDataDataRekeyPhaseEnum object, {
+    FullType specifiedType = FullType.unspecified,
+  }) => _toWire[object.name] ?? object.name;
+
+  @override
+  CommitDeviceRotationDataDataRekeyPhaseEnum deserialize(
+    Serializers serializers,
+    Object serialized, {
+    FullType specifiedType = FullType.unspecified,
+  }) => CommitDeviceRotationDataDataRekeyPhaseEnum.valueOf(
+    _fromWire[serialized] ?? (serialized is String ? serialized : ''),
+  );
+}
+
 class _$CommitDeviceRotationData extends CommitDeviceRotationData {
   @override
   final CommitDeviceRotationDataResultEnum result;
@@ -77,6 +135,8 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
   final int generation;
   @override
   final int keyEpoch;
+  @override
+  final CommitDeviceRotationDataDataRekeyPhaseEnum dataRekeyPhase;
   @override
   final String membershipManifestDigest;
   @override
@@ -93,6 +153,7 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
     required this.fromGeneration,
     required this.generation,
     required this.keyEpoch,
+    required this.dataRekeyPhase,
     required this.membershipManifestDigest,
     required this.committedAt,
   }) : super._();
@@ -115,6 +176,7 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
         fromGeneration == other.fromGeneration &&
         generation == other.generation &&
         keyEpoch == other.keyEpoch &&
+        dataRekeyPhase == other.dataRekeyPhase &&
         membershipManifestDigest == other.membershipManifestDigest &&
         committedAt == other.committedAt;
   }
@@ -128,6 +190,7 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
     _$hash = $jc(_$hash, fromGeneration.hashCode);
     _$hash = $jc(_$hash, generation.hashCode);
     _$hash = $jc(_$hash, keyEpoch.hashCode);
+    _$hash = $jc(_$hash, dataRekeyPhase.hashCode);
     _$hash = $jc(_$hash, membershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, committedAt.hashCode);
     _$hash = $jf(_$hash);
@@ -143,6 +206,7 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
           ..add('fromGeneration', fromGeneration)
           ..add('generation', generation)
           ..add('keyEpoch', keyEpoch)
+          ..add('dataRekeyPhase', dataRekeyPhase)
           ..add('membershipManifestDigest', membershipManifestDigest)
           ..add('committedAt', committedAt))
         .toString();
@@ -181,6 +245,13 @@ class CommitDeviceRotationDataBuilder
   int? get keyEpoch => _$this._keyEpoch;
   set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
 
+  CommitDeviceRotationDataDataRekeyPhaseEnum? _dataRekeyPhase;
+  CommitDeviceRotationDataDataRekeyPhaseEnum? get dataRekeyPhase =>
+      _$this._dataRekeyPhase;
+  set dataRekeyPhase(
+    CommitDeviceRotationDataDataRekeyPhaseEnum? dataRekeyPhase,
+  ) => _$this._dataRekeyPhase = dataRekeyPhase;
+
   String? _membershipManifestDigest;
   String? get membershipManifestDigest => _$this._membershipManifestDigest;
   set membershipManifestDigest(String? membershipManifestDigest) =>
@@ -203,6 +274,7 @@ class CommitDeviceRotationDataBuilder
       _fromGeneration = $v.fromGeneration;
       _generation = $v.generation;
       _keyEpoch = $v.keyEpoch;
+      _dataRekeyPhase = $v.dataRekeyPhase;
       _membershipManifestDigest = $v.membershipManifestDigest;
       _committedAt = $v.committedAt;
       _$v = null;
@@ -256,6 +328,11 @@ class CommitDeviceRotationDataBuilder
             keyEpoch,
             r'CommitDeviceRotationData',
             'keyEpoch',
+          ),
+          dataRekeyPhase: BuiltValueNullFieldError.checkNotNull(
+            dataRekeyPhase,
+            r'CommitDeviceRotationData',
+            'dataRekeyPhase',
           ),
           membershipManifestDigest: BuiltValueNullFieldError.checkNotNull(
             membershipManifestDigest,

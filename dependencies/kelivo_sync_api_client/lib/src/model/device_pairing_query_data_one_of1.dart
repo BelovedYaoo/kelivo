@@ -21,6 +21,8 @@ part 'device_pairing_query_data_one_of1.g.dart';
 /// * [targetDevice]
 /// * [status]
 /// * [issuerDeviceId]
+/// * [issuerKeyVersion]
+/// * [issuerAuthGeneration]
 /// * [issuerSigningPublicKey]
 /// * [issuerKeyAgreementPublicKey]
 /// * [keyEpoch]
@@ -58,6 +60,12 @@ abstract class DevicePairingQueryDataOneOf1
 
   @BuiltValueField(wireName: r'issuerDeviceId')
   String get issuerDeviceId;
+
+  @BuiltValueField(wireName: r'issuerKeyVersion')
+  int get issuerKeyVersion;
+
+  @BuiltValueField(wireName: r'issuerAuthGeneration')
+  int get issuerAuthGeneration;
 
   @BuiltValueField(wireName: r'issuerSigningPublicKey')
   String get issuerSigningPublicKey;
@@ -146,6 +154,16 @@ class _$DevicePairingQueryDataOneOf1Serializer
     yield serializers.serialize(
       object.issuerDeviceId,
       specifiedType: const FullType(String),
+    );
+    yield r'issuerKeyVersion';
+    yield serializers.serialize(
+      object.issuerKeyVersion,
+      specifiedType: const FullType(int),
+    );
+    yield r'issuerAuthGeneration';
+    yield serializers.serialize(
+      object.issuerAuthGeneration,
+      specifiedType: const FullType(int),
     );
     yield r'issuerSigningPublicKey';
     yield serializers.serialize(
@@ -276,6 +294,18 @@ class _$DevicePairingQueryDataOneOf1Serializer
                   )
                   as String;
           result.issuerDeviceId = valueDes;
+          break;
+        case r'issuerKeyVersion':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.issuerKeyVersion = valueDes;
+          break;
+        case r'issuerAuthGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.issuerAuthGeneration = valueDes;
           break;
         case r'issuerSigningPublicKey':
           final valueDes =

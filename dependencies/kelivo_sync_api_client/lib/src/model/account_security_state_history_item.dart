@@ -3,39 +3,36 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/device_security_state_envelope.dart';
-import 'package:built_collection/built_collection.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'device_security_state_data.g.dart';
+part 'account_security_state_history_item.g.dart';
 
-/// DeviceSecurityStateData
+/// AccountSecurityStateHistoryItem
 ///
 /// Properties:
 /// * [generation]
 /// * [keyEpoch]
-/// * [membershipManifestVersion]
 /// * [membershipManifest]
 /// * [membershipManifestDigest]
 /// * [recoveryPublicKeyVersion]
 /// * [recoveryPublicKey]
 /// * [recoveryCapsuleVersion]
 /// * [recoveryCapsule]
-/// * [lastOperationId]
-/// * [updatedAt]
-/// * [envelopes]
+/// * [operationId]
+/// * [committedAt]
 @BuiltValue()
-abstract class DeviceSecurityStateData
-    implements Built<DeviceSecurityStateData, DeviceSecurityStateDataBuilder> {
+abstract class AccountSecurityStateHistoryItem
+    implements
+        Built<
+          AccountSecurityStateHistoryItem,
+          AccountSecurityStateHistoryItemBuilder
+        > {
   @BuiltValueField(wireName: r'generation')
   int get generation;
 
   @BuiltValueField(wireName: r'keyEpoch')
   int get keyEpoch;
-
-  @BuiltValueField(wireName: r'membershipManifestVersion')
-  int get membershipManifestVersion;
 
   @BuiltValueField(wireName: r'membershipManifest')
   String get membershipManifest;
@@ -55,43 +52,40 @@ abstract class DeviceSecurityStateData
   @BuiltValueField(wireName: r'recoveryCapsule')
   String get recoveryCapsule;
 
-  @BuiltValueField(wireName: r'lastOperationId')
-  String? get lastOperationId;
+  @BuiltValueField(wireName: r'operationId')
+  String get operationId;
 
-  @BuiltValueField(wireName: r'updatedAt')
-  DateTime get updatedAt;
+  @BuiltValueField(wireName: r'committedAt')
+  DateTime get committedAt;
 
-  @BuiltValueField(wireName: r'envelopes')
-  BuiltList<DeviceSecurityStateEnvelope> get envelopes;
+  AccountSecurityStateHistoryItem._();
 
-  DeviceSecurityStateData._();
-
-  factory DeviceSecurityStateData([
-    void updates(DeviceSecurityStateDataBuilder b),
-  ]) = _$DeviceSecurityStateData;
+  factory AccountSecurityStateHistoryItem([
+    void updates(AccountSecurityStateHistoryItemBuilder b),
+  ]) = _$AccountSecurityStateHistoryItem;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(DeviceSecurityStateDataBuilder b) => b;
+  static void _defaults(AccountSecurityStateHistoryItemBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<DeviceSecurityStateData> get serializer =>
-      _$DeviceSecurityStateDataSerializer();
+  static Serializer<AccountSecurityStateHistoryItem> get serializer =>
+      _$AccountSecurityStateHistoryItemSerializer();
 }
 
-class _$DeviceSecurityStateDataSerializer
-    implements PrimitiveSerializer<DeviceSecurityStateData> {
+class _$AccountSecurityStateHistoryItemSerializer
+    implements PrimitiveSerializer<AccountSecurityStateHistoryItem> {
   @override
   final Iterable<Type> types = const [
-    DeviceSecurityStateData,
-    _$DeviceSecurityStateData,
+    AccountSecurityStateHistoryItem,
+    _$AccountSecurityStateHistoryItem,
   ];
 
   @override
-  final String wireName = r'DeviceSecurityStateData';
+  final String wireName = r'AccountSecurityStateHistoryItem';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    DeviceSecurityStateData object, {
+    AccountSecurityStateHistoryItem object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'generation';
@@ -102,11 +96,6 @@ class _$DeviceSecurityStateDataSerializer
     yield r'keyEpoch';
     yield serializers.serialize(
       object.keyEpoch,
-      specifiedType: const FullType(int),
-    );
-    yield r'membershipManifestVersion';
-    yield serializers.serialize(
-      object.membershipManifestVersion,
       specifiedType: const FullType(int),
     );
     yield r'membershipManifest';
@@ -139,31 +128,22 @@ class _$DeviceSecurityStateDataSerializer
       object.recoveryCapsule,
       specifiedType: const FullType(String),
     );
-    yield r'lastOperationId';
-    yield object.lastOperationId == null
-        ? null
-        : serializers.serialize(
-            object.lastOperationId,
-            specifiedType: const FullType.nullable(String),
-          );
-    yield r'updatedAt';
+    yield r'operationId';
     yield serializers.serialize(
-      object.updatedAt,
-      specifiedType: const FullType(DateTime),
+      object.operationId,
+      specifiedType: const FullType(String),
     );
-    yield r'envelopes';
+    yield r'committedAt';
     yield serializers.serialize(
-      object.envelopes,
-      specifiedType: const FullType(BuiltList, [
-        FullType(DeviceSecurityStateEnvelope),
-      ]),
+      object.committedAt,
+      specifiedType: const FullType(DateTime),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    DeviceSecurityStateData object, {
+    AccountSecurityStateHistoryItem object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -178,7 +158,7 @@ class _$DeviceSecurityStateDataSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required DeviceSecurityStateDataBuilder result,
+    required AccountSecurityStateHistoryItemBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -196,12 +176,6 @@ class _$DeviceSecurityStateDataSerializer
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
           result.keyEpoch = valueDes;
-          break;
-        case r'membershipManifestVersion':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.membershipManifestVersion = valueDes;
           break;
         case r'membershipManifest':
           final valueDes =
@@ -251,35 +225,23 @@ class _$DeviceSecurityStateDataSerializer
                   as String;
           result.recoveryCapsule = valueDes;
           break;
-        case r'lastOperationId':
+        case r'operationId':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType.nullable(String),
+                    specifiedType: const FullType(String),
                   )
-                  as String?;
-          if (valueDes == null) continue;
-          result.lastOperationId = valueDes;
+                  as String;
+          result.operationId = valueDes;
           break;
-        case r'updatedAt':
+        case r'committedAt':
           final valueDes =
               serializers.deserialize(
                     value,
                     specifiedType: const FullType(DateTime),
                   )
                   as DateTime;
-          result.updatedAt = valueDes;
-          break;
-        case r'envelopes':
-          final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType(BuiltList, [
-                      FullType(DeviceSecurityStateEnvelope),
-                    ]),
-                  )
-                  as BuiltList<DeviceSecurityStateEnvelope>;
-          result.envelopes.replace(valueDes);
+          result.committedAt = valueDes;
           break;
         default:
           unhandled.add(key);
@@ -290,12 +252,12 @@ class _$DeviceSecurityStateDataSerializer
   }
 
   @override
-  DeviceSecurityStateData deserialize(
+  AccountSecurityStateHistoryItem deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = DeviceSecurityStateDataBuilder();
+    final result = AccountSecurityStateHistoryItemBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

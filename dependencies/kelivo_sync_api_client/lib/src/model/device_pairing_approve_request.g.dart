@@ -18,8 +18,6 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
   @override
   final String expectedMembershipManifestDigest;
   @override
-  final int nextMembershipManifestVersion;
-  @override
   final String nextMembershipManifest;
   @override
   final String nextMembershipManifestDigest;
@@ -40,7 +38,6 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
     required this.keyEpoch,
     required this.expectedSecurityGeneration,
     required this.expectedMembershipManifestDigest,
-    required this.nextMembershipManifestVersion,
     required this.nextMembershipManifest,
     required this.nextMembershipManifestDigest,
     required this.accountKeyEnvelope,
@@ -66,7 +63,6 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
         expectedSecurityGeneration == other.expectedSecurityGeneration &&
         expectedMembershipManifestDigest ==
             other.expectedMembershipManifestDigest &&
-        nextMembershipManifestVersion == other.nextMembershipManifestVersion &&
         nextMembershipManifest == other.nextMembershipManifest &&
         nextMembershipManifestDigest == other.nextMembershipManifestDigest &&
         accountKeyEnvelope == other.accountKeyEnvelope &&
@@ -82,7 +78,6 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
     _$hash = $jc(_$hash, keyEpoch.hashCode);
     _$hash = $jc(_$hash, expectedSecurityGeneration.hashCode);
     _$hash = $jc(_$hash, expectedMembershipManifestDigest.hashCode);
-    _$hash = $jc(_$hash, nextMembershipManifestVersion.hashCode);
     _$hash = $jc(_$hash, nextMembershipManifest.hashCode);
     _$hash = $jc(_$hash, nextMembershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, accountKeyEnvelope.hashCode);
@@ -103,7 +98,6 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
             'expectedMembershipManifestDigest',
             expectedMembershipManifestDigest,
           )
-          ..add('nextMembershipManifestVersion', nextMembershipManifestVersion)
           ..add('nextMembershipManifest', nextMembershipManifest)
           ..add('nextMembershipManifestDigest', nextMembershipManifestDigest)
           ..add('accountKeyEnvelope', accountKeyEnvelope)
@@ -147,12 +141,6 @@ class DevicePairingApproveRequestBuilder
   ) => _$this._expectedMembershipManifestDigest =
       expectedMembershipManifestDigest;
 
-  int? _nextMembershipManifestVersion;
-  int? get nextMembershipManifestVersion =>
-      _$this._nextMembershipManifestVersion;
-  set nextMembershipManifestVersion(int? nextMembershipManifestVersion) =>
-      _$this._nextMembershipManifestVersion = nextMembershipManifestVersion;
-
   String? _nextMembershipManifest;
   String? get nextMembershipManifest => _$this._nextMembershipManifest;
   set nextMembershipManifest(String? nextMembershipManifest) =>
@@ -190,7 +178,6 @@ class DevicePairingApproveRequestBuilder
       _keyEpoch = $v.keyEpoch;
       _expectedSecurityGeneration = $v.expectedSecurityGeneration;
       _expectedMembershipManifestDigest = $v.expectedMembershipManifestDigest;
-      _nextMembershipManifestVersion = $v.nextMembershipManifestVersion;
       _nextMembershipManifest = $v.nextMembershipManifest;
       _nextMembershipManifestDigest = $v.nextMembershipManifestDigest;
       _accountKeyEnvelope = $v.accountKeyEnvelope;
@@ -244,11 +231,6 @@ class DevicePairingApproveRequestBuilder
                 r'DevicePairingApproveRequest',
                 'expectedMembershipManifestDigest',
               ),
-          nextMembershipManifestVersion: BuiltValueNullFieldError.checkNotNull(
-            nextMembershipManifestVersion,
-            r'DevicePairingApproveRequest',
-            'nextMembershipManifestVersion',
-          ),
           nextMembershipManifest: BuiltValueNullFieldError.checkNotNull(
             nextMembershipManifest,
             r'DevicePairingApproveRequest',

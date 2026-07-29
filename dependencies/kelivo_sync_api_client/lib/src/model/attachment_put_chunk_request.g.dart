@@ -14,7 +14,7 @@ class _$AttachmentPutChunkRequest extends AttachmentPutChunkRequest {
   @override
   final String uploadId;
   @override
-  final int keyEpoch;
+  final int chunkKeyEpoch;
   @override
   final int chunkIndex;
   @override
@@ -28,7 +28,7 @@ class _$AttachmentPutChunkRequest extends AttachmentPutChunkRequest {
     required this.mutationId,
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
     required this.chunkIndex,
     required this.ciphertext,
   }) : super._();
@@ -48,7 +48,7 @@ class _$AttachmentPutChunkRequest extends AttachmentPutChunkRequest {
         mutationId == other.mutationId &&
         attachmentId == other.attachmentId &&
         uploadId == other.uploadId &&
-        keyEpoch == other.keyEpoch &&
+        chunkKeyEpoch == other.chunkKeyEpoch &&
         chunkIndex == other.chunkIndex &&
         ciphertext == other.ciphertext;
   }
@@ -59,7 +59,7 @@ class _$AttachmentPutChunkRequest extends AttachmentPutChunkRequest {
     _$hash = $jc(_$hash, mutationId.hashCode);
     _$hash = $jc(_$hash, attachmentId.hashCode);
     _$hash = $jc(_$hash, uploadId.hashCode);
-    _$hash = $jc(_$hash, keyEpoch.hashCode);
+    _$hash = $jc(_$hash, chunkKeyEpoch.hashCode);
     _$hash = $jc(_$hash, chunkIndex.hashCode);
     _$hash = $jc(_$hash, ciphertext.hashCode);
     _$hash = $jf(_$hash);
@@ -72,7 +72,7 @@ class _$AttachmentPutChunkRequest extends AttachmentPutChunkRequest {
           ..add('mutationId', mutationId)
           ..add('attachmentId', attachmentId)
           ..add('uploadId', uploadId)
-          ..add('keyEpoch', keyEpoch)
+          ..add('chunkKeyEpoch', chunkKeyEpoch)
           ..add('chunkIndex', chunkIndex)
           ..add('ciphertext', ciphertext))
         .toString();
@@ -96,9 +96,10 @@ class AttachmentPutChunkRequestBuilder
   String? get uploadId => _$this._uploadId;
   set uploadId(String? uploadId) => _$this._uploadId = uploadId;
 
-  int? _keyEpoch;
-  int? get keyEpoch => _$this._keyEpoch;
-  set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
+  int? _chunkKeyEpoch;
+  int? get chunkKeyEpoch => _$this._chunkKeyEpoch;
+  set chunkKeyEpoch(int? chunkKeyEpoch) =>
+      _$this._chunkKeyEpoch = chunkKeyEpoch;
 
   int? _chunkIndex;
   int? get chunkIndex => _$this._chunkIndex;
@@ -118,7 +119,7 @@ class AttachmentPutChunkRequestBuilder
       _mutationId = $v.mutationId;
       _attachmentId = $v.attachmentId;
       _uploadId = $v.uploadId;
-      _keyEpoch = $v.keyEpoch;
+      _chunkKeyEpoch = $v.chunkKeyEpoch;
       _chunkIndex = $v.chunkIndex;
       _ciphertext = $v.ciphertext;
       _$v = null;
@@ -158,10 +159,10 @@ class AttachmentPutChunkRequestBuilder
             r'AttachmentPutChunkRequest',
             'uploadId',
           ),
-          keyEpoch: BuiltValueNullFieldError.checkNotNull(
-            keyEpoch,
+          chunkKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            chunkKeyEpoch,
             r'AttachmentPutChunkRequest',
-            'keyEpoch',
+            'chunkKeyEpoch',
           ),
           chunkIndex: BuiltValueNullFieldError.checkNotNull(
             chunkIndex,

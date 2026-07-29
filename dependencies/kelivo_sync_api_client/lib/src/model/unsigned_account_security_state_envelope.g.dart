@@ -1,16 +1,15 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'device_security_state_envelope.dart';
+part of 'unsigned_account_security_state_envelope.dart';
 
 // **************************************************************************
 // BuiltValueGenerator
 // **************************************************************************
 
-class _$DeviceSecurityStateEnvelope extends DeviceSecurityStateEnvelope {
+class _$UnsignedAccountSecurityStateEnvelope
+    extends UnsignedAccountSecurityStateEnvelope {
   @override
   final String targetDeviceId;
-  @override
-  final String issuerDeviceId;
   @override
   final int envelopeVersion;
   @override
@@ -18,32 +17,31 @@ class _$DeviceSecurityStateEnvelope extends DeviceSecurityStateEnvelope {
   @override
   final String accountKeyEnvelope;
 
-  factory _$DeviceSecurityStateEnvelope([
-    void Function(DeviceSecurityStateEnvelopeBuilder)? updates,
-  ]) => (DeviceSecurityStateEnvelopeBuilder()..update(updates))._build();
+  factory _$UnsignedAccountSecurityStateEnvelope([
+    void Function(UnsignedAccountSecurityStateEnvelopeBuilder)? updates,
+  ]) =>
+      (UnsignedAccountSecurityStateEnvelopeBuilder()..update(updates))._build();
 
-  _$DeviceSecurityStateEnvelope._({
+  _$UnsignedAccountSecurityStateEnvelope._({
     required this.targetDeviceId,
-    required this.issuerDeviceId,
     required this.envelopeVersion,
     required this.keyEpoch,
     required this.accountKeyEnvelope,
   }) : super._();
   @override
-  DeviceSecurityStateEnvelope rebuild(
-    void Function(DeviceSecurityStateEnvelopeBuilder) updates,
+  UnsignedAccountSecurityStateEnvelope rebuild(
+    void Function(UnsignedAccountSecurityStateEnvelopeBuilder) updates,
   ) => (toBuilder()..update(updates)).build();
 
   @override
-  DeviceSecurityStateEnvelopeBuilder toBuilder() =>
-      DeviceSecurityStateEnvelopeBuilder()..replace(this);
+  UnsignedAccountSecurityStateEnvelopeBuilder toBuilder() =>
+      UnsignedAccountSecurityStateEnvelopeBuilder()..replace(this);
 
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is DeviceSecurityStateEnvelope &&
+    return other is UnsignedAccountSecurityStateEnvelope &&
         targetDeviceId == other.targetDeviceId &&
-        issuerDeviceId == other.issuerDeviceId &&
         envelopeVersion == other.envelopeVersion &&
         keyEpoch == other.keyEpoch &&
         accountKeyEnvelope == other.accountKeyEnvelope;
@@ -53,7 +51,6 @@ class _$DeviceSecurityStateEnvelope extends DeviceSecurityStateEnvelope {
   int get hashCode {
     var _$hash = 0;
     _$hash = $jc(_$hash, targetDeviceId.hashCode);
-    _$hash = $jc(_$hash, issuerDeviceId.hashCode);
     _$hash = $jc(_$hash, envelopeVersion.hashCode);
     _$hash = $jc(_$hash, keyEpoch.hashCode);
     _$hash = $jc(_$hash, accountKeyEnvelope.hashCode);
@@ -63,9 +60,8 @@ class _$DeviceSecurityStateEnvelope extends DeviceSecurityStateEnvelope {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'DeviceSecurityStateEnvelope')
+    return (newBuiltValueToStringHelper(r'UnsignedAccountSecurityStateEnvelope')
           ..add('targetDeviceId', targetDeviceId)
-          ..add('issuerDeviceId', issuerDeviceId)
           ..add('envelopeVersion', envelopeVersion)
           ..add('keyEpoch', keyEpoch)
           ..add('accountKeyEnvelope', accountKeyEnvelope))
@@ -73,23 +69,18 @@ class _$DeviceSecurityStateEnvelope extends DeviceSecurityStateEnvelope {
   }
 }
 
-class DeviceSecurityStateEnvelopeBuilder
+class UnsignedAccountSecurityStateEnvelopeBuilder
     implements
         Builder<
-          DeviceSecurityStateEnvelope,
-          DeviceSecurityStateEnvelopeBuilder
+          UnsignedAccountSecurityStateEnvelope,
+          UnsignedAccountSecurityStateEnvelopeBuilder
         > {
-  _$DeviceSecurityStateEnvelope? _$v;
+  _$UnsignedAccountSecurityStateEnvelope? _$v;
 
   String? _targetDeviceId;
   String? get targetDeviceId => _$this._targetDeviceId;
   set targetDeviceId(String? targetDeviceId) =>
       _$this._targetDeviceId = targetDeviceId;
-
-  String? _issuerDeviceId;
-  String? get issuerDeviceId => _$this._issuerDeviceId;
-  set issuerDeviceId(String? issuerDeviceId) =>
-      _$this._issuerDeviceId = issuerDeviceId;
 
   int? _envelopeVersion;
   int? get envelopeVersion => _$this._envelopeVersion;
@@ -105,15 +96,14 @@ class DeviceSecurityStateEnvelopeBuilder
   set accountKeyEnvelope(String? accountKeyEnvelope) =>
       _$this._accountKeyEnvelope = accountKeyEnvelope;
 
-  DeviceSecurityStateEnvelopeBuilder() {
-    DeviceSecurityStateEnvelope._defaults(this);
+  UnsignedAccountSecurityStateEnvelopeBuilder() {
+    UnsignedAccountSecurityStateEnvelope._defaults(this);
   }
 
-  DeviceSecurityStateEnvelopeBuilder get _$this {
+  UnsignedAccountSecurityStateEnvelopeBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
       _targetDeviceId = $v.targetDeviceId;
-      _issuerDeviceId = $v.issuerDeviceId;
       _envelopeVersion = $v.envelopeVersion;
       _keyEpoch = $v.keyEpoch;
       _accountKeyEnvelope = $v.accountKeyEnvelope;
@@ -123,45 +113,42 @@ class DeviceSecurityStateEnvelopeBuilder
   }
 
   @override
-  void replace(DeviceSecurityStateEnvelope other) {
-    _$v = other as _$DeviceSecurityStateEnvelope;
+  void replace(UnsignedAccountSecurityStateEnvelope other) {
+    _$v = other as _$UnsignedAccountSecurityStateEnvelope;
   }
 
   @override
-  void update(void Function(DeviceSecurityStateEnvelopeBuilder)? updates) {
+  void update(
+    void Function(UnsignedAccountSecurityStateEnvelopeBuilder)? updates,
+  ) {
     if (updates != null) updates(this);
   }
 
   @override
-  DeviceSecurityStateEnvelope build() => _build();
+  UnsignedAccountSecurityStateEnvelope build() => _build();
 
-  _$DeviceSecurityStateEnvelope _build() {
+  _$UnsignedAccountSecurityStateEnvelope _build() {
     final _$result =
         _$v ??
-        _$DeviceSecurityStateEnvelope._(
+        _$UnsignedAccountSecurityStateEnvelope._(
           targetDeviceId: BuiltValueNullFieldError.checkNotNull(
             targetDeviceId,
-            r'DeviceSecurityStateEnvelope',
+            r'UnsignedAccountSecurityStateEnvelope',
             'targetDeviceId',
-          ),
-          issuerDeviceId: BuiltValueNullFieldError.checkNotNull(
-            issuerDeviceId,
-            r'DeviceSecurityStateEnvelope',
-            'issuerDeviceId',
           ),
           envelopeVersion: BuiltValueNullFieldError.checkNotNull(
             envelopeVersion,
-            r'DeviceSecurityStateEnvelope',
+            r'UnsignedAccountSecurityStateEnvelope',
             'envelopeVersion',
           ),
           keyEpoch: BuiltValueNullFieldError.checkNotNull(
             keyEpoch,
-            r'DeviceSecurityStateEnvelope',
+            r'UnsignedAccountSecurityStateEnvelope',
             'keyEpoch',
           ),
           accountKeyEnvelope: BuiltValueNullFieldError.checkNotNull(
             accountKeyEnvelope,
-            r'DeviceSecurityStateEnvelope',
+            r'UnsignedAccountSecurityStateEnvelope',
             'accountKeyEnvelope',
           ),
         );

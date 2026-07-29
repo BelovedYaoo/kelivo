@@ -13,6 +13,7 @@ part 'sync_pull_page_data.g.dart';
 /// SyncPullPageData
 ///
 /// Properties:
+/// * [dataRekeyPhase]
 /// * [changes]
 /// * [nextCursor]
 /// * [hasMore]
@@ -20,6 +21,10 @@ part 'sync_pull_page_data.g.dart';
 @BuiltValue()
 abstract class SyncPullPageData
     implements Built<SyncPullPageData, SyncPullPageDataBuilder> {
+  @BuiltValueField(wireName: r'dataRekeyPhase')
+  SyncPullPageDataDataRekeyPhaseEnum get dataRekeyPhase;
+  // enum dataRekeyPhaseEnum {  ready,  rekey-pending,  };
+
   @BuiltValueField(wireName: r'changes')
   BuiltList<SyncChange> get changes;
 
@@ -58,6 +63,11 @@ class _$SyncPullPageDataSerializer
     SyncPullPageData object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'dataRekeyPhase';
+    yield serializers.serialize(
+      object.dataRekeyPhase,
+      specifiedType: const FullType(SyncPullPageDataDataRekeyPhaseEnum),
+    );
     yield r'changes';
     yield serializers.serialize(
       object.changes,
@@ -105,6 +115,17 @@ class _$SyncPullPageDataSerializer
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'dataRekeyPhase':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(
+                      SyncPullPageDataDataRekeyPhaseEnum,
+                    ),
+                  )
+                  as SyncPullPageDataDataRekeyPhaseEnum;
+          result.dataRekeyPhase = valueDes;
+          break;
         case r'changes':
           final valueDes =
               serializers.deserialize(
@@ -170,4 +191,23 @@ class _$SyncPullPageDataSerializer
     );
     return result.build();
   }
+}
+
+class SyncPullPageDataDataRekeyPhaseEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'ready')
+  static const SyncPullPageDataDataRekeyPhaseEnum ready =
+      _$syncPullPageDataDataRekeyPhaseEnum_ready;
+  @BuiltValueEnumConst(wireName: r'rekey-pending')
+  static const SyncPullPageDataDataRekeyPhaseEnum rekeyPending =
+      _$syncPullPageDataDataRekeyPhaseEnum_rekeyPending;
+
+  static Serializer<SyncPullPageDataDataRekeyPhaseEnum> get serializer =>
+      _$syncPullPageDataDataRekeyPhaseEnumSerializer;
+
+  const SyncPullPageDataDataRekeyPhaseEnum._(String name) : super(name);
+
+  static BuiltSet<SyncPullPageDataDataRekeyPhaseEnum> get values =>
+      _$syncPullPageDataDataRekeyPhaseEnumValues;
+  static SyncPullPageDataDataRekeyPhaseEnum valueOf(String name) =>
+      _$syncPullPageDataDataRekeyPhaseEnumValueOf(name);
 }

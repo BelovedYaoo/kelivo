@@ -8,7 +8,7 @@ part of 'get_device_security_state_response.dart';
 
 class _$GetDeviceSecurityStateResponse extends GetDeviceSecurityStateResponse {
   @override
-  final DeviceSecurityStateData data;
+  final AccountSecurityStateData data;
 
   factory _$GetDeviceSecurityStateResponse([
     void Function(GetDeviceSecurityStateResponseBuilder)? updates,
@@ -54,10 +54,10 @@ class GetDeviceSecurityStateResponseBuilder
         > {
   _$GetDeviceSecurityStateResponse? _$v;
 
-  DeviceSecurityStateDataBuilder? _data;
-  DeviceSecurityStateDataBuilder get data =>
-      _$this._data ??= DeviceSecurityStateDataBuilder();
-  set data(DeviceSecurityStateDataBuilder? data) => _$this._data = data;
+  AccountSecurityStateDataBuilder? _data;
+  AccountSecurityStateDataBuilder get data =>
+      _$this._data ??= AccountSecurityStateDataBuilder();
+  set data(AccountSecurityStateDataBuilder? data) => _$this._data = data;
 
   GetDeviceSecurityStateResponseBuilder() {
     GetDeviceSecurityStateResponse._defaults(this);

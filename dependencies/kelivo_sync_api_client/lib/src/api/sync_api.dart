@@ -23,7 +23,7 @@ class SyncApi {
 
   const SyncApi(this._dio, this._serializers);
 
-  /// 按 v3 游标拉取密文增量
+  /// 按 v4 dataGeneration 游标拉取密文增量
   ///
   ///
   /// Parameters:

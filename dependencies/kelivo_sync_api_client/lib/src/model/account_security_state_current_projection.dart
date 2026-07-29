@@ -3,31 +3,29 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/initialize_device_security_state_envelope.dart';
+import 'package:built_collection/built_collection.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'initialize_device_security_state_request.g.dart';
+part 'account_security_state_current_projection.g.dart';
 
-/// InitializeDeviceSecurityStateRequest
+/// AccountSecurityStateCurrentProjection
 ///
 /// Properties:
 /// * [generation]
 /// * [keyEpoch]
-/// * [membershipManifestVersion]
-/// * [membershipManifest]
+/// * [dataRekeyPhase]
 /// * [membershipManifestDigest]
 /// * [recoveryPublicKeyVersion]
 /// * [recoveryPublicKey]
 /// * [recoveryCapsuleVersion]
-/// * [recoveryCapsule]
-/// * [currentDeviceEnvelope]
+/// * [updatedAt]
 @BuiltValue()
-abstract class InitializeDeviceSecurityStateRequest
+abstract class AccountSecurityStateCurrentProjection
     implements
         Built<
-          InitializeDeviceSecurityStateRequest,
-          InitializeDeviceSecurityStateRequestBuilder
+          AccountSecurityStateCurrentProjection,
+          AccountSecurityStateCurrentProjectionBuilder
         > {
   @BuiltValueField(wireName: r'generation')
   int get generation;
@@ -35,11 +33,9 @@ abstract class InitializeDeviceSecurityStateRequest
   @BuiltValueField(wireName: r'keyEpoch')
   int get keyEpoch;
 
-  @BuiltValueField(wireName: r'membershipManifestVersion')
-  int get membershipManifestVersion;
-
-  @BuiltValueField(wireName: r'membershipManifest')
-  String get membershipManifest;
+  @BuiltValueField(wireName: r'dataRekeyPhase')
+  AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum get dataRekeyPhase;
+  // enum dataRekeyPhaseEnum {  ready,  rekey-pending,  };
 
   @BuiltValueField(wireName: r'membershipManifestDigest')
   String get membershipManifestDigest;
@@ -53,40 +49,37 @@ abstract class InitializeDeviceSecurityStateRequest
   @BuiltValueField(wireName: r'recoveryCapsuleVersion')
   int get recoveryCapsuleVersion;
 
-  @BuiltValueField(wireName: r'recoveryCapsule')
-  String get recoveryCapsule;
+  @BuiltValueField(wireName: r'updatedAt')
+  DateTime get updatedAt;
 
-  @BuiltValueField(wireName: r'currentDeviceEnvelope')
-  InitializeDeviceSecurityStateEnvelope get currentDeviceEnvelope;
+  AccountSecurityStateCurrentProjection._();
 
-  InitializeDeviceSecurityStateRequest._();
-
-  factory InitializeDeviceSecurityStateRequest([
-    void updates(InitializeDeviceSecurityStateRequestBuilder b),
-  ]) = _$InitializeDeviceSecurityStateRequest;
+  factory AccountSecurityStateCurrentProjection([
+    void updates(AccountSecurityStateCurrentProjectionBuilder b),
+  ]) = _$AccountSecurityStateCurrentProjection;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(InitializeDeviceSecurityStateRequestBuilder b) => b;
+  static void _defaults(AccountSecurityStateCurrentProjectionBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<InitializeDeviceSecurityStateRequest> get serializer =>
-      _$InitializeDeviceSecurityStateRequestSerializer();
+  static Serializer<AccountSecurityStateCurrentProjection> get serializer =>
+      _$AccountSecurityStateCurrentProjectionSerializer();
 }
 
-class _$InitializeDeviceSecurityStateRequestSerializer
-    implements PrimitiveSerializer<InitializeDeviceSecurityStateRequest> {
+class _$AccountSecurityStateCurrentProjectionSerializer
+    implements PrimitiveSerializer<AccountSecurityStateCurrentProjection> {
   @override
   final Iterable<Type> types = const [
-    InitializeDeviceSecurityStateRequest,
-    _$InitializeDeviceSecurityStateRequest,
+    AccountSecurityStateCurrentProjection,
+    _$AccountSecurityStateCurrentProjection,
   ];
 
   @override
-  final String wireName = r'InitializeDeviceSecurityStateRequest';
+  final String wireName = r'AccountSecurityStateCurrentProjection';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    InitializeDeviceSecurityStateRequest object, {
+    AccountSecurityStateCurrentProjection object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'generation';
@@ -99,15 +92,12 @@ class _$InitializeDeviceSecurityStateRequestSerializer
       object.keyEpoch,
       specifiedType: const FullType(int),
     );
-    yield r'membershipManifestVersion';
+    yield r'dataRekeyPhase';
     yield serializers.serialize(
-      object.membershipManifestVersion,
-      specifiedType: const FullType(int),
-    );
-    yield r'membershipManifest';
-    yield serializers.serialize(
-      object.membershipManifest,
-      specifiedType: const FullType(String),
+      object.dataRekeyPhase,
+      specifiedType: const FullType(
+        AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum,
+      ),
     );
     yield r'membershipManifestDigest';
     yield serializers.serialize(
@@ -129,22 +119,17 @@ class _$InitializeDeviceSecurityStateRequestSerializer
       object.recoveryCapsuleVersion,
       specifiedType: const FullType(int),
     );
-    yield r'recoveryCapsule';
+    yield r'updatedAt';
     yield serializers.serialize(
-      object.recoveryCapsule,
-      specifiedType: const FullType(String),
-    );
-    yield r'currentDeviceEnvelope';
-    yield serializers.serialize(
-      object.currentDeviceEnvelope,
-      specifiedType: const FullType(InitializeDeviceSecurityStateEnvelope),
+      object.updatedAt,
+      specifiedType: const FullType(DateTime),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    InitializeDeviceSecurityStateRequest object, {
+    AccountSecurityStateCurrentProjection object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -159,7 +144,7 @@ class _$InitializeDeviceSecurityStateRequestSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required InitializeDeviceSecurityStateRequestBuilder result,
+    required AccountSecurityStateCurrentProjectionBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -178,20 +163,16 @@ class _$InitializeDeviceSecurityStateRequestSerializer
                   as int;
           result.keyEpoch = valueDes;
           break;
-        case r'membershipManifestVersion':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.membershipManifestVersion = valueDes;
-          break;
-        case r'membershipManifest':
+        case r'dataRekeyPhase':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(String),
+                    specifiedType: const FullType(
+                      AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum,
+                    ),
                   )
-                  as String;
-          result.membershipManifest = valueDes;
+                  as AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum;
+          result.dataRekeyPhase = valueDes;
           break;
         case r'membershipManifestDigest':
           final valueDes =
@@ -223,25 +204,14 @@ class _$InitializeDeviceSecurityStateRequestSerializer
                   as int;
           result.recoveryCapsuleVersion = valueDes;
           break;
-        case r'recoveryCapsule':
+        case r'updatedAt':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(String),
+                    specifiedType: const FullType(DateTime),
                   )
-                  as String;
-          result.recoveryCapsule = valueDes;
-          break;
-        case r'currentDeviceEnvelope':
-          final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType(
-                      InitializeDeviceSecurityStateEnvelope,
-                    ),
-                  )
-                  as InitializeDeviceSecurityStateEnvelope;
-          result.currentDeviceEnvelope.replace(valueDes);
+                  as DateTime;
+          result.updatedAt = valueDes;
           break;
         default:
           unhandled.add(key);
@@ -252,12 +222,12 @@ class _$InitializeDeviceSecurityStateRequestSerializer
   }
 
   @override
-  InitializeDeviceSecurityStateRequest deserialize(
+  AccountSecurityStateCurrentProjection deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = InitializeDeviceSecurityStateRequestBuilder();
+    final result = AccountSecurityStateCurrentProjectionBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(
@@ -270,4 +240,28 @@ class _$InitializeDeviceSecurityStateRequestSerializer
     );
     return result.build();
   }
+}
+
+class AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum
+    extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'ready')
+  static const AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum ready =
+      _$accountSecurityStateCurrentProjectionDataRekeyPhaseEnum_ready;
+  @BuiltValueEnumConst(wireName: r'rekey-pending')
+  static const AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum
+  rekeyPending =
+      _$accountSecurityStateCurrentProjectionDataRekeyPhaseEnum_rekeyPending;
+
+  static Serializer<AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum>
+  get serializer =>
+      _$accountSecurityStateCurrentProjectionDataRekeyPhaseEnumSerializer;
+
+  const AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum._(String name)
+    : super(name);
+
+  static BuiltSet<AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum>
+  get values => _$accountSecurityStateCurrentProjectionDataRekeyPhaseEnumValues;
+  static AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum valueOf(
+    String name,
+  ) => _$accountSecurityStateCurrentProjectionDataRekeyPhaseEnumValueOf(name);
 }

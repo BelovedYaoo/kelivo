@@ -83,6 +83,10 @@ class _$DevicePairingQueryDataOneOf1 extends DevicePairingQueryDataOneOf1 {
   @override
   final String issuerDeviceId;
   @override
+  final int issuerKeyVersion;
+  @override
+  final int issuerAuthGeneration;
+  @override
   final String issuerSigningPublicKey;
   @override
   final String issuerKeyAgreementPublicKey;
@@ -108,6 +112,8 @@ class _$DevicePairingQueryDataOneOf1 extends DevicePairingQueryDataOneOf1 {
     required this.targetDevice,
     required this.status,
     required this.issuerDeviceId,
+    required this.issuerKeyVersion,
+    required this.issuerAuthGeneration,
     required this.issuerSigningPublicKey,
     required this.issuerKeyAgreementPublicKey,
     required this.keyEpoch,
@@ -136,6 +142,8 @@ class _$DevicePairingQueryDataOneOf1 extends DevicePairingQueryDataOneOf1 {
         targetDevice == other.targetDevice &&
         status == other.status &&
         issuerDeviceId == other.issuerDeviceId &&
+        issuerKeyVersion == other.issuerKeyVersion &&
+        issuerAuthGeneration == other.issuerAuthGeneration &&
         issuerSigningPublicKey == other.issuerSigningPublicKey &&
         issuerKeyAgreementPublicKey == other.issuerKeyAgreementPublicKey &&
         keyEpoch == other.keyEpoch &&
@@ -155,6 +163,8 @@ class _$DevicePairingQueryDataOneOf1 extends DevicePairingQueryDataOneOf1 {
     _$hash = $jc(_$hash, targetDevice.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, issuerDeviceId.hashCode);
+    _$hash = $jc(_$hash, issuerKeyVersion.hashCode);
+    _$hash = $jc(_$hash, issuerAuthGeneration.hashCode);
     _$hash = $jc(_$hash, issuerSigningPublicKey.hashCode);
     _$hash = $jc(_$hash, issuerKeyAgreementPublicKey.hashCode);
     _$hash = $jc(_$hash, keyEpoch.hashCode);
@@ -176,6 +186,8 @@ class _$DevicePairingQueryDataOneOf1 extends DevicePairingQueryDataOneOf1 {
           ..add('targetDevice', targetDevice)
           ..add('status', status)
           ..add('issuerDeviceId', issuerDeviceId)
+          ..add('issuerKeyVersion', issuerKeyVersion)
+          ..add('issuerAuthGeneration', issuerAuthGeneration)
           ..add('issuerSigningPublicKey', issuerSigningPublicKey)
           ..add('issuerKeyAgreementPublicKey', issuerKeyAgreementPublicKey)
           ..add('keyEpoch', keyEpoch)
@@ -232,6 +244,16 @@ class DevicePairingQueryDataOneOf1Builder
   set issuerDeviceId(String? issuerDeviceId) =>
       _$this._issuerDeviceId = issuerDeviceId;
 
+  int? _issuerKeyVersion;
+  int? get issuerKeyVersion => _$this._issuerKeyVersion;
+  set issuerKeyVersion(int? issuerKeyVersion) =>
+      _$this._issuerKeyVersion = issuerKeyVersion;
+
+  int? _issuerAuthGeneration;
+  int? get issuerAuthGeneration => _$this._issuerAuthGeneration;
+  set issuerAuthGeneration(int? issuerAuthGeneration) =>
+      _$this._issuerAuthGeneration = issuerAuthGeneration;
+
   String? _issuerSigningPublicKey;
   String? get issuerSigningPublicKey => _$this._issuerSigningPublicKey;
   set issuerSigningPublicKey(String? issuerSigningPublicKey) =>
@@ -276,6 +298,8 @@ class DevicePairingQueryDataOneOf1Builder
       _targetDevice = $v.targetDevice.toBuilder();
       _status = $v.status;
       _issuerDeviceId = $v.issuerDeviceId;
+      _issuerKeyVersion = $v.issuerKeyVersion;
+      _issuerAuthGeneration = $v.issuerAuthGeneration;
       _issuerSigningPublicKey = $v.issuerSigningPublicKey;
       _issuerKeyAgreementPublicKey = $v.issuerKeyAgreementPublicKey;
       _keyEpoch = $v.keyEpoch;
@@ -341,6 +365,16 @@ class DevicePairingQueryDataOneOf1Builder
               issuerDeviceId,
               r'DevicePairingQueryDataOneOf1',
               'issuerDeviceId',
+            ),
+            issuerKeyVersion: BuiltValueNullFieldError.checkNotNull(
+              issuerKeyVersion,
+              r'DevicePairingQueryDataOneOf1',
+              'issuerKeyVersion',
+            ),
+            issuerAuthGeneration: BuiltValueNullFieldError.checkNotNull(
+              issuerAuthGeneration,
+              r'DevicePairingQueryDataOneOf1',
+              'issuerAuthGeneration',
             ),
             issuerSigningPublicKey: BuiltValueNullFieldError.checkNotNull(
               issuerSigningPublicKey,

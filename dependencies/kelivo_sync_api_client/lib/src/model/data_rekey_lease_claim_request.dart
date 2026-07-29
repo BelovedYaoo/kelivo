@@ -6,82 +6,88 @@
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'initialize_device_security_state_envelope.g.dart';
+part 'data_rekey_lease_claim_request.g.dart';
 
-/// InitializeDeviceSecurityStateEnvelope
+/// DataRekeyLeaseClaimRequest
 ///
 /// Properties:
-/// * [targetDeviceId]
-/// * [envelopeVersion]
-/// * [keyEpoch]
-/// * [accountKeyEnvelope]
+/// * [operationId]
+/// * [sourceDataGeneration]
+/// * [targetKeyEpoch]
+/// * [leaseToken]
+/// * [mutationId]
 @BuiltValue()
-abstract class InitializeDeviceSecurityStateEnvelope
+abstract class DataRekeyLeaseClaimRequest
     implements
-        Built<
-          InitializeDeviceSecurityStateEnvelope,
-          InitializeDeviceSecurityStateEnvelopeBuilder
-        > {
-  @BuiltValueField(wireName: r'targetDeviceId')
-  String get targetDeviceId;
+        Built<DataRekeyLeaseClaimRequest, DataRekeyLeaseClaimRequestBuilder> {
+  @BuiltValueField(wireName: r'operationId')
+  String get operationId;
 
-  @BuiltValueField(wireName: r'envelopeVersion')
-  int get envelopeVersion;
+  @BuiltValueField(wireName: r'sourceDataGeneration')
+  int get sourceDataGeneration;
 
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
+  @BuiltValueField(wireName: r'targetKeyEpoch')
+  int get targetKeyEpoch;
 
-  @BuiltValueField(wireName: r'accountKeyEnvelope')
-  String get accountKeyEnvelope;
+  @BuiltValueField(wireName: r'leaseToken')
+  String get leaseToken;
 
-  InitializeDeviceSecurityStateEnvelope._();
+  @BuiltValueField(wireName: r'mutationId')
+  String get mutationId;
 
-  factory InitializeDeviceSecurityStateEnvelope([
-    void updates(InitializeDeviceSecurityStateEnvelopeBuilder b),
-  ]) = _$InitializeDeviceSecurityStateEnvelope;
+  DataRekeyLeaseClaimRequest._();
+
+  factory DataRekeyLeaseClaimRequest([
+    void updates(DataRekeyLeaseClaimRequestBuilder b),
+  ]) = _$DataRekeyLeaseClaimRequest;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(InitializeDeviceSecurityStateEnvelopeBuilder b) => b;
+  static void _defaults(DataRekeyLeaseClaimRequestBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<InitializeDeviceSecurityStateEnvelope> get serializer =>
-      _$InitializeDeviceSecurityStateEnvelopeSerializer();
+  static Serializer<DataRekeyLeaseClaimRequest> get serializer =>
+      _$DataRekeyLeaseClaimRequestSerializer();
 }
 
-class _$InitializeDeviceSecurityStateEnvelopeSerializer
-    implements PrimitiveSerializer<InitializeDeviceSecurityStateEnvelope> {
+class _$DataRekeyLeaseClaimRequestSerializer
+    implements PrimitiveSerializer<DataRekeyLeaseClaimRequest> {
   @override
   final Iterable<Type> types = const [
-    InitializeDeviceSecurityStateEnvelope,
-    _$InitializeDeviceSecurityStateEnvelope,
+    DataRekeyLeaseClaimRequest,
+    _$DataRekeyLeaseClaimRequest,
   ];
 
   @override
-  final String wireName = r'InitializeDeviceSecurityStateEnvelope';
+  final String wireName = r'DataRekeyLeaseClaimRequest';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    InitializeDeviceSecurityStateEnvelope object, {
+    DataRekeyLeaseClaimRequest object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    yield r'targetDeviceId';
+    yield r'operationId';
     yield serializers.serialize(
-      object.targetDeviceId,
+      object.operationId,
       specifiedType: const FullType(String),
     );
-    yield r'envelopeVersion';
+    yield r'sourceDataGeneration';
     yield serializers.serialize(
-      object.envelopeVersion,
+      object.sourceDataGeneration,
       specifiedType: const FullType(int),
     );
-    yield r'keyEpoch';
+    yield r'targetKeyEpoch';
     yield serializers.serialize(
-      object.keyEpoch,
+      object.targetKeyEpoch,
       specifiedType: const FullType(int),
     );
-    yield r'accountKeyEnvelope';
+    yield r'leaseToken';
     yield serializers.serialize(
-      object.accountKeyEnvelope,
+      object.leaseToken,
+      specifiedType: const FullType(String),
+    );
+    yield r'mutationId';
+    yield serializers.serialize(
+      object.mutationId,
       specifiedType: const FullType(String),
     );
   }
@@ -89,7 +95,7 @@ class _$InitializeDeviceSecurityStateEnvelopeSerializer
   @override
   Object serialize(
     Serializers serializers,
-    InitializeDeviceSecurityStateEnvelope object, {
+    DataRekeyLeaseClaimRequest object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -104,42 +110,51 @@ class _$InitializeDeviceSecurityStateEnvelopeSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required InitializeDeviceSecurityStateEnvelopeBuilder result,
+    required DataRekeyLeaseClaimRequestBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'targetDeviceId':
+        case r'operationId':
           final valueDes =
               serializers.deserialize(
                     value,
                     specifiedType: const FullType(String),
                   )
                   as String;
-          result.targetDeviceId = valueDes;
+          result.operationId = valueDes;
           break;
-        case r'envelopeVersion':
+        case r'sourceDataGeneration':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.envelopeVersion = valueDes;
+          result.sourceDataGeneration = valueDes;
           break;
-        case r'keyEpoch':
+        case r'targetKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.keyEpoch = valueDes;
+          result.targetKeyEpoch = valueDes;
           break;
-        case r'accountKeyEnvelope':
+        case r'leaseToken':
           final valueDes =
               serializers.deserialize(
                     value,
                     specifiedType: const FullType(String),
                   )
                   as String;
-          result.accountKeyEnvelope = valueDes;
+          result.leaseToken = valueDes;
+          break;
+        case r'mutationId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.mutationId = valueDes;
           break;
         default:
           unhandled.add(key);
@@ -150,12 +165,12 @@ class _$InitializeDeviceSecurityStateEnvelopeSerializer
   }
 
   @override
-  InitializeDeviceSecurityStateEnvelope deserialize(
+  DataRekeyLeaseClaimRequest deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = InitializeDeviceSecurityStateEnvelopeBuilder();
+    final result = DataRekeyLeaseClaimRequestBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

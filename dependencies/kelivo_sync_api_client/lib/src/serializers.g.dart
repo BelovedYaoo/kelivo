@@ -8,6 +8,14 @@ part of 'serializers.dart';
 
 Serializers _$serializers =
     (Serializers().toBuilder()
+          ..add(AccountSecurityStateCurrentProjection.serializer)
+          ..add(
+            AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum.serializer,
+          )
+          ..add(AccountSecurityStateData.serializer)
+          ..add(AccountSecurityStateDataDataRekeyPhaseEnum.serializer)
+          ..add(AccountSecurityStateEnvelope.serializer)
+          ..add(AccountSecurityStateHistoryItem.serializer)
           ..add(AdminDeviceSummary.serializer)
           ..add(AdminDeviceSummaryPlatformEnum.serializer)
           ..add(AdminDeviceSummaryStatusEnum.serializer)
@@ -17,6 +25,7 @@ Serializers _$serializers =
           ..add(AdminUserSummaryRoleEnum.serializer)
           ..add(AdminUserSummaryStatusEnum.serializer)
           ..add(AttachmentChunkData.serializer)
+          ..add(AttachmentChunkDataDataRekeyPhaseEnum.serializer)
           ..add(AttachmentCommitUploadRequest.serializer)
           ..add(AttachmentCommittedData.serializer)
           ..add(AttachmentCommittedDataStatusEnum.serializer)
@@ -28,17 +37,45 @@ Serializers _$serializers =
           ..add(AttachmentGetManifestRequest.serializer)
           ..add(AttachmentManifestChunk.serializer)
           ..add(AttachmentManifestData.serializer)
+          ..add(AttachmentManifestDataDataRekeyPhaseEnum.serializer)
           ..add(AttachmentPutChunkRequest.serializer)
           ..add(AttachmentStoredChunkData.serializer)
           ..add(AttachmentStoredChunkDataStatusEnum.serializer)
           ..add(AttachmentUploadData.serializer)
           ..add(AttachmentUploadDataStatusEnum.serializer)
+          ..add(ClaimDataRekeyLeaseResponse.serializer)
           ..add(CommitDeviceRotationData.serializer)
+          ..add(CommitDeviceRotationDataDataRekeyPhaseEnum.serializer)
           ..add(CommitDeviceRotationDataResultEnum.serializer)
           ..add(CommitDeviceRotationRequest.serializer)
           ..add(CommitDeviceRotationResponse.serializer)
           ..add(CommitEncryptedAttachmentUploadResponse.serializer)
           ..add(CreateEncryptedAttachmentUploadResponse.serializer)
+          ..add(DataRekeyAttachmentStageData.serializer)
+          ..add(DataRekeyAttachmentStageDataResultEnum.serializer)
+          ..add(DataRekeyAttachmentStageRequest.serializer)
+          ..add(DataRekeyCompletionProofData.serializer)
+          ..add(DataRekeyFinalizeData.serializer)
+          ..add(DataRekeyFinalizeDataResultEnum.serializer)
+          ..add(DataRekeyFinalizeRequest.serializer)
+          ..add(DataRekeyFinalizeRequestProof.serializer)
+          ..add(DataRekeyLeaseClaimData.serializer)
+          ..add(DataRekeyLeaseClaimDataPhaseEnum.serializer)
+          ..add(DataRekeyLeaseClaimRequest.serializer)
+          ..add(DataRekeyPendingLeaseData.serializer)
+          ..add(DataRekeyPendingStateData.serializer)
+          ..add(DataRekeyPendingStateDataPhaseEnum.serializer)
+          ..add(DataRekeyReadyStateData.serializer)
+          ..add(DataRekeyReadyStateDataPhaseEnum.serializer)
+          ..add(DataRekeyRecordStageData.serializer)
+          ..add(DataRekeyRecordStageDataResultEnum.serializer)
+          ..add(DataRekeyRecordStageRequest.serializer)
+          ..add(DataRekeySourceAttachmentData.serializer)
+          ..add(DataRekeySourceAttachmentListData.serializer)
+          ..add(DataRekeySourceAttachmentListRequest.serializer)
+          ..add(DataRekeySourceRecordListData.serializer)
+          ..add(DataRekeySourceRecordListRequest.serializer)
+          ..add(DataRekeyStateData.serializer)
           ..add(DeleteEncryptedAttachmentResponse.serializer)
           ..add(DevicePairingApproveData.serializer)
           ..add(DevicePairingApproveDataResultEnum.serializer)
@@ -64,16 +101,16 @@ Serializers _$serializers =
           ..add(DevicePairingQueryDataOneOfStatusEnum.serializer)
           ..add(DevicePairingQueryRequest.serializer)
           ..add(DevicePairingQueryResponse.serializer)
-          ..add(DeviceSecurityStateData.serializer)
-          ..add(DeviceSecurityStateEnvelope.serializer)
           ..add(ErrorResponse.serializer)
           ..add(ErrorResponseError.serializer)
+          ..add(FinalizeDataRekeyResponse.serializer)
+          ..add(GenesisSecurityState.serializer)
+          ..add(GetDataRekeyStateResponse.serializer)
           ..add(GetDeviceSecurityStateResponse.serializer)
           ..add(GetEncryptedAttachmentChunkResponse.serializer)
           ..add(GetEncryptedAttachmentManifestResponse.serializer)
-          ..add(InitializeDeviceSecurityStateEnvelope.serializer)
-          ..add(InitializeDeviceSecurityStateRequest.serializer)
-          ..add(InitializeDeviceSecurityStateResponse.serializer)
+          ..add(ListAccountSecurityStateHistoryData.serializer)
+          ..add(ListAccountSecurityStateHistoryRequest.serializer)
           ..add(ListAdminDevicesData.serializer)
           ..add(ListAdminDevicesRequest.serializer)
           ..add(ListAdminDevicesRequestStatusEnum.serializer)
@@ -83,6 +120,9 @@ Serializers _$serializers =
           ..add(ListAdminUsersRequestRoleEnum.serializer)
           ..add(ListAdminUsersRequestStatusEnum.serializer)
           ..add(ListAdminUsersResponse.serializer)
+          ..add(ListDataRekeySourceAttachmentsResponse.serializer)
+          ..add(ListDataRekeySourceRecordsResponse.serializer)
+          ..add(ListDeviceSecurityStateHistoryResponse.serializer)
           ..add(ListTrustedDevicesData.serializer)
           ..add(ListTrustedDevicesRequest.serializer)
           ..add(ListTrustedDevicesRequestStatusEnum.serializer)
@@ -121,6 +161,8 @@ Serializers _$serializers =
           ..add(RevokeAdminDeviceData.serializer)
           ..add(RevokeAdminDeviceRequest.serializer)
           ..add(RevokeAdminDeviceResponse.serializer)
+          ..add(StageDataRekeyAttachmentResponse.serializer)
+          ..add(StageDataRekeyRecordResponse.serializer)
           ..add(SyncAppliedMutationResult.serializer)
           ..add(SyncAppliedMutationResultStatusEnum.serializer)
           ..add(SyncChange.serializer)
@@ -131,8 +173,10 @@ Serializers _$serializers =
           ..add(SyncMutationOperationEnum.serializer)
           ..add(SyncMutationResult.serializer)
           ..add(SyncPullPageData.serializer)
+          ..add(SyncPullPageDataDataRekeyPhaseEnum.serializer)
           ..add(SyncPullRequest.serializer)
           ..add(SyncPullResetData.serializer)
+          ..add(SyncPullResetDataDataRekeyPhaseEnum.serializer)
           ..add(SyncPullResetDataNextCursorEnum.serializer)
           ..add(SyncPullResponseData.serializer)
           ..add(SyncPushRequest.serializer)
@@ -142,6 +186,7 @@ Serializers _$serializers =
           ..add(SyncRejectedMutationResultStatusEnum.serializer)
           ..add(SyncSnapshotRequest.serializer)
           ..add(SyncSnapshotResponseData.serializer)
+          ..add(SyncSnapshotResponseDataDataRekeyPhaseEnum.serializer)
           ..add(SystemHealthData.serializer)
           ..add(SystemHealthDataServiceEnum.serializer)
           ..add(SystemHealthDataStatusEnum.serializer)
@@ -149,12 +194,25 @@ Serializers _$serializers =
           ..add(TrustedDeviceSummary.serializer)
           ..add(TrustedDeviceSummaryPlatformEnum.serializer)
           ..add(TrustedDeviceSummaryStatusEnum.serializer)
+          ..add(UnsignedAccountSecurityStateEnvelope.serializer)
           ..add(UpdateAdminUserData.serializer)
           ..add(UpdateAdminUserQuotaRequest.serializer)
           ..add(UpdateAdminUserQuotaResponse.serializer)
           ..add(UpdateAdminUserStatusRequest.serializer)
           ..add(UpdateAdminUserStatusRequestStatusEnum.serializer)
           ..add(UpdateAdminUserStatusResponse.serializer)
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(AccountSecurityStateEnvelope),
+            ]),
+            () => ListBuilder<AccountSecurityStateEnvelope>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(AccountSecurityStateHistoryItem),
+            ]),
+            () => ListBuilder<AccountSecurityStateHistoryItem>(),
+          )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
               const FullType(AdminDeviceSummary),
@@ -179,15 +237,15 @@ Serializers _$serializers =
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
-              const FullType(DeviceSecurityStateEnvelope),
+              const FullType(AttachmentManifestChunk),
             ]),
-            () => ListBuilder<DeviceSecurityStateEnvelope>(),
+            () => ListBuilder<AttachmentManifestChunk>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
-              const FullType(InitializeDeviceSecurityStateEnvelope),
+              const FullType(DataRekeySourceAttachmentData),
             ]),
-            () => ListBuilder<InitializeDeviceSecurityStateEnvelope>(),
+            () => ListBuilder<DataRekeySourceAttachmentData>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncChange)]),
@@ -216,10 +274,20 @@ Serializers _$serializers =
             () => ListBuilder<SyncRecord>(),
           )
           ..addBuilderFactory(
+            const FullType(BuiltList, const [const FullType(SyncRecord)]),
+            () => ListBuilder<SyncRecord>(),
+          )
+          ..addBuilderFactory(
             const FullType(BuiltList, const [
               const FullType(TrustedDeviceSummary),
             ]),
             () => ListBuilder<TrustedDeviceSummary>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(UnsignedAccountSecurityStateEnvelope),
+            ]),
+            () => ListBuilder<UnsignedAccountSecurityStateEnvelope>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltMap, const [

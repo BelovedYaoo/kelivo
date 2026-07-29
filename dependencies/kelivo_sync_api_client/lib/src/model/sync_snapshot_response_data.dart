@@ -13,6 +13,7 @@ part 'sync_snapshot_response_data.g.dart';
 /// 固定水位下按 lastChangeSeq 严格递增返回完整密文历史；同一 recordId 的多个版本会分别返回
 ///
 /// Properties:
+/// * [dataRekeyPhase]
 /// * [records]
 /// * [nextSnapshotCursor]
 /// * [syncCursor]
@@ -21,6 +22,10 @@ part 'sync_snapshot_response_data.g.dart';
 abstract class SyncSnapshotResponseData
     implements
         Built<SyncSnapshotResponseData, SyncSnapshotResponseDataBuilder> {
+  @BuiltValueField(wireName: r'dataRekeyPhase')
+  SyncSnapshotResponseDataDataRekeyPhaseEnum get dataRekeyPhase;
+  // enum dataRekeyPhaseEnum {  ready,  rekey-pending,  };
+
   @BuiltValueField(wireName: r'records')
   BuiltList<SyncRecord> get records;
 
@@ -63,6 +68,11 @@ class _$SyncSnapshotResponseDataSerializer
     SyncSnapshotResponseData object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'dataRekeyPhase';
+    yield serializers.serialize(
+      object.dataRekeyPhase,
+      specifiedType: const FullType(SyncSnapshotResponseDataDataRekeyPhaseEnum),
+    );
     yield r'records';
     yield serializers.serialize(
       object.records,
@@ -114,6 +124,17 @@ class _$SyncSnapshotResponseDataSerializer
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'dataRekeyPhase':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(
+                      SyncSnapshotResponseDataDataRekeyPhaseEnum,
+                    ),
+                  )
+                  as SyncSnapshotResponseDataDataRekeyPhaseEnum;
+          result.dataRekeyPhase = valueDes;
+          break;
         case r'records':
           final valueDes =
               serializers.deserialize(
@@ -181,4 +202,23 @@ class _$SyncSnapshotResponseDataSerializer
     );
     return result.build();
   }
+}
+
+class SyncSnapshotResponseDataDataRekeyPhaseEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'ready')
+  static const SyncSnapshotResponseDataDataRekeyPhaseEnum ready =
+      _$syncSnapshotResponseDataDataRekeyPhaseEnum_ready;
+  @BuiltValueEnumConst(wireName: r'rekey-pending')
+  static const SyncSnapshotResponseDataDataRekeyPhaseEnum rekeyPending =
+      _$syncSnapshotResponseDataDataRekeyPhaseEnum_rekeyPending;
+
+  static Serializer<SyncSnapshotResponseDataDataRekeyPhaseEnum>
+  get serializer => _$syncSnapshotResponseDataDataRekeyPhaseEnumSerializer;
+
+  const SyncSnapshotResponseDataDataRekeyPhaseEnum._(String name) : super(name);
+
+  static BuiltSet<SyncSnapshotResponseDataDataRekeyPhaseEnum> get values =>
+      _$syncSnapshotResponseDataDataRekeyPhaseEnumValues;
+  static SyncSnapshotResponseDataDataRekeyPhaseEnum valueOf(String name) =>
+      _$syncSnapshotResponseDataDataRekeyPhaseEnumValueOf(name);
 }

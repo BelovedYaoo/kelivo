@@ -13,7 +13,7 @@ part 'attachment_get_chunk_request.g.dart';
 /// Properties:
 /// * [attachmentId]
 /// * [uploadId]
-/// * [keyEpoch]
+/// * [chunkKeyEpoch]
 /// * [chunkIndex]
 @BuiltValue()
 abstract class AttachmentGetChunkRequest
@@ -25,8 +25,8 @@ abstract class AttachmentGetChunkRequest
   @BuiltValueField(wireName: r'uploadId')
   String get uploadId;
 
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
+  @BuiltValueField(wireName: r'chunkKeyEpoch')
+  int get chunkKeyEpoch;
 
   @BuiltValueField(wireName: r'chunkIndex')
   int get chunkIndex;
@@ -71,9 +71,9 @@ class _$AttachmentGetChunkRequestSerializer
       object.uploadId,
       specifiedType: const FullType(String),
     );
-    yield r'keyEpoch';
+    yield r'chunkKeyEpoch';
     yield serializers.serialize(
-      object.keyEpoch,
+      object.chunkKeyEpoch,
       specifiedType: const FullType(int),
     );
     yield r'chunkIndex';
@@ -126,11 +126,11 @@ class _$AttachmentGetChunkRequestSerializer
                   as String;
           result.uploadId = valueDes;
           break;
-        case r'keyEpoch':
+        case r'chunkKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.keyEpoch = valueDes;
+          result.chunkKeyEpoch = valueDes;
           break;
         case r'chunkIndex':
           final valueDes =

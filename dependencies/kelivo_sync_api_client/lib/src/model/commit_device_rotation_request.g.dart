@@ -18,8 +18,6 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
   @override
   final String revokeDeviceId;
   @override
-  final int nextMembershipManifestVersion;
-  @override
   final String nextMembershipManifest;
   @override
   final String nextMembershipManifestDigest;
@@ -28,7 +26,7 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
   @override
   final String nextRecoveryCapsule;
   @override
-  final BuiltList<InitializeDeviceSecurityStateEnvelope> envelopes;
+  final BuiltList<UnsignedAccountSecurityStateEnvelope> envelopes;
 
   factory _$CommitDeviceRotationRequest([
     void Function(CommitDeviceRotationRequestBuilder)? updates,
@@ -40,7 +38,6 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
     required this.expectedMembershipManifestDigest,
     required this.operationId,
     required this.revokeDeviceId,
-    required this.nextMembershipManifestVersion,
     required this.nextMembershipManifest,
     required this.nextMembershipManifestDigest,
     required this.nextRecoveryCapsuleVersion,
@@ -66,7 +63,6 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
             other.expectedMembershipManifestDigest &&
         operationId == other.operationId &&
         revokeDeviceId == other.revokeDeviceId &&
-        nextMembershipManifestVersion == other.nextMembershipManifestVersion &&
         nextMembershipManifest == other.nextMembershipManifest &&
         nextMembershipManifestDigest == other.nextMembershipManifestDigest &&
         nextRecoveryCapsuleVersion == other.nextRecoveryCapsuleVersion &&
@@ -82,7 +78,6 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
     _$hash = $jc(_$hash, expectedMembershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, operationId.hashCode);
     _$hash = $jc(_$hash, revokeDeviceId.hashCode);
-    _$hash = $jc(_$hash, nextMembershipManifestVersion.hashCode);
     _$hash = $jc(_$hash, nextMembershipManifest.hashCode);
     _$hash = $jc(_$hash, nextMembershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, nextRecoveryCapsuleVersion.hashCode);
@@ -103,7 +98,6 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
           )
           ..add('operationId', operationId)
           ..add('revokeDeviceId', revokeDeviceId)
-          ..add('nextMembershipManifestVersion', nextMembershipManifestVersion)
           ..add('nextMembershipManifest', nextMembershipManifest)
           ..add('nextMembershipManifestDigest', nextMembershipManifestDigest)
           ..add('nextRecoveryCapsuleVersion', nextRecoveryCapsuleVersion)
@@ -148,12 +142,6 @@ class CommitDeviceRotationRequestBuilder
   set revokeDeviceId(String? revokeDeviceId) =>
       _$this._revokeDeviceId = revokeDeviceId;
 
-  int? _nextMembershipManifestVersion;
-  int? get nextMembershipManifestVersion =>
-      _$this._nextMembershipManifestVersion;
-  set nextMembershipManifestVersion(int? nextMembershipManifestVersion) =>
-      _$this._nextMembershipManifestVersion = nextMembershipManifestVersion;
-
   String? _nextMembershipManifest;
   String? get nextMembershipManifest => _$this._nextMembershipManifest;
   set nextMembershipManifest(String? nextMembershipManifest) =>
@@ -175,13 +163,11 @@ class CommitDeviceRotationRequestBuilder
   set nextRecoveryCapsule(String? nextRecoveryCapsule) =>
       _$this._nextRecoveryCapsule = nextRecoveryCapsule;
 
-  ListBuilder<InitializeDeviceSecurityStateEnvelope>? _envelopes;
-  ListBuilder<InitializeDeviceSecurityStateEnvelope> get envelopes =>
-      _$this._envelopes ??=
-          ListBuilder<InitializeDeviceSecurityStateEnvelope>();
-  set envelopes(
-    ListBuilder<InitializeDeviceSecurityStateEnvelope>? envelopes,
-  ) => _$this._envelopes = envelopes;
+  ListBuilder<UnsignedAccountSecurityStateEnvelope>? _envelopes;
+  ListBuilder<UnsignedAccountSecurityStateEnvelope> get envelopes =>
+      _$this._envelopes ??= ListBuilder<UnsignedAccountSecurityStateEnvelope>();
+  set envelopes(ListBuilder<UnsignedAccountSecurityStateEnvelope>? envelopes) =>
+      _$this._envelopes = envelopes;
 
   CommitDeviceRotationRequestBuilder() {
     CommitDeviceRotationRequest._defaults(this);
@@ -195,7 +181,6 @@ class CommitDeviceRotationRequestBuilder
       _expectedMembershipManifestDigest = $v.expectedMembershipManifestDigest;
       _operationId = $v.operationId;
       _revokeDeviceId = $v.revokeDeviceId;
-      _nextMembershipManifestVersion = $v.nextMembershipManifestVersion;
       _nextMembershipManifest = $v.nextMembershipManifest;
       _nextMembershipManifestDigest = $v.nextMembershipManifestDigest;
       _nextRecoveryCapsuleVersion = $v.nextRecoveryCapsuleVersion;
@@ -251,12 +236,6 @@ class CommitDeviceRotationRequestBuilder
               r'CommitDeviceRotationRequest',
               'revokeDeviceId',
             ),
-            nextMembershipManifestVersion:
-                BuiltValueNullFieldError.checkNotNull(
-                  nextMembershipManifestVersion,
-                  r'CommitDeviceRotationRequest',
-                  'nextMembershipManifestVersion',
-                ),
             nextMembershipManifest: BuiltValueNullFieldError.checkNotNull(
               nextMembershipManifest,
               r'CommitDeviceRotationRequest',

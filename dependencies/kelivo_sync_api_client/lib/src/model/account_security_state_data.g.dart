@@ -1,18 +1,85 @@
 // GENERATED CODE - DO NOT MODIFY BY HAND
 
-part of 'device_security_state_data.dart';
+part of 'account_security_state_data.dart';
 
 // **************************************************************************
 // BuiltValueGenerator
 // **************************************************************************
 
-class _$DeviceSecurityStateData extends DeviceSecurityStateData {
+const AccountSecurityStateDataDataRekeyPhaseEnum
+_$accountSecurityStateDataDataRekeyPhaseEnum_ready =
+    const AccountSecurityStateDataDataRekeyPhaseEnum._('ready');
+const AccountSecurityStateDataDataRekeyPhaseEnum
+_$accountSecurityStateDataDataRekeyPhaseEnum_rekeyPending =
+    const AccountSecurityStateDataDataRekeyPhaseEnum._('rekeyPending');
+
+AccountSecurityStateDataDataRekeyPhaseEnum
+_$accountSecurityStateDataDataRekeyPhaseEnumValueOf(String name) {
+  switch (name) {
+    case 'ready':
+      return _$accountSecurityStateDataDataRekeyPhaseEnum_ready;
+    case 'rekeyPending':
+      return _$accountSecurityStateDataDataRekeyPhaseEnum_rekeyPending;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<AccountSecurityStateDataDataRekeyPhaseEnum>
+_$accountSecurityStateDataDataRekeyPhaseEnumValues =
+    BuiltSet<AccountSecurityStateDataDataRekeyPhaseEnum>(
+      const <AccountSecurityStateDataDataRekeyPhaseEnum>[
+        _$accountSecurityStateDataDataRekeyPhaseEnum_ready,
+        _$accountSecurityStateDataDataRekeyPhaseEnum_rekeyPending,
+      ],
+    );
+
+Serializer<AccountSecurityStateDataDataRekeyPhaseEnum>
+_$accountSecurityStateDataDataRekeyPhaseEnumSerializer =
+    _$AccountSecurityStateDataDataRekeyPhaseEnumSerializer();
+
+class _$AccountSecurityStateDataDataRekeyPhaseEnumSerializer
+    implements PrimitiveSerializer<AccountSecurityStateDataDataRekeyPhaseEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'ready': 'ready',
+    'rekeyPending': 'rekey-pending',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'ready': 'ready',
+    'rekey-pending': 'rekeyPending',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[
+    AccountSecurityStateDataDataRekeyPhaseEnum,
+  ];
+  @override
+  final String wireName = 'AccountSecurityStateDataDataRekeyPhaseEnum';
+
+  @override
+  Object serialize(
+    Serializers serializers,
+    AccountSecurityStateDataDataRekeyPhaseEnum object, {
+    FullType specifiedType = FullType.unspecified,
+  }) => _toWire[object.name] ?? object.name;
+
+  @override
+  AccountSecurityStateDataDataRekeyPhaseEnum deserialize(
+    Serializers serializers,
+    Object serialized, {
+    FullType specifiedType = FullType.unspecified,
+  }) => AccountSecurityStateDataDataRekeyPhaseEnum.valueOf(
+    _fromWire[serialized] ?? (serialized is String ? serialized : ''),
+  );
+}
+
+class _$AccountSecurityStateData extends AccountSecurityStateData {
   @override
   final int generation;
   @override
   final int keyEpoch;
   @override
-  final int membershipManifestVersion;
+  final AccountSecurityStateDataDataRekeyPhaseEnum dataRekeyPhase;
   @override
   final String membershipManifest;
   @override
@@ -26,46 +93,46 @@ class _$DeviceSecurityStateData extends DeviceSecurityStateData {
   @override
   final String recoveryCapsule;
   @override
-  final String? lastOperationId;
+  final String lastOperationId;
   @override
   final DateTime updatedAt;
   @override
-  final BuiltList<DeviceSecurityStateEnvelope> envelopes;
+  final BuiltList<AccountSecurityStateEnvelope> envelopes;
 
-  factory _$DeviceSecurityStateData([
-    void Function(DeviceSecurityStateDataBuilder)? updates,
-  ]) => (DeviceSecurityStateDataBuilder()..update(updates))._build();
+  factory _$AccountSecurityStateData([
+    void Function(AccountSecurityStateDataBuilder)? updates,
+  ]) => (AccountSecurityStateDataBuilder()..update(updates))._build();
 
-  _$DeviceSecurityStateData._({
+  _$AccountSecurityStateData._({
     required this.generation,
     required this.keyEpoch,
-    required this.membershipManifestVersion,
+    required this.dataRekeyPhase,
     required this.membershipManifest,
     required this.membershipManifestDigest,
     required this.recoveryPublicKeyVersion,
     required this.recoveryPublicKey,
     required this.recoveryCapsuleVersion,
     required this.recoveryCapsule,
-    this.lastOperationId,
+    required this.lastOperationId,
     required this.updatedAt,
     required this.envelopes,
   }) : super._();
   @override
-  DeviceSecurityStateData rebuild(
-    void Function(DeviceSecurityStateDataBuilder) updates,
+  AccountSecurityStateData rebuild(
+    void Function(AccountSecurityStateDataBuilder) updates,
   ) => (toBuilder()..update(updates)).build();
 
   @override
-  DeviceSecurityStateDataBuilder toBuilder() =>
-      DeviceSecurityStateDataBuilder()..replace(this);
+  AccountSecurityStateDataBuilder toBuilder() =>
+      AccountSecurityStateDataBuilder()..replace(this);
 
   @override
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
-    return other is DeviceSecurityStateData &&
+    return other is AccountSecurityStateData &&
         generation == other.generation &&
         keyEpoch == other.keyEpoch &&
-        membershipManifestVersion == other.membershipManifestVersion &&
+        dataRekeyPhase == other.dataRekeyPhase &&
         membershipManifest == other.membershipManifest &&
         membershipManifestDigest == other.membershipManifestDigest &&
         recoveryPublicKeyVersion == other.recoveryPublicKeyVersion &&
@@ -82,7 +149,7 @@ class _$DeviceSecurityStateData extends DeviceSecurityStateData {
     var _$hash = 0;
     _$hash = $jc(_$hash, generation.hashCode);
     _$hash = $jc(_$hash, keyEpoch.hashCode);
-    _$hash = $jc(_$hash, membershipManifestVersion.hashCode);
+    _$hash = $jc(_$hash, dataRekeyPhase.hashCode);
     _$hash = $jc(_$hash, membershipManifest.hashCode);
     _$hash = $jc(_$hash, membershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, recoveryPublicKeyVersion.hashCode);
@@ -98,10 +165,10 @@ class _$DeviceSecurityStateData extends DeviceSecurityStateData {
 
   @override
   String toString() {
-    return (newBuiltValueToStringHelper(r'DeviceSecurityStateData')
+    return (newBuiltValueToStringHelper(r'AccountSecurityStateData')
           ..add('generation', generation)
           ..add('keyEpoch', keyEpoch)
-          ..add('membershipManifestVersion', membershipManifestVersion)
+          ..add('dataRekeyPhase', dataRekeyPhase)
           ..add('membershipManifest', membershipManifest)
           ..add('membershipManifestDigest', membershipManifestDigest)
           ..add('recoveryPublicKeyVersion', recoveryPublicKeyVersion)
@@ -115,10 +182,10 @@ class _$DeviceSecurityStateData extends DeviceSecurityStateData {
   }
 }
 
-class DeviceSecurityStateDataBuilder
+class AccountSecurityStateDataBuilder
     implements
-        Builder<DeviceSecurityStateData, DeviceSecurityStateDataBuilder> {
-  _$DeviceSecurityStateData? _$v;
+        Builder<AccountSecurityStateData, AccountSecurityStateDataBuilder> {
+  _$AccountSecurityStateData? _$v;
 
   int? _generation;
   int? get generation => _$this._generation;
@@ -128,10 +195,12 @@ class DeviceSecurityStateDataBuilder
   int? get keyEpoch => _$this._keyEpoch;
   set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
 
-  int? _membershipManifestVersion;
-  int? get membershipManifestVersion => _$this._membershipManifestVersion;
-  set membershipManifestVersion(int? membershipManifestVersion) =>
-      _$this._membershipManifestVersion = membershipManifestVersion;
+  AccountSecurityStateDataDataRekeyPhaseEnum? _dataRekeyPhase;
+  AccountSecurityStateDataDataRekeyPhaseEnum? get dataRekeyPhase =>
+      _$this._dataRekeyPhase;
+  set dataRekeyPhase(
+    AccountSecurityStateDataDataRekeyPhaseEnum? dataRekeyPhase,
+  ) => _$this._dataRekeyPhase = dataRekeyPhase;
 
   String? _membershipManifest;
   String? get membershipManifest => _$this._membershipManifest;
@@ -172,22 +241,22 @@ class DeviceSecurityStateDataBuilder
   DateTime? get updatedAt => _$this._updatedAt;
   set updatedAt(DateTime? updatedAt) => _$this._updatedAt = updatedAt;
 
-  ListBuilder<DeviceSecurityStateEnvelope>? _envelopes;
-  ListBuilder<DeviceSecurityStateEnvelope> get envelopes =>
-      _$this._envelopes ??= ListBuilder<DeviceSecurityStateEnvelope>();
-  set envelopes(ListBuilder<DeviceSecurityStateEnvelope>? envelopes) =>
+  ListBuilder<AccountSecurityStateEnvelope>? _envelopes;
+  ListBuilder<AccountSecurityStateEnvelope> get envelopes =>
+      _$this._envelopes ??= ListBuilder<AccountSecurityStateEnvelope>();
+  set envelopes(ListBuilder<AccountSecurityStateEnvelope>? envelopes) =>
       _$this._envelopes = envelopes;
 
-  DeviceSecurityStateDataBuilder() {
-    DeviceSecurityStateData._defaults(this);
+  AccountSecurityStateDataBuilder() {
+    AccountSecurityStateData._defaults(this);
   }
 
-  DeviceSecurityStateDataBuilder get _$this {
+  AccountSecurityStateDataBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
       _generation = $v.generation;
       _keyEpoch = $v.keyEpoch;
-      _membershipManifestVersion = $v.membershipManifestVersion;
+      _dataRekeyPhase = $v.dataRekeyPhase;
       _membershipManifest = $v.membershipManifest;
       _membershipManifestDigest = $v.membershipManifestDigest;
       _recoveryPublicKeyVersion = $v.recoveryPublicKeyVersion;
@@ -203,73 +272,77 @@ class DeviceSecurityStateDataBuilder
   }
 
   @override
-  void replace(DeviceSecurityStateData other) {
-    _$v = other as _$DeviceSecurityStateData;
+  void replace(AccountSecurityStateData other) {
+    _$v = other as _$AccountSecurityStateData;
   }
 
   @override
-  void update(void Function(DeviceSecurityStateDataBuilder)? updates) {
+  void update(void Function(AccountSecurityStateDataBuilder)? updates) {
     if (updates != null) updates(this);
   }
 
   @override
-  DeviceSecurityStateData build() => _build();
+  AccountSecurityStateData build() => _build();
 
-  _$DeviceSecurityStateData _build() {
-    _$DeviceSecurityStateData _$result;
+  _$AccountSecurityStateData _build() {
+    _$AccountSecurityStateData _$result;
     try {
       _$result =
           _$v ??
-          _$DeviceSecurityStateData._(
+          _$AccountSecurityStateData._(
             generation: BuiltValueNullFieldError.checkNotNull(
               generation,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'generation',
             ),
             keyEpoch: BuiltValueNullFieldError.checkNotNull(
               keyEpoch,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'keyEpoch',
             ),
-            membershipManifestVersion: BuiltValueNullFieldError.checkNotNull(
-              membershipManifestVersion,
-              r'DeviceSecurityStateData',
-              'membershipManifestVersion',
+            dataRekeyPhase: BuiltValueNullFieldError.checkNotNull(
+              dataRekeyPhase,
+              r'AccountSecurityStateData',
+              'dataRekeyPhase',
             ),
             membershipManifest: BuiltValueNullFieldError.checkNotNull(
               membershipManifest,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'membershipManifest',
             ),
             membershipManifestDigest: BuiltValueNullFieldError.checkNotNull(
               membershipManifestDigest,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'membershipManifestDigest',
             ),
             recoveryPublicKeyVersion: BuiltValueNullFieldError.checkNotNull(
               recoveryPublicKeyVersion,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'recoveryPublicKeyVersion',
             ),
             recoveryPublicKey: BuiltValueNullFieldError.checkNotNull(
               recoveryPublicKey,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'recoveryPublicKey',
             ),
             recoveryCapsuleVersion: BuiltValueNullFieldError.checkNotNull(
               recoveryCapsuleVersion,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'recoveryCapsuleVersion',
             ),
             recoveryCapsule: BuiltValueNullFieldError.checkNotNull(
               recoveryCapsule,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'recoveryCapsule',
             ),
-            lastOperationId: lastOperationId,
+            lastOperationId: BuiltValueNullFieldError.checkNotNull(
+              lastOperationId,
+              r'AccountSecurityStateData',
+              'lastOperationId',
+            ),
             updatedAt: BuiltValueNullFieldError.checkNotNull(
               updatedAt,
-              r'DeviceSecurityStateData',
+              r'AccountSecurityStateData',
               'updatedAt',
             ),
             envelopes: envelopes.build(),
@@ -281,7 +354,7 @@ class DeviceSecurityStateDataBuilder
         envelopes.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
-          r'DeviceSecurityStateData',
+          r'AccountSecurityStateData',
           _$failedField,
           e.toString(),
         );

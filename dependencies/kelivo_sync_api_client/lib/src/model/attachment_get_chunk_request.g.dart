@@ -12,7 +12,7 @@ class _$AttachmentGetChunkRequest extends AttachmentGetChunkRequest {
   @override
   final String uploadId;
   @override
-  final int keyEpoch;
+  final int chunkKeyEpoch;
   @override
   final int chunkIndex;
 
@@ -23,7 +23,7 @@ class _$AttachmentGetChunkRequest extends AttachmentGetChunkRequest {
   _$AttachmentGetChunkRequest._({
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
     required this.chunkIndex,
   }) : super._();
   @override
@@ -41,7 +41,7 @@ class _$AttachmentGetChunkRequest extends AttachmentGetChunkRequest {
     return other is AttachmentGetChunkRequest &&
         attachmentId == other.attachmentId &&
         uploadId == other.uploadId &&
-        keyEpoch == other.keyEpoch &&
+        chunkKeyEpoch == other.chunkKeyEpoch &&
         chunkIndex == other.chunkIndex;
   }
 
@@ -50,7 +50,7 @@ class _$AttachmentGetChunkRequest extends AttachmentGetChunkRequest {
     var _$hash = 0;
     _$hash = $jc(_$hash, attachmentId.hashCode);
     _$hash = $jc(_$hash, uploadId.hashCode);
-    _$hash = $jc(_$hash, keyEpoch.hashCode);
+    _$hash = $jc(_$hash, chunkKeyEpoch.hashCode);
     _$hash = $jc(_$hash, chunkIndex.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -61,7 +61,7 @@ class _$AttachmentGetChunkRequest extends AttachmentGetChunkRequest {
     return (newBuiltValueToStringHelper(r'AttachmentGetChunkRequest')
           ..add('attachmentId', attachmentId)
           ..add('uploadId', uploadId)
-          ..add('keyEpoch', keyEpoch)
+          ..add('chunkKeyEpoch', chunkKeyEpoch)
           ..add('chunkIndex', chunkIndex))
         .toString();
   }
@@ -80,9 +80,10 @@ class AttachmentGetChunkRequestBuilder
   String? get uploadId => _$this._uploadId;
   set uploadId(String? uploadId) => _$this._uploadId = uploadId;
 
-  int? _keyEpoch;
-  int? get keyEpoch => _$this._keyEpoch;
-  set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
+  int? _chunkKeyEpoch;
+  int? get chunkKeyEpoch => _$this._chunkKeyEpoch;
+  set chunkKeyEpoch(int? chunkKeyEpoch) =>
+      _$this._chunkKeyEpoch = chunkKeyEpoch;
 
   int? _chunkIndex;
   int? get chunkIndex => _$this._chunkIndex;
@@ -97,7 +98,7 @@ class AttachmentGetChunkRequestBuilder
     if ($v != null) {
       _attachmentId = $v.attachmentId;
       _uploadId = $v.uploadId;
-      _keyEpoch = $v.keyEpoch;
+      _chunkKeyEpoch = $v.chunkKeyEpoch;
       _chunkIndex = $v.chunkIndex;
       _$v = null;
     }
@@ -131,10 +132,10 @@ class AttachmentGetChunkRequestBuilder
             r'AttachmentGetChunkRequest',
             'uploadId',
           ),
-          keyEpoch: BuiltValueNullFieldError.checkNotNull(
-            keyEpoch,
+          chunkKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            chunkKeyEpoch,
             r'AttachmentGetChunkRequest',
-            'keyEpoch',
+            'chunkKeyEpoch',
           ),
           chunkIndex: BuiltValueNullFieldError.checkNotNull(
             chunkIndex,

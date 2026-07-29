@@ -70,11 +70,17 @@ class _$DevicePairingConsumeData extends DevicePairingConsumeData {
   @override
   final DevicePairingConsumeDataResultEnum result;
   @override
+  final String pairingId;
+  @override
+  final String issuerDeviceId;
+  @override
   final int keyEpoch;
   @override
   final int securityGeneration;
   @override
   final String membershipManifestDigest;
+  @override
+  final AccountSecurityStateData securityState;
   @override
   final String token;
   @override
@@ -91,9 +97,12 @@ class _$DevicePairingConsumeData extends DevicePairingConsumeData {
   _$DevicePairingConsumeData._({
     required this.protocolVersion,
     required this.result,
+    required this.pairingId,
+    required this.issuerDeviceId,
     required this.keyEpoch,
     required this.securityGeneration,
     required this.membershipManifestDigest,
+    required this.securityState,
     required this.token,
     required this.tokenExpiresAt,
     required this.user,
@@ -114,9 +123,12 @@ class _$DevicePairingConsumeData extends DevicePairingConsumeData {
     return other is DevicePairingConsumeData &&
         protocolVersion == other.protocolVersion &&
         result == other.result &&
+        pairingId == other.pairingId &&
+        issuerDeviceId == other.issuerDeviceId &&
         keyEpoch == other.keyEpoch &&
         securityGeneration == other.securityGeneration &&
         membershipManifestDigest == other.membershipManifestDigest &&
+        securityState == other.securityState &&
         token == other.token &&
         tokenExpiresAt == other.tokenExpiresAt &&
         user == other.user &&
@@ -128,9 +140,12 @@ class _$DevicePairingConsumeData extends DevicePairingConsumeData {
     var _$hash = 0;
     _$hash = $jc(_$hash, protocolVersion.hashCode);
     _$hash = $jc(_$hash, result.hashCode);
+    _$hash = $jc(_$hash, pairingId.hashCode);
+    _$hash = $jc(_$hash, issuerDeviceId.hashCode);
     _$hash = $jc(_$hash, keyEpoch.hashCode);
     _$hash = $jc(_$hash, securityGeneration.hashCode);
     _$hash = $jc(_$hash, membershipManifestDigest.hashCode);
+    _$hash = $jc(_$hash, securityState.hashCode);
     _$hash = $jc(_$hash, token.hashCode);
     _$hash = $jc(_$hash, tokenExpiresAt.hashCode);
     _$hash = $jc(_$hash, user.hashCode);
@@ -144,9 +159,12 @@ class _$DevicePairingConsumeData extends DevicePairingConsumeData {
     return (newBuiltValueToStringHelper(r'DevicePairingConsumeData')
           ..add('protocolVersion', protocolVersion)
           ..add('result', result)
+          ..add('pairingId', pairingId)
+          ..add('issuerDeviceId', issuerDeviceId)
           ..add('keyEpoch', keyEpoch)
           ..add('securityGeneration', securityGeneration)
           ..add('membershipManifestDigest', membershipManifestDigest)
+          ..add('securityState', securityState)
           ..add('token', token)
           ..add('tokenExpiresAt', tokenExpiresAt)
           ..add('user', user)
@@ -170,6 +188,15 @@ class DevicePairingConsumeDataBuilder
   set result(DevicePairingConsumeDataResultEnum? result) =>
       _$this._result = result;
 
+  String? _pairingId;
+  String? get pairingId => _$this._pairingId;
+  set pairingId(String? pairingId) => _$this._pairingId = pairingId;
+
+  String? _issuerDeviceId;
+  String? get issuerDeviceId => _$this._issuerDeviceId;
+  set issuerDeviceId(String? issuerDeviceId) =>
+      _$this._issuerDeviceId = issuerDeviceId;
+
   int? _keyEpoch;
   int? get keyEpoch => _$this._keyEpoch;
   set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
@@ -183,6 +210,12 @@ class DevicePairingConsumeDataBuilder
   String? get membershipManifestDigest => _$this._membershipManifestDigest;
   set membershipManifestDigest(String? membershipManifestDigest) =>
       _$this._membershipManifestDigest = membershipManifestDigest;
+
+  AccountSecurityStateDataBuilder? _securityState;
+  AccountSecurityStateDataBuilder get securityState =>
+      _$this._securityState ??= AccountSecurityStateDataBuilder();
+  set securityState(AccountSecurityStateDataBuilder? securityState) =>
+      _$this._securityState = securityState;
 
   String? _token;
   String? get token => _$this._token;
@@ -214,9 +247,12 @@ class DevicePairingConsumeDataBuilder
     if ($v != null) {
       _protocolVersion = $v.protocolVersion;
       _result = $v.result;
+      _pairingId = $v.pairingId;
+      _issuerDeviceId = $v.issuerDeviceId;
       _keyEpoch = $v.keyEpoch;
       _securityGeneration = $v.securityGeneration;
       _membershipManifestDigest = $v.membershipManifestDigest;
+      _securityState = $v.securityState.toBuilder();
       _token = $v.token;
       _tokenExpiresAt = $v.tokenExpiresAt;
       _user = $v.user.toBuilder();
@@ -255,6 +291,16 @@ class DevicePairingConsumeDataBuilder
               r'DevicePairingConsumeData',
               'result',
             ),
+            pairingId: BuiltValueNullFieldError.checkNotNull(
+              pairingId,
+              r'DevicePairingConsumeData',
+              'pairingId',
+            ),
+            issuerDeviceId: BuiltValueNullFieldError.checkNotNull(
+              issuerDeviceId,
+              r'DevicePairingConsumeData',
+              'issuerDeviceId',
+            ),
             keyEpoch: BuiltValueNullFieldError.checkNotNull(
               keyEpoch,
               r'DevicePairingConsumeData',
@@ -270,6 +316,7 @@ class DevicePairingConsumeDataBuilder
               r'DevicePairingConsumeData',
               'membershipManifestDigest',
             ),
+            securityState: securityState.build(),
             token: BuiltValueNullFieldError.checkNotNull(
               token,
               r'DevicePairingConsumeData',
@@ -286,6 +333,9 @@ class DevicePairingConsumeDataBuilder
     } catch (_) {
       late String _$failedField;
       try {
+        _$failedField = 'securityState';
+        securityState.build();
+
         _$failedField = 'user';
         user.build();
         _$failedField = 'device';

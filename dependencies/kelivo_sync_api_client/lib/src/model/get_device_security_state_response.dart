@@ -3,7 +3,7 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/device_security_state_data.dart';
+import 'package:kelivo_sync_api_client/src/model/account_security_state_data.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -21,7 +21,7 @@ abstract class GetDeviceSecurityStateResponse
           GetDeviceSecurityStateResponseBuilder
         > {
   @BuiltValueField(wireName: r'data')
-  DeviceSecurityStateData get data;
+  AccountSecurityStateData get data;
 
   GetDeviceSecurityStateResponse._();
 
@@ -56,7 +56,7 @@ class _$GetDeviceSecurityStateResponseSerializer
     yield r'data';
     yield serializers.serialize(
       object.data,
-      specifiedType: const FullType(DeviceSecurityStateData),
+      specifiedType: const FullType(AccountSecurityStateData),
     );
   }
 
@@ -89,9 +89,9 @@ class _$GetDeviceSecurityStateResponseSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(DeviceSecurityStateData),
+                    specifiedType: const FullType(AccountSecurityStateData),
                   )
-                  as DeviceSecurityStateData;
+                  as AccountSecurityStateData;
           result.data.replace(valueDes);
           break;
         default:

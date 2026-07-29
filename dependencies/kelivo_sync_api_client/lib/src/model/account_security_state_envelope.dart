@@ -6,9 +6,9 @@
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'device_security_state_envelope.g.dart';
+part 'account_security_state_envelope.g.dart';
 
-/// DeviceSecurityStateEnvelope
+/// AccountSecurityStateEnvelope
 ///
 /// Properties:
 /// * [targetDeviceId]
@@ -17,9 +17,12 @@ part 'device_security_state_envelope.g.dart';
 /// * [keyEpoch]
 /// * [accountKeyEnvelope]
 @BuiltValue()
-abstract class DeviceSecurityStateEnvelope
+abstract class AccountSecurityStateEnvelope
     implements
-        Built<DeviceSecurityStateEnvelope, DeviceSecurityStateEnvelopeBuilder> {
+        Built<
+          AccountSecurityStateEnvelope,
+          AccountSecurityStateEnvelopeBuilder
+        > {
   @BuiltValueField(wireName: r'targetDeviceId')
   String get targetDeviceId;
 
@@ -35,34 +38,34 @@ abstract class DeviceSecurityStateEnvelope
   @BuiltValueField(wireName: r'accountKeyEnvelope')
   String get accountKeyEnvelope;
 
-  DeviceSecurityStateEnvelope._();
+  AccountSecurityStateEnvelope._();
 
-  factory DeviceSecurityStateEnvelope([
-    void updates(DeviceSecurityStateEnvelopeBuilder b),
-  ]) = _$DeviceSecurityStateEnvelope;
+  factory AccountSecurityStateEnvelope([
+    void updates(AccountSecurityStateEnvelopeBuilder b),
+  ]) = _$AccountSecurityStateEnvelope;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(DeviceSecurityStateEnvelopeBuilder b) => b;
+  static void _defaults(AccountSecurityStateEnvelopeBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<DeviceSecurityStateEnvelope> get serializer =>
-      _$DeviceSecurityStateEnvelopeSerializer();
+  static Serializer<AccountSecurityStateEnvelope> get serializer =>
+      _$AccountSecurityStateEnvelopeSerializer();
 }
 
-class _$DeviceSecurityStateEnvelopeSerializer
-    implements PrimitiveSerializer<DeviceSecurityStateEnvelope> {
+class _$AccountSecurityStateEnvelopeSerializer
+    implements PrimitiveSerializer<AccountSecurityStateEnvelope> {
   @override
   final Iterable<Type> types = const [
-    DeviceSecurityStateEnvelope,
-    _$DeviceSecurityStateEnvelope,
+    AccountSecurityStateEnvelope,
+    _$AccountSecurityStateEnvelope,
   ];
 
   @override
-  final String wireName = r'DeviceSecurityStateEnvelope';
+  final String wireName = r'AccountSecurityStateEnvelope';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    DeviceSecurityStateEnvelope object, {
+    AccountSecurityStateEnvelope object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'targetDeviceId';
@@ -95,7 +98,7 @@ class _$DeviceSecurityStateEnvelopeSerializer
   @override
   Object serialize(
     Serializers serializers,
-    DeviceSecurityStateEnvelope object, {
+    AccountSecurityStateEnvelope object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -110,7 +113,7 @@ class _$DeviceSecurityStateEnvelopeSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required DeviceSecurityStateEnvelopeBuilder result,
+    required AccountSecurityStateEnvelopeBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -165,12 +168,12 @@ class _$DeviceSecurityStateEnvelopeSerializer
   }
 
   @override
-  DeviceSecurityStateEnvelope deserialize(
+  AccountSecurityStateEnvelope deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = DeviceSecurityStateEnvelopeBuilder();
+    final result = AccountSecurityStateEnvelopeBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

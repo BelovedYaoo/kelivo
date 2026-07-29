@@ -14,7 +14,8 @@ part 'attachment_delete_request.g.dart';
 /// * [mutationId]
 /// * [attachmentId]
 /// * [uploadId]
-/// * [keyEpoch]
+/// * [manifestKeyEpoch]
+/// * [manifestRevision]
 @BuiltValue()
 abstract class AttachmentDeleteRequest
     implements Built<AttachmentDeleteRequest, AttachmentDeleteRequestBuilder> {
@@ -27,8 +28,11 @@ abstract class AttachmentDeleteRequest
   @BuiltValueField(wireName: r'uploadId')
   String get uploadId;
 
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
+  @BuiltValueField(wireName: r'manifestKeyEpoch')
+  int get manifestKeyEpoch;
+
+  @BuiltValueField(wireName: r'manifestRevision')
+  int get manifestRevision;
 
   AttachmentDeleteRequest._();
 
@@ -75,9 +79,14 @@ class _$AttachmentDeleteRequestSerializer
       object.uploadId,
       specifiedType: const FullType(String),
     );
-    yield r'keyEpoch';
+    yield r'manifestKeyEpoch';
     yield serializers.serialize(
-      object.keyEpoch,
+      object.manifestKeyEpoch,
+      specifiedType: const FullType(int),
+    );
+    yield r'manifestRevision';
+    yield serializers.serialize(
+      object.manifestRevision,
       specifiedType: const FullType(int),
     );
   }
@@ -134,11 +143,17 @@ class _$AttachmentDeleteRequestSerializer
                   as String;
           result.uploadId = valueDes;
           break;
-        case r'keyEpoch':
+        case r'manifestKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.keyEpoch = valueDes;
+          result.manifestKeyEpoch = valueDes;
+          break;
+        case r'manifestRevision':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.manifestRevision = valueDes;
           break;
         default:
           unhandled.add(key);

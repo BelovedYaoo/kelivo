@@ -16,7 +16,6 @@ part 'device_pairing_approve_request.g.dart';
 /// * [keyEpoch]
 /// * [expectedSecurityGeneration]
 /// * [expectedMembershipManifestDigest]
-/// * [nextMembershipManifestVersion]
 /// * [nextMembershipManifest]
 /// * [nextMembershipManifestDigest]
 /// * [accountKeyEnvelope]
@@ -40,9 +39,6 @@ abstract class DevicePairingApproveRequest
 
   @BuiltValueField(wireName: r'expectedMembershipManifestDigest')
   String get expectedMembershipManifestDigest;
-
-  @BuiltValueField(wireName: r'nextMembershipManifestVersion')
-  int get nextMembershipManifestVersion;
 
   @BuiltValueField(wireName: r'nextMembershipManifest')
   String get nextMembershipManifest;
@@ -113,11 +109,6 @@ class _$DevicePairingApproveRequestSerializer
     yield serializers.serialize(
       object.expectedMembershipManifestDigest,
       specifiedType: const FullType(String),
-    );
-    yield r'nextMembershipManifestVersion';
-    yield serializers.serialize(
-      object.nextMembershipManifestVersion,
-      specifiedType: const FullType(int),
     );
     yield r'nextMembershipManifest';
     yield serializers.serialize(
@@ -206,12 +197,6 @@ class _$DevicePairingApproveRequestSerializer
                   )
                   as String;
           result.expectedMembershipManifestDigest = valueDes;
-          break;
-        case r'nextMembershipManifestVersion':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.nextMembershipManifestVersion = valueDes;
           break;
         case r'nextMembershipManifest':
           final valueDes =

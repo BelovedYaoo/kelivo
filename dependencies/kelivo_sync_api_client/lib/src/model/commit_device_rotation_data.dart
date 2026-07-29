@@ -18,6 +18,7 @@ part 'commit_device_rotation_data.g.dart';
 /// * [fromGeneration]
 /// * [generation]
 /// * [keyEpoch]
+/// * [dataRekeyPhase]
 /// * [membershipManifestDigest]
 /// * [committedAt]
 @BuiltValue()
@@ -42,6 +43,10 @@ abstract class CommitDeviceRotationData
 
   @BuiltValueField(wireName: r'keyEpoch')
   int get keyEpoch;
+
+  @BuiltValueField(wireName: r'dataRekeyPhase')
+  CommitDeviceRotationDataDataRekeyPhaseEnum get dataRekeyPhase;
+  // enum dataRekeyPhaseEnum {  rekey-pending,  };
 
   @BuiltValueField(wireName: r'membershipManifestDigest')
   String get membershipManifestDigest;
@@ -108,6 +113,11 @@ class _$CommitDeviceRotationDataSerializer
     yield serializers.serialize(
       object.keyEpoch,
       specifiedType: const FullType(int),
+    );
+    yield r'dataRekeyPhase';
+    yield serializers.serialize(
+      object.dataRekeyPhase,
+      specifiedType: const FullType(CommitDeviceRotationDataDataRekeyPhaseEnum),
     );
     yield r'membershipManifestDigest';
     yield serializers.serialize(
@@ -193,6 +203,17 @@ class _$CommitDeviceRotationDataSerializer
                   as int;
           result.keyEpoch = valueDes;
           break;
+        case r'dataRekeyPhase':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(
+                      CommitDeviceRotationDataDataRekeyPhaseEnum,
+                    ),
+                  )
+                  as CommitDeviceRotationDataDataRekeyPhaseEnum;
+          result.dataRekeyPhase = valueDes;
+          break;
         case r'membershipManifestDigest':
           final valueDes =
               serializers.deserialize(
@@ -254,4 +275,20 @@ class CommitDeviceRotationDataResultEnum extends EnumClass {
       _$commitDeviceRotationDataResultEnumValues;
   static CommitDeviceRotationDataResultEnum valueOf(String name) =>
       _$commitDeviceRotationDataResultEnumValueOf(name);
+}
+
+class CommitDeviceRotationDataDataRekeyPhaseEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'rekey-pending')
+  static const CommitDeviceRotationDataDataRekeyPhaseEnum rekeyPending =
+      _$commitDeviceRotationDataDataRekeyPhaseEnum_rekeyPending;
+
+  static Serializer<CommitDeviceRotationDataDataRekeyPhaseEnum>
+  get serializer => _$commitDeviceRotationDataDataRekeyPhaseEnumSerializer;
+
+  const CommitDeviceRotationDataDataRekeyPhaseEnum._(String name) : super(name);
+
+  static BuiltSet<CommitDeviceRotationDataDataRekeyPhaseEnum> get values =>
+      _$commitDeviceRotationDataDataRekeyPhaseEnumValues;
+  static CommitDeviceRotationDataDataRekeyPhaseEnum valueOf(String name) =>
+      _$commitDeviceRotationDataDataRekeyPhaseEnumValueOf(name);
 }

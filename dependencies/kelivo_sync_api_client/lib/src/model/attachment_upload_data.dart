@@ -14,7 +14,9 @@ part 'attachment_upload_data.g.dart';
 /// Properties:
 /// * [attachmentId]
 /// * [uploadId]
-/// * [keyEpoch]
+/// * [chunkKeyEpoch]
+/// * [manifestKeyEpoch]
+/// * [manifestRevision]
 /// * [chunkCount]
 /// * [totalCiphertextBytes]
 /// * [status]
@@ -28,8 +30,14 @@ abstract class AttachmentUploadData
   @BuiltValueField(wireName: r'uploadId')
   String get uploadId;
 
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
+  @BuiltValueField(wireName: r'chunkKeyEpoch')
+  int get chunkKeyEpoch;
+
+  @BuiltValueField(wireName: r'manifestKeyEpoch')
+  int get manifestKeyEpoch;
+
+  @BuiltValueField(wireName: r'manifestRevision')
+  int get manifestRevision;
 
   @BuiltValueField(wireName: r'chunkCount')
   int get chunkCount;
@@ -83,9 +91,19 @@ class _$AttachmentUploadDataSerializer
       object.uploadId,
       specifiedType: const FullType(String),
     );
-    yield r'keyEpoch';
+    yield r'chunkKeyEpoch';
     yield serializers.serialize(
-      object.keyEpoch,
+      object.chunkKeyEpoch,
+      specifiedType: const FullType(int),
+    );
+    yield r'manifestKeyEpoch';
+    yield serializers.serialize(
+      object.manifestKeyEpoch,
+      specifiedType: const FullType(int),
+    );
+    yield r'manifestRevision';
+    yield serializers.serialize(
+      object.manifestRevision,
       specifiedType: const FullType(int),
     );
     yield r'chunkCount';
@@ -153,11 +171,23 @@ class _$AttachmentUploadDataSerializer
                   as String;
           result.uploadId = valueDes;
           break;
-        case r'keyEpoch':
+        case r'chunkKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.keyEpoch = valueDes;
+          result.chunkKeyEpoch = valueDes;
+          break;
+        case r'manifestKeyEpoch':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.manifestKeyEpoch = valueDes;
+          break;
+        case r'manifestRevision':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.manifestRevision = valueDes;
           break;
         case r'chunkCount':
           final valueDes =

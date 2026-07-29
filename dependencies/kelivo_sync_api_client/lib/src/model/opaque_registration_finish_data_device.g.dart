@@ -168,9 +168,13 @@ class _$OpaqueRegistrationFinishDataDevice
   @override
   final String clientVersion;
   @override
+  final int authGeneration;
+  @override
   final OpaqueRegistrationFinishDataDeviceStatusEnum status;
   @override
   final DateTime createdAt;
+  @override
+  final int sessionGeneration;
 
   factory _$OpaqueRegistrationFinishDataDevice([
     void Function(OpaqueRegistrationFinishDataDeviceBuilder)? updates,
@@ -181,8 +185,10 @@ class _$OpaqueRegistrationFinishDataDevice
     required this.name,
     required this.platform,
     required this.clientVersion,
+    required this.authGeneration,
     required this.status,
     required this.createdAt,
+    required this.sessionGeneration,
   }) : super._();
   @override
   OpaqueRegistrationFinishDataDevice rebuild(
@@ -201,8 +207,10 @@ class _$OpaqueRegistrationFinishDataDevice
         name == other.name &&
         platform == other.platform &&
         clientVersion == other.clientVersion &&
+        authGeneration == other.authGeneration &&
         status == other.status &&
-        createdAt == other.createdAt;
+        createdAt == other.createdAt &&
+        sessionGeneration == other.sessionGeneration;
   }
 
   @override
@@ -212,8 +220,10 @@ class _$OpaqueRegistrationFinishDataDevice
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, platform.hashCode);
     _$hash = $jc(_$hash, clientVersion.hashCode);
+    _$hash = $jc(_$hash, authGeneration.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
+    _$hash = $jc(_$hash, sessionGeneration.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -225,8 +235,10 @@ class _$OpaqueRegistrationFinishDataDevice
           ..add('name', name)
           ..add('platform', platform)
           ..add('clientVersion', clientVersion)
+          ..add('authGeneration', authGeneration)
           ..add('status', status)
-          ..add('createdAt', createdAt))
+          ..add('createdAt', createdAt)
+          ..add('sessionGeneration', sessionGeneration))
         .toString();
   }
 }
@@ -258,6 +270,11 @@ class OpaqueRegistrationFinishDataDeviceBuilder
   set clientVersion(String? clientVersion) =>
       _$this._clientVersion = clientVersion;
 
+  int? _authGeneration;
+  int? get authGeneration => _$this._authGeneration;
+  set authGeneration(int? authGeneration) =>
+      _$this._authGeneration = authGeneration;
+
   OpaqueRegistrationFinishDataDeviceStatusEnum? _status;
   OpaqueRegistrationFinishDataDeviceStatusEnum? get status => _$this._status;
   set status(OpaqueRegistrationFinishDataDeviceStatusEnum? status) =>
@@ -266,6 +283,11 @@ class OpaqueRegistrationFinishDataDeviceBuilder
   DateTime? _createdAt;
   DateTime? get createdAt => _$this._createdAt;
   set createdAt(DateTime? createdAt) => _$this._createdAt = createdAt;
+
+  int? _sessionGeneration;
+  int? get sessionGeneration => _$this._sessionGeneration;
+  set sessionGeneration(int? sessionGeneration) =>
+      _$this._sessionGeneration = sessionGeneration;
 
   OpaqueRegistrationFinishDataDeviceBuilder() {
     OpaqueRegistrationFinishDataDevice._defaults(this);
@@ -278,8 +300,10 @@ class OpaqueRegistrationFinishDataDeviceBuilder
       _name = $v.name;
       _platform = $v.platform;
       _clientVersion = $v.clientVersion;
+      _authGeneration = $v.authGeneration;
       _status = $v.status;
       _createdAt = $v.createdAt;
+      _sessionGeneration = $v.sessionGeneration;
       _$v = null;
     }
     return this;
@@ -324,6 +348,11 @@ class OpaqueRegistrationFinishDataDeviceBuilder
             r'OpaqueRegistrationFinishDataDevice',
             'clientVersion',
           ),
+          authGeneration: BuiltValueNullFieldError.checkNotNull(
+            authGeneration,
+            r'OpaqueRegistrationFinishDataDevice',
+            'authGeneration',
+          ),
           status: BuiltValueNullFieldError.checkNotNull(
             status,
             r'OpaqueRegistrationFinishDataDevice',
@@ -333,6 +362,11 @@ class OpaqueRegistrationFinishDataDeviceBuilder
             createdAt,
             r'OpaqueRegistrationFinishDataDevice',
             'createdAt',
+          ),
+          sessionGeneration: BuiltValueNullFieldError.checkNotNull(
+            sessionGeneration,
+            r'OpaqueRegistrationFinishDataDevice',
+            'sessionGeneration',
           ),
         );
     replace(_$result);

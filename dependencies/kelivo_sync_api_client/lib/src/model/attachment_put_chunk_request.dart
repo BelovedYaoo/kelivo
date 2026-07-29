@@ -14,7 +14,7 @@ part 'attachment_put_chunk_request.g.dart';
 /// * [mutationId]
 /// * [attachmentId]
 /// * [uploadId]
-/// * [keyEpoch]
+/// * [chunkKeyEpoch]
 /// * [chunkIndex]
 /// * [ciphertext] - 客户端生成的附件分块密文，使用规范无填充 Base64URL 编码，解码后最大 4 MiB
 @BuiltValue()
@@ -30,8 +30,8 @@ abstract class AttachmentPutChunkRequest
   @BuiltValueField(wireName: r'uploadId')
   String get uploadId;
 
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
+  @BuiltValueField(wireName: r'chunkKeyEpoch')
+  int get chunkKeyEpoch;
 
   @BuiltValueField(wireName: r'chunkIndex')
   int get chunkIndex;
@@ -85,9 +85,9 @@ class _$AttachmentPutChunkRequestSerializer
       object.uploadId,
       specifiedType: const FullType(String),
     );
-    yield r'keyEpoch';
+    yield r'chunkKeyEpoch';
     yield serializers.serialize(
-      object.keyEpoch,
+      object.chunkKeyEpoch,
       specifiedType: const FullType(int),
     );
     yield r'chunkIndex';
@@ -154,11 +154,11 @@ class _$AttachmentPutChunkRequestSerializer
                   as String;
           result.uploadId = valueDes;
           break;
-        case r'keyEpoch':
+        case r'chunkKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.keyEpoch = valueDes;
+          result.chunkKeyEpoch = valueDes;
           break;
         case r'chunkIndex':
           final valueDes =

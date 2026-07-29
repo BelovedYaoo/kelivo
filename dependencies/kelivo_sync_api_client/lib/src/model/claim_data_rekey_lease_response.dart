@@ -3,67 +3,64 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/device_security_state_data.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_lease_claim_data.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'initialize_device_security_state_response.g.dart';
+part 'claim_data_rekey_lease_response.g.dart';
 
-/// InitializeDeviceSecurityStateResponse
+/// ClaimDataRekeyLeaseResponse
 ///
 /// Properties:
 /// * [data]
 @BuiltValue()
-abstract class InitializeDeviceSecurityStateResponse
+abstract class ClaimDataRekeyLeaseResponse
     implements
-        Built<
-          InitializeDeviceSecurityStateResponse,
-          InitializeDeviceSecurityStateResponseBuilder
-        > {
+        Built<ClaimDataRekeyLeaseResponse, ClaimDataRekeyLeaseResponseBuilder> {
   @BuiltValueField(wireName: r'data')
-  DeviceSecurityStateData get data;
+  DataRekeyLeaseClaimData get data;
 
-  InitializeDeviceSecurityStateResponse._();
+  ClaimDataRekeyLeaseResponse._();
 
-  factory InitializeDeviceSecurityStateResponse([
-    void updates(InitializeDeviceSecurityStateResponseBuilder b),
-  ]) = _$InitializeDeviceSecurityStateResponse;
+  factory ClaimDataRekeyLeaseResponse([
+    void updates(ClaimDataRekeyLeaseResponseBuilder b),
+  ]) = _$ClaimDataRekeyLeaseResponse;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(InitializeDeviceSecurityStateResponseBuilder b) => b;
+  static void _defaults(ClaimDataRekeyLeaseResponseBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<InitializeDeviceSecurityStateResponse> get serializer =>
-      _$InitializeDeviceSecurityStateResponseSerializer();
+  static Serializer<ClaimDataRekeyLeaseResponse> get serializer =>
+      _$ClaimDataRekeyLeaseResponseSerializer();
 }
 
-class _$InitializeDeviceSecurityStateResponseSerializer
-    implements PrimitiveSerializer<InitializeDeviceSecurityStateResponse> {
+class _$ClaimDataRekeyLeaseResponseSerializer
+    implements PrimitiveSerializer<ClaimDataRekeyLeaseResponse> {
   @override
   final Iterable<Type> types = const [
-    InitializeDeviceSecurityStateResponse,
-    _$InitializeDeviceSecurityStateResponse,
+    ClaimDataRekeyLeaseResponse,
+    _$ClaimDataRekeyLeaseResponse,
   ];
 
   @override
-  final String wireName = r'InitializeDeviceSecurityStateResponse';
+  final String wireName = r'ClaimDataRekeyLeaseResponse';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    InitializeDeviceSecurityStateResponse object, {
+    ClaimDataRekeyLeaseResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'data';
     yield serializers.serialize(
       object.data,
-      specifiedType: const FullType(DeviceSecurityStateData),
+      specifiedType: const FullType(DataRekeyLeaseClaimData),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    InitializeDeviceSecurityStateResponse object, {
+    ClaimDataRekeyLeaseResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -78,7 +75,7 @@ class _$InitializeDeviceSecurityStateResponseSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required InitializeDeviceSecurityStateResponseBuilder result,
+    required ClaimDataRekeyLeaseResponseBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -89,9 +86,9 @@ class _$InitializeDeviceSecurityStateResponseSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(DeviceSecurityStateData),
+                    specifiedType: const FullType(DataRekeyLeaseClaimData),
                   )
-                  as DeviceSecurityStateData;
+                  as DataRekeyLeaseClaimData;
           result.data.replace(valueDes);
           break;
         default:
@@ -103,12 +100,12 @@ class _$InitializeDeviceSecurityStateResponseSerializer
   }
 
   @override
-  InitializeDeviceSecurityStateResponse deserialize(
+  ClaimDataRekeyLeaseResponse deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = InitializeDeviceSecurityStateResponseBuilder();
+    final result = ClaimDataRekeyLeaseResponseBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

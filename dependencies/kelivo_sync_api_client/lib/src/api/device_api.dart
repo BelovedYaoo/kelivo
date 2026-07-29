@@ -12,8 +12,8 @@ import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_request.
 import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_response.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response.dart';
 import 'package:kelivo_sync_api_client/src/model/get_device_security_state_response.dart';
-import 'package:kelivo_sync_api_client/src/model/initialize_device_security_state_request.dart';
-import 'package:kelivo_sync_api_client/src/model/initialize_device_security_state_response.dart';
+import 'package:kelivo_sync_api_client/src/model/list_account_security_state_history_request.dart';
+import 'package:kelivo_sync_api_client/src/model/list_device_security_state_history_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_request.dart';
 import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_response.dart';
 
@@ -195,11 +195,11 @@ class DeviceApi {
     );
   }
 
-  /// initializeDeviceSecurityState
+  /// listDeviceSecurityStateHistory
   ///
   ///
   /// Parameters:
-  /// * [initializeDeviceSecurityStateRequest]
+  /// * [listAccountSecurityStateHistoryRequest]
   /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
   /// * [headers] - Can be used to add additional headers to the request
   /// * [extras] - Can be used to add flags to the request
@@ -207,12 +207,12 @@ class DeviceApi {
   /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
   /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
   ///
-  /// Returns a [Future] containing a [Response] with a [InitializeDeviceSecurityStateResponse] as data
+  /// Returns a [Future] containing a [Response] with a [ListDeviceSecurityStateHistoryResponse] as data
   /// Throws [DioException] if API call or serialization fails
-  Future<Response<InitializeDeviceSecurityStateResponse>>
-  initializeDeviceSecurityState({
-    required InitializeDeviceSecurityStateRequest
-    initializeDeviceSecurityStateRequest,
+  Future<Response<ListDeviceSecurityStateHistoryResponse>>
+  listDeviceSecurityStateHistory({
+    required ListAccountSecurityStateHistoryRequest
+    listAccountSecurityStateHistoryRequest,
     CancelToken? cancelToken,
     Map<String, dynamic>? headers,
     Map<String, dynamic>? extra,
@@ -220,7 +220,7 @@ class DeviceApi {
     ProgressCallback? onSendProgress,
     ProgressCallback? onReceiveProgress,
   }) async {
-    final _path = r'/api/device/security-state/initialize';
+    final _path = r'/api/device/security-state/history/list';
     final _options = Options(
       method: r'POST',
       headers: <String, dynamic>{...?headers},
@@ -237,9 +237,9 @@ class DeviceApi {
     dynamic _bodyData;
 
     try {
-      const _type = FullType(InitializeDeviceSecurityStateRequest);
+      const _type = FullType(ListAccountSecurityStateHistoryRequest);
       _bodyData = _serializers.serialize(
-        initializeDeviceSecurityStateRequest,
+        listAccountSecurityStateHistoryRequest,
         specifiedType: _type,
       );
     } catch (error, stackTrace) {
@@ -260,7 +260,7 @@ class DeviceApi {
       onReceiveProgress: onReceiveProgress,
     );
 
-    InitializeDeviceSecurityStateResponse? _responseData;
+    ListDeviceSecurityStateHistoryResponse? _responseData;
 
     try {
       final rawResponse = _response.data;
@@ -269,10 +269,10 @@ class DeviceApi {
           : _serializers.deserialize(
                   rawResponse,
                   specifiedType: const FullType(
-                    InitializeDeviceSecurityStateResponse,
+                    ListDeviceSecurityStateHistoryResponse,
                   ),
                 )
-                as InitializeDeviceSecurityStateResponse;
+                as ListDeviceSecurityStateHistoryResponse;
     } catch (error, stackTrace) {
       throw DioException(
         requestOptions: _response.requestOptions,
@@ -283,7 +283,7 @@ class DeviceApi {
       );
     }
 
-    return Response<InitializeDeviceSecurityStateResponse>(
+    return Response<ListDeviceSecurityStateHistoryResponse>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,
