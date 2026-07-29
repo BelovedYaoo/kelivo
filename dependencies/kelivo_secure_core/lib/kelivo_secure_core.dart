@@ -12,7 +12,7 @@ import 'kelivo_secure_core_bindings_generated.dart' as native;
 part 'src/device_core.dart';
 part 'src/attachment_crypto.dart';
 
-const _expectedAbiVersion = 10;
+const _expectedAbiVersion = 11;
 const _keySlotIdLength = 16;
 const _keyPolicyVersion = 1;
 const _keySlotsCapability = 1 << 0;
@@ -23,6 +23,7 @@ const _sqlCipherDatabaseAttachCapability = 1 << 4;
 const _opaqueClientCapability = 1 << 5;
 const _deviceE2eeCoreCapability = 1 << 6;
 const _attachmentCryptoCapability = 1 << 7;
+const _accountTrustSigningCapability = 1 << 8;
 const _secureStorageCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
@@ -33,7 +34,8 @@ const _knownCapabilityFlags =
     _secureStorageCapabilityFlags |
     _opaqueClientCapability |
     _deviceE2eeCoreCapability |
-    _attachmentCryptoCapability;
+    _attachmentCryptoCapability |
+    _accountTrustSigningCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
@@ -146,6 +148,7 @@ final class KelivoCoreCapabilities {
     required this.supportsOpaqueClient,
     required this.supportsDeviceE2eeCore,
     required this.supportsAttachmentCrypto,
+    required this.supportsAccountTrustSigning,
   });
 
   final int abiVersion;
@@ -158,6 +161,7 @@ final class KelivoCoreCapabilities {
   final bool supportsOpaqueClient;
   final bool supportsDeviceE2eeCore;
   final bool supportsAttachmentCrypto;
+  final bool supportsAccountTrustSigning;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -1061,6 +1065,10 @@ KelivoCoreCapabilities _readCapabilities() {
         capabilities.flags & _deviceE2eeCoreCapability == 0) {
       throw StateError('安全核心在缺少设备 E2EE 核心时声明了附件加密能力');
     }
+    if (capabilities.flags & _accountTrustSigningCapability != 0 &&
+        capabilities.flags & _deviceE2eeCoreCapability == 0) {
+      throw StateError('安全核心在缺少设备 E2EE 核心时声明了账户信任签名能力');
+    }
 
     return KelivoCoreCapabilities(
       abiVersion: capabilities.abi_version,
@@ -1079,6 +1087,8 @@ KelivoCoreCapabilities _readCapabilities() {
           capabilities.flags & _deviceE2eeCoreCapability != 0,
       supportsAttachmentCrypto:
           capabilities.flags & _attachmentCryptoCapability != 0,
+      supportsAccountTrustSigning:
+          capabilities.flags & _accountTrustSigningCapability != 0,
     );
   } finally {
     calloc.free(output);

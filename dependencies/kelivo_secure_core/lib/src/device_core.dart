@@ -16,6 +16,11 @@ const _registrationFinishBundleLength =
 const _pairingApprovalBundleLength = native.KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE;
 const _deviceStateBlobLength = native.KELIVO_DEVICE_STATE_BLOB_SIZE;
 const _recordEntityKeyMaxLength = native.KELIVO_RECORD_ENTITY_KEY_MAX_SIZE;
+const _accountTrustPublicKeyLength =
+    native.KELIVO_ACCOUNT_TRUST_PUBLIC_KEY_SIZE;
+const _accountTrustSignatureLength = native.KELIVO_ACCOUNT_TRUST_SIGNATURE_SIZE;
+const _accountTrustPayloadMaxLength =
+    native.KELIVO_ACCOUNT_TRUST_PAYLOAD_MAX_SIZE;
 const _maxUint32 = 0xffffffff;
 
 enum _DeviceHandlePhase { open, busy, closing, closed }
@@ -70,9 +75,12 @@ final class KelivoDeviceIdentityHandle {
 }
 
 final class KelivoAccountRootKeyHandle {
-  KelivoAccountRootKeyHandle._(int value) : _state = _DeviceHandleState(value);
+  KelivoAccountRootKeyHandle._(int value, Uint8List userId)
+    : userId = _immutableDeviceBytes(userId),
+      _state = _DeviceHandleState(value);
 
   final _DeviceHandleState _state;
+  final Uint8List userId;
 
   @override
   String toString() => 'KelivoAccountRootKeyHandle(opaque)';
@@ -93,6 +101,7 @@ final class KelivoPendingPairingHandle {
   final int _value;
   _PendingPairingPhase _phase = _PendingPairingPhase.unbound;
   _PendingPairingPhase? _phaseBeforeClose;
+  Uint8List? _boundUserId;
 
   int _beginBind() {
     if (_phase != _PendingPairingPhase.unbound) {
@@ -102,28 +111,35 @@ final class KelivoPendingPairingHandle {
     return _value;
   }
 
-  void _completeBind() {
+  void _completeBind(Uint8List userId) {
     if (_phase != _PendingPairingPhase.binding) {
       throw StateError('pending 配对绑定生命周期已失配');
     }
+    _boundUserId = _immutableDeviceBytes(userId);
     _phase = _PendingPairingPhase.bound;
   }
 
   void _cancelBind() {
     if (_phase == _PendingPairingPhase.binding) {
+      _boundUserId = null;
       _phase = _PendingPairingPhase.unbound;
     }
   }
 
-  int _beginAccept() {
+  (int, Uint8List) _beginAccept() {
     if (_phase != _PendingPairingPhase.bound) {
       throw StateError('pending 配对必须先绑定创建响应');
     }
+    final userId = _boundUserId;
+    if (userId == null) {
+      throw StateError('pending 配对缺少账户绑定');
+    }
     _phase = _PendingPairingPhase.accepting;
-    return _value;
+    return (_value, userId);
   }
 
   void _completeAccept() {
+    _boundUserId = null;
     _phase = _PendingPairingPhase.closed;
   }
 
@@ -145,6 +161,7 @@ final class KelivoPendingPairingHandle {
 
   void _completeClose() {
     _phaseBeforeClose = null;
+    _boundUserId = null;
     _phase = _PendingPairingPhase.closed;
   }
 
@@ -196,6 +213,24 @@ final class KelivoAccountRootKeyEnvelope {
   }
 
   const KelivoAccountRootKeyEnvelope._(this.bytes);
+
+  final Uint8List bytes;
+}
+
+final class KelivoAccountTrustPublicKey {
+  // 私有构造器确保验签信任锚只能来自本机已认证 ARK，而不是服务器裸公钥。
+  const KelivoAccountTrustPublicKey._(this.bytes);
+
+  final Uint8List bytes;
+}
+
+final class KelivoAccountTrustSignature {
+  factory KelivoAccountTrustSignature(Uint8List bytes) {
+    _requireLength(bytes, _accountTrustSignatureLength, 'bytes');
+    return KelivoAccountTrustSignature._(_immutableDeviceBytes(bytes));
+  }
+
+  const KelivoAccountTrustSignature._(this.bytes);
 
   final Uint8List bytes;
 }
@@ -357,17 +392,16 @@ extension KelivoDeviceCore on KelivoSecureCore {
       );
 
   Future<KelivoAccountRootKeyHandle> generateAccountRootKey({
+    required Uint8List userId,
     required int keyEpoch,
   }) async {
+    _validateUuidV4(userId, 'userId');
     _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    final boundUserId = Uint8List.fromList(userId);
     final value = await Isolate.run(
-      () => _generateDeviceHandle(
-        operation: 'account_root_key_generate',
-        generate: (output) =>
-            native.kelivo_account_root_key_generate(keyEpoch, output),
-      ),
+      () => _generateAccountRootKey(Uint8List.fromList(boundUserId), keyEpoch),
     );
-    return KelivoAccountRootKeyHandle._(value);
+    return KelivoAccountRootKeyHandle._(value, boundUserId);
   }
 
   Future<void> closeAccountRootKey(KelivoAccountRootKeyHandle ark) =>
@@ -382,6 +416,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
     KelivoAccountRootKeyHandle target, {
     required KelivoAccountRootKeyHandle source,
   }) async {
+    _requireSameArkAccount(target, source.userId);
     final handles = _beginDeviceHandlePair(target._state, source._state);
     try {
       await Isolate.run(
@@ -419,6 +454,76 @@ extension KelivoDeviceCore on KelivoSecureCore {
     }
   }
 
+  Future<KelivoAccountTrustPublicKey> deriveAccountTrustPublicKey(
+    KelivoAccountRootKeyHandle ark, {
+    required Uint8List userId,
+    required int keyEpoch,
+  }) async {
+    _validateUuidV4(userId, 'userId');
+    _requireSameArkAccount(ark, userId);
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    final value = ark._state.beginUse();
+    try {
+      final publicKey = await Isolate.run(
+        () => _deriveAccountTrustPublicKey(
+          value,
+          Uint8List.fromList(userId),
+          keyEpoch,
+        ),
+      );
+      return KelivoAccountTrustPublicKey._(_immutableDeviceBytes(publicKey));
+    } finally {
+      ark._state.completeUse();
+    }
+  }
+
+  Future<KelivoAccountTrustSignature> signAccountTrustPayload(
+    KelivoAccountRootKeyHandle ark, {
+    required Uint8List userId,
+    required int keyEpoch,
+    required Uint8List canonicalPayload,
+  }) async {
+    _validateUuidV4(userId, 'userId');
+    _requireSameArkAccount(ark, userId);
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    _validateAccountTrustPayload(canonicalPayload);
+    final value = ark._state.beginUse();
+    try {
+      final signature = await Isolate.run(
+        () => _signAccountTrustPayload(
+          value,
+          Uint8List.fromList(userId),
+          keyEpoch,
+          Uint8List.fromList(canonicalPayload),
+        ),
+      );
+      return KelivoAccountTrustSignature(signature);
+    } finally {
+      ark._state.completeUse();
+    }
+  }
+
+  Future<void> verifyAccountTrustPayload(
+    KelivoAccountTrustPublicKey publicKey, {
+    required Uint8List userId,
+    required int keyEpoch,
+    required Uint8List canonicalPayload,
+    required KelivoAccountTrustSignature signature,
+  }) async {
+    _validateUuidV4(userId, 'userId');
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    _validateAccountTrustPayload(canonicalPayload);
+    await Isolate.run(
+      () => _verifyAccountTrustPayload(
+        Uint8List.fromList(publicKey.bytes),
+        Uint8List.fromList(userId),
+        keyEpoch,
+        Uint8List.fromList(canonicalPayload),
+        Uint8List.fromList(signature.bytes),
+      ),
+    );
+  }
+
   Future<KelivoAccountRootKeyEnvelope> sealAccountRootKeyEnvelope(
     KelivoDeviceIdentityHandle issuerIdentity,
     KelivoAccountRootKeyHandle ark, {
@@ -429,6 +534,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
     required KelivoDevicePublicKeys targetPublicKeys,
   }) async {
     _validateUuidV4(userId, 'userId');
+    _requireSameArkAccount(ark, userId);
     _validateUuidV4(issuerDeviceId, 'issuerDeviceId');
     _validateUuidV4(targetDeviceId, 'targetDeviceId');
     _validatePositiveUint32(keyEpoch, 'keyEpoch');
@@ -466,13 +572,14 @@ extension KelivoDeviceCore on KelivoSecureCore {
     _validateUuidV4(issuerDeviceId, 'issuerDeviceId');
     _validateUuidV4(targetDeviceId, 'targetDeviceId');
     _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    final boundUserId = Uint8List.fromList(userId);
     final identityValue = targetIdentity._state.beginUse();
     try {
       final arkHandle = await Isolate.run(
         () => _openAccountRootKeyEnvelope(
           identityValue,
           Uint8List.fromList(envelope.bytes),
-          Uint8List.fromList(userId),
+          Uint8List.fromList(boundUserId),
           Uint8List.fromList(issuerDeviceId),
           Uint8List.fromList(targetDeviceId),
           keyEpoch,
@@ -482,7 +589,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
           Uint8List.fromList(targetPublicKeys.keyAgreementPublicKey),
         ),
       );
-      return KelivoAccountRootKeyHandle._(arkHandle);
+      return KelivoAccountRootKeyHandle._(arkHandle, boundUserId);
     } finally {
       targetIdentity._state.completeUse();
     }
@@ -649,6 +756,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
     required Uint8List registrationUpload,
   }) async {
     _validateUuidV4(userId, 'userId');
+    _requireSameArkAccount(ark, userId);
     _validatePositiveUint32(keyEpoch, 'keyEpoch');
     _validateProofContext(
       attemptId: attemptId,
@@ -739,13 +847,14 @@ extension KelivoDeviceCore on KelivoSecureCore {
     _validateTimestamp(expiresAtMs, 'expiresAtMs');
     _validateTimestamp(nowMs, 'nowMs');
     _requireLength(challenge, _deviceChallengeLength, 'challenge');
+    final boundUserId = Uint8List.fromList(userId);
     final pendingValue = pending._beginBind();
     try {
       await Isolate.run(
         () => _bindPendingPairing(
           pendingValue,
           Uint8List.fromList(pairingId),
-          Uint8List.fromList(userId),
+          Uint8List.fromList(boundUserId),
           Uint8List.fromList(targetDeviceId),
           targetKeyVersion,
           Uint8List.fromList(targetPublicKeys.signingPublicKey),
@@ -755,7 +864,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
           nowMs,
         ),
       );
-      pending._completeBind();
+      pending._completeBind(boundUserId);
     } on KelivoSecureCoreException catch (error) {
       if (error.status == KelivoSecureCoreStatus.pairingExpired ||
           error.status == KelivoSecureCoreStatus.invalidPendingPairingHandle) {
@@ -815,6 +924,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
   }) async {
     _validateUuidV4(pairingId, 'pairingId');
     _validateUuidV4(userId, 'userId');
+    _requireSameArkAccount(ark, userId);
     _validateUuidV4(issuerDeviceId, 'issuerDeviceId');
     _validateUuidV4(targetDeviceId, 'targetDeviceId');
     _validateTimestamp(expiresAtMs, 'expiresAtMs');
@@ -877,9 +987,9 @@ extension KelivoDeviceCore on KelivoSecureCore {
       key._completeUse();
       rethrow;
     }
-    int pendingValue;
+    (int, Uint8List) pendingUse;
     try {
-      pendingValue = pending._beginAccept();
+      pendingUse = pending._beginAccept();
     } catch (_) {
       identity._state.completeUse();
       key._completeUse();
@@ -890,7 +1000,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
         () => _acceptPairingApproval(
           keyValue,
           identityValue,
-          pendingValue,
+          pendingUse.$1,
           nowMs,
           Uint8List.fromList(issuerDeviceId),
           keyEpoch,
@@ -903,7 +1013,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
       );
       pending._completeAccept();
       return KelivoAcceptedPairing._(
-        ark: KelivoAccountRootKeyHandle._(result.arkHandle),
+        ark: KelivoAccountRootKeyHandle._(result.arkHandle, pendingUse.$2),
         stateBlob: _immutableDeviceBytes(result.stateBlob),
       );
     } on KelivoSecureCoreException catch (error) {
@@ -916,7 +1026,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
       rethrow;
     } catch (_) {
       // 未知跨 isolate 故障可能发生在原生成功之后，不能把已消费句柄伪装成可重试。
-      native.kelivo_pending_pairing_handle_close(pendingValue);
+      native.kelivo_pending_pairing_handle_close(pendingUse.$1);
       pending._completeAccept();
       rethrow;
     } finally {
@@ -937,6 +1047,9 @@ extension KelivoDeviceCore on KelivoSecureCore {
     _validatePositiveUint32(keyVersion, 'keyVersion');
     if ((ark == null) != (account == null)) {
       throw ArgumentError('ARK 与账户绑定必须同时提供或同时省略');
+    }
+    if (ark != null && account != null) {
+      _requireSameArkAccount(ark, account.userId);
     }
     final keyValue = key._beginUse();
     int identityValue;
@@ -989,7 +1102,10 @@ extension KelivoDeviceCore on KelivoSecureCore {
         identity: KelivoDeviceIdentityHandle._(result.identityHandle),
         ark: result.arkHandle == native.KELIVO_DEVICE_INVALID_HANDLE
             ? null
-            : KelivoAccountRootKeyHandle._(result.arkHandle),
+            : KelivoAccountRootKeyHandle._(
+                result.arkHandle,
+                result.binding.account!.userId,
+              ),
       );
     } finally {
       key._completeUse();
@@ -1064,9 +1180,36 @@ void _validateUuidV4(Uint8List bytes, String name) {
   }
 }
 
+void _requireSameArkAccount(
+  KelivoAccountRootKeyHandle ark,
+  Uint8List expectedUserId,
+) {
+  if (ark.userId.length != expectedUserId.length) {
+    throw ArgumentError('ARK 句柄账户与调用账户不匹配');
+  }
+  var difference = 0;
+  for (var index = 0; index < ark.userId.length; index++) {
+    difference |= ark.userId[index] ^ expectedUserId[index];
+  }
+  if (difference != 0) {
+    throw ArgumentError('ARK 句柄账户与调用账户不匹配');
+  }
+}
+
 void _validatePositiveUint32(int value, String name) {
   if (value <= 0 || value > _maxUint32) {
     throw ArgumentError.value(value, name, '必须位于无符号 32 位正整数范围');
+  }
+}
+
+void _validateAccountTrustPayload(Uint8List canonicalPayload) {
+  if (canonicalPayload.isEmpty ||
+      canonicalPayload.length > _accountTrustPayloadMaxLength) {
+    throw ArgumentError.value(
+      canonicalPayload.length,
+      'canonicalPayload',
+      '规范载荷必须为 1 至 $_accountTrustPayloadMaxLength 字节',
+    );
   }
 }
 
@@ -1152,6 +1295,24 @@ int _generateDeviceHandle({
   }
 }
 
+int _generateAccountRootKey(Uint8List userId, int keyEpoch) {
+  final userIdPointer = _copyToNative(userId);
+  try {
+    return _generateDeviceHandle(
+      operation: 'account_root_key_generate',
+      generate: (output) => native.kelivo_account_root_key_generate(
+        userIdPointer,
+        userId.length,
+        keyEpoch,
+        output,
+      ),
+    );
+  } finally {
+    _clearAndFree(userIdPointer, userId.length);
+    userId.fillRange(0, userId.length, 0);
+  }
+}
+
 Uint8List _fixedDeviceOutput({
   required String operation,
   required int expectedLength,
@@ -1207,6 +1368,104 @@ Uint8List _deriveAccountRecordId(int arkHandle, Uint8List canonicalEntityKey) {
   } finally {
     _clearAndFree(entityKeyPointer, canonicalEntityKey.length);
     canonicalEntityKey.fillRange(0, canonicalEntityKey.length, 0);
+  }
+}
+
+Uint8List _deriveAccountTrustPublicKey(
+  int arkHandle,
+  Uint8List userId,
+  int keyEpoch,
+) {
+  final userIdPointer = _copyToNative(userId);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'account_trust_public_key_derive',
+      expectedLength: _accountTrustPublicKeyLength,
+      call: (output, capacity, outputLength) =>
+          native.kelivo_account_trust_public_key_derive(
+            arkHandle,
+            userIdPointer,
+            userId.length,
+            keyEpoch,
+            output,
+            capacity,
+            outputLength,
+          ),
+    );
+  } finally {
+    _clearAndFree(userIdPointer, userId.length);
+    userId.fillRange(0, userId.length, 0);
+  }
+}
+
+Uint8List _signAccountTrustPayload(
+  int arkHandle,
+  Uint8List userId,
+  int keyEpoch,
+  Uint8List canonicalPayload,
+) {
+  final userIdPointer = _copyToNative(userId);
+  final payloadPointer = _copyToNative(canonicalPayload);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'account_trust_payload_sign',
+      expectedLength: _accountTrustSignatureLength,
+      call: (output, capacity, outputLength) =>
+          native.kelivo_account_trust_payload_sign(
+            arkHandle,
+            userIdPointer,
+            userId.length,
+            keyEpoch,
+            payloadPointer,
+            canonicalPayload.length,
+            output,
+            capacity,
+            outputLength,
+          ),
+    );
+  } finally {
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(payloadPointer, canonicalPayload.length);
+    userId.fillRange(0, userId.length, 0);
+    canonicalPayload.fillRange(0, canonicalPayload.length, 0);
+  }
+}
+
+void _verifyAccountTrustPayload(
+  Uint8List publicKey,
+  Uint8List userId,
+  int keyEpoch,
+  Uint8List canonicalPayload,
+  Uint8List signature,
+) {
+  final publicKeyPointer = _copyToNative(publicKey);
+  final userIdPointer = _copyToNative(userId);
+  final payloadPointer = _copyToNative(canonicalPayload);
+  final signaturePointer = _copyToNative(signature);
+  try {
+    _throwOnError(
+      operation: 'account_trust_payload_verify',
+      statusCode: native.kelivo_account_trust_payload_verify(
+        publicKeyPointer,
+        publicKey.length,
+        userIdPointer,
+        userId.length,
+        keyEpoch,
+        payloadPointer,
+        canonicalPayload.length,
+        signaturePointer,
+        signature.length,
+      ),
+    );
+  } finally {
+    _clearAndFree(publicKeyPointer, publicKey.length);
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(payloadPointer, canonicalPayload.length);
+    _clearAndFree(signaturePointer, signature.length);
+    publicKey.fillRange(0, publicKey.length, 0);
+    userId.fillRange(0, userId.length, 0);
+    canonicalPayload.fillRange(0, canonicalPayload.length, 0);
+    signature.fillRange(0, signature.length, 0);
   }
 }
 

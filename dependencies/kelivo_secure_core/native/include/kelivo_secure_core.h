@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(10)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(11)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -82,6 +82,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_OPAQUE_CLIENT (UINT64_C(1) << 5)
 #define KELIVO_CAPABILITY_DEVICE_E2EE_CORE (UINT64_C(1) << 6)
 #define KELIVO_CAPABILITY_ATTACHMENT_CRYPTO (UINT64_C(1) << 7)
+#define KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING (UINT64_C(1) << 8)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_ENTITY_KEY_MAX_SIZE ((size_t)2048)
@@ -114,6 +115,9 @@ typedef int32_t KelivoStatus;
 #define KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE ((size_t)400)
 #define KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE ((size_t)432)
 #define KELIVO_ACCOUNT_ROOT_KEYRING_CAPACITY ((size_t)8)
+#define KELIVO_ACCOUNT_TRUST_PUBLIC_KEY_SIZE ((size_t)32)
+#define KELIVO_ACCOUNT_TRUST_SIGNATURE_SIZE ((size_t)64)
+#define KELIVO_ACCOUNT_TRUST_PAYLOAD_MAX_SIZE ((size_t)(64 * 1024))
 #define KELIVO_DEVICE_STATE_BLOB_SIZE ((size_t)448)
 #define KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE UINT32_C(48)
 #define KELIVO_DEVICE_STATE_BINDING_FLAG_ACCOUNT (UINT32_C(1) << 0)
@@ -545,10 +549,12 @@ KELIVO_CORE_API KelivoStatus kelivo_pending_pairing_handle_close(
     uint64_t pending_handle);
 
 /*
- * 为正 key_epoch 生成 ARK，并直接注册为仅含该代次的不透明密钥环句柄。
- * 不存在未绑定状态或原始字节导出接口；key_epoch=0 必须失败。
+ * 为规范 user_id 和正 key_epoch 生成 ARK，并直接注册为仅含该代次的账户绑定
+ * 不透明密钥环句柄。不存在未绑定状态或原始字节导出接口；key_epoch=0 必须失败。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_generate(
+    const uint8_t *user_id,
+    size_t user_id_length,
     uint32_t key_epoch,
     uint64_t *out_handle);
 
@@ -565,13 +571,59 @@ KELIVO_CORE_API KelivoStatus kelivo_account_record_id_derive(
     size_t out_record_id_capacity,
     size_t *out_record_id_length);
 
+/*
+ * 从指定且必须存在的 ARK 代次派生账户信任根 Ed25519 验证钥。user_id 必须
+ * 等于句柄固有账户；HKDF 固定绑定 user_id 与 key_epoch。成功只输出 32 字节
+ * 公钥，原始 ARK 与 seed 不跨 ABI。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_trust_public_key_derive(
+    uint64_t ark_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t key_epoch,
+    uint8_t *out_public_key,
+    size_t out_public_key_capacity,
+    size_t *out_public_key_length);
+
+/*
+ * 对 1 至 65536 字节规范载荷签名。user_id 必须等于句柄固有账户；签名
+ * transcript 固定绑定协议域、user_id、key_epoch 与载荷长度。成功固定输出
+ * 64 字节，任何失败都清零可写输出。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_trust_payload_sign(
+    uint64_t ark_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t key_epoch,
+    const uint8_t *canonical_payload,
+    size_t canonical_payload_length,
+    uint8_t *out_signature,
+    size_t out_signature_capacity,
+    size_t *out_signature_length);
+
+/*
+ * 使用严格 Ed25519 语义验证规范载荷。public_key 必须由客户端从已认证 ARK
+ * 本地派生；服务器随清单返回的裸公钥不得作为信任根。该函数不建立公钥信任。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_trust_payload_verify(
+    const uint8_t *public_key,
+    size_t public_key_length,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t key_epoch,
+    const uint8_t *canonical_payload,
+    size_t canonical_payload_length,
+    const uint8_t *signature,
+    size_t signature_length);
+
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_handle_close(
     uint64_t ark_handle);
 
 /*
- * 将 source 单槽密钥环原子加入 target 并设为当前代次。source 必须仅含一个
- * 严格高于 target 当前值的代次；重复、非递增、容量已满或任一句柄无效时，
- * target 保持不变。两个句柄都继续有效，ARK 原始字节不会跨越 ABI。
+ * 将 source 单槽密钥环原子加入同账户 target 并设为当前代次。source 必须
+ * 绑定同一 user_id，且仅含一个严格高于 target 当前值的代次；跨账户、重复、
+ * 非递增、容量已满或任一句柄无效时，target 保持不变。两个句柄都继续有效，
+ * ARK 原始字节不会跨越 ABI。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_root_keyring_add_epoch(
     uint64_t target_ark_handle,
@@ -586,9 +638,10 @@ KELIVO_CORE_API KelivoStatus kelivo_account_root_keyring_prune_epoch(
     uint32_t key_epoch);
 
 /*
- * 签发设备将不透明 ARK 封装给任意目标设备。签发公钥由 identity_handle
- * 内部取得；调用方只提供目标公钥与完整可信绑定。成功固定输出 336 字节；
- * 其他验证失败将保持长度为零并清零可写输出，容量不足返回所需长度 336。
+ * 签发设备将不透明 ARK 封装给任意目标设备。user_id 必须等于 ARK 句柄
+ * 固有账户；签发公钥由 identity_handle 内部取得，调用方只提供目标公钥与
+ * 完整可信绑定。成功固定输出 336 字节；其他验证失败将保持长度为零并清零
+ * 可写输出，容量不足返回所需长度 336。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_envelope_seal(
     uint64_t issuer_identity_handle,

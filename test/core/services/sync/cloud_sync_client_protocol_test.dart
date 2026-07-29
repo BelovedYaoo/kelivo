@@ -795,7 +795,10 @@ void main() {
     final slotId = _authenticatorSlotId(baseUrl, loginName);
     final key = await core.createSlot(slotId);
     final identity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final stateBlob = await core.sealDeviceState(
       key,
       identity,
@@ -1740,7 +1743,10 @@ void main() {
     final store = DeviceStateBlobStore(installationRoot: root);
     final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
     final identity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final targetIdentity = await core.generateDeviceIdentity();
     final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
     final fullState = await core.sealDeviceState(
@@ -2020,7 +2026,10 @@ void main() {
     final pairingSecret = decoded.takePairingSecret();
     decoded.dispose();
     final issuerIdentity = await core.generateDeviceIdentity();
-    final issuerArk = await core.generateAccountRootKey(keyEpoch: 7);
+    final issuerArk = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final issuerPublicKeys = await core.readDevicePublicKeys(issuerIdentity);
     late final KelivoPairingApprovalBundle approvalBundle;
     try {
@@ -3005,7 +3014,10 @@ void main() {
 
   test('账户记录加密器派生稳定不透明标识并限制明文生命周期', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3054,7 +3066,10 @@ void main() {
 
   test('账户记录加密器接受完整正 uint32 密钥世代', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 0xffffffff);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 0xffffffff,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3079,7 +3094,10 @@ void main() {
     expect(sealed.keyEpoch, 0xffffffff);
     expect(opened, orderedEquals(<int>[4, 2]));
 
-    final overflowArk = await core.generateAccountRootKey(keyEpoch: 1);
+    final overflowArk = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 1,
+    );
     expect(
       () => E2eeAccountRecordCipher.takeOwnership(
         secureCore: core,
@@ -3608,7 +3626,10 @@ void main() {
 
   test('账户记录加密器拒绝篡改、错误标识、未来世代与越界内容', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3698,7 +3719,7 @@ void main() {
     );
   });
 
-  test('账户记录加密器隔离用户 AAD 并拒绝帧内实体键替换', () async {
+  test('账户记录加密器拒绝跨账户句柄包装与帧内实体键替换', () async {
     const core = KelivoSecureCore();
     const firstKey = SyncEntityKey(
       entityType: 'conversation',
@@ -3709,27 +3730,25 @@ void main() {
       entityId: 'conversation-2',
     );
 
-    final aadArk = await core.generateAccountRootKey(keyEpoch: 7);
-    final wrongUserRecord = await _sealRawAccountRecord(
-      core: core,
-      ark: aadArk,
-      recordIdKey: firstKey,
-      frameKey: firstKey,
-      userId: _userId,
+    final aadArk = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
     );
-    final wrongUserCipher = E2eeAccountRecordCipher.takeOwnership(
-      secureCore: core,
-      accountRootKey: aadArk,
-      userId: _accountContextId,
-      currentKeyEpoch: 7,
+    expect(
+      () => E2eeAccountRecordCipher.takeOwnership(
+        secureCore: core,
+        accountRootKey: aadArk,
+        userId: _accountContextId,
+        currentKeyEpoch: 7,
+      ),
+      throwsA(isA<FormatException>()),
     );
-    addTearDown(wrongUserCipher.close);
-    await expectLater(
-      wrongUserCipher.open<Object?>(wrongUserRecord, decode: (_, _) => null),
-      throwsA(isA<KelivoSecureCoreException>()),
-    );
+    await core.closeAccountRootKey(aadArk);
 
-    final identityArk = await core.generateAccountRootKey(keyEpoch: 7);
+    final identityArk = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final mismatchedRecord = await _sealRawAccountRecord(
       core: core,
       ark: identityArk,
@@ -3799,7 +3818,10 @@ void main() {
 
   test('v3 推送接受完整 uint32 keyEpoch 并解析三类结果', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 0xffffffff);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 0xffffffff,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3969,7 +3991,10 @@ void main() {
 
   test('v3 推送在发网前拒绝 mutationId 与认证 operationId 不一致', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -4526,7 +4551,10 @@ void main() {
 
   test('v3 推送在发网前拒绝非法标识与批量边界', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -7266,7 +7294,12 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
   final identity = await core.generateDeviceIdentity();
   KelivoAccountRootKeyHandle? ark;
   try {
-    if (bound) ark = await core.generateAccountRootKey(keyEpoch: 7);
+    if (bound) {
+      ark = await core.generateAccountRootKey(
+        userId: _rawUuid(_userId),
+        keyEpoch: 7,
+      );
+    }
     final blob = await core.sealDeviceState(
       key,
       identity,
@@ -7366,9 +7399,9 @@ Future<Map<String, Object?>> _seedPendingRegistration({
   };
   final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
   final identity = await core.generateDeviceIdentity();
-  final ark = await core.generateAccountRootKey(keyEpoch: 1);
   final deviceId = _rawUuid(_deviceId1);
   final userId = _rawUuid(_userId);
+  final ark = await core.generateAccountRootKey(userId: userId, keyEpoch: 1);
   final identityOnlyState = Uint8List.fromList(
     await core.sealDeviceState(
       key,

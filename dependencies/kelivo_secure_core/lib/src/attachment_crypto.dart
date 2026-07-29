@@ -216,6 +216,7 @@ extension KelivoAttachmentCrypto on KelivoSecureCore {
     KelivoAttachmentDataKeyHandle key, {
     required KelivoAttachmentContext context,
   }) async {
+    _requireSameArkAccount(ark, context.userId);
     final handles = _beginAttachmentHandlePair(ark._state, key._state);
     try {
       return await Isolate.run(
@@ -238,6 +239,7 @@ extension KelivoAttachmentCrypto on KelivoSecureCore {
     required KelivoAttachmentContext context,
     required Uint8List wrappedKey,
   }) async {
+    _requireSameArkAccount(ark, context.userId);
     if (wrappedKey.length > _attachmentWrappedKeyLength) {
       throw ArgumentError.value(
         wrappedKey.length,
