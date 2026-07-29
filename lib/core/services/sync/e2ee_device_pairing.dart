@@ -6,7 +6,7 @@ const _pairingQueryInterval = Duration(seconds: 1);
 const _pairingRecordDomain = 'kelivo.e2ee.pairing-transaction.record.v1';
 const _pairingAssociatedDataDomain = 'kelivo.e2ee.pairing-transaction.aad.v1';
 const _pairingRecordEpoch = 1;
-const _pairingFrameVersion = 2;
+const _pairingFrameVersion = 3;
 const _pairingOnboardingTokenLength = 61;
 const _pairingSessionTokenLength = 50;
 const _pairingOnboardingTokenOffset = 96;
@@ -14,10 +14,22 @@ const _pairingSessionTokenOffset = 160;
 const _pairingOriginalStateOffset = 216;
 const _pairingFullStateOffset =
     _pairingOriginalStateOffset + DeviceStateBlobStore.blobLength;
-const _pairingFrameLength =
+const _pairingIssuerDeviceIdOffset =
     _pairingFullStateOffset + DeviceStateBlobStore.blobLength;
+const _pairingIssuerKeyVersionOffset = _pairingIssuerDeviceIdOffset + 16;
+const _pairingIssuerAuthGenerationOffset = _pairingIssuerKeyVersionOffset + 4;
+const _pairingTargetAuthGenerationOffset =
+    _pairingIssuerAuthGenerationOffset + 4;
+const _pairingIssuerSigningPublicKeyOffset =
+    _pairingTargetAuthGenerationOffset + 8;
+const _pairingIssuerKeyAgreementPublicKeyOffset =
+    _pairingIssuerSigningPublicKeyOffset + cloudSyncDevicePublicKeyBytes;
+const _pairingApprovedAccountKeyEnvelopeOffset =
+    _pairingIssuerKeyAgreementPublicKeyOffset + cloudSyncDevicePublicKeyBytes;
+const _pairingFrameLength =
+    _pairingApprovedAccountKeyEnvelopeOffset + cloudSyncAccountKeyEnvelopeBytes;
 final Uint8List _pairingFrameMagic = Uint8List.fromList(
-  ascii.encode('KELVPT02'),
+  ascii.encode('KELVPT03'),
 );
 
 enum _E2eePendingPairingState {
@@ -206,6 +218,18 @@ Uint8List _encodePairingRecoveryTransaction(
         transaction.pairingExpiresAt.isAfter(
           transaction.onboardingTokenExpiresAt,
         ) ||
+        transaction.issuerKeyVersion <= 0 ||
+        transaction.issuerKeyVersion > 0x7fffffff ||
+        transaction.issuerAuthGeneration < 0 ||
+        transaction.issuerAuthGeneration > 0x7fffffff ||
+        transaction.targetAuthGeneration < 0 ||
+        transaction.targetAuthGeneration >= 0x7fffffff ||
+        transaction.issuerSigningPublicKey.length !=
+            cloudSyncDevicePublicKeyBytes ||
+        transaction.issuerKeyAgreementPublicKey.length !=
+            cloudSyncDevicePublicKeyBytes ||
+        transaction.approvedAccountKeyEnvelope.length !=
+            cloudSyncAccountKeyEnvelopeBytes ||
         transaction.originalStateBlob.length !=
             DeviceStateBlobStore.blobLength ||
         transaction.fullStateBlob.length != DeviceStateBlobStore.blobLength) {
@@ -264,8 +288,43 @@ Uint8List _encodePairingRecoveryTransaction(
     );
     frame.setRange(
       _pairingFullStateOffset,
-      _pairingFrameLength,
+      _pairingIssuerDeviceIdOffset,
       transaction.fullStateBlob,
+    );
+    frame.setRange(
+      _pairingIssuerDeviceIdOffset,
+      _pairingIssuerKeyVersionOffset,
+      E2eeAccountAuthenticator._uuidBytes(transaction.issuerDeviceId),
+    );
+    fields.setUint32(
+      _pairingIssuerKeyVersionOffset,
+      transaction.issuerKeyVersion,
+      Endian.big,
+    );
+    fields.setUint32(
+      _pairingIssuerAuthGenerationOffset,
+      transaction.issuerAuthGeneration,
+      Endian.big,
+    );
+    fields.setUint32(
+      _pairingTargetAuthGenerationOffset,
+      transaction.targetAuthGeneration,
+      Endian.big,
+    );
+    frame.setRange(
+      _pairingIssuerSigningPublicKeyOffset,
+      _pairingIssuerKeyAgreementPublicKeyOffset,
+      transaction.issuerSigningPublicKey,
+    );
+    frame.setRange(
+      _pairingIssuerKeyAgreementPublicKeyOffset,
+      _pairingApprovedAccountKeyEnvelopeOffset,
+      transaction.issuerKeyAgreementPublicKey,
+    );
+    frame.setRange(
+      _pairingApprovedAccountKeyEnvelopeOffset,
+      _pairingFrameLength,
+      transaction.approvedAccountKeyEnvelope,
     );
     return frame;
   } finally {
@@ -286,6 +345,18 @@ _PairingRecoveryTransaction _decodePairingRecoveryTransaction(Uint8List frame) {
   final pairingExpiresAtMs = fields.getUint64(32, Endian.big);
   final tokenLength = fields.getUint16(88, Endian.big);
   final sessionTokenLength = fields.getUint16(90, Endian.big);
+  final issuerKeyVersion = fields.getUint32(
+    _pairingIssuerKeyVersionOffset,
+    Endian.big,
+  );
+  final issuerAuthGeneration = fields.getUint32(
+    _pairingIssuerAuthGenerationOffset,
+    Endian.big,
+  );
+  final targetAuthGeneration = fields.getUint32(
+    _pairingTargetAuthGenerationOffset,
+    Endian.big,
+  );
   if (fields.getUint16(8, Endian.big) != _pairingFrameVersion ||
       fields.getUint16(10, Endian.big) != 0 ||
       keyEpoch <= 0 ||
@@ -296,6 +367,15 @@ _PairingRecoveryTransaction _decodePairingRecoveryTransaction(Uint8List frame) {
       tokenLength != _pairingOnboardingTokenLength ||
       sessionTokenLength != _pairingSessionTokenLength ||
       fields.getUint32(92, Endian.big) != 0 ||
+      issuerKeyVersion <= 0 ||
+      issuerKeyVersion > 0x7fffffff ||
+      issuerAuthGeneration > 0x7fffffff ||
+      targetAuthGeneration >= 0x7fffffff ||
+      !_allZero(
+        frame,
+        _pairingTargetAuthGenerationOffset + 4,
+        _pairingIssuerSigningPublicKeyOffset,
+      ) ||
       !_allZero(
         frame,
         _pairingOnboardingTokenOffset + tokenLength,
@@ -341,10 +421,31 @@ _PairingRecoveryTransaction _decodePairingRecoveryTransaction(Uint8List frame) {
     sessionToken: CloudSyncFullSessionToken.parse(sessionToken),
     onboardingTokenExpiresAt: onboardingTokenExpiresAt,
     pairingExpiresAt: pairingExpiresAt,
+    issuerDeviceId: _pairingUuidFromFrame(frame, _pairingIssuerDeviceIdOffset),
+    issuerKeyVersion: issuerKeyVersion,
+    issuerAuthGeneration: issuerAuthGeneration,
+    targetAuthGeneration: targetAuthGeneration,
+    issuerSigningPublicKey: Uint8List.fromList(
+      frame.sublist(
+        _pairingIssuerSigningPublicKeyOffset,
+        _pairingIssuerKeyAgreementPublicKeyOffset,
+      ),
+    ),
+    issuerKeyAgreementPublicKey: Uint8List.fromList(
+      frame.sublist(
+        _pairingIssuerKeyAgreementPublicKeyOffset,
+        _pairingApprovedAccountKeyEnvelopeOffset,
+      ),
+    ),
+    approvedAccountKeyEnvelope: Uint8List.fromList(
+      frame.sublist(_pairingApprovedAccountKeyEnvelopeOffset),
+    ),
     originalStateBlob: Uint8List.fromList(
       frame.sublist(_pairingOriginalStateOffset, _pairingFullStateOffset),
     ),
-    fullStateBlob: Uint8List.fromList(frame.sublist(_pairingFullStateOffset)),
+    fullStateBlob: Uint8List.fromList(
+      frame.sublist(_pairingFullStateOffset, _pairingIssuerDeviceIdOffset),
+    ),
   );
 }
 
@@ -382,10 +483,24 @@ final class _PairingRecoveryTransaction {
     required this.sessionToken,
     required DateTime onboardingTokenExpiresAt,
     required DateTime pairingExpiresAt,
+    required this.issuerDeviceId,
+    required this.issuerKeyVersion,
+    required this.issuerAuthGeneration,
+    required this.targetAuthGeneration,
+    required Uint8List issuerSigningPublicKey,
+    required Uint8List issuerKeyAgreementPublicKey,
+    required Uint8List approvedAccountKeyEnvelope,
     required Uint8List originalStateBlob,
     required Uint8List fullStateBlob,
   }) : onboardingTokenExpiresAt = onboardingTokenExpiresAt.toUtc(),
        pairingExpiresAt = pairingExpiresAt.toUtc(),
+       issuerSigningPublicKey = Uint8List.fromList(issuerSigningPublicKey),
+       issuerKeyAgreementPublicKey = Uint8List.fromList(
+         issuerKeyAgreementPublicKey,
+       ),
+       approvedAccountKeyEnvelope = Uint8List.fromList(
+         approvedAccountKeyEnvelope,
+       ),
        originalStateBlob = Uint8List.fromList(originalStateBlob),
        fullStateBlob = Uint8List.fromList(fullStateBlob);
 
@@ -398,6 +513,13 @@ final class _PairingRecoveryTransaction {
   final CloudSyncFullSessionToken sessionToken;
   final DateTime onboardingTokenExpiresAt;
   final DateTime pairingExpiresAt;
+  final String issuerDeviceId;
+  final int issuerKeyVersion;
+  final int issuerAuthGeneration;
+  final int targetAuthGeneration;
+  final Uint8List issuerSigningPublicKey;
+  final Uint8List issuerKeyAgreementPublicKey;
+  final Uint8List approvedAccountKeyEnvelope;
   final Uint8List originalStateBlob;
   final Uint8List fullStateBlob;
   bool _disposed = false;
@@ -405,6 +527,17 @@ final class _PairingRecoveryTransaction {
   void dispose() {
     if (_disposed) return;
     _disposed = true;
+    issuerSigningPublicKey.fillRange(0, issuerSigningPublicKey.length, 0);
+    issuerKeyAgreementPublicKey.fillRange(
+      0,
+      issuerKeyAgreementPublicKey.length,
+      0,
+    );
+    approvedAccountKeyEnvelope.fillRange(
+      0,
+      approvedAccountKeyEnvelope.length,
+      0,
+    );
     originalStateBlob.fillRange(0, originalStateBlob.length, 0);
     fullStateBlob.fillRange(0, fullStateBlob.length, 0);
   }
@@ -643,6 +776,13 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         sessionToken: CloudSyncFullSessionToken.generate(),
         onboardingTokenExpiresAt: pairing._onboardingTokenExpiresAt,
         pairingExpiresAt: approved.expiresAt,
+        issuerDeviceId: approved.issuerDeviceId,
+        issuerKeyVersion: approved.issuerKeyVersion,
+        issuerAuthGeneration: approved.issuerAuthGeneration,
+        targetAuthGeneration: approved.targetDevice.authGeneration,
+        issuerSigningPublicKey: approved.issuerSigningPublicKey,
+        issuerKeyAgreementPublicKey: approved.issuerKeyAgreementPublicKey,
+        approvedAccountKeyEnvelope: approved.accountKeyEnvelope,
         originalStateBlob: originalState,
         fullStateBlob: fullState,
       );
@@ -664,13 +804,15 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         pairingId: pairing._pairingId,
         sessionToken: transaction.sessionToken,
       );
-      _validatePairingSession(
+      final verifiedSession = await _validatePairingSession(
+        context: context,
+        accountRootKey: acceptedArk,
         normalizedLoginName: pairing.loginName,
         transaction: transaction,
         session: session,
       );
       completed = true;
-      return _bindVerifiedDeviceKeyVersion(context, session);
+      return _bindVerifiedDeviceKeyVersion(context, verifiedSession);
     } catch (error) {
       primaryError = error;
       rethrow;
@@ -734,7 +876,13 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         normalizedLoginName: normalizedLoginName,
         transaction: pending.transaction,
       );
-      _validatePairingSession(
+      final accountRootKey = context.ark;
+      if (accountRootKey == null) {
+        throw StateError('配对确认缺少账户根密钥');
+      }
+      await _validatePairingSession(
+        context: context,
+        accountRootKey: accountRootKey,
         normalizedLoginName: normalizedLoginName,
         transaction: pending.transaction,
         session: session,
@@ -1250,17 +1398,140 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         );
   }
 
-  void _validatePairingSession({
+  Future<CloudSyncAuthenticatedSession> _validatePairingSession({
+    required _DeviceContext context,
+    required KelivoAccountRootKeyHandle accountRootKey,
     required String normalizedLoginName,
     required _PairingRecoveryTransaction transaction,
     required CloudSyncAuthenticatedSession session,
-  }) {
+  }) async {
     if (session.user.id != transaction.userId ||
         session.user.loginName != normalizedLoginName ||
         session.device.id != transaction.deviceId ||
-        session.keyEpoch != transaction.keyEpoch) {
+        session.keyEpoch != transaction.keyEpoch ||
+        session.authGeneration != transaction.targetAuthGeneration + 1 ||
+        context.deviceIdText != transaction.deviceId ||
+        context.keyVersion != transaction.keyVersion) {
       throw StateError('配对消费结果与本地恢复事务不匹配');
     }
+
+    final state = session.securityState;
+    final receipt = session.pairingReceipt;
+    if (state == null || receipt == null) {
+      throw StateError('配对消费结果缺少完整安全状态或消费回执');
+    }
+    if (state.keyEpoch != transaction.keyEpoch ||
+        state.dataRekeyPhase != CloudSyncDataRekeyPhase.ready ||
+        state.lastOperationId != transaction.pairingId ||
+        receipt.pairingId != transaction.pairingId ||
+        receipt.issuerDeviceId != transaction.issuerDeviceId ||
+        receipt.keyEpoch != state.keyEpoch ||
+        receipt.securityGeneration != state.generation ||
+        !E2eeAccountAuthenticator._sameBytes(
+          receipt.membershipManifestDigest.bytes,
+          state.membershipManifestDigest.bytes,
+        )) {
+      throw StateError('配对消费回执与账户安全状态不匹配');
+    }
+    CloudSyncAccountSecurityEnvelope? localEnvelope;
+    for (final envelope in state.envelopes) {
+      if (envelope.targetDeviceId == transaction.deviceId) {
+        localEnvelope = envelope;
+        break;
+      }
+    }
+    if (localEnvelope == null ||
+        localEnvelope.issuerDeviceId != transaction.issuerDeviceId ||
+        localEnvelope.keyEpoch != transaction.keyEpoch ||
+        !E2eeAccountAuthenticator._sameBytes(
+          localEnvelope.accountKeyEnvelope,
+          transaction.approvedAccountKeyEnvelope,
+        )) {
+      throw StateError('配对消费账户密钥信封与冻结批准载荷不匹配');
+    }
+
+    final publicKeys = await _secureCore.readDevicePublicKeys(context.identity);
+    final localMemberInput = E2eeMembershipDeviceInput(
+      deviceId: transaction.deviceId,
+      keyVersion: transaction.keyVersion,
+      authGeneration: session.authGeneration,
+      signingPublicKey: publicKeys.signingPublicKey,
+      keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+    );
+    final projection = E2eeMembershipServerProjection(
+      userId: session.user.id,
+      securityGeneration: state.generation,
+      keyEpoch: state.keyEpoch,
+      membershipManifestVersion: e2eeAccountTrustManifestFormatVersion,
+      membershipManifest: state.membershipManifest,
+      membershipManifestDigest: state.membershipManifestDigest.bytes,
+      recoveryPublicKeyVersion: state.recoveryPublicKeyVersion,
+      recoveryPublicKey: state.recoveryPublicKey,
+      recoveryCapsuleVersion: state.recoveryCapsuleVersion,
+      recoveryCapsule: state.recoveryCapsule,
+      lastOperationId: state.lastOperationId,
+      dataRekeyPhase: E2eeDataRekeyPhase.ready,
+    );
+    final verified = await const E2eeAccountTrustManifestModule().verify(
+      ark: accountRootKey,
+      expectation: E2eePairingBootstrapMembershipExpectation(
+        projection: projection,
+        consumedKeyEpoch: receipt.keyEpoch,
+        consumedSecurityGeneration: receipt.securityGeneration,
+        consumedMembershipManifestDigest:
+            receipt.membershipManifestDigest.bytes,
+        pairingId: receipt.pairingId,
+        issuerDeviceId: receipt.issuerDeviceId,
+        localMember: localMemberInput,
+      ),
+    );
+    E2eeVerifiedMembershipDevice? verifiedLocalMember;
+    E2eeVerifiedMembershipDevice? verifiedIssuerMember;
+    for (final member in verified.members) {
+      if (member.deviceId == transaction.deviceId) {
+        verifiedLocalMember = member;
+      }
+      if (member.deviceId == transaction.issuerDeviceId) {
+        verifiedIssuerMember = member;
+      }
+    }
+    if (verifiedLocalMember == null ||
+        verifiedIssuerMember == null ||
+        verifiedIssuerMember.keyVersion != transaction.issuerKeyVersion ||
+        verifiedIssuerMember.authGeneration !=
+            transaction.issuerAuthGeneration ||
+        !E2eeAccountAuthenticator._sameBytes(
+          verifiedIssuerMember.signingPublicKey,
+          transaction.issuerSigningPublicKey,
+        ) ||
+        !E2eeAccountAuthenticator._sameBytes(
+          verifiedIssuerMember.keyAgreementPublicKey,
+          transaction.issuerKeyAgreementPublicKey,
+        )) {
+      throw StateError('配对签发者公开身份与签名成员清单不匹配');
+    }
+    final localMember = CloudSyncMembershipDeviceMaterial(
+      deviceId: verifiedLocalMember.deviceId,
+      keyVersion: verifiedLocalMember.keyVersion,
+      authGeneration: verifiedLocalMember.authGeneration,
+      signingPublicKey: verifiedLocalMember.signingPublicKey,
+      keyAgreementPublicKey: verifiedLocalMember.keyAgreementPublicKey,
+    );
+    final issuerMember = CloudSyncMembershipDeviceMaterial(
+      deviceId: verifiedIssuerMember.deviceId,
+      keyVersion: verifiedIssuerMember.keyVersion,
+      authGeneration: verifiedIssuerMember.authGeneration,
+      signingPublicKey: verifiedIssuerMember.signingPublicKey,
+      keyAgreementPublicKey: verifiedIssuerMember.keyAgreementPublicKey,
+    );
+    return session.withSecurityBootstrap(
+      CloudSyncSecurityBootstrap.pairing(
+        state: state,
+        localMember: localMember,
+        issuerMember: issuerMember,
+        receipt: receipt,
+      ),
+    );
   }
 
   Uint8List _pairingRecordId(String normalizedLoginName) {

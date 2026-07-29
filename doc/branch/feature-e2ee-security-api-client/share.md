@@ -20,3 +20,5 @@
 - 注册 finish、配对 query/consume 已改为基于原始 JSON 的精确键校验，禁止依赖生成模型忽略未知字段。
 - 首设备注册结果会以本地 ARK 重新验证签名 genesis、成员双公钥、认证代次和账户密钥信封，验证成功后才生成待安装 bootstrap；三个相关文件定向 `flutter analyze` 已通过。
 - 恢复二维码/文件的独立恢复口令由恢复介质分支负责；本分支明确不向 session/bootstrap 增加任何恢复口令字段。
+- 目标设备配对恢复事务已硬切 `KELVPT03`，加密保存签发者 key version、auth generation、双公钥和冻结账户信封；首次 consume 与响应丢失后的跨重启重放使用同一材料校验。
+- 配对 consume 结果必须由本地 ARK 验证签名成员清单、完整安全状态、消费回执、目标成员和签发者公开身份，成功后才生成 pairing bootstrap；相关文件定向 `flutter analyze` 已通过。

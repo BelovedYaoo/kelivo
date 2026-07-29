@@ -548,12 +548,19 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
               pairingId: pendingPairing.transaction.pairingId,
               sessionToken: pendingPairing.transaction.sessionToken,
             );
-            E2eeDevicePairingAuthentication(this)._validatePairingSession(
-              normalizedLoginName: normalizedLoginName,
-              transaction: pendingPairing.transaction,
-              session: recoveredSession,
-            );
-            return _authenticatedLoginResult(context, recoveredSession);
+            final accountRootKey = context.ark;
+            if (accountRootKey == null) {
+              throw StateError('配对恢复缺少账户根密钥');
+            }
+            final verifiedSession = await E2eeDevicePairingAuthentication(this)
+                ._validatePairingSession(
+                  context: context,
+                  accountRootKey: accountRootKey,
+                  normalizedLoginName: normalizedLoginName,
+                  transaction: pendingPairing.transaction,
+                  session: recoveredSession,
+                );
+            return _authenticatedLoginResult(context, verifiedSession);
           } on CloudSyncException catch (error) {
             if (!E2eeDevicePairingAuthentication(
               this,
