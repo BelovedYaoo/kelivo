@@ -221,6 +221,68 @@ final class E2eeAccountRecordCipher {
     }
   }
 
+  Future<E2eeSealedAccountRecordEnvelope> rewrap(
+    E2eeUntrustedAccountRecordEnvelope source,
+  ) async {
+    _requireOpen();
+    if (source.keyEpoch == _maxUint32 ||
+        currentKeyEpoch != source.keyEpoch + 1) {
+      throw const FormatException('账户记录重包只允许相邻密钥世代');
+    }
+
+    Uint8List? associatedData;
+    Uint8List? plaintext;
+    Uint8List? ciphertext;
+    _EncodedEntityKey? encodedKey;
+    try {
+      final associatedDataValue = _buildAssociatedData(_userId);
+      associatedData = associatedDataValue;
+      final plaintextValue = await _secureCore.openAccountRecord(
+        _accountRootKey,
+        recordId: source.recordId._bytes,
+        keyEpoch: source.keyEpoch,
+        associatedData: associatedDataValue,
+        envelope: source.ciphertext,
+      );
+      plaintext = plaintextValue;
+      final decodedFrame = _decodeRecordFrame(plaintextValue);
+      encodedKey = _encodeEntityKey(decodedFrame.entityKey);
+      final expectedSourceRecordId = await _deriveRecordId(
+        encodedKey.canonicalBytes,
+        keyEpoch: source.keyEpoch,
+      );
+      if (!_sameBytes(expectedSourceRecordId._bytes, source.recordId._bytes)) {
+        throw const FormatException('账户记录标识与密文实体键不匹配');
+      }
+      final targetRecordId = await _deriveRecordId(
+        encodedKey.canonicalBytes,
+        keyEpoch: currentKeyEpoch,
+      );
+      // 直接重密封已认证帧，避免 data-rekey 将业务明文复制到执行器状态。
+      final ciphertextValue = await _secureCore.sealAccountRecord(
+        _accountRootKey,
+        recordId: targetRecordId._bytes,
+        keyEpoch: currentKeyEpoch,
+        associatedData: associatedDataValue,
+        plaintext: plaintextValue,
+      );
+      ciphertext = ciphertextValue;
+      if (ciphertextValue.length > e2eeAccountRecordMaxCiphertextBytes) {
+        throw StateError('账户记录密文超过同步协议上限');
+      }
+      return E2eeSealedAccountRecordEnvelope._(
+        recordId: targetRecordId,
+        keyEpoch: currentKeyEpoch,
+        ciphertext: ciphertextValue,
+      );
+    } finally {
+      encodedKey?.clear();
+      _clearBytes(ciphertext);
+      _clearBytes(plaintext);
+      _clearBytes(associatedData);
+    }
+  }
+
   Future<T> open<T>(
     E2eeUntrustedAccountRecordEnvelope record, {
     required T Function(SyncEntityKey entityKey, Uint8List borrowedPayload)

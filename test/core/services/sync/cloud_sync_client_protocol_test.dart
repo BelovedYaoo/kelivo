@@ -5594,6 +5594,92 @@ void main() {
     expect(payload, orderedEquals(<int>[1, 2, 3]));
   });
 
+  test('账户记录重包只接受相邻密钥世代并保持认证内容', () async {
+    const core = KelivoSecureCore();
+    final userId = _rawUuid(_userId);
+    final issuerIdentity = await core.generateDeviceIdentity();
+    final targetIdentity = await core.generateDeviceIdentity();
+    addTearDown(() => core.closeDeviceIdentity(issuerIdentity));
+    addTearDown(() => core.closeDeviceIdentity(targetIdentity));
+    final issuerPublicKeys = await core.readDevicePublicKeys(issuerIdentity);
+    final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
+
+    final sourceArk = await core.generateAccountRootKey(
+      userId: userId,
+      keyEpoch: 1,
+    );
+    final epochOneEnvelope = await core.sealAccountRootKeyEnvelope(
+      issuerIdentity,
+      sourceArk,
+      userId: userId,
+      issuerDeviceId: _rawUuid(_deviceId1),
+      targetDeviceId: _rawUuid(_deviceId2),
+      keyEpoch: 1,
+      targetPublicKeys: targetPublicKeys,
+    );
+    final targetArk = await core.openAccountRootKeyEnvelope(
+      targetIdentity,
+      envelope: epochOneEnvelope,
+      userId: userId,
+      issuerDeviceId: _rawUuid(_deviceId1),
+      targetDeviceId: _rawUuid(_deviceId2),
+      keyEpoch: 1,
+      issuerPublicKeys: issuerPublicKeys,
+      targetPublicKeys: targetPublicKeys,
+    );
+    final epochTwoArk = await core.generateAccountRootKey(
+      userId: userId,
+      keyEpoch: 2,
+    );
+    addTearDown(() => core.closeAccountRootKey(epochTwoArk));
+    await core.addAccountRootKeyEpoch(targetArk, source: epochTwoArk);
+
+    final sourceCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: sourceArk,
+      userId: _userId,
+      currentKeyEpoch: 1,
+    );
+    final targetCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: targetArk,
+      userId: _userId,
+      currentKeyEpoch: 2,
+    );
+    addTearDown(sourceCipher.close);
+    addTearDown(targetCipher.close);
+
+    const entityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'data-rekey-record',
+    );
+    final payload = Uint8List.fromList(<int>[4, 8, 15, 16, 23, 42]);
+    final source = await sourceCipher.seal(
+      entityKey: entityKey,
+      payload: payload,
+    );
+
+    final target = await targetCipher.rewrap(_untrustedRecord(source));
+
+    expect(target.keyEpoch, 2);
+    expect(target.recordId, isNot(source.recordId));
+    expect(target.ciphertext, isNot(orderedEquals(source.ciphertext)));
+    expect(
+      await targetCipher.open(
+        _untrustedRecord(target),
+        decode: (openedKey, borrowed) {
+          expect(openedKey, entityKey);
+          return Uint8List.fromList(borrowed);
+        },
+      ),
+      orderedEquals(payload),
+    );
+    await expectLater(
+      targetCipher.rewrap(_untrustedRecord(target)),
+      throwsFormatException,
+    );
+  });
+
   test('账户记录加密器按记录代次派生标识并在裁剪后失败关闭', () async {
     const core = KelivoSecureCore();
     final slotId = Uint8List.fromList(
