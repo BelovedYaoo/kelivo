@@ -10,6 +10,7 @@ import kotlin.test.assertFailsWith
 import kotlin.test.assertFalse
 import kotlin.test.assertNotNull
 import kotlin.test.assertNull
+import kotlin.test.assertSame
 import kotlin.test.assertTrue
 
 class BackgroundWorkerLifecycleCoordinatorTest {
@@ -61,23 +62,24 @@ class BackgroundWorkerLifecycleCoordinatorTest {
         val lifecycle = runningTaskLifecycle()
         val terminal = assertNotNull(lifecycle.requestTerminal("finished"))
         val debugCalls = AtomicInteger()
+        val completionCalls = AtomicInteger()
         val executor = Executors.newSingleThreadExecutor()
 
         try {
             val lateReply =
                 executor.submit {
-                    lifecycle.beginDebugEffect()?.let { effect ->
-                        try {
-                            debugCalls.incrementAndGet()
-                        } finally {
-                            effect.finish()
-                        }
-                    }
+                    reportBackgroundWorkerDebugIfActive(
+                        lifecycle = lifecycle,
+                        failureOutcome = { "failed" },
+                        report = { debugCalls.incrementAndGet() },
+                        completeTerminal = { completionCalls.incrementAndGet() },
+                    )
                 }
 
             lateReply.get()
             assertEquals("finished", terminal.outcome)
             assertEquals(0, debugCalls.get())
+            assertEquals(0, completionCalls.get())
         } finally {
             executor.shutdownNow()
         }
@@ -99,6 +101,36 @@ class BackgroundWorkerLifecycleCoordinatorTest {
         }
 
         assertEquals("failed", assertNotNull(terminal).outcome)
+    }
+
+    @Test
+    fun `取消回复 reporter 抛错时完成唯一失败终态并传播原异常`() {
+        val lifecycle = runningTaskLifecycle()
+        val reporterFailure = IllegalStateException("reporter-failed")
+        val completedOutcomes = mutableListOf<String>()
+
+        val thrown =
+            assertFailsWith<IllegalStateException> {
+                reportBackgroundWorkerDebugIfActive(
+                    lifecycle = lifecycle,
+                    failureOutcome = { failure -> "failed:${failure.message}" },
+                    report = { throw reporterFailure },
+                    completeTerminal = { completion ->
+                        BackgroundWorkerTerminalFinalizer<String>(
+                            cancelForcedStop = {},
+                            reportFinalStatus = {},
+                            shutdownScheduler = {},
+                            detachEngine = { null },
+                            scheduleDetachedEngineDestruction = {},
+                            completePlatform = { completedOutcomes += completion.outcome },
+                        ).finish()
+                    },
+                )
+            }
+
+        assertSame(reporterFailure, thrown)
+        assertEquals(listOf("failed:reporter-failed"), completedOutcomes)
+        assertNull(lifecycle.requestTerminal("late"))
     }
 
     @Test

@@ -296,12 +296,16 @@ class BackgroundWorker(
     }
 
     private fun reportDebugIfActive(exception: Throwable) {
-        val debugEffect = lifecycle.beginDebugEffect() ?: return
-        try {
-            WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
-        } finally {
-            finishLifecycleEffect(debugEffect)
-        }
+        reportBackgroundWorkerDebugIfActive(
+            lifecycle = lifecycle,
+            failureOutcome = { reporterFailure ->
+                TerminalRequest(Result.failure(), reporterFailure.message)
+            },
+            report = {
+                WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
+            },
+            completeTerminal = ::completeTerminal,
+        )
     }
 
     private fun completeTerminal(

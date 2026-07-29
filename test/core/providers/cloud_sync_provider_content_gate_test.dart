@@ -1232,6 +1232,13 @@ void main() {
       'dependencies/workmanager_android/android/src/main/kotlin/'
       'dev/fluttercommunity/workmanager/BackgroundWorkerLifecycle.kt',
     ).readAsString();
+    final debugHelperStart = androidLifecycle.indexOf(
+      'internal fun <TerminalOutcome, ForcedStop> '
+      'reportBackgroundWorkerDebugIfActive(',
+    );
+    final terminalFinalizerStart = androidLifecycle.indexOf(
+      'internal class BackgroundWorkerTerminalFinalizer',
+    );
 
     final dartExecutionStart = androidWorker.indexOf(
       'private fun startDartExecutionIfActive(',
@@ -1274,6 +1281,8 @@ void main() {
     expect(terminalCompletionStart, greaterThan(replyDebugStart));
     expect(terminalStatusStart, greaterThan(terminalCompletionStart));
     expect(detachedDestroyStart, greaterThan(terminalStatusStart));
+    expect(debugHelperStart, greaterThanOrEqualTo(0));
+    expect(terminalFinalizerStart, greaterThan(debugHelperStart));
 
     final dartExecution = androidWorker.substring(
       dartExecutionStart,
@@ -1304,6 +1313,10 @@ void main() {
       terminalStatusStart,
     );
     final detachedDestroy = androidWorker.substring(detachedDestroyStart);
+    final debugHelper = androidLifecycle.substring(
+      debugHelperStart,
+      terminalFinalizerStart,
+    );
 
     expect(
       androidWorker,
@@ -1350,13 +1363,21 @@ void main() {
     expect(failureDebug, contains('WorkmanagerDebug.onExceptionEncountered('));
     expect(failureDebug, contains('stopEngine(Result.failure()'));
     expect(failureDebug, contains('finishLifecycleEffect(debugEffect)'));
+    expect(replyDebug, contains('reportBackgroundWorkerDebugIfActive('));
+    expect(replyDebug, contains('failureOutcome = { reporterFailure ->'));
     expect(
       replyDebug,
-      contains('val debugEffect = lifecycle.beginDebugEffect() ?: return'),
+      contains('TerminalRequest(Result.failure(), reporterFailure.message)'),
     );
     expect(replyDebug, contains('WorkmanagerDebug.onExceptionEncountered('));
-    expect(replyDebug, contains('finally'));
-    expect(replyDebug, contains('finishLifecycleEffect(debugEffect)'));
+    expect(replyDebug, contains('completeTerminal = ::completeTerminal'));
+
+    expect(debugHelper, contains('lifecycle.beginDebugEffect() ?: return'));
+    expect(debugHelper, contains('catch (failure: Throwable)'));
+    expect(debugHelper, contains('lifecycle.requestTerminal('));
+    expect(debugHelper, contains('finally'));
+    expect(debugHelper, contains('effect.finish()?.let(completeTerminal)'));
+    expect(debugHelper, contains('reporterFailure?.let { throw it }'));
 
     final cancelIndex = terminalCompletion.indexOf('cancelForcedStop =');
     final statusIndex = terminalCompletion.indexOf('reportFinalStatus =');

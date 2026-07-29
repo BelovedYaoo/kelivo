@@ -166,6 +166,37 @@ internal class BackgroundWorkerLifecycleCoordinator<TerminalOutcome, ForcedStop>
     }
 }
 
+internal fun <TerminalOutcome, ForcedStop> reportBackgroundWorkerDebugIfActive(
+    lifecycle: BackgroundWorkerLifecycleCoordinator<TerminalOutcome, ForcedStop>,
+    failureOutcome: (Throwable) -> TerminalOutcome,
+    report: () -> Unit,
+    completeTerminal: (BackgroundWorkerTerminalCompletion<TerminalOutcome, ForcedStop>) -> Unit,
+) {
+    val effect = lifecycle.beginDebugEffect() ?: return
+    var reporterFailure: Throwable? = null
+
+    try {
+        report()
+    } catch (failure: Throwable) {
+        reporterFailure = failure
+        lifecycle.requestTerminal(failureOutcome(failure))
+    } finally {
+        try {
+            effect.finish()?.let(completeTerminal)
+        } catch (completionFailure: Throwable) {
+            val originalFailure = reporterFailure
+            if (originalFailure == null) {
+                throw completionFailure
+            }
+            if (completionFailure !== originalFailure) {
+                originalFailure.addSuppressed(completionFailure)
+            }
+        }
+    }
+
+    reporterFailure?.let { throw it }
+}
+
 // 把平台完成留作最后一个同步步骤，同时保证任一前置步骤抛错也不会遗留未完成 Future。
 internal class BackgroundWorkerTerminalFinalizer<Engine>(
     private val cancelForcedStop: () -> Unit,
