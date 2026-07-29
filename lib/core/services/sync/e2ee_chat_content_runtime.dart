@@ -108,10 +108,24 @@ final class E2eeChatContentRuntime
   E2eeSyncScheduler? _scheduler;
   Future<void>? _initializationFuture;
   Future<void>? _closeFuture;
+  CloudSyncTerminalAuthenticationHandler? _terminalAuthenticationHandler;
   int _activeLocalWrites = 0;
   Completer<void>? _localWritesIdle;
 
   E2eeChatContentRuntimeState get state => _state;
+
+  @override
+  void bindTerminalAuthenticationHandler(
+    CloudSyncTerminalAuthenticationHandler handler,
+  ) {
+    if (_state != E2eeChatContentRuntimeState.created) {
+      throw StateError('E2EE 内容运行时启动后不能绑定终止认证处理器');
+    }
+    if (_terminalAuthenticationHandler != null) {
+      throw StateError('E2EE 内容运行时只能绑定一个终止认证处理器');
+    }
+    _terminalAuthenticationHandler = handler;
+  }
 
   void bindChatService(ChatService chatService) {
     if (_state != E2eeChatContentRuntimeState.created) {
@@ -330,7 +344,11 @@ final class E2eeChatContentRuntime
         ),
         flushOnce: () => outbox.flushOnce(transport: transports.records),
       );
-      final scheduler = E2eeSyncScheduler(cycleRunner: cycleRunner);
+      final scheduler = E2eeSyncScheduler(
+        cycleRunner: cycleRunner,
+        isTerminalFailure: _isTerminalAuthenticationFailure,
+        onTerminalFailure: _handleTerminalAuthenticationFailure,
+      );
       _scheduler = scheduler;
 
       await keyLease.close();
@@ -486,6 +504,21 @@ final class E2eeChatContentRuntime
     await _closeOwnedResources(cleanup);
   }
 
+  Future<void> _handleTerminalAuthenticationFailure(
+    Object error,
+    StackTrace stackTrace,
+  ) {
+    if (error is! CloudSyncException ||
+        !_isTerminalAuthenticationFailure(error)) {
+      throw StateError('E2EE 同步调度器提交了非终止认证错误');
+    }
+    final handler = _terminalAuthenticationHandler;
+    if (handler == null) {
+      throw StateError('E2EE 内容运行时缺少终止认证处理器');
+    }
+    return handler(error, stackTrace);
+  }
+
   Future<void> _closeOwnedResources(_CleanupAccumulator cleanup) async {
     final attachmentDownloads = _attachmentDownloads;
     if (attachmentDownloads != null) {
@@ -590,6 +623,12 @@ final class _CleanupAccumulator {
     }
     Error.throwWithStackTrace(primary, primaryStackTrace);
   }
+}
+
+bool _isTerminalAuthenticationFailure(Object error) {
+  if (error is! CloudSyncException || error.retryable) return false;
+  return error.kind == CloudSyncFailureKind.unauthenticated ||
+      error.kind == CloudSyncFailureKind.forbidden;
 }
 
 E2eeChatContentTransports _defaultTransportFactory({

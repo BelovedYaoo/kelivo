@@ -180,15 +180,30 @@ final class CloudSyncProvider extends ChangeNotifier {
       }
 
       final contentRuntime = _contentRuntime;
+      int? contentRuntimeEpoch;
       if (contentRuntime != null) {
+        // runtime 会在 initialize 返回前启动调度器，先固定世代并绑定处理器，
+        // 才不会漏掉首次拉取立刻返回的远端撤销。
+        contentRuntimeEpoch = ++_sessionEpoch;
+        final boundEpoch = contentRuntimeEpoch;
+        contentRuntime.bindTerminalAuthenticationHandler((failure, stackTrace) {
+          return _retireTerminalAuthentication(
+            sessionEpoch: boundEpoch,
+            failure: failure,
+            failureStackTrace: stackTrace,
+          );
+        });
         await contentRuntime.initialize();
         if (_disposed) {
           await _closeContentRuntime();
           return;
         }
+        if (contentRuntimeEpoch != _sessionEpoch || _session == null) {
+          return;
+        }
         _contentRuntimeReady = true;
       }
-      _connect(session);
+      _connect(session, reservedSessionEpoch: contentRuntimeEpoch);
       if (_disposed) return;
       _ready = true;
       _setStatus(CloudSyncProviderStatus.idle);
@@ -659,12 +674,97 @@ final class CloudSyncProvider extends ChangeNotifier {
   void _connect(
     CloudSyncAccountSession session, {
     CloudSyncAccountClient? client,
+    int? reservedSessionEpoch,
   }) {
-    _sessionEpoch++;
+    if (reservedSessionEpoch == null) {
+      _sessionEpoch++;
+    } else if (reservedSessionEpoch != _sessionEpoch) {
+      throw StateError('云同步内容运行时会话世代已经失效');
+    }
     _client?.close(force: true);
     final nextClient = client ?? _clientFactory(token: session.token);
     nextClient.setToken(session.token);
     _client = nextClient;
+  }
+
+  Future<void> _retireTerminalAuthentication({
+    required int sessionEpoch,
+    required CloudSyncException failure,
+    required StackTrace failureStackTrace,
+  }) async {
+    if (_disposed || sessionEpoch != _sessionEpoch || _session == null) {
+      return;
+    }
+
+    _beginSessionMutation();
+    _sessionEpoch++;
+    _session = null;
+    _contentRuntimeReady = false;
+    _pendingDeviceApproval = null;
+    _devicesLoading = false;
+    _devices = const <CloudSyncDeviceSession>[];
+    _workspaceRestartRequired = true;
+    _ready = true;
+    _lastError = failure;
+    _deviceError = null;
+    _setStatus(CloudSyncProviderStatus.signingOut);
+    _client?.close(force: true);
+    _client = null;
+
+    Object? primaryError;
+    StackTrace? primaryStackTrace;
+    void retainCleanupFailure(
+      String operation,
+      Object error,
+      StackTrace stackTrace,
+    ) {
+      if (primaryError == null) {
+        primaryError = error;
+        primaryStackTrace = stackTrace;
+        return;
+      }
+      developer.log(
+        operation,
+        name: 'Kelivo.CloudSyncProvider',
+        level: 1000,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    // 持久 tombstone 必须先于可能等待本地写入的 runtime 关闭，避免崩溃后
+    // 旧会话再次被启动流程接回。
+    try {
+      await _workspaceRuntime.signOut();
+    } catch (error, stackTrace) {
+      retainCleanupFailure('终止认证后持久清除账户会话失败', error, stackTrace);
+    }
+    try {
+      await _closeContentRuntime();
+    } catch (error, stackTrace) {
+      retainCleanupFailure('终止认证后关闭内容运行时失败', error, stackTrace);
+    }
+    try {
+      await _workspaceRuntime.prepareRestartHandoff();
+    } catch (error, stackTrace) {
+      retainCleanupFailure('终止认证后释放工作区租约失败', error, stackTrace);
+    } finally {
+      _endSessionMutation();
+    }
+
+    final cleanupError = primaryError;
+    if (cleanupError != null) {
+      _recordFailure(
+        cleanupError,
+        primaryStackTrace!,
+        operation: '终止认证后清理云同步会话',
+        status: CloudSyncProviderStatus.workspaceChangePending,
+      );
+      Error.throwWithStackTrace(cleanupError, primaryStackTrace!);
+    }
+
+    debugPrint('云同步会话因终止认证失效：$failure\n$failureStackTrace');
+    _setStatus(CloudSyncProviderStatus.workspaceChangePending);
   }
 
   void _retainPendingApproval({

@@ -15,6 +15,9 @@ typedef E2eeSyncTimerFactory =
     Timer Function(Duration delay, void Function() callback);
 typedef E2eeSyncBackgroundErrorReporter =
     void Function(Object error, StackTrace stackTrace);
+typedef E2eeSyncTerminalFailureClassifier = bool Function(Object error);
+typedef E2eeSyncTerminalFailureHandler =
+    Future<void> Function(Object error, StackTrace stackTrace);
 
 enum E2eeSyncCycleDisposition { completed, keyEpochUnavailable }
 
@@ -143,6 +146,7 @@ enum E2eeSyncSchedulerState {
   polling,
   retrying,
   keyEpochPaused,
+  terminated,
   closing,
   closed,
 }
@@ -156,6 +160,8 @@ final class E2eeSyncScheduler {
     Duration maximumRetryDelay = const Duration(minutes: 5),
     this._timerFactory = _defaultTimerFactory,
     this._errorReporter = _defaultErrorReporter,
+    this._isTerminalFailure = _neverTerminalFailure,
+    this._onTerminalFailure = _ignoreTerminalFailure,
   }) : _pollInterval = _requirePositiveDuration(pollInterval, 'pollInterval'),
        _initialRetryDelay = _requirePositiveDuration(
          initialRetryDelay,
@@ -180,6 +186,8 @@ final class E2eeSyncScheduler {
   final Duration _maximumRetryDelay;
   final E2eeSyncTimerFactory _timerFactory;
   final E2eeSyncBackgroundErrorReporter _errorReporter;
+  final E2eeSyncTerminalFailureClassifier _isTerminalFailure;
+  final E2eeSyncTerminalFailureHandler _onTerminalFailure;
 
   E2eeSyncSchedulerState _state = E2eeSyncSchedulerState.notStarted;
   Future<void>? _activeCycle;
@@ -187,7 +195,9 @@ final class E2eeSyncScheduler {
   Timer? _timer;
   Duration? _nextRunDelay;
   bool _wakePending = false;
+  bool _terminalFailureNotified = false;
   int _consecutiveFailures = 0;
+  ({Object error, StackTrace stackTrace})? _pendingTerminalFailure;
 
   E2eeSyncSchedulerState get state => _state;
   Duration? get nextRunDelay => _nextRunDelay;
@@ -219,6 +229,7 @@ final class E2eeSyncScheduler {
         _launchCycle();
         return;
       case E2eeSyncSchedulerState.keyEpochPaused:
+      case E2eeSyncSchedulerState.terminated:
       case E2eeSyncSchedulerState.closing:
       case E2eeSyncSchedulerState.closed:
         return;
@@ -246,6 +257,7 @@ final class E2eeSyncScheduler {
 
   void _launchCycle() {
     if (_state == E2eeSyncSchedulerState.closing ||
+        _state == E2eeSyncSchedulerState.terminated ||
         _state == E2eeSyncSchedulerState.closed ||
         _activeCycle != null) {
       return;
@@ -256,6 +268,13 @@ final class E2eeSyncScheduler {
     tracked = _executeCycle().whenComplete(() {
       if (!identical(_activeCycle, tracked)) return;
       _activeCycle = null;
+      // 终止处理会沿 Provider -> runtime.close 回到 scheduler.close；
+      // 必须先解除在途周期所有权，避免关闭流程等待自身。
+      final terminalFailure = _pendingTerminalFailure;
+      if (terminalFailure != null) {
+        _pendingTerminalFailure = null;
+        _notifyTerminalFailure(terminalFailure);
+      }
       if (_state == E2eeSyncSchedulerState.polling && _wakePending) {
         _wakePending = false;
         _cancelTimer();
@@ -283,6 +302,16 @@ final class E2eeSyncScheduler {
       return;
     }
     if (failure != null && failureStackTrace != null) {
+      if (_classifyTerminalFailure(failure)) {
+        _wakePending = false;
+        _cancelTimer();
+        _pendingTerminalFailure = (
+          error: failure,
+          stackTrace: failureStackTrace,
+        );
+        _state = E2eeSyncSchedulerState.terminated;
+        return;
+      }
       _consecutiveFailures++;
       _wakePending = false;
       _schedule(
@@ -348,6 +377,27 @@ final class E2eeSyncScheduler {
       );
     }
   }
+
+  bool _classifyTerminalFailure(Object error) {
+    try {
+      return _isTerminalFailure(error);
+    } catch (classificationError, classificationStackTrace) {
+      _reportBackgroundError(classificationError, classificationStackTrace);
+      return false;
+    }
+  }
+
+  void _notifyTerminalFailure(({Object error, StackTrace stackTrace}) failure) {
+    if (_terminalFailureNotified) return;
+    _terminalFailureNotified = true;
+    unawaited(
+      Future<void>.sync(
+        () => _onTerminalFailure(failure.error, failure.stackTrace),
+      ).catchError((Object error, StackTrace stackTrace) {
+        _reportBackgroundError(error, stackTrace);
+      }),
+    );
+  }
 }
 
 Timer _defaultTimerFactory(Duration delay, void Function() callback) {
@@ -362,6 +412,13 @@ void _defaultErrorReporter(Object error, StackTrace stackTrace) {
     stackTrace: stackTrace,
   );
 }
+
+bool _neverTerminalFailure(Object error) => false;
+
+Future<void> _ignoreTerminalFailure(
+  Object error,
+  StackTrace stackTrace,
+) async {}
 
 Duration _requirePositiveDuration(Duration value, String field) {
   if (value <= Duration.zero) {

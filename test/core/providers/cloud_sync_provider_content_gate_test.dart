@@ -250,6 +250,70 @@ void main() {
     expect(errors, hasLength(2));
   });
 
+  test('E2EE 调度器遇到终止错误后停止且仅通知一次', () async {
+    final timers = _ManualTimerQueue();
+    final terminalFailure = StateError('session_revoked');
+    var pullCalls = 0;
+    var terminalNotifications = 0;
+    final runner = E2eeSyncCycleRunner(
+      runPullBatch: <T>(pull) => pull(),
+      pullOnce: ({required int limit}) async {
+        pullCalls++;
+        throw terminalFailure;
+      },
+      sealNext: () async => E2eeSyncSealStatus.idle,
+      flushOnce: () async => const E2eeSyncFlushReport.idle(),
+    );
+    final scheduler = E2eeSyncScheduler(
+      cycleRunner: runner,
+      timerFactory: timers.create,
+      isTerminalFailure: (error) => identical(error, terminalFailure),
+      onTerminalFailure: (error, stackTrace) async {
+        terminalNotifications++;
+      },
+    );
+    addTearDown(scheduler.close);
+
+    scheduler.start();
+    await _waitUntil(() => terminalNotifications == 1);
+    scheduler
+      ..wake()
+      ..wake();
+    await Future<void>.delayed(Duration.zero);
+
+    expect(scheduler.state, E2eeSyncSchedulerState.terminated);
+    expect(scheduler.nextRunDelay, isNull);
+    expect(timers.nextDelay, isNull);
+    expect(pullCalls, 1);
+    expect(terminalNotifications, 1);
+  });
+
+  test('E2EE 调度器清空在途周期后才允许终止回调关闭自身', () async {
+    final terminalFailure = StateError('session_revoked');
+    late E2eeSyncScheduler scheduler;
+    var terminalNotifications = 0;
+    final runner = E2eeSyncCycleRunner(
+      runPullBatch: <T>(pull) => pull(),
+      pullOnce: ({required int limit}) =>
+          Future<E2eeSyncPullStepDisposition>.error(terminalFailure),
+      sealNext: () async => E2eeSyncSealStatus.idle,
+      flushOnce: () async => const E2eeSyncFlushReport.idle(),
+    );
+    scheduler = E2eeSyncScheduler(
+      cycleRunner: runner,
+      isTerminalFailure: (error) => identical(error, terminalFailure),
+      onTerminalFailure: (error, stackTrace) async {
+        terminalNotifications++;
+        await scheduler.close();
+      },
+    );
+
+    scheduler.start();
+    await _waitUntil(() => scheduler.state == E2eeSyncSchedulerState.closed);
+
+    expect(terminalNotifications, 1);
+  });
+
   test('E2EE 调度器遇到未来密钥世代后暂停且不响应普通唤醒', () async {
     final timers = _ManualTimerQueue();
     var keyEpochAvailable = false;
@@ -420,6 +484,107 @@ void main() {
       fixture.provider.status,
       CloudSyncProviderStatus.workspaceChangePending,
     );
+  });
+
+  test('远端终止认证后持久清除会话并关闭内容运行时', () async {
+    final contentRuntime = _FakeCloudSyncContentRuntime();
+    final fixture = await _createSignedInFixture(
+      contentRuntime: contentRuntime,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    await contentRuntime.triggerTerminalAuthentication(
+      const CloudSyncException(
+        kind: CloudSyncFailureKind.unauthenticated,
+        retryable: false,
+        serverCode: 'SYNC_SESSION_REVOKED',
+      ),
+    );
+
+    expect(contentRuntime.closeCalls, 1);
+    expect(fixture.runtime.current.session, isNull);
+    expect(fixture.provider.signedIn, isFalse);
+    expect(fixture.provider.contentSyncEnabled, isFalse);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(
+      fixture.provider.status,
+      CloudSyncProviderStatus.workspaceChangePending,
+    );
+    expect(
+      fixture.provider.lastError?.kind,
+      CloudSyncFailureKind.unauthenticated,
+    );
+  });
+
+  test('远端终止认证清理失败时仍不保留已登录假象', () async {
+    final contentRuntime = _FakeCloudSyncContentRuntime(
+      closeFailure: StateError('content_runtime_close_failed'),
+    );
+    final fixture = await _createSignedInFixture(
+      contentRuntime: contentRuntime,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    await expectLater(
+      contentRuntime.triggerTerminalAuthentication(
+        const CloudSyncException(
+          kind: CloudSyncFailureKind.forbidden,
+          retryable: false,
+          serverCode: 'SYNC_DEVICE_REVOKED',
+        ),
+      ),
+      throwsStateError,
+    );
+
+    expect(fixture.runtime.current.session, isNull);
+    expect(fixture.provider.signedIn, isFalse);
+    expect(fixture.provider.contentSyncEnabled, isFalse);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(fixture.provider.lastError?.kind, CloudSyncFailureKind.unknown);
+    expect(
+      fixture.provider.status,
+      CloudSyncProviderStatus.workspaceChangePending,
+    );
+  });
+
+  test('旧内容运行时的终止回调不得登出替换后的新会话', () async {
+    PackageInfo.setMockInitialValues(
+      appName: 'Kelivo',
+      packageName: 'Kelivo',
+      version: '1.1.17',
+      buildNumber: '1',
+      buildSignature: 'test',
+    );
+    final contentRuntime = _FakeCloudSyncContentRuntime();
+    final fixture = await _createSignedInFixture(
+      contentRuntime: contentRuntime,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+    final staleHandler = contentRuntime.terminalAuthenticationHandler;
+
+    expect(await fixture.provider.logout(), isTrue);
+    expect(
+      await fixture.provider.login(
+        loginName: 'ovo',
+        password: 'password',
+        deviceName: '新设备',
+      ),
+      isTrue,
+    );
+    await staleHandler(
+      const CloudSyncException(
+        kind: CloudSyncFailureKind.unauthenticated,
+        retryable: false,
+      ),
+      StackTrace.current,
+    );
+
+    expect(fixture.provider.signedIn, isTrue);
+    expect(fixture.provider.session?.deviceId, _deviceId);
+    expect(fixture.provider.status, CloudSyncProviderStatus.idle);
   });
 
   test('恢复已有会话后设备列表与非当前设备撤销仍可用', () async {
@@ -1250,6 +1415,54 @@ void main() {
     await reopened.runtime.close();
   });
 
+  test('E2EE 内容运行时仅将不可重试的认证拒绝归类为终止认证', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+
+    for (final kind in <CloudSyncFailureKind>[
+      CloudSyncFailureKind.unauthenticated,
+      CloudSyncFailureKind.forbidden,
+    ]) {
+      final instance = harness.createInstance(
+        pullFailure: CloudSyncException(kind: kind, retryable: false),
+      );
+      final terminalFailure = Completer<CloudSyncException>();
+      instance.runtime.bindTerminalAuthenticationHandler((failure, _) async {
+        terminalFailure.complete(failure);
+      });
+
+      await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+      expect(
+        (await terminalFailure.future.timeout(const Duration(seconds: 5))).kind,
+        kind,
+      );
+      expect(instance.pull.pullCalls, 1);
+      await instance.runtime.close();
+    }
+  });
+
+  test('E2EE 内容运行时遇到普通网络错误时继续退避重试', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(
+      pullFailure: const CloudSyncException(
+        kind: CloudSyncFailureKind.network,
+        retryable: true,
+      ),
+    );
+    var terminalNotifications = 0;
+    instance.runtime.bindTerminalAuthenticationHandler((failure, _) async {
+      terminalNotifications++;
+    });
+
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+
+    expect(terminalNotifications, 0);
+    expect(instance.runtime.state, E2eeChatContentRuntimeState.ready);
+    await instance.runtime.close();
+  });
+
   test('E2EE 内容运行时在本地事务提交后唤醒密文发送周期', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -1872,10 +2085,12 @@ final class _E2eeRuntimeHarness {
   _E2eeRuntimeInstance createInstance({
     bool blockInitialPull = false,
     bool withConfigProviders = true,
+    CloudSyncException? pullFailure,
   }) {
     final pull = _RuntimePullTransport(
       accountUserId: session.userId,
       blockInitialPull: blockInitialPull,
+      failure: pullFailure,
     );
     final records = _RuntimeRecordTransport(
       accountUserId: session.userId,
@@ -1963,11 +2178,13 @@ final class _RuntimePullTransport
   _RuntimePullTransport({
     required this.accountUserId,
     required bool blockInitialPull,
+    this.failure,
   }) : _blockedPull = blockInitialPull ? Completer<void>() : null;
 
   @override
   final String accountUserId;
   final Completer<void>? _blockedPull;
+  final CloudSyncException? failure;
   int pullCalls = 0;
 
   @override
@@ -1979,6 +2196,8 @@ final class _RuntimePullTransport
     if (pullCalls == 1 && _blockedPull != null) {
       await _blockedPull.future;
     }
+    final pullFailure = failure;
+    if (pullFailure != null) throw pullFailure;
     return CloudSyncChangePage(
       changes: const <CloudSyncRecordChange>[],
       nextCursor: 'runtime-cursor-$pullCalls',
@@ -2119,6 +2338,29 @@ final class _FakeCloudSyncContentRuntime implements CloudSyncContentRuntime {
   final Object? closeFailure;
   int initializeCalls = 0;
   int closeCalls = 0;
+  CloudSyncTerminalAuthenticationHandler? _terminalAuthenticationHandler;
+
+  CloudSyncTerminalAuthenticationHandler get terminalAuthenticationHandler {
+    final handler = _terminalAuthenticationHandler;
+    if (handler == null) {
+      throw StateError('terminal_authentication_handler_not_bound');
+    }
+    return handler;
+  }
+
+  @override
+  void bindTerminalAuthenticationHandler(
+    CloudSyncTerminalAuthenticationHandler handler,
+  ) {
+    if (_terminalAuthenticationHandler != null) {
+      throw StateError('terminal_authentication_handler_already_bound');
+    }
+    _terminalAuthenticationHandler = handler;
+  }
+
+  Future<void> triggerTerminalAuthentication(CloudSyncException failure) {
+    return terminalAuthenticationHandler(failure, StackTrace.current);
+  }
 
   @override
   Future<void> initialize() async {
