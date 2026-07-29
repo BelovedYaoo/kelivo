@@ -136,10 +136,13 @@ Future<void> main() async {
   await runZoned(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      final mobileBackgroundSyncScheduler =
+          E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
+      final AccountWorkspaceRuntime workspaceRuntime;
       try {
-        await PlaintextRemoteBackupRetirement.retireCurrentInstallation();
+        workspaceRuntime = await AccountWorkspaceRuntime.bootstrap();
       } catch (error, stackTrace) {
-        stderr.writeln('[PlaintextRemoteBackupRetirement] $error\n$stackTrace');
+        stderr.writeln('[AccountWorkspace] $error\n$stackTrace');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -148,13 +151,17 @@ Future<void> main() async {
         );
         return;
       }
-      final mobileBackgroundSyncScheduler =
-          E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
-      final AccountWorkspaceRuntime workspaceRuntime;
       try {
-        workspaceRuntime = await AccountWorkspaceRuntime.bootstrap();
+        await PlaintextRemoteBackupRetirement.retireCurrentInstallation();
       } catch (error, stackTrace) {
-        stderr.writeln('[AccountWorkspace] $error\n$stackTrace');
+        stderr.writeln('[PlaintextRemoteBackupRetirement] $error\n$stackTrace');
+        try {
+          await workspaceRuntime.close();
+        } catch (closeError, closeStackTrace) {
+          stderr.writeln(
+            '[AccountWorkspaceClose] $closeError\n$closeStackTrace',
+          );
+        }
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(

@@ -8,6 +8,18 @@ import 'package:Kelivo/core/services/backup/plaintext_remote_backup_retirement.d
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  test('启动入口先绑定工作区偏好前缀再执行明文备份退役', () async {
+    final source = await File('lib/main.dart').readAsString();
+    const bootstrapCall = 'AccountWorkspaceRuntime.bootstrap()';
+    const retirementCall =
+        'PlaintextRemoteBackupRetirement.retireCurrentInstallation()';
+    final bootstrapOffset = source.indexOf(bootstrapCall);
+    final retirementOffset = source.indexOf(retirementCall);
+
+    expect(bootstrapOffset, greaterThanOrEqualTo(0));
+    expect(retirementOffset, greaterThan(bootstrapOffset));
+  });
+
   test('启动退役清除旧远端备份状态且保留本地导出与无关数据', () async {
     SharedPreferences.setMockInitialValues(<String, Object>{
       'webdav_config_v1': '{"password":"webdav-secret"}',
