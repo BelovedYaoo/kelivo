@@ -1,14 +1,22 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/e2ee_sync_record_ledger.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_crypto_session.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_download_coordinator.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_file_store.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_sync_adapter.dart';
+import 'package:Kelivo/core/services/sync/e2ee_message_attachment_readiness.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_sync_adapter.dart';
@@ -18,6 +26,7 @@ import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
+import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
@@ -53,6 +62,9 @@ String _syncUuid(int value) =>
 
 Uint8List _syncDigest(int value, {int length = 32}) =>
     Uint8List.fromList(List<int>.filled(length, value));
+
+String _digestHex(Uint8List value) =>
+    value.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 
 bool _containsByteSequence(Uint8List source, List<int> target) {
   if (target.isEmpty || target.length > source.length) return false;
@@ -661,12 +673,17 @@ void main() {
   E2eeSyncPullCoordinator createPullCoordinator({
     required E2eeSyncAuthenticatedPullTransport transport,
     required E2eeSyncTransactionalBusinessApplier applyPage,
+    E2eeSyncPullPagePreparer pagePreparer =
+        const E2eeNoopSyncPullPagePreparer(),
+    int maximumPreparationRemoteSteps = 1,
   }) {
     var clockTick = 0;
     return E2eeSyncPullCoordinator(
       pullCommands: pullCommands,
       stateCodec: stateCodec,
       transport: transport,
+      pagePreparer: pagePreparer,
+      maximumPreparationRemoteSteps: maximumPreparationRemoteSteps,
       applyBusiness: applyPage,
       utcNow: () =>
           DateTime.utc(2026, 7, 28).add(Duration(microseconds: clockTick++)),
@@ -2167,6 +2184,83 @@ void main() {
       expect(await database.select(database.conversationRows).get(), isEmpty);
     });
 
+    test('事务前准备 pending 时保持整页 checkpoint 且不执行业务写入', () async {
+      final change = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 162,
+      );
+      final preparer = _FakePullPagePreparer(
+        E2eeSyncPullPagePreparationDisposition.pending,
+      );
+      var businessApplyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: _FakeAuthenticatedPullTransport(
+          accountUserId: _syncAccountUserId,
+          onPull: (_, _) async => CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[change],
+            nextCursor: 'preparation-pending-must-not-commit',
+            hasMore: false,
+          ),
+        ),
+        pagePreparer: preparer,
+        maximumPreparationRemoteSteps: 3,
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+
+      final report = await coordinator.pullOnce();
+
+      expect(report.disposition, E2eeSyncPullDisposition.preparationPending);
+      expect(report.hasMore, isTrue);
+      expect(report.checkpoint.syncCursor, equals(null));
+      expect(report.checkpoint.lastChangeSeq, 0);
+      expect(preparer.maximumRemoteSteps, <int>[3]);
+      expect(preparer.pages.single, hasLength(1));
+      expect(businessApplyRan, isFalse);
+      expect(
+        await database.select(database.e2eeSyncRecordStateRows).get(),
+        isEmpty,
+      );
+      expect(
+        await database.select(database.e2eeSyncRemoteRecordRows).get(),
+        isEmpty,
+      );
+    });
+
+    test('事务前准备遇到未来附件世代时复用密钥暂停语义', () async {
+      final change = await createPullValueChange(
+        changeSeq: 1,
+        revision: 1,
+        operation: 163,
+      );
+      var businessApplyRan = false;
+      final coordinator = createPullCoordinator(
+        transport: _FakeAuthenticatedPullTransport(
+          accountUserId: _syncAccountUserId,
+          onPull: (_, _) async => CloudSyncChangePage(
+            changes: <CloudSyncRecordChange>[change],
+            nextCursor: 'attachment-future-epoch-must-not-commit',
+            hasMore: false,
+          ),
+        ),
+        pagePreparer: _FakePullPagePreparer(
+          E2eeSyncPullPagePreparationDisposition.keyEpochUnavailable,
+        ),
+        applyPage: (_) async {
+          businessApplyRan = true;
+        },
+      );
+
+      final report = await coordinator.pullOnce();
+
+      expect(report.disposition, E2eeSyncPullDisposition.keyEpochUnavailable);
+      expect(report.checkpoint.syncCursor, equals(null));
+      expect(report.checkpoint.transitionVersion, 1);
+      expect(businessApplyRan, isFalse);
+    });
+
     test('reset 后按快照游标续传同 record 历史并切回增量', () async {
       const entityKey = SyncEntityKey(
         entityType: 'conversation',
@@ -2845,6 +2939,7 @@ void main() {
       final adapter = E2eeChatSyncAdapter(
         repository: repository,
         runPullBatch: runPullBatch,
+        attachmentReadiness: const E2eeNoAttachmentMessageReadiness(),
       );
       final initial = await pullCommands.readOrCreate(
         accountUserId: _syncAccountUserId,
@@ -2885,6 +2980,120 @@ void main() {
         );
         expect(decoded, payloads[index]);
       }
+    });
+
+    test('ready 附件与消息在同一 pull 事务落库完整远端身份', () async {
+      const conversationId = 'ready-attachment-conversation';
+      const turnId = 'ready-attachment-turn';
+      const messageId = 'ready-attachment-message';
+      const groupId = 'ready-attachment-group';
+      const attachmentId = '11000000-0000-4000-8000-000000000001';
+      const uploadId = '12000000-0000-4000-8000-000000000001';
+      const contentHash =
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+      const keys = <SyncEntityKey>[
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.conversation,
+          entityId: conversationId,
+        ),
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.turn,
+          entityId: turnId,
+        ),
+        SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.message,
+          entityId: messageId,
+        ),
+      ];
+      final payloads = <Map<String, Object?>>[
+        _conversationPayload('Ready attachment conversation'),
+        _turnPayload(conversationId),
+        _messagePayload(
+          conversationId: conversationId,
+          turnId: turnId,
+          groupId: groupId,
+          attachments: const <Object?>[
+            <String, Object?>{
+              'attachmentId': attachmentId,
+              'uploadId': uploadId,
+              'keyEpoch': 7,
+              'kind': 'file',
+              'order': 0,
+            },
+          ],
+        ),
+      ];
+      final changes = <E2eeSyncPulledChange>[];
+      for (var index = 0; index < keys.length; index++) {
+        final wire = await createPullValueChange(
+          changeSeq: index + 1,
+          revision: 1,
+          operation: 860 + index,
+          entityKey: keys[index],
+          payload: payloads[index],
+        );
+        changes.add(await authenticatePulledValueChange(wire));
+      }
+      final readiness =
+          _FixedMessageAttachmentReadiness(const <MessageAssetRegistration>[
+            MessageAssetRegistration(
+              assetId: 'asset_$contentHash',
+              contentHash: contentHash,
+              path: 'memory://kelivo-e2ee-attachments/content/$contentHash',
+              byteSize: 3,
+              kind: 'file',
+              displayName: 'ready.txt',
+              mediaType: 'text/plain',
+              attachmentId: attachmentId,
+              uploadId: uploadId,
+              keyEpoch: 7,
+            ),
+          ]);
+      final adapter = E2eeChatSyncAdapter(
+        repository: repository,
+        runPullBatch:
+            <T>({
+              required Future<T> Function() pull,
+              required bool Function() shouldRefresh,
+              required bool Function() mayHaveOrphanedAssets,
+            }) => pull(),
+        attachmentReadiness: readiness,
+      );
+      final initial = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 7, 28),
+      );
+
+      final committed = await adapter.runPullAndPublish(
+        () => pullCommands.applyIncrementalPage(
+          expected: initial,
+          nextCursor: 'ready-attachment-committed',
+          lastChangeSeq: changes.length,
+          changes: changes,
+          applyBusiness: adapter.applyTransactional,
+          now: DateTime.utc(2026, 7, 28, 0, 1),
+        ),
+      );
+
+      expect(committed.checkpoint.syncCursor, 'ready-attachment-committed');
+      expect(readiness.messageIds, <String>[messageId]);
+      expect(await repository.getMessage(messageId), isNot(equals(null)));
+      final reference = await database
+          .customSelect(
+            'SELECT ordinal, asset_id, kind, display_name, media_type, '
+            'attachment_id, upload_id, key_epoch '
+            'FROM message_asset_rows WHERE revision_id = ?;',
+            variables: const <Variable<Object>>[Variable<String>(messageId)],
+          )
+          .getSingle();
+      expect(reference.read<int>('ordinal'), 0);
+      expect(reference.read<String>('asset_id'), 'asset_$contentHash');
+      expect(reference.read<String>('kind'), 'file');
+      expect(reference.read<String>('display_name'), 'ready.txt');
+      expect(reference.read<String>('media_type'), 'text/plain');
+      expect(reference.read<String>('attachment_id'), attachmentId);
+      expect(reference.read<String>('upload_id'), uploadId);
+      expect(reference.read<int>('key_epoch'), 7);
     });
 
     test('不可逆附件使远端整页回滚且本地路径快照失败关闭', () async {
@@ -2948,6 +3157,7 @@ void main() {
       final adapter = E2eeChatSyncAdapter(
         repository: repository,
         runPullBatch: runPullBatch,
+        attachmentReadiness: const E2eeNoAttachmentMessageReadiness(),
       );
       final initial = await pullCommands.readOrCreate(
         accountUserId: _syncAccountUserId,
@@ -2969,7 +3179,7 @@ void main() {
           isA<StateError>().having(
             (error) => error.message,
             'message',
-            'sync_message_attachments_not_supported',
+            'sync_message_attachments_not_configured',
           ),
         ),
       );
@@ -3133,6 +3343,7 @@ void main() {
       final adapter = E2eeChatSyncAdapter(
         repository: repository,
         runPullBatch: runPullBatch,
+        attachmentReadiness: const E2eeNoAttachmentMessageReadiness(),
       );
       final initial = await pullCommands.readOrCreate(
         accountUserId: _syncAccountUserId,
@@ -5382,6 +5593,11 @@ void main() {
             path: finalPath,
             byteSize: 0,
             kind: 'file',
+            displayName: 'download.txt',
+            mediaType: 'text/plain',
+            attachmentId: reference.attachmentId,
+            uploadId: reference.uploadId,
+            keyEpoch: reference.keyEpoch,
           ),
           now: now.add(const Duration(seconds: 3)),
         );
@@ -5493,6 +5709,393 @@ void main() {
         ),
         isTrue,
       );
+    });
+  });
+
+  group('E2EE 附件下载协调器', () {
+    const attachmentId = 'd0000000-0000-4000-8000-000000000001';
+    const uploadId = 'd1000000-0000-4000-8000-000000000001';
+    final token = CloudSyncFullSessionToken.parse(
+      'kelivo_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',
+    );
+
+    E2eeAttachmentManifest createManifest({
+      int keyEpoch = 7,
+      List<Uint8List>? plaintextChunks,
+    }) {
+      final chunks =
+          plaintextChunks ??
+          <Uint8List>[
+            Uint8List.fromList(<int>[1, 2, 3]),
+          ];
+      final totalPlaintextBytes = chunks.fold<int>(
+        0,
+        (total, chunk) => total + chunk.length,
+      );
+      final layout = KelivoAttachmentLayout(
+        totalPlaintextBytes: totalPlaintextBytes,
+      );
+      expect(chunks, hasLength(layout.chunkCount));
+      for (var index = 0; index < chunks.length; index++) {
+        expect(chunks[index], hasLength(layout.plaintextLengthForChunk(index)));
+      }
+      final plaintext = BytesBuilder(copy: false);
+      for (final chunk in chunks) {
+        plaintext.add(chunk);
+      }
+      final digest = Uint8List.fromList(
+        sha256.convert(plaintext.takeBytes()).bytes,
+      );
+      return E2eeAttachmentManifest(
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+        keyEpoch: keyEpoch,
+        kind: E2eeAttachmentKind.file,
+        totalPlaintextBytes: totalPlaintextBytes,
+        contentSha256: digest,
+        wrappedDataKey: Uint8List.fromList(
+          List<int>.filled(KelivoAttachmentLimits.wrappedDataKeyBytes, 0x71),
+        ),
+        chunkCiphertextBytes: List<int>.generate(
+          layout.chunkCount,
+          (index) =>
+              layout.plaintextLengthForChunk(index) +
+              KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+          growable: false,
+        ),
+        displayName: 'download.txt',
+        mediaType: 'text/plain',
+      );
+    }
+
+    Map<String, Object?> attachmentPayload({int keyEpoch = 7}) =>
+        <String, Object?>{
+          'attachmentId': attachmentId,
+          'uploadId': uploadId,
+          'keyEpoch': keyEpoch,
+          'kind': 'file',
+          'order': 0,
+        };
+
+    Future<E2eeSyncPulledValueChange> createMessageChange({
+      required int operation,
+      required String messageId,
+      int keyEpoch = 7,
+    }) async {
+      final wire = await createPullValueChange(
+        changeSeq: operation,
+        revision: 1,
+        operation: operation,
+        entityKey: SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.message,
+          entityId: messageId,
+        ),
+        payload: _messagePayload(
+          conversationId: 'download-conversation',
+          turnId: 'download-turn',
+          groupId: 'download-group-$operation',
+          attachments: <Object?>[attachmentPayload(keyEpoch: keyEpoch)],
+        ),
+      );
+      return authenticatePulledValueChange(wire);
+    }
+
+    E2eeAttachmentDownloadCoordinator createCoordinator({
+      required _FakeAttachmentTransport transport,
+      required _FakeAttachmentCrypto crypto,
+      required E2eeAttachmentFileStore fileStore,
+      required DateTime Function() utcNow,
+    }) {
+      var leaseSequence = 0;
+      return E2eeAttachmentDownloadCoordinator.takeOwnership(
+        commands: attachmentDownloads,
+        transport: transport,
+        token: token,
+        crypto: crypto,
+        fileStore: fileStore,
+        leaseOwner: 'download-test-runtime',
+        utcNow: utcNow,
+        leaseTokenFactory: () => 'download-lease-${leaseSequence++}',
+      );
+    }
+
+    test('远端步骤预算跨重启续传且重复身份只下载一次', () async {
+      final firstPlaintext = Uint8List.fromList(
+        List<int>.filled(KelivoAttachmentLimits.chunkPlaintextBytes, 0x31),
+      );
+      final secondPlaintext = Uint8List.fromList(<int>[4, 5, 6]);
+      final plaintextChunks = <Uint8List>[firstPlaintext, secondPlaintext];
+      final manifest = createManifest(plaintextChunks: plaintextChunks);
+      final transport = _FakeAttachmentTransport(manifest);
+      final fileStore = E2eeAttachmentMemoryFileStore();
+      var now = DateTime.utc(2026, 7, 29, 8);
+      final firstCrypto = _FakeAttachmentCrypto(
+        keyEpoch: 7,
+        manifest: manifest,
+        plaintextChunks: plaintextChunks,
+      );
+      final firstCoordinator = createCoordinator(
+        transport: transport,
+        crypto: firstCrypto,
+        fileStore: fileStore,
+        utcNow: () => now,
+      );
+      final firstMessage = await createMessageChange(
+        operation: 201,
+        messageId: 'download-message-1',
+      );
+      final repeatedMessage = await createMessageChange(
+        operation: 202,
+        messageId: 'download-message-2',
+      );
+
+      final firstPreparation = await firstCoordinator.preparePage(
+        <E2eeSyncPulledChange>[firstMessage, repeatedMessage],
+        maximumRemoteSteps: 2,
+      );
+
+      expect(firstPreparation, E2eeSyncPullPagePreparationDisposition.pending);
+      final reference = E2eeAttachmentDownloadReference(
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+        keyEpoch: 7,
+        kind: E2eeAttachmentKind.file,
+      );
+      final checkpoint = (await attachmentDownloads.read(reference))!;
+      expect(checkpoint.phase, E2eeAttachmentDownloadPhase.downloading);
+      expect(checkpoint.nextChunkIndex, 1);
+      expect(
+        checkpoint.confirmedPlaintextBytes,
+        KelivoAttachmentLimits.chunkPlaintextBytes,
+      );
+      expect(transport.manifestRequests, 1);
+      expect(transport.chunkRequests, <int>[0]);
+      await firstCoordinator.close();
+
+      now = now.add(const Duration(seconds: 1));
+      final secondCoordinator = createCoordinator(
+        transport: transport,
+        crypto: _FakeAttachmentCrypto(
+          keyEpoch: 7,
+          manifest: manifest,
+          plaintextChunks: plaintextChunks,
+        ),
+        fileStore: fileStore,
+        utcNow: () => now,
+      );
+      final completed = await secondCoordinator.preparePage(
+        <E2eeSyncPulledChange>[repeatedMessage, firstMessage],
+        maximumRemoteSteps: 1,
+      );
+
+      expect(completed, E2eeSyncPullPagePreparationDisposition.ready);
+      expect(transport.manifestRequests, 1);
+      expect(transport.chunkRequests, <int>[0, 1]);
+      final registrations = await secondCoordinator.requireReadyForApply(
+        firstMessage,
+      );
+      expect(registrations, hasLength(1));
+      final registration = registrations.single;
+      expect(
+        registration.assetId,
+        'asset_${_digestHex(manifest.contentSha256)}',
+      );
+      expect(registration.contentHash, _digestHex(manifest.contentSha256));
+      expect(registration.byteSize, manifest.totalPlaintextBytes);
+      expect(registration.kind, 'file');
+      expect(registration.displayName, 'download.txt');
+      expect(registration.mediaType, 'text/plain');
+      expect(registration.attachmentId, attachmentId);
+      expect(registration.uploadId, uploadId);
+      expect(registration.keyEpoch, 7);
+      expect(
+        registration.path,
+        'memory://kelivo-e2ee-attachments/content/'
+        '${_digestHex(manifest.contentSha256)}',
+      );
+      await secondCoordinator.close();
+    });
+
+    test('未来附件 keyEpoch 在建状态和发网前暂停', () async {
+      final manifest = createManifest();
+      final transport = _FakeAttachmentTransport(manifest);
+      final crypto = _FakeAttachmentCrypto(
+        keyEpoch: 7,
+        manifest: manifest,
+        plaintextChunks: <Uint8List>[
+          Uint8List.fromList(<int>[1, 2, 3]),
+        ],
+      );
+      final coordinator = createCoordinator(
+        transport: transport,
+        crypto: crypto,
+        fileStore: E2eeAttachmentMemoryFileStore(),
+        utcNow: () => DateTime.utc(2026, 7, 29, 9),
+      );
+      final change = await createMessageChange(
+        operation: 203,
+        messageId: 'download-future-epoch',
+        keyEpoch: 8,
+      );
+
+      final disposition = await coordinator.preparePage(<E2eeSyncPulledChange>[
+        change,
+      ], maximumRemoteSteps: 1);
+
+      expect(
+        disposition,
+        E2eeSyncPullPagePreparationDisposition.keyEpochUnavailable,
+      );
+      expect(transport.manifestRequests, 0);
+      expect(
+        await database.select(database.e2eeAttachmentDownloadRows).get(),
+        isEmpty,
+      );
+      await coordinator.close();
+    });
+
+    test('清单与分块认证篡改进入永久失败且不提升 ready', () async {
+      final manifest = createManifest();
+      final message = await createMessageChange(
+        operation: 204,
+        messageId: 'download-tampered-manifest',
+      );
+      var now = DateTime.utc(2026, 7, 29, 10);
+      final manifestCrypto = _FakeAttachmentCrypto(
+        keyEpoch: 7,
+        manifest: manifest,
+        plaintextChunks: <Uint8List>[
+          Uint8List.fromList(<int>[1, 2, 3]),
+        ],
+      )..manifestFailure = const FormatException('manifest-tampered');
+      final manifestCoordinator = createCoordinator(
+        transport: _FakeAttachmentTransport(manifest),
+        crypto: manifestCrypto,
+        fileStore: E2eeAttachmentMemoryFileStore(),
+        utcNow: () => now,
+      );
+
+      await expectLater(
+        manifestCoordinator.preparePage(<E2eeSyncPulledChange>[
+          message,
+        ], maximumRemoteSteps: 1),
+        throwsFormatException,
+      );
+      final reference = E2eeAttachmentDownloadReference(
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+        keyEpoch: 7,
+        kind: E2eeAttachmentKind.file,
+      );
+      expect(
+        (await attachmentDownloads.read(reference))!.terminalFailureKind,
+        'invalid-manifest-pending',
+      );
+      await manifestCoordinator.close();
+      expect(
+        await attachmentDownloads.deleteFailedForRebuild(
+          reference: reference,
+          expectedTransitionVersion: (await attachmentDownloads.read(
+            reference,
+          ))!.transitionVersion,
+        ),
+        isTrue,
+      );
+
+      now = now.add(const Duration(seconds: 1));
+      final chunkCrypto = _FakeAttachmentCrypto(
+        keyEpoch: 7,
+        manifest: manifest,
+        plaintextChunks: <Uint8List>[
+          Uint8List.fromList(<int>[1, 2, 3]),
+        ],
+      )..chunkFailureIndex = 0;
+      final chunkCoordinator = createCoordinator(
+        transport: _FakeAttachmentTransport(manifest),
+        crypto: chunkCrypto,
+        fileStore: E2eeAttachmentMemoryFileStore(),
+        utcNow: () => now,
+      );
+      expect(
+        await chunkCoordinator.preparePage(<E2eeSyncPulledChange>[
+          message,
+        ], maximumRemoteSteps: 1),
+        E2eeSyncPullPagePreparationDisposition.pending,
+      );
+      now = now.add(const Duration(seconds: 1));
+      await expectLater(
+        chunkCoordinator.preparePage(<E2eeSyncPulledChange>[
+          message,
+        ], maximumRemoteSteps: 1),
+        throwsFormatException,
+      );
+      final terminal = (await attachmentDownloads.read(reference))!;
+      expect(terminal.terminalFailureKind, 'invalid-downloading');
+      expect(terminal.confirmedPlaintextBytes, 0);
+      expect(await attachmentDownloads.readReady(reference), equals(null));
+      await chunkCoordinator.close();
+    });
+
+    test('可重试网络失败持久退避且到期前不重复发网', () async {
+      final manifest = createManifest();
+      final transport = _FakeAttachmentTransport(manifest)
+        ..manifestFailure = const CloudSyncException(
+          kind: CloudSyncFailureKind.network,
+          retryable: true,
+        );
+      final crypto = _FakeAttachmentCrypto(
+        keyEpoch: 7,
+        manifest: manifest,
+        plaintextChunks: <Uint8List>[
+          Uint8List.fromList(<int>[1, 2, 3]),
+        ],
+      );
+      var now = DateTime.utc(2026, 7, 29, 11);
+      final coordinator = createCoordinator(
+        transport: transport,
+        crypto: crypto,
+        fileStore: E2eeAttachmentMemoryFileStore(),
+        utcNow: () => now,
+      );
+      final message = await createMessageChange(
+        operation: 205,
+        messageId: 'download-network-retry',
+      );
+
+      expect(
+        await coordinator.preparePage(<E2eeSyncPulledChange>[
+          message,
+        ], maximumRemoteSteps: 1),
+        E2eeSyncPullPagePreparationDisposition.pending,
+      );
+      expect(transport.manifestRequests, 1);
+      expect(
+        await coordinator.preparePage(<E2eeSyncPulledChange>[
+          message,
+        ], maximumRemoteSteps: 1),
+        E2eeSyncPullPagePreparationDisposition.pending,
+      );
+      expect(transport.manifestRequests, 1);
+
+      now = now.add(const Duration(seconds: 2));
+      transport.manifestFailure = null;
+      expect(
+        await coordinator.preparePage(<E2eeSyncPulledChange>[
+          message,
+        ], maximumRemoteSteps: 1),
+        E2eeSyncPullPagePreparationDisposition.pending,
+      );
+      expect(transport.manifestRequests, 2);
+      final reference = E2eeAttachmentDownloadReference(
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+        keyEpoch: 7,
+        kind: E2eeAttachmentKind.file,
+      );
+      final state = (await attachmentDownloads.read(reference))!;
+      expect(state.phase, E2eeAttachmentDownloadPhase.downloading);
+      expect(state.consecutiveFailureCount, 0);
+      await coordinator.close();
     });
   });
 
@@ -5842,6 +6445,204 @@ final class _FakeAuthenticatedPullTransport
     snapshotCursors.add(snapshotCursor);
     return handler(snapshotCursor, limit);
   }
+}
+
+final class _FakePullPagePreparer implements E2eeSyncPullPagePreparer {
+  _FakePullPagePreparer(this.disposition);
+
+  final E2eeSyncPullPagePreparationDisposition disposition;
+  final List<List<E2eeSyncPulledChange>> pages = <List<E2eeSyncPulledChange>>[];
+  final List<int> maximumRemoteSteps = <int>[];
+
+  @override
+  Future<E2eeSyncPullPagePreparationDisposition> preparePage(
+    List<E2eeSyncPulledChange> authenticatedChanges, {
+    required int maximumRemoteSteps,
+  }) async {
+    pages.add(List<E2eeSyncPulledChange>.unmodifiable(authenticatedChanges));
+    this.maximumRemoteSteps.add(maximumRemoteSteps);
+    return disposition;
+  }
+}
+
+final class _FixedMessageAttachmentReadiness
+    implements E2eeMessageAttachmentReadiness {
+  _FixedMessageAttachmentReadiness(List<MessageAssetRegistration> assets)
+    : _assets = List<MessageAssetRegistration>.unmodifiable(assets);
+
+  final List<MessageAssetRegistration> _assets;
+  final List<String> messageIds = <String>[];
+
+  @override
+  Future<List<MessageAssetRegistration>> requireReadyForApply(
+    E2eeSyncPulledValueChange messageChange,
+  ) async {
+    messageIds.add(messageChange.state.entityKey.entityId);
+    return _assets;
+  }
+}
+
+final class _FakeAttachmentCrypto implements E2eeAttachmentCrypto {
+  _FakeAttachmentCrypto({
+    required this.keyEpoch,
+    required this.manifest,
+    required List<Uint8List> plaintextChunks,
+  }) : _plaintextChunks = <Uint8List>[
+         for (final chunk in plaintextChunks) Uint8List.fromList(chunk),
+       ];
+
+  @override
+  final int keyEpoch;
+  final E2eeAttachmentManifest manifest;
+  final List<Uint8List> _plaintextChunks;
+  Object? manifestFailure;
+  int? chunkFailureIndex;
+  bool closed = false;
+
+  @override
+  Future<E2eeAttachmentManifest> openManifest({
+    required String attachmentId,
+    required String uploadId,
+    required int keyEpoch,
+    required Uint8List ciphertext,
+  }) async {
+    final failure = manifestFailure;
+    if (failure != null) throw failure;
+    if (attachmentId != manifest.attachmentId ||
+        uploadId != manifest.uploadId ||
+        keyEpoch != manifest.keyEpoch) {
+      throw const FormatException('测试清单身份不一致');
+    }
+    return manifest;
+  }
+
+  @override
+  Future<Uint8List> openChunk({
+    required E2eeAttachmentDescriptor descriptor,
+    required String uploadId,
+    required int chunkIndex,
+    required Uint8List ciphertext,
+  }) async {
+    if (chunkFailureIndex == chunkIndex) {
+      throw const FormatException('chunk-tampered');
+    }
+    if (descriptor.attachmentId != manifest.attachmentId ||
+        uploadId != manifest.uploadId ||
+        chunkIndex < 0 ||
+        chunkIndex >= _plaintextChunks.length) {
+      throw const FormatException('测试分块身份不一致');
+    }
+    return Uint8List.fromList(_plaintextChunks[chunkIndex]);
+  }
+
+  @override
+  Future<E2eeSealedAttachmentManifest> sealManifest({
+    required E2eeAttachmentDescriptor descriptor,
+    required String uploadId,
+  }) => Future<E2eeSealedAttachmentManifest>.error(
+    UnsupportedError('下载测试不得封装附件清单'),
+  );
+
+  @override
+  Future<Uint8List> sealChunk({
+    required E2eeAttachmentDescriptor descriptor,
+    required String uploadId,
+    required int chunkIndex,
+    required Uint8List plaintext,
+  }) => Future<Uint8List>.error(UnsupportedError('下载测试不得加密附件分块'));
+
+  @override
+  Future<void> close() async {
+    closed = true;
+  }
+}
+
+final class _FakeAttachmentTransport implements CloudSyncAttachmentTransport {
+  _FakeAttachmentTransport(this.manifest);
+
+  final E2eeAttachmentManifest manifest;
+  CloudSyncException? manifestFailure;
+  int manifestRequests = 0;
+  final List<int> chunkRequests = <int>[];
+
+  CloudSyncAttachmentIdentity get _identity => CloudSyncAttachmentIdentity(
+    attachmentId: manifest.attachmentId,
+    uploadId: manifest.uploadId,
+    keyEpoch: manifest.keyEpoch,
+  );
+
+  @override
+  Future<CloudSyncAttachmentManifest> getAttachmentManifest({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentIdentity identity,
+  }) async {
+    manifestRequests++;
+    final failure = manifestFailure;
+    if (failure != null) throw failure;
+    return CloudSyncAttachmentManifest(
+      identity: _identity,
+      chunkCount: manifest.chunkCiphertextBytes.length,
+      totalCiphertextBytes: manifest.totalCiphertextBytes,
+      manifestCiphertext: Uint8List.fromList(<int>[1, 2, 3]),
+      manifestCiphertextBytes: 3,
+      chunks: <CloudSyncAttachmentManifestChunk>[
+        for (
+          var index = 0;
+          index < manifest.chunkCiphertextBytes.length;
+          index++
+        )
+          CloudSyncAttachmentManifestChunk(
+            chunkIndex: index,
+            ciphertextBytes: manifest.chunkCiphertextBytes[index],
+          ),
+      ],
+      committedAt: DateTime.utc(2026, 7, 29),
+    );
+  }
+
+  @override
+  Future<CloudSyncAttachmentChunk> getAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentChunkIdentity chunk,
+  }) async {
+    chunkRequests.add(chunk.chunkIndex);
+    final ciphertextBytes = manifest.chunkCiphertextBytes[chunk.chunkIndex];
+    return CloudSyncAttachmentChunk(
+      chunk: chunk,
+      ciphertext: Uint8List(ciphertextBytes),
+      ciphertextBytes: ciphertextBytes,
+    );
+  }
+
+  @override
+  Future<CloudSyncAttachmentUpload> createAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCreateUploadRequest request,
+  }) =>
+      Future<CloudSyncAttachmentUpload>.error(UnsupportedError('下载测试不得创建附件上传'));
+
+  @override
+  Future<CloudSyncAttachmentStoredChunk> putAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentPutChunkRequest request,
+  }) => Future<CloudSyncAttachmentStoredChunk>.error(
+    UnsupportedError('下载测试不得上传附件分块'),
+  );
+
+  @override
+  Future<CloudSyncAttachmentCommittedUpload> commitAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCommitUploadRequest request,
+  }) => Future<CloudSyncAttachmentCommittedUpload>.error(
+    UnsupportedError('下载测试不得提交附件上传'),
+  );
+
+  @override
+  Future<CloudSyncAttachmentDeleted> deleteAttachment({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentDeleteRequest request,
+  }) =>
+      Future<CloudSyncAttachmentDeleted>.error(UnsupportedError('下载测试不得删除附件'));
 }
 
 final class _ApplyingOutboxTransport

@@ -180,6 +180,7 @@ final class E2eeAttachmentDownloadCommands {
   }
 
   Future<E2eeAttachmentDownloadLease?> claimDue({
+    E2eeAttachmentDownloadReference? reference,
     required String leaseToken,
     required String leaseOwner,
     required DateTime leaseExpiresAt,
@@ -196,8 +197,8 @@ final class E2eeAttachmentDownloadCommands {
     return _database.transaction(() async {
       final table = _database.e2eeAttachmentDownloadRows;
       final query = _database.select(table)
-        ..where(
-          (row) =>
+        ..where((row) {
+          var predicate =
               row.phase.isIn(_attachmentDownloadActivePhases) &
               row.terminalFailureKind.isNull() &
               row.nextAttemptAt.isSmallerOrEqualValue(
@@ -206,8 +207,17 @@ final class E2eeAttachmentDownloadCommands {
               (row.leaseToken.isNull() |
                   row.leaseExpiresAt.isSmallerOrEqualValue(
                     timestamp.microsecondsSinceEpoch,
-                  )),
-        )
+                  ));
+          if (reference != null) {
+            predicate =
+                predicate &
+                row.attachmentId.equals(reference.attachmentId) &
+                row.uploadId.equals(reference.uploadId) &
+                row.keyEpoch.equals(reference.keyEpoch) &
+                row.kind.equals(reference.kind.name);
+          }
+          return predicate;
+        })
         ..orderBy(<OrderClauseGenerator<$E2eeAttachmentDownloadRowsTable>>[
           (row) => OrderingTerm.asc(row.nextAttemptAt),
           (row) => OrderingTerm.asc(row.createdAt),
@@ -375,7 +385,12 @@ final class E2eeAttachmentDownloadCommands {
         asset.contentHash != expectedHash ||
         asset.path != expectedPath ||
         asset.byteSize != descriptor.totalPlaintextBytes ||
-        asset.kind != state.kind.name) {
+        asset.kind != state.kind.name ||
+        asset.displayName != descriptor.displayName ||
+        asset.mediaType != descriptor.mediaType ||
+        asset.attachmentId != state.attachmentId ||
+        asset.uploadId != state.uploadId ||
+        asset.keyEpoch != state.keyEpoch) {
       throw const FormatException('附件下载资产注册与认证清单不一致');
     }
     final timestamp = _requireStorageTime(now, 'now');

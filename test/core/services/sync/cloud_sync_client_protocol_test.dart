@@ -6241,6 +6241,18 @@ void main() {
     final secondChunk = Uint8List.fromList(<int>[3, 4, 5]);
     final plaintext = Uint8List.fromList(<int>[...firstChunk, ...secondChunk]);
     final contentDigest = Uint8List.fromList(sha256.convert(plaintext).bytes);
+    final resolvedContentPath = await store.resolveContentStoragePath(
+      contentDigest,
+    );
+    expect(
+      resolvedContentPath,
+      'memory://kelivo-e2ee-attachments/content/'
+      '${sha256.convert(plaintext)}',
+    );
+    await expectLater(
+      store.resolveContentStoragePath(Uint8List(31)),
+      throwsA(isA<FormatException>()),
+    );
 
     final stagingPath = await store.openDownloadPlaintextStaging(
       identity: identity,
@@ -6450,6 +6462,26 @@ void main() {
     final secondChunk = Uint8List.fromList(<int>[13, 14, 15]);
     final plaintext = Uint8List.fromList(<int>[...firstChunk, ...secondChunk]);
     final contentDigest = Uint8List.fromList(sha256.convert(plaintext).bytes);
+    final resolvedContentPath = await store.resolveContentStoragePath(
+      contentDigest,
+    );
+    expect(
+      p.equals(
+        resolvedContentPath,
+        p.join(
+          workspace.path,
+          'upload',
+          'e2ee',
+          'content',
+          '${sha256.convert(plaintext)}',
+        ),
+      ),
+      isTrue,
+    );
+    await expectLater(
+      store.resolveContentStoragePath(Uint8List(33)),
+      throwsA(isA<FormatException>()),
+    );
     final stagingPath = await store.openDownloadPlaintextStaging(
       identity: identity,
       persistedStoragePath: null,
@@ -6546,6 +6578,7 @@ void main() {
       expectedPlaintextBytes: plaintext.length,
       expectedSha256: contentDigest,
     );
+    expect(p.equals(stored.storagePath, resolvedContentPath), isTrue);
     expect(await File(stored.storagePath).length(), plaintext.length);
     await store.verifyContent(stored);
     final repeated = await store.publishDownloadPlaintext(
@@ -6971,6 +7004,54 @@ final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
     );
     verifiedContentOpens++;
     return _AttachmentTestVerifiedContent(reader, this);
+  }
+
+  @override
+  Future<String> resolveContentStoragePath(Uint8List contentSha256) {
+    return _delegate.resolveContentStoragePath(contentSha256);
+  }
+
+  @override
+  Future<String> openDownloadPlaintextStaging({
+    required CloudSyncAttachmentIdentity identity,
+    required String? persistedStoragePath,
+    required int confirmedPlaintextBytes,
+  }) {
+    return _delegate.openDownloadPlaintextStaging(
+      identity: identity,
+      persistedStoragePath: persistedStoragePath,
+      confirmedPlaintextBytes: confirmedPlaintextBytes,
+    );
+  }
+
+  @override
+  Future<void> appendDownloadPlaintextChunk({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedOffset,
+    required Uint8List plaintext,
+  }) {
+    return _delegate.appendDownloadPlaintextChunk(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedOffset: expectedOffset,
+      plaintext: plaintext,
+    );
+  }
+
+  @override
+  Future<E2eeAttachmentStoredFile> publishDownloadPlaintext({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedPlaintextBytes,
+    required Uint8List expectedSha256,
+  }) {
+    return _delegate.publishDownloadPlaintext(
+      identity: identity,
+      stagingPath: stagingPath,
+      expectedPlaintextBytes: expectedPlaintextBytes,
+      expectedSha256: expectedSha256,
+    );
   }
 
   @override

@@ -13,6 +13,9 @@ import 'cloud_sync_types.dart';
 import 'e2ee_account_key_lease.dart';
 import 'e2ee_account_record_cipher.dart';
 import 'e2ee_account_record_state.dart';
+import 'e2ee_attachment_crypto_session.dart';
+import 'e2ee_attachment_download_coordinator.dart';
+import 'e2ee_attachment_file_store.dart';
 import 'e2ee_chat_sync_adapter.dart';
 import 'e2ee_config_provider_binding.dart';
 import 'config_sync_keys.dart';
@@ -101,6 +104,7 @@ final class E2eeChatContentRuntime
   E2eeAccountRecordCipher? _recordCipher;
   E2eeAccountRecordStateCodec? _stateCodec;
   E2eeSyncOutbox? _outbox;
+  E2eeAttachmentDownloadCoordinator? _attachmentDownloads;
   E2eeSyncScheduler? _scheduler;
   Future<void>? _initializationFuture;
   Future<void>? _closeFuture;
@@ -222,6 +226,24 @@ final class E2eeChatContentRuntime
         _requireStillInitializing();
       }
 
+      final attachmentCrypto = await E2eeAttachmentCryptoSession.open(
+        session: _session,
+        deviceStateStore: _deviceStateStore,
+        secureCore: _secureCore,
+      );
+      final attachmentDownloads =
+          E2eeAttachmentDownloadCoordinator.takeOwnership(
+            commands: repository.e2eeAttachmentDownloadCommands,
+            transport: _client,
+            token: _session.token,
+            crypto: attachmentCrypto,
+            fileStore: E2eeAttachmentPlatformFileStore(),
+            leaseOwner: _session.deviceId,
+            utcNow: _utcNow,
+          );
+      _attachmentDownloads = attachmentDownloads;
+      _requireStillInitializing();
+
       Future<T> runPullBatch<T>({
         required Future<T> Function() pull,
         required bool Function() shouldRefresh,
@@ -237,6 +259,7 @@ final class E2eeChatContentRuntime
       final adapter = E2eeChatSyncAdapter(
         repository: repository,
         runPullBatch: runPullBatch,
+        attachmentReadiness: attachmentDownloads,
       );
       final authenticatedSession = _session.toAuthenticatedSession();
       final transports = _transportFactory(
@@ -249,6 +272,8 @@ final class E2eeChatContentRuntime
         pullCommands: repository.e2eeSyncPullCommands,
         stateCodec: stateCodec,
         transport: transports.pull,
+        pagePreparer: attachmentDownloads,
+        maximumPreparationRemoteSteps: 1,
         applyBusiness: (changes) async {
           final configChanges = <E2eeSyncPulledChange>[];
           final chatChanges = <E2eeSyncPulledChange>[];
@@ -462,6 +487,12 @@ final class E2eeChatContentRuntime
   }
 
   Future<void> _closeOwnedResources(_CleanupAccumulator cleanup) async {
+    final attachmentDownloads = _attachmentDownloads;
+    if (attachmentDownloads != null) {
+      await cleanup.run('关闭 E2EE 附件下载协调器', attachmentDownloads.close);
+      if (cleanup.lastStepSucceeded) _attachmentDownloads = null;
+    }
+
     final outbox = _outbox;
     if (outbox != null) {
       await cleanup.run('关闭 E2EE outbox 及记录状态加密器', outbox.close);

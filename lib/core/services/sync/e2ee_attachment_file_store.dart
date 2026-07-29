@@ -104,6 +104,8 @@ abstract interface class E2eeAttachmentFileStore {
 
   Future<void> verifyContent(E2eeAttachmentStoredFile storedFile);
 
+  Future<String> resolveContentStoragePath(Uint8List contentSha256);
+
   Future<String> openDownloadPlaintextStaging({
     required CloudSyncAttachmentIdentity identity,
     required String? persistedStoragePath,
@@ -325,6 +327,29 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
         !_sameBytes(measured.sha256, storedFile.sha256)) {
       throw const FormatException('e2ee_attachment_file_integrity');
     }
+  }
+
+  @override
+  Future<String> resolveContentStoragePath(Uint8List contentSha256) async {
+    final digest = _requireSha256(contentSha256, 'contentSha256');
+    final contentDirectory = await _resolveLocationDirectory(const <String>[
+      'content',
+    ], createMissing: true);
+    if (contentDirectory == null) {
+      throw StateError('e2ee_attachment_directory_missing');
+    }
+    final target = File(p.join(contentDirectory.path, digest.toHex()));
+    final targetType = await FileSystemEntity.type(
+      target.path,
+      followLinks: false,
+    );
+    if (targetType != FileSystemEntityType.notFound) {
+      if (targetType != FileSystemEntityType.file) {
+        throw StateError('e2ee_attachment_publish_target_unsafe');
+      }
+      await _requireCanonicalFile(target, contentDirectory);
+    }
+    return p.normalize(target.absolute.path);
   }
 
   @override
@@ -1037,6 +1062,12 @@ final class E2eeAttachmentMemoryFileStore implements E2eeAttachmentFileStore {
         )) {
       throw const FormatException('e2ee_attachment_file_integrity');
     }
+  }
+
+  @override
+  Future<String> resolveContentStoragePath(Uint8List contentSha256) async {
+    final digest = _requireSha256(contentSha256, 'contentSha256');
+    return '${_memoryRoot}content/${digest.toHex()}';
   }
 
   @override

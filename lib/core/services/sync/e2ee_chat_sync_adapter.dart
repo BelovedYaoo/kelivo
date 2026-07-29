@@ -4,6 +4,7 @@ import '../../database/chat_database_repository.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
 import 'e2ee_account_record_state.dart';
+import 'e2ee_message_attachment_readiness.dart';
 import 'e2ee_sync_outbox.dart';
 import 'e2ee_sync_payload_codec.dart';
 import 'e2ee_sync_pull_types.dart';
@@ -21,12 +22,18 @@ final class E2eeChatSyncAdapter {
   factory E2eeChatSyncAdapter({
     required ChatDatabaseRepository repository,
     required E2eeChatSyncPullBatchRunner runPullBatch,
-  }) => E2eeChatSyncAdapter._(repository, runPullBatch);
+    required E2eeMessageAttachmentReadiness attachmentReadiness,
+  }) => E2eeChatSyncAdapter._(repository, runPullBatch, attachmentReadiness);
 
-  E2eeChatSyncAdapter._(this._repository, this._runPullBatch);
+  E2eeChatSyncAdapter._(
+    this._repository,
+    this._runPullBatch,
+    this._attachmentReadiness,
+  );
 
   final ChatDatabaseRepository _repository;
   final E2eeChatSyncPullBatchRunner _runPullBatch;
+  final E2eeMessageAttachmentReadiness _attachmentReadiness;
   Future<void> _pullTail = Future<void>.value();
   _PullApplyContext? _activePull;
   bool _publishPending = false;
@@ -261,9 +268,7 @@ final class E2eeChatSyncAdapter {
       case E2eeSyncChatRecordTypes.turn:
         rebuildConversationIds.add(await _applyTurnValue(key, change.payload));
       case E2eeSyncChatRecordTypes.message:
-        rebuildConversationIds.add(
-          await _applyMessageValue(key, change.payload),
-        );
+        rebuildConversationIds.add(await _applyMessageValue(change));
       case E2eeSyncChatRecordTypes.messageSelection:
         await _applyMessageSelectionValue(key, change.payload);
       case E2eeSyncChatRecordTypes.toolEvent:
@@ -318,15 +323,14 @@ final class E2eeChatSyncAdapter {
     return conversationId;
   }
 
-  Future<String> _applyMessageValue(
-    SyncEntityKey key,
-    Map<String, Object?> payload,
-  ) async {
-    final attachments = payload['attachments'] as List<Object?>;
+  Future<String> _applyMessageValue(E2eeSyncPulledValueChange change) async {
+    final key = change.state.entityKey;
+    final payload = change.payload;
     final content = payload['content'] as String;
-    if (attachments.isNotEmpty || _containsLocalAttachmentMarker(content)) {
-      throw StateError('sync_message_attachments_not_supported');
+    if (_containsLocalAttachmentMarker(content)) {
+      throw StateError('sync_message_local_attachment_marker_rejected');
     }
+    final attachments = await _attachmentReadiness.requireReadyForApply(change);
     final conversationId = payload['conversationId'] as String;
     final turnId = payload['turnId'] as String;
     if (await _repository.getConversation(
@@ -369,6 +373,15 @@ final class E2eeChatSyncAdapter {
     );
     _requireTerminalMessage(message);
     await _repository.upsertMessageFromSync(message);
+    final replaced = await _repository.replaceMessageAssetReferences(
+      conversationId: conversationId,
+      revisionId: message.id,
+      expectedContent: message.content,
+      assets: attachments,
+    );
+    if (!replaced) {
+      throw StateError('sync_message_attachment_reference_replace_failed');
+    }
     return conversationId;
   }
 

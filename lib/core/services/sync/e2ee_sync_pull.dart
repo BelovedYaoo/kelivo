@@ -65,10 +65,51 @@ final class E2eeSyncCloudPullTransport
 enum E2eeSyncPullDisposition {
   idle,
   applied,
+  preparationPending,
   resetToSnapshot,
   snapshotApplied,
   snapshotCompleted,
   keyEpochUnavailable,
+}
+
+enum E2eeSyncPullPagePreparationDisposition {
+  ready,
+  pending,
+  keyEpochUnavailable,
+}
+
+abstract interface class E2eeSyncPullPagePreparer {
+  Future<E2eeSyncPullPagePreparationDisposition> preparePage(
+    List<E2eeSyncPulledChange> authenticatedChanges, {
+    required int maximumRemoteSteps,
+  });
+}
+
+final class E2eeNoopSyncPullPagePreparer implements E2eeSyncPullPagePreparer {
+  const E2eeNoopSyncPullPagePreparer();
+
+  @override
+  Future<E2eeSyncPullPagePreparationDisposition> preparePage(
+    List<E2eeSyncPulledChange> authenticatedChanges, {
+    required int maximumRemoteSteps,
+  }) async {
+    if (maximumRemoteSteps < 1) {
+      throw RangeError.range(maximumRemoteSteps, 1, null, 'maximumRemoteSteps');
+    }
+    for (final change in authenticatedChanges) {
+      final attachments = change is E2eeSyncPulledValueChange
+          ? change.payload['attachments']
+          : null;
+      if (change is E2eeSyncPulledValueChange &&
+          change.state.entityKey.entityType ==
+              E2eeSyncChatRecordTypes.message &&
+          attachments is List<Object?> &&
+          attachments.isNotEmpty) {
+        throw StateError('sync_pull_noop_preparer_rejects_attachments');
+      }
+    }
+    return E2eeSyncPullPagePreparationDisposition.ready;
+  }
 }
 
 final class E2eeSyncPullReport {
@@ -90,13 +131,26 @@ final class E2eeSyncPullCoordinator {
     required this._pullCommands,
     required this._stateCodec,
     required this._transport,
+    required this._pagePreparer,
+    required this.maximumPreparationRemoteSteps,
     required this._applyBusiness,
     DateTime Function()? utcNow,
-  }) : _utcNow = utcNow ?? _defaultUtcNow;
+  }) : _utcNow = utcNow ?? _defaultUtcNow {
+    if (maximumPreparationRemoteSteps < 1) {
+      throw RangeError.range(
+        maximumPreparationRemoteSteps,
+        1,
+        null,
+        'maximumPreparationRemoteSteps',
+      );
+    }
+  }
 
   final E2eeSyncPullCommands _pullCommands;
   final E2eeAccountRecordStateCodec _stateCodec;
   final E2eeSyncAuthenticatedPullTransport _transport;
+  final E2eeSyncPullPagePreparer _pagePreparer;
+  final int maximumPreparationRemoteSteps;
   final E2eeSyncTransactionalBusinessApplier _applyBusiness;
   final DateTime Function() _utcNow;
   Future<void> _tail = Future<void>.value();
@@ -175,6 +229,24 @@ final class E2eeSyncPullCoordinator {
     final immutableChanges = List<E2eeSyncPulledChange>.unmodifiable(
       authenticated,
     );
+    final preparation = await _pagePreparer.preparePage(
+      immutableChanges,
+      maximumRemoteSteps: maximumPreparationRemoteSteps,
+    );
+    if (preparation != E2eeSyncPullPagePreparationDisposition.ready) {
+      return E2eeSyncPullReport(
+        disposition:
+            preparation ==
+                E2eeSyncPullPagePreparationDisposition.keyEpochUnavailable
+            ? E2eeSyncPullDisposition.keyEpochUnavailable
+            : E2eeSyncPullDisposition.preparationPending,
+        received: authenticated.length,
+        hasMore:
+            preparation == E2eeSyncPullPagePreparationDisposition.pending ||
+            page.hasMore,
+        checkpoint: checkpoint,
+      );
+    }
     final lastChangeSeq = page.changes.isEmpty
         ? checkpoint.lastChangeSeq
         : page.changes.last.changeSeq;
@@ -228,6 +300,24 @@ final class E2eeSyncPullCoordinator {
     final immutableChanges = List<E2eeSyncPulledChange>.unmodifiable(
       authenticated,
     );
+    final preparation = await _pagePreparer.preparePage(
+      immutableChanges,
+      maximumRemoteSteps: maximumPreparationRemoteSteps,
+    );
+    if (preparation != E2eeSyncPullPagePreparationDisposition.ready) {
+      return E2eeSyncPullReport(
+        disposition:
+            preparation ==
+                E2eeSyncPullPagePreparationDisposition.keyEpochUnavailable
+            ? E2eeSyncPullDisposition.keyEpochUnavailable
+            : E2eeSyncPullDisposition.preparationPending,
+        received: authenticated.length,
+        hasMore:
+            preparation == E2eeSyncPullPagePreparationDisposition.pending ||
+            page.hasMore,
+        checkpoint: checkpoint,
+      );
+    }
     final previousMaximum = checkpoint.snapshotMaxChangeSeq;
     if (previousMaximum == null) {
       throw StateError('快照 checkpoint 缺少 changeSeq 上界');
