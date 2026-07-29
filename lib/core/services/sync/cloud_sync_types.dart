@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+part 'cloud_sync_data_rekey_types.dart';
+
 typedef CloudSyncJsonMap = Map<String, Object?>;
 
 const defaultCloudSyncBaseUrl = 'https://kelivo.bemylover.top';

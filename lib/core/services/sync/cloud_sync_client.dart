@@ -140,10 +140,15 @@ abstract interface class CloudSyncAccountClient {
   Future<CloudSyncDeviceSession> revokeDevice(String deviceId);
 }
 
+abstract interface class CloudSyncDataRekeyTransport {
+  Future<CloudSyncDataRekeyState> getDataRekeyState();
+}
+
 final class CloudSyncClient
     implements
         CloudSyncAccountClient,
         CloudSyncAttachmentTransport,
+        CloudSyncDataRekeyTransport,
         CloudSyncRecordTransport {
   CloudSyncClient._({
     required this.baseUrl,
@@ -1145,6 +1150,18 @@ final class CloudSyncClient
   }
 
   @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() {
+    return _guard(() async {
+      final response = await _client.getDataRekeyApi().getDataRekeyState(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseDataRekeyState(response.extra[_rawResponseKey]);
+    });
+  }
+
+  @override
   Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
     int afterGeneration = 0,
     int pageSize = 20,
@@ -1791,6 +1808,18 @@ CloudSyncJsonMap _strictResponseData(
 CloudSyncAccountSecurityState _parseAccountSecurityState(Object? rawResponse) {
   return CloudSyncAccountSecurityState.fromJson(
     _strictResponseData(rawResponse, _accountSecurityStateDataKeys, '账户安全状态响应'),
+  );
+}
+
+CloudSyncDataRekeyState _parseDataRekeyState(Object? rawResponse) {
+  final envelope = copyCloudSyncJsonMap(rawResponse);
+  _requireRawExactKeys(
+    envelope,
+    _strictResponseEnvelopeKeys,
+    'data-rekey 状态响应',
+  );
+  return CloudSyncDataRekeyState.fromJson(
+    copyCloudSyncJsonMap(envelope['data']),
   );
 }
 

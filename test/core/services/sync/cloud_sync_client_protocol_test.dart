@@ -2130,6 +2130,129 @@ void main() {
     );
   });
 
+  test('data-rekey 状态严格解析冻结范围与租约归属', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final stateFuture = client.getDataRekeyState();
+    final request = await requestFuture;
+    expect(request.method, 'GET');
+    expect(request.uri.path, '/api/data-rekey/state/get');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
+    expect(
+      request.headers.value('x-kelivo-sync-protocol-version'),
+      e2eeAccountRecordSyncProtocolVersion.toString(),
+    );
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'phase': 'rekey-pending',
+          'dataGeneration': 4,
+          'dataKeyEpoch': 2,
+          'changeWatermark': 16,
+          'operationId': _mutationId3,
+          'targetKeyEpoch': 3,
+          'sourceRecordCount': 1,
+          'sourceAttachmentCount': 1,
+          'sourceMaximumChangeSeq': 15,
+          'sourceRecordCursorEnd': _recordId1,
+          'sourceAttachmentCursorEnd': <String, Object?>{
+            'attachmentId': _attachmentId,
+            'uploadId': _uploadId,
+          },
+          'lease': <String, Object?>{
+            'leaseVersion': 2,
+            'ownedByCurrentDevice': true,
+            'expiresAt': '2026-07-29T06:10:00.000Z',
+          },
+          'lastCompletion': null,
+          'updatedAt': '2026-07-29T06:00:00.000Z',
+        },
+      }),
+    );
+    await request.response.close();
+
+    final state = await stateFuture;
+    expect(state, isA<CloudSyncDataRekeyPendingState>());
+    final pending = state as CloudSyncDataRekeyPendingState;
+    expect(pending.operationId, _mutationId3);
+    expect(pending.sourceDataGeneration, 4);
+    expect(pending.sourceKeyEpoch, 2);
+    expect(pending.targetKeyEpoch, 3);
+    expect(pending.sourceRecordCursorEnd, _recordId1);
+    expect(pending.sourceAttachmentCursorEnd?.attachmentId, _attachmentId);
+    expect(pending.sourceAttachmentCursorEnd?.uploadId, _uploadId);
+    expect(pending.lease?.leaseVersion, 2);
+    expect(pending.lease?.ownedByCurrentDevice, isTrue);
+  });
+
+  test('data-rekey 状态拒绝未知字段与冻结游标错配', () async {
+    CloudSyncJsonMap pendingState({required int sourceRecordCount}) =>
+        <String, Object?>{
+          'phase': 'rekey-pending',
+          'dataGeneration': 4,
+          'dataKeyEpoch': 2,
+          'changeWatermark': 16,
+          'operationId': _mutationId3,
+          'targetKeyEpoch': 3,
+          'sourceRecordCount': sourceRecordCount,
+          'sourceAttachmentCount': 0,
+          'sourceMaximumChangeSeq': 15,
+          'sourceRecordCursorEnd': _recordId1,
+          'sourceAttachmentCursorEnd': null,
+          'lease': null,
+          'lastCompletion': null,
+          'updatedAt': '2026-07-29T06:00:00.000Z',
+        };
+
+    final responses = <CloudSyncJsonMap>[
+      <String, Object?>{
+        ...pendingState(sourceRecordCount: 1),
+        'unknownField': true,
+      },
+      pendingState(sourceRecordCount: 0),
+    ];
+    var responseIndex = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{'data': responses[responseIndex++]}),
+      );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final invalidResponse = isA<CloudSyncException>().having(
+      (error) => error.kind,
+      'kind',
+      CloudSyncFailureKind.invalidResponse,
+    );
+
+    await expectLater(client.getDataRekeyState(), throwsA(invalidResponse));
+    await expectLater(client.getDataRekeyState(), throwsA(invalidResponse));
+  });
+
   test('持久账户会话恢复认证会话时保留设备密钥版本', () {
     final persisted = _accountKeyLeaseSession(
       baseUrl: defaultCloudSyncBaseUrl,
