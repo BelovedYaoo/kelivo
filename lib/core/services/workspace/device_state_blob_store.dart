@@ -11,6 +11,55 @@ import 'package:path/path.dart' as p;
 
 import '../backup/restore_durability.dart';
 
+final class DeviceStateBlobVersion {
+  DeviceStateBlobVersion._(
+    this._locator,
+    this._generation,
+    this._slot,
+    Uint8List stateFrameHash,
+  ) : _stateFrameHash = Uint8List.fromList(stateFrameHash);
+
+  final String _locator;
+  final int _generation;
+  final String _slot;
+  final Uint8List _stateFrameHash;
+
+  @override
+  bool operator ==(Object other) {
+    return other is DeviceStateBlobVersion &&
+        _locator == other._locator &&
+        _generation == other._generation &&
+        _slot == other._slot &&
+        DeviceStateBlobStore._sameBytes(_stateFrameHash, other._stateFrameHash);
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    _locator,
+    _generation,
+    _slot,
+    Object.hashAll(_stateFrameHash),
+  );
+
+  @override
+  String toString() => 'DeviceStateBlobVersion(<opaque>)';
+}
+
+final class DeviceStateBlobSnapshot {
+  DeviceStateBlobSnapshot._({required Uint8List blob, required this.version})
+    : blob = Uint8List.fromList(blob);
+
+  final Uint8List blob;
+  final DeviceStateBlobVersion version;
+}
+
+final class DeviceStateBlobConflict implements Exception {
+  const DeviceStateBlobConflict();
+
+  @override
+  String toString() => 'device_state_store_conflict';
+}
+
 final class DeviceStateBlobStore {
   DeviceStateBlobStore({
     required Directory installationRoot,
@@ -68,6 +117,17 @@ final class DeviceStateBlobStore {
   Future<Uint8List?> read({
     required String normalizedBaseUrl,
     required String normalizedLoginName,
+  }) async {
+    final snapshot = await readVersioned(
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    return snapshot?.blob;
+  }
+
+  Future<DeviceStateBlobSnapshot?> readVersioned({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
   }) {
     final locator = _deriveLocator(
       normalizedBaseUrl: normalizedBaseUrl,
@@ -77,13 +137,18 @@ final class DeviceStateBlobStore {
       if (await _readTombstone(directory) != null) return null;
       final manifest = await _readCurrentManifest(directory);
       if (manifest == null) return null;
-      return _readPublishedState(directory, manifest);
+      final blob = await _readPublishedState(directory, manifest);
+      return DeviceStateBlobSnapshot._(
+        blob: blob,
+        version: _versionForManifest(locator, manifest),
+      );
     });
   }
 
-  Future<void> write({
+  Future<DeviceStateBlobSnapshot> compareAndSwap({
     required String normalizedBaseUrl,
     required String normalizedLoginName,
+    required DeviceStateBlobVersion? expectedVersion,
     required Uint8List blob,
   }) {
     if (blob.length != blobLength) {
@@ -96,62 +161,72 @@ final class DeviceStateBlobStore {
     );
     return _withLocatorLock(locator, (directory) async {
       final tombstone = await _readTombstone(directory);
+      final current = tombstone == null
+          ? await _readCurrentManifest(directory)
+          : null;
+      if (expectedVersion == null) {
+        if (current != null) throw const DeviceStateBlobConflict();
+      } else {
+        if (tombstone != null ||
+            current == null ||
+            expectedVersion._locator != locator) {
+          throw const DeviceStateBlobConflict();
+        }
+        final currentBlob = await _readPublishedState(directory, current);
+        final currentVersion = _versionForManifest(locator, current);
+        if (currentVersion != expectedVersion) {
+          throw const DeviceStateBlobConflict();
+        }
+        if (_sameBytes(currentBlob, state)) {
+          return DeviceStateBlobSnapshot._(
+            blob: currentBlob,
+            version: currentVersion,
+          );
+        }
+      }
+
       if (tombstone != null) {
         await _cleanupDeletedState(directory);
-        final generation = _nextGeneration(tombstone.generation);
-        final stateFrame = _encodeStateFrame(
-          generation: generation,
-          blob: state,
-        );
-        await _publishFile(
-          directory: directory,
-          target: _stateFile(directory, 'a'),
-          bytes: stateFrame,
-          replaceExisting: true,
-        );
-        await _publishFile(
-          directory: directory,
-          target: _manifestFile(directory, 'a'),
-          bytes: _encodeManifestFrame(
-            generation: generation,
-            slot: 'a',
-            stateFrameHash: Uint8List.fromList(
-              sha256.convert(stateFrame).bytes,
-            ),
-          ),
-          replaceExisting: false,
-        );
-        await _deleteRegularFile(_tombstoneFile(directory));
-        await _durability.syncDirectory(directory, fullBarrier: true);
-        return;
+      } else {
+        await _cleanupTemporaryFiles(directory);
       }
-      await _cleanupTemporaryFiles(directory);
-      final current = await _readCurrentManifest(directory);
-      if (current != null) {
-        await _readPublishedState(directory, current);
-      }
-      final generation = _nextGeneration(current?.generation ?? 0);
+      final generation = _nextGeneration(
+        tombstone?.generation ?? current?.generation ?? 0,
+      );
       final slot = current?.slot == 'a' ? 'b' : 'a';
-      await _retireManifest(directory, slot);
-
+      if (current != null) await _retireManifest(directory, slot);
       final stateFrame = _encodeStateFrame(generation: generation, blob: state);
+      final stateFrameHash = Uint8List.fromList(
+        sha256.convert(stateFrame).bytes,
+      );
       await _publishFile(
         directory: directory,
         target: _stateFile(directory, slot),
         bytes: stateFrame,
         replaceExisting: true,
       );
-
-      final manifestFrame = _encodeManifestFrame(
-        generation: generation,
-        slot: slot,
-        stateFrameHash: Uint8List.fromList(sha256.convert(stateFrame).bytes),
-      );
       await _publishFile(
         directory: directory,
         target: _manifestFile(directory, slot),
-        bytes: manifestFrame,
+        bytes: _encodeManifestFrame(
+          generation: generation,
+          slot: slot,
+          stateFrameHash: stateFrameHash,
+        ),
         replaceExisting: false,
+      );
+      if (tombstone != null) {
+        await _deleteRegularFile(_tombstoneFile(directory));
+        await _durability.syncDirectory(directory, fullBarrier: true);
+      }
+      return DeviceStateBlobSnapshot._(
+        blob: state,
+        version: DeviceStateBlobVersion._(
+          locator,
+          generation,
+          slot,
+          stateFrameHash,
+        ),
       );
     });
   }
@@ -881,6 +956,18 @@ final class DeviceStateBlobStore {
       throw StateError('device_state_store_generation_exhausted');
     }
     return current + 1;
+  }
+
+  static DeviceStateBlobVersion _versionForManifest(
+    String locator,
+    _DeviceStateManifest manifest,
+  ) {
+    return DeviceStateBlobVersion._(
+      locator,
+      manifest.generation,
+      manifest.slot,
+      manifest.stateFrameHash,
+    );
   }
 
   static bool _startsWith(Uint8List value, Uint8List prefix) {

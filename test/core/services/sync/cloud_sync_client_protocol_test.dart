@@ -702,6 +702,25 @@ Map<String, Object?> _trustedDeviceJson({String status = 'active'}) {
   };
 }
 
+extension _DeviceStateBlobStoreTestSetup on DeviceStateBlobStore {
+  Future<DeviceStateBlobSnapshot> write({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+    required Uint8List blob,
+  }) async {
+    final current = await readVersioned(
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    return compareAndSwap(
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+      expectedVersion: current?.version,
+      blob: blob,
+    );
+  }
+}
+
 void main() {
   test('桌面端不能注册首个可信设备且不会创建本地设备状态', () async {
     final testRoot = Directory(

@@ -26,6 +26,47 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:uuid/uuid.dart';
 
+extension _DeviceStateBlobStoreTestSetup on DeviceStateBlobStore {
+  Future<DeviceStateBlobSnapshot> write({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+    required Uint8List blob,
+  }) {
+    if (blob.length != DeviceStateBlobStore.blobLength) {
+      return compareAndSwap(
+        normalizedBaseUrl: normalizedBaseUrl,
+        normalizedLoginName: normalizedLoginName,
+        expectedVersion: null,
+        blob: blob,
+      );
+    }
+    return _replaceDeviceStateForTest(
+      this,
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+      blob: blob,
+    );
+  }
+}
+
+Future<DeviceStateBlobSnapshot> _replaceDeviceStateForTest(
+  DeviceStateBlobStore store, {
+  required String normalizedBaseUrl,
+  required String normalizedLoginName,
+  required Uint8List blob,
+}) async {
+  final current = await store.readVersioned(
+    normalizedBaseUrl: normalizedBaseUrl,
+    normalizedLoginName: normalizedLoginName,
+  );
+  return store.compareAndSwap(
+    normalizedBaseUrl: normalizedBaseUrl,
+    normalizedLoginName: normalizedLoginName,
+    expectedVersion: current?.version,
+    blob: blob,
+  );
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -122,6 +163,268 @@ void main() {
 
     await expectLater(bootstrap(), throwsA(isA<FormatException>()));
   }
+
+  test('设备状态首次 CAS 创建返回与持久字节精确绑定的版本令牌', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x0a);
+
+    final created = await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-create',
+      expectedVersion: null,
+      blob: state,
+    );
+    final persisted = await store.readVersioned(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-create',
+    );
+
+    expect(persisted, isNotNull);
+    expect(persisted!.blob, orderedEquals(state));
+    expect(persisted.version, created.version);
+    await expectLater(
+      store.compareAndSwap(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cas-create',
+        expectedVersion: null,
+        blob: Uint8List(DeviceStateBlobStore.blobLength),
+      ),
+      throwsA(isA<DeviceStateBlobConflict>()),
+    );
+    final afterConflict = await store.readVersioned(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-create',
+    );
+    expect(afterConflict!.version, created.version);
+  });
+
+  test('设备状态 CAS 仅接受当前令牌且陈旧写不覆盖赢家状态', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final first = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x0b);
+    final winner = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x0c);
+    final stale = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x0d);
+    final initial = await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-stale',
+      expectedVersion: null,
+      blob: first,
+    );
+
+    final committed = await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-stale',
+      expectedVersion: initial.version,
+      blob: winner,
+    );
+    await expectLater(
+      store.compareAndSwap(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cas-stale',
+        expectedVersion: initial.version,
+        blob: stale,
+      ),
+      throwsA(isA<DeviceStateBlobConflict>()),
+    );
+    final persisted = await store.readVersioned(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-stale',
+    );
+    expect(persisted, isNotNull);
+    expect(persisted!.blob, orderedEquals(winner));
+    expect(persisted.version, committed.version);
+  });
+
+  test('设备状态 CAS 写入相同字节时保持原令牌且不推进代际', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x0e);
+    final created = await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-idempotent',
+      expectedVersion: null,
+      blob: state,
+    );
+
+    final replayed = await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-idempotent',
+      expectedVersion: created.version,
+      blob: Uint8List.fromList(state),
+    );
+
+    expect(replayed.version, created.version);
+    expect(replayed.blob, orderedEquals(state));
+  });
+
+  test('设备状态 CAS 令牌绑定规范身份且不能跨 locator 复用', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x0f);
+    final alice = await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-alice',
+      expectedVersion: null,
+      blob: state,
+    );
+    await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-bob',
+      expectedVersion: null,
+      blob: state,
+    );
+
+    await expectLater(
+      store.compareAndSwap(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cas-bob',
+        expectedVersion: alice.version,
+        blob: Uint8List(DeviceStateBlobStore.blobLength)
+          ..fillRange(0, DeviceStateBlobStore.blobLength, 0x10),
+      ),
+      throwsA(isA<DeviceStateBlobConflict>()),
+    );
+    expect(
+      await store.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cas-bob',
+      ),
+      orderedEquals(state),
+    );
+  });
+
+  test('设备状态删除或当前字节损坏后拒绝旧令牌且不恢复状态', () async {
+    final deletedRoot = Directory(p.join(installationRoot.path, 'cas-deleted'));
+    await deletedRoot.create();
+    final deletedStore = DeviceStateBlobStore(installationRoot: deletedRoot);
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x11);
+    final deletedVersion = await deletedStore.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-deleted',
+      expectedVersion: null,
+      blob: state,
+    );
+    await deletedStore.delete(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-deleted',
+    );
+
+    await expectLater(
+      deletedStore.compareAndSwap(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cas-deleted',
+        expectedVersion: deletedVersion.version,
+        blob: Uint8List(DeviceStateBlobStore.blobLength),
+      ),
+      throwsA(isA<DeviceStateBlobConflict>()),
+    );
+    expect(
+      await deletedStore.read(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cas-deleted',
+      ),
+      isNull,
+    );
+
+    final corruptRoot = Directory(p.join(installationRoot.path, 'cas-corrupt'));
+    await corruptRoot.create();
+    final corruptStore = DeviceStateBlobStore(installationRoot: corruptRoot);
+    final corruptVersion = await corruptStore.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-corrupt',
+      expectedVersion: null,
+      blob: state,
+    );
+    final locator = await _deviceStateLocatorDirectory(
+      corruptRoot,
+      expectedCount: 1,
+    );
+    final stateFile = File(p.join(locator.path, 'state-a.bin'));
+    final corruptFrame = await stateFile.readAsBytes();
+    corruptFrame[corruptFrame.length - 1] ^= 0xff;
+    await stateFile.writeAsBytes(corruptFrame, flush: true);
+
+    await expectLater(
+      corruptStore.compareAndSwap(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cas-corrupt',
+        expectedVersion: corruptVersion.version,
+        blob: Uint8List(DeviceStateBlobStore.blobLength),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(await stateFile.readAsBytes(), orderedEquals(corruptFrame));
+  });
+
+  test('设备状态真实 isolate 持相同令牌竞争时仅一方提交', () async {
+    final store = DeviceStateBlobStore(installationRoot: installationRoot);
+    await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-isolate',
+      expectedVersion: null,
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x12),
+    );
+    final controls = Directory(p.join(installationRoot.path, 'cas-controls'));
+    await controls.create();
+    final firstReady = File(p.join(controls.path, 'first-ready'));
+    final secondReady = File(p.join(controls.path, 'second-ready'));
+    final release = File(p.join(controls.path, 'release'));
+    final firstOutcome = File(p.join(controls.path, 'first-outcome'));
+    final secondOutcome = File(p.join(controls.path, 'second-outcome'));
+    final firstError = File(p.join(controls.path, 'first-error'));
+    final secondError = File(p.join(controls.path, 'second-error'));
+
+    final first = Isolate.run(
+      () => _compareAndSwapDeviceStateFromIsolate(
+        installationRootPath: installationRoot.path,
+        value: 0x13,
+        readyPath: firstReady.path,
+        releasePath: release.path,
+        outcomePath: firstOutcome.path,
+        errorPath: firstError.path,
+      ),
+    );
+    final second = Isolate.run(
+      () => _compareAndSwapDeviceStateFromIsolate(
+        installationRootPath: installationRoot.path,
+        value: 0x14,
+        readyPath: secondReady.path,
+        releasePath: release.path,
+        outcomePath: secondOutcome.path,
+        errorPath: secondError.path,
+      ),
+    );
+    await Future.wait(<Future<void>>[
+      _waitForFile(firstReady),
+      _waitForFile(secondReady),
+    ]);
+    await release.writeAsString('release', flush: true);
+    await Future.wait(<Future<void>>[
+      first,
+      second,
+    ]).timeout(const Duration(seconds: 20));
+
+    expect(await firstError.exists(), isFalse);
+    expect(await secondError.exists(), isFalse);
+    expect(
+      <String>{
+        await firstOutcome.readAsString(),
+        await secondOutcome.readAsString(),
+      },
+      <String>{'committed', 'conflict'},
+    );
+    final persisted = await store.read(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-isolate',
+    );
+    expect(persisted, isNotNull);
+    expect(<int>{0x13, 0x14}, contains(persisted!.first));
+  });
 
   test('设备状态首次发布后可按规范身份读取且路径不泄漏登录名', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
@@ -1054,9 +1357,10 @@ void main() {
     final second = Uint8List(DeviceStateBlobStore.blobLength)
       ..fillRange(0, DeviceStateBlobStore.blobLength, 0x72);
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
-    await store.write(
+    final initial = await store.compareAndSwap(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'crash-recovery',
+      expectedVersion: null,
       blob: first,
     );
     final interruptedStore = DeviceStateBlobStore(
@@ -1068,24 +1372,26 @@ void main() {
     );
 
     await expectLater(
-      interruptedStore.write(
+      interruptedStore.compareAndSwap(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'crash-recovery',
+        expectedVersion: initial.version,
         blob: second,
       ),
       throwsA(isA<StateError>()),
     );
-    expect(
-      await store.read(
-        normalizedBaseUrl: 'https://kelivo.bemylover.top',
-        normalizedLoginName: 'crash-recovery',
-      ),
-      orderedEquals(first),
-    );
-
-    await store.write(
+    final preserved = await store.readVersioned(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'crash-recovery',
+    );
+    expect(preserved, isNotNull);
+    expect(preserved!.blob, orderedEquals(first));
+    expect(preserved.version, initial.version);
+
+    await store.compareAndSwap(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'crash-recovery',
+      expectedVersion: initial.version,
       blob: second,
     );
     expect(
@@ -1095,6 +1401,15 @@ void main() {
       ),
       orderedEquals(second),
     );
+    final locator = await _deviceStateLocatorDirectory(
+      installationRoot,
+      expectedCount: 1,
+    );
+    final remainingTemporaryFiles = await locator
+        .list(followLinks: false)
+        .where((entity) => p.basename(entity.path).endsWith('.next'))
+        .toList();
+    expect(remainingTemporaryFiles, isEmpty);
   });
 
   test('设备状态写入不使用可预测固定临时路径', () async {
@@ -3941,6 +4256,44 @@ final class _BlockingFirstPreferenceSetStore
       }
     }
     return super.setValue(valueType, key, value);
+  }
+}
+
+Future<void> _compareAndSwapDeviceStateFromIsolate({
+  required String installationRootPath,
+  required int value,
+  required String readyPath,
+  required String releasePath,
+  required String outcomePath,
+  required String errorPath,
+}) async {
+  final store = DeviceStateBlobStore(
+    installationRoot: Directory(installationRootPath),
+  );
+  try {
+    final snapshot = await store.readVersioned(
+      normalizedBaseUrl: 'https://kelivo.bemylover.top',
+      normalizedLoginName: 'cas-isolate',
+    );
+    if (snapshot == null) {
+      throw StateError('device_state_test_missing_state');
+    }
+    await File(readyPath).writeAsString('ready', flush: true);
+    await _waitForFile(File(releasePath));
+    try {
+      await store.compareAndSwap(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'cas-isolate',
+        expectedVersion: snapshot.version,
+        blob: Uint8List(DeviceStateBlobStore.blobLength)
+          ..fillRange(0, DeviceStateBlobStore.blobLength, value),
+      );
+      await File(outcomePath).writeAsString('committed', flush: true);
+    } on DeviceStateBlobConflict {
+      await File(outcomePath).writeAsString('conflict', flush: true);
+    }
+  } catch (error, stackTrace) {
+    await File(errorPath).writeAsString('$error\n$stackTrace', flush: true);
   }
 }
 
