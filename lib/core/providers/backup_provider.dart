@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -9,88 +8,45 @@ import '../services/backup/data_sync.dart';
 
 class BackupProvider extends ChangeNotifier {
   final DataSync _dataSync;
-  WebDavConfig _cfg;
+  LocalBackupOptions _options;
   bool _busy = false;
-  String? _message;
 
   BackupProvider({
     required ChatService chatService,
-    WebDavConfig? initialConfig,
+    LocalBackupOptions? initialOptions,
   }) : _dataSync = DataSync(chatService: chatService),
-       _cfg = initialConfig ?? const WebDavConfig();
+       _options = initialOptions ?? const LocalBackupOptions();
 
-  WebDavConfig get config => _cfg;
+  LocalBackupOptions get options => _options;
   bool get busy => _busy;
-  String? get message => _message;
 
-  void updateConfig(WebDavConfig cfg) {
-    _cfg = cfg;
+  void updateOptions(LocalBackupOptions options) {
+    _options = options;
     notifyListeners();
   }
 
-  Future<void> test() async {
+  Future<File> exportToFile() async {
     _busy = true;
-    _message = null;
     notifyListeners();
     try {
-      await _dataSync.testWebdav(_cfg);
-      _message = 'OK';
-    } catch (e) {
-      _message = e.toString();
+      return await _dataSync.prepareLocalExportFile(_options);
     } finally {
       _busy = false;
       notifyListeners();
     }
   }
 
-  Future<bool> backup() async {
-    _busy = true;
-    _message = null;
-    notifyListeners();
-    try {
-      await _dataSync.backupToWebDav(_cfg);
-      _message = 'Backup uploaded';
-      return true;
-    } catch (e) {
-      _message = e.toString();
-      return false;
-    } finally {
-      _busy = false;
-      notifyListeners();
-    }
-  }
-
-  Future<void> restoreFromItem(
-    BackupFileItem item, {
-    RestoreMode mode = RestoreMode.overwrite,
-  }) async {
-    _busy = true;
-    _message = null;
-    notifyListeners();
-    try {
-      await _dataSync.restoreFromWebDav(_cfg, item, mode: mode);
-      _message = 'Restored';
-    } catch (e) {
-      _message = e.toString();
-      rethrow;
-    } finally {
-      _busy = false;
-      notifyListeners();
-    }
-  }
-
-  Future<List<BackupFileItem>> listRemote() async {
-    return _dataSync.listBackupFiles(_cfg);
-  }
-
-  Future<List<BackupFileItem>> deleteAndReload(BackupFileItem item) async {
-    await _dataSync.deleteWebDavBackupFile(_cfg, item);
-    return _dataSync.listBackupFiles(_cfg);
-  }
-
-  Future<File> exportToFile() => _dataSync.exportToFile(_cfg);
   Future<void> restoreFromLocalFile(
     File file, {
     RestoreMode mode = RestoreMode.overwrite,
-  }) => _dataSync.restoreFromLocalFile(file, _cfg, mode: mode);
+  }) async {
+    _busy = true;
+    notifyListeners();
+    try {
+      await _dataSync.restoreLocalFile(file, _options, mode: mode);
+    } finally {
+      _busy = false;
+      notifyListeners();
+    }
+  }
 }

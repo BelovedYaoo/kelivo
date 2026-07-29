@@ -28,9 +28,6 @@ import 'core/providers/instruction_injection_provider.dart';
 import 'core/providers/instruction_injection_group_provider.dart';
 import 'core/providers/world_book_provider.dart';
 import 'core/providers/memory_provider.dart';
-import 'core/providers/backup_provider.dart';
-import 'core/providers/s3_backup_provider.dart';
-import 'core/providers/backup_reminder_provider.dart';
 import 'core/providers/hotkey_provider.dart';
 import 'core/providers/cloud_sync_provider.dart';
 import 'core/database/app_database.dart';
@@ -50,6 +47,7 @@ import 'core/services/database_v2_rollout_ledger.dart';
 import 'core/services/backup/restore_business_lease.dart';
 import 'core/services/backup/restore_startup_gate.dart';
 import 'core/services/backup/restore_receipt.dart';
+import 'core/services/backup/plaintext_remote_backup_retirement.dart';
 import 'core/services/mcp/mcp_tool_service.dart';
 import 'core/services/logging/flutter_logger.dart';
 import 'features/home/services/ask_user_interaction_service.dart';
@@ -138,6 +136,18 @@ Future<void> main() async {
   await runZoned(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      try {
+        await PlaintextRemoteBackupRetirement.retireCurrentInstallation();
+      } catch (error, stackTrace) {
+        stderr.writeln('[PlaintextRemoteBackupRetirement] $error\n$stackTrace');
+        await _initRestoreFailureWindow();
+        runApp(
+          _RestoreFailureApp(
+            diagnosticCode: restoreFailureDiagnosticCode(error),
+          ),
+        );
+        return;
+      }
       final mobileBackgroundSyncScheduler =
           E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
       final AccountWorkspaceRuntime workspaceRuntime;
@@ -498,21 +508,8 @@ class MyApp extends StatelessWidget {
             return binding;
           },
         ),
-        ChangeNotifierProvider(create: (_) => BackupReminderProvider()),
         // Desktop hotkeys provider
         ChangeNotifierProvider(create: (_) => HotkeyProvider()),
-        ChangeNotifierProvider(
-          create: (ctx) => BackupProvider(
-            chatService: ctx.read<ChatService>(),
-            initialConfig: ctx.read<SettingsProvider>().webDavConfig,
-          ),
-        ),
-        ChangeNotifierProvider(
-          create: (ctx) => S3BackupProvider(
-            chatService: ctx.read<ChatService>(),
-            initialConfig: ctx.read<SettingsProvider>().s3Config,
-          ),
-        ),
         ChangeNotifierProvider(
           lazy: false,
           create: (ctx) {

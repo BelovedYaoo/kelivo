@@ -6,12 +6,10 @@ import 'dart:typed_data';
 
 import 'package:archive/archive_io.dart';
 import 'package:crypto/crypto.dart';
-import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import 'package:xml/xml.dart';
 
 import '../../database/chat_database_repository.dart';
 import '../../database/database_cipher.dart';
@@ -23,7 +21,6 @@ import '../chat/upload_directory_critical_section.dart';
 import '../../../utils/app_directories.dart';
 import 'backup_settings_validator.dart';
 import 'restore_bundle_preparation.dart';
-import 'temporary_restore_file.dart';
 
 typedef _ParsedChatBackup = ({
   List<Conversation> conversations,
@@ -132,124 +129,20 @@ class DataSync {
     return write();
   }
 
-  // ===== WebDAV helpers =====
-  Uri _collectionUri(WebDavConfig cfg) {
-    String base = cfg.url.trim();
-    if (base.endsWith('/')) base = base.substring(0, base.length - 1);
-    String pathPart = cfg.path.trim();
-    if (pathPart.isNotEmpty) {
-      pathPart = '/${pathPart.replaceAll(RegExp(r'^/+'), '')}';
-    }
-    // Ensure trailing slash for collection
-    final full = '$base$pathPart/';
-    return Uri.parse(full);
+  Future<File> prepareLocalExportFile(LocalBackupOptions options) {
+    return _prepareLocalExportFile(options);
   }
 
-  Uri _fileUri(WebDavConfig cfg, String childName) {
-    final base = _collectionUri(cfg).toString();
-    final child = childName.replaceAll(RegExp(r'^/+'), '');
-    return Uri.parse('$base$child');
-  }
-
-  Map<String, String> _authHeaders(WebDavConfig cfg) {
-    if (cfg.username.trim().isEmpty) return {};
-    final token = base64Encode(utf8.encode('${cfg.username}:${cfg.password}'));
-    return {'Authorization': 'Basic $token'};
-  }
-
-  Map<String, String> _extraHeaders(WebDavConfig cfg) {
-    final h = <String, String>{};
-    final ua = cfg.userAgent.trim();
-    if (ua.isNotEmpty) h['User-Agent'] = ua;
-    return h;
-  }
-
-  Future<void> _ensureCollection(WebDavConfig cfg) async {
-    final client = http.Client();
-    try {
-      // Ensure each segment exists
-      final url = cfg.url.trim().replaceAll(RegExp(r'/+$'), '');
-      final segments = cfg.path
-          .split('/')
-          .where((s) => s.trim().isNotEmpty)
-          .toList();
-      String acc = url;
-      for (final seg in segments) {
-        acc = '$acc/$seg';
-        // PROPFIND depth 0 on this collection (with trailing slash)
-        final u = Uri.parse('$acc/');
-        final req = http.Request('PROPFIND', u);
-        req.headers.addAll({
-          'Depth': '0',
-          'Content-Type': 'application/xml; charset=utf-8',
-          ..._authHeaders(cfg),
-          ..._extraHeaders(cfg),
-        });
-        req.body =
-            '<?xml version="1.0" encoding="utf-8" ?><d:propfind xmlns:d="DAV:"><d:prop><d:displayname/></d:prop></d:propfind>';
-        final res = await client.send(req).then(http.Response.fromStream);
-        if (res.statusCode == 404) {
-          // create this level
-          final mk = await client
-              .send(
-                http.Request('MKCOL', u)
-                  ..headers.addAll({
-                    ..._authHeaders(cfg),
-                    ..._extraHeaders(cfg),
-                  }),
-              )
-              .then(http.Response.fromStream);
-          if (mk.statusCode != 201 &&
-              mk.statusCode != 200 &&
-              mk.statusCode != 405) {
-            throw Exception('MKCOL failed at $u: ${mk.statusCode}');
-          }
-        } else if (res.statusCode == 401) {
-          throw Exception('Unauthorized');
-        } else if (!(res.statusCode >= 200 && res.statusCode < 400)) {
-          // Some servers return 207 Multi-Status; accept 2xx/3xx/207
-          if (res.statusCode != 207) {
-            throw Exception('PROPFIND error at $u: ${res.statusCode}');
-          }
-        }
-      }
-    } finally {
-      client.close();
-    }
-  }
-
-  // ===== Public APIs =====
-  Future<void> testWebdav(WebDavConfig cfg) async {
-    final uri = _collectionUri(cfg);
-    final req = http.Request('PROPFIND', uri);
-    req.headers.addAll({
-      'Depth': '1',
-      'Content-Type': 'application/xml; charset=utf-8',
-      ..._authHeaders(cfg),
-      ..._extraHeaders(cfg),
-    });
-    req.body =
-        '<?xml version="1.0" encoding="utf-8" ?>\n'
-        '<d:propfind xmlns:d="DAV:">\n'
-        '  <d:prop>\n'
-        '    <d:displayname/>\n'
-        '  </d:prop>\n'
-        '</d:propfind>';
-    final res = await http.Client().send(req).then(http.Response.fromStream);
-    if (res.statusCode != 207 &&
-        (res.statusCode < 200 || res.statusCode >= 300)) {
-      throw Exception('WebDAV test failed: ${res.statusCode}');
-    }
-  }
-
-  Future<File> prepareBackupFile(WebDavConfig cfg) async {
+  Future<File> _prepareLocalExportFile(LocalBackupOptions options) async {
     final tmp = await _ensureTempDir();
-    await _cleanupPreviousBackupTempFiles(tmp);
+    await _cleanupPreviousLocalExportTempFiles(tmp);
     final timestamp = DateTime.now().toIso8601String().replaceAll(':', '-');
-    final workDir = Directory(p.join(tmp.path, 'kelivo_backup_$timestamp'));
+    final workDir = Directory(
+      p.join(tmp.path, 'kelivo_local_export_$timestamp'),
+    );
     await workDir.create(recursive: true);
 
-    final outPath = p.join(workDir.path, 'kelivo_backup_$timestamp.zip');
+    final outPath = p.join(workDir.path, 'kelivo_local_export_$timestamp.zip');
     final outFile = File(outPath);
     if (await outFile.exists()) await outFile.delete();
 
@@ -268,7 +161,7 @@ class DataSync {
       settingsTmp = settingsFile;
 
       ChatDatabaseSnapshotInfo? snapshotInfo;
-      if (cfg.includeChats) {
+      if (options.includeChats) {
         final databaseFile = File(p.join(workDir.path, '_bk_kelivo.db'));
         databaseTmp = databaseFile;
         snapshotInfo = await chatService.createBackupDatabaseSnapshot(
@@ -291,7 +184,7 @@ class DataSync {
       final manifestPath = manifestFile.path;
       final settingsPath = settingsFile.path;
       final databasePath = databaseTmp?.path;
-      final includeFiles = cfg.includeFiles;
+      final includeFiles = options.includeFiles;
       final verifyDirPath = p.join(workDir.path, '_verify');
       final cipher = chatService.databaseCipher;
 
@@ -303,7 +196,7 @@ class DataSync {
           settingsPath: settingsPath,
           databasePath: databasePath,
           snapshotInfo: snapshotInfo,
-          includeChats: cfg.includeChats,
+          includeChats: options.includeChats,
           includeFiles: includeFiles,
           appVersion: appVersion,
           uploadDirPath: uploadDirPath,
@@ -327,37 +220,47 @@ class DataSync {
         }
       });
 
+      await _deleteFileStrict(settingsTmp);
+      await _deleteFileStrict(databaseTmp);
+      await _deleteFileStrict(manifestTmp);
       return outFile;
-    } catch (_) {
-      await _deleteDirectoryQuietly(workDir);
-      rethrow;
-    } finally {
-      // Cleanup temp intermediate files. The final zip is returned to callers
-      // and must be deleted by the upload/export caller after it is consumed.
-      await _deleteFileQuietly(settingsTmp);
-      await _deleteFileQuietly(databaseTmp);
-      await _deleteFileQuietly(manifestTmp);
+    } catch (error, stackTrace) {
+      await _deleteDirectoryWithoutFollowingLinks(workDir);
+      Error.throwWithStackTrace(error, stackTrace);
     }
   }
 
-  static Future<void> cleanupTemporaryBackupFile(File? file) async {
+  static Future<void> cleanupTemporaryLocalExportFile(File? file) async {
     if (file == null) return;
     final parent = file.parent;
-    await _deleteFileQuietly(file);
-    try {
-      if (await parent.exists() && await parent.list().isEmpty) {
-        await parent.delete();
-      }
-    } catch (_) {}
+    final parentName = p.basename(parent.path);
+    if (!parentName.startsWith('kelivo_local_export_') ||
+        p.basename(file.path) != '$parentName.zip') {
+      throw StateError('local_export_cleanup_boundary');
+    }
+    await _deleteFileStrict(file);
+    final parentType = await FileSystemEntity.type(
+      parent.path,
+      followLinks: false,
+    );
+    if (parentType == FileSystemEntityType.notFound) return;
+    if (parentType != FileSystemEntityType.directory) {
+      throw StateError('local_export_cleanup_parent');
+    }
+    if (!await parent.list(followLinks: false).isEmpty) {
+      throw StateError('local_export_cleanup_not_empty');
+    }
+    await parent.delete();
   }
 
-  static Future<void> _deleteFileQuietly(File? file) async {
+  static Future<void> _deleteFileStrict(File? file) async {
     if (file == null) return;
-    try {
-      if (await file.exists()) {
-        await file.delete();
-      }
-    } catch (_) {}
+    final type = await FileSystemEntity.type(file.path, followLinks: false);
+    if (type == FileSystemEntityType.notFound) return;
+    if (type != FileSystemEntityType.file) {
+      throw StateError('local_export_artifact_type');
+    }
+    await file.delete();
   }
 
   static Future<void> _deleteDirectoryQuietly(Directory? directory) async {
@@ -369,23 +272,60 @@ class DataSync {
     } catch (_) {}
   }
 
-  static Future<void> _cleanupPreviousBackupTempFiles(Directory tmp) async {
-    try {
-      if (!await tmp.exists()) return;
-      await for (final ent in tmp.list(followLinks: false)) {
-        final name = p.basename(ent.path);
-        if (ent is Directory && name.startsWith('kelivo_backup_')) {
-          await _deleteDirectoryQuietly(ent);
-        } else if (ent is File &&
-            ((name.startsWith('kelivo_backup_') && name.endsWith('.zip')) ||
-                name == '_bk_settings.json' ||
-                name == '_bk_chats.json' ||
-                name == '_bk_manifest.json' ||
-                name == '_bk_kelivo.db')) {
-          await _deleteFileQuietly(ent);
-        }
+  static Future<void> _cleanupPreviousLocalExportTempFiles(
+    Directory tmp,
+  ) async {
+    if (!await tmp.exists()) return;
+    await for (final entity in tmp.list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      final type = await FileSystemEntity.type(entity.path, followLinks: false);
+      if (type == FileSystemEntityType.directory &&
+          name.startsWith('kelivo_local_export_')) {
+        await _deleteDirectoryWithoutFollowingLinks(Directory(entity.path));
+      } else if (type == FileSystemEntityType.file &&
+          name.startsWith('kelivo_local_export_') &&
+          name.endsWith('.zip')) {
+        await File(entity.path).delete();
+      } else if (type == FileSystemEntityType.link &&
+          name.startsWith('kelivo_local_export_')) {
+        await Link(entity.path).delete();
       }
-    } catch (_) {}
+    }
+  }
+
+  static Future<void> _deleteDirectoryWithoutFollowingLinks(
+    Directory directory,
+  ) async {
+    final type = await FileSystemEntity.type(
+      directory.path,
+      followLinks: false,
+    );
+    if (type == FileSystemEntityType.notFound) return;
+    if (type != FileSystemEntityType.directory) {
+      throw StateError('local_export_directory_type');
+    }
+    await for (final entity in directory.list(followLinks: false)) {
+      final childType = await FileSystemEntity.type(
+        entity.path,
+        followLinks: false,
+      );
+      switch (childType) {
+        case FileSystemEntityType.directory:
+          await _deleteDirectoryWithoutFollowingLinks(Directory(entity.path));
+          break;
+        case FileSystemEntityType.file:
+          await File(entity.path).delete();
+          break;
+        case FileSystemEntityType.link:
+          await Link(entity.path).delete();
+          break;
+        case FileSystemEntityType.notFound:
+          throw StateError('local_export_artifact_changed');
+        default:
+          throw StateError('local_export_artifact_type');
+      }
+    }
+    await directory.delete();
   }
 
   /// Synchronous ZIP packing — runs inside an Isolate.
@@ -745,187 +685,15 @@ class DataSync {
     return entries;
   }
 
-  Future<void> backupToWebDav(WebDavConfig cfg) async {
-    final file = await prepareBackupFile(cfg);
-    try {
-      await _ensureCollection(cfg);
-      final target = _fileUri(cfg, p.basename(file.path));
-      final fileLen = await file.length();
-      // Use a streamed request so we don't load the entire file into RAM.
-      final req = http.StreamedRequest('PUT', target);
-      req.headers.addAll({
-        'content-type': 'application/zip',
-        'content-length': fileLen.toString(),
-        ..._authHeaders(cfg),
-        ..._extraHeaders(cfg),
-      });
-      // Pipe the file stream into the request body.
-      file.openRead().listen(
-        req.sink.add,
-        onDone: req.sink.close,
-        onError: req.sink.addError,
-      );
-      final client = http.Client();
-      try {
-        final res = await client.send(req).then(http.Response.fromStream);
-        if (res.statusCode < 200 || res.statusCode >= 300) {
-          throw Exception('Upload failed: ${res.statusCode}');
-        }
-      } finally {
-        client.close();
-      }
-    } finally {
-      await cleanupTemporaryBackupFile(file);
-    }
-  }
-
-  Future<List<BackupFileItem>> listBackupFiles(WebDavConfig cfg) async {
-    await _ensureCollection(cfg);
-    final uri = _collectionUri(cfg);
-    final req = http.Request('PROPFIND', uri);
-    req.headers.addAll({
-      'Depth': '1',
-      'Content-Type': 'application/xml; charset=utf-8',
-      ..._authHeaders(cfg),
-      ..._extraHeaders(cfg),
-    });
-    req.body =
-        '<?xml version="1.0" encoding="utf-8" ?>\n'
-        '<d:propfind xmlns:d="DAV:">\n'
-        '  <d:prop>\n'
-        '    <d:displayname/>\n'
-        '    <d:getcontentlength/>\n'
-        '    <d:getlastmodified/>\n'
-        '  </d:prop>\n'
-        '</d:propfind>';
-    final res = await http.Client().send(req).then(http.Response.fromStream);
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception('PROPFIND failed: ${res.statusCode}');
-    }
-    final doc = XmlDocument.parse(res.body);
-    final items = <BackupFileItem>[];
-    final baseStr = uri.toString();
-    for (final resp in doc.findAllElements('response', namespace: '*')) {
-      final href = resp.getElement('href', namespace: '*')?.innerText ?? '';
-      if (href.isEmpty) continue;
-      // Skip the collection itself
-      final abs = Uri.parse(href).isAbsolute
-          ? Uri.parse(href).toString()
-          : uri.resolve(href).toString();
-      if (abs == baseStr) continue;
-      final disp = resp
-          .findAllElements('displayname', namespace: '*')
-          .map((e) => e.innerText)
-          .toList();
-      final sizeStr = resp
-          .findAllElements('getcontentlength', namespace: '*')
-          .map((e) => e.innerText)
-          .cast<String>()
-          .toList();
-      final mtimeStr = resp
-          .findAllElements('getlastmodified', namespace: '*')
-          .map((e) => e.innerText)
-          .cast<String>()
-          .toList();
-      final size = (sizeStr.isNotEmpty) ? int.tryParse(sizeStr.first) ?? 0 : 0;
-      DateTime? mtime;
-      if (mtimeStr.isNotEmpty) {
-        try {
-          mtime = DateTime.parse(mtimeStr.first);
-        } catch (_) {}
-      }
-      final name = (disp.isNotEmpty && disp.first.trim().isNotEmpty)
-          ? disp.first.trim()
-          : Uri.parse(href).pathSegments.last;
-
-      // If mtime is null, try to extract from filename (format: kelivo_backup_2025-01-19T12-34-56.123456.zip)
-      if (mtime == null) {
-        final match = RegExp(
-          r'kelivo_backup_(\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}\.\d+)\.zip',
-        ).firstMatch(name);
-        if (match != null) {
-          try {
-            // Replace hyphens in time part back to colons
-            final timestamp = match
-                .group(1)!
-                .replaceAll(
-                  RegExp(r'T(\d{2})-(\d{2})-(\d{2})'),
-                  'T\$1:\$2:\$3',
-                );
-            mtime = DateTime.parse(timestamp);
-          } catch (_) {}
-        }
-      }
-
-      // Skip directories
-      if (abs.endsWith('/')) continue;
-      final fullHref = Uri.parse(abs);
-      items.add(
-        BackupFileItem(
-          href: fullHref,
-          displayName: name,
-          size: size,
-          lastModified: mtime,
-        ),
-      );
-    }
-    items.sort(
-      (a, b) => (b.lastModified ?? DateTime(0)).compareTo(
-        a.lastModified ?? DateTime(0),
-      ),
-    );
-    return items;
-  }
-
-  Future<void> restoreFromWebDav(
-    WebDavConfig cfg,
-    BackupFileItem item, {
-    RestoreMode mode = RestoreMode.overwrite,
-  }) async {
-    // Stream the download to a file instead of buffering in memory.
-    final client = http.Client();
-    File? file;
-    try {
-      final req = http.Request('GET', item.href);
-      req.headers.addAll({..._authHeaders(cfg), ..._extraHeaders(cfg)});
-      final streamed = await client.send(req);
-      if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
-        // Drain the response body to allow the client to close cleanly.
-        await streamed.stream.drain<void>();
-        throw Exception('Download failed: ${streamed.statusCode}');
-      }
-      final tmpDir = await _ensureTempDir();
-      file = await createTemporaryRestoreFile(tmpDir);
-      final sink = file.openWrite();
-      await streamed.stream.pipe(sink);
-      await _restoreFromBackupFile(file, cfg, mode: mode);
-    } finally {
-      client.close();
-      await _deleteFileQuietly(file);
-    }
-  }
-
-  Future<void> deleteWebDavBackupFile(
-    WebDavConfig cfg,
-    BackupFileItem item,
-  ) async {
-    final req = http.Request('DELETE', item.href);
-    req.headers.addAll({..._authHeaders(cfg), ..._extraHeaders(cfg)});
-    final res = await http.Client().send(req).then(http.Response.fromStream);
-    if (res.statusCode < 200 || res.statusCode >= 300) {
-      throw Exception('Delete failed: ${res.statusCode}');
-    }
-  }
-
-  Future<File> exportToFile(WebDavConfig cfg) => prepareBackupFile(cfg);
-
-  Future<void> restoreFromLocalFile(
+  Future<void> restoreLocalFile(
     File file,
-    WebDavConfig cfg, {
+    LocalBackupOptions options, {
     RestoreMode mode = RestoreMode.overwrite,
   }) async {
-    if (!await file.exists()) throw Exception('备份文件不存在');
-    await _restoreFromBackupFile(file, cfg, mode: mode);
+    if (!await file.exists()) {
+      throw const FileSystemException('local_backup_file_missing');
+    }
+    await _restoreFromBackupFile(file, options, mode: mode);
   }
 
   // ===== Internal helpers =====
@@ -1431,7 +1199,7 @@ class DataSync {
 
   Future<void> _restoreFromBackupFile(
     File file,
-    WebDavConfig cfg, {
+    LocalBackupOptions cfg, {
     RestoreMode mode = RestoreMode.overwrite,
   }) async {
     _lastMergeReport = null;
@@ -2565,8 +2333,7 @@ class SharedPreferencesAsync {
     return map;
   }
 
-  /// 常规应用备份会包含凭据，使恢复后的安装仍可使用供应商、代理、
-  /// WebDAV、S3、TTS、MCP 和搜索配置。
+  /// 本地导出保留业务配置；已经退役的远端备份状态不会进入新文件。
   Future<Map<String, dynamic>> snapshotForRegularBackup() async {
     return snapshot();
   }
