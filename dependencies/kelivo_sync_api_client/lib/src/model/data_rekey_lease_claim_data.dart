@@ -4,6 +4,7 @@
 
 // ignore_for_file: unused_element
 import 'package:built_collection/built_collection.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data_source_attachment_cursor_end.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -15,11 +16,15 @@ part 'data_rekey_lease_claim_data.g.dart';
 /// * [phase]
 /// * [operationId]
 /// * [sourceDataGeneration]
+/// * [sourceKeyEpoch]
 /// * [targetKeyEpoch]
 /// * [leaseVersion]
 /// * [leaseExpiresAt]
 /// * [sourceRecordCount]
 /// * [sourceAttachmentCount]
+/// * [sourceMaximumChangeSeq]
+/// * [sourceRecordCursorEnd]
+/// * [sourceAttachmentCursorEnd]
 @BuiltValue()
 abstract class DataRekeyLeaseClaimData
     implements Built<DataRekeyLeaseClaimData, DataRekeyLeaseClaimDataBuilder> {
@@ -32,6 +37,9 @@ abstract class DataRekeyLeaseClaimData
 
   @BuiltValueField(wireName: r'sourceDataGeneration')
   int get sourceDataGeneration;
+
+  @BuiltValueField(wireName: r'sourceKeyEpoch')
+  int get sourceKeyEpoch;
 
   @BuiltValueField(wireName: r'targetKeyEpoch')
   int get targetKeyEpoch;
@@ -47,6 +55,16 @@ abstract class DataRekeyLeaseClaimData
 
   @BuiltValueField(wireName: r'sourceAttachmentCount')
   int get sourceAttachmentCount;
+
+  @BuiltValueField(wireName: r'sourceMaximumChangeSeq')
+  int get sourceMaximumChangeSeq;
+
+  @BuiltValueField(wireName: r'sourceRecordCursorEnd')
+  String? get sourceRecordCursorEnd;
+
+  @BuiltValueField(wireName: r'sourceAttachmentCursorEnd')
+  DataRekeyCompletionProofDataSourceAttachmentCursorEnd?
+  get sourceAttachmentCursorEnd;
 
   DataRekeyLeaseClaimData._();
 
@@ -93,6 +111,11 @@ class _$DataRekeyLeaseClaimDataSerializer
       object.sourceDataGeneration,
       specifiedType: const FullType(int),
     );
+    yield r'sourceKeyEpoch';
+    yield serializers.serialize(
+      object.sourceKeyEpoch,
+      specifiedType: const FullType(int),
+    );
     yield r'targetKeyEpoch';
     yield serializers.serialize(
       object.targetKeyEpoch,
@@ -118,6 +141,27 @@ class _$DataRekeyLeaseClaimDataSerializer
       object.sourceAttachmentCount,
       specifiedType: const FullType(int),
     );
+    yield r'sourceMaximumChangeSeq';
+    yield serializers.serialize(
+      object.sourceMaximumChangeSeq,
+      specifiedType: const FullType(int),
+    );
+    yield r'sourceRecordCursorEnd';
+    yield object.sourceRecordCursorEnd == null
+        ? null
+        : serializers.serialize(
+            object.sourceRecordCursorEnd,
+            specifiedType: const FullType.nullable(String),
+          );
+    yield r'sourceAttachmentCursorEnd';
+    yield object.sourceAttachmentCursorEnd == null
+        ? null
+        : serializers.serialize(
+            object.sourceAttachmentCursorEnd,
+            specifiedType: const FullType.nullable(
+              DataRekeyCompletionProofDataSourceAttachmentCursorEnd,
+            ),
+          );
   }
 
   @override
@@ -171,6 +215,12 @@ class _$DataRekeyLeaseClaimDataSerializer
                   as int;
           result.sourceDataGeneration = valueDes;
           break;
+        case r'sourceKeyEpoch':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.sourceKeyEpoch = valueDes;
+          break;
         case r'targetKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
@@ -203,6 +253,34 @@ class _$DataRekeyLeaseClaimDataSerializer
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
           result.sourceAttachmentCount = valueDes;
+          break;
+        case r'sourceMaximumChangeSeq':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.sourceMaximumChangeSeq = valueDes;
+          break;
+        case r'sourceRecordCursorEnd':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(String),
+                  )
+                  as String?;
+          if (valueDes == null) continue;
+          result.sourceRecordCursorEnd = valueDes;
+          break;
+        case r'sourceAttachmentCursorEnd':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(
+                      DataRekeyCompletionProofDataSourceAttachmentCursorEnd,
+                    ),
+                  )
+                  as DataRekeyCompletionProofDataSourceAttachmentCursorEnd?;
+          if (valueDes == null) continue;
+          result.sourceAttachmentCursorEnd.replace(valueDes);
           break;
         default:
           unhandled.add(key);

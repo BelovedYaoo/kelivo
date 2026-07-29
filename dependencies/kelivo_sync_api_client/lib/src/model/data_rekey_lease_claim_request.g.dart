@@ -12,6 +12,8 @@ class _$DataRekeyLeaseClaimRequest extends DataRekeyLeaseClaimRequest {
   @override
   final int sourceDataGeneration;
   @override
+  final int sourceKeyEpoch;
+  @override
   final int targetKeyEpoch;
   @override
   final String leaseToken;
@@ -25,6 +27,7 @@ class _$DataRekeyLeaseClaimRequest extends DataRekeyLeaseClaimRequest {
   _$DataRekeyLeaseClaimRequest._({
     required this.operationId,
     required this.sourceDataGeneration,
+    required this.sourceKeyEpoch,
     required this.targetKeyEpoch,
     required this.leaseToken,
     required this.mutationId,
@@ -44,6 +47,7 @@ class _$DataRekeyLeaseClaimRequest extends DataRekeyLeaseClaimRequest {
     return other is DataRekeyLeaseClaimRequest &&
         operationId == other.operationId &&
         sourceDataGeneration == other.sourceDataGeneration &&
+        sourceKeyEpoch == other.sourceKeyEpoch &&
         targetKeyEpoch == other.targetKeyEpoch &&
         leaseToken == other.leaseToken &&
         mutationId == other.mutationId;
@@ -54,6 +58,7 @@ class _$DataRekeyLeaseClaimRequest extends DataRekeyLeaseClaimRequest {
     var _$hash = 0;
     _$hash = $jc(_$hash, operationId.hashCode);
     _$hash = $jc(_$hash, sourceDataGeneration.hashCode);
+    _$hash = $jc(_$hash, sourceKeyEpoch.hashCode);
     _$hash = $jc(_$hash, targetKeyEpoch.hashCode);
     _$hash = $jc(_$hash, leaseToken.hashCode);
     _$hash = $jc(_$hash, mutationId.hashCode);
@@ -66,6 +71,7 @@ class _$DataRekeyLeaseClaimRequest extends DataRekeyLeaseClaimRequest {
     return (newBuiltValueToStringHelper(r'DataRekeyLeaseClaimRequest')
           ..add('operationId', operationId)
           ..add('sourceDataGeneration', sourceDataGeneration)
+          ..add('sourceKeyEpoch', sourceKeyEpoch)
           ..add('targetKeyEpoch', targetKeyEpoch)
           ..add('leaseToken', leaseToken)
           ..add('mutationId', mutationId))
@@ -86,6 +92,11 @@ class DataRekeyLeaseClaimRequestBuilder
   int? get sourceDataGeneration => _$this._sourceDataGeneration;
   set sourceDataGeneration(int? sourceDataGeneration) =>
       _$this._sourceDataGeneration = sourceDataGeneration;
+
+  int? _sourceKeyEpoch;
+  int? get sourceKeyEpoch => _$this._sourceKeyEpoch;
+  set sourceKeyEpoch(int? sourceKeyEpoch) =>
+      _$this._sourceKeyEpoch = sourceKeyEpoch;
 
   int? _targetKeyEpoch;
   int? get targetKeyEpoch => _$this._targetKeyEpoch;
@@ -109,6 +120,7 @@ class DataRekeyLeaseClaimRequestBuilder
     if ($v != null) {
       _operationId = $v.operationId;
       _sourceDataGeneration = $v.sourceDataGeneration;
+      _sourceKeyEpoch = $v.sourceKeyEpoch;
       _targetKeyEpoch = $v.targetKeyEpoch;
       _leaseToken = $v.leaseToken;
       _mutationId = $v.mutationId;
@@ -143,6 +155,11 @@ class DataRekeyLeaseClaimRequestBuilder
             sourceDataGeneration,
             r'DataRekeyLeaseClaimRequest',
             'sourceDataGeneration',
+          ),
+          sourceKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            sourceKeyEpoch,
+            r'DataRekeyLeaseClaimRequest',
+            'sourceKeyEpoch',
           ),
           targetKeyEpoch: BuiltValueNullFieldError.checkNotNull(
             targetKeyEpoch,

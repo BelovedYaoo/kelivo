@@ -6,6 +6,7 @@
 import 'package:kelivo_sync_api_client/src/model/data_rekey_ready_state_data.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_pending_state_data.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data_source_attachment_cursor_end.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_pending_lease_data.dart';
 import 'package:built_value/built_value.dart';
@@ -28,6 +29,8 @@ part 'data_rekey_state_data.g.dart';
 /// * [sourceRecordCount]
 /// * [sourceAttachmentCount]
 /// * [sourceMaximumChangeSeq]
+/// * [sourceRecordCursorEnd]
+/// * [sourceAttachmentCursorEnd]
 /// * [lease]
 @BuiltValue()
 abstract class DataRekeyStateData

@@ -13,6 +13,8 @@ class _$DataRekeySourceAttachmentListRequest
   @override
   final int sourceDataGeneration;
   @override
+  final int sourceKeyEpoch;
+  @override
   final int targetKeyEpoch;
   @override
   final String leaseToken;
@@ -20,6 +22,8 @@ class _$DataRekeySourceAttachmentListRequest
   final int leaseVersion;
   @override
   final String? afterAttachmentId;
+  @override
+  final String? afterUploadId;
   @override
   final int? limit;
 
@@ -31,10 +35,12 @@ class _$DataRekeySourceAttachmentListRequest
   _$DataRekeySourceAttachmentListRequest._({
     required this.operationId,
     required this.sourceDataGeneration,
+    required this.sourceKeyEpoch,
     required this.targetKeyEpoch,
     required this.leaseToken,
     required this.leaseVersion,
     this.afterAttachmentId,
+    this.afterUploadId,
     this.limit,
   }) : super._();
   @override
@@ -52,10 +58,12 @@ class _$DataRekeySourceAttachmentListRequest
     return other is DataRekeySourceAttachmentListRequest &&
         operationId == other.operationId &&
         sourceDataGeneration == other.sourceDataGeneration &&
+        sourceKeyEpoch == other.sourceKeyEpoch &&
         targetKeyEpoch == other.targetKeyEpoch &&
         leaseToken == other.leaseToken &&
         leaseVersion == other.leaseVersion &&
         afterAttachmentId == other.afterAttachmentId &&
+        afterUploadId == other.afterUploadId &&
         limit == other.limit;
   }
 
@@ -64,10 +72,12 @@ class _$DataRekeySourceAttachmentListRequest
     var _$hash = 0;
     _$hash = $jc(_$hash, operationId.hashCode);
     _$hash = $jc(_$hash, sourceDataGeneration.hashCode);
+    _$hash = $jc(_$hash, sourceKeyEpoch.hashCode);
     _$hash = $jc(_$hash, targetKeyEpoch.hashCode);
     _$hash = $jc(_$hash, leaseToken.hashCode);
     _$hash = $jc(_$hash, leaseVersion.hashCode);
     _$hash = $jc(_$hash, afterAttachmentId.hashCode);
+    _$hash = $jc(_$hash, afterUploadId.hashCode);
     _$hash = $jc(_$hash, limit.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -78,10 +88,12 @@ class _$DataRekeySourceAttachmentListRequest
     return (newBuiltValueToStringHelper(r'DataRekeySourceAttachmentListRequest')
           ..add('operationId', operationId)
           ..add('sourceDataGeneration', sourceDataGeneration)
+          ..add('sourceKeyEpoch', sourceKeyEpoch)
           ..add('targetKeyEpoch', targetKeyEpoch)
           ..add('leaseToken', leaseToken)
           ..add('leaseVersion', leaseVersion)
           ..add('afterAttachmentId', afterAttachmentId)
+          ..add('afterUploadId', afterUploadId)
           ..add('limit', limit))
         .toString();
   }
@@ -104,6 +116,11 @@ class DataRekeySourceAttachmentListRequestBuilder
   set sourceDataGeneration(int? sourceDataGeneration) =>
       _$this._sourceDataGeneration = sourceDataGeneration;
 
+  int? _sourceKeyEpoch;
+  int? get sourceKeyEpoch => _$this._sourceKeyEpoch;
+  set sourceKeyEpoch(int? sourceKeyEpoch) =>
+      _$this._sourceKeyEpoch = sourceKeyEpoch;
+
   int? _targetKeyEpoch;
   int? get targetKeyEpoch => _$this._targetKeyEpoch;
   set targetKeyEpoch(int? targetKeyEpoch) =>
@@ -122,6 +139,11 @@ class DataRekeySourceAttachmentListRequestBuilder
   set afterAttachmentId(String? afterAttachmentId) =>
       _$this._afterAttachmentId = afterAttachmentId;
 
+  String? _afterUploadId;
+  String? get afterUploadId => _$this._afterUploadId;
+  set afterUploadId(String? afterUploadId) =>
+      _$this._afterUploadId = afterUploadId;
+
   int? _limit;
   int? get limit => _$this._limit;
   set limit(int? limit) => _$this._limit = limit;
@@ -135,10 +157,12 @@ class DataRekeySourceAttachmentListRequestBuilder
     if ($v != null) {
       _operationId = $v.operationId;
       _sourceDataGeneration = $v.sourceDataGeneration;
+      _sourceKeyEpoch = $v.sourceKeyEpoch;
       _targetKeyEpoch = $v.targetKeyEpoch;
       _leaseToken = $v.leaseToken;
       _leaseVersion = $v.leaseVersion;
       _afterAttachmentId = $v.afterAttachmentId;
+      _afterUploadId = $v.afterUploadId;
       _limit = $v.limit;
       _$v = null;
     }
@@ -174,6 +198,11 @@ class DataRekeySourceAttachmentListRequestBuilder
             r'DataRekeySourceAttachmentListRequest',
             'sourceDataGeneration',
           ),
+          sourceKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            sourceKeyEpoch,
+            r'DataRekeySourceAttachmentListRequest',
+            'sourceKeyEpoch',
+          ),
           targetKeyEpoch: BuiltValueNullFieldError.checkNotNull(
             targetKeyEpoch,
             r'DataRekeySourceAttachmentListRequest',
@@ -190,6 +219,7 @@ class DataRekeySourceAttachmentListRequestBuilder
             'leaseVersion',
           ),
           afterAttachmentId: afterAttachmentId,
+          afterUploadId: afterUploadId,
           limit: limit,
         );
     replace(_$result);

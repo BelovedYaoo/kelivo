@@ -3,8 +3,8 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/data_rekey_source_record_list_data_records_inner.dart';
 import 'package:built_collection/built_collection.dart';
-import 'package:kelivo_sync_api_client/src/model/sync_record.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -24,7 +24,7 @@ abstract class DataRekeySourceRecordListData
           DataRekeySourceRecordListDataBuilder
         > {
   @BuiltValueField(wireName: r'records')
-  BuiltList<SyncRecord> get records;
+  BuiltList<DataRekeySourceRecordListDataRecordsInner> get records;
 
   @BuiltValueField(wireName: r'nextAfterRecordId')
   String? get nextAfterRecordId;
@@ -65,7 +65,9 @@ class _$DataRekeySourceRecordListDataSerializer
     yield r'records';
     yield serializers.serialize(
       object.records,
-      specifiedType: const FullType(BuiltList, [FullType(SyncRecord)]),
+      specifiedType: const FullType(BuiltList, [
+        FullType(DataRekeySourceRecordListDataRecordsInner),
+      ]),
     );
     yield r'nextAfterRecordId';
     yield object.nextAfterRecordId == null
@@ -111,10 +113,10 @@ class _$DataRekeySourceRecordListDataSerializer
               serializers.deserialize(
                     value,
                     specifiedType: const FullType(BuiltList, [
-                      FullType(SyncRecord),
+                      FullType(DataRekeySourceRecordListDataRecordsInner),
                     ]),
                   )
-                  as BuiltList<SyncRecord>;
+                  as BuiltList<DataRekeySourceRecordListDataRecordsInner>;
           result.records.replace(valueDes);
           break;
         case r'nextAfterRecordId':

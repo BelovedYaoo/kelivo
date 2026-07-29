@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data_source_attachment_cursor_end.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -11,8 +12,16 @@ part 'data_rekey_finalize_request_proof.g.dart';
 /// DataRekeyFinalizeRequestProof
 ///
 /// Properties:
+/// * [proofVersion]
 /// * [issuerDeviceId]
 /// * [targetDataGeneration]
+/// * [sourceSnapshotRoot]
+/// * [sourceRecordCount]
+/// * [sourceAttachmentCount]
+/// * [sourceMaximumChangeSeq]
+/// * [sourceRecordCursorEnd]
+/// * [sourceAttachmentCursorEnd]
+/// * [membershipGeneration]
 /// * [membershipManifestDigest]
 /// * [stagedRecordCount]
 /// * [stagedAttachmentCount]
@@ -25,11 +34,36 @@ abstract class DataRekeyFinalizeRequestProof
           DataRekeyFinalizeRequestProof,
           DataRekeyFinalizeRequestProofBuilder
         > {
+  @BuiltValueField(wireName: r'proofVersion')
+  int get proofVersion;
+
   @BuiltValueField(wireName: r'issuerDeviceId')
   String get issuerDeviceId;
 
   @BuiltValueField(wireName: r'targetDataGeneration')
   int get targetDataGeneration;
+
+  @BuiltValueField(wireName: r'sourceSnapshotRoot')
+  String get sourceSnapshotRoot;
+
+  @BuiltValueField(wireName: r'sourceRecordCount')
+  int get sourceRecordCount;
+
+  @BuiltValueField(wireName: r'sourceAttachmentCount')
+  int get sourceAttachmentCount;
+
+  @BuiltValueField(wireName: r'sourceMaximumChangeSeq')
+  int get sourceMaximumChangeSeq;
+
+  @BuiltValueField(wireName: r'sourceRecordCursorEnd')
+  String? get sourceRecordCursorEnd;
+
+  @BuiltValueField(wireName: r'sourceAttachmentCursorEnd')
+  DataRekeyCompletionProofDataSourceAttachmentCursorEnd?
+  get sourceAttachmentCursorEnd;
+
+  @BuiltValueField(wireName: r'membershipGeneration')
+  int get membershipGeneration;
 
   @BuiltValueField(wireName: r'membershipManifestDigest')
   String get membershipManifestDigest;
@@ -76,6 +110,11 @@ class _$DataRekeyFinalizeRequestProofSerializer
     DataRekeyFinalizeRequestProof object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'proofVersion';
+    yield serializers.serialize(
+      object.proofVersion,
+      specifiedType: const FullType(int),
+    );
     yield r'issuerDeviceId';
     yield serializers.serialize(
       object.issuerDeviceId,
@@ -84,6 +123,47 @@ class _$DataRekeyFinalizeRequestProofSerializer
     yield r'targetDataGeneration';
     yield serializers.serialize(
       object.targetDataGeneration,
+      specifiedType: const FullType(int),
+    );
+    yield r'sourceSnapshotRoot';
+    yield serializers.serialize(
+      object.sourceSnapshotRoot,
+      specifiedType: const FullType(String),
+    );
+    yield r'sourceRecordCount';
+    yield serializers.serialize(
+      object.sourceRecordCount,
+      specifiedType: const FullType(int),
+    );
+    yield r'sourceAttachmentCount';
+    yield serializers.serialize(
+      object.sourceAttachmentCount,
+      specifiedType: const FullType(int),
+    );
+    yield r'sourceMaximumChangeSeq';
+    yield serializers.serialize(
+      object.sourceMaximumChangeSeq,
+      specifiedType: const FullType(int),
+    );
+    yield r'sourceRecordCursorEnd';
+    yield object.sourceRecordCursorEnd == null
+        ? null
+        : serializers.serialize(
+            object.sourceRecordCursorEnd,
+            specifiedType: const FullType.nullable(String),
+          );
+    yield r'sourceAttachmentCursorEnd';
+    yield object.sourceAttachmentCursorEnd == null
+        ? null
+        : serializers.serialize(
+            object.sourceAttachmentCursorEnd,
+            specifiedType: const FullType.nullable(
+              DataRekeyCompletionProofDataSourceAttachmentCursorEnd,
+            ),
+          );
+    yield r'membershipGeneration';
+    yield serializers.serialize(
+      object.membershipGeneration,
       specifiedType: const FullType(int),
     );
     yield r'membershipManifestDigest';
@@ -138,6 +218,12 @@ class _$DataRekeyFinalizeRequestProofSerializer
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'proofVersion':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.proofVersion = valueDes;
+          break;
         case r'issuerDeviceId':
           final valueDes =
               serializers.deserialize(
@@ -152,6 +238,61 @@ class _$DataRekeyFinalizeRequestProofSerializer
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
           result.targetDataGeneration = valueDes;
+          break;
+        case r'sourceSnapshotRoot':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.sourceSnapshotRoot = valueDes;
+          break;
+        case r'sourceRecordCount':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.sourceRecordCount = valueDes;
+          break;
+        case r'sourceAttachmentCount':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.sourceAttachmentCount = valueDes;
+          break;
+        case r'sourceMaximumChangeSeq':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.sourceMaximumChangeSeq = valueDes;
+          break;
+        case r'sourceRecordCursorEnd':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(String),
+                  )
+                  as String?;
+          if (valueDes == null) continue;
+          result.sourceRecordCursorEnd = valueDes;
+          break;
+        case r'sourceAttachmentCursorEnd':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(
+                      DataRekeyCompletionProofDataSourceAttachmentCursorEnd,
+                    ),
+                  )
+                  as DataRekeyCompletionProofDataSourceAttachmentCursorEnd?;
+          if (valueDes == null) continue;
+          result.sourceAttachmentCursorEnd.replace(valueDes);
+          break;
+        case r'membershipGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.membershipGeneration = valueDes;
           break;
         case r'membershipManifestDigest':
           final valueDes =

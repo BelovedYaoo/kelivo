@@ -43,6 +43,7 @@ import 'package:kelivo_sync_api_client/src/model/create_encrypted_attachment_upl
 import 'package:kelivo_sync_api_client/src/model/data_rekey_attachment_stage_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_attachment_stage_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data_source_attachment_cursor_end.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_finalize_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_finalize_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_finalize_request_proof.dart';
@@ -54,9 +55,11 @@ import 'package:kelivo_sync_api_client/src/model/data_rekey_ready_state_data.dar
 import 'package:kelivo_sync_api_client/src/model/data_rekey_record_stage_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_record_stage_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_source_attachment_data.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_source_attachment_data_chunks_inner.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_source_attachment_list_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_source_attachment_list_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_source_record_list_data.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_source_record_list_data_records_inner.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_source_record_list_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_state_data.dart';
 import 'package:kelivo_sync_api_client/src/model/delete_encrypted_attachment_response.dart';
@@ -183,6 +186,7 @@ part 'serializers.g.dart';
   DataRekeyAttachmentStageData,
   DataRekeyAttachmentStageRequest,
   DataRekeyCompletionProofData,
+  DataRekeyCompletionProofDataSourceAttachmentCursorEnd,
   DataRekeyFinalizeData,
   DataRekeyFinalizeRequest,
   DataRekeyFinalizeRequestProof,
@@ -194,9 +198,11 @@ part 'serializers.g.dart';
   DataRekeyRecordStageData,
   DataRekeyRecordStageRequest,
   DataRekeySourceAttachmentData,
+  DataRekeySourceAttachmentDataChunksInner,
   DataRekeySourceAttachmentListData,
   DataRekeySourceAttachmentListRequest,
   DataRekeySourceRecordListData,
+  DataRekeySourceRecordListDataRecordsInner,
   DataRekeySourceRecordListRequest,
   DataRekeyStateData,
   DeleteEncryptedAttachmentResponse,

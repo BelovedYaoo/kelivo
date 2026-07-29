@@ -55,6 +55,9 @@ Serializers _$serializers =
           ..add(DataRekeyAttachmentStageDataResultEnum.serializer)
           ..add(DataRekeyAttachmentStageRequest.serializer)
           ..add(DataRekeyCompletionProofData.serializer)
+          ..add(
+            DataRekeyCompletionProofDataSourceAttachmentCursorEnd.serializer,
+          )
           ..add(DataRekeyFinalizeData.serializer)
           ..add(DataRekeyFinalizeDataResultEnum.serializer)
           ..add(DataRekeyFinalizeRequest.serializer)
@@ -71,9 +74,12 @@ Serializers _$serializers =
           ..add(DataRekeyRecordStageDataResultEnum.serializer)
           ..add(DataRekeyRecordStageRequest.serializer)
           ..add(DataRekeySourceAttachmentData.serializer)
+          ..add(DataRekeySourceAttachmentDataChunksInner.serializer)
           ..add(DataRekeySourceAttachmentListData.serializer)
           ..add(DataRekeySourceAttachmentListRequest.serializer)
           ..add(DataRekeySourceRecordListData.serializer)
+          ..add(DataRekeySourceRecordListDataRecordsInner.serializer)
+          ..add(DataRekeySourceRecordListDataRecordsInnerKindEnum.serializer)
           ..add(DataRekeySourceRecordListRequest.serializer)
           ..add(DataRekeyStateData.serializer)
           ..add(DeleteEncryptedAttachmentResponse.serializer)
@@ -237,15 +243,21 @@ Serializers _$serializers =
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
-              const FullType(AttachmentManifestChunk),
-            ]),
-            () => ListBuilder<AttachmentManifestChunk>(),
-          )
-          ..addBuilderFactory(
-            const FullType(BuiltList, const [
               const FullType(DataRekeySourceAttachmentData),
             ]),
             () => ListBuilder<DataRekeySourceAttachmentData>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(DataRekeySourceAttachmentDataChunksInner),
+            ]),
+            () => ListBuilder<DataRekeySourceAttachmentDataChunksInner>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(DataRekeySourceRecordListDataRecordsInner),
+            ]),
+            () => ListBuilder<DataRekeySourceRecordListDataRecordsInner>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncChange)]),
@@ -268,10 +280,6 @@ Serializers _$serializers =
               const FullType(SyncMutationResult),
             ]),
             () => ListBuilder<SyncMutationResult>(),
-          )
-          ..addBuilderFactory(
-            const FullType(BuiltList, const [const FullType(SyncRecord)]),
-            () => ListBuilder<SyncRecord>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncRecord)]),

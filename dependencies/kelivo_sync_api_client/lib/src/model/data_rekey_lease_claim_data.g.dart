@@ -72,6 +72,8 @@ class _$DataRekeyLeaseClaimData extends DataRekeyLeaseClaimData {
   @override
   final int sourceDataGeneration;
   @override
+  final int sourceKeyEpoch;
+  @override
   final int targetKeyEpoch;
   @override
   final int leaseVersion;
@@ -81,6 +83,13 @@ class _$DataRekeyLeaseClaimData extends DataRekeyLeaseClaimData {
   final int sourceRecordCount;
   @override
   final int sourceAttachmentCount;
+  @override
+  final int sourceMaximumChangeSeq;
+  @override
+  final String? sourceRecordCursorEnd;
+  @override
+  final DataRekeyCompletionProofDataSourceAttachmentCursorEnd?
+  sourceAttachmentCursorEnd;
 
   factory _$DataRekeyLeaseClaimData([
     void Function(DataRekeyLeaseClaimDataBuilder)? updates,
@@ -90,11 +99,15 @@ class _$DataRekeyLeaseClaimData extends DataRekeyLeaseClaimData {
     required this.phase,
     required this.operationId,
     required this.sourceDataGeneration,
+    required this.sourceKeyEpoch,
     required this.targetKeyEpoch,
     required this.leaseVersion,
     required this.leaseExpiresAt,
     required this.sourceRecordCount,
     required this.sourceAttachmentCount,
+    required this.sourceMaximumChangeSeq,
+    this.sourceRecordCursorEnd,
+    this.sourceAttachmentCursorEnd,
   }) : super._();
   @override
   DataRekeyLeaseClaimData rebuild(
@@ -112,11 +125,15 @@ class _$DataRekeyLeaseClaimData extends DataRekeyLeaseClaimData {
         phase == other.phase &&
         operationId == other.operationId &&
         sourceDataGeneration == other.sourceDataGeneration &&
+        sourceKeyEpoch == other.sourceKeyEpoch &&
         targetKeyEpoch == other.targetKeyEpoch &&
         leaseVersion == other.leaseVersion &&
         leaseExpiresAt == other.leaseExpiresAt &&
         sourceRecordCount == other.sourceRecordCount &&
-        sourceAttachmentCount == other.sourceAttachmentCount;
+        sourceAttachmentCount == other.sourceAttachmentCount &&
+        sourceMaximumChangeSeq == other.sourceMaximumChangeSeq &&
+        sourceRecordCursorEnd == other.sourceRecordCursorEnd &&
+        sourceAttachmentCursorEnd == other.sourceAttachmentCursorEnd;
   }
 
   @override
@@ -125,11 +142,15 @@ class _$DataRekeyLeaseClaimData extends DataRekeyLeaseClaimData {
     _$hash = $jc(_$hash, phase.hashCode);
     _$hash = $jc(_$hash, operationId.hashCode);
     _$hash = $jc(_$hash, sourceDataGeneration.hashCode);
+    _$hash = $jc(_$hash, sourceKeyEpoch.hashCode);
     _$hash = $jc(_$hash, targetKeyEpoch.hashCode);
     _$hash = $jc(_$hash, leaseVersion.hashCode);
     _$hash = $jc(_$hash, leaseExpiresAt.hashCode);
     _$hash = $jc(_$hash, sourceRecordCount.hashCode);
     _$hash = $jc(_$hash, sourceAttachmentCount.hashCode);
+    _$hash = $jc(_$hash, sourceMaximumChangeSeq.hashCode);
+    _$hash = $jc(_$hash, sourceRecordCursorEnd.hashCode);
+    _$hash = $jc(_$hash, sourceAttachmentCursorEnd.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -140,11 +161,15 @@ class _$DataRekeyLeaseClaimData extends DataRekeyLeaseClaimData {
           ..add('phase', phase)
           ..add('operationId', operationId)
           ..add('sourceDataGeneration', sourceDataGeneration)
+          ..add('sourceKeyEpoch', sourceKeyEpoch)
           ..add('targetKeyEpoch', targetKeyEpoch)
           ..add('leaseVersion', leaseVersion)
           ..add('leaseExpiresAt', leaseExpiresAt)
           ..add('sourceRecordCount', sourceRecordCount)
-          ..add('sourceAttachmentCount', sourceAttachmentCount))
+          ..add('sourceAttachmentCount', sourceAttachmentCount)
+          ..add('sourceMaximumChangeSeq', sourceMaximumChangeSeq)
+          ..add('sourceRecordCursorEnd', sourceRecordCursorEnd)
+          ..add('sourceAttachmentCursorEnd', sourceAttachmentCursorEnd))
         .toString();
   }
 }
@@ -166,6 +191,11 @@ class DataRekeyLeaseClaimDataBuilder
   int? get sourceDataGeneration => _$this._sourceDataGeneration;
   set sourceDataGeneration(int? sourceDataGeneration) =>
       _$this._sourceDataGeneration = sourceDataGeneration;
+
+  int? _sourceKeyEpoch;
+  int? get sourceKeyEpoch => _$this._sourceKeyEpoch;
+  set sourceKeyEpoch(int? sourceKeyEpoch) =>
+      _$this._sourceKeyEpoch = sourceKeyEpoch;
 
   int? _targetKeyEpoch;
   int? get targetKeyEpoch => _$this._targetKeyEpoch;
@@ -191,6 +221,26 @@ class DataRekeyLeaseClaimDataBuilder
   set sourceAttachmentCount(int? sourceAttachmentCount) =>
       _$this._sourceAttachmentCount = sourceAttachmentCount;
 
+  int? _sourceMaximumChangeSeq;
+  int? get sourceMaximumChangeSeq => _$this._sourceMaximumChangeSeq;
+  set sourceMaximumChangeSeq(int? sourceMaximumChangeSeq) =>
+      _$this._sourceMaximumChangeSeq = sourceMaximumChangeSeq;
+
+  String? _sourceRecordCursorEnd;
+  String? get sourceRecordCursorEnd => _$this._sourceRecordCursorEnd;
+  set sourceRecordCursorEnd(String? sourceRecordCursorEnd) =>
+      _$this._sourceRecordCursorEnd = sourceRecordCursorEnd;
+
+  DataRekeyCompletionProofDataSourceAttachmentCursorEndBuilder?
+  _sourceAttachmentCursorEnd;
+  DataRekeyCompletionProofDataSourceAttachmentCursorEndBuilder
+  get sourceAttachmentCursorEnd => _$this._sourceAttachmentCursorEnd ??=
+      DataRekeyCompletionProofDataSourceAttachmentCursorEndBuilder();
+  set sourceAttachmentCursorEnd(
+    DataRekeyCompletionProofDataSourceAttachmentCursorEndBuilder?
+    sourceAttachmentCursorEnd,
+  ) => _$this._sourceAttachmentCursorEnd = sourceAttachmentCursorEnd;
+
   DataRekeyLeaseClaimDataBuilder() {
     DataRekeyLeaseClaimData._defaults(this);
   }
@@ -201,11 +251,15 @@ class DataRekeyLeaseClaimDataBuilder
       _phase = $v.phase;
       _operationId = $v.operationId;
       _sourceDataGeneration = $v.sourceDataGeneration;
+      _sourceKeyEpoch = $v.sourceKeyEpoch;
       _targetKeyEpoch = $v.targetKeyEpoch;
       _leaseVersion = $v.leaseVersion;
       _leaseExpiresAt = $v.leaseExpiresAt;
       _sourceRecordCount = $v.sourceRecordCount;
       _sourceAttachmentCount = $v.sourceAttachmentCount;
+      _sourceMaximumChangeSeq = $v.sourceMaximumChangeSeq;
+      _sourceRecordCursorEnd = $v.sourceRecordCursorEnd;
+      _sourceAttachmentCursorEnd = $v.sourceAttachmentCursorEnd?.toBuilder();
       _$v = null;
     }
     return this;
@@ -225,50 +279,78 @@ class DataRekeyLeaseClaimDataBuilder
   DataRekeyLeaseClaimData build() => _build();
 
   _$DataRekeyLeaseClaimData _build() {
-    final _$result =
-        _$v ??
-        _$DataRekeyLeaseClaimData._(
-          phase: BuiltValueNullFieldError.checkNotNull(
-            phase,
-            r'DataRekeyLeaseClaimData',
-            'phase',
-          ),
-          operationId: BuiltValueNullFieldError.checkNotNull(
-            operationId,
-            r'DataRekeyLeaseClaimData',
-            'operationId',
-          ),
-          sourceDataGeneration: BuiltValueNullFieldError.checkNotNull(
-            sourceDataGeneration,
-            r'DataRekeyLeaseClaimData',
-            'sourceDataGeneration',
-          ),
-          targetKeyEpoch: BuiltValueNullFieldError.checkNotNull(
-            targetKeyEpoch,
-            r'DataRekeyLeaseClaimData',
-            'targetKeyEpoch',
-          ),
-          leaseVersion: BuiltValueNullFieldError.checkNotNull(
-            leaseVersion,
-            r'DataRekeyLeaseClaimData',
-            'leaseVersion',
-          ),
-          leaseExpiresAt: BuiltValueNullFieldError.checkNotNull(
-            leaseExpiresAt,
-            r'DataRekeyLeaseClaimData',
-            'leaseExpiresAt',
-          ),
-          sourceRecordCount: BuiltValueNullFieldError.checkNotNull(
-            sourceRecordCount,
-            r'DataRekeyLeaseClaimData',
-            'sourceRecordCount',
-          ),
-          sourceAttachmentCount: BuiltValueNullFieldError.checkNotNull(
-            sourceAttachmentCount,
-            r'DataRekeyLeaseClaimData',
-            'sourceAttachmentCount',
-          ),
+    _$DataRekeyLeaseClaimData _$result;
+    try {
+      _$result =
+          _$v ??
+          _$DataRekeyLeaseClaimData._(
+            phase: BuiltValueNullFieldError.checkNotNull(
+              phase,
+              r'DataRekeyLeaseClaimData',
+              'phase',
+            ),
+            operationId: BuiltValueNullFieldError.checkNotNull(
+              operationId,
+              r'DataRekeyLeaseClaimData',
+              'operationId',
+            ),
+            sourceDataGeneration: BuiltValueNullFieldError.checkNotNull(
+              sourceDataGeneration,
+              r'DataRekeyLeaseClaimData',
+              'sourceDataGeneration',
+            ),
+            sourceKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+              sourceKeyEpoch,
+              r'DataRekeyLeaseClaimData',
+              'sourceKeyEpoch',
+            ),
+            targetKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+              targetKeyEpoch,
+              r'DataRekeyLeaseClaimData',
+              'targetKeyEpoch',
+            ),
+            leaseVersion: BuiltValueNullFieldError.checkNotNull(
+              leaseVersion,
+              r'DataRekeyLeaseClaimData',
+              'leaseVersion',
+            ),
+            leaseExpiresAt: BuiltValueNullFieldError.checkNotNull(
+              leaseExpiresAt,
+              r'DataRekeyLeaseClaimData',
+              'leaseExpiresAt',
+            ),
+            sourceRecordCount: BuiltValueNullFieldError.checkNotNull(
+              sourceRecordCount,
+              r'DataRekeyLeaseClaimData',
+              'sourceRecordCount',
+            ),
+            sourceAttachmentCount: BuiltValueNullFieldError.checkNotNull(
+              sourceAttachmentCount,
+              r'DataRekeyLeaseClaimData',
+              'sourceAttachmentCount',
+            ),
+            sourceMaximumChangeSeq: BuiltValueNullFieldError.checkNotNull(
+              sourceMaximumChangeSeq,
+              r'DataRekeyLeaseClaimData',
+              'sourceMaximumChangeSeq',
+            ),
+            sourceRecordCursorEnd: sourceRecordCursorEnd,
+            sourceAttachmentCursorEnd: _sourceAttachmentCursorEnd?.build(),
+          );
+    } catch (_) {
+      late String _$failedField;
+      try {
+        _$failedField = 'sourceAttachmentCursorEnd';
+        _sourceAttachmentCursorEnd?.build();
+      } catch (e) {
+        throw BuiltValueNestedFieldError(
+          r'DataRekeyLeaseClaimData',
+          _$failedField,
+          e.toString(),
         );
+      }
+      rethrow;
+    }
     replace(_$result);
     return _$result;
   }

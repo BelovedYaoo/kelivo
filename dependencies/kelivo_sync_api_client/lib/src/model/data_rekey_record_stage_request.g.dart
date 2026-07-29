@@ -12,6 +12,8 @@ class _$DataRekeyRecordStageRequest extends DataRekeyRecordStageRequest {
   @override
   final int sourceDataGeneration;
   @override
+  final int sourceKeyEpoch;
+  @override
   final int targetKeyEpoch;
   @override
   final String leaseToken;
@@ -37,6 +39,7 @@ class _$DataRekeyRecordStageRequest extends DataRekeyRecordStageRequest {
   _$DataRekeyRecordStageRequest._({
     required this.operationId,
     required this.sourceDataGeneration,
+    required this.sourceKeyEpoch,
     required this.targetKeyEpoch,
     required this.leaseToken,
     required this.leaseVersion,
@@ -62,6 +65,7 @@ class _$DataRekeyRecordStageRequest extends DataRekeyRecordStageRequest {
     return other is DataRekeyRecordStageRequest &&
         operationId == other.operationId &&
         sourceDataGeneration == other.sourceDataGeneration &&
+        sourceKeyEpoch == other.sourceKeyEpoch &&
         targetKeyEpoch == other.targetKeyEpoch &&
         leaseToken == other.leaseToken &&
         leaseVersion == other.leaseVersion &&
@@ -78,6 +82,7 @@ class _$DataRekeyRecordStageRequest extends DataRekeyRecordStageRequest {
     var _$hash = 0;
     _$hash = $jc(_$hash, operationId.hashCode);
     _$hash = $jc(_$hash, sourceDataGeneration.hashCode);
+    _$hash = $jc(_$hash, sourceKeyEpoch.hashCode);
     _$hash = $jc(_$hash, targetKeyEpoch.hashCode);
     _$hash = $jc(_$hash, leaseToken.hashCode);
     _$hash = $jc(_$hash, leaseVersion.hashCode);
@@ -96,6 +101,7 @@ class _$DataRekeyRecordStageRequest extends DataRekeyRecordStageRequest {
     return (newBuiltValueToStringHelper(r'DataRekeyRecordStageRequest')
           ..add('operationId', operationId)
           ..add('sourceDataGeneration', sourceDataGeneration)
+          ..add('sourceKeyEpoch', sourceKeyEpoch)
           ..add('targetKeyEpoch', targetKeyEpoch)
           ..add('leaseToken', leaseToken)
           ..add('leaseVersion', leaseVersion)
@@ -125,6 +131,11 @@ class DataRekeyRecordStageRequestBuilder
   int? get sourceDataGeneration => _$this._sourceDataGeneration;
   set sourceDataGeneration(int? sourceDataGeneration) =>
       _$this._sourceDataGeneration = sourceDataGeneration;
+
+  int? _sourceKeyEpoch;
+  int? get sourceKeyEpoch => _$this._sourceKeyEpoch;
+  set sourceKeyEpoch(int? sourceKeyEpoch) =>
+      _$this._sourceKeyEpoch = sourceKeyEpoch;
 
   int? _targetKeyEpoch;
   int? get targetKeyEpoch => _$this._targetKeyEpoch;
@@ -176,6 +187,7 @@ class DataRekeyRecordStageRequestBuilder
     if ($v != null) {
       _operationId = $v.operationId;
       _sourceDataGeneration = $v.sourceDataGeneration;
+      _sourceKeyEpoch = $v.sourceKeyEpoch;
       _targetKeyEpoch = $v.targetKeyEpoch;
       _leaseToken = $v.leaseToken;
       _leaseVersion = $v.leaseVersion;
@@ -216,6 +228,11 @@ class DataRekeyRecordStageRequestBuilder
             sourceDataGeneration,
             r'DataRekeyRecordStageRequest',
             'sourceDataGeneration',
+          ),
+          sourceKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            sourceKeyEpoch,
+            r'DataRekeyRecordStageRequest',
+            'sourceKeyEpoch',
           ),
           targetKeyEpoch: BuiltValueNullFieldError.checkNotNull(
             targetKeyEpoch,

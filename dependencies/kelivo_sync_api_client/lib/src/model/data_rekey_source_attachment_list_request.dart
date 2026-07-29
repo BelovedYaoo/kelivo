@@ -13,10 +13,12 @@ part 'data_rekey_source_attachment_list_request.g.dart';
 /// Properties:
 /// * [operationId]
 /// * [sourceDataGeneration]
+/// * [sourceKeyEpoch]
 /// * [targetKeyEpoch]
 /// * [leaseToken]
 /// * [leaseVersion]
 /// * [afterAttachmentId]
+/// * [afterUploadId]
 /// * [limit]
 @BuiltValue()
 abstract class DataRekeySourceAttachmentListRequest
@@ -31,6 +33,9 @@ abstract class DataRekeySourceAttachmentListRequest
   @BuiltValueField(wireName: r'sourceDataGeneration')
   int get sourceDataGeneration;
 
+  @BuiltValueField(wireName: r'sourceKeyEpoch')
+  int get sourceKeyEpoch;
+
   @BuiltValueField(wireName: r'targetKeyEpoch')
   int get targetKeyEpoch;
 
@@ -42,6 +47,9 @@ abstract class DataRekeySourceAttachmentListRequest
 
   @BuiltValueField(wireName: r'afterAttachmentId')
   String? get afterAttachmentId;
+
+  @BuiltValueField(wireName: r'afterUploadId')
+  String? get afterUploadId;
 
   @BuiltValueField(wireName: r'limit')
   int? get limit;
@@ -87,6 +95,11 @@ class _$DataRekeySourceAttachmentListRequestSerializer
       object.sourceDataGeneration,
       specifiedType: const FullType(int),
     );
+    yield r'sourceKeyEpoch';
+    yield serializers.serialize(
+      object.sourceKeyEpoch,
+      specifiedType: const FullType(int),
+    );
     yield r'targetKeyEpoch';
     yield serializers.serialize(
       object.targetKeyEpoch,
@@ -106,6 +119,13 @@ class _$DataRekeySourceAttachmentListRequestSerializer
       yield r'afterAttachmentId';
       yield serializers.serialize(
         object.afterAttachmentId,
+        specifiedType: const FullType.nullable(String),
+      );
+    }
+    if (object.afterUploadId != null) {
+      yield r'afterUploadId';
+      yield serializers.serialize(
+        object.afterUploadId,
         specifiedType: const FullType.nullable(String),
       );
     }
@@ -158,6 +178,12 @@ class _$DataRekeySourceAttachmentListRequestSerializer
                   as int;
           result.sourceDataGeneration = valueDes;
           break;
+        case r'sourceKeyEpoch':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.sourceKeyEpoch = valueDes;
+          break;
         case r'targetKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
@@ -188,6 +214,16 @@ class _$DataRekeySourceAttachmentListRequestSerializer
                   as String?;
           if (valueDes == null) continue;
           result.afterAttachmentId = valueDes;
+          break;
+        case r'afterUploadId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(String),
+                  )
+                  as String?;
+          if (valueDes == null) continue;
+          result.afterUploadId = valueDes;
           break;
         case r'limit':
           final valueDes =

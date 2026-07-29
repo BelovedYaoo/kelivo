@@ -15,6 +15,7 @@ part 'data_rekey_source_attachment_list_data.g.dart';
 /// Properties:
 /// * [attachments]
 /// * [nextAfterAttachmentId]
+/// * [nextAfterUploadId]
 /// * [hasMore]
 @BuiltValue()
 abstract class DataRekeySourceAttachmentListData
@@ -28,6 +29,9 @@ abstract class DataRekeySourceAttachmentListData
 
   @BuiltValueField(wireName: r'nextAfterAttachmentId')
   String? get nextAfterAttachmentId;
+
+  @BuiltValueField(wireName: r'nextAfterUploadId')
+  String? get nextAfterUploadId;
 
   @BuiltValueField(wireName: r'hasMore')
   bool get hasMore;
@@ -74,6 +78,13 @@ class _$DataRekeySourceAttachmentListDataSerializer
         ? null
         : serializers.serialize(
             object.nextAfterAttachmentId,
+            specifiedType: const FullType.nullable(String),
+          );
+    yield r'nextAfterUploadId';
+    yield object.nextAfterUploadId == null
+        ? null
+        : serializers.serialize(
+            object.nextAfterUploadId,
             specifiedType: const FullType.nullable(String),
           );
     yield r'hasMore';
@@ -128,6 +139,16 @@ class _$DataRekeySourceAttachmentListDataSerializer
                   as String?;
           if (valueDes == null) continue;
           result.nextAfterAttachmentId = valueDes;
+          break;
+        case r'nextAfterUploadId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(String),
+                  )
+                  as String?;
+          if (valueDes == null) continue;
+          result.nextAfterUploadId = valueDes;
           break;
         case r'hasMore':
           final valueDes =

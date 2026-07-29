@@ -13,6 +13,8 @@ class _$DataRekeySourceAttachmentListData
   @override
   final String? nextAfterAttachmentId;
   @override
+  final String? nextAfterUploadId;
+  @override
   final bool hasMore;
 
   factory _$DataRekeySourceAttachmentListData([
@@ -22,6 +24,7 @@ class _$DataRekeySourceAttachmentListData
   _$DataRekeySourceAttachmentListData._({
     required this.attachments,
     this.nextAfterAttachmentId,
+    this.nextAfterUploadId,
     required this.hasMore,
   }) : super._();
   @override
@@ -39,6 +42,7 @@ class _$DataRekeySourceAttachmentListData
     return other is DataRekeySourceAttachmentListData &&
         attachments == other.attachments &&
         nextAfterAttachmentId == other.nextAfterAttachmentId &&
+        nextAfterUploadId == other.nextAfterUploadId &&
         hasMore == other.hasMore;
   }
 
@@ -47,6 +51,7 @@ class _$DataRekeySourceAttachmentListData
     var _$hash = 0;
     _$hash = $jc(_$hash, attachments.hashCode);
     _$hash = $jc(_$hash, nextAfterAttachmentId.hashCode);
+    _$hash = $jc(_$hash, nextAfterUploadId.hashCode);
     _$hash = $jc(_$hash, hasMore.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
@@ -57,6 +62,7 @@ class _$DataRekeySourceAttachmentListData
     return (newBuiltValueToStringHelper(r'DataRekeySourceAttachmentListData')
           ..add('attachments', attachments)
           ..add('nextAfterAttachmentId', nextAfterAttachmentId)
+          ..add('nextAfterUploadId', nextAfterUploadId)
           ..add('hasMore', hasMore))
         .toString();
   }
@@ -81,6 +87,11 @@ class DataRekeySourceAttachmentListDataBuilder
   set nextAfterAttachmentId(String? nextAfterAttachmentId) =>
       _$this._nextAfterAttachmentId = nextAfterAttachmentId;
 
+  String? _nextAfterUploadId;
+  String? get nextAfterUploadId => _$this._nextAfterUploadId;
+  set nextAfterUploadId(String? nextAfterUploadId) =>
+      _$this._nextAfterUploadId = nextAfterUploadId;
+
   bool? _hasMore;
   bool? get hasMore => _$this._hasMore;
   set hasMore(bool? hasMore) => _$this._hasMore = hasMore;
@@ -94,6 +105,7 @@ class DataRekeySourceAttachmentListDataBuilder
     if ($v != null) {
       _attachments = $v.attachments.toBuilder();
       _nextAfterAttachmentId = $v.nextAfterAttachmentId;
+      _nextAfterUploadId = $v.nextAfterUploadId;
       _hasMore = $v.hasMore;
       _$v = null;
     }
@@ -123,6 +135,7 @@ class DataRekeySourceAttachmentListDataBuilder
           _$DataRekeySourceAttachmentListData._(
             attachments: attachments.build(),
             nextAfterAttachmentId: nextAfterAttachmentId,
+            nextAfterUploadId: nextAfterUploadId,
             hasMore: BuiltValueNullFieldError.checkNotNull(
               hasMore,
               r'DataRekeySourceAttachmentListData',

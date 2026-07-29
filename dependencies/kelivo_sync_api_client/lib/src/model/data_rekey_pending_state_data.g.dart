@@ -84,6 +84,11 @@ class _$DataRekeyPendingStateData extends DataRekeyPendingStateData {
   @override
   final int sourceMaximumChangeSeq;
   @override
+  final String? sourceRecordCursorEnd;
+  @override
+  final DataRekeyCompletionProofDataSourceAttachmentCursorEnd?
+  sourceAttachmentCursorEnd;
+  @override
   final DataRekeyPendingLeaseData? lease;
   @override
   final DataRekeyCompletionProofData? lastCompletion;
@@ -104,6 +109,8 @@ class _$DataRekeyPendingStateData extends DataRekeyPendingStateData {
     required this.sourceRecordCount,
     required this.sourceAttachmentCount,
     required this.sourceMaximumChangeSeq,
+    this.sourceRecordCursorEnd,
+    this.sourceAttachmentCursorEnd,
     this.lease,
     this.lastCompletion,
     required this.updatedAt,
@@ -130,6 +137,8 @@ class _$DataRekeyPendingStateData extends DataRekeyPendingStateData {
         sourceRecordCount == other.sourceRecordCount &&
         sourceAttachmentCount == other.sourceAttachmentCount &&
         sourceMaximumChangeSeq == other.sourceMaximumChangeSeq &&
+        sourceRecordCursorEnd == other.sourceRecordCursorEnd &&
+        sourceAttachmentCursorEnd == other.sourceAttachmentCursorEnd &&
         lease == other.lease &&
         lastCompletion == other.lastCompletion &&
         updatedAt == other.updatedAt;
@@ -147,6 +156,8 @@ class _$DataRekeyPendingStateData extends DataRekeyPendingStateData {
     _$hash = $jc(_$hash, sourceRecordCount.hashCode);
     _$hash = $jc(_$hash, sourceAttachmentCount.hashCode);
     _$hash = $jc(_$hash, sourceMaximumChangeSeq.hashCode);
+    _$hash = $jc(_$hash, sourceRecordCursorEnd.hashCode);
+    _$hash = $jc(_$hash, sourceAttachmentCursorEnd.hashCode);
     _$hash = $jc(_$hash, lease.hashCode);
     _$hash = $jc(_$hash, lastCompletion.hashCode);
     _$hash = $jc(_$hash, updatedAt.hashCode);
@@ -166,6 +177,8 @@ class _$DataRekeyPendingStateData extends DataRekeyPendingStateData {
           ..add('sourceRecordCount', sourceRecordCount)
           ..add('sourceAttachmentCount', sourceAttachmentCount)
           ..add('sourceMaximumChangeSeq', sourceMaximumChangeSeq)
+          ..add('sourceRecordCursorEnd', sourceRecordCursorEnd)
+          ..add('sourceAttachmentCursorEnd', sourceAttachmentCursorEnd)
           ..add('lease', lease)
           ..add('lastCompletion', lastCompletion)
           ..add('updatedAt', updatedAt))
@@ -220,6 +233,21 @@ class DataRekeyPendingStateDataBuilder
   set sourceMaximumChangeSeq(int? sourceMaximumChangeSeq) =>
       _$this._sourceMaximumChangeSeq = sourceMaximumChangeSeq;
 
+  String? _sourceRecordCursorEnd;
+  String? get sourceRecordCursorEnd => _$this._sourceRecordCursorEnd;
+  set sourceRecordCursorEnd(String? sourceRecordCursorEnd) =>
+      _$this._sourceRecordCursorEnd = sourceRecordCursorEnd;
+
+  DataRekeyCompletionProofDataSourceAttachmentCursorEndBuilder?
+  _sourceAttachmentCursorEnd;
+  DataRekeyCompletionProofDataSourceAttachmentCursorEndBuilder
+  get sourceAttachmentCursorEnd => _$this._sourceAttachmentCursorEnd ??=
+      DataRekeyCompletionProofDataSourceAttachmentCursorEndBuilder();
+  set sourceAttachmentCursorEnd(
+    DataRekeyCompletionProofDataSourceAttachmentCursorEndBuilder?
+    sourceAttachmentCursorEnd,
+  ) => _$this._sourceAttachmentCursorEnd = sourceAttachmentCursorEnd;
+
   DataRekeyPendingLeaseDataBuilder? _lease;
   DataRekeyPendingLeaseDataBuilder get lease =>
       _$this._lease ??= DataRekeyPendingLeaseDataBuilder();
@@ -251,6 +279,8 @@ class DataRekeyPendingStateDataBuilder
       _sourceRecordCount = $v.sourceRecordCount;
       _sourceAttachmentCount = $v.sourceAttachmentCount;
       _sourceMaximumChangeSeq = $v.sourceMaximumChangeSeq;
+      _sourceRecordCursorEnd = $v.sourceRecordCursorEnd;
+      _sourceAttachmentCursorEnd = $v.sourceAttachmentCursorEnd?.toBuilder();
       _lease = $v.lease?.toBuilder();
       _lastCompletion = $v.lastCompletion?.toBuilder();
       _updatedAt = $v.updatedAt;
@@ -323,6 +353,8 @@ class DataRekeyPendingStateDataBuilder
               r'DataRekeyPendingStateData',
               'sourceMaximumChangeSeq',
             ),
+            sourceRecordCursorEnd: sourceRecordCursorEnd,
+            sourceAttachmentCursorEnd: _sourceAttachmentCursorEnd?.build(),
             lease: _lease?.build(),
             lastCompletion: _lastCompletion?.build(),
             updatedAt: BuiltValueNullFieldError.checkNotNull(
@@ -334,6 +366,8 @@ class DataRekeyPendingStateDataBuilder
     } catch (_) {
       late String _$failedField;
       try {
+        _$failedField = 'sourceAttachmentCursorEnd';
+        _sourceAttachmentCursorEnd?.build();
         _$failedField = 'lease';
         _lease?.build();
         _$failedField = 'lastCompletion';

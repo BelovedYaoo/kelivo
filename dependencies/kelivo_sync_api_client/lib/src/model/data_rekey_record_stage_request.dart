@@ -13,6 +13,7 @@ part 'data_rekey_record_stage_request.g.dart';
 /// Properties:
 /// * [operationId]
 /// * [sourceDataGeneration]
+/// * [sourceKeyEpoch]
 /// * [targetKeyEpoch]
 /// * [leaseToken]
 /// * [leaseVersion]
@@ -31,6 +32,9 @@ abstract class DataRekeyRecordStageRequest
 
   @BuiltValueField(wireName: r'sourceDataGeneration')
   int get sourceDataGeneration;
+
+  @BuiltValueField(wireName: r'sourceKeyEpoch')
+  int get sourceKeyEpoch;
 
   @BuiltValueField(wireName: r'targetKeyEpoch')
   int get targetKeyEpoch;
@@ -98,6 +102,11 @@ class _$DataRekeyRecordStageRequestSerializer
     yield r'sourceDataGeneration';
     yield serializers.serialize(
       object.sourceDataGeneration,
+      specifiedType: const FullType(int),
+    );
+    yield r'sourceKeyEpoch';
+    yield serializers.serialize(
+      object.sourceKeyEpoch,
       specifiedType: const FullType(int),
     );
     yield r'targetKeyEpoch';
@@ -186,6 +195,12 @@ class _$DataRekeyRecordStageRequestSerializer
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
           result.sourceDataGeneration = valueDes;
+          break;
+        case r'sourceKeyEpoch':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.sourceKeyEpoch = valueDes;
           break;
         case r'targetKeyEpoch':
           final valueDes =

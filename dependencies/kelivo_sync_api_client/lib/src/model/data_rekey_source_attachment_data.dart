@@ -3,8 +3,8 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/attachment_manifest_chunk.dart';
 import 'package:built_collection/built_collection.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_source_attachment_data_chunks_inner.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -22,6 +22,7 @@ part 'data_rekey_source_attachment_data.g.dart';
 /// * [totalCiphertextBytes]
 /// * [manifestCiphertext] - 客户端认证的附件清单密文，使用规范无填充 Base64URL 编码，解码后最大 1 MiB
 /// * [manifestCiphertextBytes]
+/// * [manifestCiphertextDigest]
 /// * [chunks]
 /// * [committedAt]
 @BuiltValue()
@@ -59,8 +60,11 @@ abstract class DataRekeySourceAttachmentData
   @BuiltValueField(wireName: r'manifestCiphertextBytes')
   int get manifestCiphertextBytes;
 
+  @BuiltValueField(wireName: r'manifestCiphertextDigest')
+  String get manifestCiphertextDigest;
+
   @BuiltValueField(wireName: r'chunks')
-  BuiltList<AttachmentManifestChunk> get chunks;
+  BuiltList<DataRekeySourceAttachmentDataChunksInner> get chunks;
 
   @BuiltValueField(wireName: r'committedAt')
   DateTime get committedAt;
@@ -140,11 +144,16 @@ class _$DataRekeySourceAttachmentDataSerializer
       object.manifestCiphertextBytes,
       specifiedType: const FullType(int),
     );
+    yield r'manifestCiphertextDigest';
+    yield serializers.serialize(
+      object.manifestCiphertextDigest,
+      specifiedType: const FullType(String),
+    );
     yield r'chunks';
     yield serializers.serialize(
       object.chunks,
       specifiedType: const FullType(BuiltList, [
-        FullType(AttachmentManifestChunk),
+        FullType(DataRekeySourceAttachmentDataChunksInner),
       ]),
     );
     yield r'committedAt';
@@ -242,15 +251,24 @@ class _$DataRekeySourceAttachmentDataSerializer
                   as int;
           result.manifestCiphertextBytes = valueDes;
           break;
+        case r'manifestCiphertextDigest':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.manifestCiphertextDigest = valueDes;
+          break;
         case r'chunks':
           final valueDes =
               serializers.deserialize(
                     value,
                     specifiedType: const FullType(BuiltList, [
-                      FullType(AttachmentManifestChunk),
+                      FullType(DataRekeySourceAttachmentDataChunksInner),
                     ]),
                   )
-                  as BuiltList<AttachmentManifestChunk>;
+                  as BuiltList<DataRekeySourceAttachmentDataChunksInner>;
           result.chunks.replace(valueDes);
           break;
         case r'committedAt':

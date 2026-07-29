@@ -12,6 +12,8 @@ class _$DataRekeyFinalizeRequest extends DataRekeyFinalizeRequest {
   @override
   final int sourceDataGeneration;
   @override
+  final int sourceKeyEpoch;
+  @override
   final int targetKeyEpoch;
   @override
   final String leaseToken;
@@ -29,6 +31,7 @@ class _$DataRekeyFinalizeRequest extends DataRekeyFinalizeRequest {
   _$DataRekeyFinalizeRequest._({
     required this.operationId,
     required this.sourceDataGeneration,
+    required this.sourceKeyEpoch,
     required this.targetKeyEpoch,
     required this.leaseToken,
     required this.leaseVersion,
@@ -50,6 +53,7 @@ class _$DataRekeyFinalizeRequest extends DataRekeyFinalizeRequest {
     return other is DataRekeyFinalizeRequest &&
         operationId == other.operationId &&
         sourceDataGeneration == other.sourceDataGeneration &&
+        sourceKeyEpoch == other.sourceKeyEpoch &&
         targetKeyEpoch == other.targetKeyEpoch &&
         leaseToken == other.leaseToken &&
         leaseVersion == other.leaseVersion &&
@@ -62,6 +66,7 @@ class _$DataRekeyFinalizeRequest extends DataRekeyFinalizeRequest {
     var _$hash = 0;
     _$hash = $jc(_$hash, operationId.hashCode);
     _$hash = $jc(_$hash, sourceDataGeneration.hashCode);
+    _$hash = $jc(_$hash, sourceKeyEpoch.hashCode);
     _$hash = $jc(_$hash, targetKeyEpoch.hashCode);
     _$hash = $jc(_$hash, leaseToken.hashCode);
     _$hash = $jc(_$hash, leaseVersion.hashCode);
@@ -76,6 +81,7 @@ class _$DataRekeyFinalizeRequest extends DataRekeyFinalizeRequest {
     return (newBuiltValueToStringHelper(r'DataRekeyFinalizeRequest')
           ..add('operationId', operationId)
           ..add('sourceDataGeneration', sourceDataGeneration)
+          ..add('sourceKeyEpoch', sourceKeyEpoch)
           ..add('targetKeyEpoch', targetKeyEpoch)
           ..add('leaseToken', leaseToken)
           ..add('leaseVersion', leaseVersion)
@@ -98,6 +104,11 @@ class DataRekeyFinalizeRequestBuilder
   int? get sourceDataGeneration => _$this._sourceDataGeneration;
   set sourceDataGeneration(int? sourceDataGeneration) =>
       _$this._sourceDataGeneration = sourceDataGeneration;
+
+  int? _sourceKeyEpoch;
+  int? get sourceKeyEpoch => _$this._sourceKeyEpoch;
+  set sourceKeyEpoch(int? sourceKeyEpoch) =>
+      _$this._sourceKeyEpoch = sourceKeyEpoch;
 
   int? _targetKeyEpoch;
   int? get targetKeyEpoch => _$this._targetKeyEpoch;
@@ -131,6 +142,7 @@ class DataRekeyFinalizeRequestBuilder
     if ($v != null) {
       _operationId = $v.operationId;
       _sourceDataGeneration = $v.sourceDataGeneration;
+      _sourceKeyEpoch = $v.sourceKeyEpoch;
       _targetKeyEpoch = $v.targetKeyEpoch;
       _leaseToken = $v.leaseToken;
       _leaseVersion = $v.leaseVersion;
@@ -169,6 +181,11 @@ class DataRekeyFinalizeRequestBuilder
               sourceDataGeneration,
               r'DataRekeyFinalizeRequest',
               'sourceDataGeneration',
+            ),
+            sourceKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+              sourceKeyEpoch,
+              r'DataRekeyFinalizeRequest',
+              'sourceKeyEpoch',
             ),
             targetKeyEpoch: BuiltValueNullFieldError.checkNotNull(
               targetKeyEpoch,

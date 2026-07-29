@@ -8,7 +8,7 @@ part of 'data_rekey_source_record_list_data.dart';
 
 class _$DataRekeySourceRecordListData extends DataRekeySourceRecordListData {
   @override
-  final BuiltList<SyncRecord> records;
+  final BuiltList<DataRekeySourceRecordListDataRecordsInner> records;
   @override
   final String? nextAfterRecordId;
   @override
@@ -69,10 +69,13 @@ class DataRekeySourceRecordListDataBuilder
         > {
   _$DataRekeySourceRecordListData? _$v;
 
-  ListBuilder<SyncRecord>? _records;
-  ListBuilder<SyncRecord> get records =>
-      _$this._records ??= ListBuilder<SyncRecord>();
-  set records(ListBuilder<SyncRecord>? records) => _$this._records = records;
+  ListBuilder<DataRekeySourceRecordListDataRecordsInner>? _records;
+  ListBuilder<DataRekeySourceRecordListDataRecordsInner> get records =>
+      _$this._records ??=
+          ListBuilder<DataRekeySourceRecordListDataRecordsInner>();
+  set records(
+    ListBuilder<DataRekeySourceRecordListDataRecordsInner>? records,
+  ) => _$this._records = records;
 
   String? _nextAfterRecordId;
   String? get nextAfterRecordId => _$this._nextAfterRecordId;

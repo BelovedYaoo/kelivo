@@ -26,7 +26,9 @@ class _$DataRekeySourceAttachmentData extends DataRekeySourceAttachmentData {
   @override
   final int manifestCiphertextBytes;
   @override
-  final BuiltList<AttachmentManifestChunk> chunks;
+  final String manifestCiphertextDigest;
+  @override
+  final BuiltList<DataRekeySourceAttachmentDataChunksInner> chunks;
   @override
   final DateTime committedAt;
 
@@ -44,6 +46,7 @@ class _$DataRekeySourceAttachmentData extends DataRekeySourceAttachmentData {
     required this.totalCiphertextBytes,
     required this.manifestCiphertext,
     required this.manifestCiphertextBytes,
+    required this.manifestCiphertextDigest,
     required this.chunks,
     required this.committedAt,
   }) : super._();
@@ -69,6 +72,7 @@ class _$DataRekeySourceAttachmentData extends DataRekeySourceAttachmentData {
         totalCiphertextBytes == other.totalCiphertextBytes &&
         manifestCiphertext == other.manifestCiphertext &&
         manifestCiphertextBytes == other.manifestCiphertextBytes &&
+        manifestCiphertextDigest == other.manifestCiphertextDigest &&
         chunks == other.chunks &&
         committedAt == other.committedAt;
   }
@@ -85,6 +89,7 @@ class _$DataRekeySourceAttachmentData extends DataRekeySourceAttachmentData {
     _$hash = $jc(_$hash, totalCiphertextBytes.hashCode);
     _$hash = $jc(_$hash, manifestCiphertext.hashCode);
     _$hash = $jc(_$hash, manifestCiphertextBytes.hashCode);
+    _$hash = $jc(_$hash, manifestCiphertextDigest.hashCode);
     _$hash = $jc(_$hash, chunks.hashCode);
     _$hash = $jc(_$hash, committedAt.hashCode);
     _$hash = $jf(_$hash);
@@ -103,6 +108,7 @@ class _$DataRekeySourceAttachmentData extends DataRekeySourceAttachmentData {
           ..add('totalCiphertextBytes', totalCiphertextBytes)
           ..add('manifestCiphertext', manifestCiphertext)
           ..add('manifestCiphertextBytes', manifestCiphertextBytes)
+          ..add('manifestCiphertextDigest', manifestCiphertextDigest)
           ..add('chunks', chunks)
           ..add('committedAt', committedAt))
         .toString();
@@ -159,10 +165,16 @@ class DataRekeySourceAttachmentDataBuilder
   set manifestCiphertextBytes(int? manifestCiphertextBytes) =>
       _$this._manifestCiphertextBytes = manifestCiphertextBytes;
 
-  ListBuilder<AttachmentManifestChunk>? _chunks;
-  ListBuilder<AttachmentManifestChunk> get chunks =>
-      _$this._chunks ??= ListBuilder<AttachmentManifestChunk>();
-  set chunks(ListBuilder<AttachmentManifestChunk>? chunks) =>
+  String? _manifestCiphertextDigest;
+  String? get manifestCiphertextDigest => _$this._manifestCiphertextDigest;
+  set manifestCiphertextDigest(String? manifestCiphertextDigest) =>
+      _$this._manifestCiphertextDigest = manifestCiphertextDigest;
+
+  ListBuilder<DataRekeySourceAttachmentDataChunksInner>? _chunks;
+  ListBuilder<DataRekeySourceAttachmentDataChunksInner> get chunks =>
+      _$this._chunks ??=
+          ListBuilder<DataRekeySourceAttachmentDataChunksInner>();
+  set chunks(ListBuilder<DataRekeySourceAttachmentDataChunksInner>? chunks) =>
       _$this._chunks = chunks;
 
   DateTime? _committedAt;
@@ -185,6 +197,7 @@ class DataRekeySourceAttachmentDataBuilder
       _totalCiphertextBytes = $v.totalCiphertextBytes;
       _manifestCiphertext = $v.manifestCiphertext;
       _manifestCiphertextBytes = $v.manifestCiphertextBytes;
+      _manifestCiphertextDigest = $v.manifestCiphertextDigest;
       _chunks = $v.chunks.toBuilder();
       _committedAt = $v.committedAt;
       _$v = null;
@@ -255,6 +268,11 @@ class DataRekeySourceAttachmentDataBuilder
               manifestCiphertextBytes,
               r'DataRekeySourceAttachmentData',
               'manifestCiphertextBytes',
+            ),
+            manifestCiphertextDigest: BuiltValueNullFieldError.checkNotNull(
+              manifestCiphertextDigest,
+              r'DataRekeySourceAttachmentData',
+              'manifestCiphertextDigest',
             ),
             chunks: chunks.build(),
             committedAt: BuiltValueNullFieldError.checkNotNull(

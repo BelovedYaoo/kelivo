@@ -4,6 +4,7 @@
 
 // ignore_for_file: unused_element
 import 'package:built_collection/built_collection.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data_source_attachment_cursor_end.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_pending_lease_data.dart';
 import 'package:built_value/built_value.dart';
@@ -23,6 +24,8 @@ part 'data_rekey_pending_state_data.g.dart';
 /// * [sourceRecordCount]
 /// * [sourceAttachmentCount]
 /// * [sourceMaximumChangeSeq]
+/// * [sourceRecordCursorEnd]
+/// * [sourceAttachmentCursorEnd]
 /// * [lease]
 /// * [lastCompletion]
 /// * [updatedAt]
@@ -57,6 +60,13 @@ abstract class DataRekeyPendingStateData
 
   @BuiltValueField(wireName: r'sourceMaximumChangeSeq')
   int get sourceMaximumChangeSeq;
+
+  @BuiltValueField(wireName: r'sourceRecordCursorEnd')
+  String? get sourceRecordCursorEnd;
+
+  @BuiltValueField(wireName: r'sourceAttachmentCursorEnd')
+  DataRekeyCompletionProofDataSourceAttachmentCursorEnd?
+  get sourceAttachmentCursorEnd;
 
   @BuiltValueField(wireName: r'lease')
   DataRekeyPendingLeaseData? get lease;
@@ -142,6 +152,22 @@ class _$DataRekeyPendingStateDataSerializer
       object.sourceMaximumChangeSeq,
       specifiedType: const FullType(int),
     );
+    yield r'sourceRecordCursorEnd';
+    yield object.sourceRecordCursorEnd == null
+        ? null
+        : serializers.serialize(
+            object.sourceRecordCursorEnd,
+            specifiedType: const FullType.nullable(String),
+          );
+    yield r'sourceAttachmentCursorEnd';
+    yield object.sourceAttachmentCursorEnd == null
+        ? null
+        : serializers.serialize(
+            object.sourceAttachmentCursorEnd,
+            specifiedType: const FullType.nullable(
+              DataRekeyCompletionProofDataSourceAttachmentCursorEnd,
+            ),
+          );
     yield r'lease';
     yield object.lease == null
         ? null
@@ -251,6 +277,28 @@ class _$DataRekeyPendingStateDataSerializer
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
           result.sourceMaximumChangeSeq = valueDes;
+          break;
+        case r'sourceRecordCursorEnd':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(String),
+                  )
+                  as String?;
+          if (valueDes == null) continue;
+          result.sourceRecordCursorEnd = valueDes;
+          break;
+        case r'sourceAttachmentCursorEnd':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType.nullable(
+                      DataRekeyCompletionProofDataSourceAttachmentCursorEnd,
+                    ),
+                  )
+                  as DataRekeyCompletionProofDataSourceAttachmentCursorEnd?;
+          if (valueDes == null) continue;
+          result.sourceAttachmentCursorEnd.replace(valueDes);
           break;
         case r'lease':
           final valueDes =
