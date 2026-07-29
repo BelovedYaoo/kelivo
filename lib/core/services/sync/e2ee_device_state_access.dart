@@ -14,12 +14,14 @@ final class E2eeOpenedDeviceStateHandles {
     required this.identity,
     required this.ark,
     required this.binding,
+    required this.stateVersion,
   });
 
   final KelivoKeyHandle key;
   final KelivoDeviceIdentityHandle identity;
   final KelivoAccountRootKeyHandle? ark;
   final KelivoDeviceStateBinding binding;
+  final DeviceStateBlobVersion stateVersion;
 }
 
 final class E2eeDeviceStateAccess {
@@ -50,11 +52,12 @@ final class E2eeDeviceStateAccess {
   Future<E2eeOpenedDeviceStateHandles?> openExisting(
     String normalizedLoginName,
   ) async {
-    final stateBlob = await _deviceStateStore.read(
+    final snapshot = await _deviceStateStore.readVersioned(
       normalizedBaseUrl: _baseUrl,
       normalizedLoginName: normalizedLoginName,
     );
-    if (stateBlob == null) return null;
+    if (snapshot == null) return null;
+    final stateBlob = snapshot.blob;
 
     KelivoKeyHandle? key;
     try {
@@ -73,6 +76,7 @@ final class E2eeDeviceStateAccess {
         identity: opened.identity,
         ark: opened.ark,
         binding: opened.binding,
+        stateVersion: snapshot.version,
       );
     } catch (error, stackTrace) {
       if (key != null) {

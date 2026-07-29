@@ -382,9 +382,10 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         normalizedLoginName: normalizedLoginName,
         transaction: transaction,
       );
-      await _deviceStateStore.write(
+      await _deviceStateStore.compareAndSwap(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: normalizedLoginName,
+        expectedVersion: context.stateVersion,
         blob: fullStateBlob,
       );
 
@@ -799,9 +800,10 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       if (context.ark != null) {
         throw StateError('未绑定设备状态意外包含账户根密钥');
       }
-      await _deviceStateStore.write(
+      await _deviceStateStore.compareAndSwap(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: normalizedLoginName,
+        expectedVersion: context.stateVersion,
         blob: transaction.fullStateBlob,
       );
       return;
@@ -1126,6 +1128,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         deviceId: opened.binding.deviceId,
         keyVersion: opened.binding.keyVersion,
         account: opened.binding.account,
+        stateVersion: opened.stateVersion,
       );
     }
 
@@ -1140,9 +1143,10 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         deviceId: deviceId,
         keyVersion: 1,
       );
-      await _deviceStateStore.write(
+      final createdState = await _deviceStateStore.compareAndSwap(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: normalizedLoginName,
+        expectedVersion: null,
         blob: stateBlob,
       );
       return _DeviceContext(
@@ -1152,6 +1156,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         deviceId: deviceId,
         keyVersion: 1,
         account: null,
+        stateVersion: createdState.version,
       );
     } catch (error, stackTrace) {
       await _runCleanupPreservingPrimary(<Future<void> Function()>[
@@ -1625,6 +1630,7 @@ final class _DeviceContext {
     required this.deviceId,
     required this.keyVersion,
     required this.account,
+    required this.stateVersion,
   });
 
   final KelivoKeyHandle key;
@@ -1633,6 +1639,7 @@ final class _DeviceContext {
   final Uint8List deviceId;
   final int keyVersion;
   final KelivoDeviceStateAccountBinding? account;
+  final DeviceStateBlobVersion stateVersion;
 
   String get deviceIdText => E2eeAccountAuthenticator._uuidString(deviceId);
 }

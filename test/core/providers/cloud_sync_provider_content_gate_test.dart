@@ -72,6 +72,25 @@ final _onboardingToken = CloudSyncOnboardingToken.parse(_onboardingTokenValue);
 
 Future<void> _skipAttachmentUploads({required int maximumRemoteSteps}) async {}
 
+extension _DeviceStateBlobStoreTestSetup on DeviceStateBlobStore {
+  Future<DeviceStateBlobSnapshot> write({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+    required Uint8List blob,
+  }) async {
+    final current = await readVersioned(
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    return compareAndSwap(
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+      expectedVersion: current?.version,
+      blob: blob,
+    );
+  }
+}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 

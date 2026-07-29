@@ -736,13 +736,17 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
       acceptingHandle = pairing._beginAccept();
       context = await _openDeviceContext(pairing.loginName);
       await _validatePairingTargetContext(context, pairing._created);
-      originalState = await _deviceStateStore.read(
+      final originalSnapshot = await _deviceStateStore.readVersioned(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: pairing.loginName,
       );
-      if (originalState == null) {
+      if (originalSnapshot == null) {
         throw StateError('待配对设备状态不存在');
       }
+      if (originalSnapshot.version != context.stateVersion) {
+        throw const DeviceStateBlobConflict();
+      }
+      originalState = originalSnapshot.blob;
 
       final accepted = await _secureCore.acceptPairingApproval(
         context.key,
@@ -793,9 +797,10 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         transaction: transaction,
       );
       transactionPersisted = true;
-      await _deviceStateStore.write(
+      await _deviceStateStore.compareAndSwap(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: pairing.loginName,
+        expectedVersion: context.stateVersion,
         blob: fullState,
       );
 
@@ -937,9 +942,10 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
       throw StateError('待批准登录与配对恢复事务的设备不匹配');
     }
     // 先发布 identity-only 状态；即使进程在删除 sidecar 前退出，下次仍可重复收敛。
-    await _deviceStateStore.write(
+    await _deviceStateStore.compareAndSwap(
       normalizedBaseUrl: _baseUrl,
       normalizedLoginName: normalizedLoginName,
+      expectedVersion: context.stateVersion,
       blob: transaction.originalStateBlob,
     );
     final deleted = await _deviceStateStore.deletePendingPairingEnvelope(
@@ -1291,9 +1297,10 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
       if (context.ark != null) {
         throw StateError('未绑定设备状态意外包含账户根密钥');
       }
-      await _deviceStateStore.write(
+      await _deviceStateStore.compareAndSwap(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: normalizedLoginName,
+        expectedVersion: context.stateVersion,
         blob: transaction.fullStateBlob,
       );
       return;
