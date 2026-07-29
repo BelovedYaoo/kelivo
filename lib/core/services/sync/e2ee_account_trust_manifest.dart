@@ -181,47 +181,6 @@ final class E2eeMembershipServerProjection {
   final E2eeDataRekeyPhase dataRekeyPhase;
 }
 
-final class E2eeRecoveryGenesisMembershipExpectation {
-  // 三项输入必须来自同一份本地恢复文件；服务端响应不能调用该信任入口。
-  factory E2eeRecoveryGenesisMembershipExpectation({
-    required Uint8List genesisManifest,
-    required Uint8List genesisManifestDigest,
-    required Uint8List accountTrustPublicKey,
-  }) {
-    if (genesisManifest.length < e2eeAccountTrustManifestMinimumLength ||
-        genesisManifest.length > e2eeAccountTrustManifestMaximumLength) {
-      throw ArgumentError.value(
-        genesisManifest.length,
-        'genesisManifest',
-        '成员清单长度无效',
-      );
-    }
-    return E2eeRecoveryGenesisMembershipExpectation._(
-      _immutableBytes(genesisManifest),
-      _copyFixed(
-        genesisManifestDigest,
-        _manifestDigestLength,
-        'genesisManifestDigest',
-      ),
-      _copyFixed(
-        accountTrustPublicKey,
-        _publicKeyLength,
-        'accountTrustPublicKey',
-      ),
-    );
-  }
-
-  const E2eeRecoveryGenesisMembershipExpectation._(
-    this.genesisManifest,
-    this.genesisManifestDigest,
-    this.accountTrustPublicKey,
-  );
-
-  final Uint8List genesisManifest;
-  final Uint8List genesisManifestDigest;
-  final Uint8List accountTrustPublicKey;
-}
-
 final class E2eeMembershipHistoryEntry {
   factory E2eeMembershipHistoryEntry({
     required Uint8List manifest,
@@ -603,6 +562,7 @@ final class E2eeAccountTrustManifestModule {
         currentTrustPublicKey.bytes,
       ),
     };
+    _validateRecoveryKeySeparation(data.recoveryPublicKey, data.members);
     await _validatePublicMaterial(data);
     final payload = _encodePayload(data);
     var transitionSignature = _zeroSignature;
@@ -649,32 +609,6 @@ final class E2eeAccountTrustManifestModule {
     await _verifyExpectedTransition(parsed, expectation);
     await _validatePublicMaterial(parsed.data);
     _validateExpectation(parsed.data, expectation);
-    return E2eeVerifiedMembership._(
-      data: parsed.data,
-      manifest: manifest,
-      digest: digest,
-    );
-  }
-
-  Future<E2eeVerifiedMembership> verifyRecoveryGenesis({
-    required E2eeRecoveryGenesisMembershipExpectation expectation,
-  }) async {
-    final manifest = Uint8List.fromList(expectation.genesisManifest);
-    final digest = _sha256(manifest);
-    if (!_sameBytes(digest, expectation.genesisManifestDigest)) {
-      throw StateError('恢复文件中的 genesis 清单摘要不一致');
-    }
-    final parsed = _parseManifest(manifest);
-    _validateRecoveryGenesis(parsed.data);
-    if (!_sameBytes(
-      parsed.data.currentAccountTrustPublicKey,
-      expectation.accountTrustPublicKey,
-    )) {
-      throw StateError('恢复文件中的账户信任锚不一致');
-    }
-    _requireZeroTransitionSignature(parsed.transitionSignature);
-    await _verifyCurrentSignatureFromHistory(parsed);
-    await _validatePublicMaterial(parsed.data);
     return E2eeVerifiedMembership._(
       data: parsed.data,
       manifest: manifest,
@@ -1179,21 +1113,6 @@ void _validatePreviousAnchor(
   }
 }
 
-void _validateRecoveryGenesis(_ManifestData data) {
-  if (data.operationKind != E2eeMembershipOperationKind.initialize ||
-      data.securityGeneration != 1 ||
-      data.keyEpoch != 1 ||
-      !_allZero(data.previousDigest) ||
-      data.issuerDeviceId != data.subjectDeviceId ||
-      data.members.length != 1 ||
-      data.members.single.deviceId != data.subjectDeviceId ||
-      data.members.single.authGeneration != 0 ||
-      data.recoveryPublicKeyVersion != 1 ||
-      data.recoveryCapsuleVersion != 1) {
-    throw StateError('恢复文件中的 genesis 成员清单语义无效');
-  }
-}
-
 void _validateHistorySuccessor(
   _ManifestData current,
   E2eeVerifiedMembership previous,
@@ -1389,6 +1308,8 @@ _ParsedManifest _parseManifest(Uint8List manifest) {
     offset += _manifestMemberLength;
   }
   _validateCanonicalMembers(members, untrusted: true);
+  final recoveryPublicKey = Uint8List.sublistView(manifest, 104, 136);
+  _validateRecoveryKeySeparation(recoveryPublicKey, members, untrusted: true);
   final data = _ManifestData(
     userId: Uuid.unparse(userIdBytes),
     userIdBytes: userIdBytes,
@@ -1397,7 +1318,7 @@ _ParsedManifest _parseManifest(Uint8List manifest) {
     previousDigest: Uint8List.sublistView(manifest, 36, 68),
     currentAccountTrustPublicKey: Uint8List.sublistView(manifest, 68, 100),
     recoveryPublicKeyVersion: recoveryPublicKeyVersion,
-    recoveryPublicKey: Uint8List.sublistView(manifest, 104, 136),
+    recoveryPublicKey: recoveryPublicKey,
     recoveryCapsuleVersion: recoveryCapsuleVersion,
     recoveryCapsuleDigest: Uint8List.sublistView(manifest, 140, 172),
     operationKind: operationKind,
@@ -1577,6 +1498,18 @@ void _validateCanonicalMembers(
     }
     if (!agreementKeys.add(base64Url.encode(member.keyAgreementPublicKey))) {
       _memberValidationFailure('成员 X25519 公钥不得重复', untrusted);
+    }
+  }
+}
+
+void _validateRecoveryKeySeparation(
+  Uint8List recoveryPublicKey,
+  List<_MembershipMember> members, {
+  bool untrusted = false,
+}) {
+  for (final member in members) {
+    if (_sameBytes(recoveryPublicKey, member.keyAgreementPublicKey)) {
+      _memberValidationFailure('恢复公钥不得复用成员 X25519 公钥', untrusted);
     }
   }
 }
