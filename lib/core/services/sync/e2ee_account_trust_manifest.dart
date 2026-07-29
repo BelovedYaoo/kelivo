@@ -2,8 +2,13 @@ import 'dart:convert';
 import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
+import 'package:drift/drift.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:uuid/uuid.dart';
+
+import '../../database/app_database.dart';
+
+part '../../database/e2ee_verified_membership_anchor_commands.dart';
 
 const e2eeAccountTrustManifestFormatVersion = 1;
 const e2eeAccountTrustManifestMaximumMembers = 256;
@@ -609,6 +614,50 @@ final class E2eeAccountTrustManifestModule {
     await _verifyExpectedTransition(parsed, expectation);
     await _validatePublicMaterial(parsed.data);
     _validateExpectation(parsed.data, expectation);
+    return E2eeVerifiedMembership._(
+      data: parsed.data,
+      manifest: manifest,
+      digest: digest,
+    );
+  }
+
+  Future<E2eeVerifiedMembership> _verifyPersistedAnchor({
+    required KelivoAccountRootKeyHandle ark,
+    required String userId,
+    required int securityGeneration,
+    required int keyEpoch,
+    required Uint8List persistedManifest,
+    required Uint8List persistedManifestDigest,
+  }) async {
+    final expectedUserId = _canonicalUuidV4(userId, 'userId');
+    _requireSecurityGeneration(securityGeneration, 'securityGeneration');
+    _requirePositiveUint32(keyEpoch, 'keyEpoch');
+    final manifest = Uint8List.fromList(persistedManifest);
+    final expectedDigest = _copyFixed(
+      persistedManifestDigest,
+      _manifestDigestLength,
+      'persistedManifestDigest',
+    );
+    final digest = _sha256(manifest);
+    if (!_sameBytes(digest, expectedDigest)) {
+      throw StateError('本地成员清单锚点摘要不一致');
+    }
+    final parsed = _parseManifest(manifest);
+    if (parsed.data.userId != expectedUserId ||
+        parsed.data.securityGeneration != securityGeneration ||
+        parsed.data.keyEpoch != keyEpoch) {
+      throw StateError('本地成员清单锚点外层状态不一致');
+    }
+    switch (parsed.data.operationKind) {
+      case E2eeMembershipOperationKind.initialize:
+      case E2eeMembershipOperationKind.addDevice:
+        _requireZeroTransitionSignature(parsed.transitionSignature);
+      case E2eeMembershipOperationKind.revokeRotate:
+        // 旧代签名在写入前已沿完整历史验证；重启后由 SQLCipher 锚和当前 ARK 共同认证。
+        _requireNonZeroTransitionSignature(parsed.transitionSignature);
+    }
+    await _verifyWithAccountRootKey(ark, parsed);
+    await _validatePublicMaterial(parsed.data);
     return E2eeVerifiedMembership._(
       data: parsed.data,
       manifest: manifest,

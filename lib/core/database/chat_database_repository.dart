@@ -12,6 +12,7 @@ import '../models/conversation.dart';
 import '../services/sync/config_sync_keys.dart';
 import '../services/sync/e2ee_account_record_cipher.dart';
 import '../services/sync/e2ee_account_record_state.dart';
+import '../services/sync/e2ee_account_trust_manifest.dart';
 import '../services/sync/e2ee_attachment_manifest.dart';
 import '../services/sync/e2ee_sync_pull_types.dart';
 import '../services/sync/sync_codec.dart';
@@ -146,6 +147,10 @@ class ChatDatabaseRepository {
   }
 
   E2eeSyncRecordLedger get e2eeSyncRecordLedger => E2eeSyncRecordLedger(_db);
+
+  E2eeVerifiedMembershipAnchorCommands
+  get e2eeVerifiedMembershipAnchorCommands =>
+      E2eeVerifiedMembershipAnchorCommands.forDatabase(_db);
 
   E2eeConfigVaultCommands get e2eeConfigVaultCommands =>
       E2eeConfigVaultCommands._(_db);
