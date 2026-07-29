@@ -2863,6 +2863,121 @@ class E2eeSyncPullCheckpointRows extends Table with TableInfo {
   bool get dontWriteConstraints => true;
 }
 
+class E2eeVerifiedMembershipAnchorRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  E2eeVerifiedMembershipAnchorRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> accountUserId = GeneratedColumn<String>(
+    'account_user_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<i2.Uint8List> membershipManifest =
+      GeneratedColumn<i2.Uint8List>(
+        'membership_manifest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+        $customConstraints: 'NOT NULL',
+      );
+  late final GeneratedColumn<i2.Uint8List> membershipManifestDigest =
+      GeneratedColumn<i2.Uint8List>(
+        'membership_manifest_digest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+        $customConstraints: 'NOT NULL',
+      );
+  late final GeneratedColumn<int> securityGeneration = GeneratedColumn<int>(
+    'security_generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
+    'key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> transitionVersion = GeneratedColumn<int>(
+    'transition_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> createdAt = GeneratedColumn<int>(
+    'created_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  late final GeneratedColumn<int> updatedAt = GeneratedColumn<int>(
+    'updated_at',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+    $customConstraints: 'NOT NULL',
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    accountUserId,
+    membershipManifest,
+    membershipManifestDigest,
+    securityGeneration,
+    keyEpoch,
+    transitionVersion,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_verified_membership_anchor_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {accountUserId};
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  E2eeVerifiedMembershipAnchorRows createAlias(String alias) {
+    return E2eeVerifiedMembershipAnchorRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'PRIMARY KEY(account_user_id)',
+    'CHECK(typeof(account_user_id) = \'text\' AND length(account_user_id) = 36 AND account_user_id = lower(account_user_id) AND account_user_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(account_user_id, 9, 1) = \'-\' AND substr(account_user_id, 14, 1) = \'-\' AND substr(account_user_id, 15, 1) = \'4\' AND substr(account_user_id, 19, 1) = \'-\' AND substr(account_user_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(account_user_id, 24, 1) = \'-\' AND substr(account_user_id, 1, 8) NOT GLOB \'*-*\' AND substr(account_user_id, 10, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 15, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 20, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 25, 12) NOT GLOB \'*-*\')',
+    'CHECK(typeof(membership_manifest) = \'blob\' AND length(membership_manifest) BETWEEN 356 AND 22884)',
+    'CHECK(typeof(membership_manifest_digest) = \'blob\' AND length(membership_manifest_digest) = 32)',
+    'CHECK(typeof(security_generation) = \'integer\' AND security_generation BETWEEN 1 AND 2147483647)',
+    'CHECK(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 4294967295)',
+    'CHECK(typeof(transition_version) = \'integer\' AND transition_version BETWEEN 1 AND 9223372036854775807)',
+    'CHECK(typeof(created_at) = \'integer\' AND created_at >= 0)',
+    'CHECK(typeof(updated_at) = \'integer\' AND updated_at >= created_at)',
+  ];
+  @override
+  bool get dontWriteConstraints => true;
+}
+
 class E2eeConfigEntryRows extends Table with TableInfo {
   @override
   final GeneratedDatabase attachedDatabase;
@@ -3697,8 +3812,8 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
   bool get dontWriteConstraints => true;
 }
 
-class DatabaseAtV19 extends GeneratedDatabase {
-  DatabaseAtV19(QueryExecutor e) : super(e);
+class DatabaseAtV20 extends GeneratedDatabase {
+  DatabaseAtV20(QueryExecutor e) : super(e);
   late final ConversationRows conversationRows = ConversationRows(this);
   late final MessageRows messageRows = MessageRows(this);
   late final AssetRows assetRows = AssetRows(this);
@@ -3740,6 +3855,8 @@ class DatabaseAtV19 extends GeneratedDatabase {
       E2eeSyncRemoteRecordRows(this);
   late final E2eeSyncPullCheckpointRows e2eeSyncPullCheckpointRows =
       E2eeSyncPullCheckpointRows(this);
+  late final E2eeVerifiedMembershipAnchorRows e2eeVerifiedMembershipAnchorRows =
+      E2eeVerifiedMembershipAnchorRows(this);
   late final E2eeConfigEntryRows e2eeConfigEntryRows = E2eeConfigEntryRows(
     this,
   );
@@ -3799,6 +3916,10 @@ class DatabaseAtV19 extends GeneratedDatabase {
     'idx_migration_issues_run_kind',
     'CREATE INDEX idx_migration_issues_run_kind ON migration_issue_rows (migration_run_id, kind, id)',
   );
+  late final Index idxGenerationRunsActiveTarget = Index(
+    'idx_generation_runs_active_target',
+    'CREATE UNIQUE INDEX idx_generation_runs_active_target ON generation_run_rows (conversation_id, target_revision_id) WHERE state IN (\'preparing\', \'requesting\', \'streaming\', \'waiting_tool\')',
+  );
   late final Index idxGenerationRunsStateUpdated = Index(
     'idx_generation_runs_state_updated',
     'CREATE INDEX idx_generation_runs_state_updated ON generation_run_rows (state, updated_at, id)',
@@ -3839,10 +3960,6 @@ class DatabaseAtV19 extends GeneratedDatabase {
     'idx_e2ee_attachment_download_local_asset',
     'CREATE INDEX idx_e2ee_attachment_download_local_asset ON e2ee_attachment_download_rows (local_asset_id, attachment_id)',
   );
-  late final Index idxGenerationRunsActiveTarget = Index(
-    'idx_generation_runs_active_target',
-    'CREATE UNIQUE INDEX idx_generation_runs_active_target ON generation_run_rows (conversation_id, target_revision_id) WHERE state IN (\'preparing\', \'requesting\', \'streaming\', \'waiting_tool\')',
-  );
   @override
   Iterable<TableInfo<Table, Object?>> get allTables =>
       allSchemaEntities.whereType<TableInfo<Table, Object?>>();
@@ -3875,6 +3992,7 @@ class DatabaseAtV19 extends GeneratedDatabase {
     e2eeSyncOutboxRows,
     e2eeSyncRemoteRecordRows,
     e2eeSyncPullCheckpointRows,
+    e2eeVerifiedMembershipAnchorRows,
     e2eeConfigEntryRows,
     e2eeAttachmentUploadRows,
     e2eeAttachmentDownloadRows,
@@ -3891,6 +4009,7 @@ class DatabaseAtV19 extends GeneratedDatabase {
     idxMessagePartsRevisionOrdinal,
     idxProviderArtifactsRevisionKind,
     idxMigrationIssuesRunKind,
+    idxGenerationRunsActiveTarget,
     idxGenerationRunsStateUpdated,
     idxE2eeSyncRecordStatesRecordVersion,
     idxE2eeSyncIntentsPhaseUpdated,
@@ -3901,8 +4020,134 @@ class DatabaseAtV19 extends GeneratedDatabase {
     idxE2eeAttachmentUploadDue,
     idxE2eeAttachmentDownloadDue,
     idxE2eeAttachmentDownloadLocalAsset,
-    idxGenerationRunsActiveTarget,
   ];
   @override
-  int get schemaVersion => 19;
+  StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'conversation_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('message_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'message_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('message_asset_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'asset_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('message_asset_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'asset_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('asset_gc_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'message_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('asset_reference_dirty_rows', kind: UpdateKind.delete),
+      ],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'conversation_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('turn_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'conversation_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('conversation_mcp_server_rows', kind: UpdateKind.delete),
+      ],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'message_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('tool_event_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'message_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('gemini_thought_signature_rows', kind: UpdateKind.delete),
+      ],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'message_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('message_part_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'message_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('provider_artifact_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'migration_run_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('migration_issue_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'conversation_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('generation_run_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'e2ee_sync_record_state_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('e2ee_sync_record_parent_rows', kind: UpdateKind.delete),
+      ],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'e2ee_sync_record_state_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('e2ee_sync_record_head_rows', kind: UpdateKind.delete),
+      ],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'message_asset_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [
+        TableUpdate('e2ee_attachment_upload_rows', kind: UpdateKind.delete),
+      ],
+    ),
+  ]);
+  @override
+  int get schemaVersion => 20;
 }

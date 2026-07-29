@@ -1047,6 +1047,81 @@ void main() {
     });
   });
 
+  group('E2EE verified membership anchor schema', () {
+    Future<void> insertAnchor({
+      String accountUserId = _syncAccountUserId,
+      int manifestLength = 356,
+      int digestLength = 32,
+      int securityGeneration = 1,
+      int keyEpoch = 1,
+      int transitionVersion = 1,
+      DateTime? createdAt,
+      DateTime? updatedAt,
+    }) {
+      final created = createdAt ?? DateTime.utc(2026, 7, 29);
+      return database
+          .into(database.e2eeVerifiedMembershipAnchorRows)
+          .insert(
+            E2eeVerifiedMembershipAnchorRowsCompanion.insert(
+              accountUserId: accountUserId,
+              membershipManifest: Uint8List(manifestLength),
+              membershipManifestDigest: Uint8List(digestLength),
+              securityGeneration: securityGeneration,
+              keyEpoch: keyEpoch,
+              transitionVersion: transitionVersion,
+              createdAt: created,
+              updatedAt: updatedAt ?? created,
+            ),
+          );
+    }
+
+    test('接受规范大小与整数边界', () async {
+      await insertAnchor();
+      await insertAnchor(
+        accountUserId: _syncUuid(250),
+        manifestLength: 22884,
+        securityGeneration: 2147483647,
+        keyEpoch: 4294967295,
+        transitionVersion: 9223372036854775807,
+      );
+
+      expect(
+        await database.select(database.e2eeVerifiedMembershipAnchorRows).get(),
+        hasLength(2),
+      );
+    });
+
+    test('拒绝非法身份、字节长度、整数和时间关系', () async {
+      final createdAt = DateTime.utc(2026, 7, 29);
+      final invalidWrites = <Future<void> Function()>[
+        () => insertAnchor(
+          accountUserId: _syncAccountUserId.replaceFirst('-4000-', '-5000-'),
+        ),
+        () => insertAnchor(manifestLength: 355),
+        () => insertAnchor(manifestLength: 22885),
+        () => insertAnchor(digestLength: 31),
+        () => insertAnchor(digestLength: 33),
+        () => insertAnchor(securityGeneration: 0),
+        () => insertAnchor(securityGeneration: 2147483648),
+        () => insertAnchor(keyEpoch: 0),
+        () => insertAnchor(keyEpoch: 4294967296),
+        () => insertAnchor(transitionVersion: 0),
+        () => insertAnchor(
+          createdAt: createdAt,
+          updatedAt: createdAt.subtract(const Duration(microseconds: 1)),
+        ),
+      ];
+      for (final write in invalidWrites) {
+        await expectLater(write(), throwsRemoteSqliteException());
+      }
+    });
+
+    test('每个账户只允许一个锚点', () async {
+      await insertAnchor();
+      await expectLater(insertAnchor(), throwsRemoteSqliteException());
+    });
+  });
+
   group('E2EE sync durable queue schema', () {
     test('accepts every valid state and nonnegative change sequence', () async {
       final leaseExpiry = DateTime.utc(2026, 7, 27, 0, 1);
