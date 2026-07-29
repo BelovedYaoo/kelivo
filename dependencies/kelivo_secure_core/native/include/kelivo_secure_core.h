@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(15)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(16)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -120,6 +120,8 @@ typedef int32_t KelivoStatus;
 #define KELIVO_DEVICE_PUBLIC_KEYS_SIZE ((size_t)64)
 #define KELIVO_DEVICE_CHALLENGE_SIZE ((size_t)32)
 #define KELIVO_DEVICE_PROOF_SIZE ((size_t)64)
+#define KELIVO_DATA_REKEY_COMPLETION_PROOF_FRAME_SIZE ((size_t)270)
+#define KELIVO_DATA_REKEY_COMPLETION_PROOF_SIGNATURE_SIZE ((size_t)64)
 #define KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE ((size_t)336)
 #define KELIVO_PAIRING_SECRET_SIZE ((size_t)32)
 #define KELIVO_PAIRING_AUTHENTICATOR_SIZE ((size_t)32)
@@ -561,6 +563,30 @@ KELIVO_CORE_API KelivoStatus kelivo_device_signing_public_key_validate(
 KELIVO_CORE_API KelivoStatus kelivo_device_key_agreement_public_key_validate(
     const uint8_t *public_key,
     size_t public_key_length);
+
+/*
+ * 使用 identity_handle 内的设备 Ed25519 身份签署唯一的 data-rekey v2
+ * 270 字节 canonical completion frame；其他长度或域一律拒绝。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_data_rekey_completion_proof_sign(
+    uint64_t identity_handle,
+    const uint8_t *proof_frame,
+    size_t proof_frame_length,
+    uint8_t *out_signature,
+    size_t out_signature_capacity,
+    size_t *out_signature_length);
+
+/*
+ * 使用已由成员清单建立信任的设备签名公钥严格验证 data-rekey v2 completion
+ * frame。该函数只验证密码学与规范编码，公钥信任关系由调用方负责。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_data_rekey_completion_proof_verify(
+    const uint8_t *signing_public_key,
+    size_t signing_public_key_length,
+    const uint8_t *proof_frame,
+    size_t proof_frame_length,
+    const uint8_t *signature,
+    size_t signature_length);
 
 KELIVO_CORE_API KelivoStatus kelivo_device_identity_handle_close(
     uint64_t identity_handle);

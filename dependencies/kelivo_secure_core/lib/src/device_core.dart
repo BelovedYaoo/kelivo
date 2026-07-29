@@ -5,6 +5,10 @@ const _devicePublicKeyLength = native.KELIVO_DEVICE_PUBLIC_KEY_SIZE;
 const _devicePublicKeysLength = native.KELIVO_DEVICE_PUBLIC_KEYS_SIZE;
 const _deviceChallengeLength = native.KELIVO_DEVICE_CHALLENGE_SIZE;
 const _deviceProofLength = native.KELIVO_DEVICE_PROOF_SIZE;
+const _dataRekeyCompletionProofFrameLength =
+    native.KELIVO_DATA_REKEY_COMPLETION_PROOF_FRAME_SIZE;
+const _dataRekeyCompletionProofSignatureLength =
+    native.KELIVO_DATA_REKEY_COMPLETION_PROOF_SIGNATURE_SIZE;
 const _accountKeyEnvelopeLength = native.KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE;
 const _pairingSecretLength = native.KELIVO_PAIRING_SECRET_SIZE;
 const _pairingAuthenticatorLength = native.KELIVO_PAIRING_AUTHENTICATOR_SIZE;
@@ -243,6 +247,19 @@ final class KelivoAccountTrustSignature {
   }
 
   const KelivoAccountTrustSignature._(this.bytes);
+
+  final Uint8List bytes;
+}
+
+final class KelivoDataRekeyCompletionProofSignature {
+  factory KelivoDataRekeyCompletionProofSignature(Uint8List bytes) {
+    _requireLength(bytes, _dataRekeyCompletionProofSignatureLength, 'bytes');
+    return KelivoDataRekeyCompletionProofSignature._(
+      _immutableDeviceBytes(bytes),
+    );
+  }
+
+  const KelivoDataRekeyCompletionProofSignature._(this.bytes);
 
   final Uint8List bytes;
 }
@@ -800,6 +817,53 @@ extension KelivoDeviceCore on KelivoSecureCore {
     } finally {
       identity._state.completeUse();
     }
+  }
+
+  Future<KelivoDataRekeyCompletionProofSignature> signDataRekeyCompletionProof(
+    KelivoDeviceIdentityHandle identity, {
+    required Uint8List proofFrame,
+  }) async {
+    _requireLength(
+      proofFrame,
+      _dataRekeyCompletionProofFrameLength,
+      'proofFrame',
+    );
+    final value = identity._state.beginUse();
+    try {
+      final signature = await Isolate.run(
+        () => _signDataRekeyCompletionProof(
+          value,
+          Uint8List.fromList(proofFrame),
+        ),
+      );
+      return KelivoDataRekeyCompletionProofSignature(signature);
+    } finally {
+      identity._state.completeUse();
+    }
+  }
+
+  Future<void> verifyDataRekeyCompletionProof({
+    required Uint8List signingPublicKey,
+    required Uint8List proofFrame,
+    required KelivoDataRekeyCompletionProofSignature signature,
+  }) {
+    _requireLength(
+      signingPublicKey,
+      _devicePublicKeyLength,
+      'signingPublicKey',
+    );
+    _requireLength(
+      proofFrame,
+      _dataRekeyCompletionProofFrameLength,
+      'proofFrame',
+    );
+    return Isolate.run(
+      () => _verifyDataRekeyCompletionProof(
+        Uint8List.fromList(signingPublicKey),
+        Uint8List.fromList(proofFrame),
+        Uint8List.fromList(signature.bytes),
+      ),
+    );
   }
 
   Future<KelivoDeviceRegistrationBundle> createDeviceRegistrationFinish(
@@ -1787,6 +1851,61 @@ Uint8List _signDeviceLoginProof(
     deviceId.fillRange(0, deviceId.length, 0);
     challenge.fillRange(0, challenge.length, 0);
     credentialFinalization.fillRange(0, credentialFinalization.length, 0);
+  }
+}
+
+Uint8List _signDataRekeyCompletionProof(
+  int identityHandle,
+  Uint8List proofFrame,
+) {
+  final proofFramePointer = _copyToNative(proofFrame);
+  try {
+    return _fixedDeviceOutput(
+      operation: 'data_rekey_completion_proof_sign',
+      expectedLength: _dataRekeyCompletionProofSignatureLength,
+      call: (output, capacity, outputLength) =>
+          native.kelivo_data_rekey_completion_proof_sign(
+            identityHandle,
+            proofFramePointer,
+            proofFrame.length,
+            output,
+            capacity,
+            outputLength,
+          ),
+    );
+  } finally {
+    _clearAndFree(proofFramePointer, proofFrame.length);
+    proofFrame.fillRange(0, proofFrame.length, 0);
+  }
+}
+
+void _verifyDataRekeyCompletionProof(
+  Uint8List signingPublicKey,
+  Uint8List proofFrame,
+  Uint8List signature,
+) {
+  final publicKeyPointer = _copyToNative(signingPublicKey);
+  final proofFramePointer = _copyToNative(proofFrame);
+  final signaturePointer = _copyToNative(signature);
+  try {
+    _throwOnError(
+      operation: 'data_rekey_completion_proof_verify',
+      statusCode: native.kelivo_data_rekey_completion_proof_verify(
+        publicKeyPointer,
+        signingPublicKey.length,
+        proofFramePointer,
+        proofFrame.length,
+        signaturePointer,
+        signature.length,
+      ),
+    );
+  } finally {
+    _clearAndFree(publicKeyPointer, signingPublicKey.length);
+    _clearAndFree(proofFramePointer, proofFrame.length);
+    _clearAndFree(signaturePointer, signature.length);
+    signingPublicKey.fillRange(0, signingPublicKey.length, 0);
+    proofFrame.fillRange(0, proofFrame.length, 0);
+    signature.fillRange(0, signature.length, 0);
   }
 }
 
