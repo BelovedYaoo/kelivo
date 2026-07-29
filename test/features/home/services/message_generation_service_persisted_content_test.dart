@@ -3,9 +3,9 @@ import 'package:Kelivo/features/home/services/message_generation_service.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 void main() {
-  group('persisted user message content', () {
-    test('keeps text and attachment markers in the same format as send', () {
-      final content = MessageGenerationService.buildPersistedUserMessageContent(
+  group('persisted user message text', () {
+    test('仅保留处理后的用户文本，不写入附件路径', () {
+      final content = MessageGenerationService.buildPersistedUserMessageText(
         const ChatInputData(
           text: '  edited prompt  ',
           imagePaths: ['C:/tmp/image.png'],
@@ -20,21 +20,16 @@ void main() {
         assistant: null,
       );
 
-      expect(
-        content,
-        'edited prompt\n'
-        '[image:C:/tmp/image.png]\n'
-        '[file:C:/tmp/spec.pdf|spec.pdf|application/pdf]',
-      );
+      expect(content, 'edited prompt');
     });
 
-    test('allows attachment-only edits without inventing placeholder text', () {
-      final content = MessageGenerationService.buildPersistedUserMessageContent(
+    test('纯附件输入不会伪造占位正文', () {
+      final content = MessageGenerationService.buildPersistedUserMessageText(
         const ChatInputData(text: '', imagePaths: ['C:/tmp/image.png']),
         assistant: null,
       );
 
-      expect(content, '\n[image:C:/tmp/image.png]');
+      expect(content, isEmpty);
     });
   });
 }

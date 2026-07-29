@@ -228,13 +228,15 @@ class MessageGenerationService {
     required ChatInputData input,
     required Assistant? assistant,
   }) async {
+    final attachments = buildLocalMessageAttachments(input);
     return chatService.addMessage(
       conversationId: conversationId,
       role: 'user',
-      content: MessageGenerationService.buildPersistedUserMessageContent(
+      content: MessageGenerationService.buildPersistedUserMessageText(
         input,
         assistant: assistant,
       ),
+      attachments: attachments,
     );
   }
 
@@ -248,15 +250,17 @@ class MessageGenerationService {
     required String modelId,
     required String providerKey,
   }) async {
-    final userContent = buildPersistedUserMessageContent(
+    final userContent = buildPersistedUserMessageText(
       input,
       assistant: assistant,
     );
+    final userAttachments = buildLocalMessageAttachments(input);
     if (chatService.isTemporaryConversation(conversationId)) {
       final userMessage = await chatService.addMessage(
         conversationId: conversationId,
         role: 'user',
         content: userContent,
+        attachments: userAttachments,
       );
       final assistantMessage = await createAssistantPlaceholder(
         conversationId: conversationId,
@@ -273,6 +277,7 @@ class MessageGenerationService {
     final result = await chatService.beginSendGeneration(
       conversationId: conversationId,
       userContent: userContent,
+      userAttachments: userAttachments,
       modelId: modelId,
       providerId: providerKey,
     );
@@ -315,25 +320,34 @@ class MessageGenerationService {
     return (assistantMessage: result.assistantMessage, runId: result.run.id);
   }
 
-  /// Build the persisted content string for a user message.
-  static String buildPersistedUserMessageContent(
+  static String buildPersistedUserMessageText(
     ChatInputData input, {
     required Assistant? assistant,
   }) {
     final content = input.text.trim();
-    final imageMarkers = input.imagePaths.map((p) => '\n[image:$p]').join();
-    final docMarkers = input.documents
-        .map((d) => '\n[file:${d.path}|${d.fileName}|${d.mime}]')
-        .join();
-
-    final processedUserText = applyAssistantRegexes(
+    return applyAssistantRegexes(
       content,
       assistant: assistant,
       scope: AssistantRegexScope.user,
       target: AssistantRegexTransformTarget.persist,
     );
+  }
 
-    return processedUserText + imageMarkers + docMarkers;
+  static List<LocalMessageAttachmentInput> buildLocalMessageAttachments(
+    ChatInputData input,
+  ) {
+    return List<LocalMessageAttachmentInput>.unmodifiable(
+      <LocalMessageAttachmentInput>[
+        for (final path in input.imagePaths)
+          LocalMessageAttachmentInput.image(path: path),
+        for (final document in input.documents)
+          LocalMessageAttachmentInput.file(
+            path: document.path,
+            displayName: document.fileName,
+            mediaType: document.mime,
+          ),
+      ],
+    );
   }
 
   /// Create assistant message placeholder.

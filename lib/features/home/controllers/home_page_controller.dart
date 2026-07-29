@@ -1016,6 +1016,7 @@ class HomePageController extends ChangeNotifier {
     final newMsg = await _chatService.appendMessageVersion(
       messageId: message.id,
       content: result.content,
+      attachments: const <LocalMessageAttachmentInput>[],
     );
     if (newMsg == null) return;
 
@@ -1084,9 +1085,21 @@ class HomePageController extends ChangeNotifier {
   }
 
   void _enterUserMessageEdit(ChatMessage message) {
-    final input = _messageBuilderService.parseInputFromRaw(
-      message.content,
-      includeMediaFilePathsAsImages: false,
+    final input = ChatInputData(
+      text: message.content,
+      imagePaths: <String>[
+        for (final attachment in message.attachments)
+          if (attachment.kind == 'image') attachment.path,
+      ],
+      documents: <DocumentAttachment>[
+        for (final attachment in message.attachments)
+          if (attachment.kind == 'file')
+            DocumentAttachment(
+              path: attachment.path,
+              fileName: attachment.displayName!,
+              mime: attachment.mediaType!,
+            ),
+      ],
     );
     final messageId = message.id;
     _inputController.value = TextEditingValue(
@@ -1126,9 +1139,12 @@ class HomePageController extends ChangeNotifier {
     final conversation = currentConversation;
     if (conversation == null) return null;
     final assistant = _context.read<AssistantProvider>().currentAssistant;
-    final content = MessageGenerationService.buildPersistedUserMessageContent(
+    final content = MessageGenerationService.buildPersistedUserMessageText(
       input,
       assistant: assistant,
+    );
+    final attachments = MessageGenerationService.buildLocalMessageAttachments(
+      input,
     );
 
     await _chatService.clearConversationSuggestions(conversation.id);
@@ -1139,6 +1155,7 @@ class HomePageController extends ChangeNotifier {
     final newMsg = await _chatService.appendMessageVersion(
       messageId: editState.messageId,
       content: content,
+      attachments: attachments,
     );
     if (newMsg == null) return null;
 

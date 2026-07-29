@@ -4780,6 +4780,7 @@ LIMIT 1;
   Future<AppendedMessageVersion?> appendMessageVersion({
     required String messageId,
     required String content,
+    required Iterable<ChatMessageAttachment> attachments,
     String? newMessageId,
   }) {
     return _observer.measure(
@@ -4787,6 +4788,7 @@ LIMIT 1;
       () => _appendMessageVersion(
         messageId: messageId,
         content: content,
+        attachments: attachments,
         newMessageId: newMessageId,
       ),
     );
@@ -4795,6 +4797,7 @@ LIMIT 1;
   Future<AppendedMessageVersion?> _appendMessageVersion({
     required String messageId,
     required String content,
+    required Iterable<ChatMessageAttachment> attachments,
     required String? newMessageId,
   }) async {
     return _db.transaction(() async {
@@ -4828,6 +4831,7 @@ LIMIT 1;
         id: newMessageId,
         role: original.role,
         content: content,
+        attachments: attachments,
         conversationId: original.conversationId,
         modelId: original.modelId,
         providerId: original.providerId,

@@ -55,6 +55,37 @@ final class LoadedTimelinePage {
 
 typedef AssetContentHash = Future<String> Function(File file);
 
+final class LocalMessageAttachmentInput {
+  factory LocalMessageAttachmentInput.image({required String path}) {
+    return LocalMessageAttachmentInput._(path: path, kind: 'image');
+  }
+
+  factory LocalMessageAttachmentInput.file({
+    required String path,
+    required String displayName,
+    required String mediaType,
+  }) {
+    return LocalMessageAttachmentInput._(
+      path: path,
+      kind: 'file',
+      displayName: displayName,
+      mediaType: mediaType,
+    );
+  }
+
+  const LocalMessageAttachmentInput._({
+    required this.path,
+    required this.kind,
+    this.displayName,
+    this.mediaType,
+  });
+
+  final String path;
+  final String kind;
+  final String? displayName;
+  final String? mediaType;
+}
+
 typedef _AssetGcQuarantine = ({
   AssetGcQuarantineRecord record,
   File original,
@@ -90,7 +121,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   static const int defaultLoadedWindowMax = 360;
   static const int _messageCacheMaxEntries = 720;
   static const int _messageCacheMaxBytes = 8 * 1024 * 1024;
-  static const int _assetReferenceBackfillVersion = 2;
   static const Duration _assetGcDelay = Duration(days: 7);
   static const Duration _assetGcLeaseDuration = Duration(minutes: 2);
   static const Duration _assetGcLeaseRetryInterval = Duration(
@@ -113,7 +143,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
 
   final String _assetGcLeaseOwnerToken = const Uuid().v4();
   ChatDatabaseLease? _databaseLease;
-  Future<void>? _assetReferenceMaintenanceFuture;
   Future<void>? _assetMaintenanceFuture;
   Future<void>? _assetGcRecoveryFuture;
   Future<void>? _postStartupAssetMaintenanceFuture;
@@ -182,8 +211,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     _databaseLease = lease;
     _repo = lease.repository;
     try {
-      // 迁移具有版本号且以事务执行；常规启动无需扫描数据行即可返回。
-      await _migrateSandboxPaths();
       await _loadConversationsCache();
 
       // 清理上一次崩溃或强制退出遗留的 isStreaming 标记；重新启动后，
@@ -193,17 +220,14 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       _initialized = true;
       notifyListeners();
       late final Future<void> postStartupMaintenance;
-      postStartupMaintenance = _ensureAssetGcRecovery()
-          .then((_) => _runAssetReferenceMaintenance(appDataDir))
-          .then((_) => runAssetMaintenance())
-          .whenComplete(() {
-            if (identical(
-              _postStartupAssetMaintenanceFuture,
-              postStartupMaintenance,
-            )) {
-              _postStartupAssetMaintenanceFuture = null;
-            }
-          });
+      postStartupMaintenance = runAssetMaintenance().whenComplete(() {
+        if (identical(
+          _postStartupAssetMaintenanceFuture,
+          postStartupMaintenance,
+        )) {
+          _postStartupAssetMaintenanceFuture = null;
+        }
+      });
       _postStartupAssetMaintenanceFuture = postStartupMaintenance;
       unawaited(
         postStartupMaintenance.catchError((
@@ -272,21 +296,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
             stack: stackTrace,
             library: 'chat_service',
             context: ErrorDescription('关闭聊天服务时等待启动维护失败'),
-          ),
-        );
-      }
-    }
-    final assetReferenceMaintenance = _assetReferenceMaintenanceFuture;
-    if (assetReferenceMaintenance != null) {
-      try {
-        await assetReferenceMaintenance;
-      } catch (error, stackTrace) {
-        FlutterError.reportError(
-          FlutterErrorDetails(
-            exception: error,
-            stack: stackTrace,
-            library: 'chat_service',
-            context: ErrorDescription('关闭聊天服务时等待资源维护失败'),
           ),
         );
       }
@@ -617,7 +626,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required Future<T> Function() write,
   }) async {
     if (!_initialized) await init();
-    // 导入事务会再次触发附件引用维护；先排空启动维护，避免事务内等待事务外查询形成环。
+    // 启动清理可能处理同一批资产；导入前先排空，避免文件与数据库归属并发变化。
     final startupMaintenance = _postStartupAssetMaintenanceFuture;
     if (startupMaintenance != null) {
       await startupMaintenance;
@@ -666,9 +675,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       defaultTitle: _defaultConversationTitle,
     );
     final persisted = await _repo.upsertMessageFromSync(incoming);
-    if (_messageCanOwnAssets(persisted)) {
-      await _synchronizeMessageAssetsBestEffort(persisted);
-    }
     _requiredRemoteBatchContext.rebuildConversationIds.add(
       incoming.conversationId,
     );
@@ -1886,225 +1892,81 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     notifyListeners();
   }
 
-  List<({String path, String kind, String? displayName, String? mediaType})>
-  _extractLocalAttachments(String content) {
-    final out =
-        <
-          String,
-          ({String path, String kind, String? displayName, String? mediaType})
-        >{};
-    final imgRe = RegExp(r"\[image:(.+?)\]");
-    for (final m in imgRe.allMatches(content)) {
-      final pth = m.group(1)?.trim();
-      if (pth != null &&
-          pth.isNotEmpty &&
-          !pth.startsWith('http') &&
-          !pth.startsWith('data:')) {
-        final fixed = SandboxPathResolver.fix(pth);
-        out['image:$fixed'] = (
-          path: fixed,
-          kind: 'image',
-          displayName: null,
-          mediaType: null,
-        );
-      }
-    }
-    final fileRe = RegExp(r"\[file:(.+?)\|(.+?)\|(.+?)\]");
-    for (final m in fileRe.allMatches(content)) {
-      final pth = m.group(1)?.trim();
-      final displayName = m.group(2)?.trim();
-      final mediaType = m.group(3)?.trim();
-      if (pth != null &&
-          pth.isNotEmpty &&
-          displayName != null &&
-          displayName.isNotEmpty &&
-          mediaType != null &&
-          mediaType.isNotEmpty &&
-          !pth.startsWith('http') &&
-          !pth.startsWith('data:')) {
-        final fixed = SandboxPathResolver.fix(pth);
-        out['file:$fixed'] = (
-          path: fixed,
-          kind: 'file',
-          displayName: displayName,
-          mediaType: mediaType,
-        );
-      }
-    }
-    return List.unmodifiable(out.values);
-  }
-
-  bool _messageCanOwnAssets(ChatMessage message) =>
-      message.content.contains('[image:') || message.content.contains('[file:');
-
-  Future<void> _backfillAssetReferences(Directory appDataDir) async {
-    final targetRoot = p.normalize(appDataDir.absolute.path);
-    final includeLegacyCandidates = await _repo.needsAssetReferenceBackfill(
-      version: _assetReferenceBackfillVersion,
-      targetRoot: targetRoot,
-    );
-    if (!includeLegacyCandidates &&
-        !await _repo.hasPendingAssetReferenceSync()) {
-      return;
-    }
-    var cursor = '';
-    while (true) {
-      final messages = await _repo.getMessagesForAssetReferenceBackfill(
-        afterMessageId: cursor,
-        includeLegacyCandidates: includeLegacyCandidates,
-      );
-      if (messages.isEmpty) break;
-      for (final message in messages) {
-        await _synchronizeMessageAssets(message);
-        cursor = message.id;
-        await Future<void>.delayed(Duration.zero);
-      }
-    }
-    if (includeLegacyCandidates) {
-      await _repo.markAssetReferenceBackfillComplete(
-        version: _assetReferenceBackfillVersion,
-        targetRoot: targetRoot,
+  Future<List<ChatMessageAttachment>> _prepareLocalAttachments(
+    Iterable<LocalMessageAttachmentInput> attachments,
+  ) async {
+    final inputs = List<LocalMessageAttachmentInput>.unmodifiable(attachments);
+    if (inputs.length > ChatMessage.maximumAttachmentCount) {
+      throw RangeError.range(
+        inputs.length,
+        0,
+        ChatMessage.maximumAttachmentCount,
+        'attachments.length',
       );
     }
-  }
+    if (inputs.isEmpty) return const <ChatMessageAttachment>[];
 
-  Future<void> runAssetReferenceMaintenance() async {
-    if (!_initialized) await init();
-    return _runAssetReferenceMaintenance(
-      await AppDirectories.getAppDataDirectory(),
-    );
-  }
-
-  Future<void> _runAssetReferenceMaintenance(Directory appDataDir) {
-    final inFlight = _assetReferenceMaintenanceFuture;
-    if (inFlight != null) return inFlight;
-    late final Future<void> tracked;
-    tracked = _backfillAssetReferences(appDataDir).whenComplete(() {
-      if (identical(_assetReferenceMaintenanceFuture, tracked)) {
-        _assetReferenceMaintenanceFuture = null;
+    final managedRoots = <Directory>[
+      await AppDirectories.getUploadDirectory(),
+      await AppDirectories.getImagesDirectory(),
+    ];
+    final prepared = <ChatMessageAttachment>[];
+    for (final input in inputs) {
+      if (input.path.trim() != input.path || !p.isAbsolute(input.path)) {
+        throw StateError('asset_path_invalid');
       }
-    });
-    _assetReferenceMaintenanceFuture = tracked;
-    return tracked;
-  }
-
-  Future<void> _backfillAssetReferencesForCurrentRoot() async {
-    await runAssetReferenceMaintenance();
-  }
-
-  Future<void> _synchronizeMessageAssets(ChatMessage message) async {
-    if (isTemporaryConversation(message.conversationId)) return;
-    try {
-      var current = message;
-      while (true) {
-        // 回填读取的是快照；先持久化 dirty，再读取文件，GC 才不会在摘要窗口内释放资源。
-        await _repo.markMessageAssetReferencesDirty(current.id);
-        final managedRoots = <Directory>[
-          await AppDirectories.getUploadDirectory(),
-          await AppDirectories.getImagesDirectory(),
-        ];
-        final registrations = <MessageAssetRegistration>[];
-        for (final attachment in _extractLocalAttachments(current.content)) {
-          final normalizedPath = p.normalize(
-            File(attachment.path).absolute.path,
-          );
-          Directory? owner;
-          for (final root in managedRoots) {
-            if (SandboxPathResolver.isOwnedManagedPath(
-              path: normalizedPath,
-              managedDirectory: root,
-            )) {
-              owner = root;
-              break;
-            }
-          }
-          if (owner == null) continue;
-          final file = File(normalizedPath);
-          if (await FileSystemEntity.type(file.path, followLinks: false) !=
-              FileSystemEntityType.file) {
-            throw StateError('asset_file_unavailable');
-          }
-          final contentHash = await _assetContentHash(file);
-          if (!SandboxPathResolver.isOwnedManagedPath(
+      final normalizedPath = p.normalize(File(input.path).absolute.path);
+      Directory? owner;
+      for (final root in managedRoots) {
+        if (SandboxPathResolver.isOwnedManagedPath(
+          path: normalizedPath,
+          managedDirectory: root,
+        )) {
+          owner = root;
+          break;
+        }
+      }
+      if (owner == null) {
+        throw StateError('asset_path_outside_managed_root');
+      }
+      final file = File(normalizedPath);
+      if (await FileSystemEntity.type(file.path, followLinks: false) !=
+          FileSystemEntityType.file) {
+        throw StateError('asset_file_unavailable');
+      }
+      final before = await file.stat();
+      final contentHash = await _assetContentHash(file);
+      if (!SandboxPathResolver.isOwnedManagedPath(
             path: normalizedPath,
             managedDirectory: owner,
-          )) {
-            throw StateError('asset_file_escaped_managed_root');
-          }
-          registrations.add(
-            MessageAssetRegistration(
-              assetId: 'asset_$contentHash',
-              contentHash: contentHash,
-              path: normalizedPath,
-              byteSize: await file.length(),
-              kind: attachment.kind,
-              displayName: attachment.displayName,
-              mediaType: attachment.mediaType,
-            ),
-          );
-        }
-        final replaced = await _repo.replaceMessageAssetReferences(
-          conversationId: current.conversationId,
-          revisionId: current.id,
-          expectedContent: current.content,
-          assets: registrations,
-        );
-        if (replaced) return;
-        final latest = await _repo.getMessage(current.id);
-        if (latest == null) return;
-        current = latest;
-        await Future<void>.delayed(Duration.zero);
+          ) ||
+          await FileSystemEntity.type(file.path, followLinks: false) !=
+              FileSystemEntityType.file) {
+        throw StateError('asset_file_escaped_managed_root');
       }
-    } catch (error, stackTrace) {
-      // dirty 行是失败与 GC 之间的持久化闸门；只记录日志无法跨重启保护文件。
-      await _repo.markMessageAssetReferencesDirty(message.id);
-      Error.throwWithStackTrace(error, stackTrace);
+      final after = await file.stat();
+      if (before.size != after.size || before.modified != after.modified) {
+        throw StateError('asset_file_changed_during_hash');
+      }
+      prepared.add(
+        ChatMessageAttachment(
+          assetId: 'asset_$contentHash',
+          path: normalizedPath,
+          contentHash: contentHash,
+          byteSize: after.size,
+          kind: input.kind,
+          displayName: input.displayName,
+          mediaType: input.mediaType,
+        ),
+      );
     }
+    return List<ChatMessageAttachment>.unmodifiable(prepared);
   }
 
   static Future<String> _hashAssetFile(File file) {
     final path = file.path;
     return Isolate.run(
       () async => (await sha256.bind(File(path).openRead()).first).toString(),
-    );
-  }
-
-  Future<void> _synchronizeMessageAssetsBestEffort(ChatMessage message) async {
-    try {
-      await _synchronizeMessageAssets(message);
-    } catch (error) {
-      // 消息持久化是权威数据。消息事务会先将相关修订加入队列，
-      // 因此资产索引更新失败时由有界启动回填重试，而不是让发送失败。
-      debugPrint('Message asset synchronization failed: $error');
-    }
-  }
-
-  Future<void> _migrateSandboxPaths() async {
-    if (SandboxPathResolver.docsDir == null) {
-      await SandboxPathResolver.init();
-    }
-    final targetRoot = SandboxPathResolver.docsDir;
-    if (targetRoot == null || targetRoot.isEmpty) {
-      throw StateError('sandbox_path_resolver_not_ready');
-    }
-    final imgRe = RegExp(r"\[image:(.+?)\]");
-    final fileRe = RegExp(r"\[file:(.+?)\|(.+?)\|(.+?)\]");
-    await _repo.migrateSandboxPaths(
-      targetVersion: 1,
-      targetRoot: targetRoot,
-      rewriteContent: (content) {
-        var updated = content.replaceAllMapped(imgRe, (match) {
-          final raw = (match.group(1) ?? '').trim();
-          return '[image:${SandboxPathResolver.fix(raw)}]';
-        });
-        updated = updated.replaceAllMapped(fileRe, (match) {
-          final raw = (match.group(1) ?? '').trim();
-          final name = (match.group(2) ?? '').trim();
-          final mime = (match.group(3) ?? '').trim();
-          return '[file:${SandboxPathResolver.fix(raw)}|$name|$mime]';
-        });
-        return updated;
-      },
     );
   }
 
@@ -2486,9 +2348,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   Future<void> _runAssetMaintenance({DateTime? now}) async {
     final effectiveNow = (now ?? DateTime.now()).toUtc();
     await _ensureAssetGcRecovery();
-    await _runAssetReferenceMaintenance(
-      await AppDirectories.getAppDataDirectory(),
-    );
     await _withAssetGcLease<void>(() async {
       final managedRoots = <Directory>[
         await AppDirectories.getUploadDirectory(),
@@ -2678,7 +2537,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           toolEventsByMessageId: const {},
           geminiSignaturesByMessageId: const {},
         );
-        await _backfillAssetReferencesForCurrentRoot();
         await _refreshConversation(restored.id);
 
         _messagesCache[restored.id] = List.of(normalizedMessages);
@@ -2755,7 +2613,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     if (!_initialized) await init();
     final report = await _repo.mergeBackupSnapshot(snapshotFile);
     _messagesCache.clear();
-    await _backfillAssetReferencesForCurrentRoot();
     await _loadConversationsCache();
     notifyListeners();
     return report;
@@ -2780,7 +2637,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       source: source,
     );
     _messagesCache.clear();
-    await _backfillAssetReferencesForCurrentRoot();
     await _loadConversationsCache();
     notifyListeners();
     return report;
@@ -2797,7 +2653,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     _messageCounts.clear();
     _messageOrderIds.clear();
     _currentConversationId = null;
-    await _backfillAssetReferencesForCurrentRoot();
     await _loadConversationsCache();
     notifyListeners();
   }
@@ -2823,9 +2678,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           message: message,
           touchUpdatedAt: false,
         );
-        if (_messageCanOwnAssets(message)) {
-          await _synchronizeMessageAssetsBestEffort(message);
-        }
         _conversationsCache[conversationId] = persisted;
         order.add(message.id);
         _messageCounts[conversationId] = order.length;
@@ -3072,6 +2924,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     required String conversationId,
     required String role,
     required String content,
+    Iterable<LocalMessageAttachmentInput> attachments = const [],
     String? modelId,
     String? providerId,
     int? totalTokens,
@@ -3086,6 +2939,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     bool selectVersion = false,
   }) async {
     if (!_initialized) await init();
+    final preparedAttachments = await _prepareLocalAttachments(attachments);
 
     var conversation = _conversationsCache[conversationId];
     final temporary = _temporaryConversationIds.contains(conversationId);
@@ -3109,6 +2963,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     final message = ChatMessage(
       role: role,
       content: content,
+      attachments: preparedAttachments,
       conversationId: conversationId,
       modelId: modelId,
       providerId: providerId,
@@ -3142,9 +2997,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           message: message,
           selectVersion: selectVersion,
         );
-        if (_messageCanOwnAssets(message)) {
-          await _synchronizeMessageAssetsBestEffort(message);
-        }
         _draftConversations.remove(conversationId);
         _conversationsCache[conversationId] = persisted;
         conversation = persisted;
@@ -3180,6 +3032,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   Future<GenerationBeginResult> beginSendGeneration({
     required String conversationId,
     required String userContent,
+    required Iterable<LocalMessageAttachmentInput> userAttachments,
     required String modelId,
     required String providerId,
   }) async {
@@ -3187,6 +3040,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     if (isTemporaryConversation(conversationId)) {
       throw StateError('temporary_generation_is_not_persisted');
     }
+    final preparedAttachments = await _prepareLocalAttachments(userAttachments);
     final conversation =
         _conversationsCache[conversationId] ??
         _draftConversations[conversationId] ??
@@ -3198,6 +3052,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     final userMessage = ChatMessage(
       role: 'user',
       content: userContent,
+      attachments: preparedAttachments,
       conversationId: conversationId,
       turnId: turnId,
     );
@@ -3223,7 +3078,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           assistantMessage: assistantMessage,
           runId: const Uuid().v4(),
         );
-        await _publishGenerationBegin(result);
+        _publishGenerationBegin(result);
         return result;
       },
     );
@@ -3273,7 +3128,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         _messageOrderIds.remove(conversationId);
         await _loadMessageOrder(conversationId);
       }
-      await _publishGenerationBegin(result);
+      _publishGenerationBegin(result);
       return result;
     }
 
@@ -3300,7 +3155,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
   }
 
-  Future<void> _publishGenerationBegin(GenerationBeginResult result) async {
+  void _publishGenerationBegin(GenerationBeginResult result) {
     final conversationId = result.conversation.id;
     _draftConversations.remove(conversationId);
     _conversationsCache[conversationId] = result.conversation;
@@ -3308,10 +3163,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       if (result.userMessage case final userMessage?) userMessage,
       result.assistantMessage,
     ];
-    if (result.userMessage case final userMessage?
-        when _messageCanOwnAssets(userMessage)) {
-      await _synchronizeMessageAssetsBestEffort(userMessage);
-    }
     final order = _messageOrderIds.putIfAbsent(
       conversationId,
       () => <String>[],
@@ -3398,16 +3249,10 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       final latest = await _repo.getMessage(messageId);
       if (latest == null) return;
       final updatedMessage = applyUpdate(latest);
-      if (content != null) {
-        await _repo.markMessageAssetReferencesDirty(updatedMessage.id);
-      }
       await _repo.updateMessageAndStreamingState(
         updatedMessage,
         untrackStreaming: isStreaming == false,
       );
-      if (content != null) {
-        await _synchronizeMessageAssetsBestEffort(updatedMessage);
-      }
       _replaceCachedMessage(updatedMessage);
       notifyListeners();
     }
@@ -3573,9 +3418,6 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         errorCode: errorCode,
         geminiThoughtSignature: _geminiThoughtSigsCache[message.id],
       );
-      if (_messageCanOwnAssets(message)) {
-        await _synchronizeMessageAssetsBestEffort(message);
-      }
       _replaceCachedMessage(message);
       _toolEventsCache[message.id] = List<Map<String, dynamic>>.of(toolEvents);
       _statisticsRevision++;
@@ -3827,10 +3669,12 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
   Future<ChatMessage?> appendMessageVersion({
     required String messageId,
     required String content,
+    required Iterable<LocalMessageAttachmentInput> attachments,
   }) async {
     if (!_initialized) await init();
     final original = await _repo.getMessage(messageId);
     if (original == null) return null;
+    final preparedAttachments = await _prepareLocalAttachments(attachments);
     await _loadMessageOrder(original.conversationId);
     final newMessageId = const Uuid().v4();
     final keys = <SyncEntityKey>{
@@ -3848,13 +3692,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         final result = await _repo.appendMessageVersion(
           messageId: messageId,
           content: content,
+          attachments: preparedAttachments,
           newMessageId: newMessageId,
         );
         if (result == null) return null;
         final newMsg = result.message;
-        if (_messageCanOwnAssets(newMsg)) {
-          await _synchronizeMessageAssetsBestEffort(newMsg);
-        }
         final cid = newMsg.conversationId;
         _conversationsCache[cid] = result.conversation;
         final order = _messageOrderIds.putIfAbsent(cid, () => <String>[]);

@@ -121,6 +121,18 @@ void main() {
     return service;
   }
 
+  LocalMessageAttachmentInput localFileAttachment(
+    File file, {
+    required String displayName,
+    String mediaType = 'application/octet-stream',
+  }) {
+    return LocalMessageAttachmentInput.file(
+      path: file.path,
+      displayName: displayName,
+      mediaType: mediaType,
+    );
+  }
+
   test('cold init clears every stale streaming flag', () async {
     final first = createService();
     await first.init();
@@ -171,6 +183,7 @@ void main() {
     final result = await service.beginSendGeneration(
       conversationId: conversation.id,
       userContent: 'next question',
+      userAttachments: const <LocalMessageAttachmentInput>[],
       modelId: 'model',
       providerId: 'provider',
     );
@@ -200,30 +213,176 @@ void main() {
     expect(service.getMessageCount(first.id), 1);
   });
 
-  test(
-    'persistent attachment uses delayed reference GC after message delete',
-    () async {
-      final service = createService();
-      await service.init();
-      final conversation = await service.createConversation(title: 'Assets');
-      final upload = File('${tempDir.path}/upload/spec.pdf');
-      await upload.parent.create(recursive: true);
-      await upload.writeAsString('attachment payload');
-      final message = await service.addMessage(
+  test('本地图片与文件和纯文本正文在同一事务持久化', () async {
+    final service = createService();
+    await service.init();
+    final conversation = await service.createConversation(title: 'Assets');
+    final image = File('${tempDir.path}/images/photo.png');
+    final upload = File('${tempDir.path}/upload/spec.pdf');
+    await image.parent.create(recursive: true);
+    await upload.parent.create(recursive: true);
+    await image.writeAsBytes(const <int>[1, 2, 3, 4]);
+    await upload.writeAsString('attachment payload');
+    final generation = await service.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '请分析附件',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.image(path: image.path),
+        localFileAttachment(
+          upload,
+          displayName: 'spec.pdf',
+          mediaType: 'application/pdf',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    final message = generation.userMessage!;
+
+    expect(message.content, '请分析附件');
+    expect(message.content, isNot(contains('[image:')));
+    expect(message.content, isNot(contains('[file:')));
+    expect(message.attachments, hasLength(2));
+    expect(message.attachments.map((attachment) => attachment.kind), [
+      'image',
+      'file',
+    ]);
+    expect(
+      message.attachments.every((attachment) => !attachment.hasRemoteIdentity),
+      isTrue,
+    );
+    final persisted = (await service.loadMessages(
+      conversation.id,
+    )).singleWhere((candidate) => candidate.id == message.id);
+    expect(
+      persisted.attachments.map((attachment) => attachment.toJson()),
+      message.attachments.map((attachment) => attachment.toJson()),
+    );
+
+    await service.deleteMessage(message.id);
+
+    expect(await upload.exists(), isTrue, reason: 'GC must be delayed');
+    expect(await image.exists(), isTrue, reason: 'GC must be delayed');
+    await service.runAssetMaintenance(
+      now: DateTime.now().toUtc().add(const Duration(days: 8)),
+    );
+    expect(await upload.exists(), isFalse);
+    expect(await image.exists(), isFalse);
+  });
+
+  test('本地附件数量支持零和三十二边界，超限不落库', () async {
+    final service = createService(
+      assetContentHash: (file) async {
+        final index = int.parse(
+          p.basenameWithoutExtension(file.path).split('-').last,
+        );
+        return index.toRadixString(16).padLeft(64, '0');
+      },
+    );
+    await service.init();
+    final conversation = await service.createConversation(title: 'Assets');
+    final withoutAttachments = await service.addMessage(
+      conversationId: conversation.id,
+      role: 'user',
+      content: '纯文本',
+      attachments: const <LocalMessageAttachmentInput>[],
+    );
+    expect(withoutAttachments.attachments, isEmpty);
+
+    final files = <File>[];
+    for (var index = 0; index < 33; index++) {
+      final file = File('${tempDir.path}/upload/asset-$index.bin');
+      await file.parent.create(recursive: true);
+      await file.writeAsString('asset $index');
+      files.add(file);
+    }
+    final maximum = await service.addMessage(
+      conversationId: conversation.id,
+      role: 'user',
+      content: '三十二个附件',
+      attachments: <LocalMessageAttachmentInput>[
+        for (final file in files.take(32))
+          localFileAttachment(file, displayName: p.basename(file.path)),
+      ],
+    );
+    expect(maximum.attachments, hasLength(32));
+
+    await expectLater(
+      service.addMessage(
         conversationId: conversation.id,
         role: 'user',
-        content: '[file:${upload.path}|spec.pdf|application/pdf]',
-      );
+        content: '超限附件',
+        attachments: <LocalMessageAttachmentInput>[
+          for (final file in files)
+            localFileAttachment(file, displayName: p.basename(file.path)),
+        ],
+      ),
+      throwsRangeError,
+    );
+    expect(await service.loadMessages(conversation.id), hasLength(2));
+  });
 
-      await service.deleteMessage(message.id);
+  test('缺失文件和托管目录外文件失败且不留下消息或引用', () async {
+    final service = createService();
+    await service.init();
+    final conversation = await service.createConversation(title: 'Assets');
+    final missing = File('${tempDir.path}/upload/missing.txt');
+    final outside = File(
+      '${tempDir.parent.path}/outside-${p.basename(tempDir.path)}.txt',
+    );
+    await outside.writeAsString('outside');
+    addTearDown(() async {
+      if (await outside.exists()) await outside.delete();
+    });
 
-      expect(await upload.exists(), isTrue, reason: 'GC must be delayed');
-      await service.runAssetMaintenance(
-        now: DateTime.now().toUtc().add(const Duration(days: 8)),
+    await expectLater(
+      service.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: '缺失',
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(missing, displayName: 'missing.txt'),
+        ],
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'asset_file_unavailable',
+        ),
+      ),
+    );
+    await expectLater(
+      service.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: '逃逸',
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(outside, displayName: 'outside.txt'),
+        ],
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'asset_path_outside_managed_root',
+        ),
+      ),
+    );
+
+    expect(await service.loadMessages(conversation.id), isEmpty);
+    final database = sqlite.sqlite3.open(
+      '${tempDir.path}/${AppDatabase.databaseFileName}',
+    );
+    try {
+      expect(
+        database.select('SELECT revision_id FROM message_asset_rows;'),
+        isEmpty,
       );
-      expect(await upload.exists(), isFalse);
-    },
-  );
+    } finally {
+      database.close();
+    }
+  });
 
   test('asset maintenance waits for another process lease owner', () async {
     final databaseFile = File(
@@ -291,12 +450,26 @@ void main() {
       try {
         await service.init();
         final conversation = await service.createConversation(title: 'Assets');
-        await service.addMessage(
-          conversationId: conversation.id,
-          role: 'user',
-          content:
-              '[file:$managedFilePath'
-              '|private.txt|text/plain]',
+        await expectLater(
+          service.addMessage(
+            conversationId: conversation.id,
+            role: 'user',
+            content: '路径换链',
+            attachments: <LocalMessageAttachmentInput>[
+              LocalMessageAttachmentInput.file(
+                path: managedFilePath,
+                displayName: 'private.txt',
+                mediaType: 'text/plain',
+              ),
+            ],
+          ),
+          throwsA(
+            isA<StateError>().having(
+              (error) => error.message,
+              'message',
+              'asset_file_escaped_managed_root',
+            ),
+          ),
         );
 
         expect(hashAttempts, 1);
@@ -304,12 +477,13 @@ void main() {
           '${tempDir.path}/${AppDatabase.databaseFileName}',
         );
         try {
+          expect(database.select('SELECT id FROM message_rows;'), isEmpty);
           expect(database.select('SELECT id FROM asset_rows;'), isEmpty);
           expect(
             database.select(
               'SELECT revision_id FROM asset_reference_dirty_rows;',
             ),
-            hasLength(1),
+            isEmpty,
           );
         } finally {
           database.close();
@@ -318,256 +492,6 @@ void main() {
         if (await managedDirectory.exists()) {
           await managedDirectory.delete();
         }
-      }
-    },
-  );
-
-  test(
-    'cold init backfills attachment references left by an older writer',
-    () async {
-      final first = createService();
-      await first.init();
-      final conversation = await first.createConversation(title: 'Assets');
-      final upload = File('${tempDir.path}/upload/legacy.txt');
-      await upload.parent.create(recursive: true);
-      await upload.writeAsString('legacy attachment payload');
-      final message = await first.addMessage(
-        conversationId: conversation.id,
-        role: 'user',
-        content: '[file:${upload.path}|legacy.txt|text/plain]',
-      );
-      await first.close();
-      services.remove(first);
-
-      final database = sqlite.sqlite3.open(
-        '${tempDir.path}/${AppDatabase.databaseFileName}',
-      );
-      try {
-        database.execute('DELETE FROM asset_rows;');
-        database.execute(
-          "DELETE FROM chat_storage_meta_rows "
-          "WHERE key = 'asset_reference_backfill_version';",
-        );
-      } finally {
-        database.close();
-      }
-
-      final hashStarted = Completer<void>();
-      final hashResult = Completer<String>();
-      final restarted = createService(
-        assetContentHash: (file) {
-          if (!hashStarted.isCompleted) hashStarted.complete();
-          return hashResult.future;
-        },
-      );
-      await restarted.init().timeout(const Duration(seconds: 1));
-      await hashStarted.future.timeout(const Duration(seconds: 1));
-      expect(hashResult.isCompleted, isFalse);
-
-      hashResult.complete(List.filled(64, 'b').join());
-      await restarted.runAssetReferenceMaintenance();
-      await restarted.deleteMessage(message.id);
-      await restarted.runAssetMaintenance(
-        now: DateTime.now().toUtc().add(const Duration(days: 8)),
-      );
-
-      expect(await upload.exists(), isFalse);
-    },
-  );
-
-  test(
-    'stale backfill cannot replace assets for a newer message edit',
-    () async {
-      final oldHash = List.filled(64, '6').join();
-      final newHash = List.filled(64, '7').join();
-      final first = createService(assetContentHash: (_) async => oldHash);
-      await first.init();
-      final conversation = await first.createConversation(title: 'Assets');
-      final oldUpload = File('${tempDir.path}/upload/old.txt');
-      final newUpload = File('${tempDir.path}/upload/new.txt');
-      await oldUpload.parent.create(recursive: true);
-      await oldUpload.writeAsString('old attachment');
-      await newUpload.writeAsString('new attachment');
-      final message = await first.addMessage(
-        conversationId: conversation.id,
-        role: 'user',
-        content: '[file:${oldUpload.path}|old.txt|text/plain]',
-      );
-      await first.close();
-      services.remove(first);
-
-      final database = sqlite.sqlite3.open(
-        '${tempDir.path}/${AppDatabase.databaseFileName}',
-      );
-      try {
-        database.execute('DELETE FROM asset_rows;');
-        database.execute(
-          "DELETE FROM chat_storage_meta_rows "
-          "WHERE key = 'asset_reference_backfill_version';",
-        );
-      } finally {
-        database.close();
-      }
-
-      final oldHashStarted = Completer<void>();
-      final releaseOldHash = Completer<void>();
-      final restarted = createService(
-        assetContentHash: (file) async {
-          if (p.equals(p.normalize(file.path), p.normalize(oldUpload.path))) {
-            if (!oldHashStarted.isCompleted) oldHashStarted.complete();
-            await releaseOldHash.future;
-            return oldHash;
-          }
-          return newHash;
-        },
-      );
-      await restarted.init();
-      await oldHashStarted.future.timeout(const Duration(seconds: 1));
-
-      await restarted.updateMessage(
-        message.id,
-        content: '[file:${newUpload.path}|new.txt|text/plain]',
-      );
-      releaseOldHash.complete();
-      await restarted.runAssetReferenceMaintenance();
-
-      final verified = sqlite.sqlite3.open(
-        '${tempDir.path}/${AppDatabase.databaseFileName}',
-      );
-      try {
-        expect(
-          verified
-              .select(
-                'SELECT asset_id FROM message_asset_rows '
-                'WHERE revision_id = ? ORDER BY asset_id;',
-                <Object?>[message.id],
-              )
-              .map((row) => row['asset_id']),
-          <Object?>['asset_$newHash'],
-        );
-        expect(
-          verified.select(
-            'SELECT revision_id FROM asset_reference_dirty_rows '
-            'WHERE revision_id = ?;',
-            <Object?>[message.id],
-          ),
-          isEmpty,
-        );
-      } finally {
-        verified.close();
-      }
-    },
-  );
-
-  test(
-    'failed attachment backfill stays retryable and cannot release the asset to GC',
-    () async {
-      final contentHash = List.filled(64, 'c').join();
-      final first = createService(assetContentHash: (_) async => contentHash);
-      await first.init();
-      final conversation = await first.createConversation(title: 'Assets');
-      final upload = File('${tempDir.path}/upload/retry.txt');
-      await upload.parent.create(recursive: true);
-      await upload.writeAsString('retryable attachment payload');
-      final message = await first.addMessage(
-        conversationId: conversation.id,
-        role: 'user',
-        content: '[file:${upload.path}|retry.txt|text/plain]',
-      );
-      await first.close();
-      services.remove(first);
-
-      final database = sqlite.sqlite3.open(
-        '${tempDir.path}/${AppDatabase.databaseFileName}',
-      );
-      try {
-        database.execute(
-          'DELETE FROM message_asset_rows WHERE revision_id = ?;',
-          <Object?>[message.id],
-        );
-        database.execute(
-          'DELETE FROM asset_reference_dirty_rows WHERE revision_id = ?;',
-          <Object?>[message.id],
-        );
-        database.execute(
-          "DELETE FROM chat_storage_meta_rows "
-          "WHERE key = 'asset_reference_backfill_version';",
-        );
-      } finally {
-        database.close();
-      }
-
-      final hashStarted = Completer<void>();
-      final releaseFailure = Completer<void>();
-      var hashAttempts = 0;
-      final restarted = createService(
-        assetContentHash: (file) async {
-          hashAttempts += 1;
-          if (hashAttempts == 1) {
-            hashStarted.complete();
-            await releaseFailure.future;
-            throw StateError('simulated_asset_hash_failure');
-          }
-          return contentHash;
-        },
-      );
-      await restarted.init();
-      await hashStarted.future.timeout(const Duration(seconds: 1));
-      final failedMaintenance = restarted.runAssetReferenceMaintenance();
-      releaseFailure.complete();
-
-      await expectLater(failedMaintenance, throwsStateError);
-
-      final failedDatabase = sqlite.sqlite3.open(
-        '${tempDir.path}/${AppDatabase.databaseFileName}',
-      );
-      try {
-        expect(
-          failedDatabase.select(
-            "SELECT value FROM chat_storage_meta_rows "
-            "WHERE key = 'asset_reference_backfill_version';",
-          ),
-          isEmpty,
-        );
-        expect(
-          failedDatabase.select(
-            'SELECT revision_id FROM asset_reference_dirty_rows '
-            'WHERE revision_id = ?;',
-            <Object?>[message.id],
-          ),
-          hasLength(1),
-        );
-      } finally {
-        failedDatabase.close();
-      }
-
-      await restarted.runAssetMaintenance(
-        now: DateTime.now().toUtc().add(const Duration(days: 8)),
-      );
-      expect(await upload.exists(), isTrue);
-
-      await restarted.runAssetReferenceMaintenance();
-      final recoveredDatabase = sqlite.sqlite3.open(
-        '${tempDir.path}/${AppDatabase.databaseFileName}',
-      );
-      try {
-        expect(
-          recoveredDatabase.select(
-            "SELECT value FROM chat_storage_meta_rows "
-            "WHERE key = 'asset_reference_backfill_version';",
-          ),
-          hasLength(1),
-        );
-        expect(
-          recoveredDatabase.select(
-            'SELECT revision_id FROM asset_reference_dirty_rows '
-            'WHERE revision_id = ?;',
-            <Object?>[message.id],
-          ),
-          isEmpty,
-        );
-      } finally {
-        recoveredDatabase.close();
       }
     },
   );
@@ -587,15 +511,34 @@ void main() {
       final upload = File('${tempDir.path}/upload/reused-path.txt');
       await upload.parent.create(recursive: true);
       await upload.writeAsString('old payload');
-      final content = '[file:${upload.path}|reused-path.txt|text/plain]';
+      const content = '复用路径';
       final message = await service.addMessage(
         conversationId: conversation.id,
         role: 'user',
         content: content,
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(
+            upload,
+            displayName: 'reused-path.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
       );
 
       await upload.writeAsString('new payload');
-      await service.updateMessage(message.id, content: content);
+      final edited = await service.appendMessageVersion(
+        messageId: message.id,
+        content: content,
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(
+            upload,
+            displayName: 'reused-path.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
+      );
+      expect(edited, isNotNull);
+      await service.deleteMessage(message.id);
       final scheduledAt = DateTime.now().toUtc();
       await service.runAssetMaintenance(now: scheduledAt);
       await service.runAssetMaintenance(
@@ -611,7 +554,7 @@ void main() {
           database.select(
             'SELECT asset_id FROM message_asset_rows '
             'WHERE revision_id = ?;',
-            <Object?>[message.id],
+            <Object?>[edited!.id],
           ).single['asset_id'],
           'asset_$newHash',
         );
@@ -642,7 +585,14 @@ void main() {
       await first.addMessage(
         conversationId: conversation.id,
         role: 'user',
-        content: '[file:${upload.path}|report|text/plain]',
+        content: '普通附件',
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(
+            upload,
+            displayName: 'report',
+            mediaType: 'text/plain',
+          ),
+        ],
       );
       await first.close();
       services.remove(first);
@@ -685,7 +635,14 @@ void main() {
       final message = await first.addMessage(
         conversationId: conversation.id,
         role: 'user',
-        content: '[file:${upload.path}|not-moved.txt|text/plain]',
+        content: '未移动',
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(
+            upload,
+            displayName: 'not-moved.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
       );
       await first.deleteMessage(message.id);
       await first.close();
@@ -769,7 +726,14 @@ void main() {
       final message = await first.addMessage(
         conversationId: conversation.id,
         role: 'user',
-        content: '[file:${upload.path}|pending.txt|text/plain]',
+        content: '待恢复',
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(
+            upload,
+            displayName: 'pending.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
       );
       await first.deleteMessage(message.id);
       await first.close();
@@ -843,7 +807,14 @@ void main() {
       final message = await first.addMessage(
         conversationId: conversation.id,
         role: 'user',
-        content: '[file:${upload.path}|completed.txt|text/plain]',
+        content: '已完成清理',
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(
+            upload,
+            displayName: 'completed.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
       );
       await first.deleteMessage(message.id);
       await first.close();
@@ -893,98 +864,6 @@ void main() {
   );
 
   test(
-    'cold maintenance restores completed quarantine for a newer dirty message',
-    () async {
-      final contentHash = List.filled(64, 'f').join();
-      final assetId = 'asset_$contentHash';
-      final first = createService(assetContentHash: (_) async => contentHash);
-      await first.init();
-      final conversation = await first.createConversation(title: 'Assets');
-      final upload = File('${tempDir.path}/upload/completed-but-reused.txt');
-      await upload.parent.create(recursive: true);
-      await upload.writeAsString('payload needed by newer message');
-      final message = await first.addMessage(
-        conversationId: conversation.id,
-        role: 'user',
-        content: '[file:${upload.path}|completed-but-reused.txt|text/plain]',
-      );
-      await first.close();
-      services.remove(first);
-
-      const generation = 43;
-      final quarantineDirectory = Directory(
-        '${tempDir.path}/upload/.kelivo-gc',
-      );
-      await quarantineDirectory.create();
-      final quarantine = File('${quarantineDirectory.path}/completed-reused');
-      await upload.rename(quarantine.path);
-      final database = sqlite.sqlite3.open(
-        '${tempDir.path}/${AppDatabase.databaseFileName}',
-      );
-      try {
-        database.execute('DELETE FROM asset_rows WHERE id = ?;', <Object?>[
-          assetId,
-        ]);
-        database.execute(
-          'INSERT OR IGNORE INTO asset_reference_dirty_rows(revision_id) '
-          'VALUES (?);',
-          <Object?>[message.id],
-        );
-        database.execute(
-          'INSERT INTO asset_gc_quarantine_rows('
-          'quarantine_path, asset_id, generation, original_path, state, '
-          'created_at'
-          ") VALUES (?, ?, ?, ?, 'completed', ?);",
-          <Object?>[
-            quarantine.path,
-            assetId,
-            generation,
-            upload.path,
-            DateTime.now().microsecondsSinceEpoch,
-          ],
-        );
-      } finally {
-        database.close();
-      }
-
-      final restarted = createService(
-        assetContentHash: (_) async => contentHash,
-      );
-      await restarted.init();
-      await restarted.runAssetMaintenance();
-
-      expect(await upload.readAsString(), 'payload needed by newer message');
-      expect(await quarantine.exists(), isFalse);
-      final verified = sqlite.sqlite3.open(
-        '${tempDir.path}/${AppDatabase.databaseFileName}',
-      );
-      try {
-        expect(
-          verified.select(
-            'SELECT asset_id FROM message_asset_rows WHERE revision_id = ?;',
-            <Object?>[message.id],
-          ).single['asset_id'],
-          assetId,
-        );
-        expect(
-          verified.select(
-            'SELECT revision_id FROM asset_reference_dirty_rows '
-            'WHERE revision_id = ?;',
-            <Object?>[message.id],
-          ),
-          isEmpty,
-        );
-        expect(
-          verified.select('SELECT * FROM asset_gc_quarantine_rows;'),
-          isEmpty,
-        );
-      } finally {
-        verified.close();
-      }
-    },
-  );
-
-  test(
     'cold maintenance keeps an ambiguous completed receipt fail closed',
     () async {
       final contentHash = List.filled(64, '7').join();
@@ -998,7 +877,14 @@ void main() {
       final message = await first.addMessage(
         conversationId: conversation.id,
         role: 'user',
-        content: '[file:${upload.path}|ambiguous-completed.txt|text/plain]',
+        content: '歧义回执',
+        attachments: <LocalMessageAttachmentInput>[
+          localFileAttachment(
+            upload,
+            displayName: 'ambiguous-completed.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
       );
       await first.deleteMessage(message.id);
       await first.close();
@@ -1414,15 +1300,30 @@ void main() {
           title: 'Temporary Chat',
           temporary: true,
         );
-        await service.addMessage(
+        final upload = File('${tempDir.path}/upload/temporary.txt');
+        await upload.parent.create(recursive: true);
+        await upload.writeAsString('temporary attachment');
+        final message = await service.addMessage(
           conversationId: conversation.id,
           role: 'user',
           content: 'secret',
+          attachments: <LocalMessageAttachmentInput>[
+            localFileAttachment(
+              upload,
+              displayName: 'temporary.txt',
+              mediaType: 'text/plain',
+            ),
+          ],
         );
 
         expect(service.getAllConversations(), isEmpty);
         expect(service.getConversation(conversation.id), isNotNull);
         expect(service.getMessages(conversation.id), hasLength(1));
+        expect(message.content, 'secret');
+        expect(
+          message.attachments.single.path,
+          p.normalize(upload.absolute.path),
+        );
         expect(service.isTemporaryConversation(conversation.id), isTrue);
       },
     );
@@ -1636,6 +1537,7 @@ void main() {
         final edited = await service.appendMessageVersion(
           messageId: original.id,
           content: 'edited answer',
+          attachments: const <LocalMessageAttachmentInput>[],
         );
         expect(edited, isNotNull);
 
@@ -1667,6 +1569,7 @@ void main() {
     final generation = await service.beginSendGeneration(
       conversationId: conversation.id,
       userContent: 'question',
+      userAttachments: const <LocalMessageAttachmentInput>[],
       modelId: 'model',
       providerId: 'provider',
     );
@@ -1730,6 +1633,7 @@ void main() {
     final edited = await service.appendMessageVersion(
       messageId: original.id,
       content: 'v1',
+      attachments: const <LocalMessageAttachmentInput>[],
     );
 
     expect(edited, isNotNull);
@@ -1742,6 +1646,52 @@ void main() {
       fromStart: true,
     );
     expect(page!.slots.single.message.id, original.id);
+  });
+
+  test('用户编辑版本以新结构化附件原子写入且保留原版本附件', () async {
+    final service = createService();
+    await service.init();
+    final conversation = await service.createConversation(title: 'Edit');
+    final oldFile = File('${tempDir.path}/upload/old.txt');
+    final newFile = File('${tempDir.path}/upload/new.txt');
+    await oldFile.parent.create(recursive: true);
+    await oldFile.writeAsString('old attachment');
+    await newFile.writeAsString('new attachment');
+    final original = await service.addMessage(
+      conversationId: conversation.id,
+      role: 'user',
+      content: '原始正文',
+      attachments: <LocalMessageAttachmentInput>[
+        localFileAttachment(
+          oldFile,
+          displayName: 'old.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+    );
+
+    final edited = await service.appendMessageVersion(
+      messageId: original.id,
+      content: '编辑正文',
+      attachments: <LocalMessageAttachmentInput>[
+        localFileAttachment(
+          newFile,
+          displayName: 'new.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+    );
+
+    expect(edited, isNotNull);
+    expect(edited!.content, '编辑正文');
+    expect(edited.attachments.single.displayName, 'new.txt');
+    expect(edited.attachments.single.hasRemoteIdentity, isFalse);
+    expect(
+      (await service.loadMessagesForGroups(conversation.id, <String>{
+        original.groupId ?? original.id,
+      })).map((message) => message.attachments.single.displayName),
+      containsAll(<String>['old.txt', 'new.txt']),
+    );
   });
 
   test('批量导入成功后不创建旧同步状态库', () async {

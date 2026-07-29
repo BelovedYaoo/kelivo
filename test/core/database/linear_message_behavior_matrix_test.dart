@@ -102,6 +102,7 @@ void main() {
       final result = await repository.appendMessageVersion(
         messageId: 'assistant-v0',
         content: 'edited answer',
+        attachments: const [],
       );
       final window = await repository.loadLinearMessageWindow(
         conversationId: conversation.id,

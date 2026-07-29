@@ -449,6 +449,7 @@ void main() {
     final result = await repository.appendMessageVersion(
       messageId: 'message-0',
       content: 'v1',
+      attachments: const [],
     );
 
     expect(result?.message.version, 1);
@@ -480,6 +481,7 @@ void main() {
     final result = await repository.appendMessageVersion(
       messageId: 'u2',
       content: 'u2 edited',
+      attachments: const [],
     );
     final timeline = await repository.loadLinearMessageWindow(
       conversationId: base.id,

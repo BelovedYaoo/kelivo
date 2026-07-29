@@ -146,6 +146,7 @@ void main() {
       final appended = await repository.appendMessageVersion(
         messageId: original.id,
         content: 'new answer',
+        attachments: const [],
       );
       final window = await repository.loadLinearMessageWindow(
         conversationId: conversation.id,
