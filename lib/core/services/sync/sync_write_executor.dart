@@ -1,3 +1,4 @@
+import '../../models/chat_message.dart';
 import 'sync_codec.dart';
 
 abstract interface class SyncWriteExecutor {
@@ -8,6 +9,22 @@ abstract interface class SyncWriteExecutor {
 
   Future<T> runLocalBatch<T>({
     required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  });
+}
+
+/// 为账户工作区提供结构化附件的内容落盘与事务上传草稿能力。
+abstract interface class StructuredAttachmentSyncWriteExecutor
+    implements SyncWriteExecutor {
+  Future<List<ChatMessageAttachment>> materializeLocalAttachments(
+    Iterable<ChatMessageAttachment> attachments,
+  );
+
+  Future<T> runLocalBatchWithMessageAttachments<T>({
+    required Iterable<SyncEntityKey> keys,
+    required String targetRevisionId,
+    required Iterable<ChatMessageAttachment> attachments,
+    required bool Function(T result) targetWasPersisted,
     required Future<T> Function() write,
   });
 }

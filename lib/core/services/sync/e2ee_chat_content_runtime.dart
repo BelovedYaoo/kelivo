@@ -1,10 +1,13 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 import '../../database/chat_database_gateway.dart';
+import '../../database/chat_database_repository.dart';
+import '../../models/chat_message.dart';
 import '../chat/chat_service.dart';
 import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_client.dart';
@@ -18,6 +21,8 @@ import 'e2ee_account_trust_manifest.dart';
 import 'e2ee_attachment_crypto_session.dart';
 import 'e2ee_attachment_download_coordinator.dart';
 import 'e2ee_attachment_file_store.dart';
+import 'e2ee_attachment_manifest.dart';
+import 'e2ee_attachment_upload_coordinator.dart';
 import 'e2ee_chat_sync_adapter.dart';
 import 'config_sync_keys.dart';
 import 'e2ee_config_sync_binding.dart';
@@ -29,10 +34,15 @@ import 'sync_codec.dart';
 import 'sync_write_executor.dart';
 
 final class E2eeChatContentTransports {
-  const E2eeChatContentTransports({required this.records, required this.pull});
+  const E2eeChatContentTransports({
+    required this.records,
+    required this.pull,
+    required this.attachments,
+  });
 
   final E2eeSyncAuthenticatedRecordTransport records;
   final E2eeSyncAuthenticatedPullTransport pull;
+  final CloudSyncAttachmentTransport attachments;
 }
 
 typedef E2eeChatContentTransportFactory =
@@ -54,7 +64,10 @@ enum E2eeChatContentRuntimeMode { continuous, singleCycle }
 
 /// 组装聊天数据面，并集中持有密码学、数据库、网络和调度生命周期。
 final class E2eeChatContentRuntime
-    implements CloudSyncContentRuntime, E2eeConfigVaultWriteExecutor {
+    implements
+        CloudSyncContentRuntime,
+        E2eeConfigVaultWriteExecutor,
+        StructuredAttachmentSyncWriteExecutor {
   factory E2eeChatContentRuntime.takeOwnership({
     required CloudSyncAccountSession session,
     required DeviceStateBlobStore deviceStateStore,
@@ -140,7 +153,11 @@ final class E2eeChatContentRuntime
   E2eeAccountRecordCipher? _recordCipher;
   E2eeAccountRecordStateCodec? _stateCodec;
   E2eeSyncOutbox? _outbox;
+  E2eeAttachmentFileStore? _attachmentFileStore;
+  E2eeAttachmentUploadCoordinator? _attachmentUploads;
+  E2eeAttachmentUploadCommands? _attachmentUploadCommands;
   E2eeAttachmentDownloadCoordinator? _attachmentDownloads;
+  bool _hasAttachmentUploadWork = false;
   E2eeSyncScheduler? _scheduler;
   E2eeSyncCycleRunner Function(E2eeSyncExecutionBudget?)? _cycleRunnerFactory;
   Future<E2eeSyncCycleReport>? _activeSingleCycle;
@@ -298,7 +315,16 @@ final class E2eeChatContentRuntime
         _requireStillInitializing();
       }
 
-      final attachmentCrypto = await E2eeAttachmentCryptoSession.open(
+      final authenticatedSession = _session.toAuthenticatedSession();
+      final transports = _transportFactory(
+        client: _client,
+        session: authenticatedSession,
+      );
+      _validateTransports(transports);
+
+      final attachmentFileStore = E2eeAttachmentPlatformFileStore();
+      _attachmentFileStore = attachmentFileStore;
+      final downloadCrypto = await E2eeAttachmentCryptoSession.open(
         session: _session,
         deviceStateStore: _deviceStateStore,
         secureCore: _secureCore,
@@ -306,14 +332,34 @@ final class E2eeChatContentRuntime
       final attachmentDownloads =
           E2eeAttachmentDownloadCoordinator.takeOwnership(
             commands: repository.e2eeAttachmentDownloadCommands,
-            transport: _client,
+            transport: transports.attachments,
             token: _session.token,
-            crypto: attachmentCrypto,
-            fileStore: E2eeAttachmentPlatformFileStore(),
+            crypto: downloadCrypto,
+            fileStore: attachmentFileStore,
             leaseOwner: _session.deviceId,
             utcNow: _utcNow,
           );
       _attachmentDownloads = attachmentDownloads;
+      _requireStillInitializing();
+
+      final uploadCrypto = await E2eeAttachmentCryptoSession.open(
+        session: _session,
+        deviceStateStore: _deviceStateStore,
+        secureCore: _secureCore,
+      );
+      final attachmentUploadCommands = repository.e2eeAttachmentUploadCommands;
+      final attachmentUploads = E2eeAttachmentUploadCoordinator.takeOwnership(
+        commands: attachmentUploadCommands,
+        fileStore: attachmentFileStore,
+        transport: transports.attachments,
+        token: _session.token,
+        cryptoSession: uploadCrypto,
+        utcNow: _utcNow,
+      );
+      _attachmentUploadCommands = attachmentUploadCommands;
+      _attachmentUploads = attachmentUploads;
+      _hasAttachmentUploadWork = await attachmentUploadCommands
+          .hasRetryableWork();
       _requireStillInitializing();
 
       Future<T> runPullBatch<T>({
@@ -333,12 +379,6 @@ final class E2eeChatContentRuntime
         runPullBatch: runPullBatch,
         attachmentReadiness: attachmentDownloads,
       );
-      final authenticatedSession = _session.toAuthenticatedSession();
-      final transports = _transportFactory(
-        client: _client,
-        session: authenticatedSession,
-      );
-      _validateTransports(transports);
 
       final pullCoordinator = E2eeSyncPullCoordinator(
         pullCommands: repository.e2eeSyncPullCommands,
@@ -404,6 +444,19 @@ final class E2eeChatContentRuntime
                 return E2eeSyncPullStepDisposition.more;
               }
               return E2eeSyncPullStepDisposition.complete;
+            });
+          },
+          advanceAttachmentUploads: ({required int maximumRemoteSteps}) {
+            return runBudgeted<void>(() async {
+              if (!_hasAttachmentUploadWork) return;
+              final remoteSteps = await attachmentUploads.advance(
+                maximumRemoteSteps,
+                executionBudget: executionBudget,
+              );
+              if (remoteSteps < maximumRemoteSteps) {
+                _hasAttachmentUploadWork = await attachmentUploadCommands
+                    .hasRetryableWork();
+              }
             });
           },
           sealNext: () => runBudgeted<E2eeSyncSealStatus>(
@@ -675,51 +728,178 @@ final class E2eeChatContentRuntime
   }
 
   @override
-  Future<T> runLocalBatch<T>({
-    required Iterable<SyncEntityKey> keys,
-    required Future<T> Function() write,
-  }) async {
+  Future<List<ChatMessageAttachment>> materializeLocalAttachments(
+    Iterable<ChatMessageAttachment> attachments,
+  ) async {
+    final inputs = List<ChatMessageAttachment>.unmodifiable(attachments);
+    if (inputs.isEmpty) return const <ChatMessageAttachment>[];
     await initialize();
-    if (_state != E2eeChatContentRuntimeState.ready) {
-      throw StateError('E2EE 内容运行时不接受新的本地写入');
-    }
+    _requireReadyForLocalOperation();
     _activeLocalWrites++;
     try {
-      final outbox = _outbox;
-      if (outbox == null) {
-        throw StateError('E2EE 内容运行时缺少 outbox');
+      final fileStore = _attachmentFileStore;
+      if (fileStore == null) {
+        throw StateError('E2EE 内容运行时缺少附件文件存储');
       }
-      final normalizedKeys = keys.toSet().toList(growable: false);
-      for (final key in normalizedKeys) {
-        validateSyncEntityKey(key);
+      final materialized = <ChatMessageAttachment>[];
+      for (final attachment in inputs) {
+        if (attachment.hasRemoteIdentity) {
+          throw StateError('本地附件物化不得携带远端身份');
+        }
+        final contentSha256 = _decodeSha256Hex(attachment.contentHash);
+        final stored = await fileStore.publish(
+          location: E2eeAttachmentFileLocation.content(
+            contentSha256: contentSha256,
+          ),
+          source: File(attachment.path).openRead(),
+        );
+        if (stored.bytes != attachment.byteSize) {
+          throw StateError('附件内容寻址落盘长度与本地引用不一致');
+        }
+        materialized.add(
+          ChatMessageAttachment(
+            assetId: attachment.assetId,
+            path: stored.storagePath,
+            contentHash: attachment.contentHash,
+            byteSize: attachment.byteSize,
+            kind: attachment.kind,
+            displayName: attachment.displayName,
+            mediaType: attachment.mediaType,
+          ),
+        );
       }
-      final configKeys = normalizedKeys
-          .where((key) => ConfigSyncKeys.entityTypes.contains(key.entityType))
-          .toList(growable: false);
-      final configBinding = _configBinding;
-      if (configKeys.isNotEmpty && configBinding == null) {
-        throw StateError('E2EE 配置本地写入缺少 Provider 桥接');
+      return List<ChatMessageAttachment>.unmodifiable(materialized);
+    } finally {
+      _finishLocalOperation();
+    }
+  }
+
+  @override
+  Future<T> runLocalBatchWithMessageAttachments<T>({
+    required Iterable<SyncEntityKey> keys,
+    required String targetRevisionId,
+    required Iterable<ChatMessageAttachment> attachments,
+    required bool Function(T result) targetWasPersisted,
+    required Future<T> Function() write,
+  }) async {
+    final inputs = List<ChatMessageAttachment>.unmodifiable(attachments);
+    if (inputs.isEmpty) {
+      return runLocalBatch<T>(keys: keys, write: write);
+    }
+    await initialize();
+    _requireReadyForLocalOperation();
+    _activeLocalWrites++;
+    try {
+      final uploads = _attachmentUploads;
+      final commands = _attachmentUploadCommands;
+      if (uploads == null || commands == null) {
+        throw StateError('E2EE 内容运行时缺少附件上传组件');
       }
-      final result = configBinding == null || configKeys.isEmpty
-          ? await outbox.runLocalBatch<T>(keys: normalizedKeys, write: write)
-          : await configBinding.runLocalWrite<T>(
-              configKeys: configKeys,
-              transaction: (trackedWrite) => outbox.runLocalBatch<T>(
-                keys: normalizedKeys,
-                write: trackedWrite,
-              ),
-              write: write,
-            );
+      final drafts = <E2eeAttachmentUploadDraft>[];
+      for (var index = 0; index < inputs.length; index++) {
+        final attachment = inputs[index];
+        if (attachment.hasRemoteIdentity) {
+          throw StateError('本地附件上传草稿不得携带远端身份');
+        }
+        drafts.add(
+          await uploads.prepareDraft(
+            localAssetId: attachment.assetId,
+            targetRevisionId: targetRevisionId,
+            targetOrdinal: index,
+            sourcePath: attachment.path,
+            kind: E2eeAttachmentKind.values.byName(attachment.kind),
+            totalPlaintextBytes: attachment.byteSize,
+            contentSha256: _decodeSha256Hex(attachment.contentHash),
+            displayName: attachment.displayName,
+            mediaType: attachment.mediaType,
+          ),
+        );
+      }
+
+      var persistedTarget = false;
+      final now = _utcNow();
+      final result = await _runLocalBatchCore<T>(
+        keys: keys,
+        write: () async {
+          final value = await write();
+          persistedTarget = targetWasPersisted(value);
+          if (persistedTarget) {
+            for (final draft in drafts) {
+              await commands.create(draft: draft, now: now);
+            }
+          }
+          return value;
+        },
+      );
+      if (persistedTarget) _hasAttachmentUploadWork = true;
       if (_state == E2eeChatContentRuntimeState.ready) {
         _scheduler?.wake();
       }
       return result;
     } finally {
-      _activeLocalWrites--;
-      if (_activeLocalWrites == 0) {
-        _localWritesIdle?.complete();
-        _localWritesIdle = null;
+      _finishLocalOperation();
+    }
+  }
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) async {
+    await initialize();
+    _requireReadyForLocalOperation();
+    _activeLocalWrites++;
+    try {
+      final result = await _runLocalBatchCore<T>(keys: keys, write: write);
+      if (_state == E2eeChatContentRuntimeState.ready) {
+        _scheduler?.wake();
       }
+      return result;
+    } finally {
+      _finishLocalOperation();
+    }
+  }
+
+  Future<T> _runLocalBatchCore<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) async {
+    final outbox = _outbox;
+    if (outbox == null) throw StateError('E2EE 内容运行时缺少 outbox');
+    final normalizedKeys = keys.toSet().toList(growable: false);
+    for (final key in normalizedKeys) {
+      validateSyncEntityKey(key);
+    }
+    final configKeys = normalizedKeys
+        .where((key) => ConfigSyncKeys.entityTypes.contains(key.entityType))
+        .toList(growable: false);
+    final configBinding = _configBinding;
+    if (configKeys.isNotEmpty && configBinding == null) {
+      throw StateError('E2EE 配置本地写入缺少 Provider 桥接');
+    }
+    return configBinding == null || configKeys.isEmpty
+        ? outbox.runLocalBatch<T>(keys: normalizedKeys, write: write)
+        : configBinding.runLocalWrite<T>(
+            configKeys: configKeys,
+            transaction: (trackedWrite) => outbox.runLocalBatch<T>(
+              keys: normalizedKeys,
+              write: trackedWrite,
+            ),
+            write: write,
+          );
+  }
+
+  void _requireReadyForLocalOperation() {
+    if (_state != E2eeChatContentRuntimeState.ready) {
+      throw StateError('E2EE 内容运行时不接受新的本地写入');
+    }
+  }
+
+  void _finishLocalOperation() {
+    _activeLocalWrites--;
+    if (_activeLocalWrites == 0) {
+      _localWritesIdle?.complete();
+      _localWritesIdle = null;
     }
   }
 
@@ -817,10 +997,23 @@ final class E2eeChatContentRuntime
   }
 
   Future<void> _closeOwnedResources(_CleanupAccumulator cleanup) async {
+    final attachmentUploads = _attachmentUploads;
+    if (attachmentUploads != null) {
+      await cleanup.run('关闭 E2EE 附件上传协调器', attachmentUploads.close);
+      if (cleanup.lastStepSucceeded) {
+        _attachmentUploads = null;
+        _attachmentUploadCommands = null;
+        _hasAttachmentUploadWork = false;
+      }
+    }
+
     final attachmentDownloads = _attachmentDownloads;
     if (attachmentDownloads != null) {
       await cleanup.run('关闭 E2EE 附件下载协调器', attachmentDownloads.close);
       if (cleanup.lastStepSucceeded) _attachmentDownloads = null;
+    }
+    if (_attachmentUploads == null && _attachmentDownloads == null) {
+      _attachmentFileStore = null;
     }
 
     final outbox = _outbox;
@@ -932,10 +1125,21 @@ E2eeChatContentTransports _defaultTransportFactory({
       session: session,
     ),
     pull: E2eeSyncCloudPullTransport.bind(client: client, session: session),
+    attachments: client,
   );
 }
 
 DateTime _defaultUtcNow() => DateTime.now().toUtc();
+
+Uint8List _decodeSha256Hex(String value) {
+  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(value)) {
+    throw const FormatException('附件内容摘要不是规范 SHA-256');
+  }
+  return Uint8List.fromList(<int>[
+    for (var offset = 0; offset < value.length; offset += 2)
+      int.parse(value.substring(offset, offset + 2), radix: 16),
+  ]);
+}
 
 void _logCleanupFailure(String message, Object error, StackTrace stackTrace) {
   developer.log(

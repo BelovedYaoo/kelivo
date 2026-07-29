@@ -388,6 +388,28 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return keys;
   }
 
+  Future<T> _runLocalMessageBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required String targetRevisionId,
+    required Iterable<ChatMessageAttachment> attachments,
+    required Future<T> Function() write,
+    bool Function(T result)? targetWasPersisted,
+  }) {
+    final prepared = List<ChatMessageAttachment>.unmodifiable(attachments);
+    final executor = _syncWriteExecutor;
+    if (prepared.isEmpty ||
+        executor is! StructuredAttachmentSyncWriteExecutor) {
+      return executor.runLocalBatch<T>(keys: keys, write: write);
+    }
+    return executor.runLocalBatchWithMessageAttachments<T>(
+      keys: keys,
+      targetRevisionId: targetRevisionId,
+      attachments: prepared,
+      targetWasPersisted: targetWasPersisted ?? (_) => true,
+      write: write,
+    );
+  }
+
   bool _isTerminalMessage(ChatMessage message) {
     return !message.isStreaming &&
         message.generationStatus != ChatMessage.generationStatusDraft;
@@ -1960,7 +1982,10 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         ),
       );
     }
-    return List<ChatMessageAttachment>.unmodifiable(prepared);
+    final result = List<ChatMessageAttachment>.unmodifiable(prepared);
+    final executor = _syncWriteExecutor;
+    if (executor is! StructuredAttachmentSyncWriteExecutor) return result;
+    return executor.materializeLocalAttachments(result);
   }
 
   static Future<String> _hashAssetFile(File file) {
@@ -3023,8 +3048,10 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
             _turnKey(message.turnId),
             _messageKey(message.id),
           };
-    return _syncWriteExecutor.runLocalBatch<ChatMessage>(
+    return _runLocalMessageBatch<ChatMessage>(
       keys: keys,
+      targetRevisionId: message.id,
+      attachments: message.attachments,
       write: write,
     );
   }
@@ -3065,12 +3092,14 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       isStreaming: true,
       turnId: turnId,
     );
-    return _syncWriteExecutor.runLocalBatch<GenerationBeginResult>(
+    return _runLocalMessageBatch<GenerationBeginResult>(
       keys: <SyncEntityKey>{
         _conversationKey(conversationId),
         _turnKey(turnId),
         _messageKey(userMessage.id),
       },
+      targetRevisionId: userMessage.id,
+      attachments: userMessage.attachments,
       write: () async {
         final result = await _repo.beginSendGeneration(
           conversation: conversation,
@@ -3686,8 +3715,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       if (original.role == 'assistant') _toolEventKey(newMessageId),
       if (original.role == 'assistant') _thoughtSignatureKey(newMessageId),
     };
-    return _syncWriteExecutor.runLocalBatch<ChatMessage?>(
+    return _runLocalMessageBatch<ChatMessage?>(
       keys: keys,
+      targetRevisionId: newMessageId,
+      attachments: preparedAttachments,
+      targetWasPersisted: (result) => result != null,
       write: () async {
         final result = await _repo.appendMessageVersion(
           messageId: messageId,

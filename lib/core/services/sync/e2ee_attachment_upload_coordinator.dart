@@ -9,9 +9,12 @@ import 'package:uuid/uuid.dart';
 import '../../database/chat_database_repository.dart';
 import 'cloud_sync_attachment_types.dart';
 import 'cloud_sync_client.dart';
+import 'cloud_sync_terminal_session_retirement.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_attachment_crypto_session.dart';
 import 'e2ee_attachment_file_store.dart';
+import 'e2ee_attachment_manifest.dart';
+import 'e2ee_sync_execution_budget.dart';
 
 const _attachmentUploadLeaseDuration = Duration(minutes: 5);
 
@@ -64,13 +67,47 @@ final class E2eeAttachmentUploadCoordinator {
   bool _closed = false;
   Future<void>? _closeFuture;
 
-  Future<int> advance(int maximumRemoteSteps) {
+  Future<E2eeAttachmentUploadDraft> prepareDraft({
+    required String localAssetId,
+    required String targetRevisionId,
+    required int targetOrdinal,
+    required String sourcePath,
+    required E2eeAttachmentKind kind,
+    required int totalPlaintextBytes,
+    required Uint8List contentSha256,
+    String? displayName,
+    String? mediaType,
+  }) {
+    return _runWhileOpen(() async {
+      final descriptor = await _cryptoSession.createUploadDescriptor(
+        kind: kind,
+        totalPlaintextBytes: totalPlaintextBytes,
+        contentSha256: contentSha256,
+        displayName: displayName,
+        mediaType: mediaType,
+      );
+      return E2eeAttachmentUploadDraft(
+        descriptor: descriptor,
+        localAssetId: localAssetId,
+        targetRevisionId: targetRevisionId,
+        targetOrdinal: targetOrdinal,
+        sourcePath: sourcePath,
+        createMutationId: _nextUuid('createMutationId'),
+        commitMutationId: _nextUuid('commitMutationId'),
+      );
+    });
+  }
+
+  Future<int> advance(
+    int maximumRemoteSteps, {
+    E2eeSyncExecutionBudget? executionBudget,
+  }) {
     if (maximumRemoteSteps < 0) {
       return Future<int>.error(
         const FormatException('maximumRemoteSteps 不得为负数'),
       );
     }
-    return _runWhileOpen(() => _advance(maximumRemoteSteps));
+    return _runWhileOpen(() => _advance(maximumRemoteSteps, executionBudget));
   }
 
   Future<void> close() {
@@ -91,10 +128,15 @@ final class E2eeAttachmentUploadCoordinator {
     return closing;
   }
 
-  Future<int> _advance(int maximumRemoteSteps) async {
+  Future<int> _advance(
+    int maximumRemoteSteps,
+    E2eeSyncExecutionBudget? executionBudget,
+  ) async {
     if (maximumRemoteSteps == 0) return 0;
+    executionBudget?.checkCanContinue();
     var remoteSteps = 0;
     while (remoteSteps < maximumRemoteSteps) {
+      executionBudget?.checkCanContinue();
       final claimTime = _currentTime();
       final claimed = await _commands.claimDue(
         leaseToken: _nextUuid('leaseToken'),
@@ -108,8 +150,13 @@ final class E2eeAttachmentUploadCoordinator {
       var ownsLease = true;
       try {
         final source = _sourceFile(lease.state);
-        final sourceReader = await _openSourceReader(lease.state, source);
+        final sourceReader = await _openSourceReader(
+          lease.state,
+          source,
+          executionBudget,
+        );
         while (ownsLease && remoteSteps < maximumRemoteSteps) {
+          executionBudget?.checkCanContinue();
           if (!_leaseIsActive(lease)) {
             ownsLease = false;
             break;
@@ -131,6 +178,7 @@ final class E2eeAttachmentUploadCoordinator {
                         lease.state.descriptor.totalCiphertextBytes,
                   ),
                 ),
+                executionBudget: executionBudget,
               );
               _requireCreatedMatches(lease.state, created);
               final accepted = await _persistRemoteResult(
@@ -169,7 +217,11 @@ final class E2eeAttachmentUploadCoordinator {
               break;
             case E2eeAttachmentUploadPhase.uploading:
               if (lease.state.pendingChunk == null) {
-                final staged = await _stageNextChunk(lease, sourceReader);
+                final staged = await _stageNextChunk(
+                  lease,
+                  sourceReader,
+                  executionBudget,
+                );
                 if (staged == null) {
                   ownsLease = false;
                   continue;
@@ -191,7 +243,10 @@ final class E2eeAttachmentUploadCoordinator {
                 ),
                 chunkIndex: pending.index,
               );
-              final ciphertext = await _readPendingCiphertext(pending);
+              final ciphertext = await _readPendingCiphertext(
+                pending,
+                executionBudget,
+              );
               try {
                 if (!_leaseIsActive(lease)) {
                   ownsLease = false;
@@ -207,6 +262,8 @@ final class E2eeAttachmentUploadCoordinator {
                       ciphertext: ciphertext,
                     ),
                   ),
+                  executionBudget: executionBudget,
+                  attachmentByteReservation: ciphertext.length,
                 );
                 _requireStoredChunkMatches(chunk, ciphertext.length, stored);
               } finally {
@@ -267,6 +324,8 @@ final class E2eeAttachmentUploadCoordinator {
                     ],
                   ),
                 ),
+                executionBudget: executionBudget,
+                attachmentByteReservation: manifestCiphertext.length,
               );
               _requireCommittedMatches(identity, committed);
               final committedState = await _persistRemoteResult(
@@ -344,6 +403,7 @@ final class E2eeAttachmentUploadCoordinator {
   Future<E2eeAttachmentUploadLease?> _stageNextChunk(
     E2eeAttachmentUploadLease lease,
     E2eeAttachmentVerifiedContent sourceReader,
+    E2eeSyncExecutionBudget? executionBudget,
   ) async {
     final state = lease.state;
     final uploadId = state.uploadId;
@@ -353,11 +413,15 @@ final class E2eeAttachmentUploadCoordinator {
     final chunkIndex = state.nextChunkIndex;
     final plaintext = await _runLocal(
       'source-integrity-failed',
-      () => sourceReader.readChunk(chunkIndex),
+      () => sourceReader.readChunk(
+        chunkIndex,
+        checkCanContinue: executionBudget?.checkCanContinue,
+      ),
     );
     Uint8List? ciphertext;
     E2eeAttachmentStoredFile? unownedStaging;
     try {
+      executionBudget?.checkCanContinue();
       ciphertext = await _runLocal(
         'attachment-crypto-failed',
         () => _cryptoSession.sealChunk(
@@ -367,6 +431,7 @@ final class E2eeAttachmentUploadCoordinator {
           plaintext: plaintext,
         ),
       );
+      executionBudget?.checkCanContinue();
       final mutationId = _nextUuid('chunkMutationId');
       final identity = CloudSyncAttachmentIdentity(
         attachmentId: state.attachmentId,
@@ -384,9 +449,11 @@ final class E2eeAttachmentUploadCoordinator {
             mutationId: mutationId,
           ),
           source: Stream<List<int>>.value(ciphertext!),
+          checkCanContinue: executionBudget?.checkCanContinue,
         ),
       );
       unownedStaging = stored;
+      executionBudget?.checkCanContinue();
       if (stored.bytes != state.descriptor.chunkCiphertextBytes[chunkIndex]) {
         throw const _PermanentUploadFailure('staging-integrity-failed');
       }
@@ -400,6 +467,7 @@ final class E2eeAttachmentUploadCoordinator {
         now: _currentTime(),
       );
       unownedStaging = null;
+      executionBudget?.checkCanContinue();
       return staged;
     } catch (error, stackTrace) {
       final staging = unownedStaging;
@@ -423,7 +491,10 @@ final class E2eeAttachmentUploadCoordinator {
     }
   }
 
-  Future<Uint8List> _readPendingCiphertext(E2eeAttachmentPendingChunk pending) {
+  Future<Uint8List> _readPendingCiphertext(
+    E2eeAttachmentPendingChunk pending,
+    E2eeSyncExecutionBudget? executionBudget,
+  ) {
     return _runLocal(
       'pending-ciphertext-integrity-failed',
       () => _fileStore.readVerified(
@@ -432,6 +503,7 @@ final class E2eeAttachmentUploadCoordinator {
           bytes: pending.ciphertextBytes,
           sha256: pending.ciphertextSha256,
         ),
+        checkCanContinue: executionBudget?.checkCanContinue,
       ),
     );
   }
@@ -451,6 +523,7 @@ final class E2eeAttachmentUploadCoordinator {
   Future<E2eeAttachmentVerifiedContent> _openSourceReader(
     E2eeAttachmentUploadState state,
     E2eeAttachmentStoredFile source,
+    E2eeSyncExecutionBudget? executionBudget,
   ) async {
     final fingerprint =
         '${source.storagePath}\u0000${source.bytes}\u0000'
@@ -476,6 +549,7 @@ final class E2eeAttachmentUploadCoordinator {
           for (var index = 0; index < layout.chunkCount; index++)
             layout.plaintextLengthForChunk(index),
         ],
+        checkCanContinue: executionBudget?.checkCanContinue,
       ),
     );
     _openedSource = _OpenedUploadSource(
@@ -516,10 +590,22 @@ final class E2eeAttachmentUploadCoordinator {
     }
   }
 
-  Future<T> _runRemote<T>(Future<T> Function() operation) async {
+  Future<T> _runRemote<T>(
+    Future<T> Function() operation, {
+    required E2eeSyncExecutionBudget? executionBudget,
+    int attachmentByteReservation = 0,
+  }) async {
     try {
-      return await operation();
+      if (executionBudget == null) return await operation();
+      return await executionBudget.runNetworkStep(
+        attachmentByteReservation: attachmentByteReservation,
+        operation: (_) => operation(),
+      );
     } on CloudSyncException catch (error) {
+      if (error.kind == CloudSyncFailureKind.cancelled ||
+          isTerminalCloudSyncAuthenticationFailure(error)) {
+        rethrow;
+      }
       final kind = 'remote-${error.kind.name}';
       if (error.retryable) throw _RetryableUploadFailure(kind);
       throw _PermanentUploadFailure(kind);

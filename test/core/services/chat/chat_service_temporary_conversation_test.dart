@@ -11,6 +11,7 @@ import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/generation_run.dart';
+import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_state_retirement.dart';
@@ -75,6 +76,57 @@ final class _RecordingSyncWriteExecutor implements SyncWriteExecutor {
   }) async {
     batches.add(Set<SyncEntityKey>.of(keys));
     return write();
+  }
+}
+
+final class _RecordingAttachmentWriteExecutor
+    implements StructuredAttachmentSyncWriteExecutor {
+  final List<List<ChatMessageAttachment>> materialized =
+      <List<ChatMessageAttachment>>[];
+  final List<({String revisionId, List<ChatMessageAttachment> attachments})>
+  attachmentBatches =
+      <({String revisionId, List<ChatMessageAttachment> attachments})>[];
+  int ordinaryBatches = 0;
+
+  @override
+  Future<List<ChatMessageAttachment>> materializeLocalAttachments(
+    Iterable<ChatMessageAttachment> attachments,
+  ) async {
+    final values = List<ChatMessageAttachment>.unmodifiable(attachments);
+    materialized.add(values);
+    return values;
+  }
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) => runLocalBatch(keys: <SyncEntityKey>[key], write: write);
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) async {
+    ordinaryBatches++;
+    return write();
+  }
+
+  @override
+  Future<T> runLocalBatchWithMessageAttachments<T>({
+    required Iterable<SyncEntityKey> keys,
+    required String targetRevisionId,
+    required Iterable<ChatMessageAttachment> attachments,
+    required bool Function(T result) targetWasPersisted,
+    required Future<T> Function() write,
+  }) async {
+    attachmentBatches.add((
+      revisionId: targetRevisionId,
+      attachments: List<ChatMessageAttachment>.unmodifiable(attachments),
+    ));
+    final result = await write();
+    targetWasPersisted(result);
+    return result;
   }
 }
 
@@ -268,6 +320,49 @@ void main() {
     );
     expect(await upload.exists(), isFalse);
     expect(await image.exists(), isFalse);
+  });
+
+  test('账户附件写入使用专用事务接缝且纯文本消息不触发附件准备', () async {
+    final executor = _RecordingAttachmentWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    final conversation = await service.createConversation(title: 'Assets');
+    final ordinaryBefore = executor.ordinaryBatches;
+    final upload = File('${tempDir.path}/upload/runtime.txt');
+    await upload.parent.create(recursive: true);
+    await upload.writeAsString('runtime attachment');
+
+    final generation = await service.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '附件消息',
+      userAttachments: <LocalMessageAttachmentInput>[
+        localFileAttachment(
+          upload,
+          displayName: 'runtime.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+
+    expect(executor.materialized, hasLength(1));
+    expect(executor.attachmentBatches, hasLength(1));
+    expect(
+      executor.attachmentBatches.single.revisionId,
+      generation.userMessage!.id,
+    );
+    expect(executor.attachmentBatches.single.attachments, hasLength(1));
+    expect(executor.ordinaryBatches, ordinaryBefore);
+
+    await service.addMessage(
+      conversationId: conversation.id,
+      role: 'user',
+      content: '纯文本消息',
+    );
+    expect(executor.materialized, hasLength(1));
+    expect(executor.attachmentBatches, hasLength(1));
+    expect(executor.ordinaryBatches, ordinaryBefore + 1);
   });
 
   test('本地附件数量支持零和三十二边界，超限不落库', () async {

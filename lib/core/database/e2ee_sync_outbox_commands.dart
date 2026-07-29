@@ -8,6 +8,7 @@ const _maxSendBatchCiphertextBytes = 1048576;
 enum E2eeSyncOutboxBlockReason {
   leaseLost,
   activeOutbox,
+  attachmentPending,
   requiresPull,
   quarantined,
   inconsistentHistory,

@@ -168,6 +168,13 @@ final class E2eeAttachmentUploadCommands {
     final timestamp = _requireStorageTime(now, 'now');
     final descriptor = draft.descriptor;
     return _database.transaction(() async {
+      final existing = await _uploadRowByTarget(
+        draft.targetRevisionId,
+        draft.targetOrdinal,
+      );
+      if (existing != null) {
+        return _requireSameUploadSource(existing, draft);
+      }
       final target =
           await (_database.select(_database.messageAssetRows)..where(
                 (row) =>
@@ -225,9 +232,29 @@ final class E2eeAttachmentUploadCommands {
               createdAt: timestamp,
               updatedAt: timestamp,
             ),
+            mode: InsertMode.insertOrIgnore,
           );
-      return _stateFromRow(await _rowByAttachmentId(descriptor.attachmentId));
+      final persisted = await _uploadRowByTarget(
+        draft.targetRevisionId,
+        draft.targetOrdinal,
+      );
+      if (persisted == null) {
+        throw StateError('附件上传自然键创建冲突');
+      }
+      return _requireSameUploadSource(persisted, draft);
     });
+  }
+
+  Future<E2eeAttachmentUploadRow?> _uploadRowByTarget(
+    String targetRevisionId,
+    int targetOrdinal,
+  ) {
+    return (_database.select(_database.e2eeAttachmentUploadRows)..where(
+          (row) =>
+              row.targetRevisionId.equals(targetRevisionId) &
+              row.targetOrdinal.equals(targetOrdinal),
+        ))
+        .getSingleOrNull();
   }
 
   Future<E2eeAttachmentUploadState?> readByAttachmentId(
@@ -238,6 +265,18 @@ final class E2eeAttachmentUploadCommands {
       _database.e2eeAttachmentUploadRows,
     )..where((table) => table.attachmentId.equals(id))).getSingleOrNull();
     return row == null ? null : _stateFromRow(row);
+  }
+
+  Future<bool> hasRetryableWork() async {
+    final table = _database.e2eeAttachmentUploadRows;
+    final query = _database.selectOnly(table)
+      ..addColumns(<Expression<Object>>[table.attachmentId])
+      ..where(
+        table.phase.isIn(_attachmentUploadPhases) &
+            table.terminalFailureKind.isNull(),
+      )
+      ..limit(1);
+    return await query.getSingleOrNull() != null;
   }
 
   Future<E2eeAttachmentUploadLease?> claimDue({
@@ -822,6 +861,43 @@ E2eeAttachmentUploadState _stateFromRow(E2eeAttachmentUploadRow row) {
   } finally {
     _clearAttachmentUploadRowBytes(row);
   }
+}
+
+E2eeAttachmentUploadState _requireSameUploadSource(
+  E2eeAttachmentUploadRow row,
+  E2eeAttachmentUploadDraft draft,
+) {
+  final existing = _stateFromRow(row);
+  final persisted = existing.descriptor;
+  final requested = draft.descriptor;
+  if (existing.localAssetId != draft.localAssetId ||
+      existing.targetRevisionId != draft.targetRevisionId ||
+      existing.targetOrdinal != draft.targetOrdinal ||
+      existing.sourcePath != draft.sourcePath ||
+      persisted.keyEpoch != requested.keyEpoch ||
+      persisted.kind != requested.kind ||
+      persisted.totalPlaintextBytes != requested.totalPlaintextBytes ||
+      persisted.displayName != requested.displayName ||
+      persisted.mediaType != requested.mediaType ||
+      !_sameAttachmentUploadValues(
+        persisted.contentSha256,
+        requested.contentSha256,
+      ) ||
+      !_sameAttachmentUploadValues(
+        persisted.chunkCiphertextBytes,
+        requested.chunkCiphertextBytes,
+      )) {
+    throw StateError('附件上传自然键已绑定不同来源');
+  }
+  return existing;
+}
+
+bool _sameAttachmentUploadValues(List<int> left, List<int> right) {
+  if (left.length != right.length) return false;
+  for (var index = 0; index < left.length; index++) {
+    if (left[index] != right[index]) return false;
+  }
+  return true;
 }
 
 int _requireAttachmentTargetOrdinal(int value) {

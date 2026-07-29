@@ -9,6 +9,8 @@ enum E2eeSyncPullStepDisposition { complete, more, keyEpochUnavailable }
 
 typedef E2eeSyncPullOnce =
     Future<E2eeSyncPullStepDisposition> Function({required int limit});
+typedef E2eeSyncAdvanceAttachmentUploads =
+    Future<void> Function({required int maximumRemoteSteps});
 typedef E2eeSyncSealNext = Future<E2eeSyncSealStatus> Function();
 typedef E2eeSyncFlushOnce = Future<E2eeSyncFlushReport> Function();
 typedef E2eeSyncTimerFactory =
@@ -42,10 +44,12 @@ final class E2eeSyncCycleRunner {
   E2eeSyncCycleRunner({
     required this._runPullBatch,
     required this._pullOnce,
+    required this._advanceAttachmentUploads,
     required this._sealNext,
     required this._flushOnce,
     this.pullPageLimit = 10,
     this.maximumPullPagesPerPhase = 4,
+    this.maximumAttachmentRemoteSteps = 4,
     this.maximumSealAttempts = 10,
   }) {
     if (pullPageLimit < 1 || pullPageLimit > 10) {
@@ -67,14 +71,24 @@ final class E2eeSyncCycleRunner {
         'maximumSealAttempts',
       );
     }
+    if (maximumAttachmentRemoteSteps < 1) {
+      throw RangeError.range(
+        maximumAttachmentRemoteSteps,
+        1,
+        null,
+        'maximumAttachmentRemoteSteps',
+      );
+    }
   }
 
   final E2eeSyncRunPullBatch _runPullBatch;
   final E2eeSyncPullOnce _pullOnce;
+  final E2eeSyncAdvanceAttachmentUploads _advanceAttachmentUploads;
   final E2eeSyncSealNext _sealNext;
   final E2eeSyncFlushOnce _flushOnce;
   final int pullPageLimit;
   final int maximumPullPagesPerPhase;
+  final int maximumAttachmentRemoteSteps;
   final int maximumSealAttempts;
 
   Future<E2eeSyncCycleReport> run() async {
@@ -88,6 +102,10 @@ final class E2eeSyncCycleRunner {
         finalPullPages: 0,
       );
     }
+
+    await _advanceAttachmentUploads(
+      maximumRemoteSteps: maximumAttachmentRemoteSteps,
+    );
 
     var sealedRecords = 0;
     for (var attempt = 0; attempt < maximumSealAttempts; attempt++) {

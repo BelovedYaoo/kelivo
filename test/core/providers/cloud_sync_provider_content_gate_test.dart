@@ -16,6 +16,7 @@ import 'package:Kelivo/core/providers/user_provider.dart';
 import 'package:Kelivo/core/providers/world_book_provider.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
@@ -68,6 +69,8 @@ const _onboardingTokenValue =
 final _fullToken = CloudSyncFullSessionToken.parse(_fullTokenValue);
 final _onboardingToken = CloudSyncOnboardingToken.parse(_onboardingTokenValue);
 
+Future<void> _skipAttachmentUploads({required int maximumRemoteSteps}) async {}
+
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
@@ -97,6 +100,10 @@ void main() {
         events.add('pull');
         return pullSteps.removeAt(0);
       },
+      advanceAttachmentUploads: ({required int maximumRemoteSteps}) async {
+        expect(maximumRemoteSteps, 4);
+        events.add('attachments');
+      },
       sealNext: () async {
         events.add('seal');
         return sealSteps.removeAt(0);
@@ -118,6 +125,7 @@ void main() {
       'pull',
       'pull',
       'pull-batch-end',
+      'attachments',
       'seal',
       'seal',
       'seal',
@@ -151,6 +159,7 @@ void main() {
         if (pullCalls == 1) await firstPull.future;
         return E2eeSyncPullStepDisposition.complete;
       },
+      advanceAttachmentUploads: _skipAttachmentUploads,
       sealNext: () async => E2eeSyncSealStatus.idle,
       flushOnce: () async => const E2eeSyncFlushReport.idle(),
     );
@@ -191,6 +200,7 @@ void main() {
         pullCalls++;
         return E2eeSyncPullStepDisposition.complete;
       },
+      advanceAttachmentUploads: _skipAttachmentUploads,
       sealNext: () async => E2eeSyncSealStatus.idle,
       flushOnce: () async => const E2eeSyncFlushReport.idle(),
     );
@@ -229,6 +239,7 @@ void main() {
         }
         return E2eeSyncPullStepDisposition.complete;
       },
+      advanceAttachmentUploads: _skipAttachmentUploads,
       sealNext: () async => E2eeSyncSealStatus.idle,
       flushOnce: () async => const E2eeSyncFlushReport.idle(),
     );
@@ -266,6 +277,7 @@ void main() {
         pullCalls++;
         throw terminalFailure;
       },
+      advanceAttachmentUploads: _skipAttachmentUploads,
       sealNext: () async => E2eeSyncSealStatus.idle,
       flushOnce: () async => const E2eeSyncFlushReport.idle(),
     );
@@ -301,6 +313,7 @@ void main() {
       runPullBatch: <T>(pull) => pull(),
       pullOnce: ({required int limit}) =>
           Future<E2eeSyncPullStepDisposition>.error(terminalFailure),
+      advanceAttachmentUploads: _skipAttachmentUploads,
       sealNext: () async => E2eeSyncSealStatus.idle,
       flushOnce: () async => const E2eeSyncFlushReport.idle(),
     );
@@ -331,6 +344,7 @@ void main() {
             ? E2eeSyncPullStepDisposition.complete
             : E2eeSyncPullStepDisposition.keyEpochUnavailable;
       },
+      advanceAttachmentUploads: _skipAttachmentUploads,
       sealNext: () async => E2eeSyncSealStatus.idle,
       flushOnce: () async => const E2eeSyncFlushReport.idle(),
     );
@@ -371,6 +385,7 @@ void main() {
         await blockedPull.future;
         return E2eeSyncPullStepDisposition.complete;
       },
+      advanceAttachmentUploads: _skipAttachmentUploads,
       sealNext: () async => E2eeSyncSealStatus.idle,
       flushOnce: () async => const E2eeSyncFlushReport.idle(),
     );
@@ -1754,12 +1769,17 @@ void main() {
       accountUserId: harness.session.userId,
       actorDeviceId: harness.session.deviceId,
     );
+    final attachments = _RuntimeAttachmentTransport();
     final client = CloudSyncClient.forTesting(baseUrl: harness.session.baseUrl);
     E2eeChatContentTransports createTransports({
       required CloudSyncClient client,
       required CloudSyncAuthenticatedSession session,
     }) {
-      return E2eeChatContentTransports(records: records, pull: pull);
+      return E2eeChatContentTransports(
+        records: records,
+        pull: pull,
+        attachments: attachments,
+      );
     }
 
     final runtime = E2eeChatContentRuntime.takeHeadlessOwnership(
@@ -2921,6 +2941,84 @@ void main() {
     await instance.runtime.close();
   });
 
+  test('E2EE 附件草稿与消息 outbox 原子提交且远端提交后才发送记录', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(blockInitialPull: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls == 1);
+
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    await uploadDirectory.create(recursive: true);
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}runtime-attachment.txt',
+    );
+    await source.writeAsString('runtime attachment payload');
+    final conversation = await instance.chatService.createConversation(
+      title: '附件事务',
+    );
+    final generation = await instance.chatService.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '发送附件',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.file(
+          path: source.path,
+          displayName: 'runtime-attachment.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    final messageId = generation.userMessage!.id;
+    final beforeUpload = await instance.chatService.loadMessageForSync(
+      messageId,
+    );
+    expect(beforeUpload, isNotNull);
+    expect(beforeUpload!.attachments.single.hasRemoteIdentity, isFalse);
+    expect(beforeUpload.attachments.single.path, isNot(source.path));
+
+    final inspectionLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      expect(
+        await inspectionLease.repository.e2eeAttachmentUploadCommands
+            .hasRetryableWork(),
+        isTrue,
+      );
+      final outbox = await inspectionLease.repository
+          .acquireE2eeSyncOutboxCommands(now: DateTime.now().toUtc());
+      final dirty = await outbox.listDirtyIntents(limit: 32);
+      expect(
+        dirty.map((intent) => intent.entityKey),
+        contains(
+          SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.message,
+            entityId: messageId,
+          ),
+        ),
+      );
+    } finally {
+      await inspectionLease.release();
+    }
+    expect(instance.records.pushCalls, 0);
+
+    instance.pull.releaseBlockedPull();
+    await _waitUntil(() => instance.attachments.commitCalls == 1);
+    await _waitUntil(() => instance.records.pushCalls >= 1);
+    final committed = await instance.chatService.loadMessageForSync(messageId);
+    expect(committed, isNotNull);
+    expect(committed!.attachments.single.hasRemoteIdentity, isTrue);
+    expect(instance.attachments.createCalls, 1);
+    expect(instance.attachments.chunkCalls, 1);
+    expect(
+      instance.transportEvents.indexOf('attachment-commit'),
+      lessThan(instance.transportEvents.indexOf('push')),
+    );
+    await instance.runtime.close();
+  });
+
   test('E2EE 内容运行时在本地事务提交后唤醒密文发送周期', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -3075,6 +3173,7 @@ void main() {
       accountUserId: harness.session.userId,
       actorDeviceId: harness.session.deviceId,
     );
+    final attachments = _RuntimeAttachmentTransport();
     final client = CloudSyncClient.forTesting(baseUrl: harness.session.baseUrl);
     var transportCreated = false;
     final runtime = E2eeChatContentRuntime.takeHeadlessOwnership(
@@ -3086,7 +3185,11 @@ void main() {
       client: client,
       transportFactory: ({required client, required session}) {
         transportCreated = true;
-        return E2eeChatContentTransports(records: records, pull: pull);
+        return E2eeChatContentTransports(
+          records: records,
+          pull: pull,
+          attachments: attachments,
+        );
       },
     );
     runtime.bindSecurityBootstrapCommitHandler((pendingSession) async {
@@ -3780,6 +3883,7 @@ final class _E2eeRuntimeHarness {
     void Function()? onTransportCreated,
   }) {
     final activeSession = sessionOverride ?? session;
+    final transportEvents = <String>[];
     final pull = _RuntimePullTransport(
       accountUserId: activeSession.userId,
       blockInitialPull: blockInitialPull,
@@ -3788,7 +3892,9 @@ final class _E2eeRuntimeHarness {
     final records = _RuntimeRecordTransport(
       accountUserId: activeSession.userId,
       actorDeviceId: activeSession.deviceId,
+      events: transportEvents,
     );
+    final attachments = _RuntimeAttachmentTransport(events: transportEvents);
     final capture = _TransportSessionCapture();
     E2eeChatContentTransports createTransports({
       required CloudSyncClient client,
@@ -3796,7 +3902,11 @@ final class _E2eeRuntimeHarness {
     }) {
       onTransportCreated?.call();
       capture.session = session;
-      return E2eeChatContentTransports(records: records, pull: pull);
+      return E2eeChatContentTransports(
+        records: records,
+        pull: pull,
+        attachments: attachments,
+      );
     }
 
     final runtime = E2eeChatContentRuntime.takeOwnership(
@@ -3830,6 +3940,8 @@ final class _E2eeRuntimeHarness {
       configProviders: configProviders,
       pull: pull,
       records: records,
+      attachments: attachments,
+      transportEvents: transportEvents,
       capture: capture,
     );
     _instances.add(instance);
@@ -3855,6 +3967,8 @@ final class _E2eeRuntimeInstance {
     required this.configProviders,
     required this.pull,
     required this.records,
+    required this.attachments,
+    required this.transportEvents,
     required this._capture,
   });
 
@@ -3863,6 +3977,8 @@ final class _E2eeRuntimeInstance {
   final _TestConfigProviders? configProviders;
   final _RuntimePullTransport pull;
   final _RuntimeRecordTransport records;
+  final _RuntimeAttachmentTransport attachments;
+  final List<String> transportEvents;
   final _TransportSessionCapture _capture;
 
   CloudSyncAuthenticatedSession? get transportSession => _capture.session;
@@ -3912,6 +4028,12 @@ final class _RuntimePullTransport
     throw StateError('runtime_snapshot_not_expected');
   }
 
+  void releaseBlockedPull() {
+    final blockedPull = _blockedPull;
+    if (blockedPull == null || blockedPull.isCompleted) return;
+    blockedPull.complete();
+  }
+
   void failBlockedPull() {
     final blockedPull = _blockedPull;
     if (blockedPull == null || blockedPull.isCompleted) return;
@@ -3929,6 +4051,7 @@ final class _RuntimeRecordTransport
   _RuntimeRecordTransport({
     required this.accountUserId,
     required this.actorDeviceId,
+    this.events,
   });
 
   @override
@@ -3938,11 +4061,13 @@ final class _RuntimeRecordTransport
   int pushCalls = 0;
   int mutationCount = 0;
   int _changeSequence = 0;
+  final List<String>? events;
 
   @override
   Future<List<CloudSyncRecordMutationResult>> pushRecords(
     List<CloudSyncRecordMutation> mutations,
   ) async {
+    events?.add('push');
     pushCalls++;
     mutationCount += mutations.length;
     return <CloudSyncRecordMutationResult>[
@@ -3953,6 +4078,89 @@ final class _RuntimeRecordTransport
           changeSeq: ++_changeSequence,
         ),
     ];
+  }
+}
+
+final class _RuntimeAttachmentTransport
+    implements CloudSyncAttachmentTransport {
+  _RuntimeAttachmentTransport({this.events});
+
+  final List<String>? events;
+  int _uploadSequence = 0;
+  int createCalls = 0;
+  int chunkCalls = 0;
+  int commitCalls = 0;
+
+  @override
+  Future<CloudSyncAttachmentUpload> createAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCreateUploadRequest request,
+  }) async {
+    createCalls++;
+    events?.add('attachment-create');
+    _uploadSequence++;
+    return CloudSyncAttachmentUpload(
+      identity: CloudSyncAttachmentIdentity(
+        attachmentId: request.attachmentId,
+        uploadId:
+            '50000000-0000-4000-8000-'
+            '${_uploadSequence.toRadixString(16).padLeft(12, '0')}',
+        keyEpoch: request.keyEpoch,
+      ),
+      chunkCount: request.chunkCount,
+      totalCiphertextBytes: request.totalCiphertextBytes,
+      createdAt: DateTime.utc(2026, 7, 29),
+    );
+  }
+
+  @override
+  Future<CloudSyncAttachmentStoredChunk> putAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentPutChunkRequest request,
+  }) async {
+    chunkCalls++;
+    events?.add('attachment-chunk');
+    return CloudSyncAttachmentStoredChunk(
+      chunk: request.chunk,
+      ciphertextBytes: request.ciphertext.length,
+    );
+  }
+
+  @override
+  Future<CloudSyncAttachmentCommittedUpload> commitAttachmentUpload({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentCommitUploadRequest request,
+  }) async {
+    commitCalls++;
+    events?.add('attachment-commit');
+    return CloudSyncAttachmentCommittedUpload(
+      identity: request.identity,
+      committedAt: DateTime.utc(2026, 7, 29, 0, 1),
+    );
+  }
+
+  @override
+  Future<CloudSyncAttachmentManifest> getAttachmentManifest({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentIdentity identity,
+  }) {
+    throw StateError('runtime_attachment_download_not_expected');
+  }
+
+  @override
+  Future<CloudSyncAttachmentChunk> getAttachmentChunk({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentChunkIdentity chunk,
+  }) {
+    throw StateError('runtime_attachment_download_not_expected');
+  }
+
+  @override
+  Future<CloudSyncAttachmentDeleted> deleteAttachment({
+    required CloudSyncFullSessionToken token,
+    required CloudSyncAttachmentDeleteRequest request,
+  }) {
+    throw StateError('runtime_attachment_delete_not_expected');
   }
 }
 

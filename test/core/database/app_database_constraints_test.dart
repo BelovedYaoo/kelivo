@@ -3715,7 +3715,7 @@ void main() {
       expect(reference.read<int>('key_epoch'), 7);
     });
 
-    test('不可逆附件使远端整页回滚且本地路径快照失败关闭', () async {
+    test('附件拉取未就绪整页回滚且本地消息仅在远端身份完整后可封装', () async {
       const conversationId = 'attachment-conversation';
       const turnId = 'attachment-turn';
       const messageId = 'attachment-message';
@@ -3825,10 +3825,93 @@ void main() {
           isA<StateError>().having(
             (error) => error.message,
             'message',
-            'sync_message_attachments_not_supported',
+            'sync_message_local_attachment_marker_rejected',
           ),
         ),
       );
+
+      const structuredConversationId = 'attachment-structured-conversation';
+      const structuredMessageId = 'attachment-structured-message';
+      const structuredKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.message,
+        entityId: structuredMessageId,
+      );
+      await insertConversation(id: structuredConversationId);
+      await insertMessage(
+        id: structuredMessageId,
+        conversationId: structuredConversationId,
+        groupId: 'attachment-structured-group',
+        content: 'structured attachment',
+      );
+      final localAsset = MessageAssetRegistration(
+        assetId:
+            'asset_abababababababababababababababababababababababababababababababab',
+        contentHash:
+            'abababababababababababababababababababababababababababababababab',
+        path: '${directory.path}${Platform.pathSeparator}structured.bin',
+        byteSize: 17,
+        kind: 'file',
+        displayName: 'structured.bin',
+        mediaType: 'application/octet-stream',
+      );
+      expect(
+        await repository.replaceMessageAssetReferences(
+          conversationId: structuredConversationId,
+          revisionId: structuredMessageId,
+          expectedContent: 'structured attachment',
+          assets: <MessageAssetRegistration>[localAsset],
+        ),
+        isTrue,
+      );
+
+      await expectLater(
+        adapter.readSnapshot(structuredKey),
+        throwsA(
+          isA<E2eeSyncOutboxBlocked>().having(
+            (error) => error.reason,
+            'reason',
+            E2eeSyncOutboxBlockReason.attachmentPending,
+          ),
+        ),
+      );
+
+      final remoteAsset = MessageAssetRegistration(
+        assetId: localAsset.assetId,
+        contentHash: localAsset.contentHash,
+        path: localAsset.path,
+        byteSize: localAsset.byteSize,
+        kind: localAsset.kind,
+        displayName: localAsset.displayName,
+        mediaType: localAsset.mediaType,
+        attachmentId: '10000000-0000-4000-8000-000000000002',
+        uploadId: '20000000-0000-4000-8000-000000000002',
+        keyEpoch: 7,
+      );
+      expect(
+        await repository.replaceMessageAssetReferences(
+          conversationId: structuredConversationId,
+          revisionId: structuredMessageId,
+          expectedContent: 'structured attachment',
+          assets: <MessageAssetRegistration>[remoteAsset],
+        ),
+        isTrue,
+      );
+      final snapshot = await adapter.readSnapshot(structuredKey);
+      final encoded = (snapshot as E2eeSyncValueSnapshot).payload;
+      final decoded = E2eeSyncPayloadCodec.decode(
+        entityKey: structuredKey,
+        bytes: encoded,
+      );
+      expect(decoded['attachments'], <Object?>[
+        <String, Object?>{
+          'attachmentId': remoteAsset.attachmentId,
+          'uploadId': remoteAsset.uploadId,
+          'keyEpoch': remoteAsset.keyEpoch,
+          'kind': 'file',
+          'order': 0,
+        },
+      ]);
+      expect(utf8.decode(encoded), isNot(contains(localAsset.path)));
     });
 
     test('附件引用硬切完整远程身份并拒绝旧结构与非法世代', () {
@@ -5450,6 +5533,7 @@ void main() {
       String localAssetId = 'asset-upload-1',
       String targetRevisionId = 'message-upload-1',
       int targetOrdinal = 0,
+      int contentByte = 0x5a,
       String createMutationId = 'd1000000-0000-4000-8000-000000000001',
       String commitMutationId = 'd2000000-0000-4000-8000-000000000001',
     }) {
@@ -5459,7 +5543,7 @@ void main() {
           keyEpoch: 0xffffffff,
           kind: E2eeAttachmentKind.file,
           totalPlaintextBytes: KelivoAttachmentLimits.chunkPlaintextBytes + 1,
-          contentSha256: Uint8List.fromList(List<int>.filled(32, 0x5a)),
+          contentSha256: Uint8List.fromList(List<int>.filled(32, contentByte)),
           wrappedDataKey: Uint8List.fromList(
             List<int>.filled(KelivoAttachmentLimits.wrappedDataKeyBytes, 0xa5),
           ),
@@ -5519,6 +5603,67 @@ void main() {
             ),
           );
     }
+
+    test('创建提交后响应丢失按消息附件自然键恢复原状态', () async {
+      final now = DateTime.utc(2026, 7, 29, 0, 15);
+      final initialDraft = uploadDraft();
+      await prepareUploadTarget(initialDraft);
+      final initial = await attachmentUploads.create(
+        draft: initialDraft,
+        now: now,
+      );
+
+      final replay = await attachmentUploads.create(
+        draft: uploadDraft(
+          attachmentId: 'd0000000-0000-4000-8000-000000000090',
+          createMutationId: 'd1000000-0000-4000-8000-000000000090',
+          commitMutationId: 'd2000000-0000-4000-8000-000000000090',
+        ),
+        now: now.add(const Duration(seconds: 1)),
+      );
+      expect(replay.descriptor.attachmentId, initial.descriptor.attachmentId);
+      expect(replay.createMutationId, initial.createMutationId);
+      expect(replay.commitMutationId, initial.commitMutationId);
+
+      final lease = (await attachmentUploads.claimDue(
+        leaseToken: 'natural-key-terminal-lease',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now.add(const Duration(seconds: 2)),
+      ))!;
+      final terminal = await attachmentUploads.markPermanentlyFailed(
+        lease: lease,
+        failureKind: 'source-unavailable',
+        now: now.add(const Duration(seconds: 3)),
+      );
+      final terminalReplay = await attachmentUploads.create(
+        draft: uploadDraft(
+          attachmentId: 'd0000000-0000-4000-8000-000000000091',
+          createMutationId: 'd1000000-0000-4000-8000-000000000091',
+          commitMutationId: 'd2000000-0000-4000-8000-000000000091',
+        ),
+        now: now.add(const Duration(seconds: 4)),
+      );
+      expect(
+        terminalReplay.descriptor.attachmentId,
+        terminal.descriptor.attachmentId,
+      );
+      expect(terminalReplay.terminalFailureKind, 'source-unavailable');
+      expect(terminalReplay.transitionVersion, terminal.transitionVersion);
+
+      await expectLater(
+        attachmentUploads.create(
+          draft: uploadDraft(
+            attachmentId: 'd0000000-0000-4000-8000-000000000092',
+            contentByte: 0x5b,
+            createMutationId: 'd1000000-0000-4000-8000-000000000092',
+            commitMutationId: 'd2000000-0000-4000-8000-000000000092',
+          ),
+          now: now.add(const Duration(seconds: 5)),
+        ),
+        throwsStateError,
+      );
+    });
 
     test('同一本地资产可创建多个独立远端身份', () async {
       final now = DateTime.utc(2026, 7, 29);
@@ -7153,6 +7298,17 @@ final class _FakeAttachmentCrypto implements E2eeAttachmentCrypto {
   Object? manifestFailure;
   int? chunkFailureIndex;
   bool closed = false;
+
+  @override
+  Future<E2eeAttachmentDescriptor> createUploadDescriptor({
+    required E2eeAttachmentKind kind,
+    required int totalPlaintextBytes,
+    required Uint8List contentSha256,
+    String? displayName,
+    String? mediaType,
+  }) => Future<E2eeAttachmentDescriptor>.error(
+    UnsupportedError('下载测试不得生成附件上传描述'),
+  );
 
   @override
   Future<E2eeAttachmentManifest> openManifest({

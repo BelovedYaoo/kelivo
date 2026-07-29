@@ -15,6 +15,10 @@ const _attachmentOwnedRootName = 'e2ee';
 const _memoryRoot = 'memory://kelivo-e2ee-attachments/';
 const _sha256Bytes = 32;
 const _downloadPlaintextFileName = 'plaintext.part';
+// 同时约束单次取消响应延迟和文件校验的临时内存上界。
+const _attachmentFileOperationBufferBytes = 64 * 1024;
+
+typedef E2eeAttachmentCheckCanContinue = void Function();
 
 final _canonicalUuidV4Pattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
@@ -87,9 +91,13 @@ abstract interface class E2eeAttachmentFileStore {
   Future<E2eeAttachmentStoredFile> publish({
     required E2eeAttachmentFileLocation location,
     required Stream<List<int>> source,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
   });
 
-  Future<Uint8List> readVerified(E2eeAttachmentStoredFile storedFile);
+  Future<Uint8List> readVerified(
+    E2eeAttachmentStoredFile storedFile, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  });
 
   Future<Uint8List> readContentRange({
     required E2eeAttachmentStoredFile storedFile,
@@ -100,6 +108,7 @@ abstract interface class E2eeAttachmentFileStore {
   Future<E2eeAttachmentVerifiedContent> openVerifiedContent({
     required E2eeAttachmentStoredFile storedFile,
     required List<int> chunkPlaintextBytes,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
   });
 
   Future<void> verifyContent(E2eeAttachmentStoredFile storedFile);
@@ -130,7 +139,10 @@ abstract interface class E2eeAttachmentFileStore {
 }
 
 abstract interface class E2eeAttachmentVerifiedContent {
-  Future<Uint8List> readChunk(int chunkIndex);
+  Future<Uint8List> readChunk(
+    int chunkIndex, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  });
 
   Future<void> close();
 }
@@ -146,7 +158,9 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
   Future<E2eeAttachmentStoredFile> publish({
     required E2eeAttachmentFileLocation location,
     required Stream<List<int>> source,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
   }) async {
+    checkCanContinue?.call();
     final directory = await _resolveLocationDirectory(
       location._directorySegments,
       createMissing: true,
@@ -154,6 +168,7 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
     if (directory == null) {
       throw StateError('e2ee_attachment_directory_missing');
     }
+    checkCanContinue?.call();
     final target = File(p.join(directory.path, location._fileName));
     final temporary = await _createTemporaryFile(
       directory,
@@ -161,7 +176,12 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
     );
     var temporaryExists = true;
     try {
-      final integrity = await _writeTemporary(temporary, source);
+      checkCanContinue?.call();
+      final integrity = await _writeTemporary(
+        temporary,
+        source,
+        checkCanContinue: checkCanContinue,
+      );
       if (location._isContent &&
           integrity.sha256.toHex() != location._fileName) {
         throw const FormatException('e2ee_attachment_content_digest_mismatch');
@@ -170,6 +190,7 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
         target.path,
         followLinks: false,
       );
+      checkCanContinue?.call();
       if (targetType == FileSystemEntityType.notFound) {
         await _durability.renameAndSync(
           source: temporary,
@@ -186,7 +207,10 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
         throw StateError('e2ee_attachment_publish_target_unsafe');
       }
       await _requireCanonicalFile(target, directory);
-      final existing = await _measureFile(target);
+      final existing = await _measureFile(
+        target,
+        checkCanContinue: checkCanContinue,
+      );
       if (existing.bytes != integrity.bytes ||
           !_sameBytes(existing.sha256, integrity.sha256)) {
         throw StateError('e2ee_attachment_publish_conflict');
@@ -211,7 +235,11 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
   }
 
   @override
-  Future<Uint8List> readVerified(E2eeAttachmentStoredFile storedFile) async {
+  Future<Uint8List> readVerified(
+    E2eeAttachmentStoredFile storedFile, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) async {
+    checkCanContinue?.call();
     _requireBufferedReadSize(storedFile.bytes);
     final resolved = await _resolveStoredPath(
       storedFile.storagePath,
@@ -224,15 +252,57 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
         storedFile.storagePath,
       );
     }
-    final bytes = await file.readAsBytes();
-    if (bytes.length != storedFile.bytes ||
-        !_sameBytes(
-          Uint8List.fromList(sha256.convert(bytes).bytes),
-          storedFile.sha256,
-        )) {
+    final before = await file.length();
+    if (before != storedFile.bytes) {
       throw const FormatException('e2ee_attachment_file_integrity');
     }
-    return Uint8List.fromList(bytes);
+    final input = await file.open(mode: FileMode.read);
+    final digestOutput = _SingleDigestSink();
+    final digestInput = sha256.startChunkedConversion(digestOutput);
+    var digestClosed = false;
+    Uint8List? bytes;
+    try {
+      bytes = Uint8List(storedFile.bytes);
+      var offset = 0;
+      while (offset < bytes.length) {
+        checkCanContinue?.call();
+        final read = await input.readInto(
+          bytes,
+          offset,
+          min(offset + _attachmentFileOperationBufferBytes, bytes.length),
+        );
+        checkCanContinue?.call();
+        if (read == 0) {
+          throw const FormatException('e2ee_attachment_file_integrity');
+        }
+        digestInput.add(Uint8List.sublistView(bytes, offset, offset + read));
+        offset += read;
+      }
+      digestInput.close();
+      digestClosed = true;
+      checkCanContinue?.call();
+      if (await file.length() != before ||
+          !_sameBytes(
+            Uint8List.fromList(digestOutput.value.bytes),
+            storedFile.sha256,
+          )) {
+        throw const FormatException('e2ee_attachment_file_integrity');
+      }
+      checkCanContinue?.call();
+      final transferred = bytes;
+      bytes = null;
+      return transferred;
+    } finally {
+      try {
+        if (!digestClosed) digestInput.close();
+      } finally {
+        try {
+          await input.close();
+        } finally {
+          bytes?.fillRange(0, bytes.length, 0);
+        }
+      }
+    }
   }
 
   @override
@@ -272,6 +342,7 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
   Future<E2eeAttachmentVerifiedContent> openVerifiedContent({
     required E2eeAttachmentStoredFile storedFile,
     required List<int> chunkPlaintextBytes,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
   }) async {
     final chunkLengths = _requireChunkLayout(storedFile, chunkPlaintextBytes);
     final resolved = await _resolveStoredPath(
@@ -289,6 +360,7 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
         input: input,
         storedFile: storedFile,
         chunkLengths: chunkLengths,
+        checkCanContinue: checkCanContinue,
       );
       return _PlatformVerifiedContent(
         input: input,
@@ -740,25 +812,50 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
 
   Future<_FileIntegrity> _writeTemporary(
     File temporary,
-    Stream<List<int>> source,
-  ) async {
+    Stream<List<int>> source, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) async {
     final digestOutput = _SingleDigestSink();
     final digestInput = sha256.startChunkedConversion(digestOutput);
     final output = await temporary.open(mode: FileMode.writeOnly);
     var bytes = 0;
+    var digestClosed = false;
     try {
       await for (final sourceChunk in source) {
-        final chunk = _copyByteChunk(sourceChunk);
-        bytes += chunk.length;
-        digestInput.add(chunk);
-        await output.writeFrom(chunk);
+        checkCanContinue?.call();
+        var offset = 0;
+        while (offset < sourceChunk.length) {
+          checkCanContinue?.call();
+          final end = min(
+            offset + _attachmentFileOperationBufferBytes,
+            sourceChunk.length,
+          );
+          final chunk = _copyByteChunk(sourceChunk.sublist(offset, end));
+          try {
+            bytes += chunk.length;
+            digestInput.add(chunk);
+            await output.writeFrom(chunk);
+            checkCanContinue?.call();
+          } finally {
+            chunk.fillRange(0, chunk.length, 0);
+          }
+          offset = end;
+        }
       }
       digestInput.close();
+      digestClosed = true;
+      checkCanContinue?.call();
       await output.flush();
     } finally {
-      await output.close();
+      try {
+        if (!digestClosed) digestInput.close();
+      } finally {
+        await output.close();
+      }
     }
+    checkCanContinue?.call();
     await _durability.syncFile(temporary, fullBarrier: true);
+    checkCanContinue?.call();
     if (await FileSystemEntity.type(temporary.path, followLinks: false) !=
         FileSystemEntityType.file) {
       throw StateError('e2ee_attachment_temporary_unsafe');
@@ -767,7 +864,10 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
       bytes: bytes,
       sha256: Uint8List.fromList(digestOutput.value.bytes),
     );
-    final measured = await _measureFile(temporary);
+    final measured = await _measureFile(
+      temporary,
+      checkCanContinue: checkCanContinue,
+    );
     if (measured.bytes != integrity.bytes ||
         !_sameBytes(measured.sha256, integrity.sha256)) {
       throw StateError('e2ee_attachment_temporary_integrity');
@@ -775,16 +875,47 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
     return integrity;
   }
 
-  Future<_FileIntegrity> _measureFile(File file) async {
+  Future<_FileIntegrity> _measureFile(
+    File file, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) async {
+    checkCanContinue?.call();
     final before = await file.length();
-    final digest = await sha256.bind(file.openRead()).first;
+    final digestOutput = _SingleDigestSink();
+    final digestInput = sha256.startChunkedConversion(digestOutput);
+    final input = await file.open(mode: FileMode.read);
+    var digestClosed = false;
+    var measuredBytes = 0;
+    try {
+      while (true) {
+        checkCanContinue?.call();
+        final chunk = await input.read(_attachmentFileOperationBufferBytes);
+        try {
+          checkCanContinue?.call();
+          if (chunk.isEmpty) break;
+          measuredBytes += chunk.length;
+          digestInput.add(chunk);
+        } finally {
+          chunk.fillRange(0, chunk.length, 0);
+        }
+      }
+      digestInput.close();
+      digestClosed = true;
+    } finally {
+      try {
+        if (!digestClosed) digestInput.close();
+      } finally {
+        await input.close();
+      }
+    }
+    checkCanContinue?.call();
     final after = await file.length();
-    if (before != after) {
+    if (before != after || measuredBytes != before) {
       throw StateError('e2ee_attachment_file_changed_during_read');
     }
     return _FileIntegrity(
       bytes: after,
-      sha256: Uint8List.fromList(digest.bytes),
+      sha256: Uint8List.fromList(digestOutput.value.bytes),
     );
   }
 
@@ -801,7 +932,9 @@ Future<List<Uint8List>> _verifyOpenedContent({
   required RandomAccessFile input,
   required E2eeAttachmentStoredFile storedFile,
   required List<int> chunkLengths,
+  E2eeAttachmentCheckCanContinue? checkCanContinue,
 }) async {
+  checkCanContinue?.call();
   if (await input.length() != storedFile.bytes) {
     throw const FormatException('e2ee_attachment_file_integrity');
   }
@@ -818,11 +951,15 @@ Future<List<Uint8List>> _verifyOpenedContent({
       var remaining = chunkLength;
       try {
         while (remaining > 0) {
-          final bytes = await input.read(min(64 * 1024, remaining));
+          checkCanContinue?.call();
+          final bytes = await input.read(
+            min(_attachmentFileOperationBufferBytes, remaining),
+          );
           if (bytes.isEmpty) {
             throw const FormatException('e2ee_attachment_file_integrity');
           }
           try {
+            checkCanContinue?.call();
             contentDigestInput.add(bytes);
             chunkDigestInput.add(bytes);
           } finally {
@@ -844,6 +981,7 @@ Future<List<Uint8List>> _verifyOpenedContent({
     }
     contentDigestInput.close();
     contentDigestClosed = true;
+    checkCanContinue?.call();
     if (totalRead != storedFile.bytes ||
         await input.length() != storedFile.bytes ||
         !_sameBytes(
@@ -853,6 +991,7 @@ Future<List<Uint8List>> _verifyOpenedContent({
       throw const FormatException('e2ee_attachment_file_integrity');
     }
     await input.setPosition(0);
+    checkCanContinue?.call();
     return List<Uint8List>.unmodifiable(chunkDigests);
   } finally {
     if (!contentDigestClosed) contentDigestInput.close();
@@ -879,7 +1018,10 @@ final class _PlatformVerifiedContent implements E2eeAttachmentVerifiedContent {
   Future<void>? _closeFuture;
 
   @override
-  Future<Uint8List> readChunk(int chunkIndex) {
+  Future<Uint8List> readChunk(
+    int chunkIndex, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) {
     if (chunkIndex < 0 || chunkIndex >= _chunkLengths.length) {
       return Future<Uint8List>.error(
         const FormatException('e2ee_attachment_chunk_index_invalid'),
@@ -888,19 +1030,49 @@ final class _PlatformVerifiedContent implements E2eeAttachmentVerifiedContent {
     return _runWhileOpen(() async {
       Uint8List? plaintext;
       try {
+        checkCanContinue?.call();
         if (await _input.length() != _storedFile.bytes) {
           throw const FormatException('e2ee_attachment_file_integrity');
         }
         await _input.setPosition(_chunkOffsets[chunkIndex]);
-        plaintext = await _input.read(_chunkLengths[chunkIndex]);
-        if (plaintext.length != _chunkLengths[chunkIndex] ||
+        final chunkLength = _chunkLengths[chunkIndex];
+        plaintext = Uint8List(chunkLength);
+        final digestOutput = _SingleDigestSink();
+        final digestInput = sha256.startChunkedConversion(digestOutput);
+        var digestClosed = false;
+        var offset = 0;
+        try {
+          while (offset < chunkLength) {
+            checkCanContinue?.call();
+            final read = await _input.readInto(
+              plaintext,
+              offset,
+              min(offset + _attachmentFileOperationBufferBytes, chunkLength),
+            );
+            checkCanContinue?.call();
+            if (read == 0) {
+              throw const FormatException('e2ee_attachment_file_integrity');
+            }
+            digestInput.add(
+              Uint8List.sublistView(plaintext, offset, offset + read),
+            );
+            offset += read;
+          }
+          digestInput.close();
+          digestClosed = true;
+        } finally {
+          if (!digestClosed) digestInput.close();
+        }
+        checkCanContinue?.call();
+        if (plaintext.length != chunkLength ||
             !_sameBytes(
-              Uint8List.fromList(sha256.convert(plaintext).bytes),
+              Uint8List.fromList(digestOutput.value.bytes),
               _chunkDigests[chunkIndex],
             ) ||
             await _input.length() != _storedFile.bytes) {
           throw const FormatException('e2ee_attachment_file_integrity');
         }
+        checkCanContinue?.call();
         final transferred = plaintext;
         plaintext = null;
         return transferred;
@@ -957,31 +1129,72 @@ final class E2eeAttachmentMemoryFileStore implements E2eeAttachmentFileStore {
   Future<E2eeAttachmentStoredFile> publish({
     required E2eeAttachmentFileLocation location,
     required Stream<List<int>> source,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
   }) async {
     final builder = BytesBuilder(copy: true);
-    await for (final chunk in source) {
-      builder.add(_copyByteChunk(chunk));
+    final digestOutput = _SingleDigestSink();
+    final digestInput = sha256.startChunkedConversion(digestOutput);
+    var digestClosed = false;
+    Uint8List? bytes;
+    try {
+      await for (final sourceChunk in source) {
+        checkCanContinue?.call();
+        var offset = 0;
+        while (offset < sourceChunk.length) {
+          checkCanContinue?.call();
+          final end = min(
+            offset + _attachmentFileOperationBufferBytes,
+            sourceChunk.length,
+          );
+          final chunk = _copyByteChunk(sourceChunk.sublist(offset, end));
+          try {
+            builder.add(chunk);
+            digestInput.add(chunk);
+          } finally {
+            chunk.fillRange(0, chunk.length, 0);
+          }
+          offset = end;
+          if (checkCanContinue != null) {
+            await Future<void>.delayed(Duration.zero);
+          }
+          checkCanContinue?.call();
+        }
+      }
+      digestInput.close();
+      digestClosed = true;
+      bytes = builder.takeBytes();
+      checkCanContinue?.call();
+      final storagePath = '$_memoryRoot${location._relativeSegments.join('/')}';
+      final digest = Uint8List.fromList(digestOutput.value.bytes);
+      if (location._isContent && digest.toHex() != location._fileName) {
+        throw const FormatException('e2ee_attachment_content_digest_mismatch');
+      }
+      final existing = _files[storagePath];
+      if (existing != null && !_sameBytes(existing, bytes)) {
+        throw StateError('e2ee_attachment_publish_conflict');
+      }
+      _files[storagePath] = Uint8List.fromList(bytes);
+      return E2eeAttachmentStoredFile(
+        storagePath: storagePath,
+        bytes: bytes.length,
+        sha256: digest,
+      );
+    } finally {
+      try {
+        if (!digestClosed) digestInput.close();
+      } finally {
+        final buffered = bytes ?? builder.takeBytes();
+        buffered.fillRange(0, buffered.length, 0);
+      }
     }
-    final bytes = builder.takeBytes();
-    final storagePath = '$_memoryRoot${location._relativeSegments.join('/')}';
-    final digest = Uint8List.fromList(sha256.convert(bytes).bytes);
-    if (location._isContent && digest.toHex() != location._fileName) {
-      throw const FormatException('e2ee_attachment_content_digest_mismatch');
-    }
-    final existing = _files[storagePath];
-    if (existing != null && !_sameBytes(existing, bytes)) {
-      throw StateError('e2ee_attachment_publish_conflict');
-    }
-    _files[storagePath] = Uint8List.fromList(bytes);
-    return E2eeAttachmentStoredFile(
-      storagePath: storagePath,
-      bytes: bytes.length,
-      sha256: digest,
-    );
   }
 
   @override
-  Future<Uint8List> readVerified(E2eeAttachmentStoredFile storedFile) async {
+  Future<Uint8List> readVerified(
+    E2eeAttachmentStoredFile storedFile, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) async {
+    checkCanContinue?.call();
     _requireBufferedReadSize(storedFile.bytes);
     _memoryRelativeSegments(storedFile.storagePath);
     final bytes = _files[storedFile.storagePath];
@@ -991,14 +1204,14 @@ final class E2eeAttachmentMemoryFileStore implements E2eeAttachmentFileStore {
         storedFile.storagePath,
       );
     }
-    if (bytes.length != storedFile.bytes ||
-        !_sameBytes(
-          Uint8List.fromList(sha256.convert(bytes).bytes),
-          storedFile.sha256,
-        )) {
+    if (bytes.length != storedFile.bytes) {
       throw const FormatException('e2ee_attachment_file_integrity');
     }
-    return Uint8List.fromList(bytes);
+    return _copyAndVerifyMemoryBytes(
+      bytes: bytes,
+      expectedSha256: storedFile.sha256,
+      checkCanContinue: checkCanContinue,
+    );
   }
 
   @override
@@ -1024,7 +1237,9 @@ final class E2eeAttachmentMemoryFileStore implements E2eeAttachmentFileStore {
   Future<E2eeAttachmentVerifiedContent> openVerifiedContent({
     required E2eeAttachmentStoredFile storedFile,
     required List<int> chunkPlaintextBytes,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
   }) async {
+    checkCanContinue?.call();
     final chunkLengths = _requireChunkLayout(storedFile, chunkPlaintextBytes);
     final segments = _memoryRelativeSegments(storedFile.storagePath);
     if (segments.first != 'content') {
@@ -1032,18 +1247,24 @@ final class E2eeAttachmentMemoryFileStore implements E2eeAttachmentFileStore {
     }
     _requireContentDigestPath(storedFile, segments.last);
     final bytes = _files[storedFile.storagePath];
-    if (bytes == null ||
-        bytes.length != storedFile.bytes ||
-        !_sameBytes(
-          Uint8List.fromList(sha256.convert(bytes).bytes),
-          storedFile.sha256,
-        )) {
+    if (bytes == null || bytes.length != storedFile.bytes) {
       throw const FormatException('e2ee_attachment_file_integrity');
     }
-    return _MemoryVerifiedContent(
-      plaintext: Uint8List.fromList(bytes),
-      chunkLengths: chunkLengths,
+    final plaintext = await _copyAndVerifyMemoryBytes(
+      bytes: bytes,
+      expectedSha256: storedFile.sha256,
+      checkCanContinue: checkCanContinue,
     );
+    try {
+      checkCanContinue?.call();
+      return _MemoryVerifiedContent(
+        plaintext: plaintext,
+        chunkLengths: chunkLengths,
+      );
+    } catch (_) {
+      plaintext.fillRange(0, plaintext.length, 0);
+      rethrow;
+    }
   }
 
   @override
@@ -1198,7 +1419,10 @@ final class _MemoryVerifiedContent implements E2eeAttachmentVerifiedContent {
   bool _closed = false;
 
   @override
-  Future<Uint8List> readChunk(int chunkIndex) async {
+  Future<Uint8List> readChunk(
+    int chunkIndex, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) async {
     if (_closed) {
       throw StateError('e2ee_attachment_verified_content_closed');
     }
@@ -1206,9 +1430,30 @@ final class _MemoryVerifiedContent implements E2eeAttachmentVerifiedContent {
       throw const FormatException('e2ee_attachment_chunk_index_invalid');
     }
     final offset = _chunkOffsets[chunkIndex];
-    return Uint8List.fromList(
-      _plaintext.sublist(offset, offset + _chunkLengths[chunkIndex]),
-    );
+    final length = _chunkLengths[chunkIndex];
+    Uint8List? copied = Uint8List(length);
+    try {
+      var copiedBytes = 0;
+      while (copiedBytes < length) {
+        checkCanContinue?.call();
+        final end = min(
+          copiedBytes + _attachmentFileOperationBufferBytes,
+          length,
+        );
+        copied.setRange(copiedBytes, end, _plaintext, offset + copiedBytes);
+        copiedBytes = end;
+        if (checkCanContinue != null) {
+          await Future<void>.delayed(Duration.zero);
+        }
+        checkCanContinue?.call();
+      }
+      checkCanContinue?.call();
+      final transferred = copied;
+      copied = null;
+      return transferred;
+    } finally {
+      copied?.fillRange(0, copied.length, 0);
+    }
   }
 
   @override
@@ -1216,6 +1461,52 @@ final class _MemoryVerifiedContent implements E2eeAttachmentVerifiedContent {
     if (_closed) return;
     _closed = true;
     _plaintext.fillRange(0, _plaintext.length, 0);
+  }
+}
+
+Future<Uint8List> _copyAndVerifyMemoryBytes({
+  required Uint8List bytes,
+  required Uint8List expectedSha256,
+  E2eeAttachmentCheckCanContinue? checkCanContinue,
+}) async {
+  final digestOutput = _SingleDigestSink();
+  final digestInput = sha256.startChunkedConversion(digestOutput);
+  var digestClosed = false;
+  Uint8List? copied = Uint8List(bytes.length);
+  try {
+    var offset = 0;
+    while (offset < bytes.length) {
+      checkCanContinue?.call();
+      final end = min(
+        offset + _attachmentFileOperationBufferBytes,
+        bytes.length,
+      );
+      copied.setRange(offset, end, bytes, offset);
+      digestInput.add(Uint8List.sublistView(copied, offset, end));
+      offset = end;
+      if (checkCanContinue != null) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      checkCanContinue?.call();
+    }
+    digestInput.close();
+    digestClosed = true;
+    if (!_sameBytes(
+      Uint8List.fromList(digestOutput.value.bytes),
+      expectedSha256,
+    )) {
+      throw const FormatException('e2ee_attachment_file_integrity');
+    }
+    checkCanContinue?.call();
+    final transferred = copied;
+    copied = null;
+    return transferred;
+  } finally {
+    try {
+      if (!digestClosed) digestInput.close();
+    } finally {
+      copied?.fillRange(0, copied.length, 0);
+    }
   }
 }
 
