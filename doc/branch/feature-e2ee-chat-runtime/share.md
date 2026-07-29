@@ -26,8 +26,10 @@
 - 已完成：下载明文暂存按 attachmentId/uploadId/keyEpoch 隔离为单一 plaintext.part，以数据库确认偏移恢复和截断；发布前流式核对长度与 SHA-256，并以内容摘要原子发布。
 - 已完成：附件上传协调器按持久草稿有界推进 create、manifest、chunk 与 commit，支持精确 mutation 重放、租约接管、源文件一次认证和失败关闭。
 - 已完成：上传草稿与 `message_asset_rows(revision_id, ordinal)` 建立唯一复合外键；创建前严格核对本地资产与消息元数据，commit 在同一事务内回填远端三元组并完成上传租约 CAS，任一步失败整体回滚。
+- 已完成：下载协调器在 pull 事务外按远端步骤预算物化并认证附件，事务内只接受精确 ready 身份；pending 与未来 keyEpoch 均保持整页 checkpoint 不变，空附件也会原子清理旧引用。
+- 已完成：Android/iOS 云同步页面可切换登录与首设备注册并提交 displayName，桌面端保持只能登录；请求期间禁止重复提交，四份 ARB 与生成本地化已同步。
 - 已完成：`kelivo-api/main@02dce9e` 已推送 D1/R2 密文附件六端点、原子配额、幂等状态机及完整 uint32 keyEpoch；未部署。
-- 下一步：合入下载校验/checkpoint 门禁，接通结构化消息附件并移除本地路径 marker 对同步的阻塞。
+- 下一步：接通结构化消息附件并移除本地路径 marker 对同步的阻塞，同时补齐通用 ARK 轮换信封与远端撤销后的终止认证生命周期。
 - 审计关键路径：移动端首账户注册、二维码/恢复文件、撤销设备后的 ARK keyring/epoch 轮换、Android 静默后台同步、D1 硬重建及 Worker 部署尚未完成。
 - 已知边界：客户端非空附件仍明确失败关闭，直到附件传输和本地模型闭环后解除。
 - 约束：不保留旧数据、旧 payload 或双写兼容路径；业务接线完成并验证前不提前开启内容同步。
