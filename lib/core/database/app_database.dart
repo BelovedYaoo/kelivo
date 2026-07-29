@@ -1277,9 +1277,10 @@ class E2eeVerifiedMembershipAnchorRows extends Table {
         "AND substr(account_user_id, 15, 4) NOT GLOB '*-*' "
         "AND substr(account_user_id, 20, 4) NOT GLOB '*-*' "
         "AND substr(account_user_id, 25, 12) NOT GLOB '*-*')",
-    // 同时保留当前代签名和上一代过渡签名，恢复设备才能从本地创世锚验证新 ARK。
+    // 至少保留一名可信设备；固定步长阻止数据库承载解析器永远不会接受的清单形状。
     "CHECK (typeof(membership_manifest) = 'blob' "
-        'AND length(membership_manifest) BETWEEN 356 AND 22884)',
+        'AND length(membership_manifest) BETWEEN 444 AND 22884 '
+        'AND (length(membership_manifest) - 356) % 88 = 0)',
     "CHECK (typeof(membership_manifest_digest) = 'blob' "
         'AND length(membership_manifest_digest) = 32)',
     "CHECK (typeof(security_generation) = 'integer' "
@@ -1849,7 +1850,7 @@ class AppDatabase extends _$AppDatabase {
   static const databaseFileName = 'kelivo.db';
 
   // 已验证成员清单锚点必须与内容数据库同受 SQLCipher 和硬切安装门保护。
-  static const currentSchemaVersion = 20;
+  static const currentSchemaVersion = 21;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

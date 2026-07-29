@@ -2966,7 +2966,7 @@ class E2eeVerifiedMembershipAnchorRows extends Table with TableInfo {
   List<String> get customConstraints => const [
     'PRIMARY KEY(account_user_id)',
     'CHECK(typeof(account_user_id) = \'text\' AND length(account_user_id) = 36 AND account_user_id = lower(account_user_id) AND account_user_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(account_user_id, 9, 1) = \'-\' AND substr(account_user_id, 14, 1) = \'-\' AND substr(account_user_id, 15, 1) = \'4\' AND substr(account_user_id, 19, 1) = \'-\' AND substr(account_user_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(account_user_id, 24, 1) = \'-\' AND substr(account_user_id, 1, 8) NOT GLOB \'*-*\' AND substr(account_user_id, 10, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 15, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 20, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 25, 12) NOT GLOB \'*-*\')',
-    'CHECK(typeof(membership_manifest) = \'blob\' AND length(membership_manifest) BETWEEN 356 AND 22884)',
+    'CHECK(typeof(membership_manifest) = \'blob\' AND length(membership_manifest) BETWEEN 444 AND 22884 AND(length(membership_manifest) - 356)% 88 = 0)',
     'CHECK(typeof(membership_manifest_digest) = \'blob\' AND length(membership_manifest_digest) = 32)',
     'CHECK(typeof(security_generation) = \'integer\' AND security_generation BETWEEN 1 AND 2147483647)',
     'CHECK(typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 4294967295)',
@@ -3812,8 +3812,8 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
   bool get dontWriteConstraints => true;
 }
 
-class DatabaseAtV20 extends GeneratedDatabase {
-  DatabaseAtV20(QueryExecutor e) : super(e);
+class DatabaseAtV21 extends GeneratedDatabase {
+  DatabaseAtV21(QueryExecutor e) : super(e);
   late final ConversationRows conversationRows = ConversationRows(this);
   late final MessageRows messageRows = MessageRows(this);
   late final AssetRows assetRows = AssetRows(this);
@@ -4022,132 +4022,5 @@ class DatabaseAtV20 extends GeneratedDatabase {
     idxE2eeAttachmentDownloadLocalAsset,
   ];
   @override
-  StreamQueryUpdateRules get streamUpdateRules => const StreamQueryUpdateRules([
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('message_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('message_asset_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'asset_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('message_asset_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'asset_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('asset_gc_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('asset_reference_dirty_rows', kind: UpdateKind.delete),
-      ],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('turn_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('conversation_mcp_server_rows', kind: UpdateKind.delete),
-      ],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('tool_event_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('gemini_thought_signature_rows', kind: UpdateKind.delete),
-      ],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('message_part_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('provider_artifact_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'migration_run_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('migration_issue_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'conversation_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [TableUpdate('generation_run_rows', kind: UpdateKind.delete)],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'e2ee_sync_record_state_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('e2ee_sync_record_parent_rows', kind: UpdateKind.delete),
-      ],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'e2ee_sync_record_state_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('e2ee_sync_record_head_rows', kind: UpdateKind.delete),
-      ],
-    ),
-    WritePropagation(
-      on: TableUpdateQuery.onTableName(
-        'message_asset_rows',
-        limitUpdateKind: UpdateKind.delete,
-      ),
-      result: [
-        TableUpdate('e2ee_attachment_upload_rows', kind: UpdateKind.delete),
-      ],
-    ),
-  ]);
-  @override
-  int get schemaVersion => 20;
+  int get schemaVersion => 21;
 }

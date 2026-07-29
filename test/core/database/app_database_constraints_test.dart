@@ -1050,7 +1050,7 @@ void main() {
   group('E2EE verified membership anchor schema', () {
     Future<void> insertAnchor({
       String accountUserId = _syncAccountUserId,
-      int manifestLength = 356,
+      int manifestLength = 444,
       int digestLength = 32,
       int securityGeneration = 1,
       int keyEpoch = 1,
@@ -1097,7 +1097,9 @@ void main() {
         () => insertAnchor(
           accountUserId: _syncAccountUserId.replaceFirst('-4000-', '-5000-'),
         ),
-        () => insertAnchor(manifestLength: 355),
+        () => insertAnchor(manifestLength: 356),
+        () => insertAnchor(manifestLength: 443),
+        () => insertAnchor(manifestLength: 445),
         () => insertAnchor(manifestLength: 22885),
         () => insertAnchor(digestLength: 31),
         () => insertAnchor(digestLength: 33),
