@@ -2258,6 +2258,149 @@ void main() {
     await expectLater(client.getDataRekeyState(), throwsA(invalidResponse));
   });
 
+  test('data-rekey 租约声明绑定稳定令牌与冻结范围', () async {
+    final claimRequest = CloudSyncDataRekeyLeaseClaimRequest(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      mutationId: _mutationId5,
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final claimFuture = client.claimDataRekeyLease(claimRequest);
+    final request = await requestFuture;
+    final body = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+    );
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/api/data-rekey/lease/claim');
+    expect(body, <String, Object?>{
+      'operationId': _mutationId3,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 2,
+      'targetKeyEpoch': 3,
+      'leaseToken': _mutationId4,
+      'mutationId': _mutationId5,
+    });
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'phase': 'rekey-pending',
+          'operationId': _mutationId3,
+          'sourceDataGeneration': 4,
+          'sourceKeyEpoch': 2,
+          'targetKeyEpoch': 3,
+          'leaseVersion': 7,
+          'leaseExpiresAt': '2026-07-29T06:10:00.000Z',
+          'sourceRecordCount': 1,
+          'sourceAttachmentCount': 1,
+          'sourceMaximumChangeSeq': 16,
+          'sourceRecordCursorEnd': _recordId1,
+          'sourceAttachmentCursorEnd': <String, Object?>{
+            'attachmentId': _attachmentId,
+            'uploadId': _uploadId,
+          },
+        },
+      }),
+    );
+    await request.response.close();
+
+    final claim = await claimFuture;
+    expect(claim.activeLease.operation, same(claimRequest.operation));
+    expect(claim.activeLease.leaseToken, _mutationId4);
+    expect(claim.activeLease.leaseVersion, 7);
+    expect(claim.sourceRecordCount, 1);
+    expect(claim.sourceAttachmentCount, 1);
+    expect(claim.sourceMaximumChangeSeq, 16);
+  });
+
+  test('data-rekey 租约声明拒绝代次与错配回执', () async {
+    expect(
+      () => CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 4,
+      ),
+      throwsFormatException,
+    );
+    final claimRequest = CloudSyncDataRekeyLeaseClaimRequest(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      mutationId: _mutationId5,
+    );
+    CloudSyncJsonMap responseData() => <String, Object?>{
+      'phase': 'rekey-pending',
+      'operationId': _mutationId3,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 2,
+      'targetKeyEpoch': 3,
+      'leaseVersion': 7,
+      'leaseExpiresAt': '2026-07-29T06:10:00.000Z',
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 16,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': null,
+    };
+    final responses = <CloudSyncJsonMap>[
+      <String, Object?>{...responseData(), 'unknownField': true},
+      <String, Object?>{...responseData(), 'operationId': _mutationId2},
+    ];
+    var responseIndex = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{'data': responses[responseIndex++]}),
+      );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final invalidResponse = isA<CloudSyncException>().having(
+      (error) => error.kind,
+      'kind',
+      CloudSyncFailureKind.invalidResponse,
+    );
+
+    await expectLater(
+      client.claimDataRekeyLease(claimRequest),
+      throwsA(invalidResponse),
+    );
+    await expectLater(
+      client.claimDataRekeyLease(claimRequest),
+      throwsA(invalidResponse),
+    );
+  });
+
   test('持久账户会话恢复认证会话时保留设备密钥版本', () {
     final persisted = _accountKeyLeaseSession(
       baseUrl: defaultCloudSyncBaseUrl,

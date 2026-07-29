@@ -5,6 +5,7 @@ import 'dart:typed_data';
 import 'package:crypto/crypto.dart';
 
 part 'cloud_sync_data_rekey_types.dart';
+part 'cloud_sync_data_rekey_transport_types.dart';
 
 typedef CloudSyncJsonMap = Map<String, Object?>;
 

@@ -142,6 +142,10 @@ abstract interface class CloudSyncAccountClient {
 
 abstract interface class CloudSyncDataRekeyTransport {
   Future<CloudSyncDataRekeyState> getDataRekeyState();
+
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  );
 }
 
 final class CloudSyncClient
@@ -1162,6 +1166,34 @@ final class CloudSyncClient
   }
 
   @override
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  ) {
+    return _guard(() async {
+      final operation = request.operation;
+      final generatedRequest = api.DataRekeyLeaseClaimRequest(
+        (builder) => builder
+          ..operationId = operation.operationId
+          ..sourceDataGeneration = operation.sourceDataGeneration
+          ..sourceKeyEpoch = operation.sourceKeyEpoch
+          ..targetKeyEpoch = operation.targetKeyEpoch
+          ..leaseToken = request.leaseToken
+          ..mutationId = request.mutationId,
+      );
+      final response = await _client.getDataRekeyApi().claimDataRekeyLease(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
+        dataRekeyLeaseClaimRequest: generatedRequest,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseDataRekeyLeaseClaim(
+        response.extra[_rawResponseKey],
+        request: request,
+      );
+    });
+  }
+
+  @override
   Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
     int afterGeneration = 0,
     int pageSize = 20,
@@ -1820,6 +1852,22 @@ CloudSyncDataRekeyState _parseDataRekeyState(Object? rawResponse) {
   );
   return CloudSyncDataRekeyState.fromJson(
     copyCloudSyncJsonMap(envelope['data']),
+  );
+}
+
+CloudSyncDataRekeyLeaseClaim _parseDataRekeyLeaseClaim(
+  Object? rawResponse, {
+  required CloudSyncDataRekeyLeaseClaimRequest request,
+}) {
+  final envelope = copyCloudSyncJsonMap(rawResponse);
+  _requireRawExactKeys(
+    envelope,
+    _strictResponseEnvelopeKeys,
+    'data-rekey 租约声明响应',
+  );
+  return CloudSyncDataRekeyLeaseClaim.fromJson(
+    copyCloudSyncJsonMap(envelope['data']),
+    request: request,
   );
 }
 
