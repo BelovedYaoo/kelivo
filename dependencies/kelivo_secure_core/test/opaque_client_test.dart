@@ -24,10 +24,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v11 OPAQUE、设备 E2EE、附件加密与账户信任签名支持', () async {
+  test('能力门禁声明 ABI v12 OPAQUE、设备 E2EE、附件加密与账户信任签名支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 11);
+    expect(capabilities.abiVersion, 12);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -41,6 +41,55 @@ void main() {
       capabilities.supportsAccountTrustSigning,
       Platform.isWindows || Platform.isAndroid,
     );
+  });
+
+  test('外部设备公钥必须通过安全核心严格验证', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final identity = await core.generateDeviceIdentity();
+    final publicKeys = await core.readDevicePublicKeys(identity);
+    await core.validateDevicePublicKeys(
+      <KelivoDevicePublicKeys>[publicKeys],
+      additionalKeyAgreementPublicKeys: <Uint8List>[
+        publicKeys.keyAgreementPublicKey,
+      ],
+    );
+
+    await expectLater(
+      core.validateDevicePublicKeys(<KelivoDevicePublicKeys>[
+        KelivoDevicePublicKeys(
+          signingPublicKey: Uint8List(32),
+          keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+        ),
+      ]),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.deviceMessageInvalid,
+        ),
+      ),
+    );
+    await expectLater(
+      core.validateDevicePublicKeys(
+        const <KelivoDevicePublicKeys>[],
+        additionalKeyAgreementPublicKeys: <Uint8List>[Uint8List(32)],
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.deviceMessageInvalid,
+        ),
+      ),
+    );
+    await expectLater(
+      core.validateDevicePublicKeys(
+        const <KelivoDevicePublicKeys>[],
+        additionalKeyAgreementPublicKeys: <Uint8List>[Uint8List(31)],
+      ),
+      throwsArgumentError,
+    );
+    await core.closeDeviceIdentity(identity);
   });
 
   test('注册状态可显式取消且不能重复消费', () async {
@@ -798,6 +847,39 @@ void main() {
       keyEpoch: 7,
       canonicalPayload: payload,
       signature: signature,
+    );
+    final untrustedPublicKey =
+        KelivoUntrustedAccountTrustPublicKey.fromTransport(publicKey.bytes);
+    expect(untrustedPublicKey.bytes, orderedEquals(publicKey.bytes));
+    expect(() => untrustedPublicKey.bytes[0] ^= 1, throwsUnsupportedError);
+    await core.verifyUntrustedAccountTrustPayload(
+      untrustedPublicKey,
+      userId: userId,
+      keyEpoch: 7,
+      canonicalPayload: payload,
+      signature: signature,
+    );
+    await expectLater(
+      core.verifyUntrustedAccountTrustPayload(
+        KelivoUntrustedAccountTrustPublicKey.fromTransport(
+          nextEpochPublicKey.bytes,
+        ),
+        userId: userId,
+        keyEpoch: 7,
+        canonicalPayload: payload,
+        signature: signature,
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.deviceAuthenticationFailed,
+        ),
+      ),
+    );
+    expect(
+      () => KelivoUntrustedAccountTrustPublicKey.fromTransport(Uint8List(31)),
+      throwsArgumentError,
     );
 
     for (final invalidVerification in <Future<void> Function()>[

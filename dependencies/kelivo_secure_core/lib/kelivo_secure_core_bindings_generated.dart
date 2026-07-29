@@ -483,6 +483,18 @@ external int kelivo_device_identity_public_keys(
   ffi.Pointer<ffi.Size> out_public_keys_length,
 );
 
+@ffi.Native<KelivoStatus Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>()
+external int kelivo_device_signing_public_key_validate(
+  ffi.Pointer<ffi.Uint8> public_key,
+  int public_key_length,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>()
+external int kelivo_device_key_agreement_public_key_validate(
+  ffi.Pointer<ffi.Uint8> public_key,
+  int public_key_length,
+);
+
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_device_identity_handle_close(int identity_handle);
 
@@ -1118,7 +1130,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 11;
+const int KELIVO_CORE_ABI_VERSION = 12;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 

@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(11)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(12)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -502,6 +502,20 @@ KELIVO_CORE_API KelivoStatus kelivo_device_identity_public_keys(
     uint8_t *out_public_keys,
     size_t out_public_keys_capacity,
     size_t *out_public_keys_length);
+
+/*
+ * 严格验证外部 Ed25519 公钥：拒绝非规范编码、小阶点和扭转分量。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_signing_public_key_validate(
+    const uint8_t *public_key,
+    size_t public_key_length);
+
+/*
+ * 严格验证外部 X25519 公钥：必须能完成 HPKE 封装且不能产生全零共享值。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_key_agreement_public_key_validate(
+    const uint8_t *public_key,
+    size_t public_key_length);
 
 KELIVO_CORE_API KelivoStatus kelivo_device_identity_handle_close(
     uint64_t identity_handle);
