@@ -3,7 +3,7 @@
 //! KDPF 使用固定 224 字节签名消息；KAEK 使用固定 336 字节自包含信封。
 //! 两种格式都把算法、身份和用途写入被认证数据，避免调用方自行拼接上下文。
 
-use std::{convert::Infallible, fmt};
+use std::{array, convert::Infallible, fmt};
 
 use chacha20poly1305::{
     Tag, XChaCha20Poly1305, XNonce,
@@ -992,8 +992,18 @@ struct AccountRootKeyEpoch {
     key: AccountRootKey,
 }
 
+impl AccountRootKeyEpoch {
+    const fn empty() -> Self {
+        Self {
+            epoch: 0,
+            key: AccountRootKey::from_bytes([0; ACCOUNT_ROOT_KEY_LENGTH]),
+        }
+    }
+}
+
 pub struct AccountRootKeyring {
-    entries: Vec<AccountRootKeyEpoch>,
+    entries: [AccountRootKeyEpoch; ACCOUNT_ROOT_KEYRING_CAPACITY],
+    len: usize,
 }
 
 impl AccountRootKeyring {
@@ -1001,34 +1011,33 @@ impl AccountRootKeyring {
         if epoch == 0 {
             return Err(DeviceCryptoError::InvalidKeyEpoch);
         }
-        Ok(Self {
-            entries: vec![AccountRootKeyEpoch { epoch, key }],
-        })
+        let mut entries = array::from_fn(|_| AccountRootKeyEpoch::empty());
+        entries[0] = AccountRootKeyEpoch { epoch, key };
+        Ok(Self { entries, len: 1 })
     }
 
     pub fn len(&self) -> usize {
-        self.entries.len()
+        self.len
     }
 
     pub fn current_epoch(&self) -> u32 {
-        self.entries
-            .last()
-            .expect("ARK 密钥环构造后始终至少保留当前代次")
-            .epoch
+        self.entries[self.len - 1].epoch
     }
 
     pub fn key_for_epoch(&self, epoch: u32) -> Result<&AccountRootKey, DeviceCryptoError> {
         if epoch == 0 {
             return Err(DeviceCryptoError::InvalidKeyEpoch);
         }
-        self.entries
+        self.active_entries()
             .binary_search_by_key(&epoch, |entry| entry.epoch)
             .map(|index| &self.entries[index].key)
             .map_err(|_| DeviceCryptoError::ArkKeyEpochNotFound)
     }
 
     pub fn entries(&self) -> impl ExactSizeIterator<Item = (u32, &AccountRootKey)> {
-        self.entries.iter().map(|entry| (entry.epoch, &entry.key))
+        self.active_entries()
+            .iter()
+            .map(|entry| (entry.epoch, &entry.key))
     }
 
     pub fn add_current(
@@ -1039,13 +1048,14 @@ impl AccountRootKeyring {
         if epoch == 0 {
             return Err(DeviceCryptoError::InvalidKeyEpoch);
         }
-        if self.entries.len() >= ACCOUNT_ROOT_KEYRING_CAPACITY {
+        if self.len >= ACCOUNT_ROOT_KEYRING_CAPACITY {
             return Err(DeviceCryptoError::ArkKeyringCapacityExceeded);
         }
         if epoch <= self.current_epoch() {
             return Err(DeviceCryptoError::ArkKeyEpochNotIncreasing);
         }
-        self.entries.push(AccountRootKeyEpoch { epoch, key });
+        self.entries[self.len] = AccountRootKeyEpoch { epoch, key };
+        self.len += 1;
         Ok(())
     }
 
@@ -1057,11 +1067,26 @@ impl AccountRootKeyring {
             return Err(DeviceCryptoError::ArkCurrentEpochRemoval);
         }
         let index = self
-            .entries
+            .active_entries()
             .binary_search_by_key(&epoch, |entry| entry.epoch)
             .map_err(|_| DeviceCryptoError::ArkKeyEpochNotFound)?;
-        self.entries.remove(index);
+        // 固定槽间原地覆盖并立即清零源槽，避免秘密经集合重分配或局部 move 留下残留副本。
+        for destination_index in index..self.len - 1 {
+            let source_index = destination_index + 1;
+            let (destinations, sources) = self.entries.split_at_mut(source_index);
+            let destination = &mut destinations[destination_index];
+            let source = &mut sources[0];
+            destination.epoch = source.epoch;
+            destination.key.0.copy_from_slice(&source.key.0);
+            source.key.zeroize();
+            source.epoch = 0;
+        }
+        self.len -= 1;
         Ok(())
+    }
+
+    fn active_entries(&self) -> &[AccountRootKeyEpoch] {
+        &self.entries[..self.len]
     }
 }
 
@@ -2770,6 +2795,7 @@ mod tests {
         let mut keyring =
             AccountRootKeyring::new(1, AccountRootKey::from_bytes([1; ACCOUNT_ROOT_KEY_LENGTH]))
                 .expect("首个正代次应有效");
+        assert_keyring_inactive_slots_are_zero(&keyring);
         assert!(matches!(
             keyring.add_current(1, AccountRootKey::from_bytes([2; ACCOUNT_ROOT_KEY_LENGTH])),
             Err(DeviceCryptoError::ArkKeyEpochNotIncreasing)
@@ -2785,6 +2811,7 @@ mod tests {
                     AccountRootKey::from_bytes([epoch as u8; ACCOUNT_ROOT_KEY_LENGTH]),
                 )
                 .expect("容量内的严格递增代次应成功");
+            assert_keyring_inactive_slots_are_zero(&keyring);
         }
         assert!(matches!(
             keyring.add_current(
@@ -2802,9 +2829,25 @@ mod tests {
             Err(DeviceCryptoError::ArkKeyEpochNotFound)
         ));
         keyring.prune(1).expect("旧代次应可移除");
+        assert_keyring_inactive_slots_are_zero(&keyring);
+        assert_eq!(
+            keyring
+                .entries()
+                .map(|(epoch, _)| epoch)
+                .collect::<Vec<_>>(),
+            (2..=ACCOUNT_ROOT_KEYRING_CAPACITY as u32).collect::<Vec<_>>()
+        );
         assert!(matches!(
             keyring.key_for_epoch(1),
             Err(DeviceCryptoError::ArkKeyEpochNotFound)
         ));
+    }
+
+    fn assert_keyring_inactive_slots_are_zero(keyring: &AccountRootKeyring) {
+        assert_eq!(keyring.entries.len(), ACCOUNT_ROOT_KEYRING_CAPACITY);
+        for entry in &keyring.entries[keyring.len..] {
+            assert_eq!(entry.epoch, 0);
+            assert!(entry.key.as_bytes().iter().all(|byte| *byte == 0));
+        }
     }
 }
