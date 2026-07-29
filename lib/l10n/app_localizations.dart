@@ -286,6 +286,48 @@ abstract class AppLocalizations {
   /// **'Password'**
   String get cloudSyncPassword;
 
+  /// No description provided for @cloudSyncRecoveryPassphrase.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery Passphrase'**
+  String get cloudSyncRecoveryPassphrase;
+
+  /// No description provided for @cloudSyncRecoveryPassphraseConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm Recovery Passphrase'**
+  String get cloudSyncRecoveryPassphraseConfirm;
+
+  /// No description provided for @cloudSyncRecoveryPassphraseDescription.
+  ///
+  /// In en, this message translates to:
+  /// **'Use a separate passphrase that is not your account password. It encrypts the recovery QR code and file and is never sent to the server.'**
+  String get cloudSyncRecoveryPassphraseDescription;
+
+  /// No description provided for @cloudSyncRecoveryPassphraseMismatch.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery passphrases do not match.'**
+  String get cloudSyncRecoveryPassphraseMismatch;
+
+  /// No description provided for @cloudSyncRecoveryPassphraseTooShort.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery passphrase must contain at least 12 characters.'**
+  String get cloudSyncRecoveryPassphraseTooShort;
+
+  /// No description provided for @cloudSyncRecoveryPassphraseTooLong.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery passphrase must not exceed 128 UTF-8 bytes.'**
+  String get cloudSyncRecoveryPassphraseTooLong;
+
+  /// No description provided for @cloudSyncRecoveryPassphraseInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery passphrase contains unsupported text.'**
+  String get cloudSyncRecoveryPassphraseInvalid;
+
   /// No description provided for @cloudSyncDeviceName.
   ///
   /// In en, this message translates to:
@@ -367,8 +409,74 @@ abstract class AppLocalizations {
   /// No description provided for @cloudSyncRegistrationRequiredFields.
   ///
   /// In en, this message translates to:
-  /// **'Complete the account, display name, password, and device name.'**
+  /// **'Complete the account, display name, password, recovery passphrase, confirmation, and device name.'**
   String get cloudSyncRegistrationRequiredFields;
+
+  /// No description provided for @cloudSyncRecoveryMediaTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Save Recovery Media'**
+  String get cloudSyncRecoveryMediaTitle;
+
+  /// No description provided for @cloudSyncRecoveryMediaIntro.
+  ///
+  /// In en, this message translates to:
+  /// **'This encrypted QR code or recovery file is required if every trusted device is lost. Store at least one copy safely before registration continues.'**
+  String get cloudSyncRecoveryMediaIntro;
+
+  /// No description provided for @cloudSyncRecoveryMediaCancel.
+  ///
+  /// In en, this message translates to:
+  /// **'Cancel recovery media export'**
+  String get cloudSyncRecoveryMediaCancel;
+
+  /// No description provided for @cloudSyncRecoveryMediaQrLabel.
+  ///
+  /// In en, this message translates to:
+  /// **'Encrypted recovery QR code'**
+  String get cloudSyncRecoveryMediaQrLabel;
+
+  /// No description provided for @cloudSyncRecoveryMediaQrUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery QR code could not be generated. Save the encrypted recovery file instead.'**
+  String get cloudSyncRecoveryMediaQrUnavailable;
+
+  /// No description provided for @cloudSyncRecoveryMediaSaveFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Save Recovery File'**
+  String get cloudSyncRecoveryMediaSaveFile;
+
+  /// No description provided for @cloudSyncRecoveryMediaSavingFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Saving Recovery File…'**
+  String get cloudSyncRecoveryMediaSavingFile;
+
+  /// No description provided for @cloudSyncRecoveryMediaFileSaved.
+  ///
+  /// In en, this message translates to:
+  /// **'The encrypted recovery file was saved.'**
+  String get cloudSyncRecoveryMediaFileSaved;
+
+  /// No description provided for @cloudSyncRecoveryMediaAcknowledgement.
+  ///
+  /// In en, this message translates to:
+  /// **'I have safely stored the recovery QR code or file and understand that the recovery passphrase is also required.'**
+  String get cloudSyncRecoveryMediaAcknowledgement;
+
+  /// No description provided for @cloudSyncRecoveryMediaConfirm.
+  ///
+  /// In en, this message translates to:
+  /// **'Confirm and Continue Registration'**
+  String get cloudSyncRecoveryMediaConfirm;
+
+  /// No description provided for @cloudSyncRecoveryMediaSaveFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery file was not saved. Registration was cancelled.'**
+  String get cloudSyncRecoveryMediaSaveFailed;
 
   /// No description provided for @cloudSyncAccountSection.
   ///

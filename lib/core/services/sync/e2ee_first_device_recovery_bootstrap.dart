@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:typed_data';
 
@@ -10,8 +11,38 @@ import 'e2ee_account_authenticator.dart';
 import 'e2ee_account_trust_manifest.dart';
 
 const e2eeEncryptedRecoveryMediaBytes = 644;
-const _canonicalRecoveryServiceOrigin = 'https://kelivo.bemylover.top';
+const e2eeCanonicalRecoveryServiceOrigin = 'https://kelivo.bemylover.top';
+const _recoveryPassphraseMinimumScalars = 12;
+const _recoveryPassphraseMaximumUtf8Bytes = 128;
 const _initialSecurityVersion = 1;
+
+enum E2eeRecoveryPassphraseValidation { valid, tooShort, tooLong, invalidUtf8 }
+
+/// UI 仍会短暂持有 String；这里立即转成可清零字节并复用安全核心的唯一校验器。
+E2eeRecoveryPassphraseValidation validateE2eeRecoveryPassphraseText(
+  String passphrase,
+) {
+  late final Uint8List encoded;
+  try {
+    encoded = Uint8List.fromList(utf8.encode(passphrase));
+  } on FormatException {
+    return E2eeRecoveryPassphraseValidation.invalidUtf8;
+  }
+  try {
+    const KelivoSecureCore().validateRecoveryPassphrase(encoded);
+    return E2eeRecoveryPassphraseValidation.valid;
+  } on ArgumentError {
+    if (encoded.length > _recoveryPassphraseMaximumUtf8Bytes) {
+      return E2eeRecoveryPassphraseValidation.tooLong;
+    }
+    if (passphrase.runes.length < _recoveryPassphraseMinimumScalars) {
+      return E2eeRecoveryPassphraseValidation.tooShort;
+    }
+    return E2eeRecoveryPassphraseValidation.invalidUtf8;
+  } finally {
+    _clearSensitiveBytes(encoded);
+  }
+}
 
 enum _RecoveryBootstrapPreparerState { ready, preparing, closed }
 
@@ -124,12 +155,12 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
     required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
     required E2eeFirstDeviceRecoveryCore recoveryCore,
   }) {
-    if (serviceOrigin != _canonicalRecoveryServiceOrigin) {
+    if (serviceOrigin != e2eeCanonicalRecoveryServiceOrigin) {
       _clearSensitiveBytes(recoveryPassphrase);
       throw ArgumentError.value(
         serviceOrigin,
         'serviceOrigin',
-        '必须为规范服务 origin $_canonicalRecoveryServiceOrigin',
+        '必须为规范服务 origin $e2eeCanonicalRecoveryServiceOrigin',
       );
     }
     final ownedPassphrase = Uint8List.fromList(recoveryPassphrase);
@@ -162,6 +193,7 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
       _RecoveryBootstrapPreparerState.ready;
 
   /// 上层注册在调用 prepare 前中止时，用它销毁已接管的口令。
+  @override
   void close() {
     switch (_state) {
       case _RecoveryBootstrapPreparerState.ready:

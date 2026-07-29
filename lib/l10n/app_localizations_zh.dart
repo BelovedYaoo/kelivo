@@ -102,6 +102,28 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncPassword => '密码';
 
   @override
+  String get cloudSyncRecoveryPassphrase => '独立恢复口令';
+
+  @override
+  String get cloudSyncRecoveryPassphraseConfirm => '确认恢复口令';
+
+  @override
+  String get cloudSyncRecoveryPassphraseDescription =>
+      '请使用不同于账户密码的独立口令。它仅用于加密恢复二维码和文件，绝不会发送到服务器。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseMismatch => '两次输入的恢复口令不一致。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseTooShort => '恢复口令至少需要 12 个字符。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseTooLong => '恢复口令不得超过 128 个 UTF-8 字节。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseInvalid => '恢复口令包含不支持的文本。';
+
+  @override
   String get cloudSyncDeviceName => '设备名称';
 
   @override
@@ -145,7 +167,43 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncRequiredFields => '请填写账号、密码和设备名称。';
 
   @override
-  String get cloudSyncRegistrationRequiredFields => '请填写账号、显示名称、密码和设备名称。';
+  String get cloudSyncRegistrationRequiredFields =>
+      '请填写账号、显示名称、密码、独立恢复口令、确认口令和设备名称。';
+
+  @override
+  String get cloudSyncRecoveryMediaTitle => '保存恢复介质';
+
+  @override
+  String get cloudSyncRecoveryMediaIntro =>
+      '所有可信设备丢失时，只能使用这份加密二维码或恢复文件找回账户。继续注册前，请至少安全保存其中一种。';
+
+  @override
+  String get cloudSyncRecoveryMediaCancel => '取消恢复介质导出';
+
+  @override
+  String get cloudSyncRecoveryMediaQrLabel => '加密恢复二维码';
+
+  @override
+  String get cloudSyncRecoveryMediaQrUnavailable => '无法生成恢复二维码，请改为保存加密恢复文件。';
+
+  @override
+  String get cloudSyncRecoveryMediaSaveFile => '保存恢复文件';
+
+  @override
+  String get cloudSyncRecoveryMediaSavingFile => '正在保存恢复文件…';
+
+  @override
+  String get cloudSyncRecoveryMediaFileSaved => '加密恢复文件已保存。';
+
+  @override
+  String get cloudSyncRecoveryMediaAcknowledgement =>
+      '我已安全保存恢复二维码或文件，并知晓恢复时还必须提供独立恢复口令。';
+
+  @override
+  String get cloudSyncRecoveryMediaConfirm => '确认并继续注册';
+
+  @override
+  String get cloudSyncRecoveryMediaSaveFailed => '恢复文件未保存，注册已取消。';
 
   @override
   String get cloudSyncAccountSection => '账户';
@@ -5733,6 +5791,28 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncPassword => '密码';
 
   @override
+  String get cloudSyncRecoveryPassphrase => '独立恢复口令';
+
+  @override
+  String get cloudSyncRecoveryPassphraseConfirm => '确认恢复口令';
+
+  @override
+  String get cloudSyncRecoveryPassphraseDescription =>
+      '请使用不同于账户密码的独立口令。它仅用于加密恢复二维码和文件，绝不会发送到服务器。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseMismatch => '两次输入的恢复口令不一致。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseTooShort => '恢复口令至少需要 12 个字符。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseTooLong => '恢复口令不得超过 128 个 UTF-8 字节。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseInvalid => '恢复口令包含不支持的文本。';
+
+  @override
   String get cloudSyncDeviceName => '设备名称';
 
   @override
@@ -5776,7 +5856,43 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncRequiredFields => '请填写账号、密码和设备名称。';
 
   @override
-  String get cloudSyncRegistrationRequiredFields => '请填写账号、显示名称、密码和设备名称。';
+  String get cloudSyncRegistrationRequiredFields =>
+      '请填写账号、显示名称、密码、独立恢复口令、确认口令和设备名称。';
+
+  @override
+  String get cloudSyncRecoveryMediaTitle => '保存恢复介质';
+
+  @override
+  String get cloudSyncRecoveryMediaIntro =>
+      '所有可信设备丢失时，只能使用这份加密二维码或恢复文件找回账户。继续注册前，请至少安全保存其中一种。';
+
+  @override
+  String get cloudSyncRecoveryMediaCancel => '取消恢复介质导出';
+
+  @override
+  String get cloudSyncRecoveryMediaQrLabel => '加密恢复二维码';
+
+  @override
+  String get cloudSyncRecoveryMediaQrUnavailable => '无法生成恢复二维码，请改为保存加密恢复文件。';
+
+  @override
+  String get cloudSyncRecoveryMediaSaveFile => '保存恢复文件';
+
+  @override
+  String get cloudSyncRecoveryMediaSavingFile => '正在保存恢复文件…';
+
+  @override
+  String get cloudSyncRecoveryMediaFileSaved => '加密恢复文件已保存。';
+
+  @override
+  String get cloudSyncRecoveryMediaAcknowledgement =>
+      '我已安全保存恢复二维码或文件，并知晓恢复时还必须提供独立恢复口令。';
+
+  @override
+  String get cloudSyncRecoveryMediaConfirm => '确认并继续注册';
+
+  @override
+  String get cloudSyncRecoveryMediaSaveFailed => '恢复文件未保存，注册已取消。';
 
   @override
   String get cloudSyncAccountSection => '账户';
@@ -11364,6 +11480,28 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncPassword => '密碼';
 
   @override
+  String get cloudSyncRecoveryPassphrase => '獨立復原口令';
+
+  @override
+  String get cloudSyncRecoveryPassphraseConfirm => '確認復原口令';
+
+  @override
+  String get cloudSyncRecoveryPassphraseDescription =>
+      '請使用不同於帳戶密碼的獨立口令。它僅用於加密復原 QR Code 和檔案，絕不會傳送到伺服器。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseMismatch => '兩次輸入的復原口令不一致。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseTooShort => '復原口令至少需要 12 個字元。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseTooLong => '復原口令不得超過 128 個 UTF-8 位元組。';
+
+  @override
+  String get cloudSyncRecoveryPassphraseInvalid => '復原口令包含不支援的文字。';
+
+  @override
   String get cloudSyncDeviceName => '裝置名稱';
 
   @override
@@ -11407,7 +11545,44 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncRequiredFields => '請填寫帳號、密碼和裝置名稱。';
 
   @override
-  String get cloudSyncRegistrationRequiredFields => '請填寫帳號、顯示名稱、密碼和裝置名稱。';
+  String get cloudSyncRegistrationRequiredFields =>
+      '請填寫帳號、顯示名稱、密碼、獨立復原口令、確認口令和裝置名稱。';
+
+  @override
+  String get cloudSyncRecoveryMediaTitle => '儲存復原媒介';
+
+  @override
+  String get cloudSyncRecoveryMediaIntro =>
+      '所有受信任裝置遺失時，只能使用這份加密 QR Code 或復原檔案找回帳戶。繼續註冊前，請至少安全儲存其中一種。';
+
+  @override
+  String get cloudSyncRecoveryMediaCancel => '取消復原媒介匯出';
+
+  @override
+  String get cloudSyncRecoveryMediaQrLabel => '加密復原 QR Code';
+
+  @override
+  String get cloudSyncRecoveryMediaQrUnavailable =>
+      '無法產生復原 QR Code，請改為儲存加密復原檔案。';
+
+  @override
+  String get cloudSyncRecoveryMediaSaveFile => '儲存復原檔案';
+
+  @override
+  String get cloudSyncRecoveryMediaSavingFile => '正在儲存復原檔案…';
+
+  @override
+  String get cloudSyncRecoveryMediaFileSaved => '加密復原檔案已儲存。';
+
+  @override
+  String get cloudSyncRecoveryMediaAcknowledgement =>
+      '我已安全儲存復原 QR Code 或檔案，並知悉復原時還必須提供獨立復原口令。';
+
+  @override
+  String get cloudSyncRecoveryMediaConfirm => '確認並繼續註冊';
+
+  @override
+  String get cloudSyncRecoveryMediaSaveFailed => '復原檔案未儲存，註冊已取消。';
 
   @override
   String get cloudSyncAccountSection => '帳戶';

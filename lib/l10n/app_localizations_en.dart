@@ -104,6 +104,33 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudSyncPassword => 'Password';
 
   @override
+  String get cloudSyncRecoveryPassphrase => 'Recovery Passphrase';
+
+  @override
+  String get cloudSyncRecoveryPassphraseConfirm =>
+      'Confirm Recovery Passphrase';
+
+  @override
+  String get cloudSyncRecoveryPassphraseDescription =>
+      'Use a separate passphrase that is not your account password. It encrypts the recovery QR code and file and is never sent to the server.';
+
+  @override
+  String get cloudSyncRecoveryPassphraseMismatch =>
+      'The recovery passphrases do not match.';
+
+  @override
+  String get cloudSyncRecoveryPassphraseTooShort =>
+      'The recovery passphrase must contain at least 12 characters.';
+
+  @override
+  String get cloudSyncRecoveryPassphraseTooLong =>
+      'The recovery passphrase must not exceed 128 UTF-8 bytes.';
+
+  @override
+  String get cloudSyncRecoveryPassphraseInvalid =>
+      'The recovery passphrase contains unsupported text.';
+
+  @override
   String get cloudSyncDeviceName => 'Device Name';
 
   @override
@@ -150,7 +177,46 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cloudSyncRegistrationRequiredFields =>
-      'Complete the account, display name, password, and device name.';
+      'Complete the account, display name, password, recovery passphrase, confirmation, and device name.';
+
+  @override
+  String get cloudSyncRecoveryMediaTitle => 'Save Recovery Media';
+
+  @override
+  String get cloudSyncRecoveryMediaIntro =>
+      'This encrypted QR code or recovery file is required if every trusted device is lost. Store at least one copy safely before registration continues.';
+
+  @override
+  String get cloudSyncRecoveryMediaCancel => 'Cancel recovery media export';
+
+  @override
+  String get cloudSyncRecoveryMediaQrLabel => 'Encrypted recovery QR code';
+
+  @override
+  String get cloudSyncRecoveryMediaQrUnavailable =>
+      'The recovery QR code could not be generated. Save the encrypted recovery file instead.';
+
+  @override
+  String get cloudSyncRecoveryMediaSaveFile => 'Save Recovery File';
+
+  @override
+  String get cloudSyncRecoveryMediaSavingFile => 'Saving Recovery File…';
+
+  @override
+  String get cloudSyncRecoveryMediaFileSaved =>
+      'The encrypted recovery file was saved.';
+
+  @override
+  String get cloudSyncRecoveryMediaAcknowledgement =>
+      'I have safely stored the recovery QR code or file and understand that the recovery passphrase is also required.';
+
+  @override
+  String get cloudSyncRecoveryMediaConfirm =>
+      'Confirm and Continue Registration';
+
+  @override
+  String get cloudSyncRecoveryMediaSaveFailed =>
+      'The recovery file was not saved. Registration was cancelled.';
 
   @override
   String get cloudSyncAccountSection => 'Account';

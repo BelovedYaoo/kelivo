@@ -17,6 +17,29 @@ const _deviceId = '20000000-0000-4000-8000-000000000001';
 
 void main() {
   group('首设备恢复安全 bootstrap', () {
+    test('注册 UI 口令预检与安全核心的字符和 UTF-8 字节边界一致', () {
+      expect(
+        validateE2eeRecoveryPassphraseText('12345678901'),
+        E2eeRecoveryPassphraseValidation.tooShort,
+      );
+      expect(
+        validateE2eeRecoveryPassphraseText('甲乙丙丁戊己庚辛壬癸子丑'),
+        E2eeRecoveryPassphraseValidation.valid,
+      );
+      expect(
+        validateE2eeRecoveryPassphraseText(
+          List<String>.filled(128, 'a').join(),
+        ),
+        E2eeRecoveryPassphraseValidation.valid,
+      );
+      expect(
+        validateE2eeRecoveryPassphraseText(
+          List<String>.filled(129, 'a').join(),
+        ),
+        E2eeRecoveryPassphraseValidation.tooLong,
+      );
+    });
+
     test('恢复介质确认持久化后才交付本地验签的 genesis', () async {
       final context = await _BootstrapContext.create();
       addTearDown(context.close);

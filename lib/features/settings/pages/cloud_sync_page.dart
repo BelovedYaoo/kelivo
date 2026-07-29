@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -8,6 +9,7 @@ import 'package:provider/provider.dart';
 import '../../../core/providers/cloud_sync_provider.dart';
 import '../../../core/services/sync/e2ee_account_authenticator.dart';
 import '../../../core/services/sync/cloud_sync_types.dart';
+import '../../../core/services/sync/e2ee_first_device_recovery_bootstrap.dart';
 import '../../../icons/lucide_adapter.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../shared/widgets/ios_form_text_field.dart';
@@ -16,6 +18,7 @@ import '../../../shared/widgets/ios_tile_button.dart';
 import '../../../shared/widgets/snackbar.dart';
 import '../../../theme/app_font_weights.dart';
 import '../../scan/pages/qr_scan_page.dart';
+import 'mobile_recovery_media_export_page.dart';
 
 class CloudSyncPage extends StatelessWidget {
   const CloudSyncPage({super.key});
@@ -54,6 +57,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   final TextEditingController _loginNameController = TextEditingController();
   final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  final TextEditingController _recoveryPassphraseController =
+      TextEditingController();
+  final TextEditingController _recoveryPassphraseConfirmController =
+      TextEditingController();
   final TextEditingController _deviceNameController = TextEditingController();
 
   _CloudSyncAuthenticationMode _authenticationMode =
@@ -89,6 +96,8 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     _loginNameController.dispose();
     _displayNameController.dispose();
     _passwordController.dispose();
+    _recoveryPassphraseController.dispose();
+    _recoveryPassphraseConfirmController.dispose();
     _deviceNameController.dispose();
     super.dispose();
   }
@@ -371,6 +380,45 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
           autocorrect: false,
           enableSuggestions: false,
         ),
+        if (registering) ...[
+          const _SectionDivider(),
+          IosFormTextField(
+            key: const ValueKey<String>('cloud-sync-recovery-passphrase-field'),
+            label: l10n.cloudSyncRecoveryPassphrase,
+            controller: _recoveryPassphraseController,
+            inlineLabel: widget.desktop,
+            textInputAction: TextInputAction.next,
+            enabled: !busy,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+          ),
+          const _SectionDivider(),
+          IosFormTextField(
+            key: const ValueKey<String>(
+              'cloud-sync-recovery-passphrase-confirm-field',
+            ),
+            label: l10n.cloudSyncRecoveryPassphraseConfirm,
+            controller: _recoveryPassphraseConfirmController,
+            inlineLabel: widget.desktop,
+            textInputAction: TextInputAction.next,
+            enabled: !busy,
+            obscureText: true,
+            autocorrect: false,
+            enableSuggestions: false,
+          ),
+          Padding(
+            padding: const EdgeInsets.fromLTRB(12, 0, 12, 10),
+            child: Text(
+              l10n.cloudSyncRecoveryPassphraseDescription,
+              style: TextStyle(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+                fontSize: 13,
+                height: 1.35,
+              ),
+            ),
+          ),
+        ],
         const _SectionDivider(),
         IosFormTextField(
           key: const ValueKey<String>('cloud-sync-device-name-field'),
@@ -582,10 +630,14 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final loginName = _loginNameController.text.trim();
     final displayName = _displayNameController.text.trim();
     final password = _passwordController.text;
+    var recoveryPassphrase = _recoveryPassphraseController.text;
+    var recoveryPassphraseConfirm = _recoveryPassphraseConfirmController.text;
     final deviceName = _deviceNameController.text.trim();
     if (loginName.isEmpty ||
         displayName.isEmpty ||
         password.isEmpty ||
+        recoveryPassphrase.isEmpty ||
+        recoveryPassphraseConfirm.isEmpty ||
         deviceName.isEmpty) {
       showAppSnackBar(
         context,
@@ -594,23 +646,107 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       );
       return;
     }
+    if (recoveryPassphrase != recoveryPassphraseConfirm) {
+      showAppSnackBar(
+        context,
+        message: l10n.cloudSyncRecoveryPassphraseMismatch,
+        type: NotificationType.warning,
+      );
+      return;
+    }
+    final recoveryPassphraseError = switch (validateE2eeRecoveryPassphraseText(
+      recoveryPassphrase,
+    )) {
+      E2eeRecoveryPassphraseValidation.valid => null,
+      E2eeRecoveryPassphraseValidation.tooShort =>
+        l10n.cloudSyncRecoveryPassphraseTooShort,
+      E2eeRecoveryPassphraseValidation.tooLong =>
+        l10n.cloudSyncRecoveryPassphraseTooLong,
+      E2eeRecoveryPassphraseValidation.invalidUtf8 =>
+        l10n.cloudSyncRecoveryPassphraseInvalid,
+    };
+    if (recoveryPassphraseError != null) {
+      showAppSnackBar(
+        context,
+        message: recoveryPassphraseError,
+        type: NotificationType.warning,
+      );
+      return;
+    }
 
     setState(() => _submitting = true);
     final provider = context.read<CloudSyncProvider>();
+    E2eeFirstDeviceRecoveryBootstrapPreparer? bootstrapPreparer;
+    MobileRecoveryMediaExportResult? exportResult;
     late final bool success;
     try {
+      final recoveryPassphraseBytes = Uint8List.fromList(
+        utf8.encode(recoveryPassphrase),
+      );
+      try {
+        bootstrapPreparer = E2eeFirstDeviceRecoveryBootstrapPreparer(
+          recoveryPassphrase: recoveryPassphraseBytes,
+          serviceOrigin: e2eeCanonicalRecoveryServiceOrigin,
+          encryptedMediaExporter: (encryptedMedia) async {
+            try {
+              if (!mounted) {
+                exportResult = MobileRecoveryMediaExportResult.cancelled;
+                return false;
+              }
+              exportResult =
+                  await Navigator.of(
+                    context,
+                  ).push<MobileRecoveryMediaExportResult>(
+                    MaterialPageRoute<MobileRecoveryMediaExportResult>(
+                      builder: (_) => MobileRecoveryMediaExportPage(
+                        encryptedMedia: encryptedMedia,
+                      ),
+                    ),
+                  ) ??
+                  MobileRecoveryMediaExportResult.cancelled;
+              return exportResult == MobileRecoveryMediaExportResult.confirmed;
+            } finally {
+              encryptedMedia.fillRange(0, encryptedMedia.length, 0);
+            }
+          },
+        );
+      } finally {
+        recoveryPassphraseBytes.fillRange(0, recoveryPassphraseBytes.length, 0);
+        // 尽早解除 async 状态机对不可主动清零 String 的引用。
+        recoveryPassphrase = '';
+        recoveryPassphraseConfirm = '';
+        _recoveryPassphraseController.clear();
+        _recoveryPassphraseConfirmController.clear();
+      }
       success = await provider.register(
         loginName: loginName,
         displayName: displayName,
         password: password,
         deviceName: deviceName,
+        firstDeviceBootstrapPreparer: bootstrapPreparer,
       );
     } finally {
+      bootstrapPreparer?.close();
+      _recoveryPassphraseController.clear();
+      _recoveryPassphraseConfirmController.clear();
       if (mounted) setState(() => _submitting = false);
     }
     if (!mounted) return;
     if (success || provider.signedIn) {
       _passwordController.clear();
+      return;
+    }
+    if (exportResult == MobileRecoveryMediaExportResult.cancelled) {
+      provider.clearError();
+      return;
+    }
+    if (exportResult == MobileRecoveryMediaExportResult.fileSaveFailed) {
+      provider.clearError();
+      showAppSnackBar(
+        context,
+        message: l10n.cloudSyncRecoveryMediaSaveFailed,
+        type: NotificationType.error,
+      );
       return;
     }
     showAppSnackBar(
@@ -641,6 +777,10 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   void _selectAuthenticationMode(_CloudSyncAuthenticationMode mode) {
     if (_submitting || mode == _authenticationMode) return;
     context.read<CloudSyncProvider>().clearError();
+    if (mode != _CloudSyncAuthenticationMode.register) {
+      _recoveryPassphraseController.clear();
+      _recoveryPassphraseConfirmController.clear();
+    }
     setState(() => _authenticationMode = mode);
   }
 

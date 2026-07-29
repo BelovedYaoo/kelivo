@@ -47,6 +47,7 @@ import 'package:Kelivo/features/settings/pages/cloud_sync_page.dart'
     hide CloudSyncPage;
 import 'package:Kelivo/l10n/app_localizations.dart';
 import 'package:Kelivo/shared/widgets/ios_tile_button.dart';
+import 'package:Kelivo/shared/widgets/snackbar.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:Kelivo/utils/sandbox_path_resolver.dart';
 import 'package:crypto/crypto.dart';
@@ -2407,6 +2408,7 @@ void main() {
     );
     final fixture = await _createSignedOutFixture();
     addTearDown(fixture.close);
+    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
 
     expect(
       await fixture.provider.register(
@@ -2414,6 +2416,7 @@ void main() {
         displayName: '  Ovo  ',
         password: 'password',
         deviceName: '  测试手机  ',
+        firstDeviceBootstrapPreparer: preparer,
       ),
       isTrue,
     );
@@ -2424,6 +2427,8 @@ void main() {
     expect(fixture.authentication.lastPassword, 'password');
     expect(fixture.authentication.lastDeviceName, '测试手机');
     expect(fixture.authentication.lastPlatform, CloudSyncPlatform.android);
+    expect(fixture.authentication.lastFirstDeviceBootstrapPreparer, preparer);
+    expect(preparer.closed, isTrue);
     expect(fixture.provider.workspaceRestartRequired, isTrue);
     expect(
       fixture.provider.status,
@@ -2448,6 +2453,7 @@ void main() {
       authentication: authentication,
     );
     addTearDown(fixture.close);
+    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
 
     expect(
       await fixture.provider.register(
@@ -2455,12 +2461,14 @@ void main() {
         displayName: 'Ovo',
         password: 'password',
         deviceName: '测试手机',
+        firstDeviceBootstrapPreparer: preparer,
       ),
       isTrue,
     );
 
     expect(authentication.requestNames, <String>['register']);
     expect(fixture.provider.lastError, isNull);
+    expect(preparer.closed, isTrue);
     expect(fixture.provider.workspaceRestartRequired, isTrue);
     expect(
       fixture.provider.status,
@@ -2488,6 +2496,7 @@ void main() {
       ),
     );
     addTearDown(fixture.close);
+    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
 
     expect(
       await fixture.provider.register(
@@ -2495,6 +2504,7 @@ void main() {
         displayName: 'Ovo',
         password: 'password',
         deviceName: '测试手机',
+        firstDeviceBootstrapPreparer: preparer,
       ),
       isFalse,
     );
@@ -2507,6 +2517,31 @@ void main() {
     expect(fixture.provider.workspaceRestartRequired, isFalse);
     expect(fixture.client.token, isNull);
     expect(fixture.client.closed, isTrue);
+    expect(preparer.closed, isTrue);
+  });
+
+  test('已有会话拒绝注册时仍关闭未消费的恢复 bootstrap', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final fixture = await _createSignedInFixture();
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
+
+    expect(
+      await fixture.provider.register(
+        loginName: 'ovo',
+        displayName: 'Ovo',
+        password: 'password',
+        deviceName: '测试手机',
+        firstDeviceBootstrapPreparer: preparer,
+      ),
+      isFalse,
+    );
+
+    expect(preparer.closed, isTrue);
+    expect(fixture.authentication.requestNames, isEmpty);
   });
 
   test('撤销当前设备后退出本机会话', () async {
@@ -2726,6 +2761,16 @@ void main() {
     await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
     await _enterCloudSyncField(
       tester,
+      'cloud-sync-recovery-passphrase-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
       'cloud-sync-device-name-field',
       ' 安卓手机 ',
     );
@@ -2757,6 +2802,100 @@ void main() {
     expect(authentication.lastPassword, 'password');
     expect(authentication.lastDeviceName, '安卓手机');
     expect(authentication.lastPlatform, CloudSyncPlatform.android);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('移动注册用可理解提示拒绝不符合安全核心长度规则的恢复口令', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final fixture = await tester.runAsync(_createSignedOutFixture);
+    if (fixture == null) {
+      throw StateError('recovery_passphrase_validation_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-field',
+      '12345678901',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      '12345678901',
+    );
+    await _enterCloudSyncField(tester, 'cloud-sync-device-name-field', '安卓手机');
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+    );
+    await tester.pump();
+
+    expect(fixture.authentication.requestNames, isEmpty);
+    await _expectAndDismissCloudSyncToast(tester, '恢复口令至少需要 12 个字符。');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('移动注册拒绝两次不一致的独立恢复口令', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final fixture = await tester.runAsync(_createSignedOutFixture);
+    if (fixture == null) {
+      throw StateError('recovery_passphrase_mismatch_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      'different recovery passphrase',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-device-name-field',
+      'iPhone',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+    );
+    await tester.pump();
+
+    expect(fixture.authentication.requestNames, isEmpty);
+    await _expectAndDismissCloudSyncToast(tester, '两次输入的恢复口令不一致。');
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -2793,6 +2932,16 @@ void main() {
     await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
     await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
     await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      'correct horse battery staple',
+    );
     await _enterCloudSyncField(
       tester,
       'cloud-sync-device-name-field',
@@ -3717,6 +3866,20 @@ Future<void> _pumpCloudSyncUntil(
   fail('等待云同步页面状态收敛超时');
 }
 
+Future<void> _expectAndDismissCloudSyncToast(
+  WidgetTester tester,
+  String message,
+) async {
+  final manager = AppSnackBarManager();
+  expect(
+    manager.activeToasts.map((entry) => entry.notification.message),
+    contains(message),
+  );
+  manager.dismissAll();
+  await tester.pump(const Duration(seconds: 4));
+  await tester.pumpAndSettle();
+}
+
 void _setCloudSyncPackageInfo() {
   PackageInfo.setMockInitialValues(
     appName: 'Kelivo',
@@ -3767,7 +3930,11 @@ Future<_Fixture> _createSignedInFixture({
             accountClient.setToken(token);
             return accountClient;
           },
-          authenticationFactory: (_) => accountAuthentication,
+          authenticationFactory: (_, {firstDeviceBootstrapPreparer}) {
+            accountAuthentication.lastFirstDeviceBootstrapPreparer =
+                firstDeviceBootstrapPreparer;
+            return accountAuthentication;
+          },
         )
       : CloudSyncProvider.withContentRuntime(
           runtime,
@@ -3776,7 +3943,11 @@ Future<_Fixture> _createSignedInFixture({
             accountClient.setToken(token);
             return accountClient;
           },
-          authenticationFactory: (_) => accountAuthentication,
+          authenticationFactory: (_, {firstDeviceBootstrapPreparer}) {
+            accountAuthentication.lastFirstDeviceBootstrapPreparer =
+                firstDeviceBootstrapPreparer;
+            return accountAuthentication;
+          },
         );
   return _Fixture(
     root: root,
@@ -3812,7 +3983,11 @@ Future<_Fixture> _createSignedOutFixture({
       accountClient.setToken(token);
       return accountClient;
     },
-    authenticationFactory: (_) => accountAuthentication,
+    authenticationFactory: (_, {firstDeviceBootstrapPreparer}) {
+      accountAuthentication.lastFirstDeviceBootstrapPreparer =
+          firstDeviceBootstrapPreparer;
+      return accountAuthentication;
+    },
   );
   return _Fixture(
     root: root,
@@ -5127,6 +5302,26 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
   }
 }
 
+final class _TrackingFirstDeviceSecurityBootstrapPreparer
+    implements E2eeFirstDeviceSecurityBootstrapPreparer {
+  bool closed = false;
+
+  @override
+  void close() {
+    closed = true;
+  }
+
+  @override
+  Future<E2eePreparedFirstDeviceSecurityBootstrap> prepare({
+    required KelivoAccountRootKeyHandle accountRootKey,
+    required String userId,
+    required String operationId,
+    required E2eeMembershipDeviceInput localMember,
+  }) {
+    throw UnsupportedError('测试认证器不应消费安全 bootstrap');
+  }
+}
+
 final class _FakeE2eeAccountAuthentication
     implements E2eeAccountAuthentication {
   _FakeE2eeAccountAuthentication({
@@ -5157,6 +5352,7 @@ final class _FakeE2eeAccountAuthentication
   String? lastDeviceName;
   CloudSyncPlatform? lastPlatform;
   String? lastClientVersion;
+  E2eeFirstDeviceSecurityBootstrapPreparer? lastFirstDeviceBootstrapPreparer;
   List<int>? lastPairingQrFrame;
 
   @override

@@ -60,6 +60,9 @@ abstract interface class E2eeDevicePairingSession {
 }
 
 abstract interface class E2eeFirstDeviceSecurityBootstrapPreparer {
+  /// 注册链路接管 preparer 后必须在所有退出路径调用；已消费时应幂等。
+  void close();
+
   Future<E2eePreparedFirstDeviceSecurityBootstrap> prepare({
     required KelivoAccountRootKeyHandle accountRootKey,
     required String userId,

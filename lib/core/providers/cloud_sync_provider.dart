@@ -18,7 +18,10 @@ import '../services/workspace/device_state_blob_store.dart';
 typedef CloudSyncAccountClientFactory =
     CloudSyncAccountClient Function({CloudSyncFullSessionToken? token});
 typedef E2eeAccountAuthenticationFactory =
-    E2eeAccountAuthentication Function(CloudSyncAccountClient accountClient);
+    E2eeAccountAuthentication Function(
+      CloudSyncAccountClient accountClient, {
+      E2eeFirstDeviceSecurityBootstrapPreparer? firstDeviceBootstrapPreparer,
+    });
 
 CloudSyncAccountClient _createCloudSyncAccountClient({
   CloudSyncFullSessionToken? token,
@@ -82,14 +85,16 @@ final class CloudSyncProvider extends ChangeNotifier
     _clientFactory = clientFactory;
     _authenticationFactory =
         authenticationFactory ??
-        (accountClient) => E2eeAccountAuthenticator(
-          baseUrl: defaultCloudSyncBaseUrl,
-          accountClient: accountClient,
-          deviceStateStore: DeviceStateBlobStore(
-            installationRoot: _workspaceRuntime.installationRoot,
-          ),
-          secureCore: const KelivoSecureCore(),
-        );
+        (accountClient, {firstDeviceBootstrapPreparer}) =>
+            E2eeAccountAuthenticator(
+              baseUrl: defaultCloudSyncBaseUrl,
+              accountClient: accountClient,
+              deviceStateStore: DeviceStateBlobStore(
+                installationRoot: _workspaceRuntime.installationRoot,
+              ),
+              secureCore: const KelivoSecureCore(),
+              firstDeviceBootstrapPreparer: firstDeviceBootstrapPreparer,
+            );
   }
 
   final AccountWorkspaceRuntime _workspaceRuntime;
@@ -333,61 +338,70 @@ final class CloudSyncProvider extends ChangeNotifier
     required String displayName,
     required String password,
     required String deviceName,
+    required E2eeFirstDeviceSecurityBootstrapPreparer
+    firstDeviceBootstrapPreparer,
   }) async {
-    await initialize();
-    if (!_ready || _disposed) return false;
-    if (_session != null ||
-        _sessionMutationInProgress ||
-        _pendingPairingSession != null) {
-      _lastError = const CloudSyncException(
-        kind: CloudSyncFailureKind.conflict,
-        retryable: false,
-        serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
-      );
-      _notify();
-      return false;
-    }
-
-    _beginSessionMutation();
-    _lastError = null;
-    _deviceError = null;
-    _pendingDeviceApproval = null;
-    _devicesLoading = false;
-    _setStatus(CloudSyncProviderStatus.signingIn);
-    CloudSyncAccountClient? registrationClient;
     try {
-      final packageInfo = await PackageInfo.fromPlatform();
-      if (_disposed) return false;
-      registrationClient = _clientFactory();
-      final authentication = _authenticationFactory(registrationClient);
-      final authenticatedSession = await authentication.registerFirstDevice(
-        loginName: loginName.trim(),
-        displayName: displayName.trim(),
-        password: Uint8List.fromList(utf8.encode(password)),
-        deviceName: deviceName.trim(),
-        platform: _currentPlatform(),
-        clientVersion: packageInfo.version,
-      );
-      if (_disposed) return false;
-      final connected = await _bindAuthenticatedSession(
-        authenticatedSession,
-        registrationClient,
-      );
-      if (connected) registrationClient = null;
-      return true;
-    } catch (error, stackTrace) {
-      _recordFailure(
-        error,
-        stackTrace,
-        operation: '注册云同步账户',
-        status: _session == null
-            ? CloudSyncProviderStatus.signedOut
-            : CloudSyncProviderStatus.error,
-      );
-      return false;
+      await initialize();
+      if (!_ready || _disposed) return false;
+      if (_session != null ||
+          _sessionMutationInProgress ||
+          _pendingPairingSession != null) {
+        _lastError = const CloudSyncException(
+          kind: CloudSyncFailureKind.conflict,
+          retryable: false,
+          serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
+        );
+        _notify();
+        return false;
+      }
+
+      _beginSessionMutation();
+      _lastError = null;
+      _deviceError = null;
+      _pendingDeviceApproval = null;
+      _devicesLoading = false;
+      _setStatus(CloudSyncProviderStatus.signingIn);
+      CloudSyncAccountClient? registrationClient;
+      try {
+        final packageInfo = await PackageInfo.fromPlatform();
+        if (_disposed) return false;
+        registrationClient = _clientFactory();
+        final authentication = _authenticationFactory(
+          registrationClient,
+          firstDeviceBootstrapPreparer: firstDeviceBootstrapPreparer,
+        );
+        final authenticatedSession = await authentication.registerFirstDevice(
+          loginName: loginName.trim(),
+          displayName: displayName.trim(),
+          password: Uint8List.fromList(utf8.encode(password)),
+          deviceName: deviceName.trim(),
+          platform: _currentPlatform(),
+          clientVersion: packageInfo.version,
+        );
+        if (_disposed) return false;
+        final connected = await _bindAuthenticatedSession(
+          authenticatedSession,
+          registrationClient,
+        );
+        if (connected) registrationClient = null;
+        return true;
+      } catch (error, stackTrace) {
+        _recordFailure(
+          error,
+          stackTrace,
+          operation: '注册云同步账户',
+          status: _session == null
+              ? CloudSyncProviderStatus.signedOut
+              : CloudSyncProviderStatus.error,
+        );
+        return false;
+      } finally {
+        registrationClient?.close(force: true);
+        _endSessionMutation();
+      }
     } finally {
-      registrationClient?.close(force: true);
-      _endSessionMutation();
+      firstDeviceBootstrapPreparer.close();
     }
   }
 
