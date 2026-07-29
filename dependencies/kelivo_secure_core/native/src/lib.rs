@@ -26,7 +26,8 @@ pub use device_core::{
     kelivo_account_root_key_generate, kelivo_account_root_key_handle_close,
     kelivo_account_root_keyring_add_epoch, kelivo_account_root_keyring_prune_epoch,
     kelivo_account_trust_payload_sign, kelivo_account_trust_payload_verify,
-    kelivo_account_trust_public_key_derive, kelivo_device_identity_generate,
+    kelivo_account_trust_public_key_derive, kelivo_data_rekey_completion_proof_sign,
+    kelivo_data_rekey_completion_proof_verify, kelivo_device_identity_generate,
     kelivo_device_identity_handle_close, kelivo_device_identity_public_keys,
     kelivo_device_key_agreement_public_key_validate, kelivo_device_login_proof_sign,
     kelivo_device_pairing_approval_accept, kelivo_device_pairing_approval_create,
@@ -58,7 +59,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 15;
+const ABI_VERSION: u32 = 16;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -1125,6 +1126,31 @@ mod tests {
         value[6] = (value[6] & 0x0f) | 0x40;
         value[8] = (value[8] & 0x3f) | 0x80;
         value
+    }
+
+    fn hex_array<const LENGTH: usize>(hex: &str) -> [u8; LENGTH] {
+        assert_eq!(hex.len(), LENGTH * 2);
+        let mut output = [0_u8; LENGTH];
+        for (index, value) in output.iter_mut().enumerate() {
+            *value = u8::from_str_radix(&hex[index * 2..index * 2 + 2], 16)
+                .expect("测试十六进制向量必须有效");
+        }
+        output
+    }
+
+    fn data_rekey_completion_proof_frame() -> [u8; crypto::DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH]
+    {
+        hex_array(concat!(
+            "6b656c69766f2d646174612d72656b65792d636f6d706c6574696f6e2d763200",
+            "1111111111114111811111111111111122222222222242228222222222222222",
+            "3333333333334333833333333333333300000007000000080000000b0000000c",
+            "4444444444444444444444444444444444444444444444444444444444444444",
+            "000000020000000100000000000000090155555555555545558555555555555555",
+            "016666666666664666866666666666666677777777777747778777777777777777",
+            "0000000388888888888888888888888888888888888888888888888888888888",
+            "8888888800000002000000019999999999999999999999999999999999999999",
+            "999999999999999999999999"
+        ))
     }
 
     fn opaque_finish_test_guard() -> std::sync::MutexGuard<'static, ()> {
@@ -3541,6 +3567,147 @@ mod tests {
                 kelivo_device_signing_public_key_validate(signing.as_ptr(), signing.len() - 1)
             },
             KelivoStatus::DeviceMessageInvalid.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(identity),
+            KelivoStatus::Ok.code()
+        );
+    }
+
+    #[test]
+    fn data_rekey_completion_proof_abi_signs_and_verifies_with_device_identity() {
+        let identity = generate_device_identity();
+        let public_keys = device_public_keys(identity);
+        let signing_public_key = &public_keys[..crypto::DEVICE_PUBLIC_KEY_LENGTH];
+        let proof_frame = data_rekey_completion_proof_frame();
+        let mut signature = [0_u8; crypto::DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH];
+        let mut signature_length = usize::MAX;
+
+        assert_eq!(
+            unsafe {
+                kelivo_data_rekey_completion_proof_sign(
+                    identity,
+                    proof_frame.as_ptr(),
+                    proof_frame.len(),
+                    signature.as_mut_ptr(),
+                    signature.len(),
+                    &mut signature_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(signature_length, signature.len());
+        assert_eq!(
+            unsafe {
+                kelivo_data_rekey_completion_proof_verify(
+                    signing_public_key.as_ptr(),
+                    signing_public_key.len(),
+                    proof_frame.as_ptr(),
+                    proof_frame.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(identity),
+            KelivoStatus::Ok.code()
+        );
+    }
+
+    #[test]
+    fn data_rekey_completion_proof_abi_rejects_invalid_frames_and_signers() {
+        let identity = generate_device_identity();
+        let other_identity = generate_device_identity();
+        let public_keys = device_public_keys(identity);
+        let signing_public_key = &public_keys[..crypto::DEVICE_PUBLIC_KEY_LENGTH];
+        let other_public_keys = device_public_keys(other_identity);
+        let other_signing_public_key = &other_public_keys[..crypto::DEVICE_PUBLIC_KEY_LENGTH];
+        let proof_frame = data_rekey_completion_proof_frame();
+        let mut signature = [0_u8; crypto::DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH];
+        let mut signature_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_data_rekey_completion_proof_sign(
+                    identity,
+                    proof_frame.as_ptr(),
+                    proof_frame.len(),
+                    signature.as_mut_ptr(),
+                    signature.len(),
+                    &mut signature_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let mut tampered_frame = proof_frame;
+        tampered_frame[tampered_frame.len() - 1] ^= 1;
+        assert_eq!(
+            unsafe {
+                kelivo_data_rekey_completion_proof_verify(
+                    signing_public_key.as_ptr(),
+                    signing_public_key.len(),
+                    tampered_frame.as_ptr(),
+                    tampered_frame.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            KelivoStatus::DeviceAuthenticationFailed.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_data_rekey_completion_proof_verify(
+                    other_signing_public_key.as_ptr(),
+                    other_signing_public_key.len(),
+                    proof_frame.as_ptr(),
+                    proof_frame.len(),
+                    signature.as_ptr(),
+                    signature.len(),
+                )
+            },
+            KelivoStatus::DeviceAuthenticationFailed.code()
+        );
+
+        let mut rejected_signature =
+            [0xa5_u8; crypto::DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH];
+        let mut rejected_signature_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_data_rekey_completion_proof_sign(
+                    identity,
+                    proof_frame.as_ptr(),
+                    proof_frame.len() - 1,
+                    rejected_signature.as_mut_ptr(),
+                    rejected_signature.len(),
+                    &mut rejected_signature_length,
+                )
+            },
+            KelivoStatus::DeviceMessageInvalid.code()
+        );
+        assert_eq!(rejected_signature_length, 0);
+        assert_eq!(
+            rejected_signature,
+            [0xa5; crypto::DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH]
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_data_rekey_completion_proof_verify(
+                    signing_public_key.as_ptr(),
+                    signing_public_key.len(),
+                    proof_frame.as_ptr(),
+                    proof_frame.len(),
+                    signature.as_ptr(),
+                    signature.len() - 1,
+                )
+            },
+            KelivoStatus::DeviceMessageInvalid.code()
+        );
+
+        assert_eq!(
+            kelivo_device_identity_handle_close(other_identity),
+            KelivoStatus::Ok.code()
         );
         assert_eq!(
             kelivo_device_identity_handle_close(identity),

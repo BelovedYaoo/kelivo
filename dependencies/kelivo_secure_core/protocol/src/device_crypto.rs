@@ -37,6 +37,9 @@ pub const DEVICE_PROOF_CHALLENGE_LENGTH: usize = 32;
 pub const DEVICE_PROOF_MESSAGE_LENGTH: usize = 224;
 pub const DEVICE_PROOF_SIGNATURE_LENGTH: usize = 64;
 pub const DEVICE_PROOF_SIGNATURE_BUNDLE_LENGTH: usize = DEVICE_PROOF_SIGNATURE_LENGTH;
+pub const DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH: usize = 270;
+pub const DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH: usize = 64;
+const DATA_REKEY_COMPLETION_PROOF_DOMAIN: [u8; 32] = *b"kelivo-data-rekey-completion-v2\0";
 pub const PAIRING_SECRET_LENGTH: usize = 32;
 pub const PAIRING_AUTHENTICATOR_LENGTH: usize = 32;
 const PAIRING_AUTHENTICATOR_INFO: &[u8] = b"kelivo.pairing.authenticator.v1\0";
@@ -95,6 +98,39 @@ const PROOF_KEY_AGREEMENT_OFFSET: usize = PROOF_SIGNING_KEY_OFFSET + DEVICE_PUBL
 const PROOF_PRIMARY_PAYLOAD_HASH_OFFSET: usize =
     PROOF_KEY_AGREEMENT_OFFSET + DEVICE_PUBLIC_KEY_LENGTH;
 const PROOF_ENVELOPE_HASH_OFFSET: usize = PROOF_PRIMARY_PAYLOAD_HASH_OFFSET + SHA256_DIGEST_LENGTH;
+// 先在私钥边界解析固定 v2 布局，避免专用 completion 接口退化为通用原始签名器。
+const DATA_REKEY_OPERATION_ID_OFFSET: usize = DATA_REKEY_COMPLETION_PROOF_DOMAIN.len();
+const DATA_REKEY_USER_ID_OFFSET: usize = DATA_REKEY_OPERATION_ID_OFFSET + UUID_LENGTH;
+const DATA_REKEY_ISSUER_DEVICE_ID_OFFSET: usize = DATA_REKEY_USER_ID_OFFSET + UUID_LENGTH;
+const DATA_REKEY_SOURCE_GENERATION_OFFSET: usize = DATA_REKEY_ISSUER_DEVICE_ID_OFFSET + UUID_LENGTH;
+const DATA_REKEY_TARGET_GENERATION_OFFSET: usize =
+    DATA_REKEY_SOURCE_GENERATION_OFFSET + size_of::<u32>();
+const DATA_REKEY_SOURCE_KEY_EPOCH_OFFSET: usize =
+    DATA_REKEY_TARGET_GENERATION_OFFSET + size_of::<u32>();
+const DATA_REKEY_TARGET_KEY_EPOCH_OFFSET: usize =
+    DATA_REKEY_SOURCE_KEY_EPOCH_OFFSET + size_of::<u32>();
+const DATA_REKEY_SOURCE_SNAPSHOT_ROOT_OFFSET: usize =
+    DATA_REKEY_TARGET_KEY_EPOCH_OFFSET + size_of::<u32>();
+const DATA_REKEY_SOURCE_RECORD_COUNT_OFFSET: usize =
+    DATA_REKEY_SOURCE_SNAPSHOT_ROOT_OFFSET + SHA256_DIGEST_LENGTH;
+const DATA_REKEY_SOURCE_ATTACHMENT_COUNT_OFFSET: usize =
+    DATA_REKEY_SOURCE_RECORD_COUNT_OFFSET + size_of::<u32>();
+const DATA_REKEY_SOURCE_MAXIMUM_CHANGE_SEQ_OFFSET: usize =
+    DATA_REKEY_SOURCE_ATTACHMENT_COUNT_OFFSET + size_of::<u32>();
+const DATA_REKEY_SOURCE_RECORD_CURSOR_FLAG_OFFSET: usize =
+    DATA_REKEY_SOURCE_MAXIMUM_CHANGE_SEQ_OFFSET + size_of::<u64>();
+const DATA_REKEY_SOURCE_ATTACHMENT_CURSOR_FLAG_OFFSET: usize =
+    DATA_REKEY_SOURCE_RECORD_CURSOR_FLAG_OFFSET + 1 + UUID_LENGTH;
+const DATA_REKEY_MEMBERSHIP_GENERATION_OFFSET: usize =
+    DATA_REKEY_SOURCE_ATTACHMENT_CURSOR_FLAG_OFFSET + 1 + UUID_LENGTH * 2;
+const DATA_REKEY_MEMBERSHIP_MANIFEST_DIGEST_OFFSET: usize =
+    DATA_REKEY_MEMBERSHIP_GENERATION_OFFSET + size_of::<u32>();
+const DATA_REKEY_STAGED_RECORD_COUNT_OFFSET: usize =
+    DATA_REKEY_MEMBERSHIP_MANIFEST_DIGEST_OFFSET + SHA256_DIGEST_LENGTH;
+const DATA_REKEY_STAGED_ATTACHMENT_COUNT_OFFSET: usize =
+    DATA_REKEY_STAGED_RECORD_COUNT_OFFSET + size_of::<u32>();
+const DATA_REKEY_STAGED_CIPHERTEXT_SET_DIGEST_OFFSET: usize =
+    DATA_REKEY_STAGED_ATTACHMENT_COUNT_OFFSET + size_of::<u32>();
 const ARK_USER_OFFSET: usize = ARK_ENVELOPE_HEADER_LENGTH;
 const ARK_ISSUER_DEVICE_OFFSET: usize = ARK_USER_OFFSET + UUID_LENGTH;
 const ARK_TARGET_DEVICE_OFFSET: usize = ARK_ISSUER_DEVICE_OFFSET + UUID_LENGTH;
@@ -117,6 +153,10 @@ const _: () = {
     assert!(ARK_SIGNATURE_OFFSET + ARK_ENVELOPE_SIGNATURE_LENGTH == ARK_ENVELOPE_LENGTH);
     assert!(DEVICE_STATE_KEY_COUNT_OFFSET + size_of::<u32>() == DEVICE_STATE_NONCE_OFFSET);
     assert!(DEVICE_STATE_BLOB_LENGTH == 448);
+    assert!(
+        DATA_REKEY_STAGED_CIPHERTEXT_SET_DIGEST_OFFSET + SHA256_DIGEST_LENGTH
+            == DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH
+    );
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -142,6 +182,16 @@ pub enum DeviceCryptoError {
     },
     DeviceProofBindingMismatch,
     DeviceProofSignatureInvalid,
+    InvalidDataRekeyCompletionProofFrameLength {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidDataRekeyCompletionProofFrame,
+    InvalidDataRekeyCompletionProofSignatureLength {
+        expected: usize,
+        actual: usize,
+    },
+    DataRekeyCompletionProofSignatureInvalid,
     InvalidKeyEpoch,
     ArkKeyEpochNotFound,
     ArkKeyEpochNotIncreasing,
@@ -235,6 +285,20 @@ impl fmt::Display for DeviceCryptoError {
                 formatter.write_str("设备证明与服务端预期字段不匹配")
             }
             Self::DeviceProofSignatureInvalid => formatter.write_str("设备证明签名无效"),
+            Self::InvalidDataRekeyCompletionProofFrameLength { expected, actual } => write!(
+                formatter,
+                "数据重加密完成证明帧长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::InvalidDataRekeyCompletionProofFrame => {
+                formatter.write_str("数据重加密完成证明帧不是规范编码")
+            }
+            Self::InvalidDataRekeyCompletionProofSignatureLength { expected, actual } => write!(
+                formatter,
+                "数据重加密完成证明签名长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::DataRekeyCompletionProofSignatureInvalid => {
+                formatter.write_str("数据重加密完成证明签名无效")
+            }
             Self::InvalidKeyEpoch => formatter.write_str("ARK 密钥代次无效"),
             Self::ArkKeyEpochNotFound => formatter.write_str("ARK 密钥环中不存在指定代次"),
             Self::ArkKeyEpochNotIncreasing => {
@@ -632,6 +696,16 @@ impl DeviceIdentity {
         Ok((signature, authenticator))
     }
 
+    pub fn sign_data_rekey_completion_proof(
+        &self,
+        canonical_frame: &[u8],
+    ) -> Result<DataRekeyCompletionProofSignature, DeviceCryptoError> {
+        require_data_rekey_completion_proof_frame(canonical_frame)?;
+        Ok(DataRekeyCompletionProofSignature(
+            self.signing.signing_key().sign(canonical_frame).to_bytes(),
+        ))
+    }
+
     fn build_and_sign_proof(
         &self,
         kind: DeviceProofKind,
@@ -722,6 +796,147 @@ impl DeviceIdentity {
             &self.key_agreement,
         )
     }
+}
+
+pub struct DataRekeyCompletionProofSignature([u8; DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH]);
+
+impl DataRekeyCompletionProofSignature {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeviceCryptoError> {
+        if bytes.len() != DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH {
+            return Err(
+                DeviceCryptoError::InvalidDataRekeyCompletionProofSignatureLength {
+                    expected: DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH,
+                    actual: bytes.len(),
+                },
+            );
+        }
+        Ok(Self(copy_array(bytes)))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH] {
+        &self.0
+    }
+}
+
+pub fn verify_data_rekey_completion_proof(
+    signing_public_key: &DeviceSigningPublicKey,
+    canonical_frame: &[u8],
+    signature: &[u8],
+) -> Result<(), DeviceCryptoError> {
+    require_data_rekey_completion_proof_frame(canonical_frame)?;
+    let signature = DataRekeyCompletionProofSignature::from_bytes(signature)?;
+    let verifying_key = signing_public_key.verifying_key()?;
+    if !verify_strict_device_signature(
+        &verifying_key,
+        canonical_frame,
+        &Signature::from_bytes(&signature.0),
+    ) {
+        return Err(DeviceCryptoError::DataRekeyCompletionProofSignatureInvalid);
+    }
+    Ok(())
+}
+
+fn require_data_rekey_completion_proof_frame(
+    canonical_frame: &[u8],
+) -> Result<(), DeviceCryptoError> {
+    if canonical_frame.len() != DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH {
+        return Err(
+            DeviceCryptoError::InvalidDataRekeyCompletionProofFrameLength {
+                expected: DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH,
+                actual: canonical_frame.len(),
+            },
+        );
+    }
+    if canonical_frame[..DATA_REKEY_COMPLETION_PROOF_DOMAIN.len()]
+        != DATA_REKEY_COMPLETION_PROOF_DOMAIN
+    {
+        return Err(DeviceCryptoError::InvalidDataRekeyCompletionProofFrame);
+    }
+    for uuid_offset in [
+        DATA_REKEY_OPERATION_ID_OFFSET,
+        DATA_REKEY_USER_ID_OFFSET,
+        DATA_REKEY_ISSUER_DEVICE_ID_OFFSET,
+    ] {
+        if !is_uuid_v4(&copy_array(
+            &canonical_frame[uuid_offset..uuid_offset + UUID_LENGTH],
+        )) {
+            return Err(DeviceCryptoError::InvalidDataRekeyCompletionProofFrame);
+        }
+    }
+    require_canonical_nullable_uuid(
+        canonical_frame,
+        DATA_REKEY_SOURCE_RECORD_CURSOR_FLAG_OFFSET,
+        DATA_REKEY_SOURCE_RECORD_CURSOR_FLAG_OFFSET + 1,
+    )?;
+    require_canonical_nullable_uuid(
+        canonical_frame,
+        DATA_REKEY_SOURCE_ATTACHMENT_CURSOR_FLAG_OFFSET,
+        DATA_REKEY_SOURCE_ATTACHMENT_CURSOR_FLAG_OFFSET + 1,
+    )?;
+    require_canonical_nullable_uuid(
+        canonical_frame,
+        DATA_REKEY_SOURCE_ATTACHMENT_CURSOR_FLAG_OFFSET,
+        DATA_REKEY_SOURCE_ATTACHMENT_CURSOR_FLAG_OFFSET + 1 + UUID_LENGTH,
+    )?;
+    let source_generation =
+        read_data_rekey_u32(canonical_frame, DATA_REKEY_SOURCE_GENERATION_OFFSET);
+    let target_generation =
+        read_data_rekey_u32(canonical_frame, DATA_REKEY_TARGET_GENERATION_OFFSET);
+    let source_key_epoch = read_data_rekey_u32(canonical_frame, DATA_REKEY_SOURCE_KEY_EPOCH_OFFSET);
+    let target_key_epoch = read_data_rekey_u32(canonical_frame, DATA_REKEY_TARGET_KEY_EPOCH_OFFSET);
+    let membership_generation =
+        read_data_rekey_u32(canonical_frame, DATA_REKEY_MEMBERSHIP_GENERATION_OFFSET);
+    let source_record_count =
+        read_data_rekey_u32(canonical_frame, DATA_REKEY_SOURCE_RECORD_COUNT_OFFSET);
+    let source_attachment_count =
+        read_data_rekey_u32(canonical_frame, DATA_REKEY_SOURCE_ATTACHMENT_COUNT_OFFSET);
+    let staged_record_count =
+        read_data_rekey_u32(canonical_frame, DATA_REKEY_STAGED_RECORD_COUNT_OFFSET);
+    let staged_attachment_count =
+        read_data_rekey_u32(canonical_frame, DATA_REKEY_STAGED_ATTACHMENT_COUNT_OFFSET);
+    let valid_generations = source_generation > 0
+        && source_generation.checked_add(1) == Some(target_generation)
+        && target_generation <= i32::MAX as u32
+        && membership_generation > 0
+        && membership_generation <= i32::MAX as u32;
+    let valid_key_epochs =
+        source_key_epoch > 0 && source_key_epoch.checked_add(1) == Some(target_key_epoch);
+    let valid_counts = source_record_count <= i32::MAX as u32
+        && source_attachment_count <= i32::MAX as u32
+        && source_record_count == staged_record_count
+        && source_attachment_count == staged_attachment_count
+        && (source_record_count > 0)
+            == (canonical_frame[DATA_REKEY_SOURCE_RECORD_CURSOR_FLAG_OFFSET] == 1)
+        && (source_attachment_count > 0)
+            == (canonical_frame[DATA_REKEY_SOURCE_ATTACHMENT_CURSOR_FLAG_OFFSET] == 1);
+    if !valid_generations || !valid_key_epochs || !valid_counts {
+        return Err(DeviceCryptoError::InvalidDataRekeyCompletionProofFrame);
+    }
+    Ok(())
+}
+
+fn read_data_rekey_u32(canonical_frame: &[u8], offset: usize) -> u32 {
+    u32::from_be_bytes(copy_array(
+        &canonical_frame[offset..offset + size_of::<u32>()],
+    ))
+}
+
+fn require_canonical_nullable_uuid(
+    canonical_frame: &[u8],
+    flag_offset: usize,
+    uuid_offset: usize,
+) -> Result<(), DeviceCryptoError> {
+    let flag = canonical_frame[flag_offset];
+    let uuid = copy_array(&canonical_frame[uuid_offset..uuid_offset + UUID_LENGTH]);
+    let canonical = match flag {
+        0 => uuid == [0; UUID_LENGTH],
+        1 => is_uuid_v4(&uuid),
+        _ => false,
+    };
+    if !canonical {
+        return Err(DeviceCryptoError::InvalidDataRekeyCompletionProofFrame);
+    }
+    Ok(())
 }
 
 fn require_exact_length(
@@ -3137,6 +3352,139 @@ mod tests {
             ),
             Err(DeviceCryptoError::InvalidKeyEpoch)
         ));
+    }
+
+    #[test]
+    fn data_rekey_completion_proof_matches_server_fixed_vector() {
+        let identity =
+            DeviceIdentity::from_private_bytes([0x11; 32], [0x22; 32]).expect("设备身份应可构造");
+        let proof_frame = hex_array::<270>(concat!(
+            "6b656c69766f2d646174612d72656b65792d636f6d706c6574696f6e2d763200",
+            "1111111111114111811111111111111122222222222242228222222222222222",
+            "3333333333334333833333333333333300000007000000080000000b0000000c",
+            "4444444444444444444444444444444444444444444444444444444444444444",
+            "000000020000000100000000000000090155555555555545558555555555555555",
+            "016666666666664666866666666666666677777777777747778777777777777777",
+            "0000000388888888888888888888888888888888888888888888888888888888",
+            "8888888800000002000000019999999999999999999999999999999999999999",
+            "999999999999999999999999"
+        ));
+        let expected_signature = hex_array::<64>(concat!(
+            "1eb86cbd69ee7133cbb082f4c5d2a411431829095dccab3a90fe52d010dc52d4c",
+            "698a1b388a2c41432433c383e48a346a16aad2e9f360c7f48b7e4d73161dd03"
+        ));
+
+        let signature = identity
+            .sign_data_rekey_completion_proof(&proof_frame)
+            .expect("规范 data-rekey completion frame 应可签名");
+        assert_eq!(signature.as_bytes(), &expected_signature);
+        verify_data_rekey_completion_proof(
+            &identity.public_keys().signing,
+            &proof_frame,
+            signature.as_bytes(),
+        )
+        .expect("服务器固定向量应通过设备公钥严格验签");
+    }
+
+    #[test]
+    fn data_rekey_completion_proof_rejects_noncanonical_nullable_cursors() {
+        let identity =
+            DeviceIdentity::from_private_bytes([0x11; 32], [0x22; 32]).expect("设备身份应可构造");
+        let mut proof_frame = [0_u8; DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH];
+        proof_frame[..DATA_REKEY_COMPLETION_PROOF_DOMAIN.len()]
+            .copy_from_slice(&DATA_REKEY_COMPLETION_PROOF_DOMAIN);
+
+        proof_frame[145] = 1;
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&proof_frame)
+                .is_err()
+        );
+
+        proof_frame[145] = 0;
+        proof_frame[144] = 2;
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&proof_frame)
+                .is_err()
+        );
+
+        proof_frame[144] = 0;
+        proof_frame[162] = 1;
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&proof_frame)
+                .is_err()
+        );
+
+        proof_frame[162] = 0;
+        proof_frame[161] = 2;
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&proof_frame)
+                .is_err()
+        );
+    }
+
+    #[test]
+    fn data_rekey_completion_proof_rejects_invalid_identity_and_scope_invariants() {
+        let identity =
+            DeviceIdentity::from_private_bytes([0x11; 32], [0x22; 32]).expect("设备身份应可构造");
+        let mut proof_frame = [0_u8; DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH];
+        proof_frame[..DATA_REKEY_COMPLETION_PROOF_DOMAIN.len()]
+            .copy_from_slice(&DATA_REKEY_COMPLETION_PROOF_DOMAIN);
+        proof_frame[32..48].copy_from_slice(&uuid_v4(1));
+        proof_frame[48..64].copy_from_slice(&uuid_v4(2));
+        proof_frame[64..80].copy_from_slice(&uuid_v4(3));
+        proof_frame[80..84].copy_from_slice(&7_u32.to_be_bytes());
+        proof_frame[84..88].copy_from_slice(&8_u32.to_be_bytes());
+        proof_frame[88..92].copy_from_slice(&11_u32.to_be_bytes());
+        proof_frame[92..96].copy_from_slice(&12_u32.to_be_bytes());
+        proof_frame[194..198].copy_from_slice(&3_u32.to_be_bytes());
+        identity
+            .sign_data_rekey_completion_proof(&proof_frame)
+            .expect("最小规范完成证明帧应可签名");
+
+        let mut invalid_uuid = proof_frame;
+        invalid_uuid[38] &= 0x0f;
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&invalid_uuid)
+                .is_err()
+        );
+
+        let mut invalid_generation = proof_frame;
+        invalid_generation[84..88].copy_from_slice(&7_u32.to_be_bytes());
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&invalid_generation)
+                .is_err()
+        );
+
+        let mut invalid_epoch = proof_frame;
+        invalid_epoch[92..96].copy_from_slice(&11_u32.to_be_bytes());
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&invalid_epoch)
+                .is_err()
+        );
+
+        let mut mismatched_staged_count = proof_frame;
+        mismatched_staged_count[230..234].copy_from_slice(&1_u32.to_be_bytes());
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&mismatched_staged_count)
+                .is_err()
+        );
+
+        let mut missing_record_cursor = proof_frame;
+        missing_record_cursor[128..132].copy_from_slice(&1_u32.to_be_bytes());
+        missing_record_cursor[230..234].copy_from_slice(&1_u32.to_be_bytes());
+        assert!(
+            identity
+                .sign_data_rekey_completion_proof(&missing_record_cursor)
+                .is_err()
+        );
     }
 
     #[test]

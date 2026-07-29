@@ -16,6 +16,23 @@ void main() {
     return value;
   }
 
+  Uint8List hexBytes(String value) => Uint8List.fromList([
+    for (var index = 0; index < value.length; index += 2)
+      int.parse(value.substring(index, index + 2), radix: 16),
+  ]);
+
+  Uint8List dataRekeyCompletionProofFrame() => hexBytes(
+    '6b656c69766f2d646174612d72656b65792d636f6d706c6574696f6e2d763200'
+    '1111111111114111811111111111111122222222222242228222222222222222'
+    '3333333333334333833333333333333300000007000000080000000b0000000c'
+    '4444444444444444444444444444444444444444444444444444444444444444'
+    '000000020000000100000000000000090155555555555545558555555555555555'
+    '016666666666664666866666666666666677777777777747778777777777777777'
+    '0000000388888888888888888888888888888888888888888888888888888888'
+    '8888888800000002000000019999999999999999999999999999999999999999'
+    '999999999999999999999999',
+  );
+
   Future<KelivoKeyHandle> openOrCreateTestSlot() async {
     final slotId = Uint8List(16)..fillRange(0, 16, 0xe2);
     try {
@@ -26,10 +43,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v15 及恢复介质支持', () async {
+  test('能力门禁声明 ABI v16 及恢复介质支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 15);
+    expect(capabilities.abiVersion, 16);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -372,6 +389,101 @@ void main() {
     await core.closeAccountRootKey(ark);
     await core.closeDeviceIdentity(identity);
     await expectLater(core.closeDeviceIdentity(identity), throwsStateError);
+  });
+
+  test('数据重加密完成证明仅由设备身份签名并可用设备公钥验签', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final identity = await core.generateDeviceIdentity();
+    final publicKeys = await core.readDevicePublicKeys(identity);
+    final proofFrame = dataRekeyCompletionProofFrame();
+
+    final signature = await core.signDataRekeyCompletionProof(
+      identity,
+      proofFrame: proofFrame,
+    );
+    expect(signature.bytes, hasLength(64));
+    expect(() => signature.bytes[0] ^= 1, throwsUnsupportedError);
+    await core.verifyDataRekeyCompletionProof(
+      signingPublicKey: publicKeys.signingPublicKey,
+      proofFrame: proofFrame,
+      signature: signature,
+    );
+
+    await core.closeDeviceIdentity(identity);
+  });
+
+  test('数据重加密完成证明拒绝篡改、错误设备和非规范长度', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final identity = await core.generateDeviceIdentity();
+    final otherIdentity = await core.generateDeviceIdentity();
+    final publicKeys = await core.readDevicePublicKeys(identity);
+    final otherPublicKeys = await core.readDevicePublicKeys(otherIdentity);
+    final proofFrame = dataRekeyCompletionProofFrame();
+    final signature = await core.signDataRekeyCompletionProof(
+      identity,
+      proofFrame: proofFrame,
+    );
+
+    final tamperedFrame = Uint8List.fromList(proofFrame)
+      ..[proofFrame.length - 1] ^= 1;
+    for (final invalidVerification in <Future<void> Function()>[
+      () => core.verifyDataRekeyCompletionProof(
+        signingPublicKey: publicKeys.signingPublicKey,
+        proofFrame: tamperedFrame,
+        signature: signature,
+      ),
+      () => core.verifyDataRekeyCompletionProof(
+        signingPublicKey: otherPublicKeys.signingPublicKey,
+        proofFrame: proofFrame,
+        signature: signature,
+      ),
+    ]) {
+      await expectLater(
+        invalidVerification(),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.deviceAuthenticationFailed,
+          ),
+        ),
+      );
+    }
+
+    await expectLater(
+      core.signDataRekeyCompletionProof(
+        identity,
+        proofFrame: Uint8List.sublistView(proofFrame, 0, proofFrame.length - 1),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => core.verifyDataRekeyCompletionProof(
+        signingPublicKey: publicKeys.signingPublicKey,
+        proofFrame: Uint8List(proofFrame.length + 1),
+        signature: signature,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => KelivoDataRekeyCompletionProofSignature(Uint8List(63)),
+      throwsArgumentError,
+    );
+
+    final invalidDomain = Uint8List.fromList(proofFrame)..[0] ^= 1;
+    await expectLater(
+      core.signDataRekeyCompletionProof(identity, proofFrame: invalidDomain),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.deviceMessageInvalid,
+        ),
+      ),
+    );
+
+    await core.closeDeviceIdentity(otherIdentity);
+    await core.closeDeviceIdentity(identity);
   });
 
   test('账户根密钥按精确代次稳定派生记录标识并拒绝非法输入', () async {

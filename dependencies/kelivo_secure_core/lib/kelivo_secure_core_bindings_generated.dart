@@ -504,6 +504,44 @@ external int kelivo_device_key_agreement_public_key_validate(
   int public_key_length,
 );
 
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_data_rekey_completion_proof_sign(
+  int identity_handle,
+  ffi.Pointer<ffi.Uint8> proof_frame,
+  int proof_frame_length,
+  ffi.Pointer<ffi.Uint8> out_signature,
+  int out_signature_capacity,
+  ffi.Pointer<ffi.Size> out_signature_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+  )
+>()
+external int kelivo_data_rekey_completion_proof_verify(
+  ffi.Pointer<ffi.Uint8> signing_public_key,
+  int signing_public_key_length,
+  ffi.Pointer<ffi.Uint8> proof_frame,
+  int proof_frame_length,
+  ffi.Pointer<ffi.Uint8> signature,
+  int signature_length,
+);
+
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_device_identity_handle_close(int identity_handle);
 
@@ -1283,7 +1321,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 15;
+const int KELIVO_CORE_ABI_VERSION = 16;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -1472,6 +1510,10 @@ const int KELIVO_DEVICE_PUBLIC_KEYS_SIZE = 64;
 const int KELIVO_DEVICE_CHALLENGE_SIZE = 32;
 
 const int KELIVO_DEVICE_PROOF_SIZE = 64;
+
+const int KELIVO_DATA_REKEY_COMPLETION_PROOF_FRAME_SIZE = 270;
+
+const int KELIVO_DATA_REKEY_COMPLETION_PROOF_SIGNATURE_SIZE = 64;
 
 const int KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE = 336;
 

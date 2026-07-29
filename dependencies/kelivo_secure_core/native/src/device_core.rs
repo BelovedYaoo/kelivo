@@ -627,6 +627,7 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         Error::RandomnessUnavailable => KelivoStatus::RandomSourceFailure,
         Error::DeviceProofBindingMismatch
         | Error::DeviceProofSignatureInvalid
+        | Error::DataRekeyCompletionProofSignatureInvalid
         | Error::ArkEnvelopeBindingMismatch
         | Error::ArkEnvelopeSignatureInvalid
         | Error::AccountTrustSignatureInvalid
@@ -657,6 +658,9 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         | Error::UnsupportedDeviceProofFlags(_)
         | Error::InvalidDeviceProofLength { .. }
         | Error::InvalidDeviceProofSignatureLength { .. }
+        | Error::InvalidDataRekeyCompletionProofFrameLength { .. }
+        | Error::InvalidDataRekeyCompletionProofFrame
+        | Error::InvalidDataRekeyCompletionProofSignatureLength { .. }
         | Error::InvalidKeyEpoch
         | Error::ArkKeyEpochNotFound
         | Error::ArkKeyEpochNotIncreasing
@@ -999,6 +1003,80 @@ pub unsafe extern "C" fn kelivo_device_key_agreement_public_key_validate(
     };
     match crypto::DeviceKeyAgreementPublicKey::from_bytes(bytes) {
         Ok(_) => KelivoStatus::Ok.code(),
+        Err(error) => device_error_status(error).code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// 输入帧必须覆盖声明长度；输出缓冲区和长度指针必须可写且互不重叠。
+pub unsafe extern "C" fn kelivo_data_rekey_completion_proof_sign(
+    identity_handle: u64,
+    proof_frame: *const u8,
+    proof_frame_length: usize,
+    out_signature: *mut u8,
+    out_signature_capacity: usize,
+    out_signature_length: *mut usize,
+) -> i32 {
+    if let Err(status) = unsafe { write_output(out_signature_length, 0) } {
+        return status.code();
+    }
+    let proof_frame = match unsafe { read_input(proof_frame, proof_frame_length) } {
+        Ok(proof_frame) => proof_frame,
+        Err(status) => return status.code(),
+    };
+    let identity = match identity_for_handle(identity_handle) {
+        Ok(identity) => identity,
+        Err(status) => return status.code(),
+    };
+    let signature = match identity.sign_data_rekey_completion_proof(proof_frame) {
+        Ok(signature) => signature,
+        Err(error) => return device_error_status(error).code(),
+    };
+    match unsafe {
+        write_bytes(
+            out_signature,
+            out_signature_capacity,
+            signature.as_bytes(),
+            out_signature_length,
+        )
+    } {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// 所有输入指针必须覆盖各自声明长度。
+pub unsafe extern "C" fn kelivo_data_rekey_completion_proof_verify(
+    signing_public_key: *const u8,
+    signing_public_key_length: usize,
+    proof_frame: *const u8,
+    proof_frame_length: usize,
+    signature: *const u8,
+    signature_length: usize,
+) -> i32 {
+    let signing_public_key =
+        match unsafe { read_fixed(signing_public_key, signing_public_key_length) } {
+            Ok(bytes) => match crypto::DeviceSigningPublicKey::from_bytes(bytes) {
+                Ok(public_key) => public_key,
+                Err(error) => return device_error_status(error).code(),
+            },
+            Err(status) => return status.code(),
+        };
+    let proof_frame = match unsafe { read_input(proof_frame, proof_frame_length) } {
+        Ok(proof_frame) => proof_frame,
+        Err(status) => return status.code(),
+    };
+    let signature = match unsafe { read_input(signature, signature_length) } {
+        Ok(signature) => signature,
+        Err(status) => return status.code(),
+    };
+    match crypto::verify_data_rekey_completion_proof(&signing_public_key, proof_frame, signature) {
+        Ok(()) => KelivoStatus::Ok.code(),
         Err(error) => device_error_status(error).code(),
     }
 }
