@@ -50,12 +50,18 @@ pub(super) fn create_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, 
 }
 
 pub(super) fn open_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, KelivoStatus> {
-    let key = generic_password(slot_options(slot_id))
-        .map(|value| Zeroizing::new(value.into_boxed_slice()))
+    let source = generic_password(slot_options(slot_id))
+        .map(Zeroizing::new)
         .map_err(map_open_error)?;
-    if key.len() != LOCAL_KEY_SIZE {
+    copy_opened_key(&source)
+}
+
+fn copy_opened_key(source: &[u8]) -> Result<LocalKey, KelivoStatus> {
+    if source.len() != LOCAL_KEY_SIZE {
         return Err(KelivoStatus::SlotDataInvalid);
     }
+    let mut key = Zeroizing::new(vec![0_u8; LOCAL_KEY_SIZE].into_boxed_slice());
+    key.copy_from_slice(source);
     Ok(key)
 }
 
@@ -132,6 +138,7 @@ fn encode_hex(bytes: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use zeroize::Zeroize;
 
     #[test]
     fn slot_identifier_uses_fixed_lowercase_hex() {
@@ -148,5 +155,24 @@ mod tests {
             map_open_error(Error::from_code(errSecAuthFailed)),
             KelivoStatus::SlotUnwrapFailed
         );
+    }
+
+    #[test]
+    fn opened_key_copy_keeps_zeroizing_lifetimes_independent() {
+        let expected = [0x5a_u8; LOCAL_KEY_SIZE];
+        let mut source = Zeroizing::new(Vec::with_capacity(LOCAL_KEY_SIZE * 2));
+        source.extend_from_slice(&expected);
+        let source_address = source.as_ptr() as usize;
+
+        let mut key = copy_opened_key(&source).expect("有效 Keychain 密钥应可复制");
+        assert_ne!(source_address, key.as_ptr() as usize);
+        assert_eq!(&key[..], &expected);
+
+        source.zeroize();
+        assert!(source.is_empty());
+        assert_eq!(&key[..], &expected);
+
+        key.zeroize();
+        assert!(key.iter().all(|byte| *byte == 0));
     }
 }
