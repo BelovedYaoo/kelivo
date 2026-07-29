@@ -3004,7 +3004,23 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
     final targetConversation = conversation;
 
-    Future<ChatMessage> write() async {
+    void publish(Conversation persistedConversation) {
+      _draftConversations.remove(conversationId);
+      _conversationsCache[conversationId] = persistedConversation;
+      conversation = persistedConversation;
+      final order = _messageOrderIds.putIfAbsent(
+        conversationId,
+        () => <String>[],
+      );
+      if (!order.contains(message.id)) order.add(message.id);
+      _messageCounts[conversationId] = order.length;
+      if (_messagesCache.containsKey(conversationId)) {
+        _messagesCache[conversationId]!.add(message);
+      }
+      notifyListeners();
+    }
+
+    Future<ChatMessage> writeTemporary() async {
       if (temporary) {
         targetConversation.messageIds.add(message.id);
         targetConversation.updatedAt = DateTime.now();
@@ -3013,26 +3029,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
               message.version;
         }
         _messagesCache.putIfAbsent(conversationId, () => <ChatMessage>[]);
-      } else {
-        if (_conversationsCache.containsKey(conversationId)) {
-          await _loadMessageOrder(conversationId);
-        }
-        final persisted = await _repo.appendLinearMessageToConversation(
-          conversation: targetConversation,
-          message: message,
-          selectVersion: selectVersion,
-        );
-        _draftConversations.remove(conversationId);
-        _conversationsCache[conversationId] = persisted;
-        conversation = persisted;
-        final order = _messageOrderIds.putIfAbsent(
-          conversationId,
-          () => <String>[],
-        );
-        if (!order.contains(message.id)) order.add(message.id);
-        _messageCounts[conversationId] = order.length;
       }
-
       if (_messagesCache.containsKey(conversationId)) {
         _messagesCache[conversationId]!.add(message);
       }
@@ -3040,7 +3037,30 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       return message;
     }
 
-    if (temporary || !_isTerminalMessage(message)) return write();
+    if (temporary) return writeTemporary();
+    if (_conversationsCache.containsKey(conversationId)) {
+      await _loadMessageOrder(conversationId);
+    }
+    Conversation? persistedConversation;
+    Future<ChatMessage> persist() async {
+      persistedConversation = await _repo.appendLinearMessageToConversation(
+        conversation: targetConversation,
+        message: message,
+        selectVersion: selectVersion,
+      );
+      return message;
+    }
+
+    if (!_isTerminalMessage(message)) {
+      final persistedMessage = await persist();
+      final committedConversation = persistedConversation;
+      if (committedConversation == null) {
+        throw StateError('message_persisted_conversation_missing');
+      }
+      publish(committedConversation);
+      return persistedMessage;
+    }
+
     final keys = message.role == 'assistant'
         ? _messageGraphKeys(message)
         : <SyncEntityKey>{
@@ -3048,12 +3068,18 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
             _turnKey(message.turnId),
             _messageKey(message.id),
           };
-    return _runLocalMessageBatch<ChatMessage>(
+    final persistedMessage = await _runLocalMessageBatch<ChatMessage>(
       keys: keys,
       targetRevisionId: message.id,
       attachments: message.attachments,
-      write: write,
+      write: persist,
     );
+    final committedConversation = persistedConversation;
+    if (committedConversation == null) {
+      throw StateError('message_persisted_conversation_missing');
+    }
+    publish(committedConversation);
+    return persistedMessage;
   }
 
   Future<GenerationBeginResult> beginSendGeneration({
@@ -3092,7 +3118,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       isStreaming: true,
       turnId: turnId,
     );
-    return _runLocalMessageBatch<GenerationBeginResult>(
+    final result = await _runLocalMessageBatch<GenerationBeginResult>(
       keys: <SyncEntityKey>{
         _conversationKey(conversationId),
         _turnKey(turnId),
@@ -3107,10 +3133,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           assistantMessage: assistantMessage,
           runId: const Uuid().v4(),
         );
-        _publishGenerationBegin(result);
         return result;
       },
     );
+    _publishGenerationBegin(result);
+    return result;
   }
 
   Future<GenerationBeginResult> beginRegeneration({
@@ -3715,7 +3742,8 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       if (original.role == 'assistant') _toolEventKey(newMessageId),
       if (original.role == 'assistant') _thoughtSignatureKey(newMessageId),
     };
-    return _runLocalMessageBatch<ChatMessage?>(
+    Conversation? persistedConversation;
+    final newMessage = await _runLocalMessageBatch<ChatMessage?>(
       keys: keys,
       targetRevisionId: newMessageId,
       attachments: preparedAttachments,
@@ -3728,18 +3756,27 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           newMessageId: newMessageId,
         );
         if (result == null) return null;
-        final newMsg = result.message;
-        final cid = newMsg.conversationId;
-        _conversationsCache[cid] = result.conversation;
-        final order = _messageOrderIds.putIfAbsent(cid, () => <String>[]);
-        if (!order.contains(newMsg.id)) order.add(newMsg.id);
-        _messageCounts[cid] = order.length;
-        final arr = _messagesCache[cid];
-        if (arr != null) arr.add(newMsg);
-        notifyListeners();
-        return newMsg;
+        persistedConversation = result.conversation;
+        return result.message;
       },
     );
+    if (newMessage == null) return null;
+    final conversation = persistedConversation;
+    if (conversation == null) {
+      throw StateError('message_version_persisted_conversation_missing');
+    }
+    final conversationId = newMessage.conversationId;
+    _conversationsCache[conversationId] = conversation;
+    final order = _messageOrderIds.putIfAbsent(
+      conversationId,
+      () => <String>[],
+    );
+    if (!order.contains(newMessage.id)) order.add(newMessage.id);
+    _messageCounts[conversationId] = order.length;
+    final messages = _messagesCache[conversationId];
+    if (messages != null) messages.add(newMessage);
+    notifyListeners();
+    return newMessage;
   }
 
   Map<String, int> getVersionSelections(String conversationId) {

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
+import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
 import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
@@ -2204,6 +2205,144 @@ void main() {
     await instance.runtime.close();
   });
 
+  test('附件草稿事务失败时普通消息不会进入缓存或通知 UI', () async {
+    final harness = await _RollbackAttachmentWriteHarness.create();
+    addTearDown(harness.close);
+    final conversation = await harness.chatService.createConversation(
+      title: '附件回滚',
+    );
+    await harness.chatService.loadMessages(conversation.id);
+    final source = await harness.createSource('plain-message.txt');
+    var notifications = 0;
+    harness.chatService.addListener(() => notifications++);
+
+    await expectLater(
+      harness.chatService.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: '不会发布',
+        attachments: <LocalMessageAttachmentInput>[
+          LocalMessageAttachmentInput.file(
+            path: source.path,
+            displayName: 'plain-message.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'attachment-draft-failed',
+        ),
+      ),
+    );
+
+    expect(
+      await harness.chatService.loadMessagesForSync(conversation.id),
+      isEmpty,
+    );
+    expect(harness.chatService.getMessages(conversation.id), isEmpty);
+    expect(harness.chatService.getMessageCount(conversation.id), 0);
+    expect(notifications, 0);
+  });
+
+  test('附件草稿事务失败时生成消息与助手占位不会发布', () async {
+    final harness = await _RollbackAttachmentWriteHarness.create();
+    addTearDown(harness.close);
+    final conversation = await harness.chatService.createConversation(
+      title: '生成回滚',
+    );
+    await harness.chatService.loadMessages(conversation.id);
+    final source = await harness.createSource('generation-message.txt');
+    var notifications = 0;
+    harness.chatService.addListener(() => notifications++);
+
+    await expectLater(
+      harness.chatService.beginSendGeneration(
+        conversationId: conversation.id,
+        userContent: '不会发布生成',
+        userAttachments: <LocalMessageAttachmentInput>[
+          LocalMessageAttachmentInput.file(
+            path: source.path,
+            displayName: 'generation-message.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
+        modelId: 'model',
+        providerId: 'provider',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'attachment-draft-failed',
+        ),
+      ),
+    );
+
+    expect(
+      await harness.chatService.loadMessagesForSync(conversation.id),
+      isEmpty,
+    );
+    expect(harness.chatService.getMessages(conversation.id), isEmpty);
+    expect(harness.chatService.getMessageCount(conversation.id), 0);
+    expect(notifications, 0);
+  });
+
+  test('附件草稿事务失败时编辑版本与选择状态不会发布', () async {
+    final harness = await _RollbackAttachmentWriteHarness.create();
+    addTearDown(harness.close);
+    final conversation = await harness.chatService.createConversation(
+      title: '版本回滚',
+    );
+    final original = await harness.chatService.addMessage(
+      conversationId: conversation.id,
+      role: 'user',
+      content: '原始版本',
+    );
+    await harness.chatService.loadMessages(conversation.id);
+    final selectionsBefore = harness.chatService.getVersionSelections(
+      conversation.id,
+    );
+    final source = await harness.createSource('version-message.txt');
+    var notifications = 0;
+    harness.chatService.addListener(() => notifications++);
+
+    await expectLater(
+      harness.chatService.appendMessageVersion(
+        messageId: original.id,
+        content: '不会发布的新版本',
+        attachments: <LocalMessageAttachmentInput>[
+          LocalMessageAttachmentInput.file(
+            path: source.path,
+            displayName: 'version-message.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'attachment-draft-failed',
+        ),
+      ),
+    );
+
+    expect(
+      await harness.chatService.loadMessagesForSync(conversation.id),
+      hasLength(1),
+    );
+    expect(harness.chatService.getMessages(conversation.id), hasLength(1));
+    expect(harness.chatService.getMessageCount(conversation.id), 1);
+    expect(
+      harness.chatService.getVersionSelections(conversation.id),
+      selectionsBefore,
+    );
+    expect(notifications, 0);
+  });
+
   test('E2EE 附件草稿与消息 outbox 原子提交且远端提交后才发送记录', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -2977,6 +3116,120 @@ final class _E2eeRuntimeHarness {
     }
     _instances.clear();
     if (await root.exists()) await root.delete(recursive: true);
+  }
+}
+
+final class _RollbackAttachmentWriteHarness {
+  const _RollbackAttachmentWriteHarness._({
+    required this.root,
+    required this.chatService,
+  });
+
+  final Directory root;
+  final ChatService chatService;
+
+  static Future<_RollbackAttachmentWriteHarness> create() async {
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}attachment_rollback_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('rollback-');
+    final installationRoot = Directory(
+      '${root.path}${Platform.pathSeparator}installation',
+    );
+    final workspaceRoot = Directory(
+      '${root.path}${Platform.pathSeparator}workspace',
+    );
+    await installationRoot.create(recursive: true);
+    await workspaceRoot.create(recursive: true);
+    AppDirectories.bindWorkspaceRoot(
+      workspaceRoot,
+      installationRoot: installationRoot,
+      accountWorkspace: true,
+    );
+    await SandboxPathResolver.init();
+    final databaseFile = File(
+      '${workspaceRoot.path}${Platform.pathSeparator}'
+      '${AppDatabase.databaseFileName}',
+    );
+    final gateway = ChatDatabaseGateway(cipher: testDatabaseCipher);
+    final executor = _RollbackAttachmentSyncWriteExecutor(
+      databaseGateway: gateway,
+      databaseFile: databaseFile,
+    );
+    final chatService = ChatService(executor, databaseGateway: gateway);
+    await chatService.init();
+    return _RollbackAttachmentWriteHarness._(
+      root: root,
+      chatService: chatService,
+    );
+  }
+
+  Future<File> createSource(String name) async {
+    final directory = await AppDirectories.getUploadDirectory();
+    final file = File('${directory.path}${Platform.pathSeparator}$name');
+    await file.writeAsString('attachment rollback payload', flush: true);
+    return file;
+  }
+
+  Future<void> close() async {
+    await chatService.close();
+    chatService.dispose();
+    if (await root.exists()) await root.delete(recursive: true);
+  }
+}
+
+final class _RollbackAttachmentSyncWriteExecutor
+    implements StructuredAttachmentSyncWriteExecutor {
+  const _RollbackAttachmentSyncWriteExecutor({
+    required this._databaseGateway,
+    required this._databaseFile,
+  });
+
+  final ChatDatabaseGateway _databaseGateway;
+  final File _databaseFile;
+
+  @override
+  Future<List<ChatMessageAttachment>> materializeLocalAttachments(
+    Iterable<ChatMessageAttachment> attachments,
+  ) async {
+    return List<ChatMessageAttachment>.unmodifiable(attachments);
+  }
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) {
+    return Future<T>.sync(write);
+  }
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) {
+    return Future<T>.sync(write);
+  }
+
+  @override
+  Future<T> runLocalBatchWithMessageAttachments<T>({
+    required Iterable<SyncEntityKey> keys,
+    required String targetRevisionId,
+    required Iterable<ChatMessageAttachment> attachments,
+    required bool Function(T result) targetWasPersisted,
+    required Future<T> Function() write,
+  }) async {
+    final lease = await _databaseGateway.acquire(_databaseFile);
+    try {
+      return lease.repository.runInTransaction<T>(() async {
+        await write();
+        throw StateError('attachment-draft-failed');
+      });
+    } finally {
+      await lease.release();
+    }
   }
 }
 
