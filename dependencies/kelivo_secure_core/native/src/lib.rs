@@ -27,8 +27,9 @@ pub use device_core::{
     kelivo_account_trust_payload_sign, kelivo_account_trust_payload_verify,
     kelivo_account_trust_public_key_derive, kelivo_device_identity_generate,
     kelivo_device_identity_handle_close, kelivo_device_identity_public_keys,
-    kelivo_device_login_proof_sign, kelivo_device_pairing_approval_accept,
-    kelivo_device_pairing_approval_create, kelivo_device_registration_finish_create,
+    kelivo_device_key_agreement_public_key_validate, kelivo_device_login_proof_sign,
+    kelivo_device_pairing_approval_accept, kelivo_device_pairing_approval_create,
+    kelivo_device_registration_finish_create, kelivo_device_signing_public_key_validate,
     kelivo_device_state_open, kelivo_device_state_seal, kelivo_pending_pairing_bind,
     kelivo_pending_pairing_handle_close, kelivo_pending_pairing_start,
 };
@@ -47,7 +48,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 11;
+const ABI_VERSION: u32 = 12;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -3099,6 +3100,47 @@ mod tests {
         );
         assert_eq!(public_keys_length, public_keys.len());
         public_keys
+    }
+
+    #[test]
+    fn external_device_public_keys_require_strict_validation() {
+        let identity = generate_device_identity();
+        let public_keys = device_public_keys(identity);
+        let signing = &public_keys[..crypto::DEVICE_PUBLIC_KEY_LENGTH];
+        let agreement = &public_keys[crypto::DEVICE_PUBLIC_KEY_LENGTH..];
+
+        assert_eq!(
+            unsafe { kelivo_device_signing_public_key_validate(signing.as_ptr(), signing.len()) },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_device_key_agreement_public_key_validate(agreement.as_ptr(), agreement.len())
+            },
+            KelivoStatus::Ok.code()
+        );
+
+        let invalid = [0_u8; crypto::DEVICE_PUBLIC_KEY_LENGTH];
+        assert_eq!(
+            unsafe { kelivo_device_signing_public_key_validate(invalid.as_ptr(), invalid.len()) },
+            KelivoStatus::DeviceMessageInvalid.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_device_key_agreement_public_key_validate(invalid.as_ptr(), invalid.len())
+            },
+            KelivoStatus::DeviceMessageInvalid.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_device_signing_public_key_validate(signing.as_ptr(), signing.len() - 1)
+            },
+            KelivoStatus::DeviceMessageInvalid.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(identity),
+            KelivoStatus::Ok.code()
+        );
     }
 
     #[test]

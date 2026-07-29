@@ -955,6 +955,42 @@ pub unsafe extern "C" fn kelivo_device_identity_public_keys(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+///
+/// `public_key` 必须覆盖声明长度。
+pub unsafe extern "C" fn kelivo_device_signing_public_key_validate(
+    public_key: *const u8,
+    public_key_length: usize,
+) -> i32 {
+    let bytes = match unsafe { read_fixed(public_key, public_key_length) } {
+        Ok(bytes) => bytes,
+        Err(status) => return status.code(),
+    };
+    match crypto::DeviceSigningPublicKey::from_bytes(bytes) {
+        Ok(_) => KelivoStatus::Ok.code(),
+        Err(error) => device_error_status(error).code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `public_key` 必须覆盖声明长度。
+pub unsafe extern "C" fn kelivo_device_key_agreement_public_key_validate(
+    public_key: *const u8,
+    public_key_length: usize,
+) -> i32 {
+    let bytes = match unsafe { read_fixed(public_key, public_key_length) } {
+        Ok(bytes) => bytes,
+        Err(status) => return status.code(),
+    };
+    match crypto::DeviceKeyAgreementPublicKey::from_bytes(bytes) {
+        Ok(_) => KelivoStatus::Ok.code(),
+        Err(error) => device_error_status(error).code(),
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn kelivo_device_identity_handle_close(identity_handle: u64) -> i32 {
     match close_identity(identity_handle) {
         Ok(()) => KelivoStatus::Ok.code(),

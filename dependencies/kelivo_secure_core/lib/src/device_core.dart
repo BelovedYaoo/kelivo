@@ -224,6 +224,18 @@ final class KelivoAccountTrustPublicKey {
   final Uint8List bytes;
 }
 
+final class KelivoUntrustedAccountTrustPublicKey {
+  // 该类型只证明编码可参与严格验签，信任关系必须由上层签名链建立。
+  factory KelivoUntrustedAccountTrustPublicKey.fromTransport(Uint8List bytes) {
+    _requireLength(bytes, _accountTrustPublicKeyLength, 'bytes');
+    return KelivoUntrustedAccountTrustPublicKey._(_immutableDeviceBytes(bytes));
+  }
+
+  const KelivoUntrustedAccountTrustPublicKey._(this.bytes);
+
+  final Uint8List bytes;
+}
+
 final class KelivoAccountTrustSignature {
   factory KelivoAccountTrustSignature(Uint8List bytes) {
     _requireLength(bytes, _accountTrustSignatureLength, 'bytes');
@@ -383,6 +395,29 @@ extension KelivoDeviceCore on KelivoSecureCore {
     }
   }
 
+  Future<void> validateDevicePublicKeys(
+    Iterable<KelivoDevicePublicKeys> devicePublicKeys, {
+    Iterable<Uint8List> additionalKeyAgreementPublicKeys = const [],
+  }) async {
+    final copiedDeviceKeys = <(Uint8List, Uint8List)>[
+      for (final publicKeys in devicePublicKeys)
+        (
+          Uint8List.fromList(publicKeys.signingPublicKey),
+          Uint8List.fromList(publicKeys.keyAgreementPublicKey),
+        ),
+    ];
+    final copiedAgreementKeys = <Uint8List>[
+      for (final publicKey in additionalKeyAgreementPublicKeys)
+        Uint8List.fromList(publicKey),
+    ];
+    for (final publicKey in copiedAgreementKeys) {
+      _requireLength(publicKey, _devicePublicKeyLength, 'publicKey');
+    }
+    await Isolate.run(
+      () => _validateDevicePublicKeySet(copiedDeviceKeys, copiedAgreementKeys),
+    );
+  }
+
   Future<void> closeDeviceIdentity(KelivoDeviceIdentityHandle identity) =>
       _closeDeviceHandle(
         identity._state,
@@ -505,6 +540,27 @@ extension KelivoDeviceCore on KelivoSecureCore {
 
   Future<void> verifyAccountTrustPayload(
     KelivoAccountTrustPublicKey publicKey, {
+    required Uint8List userId,
+    required int keyEpoch,
+    required Uint8List canonicalPayload,
+    required KelivoAccountTrustSignature signature,
+  }) async {
+    _validateUuidV4(userId, 'userId');
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    _validateAccountTrustPayload(canonicalPayload);
+    await Isolate.run(
+      () => _verifyAccountTrustPayload(
+        Uint8List.fromList(publicKey.bytes),
+        Uint8List.fromList(userId),
+        keyEpoch,
+        Uint8List.fromList(canonicalPayload),
+        Uint8List.fromList(signature.bytes),
+      ),
+    );
+  }
+
+  Future<void> verifyUntrustedAccountTrustPayload(
+    KelivoUntrustedAccountTrustPublicKey publicKey, {
     required Uint8List userId,
     required int keyEpoch,
     required Uint8List canonicalPayload,
@@ -1348,6 +1404,61 @@ Uint8List _readDevicePublicKeys(int identityHandle) => _fixedDeviceOutput(
         outputLength,
       ),
 );
+
+void _validateDeviceSigningPublicKey(Uint8List publicKey) {
+  final pointer = _copyToNative(publicKey);
+  try {
+    _throwOnError(
+      operation: 'device_signing_public_key_validate',
+      statusCode: native.kelivo_device_signing_public_key_validate(
+        pointer,
+        publicKey.length,
+      ),
+    );
+  } finally {
+    _clearAndFree(pointer, publicKey.length);
+    publicKey.fillRange(0, publicKey.length, 0);
+  }
+}
+
+void _validateDeviceKeyAgreementPublicKey(Uint8List publicKey) {
+  final pointer = _copyToNative(publicKey);
+  try {
+    _throwOnError(
+      operation: 'device_key_agreement_public_key_validate',
+      statusCode: native.kelivo_device_key_agreement_public_key_validate(
+        pointer,
+        publicKey.length,
+      ),
+    );
+  } finally {
+    _clearAndFree(pointer, publicKey.length);
+    publicKey.fillRange(0, publicKey.length, 0);
+  }
+}
+
+void _validateDevicePublicKeySet(
+  List<(Uint8List, Uint8List)> devicePublicKeys,
+  List<Uint8List> additionalKeyAgreementPublicKeys,
+) {
+  try {
+    for (final publicKeys in devicePublicKeys) {
+      _validateDeviceSigningPublicKey(publicKeys.$1);
+      _validateDeviceKeyAgreementPublicKey(publicKeys.$2);
+    }
+    for (final publicKey in additionalKeyAgreementPublicKeys) {
+      _validateDeviceKeyAgreementPublicKey(publicKey);
+    }
+  } finally {
+    for (final publicKeys in devicePublicKeys) {
+      publicKeys.$1.fillRange(0, publicKeys.$1.length, 0);
+      publicKeys.$2.fillRange(0, publicKeys.$2.length, 0);
+    }
+    for (final publicKey in additionalKeyAgreementPublicKeys) {
+      publicKey.fillRange(0, publicKey.length, 0);
+    }
+  }
+}
 
 Uint8List _deriveAccountRecordId(int arkHandle, Uint8List canonicalEntityKey) {
   final entityKeyPointer = _copyToNative(canonicalEntityKey);
