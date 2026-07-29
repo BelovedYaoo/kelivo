@@ -681,6 +681,8 @@ pub unsafe extern "C" fn kelivo_sqlcipher_database_attach(
 ///
 /// 所有输入指针必须覆盖声明的可读长度；输出指针必须覆盖声明的可写容量。
 /// `out_envelope_length` 必须始终可写。输出容量不足时不会生成 nonce 或写入输出缓冲区。
+// 该内部入口逐项镜像冻结的 C ABI，拆成参数对象会隐藏指针与长度的配对审计边界。
+#[allow(clippy::too_many_arguments)]
 unsafe fn record_seal_with_handle(
     key_source: RecordKeySource,
     handle: u64,
@@ -833,6 +835,8 @@ pub unsafe extern "C" fn kelivo_account_record_seal(
 ///
 /// 所有输入指针必须覆盖声明的可读长度；输出指针必须覆盖声明的可写容量。
 /// `out_plaintext_length` 必须始终可写；认证失败不得写出任何明文字节。
+// 该内部入口逐项镜像冻结的 C ABI，拆成参数对象会隐藏指针与长度的配对审计边界。
+#[allow(clippy::too_many_arguments)]
 unsafe fn record_open_with_handle(
     key_source: RecordKeySource,
     handle: u64,
