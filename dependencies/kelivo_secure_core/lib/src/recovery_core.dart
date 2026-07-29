@@ -52,6 +52,11 @@ final class KelivoRecoveryCapsuleOpen {
 }
 
 extension KelivoRecoveryCore on KelivoSecureCore {
+  /// 仅预检且不接管缓冲区；调用方仍须清零，借此避免把口令解码成无法清零的 Dart 字符串。
+  void validateRecoveryPassphrase(Uint8List passphrase) {
+    _validateRecoveryPassphrase(passphrase);
+  }
+
   Future<KelivoRecoveryIdentity> generateRecoveryIdentity({
     required Uint8List userId,
     int recoveryPublicKeyVersion = 1,
