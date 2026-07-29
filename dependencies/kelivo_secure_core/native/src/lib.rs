@@ -1508,7 +1508,7 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn key_slot_delete_requires_closed_handles_and_is_idempotent() {
-        let production_canary = platform::ProductionStoreCanary::capture();
+        let production_canary = platform::ProductionStoreAccessCanary::capture();
         let test_store_scope = platform::TestStoreScope::enter("single_slot_delete");
         let mut slot_id = [0_u8; KEY_SLOT_ID_SIZE];
         platform::fill_random(&mut slot_id).expect("删除测试槽位标识应生成成功");
@@ -1558,13 +1558,13 @@ mod tests {
             KelivoStatus::Ok.code()
         );
         drop(test_store_scope);
-        production_canary.assert_unchanged();
+        production_canary.assert_no_attempt();
     }
 
     #[cfg(target_os = "windows")]
     #[test]
     fn key_slots_delete_all_rejects_any_open_slot_and_is_idempotent() {
-        let production_canary = platform::ProductionStoreCanary::capture();
+        let production_canary = platform::ProductionStoreAccessCanary::capture();
         let test_store_scope = platform::TestStoreScope::enter("all_slots_delete");
         let mut first_slot_id = [0_u8; KEY_SLOT_ID_SIZE];
         let mut second_slot_id = [0_u8; KEY_SLOT_ID_SIZE];
@@ -1645,7 +1645,7 @@ mod tests {
         }
         assert_eq!(kelivo_key_slots_delete_all(), KelivoStatus::Ok.code());
         drop(test_store_scope);
-        production_canary.assert_unchanged();
+        production_canary.assert_no_attempt();
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))]

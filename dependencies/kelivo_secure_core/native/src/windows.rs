@@ -21,7 +21,10 @@ use std::{
 use std::{
     fs,
     io::ErrorKind,
-    sync::{Mutex, MutexGuard, OnceLock},
+    sync::{
+        Mutex, MutexGuard, OnceLock,
+        atomic::{AtomicUsize, Ordering},
+    },
 };
 use windows_sys::{
     Wdk::{
@@ -107,6 +110,7 @@ pub(super) fn fill_random(output: &mut [u8]) -> Result<(), KelivoStatus> {
     }
 }
 
+#[cfg(not(test))]
 fn production_store_root() -> Result<PathBuf, KelivoStatus> {
     let local_app_data = env::var_os("LOCALAPPDATA")
         .filter(|value| !value.is_empty())
@@ -121,6 +125,18 @@ fn production_store_root() -> Result<PathBuf, KelivoStatus> {
         .join("secure-core")
         .join("v1")
         .join("slots"))
+}
+
+#[cfg(test)]
+fn production_store_root() -> Result<PathBuf, KelivoStatus> {
+    production_store_resolution_attempts().fetch_add(1, Ordering::SeqCst);
+    Err(KelivoStatus::InternalState)
+}
+
+#[cfg(test)]
+fn production_store_resolution_attempts() -> &'static AtomicUsize {
+    static ATTEMPTS: AtomicUsize = AtomicUsize::new(0);
+    &ATTEMPTS
 }
 
 #[cfg(not(test))]
@@ -239,81 +255,28 @@ fn create_scoped_test_store_root(temporary_root: &Path, label: &str) -> PathBuf 
 }
 
 #[cfg(test)]
-#[derive(Debug, Eq, PartialEq)]
-struct ProductionEntrySnapshot {
-    name: OsString,
-    attributes: u32,
-    creation_time: u64,
-    last_write_time: u64,
-    length: u64,
-}
+pub(super) struct ProductionStoreAccessCanary;
 
 #[cfg(test)]
-#[derive(Debug, Eq, PartialEq)]
-enum ProductionStoreSnapshot {
-    Missing,
-    Present {
-        attributes: u32,
-        creation_time: u64,
-        last_write_time: u64,
-        entries: Vec<ProductionEntrySnapshot>,
-    },
-}
-
-#[cfg(test)]
-pub(super) struct ProductionStoreCanary {
-    root: PathBuf,
-    before: ProductionStoreSnapshot,
-}
-
-#[cfg(test)]
-impl ProductionStoreCanary {
+impl ProductionStoreAccessCanary {
     pub(super) fn capture() -> Self {
-        let root = production_store_root().expect("生产槽位根必须可解析");
-        let before = snapshot_production_store(&root).expect("生产槽位 canary 必须可读取元数据");
-        Self { root, before }
+        // 保留测试哨兵函数的静态可达性，但绝不调用它或解析生产路径。
+        let _forbidden_resolver: fn() -> Result<PathBuf, KelivoStatus> = production_store_root;
+        assert_eq!(
+            production_store_resolution_attempts().load(Ordering::SeqCst),
+            0,
+            "任何测试开始前都不得尝试解析生产槽位根"
+        );
+        Self
     }
 
-    pub(super) fn assert_unchanged(self) {
-        let after =
-            snapshot_production_store(&self.root).expect("生产槽位 canary 必须可复查元数据");
-        assert_eq!(after, self.before, "C ABI 测试不得改动生产槽位目录");
+    pub(super) fn assert_no_attempt(self) {
+        assert_eq!(
+            production_store_resolution_attempts().load(Ordering::SeqCst),
+            0,
+            "C ABI 测试不得尝试解析生产槽位根"
+        );
     }
-}
-
-#[cfg(test)]
-fn snapshot_production_store(path: &Path) -> std::io::Result<ProductionStoreSnapshot> {
-    let metadata = match fs::symlink_metadata(path) {
-        Ok(metadata) => metadata,
-        Err(error) if error.kind() == ErrorKind::NotFound => {
-            return Ok(ProductionStoreSnapshot::Missing);
-        }
-        Err(error) => return Err(error),
-    };
-    let mut entries = Vec::new();
-    // Canary 只取元数据且不跟随重解析根；它用于证明测试未触碰生产存储，不读取槽内容。
-    if metadata.file_type().is_dir()
-        && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
-    {
-        for entry in fs::read_dir(path)? {
-            let entry = entry?;
-            let entry_metadata = fs::symlink_metadata(entry.path())?;
-            entries.push(ProductionEntrySnapshot {
-                name: entry.file_name(),
-                attributes: entry_metadata.file_attributes(),
-                creation_time: entry_metadata.creation_time(),
-                last_write_time: entry_metadata.last_write_time(),
-                length: entry_metadata.len(),
-            });
-        }
-    }
-    entries.sort_by(|left, right| left.name.cmp(&right.name));
-    Ok(ProductionStoreSnapshot::Present {
-        attributes: metadata.file_attributes(),
-        creation_time: metadata.creation_time(),
-        last_write_time: metadata.last_write_time(),
-        entries,
-    })
 }
 
 struct SlotStore {
