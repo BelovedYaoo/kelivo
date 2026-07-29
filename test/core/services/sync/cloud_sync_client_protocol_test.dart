@@ -7060,49 +7060,6 @@ final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
   }
 
   @override
-  Future<String> openDownloadPlaintextStaging({
-    required CloudSyncAttachmentIdentity identity,
-    required String? persistedStoragePath,
-    required int confirmedPlaintextBytes,
-  }) {
-    return _delegate.openDownloadPlaintextStaging(
-      identity: identity,
-      persistedStoragePath: persistedStoragePath,
-      confirmedPlaintextBytes: confirmedPlaintextBytes,
-    );
-  }
-
-  @override
-  Future<void> appendDownloadPlaintextChunk({
-    required CloudSyncAttachmentIdentity identity,
-    required String stagingPath,
-    required int expectedOffset,
-    required Uint8List plaintext,
-  }) {
-    return _delegate.appendDownloadPlaintextChunk(
-      identity: identity,
-      stagingPath: stagingPath,
-      expectedOffset: expectedOffset,
-      plaintext: plaintext,
-    );
-  }
-
-  @override
-  Future<E2eeAttachmentStoredFile> publishDownloadPlaintext({
-    required CloudSyncAttachmentIdentity identity,
-    required String stagingPath,
-    required int expectedPlaintextBytes,
-    required Uint8List expectedSha256,
-  }) {
-    return _delegate.publishDownloadPlaintext(
-      identity: identity,
-      stagingPath: stagingPath,
-      expectedPlaintextBytes: expectedPlaintextBytes,
-      expectedSha256: expectedSha256,
-    );
-  }
-
-  @override
   Future<void> deleteStaging({required String storagePath}) {
     return _delegate.deleteStaging(storagePath: storagePath);
   }
