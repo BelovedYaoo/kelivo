@@ -3506,6 +3506,103 @@ LIMIT 1;
     );
   }
 
+  Future<void> recordMaterializedSourceRetirement({
+    required String retirementId,
+    required String originalPath,
+    required String quarantinePath,
+    DateTime? createdAt,
+  }) {
+    final canonicalRetirementId = _requireCanonicalUuidV4(
+      retirementId,
+      'retirementId',
+    );
+    final source = _requireAttachmentStorageText(
+      originalPath,
+      'originalPath',
+      32768,
+    );
+    final quarantine = _requireAttachmentStorageText(
+      quarantinePath,
+      'quarantinePath',
+      32768,
+    );
+    final timestamp = _requireStorageTime(
+      createdAt ?? DateTime.now(),
+      'createdAt',
+    );
+    return recordAssetGcQuarantine(
+      assetId:
+          '${AssetGcQuarantineRecord.materializedSourceRetirementAssetIdPrefix}'
+          '$canonicalRetirementId',
+      generation: 0,
+      originalPath: source,
+      quarantinePath: quarantine,
+      createdAt: timestamp,
+    );
+  }
+
+  Future<bool> isManagedPathDemanded(String path) {
+    return _isManagedPathDemanded(
+      _requireAttachmentStorageText(path, 'path', 32768),
+    );
+  }
+
+  Future<bool> _isManagedPathDemanded(String path) async {
+    final demand = await _db
+        .customSelect(
+          '''
+          SELECT 1 AS demanded
+          WHERE EXISTS (
+              SELECT 1 FROM message_rows m
+              WHERE instr(
+                  lower(m.content),
+                  lower('[image:' || ? || ']')
+                ) > 0
+                OR instr(
+                  lower(m.content),
+                  lower('[file:' || ? || '|')
+                ) > 0
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM asset_rows a
+              WHERE a.path = ? COLLATE NOCASE
+                OR a.thumbnail_path = ? COLLATE NOCASE
+            )
+            OR EXISTS (SELECT 1 FROM asset_reference_dirty_rows)
+            OR EXISTS (
+              SELECT 1
+              FROM e2ee_attachment_upload_rows u
+              WHERE u.source_path = ? COLLATE NOCASE
+                AND u.phase != 'committed'
+                AND u.terminal_failure_kind IS NULL
+            )
+            OR EXISTS (
+              SELECT 1
+              FROM e2ee_attachment_download_rows d
+              WHERE (
+                  d.staging_path = ? COLLATE NOCASE
+                  OR d.final_path = ? COLLATE NOCASE
+                )
+                AND d.phase != 'ready'
+                AND d.terminal_failure_kind IS NULL
+            )
+          LIMIT 1;
+          ''',
+          variables: [
+            Variable<String>(path),
+            Variable<String>(path),
+            Variable<String>(path),
+            Variable<String>(path),
+            Variable<String>(path),
+            Variable<String>(path),
+            Variable<String>(path),
+          ],
+        )
+        .getSingleOrNull();
+    return demand != null;
+  }
+
   Future<List<AssetGcQuarantineRecord>> listAssetGcQuarantines() async {
     final rows = await _db.customSelect('''
           SELECT quarantine_path, asset_id, generation, original_path, state
@@ -3577,41 +3674,10 @@ LIMIT 1;
       if (matched != 1) {
         throw StateError('asset_gc_quarantine_record_changed');
       }
-      final path = expectedRecord.originalPath;
-      final demand = await _db
-          .customSelect(
-            '''
-            SELECT 1 AS demanded
-            WHERE EXISTS (
-                SELECT 1 FROM message_rows m
-                WHERE instr(
-                    lower(m.content),
-                    lower('[image:' || ? || ']')
-                  ) > 0
-                  OR instr(
-                    lower(m.content),
-                    lower('[file:' || ? || '|')
-                  ) > 0
-              )
-              OR EXISTS (
-                SELECT 1
-                FROM asset_rows a
-                WHERE a.path = ? COLLATE NOCASE
-                  OR a.thumbnail_path = ? COLLATE NOCASE
-              )
-            LIMIT 1;
-            ''',
-            variables: [
-              Variable<String>(path),
-              Variable<String>(path),
-              Variable<String>(path),
-              Variable<String>(path),
-            ],
-          )
-          .getSingleOrNull();
-      final disposition = demand == null
-          ? AssetGcCompletedDisposition.delete
-          : AssetGcCompletedDisposition.restore;
+      final disposition =
+          await _isManagedPathDemanded(expectedRecord.originalPath)
+          ? AssetGcCompletedDisposition.restore
+          : AssetGcCompletedDisposition.delete;
       await settleFile(disposition);
       await _db.customStatement(
         '''
@@ -3644,6 +3710,66 @@ LIMIT 1;
       'DELETE FROM asset_gc_quarantine_rows WHERE quarantine_path = ?;',
       [quarantinePath],
     );
+  }
+
+  Future<bool> completeMaterializedSourceRetirement({
+    required AssetGcQuarantineRecord expectedRecord,
+  }) async {
+    if (!expectedRecord.isMaterializedSourceRetirement) {
+      throw ArgumentError.value(expectedRecord, 'expectedRecord');
+    }
+    return _db.transaction(() async {
+      await _db.customStatement(
+        '''
+        UPDATE asset_gc_quarantine_rows
+        SET state = state
+        WHERE quarantine_path = ?
+          AND asset_id = ?
+          AND generation = ?
+          AND original_path = ?
+          AND state = 'pending';
+        ''',
+        [
+          expectedRecord.quarantinePath,
+          expectedRecord.assetId,
+          expectedRecord.generation,
+          expectedRecord.originalPath,
+        ],
+      );
+      final matched =
+          (await _db.customSelect('SELECT changes() AS changed;').getSingle())
+              .read<int>('changed');
+      if (matched != 1) {
+        throw StateError('asset_gc_quarantine_record_changed');
+      }
+      if (await _isManagedPathDemanded(expectedRecord.originalPath)) {
+        return false;
+      }
+      await _db.customStatement(
+        '''
+        UPDATE asset_gc_quarantine_rows
+        SET state = 'completed'
+        WHERE quarantine_path = ?
+          AND asset_id = ?
+          AND generation = ?
+          AND original_path = ?
+          AND state = 'pending';
+        ''',
+        [
+          expectedRecord.quarantinePath,
+          expectedRecord.assetId,
+          expectedRecord.generation,
+          expectedRecord.originalPath,
+        ],
+      );
+      final completed =
+          (await _db.customSelect('SELECT changes() AS changed;').getSingle())
+              .read<int>('changed');
+      if (completed != 1) {
+        throw StateError('asset_gc_quarantine_record_changed');
+      }
+      return true;
+    });
   }
 
   Future<bool> completeAssetGc({
@@ -6365,6 +6491,20 @@ final class AssetGcQuarantineRecord {
   final String originalPath;
   final String quarantinePath;
   final AssetGcQuarantineState state;
+
+  static const materializedSourceRetirementAssetIdPrefix =
+      'materialized-source-retirement:';
+
+  bool get isMaterializedSourceRetirement {
+    if (generation != 0 ||
+        !assetId.startsWith(materializedSourceRetirementAssetIdPrefix)) {
+      return false;
+    }
+    final retirementId = assetId.substring(
+      materializedSourceRetirementAssetIdPrefix.length,
+    );
+    return _canonicalUuidV4Pattern.hasMatch(retirementId);
+  }
 }
 
 final class MessageAssetRegistration {

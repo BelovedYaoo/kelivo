@@ -4,7 +4,11 @@ import 'dart:io';
 
 import 'package:flutter/foundation.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
+import 'package:path/path.dart' as p;
+import 'package:uuid/uuid.dart';
 
+import '../../../utils/app_directories.dart';
+import '../../../utils/sandbox_path_resolver.dart';
 import '../../database/chat_database_gateway.dart';
 import '../../database/chat_database_repository.dart';
 import '../../models/chat_message.dart';
@@ -63,6 +67,18 @@ enum E2eeChatContentRuntimeState {
 }
 
 enum E2eeChatContentRuntimeMode { continuous, singleCycle }
+
+final class _MaterializedAttachmentSourceRetirement {
+  const _MaterializedAttachmentSourceRetirement({
+    required this.retirementId,
+    required this.sourcePath,
+    required this.quarantinePath,
+  });
+
+  final String retirementId;
+  final String sourcePath;
+  final String quarantinePath;
+}
 
 /// 组装聊天数据面，并集中持有密码学、数据库、网络和调度生命周期。
 final class E2eeChatContentRuntime
@@ -171,6 +187,10 @@ final class E2eeChatContentRuntime
   E2eeAttachmentDownloadCoordinator? _attachmentDownloads;
   bool _hasAttachmentUploadWork = false;
   int _attachmentUploadWorkGeneration = 0;
+  // 接管信息只跨越材料化到事务提交窗口，不能进入聊天附件持久格式。
+  final Expando<_MaterializedAttachmentSourceRetirement>
+  _materializedSourceRetirements =
+      Expando<_MaterializedAttachmentSourceRetirement>();
   E2eeSyncScheduler? _scheduler;
   E2eeSyncCycleRunner Function(E2eeSyncExecutionBudget?)? _cycleRunnerFactory;
   Future<E2eeSyncCycleReport>? _activeSingleCycle;
@@ -317,6 +337,10 @@ final class E2eeChatContentRuntime
 
       final attachmentFileStore = E2eeAttachmentPlatformFileStore();
       _attachmentFileStore = attachmentFileStore;
+      await attachmentFileStore.reconcileUnreferencedContent(
+        isPathDemanded: repository.isManagedPathDemanded,
+      );
+      _requireStillInitializing();
       final downloadCrypto = await E2eeAttachmentCryptoSession.open(
         session: _session,
         deviceStateStore: _deviceStateStore,
@@ -579,17 +603,23 @@ final class E2eeChatContentRuntime
         if (stored.bytes != attachment.byteSize) {
           throw StateError('附件内容寻址落盘长度与本地引用不一致');
         }
-        materialized.add(
-          ChatMessageAttachment(
-            assetId: attachment.assetId,
-            path: stored.storagePath,
-            contentHash: attachment.contentHash,
-            byteSize: attachment.byteSize,
-            kind: attachment.kind,
-            displayName: attachment.displayName,
-            mediaType: attachment.mediaType,
-          ),
+        final output = ChatMessageAttachment(
+          assetId: attachment.assetId,
+          path: stored.storagePath,
+          contentHash: attachment.contentHash,
+          byteSize: attachment.byteSize,
+          kind: attachment.kind,
+          displayName: attachment.displayName,
+          mediaType: attachment.mediaType,
         );
+        final retirement = await _createMaterializedSourceRetirement(
+          sourcePath: attachment.path,
+          materializedPath: stored.storagePath,
+        );
+        if (retirement != null) {
+          _materializedSourceRetirements[output] = retirement;
+        }
+        materialized.add(output);
       }
       return List<ChatMessageAttachment>.unmodifiable(materialized);
     } finally {
@@ -615,9 +645,11 @@ final class E2eeChatContentRuntime
     try {
       final uploads = _attachmentUploads;
       final commands = _attachmentUploadCommands;
-      if (uploads == null || commands == null) {
+      final repository = _databaseLease?.repository;
+      if (uploads == null || commands == null || repository == null) {
         throw StateError('E2EE 内容运行时缺少附件上传组件');
       }
+      final retirements = <_MaterializedAttachmentSourceRetirement>[];
       final drafts = <E2eeAttachmentUploadDraft>[];
       for (var index = 0; index < inputs.length; index++) {
         final attachment = inputs[index];
@@ -637,6 +669,14 @@ final class E2eeChatContentRuntime
             mediaType: attachment.mediaType,
           ),
         );
+        final retirement = _materializedSourceRetirements[attachment];
+        if (retirement != null &&
+            !retirements.any(
+              (existing) =>
+                  p.equals(existing.sourcePath, retirement.sourcePath),
+            )) {
+          retirements.add(retirement);
+        }
       }
 
       var persistedTarget = false;
@@ -650,16 +690,30 @@ final class E2eeChatContentRuntime
             for (final draft in drafts) {
               await commands.create(draft: draft, now: now);
             }
+            for (final retirement in retirements) {
+              await repository.recordMaterializedSourceRetirement(
+                retirementId: retirement.retirementId,
+                originalPath: retirement.sourcePath,
+                quarantinePath: retirement.quarantinePath,
+                createdAt: now,
+              );
+            }
           }
           return value;
         },
       );
-      if (persistedTarget) _markAttachmentUploadWork();
+      if (persistedTarget) {
+        _markAttachmentUploadWork();
+        if (retirements.isNotEmpty) _scheduleMaterializedSourceRetirement();
+      }
       if (_state == E2eeChatContentRuntimeState.ready) {
         _scheduler?.wake();
       }
       return result;
     } finally {
+      for (final attachment in inputs) {
+        _materializedSourceRetirements[attachment] = null;
+      }
       _finishLocalOperation();
     }
   }
@@ -726,6 +780,67 @@ final class E2eeChatContentRuntime
     if (hasWork || scannedGeneration == _attachmentUploadWorkGeneration) {
       _hasAttachmentUploadWork = hasWork;
     }
+  }
+
+  Future<_MaterializedAttachmentSourceRetirement?>
+  _createMaterializedSourceRetirement({
+    required String sourcePath,
+    required String materializedPath,
+  }) async {
+    final source = p.normalize(File(sourcePath).absolute.path);
+    final materialized = p.normalize(File(materializedPath).absolute.path);
+    if (p.equals(source, materialized)) return null;
+    final upload = await AppDirectories.getUploadDirectory();
+    final images = await AppDirectories.getImagesDirectory();
+    Directory? owner;
+    for (final root in <Directory>[upload, images]) {
+      if (SandboxPathResolver.isOwnedManagedPath(
+        path: source,
+        managedDirectory: root,
+      )) {
+        owner = root;
+        break;
+      }
+    }
+    if (owner == null) return null;
+    final quarantineRoot = p.normalize(
+      p.join(owner.absolute.path, '.kelivo-gc'),
+    );
+    if (p.equals(source, quarantineRoot) ||
+        p.isWithin(quarantineRoot, source)) {
+      return null;
+    }
+    final e2eeRoot = p.normalize(p.join(upload.absolute.path, 'e2ee'));
+    if (p.equals(source, e2eeRoot) || p.isWithin(e2eeRoot, source)) {
+      return null;
+    }
+    final retirementId = const Uuid().v4();
+    return _MaterializedAttachmentSourceRetirement(
+      retirementId: retirementId,
+      sourcePath: source,
+      quarantinePath: p.join(owner.absolute.path, '.kelivo-gc', retirementId),
+    );
+  }
+
+  void _scheduleMaterializedSourceRetirement() {
+    final chatService = _chatService;
+    if (chatService == null) return;
+    unawaited(() async {
+      try {
+        // 第一次调用可能正在等待启动维护；第二次保证处理其后提交的回执。
+        await chatService.runAssetMaintenance();
+        await chatService.runAssetMaintenance();
+      } catch (error, stackTrace) {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'e2ee_chat_content_runtime',
+            context: ErrorDescription('收尾 E2EE 附件受管明文源文件失败'),
+          ),
+        );
+      }
+    }());
   }
 
   void _requireReadyForLocalOperation() {

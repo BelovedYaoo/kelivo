@@ -2473,6 +2473,7 @@ void main() {
     expect(beforeUpload, isNotNull);
     expect(beforeUpload!.attachments.single.hasRemoteIdentity, isFalse);
     expect(beforeUpload.attachments.single.path, isNot(source.path));
+    final materializedPath = beforeUpload.attachments.single.path;
 
     final inspectionLease = await harness._databaseGateway.acquire(
       harness._databaseFile,
@@ -2512,7 +2513,154 @@ void main() {
       instance.transportEvents.indexOf('attachment-commit'),
       lessThan(instance.transportEvents.indexOf('push')),
     );
+    await _waitUntil(() => !source.existsSync());
+    expect(File(materializedPath).existsSync(), isTrue);
     await instance.runtime.close();
+  });
+
+  test('E2EE 附件消息事务回滚保留受管源文件且重启清理无引用副本', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final first = harness.createInstance();
+    await first.runtime.initialize().timeout(const Duration(seconds: 15));
+
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}rollback-source.txt',
+    );
+    final bytes = utf8.encode('rollback attachment payload');
+    await source.writeAsBytes(bytes, flush: true);
+    final contentHash = sha256.convert(bytes).toString();
+    final materialized = await first.runtime
+        .materializeLocalAttachments(<ChatMessageAttachment>[
+          ChatMessageAttachment(
+            assetId: 'rollback-asset',
+            path: source.path,
+            contentHash: contentHash,
+            byteSize: bytes.length,
+            kind: 'file',
+            displayName: 'rollback-source.txt',
+            mediaType: 'text/plain',
+          ),
+        ]);
+    final materializedPath = materialized.single.path;
+    expect(await File(materializedPath).exists(), isTrue);
+
+    await expectLater(
+      first.runtime.runLocalBatchWithMessageAttachments<void>(
+        keys: const <SyncEntityKey>[
+          SyncEntityKey(entityType: 'message', entityId: 'rollback-message'),
+        ],
+        targetRevisionId: 'rollback-revision',
+        attachments: materialized,
+        targetWasPersisted: (_) => true,
+        write: () => throw StateError('rollback-message-write'),
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'rollback-message-write',
+        ),
+      ),
+    );
+    expect(await source.exists(), isTrue);
+    expect(await File(materializedPath).exists(), isTrue);
+    await first.runtime.close();
+
+    final restarted = harness.createInstance();
+    await restarted.runtime.initialize().timeout(const Duration(seconds: 15));
+    expect(await source.exists(), isTrue);
+    expect(await File(materializedPath).exists(), isFalse);
+  });
+
+  test('E2EE 附件受管源路径仍被其他资产引用时不得淘汰', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(blockInitialPull: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}shared-source.txt',
+    );
+    await source.writeAsString('shared source payload', flush: true);
+    final conversation = await instance.chatService.createConversation(
+      title: '共享源路径',
+    );
+    final existing = await instance.chatService.addMessage(
+      conversationId: conversation.id,
+      role: 'user',
+      content: '已有引用',
+    );
+    final lease = await harness._databaseGateway.acquire(harness._databaseFile);
+    try {
+      await lease.repository.registerAsset(
+        id: 'shared-source-owner',
+        contentHash: List<String>.filled(64, 'b').join(),
+        path: source.path,
+        byteSize: await source.length(),
+      );
+      await lease.repository.linkMessageAsset(
+        conversationId: conversation.id,
+        revisionId: existing.id,
+        ordinal: 0,
+        assetId: 'shared-source-owner',
+        kind: 'file',
+        displayName: 'shared-source.txt',
+        mediaType: 'text/plain',
+      );
+    } finally {
+      await lease.release();
+    }
+
+    final generation = await instance.chatService.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '再次使用同一路径',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.file(
+          path: source.path,
+          displayName: 'shared-source.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    final persisted = await instance.chatService.loadMessageForSync(
+      generation.userMessage!.id,
+    );
+    expect(persisted, isNotNull);
+    expect(persisted!.attachments.single.path, isNot(source.path));
+
+    await instance.chatService.runAssetMaintenance();
+    await instance.chatService.runAssetMaintenance();
+    expect(await source.exists(), isTrue);
+    expect(await File(persisted.attachments.single.path).exists(), isTrue);
+
+    final replacement = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}shared-replacement.txt',
+    );
+    await replacement.writeAsString('shared source payload', flush: true);
+    final updateLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      await updateLease.repository.registerAsset(
+        id: 'shared-source-owner',
+        contentHash: List<String>.filled(64, 'b').join(),
+        path: replacement.path,
+        byteSize: await replacement.length(),
+      );
+    } finally {
+      await updateLease.release();
+    }
+
+    await instance.chatService.runAssetMaintenance();
+    await instance.chatService.runAssetMaintenance();
+    expect(await source.exists(), isFalse);
+    expect(await replacement.exists(), isTrue);
+    expect(await File(persisted.attachments.single.path).exists(), isTrue);
   });
 
   test('E2EE 内容运行时在本地事务提交后唤醒密文发送周期', () async {

@@ -2158,6 +2158,97 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
   }
 
+  Future<void> _recoverPendingMaterializedSourceRetirement(
+    _AssetGcQuarantine quarantine,
+    AssetGcQuarantineRecord record, {
+    required FileSystemEntityType originalType,
+    required FileSystemEntityType quarantineType,
+  }) async {
+    var currentOriginalType = originalType;
+    var currentQuarantineType = quarantineType;
+    if (currentOriginalType == FileSystemEntityType.file &&
+        currentQuarantineType == FileSystemEntityType.notFound) {
+      if (await _repo.isManagedPathDemanded(record.originalPath)) return;
+      await _ensureAssetGcQuarantineDirectory(quarantine.root);
+      if (!SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.original.path,
+            managedDirectory: quarantine.root,
+          ) ||
+          !SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.quarantine.path,
+            managedDirectory: quarantine.root,
+          )) {
+        throw StateError('asset_gc_quarantine_path_escaped_managed_root');
+      }
+      currentOriginalType = await FileSystemEntity.type(
+        quarantine.original.path,
+        followLinks: false,
+      );
+      currentQuarantineType = await FileSystemEntity.type(
+        quarantine.quarantine.path,
+        followLinks: false,
+      );
+      if (currentOriginalType != FileSystemEntityType.file ||
+          currentQuarantineType != FileSystemEntityType.notFound) {
+        throw StateError('asset_gc_pending_quarantine_ambiguous');
+      }
+      await _renewAssetGcLease();
+      await quarantine.original.rename(quarantine.quarantine.path);
+      currentOriginalType = FileSystemEntityType.notFound;
+      currentQuarantineType = await FileSystemEntity.type(
+        quarantine.quarantine.path,
+        followLinks: false,
+      );
+      if (currentQuarantineType != FileSystemEntityType.file ||
+          !SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.quarantine.path,
+            managedDirectory: quarantine.root,
+          )) {
+        throw StateError('asset_gc_quarantine_move_invalid');
+      }
+    }
+
+    if (currentOriginalType != FileSystemEntityType.notFound ||
+        (currentQuarantineType != FileSystemEntityType.file &&
+            currentQuarantineType != FileSystemEntityType.notFound)) {
+      throw StateError('asset_gc_pending_quarantine_ambiguous');
+    }
+
+    await _renewAssetGcLease();
+    final completed = await _repo.completeMaterializedSourceRetirement(
+      expectedRecord: record,
+    );
+    if (!completed) {
+      if (currentQuarantineType == FileSystemEntityType.notFound) return;
+      if (!SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.original.path,
+            managedDirectory: quarantine.root,
+          ) ||
+          !SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.quarantine.path,
+            managedDirectory: quarantine.root,
+          ) ||
+          await FileSystemEntity.type(
+                quarantine.original.path,
+                followLinks: false,
+              ) !=
+              FileSystemEntityType.notFound ||
+          await FileSystemEntity.type(
+                quarantine.quarantine.path,
+                followLinks: false,
+              ) !=
+              FileSystemEntityType.file) {
+        throw StateError('asset_gc_pending_restore_ambiguous');
+      }
+      await _renewAssetGcLease();
+      await quarantine.quarantine.rename(quarantine.original.path);
+      return;
+    }
+
+    // 回执已成为文件去向的唯一真相，立即走同一 completed 结算协议。
+    await _recoverAssetGcQuarantine(quarantine);
+  }
+
   Future<void> _recoverAssetGcQuarantine(_AssetGcQuarantine quarantine) async {
     await _renewAssetGcLease();
     final record = await _repo.getAssetGcQuarantine(
@@ -2189,6 +2280,15 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
     switch (record.state) {
       case AssetGcQuarantineState.pending:
+        if (record.isMaterializedSourceRetirement) {
+          await _recoverPendingMaterializedSourceRetirement(
+            quarantine,
+            record,
+            originalType: originalType,
+            quarantineType: quarantineType,
+          );
+          return;
+        }
         if (originalType == FileSystemEntityType.file &&
             quarantineType == FileSystemEntityType.notFound) {
           await _renewAssetGcLease();
@@ -2259,6 +2359,25 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
             }
           },
         );
+    }
+  }
+
+  Future<void> _recoverMaterializedSourceRetirements(
+    List<Directory> managedRoots,
+  ) async {
+    final records = await _repo.listAssetGcQuarantines();
+    final seenPaths = <String>{};
+    final retirements = <_AssetGcQuarantine>[];
+    for (final record in records) {
+      final pathKey = _assetGcPathKey(record.quarantinePath);
+      if (!seenPaths.add(pathKey)) {
+        throw StateError('asset_gc_quarantine_path_collision');
+      }
+      if (!record.isMaterializedSourceRetirement) continue;
+      retirements.add(_validateAssetGcQuarantineRecord(record, managedRoots));
+    }
+    for (final retirement in retirements) {
+      await _recoverAssetGcQuarantine(retirement);
     }
   }
 
@@ -2378,6 +2497,12 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         await AppDirectories.getUploadDirectory(),
         await AppDirectories.getImagesDirectory(),
       ];
+      try {
+        await _recoverMaterializedSourceRetirements(managedRoots);
+      } catch (_) {
+        _assetGcRecoveryComplete = false;
+        rethrow;
+      }
       await _renewAssetGcLease();
       await _repo.scheduleUnreferencedAssetGc(
         notBefore: effectiveNow.add(_assetGcDelay),

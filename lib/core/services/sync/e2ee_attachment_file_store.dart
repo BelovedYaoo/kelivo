@@ -329,6 +329,39 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
     }
   }
 
+  Future<int> reconcileUnreferencedContent({
+    required Future<bool> Function(String storagePath) isPathDemanded,
+  }) async {
+    final contentDirectory = await _resolveLocationDirectory(const <String>[
+      'content',
+    ], createMissing: false);
+    if (contentDirectory == null) return 0;
+
+    var deleted = 0;
+    await for (final entity in contentDirectory.list(followLinks: false)) {
+      final name = p.basename(entity.path);
+      if (!_sha256HexPattern.hasMatch(name)) continue;
+      var type = await FileSystemEntity.type(entity.path, followLinks: false);
+      if (type != FileSystemEntityType.file) {
+        throw StateError('e2ee_attachment_content_reconcile_unsafe');
+      }
+      final file = File(entity.path);
+      await _requireCanonicalFile(file, contentDirectory);
+      final storagePath = p.normalize(file.absolute.path);
+      if (await isPathDemanded(storagePath)) continue;
+
+      type = await FileSystemEntity.type(file.path, followLinks: false);
+      if (type != FileSystemEntityType.file) {
+        throw StateError('e2ee_attachment_content_reconcile_unsafe');
+      }
+      await _requireCanonicalFile(file, contentDirectory);
+      await file.delete();
+      await _durability.syncDirectory(contentDirectory, fullBarrier: true);
+      deleted++;
+    }
+    return deleted;
+  }
+
   @override
   Future<String> resolveContentStoragePath(Uint8List contentSha256) async {
     final digest = _requireSha256(contentSha256, 'contentSha256');
