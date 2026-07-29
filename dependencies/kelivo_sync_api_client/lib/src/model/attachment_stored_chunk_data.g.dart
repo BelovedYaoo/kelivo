@@ -71,6 +71,8 @@ class _$AttachmentStoredChunkData extends AttachmentStoredChunkData {
   @override
   final String uploadId;
   @override
+  final int chunkKeyEpoch;
+  @override
   final int chunkIndex;
   @override
   final int ciphertextBytes;
@@ -84,6 +86,7 @@ class _$AttachmentStoredChunkData extends AttachmentStoredChunkData {
   _$AttachmentStoredChunkData._({
     required this.attachmentId,
     required this.uploadId,
+    required this.chunkKeyEpoch,
     required this.chunkIndex,
     required this.ciphertextBytes,
     required this.status,
@@ -103,6 +106,7 @@ class _$AttachmentStoredChunkData extends AttachmentStoredChunkData {
     return other is AttachmentStoredChunkData &&
         attachmentId == other.attachmentId &&
         uploadId == other.uploadId &&
+        chunkKeyEpoch == other.chunkKeyEpoch &&
         chunkIndex == other.chunkIndex &&
         ciphertextBytes == other.ciphertextBytes &&
         status == other.status;
@@ -113,6 +117,7 @@ class _$AttachmentStoredChunkData extends AttachmentStoredChunkData {
     var _$hash = 0;
     _$hash = $jc(_$hash, attachmentId.hashCode);
     _$hash = $jc(_$hash, uploadId.hashCode);
+    _$hash = $jc(_$hash, chunkKeyEpoch.hashCode);
     _$hash = $jc(_$hash, chunkIndex.hashCode);
     _$hash = $jc(_$hash, ciphertextBytes.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
@@ -125,6 +130,7 @@ class _$AttachmentStoredChunkData extends AttachmentStoredChunkData {
     return (newBuiltValueToStringHelper(r'AttachmentStoredChunkData')
           ..add('attachmentId', attachmentId)
           ..add('uploadId', uploadId)
+          ..add('chunkKeyEpoch', chunkKeyEpoch)
           ..add('chunkIndex', chunkIndex)
           ..add('ciphertextBytes', ciphertextBytes)
           ..add('status', status))
@@ -144,6 +150,11 @@ class AttachmentStoredChunkDataBuilder
   String? _uploadId;
   String? get uploadId => _$this._uploadId;
   set uploadId(String? uploadId) => _$this._uploadId = uploadId;
+
+  int? _chunkKeyEpoch;
+  int? get chunkKeyEpoch => _$this._chunkKeyEpoch;
+  set chunkKeyEpoch(int? chunkKeyEpoch) =>
+      _$this._chunkKeyEpoch = chunkKeyEpoch;
 
   int? _chunkIndex;
   int? get chunkIndex => _$this._chunkIndex;
@@ -168,6 +179,7 @@ class AttachmentStoredChunkDataBuilder
     if ($v != null) {
       _attachmentId = $v.attachmentId;
       _uploadId = $v.uploadId;
+      _chunkKeyEpoch = $v.chunkKeyEpoch;
       _chunkIndex = $v.chunkIndex;
       _ciphertextBytes = $v.ciphertextBytes;
       _status = $v.status;
@@ -202,6 +214,11 @@ class AttachmentStoredChunkDataBuilder
             uploadId,
             r'AttachmentStoredChunkData',
             'uploadId',
+          ),
+          chunkKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            chunkKeyEpoch,
+            r'AttachmentStoredChunkData',
+            'chunkKeyEpoch',
           ),
           chunkIndex: BuiltValueNullFieldError.checkNotNull(
             chunkIndex,

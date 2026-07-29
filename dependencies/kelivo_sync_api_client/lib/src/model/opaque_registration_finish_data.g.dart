@@ -71,8 +71,6 @@ class _$OpaqueRegistrationFinishData extends OpaqueRegistrationFinishData {
   @override
   final OpaqueRegistrationFinishDataResultEnum result;
   @override
-  final int keyEpoch;
-  @override
   final String token;
   @override
   final DateTime tokenExpiresAt;
@@ -80,6 +78,8 @@ class _$OpaqueRegistrationFinishData extends OpaqueRegistrationFinishData {
   final OpaqueRegistrationFinishDataUser user;
   @override
   final OpaqueRegistrationFinishDataDevice device;
+  @override
+  final AccountSecurityStateData securityState;
 
   factory _$OpaqueRegistrationFinishData([
     void Function(OpaqueRegistrationFinishDataBuilder)? updates,
@@ -88,11 +88,11 @@ class _$OpaqueRegistrationFinishData extends OpaqueRegistrationFinishData {
   _$OpaqueRegistrationFinishData._({
     required this.protocolVersion,
     required this.result,
-    required this.keyEpoch,
     required this.token,
     required this.tokenExpiresAt,
     required this.user,
     required this.device,
+    required this.securityState,
   }) : super._();
   @override
   OpaqueRegistrationFinishData rebuild(
@@ -109,11 +109,11 @@ class _$OpaqueRegistrationFinishData extends OpaqueRegistrationFinishData {
     return other is OpaqueRegistrationFinishData &&
         protocolVersion == other.protocolVersion &&
         result == other.result &&
-        keyEpoch == other.keyEpoch &&
         token == other.token &&
         tokenExpiresAt == other.tokenExpiresAt &&
         user == other.user &&
-        device == other.device;
+        device == other.device &&
+        securityState == other.securityState;
   }
 
   @override
@@ -121,11 +121,11 @@ class _$OpaqueRegistrationFinishData extends OpaqueRegistrationFinishData {
     var _$hash = 0;
     _$hash = $jc(_$hash, protocolVersion.hashCode);
     _$hash = $jc(_$hash, result.hashCode);
-    _$hash = $jc(_$hash, keyEpoch.hashCode);
     _$hash = $jc(_$hash, token.hashCode);
     _$hash = $jc(_$hash, tokenExpiresAt.hashCode);
     _$hash = $jc(_$hash, user.hashCode);
     _$hash = $jc(_$hash, device.hashCode);
+    _$hash = $jc(_$hash, securityState.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -135,11 +135,11 @@ class _$OpaqueRegistrationFinishData extends OpaqueRegistrationFinishData {
     return (newBuiltValueToStringHelper(r'OpaqueRegistrationFinishData')
           ..add('protocolVersion', protocolVersion)
           ..add('result', result)
-          ..add('keyEpoch', keyEpoch)
           ..add('token', token)
           ..add('tokenExpiresAt', tokenExpiresAt)
           ..add('user', user)
-          ..add('device', device))
+          ..add('device', device)
+          ..add('securityState', securityState))
         .toString();
   }
 }
@@ -162,10 +162,6 @@ class OpaqueRegistrationFinishDataBuilder
   set result(OpaqueRegistrationFinishDataResultEnum? result) =>
       _$this._result = result;
 
-  int? _keyEpoch;
-  int? get keyEpoch => _$this._keyEpoch;
-  set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
-
   String? _token;
   String? get token => _$this._token;
   set token(String? token) => _$this._token = token;
@@ -187,6 +183,12 @@ class OpaqueRegistrationFinishDataBuilder
   set device(OpaqueRegistrationFinishDataDeviceBuilder? device) =>
       _$this._device = device;
 
+  AccountSecurityStateDataBuilder? _securityState;
+  AccountSecurityStateDataBuilder get securityState =>
+      _$this._securityState ??= AccountSecurityStateDataBuilder();
+  set securityState(AccountSecurityStateDataBuilder? securityState) =>
+      _$this._securityState = securityState;
+
   OpaqueRegistrationFinishDataBuilder() {
     OpaqueRegistrationFinishData._defaults(this);
   }
@@ -196,11 +198,11 @@ class OpaqueRegistrationFinishDataBuilder
     if ($v != null) {
       _protocolVersion = $v.protocolVersion;
       _result = $v.result;
-      _keyEpoch = $v.keyEpoch;
       _token = $v.token;
       _tokenExpiresAt = $v.tokenExpiresAt;
       _user = $v.user.toBuilder();
       _device = $v.device.toBuilder();
+      _securityState = $v.securityState.toBuilder();
       _$v = null;
     }
     return this;
@@ -235,11 +237,6 @@ class OpaqueRegistrationFinishDataBuilder
               r'OpaqueRegistrationFinishData',
               'result',
             ),
-            keyEpoch: BuiltValueNullFieldError.checkNotNull(
-              keyEpoch,
-              r'OpaqueRegistrationFinishData',
-              'keyEpoch',
-            ),
             token: BuiltValueNullFieldError.checkNotNull(
               token,
               r'OpaqueRegistrationFinishData',
@@ -252,6 +249,7 @@ class OpaqueRegistrationFinishDataBuilder
             ),
             user: user.build(),
             device: device.build(),
+            securityState: securityState.build(),
           );
     } catch (_) {
       late String _$failedField;
@@ -260,6 +258,8 @@ class OpaqueRegistrationFinishDataBuilder
         user.build();
         _$failedField = 'device';
         device.build();
+        _$failedField = 'securityState';
+        securityState.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
           r'OpaqueRegistrationFinishData',

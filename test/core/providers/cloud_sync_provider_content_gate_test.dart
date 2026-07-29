@@ -25,6 +25,7 @@ import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_background_sync_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_provider_binding.dart';
@@ -1546,8 +1547,8 @@ void main() {
     expect(host.maximumConcurrentWorkspaces, 1);
   });
 
-  test('移动后台同步真实绑定工厂未接线时不创建生产 Runner', () {
-    expect(E2eeBackgroundProductionRunnerFactory.tryCreate(), isNull);
+  test('移动后台同步生产 Runner 已接入安全引导门禁', () {
+    expect(E2eeBackgroundSyncRunner(), isA<E2eeBackgroundSyncRunner>());
   });
 
   test('移动后台同步拒绝未知系统任务且不创建 Runner', () async {
@@ -2018,6 +2019,72 @@ void main() {
     ]);
   });
 
+  test('重启内容运行时提交已安装 bootstrap 后才确认事务并重写 v4 会话', () async {
+    final pendingSession = _session(
+      securityBootstrap: _registrationBootstrap(),
+    );
+    final contentRuntime = _FakeCloudSyncContentRuntime(
+      bootstrapSessionToCommit: pendingSession,
+    );
+    final authentication = _FakeE2eeAccountAuthentication();
+    final fixture = await _createSignedInFixture(
+      session: pendingSession,
+      contentRuntime: contentRuntime,
+      authentication: authentication,
+    );
+    addTearDown(fixture.close);
+
+    await fixture.provider.initialize();
+
+    expect(contentRuntime.bootstrapCommitCalls, 1);
+    expect(authentication.requestNames, <String>['confirm-registration']);
+    expect(fixture.provider.status, CloudSyncProviderStatus.idle);
+    expect(fixture.provider.session?.securityBootstrap, isNull);
+    expect(fixture.runtime.current.session?.securityBootstrap, isNull);
+    expect(fixture.client.token?.value, pendingSession.token.value);
+  });
+
+  test('bootstrap 确认失败时禁止连接并保留会话材料供重启重放', () async {
+    final pendingSession = _session(
+      securityBootstrap: _registrationBootstrap(),
+    );
+    final contentRuntime = _FakeCloudSyncContentRuntime(
+      bootstrapSessionToCommit: pendingSession,
+    );
+    final authentication = _FakeE2eeAccountAuthentication(
+      confirmationFailure: StateError('registration_cleanup_failed'),
+    );
+    final fixture = await _createSignedInFixture(
+      session: pendingSession,
+      contentRuntime: contentRuntime,
+      authentication: authentication,
+    );
+    addTearDown(fixture.close);
+
+    await fixture.provider.initialize();
+
+    expect(contentRuntime.bootstrapCommitCalls, 1);
+    expect(authentication.requestNames, <String>['confirm-registration']);
+    expect(fixture.provider.status, CloudSyncProviderStatus.error);
+    expect(fixture.provider.contentSyncEnabled, isFalse);
+    expect(fixture.runtime.current.session?.securityBootstrap, isNotNull);
+  });
+
+  test('控制面模式拒绝激活尚未安装的安全 bootstrap', () async {
+    final pendingSession = _session(
+      securityBootstrap: _registrationBootstrap(),
+    );
+    final fixture = await _createSignedInFixture(session: pendingSession);
+    addTearDown(fixture.close);
+
+    await fixture.provider.initialize();
+
+    expect(fixture.provider.status, CloudSyncProviderStatus.error);
+    expect(fixture.provider.contentSyncEnabled, isFalse);
+    expect(fixture.client.requestNames, isEmpty);
+    expect(fixture.runtime.current.session?.securityBootstrap, isNotNull);
+  });
+
   test('恢复过期会话时清理持久状态且不接回令牌', () async {
     final client = _FakeCloudSyncAccountClient();
     final fixture = await _createSignedInFixture(
@@ -2059,10 +2126,7 @@ void main() {
       isTrue,
     );
 
-    expect(fixture.authentication.requestNames, <String>[
-      'login',
-      'confirm-pairing',
-    ]);
+    expect(fixture.authentication.requestNames, <String>['login']);
     expect(fixture.authentication.lastLoginName, 'ovo');
     expect(fixture.authentication.lastPassword, 'password');
     expect(fixture.authentication.lastDeviceName, '测试手机');
@@ -2131,7 +2195,7 @@ void main() {
     expect(fixture.client.closed, isTrue);
   });
 
-  test('待批准设备完成配对后提交账户工作区并确认恢复事务', () async {
+  test('待批准设备完成配对后仅提交账户工作区并等待重启安装锚点', () async {
     PackageInfo.setMockInitialValues(
       appName: 'Kelivo',
       packageName: 'Kelivo',
@@ -2171,15 +2235,9 @@ void main() {
       isFalse,
     );
     pairing.approve(_authenticatedSession());
-    await _waitUntil(
-      () => authentication.requestNames.contains('confirm-pairing'),
-    );
+    await _waitUntil(() => fixture.provider.pendingDeviceApproval == null);
 
-    expect(authentication.requestNames, <String>[
-      'login',
-      'start-pairing',
-      'confirm-pairing',
-    ]);
+    expect(authentication.requestNames, <String>['login', 'start-pairing']);
     expect(fixture.provider.pendingDeviceApproval, isNull);
     expect(fixture.provider.workspaceRestartRequired, isTrue);
     expect(
@@ -2320,10 +2378,7 @@ void main() {
       isTrue,
     );
 
-    expect(fixture.authentication.requestNames, <String>[
-      'register',
-      'confirm-registration',
-    ]);
+    expect(fixture.authentication.requestNames, <String>['register']);
     expect(fixture.authentication.lastLoginName, 'ovo');
     expect(fixture.authentication.lastDisplayName, 'Ovo');
     expect(fixture.authentication.lastPassword, 'password');
@@ -2336,7 +2391,7 @@ void main() {
     );
   });
 
-  test('首设备注册工作区提交后事务清理失败仍保持已提交结果', () async {
+  test('首设备注册绑定阶段不提前执行恢复事务清理', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     PackageInfo.setMockInitialValues(
@@ -2364,10 +2419,7 @@ void main() {
       isTrue,
     );
 
-    expect(authentication.requestNames, <String>[
-      'register',
-      'confirm-registration',
-    ]);
+    expect(authentication.requestNames, <String>['register']);
     expect(fixture.provider.lastError, isNull);
     expect(fixture.provider.workspaceRestartRequired, isTrue);
     expect(
@@ -2903,6 +2955,163 @@ void main() {
     expect(instance.runtime.state, E2eeChatContentRuntimeState.closed);
   });
 
+  test('E2EE 内容运行时无 bootstrap 且缺少本地成员锚点时禁止启动网络', () async {
+    final harness = await _E2eeRuntimeHarness.create(
+      seedMembershipAnchor: false,
+    );
+    addTearDown(harness.close);
+    final instance = harness.createInstance();
+
+    await expectLater(
+      instance.runtime.initialize(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          '账户会话缺少本地已验证成员锚点',
+        ),
+      ),
+    );
+
+    expect(instance.runtime.state, E2eeChatContentRuntimeState.failed);
+    expect(instance.pull.pullCalls, 0);
+    expect(instance.transportSession, isNull);
+  });
+
+  test('E2EE 内容运行时先用 ARK 安装注册锚点并提交会话再创建传输层', () async {
+    final harness = await _E2eeRuntimeHarness.create(
+      seedMembershipAnchor: false,
+      withSecurityBootstrap: true,
+    );
+    addTearDown(harness.close);
+    final events = <String>[];
+    late final _E2eeRuntimeInstance instance;
+    instance = harness.createInstance(
+      securityBootstrapCommitHandler: (pendingSession) async {
+        expect(pendingSession.securityBootstrap, isNotNull);
+        expect(instance.transportSession, isNull);
+        expect(instance.pull.pullCalls, 0);
+        events.add('commit');
+      },
+      onTransportCreated: () => events.add('transport'),
+    );
+
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+
+    expect(events, <String>['commit', 'transport']);
+    expect(instance.runtime.state, E2eeChatContentRuntimeState.ready);
+    await instance.runtime.close();
+
+    final replay = harness.createInstance(
+      sessionOverride: harness.session.withoutSecurityBootstrap(),
+    );
+    await replay.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => replay.pull.pullCalls >= 2);
+    expect(replay.runtime.state, E2eeChatContentRuntimeState.ready);
+  });
+
+  test('E2EE 内容运行时锚点安装后提交失败可按同一 bootstrap 幂等重放', () async {
+    final harness = await _E2eeRuntimeHarness.create(
+      seedMembershipAnchor: false,
+      withSecurityBootstrap: true,
+    );
+    addTearDown(harness.close);
+    final first = harness.createInstance(
+      securityBootstrapCommitHandler: (_) async {
+        throw StateError('bootstrap_commit_failed');
+      },
+    );
+
+    await expectLater(first.runtime.initialize(), throwsStateError);
+    expect(first.pull.pullCalls, 0);
+    expect(first.transportSession, isNull);
+    await first.runtime.close();
+
+    var replayCommits = 0;
+    final replay = harness.createInstance(
+      securityBootstrapCommitHandler: (_) async => replayCommits++,
+    );
+    await replay.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => replay.pull.pullCalls >= 2);
+
+    expect(replayCommits, 1);
+    expect(replay.runtime.state, E2eeChatContentRuntimeState.ready);
+  });
+
+  test('E2EE 内容运行时拒绝用 bootstrap 覆盖冲突的本地成员锚点', () async {
+    final harness = await _E2eeRuntimeHarness.create(
+      seedMembershipAnchor: false,
+      installConflictingMembershipAnchor: true,
+      withSecurityBootstrap: true,
+    );
+    addTearDown(harness.close);
+    var commitCalls = 0;
+    final instance = harness.createInstance(
+      securityBootstrapCommitHandler: (_) async => commitCalls++,
+    );
+
+    await expectLater(
+      instance.runtime.initialize(),
+      throwsA(isA<E2eeVerifiedMembershipAnchorConflict>()),
+    );
+
+    expect(commitCalls, 0);
+    expect(instance.pull.pullCalls, 0);
+    expect(instance.transportSession, isNull);
+  });
+
+  test('E2EE headless 运行时安装 bootstrap 并提交后才执行单次网络周期', () async {
+    final harness = await _E2eeRuntimeHarness.create(
+      seedMembershipAnchor: false,
+      withSecurityBootstrap: true,
+    );
+    addTearDown(harness.close);
+    final pull = _RuntimePullTransport(
+      accountUserId: harness.session.userId,
+      blockInitialPull: false,
+    );
+    final records = _RuntimeRecordTransport(
+      accountUserId: harness.session.userId,
+      actorDeviceId: harness.session.deviceId,
+    );
+    final client = CloudSyncClient.forTesting(baseUrl: harness.session.baseUrl);
+    var transportCreated = false;
+    final runtime = E2eeChatContentRuntime.takeHeadlessOwnership(
+      session: harness.session,
+      deviceStateStore: harness._deviceStateStore,
+      secureCore: const KelivoSecureCore(),
+      databaseGateway: harness._databaseGateway,
+      databaseFile: harness._databaseFile,
+      client: client,
+      transportFactory: ({required client, required session}) {
+        transportCreated = true;
+        return E2eeChatContentTransports(records: records, pull: pull);
+      },
+    );
+    runtime.bindSecurityBootstrapCommitHandler((pendingSession) async {
+      expect(pendingSession.securityBootstrap, isNotNull);
+      expect(transportCreated, isFalse);
+      expect(pull.pullCalls, 0);
+    });
+    try {
+      final report = await runtime.runSingleCycle(
+        E2eeSyncExecutionBudget(
+          maximumNetworkSteps: 17,
+          maximumAttachmentBytes: 16 * 1024 * 1024,
+          maximumDuration: const Duration(seconds: 5),
+          abortInFlightNetwork: () => client.close(force: true),
+        ),
+      );
+
+      expect(report.disposition, E2eeSyncCycleDisposition.completed);
+      expect(transportCreated, isTrue);
+      expect(pull.pullCalls, 2);
+    } finally {
+      await runtime.close();
+    }
+  });
+
   test('E2EE 配置桥接从 Vault 水合且事务失败后恢复 Provider', () async {
     final harness = await _E2eeConfigBindingHarness.create(
       initialProfileName: 'Vault 用户',
@@ -3111,12 +3320,17 @@ Future<_Fixture> _createSignedOutFixture({
   );
 }
 
-CloudSyncAccountSession _session({DateTime? tokenExpiresAt}) {
+CloudSyncAccountSession _session({
+  DateTime? tokenExpiresAt,
+  CloudSyncSecurityBootstrap? securityBootstrap,
+}) {
   return CloudSyncAccountSession(
     baseUrl: defaultCloudSyncBaseUrl,
     token: _fullToken,
     tokenExpiresAt: tokenExpiresAt ?? DateTime.utc(2100),
     keyEpoch: 1,
+    authGeneration: securityBootstrap?.localMember.authGeneration ?? 0,
+    sessionGeneration: 1,
     userId: _userId,
     loginName: 'ovo',
     displayName: 'Ovo',
@@ -3128,17 +3342,21 @@ CloudSyncAccountSession _session({DateTime? tokenExpiresAt}) {
     clientVersion: '1.1.17',
     deviceKeyVersion: 1,
     deviceCreatedAt: DateTime.utc(2026, 7, 22),
+    securityBootstrap: securityBootstrap,
   );
 }
 
 CloudSyncAuthenticatedSession _authenticatedSession({
   DateTime? tokenExpiresAt,
   int keyEpoch = 1,
+  CloudSyncSecurityBootstrap? securityBootstrap,
 }) {
   return CloudSyncAuthenticatedSession(
     token: _fullToken,
     tokenExpiresAt: tokenExpiresAt ?? DateTime.utc(2100),
     keyEpoch: keyEpoch,
+    authGeneration: securityBootstrap?.localMember.authGeneration ?? 0,
+    sessionGeneration: 1,
     deviceKeyVersion: 1,
     user: CloudSyncAuthenticatedUser(
       id: _userId,
@@ -3154,6 +3372,53 @@ CloudSyncAuthenticatedSession _authenticatedSession({
       clientVersion: '1.1.17',
       status: CloudSyncAuthenticatedDeviceStatus.active,
       createdAt: DateTime.utc(2026, 7, 22),
+    ),
+    securityState: securityBootstrap?.state,
+    pairingReceipt: securityBootstrap?.pairingReceipt,
+    securityBootstrap: securityBootstrap,
+  );
+}
+
+CloudSyncSecurityBootstrap _registrationBootstrap() {
+  final manifest = Uint8List(cloudSyncMembershipManifestMinimumBytes)
+    ..fillRange(0, cloudSyncMembershipManifestMinimumBytes, 0x41);
+  final state = CloudSyncAccountSecurityState(
+    generation: 1,
+    keyEpoch: 1,
+    dataRekeyPhase: CloudSyncDataRekeyPhase.ready,
+    membershipManifest: manifest,
+    membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List.fromList(sha256.convert(manifest).bytes),
+    ),
+    recoveryPublicKeyVersion: 1,
+    recoveryPublicKey: Uint8List(cloudSyncRecoveryPublicKeyBytes)
+      ..fillRange(0, cloudSyncRecoveryPublicKeyBytes, 0x42),
+    recoveryCapsuleVersion: 1,
+    recoveryCapsule: Uint8List(cloudSyncRecoveryCapsuleBytes)
+      ..fillRange(0, cloudSyncRecoveryCapsuleBytes, 0x43),
+    lastOperationId: '30000000-0000-4000-8000-000000000001',
+    updatedAt: DateTime.utc(2026, 7, 29),
+    envelopes: <CloudSyncAccountSecurityEnvelope>[
+      CloudSyncAccountSecurityEnvelope(
+        targetDeviceId: _deviceId,
+        issuerDeviceId: _deviceId,
+        envelopeVersion: 1,
+        keyEpoch: 1,
+        accountKeyEnvelope: Uint8List(cloudSyncAccountKeyEnvelopeBytes)
+          ..fillRange(0, cloudSyncAccountKeyEnvelopeBytes, 0x44),
+      ),
+    ],
+  );
+  return CloudSyncSecurityBootstrap.firstRegistration(
+    state: state,
+    localMember: CloudSyncMembershipDeviceMaterial(
+      deviceId: _deviceId,
+      keyVersion: 1,
+      authGeneration: 0,
+      signingPublicKey: Uint8List(cloudSyncDevicePublicKeyBytes)
+        ..fillRange(0, cloudSyncDevicePublicKeyBytes, 0x45),
+      keyAgreementPublicKey: Uint8List(cloudSyncDevicePublicKeyBytes)
+        ..fillRange(0, cloudSyncDevicePublicKeyBytes, 0x46),
     ),
   );
 }
@@ -3425,6 +3690,9 @@ final class _E2eeRuntimeHarness {
 
   static Future<_E2eeRuntimeHarness> create({
     bool seedDeviceState = true,
+    bool seedMembershipAnchor = true,
+    bool installConflictingMembershipAnchor = false,
+    bool withSecurityBootstrap = false,
   }) async {
     final testRoot = Directory(
       '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -3451,11 +3719,13 @@ final class _E2eeRuntimeHarness {
         .convert(utf8.encode(root.path))
         .toString()
         .substring(0, 16);
-    final session = CloudSyncAccountSession(
+    var session = CloudSyncAccountSession(
       baseUrl: 'https://runtime-$nonce.example.com',
       token: _fullToken,
       tokenExpiresAt: DateTime.utc(2100),
       keyEpoch: 1,
+      authGeneration: 0,
+      sessionGeneration: 1,
       userId: _userId,
       loginName: 'runtime-$nonce',
       displayName: 'Runtime User',
@@ -3472,22 +3742,32 @@ final class _E2eeRuntimeHarness {
     final deviceStateStore = DeviceStateBlobStore(
       installationRoot: installationRoot,
     );
+    final databaseGateway = ChatDatabaseGateway(cipher: testDatabaseCipher);
+    final databaseFile = File(
+      '${workspaceRoot.path}${Platform.pathSeparator}'
+      '${AppDatabase.databaseFileName}',
+    );
     if (seedDeviceState) {
-      await _seedRuntimeDeviceState(
+      final bootstrap = await _seedRuntimeDeviceState(
         secureCore: secureCore,
         store: deviceStateStore,
         session: session,
+        databaseGateway: databaseGateway,
+        databaseFile: databaseFile,
+        installMembershipAnchor: seedMembershipAnchor,
+        installConflictingMembershipAnchor: installConflictingMembershipAnchor,
+        createSecurityBootstrap: withSecurityBootstrap,
       );
+      if (bootstrap != null) {
+        session = _runtimeSessionWithBootstrap(session, bootstrap);
+      }
     }
     return _E2eeRuntimeHarness._(
       root: root,
       session: session,
       deviceStateStore: deviceStateStore,
-      databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
-      databaseFile: File(
-        '${workspaceRoot.path}${Platform.pathSeparator}'
-        '${AppDatabase.databaseFileName}',
-      ),
+      databaseGateway: databaseGateway,
+      databaseFile: databaseFile,
     );
   }
 
@@ -3495,34 +3775,44 @@ final class _E2eeRuntimeHarness {
     bool blockInitialPull = false,
     bool withConfigProviders = true,
     CloudSyncException? pullFailure,
+    CloudSyncSecurityBootstrapCommitHandler? securityBootstrapCommitHandler,
+    CloudSyncAccountSession? sessionOverride,
+    void Function()? onTransportCreated,
   }) {
+    final activeSession = sessionOverride ?? session;
     final pull = _RuntimePullTransport(
-      accountUserId: session.userId,
+      accountUserId: activeSession.userId,
       blockInitialPull: blockInitialPull,
       failure: pullFailure,
     );
     final records = _RuntimeRecordTransport(
-      accountUserId: session.userId,
-      actorDeviceId: session.deviceId,
+      accountUserId: activeSession.userId,
+      actorDeviceId: activeSession.deviceId,
     );
     final capture = _TransportSessionCapture();
     E2eeChatContentTransports createTransports({
       required CloudSyncClient client,
       required CloudSyncAuthenticatedSession session,
     }) {
+      onTransportCreated?.call();
       capture.session = session;
       return E2eeChatContentTransports(records: records, pull: pull);
     }
 
     final runtime = E2eeChatContentRuntime.takeOwnership(
-      session: session,
+      session: activeSession,
       deviceStateStore: _deviceStateStore,
       secureCore: const KelivoSecureCore(),
       databaseGateway: _databaseGateway,
       databaseFile: _databaseFile,
-      client: CloudSyncClient.forTesting(baseUrl: session.baseUrl),
+      client: CloudSyncClient.forTesting(baseUrl: activeSession.baseUrl),
       transportFactory: createTransports,
     );
+    if (securityBootstrapCommitHandler != null) {
+      runtime.bindSecurityBootstrapCommitHandler(
+        securityBootstrapCommitHandler,
+      );
+    }
     final chatService = ChatService(runtime, databaseGateway: _databaseGateway);
     runtime.bindChatService(chatService);
     _TestConfigProviders? configProviders;
@@ -3666,10 +3956,15 @@ final class _RuntimeRecordTransport
   }
 }
 
-Future<void> _seedRuntimeDeviceState({
+Future<CloudSyncSecurityBootstrap?> _seedRuntimeDeviceState({
   required KelivoSecureCore secureCore,
   required DeviceStateBlobStore store,
   required CloudSyncAccountSession session,
+  required ChatDatabaseGateway databaseGateway,
+  required File databaseFile,
+  required bool installMembershipAnchor,
+  required bool installConflictingMembershipAnchor,
+  required bool createSecurityBootstrap,
 }) async {
   final key = await secureCore.createSlot(
     E2eeDeviceStateAccess.deriveSlotId(
@@ -3683,6 +3978,8 @@ Future<void> _seedRuntimeDeviceState({
     keyEpoch: session.keyEpoch,
   );
   Uint8List? blob;
+  ChatDatabaseLease? databaseLease;
+  CloudSyncSecurityBootstrap? bootstrap;
   try {
     blob = Uint8List.fromList(
       await secureCore.sealDeviceState(
@@ -3702,13 +3999,143 @@ Future<void> _seedRuntimeDeviceState({
       normalizedLoginName: session.loginName,
       blob: blob,
     );
+    final publicKeys = await secureCore.readDevicePublicKeys(identity);
+    final recoveryPublicKey = Uint8List(32)..fillRange(0, 32, 0x71);
+    final recoveryCapsule = Uint8List(cloudSyncRecoveryCapsuleBytes)
+      ..fillRange(0, cloudSyncRecoveryCapsuleBytes, 0x72);
+    final membership = await const E2eeAccountTrustManifestModule().create(
+      ark: ark,
+      change: E2eeInitializeMembershipChange(
+        userId: session.userId,
+        operationId: '30000000-0000-4000-8000-000000000001',
+        member: E2eeMembershipDeviceInput(
+          deviceId: session.deviceId,
+          keyVersion: session.deviceKeyVersion,
+          authGeneration: session.authGeneration,
+          signingPublicKey: publicKeys.signingPublicKey,
+          keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+        ),
+        recoveryPublicKeyVersion: 1,
+        recoveryPublicKey: recoveryPublicKey,
+        recoveryCapsuleVersion: 1,
+        recoveryCapsule: recoveryCapsule,
+      ),
+    );
+    if (installMembershipAnchor || installConflictingMembershipAnchor) {
+      databaseLease = await databaseGateway.acquire(databaseFile);
+      var installedMembership = membership;
+      KelivoDeviceIdentityHandle? conflictingIdentity;
+      try {
+        if (installConflictingMembershipAnchor) {
+          conflictingIdentity = await secureCore.generateDeviceIdentity();
+          final conflictingPublicKeys = await secureCore.readDevicePublicKeys(
+            conflictingIdentity,
+          );
+          installedMembership = await const E2eeAccountTrustManifestModule()
+              .create(
+                ark: ark,
+                change: E2eeInitializeMembershipChange(
+                  userId: session.userId,
+                  operationId: '30000000-0000-4000-8000-000000000002',
+                  member: E2eeMembershipDeviceInput(
+                    deviceId: session.deviceId,
+                    keyVersion: session.deviceKeyVersion,
+                    authGeneration: session.authGeneration,
+                    signingPublicKey: conflictingPublicKeys.signingPublicKey,
+                    keyAgreementPublicKey:
+                        conflictingPublicKeys.keyAgreementPublicKey,
+                  ),
+                  recoveryPublicKeyVersion: 1,
+                  recoveryPublicKey: recoveryPublicKey,
+                  recoveryCapsuleVersion: 1,
+                  recoveryCapsule: recoveryCapsule,
+                ),
+              );
+        }
+        await databaseLease.repository.e2eeVerifiedMembershipAnchorCommands
+            .install(
+              membership: installedMembership,
+              now: DateTime.utc(2026, 7, 29),
+            );
+      } finally {
+        final identityToClose = conflictingIdentity;
+        if (identityToClose != null) {
+          await secureCore.closeDeviceIdentity(identityToClose);
+        }
+      }
+    }
+    if (createSecurityBootstrap) {
+      final state = CloudSyncAccountSecurityState(
+        generation: membership.securityGeneration,
+        keyEpoch: membership.keyEpoch,
+        dataRekeyPhase: CloudSyncDataRekeyPhase.ready,
+        membershipManifest: membership.manifest,
+        membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+          membership.digest,
+        ),
+        recoveryPublicKeyVersion: membership.recoveryPublicKeyVersion,
+        recoveryPublicKey: recoveryPublicKey,
+        recoveryCapsuleVersion: membership.recoveryCapsuleVersion,
+        recoveryCapsule: recoveryCapsule,
+        lastOperationId: membership.operationId,
+        updatedAt: DateTime.utc(2026, 7, 29),
+        envelopes: <CloudSyncAccountSecurityEnvelope>[
+          CloudSyncAccountSecurityEnvelope(
+            targetDeviceId: session.deviceId,
+            issuerDeviceId: session.deviceId,
+            envelopeVersion: 1,
+            keyEpoch: session.keyEpoch,
+            accountKeyEnvelope: Uint8List(cloudSyncAccountKeyEnvelopeBytes)
+              ..fillRange(0, cloudSyncAccountKeyEnvelopeBytes, 0x73),
+          ),
+        ],
+      );
+      bootstrap = CloudSyncSecurityBootstrap.firstRegistration(
+        state: state,
+        localMember: CloudSyncMembershipDeviceMaterial(
+          deviceId: session.deviceId,
+          keyVersion: session.deviceKeyVersion,
+          authGeneration: session.authGeneration,
+          signingPublicKey: publicKeys.signingPublicKey,
+          keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+        ),
+      );
+    }
   } finally {
+    await databaseLease?.release();
     final sealedBlob = blob;
     if (sealedBlob != null) sealedBlob.fillRange(0, sealedBlob.length, 0);
     await secureCore.closeAccountRootKey(ark);
     await secureCore.closeDeviceIdentity(identity);
     await secureCore.close(key);
   }
+  return bootstrap;
+}
+
+CloudSyncAccountSession _runtimeSessionWithBootstrap(
+  CloudSyncAccountSession session,
+  CloudSyncSecurityBootstrap bootstrap,
+) {
+  return CloudSyncAccountSession(
+    baseUrl: session.baseUrl,
+    token: session.token,
+    tokenExpiresAt: session.tokenExpiresAt,
+    keyEpoch: session.keyEpoch,
+    authGeneration: session.authGeneration,
+    sessionGeneration: session.sessionGeneration,
+    userId: session.userId,
+    loginName: session.loginName,
+    displayName: session.displayName,
+    role: session.role,
+    attachmentQuotaBytes: session.attachmentQuotaBytes,
+    deviceId: session.deviceId,
+    deviceName: session.deviceName,
+    platform: session.platform,
+    clientVersion: session.clientVersion,
+    deviceKeyVersion: session.deviceKeyVersion,
+    deviceCreatedAt: session.deviceCreatedAt,
+    securityBootstrap: bootstrap,
+  );
 }
 
 Uint8List _runtimeUuidBytes(String value) {
@@ -3744,13 +4171,30 @@ final class _Fixture {
 }
 
 final class _FakeCloudSyncContentRuntime implements CloudSyncContentRuntime {
-  _FakeCloudSyncContentRuntime({this.initializeFailure, this.closeFailure});
+  _FakeCloudSyncContentRuntime({
+    this.initializeFailure,
+    this.closeFailure,
+    this.bootstrapSessionToCommit,
+  });
 
   final Object? initializeFailure;
   final Object? closeFailure;
+  final CloudSyncAccountSession? bootstrapSessionToCommit;
   int initializeCalls = 0;
   int closeCalls = 0;
+  int bootstrapCommitCalls = 0;
+  CloudSyncSecurityBootstrapCommitHandler? _securityBootstrapCommitHandler;
   CloudSyncTerminalAuthenticationHandler? _terminalAuthenticationHandler;
+
+  @override
+  void bindSecurityBootstrapCommitHandler(
+    CloudSyncSecurityBootstrapCommitHandler handler,
+  ) {
+    if (_securityBootstrapCommitHandler != null) {
+      throw StateError('security_bootstrap_commit_handler_already_bound');
+    }
+    _securityBootstrapCommitHandler = handler;
+  }
 
   CloudSyncTerminalAuthenticationHandler get terminalAuthenticationHandler {
     final handler = _terminalAuthenticationHandler;
@@ -3779,6 +4223,15 @@ final class _FakeCloudSyncContentRuntime implements CloudSyncContentRuntime {
     initializeCalls++;
     final failure = initializeFailure;
     if (failure != null) throw failure;
+    final bootstrapSession = bootstrapSessionToCommit;
+    if (bootstrapSession != null) {
+      final handler = _securityBootstrapCommitHandler;
+      if (handler == null) {
+        throw StateError('security_bootstrap_commit_handler_not_bound');
+      }
+      bootstrapCommitCalls++;
+      await handler(bootstrapSession);
+    }
   }
 
   @override
@@ -3823,6 +4276,7 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
     required String attemptId,
     required Uint8List registrationUpload,
     required Uint8List accountKeyEnvelope,
+    required CloudSyncGenesisSecurityState securityState,
     required Uint8List deviceProof,
   }) {
     throw UnsupportedError('unexpected_opaque_registration_finish');
@@ -3868,6 +4322,7 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
     required CloudSyncFullSessionToken token,
     required String pairingId,
     required int keyEpoch,
+    required CloudSyncDevicePairingMembershipCommit membershipCommit,
     required Uint8List accountKeyEnvelope,
     required Uint8List deviceProof,
     required Uint8List pairingAuthenticator,
@@ -3879,6 +4334,7 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
   Future<CloudSyncAuthenticatedSession> consumeDevicePairing({
     required CloudSyncOnboardingToken token,
     required String pairingId,
+    required CloudSyncFullSessionToken sessionToken,
   }) {
     throw UnsupportedError('unexpected_pairing_consume');
   }
@@ -3889,6 +4345,26 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
     required String pairingId,
   }) {
     throw UnsupportedError('unexpected_pairing_cancel');
+  }
+
+  @override
+  Future<CloudSyncAccountSecurityState> getSecurityState() {
+    throw UnsupportedError('unexpected_security_state_get');
+  }
+
+  @override
+  Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
+    int afterGeneration = 0,
+    int pageSize = 20,
+  }) {
+    throw UnsupportedError('unexpected_security_state_history_list');
+  }
+
+  @override
+  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
+    CloudSyncDeviceRotationRequest request,
+  ) {
+    throw UnsupportedError('unexpected_device_rotation_commit');
   }
 
   @override

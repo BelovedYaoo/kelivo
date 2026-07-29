@@ -6,6 +6,34 @@ part of 'sync_pull_reset_data.dart';
 // BuiltValueGenerator
 // **************************************************************************
 
+const SyncPullResetDataDataRekeyPhaseEnum
+_$syncPullResetDataDataRekeyPhaseEnum_ready =
+    const SyncPullResetDataDataRekeyPhaseEnum._('ready');
+const SyncPullResetDataDataRekeyPhaseEnum
+_$syncPullResetDataDataRekeyPhaseEnum_rekeyPending =
+    const SyncPullResetDataDataRekeyPhaseEnum._('rekeyPending');
+
+SyncPullResetDataDataRekeyPhaseEnum
+_$syncPullResetDataDataRekeyPhaseEnumValueOf(String name) {
+  switch (name) {
+    case 'ready':
+      return _$syncPullResetDataDataRekeyPhaseEnum_ready;
+    case 'rekeyPending':
+      return _$syncPullResetDataDataRekeyPhaseEnum_rekeyPending;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<SyncPullResetDataDataRekeyPhaseEnum>
+_$syncPullResetDataDataRekeyPhaseEnumValues =
+    BuiltSet<SyncPullResetDataDataRekeyPhaseEnum>(
+      const <SyncPullResetDataDataRekeyPhaseEnum>[
+        _$syncPullResetDataDataRekeyPhaseEnum_ready,
+        _$syncPullResetDataDataRekeyPhaseEnum_rekeyPending,
+      ],
+    );
+
 SyncPullResetDataNextCursorEnum _$syncPullResetDataNextCursorEnumValueOf(
   String name,
 ) {
@@ -21,9 +49,47 @@ _$syncPullResetDataNextCursorEnumValues =
       const <SyncPullResetDataNextCursorEnum>[],
     );
 
+Serializer<SyncPullResetDataDataRekeyPhaseEnum>
+_$syncPullResetDataDataRekeyPhaseEnumSerializer =
+    _$SyncPullResetDataDataRekeyPhaseEnumSerializer();
 Serializer<SyncPullResetDataNextCursorEnum>
 _$syncPullResetDataNextCursorEnumSerializer =
     _$SyncPullResetDataNextCursorEnumSerializer();
+
+class _$SyncPullResetDataDataRekeyPhaseEnumSerializer
+    implements PrimitiveSerializer<SyncPullResetDataDataRekeyPhaseEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'ready': 'ready',
+    'rekeyPending': 'rekey-pending',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'ready': 'ready',
+    'rekey-pending': 'rekeyPending',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[
+    SyncPullResetDataDataRekeyPhaseEnum,
+  ];
+  @override
+  final String wireName = 'SyncPullResetDataDataRekeyPhaseEnum';
+
+  @override
+  Object serialize(
+    Serializers serializers,
+    SyncPullResetDataDataRekeyPhaseEnum object, {
+    FullType specifiedType = FullType.unspecified,
+  }) => _toWire[object.name] ?? object.name;
+
+  @override
+  SyncPullResetDataDataRekeyPhaseEnum deserialize(
+    Serializers serializers,
+    Object serialized, {
+    FullType specifiedType = FullType.unspecified,
+  }) => SyncPullResetDataDataRekeyPhaseEnum.valueOf(
+    _fromWire[serialized] ?? (serialized is String ? serialized : ''),
+  );
+}
 
 class _$SyncPullResetDataNextCursorEnumSerializer
     implements PrimitiveSerializer<SyncPullResetDataNextCursorEnum> {
@@ -49,6 +115,8 @@ class _$SyncPullResetDataNextCursorEnumSerializer
 
 class _$SyncPullResetData extends SyncPullResetData {
   @override
+  final SyncPullResetDataDataRekeyPhaseEnum dataRekeyPhase;
+  @override
   final BuiltList<SyncChange> changes;
   @override
   final SyncPullResetDataNextCursorEnum? nextCursor;
@@ -62,6 +130,7 @@ class _$SyncPullResetData extends SyncPullResetData {
   ]) => (SyncPullResetDataBuilder()..update(updates))._build();
 
   _$SyncPullResetData._({
+    required this.dataRekeyPhase,
     required this.changes,
     this.nextCursor,
     required this.hasMore,
@@ -79,6 +148,7 @@ class _$SyncPullResetData extends SyncPullResetData {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is SyncPullResetData &&
+        dataRekeyPhase == other.dataRekeyPhase &&
         changes == other.changes &&
         nextCursor == other.nextCursor &&
         hasMore == other.hasMore &&
@@ -88,6 +158,7 @@ class _$SyncPullResetData extends SyncPullResetData {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, dataRekeyPhase.hashCode);
     _$hash = $jc(_$hash, changes.hashCode);
     _$hash = $jc(_$hash, nextCursor.hashCode);
     _$hash = $jc(_$hash, hasMore.hashCode);
@@ -99,6 +170,7 @@ class _$SyncPullResetData extends SyncPullResetData {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'SyncPullResetData')
+          ..add('dataRekeyPhase', dataRekeyPhase)
           ..add('changes', changes)
           ..add('nextCursor', nextCursor)
           ..add('hasMore', hasMore)
@@ -110,6 +182,12 @@ class _$SyncPullResetData extends SyncPullResetData {
 class SyncPullResetDataBuilder
     implements Builder<SyncPullResetData, SyncPullResetDataBuilder> {
   _$SyncPullResetData? _$v;
+
+  SyncPullResetDataDataRekeyPhaseEnum? _dataRekeyPhase;
+  SyncPullResetDataDataRekeyPhaseEnum? get dataRekeyPhase =>
+      _$this._dataRekeyPhase;
+  set dataRekeyPhase(SyncPullResetDataDataRekeyPhaseEnum? dataRekeyPhase) =>
+      _$this._dataRekeyPhase = dataRekeyPhase;
 
   ListBuilder<SyncChange>? _changes;
   ListBuilder<SyncChange> get changes =>
@@ -137,6 +215,7 @@ class SyncPullResetDataBuilder
   SyncPullResetDataBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _dataRekeyPhase = $v.dataRekeyPhase;
       _changes = $v.changes.toBuilder();
       _nextCursor = $v.nextCursor;
       _hasMore = $v.hasMore;
@@ -165,6 +244,11 @@ class SyncPullResetDataBuilder
       _$result =
           _$v ??
           _$SyncPullResetData._(
+            dataRekeyPhase: BuiltValueNullFieldError.checkNotNull(
+              dataRekeyPhase,
+              r'SyncPullResetData',
+              'dataRekeyPhase',
+            ),
             changes: changes.build(),
             nextCursor: nextCursor,
             hasMore: BuiltValueNullFieldError.checkNotNull(

@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/account_security_state_data.dart';
 import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_data_device.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_data_user.dart';
@@ -16,11 +17,11 @@ part 'opaque_registration_finish_data.g.dart';
 /// Properties:
 /// * [protocolVersion]
 /// * [result]
-/// * [keyEpoch]
 /// * [token]
 /// * [tokenExpiresAt]
 /// * [user]
 /// * [device]
+/// * [securityState]
 @BuiltValue()
 abstract class OpaqueRegistrationFinishData
     implements
@@ -35,9 +36,6 @@ abstract class OpaqueRegistrationFinishData
   OpaqueRegistrationFinishDataResultEnum get result;
   // enum resultEnum {  authenticated,  };
 
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
-
   @BuiltValueField(wireName: r'token')
   String get token;
 
@@ -49,6 +47,9 @@ abstract class OpaqueRegistrationFinishData
 
   @BuiltValueField(wireName: r'device')
   OpaqueRegistrationFinishDataDevice get device;
+
+  @BuiltValueField(wireName: r'securityState')
+  AccountSecurityStateData get securityState;
 
   OpaqueRegistrationFinishData._();
 
@@ -90,11 +91,6 @@ class _$OpaqueRegistrationFinishDataSerializer
       object.result,
       specifiedType: const FullType(OpaqueRegistrationFinishDataResultEnum),
     );
-    yield r'keyEpoch';
-    yield serializers.serialize(
-      object.keyEpoch,
-      specifiedType: const FullType(int),
-    );
     yield r'token';
     yield serializers.serialize(
       object.token,
@@ -114,6 +110,11 @@ class _$OpaqueRegistrationFinishDataSerializer
     yield serializers.serialize(
       object.device,
       specifiedType: const FullType(OpaqueRegistrationFinishDataDevice),
+    );
+    yield r'securityState';
+    yield serializers.serialize(
+      object.securityState,
+      specifiedType: const FullType(AccountSecurityStateData),
     );
   }
 
@@ -159,12 +160,6 @@ class _$OpaqueRegistrationFinishDataSerializer
                   as OpaqueRegistrationFinishDataResultEnum;
           result.result = valueDes;
           break;
-        case r'keyEpoch':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.keyEpoch = valueDes;
-          break;
         case r'token':
           final valueDes =
               serializers.deserialize(
@@ -204,6 +199,15 @@ class _$OpaqueRegistrationFinishDataSerializer
                   )
                   as OpaqueRegistrationFinishDataDevice;
           result.device.replace(valueDes);
+          break;
+        case r'securityState':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(AccountSecurityStateData),
+                  )
+                  as AccountSecurityStateData;
+          result.securityState.replace(valueDes);
           break;
         default:
           unhandled.add(key);

@@ -191,6 +191,9 @@ final class CloudSyncProvider extends ChangeNotifier
         // 才不会漏掉首次拉取立刻返回的远端撤销。
         contentRuntimeEpoch = ++_sessionEpoch;
         final boundEpoch = contentRuntimeEpoch;
+        contentRuntime.bindSecurityBootstrapCommitHandler(
+          _commitSecurityBootstrap,
+        );
         contentRuntime.bindTerminalAuthenticationHandler((failure, stackTrace) {
           return _retireTerminalAuthentication(
             sessionEpoch: boundEpoch,
@@ -207,8 +210,14 @@ final class CloudSyncProvider extends ChangeNotifier
           return;
         }
         _contentRuntimeReady = true;
+      } else if (session.securityBootstrap != null) {
+        throw StateError('待安装安全 bootstrap 不能在控制面模式激活');
       }
-      _connect(session, reservedSessionEpoch: contentRuntimeEpoch);
+      final activeSession = _session;
+      if (activeSession == null) {
+        throw StateError('内容运行时初始化后账户会话丢失');
+      }
+      _connect(activeSession, reservedSessionEpoch: contentRuntimeEpoch);
       if (_disposed) return;
       _ready = true;
       _setStatus(CloudSyncProviderStatus.idle);
@@ -273,7 +282,6 @@ final class CloudSyncProvider extends ChangeNotifier
               return false;
             }
             _retainPendingApproval(
-              authentication: authentication,
               client: loginClient,
               approval: loginResult,
               pairing: pairing,
@@ -300,11 +308,6 @@ final class CloudSyncProvider extends ChangeNotifier
           final connected = await _bindAuthenticatedSession(
             session,
             loginClient,
-          );
-          await _confirmDevicePairingAfterWorkspaceCommit(
-            authentication,
-            loginName: loginName.trim(),
-            session: session,
           );
           if (connected) loginClient = null;
           return true;
@@ -370,21 +373,6 @@ final class CloudSyncProvider extends ChangeNotifier
         authenticatedSession,
         registrationClient,
       );
-      try {
-        await authentication.confirmFirstDeviceRegistration(
-          loginName: loginName.trim(),
-          session: authenticatedSession,
-        );
-      } catch (error, stackTrace) {
-        // 工作区会话已经提交，事务清理失败只能延后重试，不能把成功注册伪装成失败。
-        developer.log(
-          '首设备注册已提交，恢复事务将在后续认证重试清理',
-          name: 'Kelivo.CloudSyncProvider',
-          level: 900,
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
       if (connected) registrationClient = null;
       return true;
     } catch (error, stackTrace) {
@@ -692,6 +680,52 @@ final class CloudSyncProvider extends ChangeNotifier
     _client = nextClient;
   }
 
+  Future<void> _commitSecurityBootstrap(
+    CloudSyncAccountSession pendingSession,
+  ) async {
+    final bootstrap = pendingSession.securityBootstrap;
+    final current = _session;
+    if (bootstrap == null ||
+        current == null ||
+        current.securityBootstrap == null ||
+        current.accountScope != pendingSession.accountScope ||
+        current.deviceId != pendingSession.deviceId ||
+        current.authGeneration != pendingSession.authGeneration ||
+        current.sessionGeneration != pendingSession.sessionGeneration ||
+        current.token.value != pendingSession.token.value) {
+      throw StateError('安全 bootstrap 提交会话与当前工作区不匹配');
+    }
+
+    final client = _clientFactory(token: pendingSession.token);
+    try {
+      final authentication = _authenticationFactory(client);
+      final authenticatedSession = pendingSession.toAuthenticatedSession();
+      switch (bootstrap.source) {
+        case CloudSyncSecurityBootstrapSource.firstRegistration:
+          await authentication.confirmFirstDeviceRegistration(
+            loginName: pendingSession.loginName,
+            session: authenticatedSession,
+          );
+          break;
+        case CloudSyncSecurityBootstrapSource.pairing:
+          await authentication.confirmDevicePairing(
+            loginName: pendingSession.loginName,
+            session: authenticatedSession,
+          );
+          break;
+      }
+
+      final cleanedSession = pendingSession.withoutSecurityBootstrap();
+      final binding = await _workspaceRuntime.bindAccount(cleanedSession);
+      if (binding is! AccountWorkspaceRetained) {
+        throw StateError('安全 bootstrap 只能在当前账户工作区内提交');
+      }
+      _session = cleanedSession;
+    } finally {
+      client.close(force: true);
+    }
+  }
+
   Future<void> _retireTerminalAuthentication({
     required int sessionEpoch,
     required CloudSyncException failure,
@@ -744,7 +778,6 @@ final class CloudSyncProvider extends ChangeNotifier
   }
 
   void _retainPendingApproval({
-    required E2eeAccountAuthentication authentication,
     required CloudSyncAccountClient client,
     required E2eeAccountLoginApprovalRequired approval,
     required E2eeDevicePairingSession pairing,
@@ -759,9 +792,7 @@ final class CloudSyncProvider extends ChangeNotifier
     _pendingPairingCancellationRequested = false;
     _lastError = null;
     final task = _completePendingDevicePairing(
-      authentication: authentication,
       client: client,
-      approval: approval,
       pairing: pairing,
     );
     _pendingPairingTask = task;
@@ -770,9 +801,7 @@ final class CloudSyncProvider extends ChangeNotifier
   }
 
   Future<void> _completePendingDevicePairing({
-    required E2eeAccountAuthentication authentication,
     required CloudSyncAccountClient client,
-    required E2eeAccountLoginApprovalRequired approval,
     required E2eeDevicePairingSession pairing,
   }) async {
     var clientTransferred = false;
@@ -782,11 +811,6 @@ final class CloudSyncProvider extends ChangeNotifier
       clientTransferred = await _bindAuthenticatedSession(
         authenticatedSession,
         client,
-      );
-      await _confirmDevicePairingAfterWorkspaceCommit(
-        authentication,
-        loginName: approval.loginName,
-        session: authenticatedSession,
       );
     } catch (error, stackTrace) {
       if (!_ownsPendingDevicePairing(pairing, client)) return;
@@ -809,28 +833,6 @@ final class CloudSyncProvider extends ChangeNotifier
           _setStatus(CloudSyncProviderStatus.signedOut);
         }
       }
-    }
-  }
-
-  Future<void> _confirmDevicePairingAfterWorkspaceCommit(
-    E2eeAccountAuthentication authentication, {
-    required String loginName,
-    required CloudSyncAuthenticatedSession session,
-  }) async {
-    try {
-      await authentication.confirmDevicePairing(
-        loginName: loginName,
-        session: session,
-      );
-    } catch (error, stackTrace) {
-      // 工作区会话已提交；确认清理可由下次登录重复完成，不能撤销成功登录。
-      developer.log(
-        '设备配对已提交，恢复事务将在后续登录重试清理',
-        name: 'Kelivo.CloudSyncProvider',
-        level: 900,
-        error: error,
-        stackTrace: stackTrace,
-      );
     }
   }
 
@@ -867,7 +869,8 @@ final class CloudSyncProvider extends ChangeNotifier
       session: authenticatedSession,
     );
     final workspaceBinding = await _workspaceRuntime.bindAccount(session);
-    if (workspaceBinding is AccountWorkspaceRestartRequired) {
+    if (workspaceBinding is AccountWorkspaceRestartRequired ||
+        session.securityBootstrap != null) {
       _workspaceRestartRequired = true;
       _setStatus(CloudSyncProviderStatus.workspaceChangePending);
       return false;

@@ -37,6 +37,8 @@ const AdminUserSummaryStatusEnum _$adminUserSummaryStatusEnum_active =
     const AdminUserSummaryStatusEnum._('active');
 const AdminUserSummaryStatusEnum _$adminUserSummaryStatusEnum_disabled =
     const AdminUserSummaryStatusEnum._('disabled');
+const AdminUserSummaryStatusEnum _$adminUserSummaryStatusEnum_deleting =
+    const AdminUserSummaryStatusEnum._('deleting');
 
 AdminUserSummaryStatusEnum _$adminUserSummaryStatusEnumValueOf(String name) {
   switch (name) {
@@ -44,6 +46,8 @@ AdminUserSummaryStatusEnum _$adminUserSummaryStatusEnumValueOf(String name) {
       return _$adminUserSummaryStatusEnum_active;
     case 'disabled':
       return _$adminUserSummaryStatusEnum_disabled;
+    case 'deleting':
+      return _$adminUserSummaryStatusEnum_deleting;
     default:
       throw ArgumentError(name);
   }
@@ -53,6 +57,7 @@ final BuiltSet<AdminUserSummaryStatusEnum> _$adminUserSummaryStatusEnumValues =
     BuiltSet<AdminUserSummaryStatusEnum>(const <AdminUserSummaryStatusEnum>[
       _$adminUserSummaryStatusEnum_active,
       _$adminUserSummaryStatusEnum_disabled,
+      _$adminUserSummaryStatusEnum_deleting,
     ]);
 
 Serializer<AdminUserSummaryRoleEnum> _$adminUserSummaryRoleEnumSerializer =
@@ -100,10 +105,12 @@ class _$AdminUserSummaryStatusEnumSerializer
   static const Map<String, Object> _toWire = const <String, Object>{
     'active': 'active',
     'disabled': 'disabled',
+    'deleting': 'deleting',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
     'active': 'active',
     'disabled': 'disabled',
+    'deleting': 'deleting',
   };
 
   @override

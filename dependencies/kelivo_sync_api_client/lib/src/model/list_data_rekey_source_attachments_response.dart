@@ -3,63 +3,67 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/data_rekey_source_attachment_list_data.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'revoke_trusted_device_request.g.dart';
+part 'list_data_rekey_source_attachments_response.g.dart';
 
-/// RevokeTrustedDeviceRequest
+/// ListDataRekeySourceAttachmentsResponse
 ///
 /// Properties:
-/// * [deviceId]
+/// * [data]
 @BuiltValue()
-abstract class RevokeTrustedDeviceRequest
+abstract class ListDataRekeySourceAttachmentsResponse
     implements
-        Built<RevokeTrustedDeviceRequest, RevokeTrustedDeviceRequestBuilder> {
-  @BuiltValueField(wireName: r'deviceId')
-  String get deviceId;
+        Built<
+          ListDataRekeySourceAttachmentsResponse,
+          ListDataRekeySourceAttachmentsResponseBuilder
+        > {
+  @BuiltValueField(wireName: r'data')
+  DataRekeySourceAttachmentListData get data;
 
-  RevokeTrustedDeviceRequest._();
+  ListDataRekeySourceAttachmentsResponse._();
 
-  factory RevokeTrustedDeviceRequest([
-    void updates(RevokeTrustedDeviceRequestBuilder b),
-  ]) = _$RevokeTrustedDeviceRequest;
+  factory ListDataRekeySourceAttachmentsResponse([
+    void updates(ListDataRekeySourceAttachmentsResponseBuilder b),
+  ]) = _$ListDataRekeySourceAttachmentsResponse;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(RevokeTrustedDeviceRequestBuilder b) => b;
+  static void _defaults(ListDataRekeySourceAttachmentsResponseBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<RevokeTrustedDeviceRequest> get serializer =>
-      _$RevokeTrustedDeviceRequestSerializer();
+  static Serializer<ListDataRekeySourceAttachmentsResponse> get serializer =>
+      _$ListDataRekeySourceAttachmentsResponseSerializer();
 }
 
-class _$RevokeTrustedDeviceRequestSerializer
-    implements PrimitiveSerializer<RevokeTrustedDeviceRequest> {
+class _$ListDataRekeySourceAttachmentsResponseSerializer
+    implements PrimitiveSerializer<ListDataRekeySourceAttachmentsResponse> {
   @override
   final Iterable<Type> types = const [
-    RevokeTrustedDeviceRequest,
-    _$RevokeTrustedDeviceRequest,
+    ListDataRekeySourceAttachmentsResponse,
+    _$ListDataRekeySourceAttachmentsResponse,
   ];
 
   @override
-  final String wireName = r'RevokeTrustedDeviceRequest';
+  final String wireName = r'ListDataRekeySourceAttachmentsResponse';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    RevokeTrustedDeviceRequest object, {
+    ListDataRekeySourceAttachmentsResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    yield r'deviceId';
+    yield r'data';
     yield serializers.serialize(
-      object.deviceId,
-      specifiedType: const FullType(String),
+      object.data,
+      specifiedType: const FullType(DataRekeySourceAttachmentListData),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    RevokeTrustedDeviceRequest object, {
+    ListDataRekeySourceAttachmentsResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -74,21 +78,23 @@ class _$RevokeTrustedDeviceRequestSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required RevokeTrustedDeviceRequestBuilder result,
+    required ListDataRekeySourceAttachmentsResponseBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'deviceId':
+        case r'data':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(String),
+                    specifiedType: const FullType(
+                      DataRekeySourceAttachmentListData,
+                    ),
                   )
-                  as String;
-          result.deviceId = valueDes;
+                  as DataRekeySourceAttachmentListData;
+          result.data.replace(valueDes);
           break;
         default:
           unhandled.add(key);
@@ -99,12 +105,12 @@ class _$RevokeTrustedDeviceRequestSerializer
   }
 
   @override
-  RevokeTrustedDeviceRequest deserialize(
+  ListDataRekeySourceAttachmentsResponse deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = RevokeTrustedDeviceRequestBuilder();
+    final result = ListDataRekeySourceAttachmentsResponseBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

@@ -14,6 +14,14 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
   @override
   final int keyEpoch;
   @override
+  final int expectedSecurityGeneration;
+  @override
+  final String expectedMembershipManifestDigest;
+  @override
+  final String nextMembershipManifest;
+  @override
+  final String nextMembershipManifestDigest;
+  @override
   final String accountKeyEnvelope;
   @override
   final String deviceProof;
@@ -28,6 +36,10 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
     required this.protocolVersion,
     required this.pairingId,
     required this.keyEpoch,
+    required this.expectedSecurityGeneration,
+    required this.expectedMembershipManifestDigest,
+    required this.nextMembershipManifest,
+    required this.nextMembershipManifestDigest,
     required this.accountKeyEnvelope,
     required this.deviceProof,
     required this.pairingAuthenticator,
@@ -48,6 +60,11 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
         protocolVersion == other.protocolVersion &&
         pairingId == other.pairingId &&
         keyEpoch == other.keyEpoch &&
+        expectedSecurityGeneration == other.expectedSecurityGeneration &&
+        expectedMembershipManifestDigest ==
+            other.expectedMembershipManifestDigest &&
+        nextMembershipManifest == other.nextMembershipManifest &&
+        nextMembershipManifestDigest == other.nextMembershipManifestDigest &&
         accountKeyEnvelope == other.accountKeyEnvelope &&
         deviceProof == other.deviceProof &&
         pairingAuthenticator == other.pairingAuthenticator;
@@ -59,6 +76,10 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
     _$hash = $jc(_$hash, protocolVersion.hashCode);
     _$hash = $jc(_$hash, pairingId.hashCode);
     _$hash = $jc(_$hash, keyEpoch.hashCode);
+    _$hash = $jc(_$hash, expectedSecurityGeneration.hashCode);
+    _$hash = $jc(_$hash, expectedMembershipManifestDigest.hashCode);
+    _$hash = $jc(_$hash, nextMembershipManifest.hashCode);
+    _$hash = $jc(_$hash, nextMembershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, accountKeyEnvelope.hashCode);
     _$hash = $jc(_$hash, deviceProof.hashCode);
     _$hash = $jc(_$hash, pairingAuthenticator.hashCode);
@@ -72,6 +93,13 @@ class _$DevicePairingApproveRequest extends DevicePairingApproveRequest {
           ..add('protocolVersion', protocolVersion)
           ..add('pairingId', pairingId)
           ..add('keyEpoch', keyEpoch)
+          ..add('expectedSecurityGeneration', expectedSecurityGeneration)
+          ..add(
+            'expectedMembershipManifestDigest',
+            expectedMembershipManifestDigest,
+          )
+          ..add('nextMembershipManifest', nextMembershipManifest)
+          ..add('nextMembershipManifestDigest', nextMembershipManifestDigest)
           ..add('accountKeyEnvelope', accountKeyEnvelope)
           ..add('deviceProof', deviceProof)
           ..add('pairingAuthenticator', pairingAuthenticator))
@@ -100,6 +128,30 @@ class DevicePairingApproveRequestBuilder
   int? get keyEpoch => _$this._keyEpoch;
   set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
 
+  int? _expectedSecurityGeneration;
+  int? get expectedSecurityGeneration => _$this._expectedSecurityGeneration;
+  set expectedSecurityGeneration(int? expectedSecurityGeneration) =>
+      _$this._expectedSecurityGeneration = expectedSecurityGeneration;
+
+  String? _expectedMembershipManifestDigest;
+  String? get expectedMembershipManifestDigest =>
+      _$this._expectedMembershipManifestDigest;
+  set expectedMembershipManifestDigest(
+    String? expectedMembershipManifestDigest,
+  ) => _$this._expectedMembershipManifestDigest =
+      expectedMembershipManifestDigest;
+
+  String? _nextMembershipManifest;
+  String? get nextMembershipManifest => _$this._nextMembershipManifest;
+  set nextMembershipManifest(String? nextMembershipManifest) =>
+      _$this._nextMembershipManifest = nextMembershipManifest;
+
+  String? _nextMembershipManifestDigest;
+  String? get nextMembershipManifestDigest =>
+      _$this._nextMembershipManifestDigest;
+  set nextMembershipManifestDigest(String? nextMembershipManifestDigest) =>
+      _$this._nextMembershipManifestDigest = nextMembershipManifestDigest;
+
   String? _accountKeyEnvelope;
   String? get accountKeyEnvelope => _$this._accountKeyEnvelope;
   set accountKeyEnvelope(String? accountKeyEnvelope) =>
@@ -124,6 +176,10 @@ class DevicePairingApproveRequestBuilder
       _protocolVersion = $v.protocolVersion;
       _pairingId = $v.pairingId;
       _keyEpoch = $v.keyEpoch;
+      _expectedSecurityGeneration = $v.expectedSecurityGeneration;
+      _expectedMembershipManifestDigest = $v.expectedMembershipManifestDigest;
+      _nextMembershipManifest = $v.nextMembershipManifest;
+      _nextMembershipManifestDigest = $v.nextMembershipManifestDigest;
       _accountKeyEnvelope = $v.accountKeyEnvelope;
       _deviceProof = $v.deviceProof;
       _pairingAuthenticator = $v.pairingAuthenticator;
@@ -163,6 +219,27 @@ class DevicePairingApproveRequestBuilder
             keyEpoch,
             r'DevicePairingApproveRequest',
             'keyEpoch',
+          ),
+          expectedSecurityGeneration: BuiltValueNullFieldError.checkNotNull(
+            expectedSecurityGeneration,
+            r'DevicePairingApproveRequest',
+            'expectedSecurityGeneration',
+          ),
+          expectedMembershipManifestDigest:
+              BuiltValueNullFieldError.checkNotNull(
+                expectedMembershipManifestDigest,
+                r'DevicePairingApproveRequest',
+                'expectedMembershipManifestDigest',
+              ),
+          nextMembershipManifest: BuiltValueNullFieldError.checkNotNull(
+            nextMembershipManifest,
+            r'DevicePairingApproveRequest',
+            'nextMembershipManifest',
+          ),
+          nextMembershipManifestDigest: BuiltValueNullFieldError.checkNotNull(
+            nextMembershipManifestDigest,
+            r'DevicePairingApproveRequest',
+            'nextMembershipManifestDigest',
           ),
           accountKeyEnvelope: BuiltValueNullFieldError.checkNotNull(
             accountKeyEnvelope,

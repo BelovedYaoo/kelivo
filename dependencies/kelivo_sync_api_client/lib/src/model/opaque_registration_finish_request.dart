@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/genesis_security_state.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -15,6 +16,7 @@ part 'opaque_registration_finish_request.g.dart';
 /// * [attemptId]
 /// * [registrationUpload]
 /// * [accountKeyEnvelope]
+/// * [securityState]
 /// * [deviceProof]
 @BuiltValue()
 abstract class OpaqueRegistrationFinishRequest
@@ -34,6 +36,9 @@ abstract class OpaqueRegistrationFinishRequest
 
   @BuiltValueField(wireName: r'accountKeyEnvelope')
   String get accountKeyEnvelope;
+
+  @BuiltValueField(wireName: r'securityState')
+  GenesisSecurityState get securityState;
 
   @BuiltValueField(wireName: r'deviceProof')
   String get deviceProof;
@@ -87,6 +92,11 @@ class _$OpaqueRegistrationFinishRequestSerializer
     yield serializers.serialize(
       object.accountKeyEnvelope,
       specifiedType: const FullType(String),
+    );
+    yield r'securityState';
+    yield serializers.serialize(
+      object.securityState,
+      specifiedType: const FullType(GenesisSecurityState),
     );
     yield r'deviceProof';
     yield serializers.serialize(
@@ -152,6 +162,15 @@ class _$OpaqueRegistrationFinishRequestSerializer
                   )
                   as String;
           result.accountKeyEnvelope = valueDes;
+          break;
+        case r'securityState':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(GenesisSecurityState),
+                  )
+                  as GenesisSecurityState;
+          result.securityState.replace(valueDes);
           break;
         case r'deviceProof':
           final valueDes =

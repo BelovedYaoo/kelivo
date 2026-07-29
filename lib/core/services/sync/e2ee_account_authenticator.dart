@@ -11,9 +11,19 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_pairing_qr_codec.dart';
 import 'cloud_sync_types.dart';
+import 'e2ee_account_trust_manifest.dart';
 import 'e2ee_device_state_access.dart';
 
 part 'e2ee_device_pairing.dart';
+
+bool _sameSecurityBytes(Uint8List left, Uint8List right) {
+  if (left.length != right.length) return false;
+  var difference = 0;
+  for (var index = 0; index < left.length; index++) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference == 0;
+}
 
 sealed class E2eeAccountLoginResult {
   const E2eeAccountLoginResult();
@@ -47,6 +57,61 @@ abstract interface class E2eeDevicePairingSession {
   Future<CloudSyncAuthenticatedSession> wait();
 
   Future<void> cancel();
+}
+
+abstract interface class E2eeFirstDeviceSecurityBootstrapPreparer {
+  Future<E2eePreparedFirstDeviceSecurityBootstrap> prepare({
+    required KelivoAccountRootKeyHandle accountRootKey,
+    required String userId,
+    required String operationId,
+    required E2eeMembershipDeviceInput localMember,
+  });
+}
+
+final class E2eePreparedFirstDeviceSecurityBootstrap {
+  factory E2eePreparedFirstDeviceSecurityBootstrap({
+    required CloudSyncGenesisSecurityState securityState,
+    required E2eeVerifiedMembership membership,
+  }) {
+    final capsuleDigest = Uint8List.fromList(
+      sha256.convert(securityState.recoveryCapsule).bytes,
+    );
+    if (membership.securityGeneration != 1 ||
+        membership.keyEpoch != 1 ||
+        membership.operationKind != E2eeMembershipOperationKind.initialize ||
+        membership.operationId != securityState.operationId ||
+        !_sameSecurityBytes(
+          membership.manifest,
+          securityState.membershipManifest,
+        ) ||
+        !_sameSecurityBytes(
+          membership.digest,
+          securityState.membershipManifestDigest.bytes,
+        ) ||
+        membership.recoveryPublicKeyVersion !=
+            securityState.recoveryPublicKeyVersion ||
+        !_sameSecurityBytes(
+          membership.recoveryPublicKey,
+          securityState.recoveryPublicKey,
+        ) ||
+        membership.recoveryCapsuleVersion !=
+            securityState.recoveryCapsuleVersion ||
+        !_sameSecurityBytes(membership.recoveryCapsuleDigest, capsuleDigest)) {
+      throw const FormatException('首设备安全 bootstrap 与签名 genesis 不一致');
+    }
+    return E2eePreparedFirstDeviceSecurityBootstrap._(
+      securityState,
+      membership,
+    );
+  }
+
+  const E2eePreparedFirstDeviceSecurityBootstrap._(
+    this.securityState,
+    this.membership,
+  );
+
+  final CloudSyncGenesisSecurityState securityState;
+  final E2eeVerifiedMembership membership;
 }
 
 abstract interface class E2eeAccountAuthentication {
@@ -96,12 +161,14 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     required CloudSyncAccountClient accountClient,
     required DeviceStateBlobStore deviceStateStore,
     required KelivoSecureCore secureCore,
+    E2eeFirstDeviceSecurityBootstrapPreparer? firstDeviceBootstrapPreparer,
   }) {
     return E2eeAccountAuthenticator._(
       normalizeCloudSyncBaseUrl(baseUrl),
       accountClient,
       deviceStateStore,
       secureCore,
+      firstDeviceBootstrapPreparer,
     );
   }
 
@@ -110,6 +177,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     this._accountClient,
     this._deviceStateStore,
     this._secureCore,
+    this._firstDeviceBootstrapPreparer,
   );
 
   static const _registrationRecordDomain =
@@ -117,8 +185,8 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   static const _registrationAssociatedDataDomain =
       'kelivo.e2ee.registration-transaction.aad.v1';
   static const _registrationRecordEpoch = 1;
-  static const _registrationFrameVersion = 1;
-  static const _registrationFrameHeaderLength = 96;
+  static const _registrationFrameVersion = 2;
+  static const _registrationFrameHeaderLength = 120;
   static const _registrationUploadOffset = _registrationFrameHeaderLength;
   static const _registrationEnvelopeOffset =
       _registrationUploadOffset + cloudSyncOpaqueRegistrationUploadBytes;
@@ -126,10 +194,19 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       _registrationEnvelopeOffset + cloudSyncAccountKeyEnvelopeBytes;
   static const _registrationStateOffset =
       _registrationProofOffset + cloudSyncDeviceProofBytes;
-  static const _registrationFrameLength =
+  static const _registrationManifestOffset =
       _registrationStateOffset + DeviceStateBlobStore.blobLength;
+  static const _registrationManifestDigestOffset =
+      _registrationManifestOffset + cloudSyncMembershipManifestMinimumBytes;
+  static const _registrationRecoveryPublicKeyOffset =
+      _registrationManifestDigestOffset +
+      cloudSyncMembershipManifestDigestBytes;
+  static const _registrationRecoveryCapsuleOffset =
+      _registrationRecoveryPublicKeyOffset + cloudSyncRecoveryPublicKeyBytes;
+  static const _registrationFrameLength =
+      _registrationRecoveryCapsuleOffset + cloudSyncRecoveryCapsuleBytes;
   static final Uint8List _registrationFrameMagic = Uint8List.fromList(
-    ascii.encode('KELVRT01'),
+    ascii.encode('KELVRT02'),
   );
   static final RegExp _normalizedLoginNamePattern = RegExp(
     r'^[a-z0-9][a-z0-9._-]*$',
@@ -142,6 +219,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   final CloudSyncAccountClient _accountClient;
   final DeviceStateBlobStore _deviceStateStore;
   final KelivoSecureCore _secureCore;
+  final E2eeFirstDeviceSecurityBootstrapPreparer? _firstDeviceBootstrapPreparer;
   late final E2eeDeviceStateAccess _deviceStateAccess = E2eeDeviceStateAccess(
     baseUrl: _baseUrl,
     deviceStateStore: _deviceStateStore,
@@ -167,6 +245,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     Uint8List? accountKeyEnvelope;
     Uint8List? deviceProof;
     Uint8List? fullStateBlob;
+    E2eePreparedFirstDeviceSecurityBootstrap? preparedSecurity;
     _OpenedPendingRegistration? pending;
     _PendingRegistrationTransaction? transaction;
     Object? primaryError;
@@ -185,14 +264,24 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
           normalizedLoginName: normalizedLoginName,
           transaction: transaction,
         );
+        if (context.ark == null) {
+          await _closeHandles(context: context);
+          context = null;
+          context = await _openDeviceContext(normalizedLoginName);
+        }
+        final accountRootKey = context.ark;
+        if (accountRootKey == null) {
+          throw StateError('注册恢复事务缺少账户根密钥');
+        }
         final session = await _finishPendingRegistration(transaction);
-        _validateRegistrationSession(
+        final verifiedSession = await _validateRegistrationSession(
           context,
           normalizedLoginName: normalizedLoginName,
           transaction: transaction,
           session: session,
+          accountRootKey: accountRootKey,
         );
-        return _bindVerifiedDeviceKeyVersion(context, session);
+        return _bindVerifiedDeviceKeyVersion(context, verifiedSession);
       }
       if (context.account != null || context.ark != null) {
         throw StateError('已绑定账户的设备状态不能再次注册');
@@ -222,6 +311,30 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       ark = await _secureCore.generateAccountRootKey(
         userId: userId,
         keyEpoch: 1,
+      );
+      final bootstrapPreparer = _firstDeviceBootstrapPreparer;
+      if (bootstrapPreparer == null) {
+        throw UnsupportedError('首设备恢复介质与签名 genesis 尚未接入');
+      }
+      final operationId = const Uuid().v4();
+      final localMember = E2eeMembershipDeviceInput(
+        deviceId: context.deviceIdText,
+        keyVersion: context.keyVersion,
+        authGeneration: 0,
+        signingPublicKey: device.signingPublicKey,
+        keyAgreementPublicKey: device.keyAgreementPublicKey,
+      );
+      preparedSecurity = await bootstrapPreparer.prepare(
+        accountRootKey: ark,
+        userId: start.userId,
+        operationId: operationId,
+        localMember: localMember,
+      );
+      _validatePreparedRegistrationBootstrap(
+        preparedSecurity,
+        userId: start.userId,
+        operationId: operationId,
+        localMember: localMember,
       );
       final registrationBundle = await _secureCore
           .createDeviceRegistrationFinish(
@@ -261,6 +374,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         accountKeyEnvelope: accountKeyEnvelope,
         deviceProof: deviceProof,
         fullStateBlob: fullStateBlob,
+        securityState: preparedSecurity.securityState,
       );
       // 本地事务是注册提交点；服务端调用只能发生在唯一 ARK 与原样载荷均可恢复之后。
       await _persistPendingRegistration(
@@ -275,13 +389,14 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       );
 
       final session = await _finishPendingRegistration(transaction);
-      _validateRegistrationSession(
+      final verifiedSession = await _validateRegistrationSession(
         context,
         normalizedLoginName: normalizedLoginName,
         transaction: transaction,
         session: session,
+        accountRootKey: ark,
       );
-      return _bindVerifiedDeviceKeyVersion(context, session);
+      return _bindVerifiedDeviceKeyVersion(context, verifiedSession);
     } catch (error, stackTrace) {
       final reportedError =
           transaction != null &&
@@ -349,11 +464,21 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         normalizedLoginName: normalizedLoginName,
         transaction: pending.transaction,
       );
-      _validateRegistrationSession(
+      if (context.ark == null) {
+        await _closeHandles(context: context);
+        context = null;
+        context = await _openDeviceContext(normalizedLoginName);
+      }
+      final accountRootKey = context.ark;
+      if (accountRootKey == null) {
+        throw StateError('注册确认缺少账户根密钥');
+      }
+      await _validateRegistrationSession(
         context,
         normalizedLoginName: normalizedLoginName,
         transaction: pending.transaction,
         session: session,
+        accountRootKey: accountRootKey,
       );
       await _deviceStateStore.deletePendingRegistrationEnvelope(
         normalizedBaseUrl: _baseUrl,
@@ -421,13 +546,21 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
             final recoveredSession = await _accountClient.consumeDevicePairing(
               token: pendingPairing.transaction.onboardingToken,
               pairingId: pendingPairing.transaction.pairingId,
+              sessionToken: pendingPairing.transaction.sessionToken,
             );
-            E2eeDevicePairingAuthentication(this)._validatePairingSession(
-              normalizedLoginName: normalizedLoginName,
-              transaction: pendingPairing.transaction,
-              session: recoveredSession,
-            );
-            return _authenticatedLoginResult(context, recoveredSession);
+            final accountRootKey = context.ark;
+            if (accountRootKey == null) {
+              throw StateError('配对恢复缺少账户根密钥');
+            }
+            final verifiedSession = await E2eeDevicePairingAuthentication(this)
+                ._validatePairingSession(
+                  context: context,
+                  accountRootKey: accountRootKey,
+                  normalizedLoginName: normalizedLoginName,
+                  transaction: pendingPairing.transaction,
+                  session: recoveredSession,
+                );
+            return _authenticatedLoginResult(context, verifiedSession);
           } on CloudSyncException catch (error) {
             if (!E2eeDevicePairingAuthentication(
               this,
@@ -575,6 +708,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       attemptId: transaction.attemptId,
       registrationUpload: transaction.registrationUpload,
       accountKeyEnvelope: transaction.accountKeyEnvelope,
+      securityState: transaction.securityState,
       deviceProof: transaction.deviceProof,
     );
   }
@@ -753,12 +887,38 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     }
   }
 
-  void _validateRegistrationSession(
+  void _validatePreparedRegistrationBootstrap(
+    E2eePreparedFirstDeviceSecurityBootstrap prepared, {
+    required String userId,
+    required String operationId,
+    required E2eeMembershipDeviceInput localMember,
+  }) {
+    final membership = prepared.membership;
+    if (membership.userId != userId ||
+        membership.operationId != operationId ||
+        membership.members.length != 1) {
+      throw StateError('首设备签名 genesis 与注册上下文不匹配');
+    }
+    final member = membership.members.single;
+    if (member.deviceId != localMember.deviceId ||
+        member.keyVersion != localMember.keyVersion ||
+        member.authGeneration != localMember.authGeneration ||
+        !_sameBytes(member.signingPublicKey, localMember.signingPublicKey) ||
+        !_sameBytes(
+          member.keyAgreementPublicKey,
+          localMember.keyAgreementPublicKey,
+        )) {
+      throw StateError('首设备签名 genesis 未绑定当前设备身份');
+    }
+  }
+
+  Future<CloudSyncAuthenticatedSession> _validateRegistrationSession(
     _DeviceContext context, {
     required String normalizedLoginName,
     required _PendingRegistrationTransaction transaction,
     required CloudSyncAuthenticatedSession session,
-  }) {
+    required KelivoAccountRootKeyHandle accountRootKey,
+  }) async {
     if (context.deviceIdText != transaction.deviceId ||
         context.keyVersion != transaction.keyVersion ||
         session.user.id != transaction.userId ||
@@ -774,6 +934,84 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
             context.ark == null)) {
       throw StateError('注册结果与已绑定设备状态不匹配');
     }
+
+    final state = session.securityState;
+    if (state == null || session.pairingReceipt != null) {
+      throw StateError('注册结果缺少完整账户安全状态');
+    }
+    final genesis = transaction.securityState;
+    if (session.authGeneration != 0 ||
+        state.generation != 1 ||
+        state.keyEpoch != 1 ||
+        state.dataRekeyPhase != CloudSyncDataRekeyPhase.ready ||
+        state.lastOperationId != genesis.operationId ||
+        state.recoveryPublicKeyVersion != genesis.recoveryPublicKeyVersion ||
+        state.recoveryCapsuleVersion != genesis.recoveryCapsuleVersion ||
+        !_sameBytes(state.membershipManifest, genesis.membershipManifest) ||
+        !_sameBytes(
+          state.membershipManifestDigest.bytes,
+          genesis.membershipManifestDigest.bytes,
+        ) ||
+        !_sameBytes(state.recoveryPublicKey, genesis.recoveryPublicKey) ||
+        !_sameBytes(state.recoveryCapsule, genesis.recoveryCapsule) ||
+        state.envelopes.length != 1) {
+      throw StateError('注册结果安全状态与本地签名 genesis 不匹配');
+    }
+    final envelope = state.envelopes.single;
+    if (envelope.targetDeviceId != transaction.deviceId ||
+        envelope.issuerDeviceId != transaction.deviceId ||
+        envelope.keyEpoch != transaction.keyEpoch ||
+        !_sameBytes(
+          envelope.accountKeyEnvelope,
+          transaction.accountKeyEnvelope,
+        )) {
+      throw StateError('注册结果账户密钥信封与本地事务不匹配');
+    }
+
+    final publicKeys = await _secureCore.readDevicePublicKeys(context.identity);
+    final localMemberInput = E2eeMembershipDeviceInput(
+      deviceId: transaction.deviceId,
+      keyVersion: transaction.keyVersion,
+      authGeneration: session.authGeneration,
+      signingPublicKey: publicKeys.signingPublicKey,
+      keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+    );
+    final projection = E2eeMembershipServerProjection(
+      userId: session.user.id,
+      securityGeneration: state.generation,
+      keyEpoch: state.keyEpoch,
+      membershipManifestVersion: e2eeAccountTrustManifestFormatVersion,
+      membershipManifest: state.membershipManifest,
+      membershipManifestDigest: state.membershipManifestDigest.bytes,
+      recoveryPublicKeyVersion: state.recoveryPublicKeyVersion,
+      recoveryPublicKey: state.recoveryPublicKey,
+      recoveryCapsuleVersion: state.recoveryCapsuleVersion,
+      recoveryCapsule: state.recoveryCapsule,
+      lastOperationId: state.lastOperationId,
+      dataRekeyPhase: E2eeDataRekeyPhase.ready,
+    );
+    final verified = await const E2eeAccountTrustManifestModule().verify(
+      ark: accountRootKey,
+      expectation: E2eeInitializeMembershipExpectation(
+        projection: projection,
+        operationId: genesis.operationId,
+        member: localMemberInput,
+      ),
+    );
+    final verifiedMember = verified.members.single;
+    final localMember = CloudSyncMembershipDeviceMaterial(
+      deviceId: verifiedMember.deviceId,
+      keyVersion: verifiedMember.keyVersion,
+      authGeneration: verifiedMember.authGeneration,
+      signingPublicKey: verifiedMember.signingPublicKey,
+      keyAgreementPublicKey: verifiedMember.keyAgreementPublicKey,
+    );
+    return session.withSecurityBootstrap(
+      CloudSyncSecurityBootstrap.firstRegistration(
+        state: state,
+        localMember: localMember,
+      ),
+    );
   }
 
   Future<void> _discardPendingRegistrationAfterAuthenticatedLogin(
@@ -948,6 +1186,10 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     if (transaction.keyVersion <= 0 ||
         transaction.keyVersion > 0xffffffff ||
         transaction.keyEpoch != 1 ||
+        transaction.securityState.recoveryPublicKeyVersion <= 0 ||
+        transaction.securityState.recoveryPublicKeyVersion > 0xffffffff ||
+        transaction.securityState.recoveryCapsuleVersion <= 0 ||
+        transaction.securityState.recoveryCapsuleVersion > 0xffffffff ||
         transaction.attemptExpiresAt.millisecondsSinceEpoch <= 0) {
       throw const FormatException('注册事务元数据无效');
     }
@@ -971,6 +1213,26 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       DeviceStateBlobStore.blobLength,
       'fullStateBlob',
     );
+    _requireFixedBytes(
+      transaction.securityState.membershipManifest,
+      cloudSyncMembershipManifestMinimumBytes,
+      'membershipManifest',
+    );
+    _requireFixedBytes(
+      transaction.securityState.membershipManifestDigest.bytes,
+      cloudSyncMembershipManifestDigestBytes,
+      'membershipManifestDigest',
+    );
+    _requireFixedBytes(
+      transaction.securityState.recoveryPublicKey,
+      cloudSyncRecoveryPublicKeyBytes,
+      'recoveryPublicKey',
+    );
+    _requireFixedBytes(
+      transaction.securityState.recoveryCapsule,
+      cloudSyncRecoveryCapsuleBytes,
+      'recoveryCapsule',
+    );
 
     final frame = Uint8List(_registrationFrameLength);
     frame.setRange(0, _registrationFrameMagic.length, _registrationFrameMagic);
@@ -979,16 +1241,27 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     fields.setUint16(10, 0, Endian.big);
     fields.setUint32(12, transaction.keyEpoch, Endian.big);
     fields.setUint32(16, transaction.keyVersion, Endian.big);
-    fields.setUint32(20, 0, Endian.big);
-    fields.setUint64(
+    fields.setUint32(
+      20,
+      transaction.securityState.recoveryPublicKeyVersion,
+      Endian.big,
+    );
+    fields.setUint32(
       24,
+      transaction.securityState.recoveryCapsuleVersion,
+      Endian.big,
+    );
+    fields.setUint32(28, 0, Endian.big);
+    fields.setUint64(
+      32,
       transaction.attemptExpiresAt.millisecondsSinceEpoch,
       Endian.big,
     );
-    frame.setRange(32, 48, _uuidBytes(transaction.attemptId));
-    frame.setRange(48, 64, _uuidBytes(transaction.userId));
-    frame.setRange(64, 80, _uuidBytes(transaction.accountBinding));
-    frame.setRange(80, 96, _uuidBytes(transaction.deviceId));
+    frame.setRange(40, 56, _uuidBytes(transaction.attemptId));
+    frame.setRange(56, 72, _uuidBytes(transaction.userId));
+    frame.setRange(72, 88, _uuidBytes(transaction.accountBinding));
+    frame.setRange(88, 104, _uuidBytes(transaction.deviceId));
+    frame.setRange(104, 120, _uuidBytes(transaction.securityState.operationId));
     frame.setRange(
       _registrationUploadOffset,
       _registrationEnvelopeOffset,
@@ -1006,8 +1279,28 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     );
     frame.setRange(
       _registrationStateOffset,
-      _registrationFrameLength,
+      _registrationManifestOffset,
       transaction.fullStateBlob,
+    );
+    frame.setRange(
+      _registrationManifestOffset,
+      _registrationManifestDigestOffset,
+      transaction.securityState.membershipManifest,
+    );
+    frame.setRange(
+      _registrationManifestDigestOffset,
+      _registrationRecoveryPublicKeyOffset,
+      transaction.securityState.membershipManifestDigest.bytes,
+    );
+    frame.setRange(
+      _registrationRecoveryPublicKeyOffset,
+      _registrationRecoveryCapsuleOffset,
+      transaction.securityState.recoveryPublicKey,
+    );
+    frame.setRange(
+      _registrationRecoveryCapsuleOffset,
+      _registrationFrameLength,
+      transaction.securityState.recoveryCapsule,
     );
     return frame;
   }
@@ -1022,21 +1315,25 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     final fields = ByteData.sublistView(frame);
     final keyEpoch = fields.getUint32(12, Endian.big);
     final keyVersion = fields.getUint32(16, Endian.big);
-    final expiresAtMs = fields.getUint64(24, Endian.big);
+    final recoveryPublicKeyVersion = fields.getUint32(20, Endian.big);
+    final recoveryCapsuleVersion = fields.getUint32(24, Endian.big);
+    final expiresAtMs = fields.getUint64(32, Endian.big);
     if (fields.getUint16(8, Endian.big) != _registrationFrameVersion ||
         fields.getUint16(10, Endian.big) != 0 ||
         keyEpoch != 1 ||
         keyVersion <= 0 ||
-        fields.getUint32(20, Endian.big) != 0 ||
+        recoveryPublicKeyVersion <= 0 ||
+        recoveryCapsuleVersion <= 0 ||
+        fields.getUint32(28, Endian.big) != 0 ||
         expiresAtMs <= 0) {
       throw const FormatException('注册事务帧元数据无效');
     }
     final attemptExpiresAt = _utcDateTimeFromMilliseconds(expiresAtMs);
     return _PendingRegistrationTransaction(
-      attemptId: _canonicalUuidFromBytes(frame, 32),
-      userId: _canonicalUuidFromBytes(frame, 48),
-      accountBinding: _canonicalUuidFromBytes(frame, 64),
-      deviceId: _canonicalUuidFromBytes(frame, 80),
+      attemptId: _canonicalUuidFromBytes(frame, 40),
+      userId: _canonicalUuidFromBytes(frame, 56),
+      accountBinding: _canonicalUuidFromBytes(frame, 72),
+      deviceId: _canonicalUuidFromBytes(frame, 88),
       keyVersion: keyVersion,
       keyEpoch: keyEpoch,
       attemptExpiresAt: attemptExpiresAt,
@@ -1050,7 +1347,35 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         frame.sublist(_registrationProofOffset, _registrationStateOffset),
       ),
       fullStateBlob: Uint8List.fromList(
-        frame.sublist(_registrationStateOffset),
+        frame.sublist(_registrationStateOffset, _registrationManifestOffset),
+      ),
+      securityState: CloudSyncGenesisSecurityState(
+        operationId: _canonicalUuidFromBytes(frame, 104),
+        membershipManifest: Uint8List.fromList(
+          frame.sublist(
+            _registrationManifestOffset,
+            _registrationManifestDigestOffset,
+          ),
+        ),
+        membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+          Uint8List.fromList(
+            frame.sublist(
+              _registrationManifestDigestOffset,
+              _registrationRecoveryPublicKeyOffset,
+            ),
+          ),
+        ),
+        recoveryPublicKeyVersion: recoveryPublicKeyVersion,
+        recoveryPublicKey: Uint8List.fromList(
+          frame.sublist(
+            _registrationRecoveryPublicKeyOffset,
+            _registrationRecoveryCapsuleOffset,
+          ),
+        ),
+        recoveryCapsuleVersion: recoveryCapsuleVersion,
+        recoveryCapsule: Uint8List.fromList(
+          frame.sublist(_registrationRecoveryCapsuleOffset),
+        ),
       ),
     );
   }
@@ -1325,6 +1650,7 @@ final class _PendingRegistrationTransaction {
     required Uint8List accountKeyEnvelope,
     required Uint8List deviceProof,
     required Uint8List fullStateBlob,
+    required this.securityState,
   }) : attemptExpiresAt = attemptExpiresAt.toUtc(),
        registrationUpload = Uint8List.fromList(registrationUpload),
        accountKeyEnvelope = Uint8List.fromList(accountKeyEnvelope),
@@ -1342,6 +1668,7 @@ final class _PendingRegistrationTransaction {
   final Uint8List accountKeyEnvelope;
   final Uint8List deviceProof;
   final Uint8List fullStateBlob;
+  final CloudSyncGenesisSecurityState securityState;
   bool _disposed = false;
 
   void dispose() {

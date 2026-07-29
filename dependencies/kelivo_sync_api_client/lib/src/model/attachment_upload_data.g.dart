@@ -69,7 +69,11 @@ class _$AttachmentUploadData extends AttachmentUploadData {
   @override
   final String uploadId;
   @override
-  final int keyEpoch;
+  final int chunkKeyEpoch;
+  @override
+  final int manifestKeyEpoch;
+  @override
+  final int manifestRevision;
   @override
   final int chunkCount;
   @override
@@ -86,7 +90,9 @@ class _$AttachmentUploadData extends AttachmentUploadData {
   _$AttachmentUploadData._({
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
     required this.chunkCount,
     required this.totalCiphertextBytes,
     required this.status,
@@ -107,7 +113,9 @@ class _$AttachmentUploadData extends AttachmentUploadData {
     return other is AttachmentUploadData &&
         attachmentId == other.attachmentId &&
         uploadId == other.uploadId &&
-        keyEpoch == other.keyEpoch &&
+        chunkKeyEpoch == other.chunkKeyEpoch &&
+        manifestKeyEpoch == other.manifestKeyEpoch &&
+        manifestRevision == other.manifestRevision &&
         chunkCount == other.chunkCount &&
         totalCiphertextBytes == other.totalCiphertextBytes &&
         status == other.status &&
@@ -119,7 +127,9 @@ class _$AttachmentUploadData extends AttachmentUploadData {
     var _$hash = 0;
     _$hash = $jc(_$hash, attachmentId.hashCode);
     _$hash = $jc(_$hash, uploadId.hashCode);
-    _$hash = $jc(_$hash, keyEpoch.hashCode);
+    _$hash = $jc(_$hash, chunkKeyEpoch.hashCode);
+    _$hash = $jc(_$hash, manifestKeyEpoch.hashCode);
+    _$hash = $jc(_$hash, manifestRevision.hashCode);
     _$hash = $jc(_$hash, chunkCount.hashCode);
     _$hash = $jc(_$hash, totalCiphertextBytes.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
@@ -133,7 +143,9 @@ class _$AttachmentUploadData extends AttachmentUploadData {
     return (newBuiltValueToStringHelper(r'AttachmentUploadData')
           ..add('attachmentId', attachmentId)
           ..add('uploadId', uploadId)
-          ..add('keyEpoch', keyEpoch)
+          ..add('chunkKeyEpoch', chunkKeyEpoch)
+          ..add('manifestKeyEpoch', manifestKeyEpoch)
+          ..add('manifestRevision', manifestRevision)
           ..add('chunkCount', chunkCount)
           ..add('totalCiphertextBytes', totalCiphertextBytes)
           ..add('status', status)
@@ -154,9 +166,20 @@ class AttachmentUploadDataBuilder
   String? get uploadId => _$this._uploadId;
   set uploadId(String? uploadId) => _$this._uploadId = uploadId;
 
-  int? _keyEpoch;
-  int? get keyEpoch => _$this._keyEpoch;
-  set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
+  int? _chunkKeyEpoch;
+  int? get chunkKeyEpoch => _$this._chunkKeyEpoch;
+  set chunkKeyEpoch(int? chunkKeyEpoch) =>
+      _$this._chunkKeyEpoch = chunkKeyEpoch;
+
+  int? _manifestKeyEpoch;
+  int? get manifestKeyEpoch => _$this._manifestKeyEpoch;
+  set manifestKeyEpoch(int? manifestKeyEpoch) =>
+      _$this._manifestKeyEpoch = manifestKeyEpoch;
+
+  int? _manifestRevision;
+  int? get manifestRevision => _$this._manifestRevision;
+  set manifestRevision(int? manifestRevision) =>
+      _$this._manifestRevision = manifestRevision;
 
   int? _chunkCount;
   int? get chunkCount => _$this._chunkCount;
@@ -184,7 +207,9 @@ class AttachmentUploadDataBuilder
     if ($v != null) {
       _attachmentId = $v.attachmentId;
       _uploadId = $v.uploadId;
-      _keyEpoch = $v.keyEpoch;
+      _chunkKeyEpoch = $v.chunkKeyEpoch;
+      _manifestKeyEpoch = $v.manifestKeyEpoch;
+      _manifestRevision = $v.manifestRevision;
       _chunkCount = $v.chunkCount;
       _totalCiphertextBytes = $v.totalCiphertextBytes;
       _status = $v.status;
@@ -221,10 +246,20 @@ class AttachmentUploadDataBuilder
             r'AttachmentUploadData',
             'uploadId',
           ),
-          keyEpoch: BuiltValueNullFieldError.checkNotNull(
-            keyEpoch,
+          chunkKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            chunkKeyEpoch,
             r'AttachmentUploadData',
-            'keyEpoch',
+            'chunkKeyEpoch',
+          ),
+          manifestKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            manifestKeyEpoch,
+            r'AttachmentUploadData',
+            'manifestKeyEpoch',
+          ),
+          manifestRevision: BuiltValueNullFieldError.checkNotNull(
+            manifestRevision,
+            r'AttachmentUploadData',
+            'manifestRevision',
           ),
           chunkCount: BuiltValueNullFieldError.checkNotNull(
             chunkCount,

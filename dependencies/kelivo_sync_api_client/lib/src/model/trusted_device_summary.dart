@@ -16,6 +16,7 @@ part 'trusted_device_summary.g.dart';
 /// * [name]
 /// * [platform]
 /// * [clientVersion]
+/// * [authGeneration]
 /// * [status]
 /// * [createdAt]
 /// * [lastSeenAt]
@@ -36,6 +37,9 @@ abstract class TrustedDeviceSummary
 
   @BuiltValueField(wireName: r'clientVersion')
   String get clientVersion;
+
+  @BuiltValueField(wireName: r'authGeneration')
+  int get authGeneration;
 
   @BuiltValueField(wireName: r'status')
   TrustedDeviceSummaryStatusEnum get status;
@@ -101,6 +105,11 @@ class _$TrustedDeviceSummarySerializer
     yield serializers.serialize(
       object.clientVersion,
       specifiedType: const FullType(String),
+    );
+    yield r'authGeneration';
+    yield serializers.serialize(
+      object.authGeneration,
+      specifiedType: const FullType(int),
     );
     yield r'status';
     yield serializers.serialize(
@@ -195,6 +204,12 @@ class _$TrustedDeviceSummarySerializer
                   )
                   as String;
           result.clientVersion = valueDes;
+          break;
+        case r'authGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.authGeneration = valueDes;
           break;
         case r'status':
           final valueDes =

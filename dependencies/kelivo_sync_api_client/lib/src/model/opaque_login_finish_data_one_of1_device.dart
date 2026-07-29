@@ -16,6 +16,7 @@ part 'opaque_login_finish_data_one_of1_device.g.dart';
 /// * [name]
 /// * [platform]
 /// * [clientVersion]
+/// * [authGeneration]
 /// * [status]
 /// * [createdAt]
 @BuiltValue()
@@ -37,6 +38,9 @@ abstract class OpaqueLoginFinishDataOneOf1Device
 
   @BuiltValueField(wireName: r'clientVersion')
   String get clientVersion;
+
+  @BuiltValueField(wireName: r'authGeneration')
+  int get authGeneration;
 
   @BuiltValueField(wireName: r'status')
   OpaqueLoginFinishDataOneOf1DeviceStatusEnum get status;
@@ -96,6 +100,11 @@ class _$OpaqueLoginFinishDataOneOf1DeviceSerializer
     yield serializers.serialize(
       object.clientVersion,
       specifiedType: const FullType(String),
+    );
+    yield r'authGeneration';
+    yield serializers.serialize(
+      object.authGeneration,
+      specifiedType: const FullType(int),
     );
     yield r'status';
     yield serializers.serialize(
@@ -173,6 +182,12 @@ class _$OpaqueLoginFinishDataOneOf1DeviceSerializer
                   )
                   as String;
           result.clientVersion = valueDes;
+          break;
+        case r'authGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.authGeneration = valueDes;
           break;
         case r'status':
           final valueDes =

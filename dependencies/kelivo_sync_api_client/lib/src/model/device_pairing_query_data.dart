@@ -24,6 +24,8 @@ part 'device_pairing_query_data.g.dart';
 /// * [targetDevice]
 /// * [status]
 /// * [issuerDeviceId]
+/// * [issuerKeyVersion]
+/// * [issuerAuthGeneration]
 /// * [issuerSigningPublicKey]
 /// * [issuerKeyAgreementPublicKey]
 /// * [keyEpoch]

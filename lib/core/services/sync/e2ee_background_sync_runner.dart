@@ -1,11 +1,23 @@
 import 'dart:developer' as developer;
+import 'dart:io';
 
 import 'package:flutter/foundation.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
+import '../../database/app_database.dart';
+import '../../database/chat_database_gateway.dart';
+import '../../database/database_installation_gate.dart';
+import '../../database/sqlcipher_database_key.dart';
 import '../backup/restore_business_lease.dart';
+import '../backup/restore_receipt.dart';
+import '../backup/restore_startup_gate.dart';
 import '../workspace/account_workspace_runtime.dart';
+import '../workspace/device_state_blob_store.dart';
+import 'cloud_sync_client.dart';
 import 'cloud_sync_terminal_session_retirement.dart';
 import 'cloud_sync_types.dart';
+import 'e2ee_account_authenticator.dart';
+import 'e2ee_chat_content_runtime.dart';
 import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_scheduler.dart';
 
@@ -158,6 +170,12 @@ abstract interface class E2eeBackgroundSyncContent {
 
 /// 平台后台回调只需调用一次 [run]；工作区、密钥、数据库与网络所有权均在内部闭环。
 final class E2eeBackgroundSyncRunner {
+  factory E2eeBackgroundSyncRunner({Directory? installationRoot}) {
+    return E2eeBackgroundSyncRunner._(
+      _ProductionBackgroundSyncHost(installationRoot),
+    );
+  }
+
   @visibleForTesting
   const E2eeBackgroundSyncRunner.forTesting(E2eeBackgroundSyncHost host)
     : this._(host);
@@ -430,40 +448,10 @@ final class _InterruptedContentAcquisitionCleanupBarrier {
   }
 }
 
-abstract interface class _E2eeBackgroundVerifiedContentFactory {
-  Future<E2eeBackgroundContentAcquisition> tryAcquireVerifiedContent({
-    required AccountWorkspaceRuntime workspaceRuntime,
-    required E2eeSyncExecutionBudget executionBudget,
-  });
-}
-
-_E2eeBackgroundVerifiedContentFactory? _createVerifiedContentFactory() {
-  // schema 21 必须在同一步骤内验证设备绑定并返回内容所有权，接线前禁止生产执行。
-  return null;
-}
-
-final class E2eeBackgroundProductionRunnerFactory {
-  E2eeBackgroundProductionRunnerFactory._(this._verifiedContentFactory);
-
-  final _E2eeBackgroundVerifiedContentFactory _verifiedContentFactory;
-
-  static E2eeBackgroundProductionRunnerFactory? tryCreate() {
-    final verifiedContentFactory = _createVerifiedContentFactory();
-    if (verifiedContentFactory == null) return null;
-    return E2eeBackgroundProductionRunnerFactory._(verifiedContentFactory);
-  }
-
-  E2eeBackgroundSyncRunner createRunner() {
-    return E2eeBackgroundSyncRunner._(
-      _ProductionBackgroundSyncHost(_verifiedContentFactory),
-    );
-  }
-}
-
 final class _ProductionBackgroundSyncHost implements E2eeBackgroundSyncHost {
-  const _ProductionBackgroundSyncHost(this._verifiedContentFactory);
+  const _ProductionBackgroundSyncHost(this._installationRoot);
 
-  final _E2eeBackgroundVerifiedContentFactory _verifiedContentFactory;
+  final Directory? _installationRoot;
 
   @override
   Future<E2eeBackgroundWorkspaceAcquisition> tryAcquireWorkspace(
@@ -471,9 +459,11 @@ final class _ProductionBackgroundSyncHost implements E2eeBackgroundSyncHost {
   ) async {
     executionBudget.checkCanContinue();
     try {
-      final runtime = await AccountWorkspaceRuntime.bootstrap();
+      final runtime = await AccountWorkspaceRuntime.bootstrap(
+        installationRoot: _installationRoot,
+      );
       return E2eeBackgroundWorkspaceAcquired(
-        _ProductionBackgroundSyncWorkspace(runtime, _verifiedContentFactory),
+        _ProductionBackgroundSyncWorkspace(runtime),
       );
     } on RestoreBusinessLeaseUnavailable {
       return const E2eeBackgroundWorkspaceBusy();
@@ -483,13 +473,9 @@ final class _ProductionBackgroundSyncHost implements E2eeBackgroundSyncHost {
 
 final class _ProductionBackgroundSyncWorkspace
     implements E2eeBackgroundSyncWorkspace {
-  _ProductionBackgroundSyncWorkspace(
-    this._workspaceRuntime,
-    this._verifiedContentFactory,
-  );
+  _ProductionBackgroundSyncWorkspace(this._workspaceRuntime);
 
   final AccountWorkspaceRuntime _workspaceRuntime;
-  final _E2eeBackgroundVerifiedContentFactory _verifiedContentFactory;
 
   @override
   CloudSyncAccountSession? get session => _workspaceRuntime.current.session;
@@ -497,11 +483,103 @@ final class _ProductionBackgroundSyncWorkspace
   @override
   Future<E2eeBackgroundContentAcquisition> tryAcquireContent(
     E2eeSyncExecutionBudget executionBudget,
-  ) {
-    return _verifiedContentFactory.tryAcquireVerifiedContent(
-      workspaceRuntime: _workspaceRuntime,
-      executionBudget: executionBudget,
-    );
+  ) async {
+    executionBudget.checkCanContinue();
+    final activeSession = session;
+    if (activeSession == null) {
+      throw StateError('e2ee_background_sync_session_missing');
+    }
+    final appDataDirectory = _workspaceRuntime.current.dataDirectory;
+    late final RestoreBusinessLease accountLease;
+    try {
+      accountLease = await RestoreBusinessLease.acquire(
+        appDataDirectory: appDataDirectory,
+      );
+    } on RestoreBusinessLeaseUnavailable {
+      return const E2eeBackgroundContentBusy();
+    }
+
+    CloudSyncClient? client;
+    E2eeChatContentRuntime? runtime;
+    try {
+      executionBudget.checkCanContinue();
+      final databaseCipher = SqlCipherDatabaseKey.forWorkspace(
+        _workspaceRuntime.current.workspaceKey,
+      );
+      executionBudget.checkCanContinue();
+      await _workspaceRuntime.discardPlaintextLocalState();
+      executionBudget.checkCanContinue();
+      final restoreOutcome =
+          await RestoreStartupGate.recoverAndRequireBusinessReady(
+            appDataDirectory: appDataDirectory,
+            cipher: databaseCipher,
+            businessLease: accountLease,
+          );
+      executionBudget.checkCanContinue();
+      await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: appDataDirectory,
+        cipher: databaseCipher,
+        allowDatabaseIdentityChange:
+            restoreOutcome?.selectedComponents.contains(
+              RestoreComponent.database,
+            ) ??
+            false,
+      );
+      executionBudget.checkCanContinue();
+
+      final databaseGateway = ChatDatabaseGateway(cipher: databaseCipher);
+      final activeClient = CloudSyncClient(token: activeSession.token);
+      client = activeClient;
+      final activeRuntime = E2eeChatContentRuntime.takeHeadlessOwnership(
+        session: activeSession,
+        deviceStateStore: DeviceStateBlobStore(
+          installationRoot: _workspaceRuntime.installationRoot,
+        ),
+        secureCore: const KelivoSecureCore(),
+        databaseGateway: databaseGateway,
+        databaseFile: File(
+          '${appDataDirectory.path}${Platform.pathSeparator}'
+          '${AppDatabase.databaseFileName}',
+        ),
+        client: activeClient,
+      );
+      activeRuntime.bindSecurityBootstrapCommitHandler((pendingSession) {
+        return _commitSecurityBootstrap(pendingSession, activeClient);
+      });
+      runtime = activeRuntime;
+      return E2eeBackgroundContentAcquired(
+        _ProductionBackgroundSyncContent(
+          runtime: activeRuntime,
+          client: activeClient,
+          accountLease: accountLease,
+        ),
+      );
+    } catch (error, stackTrace) {
+      final ownedRuntime = runtime;
+      final ownedClient = client;
+      await rethrowCloudSyncPrimaryAfterCleanup(
+        primaryError: error,
+        primaryStackTrace: stackTrace,
+        cleanupSteps: <CloudSyncFailureCleanupStep>[
+          if (ownedRuntime != null)
+            CloudSyncFailureCleanupStep(
+              operation: '后台 E2EE 内容构造失败后的运行时关闭失败',
+              cleanup: ownedRuntime.close,
+            ),
+          if (ownedClient != null)
+            CloudSyncFailureCleanupStep(
+              operation: '后台 E2EE 内容构造失败后的网络客户端关闭失败',
+              cleanup: () async {
+                ownedClient.close(force: true);
+              },
+            ),
+          CloudSyncFailureCleanupStep(
+            operation: '后台 E2EE 内容构造失败后的账户租约释放失败',
+            cleanup: accountLease.close,
+          ),
+        ],
+      );
+    }
   }
 
   @override
@@ -511,6 +589,83 @@ final class _ProductionBackgroundSyncWorkspace
 
   @override
   Future<void> closeWorkspaceLease() => _workspaceRuntime.close();
+
+  Future<void> _commitSecurityBootstrap(
+    CloudSyncAccountSession pendingSession,
+    CloudSyncAccountClient client,
+  ) async {
+    final bootstrap = pendingSession.securityBootstrap;
+    final current = session;
+    if (bootstrap == null ||
+        current == null ||
+        current.securityBootstrap == null ||
+        current.accountScope != pendingSession.accountScope ||
+        current.deviceId != pendingSession.deviceId ||
+        current.authGeneration != pendingSession.authGeneration ||
+        current.sessionGeneration != pendingSession.sessionGeneration ||
+        current.token.value != pendingSession.token.value) {
+      throw StateError('后台安全 bootstrap 提交会话与当前工作区不匹配');
+    }
+    final authentication = E2eeAccountAuthenticator(
+      baseUrl: pendingSession.baseUrl,
+      accountClient: client,
+      deviceStateStore: DeviceStateBlobStore(
+        installationRoot: _workspaceRuntime.installationRoot,
+      ),
+      secureCore: const KelivoSecureCore(),
+    );
+    final authenticatedSession = pendingSession.toAuthenticatedSession();
+    switch (bootstrap.source) {
+      case CloudSyncSecurityBootstrapSource.firstRegistration:
+        await authentication.confirmFirstDeviceRegistration(
+          loginName: pendingSession.loginName,
+          session: authenticatedSession,
+        );
+        break;
+      case CloudSyncSecurityBootstrapSource.pairing:
+        await authentication.confirmDevicePairing(
+          loginName: pendingSession.loginName,
+          session: authenticatedSession,
+        );
+        break;
+    }
+    final binding = await _workspaceRuntime.bindAccount(
+      pendingSession.withoutSecurityBootstrap(),
+    );
+    if (binding is! AccountWorkspaceRetained) {
+      throw StateError('后台安全 bootstrap 只能在当前账户工作区内提交');
+    }
+  }
+}
+
+final class _ProductionBackgroundSyncContent
+    implements E2eeBackgroundSyncContent {
+  _ProductionBackgroundSyncContent({
+    required this._runtime,
+    required this._client,
+    required this._accountLease,
+  });
+
+  final E2eeChatContentRuntime _runtime;
+  final CloudSyncClient _client;
+  final RestoreBusinessLease _accountLease;
+
+  @override
+  Future<E2eeSyncCycleReport> runOnce({
+    required E2eeSyncExecutionBudget executionBudget,
+  }) {
+    executionBudget.checkCanContinue();
+    return _runtime.runSingleCycle(executionBudget);
+  }
+
+  @override
+  void abortInFlightNetwork() => _client.close(force: true);
+
+  @override
+  Future<void> closeRuntime() => _runtime.close();
+
+  @override
+  Future<void> closeAccountLease() => _accountLease.close();
 }
 
 final class _BackgroundCleanupAccumulator {

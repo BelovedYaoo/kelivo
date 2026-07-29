@@ -3,64 +3,64 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_data.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_lease_claim_data.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'revoke_trusted_device_response.g.dart';
+part 'claim_data_rekey_lease_response.g.dart';
 
-/// RevokeTrustedDeviceResponse
+/// ClaimDataRekeyLeaseResponse
 ///
 /// Properties:
 /// * [data]
 @BuiltValue()
-abstract class RevokeTrustedDeviceResponse
+abstract class ClaimDataRekeyLeaseResponse
     implements
-        Built<RevokeTrustedDeviceResponse, RevokeTrustedDeviceResponseBuilder> {
+        Built<ClaimDataRekeyLeaseResponse, ClaimDataRekeyLeaseResponseBuilder> {
   @BuiltValueField(wireName: r'data')
-  RevokeTrustedDeviceData get data;
+  DataRekeyLeaseClaimData get data;
 
-  RevokeTrustedDeviceResponse._();
+  ClaimDataRekeyLeaseResponse._();
 
-  factory RevokeTrustedDeviceResponse([
-    void updates(RevokeTrustedDeviceResponseBuilder b),
-  ]) = _$RevokeTrustedDeviceResponse;
+  factory ClaimDataRekeyLeaseResponse([
+    void updates(ClaimDataRekeyLeaseResponseBuilder b),
+  ]) = _$ClaimDataRekeyLeaseResponse;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(RevokeTrustedDeviceResponseBuilder b) => b;
+  static void _defaults(ClaimDataRekeyLeaseResponseBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<RevokeTrustedDeviceResponse> get serializer =>
-      _$RevokeTrustedDeviceResponseSerializer();
+  static Serializer<ClaimDataRekeyLeaseResponse> get serializer =>
+      _$ClaimDataRekeyLeaseResponseSerializer();
 }
 
-class _$RevokeTrustedDeviceResponseSerializer
-    implements PrimitiveSerializer<RevokeTrustedDeviceResponse> {
+class _$ClaimDataRekeyLeaseResponseSerializer
+    implements PrimitiveSerializer<ClaimDataRekeyLeaseResponse> {
   @override
   final Iterable<Type> types = const [
-    RevokeTrustedDeviceResponse,
-    _$RevokeTrustedDeviceResponse,
+    ClaimDataRekeyLeaseResponse,
+    _$ClaimDataRekeyLeaseResponse,
   ];
 
   @override
-  final String wireName = r'RevokeTrustedDeviceResponse';
+  final String wireName = r'ClaimDataRekeyLeaseResponse';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    RevokeTrustedDeviceResponse object, {
+    ClaimDataRekeyLeaseResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'data';
     yield serializers.serialize(
       object.data,
-      specifiedType: const FullType(RevokeTrustedDeviceData),
+      specifiedType: const FullType(DataRekeyLeaseClaimData),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    RevokeTrustedDeviceResponse object, {
+    ClaimDataRekeyLeaseResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -75,7 +75,7 @@ class _$RevokeTrustedDeviceResponseSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required RevokeTrustedDeviceResponseBuilder result,
+    required ClaimDataRekeyLeaseResponseBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -86,9 +86,9 @@ class _$RevokeTrustedDeviceResponseSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(RevokeTrustedDeviceData),
+                    specifiedType: const FullType(DataRekeyLeaseClaimData),
                   )
-                  as RevokeTrustedDeviceData;
+                  as DataRekeyLeaseClaimData;
           result.data.replace(valueDes);
           break;
         default:
@@ -100,12 +100,12 @@ class _$RevokeTrustedDeviceResponseSerializer
   }
 
   @override
-  RevokeTrustedDeviceResponse deserialize(
+  ClaimDataRekeyLeaseResponse deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = RevokeTrustedDeviceResponseBuilder();
+    final result = ClaimDataRekeyLeaseResponseBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

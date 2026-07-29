@@ -70,7 +70,11 @@ class _$AttachmentDeletedData extends AttachmentDeletedData {
   @override
   final String uploadId;
   @override
-  final int keyEpoch;
+  final int chunkKeyEpoch;
+  @override
+  final int manifestKeyEpoch;
+  @override
+  final int manifestRevision;
   @override
   final AttachmentDeletedDataStatusEnum status;
   @override
@@ -83,7 +87,9 @@ class _$AttachmentDeletedData extends AttachmentDeletedData {
   _$AttachmentDeletedData._({
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.chunkKeyEpoch,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
     required this.status,
     required this.deletedAt,
   }) : super._();
@@ -102,7 +108,9 @@ class _$AttachmentDeletedData extends AttachmentDeletedData {
     return other is AttachmentDeletedData &&
         attachmentId == other.attachmentId &&
         uploadId == other.uploadId &&
-        keyEpoch == other.keyEpoch &&
+        chunkKeyEpoch == other.chunkKeyEpoch &&
+        manifestKeyEpoch == other.manifestKeyEpoch &&
+        manifestRevision == other.manifestRevision &&
         status == other.status &&
         deletedAt == other.deletedAt;
   }
@@ -112,7 +120,9 @@ class _$AttachmentDeletedData extends AttachmentDeletedData {
     var _$hash = 0;
     _$hash = $jc(_$hash, attachmentId.hashCode);
     _$hash = $jc(_$hash, uploadId.hashCode);
-    _$hash = $jc(_$hash, keyEpoch.hashCode);
+    _$hash = $jc(_$hash, chunkKeyEpoch.hashCode);
+    _$hash = $jc(_$hash, manifestKeyEpoch.hashCode);
+    _$hash = $jc(_$hash, manifestRevision.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, deletedAt.hashCode);
     _$hash = $jf(_$hash);
@@ -124,7 +134,9 @@ class _$AttachmentDeletedData extends AttachmentDeletedData {
     return (newBuiltValueToStringHelper(r'AttachmentDeletedData')
           ..add('attachmentId', attachmentId)
           ..add('uploadId', uploadId)
-          ..add('keyEpoch', keyEpoch)
+          ..add('chunkKeyEpoch', chunkKeyEpoch)
+          ..add('manifestKeyEpoch', manifestKeyEpoch)
+          ..add('manifestRevision', manifestRevision)
           ..add('status', status)
           ..add('deletedAt', deletedAt))
         .toString();
@@ -143,9 +155,20 @@ class AttachmentDeletedDataBuilder
   String? get uploadId => _$this._uploadId;
   set uploadId(String? uploadId) => _$this._uploadId = uploadId;
 
-  int? _keyEpoch;
-  int? get keyEpoch => _$this._keyEpoch;
-  set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
+  int? _chunkKeyEpoch;
+  int? get chunkKeyEpoch => _$this._chunkKeyEpoch;
+  set chunkKeyEpoch(int? chunkKeyEpoch) =>
+      _$this._chunkKeyEpoch = chunkKeyEpoch;
+
+  int? _manifestKeyEpoch;
+  int? get manifestKeyEpoch => _$this._manifestKeyEpoch;
+  set manifestKeyEpoch(int? manifestKeyEpoch) =>
+      _$this._manifestKeyEpoch = manifestKeyEpoch;
+
+  int? _manifestRevision;
+  int? get manifestRevision => _$this._manifestRevision;
+  set manifestRevision(int? manifestRevision) =>
+      _$this._manifestRevision = manifestRevision;
 
   AttachmentDeletedDataStatusEnum? _status;
   AttachmentDeletedDataStatusEnum? get status => _$this._status;
@@ -165,7 +188,9 @@ class AttachmentDeletedDataBuilder
     if ($v != null) {
       _attachmentId = $v.attachmentId;
       _uploadId = $v.uploadId;
-      _keyEpoch = $v.keyEpoch;
+      _chunkKeyEpoch = $v.chunkKeyEpoch;
+      _manifestKeyEpoch = $v.manifestKeyEpoch;
+      _manifestRevision = $v.manifestRevision;
       _status = $v.status;
       _deletedAt = $v.deletedAt;
       _$v = null;
@@ -200,10 +225,20 @@ class AttachmentDeletedDataBuilder
             r'AttachmentDeletedData',
             'uploadId',
           ),
-          keyEpoch: BuiltValueNullFieldError.checkNotNull(
-            keyEpoch,
+          chunkKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            chunkKeyEpoch,
             r'AttachmentDeletedData',
-            'keyEpoch',
+            'chunkKeyEpoch',
+          ),
+          manifestKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            manifestKeyEpoch,
+            r'AttachmentDeletedData',
+            'manifestKeyEpoch',
+          ),
+          manifestRevision: BuiltValueNullFieldError.checkNotNull(
+            manifestRevision,
+            r'AttachmentDeletedData',
+            'manifestRevision',
           ),
           status: BuiltValueNullFieldError.checkNotNull(
             status,

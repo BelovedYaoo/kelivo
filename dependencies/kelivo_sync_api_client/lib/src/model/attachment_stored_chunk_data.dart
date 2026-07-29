@@ -14,6 +14,7 @@ part 'attachment_stored_chunk_data.g.dart';
 /// Properties:
 /// * [attachmentId]
 /// * [uploadId]
+/// * [chunkKeyEpoch]
 /// * [chunkIndex]
 /// * [ciphertextBytes]
 /// * [status]
@@ -26,6 +27,9 @@ abstract class AttachmentStoredChunkData
 
   @BuiltValueField(wireName: r'uploadId')
   String get uploadId;
+
+  @BuiltValueField(wireName: r'chunkKeyEpoch')
+  int get chunkKeyEpoch;
 
   @BuiltValueField(wireName: r'chunkIndex')
   int get chunkIndex;
@@ -76,6 +80,11 @@ class _$AttachmentStoredChunkDataSerializer
     yield serializers.serialize(
       object.uploadId,
       specifiedType: const FullType(String),
+    );
+    yield r'chunkKeyEpoch';
+    yield serializers.serialize(
+      object.chunkKeyEpoch,
+      specifiedType: const FullType(int),
     );
     yield r'chunkIndex';
     yield serializers.serialize(
@@ -136,6 +145,12 @@ class _$AttachmentStoredChunkDataSerializer
                   )
                   as String;
           result.uploadId = valueDes;
+          break;
+        case r'chunkKeyEpoch':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.chunkKeyEpoch = valueDes;
           break;
         case r'chunkIndex':
           final valueDes =

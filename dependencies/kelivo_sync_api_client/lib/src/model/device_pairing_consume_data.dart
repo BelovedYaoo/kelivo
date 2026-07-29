@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/account_security_state_data.dart';
 import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_data_device.dart';
 import 'package:built_collection/built_collection.dart';
 import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_data_user.dart';
@@ -16,7 +17,12 @@ part 'device_pairing_consume_data.g.dart';
 /// Properties:
 /// * [protocolVersion]
 /// * [result]
+/// * [pairingId]
+/// * [issuerDeviceId]
 /// * [keyEpoch]
+/// * [securityGeneration]
+/// * [membershipManifestDigest]
+/// * [securityState]
 /// * [token]
 /// * [tokenExpiresAt]
 /// * [user]
@@ -32,8 +38,23 @@ abstract class DevicePairingConsumeData
   DevicePairingConsumeDataResultEnum get result;
   // enum resultEnum {  authenticated,  };
 
+  @BuiltValueField(wireName: r'pairingId')
+  String get pairingId;
+
+  @BuiltValueField(wireName: r'issuerDeviceId')
+  String get issuerDeviceId;
+
   @BuiltValueField(wireName: r'keyEpoch')
   int get keyEpoch;
+
+  @BuiltValueField(wireName: r'securityGeneration')
+  int get securityGeneration;
+
+  @BuiltValueField(wireName: r'membershipManifestDigest')
+  String get membershipManifestDigest;
+
+  @BuiltValueField(wireName: r'securityState')
+  AccountSecurityStateData get securityState;
 
   @BuiltValueField(wireName: r'token')
   String get token;
@@ -87,10 +108,35 @@ class _$DevicePairingConsumeDataSerializer
       object.result,
       specifiedType: const FullType(DevicePairingConsumeDataResultEnum),
     );
+    yield r'pairingId';
+    yield serializers.serialize(
+      object.pairingId,
+      specifiedType: const FullType(String),
+    );
+    yield r'issuerDeviceId';
+    yield serializers.serialize(
+      object.issuerDeviceId,
+      specifiedType: const FullType(String),
+    );
     yield r'keyEpoch';
     yield serializers.serialize(
       object.keyEpoch,
       specifiedType: const FullType(int),
+    );
+    yield r'securityGeneration';
+    yield serializers.serialize(
+      object.securityGeneration,
+      specifiedType: const FullType(int),
+    );
+    yield r'membershipManifestDigest';
+    yield serializers.serialize(
+      object.membershipManifestDigest,
+      specifiedType: const FullType(String),
+    );
+    yield r'securityState';
+    yield serializers.serialize(
+      object.securityState,
+      specifiedType: const FullType(AccountSecurityStateData),
     );
     yield r'token';
     yield serializers.serialize(
@@ -156,11 +202,53 @@ class _$DevicePairingConsumeDataSerializer
                   as DevicePairingConsumeDataResultEnum;
           result.result = valueDes;
           break;
+        case r'pairingId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.pairingId = valueDes;
+          break;
+        case r'issuerDeviceId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.issuerDeviceId = valueDes;
+          break;
         case r'keyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
           result.keyEpoch = valueDes;
+          break;
+        case r'securityGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.securityGeneration = valueDes;
+          break;
+        case r'membershipManifestDigest':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.membershipManifestDigest = valueDes;
+          break;
+        case r'securityState':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(AccountSecurityStateData),
+                  )
+                  as AccountSecurityStateData;
+          result.securityState.replace(valueDes);
           break;
         case r'token':
           final valueDes =

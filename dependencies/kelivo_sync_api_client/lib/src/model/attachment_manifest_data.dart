@@ -13,9 +13,12 @@ part 'attachment_manifest_data.g.dart';
 /// AttachmentManifestData
 ///
 /// Properties:
+/// * [dataRekeyPhase]
 /// * [attachmentId]
 /// * [uploadId]
-/// * [keyEpoch]
+/// * [chunkKeyEpoch]
+/// * [manifestKeyEpoch]
+/// * [manifestRevision]
 /// * [chunkCount]
 /// * [totalCiphertextBytes]
 /// * [manifestCiphertext] - 客户端认证的附件清单密文，使用规范无填充 Base64URL 编码，解码后最大 1 MiB
@@ -25,14 +28,24 @@ part 'attachment_manifest_data.g.dart';
 @BuiltValue()
 abstract class AttachmentManifestData
     implements Built<AttachmentManifestData, AttachmentManifestDataBuilder> {
+  @BuiltValueField(wireName: r'dataRekeyPhase')
+  AttachmentManifestDataDataRekeyPhaseEnum get dataRekeyPhase;
+  // enum dataRekeyPhaseEnum {  ready,  rekey-pending,  };
+
   @BuiltValueField(wireName: r'attachmentId')
   String get attachmentId;
 
   @BuiltValueField(wireName: r'uploadId')
   String get uploadId;
 
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
+  @BuiltValueField(wireName: r'chunkKeyEpoch')
+  int get chunkKeyEpoch;
+
+  @BuiltValueField(wireName: r'manifestKeyEpoch')
+  int get manifestKeyEpoch;
+
+  @BuiltValueField(wireName: r'manifestRevision')
+  int get manifestRevision;
 
   @BuiltValueField(wireName: r'chunkCount')
   int get chunkCount;
@@ -83,6 +96,11 @@ class _$AttachmentManifestDataSerializer
     AttachmentManifestData object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'dataRekeyPhase';
+    yield serializers.serialize(
+      object.dataRekeyPhase,
+      specifiedType: const FullType(AttachmentManifestDataDataRekeyPhaseEnum),
+    );
     yield r'attachmentId';
     yield serializers.serialize(
       object.attachmentId,
@@ -93,9 +111,19 @@ class _$AttachmentManifestDataSerializer
       object.uploadId,
       specifiedType: const FullType(String),
     );
-    yield r'keyEpoch';
+    yield r'chunkKeyEpoch';
     yield serializers.serialize(
-      object.keyEpoch,
+      object.chunkKeyEpoch,
+      specifiedType: const FullType(int),
+    );
+    yield r'manifestKeyEpoch';
+    yield serializers.serialize(
+      object.manifestKeyEpoch,
+      specifiedType: const FullType(int),
+    );
+    yield r'manifestRevision';
+    yield serializers.serialize(
+      object.manifestRevision,
       specifiedType: const FullType(int),
     );
     yield r'chunkCount';
@@ -157,6 +185,17 @@ class _$AttachmentManifestDataSerializer
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'dataRekeyPhase':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(
+                      AttachmentManifestDataDataRekeyPhaseEnum,
+                    ),
+                  )
+                  as AttachmentManifestDataDataRekeyPhaseEnum;
+          result.dataRekeyPhase = valueDes;
+          break;
         case r'attachmentId':
           final valueDes =
               serializers.deserialize(
@@ -175,11 +214,23 @@ class _$AttachmentManifestDataSerializer
                   as String;
           result.uploadId = valueDes;
           break;
-        case r'keyEpoch':
+        case r'chunkKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.keyEpoch = valueDes;
+          result.chunkKeyEpoch = valueDes;
+          break;
+        case r'manifestKeyEpoch':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.manifestKeyEpoch = valueDes;
+          break;
+        case r'manifestRevision':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.manifestRevision = valueDes;
           break;
         case r'chunkCount':
           final valueDes =
@@ -255,4 +306,23 @@ class _$AttachmentManifestDataSerializer
     );
     return result.build();
   }
+}
+
+class AttachmentManifestDataDataRekeyPhaseEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'ready')
+  static const AttachmentManifestDataDataRekeyPhaseEnum ready =
+      _$attachmentManifestDataDataRekeyPhaseEnum_ready;
+  @BuiltValueEnumConst(wireName: r'rekey-pending')
+  static const AttachmentManifestDataDataRekeyPhaseEnum rekeyPending =
+      _$attachmentManifestDataDataRekeyPhaseEnum_rekeyPending;
+
+  static Serializer<AttachmentManifestDataDataRekeyPhaseEnum> get serializer =>
+      _$attachmentManifestDataDataRekeyPhaseEnumSerializer;
+
+  const AttachmentManifestDataDataRekeyPhaseEnum._(String name) : super(name);
+
+  static BuiltSet<AttachmentManifestDataDataRekeyPhaseEnum> get values =>
+      _$attachmentManifestDataDataRekeyPhaseEnumValues;
+  static AttachmentManifestDataDataRekeyPhaseEnum valueOf(String name) =>
+      _$attachmentManifestDataDataRekeyPhaseEnumValueOf(name);
 }

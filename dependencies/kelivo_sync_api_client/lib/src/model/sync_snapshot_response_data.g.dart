@@ -6,7 +6,76 @@ part of 'sync_snapshot_response_data.dart';
 // BuiltValueGenerator
 // **************************************************************************
 
+const SyncSnapshotResponseDataDataRekeyPhaseEnum
+_$syncSnapshotResponseDataDataRekeyPhaseEnum_ready =
+    const SyncSnapshotResponseDataDataRekeyPhaseEnum._('ready');
+const SyncSnapshotResponseDataDataRekeyPhaseEnum
+_$syncSnapshotResponseDataDataRekeyPhaseEnum_rekeyPending =
+    const SyncSnapshotResponseDataDataRekeyPhaseEnum._('rekeyPending');
+
+SyncSnapshotResponseDataDataRekeyPhaseEnum
+_$syncSnapshotResponseDataDataRekeyPhaseEnumValueOf(String name) {
+  switch (name) {
+    case 'ready':
+      return _$syncSnapshotResponseDataDataRekeyPhaseEnum_ready;
+    case 'rekeyPending':
+      return _$syncSnapshotResponseDataDataRekeyPhaseEnum_rekeyPending;
+    default:
+      throw ArgumentError(name);
+  }
+}
+
+final BuiltSet<SyncSnapshotResponseDataDataRekeyPhaseEnum>
+_$syncSnapshotResponseDataDataRekeyPhaseEnumValues =
+    BuiltSet<SyncSnapshotResponseDataDataRekeyPhaseEnum>(
+      const <SyncSnapshotResponseDataDataRekeyPhaseEnum>[
+        _$syncSnapshotResponseDataDataRekeyPhaseEnum_ready,
+        _$syncSnapshotResponseDataDataRekeyPhaseEnum_rekeyPending,
+      ],
+    );
+
+Serializer<SyncSnapshotResponseDataDataRekeyPhaseEnum>
+_$syncSnapshotResponseDataDataRekeyPhaseEnumSerializer =
+    _$SyncSnapshotResponseDataDataRekeyPhaseEnumSerializer();
+
+class _$SyncSnapshotResponseDataDataRekeyPhaseEnumSerializer
+    implements PrimitiveSerializer<SyncSnapshotResponseDataDataRekeyPhaseEnum> {
+  static const Map<String, Object> _toWire = const <String, Object>{
+    'ready': 'ready',
+    'rekeyPending': 'rekey-pending',
+  };
+  static const Map<Object, String> _fromWire = const <Object, String>{
+    'ready': 'ready',
+    'rekey-pending': 'rekeyPending',
+  };
+
+  @override
+  final Iterable<Type> types = const <Type>[
+    SyncSnapshotResponseDataDataRekeyPhaseEnum,
+  ];
+  @override
+  final String wireName = 'SyncSnapshotResponseDataDataRekeyPhaseEnum';
+
+  @override
+  Object serialize(
+    Serializers serializers,
+    SyncSnapshotResponseDataDataRekeyPhaseEnum object, {
+    FullType specifiedType = FullType.unspecified,
+  }) => _toWire[object.name] ?? object.name;
+
+  @override
+  SyncSnapshotResponseDataDataRekeyPhaseEnum deserialize(
+    Serializers serializers,
+    Object serialized, {
+    FullType specifiedType = FullType.unspecified,
+  }) => SyncSnapshotResponseDataDataRekeyPhaseEnum.valueOf(
+    _fromWire[serialized] ?? (serialized is String ? serialized : ''),
+  );
+}
+
 class _$SyncSnapshotResponseData extends SyncSnapshotResponseData {
+  @override
+  final SyncSnapshotResponseDataDataRekeyPhaseEnum dataRekeyPhase;
   @override
   final BuiltList<SyncRecord> records;
   @override
@@ -21,6 +90,7 @@ class _$SyncSnapshotResponseData extends SyncSnapshotResponseData {
   ]) => (SyncSnapshotResponseDataBuilder()..update(updates))._build();
 
   _$SyncSnapshotResponseData._({
+    required this.dataRekeyPhase,
     required this.records,
     this.nextSnapshotCursor,
     this.syncCursor,
@@ -39,6 +109,7 @@ class _$SyncSnapshotResponseData extends SyncSnapshotResponseData {
   bool operator ==(Object other) {
     if (identical(other, this)) return true;
     return other is SyncSnapshotResponseData &&
+        dataRekeyPhase == other.dataRekeyPhase &&
         records == other.records &&
         nextSnapshotCursor == other.nextSnapshotCursor &&
         syncCursor == other.syncCursor &&
@@ -48,6 +119,7 @@ class _$SyncSnapshotResponseData extends SyncSnapshotResponseData {
   @override
   int get hashCode {
     var _$hash = 0;
+    _$hash = $jc(_$hash, dataRekeyPhase.hashCode);
     _$hash = $jc(_$hash, records.hashCode);
     _$hash = $jc(_$hash, nextSnapshotCursor.hashCode);
     _$hash = $jc(_$hash, syncCursor.hashCode);
@@ -59,6 +131,7 @@ class _$SyncSnapshotResponseData extends SyncSnapshotResponseData {
   @override
   String toString() {
     return (newBuiltValueToStringHelper(r'SyncSnapshotResponseData')
+          ..add('dataRekeyPhase', dataRekeyPhase)
           ..add('records', records)
           ..add('nextSnapshotCursor', nextSnapshotCursor)
           ..add('syncCursor', syncCursor)
@@ -71,6 +144,13 @@ class SyncSnapshotResponseDataBuilder
     implements
         Builder<SyncSnapshotResponseData, SyncSnapshotResponseDataBuilder> {
   _$SyncSnapshotResponseData? _$v;
+
+  SyncSnapshotResponseDataDataRekeyPhaseEnum? _dataRekeyPhase;
+  SyncSnapshotResponseDataDataRekeyPhaseEnum? get dataRekeyPhase =>
+      _$this._dataRekeyPhase;
+  set dataRekeyPhase(
+    SyncSnapshotResponseDataDataRekeyPhaseEnum? dataRekeyPhase,
+  ) => _$this._dataRekeyPhase = dataRekeyPhase;
 
   ListBuilder<SyncRecord>? _records;
   ListBuilder<SyncRecord> get records =>
@@ -97,6 +177,7 @@ class SyncSnapshotResponseDataBuilder
   SyncSnapshotResponseDataBuilder get _$this {
     final $v = _$v;
     if ($v != null) {
+      _dataRekeyPhase = $v.dataRekeyPhase;
       _records = $v.records.toBuilder();
       _nextSnapshotCursor = $v.nextSnapshotCursor;
       _syncCursor = $v.syncCursor;
@@ -125,6 +206,11 @@ class SyncSnapshotResponseDataBuilder
       _$result =
           _$v ??
           _$SyncSnapshotResponseData._(
+            dataRekeyPhase: BuiltValueNullFieldError.checkNotNull(
+              dataRekeyPhase,
+              r'SyncSnapshotResponseData',
+              'dataRekeyPhase',
+            ),
             records: records.build(),
             nextSnapshotCursor: nextSnapshotCursor,
             syncCursor: syncCursor,

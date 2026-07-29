@@ -14,7 +14,9 @@ class _$AttachmentDeleteRequest extends AttachmentDeleteRequest {
   @override
   final String uploadId;
   @override
-  final int keyEpoch;
+  final int manifestKeyEpoch;
+  @override
+  final int manifestRevision;
 
   factory _$AttachmentDeleteRequest([
     void Function(AttachmentDeleteRequestBuilder)? updates,
@@ -24,7 +26,8 @@ class _$AttachmentDeleteRequest extends AttachmentDeleteRequest {
     required this.mutationId,
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
   }) : super._();
   @override
   AttachmentDeleteRequest rebuild(
@@ -42,7 +45,8 @@ class _$AttachmentDeleteRequest extends AttachmentDeleteRequest {
         mutationId == other.mutationId &&
         attachmentId == other.attachmentId &&
         uploadId == other.uploadId &&
-        keyEpoch == other.keyEpoch;
+        manifestKeyEpoch == other.manifestKeyEpoch &&
+        manifestRevision == other.manifestRevision;
   }
 
   @override
@@ -51,7 +55,8 @@ class _$AttachmentDeleteRequest extends AttachmentDeleteRequest {
     _$hash = $jc(_$hash, mutationId.hashCode);
     _$hash = $jc(_$hash, attachmentId.hashCode);
     _$hash = $jc(_$hash, uploadId.hashCode);
-    _$hash = $jc(_$hash, keyEpoch.hashCode);
+    _$hash = $jc(_$hash, manifestKeyEpoch.hashCode);
+    _$hash = $jc(_$hash, manifestRevision.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -62,7 +67,8 @@ class _$AttachmentDeleteRequest extends AttachmentDeleteRequest {
           ..add('mutationId', mutationId)
           ..add('attachmentId', attachmentId)
           ..add('uploadId', uploadId)
-          ..add('keyEpoch', keyEpoch))
+          ..add('manifestKeyEpoch', manifestKeyEpoch)
+          ..add('manifestRevision', manifestRevision))
         .toString();
   }
 }
@@ -84,9 +90,15 @@ class AttachmentDeleteRequestBuilder
   String? get uploadId => _$this._uploadId;
   set uploadId(String? uploadId) => _$this._uploadId = uploadId;
 
-  int? _keyEpoch;
-  int? get keyEpoch => _$this._keyEpoch;
-  set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
+  int? _manifestKeyEpoch;
+  int? get manifestKeyEpoch => _$this._manifestKeyEpoch;
+  set manifestKeyEpoch(int? manifestKeyEpoch) =>
+      _$this._manifestKeyEpoch = manifestKeyEpoch;
+
+  int? _manifestRevision;
+  int? get manifestRevision => _$this._manifestRevision;
+  set manifestRevision(int? manifestRevision) =>
+      _$this._manifestRevision = manifestRevision;
 
   AttachmentDeleteRequestBuilder() {
     AttachmentDeleteRequest._defaults(this);
@@ -98,7 +110,8 @@ class AttachmentDeleteRequestBuilder
       _mutationId = $v.mutationId;
       _attachmentId = $v.attachmentId;
       _uploadId = $v.uploadId;
-      _keyEpoch = $v.keyEpoch;
+      _manifestKeyEpoch = $v.manifestKeyEpoch;
+      _manifestRevision = $v.manifestRevision;
       _$v = null;
     }
     return this;
@@ -136,10 +149,15 @@ class AttachmentDeleteRequestBuilder
             r'AttachmentDeleteRequest',
             'uploadId',
           ),
-          keyEpoch: BuiltValueNullFieldError.checkNotNull(
-            keyEpoch,
+          manifestKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            manifestKeyEpoch,
             r'AttachmentDeleteRequest',
-            'keyEpoch',
+            'manifestKeyEpoch',
+          ),
+          manifestRevision: BuiltValueNullFieldError.checkNotNull(
+            manifestRevision,
+            r'AttachmentDeleteRequest',
+            'manifestRevision',
           ),
         );
     replace(_$result);

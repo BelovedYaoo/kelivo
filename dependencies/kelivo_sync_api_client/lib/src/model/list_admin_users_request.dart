@@ -29,7 +29,7 @@ abstract class ListAdminUsersRequest
 
   @BuiltValueField(wireName: r'status')
   ListAdminUsersRequestStatusEnum? get status;
-  // enum statusEnum {  active,  disabled,  };
+  // enum statusEnum {  active,  disabled,  deleting,  };
 
   @BuiltValueField(wireName: r'pageIndex')
   int? get pageIndex;
@@ -232,6 +232,9 @@ class ListAdminUsersRequestStatusEnum extends EnumClass {
   @BuiltValueEnumConst(wireName: r'disabled')
   static const ListAdminUsersRequestStatusEnum disabled =
       _$listAdminUsersRequestStatusEnum_disabled;
+  @BuiltValueEnumConst(wireName: r'deleting')
+  static const ListAdminUsersRequestStatusEnum deleting =
+      _$listAdminUsersRequestStatusEnum_deleting;
 
   static Serializer<ListAdminUsersRequestStatusEnum> get serializer =>
       _$listAdminUsersRequestStatusEnumSerializer;

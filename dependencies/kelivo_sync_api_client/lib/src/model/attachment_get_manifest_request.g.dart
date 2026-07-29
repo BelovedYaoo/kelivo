@@ -12,7 +12,9 @@ class _$AttachmentGetManifestRequest extends AttachmentGetManifestRequest {
   @override
   final String uploadId;
   @override
-  final int keyEpoch;
+  final int manifestKeyEpoch;
+  @override
+  final int manifestRevision;
 
   factory _$AttachmentGetManifestRequest([
     void Function(AttachmentGetManifestRequestBuilder)? updates,
@@ -21,7 +23,8 @@ class _$AttachmentGetManifestRequest extends AttachmentGetManifestRequest {
   _$AttachmentGetManifestRequest._({
     required this.attachmentId,
     required this.uploadId,
-    required this.keyEpoch,
+    required this.manifestKeyEpoch,
+    required this.manifestRevision,
   }) : super._();
   @override
   AttachmentGetManifestRequest rebuild(
@@ -38,7 +41,8 @@ class _$AttachmentGetManifestRequest extends AttachmentGetManifestRequest {
     return other is AttachmentGetManifestRequest &&
         attachmentId == other.attachmentId &&
         uploadId == other.uploadId &&
-        keyEpoch == other.keyEpoch;
+        manifestKeyEpoch == other.manifestKeyEpoch &&
+        manifestRevision == other.manifestRevision;
   }
 
   @override
@@ -46,7 +50,8 @@ class _$AttachmentGetManifestRequest extends AttachmentGetManifestRequest {
     var _$hash = 0;
     _$hash = $jc(_$hash, attachmentId.hashCode);
     _$hash = $jc(_$hash, uploadId.hashCode);
-    _$hash = $jc(_$hash, keyEpoch.hashCode);
+    _$hash = $jc(_$hash, manifestKeyEpoch.hashCode);
+    _$hash = $jc(_$hash, manifestRevision.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -56,7 +61,8 @@ class _$AttachmentGetManifestRequest extends AttachmentGetManifestRequest {
     return (newBuiltValueToStringHelper(r'AttachmentGetManifestRequest')
           ..add('attachmentId', attachmentId)
           ..add('uploadId', uploadId)
-          ..add('keyEpoch', keyEpoch))
+          ..add('manifestKeyEpoch', manifestKeyEpoch)
+          ..add('manifestRevision', manifestRevision))
         .toString();
   }
 }
@@ -77,9 +83,15 @@ class AttachmentGetManifestRequestBuilder
   String? get uploadId => _$this._uploadId;
   set uploadId(String? uploadId) => _$this._uploadId = uploadId;
 
-  int? _keyEpoch;
-  int? get keyEpoch => _$this._keyEpoch;
-  set keyEpoch(int? keyEpoch) => _$this._keyEpoch = keyEpoch;
+  int? _manifestKeyEpoch;
+  int? get manifestKeyEpoch => _$this._manifestKeyEpoch;
+  set manifestKeyEpoch(int? manifestKeyEpoch) =>
+      _$this._manifestKeyEpoch = manifestKeyEpoch;
+
+  int? _manifestRevision;
+  int? get manifestRevision => _$this._manifestRevision;
+  set manifestRevision(int? manifestRevision) =>
+      _$this._manifestRevision = manifestRevision;
 
   AttachmentGetManifestRequestBuilder() {
     AttachmentGetManifestRequest._defaults(this);
@@ -90,7 +102,8 @@ class AttachmentGetManifestRequestBuilder
     if ($v != null) {
       _attachmentId = $v.attachmentId;
       _uploadId = $v.uploadId;
-      _keyEpoch = $v.keyEpoch;
+      _manifestKeyEpoch = $v.manifestKeyEpoch;
+      _manifestRevision = $v.manifestRevision;
       _$v = null;
     }
     return this;
@@ -123,10 +136,15 @@ class AttachmentGetManifestRequestBuilder
             r'AttachmentGetManifestRequest',
             'uploadId',
           ),
-          keyEpoch: BuiltValueNullFieldError.checkNotNull(
-            keyEpoch,
+          manifestKeyEpoch: BuiltValueNullFieldError.checkNotNull(
+            manifestKeyEpoch,
             r'AttachmentGetManifestRequest',
-            'keyEpoch',
+            'manifestKeyEpoch',
+          ),
+          manifestRevision: BuiltValueNullFieldError.checkNotNull(
+            manifestRevision,
+            r'AttachmentGetManifestRequest',
+            'manifestRevision',
           ),
         );
     replace(_$result);

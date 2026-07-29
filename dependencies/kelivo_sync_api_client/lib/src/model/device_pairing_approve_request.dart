@@ -14,6 +14,10 @@ part 'device_pairing_approve_request.g.dart';
 /// * [protocolVersion]
 /// * [pairingId]
 /// * [keyEpoch]
+/// * [expectedSecurityGeneration]
+/// * [expectedMembershipManifestDigest]
+/// * [nextMembershipManifest]
+/// * [nextMembershipManifestDigest]
 /// * [accountKeyEnvelope]
 /// * [deviceProof]
 /// * [pairingAuthenticator]
@@ -29,6 +33,18 @@ abstract class DevicePairingApproveRequest
 
   @BuiltValueField(wireName: r'keyEpoch')
   int get keyEpoch;
+
+  @BuiltValueField(wireName: r'expectedSecurityGeneration')
+  int get expectedSecurityGeneration;
+
+  @BuiltValueField(wireName: r'expectedMembershipManifestDigest')
+  String get expectedMembershipManifestDigest;
+
+  @BuiltValueField(wireName: r'nextMembershipManifest')
+  String get nextMembershipManifest;
+
+  @BuiltValueField(wireName: r'nextMembershipManifestDigest')
+  String get nextMembershipManifestDigest;
 
   @BuiltValueField(wireName: r'accountKeyEnvelope')
   String get accountKeyEnvelope;
@@ -83,6 +99,26 @@ class _$DevicePairingApproveRequestSerializer
     yield serializers.serialize(
       object.keyEpoch,
       specifiedType: const FullType(int),
+    );
+    yield r'expectedSecurityGeneration';
+    yield serializers.serialize(
+      object.expectedSecurityGeneration,
+      specifiedType: const FullType(int),
+    );
+    yield r'expectedMembershipManifestDigest';
+    yield serializers.serialize(
+      object.expectedMembershipManifestDigest,
+      specifiedType: const FullType(String),
+    );
+    yield r'nextMembershipManifest';
+    yield serializers.serialize(
+      object.nextMembershipManifest,
+      specifiedType: const FullType(String),
+    );
+    yield r'nextMembershipManifestDigest';
+    yield serializers.serialize(
+      object.nextMembershipManifestDigest,
+      specifiedType: const FullType(String),
     );
     yield r'accountKeyEnvelope';
     yield serializers.serialize(
@@ -146,6 +182,39 @@ class _$DevicePairingApproveRequestSerializer
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
           result.keyEpoch = valueDes;
+          break;
+        case r'expectedSecurityGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.expectedSecurityGeneration = valueDes;
+          break;
+        case r'expectedMembershipManifestDigest':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.expectedMembershipManifestDigest = valueDes;
+          break;
+        case r'nextMembershipManifest':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.nextMembershipManifest = valueDes;
+          break;
+        case r'nextMembershipManifestDigest':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.nextMembershipManifestDigest = valueDes;
           break;
         case r'accountKeyEnvelope':
           final valueDes =

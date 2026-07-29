@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_collection/built_collection.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
@@ -11,23 +12,28 @@ part 'attachment_chunk_data.g.dart';
 /// AttachmentChunkData
 ///
 /// Properties:
+/// * [dataRekeyPhase]
 /// * [attachmentId]
 /// * [uploadId]
-/// * [keyEpoch]
+/// * [chunkKeyEpoch]
 /// * [chunkIndex]
 /// * [ciphertext] - 客户端生成的附件分块密文，使用规范无填充 Base64URL 编码，解码后最大 4 MiB
 /// * [ciphertextBytes]
 @BuiltValue()
 abstract class AttachmentChunkData
     implements Built<AttachmentChunkData, AttachmentChunkDataBuilder> {
+  @BuiltValueField(wireName: r'dataRekeyPhase')
+  AttachmentChunkDataDataRekeyPhaseEnum get dataRekeyPhase;
+  // enum dataRekeyPhaseEnum {  ready,  rekey-pending,  };
+
   @BuiltValueField(wireName: r'attachmentId')
   String get attachmentId;
 
   @BuiltValueField(wireName: r'uploadId')
   String get uploadId;
 
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
+  @BuiltValueField(wireName: r'chunkKeyEpoch')
+  int get chunkKeyEpoch;
 
   @BuiltValueField(wireName: r'chunkIndex')
   int get chunkIndex;
@@ -68,6 +74,11 @@ class _$AttachmentChunkDataSerializer
     AttachmentChunkData object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
+    yield r'dataRekeyPhase';
+    yield serializers.serialize(
+      object.dataRekeyPhase,
+      specifiedType: const FullType(AttachmentChunkDataDataRekeyPhaseEnum),
+    );
     yield r'attachmentId';
     yield serializers.serialize(
       object.attachmentId,
@@ -78,9 +89,9 @@ class _$AttachmentChunkDataSerializer
       object.uploadId,
       specifiedType: const FullType(String),
     );
-    yield r'keyEpoch';
+    yield r'chunkKeyEpoch';
     yield serializers.serialize(
-      object.keyEpoch,
+      object.chunkKeyEpoch,
       specifiedType: const FullType(int),
     );
     yield r'chunkIndex';
@@ -125,6 +136,17 @@ class _$AttachmentChunkDataSerializer
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
+        case r'dataRekeyPhase':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(
+                      AttachmentChunkDataDataRekeyPhaseEnum,
+                    ),
+                  )
+                  as AttachmentChunkDataDataRekeyPhaseEnum;
+          result.dataRekeyPhase = valueDes;
+          break;
         case r'attachmentId':
           final valueDes =
               serializers.deserialize(
@@ -143,11 +165,11 @@ class _$AttachmentChunkDataSerializer
                   as String;
           result.uploadId = valueDes;
           break;
-        case r'keyEpoch':
+        case r'chunkKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.keyEpoch = valueDes;
+          result.chunkKeyEpoch = valueDes;
           break;
         case r'chunkIndex':
           final valueDes =
@@ -197,4 +219,23 @@ class _$AttachmentChunkDataSerializer
     );
     return result.build();
   }
+}
+
+class AttachmentChunkDataDataRekeyPhaseEnum extends EnumClass {
+  @BuiltValueEnumConst(wireName: r'ready')
+  static const AttachmentChunkDataDataRekeyPhaseEnum ready =
+      _$attachmentChunkDataDataRekeyPhaseEnum_ready;
+  @BuiltValueEnumConst(wireName: r'rekey-pending')
+  static const AttachmentChunkDataDataRekeyPhaseEnum rekeyPending =
+      _$attachmentChunkDataDataRekeyPhaseEnum_rekeyPending;
+
+  static Serializer<AttachmentChunkDataDataRekeyPhaseEnum> get serializer =>
+      _$attachmentChunkDataDataRekeyPhaseEnumSerializer;
+
+  const AttachmentChunkDataDataRekeyPhaseEnum._(String name) : super(name);
+
+  static BuiltSet<AttachmentChunkDataDataRekeyPhaseEnum> get values =>
+      _$attachmentChunkDataDataRekeyPhaseEnumValues;
+  static AttachmentChunkDataDataRekeyPhaseEnum valueOf(String name) =>
+      _$attachmentChunkDataDataRekeyPhaseEnumValueOf(name);
 }

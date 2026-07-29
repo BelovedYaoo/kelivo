@@ -11,6 +11,7 @@ import 'package:kelivo_sync_api_client/src/auth/bearer_auth.dart';
 import 'package:kelivo_sync_api_client/src/auth/oauth.dart';
 import 'package:kelivo_sync_api_client/src/api/admin_api.dart';
 import 'package:kelivo_sync_api_client/src/api/auth_api.dart';
+import 'package:kelivo_sync_api_client/src/api/data_rekey_api.dart';
 import 'package:kelivo_sync_api_client/src/api/device_api.dart';
 import 'package:kelivo_sync_api_client/src/api/sync_api.dart';
 import 'package:kelivo_sync_api_client/src/api/sync_attachment_api.dart';
@@ -153,6 +154,12 @@ class KelivoSyncApiClient {
   /// by doing that all interceptors will not be executed
   AuthApi getAuthApi() {
     return AuthApi(dio, serializers);
+  }
+
+  /// Get DataRekeyApi instance, base route and serializer can be overridden by a given but be careful,
+  /// by doing that all interceptors will not be executed
+  DataRekeyApi getDataRekeyApi() {
+    return DataRekeyApi(dio, serializers);
   }
 
   /// Get DeviceApi instance, base route and serializer can be overridden by a given but be careful,

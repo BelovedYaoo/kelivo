@@ -168,6 +168,8 @@ class _$TrustedDeviceSummary extends TrustedDeviceSummary {
   @override
   final String clientVersion;
   @override
+  final int authGeneration;
+  @override
   final TrustedDeviceSummaryStatusEnum status;
   @override
   final DateTime createdAt;
@@ -187,6 +189,7 @@ class _$TrustedDeviceSummary extends TrustedDeviceSummary {
     required this.name,
     required this.platform,
     required this.clientVersion,
+    required this.authGeneration,
     required this.status,
     required this.createdAt,
     this.lastSeenAt,
@@ -210,6 +213,7 @@ class _$TrustedDeviceSummary extends TrustedDeviceSummary {
         name == other.name &&
         platform == other.platform &&
         clientVersion == other.clientVersion &&
+        authGeneration == other.authGeneration &&
         status == other.status &&
         createdAt == other.createdAt &&
         lastSeenAt == other.lastSeenAt &&
@@ -224,6 +228,7 @@ class _$TrustedDeviceSummary extends TrustedDeviceSummary {
     _$hash = $jc(_$hash, name.hashCode);
     _$hash = $jc(_$hash, platform.hashCode);
     _$hash = $jc(_$hash, clientVersion.hashCode);
+    _$hash = $jc(_$hash, authGeneration.hashCode);
     _$hash = $jc(_$hash, status.hashCode);
     _$hash = $jc(_$hash, createdAt.hashCode);
     _$hash = $jc(_$hash, lastSeenAt.hashCode);
@@ -240,6 +245,7 @@ class _$TrustedDeviceSummary extends TrustedDeviceSummary {
           ..add('name', name)
           ..add('platform', platform)
           ..add('clientVersion', clientVersion)
+          ..add('authGeneration', authGeneration)
           ..add('status', status)
           ..add('createdAt', createdAt)
           ..add('lastSeenAt', lastSeenAt)
@@ -270,6 +276,11 @@ class TrustedDeviceSummaryBuilder
   String? get clientVersion => _$this._clientVersion;
   set clientVersion(String? clientVersion) =>
       _$this._clientVersion = clientVersion;
+
+  int? _authGeneration;
+  int? get authGeneration => _$this._authGeneration;
+  set authGeneration(int? authGeneration) =>
+      _$this._authGeneration = authGeneration;
 
   TrustedDeviceSummaryStatusEnum? _status;
   TrustedDeviceSummaryStatusEnum? get status => _$this._status;
@@ -302,6 +313,7 @@ class TrustedDeviceSummaryBuilder
       _name = $v.name;
       _platform = $v.platform;
       _clientVersion = $v.clientVersion;
+      _authGeneration = $v.authGeneration;
       _status = $v.status;
       _createdAt = $v.createdAt;
       _lastSeenAt = $v.lastSeenAt;
@@ -348,6 +360,11 @@ class TrustedDeviceSummaryBuilder
             clientVersion,
             r'TrustedDeviceSummary',
             'clientVersion',
+          ),
+          authGeneration: BuiltValueNullFieldError.checkNotNull(
+            authGeneration,
+            r'TrustedDeviceSummary',
+            'authGeneration',
           ),
           status: BuiltValueNullFieldError.checkNotNull(
             status,

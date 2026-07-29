@@ -108,13 +108,8 @@ Future<bool> _executeProductionBackgroundTask(
   String taskName,
   BackgroundTaskContext context,
 ) async {
-  final productionFactory = E2eeBackgroundProductionRunnerFactory.tryCreate();
-  if (productionFactory == null) {
-    await Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName);
-    return false;
-  }
   final executor = _productionTaskExecutor ??= E2eeMobileBackgroundTaskExecutor(
-    runnerFactory: productionFactory.createRunner,
+    runnerFactory: E2eeBackgroundSyncRunner.new,
     cancelScheduledTask: () =>
         Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName),
   );
@@ -244,9 +239,6 @@ final class _WorkmanagerMobileBackgroundSchedulerPlatform
 
   @override
   Future<void> enable() async {
-    if (E2eeBackgroundProductionRunnerFactory.tryCreate() == null) {
-      throw StateError('e2ee_background_verified_binding_factory_unavailable');
-    }
     await _initialize();
     await Workmanager().registerPeriodicTask(
       e2eeMobileBackgroundTaskUniqueName,

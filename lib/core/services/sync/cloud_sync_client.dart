@@ -72,6 +72,7 @@ abstract interface class CloudSyncAccountClient {
     required String attemptId,
     required Uint8List registrationUpload,
     required Uint8List accountKeyEnvelope,
+    required CloudSyncGenesisSecurityState securityState,
     required Uint8List deviceProof,
   });
 
@@ -102,6 +103,7 @@ abstract interface class CloudSyncAccountClient {
     required CloudSyncFullSessionToken token,
     required String pairingId,
     required int keyEpoch,
+    required CloudSyncDevicePairingMembershipCommit membershipCommit,
     required Uint8List accountKeyEnvelope,
     required Uint8List deviceProof,
     required Uint8List pairingAuthenticator,
@@ -110,12 +112,24 @@ abstract interface class CloudSyncAccountClient {
   Future<CloudSyncAuthenticatedSession> consumeDevicePairing({
     required CloudSyncOnboardingToken token,
     required String pairingId,
+    required CloudSyncFullSessionToken sessionToken,
   });
 
   Future<CloudSyncDevicePairingCancellation> cancelDevicePairing({
     required CloudSyncOnboardingToken token,
     required String pairingId,
   });
+
+  Future<CloudSyncAccountSecurityState> getSecurityState();
+
+  Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
+    int afterGeneration = 0,
+    int pageSize = 20,
+  });
+
+  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
+    CloudSyncDeviceRotationRequest request,
+  );
 
   Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
     CloudSyncDeviceStatus? status,
@@ -185,9 +199,9 @@ final class CloudSyncClient
         interceptors: <Interceptor>[
           InterceptorsWrapper(
             onResponse: (response, handler) {
-              if (response.requestOptions.extra[_attachmentResponseMarker] ==
+              if (response.requestOptions.extra[_strictResponseMarker] ==
                   true) {
-                response.extra[_attachmentRawResponseKey] = response.data;
+                response.extra[_rawResponseKey] = response.data;
               }
               handler.next(response);
             },
@@ -294,6 +308,7 @@ final class CloudSyncClient
     required String attemptId,
     required Uint8List registrationUpload,
     required Uint8List accountKeyEnvelope,
+    required CloudSyncGenesisSecurityState securityState,
     required Uint8List deviceProof,
   }) {
     _requireClientIdentifier(attemptId);
@@ -317,17 +332,36 @@ final class CloudSyncClient
           ..attemptId = attemptId
           ..registrationUpload = encodedRegistrationUpload
           ..accountKeyEnvelope = encodedAccountKeyEnvelope
+          ..securityState.replace(
+            api.GenesisSecurityState(
+              (state) => state
+                ..generation = 1
+                ..operationId = securityState.operationId
+                ..keyEpoch = 1
+                ..membershipManifest = _encodeBinaryForRequest(
+                  securityState.membershipManifest,
+                )
+                ..membershipManifestDigest =
+                    securityState.membershipManifestDigest.encoded
+                ..recoveryPublicKeyVersion =
+                    securityState.recoveryPublicKeyVersion
+                ..recoveryPublicKey = _encodeFixedBinaryForRequest(
+                  securityState.recoveryPublicKey,
+                  cloudSyncRecoveryPublicKeyBytes,
+                )
+                ..recoveryCapsuleVersion = securityState.recoveryCapsuleVersion
+                ..recoveryCapsule = _encodeBinaryForRequest(
+                  securityState.recoveryCapsule,
+                ),
+            ),
+          )
           ..deviceProof = encodedDeviceProof,
       );
       final response = await _client.getAuthApi().finishOpaqueRegistration(
         opaqueRegistrationFinishRequest: request,
+        extra: _strictResponseExtra,
       );
-      final data = _requireResponseData(response.data?.data);
-      _requireProtocolVersion(data.protocolVersion);
-      if (data.result.name != 'authenticated') {
-        throw const FormatException('服务端返回了未知的注册结果');
-      }
-      return _authenticatedSessionFromRegistration(data);
+      return _parseRegistrationSession(response.extra[_rawResponseKey]);
     });
   }
 
@@ -499,63 +533,9 @@ final class CloudSyncClient
       final response = await _client.getAuthApi().queryDevicePairing(
         devicePairingQueryRequest: request,
         headers: _authorizationHeaders(token.value),
+        extra: _strictResponseExtra,
       );
-      final value = _requireResponseData(response.data?.data).oneOf.value;
-      if (value is api.DevicePairingQueryDataOneOf) {
-        _requireProtocolVersion(value.protocolVersion);
-        if (value.status.name != 'pending') {
-          throw const FormatException('服务端返回了未知的配对状态');
-        }
-        return CloudSyncDevicePairingPending(
-          pairingId: value.pairingId,
-          accountContextId: value.accountContextId,
-          challenge: _decodeFixedBinaryFromResponse(
-            value.challenge,
-            cloudSyncDeviceChallengeBytes,
-          ),
-          expiresAt: value.expiresAt,
-          targetDevice: _pairingTarget(value.targetDevice),
-        );
-      }
-      if (value is api.DevicePairingQueryDataOneOf1) {
-        _requireProtocolVersion(value.protocolVersion);
-        if (value.status.name != 'approved') {
-          throw const FormatException('服务端返回了未知的配对状态');
-        }
-        return CloudSyncDevicePairingApproved(
-          pairingId: value.pairingId,
-          accountContextId: value.accountContextId,
-          challenge: _decodeFixedBinaryFromResponse(
-            value.challenge,
-            cloudSyncDeviceChallengeBytes,
-          ),
-          expiresAt: value.expiresAt,
-          targetDevice: _pairingTarget(value.targetDevice),
-          issuerDeviceId: value.issuerDeviceId,
-          issuerSigningPublicKey: _decodeFixedBinaryFromResponse(
-            value.issuerSigningPublicKey,
-            cloudSyncDevicePublicKeyBytes,
-          ),
-          issuerKeyAgreementPublicKey: _decodeFixedBinaryFromResponse(
-            value.issuerKeyAgreementPublicKey,
-            cloudSyncDevicePublicKeyBytes,
-          ),
-          keyEpoch: value.keyEpoch,
-          accountKeyEnvelope: _decodeFixedBinaryFromResponse(
-            value.accountKeyEnvelope,
-            cloudSyncAccountKeyEnvelopeBytes,
-          ),
-          deviceProof: _decodeFixedBinaryFromResponse(
-            value.deviceProof,
-            cloudSyncDeviceProofBytes,
-          ),
-          pairingAuthenticator: _decodeFixedBinaryFromResponse(
-            value.pairingAuthenticator,
-            cloudSyncPairingAuthenticatorBytes,
-          ),
-        );
-      }
-      throw const FormatException('服务端返回了歧义的配对状态');
+      return _parseDevicePairingQuery(response.extra[_rawResponseKey]);
     });
   }
 
@@ -564,6 +544,7 @@ final class CloudSyncClient
     required CloudSyncFullSessionToken token,
     required String pairingId,
     required int keyEpoch,
+    required CloudSyncDevicePairingMembershipCommit membershipCommit,
     required Uint8List accountKeyEnvelope,
     required Uint8List deviceProof,
     required Uint8List pairingAuthenticator,
@@ -589,6 +570,15 @@ final class CloudSyncClient
           ..protocolVersion = cloudSyncOpaqueProtocolVersion
           ..pairingId = pairingId
           ..keyEpoch = keyEpoch
+          ..expectedSecurityGeneration =
+              membershipCommit.expectedSecurityGeneration
+          ..expectedMembershipManifestDigest =
+              membershipCommit.expectedMembershipManifestDigest.encoded
+          ..nextMembershipManifest = _encodeBinaryForRequest(
+            membershipCommit.nextMembershipManifest,
+          )
+          ..nextMembershipManifestDigest =
+              membershipCommit.nextMembershipManifestDigest.encoded
           ..accountKeyEnvelope = encodedAccountKeyEnvelope
           ..deviceProof = encodedDeviceProof
           ..pairingAuthenticator = encodedPairingAuthenticator,
@@ -613,6 +603,7 @@ final class CloudSyncClient
   Future<CloudSyncAuthenticatedSession> consumeDevicePairing({
     required CloudSyncOnboardingToken token,
     required String pairingId,
+    required CloudSyncFullSessionToken sessionToken,
   }) {
     _requireClientIdentifier(pairingId);
 
@@ -620,18 +611,18 @@ final class CloudSyncClient
       final request = api.DevicePairingConsumeRequest(
         (builder) => builder
           ..protocolVersion = cloudSyncOpaqueProtocolVersion
-          ..pairingId = pairingId,
+          ..pairingId = pairingId
+          ..sessionToken = sessionToken.value,
       );
       final response = await _client.getAuthApi().consumeDevicePairing(
         devicePairingConsumeRequest: request,
         headers: _authorizationHeaders(token.value),
+        extra: _strictResponseExtra,
       );
-      final data = _requireResponseData(response.data?.data);
-      _requireProtocolVersion(data.protocolVersion);
-      if (data.result.name != 'authenticated') {
-        throw const FormatException('服务端返回了未知的配对消费结果');
-      }
-      return _authenticatedSessionFromPairing(data);
+      return _parsePairingSession(
+        response.extra[_rawResponseKey],
+        expectedToken: sessionToken,
+      );
     });
   }
 
@@ -674,7 +665,9 @@ final class CloudSyncClient
         (builder) => builder
           ..mutationId = request.mutationId
           ..attachmentId = request.attachmentId
-          ..keyEpoch = request.keyEpoch
+          ..chunkKeyEpoch = request.keyEpoch
+          ..manifestKeyEpoch = request.keyEpoch
+          ..manifestRevision = 1
           ..chunkCount = request.chunkCount
           ..totalCiphertextBytes = request.totalCiphertextBytes,
       );
@@ -684,10 +677,10 @@ final class CloudSyncClient
             xKelivoSyncProtocolVersion: _syncProtocolVersion,
             attachmentCreateUploadRequest: generatedRequest,
             headers: _authorizationHeaders(token.value),
-            extra: _strictAttachmentResponseExtra,
+            extra: _strictResponseExtra,
           );
       _requireStrictAttachmentResponse(
-        response.extra[_attachmentRawResponseKey],
+        response.extra[_rawResponseKey],
         _attachmentUploadResponseKeys,
       );
       final data = _requireResponseData(response.data?.data);
@@ -697,8 +690,12 @@ final class CloudSyncClient
       final identity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
+      if (data.manifestKeyEpoch != request.keyEpoch ||
+          data.manifestRevision != 1) {
+        throw const FormatException('服务端返回的附件清单身份与请求不一致');
+      }
       _requireAttachmentCreateResponseMatches(
         request: request,
         identity: identity,
@@ -726,7 +723,7 @@ final class CloudSyncClient
           ..mutationId = request.mutationId
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch
+          ..chunkKeyEpoch = identity.keyEpoch
           ..chunkIndex = request.chunk.chunkIndex
           ..ciphertext = _encodeSyncCiphertext(request.ciphertext),
       );
@@ -736,16 +733,17 @@ final class CloudSyncClient
             xKelivoSyncProtocolVersion: _syncProtocolVersion,
             attachmentPutChunkRequest: generatedRequest,
             headers: _authorizationHeaders(token.value),
-            extra: _strictAttachmentResponseExtra,
+            extra: _strictResponseExtra,
           );
       _requireStrictAttachmentResponse(
-        response.extra[_attachmentRawResponseKey],
+        response.extra[_rawResponseKey],
         _attachmentStoredChunkResponseKeys,
       );
       final data = _requireResponseData(response.data?.data);
       if (data.status.name != 'stored' ||
           data.attachmentId != identity.attachmentId ||
           data.uploadId != identity.uploadId ||
+          data.chunkKeyEpoch != identity.keyEpoch ||
           data.chunkIndex != request.chunk.chunkIndex ||
           data.ciphertextBytes != request.ciphertext.length) {
         throw const FormatException('服务端返回的附件分块写入结果与请求不一致');
@@ -769,7 +767,8 @@ final class CloudSyncClient
           ..mutationId = request.mutationId
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch
+          ..manifestKeyEpoch = identity.keyEpoch
+          ..manifestRevision = 1
           ..manifestCiphertext = _encodeSyncCiphertext(
             request.manifestCiphertext,
           )
@@ -781,19 +780,21 @@ final class CloudSyncClient
             xKelivoSyncProtocolVersion: _syncProtocolVersion,
             attachmentCommitUploadRequest: generatedRequest,
             headers: _authorizationHeaders(token.value),
-            extra: _strictAttachmentResponseExtra,
+            extra: _strictResponseExtra,
           );
       _requireStrictAttachmentResponse(
-        response.extra[_attachmentRawResponseKey],
+        response.extra[_rawResponseKey],
         _attachmentCommittedResponseKeys,
       );
       final data = _requireResponseData(response.data?.data);
       final responseIdentity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
-      if (data.status.name != 'committed') {
+      if (data.status.name != 'committed' ||
+          data.manifestKeyEpoch != identity.keyEpoch ||
+          data.manifestRevision != 1) {
         throw const FormatException('服务端返回了未知的附件提交状态');
       }
       _requireMatchingAttachmentIdentity(identity, responseIdentity);
@@ -814,7 +815,8 @@ final class CloudSyncClient
         (builder) => builder
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch,
+          ..manifestKeyEpoch = identity.keyEpoch
+          ..manifestRevision = 1,
       );
       final response = await _client
           .getSyncAttachmentApi()
@@ -822,10 +824,10 @@ final class CloudSyncClient
             xKelivoSyncProtocolVersion: _syncProtocolVersion,
             attachmentGetManifestRequest: generatedRequest,
             headers: _authorizationHeaders(token.value),
-            extra: _strictAttachmentResponseExtra,
+            extra: _strictResponseExtra,
           );
       _requireStrictAttachmentResponse(
-        response.extra[_attachmentRawResponseKey],
+        response.extra[_rawResponseKey],
         _attachmentManifestResponseKeys,
         validateChunks: true,
       );
@@ -833,9 +835,13 @@ final class CloudSyncClient
       final responseIdentity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
       _requireMatchingAttachmentIdentity(identity, responseIdentity);
+      if (data.manifestKeyEpoch != identity.keyEpoch ||
+          data.manifestRevision != 1) {
+        throw const FormatException('服务端返回了其他附件清单版本');
+      }
       final manifestCiphertext = _decodeCanonicalAttachmentCiphertext(
         data.manifestCiphertext,
         expectedLength: data.manifestCiphertextBytes,
@@ -871,7 +877,7 @@ final class CloudSyncClient
         (builder) => builder
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch
+          ..chunkKeyEpoch = identity.keyEpoch
           ..chunkIndex = chunk.chunkIndex,
       );
       final response = await _client
@@ -880,17 +886,17 @@ final class CloudSyncClient
             xKelivoSyncProtocolVersion: _syncProtocolVersion,
             attachmentGetChunkRequest: generatedRequest,
             headers: _authorizationHeaders(token.value),
-            extra: _strictAttachmentResponseExtra,
+            extra: _strictResponseExtra,
           );
       _requireStrictAttachmentResponse(
-        response.extra[_attachmentRawResponseKey],
+        response.extra[_rawResponseKey],
         _attachmentChunkResponseKeys,
       );
       final data = _requireResponseData(response.data?.data);
       final responseIdentity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
       _requireMatchingAttachmentIdentity(identity, responseIdentity);
       if (data.chunkIndex != chunk.chunkIndex) {
@@ -921,7 +927,8 @@ final class CloudSyncClient
           ..mutationId = request.mutationId
           ..attachmentId = identity.attachmentId
           ..uploadId = identity.uploadId
-          ..keyEpoch = identity.keyEpoch,
+          ..manifestKeyEpoch = identity.keyEpoch
+          ..manifestRevision = 1,
       );
       final response = await _client
           .getSyncAttachmentApi()
@@ -929,19 +936,21 @@ final class CloudSyncClient
             xKelivoSyncProtocolVersion: _syncProtocolVersion,
             attachmentDeleteRequest: generatedRequest,
             headers: _authorizationHeaders(token.value),
-            extra: _strictAttachmentResponseExtra,
+            extra: _strictResponseExtra,
           );
       _requireStrictAttachmentResponse(
-        response.extra[_attachmentRawResponseKey],
+        response.extra[_rawResponseKey],
         _attachmentDeletedResponseKeys,
       );
       final data = _requireResponseData(response.data?.data);
       final responseIdentity = _attachmentIdentity(
         attachmentId: data.attachmentId,
         uploadId: data.uploadId,
-        keyEpoch: data.keyEpoch,
+        keyEpoch: data.chunkKeyEpoch,
       );
-      if (data.status.name != 'deleted') {
+      if (data.status.name != 'deleted' ||
+          data.manifestKeyEpoch != identity.keyEpoch ||
+          data.manifestRevision != 1) {
         throw const FormatException('服务端返回了未知的附件删除状态');
       }
       _requireMatchingAttachmentIdentity(identity, responseIdentity);
@@ -1125,6 +1134,90 @@ final class CloudSyncClient
   }
 
   @override
+  Future<CloudSyncAccountSecurityState> getSecurityState() {
+    return _guard(() async {
+      final response = await _client.getDeviceApi().getDeviceSecurityState(
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseAccountSecurityState(response.extra[_rawResponseKey]);
+    });
+  }
+
+  @override
+  Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
+    int afterGeneration = 0,
+    int pageSize = 20,
+  }) {
+    if (afterGeneration < 0 ||
+        afterGeneration > 0x7fffffff ||
+        pageSize < 1 ||
+        pageSize > 100) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      );
+    }
+    return _guard(() async {
+      final request = api.ListAccountSecurityStateHistoryRequest(
+        (builder) => builder
+          ..afterGeneration = afterGeneration
+          ..pageSize = pageSize,
+      );
+      final response = await _client
+          .getDeviceApi()
+          .listDeviceSecurityStateHistory(
+            listAccountSecurityStateHistoryRequest: request,
+            headers: _requireFullSessionHeaders(),
+            extra: _strictResponseExtra,
+          );
+      return _parseAccountSecurityStateHistory(
+        response.extra[_rawResponseKey],
+        expectedAfterGeneration: afterGeneration,
+        expectedPageSize: pageSize,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
+    CloudSyncDeviceRotationRequest request,
+  ) {
+    return _guard(() async {
+      final generatedRequest = api.CommitDeviceRotationRequest(
+        (builder) => builder
+          ..expectedGeneration = request.expectedGeneration
+          ..expectedKeyEpoch = request.expectedKeyEpoch
+          ..expectedMembershipManifestDigest =
+              request.expectedMembershipManifestDigest.encoded
+          ..operationId = request.operationId
+          ..revokeDeviceId = request.revokeDeviceId
+          ..nextMembershipManifest = _encodeBinaryForRequest(
+            request.nextMembershipManifest,
+          )
+          ..nextMembershipManifestDigest =
+              request.nextMembershipManifestDigest.encoded
+          ..nextRecoveryCapsuleVersion = request.nextRecoveryCapsuleVersion
+          ..nextRecoveryCapsule = _encodeBinaryForRequest(
+            request.nextRecoveryCapsule,
+          )
+          ..envelopes.replace(
+            request.envelopes.map(_toGeneratedRotationEnvelope),
+          ),
+      );
+      final response = await _client.getDeviceApi().commitDeviceRotation(
+        commitDeviceRotationRequest: generatedRequest,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseDeviceRotationResult(
+        response.extra[_rawResponseKey],
+        request: request,
+      );
+    });
+  }
+
+  @override
   Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
     CloudSyncDeviceStatus? status,
     int pageIndex = 1,
@@ -1162,18 +1255,13 @@ final class CloudSyncClient
   }
 
   @override
-  Future<CloudSyncDeviceSession> revokeDevice(String deviceId) {
+  Future<CloudSyncDeviceSession> revokeDevice(String deviceId) async {
     _requireClientIdentifier(deviceId);
-    return _guard(() async {
-      final request = api.RevokeTrustedDeviceRequest(
-        (builder) => builder.deviceId = deviceId,
-      );
-      final response = await _client.getDeviceApi().revokeTrustedDevice(
-        revokeTrustedDeviceRequest: request,
-        headers: _requireFullSessionHeaders(),
-      );
-      return _fromDevice(_requireResponseData(response.data?.data).device);
-    });
+    throw const CloudSyncException(
+      kind: CloudSyncFailureKind.conflict,
+      retryable: false,
+      serverCode: 'SYNC_DEVICE_ROTATION_REQUIRED',
+    );
   }
 
   Map<String, String> _requireFullSessionHeaders() {
@@ -1214,6 +1302,21 @@ api.AttachmentManifestChunk _toGeneratedManifestChunk(
     (builder) => builder
       ..chunkIndex = chunk.chunkIndex
       ..ciphertextBytes = chunk.ciphertextBytes,
+  );
+}
+
+api.UnsignedAccountSecurityStateEnvelope _toGeneratedRotationEnvelope(
+  CloudSyncDeviceRotationEnvelope envelope,
+) {
+  return api.UnsignedAccountSecurityStateEnvelope(
+    (builder) => builder
+      ..targetDeviceId = envelope.targetDeviceId
+      ..envelopeVersion = envelope.envelopeVersion
+      ..keyEpoch = envelope.keyEpoch
+      ..accountKeyEnvelope = _encodeFixedBinaryForRequest(
+        envelope.accountKeyEnvelope,
+        cloudSyncAccountKeyEnvelopeBytes,
+      ),
   );
 }
 
@@ -1673,24 +1776,141 @@ void _requireServerIdentifier(String value) {
   }
 }
 
-CloudSyncAuthenticatedSession _authenticatedSessionFromRegistration(
-  api.OpaqueRegistrationFinishData data,
+CloudSyncJsonMap _strictResponseData(
+  Object? rawResponse,
+  Set<String> expectedDataKeys,
+  String context,
 ) {
-  return _authenticatedSession(
-    token: data.token,
-    tokenExpiresAt: data.tokenExpiresAt,
-    keyEpoch: data.keyEpoch,
-    userId: data.user.id,
-    loginName: data.user.loginName,
-    displayName: data.user.displayName,
-    role: data.user.role.name,
-    attachmentQuotaBytes: data.user.attachmentQuotaBytes,
-    deviceId: data.device.id,
-    deviceName: data.device.name,
-    platform: data.device.platform.name,
-    clientVersion: data.device.clientVersion,
-    deviceStatus: data.device.status.name,
-    deviceCreatedAt: data.device.createdAt,
+  final envelope = copyCloudSyncJsonMap(rawResponse);
+  _requireRawExactKeys(envelope, _strictResponseEnvelopeKeys, context);
+  final data = copyCloudSyncJsonMap(envelope['data']);
+  _requireRawExactKeys(data, expectedDataKeys, '$context data');
+  return data;
+}
+
+CloudSyncAccountSecurityState _parseAccountSecurityState(Object? rawResponse) {
+  return CloudSyncAccountSecurityState.fromJson(
+    _strictResponseData(rawResponse, _accountSecurityStateDataKeys, '账户安全状态响应'),
+  );
+}
+
+CloudSyncAccountSecurityHistoryPage _parseAccountSecurityStateHistory(
+  Object? rawResponse, {
+  required int expectedAfterGeneration,
+  required int expectedPageSize,
+}) {
+  final page = CloudSyncAccountSecurityHistoryPage.fromJson(
+    _strictResponseData(
+      rawResponse,
+      _accountSecurityStateHistoryDataKeys,
+      '账户安全状态历史响应',
+    ),
+  );
+  if (page.afterGeneration != expectedAfterGeneration ||
+      page.pageSize != expectedPageSize) {
+    throw const FormatException('账户安全状态历史未回显请求分页');
+  }
+  return page;
+}
+
+CloudSyncDeviceRotationResult _parseDeviceRotationResult(
+  Object? rawResponse, {
+  required CloudSyncDeviceRotationRequest request,
+}) {
+  final result = CloudSyncDeviceRotationResult.fromJson(
+    _strictResponseData(rawResponse, _deviceRotationResultDataKeys, '设备轮换响应'),
+  );
+  if (result.operationId != request.operationId ||
+      result.revokedDeviceId != request.revokeDeviceId ||
+      result.fromGeneration != request.expectedGeneration ||
+      result.generation != request.expectedGeneration + 1 ||
+      result.keyEpoch != request.expectedKeyEpoch + 1 ||
+      result.membershipManifestDigest.encoded !=
+          request.nextMembershipManifestDigest.encoded) {
+    throw const FormatException('设备轮换响应未绑定原始请求');
+  }
+  return result;
+}
+
+void _requireRawExactKeys(
+  CloudSyncJsonMap value,
+  Set<String> expectedKeys,
+  String context,
+) {
+  if (value.length != expectedKeys.length ||
+      !value.keys.every(expectedKeys.contains)) {
+    throw FormatException('$context 字段集合无效');
+  }
+}
+
+String _rawString(CloudSyncJsonMap value, String key) {
+  final field = value[key];
+  if (field is! String || field.isEmpty) {
+    throw FormatException('$key 必须为非空字符串');
+  }
+  return field;
+}
+
+int _rawInt(CloudSyncJsonMap value, String key) {
+  final field = value[key];
+  if (field is! int) {
+    throw FormatException('$key 必须为整数');
+  }
+  return field;
+}
+
+DateTime _rawUtcDateTime(CloudSyncJsonMap value, String key) {
+  final raw = _rawString(value, key);
+  final parsed = DateTime.tryParse(raw);
+  if (parsed == null || !parsed.isUtc || parsed.toIso8601String() != raw) {
+    throw FormatException('$key 必须为规范 UTC 时间');
+  }
+  return parsed;
+}
+
+void _requireRawProtocolVersion(CloudSyncJsonMap data) {
+  if (_rawInt(data, 'protocolVersion') != cloudSyncOpaqueProtocolVersion) {
+    throw const FormatException('服务端返回了不支持的认证协议版本');
+  }
+}
+
+CloudSyncDevicePairingTarget _pairingTargetFromRaw(CloudSyncJsonMap target) {
+  _requireRawExactKeys(target, _pairingTargetKeys, '配对查询 targetDevice');
+  return CloudSyncDevicePairingTarget(
+    id: _rawString(target, 'id'),
+    name: _rawString(target, 'name'),
+    platform: _fromPlatformName(_rawString(target, 'platform')),
+    clientVersion: _rawString(target, 'clientVersion'),
+    keyVersion: _rawInt(target, 'keyVersion'),
+    authGeneration: _rawInt(target, 'authGeneration'),
+    signingPublicKey: _decodeFixedBinaryFromResponse(
+      _rawString(target, 'signingPublicKey'),
+      cloudSyncDevicePublicKeyBytes,
+    ),
+    keyAgreementPublicKey: _decodeFixedBinaryFromResponse(
+      _rawString(target, 'keyAgreementPublicKey'),
+      cloudSyncDevicePublicKeyBytes,
+    ),
+  );
+}
+
+CloudSyncAuthenticatedSession _parseRegistrationSession(Object? rawResponse) {
+  final data = _strictResponseData(
+    rawResponse,
+    _registrationSessionDataKeys,
+    '注册响应',
+  );
+  _requireRawProtocolVersion(data);
+  if (_rawString(data, 'result') != 'authenticated') {
+    throw const FormatException('服务端返回了未知的注册结果');
+  }
+  final securityState = CloudSyncAccountSecurityState.fromJson(
+    copyCloudSyncJsonMap(data['securityState']),
+  );
+  return _authenticatedSessionFromRawMaps(
+    data: data,
+    keyEpoch: securityState.keyEpoch,
+    securityState: securityState,
   );
 }
 
@@ -1701,6 +1921,8 @@ CloudSyncAuthenticatedSession _authenticatedSessionFromLogin(
     token: data.token,
     tokenExpiresAt: data.tokenExpiresAt,
     keyEpoch: data.keyEpoch,
+    authGeneration: data.device.authGeneration,
+    sessionGeneration: data.device.sessionGeneration,
     userId: data.user.id,
     loginName: data.user.loginName,
     displayName: data.user.displayName,
@@ -1715,24 +1937,140 @@ CloudSyncAuthenticatedSession _authenticatedSessionFromLogin(
   );
 }
 
-CloudSyncAuthenticatedSession _authenticatedSessionFromPairing(
-  api.DevicePairingConsumeData data,
+CloudSyncDevicePairingQueryResult _parseDevicePairingQuery(
+  Object? rawResponse,
 ) {
+  final envelope = copyCloudSyncJsonMap(rawResponse);
+  _requireRawExactKeys(envelope, _strictResponseEnvelopeKeys, '配对查询响应');
+  final data = copyCloudSyncJsonMap(envelope['data']);
+  final status = _rawString(data, 'status');
+  final expectedKeys = switch (status) {
+    'pending' => _pairingPendingDataKeys,
+    'approved' => _pairingApprovedDataKeys,
+    _ => throw const FormatException('服务端返回了未知的配对状态'),
+  };
+  _requireRawExactKeys(data, expectedKeys, '配对查询 data');
+  _requireRawProtocolVersion(data);
+  final target = _pairingTargetFromRaw(
+    copyCloudSyncJsonMap(data['targetDevice']),
+  );
+  final common = (
+    pairingId: _rawString(data, 'pairingId'),
+    accountContextId: _rawString(data, 'accountContextId'),
+    challenge: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'challenge'),
+      cloudSyncDeviceChallengeBytes,
+    ),
+    expiresAt: _rawUtcDateTime(data, 'expiresAt'),
+  );
+  if (status == 'pending') {
+    return CloudSyncDevicePairingPending(
+      pairingId: common.pairingId,
+      accountContextId: common.accountContextId,
+      challenge: common.challenge,
+      expiresAt: common.expiresAt,
+      targetDevice: target,
+    );
+  }
+  return CloudSyncDevicePairingApproved(
+    pairingId: common.pairingId,
+    accountContextId: common.accountContextId,
+    challenge: common.challenge,
+    expiresAt: common.expiresAt,
+    targetDevice: target,
+    issuerDeviceId: _rawString(data, 'issuerDeviceId'),
+    issuerKeyVersion: _rawInt(data, 'issuerKeyVersion'),
+    issuerAuthGeneration: _rawInt(data, 'issuerAuthGeneration'),
+    issuerSigningPublicKey: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'issuerSigningPublicKey'),
+      cloudSyncDevicePublicKeyBytes,
+    ),
+    issuerKeyAgreementPublicKey: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'issuerKeyAgreementPublicKey'),
+      cloudSyncDevicePublicKeyBytes,
+    ),
+    keyEpoch: _rawInt(data, 'keyEpoch'),
+    accountKeyEnvelope: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'accountKeyEnvelope'),
+      cloudSyncAccountKeyEnvelopeBytes,
+    ),
+    deviceProof: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'deviceProof'),
+      cloudSyncDeviceProofBytes,
+    ),
+    pairingAuthenticator: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'pairingAuthenticator'),
+      cloudSyncPairingAuthenticatorBytes,
+    ),
+  );
+}
+
+CloudSyncAuthenticatedSession _parsePairingSession(
+  Object? rawResponse, {
+  required CloudSyncFullSessionToken expectedToken,
+}) {
+  final data = _strictResponseData(
+    rawResponse,
+    _pairingSessionDataKeys,
+    '配对消费响应',
+  );
+  _requireRawProtocolVersion(data);
+  if (_rawString(data, 'result') != 'authenticated') {
+    throw const FormatException('服务端返回了未知的配对消费结果');
+  }
+  if (_rawString(data, 'token') != expectedToken.value) {
+    throw const FormatException('服务端返回了其他完整会话令牌');
+  }
+  final securityState = CloudSyncAccountSecurityState.fromJson(
+    copyCloudSyncJsonMap(data['securityState']),
+  );
+  final manifestDigest = CloudSyncMembershipManifestDigest.parse(
+    _rawString(data, 'membershipManifestDigest'),
+  );
+  final receipt = CloudSyncDevicePairingConsumptionReceipt(
+    pairingId: _rawString(data, 'pairingId'),
+    issuerDeviceId: _rawString(data, 'issuerDeviceId'),
+    keyEpoch: _rawInt(data, 'keyEpoch'),
+    securityGeneration: _rawInt(data, 'securityGeneration'),
+    membershipManifestDigest: manifestDigest,
+  );
+  return _authenticatedSessionFromRawMaps(
+    data: data,
+    keyEpoch: receipt.keyEpoch,
+    securityState: securityState,
+    pairingReceipt: receipt,
+  );
+}
+
+CloudSyncAuthenticatedSession _authenticatedSessionFromRawMaps({
+  required CloudSyncJsonMap data,
+  required int keyEpoch,
+  required CloudSyncAccountSecurityState securityState,
+  CloudSyncDevicePairingConsumptionReceipt? pairingReceipt,
+}) {
+  final user = copyCloudSyncJsonMap(data['user']);
+  final device = copyCloudSyncJsonMap(data['device']);
+  _requireRawExactKeys(user, _authenticatedUserKeys, '认证响应 user');
+  _requireRawExactKeys(device, _authenticatedDeviceKeys, '认证响应 device');
   return _authenticatedSession(
-    token: data.token,
-    tokenExpiresAt: data.tokenExpiresAt,
-    keyEpoch: data.keyEpoch,
-    userId: data.user.id,
-    loginName: data.user.loginName,
-    displayName: data.user.displayName,
-    role: data.user.role.name,
-    attachmentQuotaBytes: data.user.attachmentQuotaBytes,
-    deviceId: data.device.id,
-    deviceName: data.device.name,
-    platform: data.device.platform.name,
-    clientVersion: data.device.clientVersion,
-    deviceStatus: data.device.status.name,
-    deviceCreatedAt: data.device.createdAt,
+    token: _rawString(data, 'token'),
+    tokenExpiresAt: _rawUtcDateTime(data, 'tokenExpiresAt'),
+    keyEpoch: keyEpoch,
+    authGeneration: _rawInt(device, 'authGeneration'),
+    sessionGeneration: _rawInt(device, 'sessionGeneration'),
+    userId: _rawString(user, 'id'),
+    loginName: _rawString(user, 'loginName'),
+    displayName: _rawString(user, 'displayName'),
+    role: _rawString(user, 'role'),
+    attachmentQuotaBytes: _rawInt(user, 'attachmentQuotaBytes'),
+    deviceId: _rawString(device, 'id'),
+    deviceName: _rawString(device, 'name'),
+    platform: _rawString(device, 'platform'),
+    clientVersion: _rawString(device, 'clientVersion'),
+    deviceStatus: _rawString(device, 'status'),
+    deviceCreatedAt: _rawUtcDateTime(device, 'createdAt'),
+    securityState: securityState,
+    pairingReceipt: pairingReceipt,
   );
 }
 
@@ -1740,6 +2078,8 @@ CloudSyncAuthenticatedSession _authenticatedSession({
   required String token,
   required DateTime tokenExpiresAt,
   required int keyEpoch,
+  required int authGeneration,
+  required int sessionGeneration,
   required String userId,
   required String loginName,
   required String displayName,
@@ -1751,11 +2091,15 @@ CloudSyncAuthenticatedSession _authenticatedSession({
   required String clientVersion,
   required String deviceStatus,
   required DateTime deviceCreatedAt,
+  CloudSyncAccountSecurityState? securityState,
+  CloudSyncDevicePairingConsumptionReceipt? pairingReceipt,
 }) {
   return CloudSyncAuthenticatedSession(
     token: CloudSyncFullSessionToken.parse(token),
     tokenExpiresAt: tokenExpiresAt,
     keyEpoch: keyEpoch,
+    authGeneration: authGeneration,
+    sessionGeneration: sessionGeneration,
     user: CloudSyncAuthenticatedUser(
       id: userId,
       loginName: loginName,
@@ -1771,6 +2115,8 @@ CloudSyncAuthenticatedSession _authenticatedSession({
       status: deviceStatus,
       createdAt: deviceCreatedAt,
     ),
+    securityState: securityState,
+    pairingReceipt: pairingReceipt,
   );
 }
 
@@ -1950,6 +2296,10 @@ String _encodeFixedBinaryForRequest(Uint8List value, int expectedBytes) {
   return base64Url.encode(value).replaceAll('=', '');
 }
 
+String _encodeBinaryForRequest(Uint8List value) {
+  return base64Url.encode(value).replaceAll('=', '');
+}
+
 Uint8List _decodeFixedBinaryFromResponse(String value, int expectedBytes) {
   final expectedEncodedLength = (expectedBytes * 8 + 5) ~/ 6;
   if (value.length != expectedEncodedLength ||
@@ -2061,16 +2411,121 @@ _ParsedServerError? _parseServerError(Object? raw) {
   }
 }
 
-const _attachmentResponseMarker = 'kelivo.strict-attachment-response';
-const _attachmentRawResponseKey = 'kelivo.raw-attachment-response';
-const _strictAttachmentResponseExtra = <String, Object>{
-  _attachmentResponseMarker: true,
+const _strictResponseMarker = 'kelivo.strict-response';
+const _rawResponseKey = 'kelivo.raw-response';
+const _strictResponseExtra = <String, Object>{_strictResponseMarker: true};
+const _strictResponseEnvelopeKeys = <String>{'data'};
+const _accountSecurityStateDataKeys = <String>{
+  'generation',
+  'keyEpoch',
+  'dataRekeyPhase',
+  'membershipManifest',
+  'membershipManifestDigest',
+  'recoveryPublicKeyVersion',
+  'recoveryPublicKey',
+  'recoveryCapsuleVersion',
+  'recoveryCapsule',
+  'lastOperationId',
+  'updatedAt',
+  'envelopes',
+};
+const _accountSecurityStateHistoryDataKeys = <String>{
+  'items',
+  'afterGeneration',
+  'nextAfterGeneration',
+  'pageSize',
+  'hasMore',
+  'currentState',
+};
+const _deviceRotationResultDataKeys = <String>{
+  'result',
+  'operationId',
+  'revokedDeviceId',
+  'fromGeneration',
+  'generation',
+  'keyEpoch',
+  'dataRekeyPhase',
+  'membershipManifestDigest',
+  'committedAt',
+};
+const _registrationSessionDataKeys = <String>{
+  'protocolVersion',
+  'result',
+  'token',
+  'tokenExpiresAt',
+  'user',
+  'device',
+  'securityState',
+};
+const _authenticatedUserKeys = <String>{
+  'id',
+  'loginName',
+  'displayName',
+  'role',
+  'attachmentQuotaBytes',
+};
+const _authenticatedDeviceKeys = <String>{
+  'id',
+  'name',
+  'platform',
+  'clientVersion',
+  'authGeneration',
+  'status',
+  'createdAt',
+  'sessionGeneration',
+};
+const _pairingTargetKeys = <String>{
+  'id',
+  'name',
+  'platform',
+  'clientVersion',
+  'keyVersion',
+  'authGeneration',
+  'signingPublicKey',
+  'keyAgreementPublicKey',
+};
+const _pairingPendingDataKeys = <String>{
+  'protocolVersion',
+  'pairingId',
+  'accountContextId',
+  'challenge',
+  'expiresAt',
+  'targetDevice',
+  'status',
+};
+const _pairingApprovedDataKeys = <String>{
+  ..._pairingPendingDataKeys,
+  'issuerDeviceId',
+  'issuerKeyVersion',
+  'issuerAuthGeneration',
+  'issuerSigningPublicKey',
+  'issuerKeyAgreementPublicKey',
+  'keyEpoch',
+  'accountKeyEnvelope',
+  'deviceProof',
+  'pairingAuthenticator',
+};
+const _pairingSessionDataKeys = <String>{
+  'protocolVersion',
+  'result',
+  'pairingId',
+  'issuerDeviceId',
+  'keyEpoch',
+  'securityGeneration',
+  'membershipManifestDigest',
+  'securityState',
+  'token',
+  'tokenExpiresAt',
+  'user',
+  'device',
 };
 const _attachmentResponseEnvelopeKeys = <String>{'data'};
 const _attachmentUploadResponseKeys = <String>{
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'chunkCount',
   'totalCiphertextBytes',
   'status',
@@ -2079,6 +2534,7 @@ const _attachmentUploadResponseKeys = <String>{
 const _attachmentStoredChunkResponseKeys = <String>{
   'attachmentId',
   'uploadId',
+  'chunkKeyEpoch',
   'chunkIndex',
   'ciphertextBytes',
   'status',
@@ -2086,14 +2542,19 @@ const _attachmentStoredChunkResponseKeys = <String>{
 const _attachmentCommittedResponseKeys = <String>{
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'status',
   'committedAt',
 };
 const _attachmentManifestResponseKeys = <String>{
+  'dataRekeyPhase',
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'chunkCount',
   'totalCiphertextBytes',
   'manifestCiphertext',
@@ -2102,9 +2563,10 @@ const _attachmentManifestResponseKeys = <String>{
   'committedAt',
 };
 const _attachmentChunkResponseKeys = <String>{
+  'dataRekeyPhase',
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
   'chunkIndex',
   'ciphertext',
   'ciphertextBytes',
@@ -2112,7 +2574,9 @@ const _attachmentChunkResponseKeys = <String>{
 const _attachmentDeletedResponseKeys = <String>{
   'attachmentId',
   'uploadId',
-  'keyEpoch',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
   'status',
   'deletedAt',
 };
