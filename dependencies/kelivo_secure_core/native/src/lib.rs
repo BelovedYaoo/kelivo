@@ -48,7 +48,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 12;
+const ABI_VERSION: u32 = 13;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -2949,6 +2949,7 @@ mod tests {
                     ark,
                     canonical_key.as_ptr(),
                     canonical_key.len(),
+                    1,
                     first.as_mut_ptr(),
                     first.len(),
                     &mut first_length,
@@ -2968,6 +2969,7 @@ mod tests {
                     ark,
                     canonical_key.as_ptr(),
                     canonical_key.len(),
+                    1,
                     repeated.as_mut_ptr(),
                     repeated.len(),
                     &mut repeated_length,
@@ -2986,6 +2988,7 @@ mod tests {
                     ark,
                     other_key.as_ptr(),
                     other_key.len(),
+                    1,
                     other.as_mut_ptr(),
                     other.len(),
                     &mut other_length,
@@ -3004,6 +3007,7 @@ mod tests {
                     ark,
                     maximum_key.as_ptr(),
                     maximum_key.len(),
+                    1,
                     boundary_output.as_mut_ptr(),
                     boundary_output.len(),
                     &mut boundary_length,
@@ -3020,6 +3024,7 @@ mod tests {
                     ark,
                     canonical_key.as_ptr(),
                     canonical_key.len(),
+                    1,
                     untouched.as_mut_ptr(),
                     untouched.len(),
                     &mut required_length,
@@ -3038,6 +3043,7 @@ mod tests {
                     ark,
                     ptr::null(),
                     0,
+                    1,
                     rejected_output.as_mut_ptr(),
                     rejected_output.len(),
                     &mut rejected_length,
@@ -3055,12 +3061,44 @@ mod tests {
                     ark,
                     oversized_key.as_ptr(),
                     oversized_key.len(),
+                    1,
                     rejected_output.as_mut_ptr(),
                     rejected_output.len(),
                     &mut rejected_length,
                 )
             },
             KelivoStatus::InputTooLarge.code()
+        );
+        assert_eq!(rejected_length, 0);
+
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    canonical_key.as_ptr(),
+                    canonical_key.len(),
+                    0,
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(rejected_length, 0);
+        assert_eq!(
+            unsafe {
+                kelivo_account_record_id_derive(
+                    ark,
+                    canonical_key.as_ptr(),
+                    canonical_key.len(),
+                    2,
+                    rejected_output.as_mut_ptr(),
+                    rejected_output.len(),
+                    &mut rejected_length,
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
         );
         assert_eq!(rejected_length, 0);
 
@@ -3074,6 +3112,7 @@ mod tests {
                     ark,
                     canonical_key.as_ptr(),
                     canonical_key.len(),
+                    1,
                     rejected_output.as_mut_ptr(),
                     rejected_output.len(),
                     &mut rejected_length,
@@ -4111,6 +4150,7 @@ mod tests {
                     issuer_ark,
                     canonical_key.as_ptr(),
                     canonical_key.len(),
+                    u32::MAX,
                     original_record_id.as_mut_ptr(),
                     original_record_id.len(),
                     &mut original_length,
@@ -4124,6 +4164,7 @@ mod tests {
                     opened_ark,
                     canonical_key.as_ptr(),
                     canonical_key.len(),
+                    u32::MAX,
                     opened_record_id.as_mut_ptr(),
                     opened_record_id.len(),
                     &mut opened_length,

@@ -653,8 +653,10 @@ extension KelivoDeviceCore on KelivoSecureCore {
 
   Future<Uint8List> deriveAccountRecordId(
     KelivoAccountRootKeyHandle ark, {
+    required int keyEpoch,
     required Uint8List canonicalEntityKey,
   }) async {
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
     if (canonicalEntityKey.isEmpty ||
         canonicalEntityKey.length > _recordEntityKeyMaxLength) {
       throw ArgumentError.value(
@@ -669,6 +671,7 @@ extension KelivoDeviceCore on KelivoSecureCore {
       final recordId = await Isolate.run(
         () => _deriveAccountRecordId(
           value,
+          keyEpoch,
           Uint8List.fromList(canonicalEntityKey),
         ),
       );
@@ -1460,7 +1463,11 @@ void _validateDevicePublicKeySet(
   }
 }
 
-Uint8List _deriveAccountRecordId(int arkHandle, Uint8List canonicalEntityKey) {
+Uint8List _deriveAccountRecordId(
+  int arkHandle,
+  int keyEpoch,
+  Uint8List canonicalEntityKey,
+) {
   final entityKeyPointer = _copyToNative(canonicalEntityKey);
   try {
     return _fixedDeviceOutput(
@@ -1471,6 +1478,7 @@ Uint8List _deriveAccountRecordId(int arkHandle, Uint8List canonicalEntityKey) {
             arkHandle,
             entityKeyPointer,
             canonicalEntityKey.length,
+            keyEpoch,
             output,
             capacity,
             outputLength,

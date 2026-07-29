@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(12)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(13)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -573,14 +573,16 @@ KELIVO_CORE_API KelivoStatus kelivo_account_root_key_generate(
     uint64_t *out_handle);
 
 /*
- * 使用 ARK 对调用方提供的非空规范实体键执行 v1 域分离 keyed PRF，输出固定
- * 16 字节不透明记录 ID，并设置 RFC 4122 UUIDv4/variant 位。实体键最长 2048
- * 字节；原始 ARK 和完整 PRF 输出均不会通过 ABI 暴露。
+ * 使用句柄中指定且必须存在的 ARK 代次，对调用方提供的非空规范实体键执行
+ * v1 域分离 keyed PRF，输出固定 16 字节不透明记录 ID，并设置 RFC 4122
+ * UUIDv4/variant 位。实体键最长 2048 字节；原始 ARK 和完整 PRF 输出均不
+ * 会通过 ABI 暴露。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_record_id_derive(
     uint64_t ark_handle,
     const uint8_t *canonical_entity_key,
     size_t canonical_entity_key_length,
+    uint32_t key_epoch,
     uint8_t *out_record_id,
     size_t out_record_id_capacity,
     size_t *out_record_id_length);

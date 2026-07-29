@@ -24,10 +24,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v12 OPAQUE、设备 E2EE、附件加密与账户信任签名支持', () async {
+  test('能力门禁声明 ABI v13 OPAQUE、设备 E2EE、附件加密与账户信任签名支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 12);
+    expect(capabilities.abiVersion, 13);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -258,7 +258,7 @@ void main() {
     await expectLater(core.closeDeviceIdentity(identity), throwsStateError);
   });
 
-  test('账户根密钥稳定派生不透明 UUIDv4 记录标识并拒绝非法实体键', () async {
+  test('账户根密钥按精确代次稳定派生记录标识并拒绝非法输入', () async {
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final userId = accountId(0x40);
     final ark = await core.generateAccountRootKey(userId: userId, keyEpoch: 1);
@@ -268,14 +268,17 @@ void main() {
 
     final first = await core.deriveAccountRecordId(
       ark,
+      keyEpoch: 1,
       canonicalEntityKey: canonicalKey,
     );
     final repeated = await core.deriveAccountRecordId(
       ark,
+      keyEpoch: 1,
       canonicalEntityKey: canonicalKey,
     );
     final other = await core.deriveAccountRecordId(
       ark,
+      keyEpoch: 1,
       canonicalEntityKey: Uint8List.fromList(
         'chat-message/018f2f89-8d5a-7bd2-a459-5d540a8f90ac'.codeUnits,
       ),
@@ -289,23 +292,52 @@ void main() {
     expect(
       await core.deriveAccountRecordId(
         ark,
+        keyEpoch: 1,
         canonicalEntityKey: Uint8List(2048)..fillRange(0, 2048, 0x5a),
       ),
       hasLength(16),
     );
 
     await expectLater(
-      core.deriveAccountRecordId(ark, canonicalEntityKey: Uint8List(0)),
+      core.deriveAccountRecordId(
+        ark,
+        keyEpoch: 1,
+        canonicalEntityKey: Uint8List(0),
+      ),
       throwsArgumentError,
     );
     await expectLater(
-      core.deriveAccountRecordId(ark, canonicalEntityKey: Uint8List(2049)),
+      core.deriveAccountRecordId(
+        ark,
+        keyEpoch: 1,
+        canonicalEntityKey: Uint8List(2049),
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      core.deriveAccountRecordId(
+        ark,
+        keyEpoch: 0,
+        canonicalEntityKey: canonicalKey,
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      core.deriveAccountRecordId(
+        ark,
+        keyEpoch: 0x100000000,
+        canonicalEntityKey: canonicalKey,
+      ),
       throwsArgumentError,
     );
 
     await core.closeAccountRootKey(ark);
     await expectLater(
-      core.deriveAccountRecordId(ark, canonicalEntityKey: canonicalKey),
+      core.deriveAccountRecordId(
+        ark,
+        keyEpoch: 1,
+        canonicalEntityKey: canonicalKey,
+      ),
       throwsStateError,
     );
   });
@@ -368,10 +400,15 @@ void main() {
     expect(
       await core.deriveAccountRecordId(
         openedArk,
+        keyEpoch: keyEpoch,
         canonicalEntityKey: canonicalKey,
       ),
       orderedEquals(
-        await core.deriveAccountRecordId(ark, canonicalEntityKey: canonicalKey),
+        await core.deriveAccountRecordId(
+          ark,
+          keyEpoch: keyEpoch,
+          canonicalEntityKey: canonicalKey,
+        ),
       ),
     );
 
@@ -660,6 +697,14 @@ void main() {
     );
     final deviceId = accountId(0x4e);
     final associatedData = Uint8List.fromList('sync/keyring'.codeUnits);
+    final canonicalEntityKey = Uint8List.fromList(
+      'conversation/record-epoch-history'.codeUnits,
+    );
+    final epochOneRecordId = await core.deriveAccountRecordId(
+      keyring,
+      keyEpoch: 1,
+      canonicalEntityKey: canonicalEntityKey,
+    );
     final epochOneEnvelope = await core.sealAccountRecord(
       keyring,
       recordId: recordId,
@@ -669,6 +714,34 @@ void main() {
     );
 
     await core.addAccountRootKeyEpoch(keyring, source: epochTwo);
+    expect(
+      await core.deriveAccountRecordId(
+        keyring,
+        keyEpoch: 1,
+        canonicalEntityKey: canonicalEntityKey,
+      ),
+      orderedEquals(epochOneRecordId),
+    );
+    final epochTwoRecordId = await core.deriveAccountRecordId(
+      keyring,
+      keyEpoch: 2,
+      canonicalEntityKey: canonicalEntityKey,
+    );
+    expect(epochTwoRecordId, isNot(orderedEquals(epochOneRecordId)));
+    await expectLater(
+      core.deriveAccountRecordId(
+        keyring,
+        keyEpoch: 3,
+        canonicalEntityKey: canonicalEntityKey,
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.invalidArgument,
+        ),
+      ),
+    );
     await expectLater(
       core.addAccountRootKeyEpoch(keyring, source: duplicate),
       throwsA(
@@ -699,6 +772,22 @@ void main() {
     final reopenedKeyring = reopened.ark!;
     expect(reopenedKeyring.userId, orderedEquals(userId));
     expect(
+      await core.deriveAccountRecordId(
+        reopenedKeyring,
+        keyEpoch: 1,
+        canonicalEntityKey: canonicalEntityKey,
+      ),
+      orderedEquals(epochOneRecordId),
+    );
+    expect(
+      await core.deriveAccountRecordId(
+        reopenedKeyring,
+        keyEpoch: 2,
+        canonicalEntityKey: canonicalEntityKey,
+      ),
+      orderedEquals(epochTwoRecordId),
+    );
+    expect(
       await core.openAccountRecord(
         reopenedKeyring,
         recordId: recordId,
@@ -720,6 +809,20 @@ void main() {
     );
 
     await core.pruneAccountRootKeyEpoch(reopenedKeyring, keyEpoch: 1);
+    await expectLater(
+      core.deriveAccountRecordId(
+        reopenedKeyring,
+        keyEpoch: 1,
+        canonicalEntityKey: canonicalEntityKey,
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.invalidArgument,
+        ),
+      ),
+    );
     await expectLater(
       core.openAccountRecord(
         reopenedKeyring,
