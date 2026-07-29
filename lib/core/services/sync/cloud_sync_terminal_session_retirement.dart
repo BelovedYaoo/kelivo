@@ -4,6 +4,16 @@ import 'cloud_sync_types.dart';
 
 typedef CloudSyncRetirementStep = Future<void> Function();
 
+final class CloudSyncFailureCleanupStep {
+  const CloudSyncFailureCleanupStep({
+    required this.operation,
+    required this.cleanup,
+  });
+
+  final String operation;
+  final CloudSyncRetirementStep cleanup;
+}
+
 bool isTerminalCloudSyncAuthenticationFailure(Object error) {
   return error is CloudSyncException &&
       !error.retryable &&
@@ -14,19 +24,20 @@ bool isTerminalCloudSyncAuthenticationFailure(Object error) {
 Future<Never> rethrowCloudSyncPrimaryAfterCleanup({
   required Object primaryError,
   required StackTrace primaryStackTrace,
-  required String cleanupOperation,
-  required CloudSyncRetirementStep cleanup,
+  required Iterable<CloudSyncFailureCleanupStep> cleanupSteps,
 }) async {
-  try {
-    await cleanup();
-  } catch (cleanupError, cleanupStackTrace) {
-    developer.log(
-      cleanupOperation,
-      name: 'Kelivo.CloudSyncSessionRetirement',
-      level: 1000,
-      error: cleanupError,
-      stackTrace: cleanupStackTrace,
-    );
+  for (final step in cleanupSteps) {
+    try {
+      await step.cleanup();
+    } catch (cleanupError, cleanupStackTrace) {
+      developer.log(
+        step.operation,
+        name: 'Kelivo.CloudSyncSessionRetirement',
+        level: 1000,
+        error: cleanupError,
+        stackTrace: cleanupStackTrace,
+      );
+    }
   }
   Error.throwWithStackTrace(primaryError, primaryStackTrace);
 }

@@ -176,7 +176,7 @@ final class E2eeBackgroundSyncRunner {
 
   Future<E2eeBackgroundSyncOutcome> run({
     E2eeBackgroundSyncLimits limits = const E2eeBackgroundSyncLimits(),
-    Future<void>? cancellationSignal,
+    E2eeSyncCancellationSignal? cancellationSignal,
   }) async {
     limits.validate();
     E2eeBackgroundSyncWorkspace? workspace;
@@ -188,94 +188,97 @@ final class E2eeBackgroundSyncRunner {
       abortInFlightNetwork: () => content?.abortInFlightNetwork(),
       cancellationSignal: cancellationSignal,
     );
-    var terminalRetirementAttempted = false;
-    E2eeBackgroundSyncOutcome? outcome;
-    Object? primaryError;
-    StackTrace? primaryStackTrace;
-
     try {
-      // 让已完成的取消信号先进入微任务队列，禁止继续触碰工作区。
-      await Future<void>.value();
-      executionBudget.checkCanContinue();
-      final workspaceAcquisition = await _host.tryAcquireWorkspace(
-        executionBudget,
-      );
-      switch (workspaceAcquisition) {
-        case E2eeBackgroundWorkspaceBusy():
-          outcome = const E2eeBackgroundSyncOutcome.workspaceBusy();
-        case E2eeBackgroundWorkspaceAcquired(workspace: final acquired):
-          workspace = acquired;
-      }
-      executionBudget.checkCanContinue();
+      var terminalRetirementAttempted = false;
+      E2eeBackgroundSyncOutcome? outcome;
+      Object? primaryError;
+      StackTrace? primaryStackTrace;
 
-      if (outcome == null) {
-        final activeWorkspace = workspace!;
-        if (activeWorkspace.session == null) {
-          outcome = const E2eeBackgroundSyncOutcome.noSession();
-        } else {
-          final contentAcquisition = await activeWorkspace.tryAcquireContent(
-            executionBudget,
-          );
-          switch (contentAcquisition) {
-            case E2eeBackgroundContentBusy():
-              outcome = const E2eeBackgroundSyncOutcome.workspaceBusy();
-            case E2eeBackgroundContentAcquired(content: final acquired):
-              content = acquired;
+      try {
+        executionBudget.checkCanContinue();
+        final workspaceAcquisition = await _host.tryAcquireWorkspace(
+          executionBudget,
+        );
+        switch (workspaceAcquisition) {
+          case E2eeBackgroundWorkspaceBusy():
+            outcome = const E2eeBackgroundSyncOutcome.workspaceBusy();
+          case E2eeBackgroundWorkspaceAcquired(workspace: final acquired):
+            workspace = acquired;
+        }
+        executionBudget.checkCanContinue();
+
+        if (outcome == null) {
+          final activeWorkspace = workspace!;
+          if (activeWorkspace.session == null) {
+            outcome = const E2eeBackgroundSyncOutcome.noSession();
+          } else {
+            final contentAcquisition = await activeWorkspace.tryAcquireContent(
+              executionBudget,
+            );
+            switch (contentAcquisition) {
+              case E2eeBackgroundContentBusy():
+                outcome = const E2eeBackgroundSyncOutcome.workspaceBusy();
+              case E2eeBackgroundContentAcquired(content: final acquired):
+                content = acquired;
+            }
+            executionBudget.checkCanContinue();
           }
-          executionBudget.checkCanContinue();
+        }
+
+        if (outcome == null) {
+          final activeContent = content!;
+          final activeWorkspace = workspace!;
+          try {
+            final report = await activeContent.runOnce(
+              executionBudget: executionBudget,
+            );
+            outcome =
+                report.disposition ==
+                    E2eeSyncCycleDisposition.keyEpochUnavailable
+                ? E2eeBackgroundSyncOutcome.blockedByKeyEpoch(report)
+                : E2eeBackgroundSyncOutcome.completed(report);
+          } on E2eeSyncBudgetExhausted catch (error) {
+            outcome = E2eeBackgroundSyncOutcome.budgetExhausted(error.reason);
+          } catch (error) {
+            if (!isTerminalCloudSyncAuthenticationFailure(error)) rethrow;
+            terminalRetirementAttempted = true;
+            await retireTerminalCloudSyncSession(
+              persistSessionTombstone: activeWorkspace.persistSessionTombstone,
+              closeContentRuntime: activeContent.closeRuntime,
+              releaseAccountLease: activeContent.closeAccountLease,
+              releaseWorkspaceLease: activeWorkspace.closeWorkspaceLease,
+            );
+            outcome = const E2eeBackgroundSyncOutcome.authenticationRetired();
+          }
+        }
+      } catch (error, stackTrace) {
+        primaryError = error;
+        primaryStackTrace = stackTrace;
+      }
+
+      if (!terminalRetirementAttempted) {
+        final cleanup = _BackgroundCleanupAccumulator();
+        if (content != null) {
+          await cleanup.run('关闭后台 E2EE 内容运行时失败', content.closeRuntime);
+          await cleanup.run('释放后台账户业务租约失败', content.closeAccountLease);
+        }
+        if (workspace != null) {
+          await cleanup.run('释放后台工作区租约失败', workspace.closeWorkspaceLease);
+        }
+        if (primaryError == null && cleanup.error != null) {
+          primaryError = cleanup.error;
+          primaryStackTrace = cleanup.stackTrace;
         }
       }
 
-      if (outcome == null) {
-        final activeContent = content!;
-        final activeWorkspace = workspace!;
-        try {
-          final report = await activeContent.runOnce(
-            executionBudget: executionBudget,
-          );
-          outcome =
-              report.disposition == E2eeSyncCycleDisposition.keyEpochUnavailable
-              ? E2eeBackgroundSyncOutcome.blockedByKeyEpoch(report)
-              : E2eeBackgroundSyncOutcome.completed(report);
-        } on E2eeSyncBudgetExhausted catch (error) {
-          outcome = E2eeBackgroundSyncOutcome.budgetExhausted(error.reason);
-        } catch (error) {
-          if (!isTerminalCloudSyncAuthenticationFailure(error)) rethrow;
-          terminalRetirementAttempted = true;
-          await retireTerminalCloudSyncSession(
-            persistSessionTombstone: activeWorkspace.persistSessionTombstone,
-            closeContentRuntime: activeContent.closeRuntime,
-            releaseAccountLease: activeContent.closeAccountLease,
-            releaseWorkspaceLease: activeWorkspace.closeWorkspaceLease,
-          );
-          outcome = const E2eeBackgroundSyncOutcome.authenticationRetired();
-        }
+      final error = primaryError;
+      if (error != null) {
+        Error.throwWithStackTrace(error, primaryStackTrace!);
       }
-    } catch (error, stackTrace) {
-      primaryError = error;
-      primaryStackTrace = stackTrace;
+      return outcome!;
+    } finally {
+      executionBudget.dispose();
     }
-
-    if (!terminalRetirementAttempted) {
-      final cleanup = _BackgroundCleanupAccumulator();
-      if (content != null) {
-        await cleanup.run('关闭后台 E2EE 内容运行时失败', content.closeRuntime);
-        await cleanup.run('释放后台账户业务租约失败', content.closeAccountLease);
-      }
-      if (workspace != null) {
-        await cleanup.run('释放后台工作区租约失败', workspace.closeWorkspaceLease);
-      }
-      if (primaryError == null && cleanup.error != null) {
-        primaryError = cleanup.error;
-        primaryStackTrace = cleanup.stackTrace;
-      }
-    }
-
-    final error = primaryError;
-    if (error != null) {
-      Error.throwWithStackTrace(error, primaryStackTrace!);
-    }
-    return outcome!;
   }
 }
 
@@ -330,6 +333,8 @@ final class _ProductionBackgroundSyncWorkspace
       return const E2eeBackgroundContentBusy();
     }
 
+    CloudSyncClient? client;
+    E2eeChatContentRuntime? runtime;
     try {
       executionBudget.checkCanContinue();
       final databaseCipher = SqlCipherDatabaseKey.forWorkspace(
@@ -357,8 +362,9 @@ final class _ProductionBackgroundSyncWorkspace
       executionBudget.checkCanContinue();
 
       final databaseGateway = ChatDatabaseGateway(cipher: databaseCipher);
-      final client = CloudSyncClient(token: activeSession.token);
-      final runtime = E2eeChatContentRuntime.takeHeadlessOwnership(
+      final activeClient = CloudSyncClient(token: activeSession.token);
+      client = activeClient;
+      final activeRuntime = E2eeChatContentRuntime.takeHeadlessOwnership(
         session: activeSession,
         deviceStateStore: DeviceStateBlobStore(
           installationRoot: _workspaceRuntime.installationRoot,
@@ -369,21 +375,40 @@ final class _ProductionBackgroundSyncWorkspace
           '${appDataDirectory.path}${Platform.pathSeparator}'
           '${AppDatabase.databaseFileName}',
         ),
-        client: client,
+        client: activeClient,
       );
+      runtime = activeRuntime;
       return E2eeBackgroundContentAcquired(
         _ProductionBackgroundSyncContent(
-          runtime: runtime,
-          client: client,
+          runtime: activeRuntime,
+          client: activeClient,
           accountLease: accountLease,
         ),
       );
     } catch (error, stackTrace) {
+      final ownedRuntime = runtime;
+      final ownedClient = client;
       await rethrowCloudSyncPrimaryAfterCleanup(
         primaryError: error,
         primaryStackTrace: stackTrace,
-        cleanupOperation: '后台 E2EE 内容初始化失败后的账户租约释放失败',
-        cleanup: accountLease.close,
+        cleanupSteps: <CloudSyncFailureCleanupStep>[
+          if (ownedRuntime != null)
+            CloudSyncFailureCleanupStep(
+              operation: '后台 E2EE 内容构造失败后的运行时关闭失败',
+              cleanup: ownedRuntime.close,
+            ),
+          if (ownedClient != null)
+            CloudSyncFailureCleanupStep(
+              operation: '后台 E2EE 内容构造失败后的网络客户端关闭失败',
+              cleanup: () async {
+                ownedClient.close(force: true);
+              },
+            ),
+          CloudSyncFailureCleanupStep(
+            operation: '后台 E2EE 内容构造失败后的账户租约释放失败',
+            cleanup: accountLease.close,
+          ),
+        ],
       );
     }
   }

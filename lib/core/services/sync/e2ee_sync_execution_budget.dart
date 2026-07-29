@@ -28,6 +28,15 @@ final class E2eeSyncExecutionCancelled implements Exception {
 
 typedef E2eeSyncAbortInFlightNetwork = void Function();
 
+abstract interface class E2eeSyncCancellationSignal {
+  /// 已取消的信号也必须立即通知新注册者，并返回可幂等解绑的句柄。
+  E2eeSyncCancellationRegistration register(void Function() onCancelled);
+}
+
+abstract interface class E2eeSyncCancellationRegistration {
+  void unregister();
+}
+
 /// 为一次同步统一核算网络、附件和单调墙钟预算。
 ///
 /// 截止或取消不会只让上层 Future 超时返回，而是先中止同一网络客户端，
@@ -38,7 +47,7 @@ final class E2eeSyncExecutionBudget {
     required this.maximumAttachmentBytes,
     required this.maximumDuration,
     required this._abortInFlightNetwork,
-    Future<void>? cancellationSignal,
+    E2eeSyncCancellationSignal? cancellationSignal,
   }) : _stopwatch = Stopwatch()..start() {
     if (maximumNetworkSteps < 1) {
       throw RangeError.range(
@@ -59,7 +68,7 @@ final class E2eeSyncExecutionBudget {
     if (maximumDuration <= Duration.zero) {
       throw ArgumentError.value(maximumDuration, 'maximumDuration', '必须为正数');
     }
-    cancellationSignal?.whenComplete(_markCancelled).ignore();
+    _cancellationRegistration = cancellationSignal?.register(_markCancelled);
   }
 
   final int maximumNetworkSteps;
@@ -71,7 +80,9 @@ final class E2eeSyncExecutionBudget {
   int _networkStepsConsumed = 0;
   int _attachmentBytesConsumed = 0;
   bool _cancelled = false;
+  bool _disposed = false;
   Completer<_ExecutionInterruption>? _activeInterruption;
+  E2eeSyncCancellationRegistration? _cancellationRegistration;
 
   int get networkStepsConsumed => _networkStepsConsumed;
   int get attachmentBytesConsumed => _attachmentBytesConsumed;
@@ -82,6 +93,7 @@ final class E2eeSyncExecutionBudget {
   }
 
   void checkCanContinue() {
+    if (_disposed) throw StateError('e2ee_sync_execution_budget_disposed');
     if (_cancelled) throw const E2eeSyncExecutionCancelled();
     if (remainingDuration == Duration.zero) {
       throw const E2eeSyncDeadlineExceeded();
@@ -183,7 +195,27 @@ final class E2eeSyncExecutionBudget {
     }
   }
 
+  /// 解除外部取消监听，避免长生命周期信号保留本次同步的资源所有权图。
+  void dispose() {
+    if (_disposed) return;
+    _disposed = true;
+    final registration = _cancellationRegistration;
+    _cancellationRegistration = null;
+    try {
+      registration?.unregister();
+    } catch (error, stackTrace) {
+      developer.log(
+        '解除后台同步取消监听失败',
+        name: 'Kelivo.E2eeSyncExecutionBudget',
+        level: 1000,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+  }
+
   void _markCancelled() {
+    if (_disposed) return;
     _cancelled = true;
     _interrupt(_ExecutionInterruption.cancelled);
   }

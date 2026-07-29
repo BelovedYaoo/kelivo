@@ -408,6 +408,20 @@ void main() {
     expect(events, <String>['workspace-close']);
   });
 
+  test('E2EE 后台同步结束后解除永不触发的取消监听', () async {
+    final cancellation = _TrackedSyncCancellationSignal();
+    final runner = E2eeBackgroundSyncRunner.forTesting(
+      const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+    );
+
+    final outcome = await runner.run(cancellationSignal: cancellation);
+
+    expect(outcome.disposition, E2eeBackgroundSyncDisposition.workspaceBusy);
+    expect(cancellation.registrationCount, 1);
+    expect(cancellation.unregistrationCount, 1);
+    expect(cancellation.activeListenerCount, 0);
+  });
+
   test('E2EE 后台同步在前台持有租约时不打开 SQLCipher 或网络', () async {
     final runner = E2eeBackgroundSyncRunner.forTesting(
       const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
@@ -419,7 +433,7 @@ void main() {
   });
 
   test('E2EE 后台同步入口已取消时抛给平台且不获取工作区', () async {
-    final cancellation = Completer<void>()..complete();
+    final cancellation = _TrackedSyncCancellationSignal()..cancel();
     final host = _DelayedBackgroundHost(
       const E2eeBackgroundWorkspaceBusy(),
       Duration.zero,
@@ -428,11 +442,12 @@ void main() {
     await expectLater(
       E2eeBackgroundSyncRunner.forTesting(
         host,
-      ).run(cancellationSignal: cancellation.future),
+      ).run(cancellationSignal: cancellation),
       throwsA(isA<E2eeSyncExecutionCancelled>()),
     );
 
     expect(host.acquisitionCalls, 0);
+    expect(cancellation.activeListenerCount, 0);
   });
 
   test('E2EE 后台同步总截止覆盖工作区前置阶段并在开库前抛给平台', () async {
@@ -613,25 +628,35 @@ void main() {
     ]);
   });
 
-  test('E2EE 后台内容初始化与账户租约关闭同时失败时保留初始化根因', () async {
-    final initializationFailure = StateError('background-init-primary');
+  test('E2EE 后台内容运行时构造失败时关闭客户端与账户租约并保留根因', () async {
+    final events = <String>[];
+    final initializationFailure = StateError('background-runtime-create');
     final leaseCloseFailure = StateError('background-lease-close-secondary');
-    var closeCalls = 0;
 
     await expectLater(
       rethrowCloudSyncPrimaryAfterCleanup(
         primaryError: initializationFailure,
         primaryStackTrace: StackTrace.current,
-        cleanupOperation: '测试账户租约关闭失败',
-        cleanup: () async {
-          closeCalls++;
-          throw leaseCloseFailure;
-        },
+        cleanupSteps: <CloudSyncFailureCleanupStep>[
+          CloudSyncFailureCleanupStep(
+            operation: '测试网络客户端关闭失败',
+            cleanup: () async {
+              events.add('client-close');
+            },
+          ),
+          CloudSyncFailureCleanupStep(
+            operation: '测试账户租约关闭失败',
+            cleanup: () async {
+              events.add('account-lease-close');
+              throw leaseCloseFailure;
+            },
+          ),
+        ],
       ),
       throwsA(same(initializationFailure)),
     );
 
-    expect(closeCalls, 1);
+    expect(events, <String>['client-close', 'account-lease-close']);
   });
 
   test('E2EE 后台同步终止认证先提交 tombstone 再关闭资源', () async {
@@ -734,7 +759,7 @@ void main() {
   });
 
   test('E2EE 单调预算取消会中止并等待在途网络 Future 结算', () async {
-    final cancellation = Completer<void>();
+    final cancellation = _TrackedSyncCancellationSignal();
     final network = Completer<int>();
     var abortCalls = 0;
     var networkSettled = false;
@@ -746,8 +771,9 @@ void main() {
         abortCalls++;
         network.completeError(StateError('network-aborted'));
       },
-      cancellationSignal: cancellation.future,
+      cancellationSignal: cancellation,
     );
+    addTearDown(budget.dispose);
     final run = budget.runNetworkStep(
       operation: (_) async {
         try {
@@ -758,7 +784,7 @@ void main() {
       },
     );
 
-    cancellation.complete();
+    cancellation.cancel();
 
     await expectLater(run, throwsA(isA<E2eeSyncExecutionCancelled>()));
     expect(abortCalls, 1);
@@ -3222,6 +3248,49 @@ final class _MemoryAccountSessionTokenStore
   ) {
     return '${accountDirectory.absolute.path}|'
         '${reference.slot}|${reference.generation}';
+  }
+}
+
+final class _TrackedSyncCancellationSignal
+    implements E2eeSyncCancellationSignal {
+  final Set<void Function()> _listeners = <void Function()>{};
+  bool _cancelled = false;
+  int registrationCount = 0;
+  int unregistrationCount = 0;
+
+  int get activeListenerCount => _listeners.length;
+
+  @override
+  E2eeSyncCancellationRegistration register(void Function() onCancelled) {
+    registrationCount++;
+    _listeners.add(onCancelled);
+    if (_cancelled) onCancelled();
+    return _TrackedSyncCancellationRegistration(() {
+      if (_listeners.remove(onCancelled)) unregistrationCount++;
+    });
+  }
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    for (final listener in _listeners.toList(growable: false)) {
+      listener();
+    }
+  }
+}
+
+final class _TrackedSyncCancellationRegistration
+    implements E2eeSyncCancellationRegistration {
+  _TrackedSyncCancellationRegistration(this._onUnregister);
+
+  final void Function() _onUnregister;
+  bool _unregistered = false;
+
+  @override
+  void unregister() {
+    if (_unregistered) return;
+    _unregistered = true;
+    _onUnregister();
   }
 }
 
