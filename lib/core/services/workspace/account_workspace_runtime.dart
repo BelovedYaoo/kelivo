@@ -110,6 +110,10 @@ final class AccountWorkspaceRuntime {
 
   Future<void> discardPlaintextLocalState() async {
     _requireOpen();
+    await _ensureTrustedInstallationRoot(
+      directory: installationRoot,
+      createMissing: false,
+    );
     final dataDirectories = await _existingDataDirectories();
     // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
     for (final dataDirectory in dataDirectories) {
@@ -120,6 +124,11 @@ final class AccountWorkspaceRuntime {
         appDataDirectory: dataDirectory,
       );
     }
+    // 拓扑检查与删除之间不能复用旧路径结论，否则运行期重解析替换会越过安装边界。
+    await _ensureTrustedInstallationRoot(
+      directory: installationRoot,
+      createMissing: false,
+    );
     for (final dataDirectory in dataDirectories) {
       await DatabaseEncryptionCutover.discardPlaintextState(
         appDataDirectory: dataDirectory,
@@ -130,6 +139,10 @@ final class AccountWorkspaceRuntime {
         durability: _durability,
       );
     }
+    await _ensureTrustedInstallationRoot(
+      directory: installationRoot,
+      createMissing: false,
+    );
     await DatabaseEncryptionCutover.discardLegacyDatabaseFamily(
       appDataDirectory: installationRoot,
       durability: _durability,
@@ -143,18 +156,20 @@ final class AccountWorkspaceRuntime {
   }) async {
     final resolvedSessionTokenStore =
         sessionTokenStore ?? const SecureAccountSessionTokenStore();
-    final resolvedInstallationRoot = Directory(
-      p.normalize(
-        p.absolute(
-          (installationRoot ??
-                  await AppDirectories.getInstallationRootDirectory())
-              .path,
+    final resolvedInstallationRoot = await _ensureTrustedInstallationRoot(
+      directory: Directory(
+        p.normalize(
+          p.absolute(
+            (installationRoot ??
+                    await AppDirectories.getInstallationRootDirectory())
+                .path,
+          ),
         ),
       ),
+      createMissing: true,
     );
-    await resolvedInstallationRoot.create(recursive: true);
     final canonicalInstallationRoot = p.normalize(
-      await resolvedInstallationRoot.resolveSymbolicLinks(),
+      resolvedInstallationRoot.path,
     );
     final workspaceRoot = Directory(
       p.join(resolvedInstallationRoot.path, _workspaceDirectoryName),
@@ -986,6 +1001,67 @@ final class AccountWorkspaceRuntime {
       throw StateError(errorCode);
     }
     return directory;
+  }
+
+  static Future<Directory> _ensureTrustedInstallationRoot({
+    required Directory directory,
+    required bool createMissing,
+  }) async {
+    const errorCode = 'account_workspace_installation_root_unsafe';
+    final normalizedDirectory = Directory(
+      p.normalize(p.absolute(directory.path)),
+    );
+    // 信任边界只能由调用方给出的词法绝对路径形成，不能由重解析目标反向定义。
+    await _validateInstallationRootChain(
+      normalizedDirectory.path,
+      allowMissingTail: createMissing,
+      errorCode: errorCode,
+    );
+    final type = await FileSystemEntity.type(
+      normalizedDirectory.path,
+      followLinks: false,
+    );
+    if (type == FileSystemEntityType.notFound) {
+      if (!createMissing) throw StateError('${errorCode}_missing');
+      await normalizedDirectory.create(recursive: true);
+    }
+    await _validateInstallationRootChain(
+      normalizedDirectory.path,
+      allowMissingTail: false,
+      errorCode: errorCode,
+    );
+    return normalizedDirectory;
+  }
+
+  static Future<void> _validateInstallationRootChain(
+    String path, {
+    required bool allowMissingTail,
+    required String errorCode,
+  }) async {
+    var current = p.normalize(p.absolute(path));
+    var missingTailAllowed = allowMissingTail;
+    while (true) {
+      final type = await FileSystemEntity.type(current, followLinks: false);
+      if (type == FileSystemEntityType.notFound) {
+        if (!missingTailAllowed) throw StateError('${errorCode}_missing');
+      } else {
+        missingTailAllowed = false;
+        if (type != FileSystemEntityType.directory) {
+          throw StateError(errorCode);
+        }
+        try {
+          final canonical = p.normalize(
+            await Directory(current).resolveSymbolicLinks(),
+          );
+          if (!p.equals(canonical, current)) throw StateError(errorCode);
+        } on FileSystemException {
+          throw StateError(errorCode);
+        }
+      }
+      final parent = p.dirname(current);
+      if (p.equals(parent, current)) return;
+      current = parent;
+    }
   }
 
   static String _workspaceKey(String accountScope) {

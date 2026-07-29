@@ -1914,6 +1914,161 @@ void main() {
     }
   });
 
+  test('Windows 安装根祖先 junction 必须失败关闭且不得删除外部明文库', () async {
+    if (!Platform.isWindows) return;
+
+    final caseRoot = Directory(
+      p.join(installationRoot.path, 'installation-root-junction'),
+    );
+    final externalRoot = Directory(
+      p.join(installationRoot.parent.path, 'external-${const Uuid().v4()}'),
+    );
+    final externalInstallationRoot = Directory(
+      p.join(externalRoot.path, 'kelivo'),
+    );
+    final junctionPath = p.join(caseRoot.path, 'redirected-parent');
+    await caseRoot.create(recursive: true);
+    await externalInstallationRoot.create(recursive: true);
+
+    final legacyDatabase = File(
+      p.join(externalInstallationRoot.path, AppDatabase.databaseFileName),
+    );
+    final protectedFiles = <File>[
+      legacyDatabase,
+      File('${legacyDatabase.path}-wal'),
+      File('${legacyDatabase.path}-shm'),
+      File('${legacyDatabase.path}-journal'),
+      File(
+        p.join(
+          externalInstallationRoot.path,
+          'database_installation_receipt_external.json',
+        ),
+      ),
+    ];
+    for (var index = 0; index < protectedFiles.length; index++) {
+      await protectedFiles[index].writeAsBytes(<int>[index + 1], flush: true);
+    }
+    await _createDirectoryLink(junctionPath, externalRoot.path);
+
+    Future<void> bootstrapAndDiscard() async {
+      final runtime = await AccountWorkspaceRuntime.bootstrap(
+        installationRoot: Directory(p.join(junctionPath, 'kelivo')),
+        sessionTokenStore: sessionTokenStore,
+      );
+      try {
+        await runtime.discardPlaintextLocalState();
+      } finally {
+        await runtime.close();
+      }
+    }
+
+    try {
+      await expectLater(
+        bootstrapAndDiscard(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'account_workspace_installation_root_unsafe',
+          ),
+        ),
+      );
+      for (var index = 0; index < protectedFiles.length; index++) {
+        expect(
+          await protectedFiles[index].readAsBytes(),
+          <int>[index + 1],
+          reason: protectedFiles[index].path,
+        );
+      }
+    } finally {
+      await _deleteDirectoryLink(junctionPath);
+      if (await externalRoot.exists()) {
+        await externalRoot.delete(recursive: true);
+      }
+    }
+  });
+
+  test('Windows 安装根自身为 junction 时不得创建外部工作区', () async {
+    if (!Platform.isWindows) return;
+
+    final caseRoot = Directory(
+      p.join(installationRoot.path, 'linked-installation-root'),
+    );
+    final externalRoot = Directory(
+      p.join(installationRoot.parent.path, 'external-${const Uuid().v4()}'),
+    );
+    final junctionPath = p.join(caseRoot.path, 'kelivo');
+    final sentinel = File(p.join(externalRoot.path, 'sentinel'));
+    await caseRoot.create(recursive: true);
+    await externalRoot.create(recursive: true);
+    await sentinel.writeAsString('external', flush: true);
+    await _createDirectoryLink(junctionPath, externalRoot.path);
+
+    Future<void> bootstrapAndClose() async {
+      final runtime = await AccountWorkspaceRuntime.bootstrap(
+        installationRoot: Directory(junctionPath),
+        sessionTokenStore: sessionTokenStore,
+      );
+      await runtime.close();
+    }
+
+    try {
+      await expectLater(
+        bootstrapAndClose(),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'account_workspace_installation_root_unsafe',
+          ),
+        ),
+      );
+      expect(await sentinel.readAsString(), 'external');
+      expect(
+        await Directory(
+          p.join(externalRoot.path, '.kelivo-workspaces'),
+        ).exists(),
+        isFalse,
+      );
+    } finally {
+      await _deleteDirectoryLink(junctionPath);
+      if (await externalRoot.exists()) {
+        await externalRoot.delete(recursive: true);
+      }
+    }
+  });
+
+  test('普通安装根尾部目录缺失时按词法路径创建工作区', () async {
+    final absentInstallationRoot = Directory(
+      p.join(installationRoot.path, 'ordinary', 'kelivo'),
+    );
+    expect(await absentInstallationRoot.exists(), isFalse);
+
+    final runtime = await AccountWorkspaceRuntime.bootstrap(
+      installationRoot: absentInstallationRoot,
+      sessionTokenStore: sessionTokenStore,
+    );
+    try {
+      expect(
+        p.normalize(runtime.installationRoot.path),
+        p.normalize(absentInstallationRoot.path),
+      );
+      expect(
+        p.normalize(runtime.current.dataDirectory.path),
+        p.normalize(
+          p.join(
+            absentInstallationRoot.path,
+            '.kelivo-workspaces',
+            'local',
+            'data',
+          ),
+        ),
+      );
+    } finally {
+      await runtime.close();
+    }
+  });
+
   test('任一非当前工作区存在未知同步拓扑时整批清理失败且不先删本地状态', () async {
     var runtime = await bootstrap();
     final bind = await runtime.bindAccount(
@@ -4351,6 +4506,29 @@ Future<void> _createDirectoryLink(String linkPath, String targetPath) async {
   if (result.exitCode != 0) {
     throw StateError(
       'account_workspace_junction_setup_failed:${result.stderr}',
+    );
+  }
+}
+
+Future<void> _deleteDirectoryLink(String linkPath) async {
+  if (!Platform.isWindows) {
+    await Link(linkPath).delete();
+    return;
+  }
+  final result = await Process.run(
+    'pwsh',
+    <String>[
+      '-NoLogo',
+      '-NoProfile',
+      '-NonInteractive',
+      '-Command',
+      r'Remove-Item -LiteralPath $env:KELIVO_LINK_PATH -Force',
+    ],
+    environment: <String, String>{'KELIVO_LINK_PATH': linkPath},
+  );
+  if (result.exitCode != 0) {
+    throw StateError(
+      'account_workspace_junction_cleanup_failed:${result.stderr}',
     );
   }
 }
