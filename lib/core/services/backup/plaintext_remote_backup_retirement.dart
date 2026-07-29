@@ -2,11 +2,51 @@ import 'dart:io';
 
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
-import 'package:shared_preferences/shared_preferences.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
+
+import '../workspace/account_workspace_runtime.dart';
+
+abstract interface class PlaintextRemoteBackupPreferenceStore {
+  Future<Set<String>> getKeys();
+
+  Future<void> remove(String key);
+}
+
+final class LegacySharedPreferencesPlaintextRemoteBackupPreferenceStore
+    implements PlaintextRemoteBackupPreferenceStore {
+  const LegacySharedPreferencesPlaintextRemoteBackupPreferenceStore(
+    this._platform,
+  );
+
+  factory LegacySharedPreferencesPlaintextRemoteBackupPreferenceStore.forCurrentPlatform() {
+    return LegacySharedPreferencesPlaintextRemoteBackupPreferenceStore(
+      SharedPreferencesStorePlatform.instance,
+    );
+  }
+
+  final SharedPreferencesStorePlatform _platform;
+
+  @override
+  Future<Set<String>> getKeys() async {
+    final values = await _platform.getAllWithParameters(
+      GetAllParameters(filter: PreferencesFilter(prefix: '')),
+    );
+    return values.keys.toSet();
+  }
+
+  @override
+  Future<void> remove(String key) async {
+    if (!await _platform.remove(key)) {
+      throw StateError('plaintext_remote_backup_platform_remove:$key');
+    }
+  }
+}
 
 final class PlaintextRemoteBackupRetirement {
   const PlaintextRemoteBackupRetirement({
-    required this.preferences,
+    required this.preferenceStore,
+    required this.registeredPreferencePrefixes,
     required this.temporaryDirectory,
   });
 
@@ -26,25 +66,55 @@ final class PlaintextRemoteBackupRetirement {
     '_bk_manifest.json',
     '_bk_kelivo.db',
   };
+  static const _localPreferencePrefix = 'flutter.';
+  static const _accountPreferencePrefix = 'kelivo.account.';
+  static final _workspaceKeyPattern = RegExp(r'^[0-9a-f]{64}$');
 
-  final SharedPreferences preferences;
+  final PlaintextRemoteBackupPreferenceStore preferenceStore;
+  final Set<String> registeredPreferencePrefixes;
   final Directory temporaryDirectory;
 
-  static Future<void> retireCurrentInstallation() async {
-    final preferences = await SharedPreferences.getInstance();
+  static Future<void> retireCurrentInstallation({
+    required AccountWorkspaceRuntime workspaceRuntime,
+  }) async {
+    final registeredPreferencePrefixes = await workspaceRuntime
+        .registeredPreferencesPrefixes();
     final temporaryDirectory = await getTemporaryDirectory();
     await PlaintextRemoteBackupRetirement(
-      preferences: preferences,
+      preferenceStore:
+          LegacySharedPreferencesPlaintextRemoteBackupPreferenceStore.forCurrentPlatform(),
+      registeredPreferencePrefixes: registeredPreferencePrefixes,
       temporaryDirectory: temporaryDirectory,
     ).retire();
   }
 
   Future<void> retire() async {
-    for (final key in retiredPreferenceKeys) {
-      if (!preferences.containsKey(key)) continue;
-      await preferences.remove(key);
-      if (preferences.containsKey(key)) {
-        throw StateError('plaintext_remote_backup_preference_retirement:$key');
+    _validateRegisteredPreferencePrefixes();
+    final existingKeys = await preferenceStore.getKeys();
+    for (final physicalKey in existingKeys) {
+      final accountPrefix = _retiredAccountPrefix(physicalKey);
+      if (accountPrefix != null &&
+          !registeredPreferencePrefixes.contains(accountPrefix)) {
+        throw StateError(
+          'plaintext_remote_backup_unregistered_namespace:$accountPrefix',
+        );
+      }
+    }
+    final retiredPhysicalKeys = <String>{
+      for (final prefix in registeredPreferencePrefixes)
+        for (final key in retiredPreferenceKeys) '$prefix$key',
+    };
+    final existingRetiredKeys =
+        existingKeys.where(retiredPhysicalKeys.contains).toList()..sort();
+    for (final physicalKey in existingRetiredKeys) {
+      await preferenceStore.remove(physicalKey);
+    }
+    final remainingKeys = await preferenceStore.getKeys();
+    for (final physicalKey in existingRetiredKeys) {
+      if (remainingKeys.contains(physicalKey)) {
+        throw StateError(
+          'plaintext_remote_backup_preference_retirement:$physicalKey',
+        );
       }
     }
 
@@ -73,6 +143,43 @@ final class PlaintextRemoteBackupRetirement {
         await File(entity.path).delete();
       }
     }
+  }
+
+  void _validateRegisteredPreferencePrefixes() {
+    if (!registeredPreferencePrefixes.contains(_localPreferencePrefix)) {
+      throw StateError('plaintext_remote_backup_local_namespace_missing');
+    }
+    for (final prefix in registeredPreferencePrefixes) {
+      if (prefix == _localPreferencePrefix) continue;
+      if (!prefix.startsWith(_accountPreferencePrefix) ||
+          !prefix.endsWith('.')) {
+        throw StateError('plaintext_remote_backup_namespace_invalid:$prefix');
+      }
+      final workspaceKey = prefix.substring(
+        _accountPreferencePrefix.length,
+        prefix.length - 1,
+      );
+      if (!_workspaceKeyPattern.hasMatch(workspaceKey)) {
+        throw StateError('plaintext_remote_backup_namespace_invalid:$prefix');
+      }
+    }
+  }
+
+  static String? _retiredAccountPrefix(String physicalKey) {
+    if (!physicalKey.startsWith(_accountPreferencePrefix)) return null;
+    final workspaceKeyStart = _accountPreferencePrefix.length;
+    final separator = physicalKey.indexOf('.', workspaceKeyStart);
+    if (separator < 0) return null;
+    final logicalKey = physicalKey.substring(separator + 1);
+    if (!retiredPreferenceKeys.contains(logicalKey)) return null;
+    final workspaceKey = physicalKey.substring(workspaceKeyStart, separator);
+    if (!_workspaceKeyPattern.hasMatch(workspaceKey)) {
+      throw StateError(
+        'plaintext_remote_backup_namespace_invalid:'
+        '$_accountPreferencePrefix$workspaceKey.',
+      );
+    }
+    return '$_accountPreferencePrefix$workspaceKey.';
   }
 
   static Future<void> _deleteDirectoryWithoutFollowingLinks(

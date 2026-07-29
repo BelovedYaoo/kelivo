@@ -1,37 +1,64 @@
 import 'dart:io';
 
 import 'package:flutter_test/flutter_test.dart';
-import 'package:shared_preferences/shared_preferences.dart';
-
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
 import 'package:Kelivo/core/services/backup/plaintext_remote_backup_retirement.dart';
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
-  test('启动入口先绑定工作区偏好前缀再执行明文备份退役', () async {
+  test('启动入口绑定工作区后以同一 runtime 执行安装级退役', () async {
     final source = await File('lib/main.dart').readAsString();
     const bootstrapCall = 'AccountWorkspaceRuntime.bootstrap()';
     const retirementCall =
-        'PlaintextRemoteBackupRetirement.retireCurrentInstallation()';
+        'PlaintextRemoteBackupRetirement.retireCurrentInstallation(';
     final bootstrapOffset = source.indexOf(bootstrapCall);
     final retirementOffset = source.indexOf(retirementCall);
+    final retirementEnd = source.indexOf(');', retirementOffset);
 
     expect(bootstrapOffset, greaterThanOrEqualTo(0));
     expect(retirementOffset, greaterThan(bootstrapOffset));
+    expect(retirementEnd, greaterThan(retirementOffset));
+    expect(
+      source.substring(retirementOffset, retirementEnd),
+      contains('workspaceRuntime: workspaceRuntime'),
+    );
   });
 
-  test('启动退役清除旧远端备份状态且保留本地导出与无关数据', () async {
-    SharedPreferences.setMockInitialValues(<String, Object>{
-      'webdav_config_v1': '{"password":"webdav-secret"}',
-      's3_config_v1': '{"secretAccessKey":"s3-secret"}',
-      'backup_reminder_enabled_v1': true,
-      'backup_reminder_interval_days_v1': 7,
-      'backup_reminder_minutes_of_day_v1': 480,
-      'backup_reminder_enabled_at_v1': '2026-07-01T00:00:00.000Z',
-      'backup_reminder_last_backup_at_v1': '2026-07-02T00:00:00.000Z',
-      'unrelated_preference': 'kept',
+  test('安装级退役精确清除匿名当前及非当前账号旧状态', () async {
+    const retiredKeys = <String>{
+      'webdav_config_v1',
+      's3_config_v1',
+      'backup_reminder_enabled_v1',
+      'backup_reminder_interval_days_v1',
+      'backup_reminder_minutes_of_day_v1',
+      'backup_reminder_enabled_at_v1',
+      'backup_reminder_last_backup_at_v1',
+    };
+    const activeWorkspaceKey =
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
+    const signedOutWorkspaceKey =
+        'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
+    const prefixes = <String>{
+      'flutter.',
+      'kelivo.account.$activeWorkspaceKey.',
+      'kelivo.account.$signedOutWorkspaceKey.',
+    };
+    final initialPreferences = <String, Object>{};
+    for (final prefix in prefixes) {
+      for (final key in retiredKeys) {
+        initialPreferences['$prefix$key'] = 'retired';
+      }
+    }
+    initialPreferences.addAll(<String, Object>{
+      'flutter.unrelated_preference': 'kept',
+      'flutter.webdav_config_v1_extra': 'kept-similar',
+      'other.app.webdav_config_v1': 'kept-other-app',
     });
-    final preferences = await SharedPreferences.getInstance();
+    final preferenceStore = _MemoryPlaintextRemoteBackupPreferenceStore(
+      initialPreferences,
+    );
     final temporaryDirectory = await Directory.systemTemp.createTemp(
       'kelivo_remote_backup_retirement_test_',
     );
@@ -72,14 +99,20 @@ void main() {
     await unrelatedFile.writeAsString('kept');
 
     await PlaintextRemoteBackupRetirement(
-      preferences: preferences,
+      preferenceStore: preferenceStore,
+      registeredPreferencePrefixes: prefixes,
       temporaryDirectory: temporaryDirectory,
     ).retire();
 
-    for (final key in PlaintextRemoteBackupRetirement.retiredPreferenceKeys) {
-      expect(preferences.containsKey(key), isFalse, reason: key);
+    expect(PlaintextRemoteBackupRetirement.retiredPreferenceKeys, retiredKeys);
+    for (final prefix in prefixes) {
+      for (final key in retiredKeys) {
+        expect(preferenceStore.containsKey('$prefix$key'), isFalse);
+      }
     }
-    expect(preferences.getString('unrelated_preference'), 'kept');
+    expect(preferenceStore['flutter.unrelated_preference'], 'kept');
+    expect(preferenceStore['flutter.webdav_config_v1_extra'], 'kept-similar');
+    expect(preferenceStore['other.app.webdav_config_v1'], 'kept-other-app');
     expect(await staleDirectory.exists(), isFalse);
     expect(
       await File('${temporaryDirectory.path}/kelivo_backup_old.zip').exists(),
@@ -89,9 +122,144 @@ void main() {
     expect(await unrelatedFile.exists(), isTrue);
   });
 
+  test('发现未注册账号命名空间时在任何删除前显式失败', () async {
+    const unknownWorkspaceKey =
+        'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+    final preferenceStore =
+        _MemoryPlaintextRemoteBackupPreferenceStore(<String, Object>{
+          'flutter.webdav_config_v1': 'known-secret',
+          'kelivo.account.$unknownWorkspaceKey.s3_config_v1': 'unknown-secret',
+        });
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'kelivo_remote_backup_unknown_namespace_test_',
+    );
+    addTearDown(() async {
+      if (await temporaryDirectory.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+    });
+
+    await expectLater(
+      PlaintextRemoteBackupRetirement(
+        preferenceStore: preferenceStore,
+        registeredPreferencePrefixes: const <String>{'flutter.'},
+        temporaryDirectory: temporaryDirectory,
+      ).retire(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'plaintext_remote_backup_unregistered_namespace:'
+              'kelivo.account.$unknownWorkspaceKey.',
+        ),
+      ),
+    );
+
+    expect(preferenceStore.containsKey('flutter.webdav_config_v1'), isTrue);
+    expect(
+      preferenceStore.containsKey(
+        'kelivo.account.$unknownWorkspaceKey.s3_config_v1',
+      ),
+      isTrue,
+    );
+    expect(preferenceStore.removeCallCount, 0);
+  });
+
+  test('偏好后端未实际删除时阻止完成且不继续清理临时文件', () async {
+    final preferenceStore = _MemoryPlaintextRemoteBackupPreferenceStore(
+      <String, Object>{'flutter.s3_config_v1': 'secret'},
+      removeSucceeds: false,
+    );
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'kelivo_remote_backup_remove_failure_test_',
+    );
+    final staleFile = File(
+      '${temporaryDirectory.path}${Platform.pathSeparator}_bk_settings.json',
+    );
+    await staleFile.writeAsString('plaintext', flush: true);
+    addTearDown(() async {
+      if (await temporaryDirectory.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+    });
+
+    await expectLater(
+      PlaintextRemoteBackupRetirement(
+        preferenceStore: preferenceStore,
+        registeredPreferencePrefixes: const <String>{'flutter.'},
+        temporaryDirectory: temporaryDirectory,
+      ).retire(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'plaintext_remote_backup_preference_retirement:'
+              'flutter.s3_config_v1',
+        ),
+      ),
+    );
+
+    expect(preferenceStore.containsKey('flutter.s3_config_v1'), isTrue);
+    expect(await staleFile.exists(), isTrue);
+  });
+
+  test('安装级退役重复执行保持幂等且不重复删除', () async {
+    final preferenceStore = _MemoryPlaintextRemoteBackupPreferenceStore(
+      <String, Object>{'flutter.webdav_config_v1': 'secret'},
+    );
+    final temporaryDirectory = await Directory.systemTemp.createTemp(
+      'kelivo_remote_backup_idempotent_test_',
+    );
+    addTearDown(() async {
+      if (await temporaryDirectory.exists()) {
+        await temporaryDirectory.delete(recursive: true);
+      }
+    });
+    final retirement = PlaintextRemoteBackupRetirement(
+      preferenceStore: preferenceStore,
+      registeredPreferencePrefixes: const <String>{'flutter.'},
+      temporaryDirectory: temporaryDirectory,
+    );
+
+    await retirement.retire();
+    await retirement.retire();
+
+    expect(preferenceStore.containsKey('flutter.webdav_config_v1'), isFalse);
+    expect(preferenceStore.removeCallCount, 1);
+  });
+
+  test('legacy 平台适配器空前缀枚举原始键且拒绝删除失败', () async {
+    final platform = _CapturingLegacySharedPreferencesPlatform(<String, Object>{
+      'flutter.webdav_config_v1': 'local-secret',
+      'kelivo.account.account-key.s3_config_v1': 'account-secret',
+    });
+    final store = LegacySharedPreferencesPlaintextRemoteBackupPreferenceStore(
+      platform,
+    );
+
+    final keys = await store.getKeys();
+
+    expect(platform.lastGetAllPrefix, '');
+    expect(keys, <String>{
+      'flutter.webdav_config_v1',
+      'kelivo.account.account-key.s3_config_v1',
+    });
+
+    platform.removeSucceeds = false;
+    await expectLater(
+      store.remove('flutter.webdav_config_v1'),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'plaintext_remote_backup_platform_remove:'
+              'flutter.webdav_config_v1',
+        ),
+      ),
+    );
+  });
+
   test('启动退役遇到异常临时根时显式失败', () async {
-    SharedPreferences.setMockInitialValues(const <String, Object>{});
-    final preferences = await SharedPreferences.getInstance();
     final root = await Directory.systemTemp.createTemp(
       'kelivo_remote_backup_invalid_root_test_',
     );
@@ -103,7 +271,10 @@ void main() {
 
     await expectLater(
       PlaintextRemoteBackupRetirement(
-        preferences: preferences,
+        preferenceStore: _MemoryPlaintextRemoteBackupPreferenceStore(
+          const <String, Object>{},
+        ),
+        registeredPreferencePrefixes: const <String>{'flutter.'},
         temporaryDirectory: Directory(invalidRoot.path),
       ).retire(),
       throwsA(
@@ -115,4 +286,51 @@ void main() {
       ),
     );
   });
+}
+
+final class _MemoryPlaintextRemoteBackupPreferenceStore
+    implements PlaintextRemoteBackupPreferenceStore {
+  _MemoryPlaintextRemoteBackupPreferenceStore(
+    Map<String, Object> values, {
+    this.removeSucceeds = true,
+  }) : _values = Map<String, Object>.from(values);
+
+  final Map<String, Object> _values;
+  final bool removeSucceeds;
+  int removeCallCount = 0;
+
+  Object? operator [](String key) => _values[key];
+
+  bool containsKey(String key) => _values.containsKey(key);
+
+  @override
+  Future<Set<String>> getKeys() async => _values.keys.toSet();
+
+  @override
+  Future<void> remove(String key) async {
+    removeCallCount++;
+    if (removeSucceeds) _values.remove(key);
+  }
+}
+
+final class _CapturingLegacySharedPreferencesPlatform
+    extends InMemorySharedPreferencesStore {
+  _CapturingLegacySharedPreferencesPlatform(super.data) : super.withData();
+
+  String? lastGetAllPrefix;
+  bool removeSucceeds = true;
+
+  @override
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) {
+    lastGetAllPrefix = parameters.filter.prefix;
+    return super.getAllWithParameters(parameters);
+  }
+
+  @override
+  Future<bool> remove(String key) {
+    if (!removeSucceeds) return Future<bool>.value(false);
+    return super.remove(key);
+  }
 }

@@ -108,6 +108,73 @@ final class AccountWorkspaceRuntime {
 
   AccountWorkspaceContext get current => _current;
 
+  Future<Set<String>> registeredPreferencesPrefixes() async {
+    _requireOpen();
+    await _ensureTrustedInstallationRoot(
+      directory: installationRoot,
+      createMissing: false,
+    );
+    await _ensureOwnedDirectory(
+      directory: _workspaceRoot,
+      expectedCanonicalPath: _canonicalWorkspaceRoot,
+      createMissing: false,
+      errorCode: 'account_workspace_root_unsafe',
+    );
+    final prefixes = <String>{_localPreferencesPrefix};
+    final accountsDirectory = Directory(
+      p.join(_workspaceRoot.path, _accountsDirectoryName),
+    );
+    final accountsType = await FileSystemEntity.type(
+      accountsDirectory.path,
+      followLinks: false,
+    );
+    if (accountsType == FileSystemEntityType.notFound) {
+      return Set<String>.unmodifiable(prefixes);
+    }
+    final ownedAccountsDirectory = await _ensureOwnedDirectory(
+      directory: accountsDirectory,
+      expectedCanonicalPath: p.join(
+        _canonicalWorkspaceRoot,
+        _accountsDirectoryName,
+      ),
+      createMissing: false,
+      errorCode: 'account_workspace_accounts_unsafe',
+    );
+    await for (final entity in ownedAccountsDirectory.list(
+      followLinks: false,
+    )) {
+      final entityType = await FileSystemEntity.type(
+        entity.path,
+        followLinks: false,
+      );
+      final workspaceKey = p.basename(entity.path);
+      if (entityType != FileSystemEntityType.directory ||
+          !_isWorkspaceKey(workspaceKey)) {
+        throw StateError('account_workspace_account_entry_unsafe');
+      }
+      final accountDirectory = await _ensureAccountDirectoryPath(
+        workspaceRoot: _workspaceRoot,
+        canonicalWorkspaceRoot: _canonicalWorkspaceRoot,
+        workspaceKey: workspaceKey,
+        createMissing: false,
+      );
+      // 仅凭一个合法形状的目录名不足以证明它由工作区运行时拥有。
+      await _ensureOwnedDirectory(
+        directory: Directory(p.join(accountDirectory.path, _dataDirectoryName)),
+        expectedCanonicalPath: p.join(
+          _canonicalWorkspaceRoot,
+          _accountsDirectoryName,
+          workspaceKey,
+          _dataDirectoryName,
+        ),
+        createMissing: false,
+        errorCode: 'account_workspace_data_unsafe',
+      );
+      prefixes.add('$_accountPreferencesPrefix$workspaceKey.');
+    }
+    return Set<String>.unmodifiable(prefixes);
+  }
+
   Future<void> discardPlaintextLocalState() async {
     _requireOpen();
     await _ensureTrustedInstallationRoot(

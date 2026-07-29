@@ -153,7 +153,9 @@ Future<void> main() async {
         return;
       }
       try {
-        await PlaintextRemoteBackupRetirement.retireCurrentInstallation();
+        await PlaintextRemoteBackupRetirement.retireCurrentInstallation(
+          workspaceRuntime: workspaceRuntime,
+        );
       } catch (error, stackTrace) {
         stderr.writeln('[PlaintextRemoteBackupRetirement] $error\n$stackTrace');
         try {

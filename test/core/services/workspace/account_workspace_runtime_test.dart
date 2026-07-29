@@ -164,6 +164,83 @@ void main() {
     await expectLater(bootstrap(), throwsA(isA<FormatException>()));
   }
 
+  test('枚举匿名当前账号及已登出无会话工作区的精确偏好前缀', () async {
+    final signedOutSession = _session(
+      userId: 'signed-out-account',
+      token: 'signed-out-token',
+    );
+    final activeSession = _session(
+      userId: 'active-account',
+      token: 'active-token',
+    );
+
+    final localRuntime = await bootstrap();
+    await localRuntime.bindAccount(signedOutSession);
+    await close(localRuntime);
+
+    final signedOutAccountRuntime = await bootstrap();
+    await signedOutAccountRuntime.signOut();
+    await close(signedOutAccountRuntime);
+
+    final reboundLocalRuntime = await bootstrap();
+    await reboundLocalRuntime.bindAccount(activeSession);
+    await close(reboundLocalRuntime);
+
+    final activeAccountRuntime = await bootstrap();
+    final prefixes = await activeAccountRuntime.registeredPreferencesPrefixes();
+    final signedOutWorkspaceKey = sha256
+        .convert(utf8.encode(signedOutSession.accountScope))
+        .toString();
+    final activeWorkspaceKey = sha256
+        .convert(utf8.encode(activeSession.accountScope))
+        .toString();
+
+    expect(prefixes, <String>{
+      'flutter.',
+      'kelivo.account.$signedOutWorkspaceKey.',
+      'kelivo.account.$activeWorkspaceKey.',
+    });
+  });
+
+  test('账号注册拓扑含陌生条目或缺失数据目录时显式失败', () async {
+    final runtime = await bootstrap();
+    final accountsDirectory = Directory(
+      p.join(installationRoot.path, '.kelivo-workspaces', 'accounts'),
+    );
+    await accountsDirectory.create(recursive: true);
+    final foreignEntry = File(p.join(accountsDirectory.path, 'foreign-entry'));
+    await foreignEntry.writeAsString('not-a-workspace', flush: true);
+
+    await expectLater(
+      runtime.registeredPreferencesPrefixes(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'account_workspace_account_entry_unsafe',
+        ),
+      ),
+    );
+
+    await foreignEntry.delete();
+    const incompleteWorkspaceKey =
+        'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
+    await Directory(
+      p.join(accountsDirectory.path, incompleteWorkspaceKey),
+    ).create();
+
+    await expectLater(
+      runtime.registeredPreferencesPrefixes(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'account_workspace_data_unsafe_missing',
+        ),
+      ),
+    );
+  });
+
   test('设备状态首次 CAS 创建返回与持久字节精确绑定的版本令牌', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     final state = Uint8List(DeviceStateBlobStore.blobLength)
