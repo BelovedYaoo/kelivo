@@ -1412,10 +1412,13 @@ void main() {
       'tokenReference',
     });
     expect(sessionMetadata, isNot(contains('token')));
-    expect(sessionMetadata['version'], 3);
+    expect(sessionMetadata['version'], 4);
     expect(sessionMetadata['tokenExpiresAt'], '2030-07-18T00:00:00.000Z');
     expect(sessionMetadata['keyEpoch'], 1);
+    expect(sessionMetadata['authGeneration'], 0);
+    expect(sessionMetadata['sessionGeneration'], 1);
     expect(sessionMetadata['deviceKeyVersion'], 1);
+    expect(sessionMetadata['securityBootstrap'], isNull);
     expect(payload['tokenReference'], <String, Object?>{
       'version': 1,
       'generation': 1,
@@ -1428,6 +1431,8 @@ void main() {
       token: _fullSessionToken('authenticated-roundtrip-token'),
       tokenExpiresAt: DateTime.parse('2031-07-26T16:20:00+08:00'),
       keyEpoch: 0xffffffff,
+      authGeneration: 0x7fffffff,
+      sessionGeneration: 0x7fffffff,
       deviceKeyVersion: 0x7fffffff,
       user: CloudSyncAuthenticatedUser(
         id: '11111111-1111-4111-8111-111111111111',
@@ -1459,6 +1464,8 @@ void main() {
     expect(restored.token.value, expected.token.value);
     expect(restored.tokenExpiresAt, DateTime.utc(2031, 7, 26, 8, 20));
     expect(restored.keyEpoch, 0xffffffff);
+    expect(restored.authGeneration, 0x7fffffff);
+    expect(restored.sessionGeneration, 0x7fffffff);
     expect(restored.userId, expected.userId);
     expect(restored.loginName, expected.loginName);
     expect(restored.displayName, expected.displayName);
@@ -1538,11 +1545,23 @@ void main() {
     );
   });
 
-  test('完整会话 JSON 拒绝浮点版本 3.0', () {
+  test('完整会话 JSON 拒绝旧整数版本 3', () {
+    final json = _session(
+      userId: 'legacy-json-version',
+      token: 'legacy-json-version-token',
+    ).toJson()..['version'] = 3;
+
+    expect(
+      () => CloudSyncAccountSession.fromJson(json),
+      throwsA(isA<FormatException>()),
+    );
+  });
+
+  test('完整会话 JSON 拒绝浮点版本 4.0', () {
     final json = _session(
       userId: 'floating-json-version',
       token: 'floating-json-version-token',
-    ).toJson()..['version'] = 3.0;
+    ).toJson()..['version'] = 4.0;
 
     expect(
       () => CloudSyncAccountSession.fromJson(json),
@@ -1611,15 +1630,15 @@ void main() {
     );
   });
 
-  test('旧版会话 metadata 启动时拒绝迁移', () async {
+  test('旧版会话 metadata v3 启动时拒绝迁移', () async {
     await expectStoredSessionMetadataRejected(
-      (metadata) => metadata['version'] = 2,
+      (metadata) => metadata['version'] = 3,
     );
   });
 
-  test('会话 metadata 拒绝浮点版本 3.0', () async {
+  test('会话 metadata 拒绝浮点版本 4.0', () async {
     await expectStoredSessionMetadataRejected(
-      (metadata) => metadata['version'] = 3.0,
+      (metadata) => metadata['version'] = 4.0,
     );
   });
 
@@ -4289,6 +4308,8 @@ CloudSyncAccountSession _session({
     token: _fullSessionToken(token),
     tokenExpiresAt: tokenExpiresAt ?? DateTime.utc(2030, 7, 18),
     keyEpoch: 1,
+    authGeneration: 0,
+    sessionGeneration: 1,
     userId: _testUuid('user:$userId'),
     loginName: userId.toLowerCase(),
     displayName: userId,

@@ -16,6 +16,7 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_terminal_session_retirement.dart';
 import 'cloud_sync_types.dart';
+import 'e2ee_account_authenticator.dart';
 import 'e2ee_chat_content_runtime.dart';
 import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_scheduler.dart';
@@ -377,6 +378,9 @@ final class _ProductionBackgroundSyncWorkspace
         ),
         client: activeClient,
       );
+      activeRuntime.bindSecurityBootstrapCommitHandler((pendingSession) {
+        return _commitSecurityBootstrap(pendingSession, activeClient);
+      });
       runtime = activeRuntime;
       return E2eeBackgroundContentAcquired(
         _ProductionBackgroundSyncContent(
@@ -420,6 +424,53 @@ final class _ProductionBackgroundSyncWorkspace
 
   @override
   Future<void> closeWorkspaceLease() => _workspaceRuntime.close();
+
+  Future<void> _commitSecurityBootstrap(
+    CloudSyncAccountSession pendingSession,
+    CloudSyncAccountClient client,
+  ) async {
+    final bootstrap = pendingSession.securityBootstrap;
+    final current = session;
+    if (bootstrap == null ||
+        current == null ||
+        current.securityBootstrap == null ||
+        current.accountScope != pendingSession.accountScope ||
+        current.deviceId != pendingSession.deviceId ||
+        current.authGeneration != pendingSession.authGeneration ||
+        current.sessionGeneration != pendingSession.sessionGeneration ||
+        current.token.value != pendingSession.token.value) {
+      throw StateError('后台安全 bootstrap 提交会话与当前工作区不匹配');
+    }
+    final authentication = E2eeAccountAuthenticator(
+      baseUrl: pendingSession.baseUrl,
+      accountClient: client,
+      deviceStateStore: DeviceStateBlobStore(
+        installationRoot: _workspaceRuntime.installationRoot,
+      ),
+      secureCore: const KelivoSecureCore(),
+    );
+    final authenticatedSession = pendingSession.toAuthenticatedSession();
+    switch (bootstrap.source) {
+      case CloudSyncSecurityBootstrapSource.firstRegistration:
+        await authentication.confirmFirstDeviceRegistration(
+          loginName: pendingSession.loginName,
+          session: authenticatedSession,
+        );
+        break;
+      case CloudSyncSecurityBootstrapSource.pairing:
+        await authentication.confirmDevicePairing(
+          loginName: pendingSession.loginName,
+          session: authenticatedSession,
+        );
+        break;
+    }
+    final binding = await _workspaceRuntime.bindAccount(
+      pendingSession.withoutSecurityBootstrap(),
+    );
+    if (binding is! AccountWorkspaceRetained) {
+      throw StateError('后台安全 bootstrap 只能在当前账户工作区内提交');
+    }
+  }
 }
 
 final class _ProductionBackgroundSyncContent

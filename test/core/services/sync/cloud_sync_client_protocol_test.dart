@@ -156,6 +156,10 @@ String _encodedBytes(int length, [int value = 0]) {
   return base64Url.encode(_filledBytes(length, value)).replaceAll('=', '');
 }
 
+String _encodedData(Uint8List value) {
+  return base64Url.encode(value).replaceAll('=', '');
+}
+
 String _encodedRecordCiphertext(E2eeSealedAccountRecordEnvelope record) {
   return base64Url.encode(record.ciphertext).replaceAll('=', '');
 }
@@ -303,10 +307,75 @@ Map<String, Object?> _authenticatedData({
       'name': 'Windows 主机',
       'platform': 'windows',
       'clientVersion': '1.2.3',
+      'authGeneration': 0,
+      'sessionGeneration': 1,
       'status': 'active',
       'createdAt': '2026-07-26T05:00:00.000Z',
     },
   };
+}
+
+CloudSyncGenesisSecurityState _genesisSecurityState() {
+  final manifest = _filledBytes(cloudSyncMembershipManifestMinimumBytes, 30);
+  return CloudSyncGenesisSecurityState(
+    operationId: _attemptId1,
+    membershipManifest: manifest,
+    membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List.fromList(sha256.convert(manifest).bytes),
+    ),
+    recoveryPublicKeyVersion: 1,
+    recoveryPublicKey: _filledBytes(cloudSyncRecoveryPublicKeyBytes, 31),
+    recoveryCapsuleVersion: 1,
+    recoveryCapsule: _filledBytes(cloudSyncRecoveryCapsuleBytes, 32),
+  );
+}
+
+Map<String, Object?> _registrationSecurityStateData({
+  String deviceId = _deviceId1,
+  CloudSyncGenesisSecurityState? securityState,
+  Uint8List? accountKeyEnvelope,
+}) {
+  final genesis = securityState ?? _genesisSecurityState();
+  return <String, Object?>{
+    'generation': 1,
+    'keyEpoch': 1,
+    'dataRekeyPhase': 'ready',
+    'membershipManifest': _encodedData(genesis.membershipManifest),
+    'membershipManifestDigest': genesis.membershipManifestDigest.encoded,
+    'recoveryPublicKeyVersion': genesis.recoveryPublicKeyVersion,
+    'recoveryPublicKey': _encodedData(genesis.recoveryPublicKey),
+    'recoveryCapsuleVersion': genesis.recoveryCapsuleVersion,
+    'recoveryCapsule': _encodedData(genesis.recoveryCapsule),
+    'lastOperationId': genesis.operationId,
+    'updatedAt': '2026-07-26T05:00:00.000Z',
+    'envelopes': <Object?>[
+      <String, Object?>{
+        'targetDeviceId': deviceId,
+        'issuerDeviceId': deviceId,
+        'envelopeVersion': 1,
+        'keyEpoch': 1,
+        'accountKeyEnvelope': _encodedData(
+          accountKeyEnvelope ??
+              _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 9),
+        ),
+      },
+    ],
+  };
+}
+
+Map<String, Object?> _registrationAuthenticatedData({
+  Map<String, Object?>? securityState,
+  String deviceId = _deviceId1,
+  String loginName = 'alice',
+}) {
+  return <String, Object?>{
+    ..._authenticatedData(
+      keyEpoch: 1,
+      deviceId: deviceId,
+      loginName: loginName,
+    ),
+    'securityState': securityState ?? _registrationSecurityStateData(),
+  }..remove('keyEpoch');
 }
 
 Map<String, Object?> _pairingAuthenticatedData({
@@ -314,17 +383,111 @@ Map<String, Object?> _pairingAuthenticatedData({
   int keyEpoch = 7,
   String deviceId = _deviceId1,
   String loginName = 'alice',
+  String pairingId = _pairingId,
+  String issuerDeviceId = _issuerDeviceId,
+  Uint8List? membershipManifest,
+  Uint8List? recoveryPublicKey,
+  Uint8List? recoveryCapsule,
+  Uint8List? accountKeyEnvelope,
 }) {
-  return <String, Object?>{
+  final manifest =
+      membershipManifest ??
+      _filledBytes(cloudSyncMembershipManifestMinimumBytes, 33);
+  final manifestDigest = _encodedData(
+    Uint8List.fromList(sha256.convert(manifest).bytes),
+  );
+  final state = <String, Object?>{
+    'generation': 2,
+    'keyEpoch': keyEpoch,
+    'dataRekeyPhase': 'ready',
+    'membershipManifest': _encodedData(manifest),
+    'membershipManifestDigest': manifestDigest,
+    'recoveryPublicKeyVersion': 1,
+    'recoveryPublicKey': _encodedData(
+      recoveryPublicKey ?? _filledBytes(cloudSyncRecoveryPublicKeyBytes, 34),
+    ),
+    'recoveryCapsuleVersion': 1,
+    'recoveryCapsule': _encodedData(
+      recoveryCapsule ?? _filledBytes(cloudSyncRecoveryCapsuleBytes, 35),
+    ),
+    'lastOperationId': pairingId,
+    'updatedAt': '2026-07-26T05:01:00.000Z',
+    'envelopes': <Object?>[
+      <String, Object?>{
+        'targetDeviceId': deviceId,
+        'issuerDeviceId': issuerDeviceId,
+        'envelopeVersion': 1,
+        'keyEpoch': keyEpoch,
+        'accountKeyEnvelope': _encodedData(
+          accountKeyEnvelope ??
+              _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 21),
+        ),
+      },
+    ],
+  };
+  final data = <String, Object?>{
     ..._authenticatedData(
       token: token,
       keyEpoch: keyEpoch,
       deviceId: deviceId,
       loginName: loginName,
     ),
+    'pairingId': pairingId,
+    'issuerDeviceId': issuerDeviceId,
+    'keyEpoch': keyEpoch,
     'securityGeneration': 2,
-    'membershipManifestDigest': _encodedBytes(32, 31),
+    'membershipManifestDigest': manifestDigest,
+    'securityState': state,
   };
+  final device = <String, Object?>{...copyCloudSyncJsonMap(data['device'])};
+  device['authGeneration'] = 1;
+  device['sessionGeneration'] = 2;
+  data['device'] = device;
+  return data;
+}
+
+CloudSyncAccountSecurityState _copySecurityState(
+  CloudSyncAccountSecurityState source, {
+  Uint8List? membershipManifest,
+  List<CloudSyncAccountSecurityEnvelope>? envelopes,
+}) {
+  final manifest = membershipManifest ?? source.membershipManifest;
+  return CloudSyncAccountSecurityState(
+    generation: source.generation,
+    keyEpoch: source.keyEpoch,
+    dataRekeyPhase: source.dataRekeyPhase,
+    membershipManifest: manifest,
+    membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List.fromList(sha256.convert(manifest).bytes),
+    ),
+    recoveryPublicKeyVersion: source.recoveryPublicKeyVersion,
+    recoveryPublicKey: source.recoveryPublicKey,
+    recoveryCapsuleVersion: source.recoveryCapsuleVersion,
+    recoveryCapsule: source.recoveryCapsule,
+    lastOperationId: source.lastOperationId,
+    updatedAt: source.updatedAt,
+    envelopes: envelopes ?? source.envelopes,
+  );
+}
+
+CloudSyncAuthenticatedSession _copyAuthenticatedSession(
+  CloudSyncAuthenticatedSession source, {
+  int? authGeneration,
+  CloudSyncAccountSecurityState? securityState,
+  CloudSyncDevicePairingConsumptionReceipt? pairingReceipt,
+}) {
+  return CloudSyncAuthenticatedSession(
+    token: source.token,
+    tokenExpiresAt: source.tokenExpiresAt,
+    keyEpoch: source.keyEpoch,
+    authGeneration: authGeneration ?? source.authGeneration,
+    sessionGeneration: source.sessionGeneration,
+    user: source.user,
+    device: source.device,
+    deviceKeyVersion: source.deviceKeyVersion,
+    securityState: securityState ?? source.securityState,
+    pairingReceipt: pairingReceipt ?? source.pairingReceipt,
+  );
 }
 
 String _requiredTestString(CloudSyncJsonMap json, String key) {
@@ -432,6 +595,7 @@ Map<String, Object?> _trustedDeviceJson({String status = 'active'}) {
     'name': 'Android 手机',
     'platform': 'android',
     'clientVersion': '1.2.3',
+    'authGeneration': 1,
     'status': status,
     'createdAt': '2026-07-26T05:00:00.000Z',
     'lastSeenAt': '2026-07-26T06:00:00.000Z',
@@ -1028,13 +1192,14 @@ void main() {
     await testRoot.create(recursive: true);
     final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
     final store = DeviceStateBlobStore(installationRoot: root);
-    final expectedRequest = await _seedPendingRegistration(
+    final seededRegistration = await _seedPendingRegistration(
       core: core,
       store: store,
       baseUrl: baseUrl,
       loginName: loginName,
       attemptExpiresAt: DateTime.now().toUtc().add(const Duration(minutes: 5)),
     );
+    final expectedRequest = seededRegistration.expectedRequest;
     final firstClient = CloudSyncClient.forTesting(baseUrl: baseUrl);
     final firstAuthenticator = E2eeAccountAuthenticator(
       baseUrl: baseUrl,
@@ -1124,9 +1289,8 @@ void main() {
     secondRequest.response.headers.contentType = ContentType.json;
     secondRequest.response.write(
       jsonEncode(<String, Object?>{
-        'data': _authenticatedData(
-          keyEpoch: 1,
-          deviceId: _deviceId1,
+        'data': _registrationAuthenticatedData(
+          securityState: seededRegistration.securityState,
           loginName: loginName,
         ),
       }),
@@ -1470,6 +1634,7 @@ void main() {
         8,
       ),
       accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 9),
+      securityState: _genesisSecurityState(),
       deviceProof: _filledBytes(cloudSyncDeviceProofBytes, 10),
     );
 
@@ -1487,17 +1652,32 @@ void main() {
         8,
       ),
       'accountKeyEnvelope': _encodedBytes(cloudSyncAccountKeyEnvelopeBytes, 9),
+      'securityState': <String, Object?>{
+        'generation': 1,
+        'operationId': _attemptId1,
+        'keyEpoch': 1,
+        'membershipManifest': _encodedBytes(
+          cloudSyncMembershipManifestMinimumBytes,
+          30,
+        ),
+        'membershipManifestDigest':
+            _genesisSecurityState().membershipManifestDigest.encoded,
+        'recoveryPublicKeyVersion': 1,
+        'recoveryPublicKey': _encodedBytes(cloudSyncRecoveryPublicKeyBytes, 31),
+        'recoveryCapsuleVersion': 1,
+        'recoveryCapsule': _encodedBytes(cloudSyncRecoveryCapsuleBytes, 32),
+      },
       'deviceProof': _encodedBytes(cloudSyncDeviceProofBytes, 10),
     });
     request.response.headers.contentType = ContentType.json;
     request.response.write(
-      jsonEncode(<String, Object?>{'data': _authenticatedData(keyEpoch: 11)}),
+      jsonEncode(<String, Object?>{'data': _registrationAuthenticatedData()}),
     );
     await request.response.close();
 
     final session = await finishFuture;
     expect(session.token.value, _fullTokenValue);
-    expect(session.keyEpoch, 11);
+    expect(session.keyEpoch, 1);
     expect(session.user.id, _userId);
     expect(session.device.id, _deviceId1);
     expect(session.device.status, CloudSyncAuthenticatedDeviceStatus.active);
@@ -1542,6 +1722,7 @@ void main() {
             'name': 'Windows 主机',
             'platform': 'windows',
             'clientVersion': '1.2.3',
+            'authGeneration': 0,
             'status': 'pending',
             'createdAt': '2026-07-26T05:00:00.000Z',
           },
@@ -1896,6 +2077,8 @@ void main() {
       token: _fullToken,
       tokenExpiresAt: now.add(const Duration(minutes: 10)),
       keyEpoch: 7,
+      authGeneration: 3,
+      sessionGeneration: 4,
       user: CloudSyncAuthenticatedUser(
         id: _userId,
         loginName: loginName,
@@ -1961,6 +2144,8 @@ void main() {
       token: _fullToken,
       tokenExpiresAt: session.tokenExpiresAt,
       keyEpoch: session.keyEpoch,
+      authGeneration: session.authGeneration,
+      sessionGeneration: session.sessionGeneration,
       user: session.user,
       device: CloudSyncAuthenticatedDevice(
         id: session.device.id,
@@ -2091,10 +2276,21 @@ void main() {
     final issuerIdentity = await core.generateDeviceIdentity();
     final issuerArk = await core.generateAccountRootKey(
       userId: _rawUuid(_userId),
-      keyEpoch: 7,
+      keyEpoch: 1,
     );
     final issuerPublicKeys = await core.readDevicePublicKeys(issuerIdentity);
+    final alternateIssuerIdentity = await core.generateDeviceIdentity();
+    final alternateIssuerPublicKeys = await core.readDevicePublicKeys(
+      alternateIssuerIdentity,
+    );
+    final recoveryPublicKey = _filledBytes(
+      cloudSyncRecoveryPublicKeyBytes,
+      0x61,
+    );
+    final recoveryCapsule = _filledBytes(cloudSyncRecoveryCapsuleBytes, 0x62);
     late final KelivoPairingApprovalBundle approvalBundle;
+    late final E2eeVerifiedMembership pairedMembership;
+    late final E2eeVerifiedMembership alternateIssuerMembership;
     try {
       approvalBundle = await core.createPairingApproval(
         issuerIdentity,
@@ -2105,14 +2301,85 @@ void main() {
         targetDeviceId: _rawUuid(_deviceId2),
         expiresAtMs: pairingExpiresAt.millisecondsSinceEpoch,
         challenge: _filledBytes(cloudSyncDeviceChallengeBytes, 18),
-        keyEpoch: 7,
+        keyEpoch: 1,
         targetPublicKeys: targetPublicKeys,
         pairingSecret: pairingSecret,
       );
+      final initialMembership = await const E2eeAccountTrustManifestModule()
+          .create(
+            ark: issuerArk,
+            change: E2eeInitializeMembershipChange(
+              userId: _userId,
+              operationId: _attemptId2,
+              member: E2eeMembershipDeviceInput(
+                deviceId: _issuerDeviceId,
+                keyVersion: 1,
+                authGeneration: 0,
+                signingPublicKey: issuerPublicKeys.signingPublicKey,
+                keyAgreementPublicKey: issuerPublicKeys.keyAgreementPublicKey,
+              ),
+              recoveryPublicKeyVersion: 1,
+              recoveryPublicKey: recoveryPublicKey,
+              recoveryCapsuleVersion: 1,
+              recoveryCapsule: recoveryCapsule,
+            ),
+          );
+      pairedMembership = await const E2eeAccountTrustManifestModule().create(
+        ark: issuerArk,
+        change: E2eeAddDeviceMembershipChange(
+          previous: initialMembership,
+          pairingId: pairingId,
+          issuerDeviceId: _issuerDeviceId,
+          subject: E2eeMembershipDeviceInput(
+            deviceId: _deviceId2,
+            keyVersion: 1,
+            authGeneration: 1,
+            signingPublicKey: targetPublicKeys.signingPublicKey,
+            keyAgreementPublicKey: targetPublicKeys.keyAgreementPublicKey,
+          ),
+        ),
+      );
+      final alternateInitialMembership =
+          await const E2eeAccountTrustManifestModule().create(
+            ark: issuerArk,
+            change: E2eeInitializeMembershipChange(
+              userId: _userId,
+              operationId: _attemptId2,
+              member: E2eeMembershipDeviceInput(
+                deviceId: _issuerDeviceId,
+                keyVersion: 1,
+                authGeneration: 0,
+                signingPublicKey: alternateIssuerPublicKeys.signingPublicKey,
+                keyAgreementPublicKey:
+                    alternateIssuerPublicKeys.keyAgreementPublicKey,
+              ),
+              recoveryPublicKeyVersion: 1,
+              recoveryPublicKey: recoveryPublicKey,
+              recoveryCapsuleVersion: 1,
+              recoveryCapsule: recoveryCapsule,
+            ),
+          );
+      alternateIssuerMembership = await const E2eeAccountTrustManifestModule()
+          .create(
+            ark: issuerArk,
+            change: E2eeAddDeviceMembershipChange(
+              previous: alternateInitialMembership,
+              pairingId: pairingId,
+              issuerDeviceId: _issuerDeviceId,
+              subject: E2eeMembershipDeviceInput(
+                deviceId: _deviceId2,
+                keyVersion: 1,
+                authGeneration: 1,
+                signingPublicKey: targetPublicKeys.signingPublicKey,
+                keyAgreementPublicKey: targetPublicKeys.keyAgreementPublicKey,
+              ),
+            ),
+          );
     } finally {
       pairingSecret.fillRange(0, pairingSecret.length, 0);
       await core.closeAccountRootKey(issuerArk);
       await core.closeDeviceIdentity(issuerIdentity);
+      await core.closeDeviceIdentity(alternateIssuerIdentity);
     }
 
     final completionFuture = authenticator.waitForDevicePairing(pending);
@@ -2145,13 +2412,15 @@ void main() {
           },
           'status': 'approved',
           'issuerDeviceId': _issuerDeviceId,
+          'issuerKeyVersion': 1,
+          'issuerAuthGeneration': 0,
           'issuerSigningPublicKey': base64Url
               .encode(issuerPublicKeys.signingPublicKey)
               .replaceAll('=', ''),
           'issuerKeyAgreementPublicKey': base64Url
               .encode(issuerPublicKeys.keyAgreementPublicKey)
               .replaceAll('=', ''),
-          'keyEpoch': 7,
+          'keyEpoch': 1,
           'accountKeyEnvelope': base64Url
               .encode(approvalBundle.envelope)
               .replaceAll('=', ''),
@@ -2197,7 +2466,7 @@ void main() {
         normalizedLoginName: loginName,
       ))!,
     );
-    expect(persistedState.binding.account?.keyEpoch, 7);
+    expect(persistedState.binding.account?.keyEpoch, 1);
     expect(
       persistedState.binding.account?.userId,
       orderedEquals(_rawUuid(_userId)),
@@ -2241,9 +2510,14 @@ void main() {
       jsonEncode(<String, Object?>{
         'data': _pairingAuthenticatedData(
           token: finalSessionToken,
-          keyEpoch: 7,
+          keyEpoch: 1,
           deviceId: _deviceId2,
           loginName: loginName,
+          pairingId: pairingId,
+          membershipManifest: pairedMembership.manifest,
+          recoveryPublicKey: recoveryPublicKey,
+          recoveryCapsule: recoveryCapsule,
+          accountKeyEnvelope: approvalBundle.envelope,
         ),
       }),
     );
@@ -2262,6 +2536,195 @@ void main() {
       ),
       isNotNull,
     );
+
+    final originalPendingEnvelope = (await store.readPendingPairingEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+    ))!;
+    final recoveryKey = await core.openSlot(
+      _authenticatorSlotId(baseUrl, loginName),
+    );
+    final recoveryRecordId = _pairingRecoveryRecordId(baseUrl, loginName);
+    final recoveryAssociatedData = _pairingRecoveryAssociatedData(
+      baseUrl,
+      loginName,
+    );
+    Uint8List? recoveryFrame;
+    try {
+      recoveryFrame = await core.openRecord(
+        recoveryKey,
+        recordId: recoveryRecordId,
+        epoch: 1,
+        associatedData: recoveryAssociatedData,
+        envelope: originalPendingEnvelope,
+      );
+      for (final corruption in <String>['version', 'reserved', 'length']) {
+        final corruptedFrame = Uint8List.fromList(recoveryFrame);
+        final corruptedPayload = switch (corruption) {
+          'version' =>
+            corruptedFrame
+              ..[8] = 0
+              ..[9] = 2,
+          'reserved' => corruptedFrame..[10] = 1,
+          'length' => Uint8List.fromList(
+            corruptedFrame.sublist(0, corruptedFrame.length - 1),
+          ),
+          _ => throw StateError('未知恢复帧破坏类型'),
+        };
+        final corruptedEnvelope = await core.sealRecord(
+          recoveryKey,
+          recordId: recoveryRecordId,
+          epoch: 1,
+          associatedData: recoveryAssociatedData,
+          plaintext: corruptedPayload,
+        );
+        try {
+          final removedOriginal = await store.deletePendingPairingEnvelope(
+            normalizedBaseUrl: baseUrl,
+            normalizedLoginName: loginName,
+            expectedDigest: Uint8List.fromList(
+              sha256.convert(originalPendingEnvelope).bytes,
+            ),
+          );
+          expect(removedOriginal, isTrue, reason: corruption);
+          await store.writePendingPairingEnvelope(
+            normalizedBaseUrl: baseUrl,
+            normalizedLoginName: loginName,
+            envelope: corruptedEnvelope,
+          );
+          await expectLater(
+            recoveryAuthenticator.confirmDevicePairing(
+              loginName: loginName,
+              session: session,
+            ),
+            throwsFormatException,
+            reason: corruption,
+          );
+        } finally {
+          corruptedFrame.fillRange(0, corruptedFrame.length, 0);
+          corruptedPayload.fillRange(0, corruptedPayload.length, 0);
+          await store.deletePendingPairingEnvelope(
+            normalizedBaseUrl: baseUrl,
+            normalizedLoginName: loginName,
+            expectedDigest: Uint8List.fromList(
+              sha256.convert(corruptedEnvelope).bytes,
+            ),
+          );
+          corruptedEnvelope.fillRange(0, corruptedEnvelope.length, 0);
+          await store.writePendingPairingEnvelope(
+            normalizedBaseUrl: baseUrl,
+            normalizedLoginName: loginName,
+            envelope: originalPendingEnvelope,
+          );
+        }
+      }
+    } finally {
+      recoveryFrame?.fillRange(0, recoveryFrame.length, 0);
+      recoveryRecordId.fillRange(0, recoveryRecordId.length, 0);
+      recoveryAssociatedData.fillRange(0, recoveryAssociatedData.length, 0);
+      await core.close(recoveryKey);
+    }
+
+    final state = session.securityState!;
+    final receipt = session.pairingReceipt!;
+    final alternateIssuerState = _copySecurityState(
+      state,
+      membershipManifest: alternateIssuerMembership.manifest,
+    );
+    await expectLater(
+      recoveryAuthenticator.confirmDevicePairing(
+        loginName: loginName,
+        session: _copyAuthenticatedSession(
+          session,
+          securityState: alternateIssuerState,
+          pairingReceipt: CloudSyncDevicePairingConsumptionReceipt(
+            pairingId: receipt.pairingId,
+            issuerDeviceId: receipt.issuerDeviceId,
+            keyEpoch: receipt.keyEpoch,
+            securityGeneration: receipt.securityGeneration,
+            membershipManifestDigest:
+                alternateIssuerState.membershipManifestDigest,
+          ),
+        ),
+      ),
+      throwsStateError,
+      reason: '签发者双公钥被替换',
+    );
+    await expectLater(
+      recoveryAuthenticator.confirmDevicePairing(
+        loginName: loginName,
+        session: _copyAuthenticatedSession(session, authGeneration: 2),
+      ),
+      throwsStateError,
+      reason: '目标设备认证代次不连续',
+    );
+    await expectLater(
+      recoveryAuthenticator.confirmDevicePairing(
+        loginName: loginName,
+        session: _copyAuthenticatedSession(
+          session,
+          pairingReceipt: CloudSyncDevicePairingConsumptionReceipt(
+            pairingId: receipt.pairingId,
+            issuerDeviceId: _deviceId1,
+            keyEpoch: receipt.keyEpoch,
+            securityGeneration: receipt.securityGeneration,
+            membershipManifestDigest: receipt.membershipManifestDigest,
+          ),
+        ),
+      ),
+      throwsStateError,
+      reason: '消费回执签发者不一致',
+    );
+    final envelope = state.envelopes.single;
+    final mismatchedEnvelopeState = _copySecurityState(
+      state,
+      envelopes: <CloudSyncAccountSecurityEnvelope>[
+        CloudSyncAccountSecurityEnvelope(
+          targetDeviceId: envelope.targetDeviceId,
+          issuerDeviceId: envelope.issuerDeviceId,
+          envelopeVersion: envelope.envelopeVersion,
+          keyEpoch: envelope.keyEpoch,
+          accountKeyEnvelope: _filledBytes(
+            cloudSyncAccountKeyEnvelopeBytes,
+            0x7a,
+          ),
+        ),
+      ],
+    );
+    await expectLater(
+      recoveryAuthenticator.confirmDevicePairing(
+        loginName: loginName,
+        session: _copyAuthenticatedSession(
+          session,
+          securityState: mismatchedEnvelopeState,
+        ),
+      ),
+      throwsStateError,
+      reason: '冻结批准信封不一致',
+    );
+    expect(
+      () => _copyAuthenticatedSession(
+        session,
+        pairingReceipt: CloudSyncDevicePairingConsumptionReceipt(
+          pairingId: receipt.pairingId,
+          issuerDeviceId: receipt.issuerDeviceId,
+          keyEpoch: receipt.keyEpoch,
+          securityGeneration: receipt.securityGeneration,
+          membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+            _filledBytes(cloudSyncMembershipManifestDigestBytes, 0x7b),
+          ),
+        ),
+      ),
+      throwsFormatException,
+      reason: '消费回执摘要与安全状态不一致',
+    );
+    expect(
+      await store.readPendingPairingEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNotNull,
+    );
     await recoveryAuthenticator.confirmDevicePairing(
       loginName: loginName,
       session: session,
@@ -2273,6 +2736,7 @@ void main() {
       ),
       isNull,
     );
+    originalPendingEnvelope.fillRange(0, originalPendingEnvelope.length, 0);
   });
 
   test('设备配对全生命周期按令牌能力隔离并显式接管完整会话', () async {
@@ -2307,6 +2771,8 @@ void main() {
           'status': ++queryCount == 1 ? 'pending' : 'approved',
           if (queryCount > 1) ...<String, Object?>{
             'issuerDeviceId': _issuerDeviceId,
+            'issuerKeyVersion': 1,
+            'issuerAuthGeneration': 0,
             'issuerSigningPublicKey': _encodedBytes(
               cloudSyncDevicePublicKeyBytes,
               19,
@@ -2927,6 +3393,7 @@ void main() {
             cloudSyncOpaqueRegistrationUploadBytes + 1,
           ),
           accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes),
+          securityState: _genesisSecurityState(),
           deviceProof: _filledBytes(cloudSyncDeviceProofBytes),
         ),
       ),
@@ -4488,6 +4955,7 @@ void main() {
     request.response.write(
       jsonEncode(<String, Object?>{
         'data': <String, Object?>{
+          'dataRekeyPhase': 'ready',
           'records': <Object?>[
             <String, Object?>{
               'recordId': _recordId1,
@@ -4991,7 +5459,9 @@ void main() {
       <String, Object?>{
         'mutationId': _mutationId1,
         'attachmentId': _attachmentId,
-        'keyEpoch': 0xffffffff,
+        'chunkKeyEpoch': 0xffffffff,
+        'manifestKeyEpoch': 0xffffffff,
+        'manifestRevision': 1,
         'chunkCount': 2,
         'totalCiphertextBytes': 5,
       },
@@ -5002,7 +5472,9 @@ void main() {
         'data': <String, Object?>{
           'attachmentId': _attachmentId,
           'uploadId': _uploadId,
-          'keyEpoch': 0xffffffff,
+          'chunkKeyEpoch': 0xffffffff,
+          'manifestKeyEpoch': 0xffffffff,
+          'manifestRevision': 1,
           'chunkCount': 2,
           'totalCiphertextBytes': 5,
           'status': 'open',
@@ -5058,7 +5530,7 @@ void main() {
         'mutationId': _mutationId1,
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'chunkKeyEpoch': 7,
         'chunkIndex': 0,
         'ciphertext': 'AQID',
       },
@@ -5067,6 +5539,7 @@ void main() {
       'data': <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
+        'chunkKeyEpoch': 7,
         'chunkIndex': 0,
         'ciphertextBytes': 3,
         'status': 'stored',
@@ -5095,7 +5568,8 @@ void main() {
         'mutationId': _mutationId2,
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 1,
         'manifestCiphertext': 'BAU',
         'chunks': <Object?>[
           <String, Object?>{'chunkIndex': 0, 'ciphertextBytes': 3},
@@ -5106,7 +5580,9 @@ void main() {
       'data': <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'chunkKeyEpoch': 7,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 1,
         'status': 'committed',
         'committedAt': '2026-07-29T00:01:00.000Z',
       },
@@ -5126,14 +5602,18 @@ void main() {
       body: <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 1,
       },
     );
     await _writeJsonResponse(manifestRequest, <String, Object?>{
       'data': <String, Object?>{
+        'dataRekeyPhase': 'ready',
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'chunkKeyEpoch': 7,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 1,
         'chunkCount': 1,
         'totalCiphertextBytes': 3,
         'manifestCiphertext': 'BAU',
@@ -5160,15 +5640,16 @@ void main() {
       body: <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'chunkKeyEpoch': 7,
         'chunkIndex': 0,
       },
     );
     await _writeJsonResponse(getChunkRequest, <String, Object?>{
       'data': <String, Object?>{
+        'dataRekeyPhase': 'ready',
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'chunkKeyEpoch': 7,
         'chunkIndex': 0,
         'ciphertext': 'AQID',
         'ciphertextBytes': 3,
@@ -5193,14 +5674,17 @@ void main() {
         'mutationId': _mutationId3,
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 1,
       },
     );
     await _writeJsonResponse(deleteRequest, <String, Object?>{
       'data': <String, Object?>{
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'chunkKeyEpoch': 7,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 1,
         'status': 'deleted',
         'deletedAt': '2026-07-29T00:02:00.000Z',
       },
@@ -5402,7 +5886,9 @@ void main() {
     Map<String, Object?> validUploadData() => <String, Object?>{
       'attachmentId': _attachmentId,
       'uploadId': _uploadId,
-      'keyEpoch': 7,
+      'chunkKeyEpoch': 7,
+      'manifestKeyEpoch': 7,
+      'manifestRevision': 1,
       'chunkCount': 1,
       'totalCiphertextBytes': 3,
       'status': 'open',
@@ -5441,9 +5927,12 @@ void main() {
     await utf8.decoder.bind(manifestRequest).join();
     await _writeJsonResponse(manifestRequest, <String, Object?>{
       'data': <String, Object?>{
+        'dataRekeyPhase': 'ready',
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'chunkKeyEpoch': 7,
+        'manifestKeyEpoch': 7,
+        'manifestRevision': 1,
         'chunkCount': 1,
         'totalCiphertextBytes': 3,
         'manifestCiphertext': 'AQ',
@@ -5471,9 +5960,10 @@ void main() {
     await utf8.decoder.bind(chunkRequest).join();
     await _writeJsonResponse(chunkRequest, <String, Object?>{
       'data': <String, Object?>{
+        'dataRekeyPhase': 'ready',
         'attachmentId': _attachmentId,
         'uploadId': _uploadId,
-        'keyEpoch': 7,
+        'chunkKeyEpoch': 7,
         'chunkIndex': 0,
         'ciphertext': 'AQI=',
         'ciphertextBytes': 2,
@@ -8181,6 +8671,25 @@ Uint8List _authenticatorSlotId(String baseUrl, String loginName) {
   return Uint8List.fromList(digest.bytes.sublist(0, 16));
 }
 
+Uint8List _pairingRecoveryRecordId(String baseUrl, String loginName) {
+  final digest = sha256.convert(
+    utf8.encode(
+      'kelivo.e2ee.pairing-transaction.record.v1\u0000'
+      '$baseUrl\u0000$loginName',
+    ),
+  );
+  return Uint8List.fromList(digest.bytes.sublist(0, 16));
+}
+
+Uint8List _pairingRecoveryAssociatedData(String baseUrl, String loginName) {
+  return Uint8List.fromList(
+    utf8.encode(
+      'kelivo.e2ee.pairing-transaction.aad.v1\u0000'
+      '$baseUrl\u0000$loginName',
+    ),
+  );
+}
+
 Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
   required KelivoSecureCore core,
   required DeviceStateBlobStore store,
@@ -8242,6 +8751,8 @@ CloudSyncAccountSession _accountKeyLeaseSession({
     token: _fullToken,
     tokenExpiresAt: DateTime.utc(2030),
     keyEpoch: keyEpoch,
+    authGeneration: 0,
+    sessionGeneration: 1,
     userId: userId,
     loginName: loginName,
     displayName: 'Lease User',
@@ -8273,7 +8784,10 @@ String _uuidStringForTest(Uint8List value) {
       '${hex.substring(20)}';
 }
 
-Future<Map<String, Object?>> _seedPendingRegistration({
+Future<
+  ({Map<String, Object?> expectedRequest, Map<String, Object?> securityState})
+>
+_seedPendingRegistration({
   required KelivoSecureCore core,
   required DeviceStateBlobStore store,
   required String baseUrl,
@@ -8289,22 +8803,65 @@ Future<Map<String, Object?>> _seedPendingRegistration({
     0x52,
   );
   final deviceProof = _filledBytes(cloudSyncDeviceProofBytes, 0x53);
-  final expectedRequest = <String, Object?>{
-    'protocolVersion': cloudSyncOpaqueProtocolVersion,
-    'attemptId': _attemptId1,
-    'registrationUpload': base64Url
-        .encode(registrationUpload)
-        .replaceAll('=', ''),
-    'accountKeyEnvelope': base64Url
-        .encode(accountKeyEnvelope)
-        .replaceAll('=', ''),
-    'deviceProof': base64Url.encode(deviceProof).replaceAll('=', ''),
-  };
+  final recoveryPublicKey = _filledBytes(cloudSyncRecoveryPublicKeyBytes, 0x54);
+  final recoveryCapsule = _filledBytes(cloudSyncRecoveryCapsuleBytes, 0x55);
   final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
   final identity = await core.generateDeviceIdentity();
   final deviceId = _rawUuid(_deviceId1);
   final userId = _rawUuid(_userId);
   final ark = await core.generateAccountRootKey(userId: userId, keyEpoch: 1);
+  final publicKeys = await core.readDevicePublicKeys(identity);
+  final membership = await const E2eeAccountTrustManifestModule().create(
+    ark: ark,
+    change: E2eeInitializeMembershipChange(
+      userId: _userId,
+      operationId: _attemptId1,
+      member: E2eeMembershipDeviceInput(
+        deviceId: _deviceId1,
+        keyVersion: 1,
+        authGeneration: 0,
+        signingPublicKey: publicKeys.signingPublicKey,
+        keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+      ),
+      recoveryPublicKeyVersion: 1,
+      recoveryPublicKey: recoveryPublicKey,
+      recoveryCapsuleVersion: 1,
+      recoveryCapsule: recoveryCapsule,
+    ),
+  );
+  final genesis = CloudSyncGenesisSecurityState(
+    operationId: membership.operationId,
+    membershipManifest: membership.manifest,
+    membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+      membership.digest,
+    ),
+    recoveryPublicKeyVersion: membership.recoveryPublicKeyVersion,
+    recoveryPublicKey: recoveryPublicKey,
+    recoveryCapsuleVersion: membership.recoveryCapsuleVersion,
+    recoveryCapsule: recoveryCapsule,
+  );
+  final expectedRequest = <String, Object?>{
+    'protocolVersion': cloudSyncOpaqueProtocolVersion,
+    'attemptId': _attemptId1,
+    'registrationUpload': _encodedData(registrationUpload),
+    'accountKeyEnvelope': _encodedData(accountKeyEnvelope),
+    'securityState': <String, Object?>{
+      'generation': 1,
+      'operationId': genesis.operationId,
+      'keyEpoch': 1,
+      'membershipManifest': _encodedData(genesis.membershipManifest),
+      'membershipManifestDigest': genesis.membershipManifestDigest.encoded,
+      'recoveryPublicKeyVersion': genesis.recoveryPublicKeyVersion,
+      'recoveryPublicKey': _encodedData(genesis.recoveryPublicKey),
+      'recoveryCapsuleVersion': genesis.recoveryCapsuleVersion,
+      'recoveryCapsule': _encodedData(genesis.recoveryCapsule),
+    },
+    'deviceProof': _encodedData(deviceProof),
+  };
+  final securityState = _registrationSecurityStateData(
+    securityState: genesis,
+    accountKeyEnvelope: accountKeyEnvelope,
+  );
   final identityOnlyState = Uint8List.fromList(
     await core.sealDeviceState(
       key,
@@ -8323,31 +8880,81 @@ Future<Map<String, Object?>> _seedPendingRegistration({
       account: KelivoDeviceStateAccountBinding(userId: userId, keyEpoch: 1),
     ),
   );
-  const registrationStateOffset = 704;
-  final frame = Uint8List(
-    registrationStateOffset + DeviceStateBlobStore.blobLength,
-  );
-  final magic = ascii.encode('KELVRT01');
+  const registrationHeaderLength = 120;
+  const registrationUploadOffset = registrationHeaderLength;
+  const registrationEnvelopeOffset =
+      registrationUploadOffset + cloudSyncOpaqueRegistrationUploadBytes;
+  const registrationProofOffset =
+      registrationEnvelopeOffset + cloudSyncAccountKeyEnvelopeBytes;
+  const registrationStateOffset =
+      registrationProofOffset + cloudSyncDeviceProofBytes;
+  const registrationManifestOffset =
+      registrationStateOffset + DeviceStateBlobStore.blobLength;
+  const registrationManifestDigestOffset =
+      registrationManifestOffset + cloudSyncMembershipManifestMinimumBytes;
+  const registrationRecoveryPublicKeyOffset =
+      registrationManifestDigestOffset + cloudSyncMembershipManifestDigestBytes;
+  const registrationRecoveryCapsuleOffset =
+      registrationRecoveryPublicKeyOffset + cloudSyncRecoveryPublicKeyBytes;
+  const registrationFrameLength =
+      registrationRecoveryCapsuleOffset + cloudSyncRecoveryCapsuleBytes;
+  final frame = Uint8List(registrationFrameLength);
+  final magic = ascii.encode('KELVRT02');
   frame.setRange(0, magic.length, magic);
   final fields = ByteData.sublistView(frame);
-  fields.setUint16(8, 1, Endian.big);
+  fields.setUint16(8, 2, Endian.big);
   fields.setUint16(10, 0, Endian.big);
   fields.setUint32(12, 1, Endian.big);
   fields.setUint32(16, 1, Endian.big);
-  fields.setUint32(20, 0, Endian.big);
+  fields.setUint32(20, genesis.recoveryPublicKeyVersion, Endian.big);
+  fields.setUint32(24, genesis.recoveryCapsuleVersion, Endian.big);
+  fields.setUint32(28, 0, Endian.big);
   fields.setUint64(
-    24,
+    32,
     attemptExpiresAt.toUtc().millisecondsSinceEpoch,
     Endian.big,
   );
-  frame.setRange(32, 48, _rawUuid(_attemptId1));
-  frame.setRange(48, 64, userId);
-  frame.setRange(64, 80, _rawUuid(_accountContextId));
-  frame.setRange(80, 96, deviceId);
-  frame.setRange(96, 304, registrationUpload);
-  frame.setRange(304, 640, accountKeyEnvelope);
-  frame.setRange(640, 704, deviceProof);
-  frame.setRange(registrationStateOffset, frame.length, fullState);
+  frame.setRange(40, 56, _rawUuid(_attemptId1));
+  frame.setRange(56, 72, userId);
+  frame.setRange(72, 88, _rawUuid(_accountContextId));
+  frame.setRange(88, 104, deviceId);
+  frame.setRange(104, 120, _rawUuid(genesis.operationId));
+  frame.setRange(
+    registrationUploadOffset,
+    registrationEnvelopeOffset,
+    registrationUpload,
+  );
+  frame.setRange(
+    registrationEnvelopeOffset,
+    registrationProofOffset,
+    accountKeyEnvelope,
+  );
+  frame.setRange(registrationProofOffset, registrationStateOffset, deviceProof);
+  frame.setRange(
+    registrationStateOffset,
+    registrationManifestOffset,
+    fullState,
+  );
+  frame.setRange(
+    registrationManifestOffset,
+    registrationManifestDigestOffset,
+    genesis.membershipManifest,
+  );
+  frame.setRange(
+    registrationManifestDigestOffset,
+    registrationRecoveryPublicKeyOffset,
+    genesis.membershipManifestDigest.bytes,
+  );
+  frame.setRange(
+    registrationRecoveryPublicKeyOffset,
+    registrationRecoveryCapsuleOffset,
+    genesis.recoveryPublicKey,
+  );
+  frame.setRange(
+    registrationRecoveryCapsuleOffset,
+    registrationFrameLength,
+    genesis.recoveryCapsule,
+  );
   final recordId = Uint8List.fromList(
     sha256
         .convert(
@@ -8390,11 +8997,13 @@ Future<Map<String, Object?>> _seedPendingRegistration({
     registrationUpload.fillRange(0, registrationUpload.length, 0);
     accountKeyEnvelope.fillRange(0, accountKeyEnvelope.length, 0);
     deviceProof.fillRange(0, deviceProof.length, 0);
+    recoveryPublicKey.fillRange(0, recoveryPublicKey.length, 0);
+    recoveryCapsule.fillRange(0, recoveryCapsule.length, 0);
     recordId.fillRange(0, recordId.length, 0);
     associatedData.fillRange(0, associatedData.length, 0);
     await core.closeAccountRootKey(ark);
     await core.closeDeviceIdentity(identity);
     await core.close(key);
   }
-  return expectedRequest;
+  return (expectedRequest: expectedRequest, securityState: securityState);
 }

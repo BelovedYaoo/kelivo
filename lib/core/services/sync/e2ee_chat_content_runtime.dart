@@ -14,6 +14,7 @@ import 'cloud_sync_types.dart';
 import 'e2ee_account_key_lease.dart';
 import 'e2ee_account_record_cipher.dart';
 import 'e2ee_account_record_state.dart';
+import 'e2ee_account_trust_manifest.dart';
 import 'e2ee_attachment_crypto_session.dart';
 import 'e2ee_attachment_download_coordinator.dart';
 import 'e2ee_attachment_file_store.dart';
@@ -145,11 +146,25 @@ final class E2eeChatContentRuntime
   Future<E2eeSyncCycleReport>? _activeSingleCycle;
   Future<void>? _initializationFuture;
   Future<void>? _closeFuture;
+  CloudSyncSecurityBootstrapCommitHandler? _securityBootstrapCommitHandler;
   CloudSyncTerminalAuthenticationHandler? _terminalAuthenticationHandler;
   int _activeLocalWrites = 0;
   Completer<void>? _localWritesIdle;
 
   E2eeChatContentRuntimeState get state => _state;
+
+  @override
+  void bindSecurityBootstrapCommitHandler(
+    CloudSyncSecurityBootstrapCommitHandler handler,
+  ) {
+    if (_state != E2eeChatContentRuntimeState.created) {
+      throw StateError('E2EE 内容运行时启动后不能绑定安全 bootstrap 提交处理器');
+    }
+    if (_securityBootstrapCommitHandler != null) {
+      throw StateError('E2EE 内容运行时只能绑定一个安全 bootstrap 提交处理器');
+    }
+    _securityBootstrapCommitHandler = handler;
+  }
 
   @override
   void bindTerminalAuthenticationHandler(
@@ -222,9 +237,6 @@ final class E2eeChatContentRuntime
     KelivoAccountRootKeyHandle? unownedArk;
     try {
       final chatService = _chatService!;
-      await chatService.init();
-      _requireStillInitializing();
-
       final keyLease = await E2eeAccountKeyLease.open(
         session: _session,
         deviceStateStore: _deviceStateStore,
@@ -234,6 +246,20 @@ final class E2eeChatContentRuntime
       _requireStillInitializing();
 
       unownedArk = keyLease.takeAccountRootKeyOwnership();
+      final databaseLease = await _databaseGateway.acquire(_databaseFile);
+      _databaseLease = databaseLease;
+      _requireStillInitializing();
+
+      final repository = databaseLease.repository;
+      await _establishMembershipTrust(
+        commands: repository.e2eeVerifiedMembershipAnchorCommands,
+        accountRootKey: unownedArk,
+      );
+      _requireStillInitializing();
+
+      await chatService.init();
+      _requireStillInitializing();
+
       final recordCipher = E2eeAccountRecordCipher.takeOwnership(
         secureCore: _secureCore,
         accountRootKey: unownedArk,
@@ -249,11 +275,6 @@ final class E2eeChatContentRuntime
       _recordCipher = null;
       _stateCodec = stateCodec;
 
-      final databaseLease = await _databaseGateway.acquire(_databaseFile);
-      _databaseLease = databaseLease;
-      _requireStillInitializing();
-
-      final repository = databaseLease.repository;
       final outboxCommands = await repository.acquireE2eeSyncOutboxCommands(
         now: _utcNow(),
       );
@@ -443,6 +464,178 @@ final class E2eeChatContentRuntime
       await _cleanupAfterInitializationFailure();
       Error.throwWithStackTrace(error, stackTrace);
     }
+  }
+
+  Future<void> _establishMembershipTrust({
+    required E2eeVerifiedMembershipAnchorCommands commands,
+    required KelivoAccountRootKeyHandle accountRootKey,
+  }) async {
+    final bootstrap = _session.securityBootstrap;
+    if (bootstrap == null) {
+      final anchor = await commands.readVerified(
+        accountUserId: _session.userId,
+        ark: accountRootKey,
+      );
+      if (anchor == null) {
+        throw StateError('账户会话缺少本地已验证成员锚点');
+      }
+      _validateCurrentMembership(anchor.membership);
+      return;
+    }
+
+    final commitHandler = _securityBootstrapCommitHandler;
+    if (commitHandler == null) {
+      throw StateError('待安装安全 bootstrap 缺少提交处理器');
+    }
+    final verified = await _verifySecurityBootstrap(
+      bootstrap,
+      accountRootKey: accountRootKey,
+    );
+    await commands.install(membership: verified, now: _utcNow());
+    try {
+      await commitHandler(_session);
+    } catch (error, stackTrace) {
+      developer.log(
+        '成员锚点已安装，但安全 bootstrap 恢复事务清理或会话提交失败',
+        name: 'Kelivo.E2eeChatContentRuntime',
+        level: 1000,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      rethrow;
+    }
+  }
+
+  Future<E2eeVerifiedMembership> _verifySecurityBootstrap(
+    CloudSyncSecurityBootstrap bootstrap, {
+    required KelivoAccountRootKeyHandle accountRootKey,
+  }) async {
+    final state = bootstrap.state;
+    if (state.dataRekeyPhase != CloudSyncDataRekeyPhase.ready) {
+      throw StateError('初始安全 bootstrap 不能处于数据重加密阶段');
+    }
+    final localMember = _membershipDeviceInput(bootstrap.localMember);
+    final projection = E2eeMembershipServerProjection(
+      userId: _session.userId,
+      securityGeneration: state.generation,
+      keyEpoch: state.keyEpoch,
+      membershipManifestVersion: e2eeAccountTrustManifestFormatVersion,
+      membershipManifest: state.membershipManifest,
+      membershipManifestDigest: state.membershipManifestDigest.bytes,
+      recoveryPublicKeyVersion: state.recoveryPublicKeyVersion,
+      recoveryPublicKey: state.recoveryPublicKey,
+      recoveryCapsuleVersion: state.recoveryCapsuleVersion,
+      recoveryCapsule: state.recoveryCapsule,
+      lastOperationId: state.lastOperationId,
+      dataRekeyPhase: E2eeDataRekeyPhase.ready,
+    );
+    final expectation = switch (bootstrap.source) {
+      CloudSyncSecurityBootstrapSource.firstRegistration =>
+        E2eeInitializeMembershipExpectation(
+          projection: projection,
+          operationId: state.lastOperationId,
+          member: localMember,
+        ),
+      CloudSyncSecurityBootstrapSource.pairing =>
+        E2eePairingBootstrapMembershipExpectation(
+          projection: projection,
+          consumedKeyEpoch: bootstrap.pairingReceipt!.keyEpoch,
+          consumedSecurityGeneration:
+              bootstrap.pairingReceipt!.securityGeneration,
+          consumedMembershipManifestDigest:
+              bootstrap.pairingReceipt!.membershipManifestDigest.bytes,
+          pairingId: bootstrap.pairingReceipt!.pairingId,
+          issuerDeviceId: bootstrap.pairingReceipt!.issuerDeviceId,
+          localMember: localMember,
+        ),
+    };
+    final verified = await const E2eeAccountTrustManifestModule().verify(
+      ark: accountRootKey,
+      expectation: expectation,
+    );
+    final verifiedLocal = _requireMembershipDevice(
+      verified,
+      bootstrap.localMember.deviceId,
+    );
+    if (!_sameMembershipDevice(verifiedLocal, bootstrap.localMember)) {
+      throw StateError('安全 bootstrap 本机成员材料与签名清单不匹配');
+    }
+    final issuer = bootstrap.issuerMember;
+    if (issuer != null) {
+      final verifiedIssuer = _requireMembershipDevice(
+        verified,
+        issuer.deviceId,
+      );
+      if (!_sameMembershipDevice(verifiedIssuer, issuer)) {
+        throw StateError('安全 bootstrap 签发者材料与签名清单不匹配');
+      }
+    }
+    return verified;
+  }
+
+  void _validateCurrentMembership(E2eeVerifiedMembership membership) {
+    if (membership.userId != _session.userId ||
+        membership.keyEpoch != _session.keyEpoch) {
+      throw StateError('本地成员锚点与账户会话不匹配');
+    }
+    final local = _requireMembershipDevice(membership, _session.deviceId);
+    if (local.keyVersion != _session.deviceKeyVersion ||
+        local.authGeneration != _session.authGeneration) {
+      throw StateError('本地成员锚点与当前设备认证状态不匹配');
+    }
+  }
+
+  E2eeMembershipDeviceInput _membershipDeviceInput(
+    CloudSyncMembershipDeviceMaterial member,
+  ) {
+    return E2eeMembershipDeviceInput(
+      deviceId: member.deviceId,
+      keyVersion: member.keyVersion,
+      authGeneration: member.authGeneration,
+      signingPublicKey: member.signingPublicKey,
+      keyAgreementPublicKey: member.keyAgreementPublicKey,
+    );
+  }
+
+  E2eeVerifiedMembershipDevice _requireMembershipDevice(
+    E2eeVerifiedMembership membership,
+    String deviceId,
+  ) {
+    E2eeVerifiedMembershipDevice? result;
+    for (final member in membership.members) {
+      if (member.deviceId != deviceId) continue;
+      if (result != null) {
+        throw StateError('签名成员清单包含重复设备');
+      }
+      result = member;
+    }
+    return result ?? (throw StateError('签名成员清单缺少当前设备'));
+  }
+
+  bool _sameMembershipDevice(
+    E2eeVerifiedMembershipDevice verified,
+    CloudSyncMembershipDeviceMaterial expected,
+  ) {
+    return verified.deviceId == expected.deviceId &&
+        verified.keyVersion == expected.keyVersion &&
+        verified.authGeneration == expected.authGeneration &&
+        _sameRuntimeBytes(
+          verified.signingPublicKey,
+          expected.signingPublicKey,
+        ) &&
+        _sameRuntimeBytes(
+          verified.keyAgreementPublicKey,
+          expected.keyAgreementPublicKey,
+        );
+  }
+
+  bool _sameRuntimeBytes(List<int> left, List<int> right) {
+    if (left.length != right.length) return false;
+    var difference = 0;
+    for (var index = 0; index < left.length; index++) {
+      difference |= left[index] ^ right[index];
+    }
+    return difference == 0;
   }
 
   Future<E2eeSyncCycleReport> runSingleCycle(
