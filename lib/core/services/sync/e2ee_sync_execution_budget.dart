@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
+
 enum E2eeSyncBudgetExhaustion { networkSteps, attachmentBytes }
 
 final class E2eeSyncBudgetExhausted implements Exception {
@@ -37,15 +39,69 @@ abstract interface class E2eeSyncCancellationRegistration {
   void unregister();
 }
 
+final class E2eeSyncCancellationController
+    implements E2eeSyncCancellationSignal {
+  final Set<void Function()> _listeners = <void Function()>{};
+  bool _cancelled = false;
+
+  bool get isCancelled => _cancelled;
+
+  @override
+  E2eeSyncCancellationRegistration register(void Function() onCancelled) {
+    if (_cancelled) {
+      onCancelled();
+      return const _NoopSyncCancellationRegistration();
+    }
+    _listeners.add(onCancelled);
+    return _SyncCancellationRegistration(() {
+      _listeners.remove(onCancelled);
+    });
+  }
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    final listeners = _listeners.toList(growable: false);
+    _listeners.clear();
+    for (final listener in listeners) {
+      listener();
+    }
+  }
+}
+
+final class _SyncCancellationRegistration
+    implements E2eeSyncCancellationRegistration {
+  _SyncCancellationRegistration(this._unregister);
+
+  final void Function() _unregister;
+  bool _registered = true;
+
+  @override
+  void unregister() {
+    if (!_registered) return;
+    _registered = false;
+    _unregister();
+  }
+}
+
+final class _NoopSyncCancellationRegistration
+    implements E2eeSyncCancellationRegistration {
+  const _NoopSyncCancellationRegistration();
+
+  @override
+  void unregister() {}
+}
+
 /// 为一次同步统一核算网络、附件和单调墙钟预算。
 ///
-/// 截止或取消不会只让上层 Future 超时返回，而是先中止同一网络客户端，
-/// 再等待在途调用结算，避免随后关闭数据库和密钥时底层 I/O 仍在运行。
+/// 截止或取消会先中止同一网络客户端，并在关闭宽限期内等待在途调用结算；
+/// 超过宽限期后由原生桥释放平台任务，避免失控 I/O 永久占用后台执行槽。
 final class E2eeSyncExecutionBudget {
   E2eeSyncExecutionBudget({
     required this.maximumNetworkSteps,
     required this.maximumAttachmentBytes,
     required this.maximumDuration,
+    this.maximumShutdownDuration = const Duration(seconds: 2),
     required this._abortInFlightNetwork,
     E2eeSyncCancellationSignal? cancellationSignal,
   }) : _stopwatch = Stopwatch()..start() {
@@ -68,12 +124,20 @@ final class E2eeSyncExecutionBudget {
     if (maximumDuration <= Duration.zero) {
       throw ArgumentError.value(maximumDuration, 'maximumDuration', '必须为正数');
     }
+    if (maximumShutdownDuration <= Duration.zero) {
+      throw ArgumentError.value(
+        maximumShutdownDuration,
+        'maximumShutdownDuration',
+        '必须为正数',
+      );
+    }
     _cancellationRegistration = cancellationSignal?.register(_markCancelled);
   }
 
   final int maximumNetworkSteps;
   final int maximumAttachmentBytes;
   final Duration maximumDuration;
+  final Duration maximumShutdownDuration;
   final E2eeSyncAbortInFlightNetwork _abortInFlightNetwork;
   final Stopwatch _stopwatch;
 
@@ -83,6 +147,7 @@ final class E2eeSyncExecutionBudget {
   bool _disposed = false;
   Completer<_ExecutionInterruption>? _activeInterruption;
   E2eeSyncCancellationRegistration? _cancellationRegistration;
+  Stopwatch? _shutdownStopwatch;
 
   int get networkStepsConsumed => _networkStepsConsumed;
   int get attachmentBytesConsumed => _attachmentBytesConsumed;
@@ -96,7 +161,131 @@ final class E2eeSyncExecutionBudget {
     if (_disposed) throw StateError('e2ee_sync_execution_budget_disposed');
     if (_cancelled) throw const E2eeSyncExecutionCancelled();
     if (remainingDuration == Duration.zero) {
+      _beginShutdown();
       throw const E2eeSyncDeadlineExceeded();
+    }
+  }
+
+  Future<T> runBoundedStep<T>({
+    required Future<T> Function(Duration remaining) operation,
+    Future<void> Function(T value)? releaseInterruptedValue,
+    void Function()? transferInterruptedOwnership,
+  }) async {
+    checkCanContinue();
+    if (_activeInterruption != null) {
+      throw StateError('e2ee_sync_budget_step_reentrant');
+    }
+    final remaining = remainingDuration;
+    final interruption = Completer<_ExecutionInterruption>();
+    _activeInterruption = interruption;
+    final deadlineTimer = Timer(
+      remaining,
+      () => _interrupt(_ExecutionInterruption.deadline),
+    );
+    final operationOutcome = Future<T>.sync(() => operation(remaining))
+        .then<_NetworkOutcome<T>>(
+          _NetworkSucceeded<T>.new,
+          onError: (Object error, StackTrace stackTrace) =>
+              _NetworkFailed<T>(error, stackTrace),
+        );
+    var ownershipTransferred = false;
+
+    void transferOwnership() {
+      if (ownershipTransferred) return;
+      ownershipTransferred = true;
+      transferInterruptedOwnership?.call();
+    }
+
+    try {
+      final winner = await Future.any<Object>(<Future<Object>>[
+        operationOutcome,
+        interruption.future,
+      ]);
+      if (winner case _ExecutionInterruption interruptionReason) {
+        transferOwnership();
+        _beginShutdown();
+        final settled = await _waitForBoundedSettlement(operationOutcome);
+        await _releaseInterruptedOutcome(
+          operationOutcome: operationOutcome,
+          settled: settled,
+          release: releaseInterruptedValue,
+        );
+        _throwInterruption(interruptionReason);
+      }
+
+      final outcome = winner as _NetworkOutcome<T>;
+      switch (outcome) {
+        case _NetworkFailed<T>(:final error, :final stackTrace):
+          Error.throwWithStackTrace(error, stackTrace);
+        case _NetworkSucceeded<T>(:final value):
+          try {
+            checkCanContinue();
+          } catch (error, stackTrace) {
+            transferOwnership();
+            _beginShutdown();
+            await _releaseInterruptedValue(
+              value: value,
+              release: releaseInterruptedValue,
+            );
+            Error.throwWithStackTrace(error, stackTrace);
+          }
+          return value;
+      }
+    } finally {
+      deadlineTimer.cancel();
+      if (identical(_activeInterruption, interruption)) {
+        _activeInterruption = null;
+      }
+    }
+  }
+
+  Future<void> runCleanupStep(Future<void> Function() operation) async {
+    if (_disposed) throw StateError('e2ee_sync_execution_budget_disposed');
+    if (_activeInterruption != null) {
+      throw StateError('e2ee_sync_budget_step_reentrant');
+    }
+    final operationOutcome = Future<void>.sync(operation)
+        .then<_NetworkOutcome<void>>(
+          _NetworkSucceeded<void>.new,
+          onError: (Object error, StackTrace stackTrace) =>
+              _NetworkFailed<void>(error, stackTrace),
+        );
+    final initialInterruption = _currentInterruption;
+    if (initialInterruption != null) {
+      _beginShutdown();
+      await _waitForBoundedSettlement(operationOutcome);
+      _throwInterruption(initialInterruption);
+    }
+
+    final interruption = Completer<_ExecutionInterruption>();
+    _activeInterruption = interruption;
+    final deadlineTimer = Timer(
+      remainingDuration,
+      () => _interrupt(_ExecutionInterruption.deadline),
+    );
+    try {
+      final winner = await Future.any<Object>(<Future<Object>>[
+        operationOutcome,
+        interruption.future,
+      ]);
+      if (winner case _ExecutionInterruption interruptionReason) {
+        _beginShutdown();
+        await _waitForBoundedSettlement(operationOutcome);
+        _throwInterruption(interruptionReason);
+      }
+
+      final outcome = winner as _NetworkOutcome<void>;
+      switch (outcome) {
+        case _NetworkFailed<void>(:final error, :final stackTrace):
+          Error.throwWithStackTrace(error, stackTrace);
+        case _NetworkSucceeded<void>():
+          checkCanContinue();
+      }
+    } finally {
+      deadlineTimer.cancel();
+      if (identical(_activeInterruption, interruption)) {
+        _activeInterruption = null;
+      }
     }
   }
 
@@ -151,6 +340,7 @@ final class E2eeSyncExecutionBudget {
         interruption.future,
       ]);
       if (winner case _ExecutionInterruption interruptionReason) {
+        _beginShutdown();
         try {
           _abortInFlightNetwork();
         } catch (error, stackTrace) {
@@ -162,14 +352,9 @@ final class E2eeSyncExecutionBudget {
             stackTrace: stackTrace,
           );
         }
-        // 必须等被中止的网络 Future 真正结算，调用方才可以关闭其余资源。
-        await operationOutcome;
-        switch (interruptionReason) {
-          case _ExecutionInterruption.deadline:
-            throw const E2eeSyncDeadlineExceeded();
-          case _ExecutionInterruption.cancelled:
-            throw const E2eeSyncExecutionCancelled();
-        }
+        // 系统不会为失控 transport 无限续命；宽限期后由原生桥强制收尾。
+        await _waitForBoundedSettlement(operationOutcome);
+        _throwInterruption(interruptionReason);
       }
 
       final outcome = winner as _NetworkOutcome<T>;
@@ -217,7 +402,108 @@ final class E2eeSyncExecutionBudget {
   void _markCancelled() {
     if (_disposed) return;
     _cancelled = true;
+    _beginShutdown();
     _interrupt(_ExecutionInterruption.cancelled);
+  }
+
+  void _beginShutdown() {
+    _shutdownStopwatch ??= Stopwatch()..start();
+  }
+
+  _ExecutionInterruption? get _currentInterruption {
+    if (_cancelled) return _ExecutionInterruption.cancelled;
+    if (remainingDuration == Duration.zero) {
+      return _ExecutionInterruption.deadline;
+    }
+    return null;
+  }
+
+  Never _throwInterruption(_ExecutionInterruption interruption) {
+    switch (interruption) {
+      case _ExecutionInterruption.deadline:
+        throw const E2eeSyncDeadlineExceeded();
+      case _ExecutionInterruption.cancelled:
+        throw const E2eeSyncExecutionCancelled();
+    }
+  }
+
+  Future<_NetworkOutcome<T>?> _waitForBoundedSettlement<T>(
+    Future<_NetworkOutcome<T>> operation,
+  ) async {
+    final shutdownStopwatch = _shutdownStopwatch;
+    if (shutdownStopwatch == null) return null;
+    final remaining = maximumShutdownDuration - shutdownStopwatch.elapsed;
+    if (remaining <= Duration.zero) return null;
+    final timeout = Completer<_NetworkOutcome<T>?>();
+    final timer = Timer(remaining, () => timeout.complete(null));
+    try {
+      return await Future.any<_NetworkOutcome<T>?>(
+        <Future<_NetworkOutcome<T>?>>[operation, timeout.future],
+      );
+    } finally {
+      timer.cancel();
+    }
+  }
+
+  Future<void> _releaseInterruptedOutcome<T>({
+    required Future<_NetworkOutcome<T>> operationOutcome,
+    required _NetworkOutcome<T>? settled,
+    required Future<void> Function(T value)? release,
+  }) async {
+    if (release == null) return;
+    if (settled case _NetworkSucceeded<T>(:final value)) {
+      await _releaseInterruptedValue(value: value, release: release);
+      return;
+    }
+    if (settled != null) return;
+    unawaited(
+      operationOutcome.then((outcome) {
+        if (outcome case _NetworkSucceeded<T>(:final value)) {
+          return _observedInterruptedRelease(value: value, release: release);
+        }
+        return Future<void>.value();
+      }),
+    );
+  }
+
+  Future<void> _releaseInterruptedValue<T>({
+    required T value,
+    required Future<void> Function(T value)? release,
+  }) async {
+    if (release == null) return;
+    final releaseOutcome = _observedInterruptedRelease(
+      value: value,
+      release: release,
+    ).then<_NetworkOutcome<void>>((_) => const _NetworkSucceeded<void>(null));
+    await _waitForBoundedSettlement(releaseOutcome);
+  }
+
+  Future<void> _observedInterruptedRelease<T>({
+    required T value,
+    required Future<void> Function(T value) release,
+  }) async {
+    try {
+      await release(value);
+    } catch (error, stackTrace) {
+      try {
+        FlutterError.reportError(
+          FlutterErrorDetails(
+            exception: error,
+            stack: stackTrace,
+            library: 'Kelivo E2EE 后台同步',
+            context: ErrorDescription('释放截止后才返回的后台同步所有权失败'),
+          ),
+        );
+      } catch (reportError, reportStackTrace) {
+        developer.log(
+          '上报后台同步迟到所有权释放失败时发生异常',
+          name: 'Kelivo.E2eeSyncExecutionBudget',
+          level: 1000,
+          error: reportError,
+          stackTrace: reportStackTrace,
+        );
+      }
+    }
   }
 
   void _interrupt(_ExecutionInterruption interruption) {

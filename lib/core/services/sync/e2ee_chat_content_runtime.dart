@@ -451,11 +451,7 @@ final class E2eeChatContentRuntime
     if (_mode != E2eeChatContentRuntimeMode.singleCycle) {
       throw StateError('E2EE 持续运行时不接受外部单次同步');
     }
-    executionBudget.checkCanContinue();
-    await initialize();
-    // 初始化可能包含不可中断的本地数据库和安全核心步骤；其完成后必须在
-    // 第一个远端调用前重新核对总截止时间。
-    executionBudget.checkCanContinue();
+    await executionBudget.runBoundedStep(operation: (_) => initialize());
     if (_state != E2eeChatContentRuntimeState.ready) {
       throw StateError('E2EE 内容运行时不接受新的单次同步');
     }

@@ -5,6 +5,7 @@ import 'package:flutter/foundation.dart';
 import 'package:workmanager/workmanager.dart';
 
 import 'e2ee_background_sync_runner.dart';
+import 'e2ee_sync_execution_budget.dart';
 
 const e2eeMobileBackgroundTaskUniqueName = 'psyche.kelivo.e2ee-sync.periodic';
 const e2eeMobileBackgroundTaskName = 'e2ee-background-sync';
@@ -14,21 +15,15 @@ const _mobileBackgroundSyncLimits = E2eeBackgroundSyncLimits(
   maximumDuration: Duration(seconds: 20),
 );
 
-abstract interface class E2eeBackgroundSyncVerifiedStateGate {
-  Future<bool> hasVerifiedSecurityAnchor();
-}
-
 typedef E2eeBackgroundSyncRunnerFactory = E2eeBackgroundSyncRunner Function();
 
 final class E2eeMobileBackgroundTaskExecutor {
   factory E2eeMobileBackgroundTaskExecutor({
-    required E2eeBackgroundSyncVerifiedStateGate verifiedStateGate,
     required E2eeBackgroundSyncRunnerFactory runnerFactory,
     required Future<void> Function() cancelScheduledTask,
     E2eeBackgroundSyncLimits limits = _mobileBackgroundSyncLimits,
   }) {
     return E2eeMobileBackgroundTaskExecutor._(
-      verifiedStateGate,
       runnerFactory,
       cancelScheduledTask,
       limits,
@@ -36,42 +31,56 @@ final class E2eeMobileBackgroundTaskExecutor {
   }
 
   E2eeMobileBackgroundTaskExecutor._(
-    this._verifiedStateGate,
     this._runnerFactory,
     this._cancelScheduledTask,
     this._limits,
   );
 
-  final E2eeBackgroundSyncVerifiedStateGate _verifiedStateGate;
   final E2eeBackgroundSyncRunnerFactory _runnerFactory;
   final Future<void> Function() _cancelScheduledTask;
   final E2eeBackgroundSyncLimits _limits;
   Future<bool>? _inFlight;
+  E2eeSyncCancellationController? _inFlightCancellation;
+  final List<E2eeSyncCancellationRegistration> _cancellationLinks =
+      <E2eeSyncCancellationRegistration>[];
 
-  Future<bool> execute(String taskName) {
+  Future<bool> execute(
+    String taskName, {
+    E2eeSyncCancellationSignal? cancellationSignal,
+  }) {
     if (taskName != e2eeMobileBackgroundTaskName &&
         taskName != e2eeMobileBackgroundTaskUniqueName) {
       throw UnsupportedError('e2ee_mobile_background_task_unknown');
     }
 
     final active = _inFlight;
-    if (active != null) return active;
+    if (active != null) {
+      _linkCancellation(cancellationSignal);
+      return active;
+    }
 
-    final run = _executeOnce();
+    final cancellation = E2eeSyncCancellationController();
+    _inFlightCancellation = cancellation;
+    _linkCancellation(cancellationSignal);
+    final run = _executeOnce(cancellation);
     _inFlight = run;
     return run.whenComplete(() {
-      if (identical(_inFlight, run)) _inFlight = null;
+      if (!identical(_inFlight, run)) return;
+      _inFlight = null;
+      _inFlightCancellation = null;
+      final links = _cancellationLinks.toList(growable: false);
+      _cancellationLinks.clear();
+      for (final link in links) {
+        link.unregister();
+      }
     });
   }
 
-  Future<bool> _executeOnce() async {
-    final verified = await _verifiedStateGate.hasVerifiedSecurityAnchor();
-    if (!verified) {
-      await _cancelScheduledTask();
-      throw StateError('e2ee_background_security_anchor_unverified');
-    }
-
-    final outcome = await _runnerFactory().run(limits: _limits);
+  Future<bool> _executeOnce(E2eeSyncCancellationSignal cancellation) async {
+    final outcome = await _runnerFactory().run(
+      limits: _limits,
+      cancellationSignal: cancellation,
+    );
     switch (outcome.disposition) {
       case E2eeBackgroundSyncDisposition.noSession:
       case E2eeBackgroundSyncDisposition.authenticationRetired:
@@ -79,37 +88,71 @@ final class E2eeMobileBackgroundTaskExecutor {
         return true;
       case E2eeBackgroundSyncDisposition.workspaceBusy:
       case E2eeBackgroundSyncDisposition.completed:
-      case E2eeBackgroundSyncDisposition.blockedByKeyEpoch:
       case E2eeBackgroundSyncDisposition.budgetExhausted:
         return true;
+      case E2eeBackgroundSyncDisposition.blockedByKeyEpoch:
+        return false;
     }
   }
-}
 
-final class _PendingVerifiedStateAnchor
-    implements E2eeBackgroundSyncVerifiedStateGate {
-  const _PendingVerifiedStateAnchor();
-
-  @override
-  Future<bool> hasVerifiedSecurityAnchor() async {
-    // 可信锚点必须来自 ARK 验签结果的设备密钥封存，普通本地偏好不能代替它。
-    return false;
+  void _linkCancellation(E2eeSyncCancellationSignal? source) {
+    final target = _inFlightCancellation;
+    if (source == null || target == null) return;
+    _cancellationLinks.add(source.register(target.cancel));
   }
 }
 
-final E2eeMobileBackgroundTaskExecutor _productionTaskExecutor =
-    E2eeMobileBackgroundTaskExecutor(
-      verifiedStateGate: const _PendingVerifiedStateAnchor(),
-      runnerFactory: E2eeBackgroundSyncRunner.new,
-      cancelScheduledTask: () =>
-          Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName),
-    );
+E2eeMobileBackgroundTaskExecutor? _productionTaskExecutor;
+
+Future<bool> _executeProductionBackgroundTask(
+  String taskName,
+  BackgroundTaskContext context,
+) async {
+  final productionFactory = E2eeBackgroundProductionRunnerFactory.tryCreate();
+  if (productionFactory == null) {
+    await Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName);
+    return false;
+  }
+  final executor = _productionTaskExecutor ??= E2eeMobileBackgroundTaskExecutor(
+    runnerFactory: productionFactory.createRunner,
+    cancelScheduledTask: () =>
+        Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName),
+  );
+  return executor.execute(
+    taskName,
+    cancellationSignal: _WorkmanagerCancellationSignal(context),
+  );
+}
 
 @pragma('vm:entry-point')
 void e2eeMobileBackgroundCallbackDispatcher() {
-  Workmanager().executeTask((taskName, _) {
-    return _productionTaskExecutor.execute(taskName);
+  Workmanager().executeTask((taskName, _, context) {
+    return _executeProductionBackgroundTask(taskName, context);
   });
+}
+
+final class _WorkmanagerCancellationSignal
+    implements E2eeSyncCancellationSignal {
+  const _WorkmanagerCancellationSignal(this._context);
+
+  final BackgroundTaskContext _context;
+
+  @override
+  E2eeSyncCancellationRegistration register(void Function() onCancelled) {
+    return _WorkmanagerSyncCancellationRegistration(
+      _context.registerCancellation(onCancelled),
+    );
+  }
+}
+
+final class _WorkmanagerSyncCancellationRegistration
+    implements E2eeSyncCancellationRegistration {
+  const _WorkmanagerSyncCancellationRegistration(this._registration);
+
+  final BackgroundTaskCancellationRegistration _registration;
+
+  @override
+  void unregister() => _registration.unregister();
 }
 
 abstract interface class E2eeMobileBackgroundSchedulerPlatform {
@@ -201,6 +244,9 @@ final class _WorkmanagerMobileBackgroundSchedulerPlatform
 
   @override
   Future<void> enable() async {
+    if (E2eeBackgroundProductionRunnerFactory.tryCreate() == null) {
+      throw StateError('e2ee_background_verified_binding_factory_unavailable');
+    }
     await _initialize();
     await Workmanager().registerPeriodicTask(
       e2eeMobileBackgroundTaskUniqueName,
@@ -214,6 +260,12 @@ final class _WorkmanagerMobileBackgroundSchedulerPlatform
       ),
       existingWorkPolicy: ExistingPeriodicWorkPolicy.update,
     );
+    final scheduled = await Workmanager().isScheduledByUniqueName(
+      e2eeMobileBackgroundTaskUniqueName,
+    );
+    if (!scheduled) {
+      throw StateError('e2ee_mobile_background_task_registration_unconfirmed');
+    }
   }
 
   @override

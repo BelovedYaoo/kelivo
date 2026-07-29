@@ -15,13 +15,9 @@
 - 失败路径：无会话、已登出、同步暂停、认证撤销、安全状态未验证、插件初始化失败时不运行同步且不报告成功。
 - 状态转换：登录/启用时注册，暂停/登出时取消，恢复启用后重新注册；终止认证清理后后续回调不再执行。
 
-## 进度
+## 结果
 
-- 已确认 Issue #56 为唯一跟踪项，固定基线为 `d1ae65e3`。
-- 已接入 `workmanager 0.9.0+3`：Android 使用唯一周期 WorkRequest，iOS 使用独立 BGAppRefreshTask 标识；均为 15 分钟最早周期、联网/低电量/低存储约束、20 秒 runner 截止，不接通知。
-- 前台生命周期仅观察 `CloudSyncProvider` 的登录与内容就绪状态并串行注册/取消；headless 回调不导入或构造任何 Provider。
-- 系统回调经进程内去重后只调用一次 `E2eeBackgroundSyncRunner`；无会话或终止认证会取消后续任务，未知任务和未验证安全状态失败关闭。
-- 生产安全门当前明确返回未验证：必须由主分支 schema 21 的设备密钥封存锚点接入后才能放行，禁止使用服务端字段或普通偏好替代。
-- iOS 最低版本已硬切到 14，Podfile 与全部 Runner Xcode deployment target 一致；Info.plist、AppDelegate 标识和插件注册静态检查通过。Windows 无法执行 iOS 编译/真机唤醒。
-- 定向 analyze 无问题；内容门禁 71/71 通过；Android debug APK 构建成功，最终 Manifest 已包含 WorkManager JobService、启动初始化和重启恢复组件。全仓库 analyze 仍仅被既有 #33 的 `mcp_client` 测试缺少 `package:test` 阻断。
-- Android 构建发现的未来 Built-in Kotlin 兼容警告已单独记录为 #60，本分支不扩展处理。
+- 已补齐结算后截止的所有权转移、迟到内容取得结算屏障、严格 `runtime -> account -> workspace` 单次释放；有界清理失败会在 Runner 返回前同步调用现有错误上报，密钥世代阻塞会向平台返回失败。
+- Android 在取消 4 秒时由独立线程封闭新 effect 并请求终态；纯 Kotlin `terminalRequest + inFlightEffects` 协调器仅等待截止前已领取的同步原生 dispatch 返回，不等待 Dart 回复、网络或业务任务。失败 debug 与异步取消回复 debug 必须先领取 effect，终态后静默跳过；取消回复的 reporter 抛错时先登记失败终态，再在 `finally` 中归还 effect、完成平台链，并继续传播原异常。终态依次取消强停、上报最终状态、关闭调度器、原子脱离引擎，最后发布平台 completer；平台完成后唯一允许迟到的是只持有已脱离引擎局部引用的主线程销毁。iOS Operation 与 legacy fetch 共用单一 `pending/executing/terminal` 生命周期状态机，iOS 最低版本保持 14。
+- 生产 Runner 工厂继续返回 `null`；schema 21 原子验证绑定完成前不启用真实后台内容同步，Issue #56 保持开启。
+- 验证通过：专项 Flutter 测试 85/85、Android 生命周期协调器 8/8 可执行 JVM 行为测试、改动测试文件分析、四个 Workmanager 包分析、Android debug APK 构建和原生静态接线契约。行为测试覆盖迟到 loader、迟到取消回复、取消回复 reporter 抛错后的唯一失败完成与原异常传播、取消单次发送、终态等待在途 effect、completer 前脱离引擎及迟到销毁仅作用于旧引擎；源码契约只负责检查真实 Worker 接线。根目录全量分析仍受既有 #33 影响；根目录全量测试命中既有 #53 挂起后已停止并清理残留进程。若 engine/Pigeon/debug 的同步调用本身永久阻塞，OS 线程卡死时无法同时保证绝对 4 秒结算与终态顺序安全。Windows 无法执行 Xcode/iOS 生命周期竞态或实机构建，仍需 macOS CI 或真机验证。
