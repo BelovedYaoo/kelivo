@@ -13,6 +13,13 @@ final class BackupSettingsValidator {
     'display_chat_font_scale_v1',
     'desktop_hotkeys_commands_v1',
     'desktop_hotkeys_enabled_v1',
+    'webdav_config_v1',
+    's3_config_v1',
+    'backup_reminder_enabled_v1',
+    'backup_reminder_interval_days_v1',
+    'backup_reminder_minutes_of_day_v1',
+    'backup_reminder_enabled_at_v1',
+    'backup_reminder_last_backup_at_v1',
   };
   static const _jsonListKeys = {
     'assistants_v1',

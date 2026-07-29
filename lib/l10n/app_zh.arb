@@ -702,6 +702,14 @@
       }
     }
   },
+  "backupPageExportFailedMessage": "导出失败：{error}",
+  "@backupPageExportFailedMessage": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "backupPageOK": "好的",
   "backupPageCancel": "取消",
   "backupPageSelectImportMode": "选择导入模式",

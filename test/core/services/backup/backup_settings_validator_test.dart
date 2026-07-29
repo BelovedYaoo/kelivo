@@ -33,6 +33,17 @@ void main() {
         }),
         returnsNormally,
       );
+      for (final key in <String>[
+        'webdav_config_v1',
+        's3_config_v1',
+        'backup_reminder_enabled_v1',
+        'backup_reminder_interval_days_v1',
+        'backup_reminder_minutes_of_day_v1',
+        'backup_reminder_enabled_at_v1',
+        'backup_reminder_last_backup_at_v1',
+      ]) {
+        expect(BackupSettingsValidator.isLocalOnly(key), isTrue, reason: key);
+      }
     });
 
     test('rejects malformed structured settings and unsupported values', () {

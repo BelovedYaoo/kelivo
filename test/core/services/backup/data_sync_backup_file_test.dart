@@ -19,7 +19,6 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/backup.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
-import 'package:Kelivo/core/providers/backup_provider.dart';
 import 'package:Kelivo/core/services/backup/data_sync.dart';
 import 'package:Kelivo/core/services/backup/restore_receipt.dart';
 import 'package:Kelivo/core/services/backup/restore_startup_gate.dart';
@@ -457,25 +456,32 @@ void main() {
         await fontFile.writeAsBytes(List<int>.filled(256, 9));
 
         final tmpDir = Directory('${root.path}/tmp');
-        final staleWorkDir = Directory('${tmpDir.path}/kelivo_backup_stale');
+        final staleWorkDir = Directory(
+          '${tmpDir.path}/kelivo_local_export_stale',
+        );
         await staleWorkDir.create(recursive: true);
         await File('${staleWorkDir.path}/orphan.zip').writeAsString('old');
-        await File('${tmpDir.path}/kelivo_backup_old.zip').writeAsString('old');
-        await File('${tmpDir.path}/_bk_chats.json').writeAsString('{}');
+        final retiredRemoteFile = File('${tmpDir.path}/kelivo_backup_old.zip');
+        await retiredRemoteFile.writeAsString('old');
 
         final sync = DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
         );
-        final backupFile = await sync.prepareBackupFile(
-          const WebDavConfig(includeChats: false, includeFiles: true),
+        final backupFile = await HttpOverrides.runZoned(
+          () => sync.prepareLocalExportFile(
+            const LocalBackupOptions(includeChats: false, includeFiles: true),
+          ),
+          createHttpClient: (_) {
+            throw StateError('local_export_network_forbidden');
+          },
         );
 
         expect(await staleWorkDir.exists(), isFalse);
+        expect(await retiredRemoteFile.exists(), isTrue);
         expect(
-          await File('${tmpDir.path}/kelivo_backup_old.zip').exists(),
-          isFalse,
+          p.basename(backupFile.parent.path),
+          startsWith('kelivo_local_export_'),
         );
-        expect(await File('${tmpDir.path}/_bk_chats.json').exists(), isFalse);
 
         final input = InputFileStream(backupFile.path);
         Archive? archive;
@@ -527,7 +533,7 @@ void main() {
           isFalse,
         );
 
-        await DataSync.cleanupTemporaryBackupFile(backupFile);
+        await DataSync.cleanupTemporaryLocalExportFile(backupFile);
 
         expect(await backupFile.exists(), isFalse);
         expect(await backupFile.parent.exists(), isFalse);
@@ -535,7 +541,7 @@ void main() {
     );
 
     test(
-      'normal backup includes credentials and declares that in manifest',
+      'local export includes credentials and declares that in manifest',
       () async {
         SharedPreferences.setMockInitialValues({
           'safe_setting_v1': 'safe-value',
@@ -553,8 +559,8 @@ void main() {
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
         );
 
-        final backupFile = await sync.prepareBackupFile(
-          const WebDavConfig(includeChats: false, includeFiles: false),
+        final backupFile = await sync.prepareLocalExportFile(
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         );
 
         final input = InputFileStream(backupFile.path);
@@ -590,13 +596,13 @@ void main() {
         } finally {
           archive?.clearSync();
           input.closeSync();
-          await DataSync.cleanupTemporaryBackupFile(backupFile);
+          await DataSync.cleanupTemporaryLocalExportFile(backupFile);
         }
       },
     );
 
     test(
-      'credential backup restores saved secrets and preserves unrelated ones',
+      'local export restores saved secrets and preserves unrelated ones',
       () async {
         SharedPreferences.setMockInitialValues({
           'global_proxy_enabled_v1': true,
@@ -613,10 +619,10 @@ void main() {
         final sync = DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
         );
-        final backupFile = await sync.prepareBackupFile(
-          const WebDavConfig(includeChats: false, includeFiles: false),
+        final backupFile = await sync.prepareLocalExportFile(
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         );
-        addTearDown(() => DataSync.cleanupTemporaryBackupFile(backupFile));
+        addTearDown(() => DataSync.cleanupTemporaryLocalExportFile(backupFile));
 
         SharedPreferences.setMockInitialValues({
           'global_proxy_enabled_v1': false,
@@ -653,13 +659,11 @@ void main() {
               ],
             },
           ]),
-          'webdav_config_v1': jsonEncode({'password': 'target-webdav-secret'}),
-          's3_config_v1': jsonEncode({'secretAccessKey': 'target-s3-secret'}),
         });
 
-        await sync.restoreFromLocalFile(
+        await sync.restoreLocalFile(
           backupFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         );
 
         final prefs = await SharedPreferences.getInstance();
@@ -692,8 +696,6 @@ void main() {
           'tts_services_v1',
           'mcp_servers_v1',
           'assistants_v1',
-          'webdav_config_v1',
-          's3_config_v1',
         ]) {
           expect(prefs.containsKey(key), isTrue, reason: key);
         }
@@ -718,9 +720,9 @@ void main() {
             chatService: ChatService(
               const UntrackedSyncWriteExecutor.forTests(),
             ),
-          ).restoreFromLocalFile(
+          ).restoreLocalFile(
             backupFile,
-            const WebDavConfig(includeChats: true, includeFiles: false),
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           ),
           throwsA(
             isA<FormatException>().having(
@@ -757,10 +759,10 @@ void main() {
       final sync = DataSync(
         chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       );
-      final backupFile = await sync.prepareBackupFile(
-        const WebDavConfig(includeChats: false, includeFiles: false),
+      final backupFile = await sync.prepareLocalExportFile(
+        const LocalBackupOptions(includeChats: false, includeFiles: false),
       );
-      addTearDown(() => DataSync.cleanupTemporaryBackupFile(backupFile));
+      addTearDown(() => DataSync.cleanupTemporaryLocalExportFile(backupFile));
 
       final targetProviders = jsonEncode({
         'openai': {
@@ -774,9 +776,9 @@ void main() {
         'provider_configs_v1': targetProviders,
       });
 
-      await sync.restoreFromLocalFile(
+      await sync.restoreLocalFile(
         backupFile,
-        const WebDavConfig(includeChats: false, includeFiles: false),
+        const LocalBackupOptions(includeChats: false, includeFiles: false),
         mode: RestoreMode.merge,
       );
 
@@ -791,16 +793,16 @@ void main() {
     });
 
     test(
-      'credential backup does not remove unrelated credential settings',
+      'local export does not remove unrelated credential settings',
       () async {
         SharedPreferences.setMockInitialValues({'source_setting': 'source'});
         final sync = DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
         );
-        final backupFile = await sync.prepareBackupFile(
-          const WebDavConfig(includeChats: false, includeFiles: false),
+        final backupFile = await sync.prepareLocalExportFile(
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         );
-        addTearDown(() => DataSync.cleanupTemporaryBackupFile(backupFile));
+        addTearDown(() => DataSync.cleanupTemporaryLocalExportFile(backupFile));
 
         final targetSearchServices = jsonEncode([
           {'id': 'target', 'apiKey': 'target-search-secret'},
@@ -813,9 +815,9 @@ void main() {
               'flutter.search_services_v1': targetSearchServices,
             });
 
-        await sync.restoreFromLocalFile(
+        await sync.restoreLocalFile(
           backupFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         );
 
         final prefs = await SharedPreferences.getInstance();
@@ -870,10 +872,10 @@ void main() {
       );
 
       final backupFile = await DataSync(chatService: chatService)
-          .prepareBackupFile(
-            const WebDavConfig(includeChats: true, includeFiles: false),
+          .prepareLocalExportFile(
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           );
-      addTearDown(() => DataSync.cleanupTemporaryBackupFile(backupFile));
+      addTearDown(() => DataSync.cleanupTemporaryLocalExportFile(backupFile));
 
       final input = InputFileStream(backupFile.path);
       Archive? archive;
@@ -1014,9 +1016,9 @@ void main() {
       addTearDown(chatService.close);
       final existing = await chatService.createConversation(title: 'Existing');
 
-      await DataSync(chatService: chatService).restoreFromLocalFile(
+      await DataSync(chatService: chatService).restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: true, includeFiles: false),
+        const LocalBackupOptions(includeChats: true, includeFiles: false),
       );
 
       await _expectLegacyCloudSyncStateAbsent(root);
@@ -1054,9 +1056,9 @@ void main() {
       );
       final chatService = _RecordingSnapshotPathChatService();
 
-      await DataSync(chatService: chatService).restoreFromLocalFile(
+      await DataSync(chatService: chatService).restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: true, includeFiles: false),
+        const LocalBackupOptions(includeChats: true, includeFiles: false),
       );
 
       expect(chatService.snapshotPath, isNull);
@@ -1102,9 +1104,9 @@ void main() {
 
         await DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-        ).restoreFromLocalFile(
+        ).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         );
 
         final runDirectory = await _singleRestoreRunDirectory(root);
@@ -1155,9 +1157,9 @@ void main() {
             chatService: ChatService(
               const UntrackedSyncWriteExecutor.forTests(),
             ),
-          ).restoreFromLocalFile(
+          ).restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: false, includeFiles: false),
+            const LocalBackupOptions(includeChats: false, includeFiles: false),
           ),
           throwsStateError,
         );
@@ -1185,9 +1187,9 @@ void main() {
 
       await DataSync(
         chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-      ).restoreFromLocalFile(
+      ).restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: false, includeFiles: true),
+        const LocalBackupOptions(includeChats: false, includeFiles: true),
       );
 
       for (final rootName in const ['upload', 'images', 'avatars', 'fonts']) {
@@ -1218,9 +1220,9 @@ void main() {
 
       await DataSync(
         chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-      ).restoreFromLocalFile(
+      ).restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: true, includeFiles: true),
+        const LocalBackupOptions(includeChats: true, includeFiles: true),
       );
 
       final runDirectory = await _singleRestoreRunDirectory(root);
@@ -1277,9 +1279,9 @@ void main() {
 
         await DataSync(
           chatService: _FailingSnapshotRestoreChatService(),
-        ).restoreFromLocalFile(
+        ).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         );
 
         final prefs = await SharedPreferences.getInstance();
@@ -1315,9 +1317,9 @@ void main() {
 
       await DataSync(
         chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-      ).restoreFromLocalFile(
+      ).restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: false, includeFiles: false),
+        const LocalBackupOptions(includeChats: false, includeFiles: false),
       );
 
       final prefs = await SharedPreferences.getInstance();
@@ -1365,9 +1367,9 @@ void main() {
         final existing = await chatService.createConversation(title: 'Local');
 
         await expectLater(
-          DataSync(chatService: chatService).restoreFromLocalFile(
+          DataSync(chatService: chatService).restoreLocalFile(
             fixture,
-            const WebDavConfig(includeChats: true, includeFiles: false),
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           ),
           throwsA(isA<FormatException>()),
         );
@@ -1431,9 +1433,9 @@ void main() {
         addTearDown(chatService.close);
 
         await expectLater(
-          DataSync(chatService: chatService).restoreFromLocalFile(
+          DataSync(chatService: chatService).restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: true, includeFiles: false),
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           ),
           throwsA(isA<FormatException>()),
         );
@@ -1464,9 +1466,9 @@ void main() {
       await expectLater(
         DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-        ).restoreFromLocalFile(
+        ).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         ),
         throwsA(isA<FormatException>()),
       );
@@ -1495,9 +1497,9 @@ void main() {
             chatService: ChatService(
               const UntrackedSyncWriteExecutor.forTests(),
             ),
-          ).restoreFromLocalFile(
+          ).restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: false, includeFiles: false),
+            const LocalBackupOptions(includeChats: false, includeFiles: false),
           ),
           throwsA(isA<FormatException>()),
         );
@@ -1533,9 +1535,9 @@ void main() {
       await expectLater(
         DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-        ).restoreFromLocalFile(
+        ).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         ),
         throwsA(isA<FormatException>()),
       );
@@ -1562,9 +1564,9 @@ void main() {
       await expectLater(
         DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-        ).restoreFromLocalFile(
+        ).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         ),
         throwsA(isA<FormatException>()),
       );
@@ -1588,9 +1590,9 @@ void main() {
       writeExecutor.batches.clear();
 
       final sync = DataSync(chatService: chatService);
-      await sync.restoreFromLocalFile(
+      await sync.restoreLocalFile(
         fixture,
-        const WebDavConfig(includeChats: true, includeFiles: false),
+        const LocalBackupOptions(includeChats: true, includeFiles: false),
         mode: RestoreMode.merge,
       );
 
@@ -1626,9 +1628,9 @@ void main() {
             chatService: ChatService(
               const UntrackedSyncWriteExecutor.forTests(),
             ),
-          ).restoreFromLocalFile(
+          ).restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: false, includeFiles: false),
+            const LocalBackupOptions(includeChats: false, includeFiles: false),
             mode: RestoreMode.merge,
           ),
           throwsA(isA<StateError>()),
@@ -1663,9 +1665,9 @@ void main() {
       final sync = DataSync(
         chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
       );
-      await sync.restoreFromLocalFile(
+      await sync.restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: false, includeFiles: true),
+        const LocalBackupOptions(includeChats: false, includeFiles: true),
         mode: RestoreMode.merge,
       );
 
@@ -1675,9 +1677,9 @@ void main() {
         List<int>.filled(128, 5),
       );
 
-      await sync.restoreFromLocalFile(
+      await sync.restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: false, includeFiles: true),
+        const LocalBackupOptions(includeChats: false, includeFiles: true),
         mode: RestoreMode.overwrite,
       );
 
@@ -1754,9 +1756,9 @@ void main() {
         final sync = DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
         );
-        await sync.restoreFromLocalFile(
+        await sync.restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
           mode: RestoreMode.merge,
         );
 
@@ -1830,9 +1832,9 @@ void main() {
 
         await DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-        ).restoreFromLocalFile(
+        ).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
           mode: RestoreMode.merge,
         );
 
@@ -1869,9 +1871,9 @@ void main() {
       );
 
       await expectLater(
-        sync.restoreFromLocalFile(
+        sync.restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
           mode: RestoreMode.merge,
         ),
         throwsA(isA<FormatException>()),
@@ -1905,9 +1907,9 @@ void main() {
         );
 
         await expectLater(
-          sync.restoreFromLocalFile(
+          sync.restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: false, includeFiles: false),
+            const LocalBackupOptions(includeChats: false, includeFiles: false),
           ),
           throwsA(isA<FormatException>()),
         );
@@ -1939,9 +1941,9 @@ void main() {
       );
 
       await expectLater(
-        sync.restoreFromLocalFile(
+        sync.restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
           mode: RestoreMode.merge,
         ),
         throwsA(isA<FormatException>()),
@@ -1969,9 +1971,9 @@ void main() {
       await expectLater(
         DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-        ).restoreFromLocalFile(
+        ).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         ),
         throwsA(isA<FormatException>()),
       );
@@ -1996,9 +1998,9 @@ void main() {
       await expectLater(
         DataSync(
           chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-        ).restoreFromLocalFile(
+        ).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: false, includeFiles: false),
+          const LocalBackupOptions(includeChats: false, includeFiles: false),
         ),
         throwsA(isA<FormatException>()),
       );
@@ -2031,9 +2033,9 @@ void main() {
         final sync = DataSync(chatService: chatService);
 
         await expectLater(
-          sync.restoreFromLocalFile(
+          sync.restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: true, includeFiles: false),
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           ),
           throwsA(
             isA<StateError>().having(
@@ -2064,9 +2066,9 @@ void main() {
         );
 
         await expectLater(
-          sync.restoreFromLocalFile(
+          sync.restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: false, includeFiles: false),
+            const LocalBackupOptions(includeChats: false, includeFiles: false),
           ),
           throwsA(isA<FormatException>()),
         );
@@ -2112,9 +2114,9 @@ void main() {
         final sync = DataSync(chatService: _FailingArtifactChatService());
 
         await expectLater(
-          sync.restoreFromLocalFile(
+          sync.restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: true, includeFiles: false),
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           ),
           throwsA(
             isA<StateError>().having(
@@ -2124,68 +2126,6 @@ void main() {
             ),
           ),
         );
-      },
-    );
-
-    test(
-      'WebDAV provider completes with an error when restore fails',
-      () async {
-        final chatsFile = File('${root.path}/provider_chats.json');
-        await chatsFile.writeAsString(
-          jsonEncode({
-            'conversations': [
-              Conversation(id: 'first', title: 'First').toJson(),
-              Conversation(id: 'second', title: 'Second').toJson(),
-            ],
-            'messages': <Map<String, dynamic>>[],
-          }),
-        );
-
-        final zipFile = File('${root.path}/provider_restore.zip');
-        final encoder = ZipFileEncoder();
-        encoder.create(zipFile.path);
-        encoder.addFileSync(validSettingsFile, 'settings.json');
-        encoder.addFileSync(chatsFile, 'chats.json');
-        encoder.closeSync();
-
-        final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-        addTearDown(() async {
-          await server.close(force: true);
-        });
-        server.listen((request) async {
-          request.response.statusCode = HttpStatus.ok;
-          await request.response.addStream(zipFile.openRead());
-          await request.response.close();
-        });
-
-        final provider = BackupProvider(
-          chatService: _FailingRestoreChatService(),
-          initialConfig: const WebDavConfig(
-            includeChats: true,
-            includeFiles: false,
-          ),
-        );
-        final item = BackupFileItem(
-          href: Uri.parse(
-            'http://127.0.0.1:${server.port}/provider_restore.zip',
-          ),
-          displayName: 'provider_restore.zip',
-          size: await zipFile.length(),
-          lastModified: null,
-        );
-
-        await expectLater(
-          provider.restoreFromItem(item),
-          throwsA(
-            isA<StateError>().having(
-              (error) => error.message,
-              'message',
-              'chat replacement failed',
-            ),
-          ),
-        );
-        expect(provider.busy, isFalse);
-        expect(provider.message, contains('chat replacement failed'));
       },
     );
 
@@ -2209,9 +2149,9 @@ void main() {
       final sync = DataSync(chatService: chatService);
 
       await expectLater(
-        sync.restoreFromLocalFile(
+        sync.restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         ),
         throwsA(isA<FormatException>()),
       );
@@ -2238,9 +2178,9 @@ void main() {
       final chatService = _RecordingClearChatService();
 
       await expectLater(
-        DataSync(chatService: chatService).restoreFromLocalFile(
+        DataSync(chatService: chatService).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         ),
         throwsA(isA<FormatException>()),
       );
@@ -2281,9 +2221,9 @@ void main() {
       final chatService = _RecordingClearChatService();
 
       await expectLater(
-        DataSync(chatService: chatService).restoreFromLocalFile(
+        DataSync(chatService: chatService).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         ),
         throwsA(isA<FormatException>()),
       );
@@ -2313,9 +2253,9 @@ void main() {
         );
 
         await expectLater(
-          sync.restoreFromLocalFile(
+          sync.restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: true, includeFiles: false),
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           ),
           throwsA(isA<FormatException>()),
         );
@@ -2348,9 +2288,9 @@ void main() {
         final chatService = _RecordingClearChatService();
         final sync = DataSync(chatService: chatService);
 
-        await sync.restoreFromLocalFile(
+        await sync.restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         );
 
         expect(chatService.cleared, isFalse);
@@ -2395,9 +2335,9 @@ void main() {
       addTearDown(chatService.close);
       final sync = DataSync(chatService: chatService);
 
-      await sync.restoreFromLocalFile(
+      await sync.restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: true, includeFiles: false),
+        const LocalBackupOptions(includeChats: true, includeFiles: false),
       );
 
       expect(await uploadFile.readAsString(), 'keep');
@@ -2458,9 +2398,9 @@ void main() {
       encoder.addFileSync(chatsFile, 'chats.json');
       encoder.closeSync();
 
-      await DataSync(chatService: chatService).restoreFromLocalFile(
+      await DataSync(chatService: chatService).restoreLocalFile(
         zipFile,
-        const WebDavConfig(includeChats: true, includeFiles: false),
+        const LocalBackupOptions(includeChats: true, includeFiles: false),
       );
 
       expect(chatService.getConversation('cache-conversation')?.title, 'New');
@@ -2502,9 +2442,9 @@ void main() {
           Directory('${root.path}/tmp'),
         );
 
-        await DataSync(chatService: chatService).restoreFromLocalFile(
+        await DataSync(chatService: chatService).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         );
 
         expect(chatService.replaced, isTrue);
@@ -2552,9 +2492,9 @@ void main() {
         final sync = DataSync(chatService: chatService);
 
         await expectLater(
-          sync.restoreFromLocalFile(
+          sync.restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: true, includeFiles: false),
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           ),
           throwsA(anything),
         );
@@ -2587,9 +2527,9 @@ void main() {
       final chatService = _RecordingClearChatService();
 
       await expectLater(
-        DataSync(chatService: chatService).restoreFromLocalFile(
+        DataSync(chatService: chatService).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         ),
         throwsA(
           isA<StateError>().having(
@@ -2640,9 +2580,9 @@ void main() {
         final chatService = _RecordingClearChatService();
 
         await expectLater(
-          DataSync(chatService: chatService).restoreFromLocalFile(
+          DataSync(chatService: chatService).restoreLocalFile(
             zipFile,
-            const WebDavConfig(includeChats: true, includeFiles: false),
+            const LocalBackupOptions(includeChats: true, includeFiles: false),
           ),
           throwsA(
             isA<StateError>().having(
@@ -2680,9 +2620,9 @@ void main() {
       final chatService = _RecordingClearChatService();
 
       await expectLater(
-        DataSync(chatService: chatService).restoreFromLocalFile(
+        DataSync(chatService: chatService).restoreLocalFile(
           zipFile,
-          const WebDavConfig(includeChats: true, includeFiles: false),
+          const LocalBackupOptions(includeChats: true, includeFiles: false),
         ),
         throwsA(
           isA<StateError>().having(
@@ -2693,69 +2633,6 @@ void main() {
         ),
       );
       expect(chatService.replaced, isFalse);
-    });
-
-    test('WebDAV restore ignores untrusted display names', () async {
-      final sourceDir = Directory('${root.path}/source_upload');
-      await sourceDir.create(recursive: true);
-      final sourceFile = File('${sourceDir.path}/file.txt');
-      await sourceFile.writeAsString('payload');
-
-      final zipFile = File('${root.path}/restore_source.zip');
-      final encoder = ZipFileEncoder();
-      encoder.create(zipFile.path);
-      encoder.addFileSync(validSettingsFile, 'settings.json');
-      encoder.addFileSync(sourceFile, 'upload/file.txt');
-      encoder.closeSync();
-
-      await File('${root.path}/upload').writeAsString('not a directory');
-
-      final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
-      addTearDown(() async {
-        await server.close(force: true);
-      });
-
-      server.listen((request) async {
-        request.response.statusCode = HttpStatus.ok;
-        await request.response.addStream(zipFile.openRead());
-        await request.response.close();
-      });
-
-      final sync = DataSync(
-        chatService: ChatService(const UntrackedSyncWriteExecutor.forTests()),
-      );
-      final tmpDir = Directory('${root.path}/tmp');
-      final relativeSentinel = File('${root.path}/webdav_relative.zip');
-      final absoluteSentinel = File('${root.path}/webdav_absolute.zip');
-      await relativeSentinel.writeAsString('keep relative');
-      await absoluteSentinel.writeAsString('keep absolute');
-      final remoteNames = <String>[
-        '../webdav_relative.zip',
-        absoluteSentinel.path,
-      ];
-
-      for (var i = 0; i < remoteNames.length; i++) {
-        final item = BackupFileItem(
-          href: Uri.parse(
-            'http://127.0.0.1:${server.port}/restore_source_$i.zip',
-          ),
-          displayName: remoteNames[i],
-          size: await zipFile.length(),
-          lastModified: null,
-        );
-
-        await expectLater(
-          sync.restoreFromWebDav(
-            const WebDavConfig(includeChats: false, includeFiles: true),
-            item,
-          ),
-          throwsA(anything),
-        );
-      }
-
-      expect(await relativeSentinel.readAsString(), 'keep relative');
-      expect(await absoluteSentinel.readAsString(), 'keep absolute');
-      expect(await tmpDir.list().toList(), isEmpty);
     });
   });
 }

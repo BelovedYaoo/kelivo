@@ -715,6 +715,14 @@
       }
     }
   },
+  "backupPageExportFailedMessage": "匯出失敗：{error}",
+  "@backupPageExportFailedMessage": {
+    "placeholders": {
+      "error": {
+        "type": "String"
+      }
+    }
+  },
   "backupPageOK": "好的",
   "backupPageCancel": "取消",
   "backupPageSelectImportMode": "選擇匯入模式",
