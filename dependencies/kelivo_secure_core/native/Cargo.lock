@@ -22,6 +22,7 @@ dependencies = [
  "blake2",
  "cpufeatures 0.2.17",
  "password-hash",
+ "zeroize",
 ]
 
 [[package]]
@@ -596,6 +597,7 @@ dependencies = [
 name = "kelivo_secure_core_protocol"
 version = "0.1.0"
 dependencies = [
+ "argon2",
  "chacha20poly1305",
  "curve25519-dalek 4.1.3",
  "ed25519-dalek",

@@ -398,12 +398,37 @@ fn close_identity(handle: u64) -> Result<(), KelivoStatus> {
     )
 }
 
-fn register_ark(
+pub(super) fn register_ark(
     user_id: crypto::UserId,
     epoch: u32,
     ark: crypto::AccountRootKey,
 ) -> Result<u64, KelivoStatus> {
     let keyring = crypto::AccountRootKeyring::new(epoch, ark).map_err(device_error_status)?;
+    register_keyring(user_id, keyring)
+}
+
+pub(super) fn register_recovered_ark_keyring(
+    user_id: crypto::UserId,
+    source: Option<(u32, crypto::AccountRootKey)>,
+    current_epoch: u32,
+    current: crypto::AccountRootKey,
+) -> Result<u64, KelivoStatus> {
+    let keyring = match source {
+        Some((source_epoch, source)) => {
+            if source_epoch.checked_add(1) != Some(current_epoch) {
+                return Err(KelivoStatus::RecoveryHistoryInvalid);
+            }
+            let mut keyring = crypto::AccountRootKeyring::new(source_epoch, source)
+                .map_err(device_error_status)?;
+            keyring
+                .add_current(current_epoch, current)
+                .map_err(device_error_status)?;
+            keyring
+        }
+        None => {
+            crypto::AccountRootKeyring::new(current_epoch, current).map_err(device_error_status)?
+        }
+    };
     register_keyring(user_id, keyring)
 }
 
@@ -554,7 +579,7 @@ fn prune_ark_epoch(handle: u64, epoch: u32) -> Result<(), KelivoStatus> {
         .map_err(|_| KelivoStatus::InvalidArgument)
 }
 
-fn close_ark(handle: u64) -> Result<(), KelivoStatus> {
+pub(super) fn close_ark(handle: u64) -> Result<(), KelivoStatus> {
     close_secret(
         ark_registry(),
         handle,
@@ -794,7 +819,7 @@ unsafe fn reset_handle_and_length(
     }
 }
 
-unsafe fn prepare_fixed_output(
+pub(super) unsafe fn prepare_fixed_output(
     output: *mut u8,
     output_capacity: usize,
     output_length: *mut usize,
