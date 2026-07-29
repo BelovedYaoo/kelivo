@@ -573,6 +573,7 @@ external int kelivo_account_root_key_generate(
     ffi.Uint64,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
+    ffi.Uint32,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
     ffi.Pointer<ffi.Size>,
@@ -582,6 +583,7 @@ external int kelivo_account_record_id_derive(
   int ark_handle,
   ffi.Pointer<ffi.Uint8> canonical_entity_key,
   int canonical_entity_key_length,
+  int key_epoch,
   ffi.Pointer<ffi.Uint8> out_record_id,
   int out_record_id_capacity,
   ffi.Pointer<ffi.Size> out_record_id_length,
@@ -1118,7 +1120,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 11;
+const int KELIVO_CORE_ABI_VERSION = 12;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 

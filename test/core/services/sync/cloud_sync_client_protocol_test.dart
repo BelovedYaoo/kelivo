@@ -190,6 +190,7 @@ Future<E2eeUntrustedAccountRecordEnvelope> _sealRawAccountRecord({
   try {
     final recordId = await core.deriveAccountRecordId(
       ark,
+      keyEpoch: keyEpoch,
       canonicalEntityKey: canonicalKey,
     );
     ciphertext = await core.sealAccountRecord(
@@ -3064,6 +3065,112 @@ void main() {
     expect(payload, orderedEquals(<int>[1, 2, 3]));
   });
 
+  test('账户记录加密器按记录代次派生标识并在裁剪后失败关闭', () async {
+    const core = KelivoSecureCore();
+    final slotId = Uint8List.fromList(
+      sha256
+          .convert(utf8.encode('e2ee-record-epoch-derivation'))
+          .bytes
+          .sublist(0, 16),
+    );
+    late final KelivoKeyHandle key;
+    try {
+      key = await core.createSlot(slotId);
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
+      key = await core.openSlot(slotId);
+    }
+    addTearDown(() => core.close(key));
+
+    final userId = _rawUuid(_userId);
+    final identity = await core.generateDeviceIdentity();
+    addTearDown(() => core.closeDeviceIdentity(identity));
+    final initialArk = await core.generateAccountRootKey(
+      userId: userId,
+      keyEpoch: 1,
+    );
+    addTearDown(() => core.closeAccountRootKey(initialArk));
+    final stateBlob = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: _rawUuid(_deviceId1),
+      keyVersion: 1,
+      ark: initialArk,
+      account: KelivoDeviceStateAccountBinding(userId: userId, keyEpoch: 1),
+    );
+
+    final epochOneState = await core.openDeviceState(key, stateBlob: stateBlob);
+    addTearDown(() => core.closeDeviceIdentity(epochOneState.identity));
+    final epochOneCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: epochOneState.ark!,
+      userId: _userId,
+      currentKeyEpoch: 1,
+    );
+    addTearDown(epochOneCipher.close);
+
+    const entityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'record-epoch-history',
+    );
+    final payload = Uint8List.fromList(<int>[1, 7, 9]);
+    final epochOneRecord = await epochOneCipher.seal(
+      entityKey: entityKey,
+      payload: payload,
+    );
+
+    final epochTwoArk = await core.generateAccountRootKey(
+      userId: userId,
+      keyEpoch: 2,
+    );
+    addTearDown(() => core.closeAccountRootKey(epochTwoArk));
+
+    final currentState = await core.openDeviceState(key, stateBlob: stateBlob);
+    addTearDown(() => core.closeDeviceIdentity(currentState.identity));
+    await core.addAccountRootKeyEpoch(currentState.ark!, source: epochTwoArk);
+    final currentCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: currentState.ark!,
+      userId: _userId,
+      currentKeyEpoch: 2,
+    );
+    addTearDown(currentCipher.close);
+
+    final epochTwoId = await currentCipher.deriveRecordId(entityKey);
+    expect(epochTwoId, isNot(epochOneRecord.recordId));
+    final opened = await currentCipher.open(
+      _untrustedRecord(epochOneRecord),
+      decode: (_, borrowed) => Uint8List.fromList(borrowed),
+    );
+    expect(opened, orderedEquals(payload));
+
+    final prunedState = await core.openDeviceState(key, stateBlob: stateBlob);
+    addTearDown(() => core.closeDeviceIdentity(prunedState.identity));
+    await core.addAccountRootKeyEpoch(prunedState.ark!, source: epochTwoArk);
+    await core.pruneAccountRootKeyEpoch(prunedState.ark!, keyEpoch: 1);
+    final prunedCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: prunedState.ark!,
+      userId: _userId,
+      currentKeyEpoch: 2,
+    );
+    addTearDown(prunedCipher.close);
+
+    await expectLater(
+      prunedCipher.open(
+        _untrustedRecord(epochOneRecord),
+        decode: (_, borrowed) => Uint8List.fromList(borrowed),
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.recordAuthenticationFailed,
+        ),
+      ),
+    );
+  });
+
   test('账户记录加密器接受完整正 uint32 密钥世代', () async {
     const core = KelivoSecureCore();
     final ark = await core.generateAccountRootKey(
@@ -3148,6 +3255,7 @@ void main() {
     await lease.close();
     final recordId = await core.deriveAccountRecordId(
       ark,
+      keyEpoch: session.keyEpoch,
       canonicalEntityKey: Uint8List.fromList(utf8.encode('conversation:id')),
     );
     expect(recordId, hasLength(16));

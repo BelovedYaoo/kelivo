@@ -487,18 +487,6 @@ fn with_ark_for_bound_keyring<T>(
     operation(key)
 }
 
-fn current_ark_for_handle(handle: u64) -> Result<crypto::AccountRootKey, KelivoStatus> {
-    let bound = bound_keyring_for_handle(handle)?;
-    let keyring = bound
-        .keyring
-        .lock()
-        .map_err(|_| KelivoStatus::InternalState)?;
-    let key = keyring
-        .key_for_epoch(keyring.current_epoch())
-        .map_err(|_| KelivoStatus::InternalState)?;
-    Ok(crypto::AccountRootKey::from_bytes(*key.as_bytes()))
-}
-
 fn keyring_snapshot_for_handle(
     handle: u64,
     expected_user_id: crypto::UserId,
@@ -1142,12 +1130,13 @@ pub unsafe extern "C" fn kelivo_account_root_key_generate(
 #[unsafe(no_mangle)]
 /// # Safety
 ///
-/// `canonical_entity_key` 必须覆盖声明长度；输出指针必须覆盖声明容量，长度指针
-/// 必须可写，且所有缓冲区不得重叠。
+/// `canonical_entity_key` 必须覆盖声明长度，`key_epoch` 必须为正数；输出指针
+/// 必须覆盖声明容量，长度指针必须可写，且所有缓冲区不得重叠。
 pub unsafe extern "C" fn kelivo_account_record_id_derive(
     ark_handle: u64,
     canonical_entity_key: *const u8,
     canonical_entity_key_length: usize,
+    key_epoch: u32,
     out_record_id: *mut u8,
     out_record_id_capacity: usize,
     out_record_id_length: *mut usize,
@@ -1162,7 +1151,7 @@ pub unsafe extern "C" fn kelivo_account_record_id_derive(
     } {
         return status.code();
     }
-    if canonical_entity_key_length == 0 {
+    if key_epoch == 0 || canonical_entity_key_length == 0 {
         return KelivoStatus::InvalidArgument.code();
     }
     if canonical_entity_key_length > RECORD_ENTITY_KEY_MAX_LENGTH {
@@ -1173,11 +1162,13 @@ pub unsafe extern "C" fn kelivo_account_record_id_derive(
             Ok(value) => value,
             Err(status) => return status.code(),
         };
-    let ark = match current_ark_for_handle(ark_handle) {
-        Ok(ark) => ark,
+    let bound = match bound_keyring_for_handle(ark_handle) {
+        Ok(bound) => bound,
         Err(status) => return status.code(),
     };
-    let record_id = match derive_account_record_id(&ark, canonical_entity_key) {
+    let record_id = match with_ark_for_bound_keyring(&bound, key_epoch, |ark| {
+        derive_account_record_id(ark, canonical_entity_key)
+    }) {
         Ok(record_id) => record_id,
         Err(status) => return status.code(),
     };

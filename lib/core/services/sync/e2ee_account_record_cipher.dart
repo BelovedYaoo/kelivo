@@ -149,7 +149,10 @@ final class E2eeAccountRecordCipher {
     _requireOpen();
     final encodedKey = _encodeEntityKey(entityKey);
     try {
-      return await _deriveRecordId(encodedKey.canonicalBytes);
+      return await _deriveRecordId(
+        encodedKey.canonicalBytes,
+        keyEpoch: currentKeyEpoch,
+      );
     } finally {
       encodedKey.clear();
     }
@@ -182,7 +185,10 @@ final class E2eeAccountRecordCipher {
       frame = frameValue;
       final associatedDataValue = _buildAssociatedData(_userId);
       associatedData = associatedDataValue;
-      final recordId = await _deriveRecordId(encodedKey.canonicalBytes);
+      final recordId = await _deriveRecordId(
+        encodedKey.canonicalBytes,
+        keyEpoch: currentKeyEpoch,
+      );
       final ciphertextValue = await _secureCore.sealAccountRecord(
         _accountRootKey,
         recordId: recordId._bytes,
@@ -289,7 +295,10 @@ final class E2eeAccountRecordCipher {
       plaintext = plaintextValue;
       final decodedFrame = _decodeRecordFrame(plaintextValue);
       encodedKey = _encodeEntityKey(decodedFrame.entityKey);
-      final expectedRecordId = await _deriveRecordId(encodedKey.canonicalBytes);
+      final expectedRecordId = await _deriveRecordId(
+        encodedKey.canonicalBytes,
+        keyEpoch: record.keyEpoch,
+      );
       if (!_sameBytes(expectedRecordId._bytes, record.recordId._bytes)) {
         throw const FormatException('账户记录标识与密文实体键不匹配');
       }
@@ -335,10 +344,12 @@ final class E2eeAccountRecordCipher {
   }
 
   Future<E2eeAccountRecordId> _deriveRecordId(
-    Uint8List canonicalEntityKey,
-  ) async {
+    Uint8List canonicalEntityKey, {
+    required int keyEpoch,
+  }) async {
     final bytes = await _secureCore.deriveAccountRecordId(
       _accountRootKey,
+      keyEpoch: keyEpoch,
       canonicalEntityKey: canonicalEntityKey,
     );
     _requireUuidV4Bytes(bytes, 'derivedRecordId');
