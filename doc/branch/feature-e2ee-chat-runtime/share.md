@@ -44,6 +44,7 @@
 - 已完成：成员清单锚点只接受私有构造的已验证清单，持久化重验入口与数据库命令位于同一 Dart library 私有边界；安装和推进均以写语句取得首个事务快照，双连接竞争收敛为幂等成功或明确陈旧。真实 SQLCipher 关闭重开、撤销轮换、跨连接 capability、版本耗尽和篡改均已覆盖，数据库 94 项、协议 120 项测试通过。
 - 已完成：成员清单 wire 固定当前信任公钥、上一完整摘要、恢复公钥与 capsule 摘要；轮换旧/新 epoch 双签，初始化与新增设备过渡签名为零，自撤销失败关闭。公开恢复 genesis 字节入口已删除，必须等待原生恢复介质 capability。
 - 已完成：记录 ID 派生强制使用记录自身 keyEpoch；与成员清单安全核心合并后统一 ABI 13，避免两份 ABI 12 动态库错误互认。native 49、protocol 41+doctest、依赖 20、根协议 120 项测试通过。
+- 已完成：iOS 安全密钥槽硬切 Keychain `AfterFirstUnlockThisDeviceOnly`、Data Protection 且禁止同步，无文件或偏好回退；Runner/CocoaPods 最低 iOS 14，ActivityKit 扩展保持 16.1。ABI 13 下 native 49、protocol 41+5 doctest、依赖 21、根协议 120 项通过，三个 Apple Rust target 的 check 与严格 Clippy 通过。
 - 已完成：`kelivo-api/main@02dce9e` 已推送 D1/R2 密文附件六端点、原子配额、幂等状态机及完整 uint32 keyEpoch；未部署。
 - 已确认：成员清单必须签名覆盖恢复公钥、恢复胶囊版本与摘要，并在 SQLCipher 持久化最后验证清单锚点；服务器投影只参与 CAS，不能成为信任来源。普通登录使用的会话代必须与签名成员的稳定认证代分离。
 - 已确认：恢复介质必须固定 genesis 完整清单；清单显式携带当前信任公钥，并以旧 epoch 过渡签名和当前 epoch 持有签名建立不可伪造的完整历史链，否则恶意服务器可向恢复设备替换为自选 ARK。撤销禁止由被撤销设备自发起；单一恶意服务器仍可隐藏或回放真实旧前缀，但不能构造服务器已知 ARK 的有效后继。
