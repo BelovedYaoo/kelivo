@@ -11,13 +11,14 @@ use kelivo_secure_core_protocol::{
     REGISTRATION_RECORD_LENGTH, REGISTRATION_REQUEST_LENGTH, REGISTRATION_RESPONSE_LENGTH,
     REGISTRATION_UPLOAD_LENGTH, RegistrationRecord, RegistrationRequest, RegistrationUpload,
     SERVER_LOGIN_CONTINUATION_KEY_LENGTH, SERVER_LOGIN_CONTINUATION_LENGTH, SERVER_SETUP_LENGTH,
-    ServerLoginContinuation, ServerLoginContinuationKey, ServerSetup, server_login_finish_sealed,
-    server_login_start_sealed, server_registration_finish, server_registration_start,
+    ServerLoginContinuation, ServerLoginContinuationKey, ServerSetup, generate_server_setup,
+    server_login_finish_sealed, server_login_start_sealed, server_registration_finish,
+    server_registration_start,
 };
 use rand_core::{CryptoRng, Error as RandomError, RngCore};
 use zeroize::{ZeroizeOnDrop, Zeroizing};
 
-pub const ABI_VERSION: u32 = 1;
+pub const ABI_VERSION: u32 = 2;
 pub const STATUS_OK: i32 = 0;
 pub const STATUS_INVALID_BUFFER_HANDLE: i32 = -1;
 pub const STATUS_UNSUPPORTED_BUFFER_LENGTH: i32 = -2;
@@ -314,6 +315,32 @@ pub extern "C" fn kelivo_opaque_server_buffer_close(handle: u32) -> i32 {
     };
     drop(buffer);
     STATUS_OK
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kelivo_opaque_server_setup_generate(random_seed_handle: u32) -> i32 {
+    let inputs = match consume_buffers(&[BufferSpec {
+        handle: random_seed_handle,
+        expected_length: RANDOM_SEED_LENGTH,
+        optional: false,
+    }]) {
+        Ok(inputs) => inputs,
+        Err(status) => return status,
+    };
+    let [Some(random_seed)] = inputs.as_slice() else {
+        return STATUS_INVALID_BUFFER_HANDLE;
+    };
+
+    let result = (|| {
+        // 随机性由宿主显式注入，Wasm 只负责协议生成，避免无系统熵环境中的隐式回退。
+        let mut rng = ProtocolRng::from_bytes(random_seed)?;
+        let server_setup = generate_server_setup(&mut rng).map_err(protocol_failure)?;
+        if server_setup.as_bytes().len() != SERVER_SETUP_LENGTH {
+            return Err(STATUS_PROTOCOL_FAILED);
+        }
+        register_output(server_setup.as_bytes())
+    })();
+    result.unwrap_or_else(|status| status)
 }
 
 #[unsafe(no_mangle)]
@@ -710,6 +737,56 @@ mod tests {
             kelivo_opaque_server_buffer_close(handle as u32),
             0,
             "重复关闭不得伪装成功"
+        );
+    }
+
+    #[test]
+    fn server_setup_generation_consumes_seed_and_returns_valid_wire_object() {
+        let _guard = test_guard();
+        let first_seed_handle = open_buffer(&[0x91; RANDOM_SEED_LENGTH]);
+        let first_output_handle = kelivo_opaque_server_setup_generate(first_seed_handle);
+        assert!(first_output_handle > 0, "服务端配置生成应返回输出句柄");
+        assert_eq!(
+            kelivo_opaque_server_buffer_length(first_seed_handle),
+            0,
+            "随机种子必须由生成调用单次消费"
+        );
+        let first_output = read_and_close_buffer(first_output_handle as u32);
+        assert_eq!(
+            first_output.len(),
+            SERVER_SETUP_LENGTH,
+            "服务端配置必须保持固定线格式长度"
+        );
+        ServerSetup::from_bytes(&first_output).expect("生成结果必须是合法服务端配置");
+
+        let second_output_handle =
+            kelivo_opaque_server_setup_generate(open_buffer(&[0x92; RANDOM_SEED_LENGTH]));
+        assert!(second_output_handle > 0, "第二个服务端配置应成功生成");
+        let second_output = read_and_close_buffer(second_output_handle as u32);
+        assert_ne!(
+            first_output, second_output,
+            "不同随机种子不得生成相同服务端配置"
+        );
+    }
+
+    #[test]
+    fn server_setup_generation_rejects_invalid_seed_handles() {
+        let _guard = test_guard();
+        let wrong_length_handle = open_buffer(&[0xa1; ACCOUNT_ID_LENGTH]);
+        assert_eq!(
+            kelivo_opaque_server_setup_generate(wrong_length_handle),
+            STATUS_UNSUPPORTED_BUFFER_LENGTH,
+            "错误长度的随机种子必须明确失败"
+        );
+        assert_eq!(
+            kelivo_opaque_server_buffer_length(wrong_length_handle),
+            0,
+            "错误长度的输入也必须被销毁"
+        );
+        assert_eq!(
+            kelivo_opaque_server_setup_generate(wrong_length_handle),
+            STATUS_INVALID_BUFFER_HANDLE,
+            "失效句柄不得被重复使用"
         );
     }
 
