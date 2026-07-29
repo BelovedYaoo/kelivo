@@ -2,10 +2,19 @@ use super::{
     BACKGROUND_ACCESS_CAPABILITY, KEY_SLOT_ID_SIZE, KEY_SLOTS_CAPABILITY, KelivoStatus,
     LOCAL_KEY_SIZE, LocalKey, RECORD_ENVELOPES_CAPABILITY, SQLCIPHER_DATABASE_ATTACH_CAPABILITY,
     SQLCIPHER_KEY_APPLICATION_CAPABILITY,
+    slot_store_name::{SlotStoreEntryKind, classify_slot_store_entry},
 };
 use core::mem::size_of;
+#[cfg(test)]
 use std::{
     env,
+    io::ErrorKind,
+    sync::{
+        MutexGuard,
+        atomic::{AtomicUsize, Ordering},
+    },
+};
+use std::{
     ffi::{OsStr, OsString},
     fs::{File, OpenOptions},
     io::{Read, Write},
@@ -17,14 +26,17 @@ use std::{
     path::{Component, Path, PathBuf, Prefix},
     ptr, slice,
 };
-#[cfg(test)]
+#[cfg(any(test, feature = "test-store-support"))]
 use std::{
     fs,
-    io::ErrorKind,
-    sync::{
-        Mutex, MutexGuard, OnceLock,
-        atomic::{AtomicUsize, Ordering},
-    },
+    sync::{Mutex, OnceLock},
+};
+#[cfg(feature = "test-store-support")]
+use windows_sys::Win32::Storage::FileSystem::GetTempPathW;
+#[cfg(all(not(test), not(feature = "test-store-support")))]
+use windows_sys::Win32::{
+    System::Com::CoTaskMemFree,
+    UI::Shell::{FOLDERID_LocalAppData, KF_FLAG_DEFAULT, SHGetKnownFolderPath},
 };
 use windows_sys::{
     Wdk::{
@@ -50,10 +62,11 @@ use windows_sys::{
             DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
             FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
             FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ,
-            FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA, FileDispositionInfo, SYNCHRONIZE,
-            SetFileInformationByHandle,
+            FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA, FileDispositionInfo,
+            LOCKFILE_EXCLUSIVE_LOCK, LockFileEx, SYNCHRONIZE, SetFileInformationByHandle,
+            UnlockFileEx,
         },
-        System::IO::IO_STATUS_BLOCK,
+        System::IO::{IO_STATUS_BLOCK, OVERLAPPED},
     },
 };
 use zeroize::{Zeroize, Zeroizing};
@@ -110,12 +123,32 @@ pub(super) fn fill_random(output: &mut [u8]) -> Result<(), KelivoStatus> {
     }
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(feature = "test-store-support")))]
 fn production_store_root() -> Result<PathBuf, KelivoStatus> {
-    let local_app_data = env::var_os("LOCALAPPDATA")
-        .filter(|value| !value.is_empty())
-        .ok_or(KelivoStatus::SecureStorageUnavailable)?;
-    let local_app_data = PathBuf::from(local_app_data);
+    let folder_id = FOLDERID_LocalAppData;
+    let mut raw_path = ptr::null_mut();
+    let status = unsafe {
+        SHGetKnownFolderPath(
+            &raw const folder_id,
+            KF_FLAG_DEFAULT as u32,
+            ptr::null_mut(),
+            &mut raw_path,
+        )
+    };
+    if status < 0 || raw_path.is_null() {
+        return Err(KelivoStatus::SecureStorageUnavailable);
+    }
+    let raw_path = KnownFolderPath(raw_path);
+    let mut length = 0_usize;
+    while unsafe { *raw_path.0.add(length) } != 0 {
+        length = length
+            .checked_add(1)
+            .filter(|value| *value <= 32_767)
+            .ok_or(KelivoStatus::SecureStorageUnavailable)?;
+    }
+    let local_app_data = PathBuf::from(OsString::from_wide(unsafe {
+        slice::from_raw_parts(raw_path.0, length)
+    }));
     if !local_app_data.is_absolute() {
         return Err(KelivoStatus::SecureStorageUnavailable);
     }
@@ -125,6 +158,16 @@ fn production_store_root() -> Result<PathBuf, KelivoStatus> {
         .join("secure-core")
         .join("v1")
         .join("slots"))
+}
+
+#[cfg(all(not(test), not(feature = "test-store-support")))]
+struct KnownFolderPath(*mut u16);
+
+#[cfg(all(not(test), not(feature = "test-store-support")))]
+impl Drop for KnownFolderPath {
+    fn drop(&mut self) {
+        unsafe { CoTaskMemFree(self.0.cast()) };
+    }
 }
 
 #[cfg(test)]
@@ -139,12 +182,12 @@ fn production_store_resolution_attempts() -> &'static AtomicUsize {
     &ATTEMPTS
 }
 
-#[cfg(not(test))]
+#[cfg(all(not(test), not(feature = "test-store-support")))]
 fn default_store() -> Result<SlotStore, KelivoStatus> {
     Ok(SlotStore::new(production_store_root()?))
 }
 
-#[cfg(test)]
+#[cfg(all(test, not(feature = "test-store-support")))]
 fn default_store() -> Result<SlotStore, KelivoStatus> {
     // 测试产物不得继承生产根；遗漏显式作用域时必须失败，不能便利性回退。
     let root = test_store_root()
@@ -162,6 +205,171 @@ fn default_store() -> Result<SlotStore, KelivoStatus> {
         return Err(KelivoStatus::InternalState);
     }
     Ok(SlotStore::new(canonical_root))
+}
+
+#[cfg(feature = "test-store-support")]
+fn default_store() -> Result<SlotStore, KelivoStatus> {
+    let root = test_store_state()
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?
+        .as_ref()
+        .map(|active| active.root.clone())
+        .ok_or(KelivoStatus::InternalState)?;
+    Ok(SlotStore::new(root))
+}
+
+#[cfg(feature = "test-store-support")]
+struct ActiveTestStore {
+    scope: u64,
+    root: PathBuf,
+    temporary_root: PathBuf,
+}
+
+#[cfg(feature = "test-store-support")]
+fn test_store_state() -> &'static Mutex<Option<ActiveTestStore>> {
+    static STATE: OnceLock<Mutex<Option<ActiveTestStore>>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(feature = "test-store-support")]
+pub(super) fn open_test_store_scope() -> Result<u64, KelivoStatus> {
+    register_test_store_exit_cleanup()?;
+    let mut state = test_store_state()
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?;
+    if state.is_some() {
+        return Err(KelivoStatus::InternalState);
+    }
+    let temporary_root = canonical_temporary_root()?;
+    let root = create_random_test_store_root(&temporary_root)?;
+    let scope = random_test_scope()?;
+    *state = Some(ActiveTestStore {
+        scope,
+        root,
+        temporary_root,
+    });
+    Ok(scope)
+}
+
+#[cfg(feature = "test-store-support")]
+pub(super) fn close_test_store_scope(scope: u64) -> Result<(), KelivoStatus> {
+    let active = {
+        let mut state = test_store_state()
+            .lock()
+            .map_err(|_| KelivoStatus::InternalState)?;
+        if state.as_ref().map(|active| active.scope) != Some(scope) {
+            return Err(KelivoStatus::InvalidArgument);
+        }
+        state.take().ok_or(KelivoStatus::InternalState)?
+    };
+    match cleanup_test_store(&active) {
+        Ok(()) => Ok(()),
+        Err(status) => {
+            let mut state = test_store_state()
+                .lock()
+                .map_err(|_| KelivoStatus::InternalState)?;
+            if state.is_none() {
+                *state = Some(active);
+            }
+            Err(status)
+        }
+    }
+}
+
+#[cfg(feature = "test-store-support")]
+fn canonical_temporary_root() -> Result<PathBuf, KelivoStatus> {
+    let mut buffer = vec![0_u16; 32_768];
+    let length = unsafe {
+        GetTempPathW(
+            u32::try_from(buffer.len()).map_err(|_| KelivoStatus::InternalState)?,
+            buffer.as_mut_ptr(),
+        )
+    };
+    let length = usize::try_from(length).map_err(|_| KelivoStatus::InternalState)?;
+    if length == 0 || length >= buffer.len() {
+        return Err(KelivoStatus::SecureStorageUnavailable);
+    }
+    let path = PathBuf::from(OsString::from_wide(&buffer[..length]));
+    let canonical = fs::canonicalize(path).map_err(|_| KelivoStatus::IoFailure)?;
+    split_disk_path(&canonical)?;
+    Ok(canonical)
+}
+
+#[cfg(feature = "test-store-support")]
+fn create_random_test_store_root(temporary_root: &Path) -> Result<PathBuf, KelivoStatus> {
+    for _ in 0..TEMP_FILE_ATTEMPTS {
+        let mut suffix = [0_u8; 16];
+        fill_random(&mut suffix)?;
+        let root = temporary_root.join(format!(
+            "kelivo_secure_core_dart_test_{}",
+            encode_hex(&suffix)
+        ));
+        match fs::create_dir(&root) {
+            Ok(()) => {
+                let canonical = fs::canonicalize(&root).map_err(|_| KelivoStatus::IoFailure)?;
+                if canonical.parent() != Some(temporary_root) {
+                    return Err(KelivoStatus::InternalState);
+                }
+                return Ok(canonical);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(_) => return Err(KelivoStatus::IoFailure),
+        }
+    }
+    Err(KelivoStatus::InternalState)
+}
+
+#[cfg(feature = "test-store-support")]
+fn random_test_scope() -> Result<u64, KelivoStatus> {
+    loop {
+        let mut encoded = [0_u8; size_of::<u64>()];
+        fill_random(&mut encoded)?;
+        let scope = u64::from_le_bytes(encoded) & ((1_u64 << 63) - 1);
+        if scope != 0 {
+            return Ok(scope);
+        }
+    }
+}
+
+#[cfg(feature = "test-store-support")]
+fn cleanup_test_store(active: &ActiveTestStore) -> Result<(), KelivoStatus> {
+    let canonical = fs::canonicalize(&active.root).map_err(|_| KelivoStatus::IoFailure)?;
+    if canonical != active.root || canonical.parent() != Some(active.temporary_root.as_path()) {
+        return Err(KelivoStatus::InternalState);
+    }
+    let store = SlotStore::new(canonical.clone());
+    store.delete_all_slots()?;
+    let directory = open_directory_chain(&canonical)?.ok_or(KelivoStatus::InternalState)?;
+    delete_slot_file(
+        &directory,
+        OsStr::new(super::slot_store_name::NAMESPACE_LOCK_FILE_NAME),
+    )?;
+    if !enumerate_directory_entries(&directory)?.is_empty() {
+        return Err(KelivoStatus::IoFailure);
+    }
+    drop(directory);
+    fs::remove_dir(canonical).map_err(|_| KelivoStatus::IoFailure)
+}
+
+#[cfg(feature = "test-store-support")]
+fn register_test_store_exit_cleanup() -> Result<(), KelivoStatus> {
+    static REGISTERED: OnceLock<bool> = OnceLock::new();
+    if *REGISTERED.get_or_init(|| unsafe { libc::atexit(test_store_exit_cleanup) == 0 }) {
+        Ok(())
+    } else {
+        Err(KelivoStatus::InternalState)
+    }
+}
+
+#[cfg(feature = "test-store-support")]
+extern "C" fn test_store_exit_cleanup() {
+    let active = test_store_state()
+        .lock()
+        .ok()
+        .and_then(|mut state| state.take());
+    if let Some(active) = active {
+        let _ = cleanup_test_store(&active);
+    }
 }
 
 #[cfg(test)]
@@ -290,6 +498,7 @@ impl SlotStore {
 
     fn create_slot(&self, slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, KelivoStatus> {
         let directory = ensure_directory_chain(&self.root)?;
+        let _namespace_lock = NamespaceLockGuard::acquire(&directory)?;
         let slot_name = Self::slot_name(slot_id);
         match open_relative_file(
             &directory,
@@ -315,6 +524,7 @@ impl SlotStore {
         let Some(directory) = open_directory_chain(&self.root)? else {
             return Err(KelivoStatus::SlotNotFound);
         };
+        let _namespace_lock = NamespaceLockGuard::acquire(&directory)?;
         let slot_name = Self::slot_name(slot_id);
         let encoded = read_slot_file(&directory, OsStr::new(&slot_name))?;
         let protected_key = decode_slot_file(&encoded)?;
@@ -326,6 +536,7 @@ impl SlotStore {
         let Some(directory) = open_directory_chain(&self.root)? else {
             return Ok(());
         };
+        let _namespace_lock = NamespaceLockGuard::acquire(&directory)?;
         let slot_name = Self::slot_name(slot_id);
         delete_slot_file(&directory, OsStr::new(&slot_name))
     }
@@ -334,18 +545,27 @@ impl SlotStore {
         let Some(directory) = open_directory_chain(&self.root)? else {
             return Ok(());
         };
+        let _namespace_lock = NamespaceLockGuard::acquire(&directory)?;
         let entries = enumerate_directory_entries(&directory)?;
-        for entry in &entries {
-            validate_deletable_entry(entry)?;
-        }
+        let mut deletable_names = Vec::new();
         for entry in entries {
-            delete_slot_file(&directory, &entry.name)?;
+            match validate_namespace_entry(&entry)? {
+                SlotStoreEntryKind::Slot | SlotStoreEntryKind::Temporary => {
+                    deletable_names.push(entry.name);
+                }
+                SlotStoreEntryKind::NamespaceLock => {}
+                SlotStoreEntryKind::Unknown => return Err(KelivoStatus::IoFailure),
+            }
         }
-        if enumerate_directory_entries(&directory)?.is_empty() {
-            Ok(())
-        } else {
-            Err(KelivoStatus::IoFailure)
+        for name in deletable_names {
+            delete_slot_file(&directory, &name)?;
         }
+        for entry in enumerate_directory_entries(&directory)? {
+            if validate_namespace_entry(&entry)? != SlotStoreEntryKind::NamespaceLock {
+                return Err(KelivoStatus::IoFailure);
+            }
+        }
+        Ok(())
     }
 
     fn slot_name(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> String {
@@ -414,6 +634,57 @@ impl SlotStore {
 
 struct DirectoryChainGuard {
     directory: File,
+}
+
+struct NamespaceLockGuard {
+    file: File,
+    overlapped: OVERLAPPED,
+}
+
+impl NamespaceLockGuard {
+    fn acquire(directory: &DirectoryChainGuard) -> Result<Self, KelivoStatus> {
+        let file = match open_relative_file(
+            directory,
+            OsStr::new(super::slot_store_name::NAMESPACE_LOCK_FILE_NAME),
+            FILE_READ_DATA | FILE_WRITE_DATA | FILE_READ_ATTRIBUTES | SYNCHRONIZE,
+            FILE_SHARE_READ | FILE_SHARE_WRITE,
+            FILE_OPEN_IF,
+        )? {
+            RelativeOpenResult::Opened(file) => file,
+            RelativeOpenResult::Missing | RelativeOpenResult::Collision => {
+                return Err(KelivoStatus::IoFailure);
+            }
+        };
+        let mut overlapped = OVERLAPPED::default();
+        let locked = unsafe {
+            LockFileEx(
+                file.as_raw_handle(),
+                LOCKFILE_EXCLUSIVE_LOCK,
+                0,
+                u32::MAX,
+                u32::MAX,
+                &mut overlapped,
+            )
+        };
+        if locked == 0 {
+            return Err(KelivoStatus::IoFailure);
+        }
+        Ok(Self { file, overlapped })
+    }
+}
+
+impl Drop for NamespaceLockGuard {
+    fn drop(&mut self) {
+        unsafe {
+            UnlockFileEx(
+                self.file.as_raw_handle(),
+                0,
+                u32::MAX,
+                u32::MAX,
+                &mut self.overlapped,
+            )
+        };
+    }
 }
 
 fn ensure_directory_chain(path: &Path) -> Result<DirectoryChainGuard, KelivoStatus> {
@@ -811,12 +1082,13 @@ fn parse_directory_entries(
     output: &mut Vec<DirectoryEntry>,
 ) -> Result<(), KelivoStatus> {
     let file_name_offset = core::mem::offset_of!(FILE_BOTH_DIR_INFORMATION, FileName);
+    let fixed_entry_size = size_of::<FILE_BOTH_DIR_INFORMATION>();
     let mut offset = 0_usize;
     loop {
         let remaining = buffer_length
             .checked_sub(offset)
             .ok_or(KelivoStatus::IoFailure)?;
-        if remaining < file_name_offset {
+        if remaining < fixed_entry_size {
             return Err(KelivoStatus::IoFailure);
         }
         let information =
@@ -828,13 +1100,16 @@ fn parse_directory_entries(
         {
             return Err(KelivoStatus::IoFailure);
         }
-        let file_name = unsafe {
-            slice::from_raw_parts(
-                buffer.add(offset + file_name_offset).cast::<u16>(),
-                file_name_length / size_of::<u16>(),
-            )
-        };
-        let name = OsString::from_wide(file_name);
+        let file_name_start = offset
+            .checked_add(file_name_offset)
+            .ok_or(KelivoStatus::IoFailure)?;
+        let mut file_name = Vec::with_capacity(file_name_length / size_of::<u16>());
+        for index in (0..file_name_length).step_by(size_of::<u16>()) {
+            file_name.push(unsafe {
+                ptr::read_unaligned(buffer.add(file_name_start + index).cast::<u16>())
+            });
+        }
+        let name = OsString::from_wide(&file_name);
         if name != "." && name != ".." {
             output.push(DirectoryEntry {
                 name,
@@ -847,7 +1122,10 @@ fn parse_directory_entries(
         }
         let next_offset =
             usize::try_from(information.NextEntryOffset).map_err(|_| KelivoStatus::IoFailure)?;
-        if next_offset < file_name_offset + file_name_length || next_offset >= remaining {
+        let entry_payload_size = file_name_offset
+            .checked_add(file_name_length)
+            .ok_or(KelivoStatus::IoFailure)?;
+        if next_offset < fixed_entry_size.max(entry_payload_size) || next_offset >= remaining {
             return Err(KelivoStatus::IoFailure);
         }
         offset = offset
@@ -857,38 +1135,10 @@ fn parse_directory_entries(
     Ok(())
 }
 
-fn validate_deletable_entry(entry: &DirectoryEntry) -> Result<(), KelivoStatus> {
+fn validate_namespace_entry(entry: &DirectoryEntry) -> Result<SlotStoreEntryKind, KelivoStatus> {
     validate_slot_file_attributes(entry.attributes)?;
     let name = entry.name.to_str().ok_or(KelivoStatus::IoFailure)?;
-    if is_slot_file_name(name) || is_temporary_slot_file_name(name) {
-        Ok(())
-    } else {
-        Err(KelivoStatus::IoFailure)
-    }
-}
-
-fn is_slot_file_name(name: &str) -> bool {
-    name.len() == KEY_SLOT_ID_SIZE * 2 + 4
-        && name.ends_with(".bin")
-        && is_lower_hex(&name[..KEY_SLOT_ID_SIZE * 2])
-}
-
-fn is_temporary_slot_file_name(name: &str) -> bool {
-    let slot_name_length = KEY_SLOT_ID_SIZE * 2 + 4;
-    let suffix_length = 16 * 2;
-    let expected_length = 1 + slot_name_length + 1 + suffix_length + 4;
-    name.len() == expected_length
-        && name.starts_with('.')
-        && is_slot_file_name(&name[1..1 + slot_name_length])
-        && &name[1 + slot_name_length..2 + slot_name_length] == "."
-        && is_lower_hex(&name[2 + slot_name_length..2 + slot_name_length + suffix_length])
-        && name.ends_with(".tmp")
-}
-
-fn is_lower_hex(value: &str) -> bool {
-    value
-        .bytes()
-        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+    Ok(classify_slot_store_entry(name))
 }
 
 fn encode_slot_file(protected_key: &[u8]) -> Result<Vec<u8>, KelivoStatus> {
@@ -1040,7 +1290,18 @@ fn encode_hex(input: &[u8]) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs, os::windows::fs::symlink_file, process::Command};
+    use std::{
+        fs,
+        os::windows::fs::symlink_file,
+        process::Command,
+        sync::mpsc,
+        thread,
+        time::{Duration, Instant},
+    };
+
+    const LOCK_CHILD_ROOT_ENV: &str = "KELIVO_TEST_NAMESPACE_LOCK_ROOT";
+    const LOCK_CHILD_READY_ENV: &str = "KELIVO_TEST_NAMESPACE_LOCK_READY";
+    const LOCK_CHILD_RELEASE_ENV: &str = "KELIVO_TEST_NAMESPACE_LOCK_RELEASE";
 
     #[test]
     fn native_test_default_store_requires_explicit_temporary_scope() {
@@ -1068,6 +1329,82 @@ mod tests {
         ));
         fs::create_dir(&root).expect("测试目录应创建成功");
         (SlotStore::new(root.clone()), root)
+    }
+
+    fn wait_for_marker(path: &Path, timeout: Duration) {
+        let deadline = Instant::now() + timeout;
+        while !path.exists() {
+            assert!(Instant::now() < deadline, "等待子进程标记超时：{path:?}");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    #[test]
+    fn namespace_lock_child_process() {
+        let Some(root) = env::var_os(LOCK_CHILD_ROOT_ENV) else {
+            return;
+        };
+        let ready = PathBuf::from(
+            env::var_os(LOCK_CHILD_READY_ENV).expect("锁测试子进程必须收到就绪标记路径"),
+        );
+        let release = PathBuf::from(
+            env::var_os(LOCK_CHILD_RELEASE_ENV).expect("锁测试子进程必须收到释放标记路径"),
+        );
+        let directory = ensure_directory_chain(Path::new(&root)).expect("子进程槽目录必须可固定");
+        let _lock = NamespaceLockGuard::acquire(&directory).expect("子进程必须取得命名空间锁");
+        fs::write(&ready, b"ready").expect("子进程就绪标记应写入成功");
+        wait_for_marker(&release, Duration::from_secs(10));
+    }
+
+    #[test]
+    fn all_slots_delete_waits_for_another_process_namespace_lock() {
+        let (_unused_store, sandbox) = create_test_store("cross_process_lock");
+        let slot_root = sandbox.join("slots");
+        fs::create_dir(&slot_root).expect("跨进程锁测试槽目录应创建成功");
+        let slot_name = format!("{}.bin", "ab".repeat(KEY_SLOT_ID_SIZE));
+        fs::write(slot_root.join(&slot_name), b"test-slot").expect("测试槽文件应写入成功");
+        let ready = sandbox.join("child-ready");
+        let release = sandbox.join("child-release");
+
+        let current_executable = env::current_exe().expect("当前测试程序路径必须可解析");
+        let mut child = Command::new(current_executable)
+            .args([
+                "--exact",
+                "windows::tests::namespace_lock_child_process",
+                "--nocapture",
+            ])
+            .env(LOCK_CHILD_ROOT_ENV, &slot_root)
+            .env(LOCK_CHILD_READY_ENV, &ready)
+            .env(LOCK_CHILD_RELEASE_ENV, &release)
+            .spawn()
+            .expect("命名空间锁测试子进程应启动成功");
+        wait_for_marker(&ready, Duration::from_secs(10));
+
+        let (sender, receiver) = mpsc::channel();
+        let delete_store = SlotStore::new(slot_root.clone());
+        let delete_thread = thread::spawn(move || {
+            sender
+                .send(delete_store.delete_all_slots())
+                .expect("删除结果接收端必须存活");
+        });
+        let early_result = receiver.recv_timeout(Duration::from_millis(300));
+        let was_blocked = matches!(early_result, Err(mpsc::RecvTimeoutError::Timeout));
+
+        fs::write(&release, b"release").expect("子进程释放标记应写入成功");
+        let delete_result = match early_result {
+            Ok(result) => result,
+            Err(mpsc::RecvTimeoutError::Timeout) => receiver
+                .recv_timeout(Duration::from_secs(10))
+                .expect("锁释放后删除必须完成"),
+            Err(mpsc::RecvTimeoutError::Disconnected) => panic!("删除线程不得提前断开"),
+        };
+        delete_thread.join().expect("删除线程不得 panic");
+        let child_status = child.wait().expect("锁测试子进程必须可回收");
+        fs::remove_dir_all(&sandbox).expect("跨进程锁测试目录必须清理");
+
+        assert!(child_status.success(), "锁测试子进程必须成功退出");
+        assert!(was_blocked, "另一进程持锁期间全槽删除不得开始");
+        delete_result.expect("另一进程释放锁后全槽删除应成功");
     }
 
     fn expect_status(result: Result<LocalKey, KelivoStatus>, expected: KelivoStatus) {
@@ -1380,6 +1717,17 @@ mod tests {
         assert!(!store.slot_path(&first_slot_id).exists());
         assert!(!store.slot_path(&second_slot_id).exists());
         assert!(!root.join(temporary_name).exists());
+        let remaining_names: Vec<OsString> = fs::read_dir(&root)
+            .expect("槽目录应保持可枚举")
+            .map(|entry| entry.expect("残留条目应可读取").file_name())
+            .collect();
+        assert_eq!(
+            remaining_names,
+            [OsString::from(
+                super::super::slot_store_name::NAMESPACE_LOCK_FILE_NAME
+            )],
+            "全槽删除只能保留固定命名空间锁"
+        );
         store.delete_all_slots().expect("空目录应幂等删除成功");
         fs::remove_dir_all(root).expect("测试目录应清理成功");
     }

@@ -6,8 +6,18 @@ import 'dart:typed_data';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
+import 'support/secure_core_test_store.dart';
+
 void main() {
   const core = KelivoSecureCore();
+  SecureCoreTestStoreScope? testStoreScope;
+
+  setUpAll(() {
+    testStoreScope = SecureCoreTestStoreScope.open();
+  });
+  tearDownAll(() {
+    testStoreScope?.close();
+  });
 
   Uint8List accountId(int seed) {
     final value = Uint8List(16)..fillRange(0, 16, seed);

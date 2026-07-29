@@ -20,3 +20,8 @@ dev_dependencies:
   flutter_test:
     sdk: flutter
   flutter_lints: ^5.0.0
+
+hooks:
+  user_defines:
+    kelivo_secure_core:
+      test_store_marker: .dart_tool/kelivo_secure_core_test_store.marker

@@ -35,6 +35,7 @@ import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 
 import '../../database/test_database_cipher.dart';
+import '../../../support/secure_core_test_store.dart';
 
 const _mutationId1 = '00000000-0000-4000-8000-000000000001';
 const _mutationId2 = '00000000-0000-4000-8000-000000000002';
@@ -754,6 +755,15 @@ extension _DeviceStateBlobStoreTestSetup on DeviceStateBlobStore {
 }
 
 void main() {
+  SecureCoreTestStoreScope? testStoreScope;
+
+  setUpAll(() {
+    testStoreScope = SecureCoreTestStoreScope.open();
+  });
+  tearDownAll(() {
+    testStoreScope?.close();
+  });
+
   test('桌面端不能注册首个可信设备且不会创建本地设备状态', () async {
     final testRoot = Directory(
       '${Directory.current.path}${Platform.pathSeparator}.dart_tool'

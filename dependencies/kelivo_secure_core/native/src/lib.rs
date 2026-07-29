@@ -13,6 +13,8 @@ mod device_core;
 mod opaque_client;
 mod record;
 mod recovery;
+#[cfg(any(target_os = "android", target_os = "windows"))]
+mod slot_store_name;
 
 pub use attachment::{
     kelivo_attachment_chunk_open, kelivo_attachment_chunk_seal,
@@ -620,6 +622,55 @@ pub extern "C" fn kelivo_key_slots_delete_all() -> i32 {
         return status.code();
     }
     match platform::delete_all_slots() {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
+#[cfg(all(feature = "test-store-support", target_os = "windows"))]
+/// # Safety
+///
+/// `out_scope` 必须指向可写的 `u64`；调用方必须在测试结束时将返回的非零作用域
+/// 原样传给 `kelivo_test_key_slot_store_close`。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_test_key_slot_store_open(out_scope: *mut u64) -> i32 {
+    if let Err(status) = unsafe { write_output(out_scope, 0) } {
+        return status.code();
+    }
+    let _lifecycle_guard = match key_slot_lifecycle_lock().lock() {
+        Ok(guard) => guard,
+        Err(_) => return KelivoStatus::InternalState.code(),
+    };
+    if let Err(status) = ensure_all_slots_unused() {
+        return status.code();
+    }
+    let scope = match platform::open_test_store_scope() {
+        Ok(scope) => scope,
+        Err(status) => return status.code(),
+    };
+    match unsafe { write_output(out_scope, scope) } {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => {
+            let _ = platform::close_test_store_scope(scope);
+            status.code()
+        }
+    }
+}
+
+#[cfg(all(feature = "test-store-support", target_os = "windows"))]
+#[unsafe(no_mangle)]
+pub extern "C" fn kelivo_test_key_slot_store_close(scope: u64) -> i32 {
+    if scope == 0 {
+        return KelivoStatus::InvalidArgument.code();
+    }
+    let _lifecycle_guard = match key_slot_lifecycle_lock().lock() {
+        Ok(guard) => guard,
+        Err(_) => return KelivoStatus::InternalState.code(),
+    };
+    if let Err(status) = ensure_all_slots_unused() {
+        return status.code();
+    }
+    match platform::close_test_store_scope(scope) {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(status) => status.code(),
     }
@@ -1646,6 +1697,63 @@ mod tests {
         assert_eq!(kelivo_key_slots_delete_all(), KelivoStatus::Ok.code());
         drop(test_store_scope);
         production_canary.assert_no_attempt();
+    }
+
+    #[cfg(all(feature = "test-store-support", target_os = "windows"))]
+    #[test]
+    fn test_store_feature_fails_closed_until_an_unforgeable_scope_is_open() {
+        let mut slot_id = [0_u8; KEY_SLOT_ID_SIZE];
+        platform::fill_random(&mut slot_id).expect("测试库槽标识应生成成功");
+        let mut handle = 42_u64;
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_create(
+                    slot_id.as_ptr(),
+                    slot_id.len(),
+                    KEY_POLICY_VERSION,
+                    &mut handle,
+                )
+            },
+            KelivoStatus::InternalState.code()
+        );
+        assert_eq!(handle, INVALID_KEY_HANDLE);
+
+        let mut scope = 0_u64;
+        assert_eq!(
+            unsafe { kelivo_test_key_slot_store_open(&mut scope) },
+            KelivoStatus::Ok.code()
+        );
+        assert_ne!(scope, 0);
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_create(
+                    slot_id.as_ptr(),
+                    slot_id.len(),
+                    KEY_POLICY_VERSION,
+                    &mut handle,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(kelivo_key_handle_close(handle), KelivoStatus::Ok.code());
+        assert_eq!(
+            kelivo_test_key_slot_store_close(scope),
+            KelivoStatus::Ok.code()
+        );
+
+        handle = 42;
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_open(
+                    slot_id.as_ptr(),
+                    slot_id.len(),
+                    KEY_POLICY_VERSION,
+                    &mut handle,
+                )
+            },
+            KelivoStatus::InternalState.code()
+        );
+        assert_eq!(handle, INVALID_KEY_HANDLE);
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))]

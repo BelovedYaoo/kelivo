@@ -151,6 +151,8 @@ hooks:
     sqlite3:
       # 安全构建必须显式选择 SQLCipher，禁止按平台回退到普通 SQLite。
       source: sqlcipher
+    kelivo_secure_core:
+      test_store_marker: .dart_tool/kelivo_secure_core_test_store.marker
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec

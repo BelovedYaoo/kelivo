@@ -5,6 +5,8 @@ import 'package:hooks/hooks.dart';
 
 const _assetName = 'kelivo_secure_core_bindings_generated.dart';
 const _minimumIOSVersion = 14;
+const _testStoreMarkerKey = 'test_store_marker';
+const _testStoreMarkerContents = 'kelivo-secure-core-test-store-v1';
 
 void main(List<String> arguments) async {
   await build(arguments, (input, output) async {
@@ -18,6 +20,7 @@ void main(List<String> arguments) async {
     }
 
     final target = _resolveTarget(code);
+    final testStoreSupport = await _testStoreSupportEnabled(input, output);
     final nativeRoot = input.packageRoot.resolve('native/');
     final protocolRoot = input.packageRoot.resolve('protocol/');
     final dependencies = _nativeDependencies(nativeRoot, protocolRoot);
@@ -32,6 +35,7 @@ void main(List<String> arguments) async {
       'build',
       '--locked',
       '--release',
+      if (testStoreSupport) ...['--features', 'test-store-support'],
       '--target',
       target.rustTriple,
       '--target-dir',
@@ -78,6 +82,30 @@ void main(List<String> arguments) async {
       ),
     );
   });
+}
+
+Future<bool> _testStoreSupportEnabled(
+  BuildInput input,
+  BuildOutputBuilder output,
+) async {
+  final marker = input.userDefines.path(_testStoreMarkerKey);
+  if (marker == null) {
+    return false;
+  }
+  output.dependencies.add(marker);
+  final markerFile = File.fromUri(marker);
+  if (!await markerFile.exists()) {
+    return false;
+  }
+  final contents = await markerFile.readAsString();
+  if (contents != _testStoreMarkerContents) {
+    throw BuildError(message: 'Kelivo 安全核心测试存储标记无效。');
+  }
+  // Flutter 仅在 debug 模式关闭 native-assets linking；profile/release 必须硬失败。
+  if (input.config.linkingEnabled) {
+    throw BuildError(message: 'Kelivo 安全核心测试存储禁止用于 profile/release 构建。');
+  }
+  return true;
 }
 
 _CargoTarget _resolveTarget(CodeConfig code) {
