@@ -47,6 +47,10 @@ use windows as platform;
 mod android;
 #[cfg(target_os = "android")]
 use android as platform;
+#[cfg(target_os = "ios")]
+mod ios;
+#[cfg(target_os = "ios")]
+use ios as platform;
 
 const ABI_VERSION: u32 = 13;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
@@ -80,26 +84,26 @@ const OPAQUE_CREDENTIAL_RESPONSE_SIZE: usize =
     kelivo_secure_core_protocol::CREDENTIAL_RESPONSE_LENGTH;
 const OPAQUE_CREDENTIAL_FINALIZATION_SIZE: usize =
     kelivo_secure_core_protocol::CREDENTIAL_FINALIZATION_LENGTH;
-#[cfg(any(target_os = "android", target_os = "windows"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))]
 const KEY_SLOTS_CAPABILITY: u64 = 1 << 0;
-#[cfg(any(target_os = "android", target_os = "windows"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))]
 const BACKGROUND_ACCESS_CAPABILITY: u64 = 1 << 1;
-#[cfg(any(target_os = "android", target_os = "windows"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))]
 const RECORD_ENVELOPES_CAPABILITY: u64 = 1 << 2;
-#[cfg(any(target_os = "android", target_os = "windows"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))]
 const SQLCIPHER_KEY_APPLICATION_CAPABILITY: u64 = 1 << 3;
-#[cfg(any(target_os = "android", target_os = "windows"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))]
 const SQLCIPHER_DATABASE_ATTACH_CAPABILITY: u64 = 1 << 4;
 const OPAQUE_CLIENT_CAPABILITY: u64 = 1 << 5;
 const DEVICE_E2EE_CORE_CAPABILITY: u64 = 1 << 6;
 const ATTACHMENT_CRYPTO_CAPABILITY: u64 = 1 << 7;
 const ACCOUNT_TRUST_SIGNING_CAPABILITY: u64 = 1 << 8;
-#[cfg(any(target_os = "android", target_os = "windows"))]
+#[cfg(any(target_os = "android", target_os = "ios", target_os = "windows"))]
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
 type LocalKey = Zeroizing<Box<[u8]>>;
 
-#[cfg(not(any(target_os = "android", target_os = "windows")))]
+#[cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))]
 mod platform {
     use super::{KelivoStatus, LocalKey};
 
@@ -398,7 +402,11 @@ pub unsafe extern "C" fn kelivo_core_get_capabilities(
         abi_version: ABI_VERSION,
         flags: platform::CAPABILITY_FLAGS
             | OPAQUE_CLIENT_CAPABILITY
-            | if cfg!(any(target_os = "android", target_os = "windows")) {
+            | if cfg!(any(
+                target_os = "android",
+                target_os = "ios",
+                target_os = "windows"
+            )) {
                 DEVICE_E2EE_CORE_CAPABILITY
                     | ATTACHMENT_CRYPTO_CAPABILITY
                     | ACCOUNT_TRUST_SIGNING_CAPABILITY
@@ -971,7 +979,9 @@ pub unsafe extern "C" fn kelivo_account_record_open(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use core::{ffi::c_char, ptr, slice};
+    use core::ptr;
+    #[cfg(target_os = "windows")]
+    use core::{ffi::c_char, slice};
     use kelivo_secure_core_protocol::device_crypto as crypto;
 
     fn empty_capabilities() -> KelivoCoreCapabilities {
@@ -1048,7 +1058,11 @@ mod tests {
             output.flags,
             platform::CAPABILITY_FLAGS
                 | OPAQUE_CLIENT_CAPABILITY
-                | if cfg!(any(target_os = "android", target_os = "windows")) {
+                | if cfg!(any(
+                    target_os = "android",
+                    target_os = "ios",
+                    target_os = "windows"
+                )) {
                     DEVICE_E2EE_CORE_CAPABILITY
                         | ATTACHMENT_CRYPTO_CAPABILITY
                         | ACCOUNT_TRUST_SIGNING_CAPABILITY
@@ -1074,6 +1088,31 @@ mod tests {
             KelivoStatus::Ok.code()
         );
         assert_eq!(output.secure_storage_backend, 1);
+        assert_eq!(
+            output.flags,
+            KEY_SLOTS_CAPABILITY
+                | BACKGROUND_ACCESS_CAPABILITY
+                | RECORD_ENVELOPES_CAPABILITY
+                | SQLCIPHER_KEY_APPLICATION_CAPABILITY
+                | SQLCIPHER_DATABASE_ATTACH_CAPABILITY
+                | OPAQUE_CLIENT_CAPABILITY
+                | DEVICE_E2EE_CORE_CAPABILITY
+                | ATTACHMENT_CRYPTO_CAPABILITY
+                | ACCOUNT_TRUST_SIGNING_CAPABILITY
+        );
+    }
+
+    #[cfg(target_os = "ios")]
+    #[test]
+    fn ios_capabilities_require_keychain_backend() {
+        let mut output = empty_capabilities();
+        assert_eq!(
+            unsafe {
+                kelivo_core_get_capabilities(&mut output, size_of::<KelivoCoreCapabilities>())
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(output.secure_storage_backend, 4);
         assert_eq!(
             output.flags,
             KEY_SLOTS_CAPABILITY
