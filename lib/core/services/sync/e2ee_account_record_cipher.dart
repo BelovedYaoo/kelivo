@@ -120,10 +120,14 @@ final class E2eeAccountRecordCipher {
     required int currentKeyEpoch,
   }) {
     _requirePositiveUint32(currentKeyEpoch, 'currentKeyEpoch');
+    final canonicalUserId = _parseCanonicalUuidV4(userId, 'userId');
+    if (!_sameBytes(accountRootKey.userId, canonicalUserId)) {
+      throw FormatException('账户根密钥句柄与 userId 不匹配');
+    }
     return E2eeAccountRecordCipher._(
       secureCore: secureCore,
       accountRootKey: accountRootKey,
-      userId: _parseCanonicalUuidV4(userId, 'userId'),
+      userId: canonicalUserId,
       currentKeyEpoch: currentKeyEpoch,
     );
   }
@@ -145,7 +149,10 @@ final class E2eeAccountRecordCipher {
     _requireOpen();
     final encodedKey = _encodeEntityKey(entityKey);
     try {
-      return await _deriveRecordId(encodedKey.canonicalBytes);
+      return await _deriveRecordId(
+        encodedKey.canonicalBytes,
+        keyEpoch: currentKeyEpoch,
+      );
     } finally {
       encodedKey.clear();
     }
@@ -178,7 +185,10 @@ final class E2eeAccountRecordCipher {
       frame = frameValue;
       final associatedDataValue = _buildAssociatedData(_userId);
       associatedData = associatedDataValue;
-      final recordId = await _deriveRecordId(encodedKey.canonicalBytes);
+      final recordId = await _deriveRecordId(
+        encodedKey.canonicalBytes,
+        keyEpoch: currentKeyEpoch,
+      );
       final ciphertextValue = await _secureCore.sealAccountRecord(
         _accountRootKey,
         recordId: recordId._bytes,
@@ -285,7 +295,10 @@ final class E2eeAccountRecordCipher {
       plaintext = plaintextValue;
       final decodedFrame = _decodeRecordFrame(plaintextValue);
       encodedKey = _encodeEntityKey(decodedFrame.entityKey);
-      final expectedRecordId = await _deriveRecordId(encodedKey.canonicalBytes);
+      final expectedRecordId = await _deriveRecordId(
+        encodedKey.canonicalBytes,
+        keyEpoch: record.keyEpoch,
+      );
       if (!_sameBytes(expectedRecordId._bytes, record.recordId._bytes)) {
         throw const FormatException('账户记录标识与密文实体键不匹配');
       }
@@ -331,10 +344,12 @@ final class E2eeAccountRecordCipher {
   }
 
   Future<E2eeAccountRecordId> _deriveRecordId(
-    Uint8List canonicalEntityKey,
-  ) async {
+    Uint8List canonicalEntityKey, {
+    required int keyEpoch,
+  }) async {
     final bytes = await _secureCore.deriveAccountRecordId(
       _accountRootKey,
+      keyEpoch: keyEpoch,
       canonicalEntityKey: canonicalEntityKey,
     );
     _requireUuidV4Bytes(bytes, 'derivedRecordId');
@@ -346,6 +361,15 @@ final class E2eeAccountRecordCipher {
       throw StateError('账户记录加密器已经关闭');
     }
   }
+}
+
+bool _sameBytes(Uint8List left, Uint8List right) {
+  if (left.length != right.length) return false;
+  var difference = 0;
+  for (var index = 0; index < left.length; index++) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference == 0;
 }
 
 final class _AuthenticatedRecordDecode<T> {
@@ -576,15 +600,6 @@ bool _rangeEquals(Uint8List value, int offset, Uint8List expected) {
   var difference = 0;
   for (var index = 0; index < expected.length; index++) {
     difference |= value[offset + index] ^ expected[index];
-  }
-  return difference == 0;
-}
-
-bool _sameBytes(Uint8List left, Uint8List right) {
-  if (left.length != right.length) return false;
-  var difference = 0;
-  for (var index = 0; index < left.length; index++) {
-    difference |= left[index] ^ right[index];
   }
   return difference == 0;
 }

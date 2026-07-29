@@ -13730,6 +13730,595 @@ class E2eeSyncPullCheckpointRowsCompanion
   }
 }
 
+class $E2eeVerifiedMembershipAnchorRowsTable
+    extends E2eeVerifiedMembershipAnchorRows
+    with
+        TableInfo<
+          $E2eeVerifiedMembershipAnchorRowsTable,
+          E2eeVerifiedMembershipAnchorRow
+        > {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeVerifiedMembershipAnchorRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _accountUserIdMeta = const VerificationMeta(
+    'accountUserId',
+  );
+  @override
+  late final GeneratedColumn<String> accountUserId = GeneratedColumn<String>(
+    'account_user_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _membershipManifestMeta =
+      const VerificationMeta('membershipManifest');
+  @override
+  late final GeneratedColumn<Uint8List> membershipManifest =
+      GeneratedColumn<Uint8List>(
+        'membership_manifest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _membershipManifestDigestMeta =
+      const VerificationMeta('membershipManifestDigest');
+  @override
+  late final GeneratedColumn<Uint8List> membershipManifestDigest =
+      GeneratedColumn<Uint8List>(
+        'membership_manifest_digest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _securityGenerationMeta =
+      const VerificationMeta('securityGeneration');
+  @override
+  late final GeneratedColumn<int> securityGeneration = GeneratedColumn<int>(
+    'security_generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _keyEpochMeta = const VerificationMeta(
+    'keyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> keyEpoch = GeneratedColumn<int>(
+    'key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _transitionVersionMeta = const VerificationMeta(
+    'transitionVersion',
+  );
+  @override
+  late final GeneratedColumn<int> transitionVersion = GeneratedColumn<int>(
+    'transition_version',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
+      GeneratedColumn<int>(
+        'created_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeVerifiedMembershipAnchorRowsTable.$convertercreatedAt,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeVerifiedMembershipAnchorRowsTable.$converterupdatedAt,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    accountUserId,
+    membershipManifest,
+    membershipManifestDigest,
+    securityGeneration,
+    keyEpoch,
+    transitionVersion,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_verified_membership_anchor_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeVerifiedMembershipAnchorRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('account_user_id')) {
+      context.handle(
+        _accountUserIdMeta,
+        accountUserId.isAcceptableOrUnknown(
+          data['account_user_id']!,
+          _accountUserIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_accountUserIdMeta);
+    }
+    if (data.containsKey('membership_manifest')) {
+      context.handle(
+        _membershipManifestMeta,
+        membershipManifest.isAcceptableOrUnknown(
+          data['membership_manifest']!,
+          _membershipManifestMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_membershipManifestMeta);
+    }
+    if (data.containsKey('membership_manifest_digest')) {
+      context.handle(
+        _membershipManifestDigestMeta,
+        membershipManifestDigest.isAcceptableOrUnknown(
+          data['membership_manifest_digest']!,
+          _membershipManifestDigestMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_membershipManifestDigestMeta);
+    }
+    if (data.containsKey('security_generation')) {
+      context.handle(
+        _securityGenerationMeta,
+        securityGeneration.isAcceptableOrUnknown(
+          data['security_generation']!,
+          _securityGenerationMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_securityGenerationMeta);
+    }
+    if (data.containsKey('key_epoch')) {
+      context.handle(
+        _keyEpochMeta,
+        keyEpoch.isAcceptableOrUnknown(data['key_epoch']!, _keyEpochMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_keyEpochMeta);
+    }
+    if (data.containsKey('transition_version')) {
+      context.handle(
+        _transitionVersionMeta,
+        transitionVersion.isAcceptableOrUnknown(
+          data['transition_version']!,
+          _transitionVersionMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_transitionVersionMeta);
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {accountUserId};
+  @override
+  E2eeVerifiedMembershipAnchorRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeVerifiedMembershipAnchorRow(
+      accountUserId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}account_user_id'],
+      )!,
+      membershipManifest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}membership_manifest'],
+      )!,
+      membershipManifestDigest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}membership_manifest_digest'],
+      )!,
+      securityGeneration: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}security_generation'],
+      )!,
+      keyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}key_epoch'],
+      )!,
+      transitionVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}transition_version'],
+      )!,
+      createdAt: $E2eeVerifiedMembershipAnchorRowsTable.$convertercreatedAt
+          .fromSql(
+            attachedDatabase.typeMapping.read(
+              DriftSqlType.int,
+              data['${effectivePrefix}created_at'],
+            )!,
+          ),
+      updatedAt: $E2eeVerifiedMembershipAnchorRowsTable.$converterupdatedAt
+          .fromSql(
+            attachedDatabase.typeMapping.read(
+              DriftSqlType.int,
+              data['${effectivePrefix}updated_at'],
+            )!,
+          ),
+    );
+  }
+
+  @override
+  $E2eeVerifiedMembershipAnchorRowsTable createAlias(String alias) {
+    return $E2eeVerifiedMembershipAnchorRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $convertercreatedAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeVerifiedMembershipAnchorRow extends DataClass
+    implements Insertable<E2eeVerifiedMembershipAnchorRow> {
+  final String accountUserId;
+  final Uint8List membershipManifest;
+  final Uint8List membershipManifestDigest;
+  final int securityGeneration;
+  final int keyEpoch;
+  final int transitionVersion;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const E2eeVerifiedMembershipAnchorRow({
+    required this.accountUserId,
+    required this.membershipManifest,
+    required this.membershipManifestDigest,
+    required this.securityGeneration,
+    required this.keyEpoch,
+    required this.transitionVersion,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['account_user_id'] = Variable<String>(accountUserId);
+    map['membership_manifest'] = Variable<Uint8List>(membershipManifest);
+    map['membership_manifest_digest'] = Variable<Uint8List>(
+      membershipManifestDigest,
+    );
+    map['security_generation'] = Variable<int>(securityGeneration);
+    map['key_epoch'] = Variable<int>(keyEpoch);
+    map['transition_version'] = Variable<int>(transitionVersion);
+    {
+      map['created_at'] = Variable<int>(
+        $E2eeVerifiedMembershipAnchorRowsTable.$convertercreatedAt.toSql(
+          createdAt,
+        ),
+      );
+    }
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeVerifiedMembershipAnchorRowsTable.$converterupdatedAt.toSql(
+          updatedAt,
+        ),
+      );
+    }
+    return map;
+  }
+
+  E2eeVerifiedMembershipAnchorRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeVerifiedMembershipAnchorRowsCompanion(
+      accountUserId: Value(accountUserId),
+      membershipManifest: Value(membershipManifest),
+      membershipManifestDigest: Value(membershipManifestDigest),
+      securityGeneration: Value(securityGeneration),
+      keyEpoch: Value(keyEpoch),
+      transitionVersion: Value(transitionVersion),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeVerifiedMembershipAnchorRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeVerifiedMembershipAnchorRow(
+      accountUserId: serializer.fromJson<String>(json['accountUserId']),
+      membershipManifest: serializer.fromJson<Uint8List>(
+        json['membershipManifest'],
+      ),
+      membershipManifestDigest: serializer.fromJson<Uint8List>(
+        json['membershipManifestDigest'],
+      ),
+      securityGeneration: serializer.fromJson<int>(json['securityGeneration']),
+      keyEpoch: serializer.fromJson<int>(json['keyEpoch']),
+      transitionVersion: serializer.fromJson<int>(json['transitionVersion']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'accountUserId': serializer.toJson<String>(accountUserId),
+      'membershipManifest': serializer.toJson<Uint8List>(membershipManifest),
+      'membershipManifestDigest': serializer.toJson<Uint8List>(
+        membershipManifestDigest,
+      ),
+      'securityGeneration': serializer.toJson<int>(securityGeneration),
+      'keyEpoch': serializer.toJson<int>(keyEpoch),
+      'transitionVersion': serializer.toJson<int>(transitionVersion),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeVerifiedMembershipAnchorRow copyWith({
+    String? accountUserId,
+    Uint8List? membershipManifest,
+    Uint8List? membershipManifestDigest,
+    int? securityGeneration,
+    int? keyEpoch,
+    int? transitionVersion,
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => E2eeVerifiedMembershipAnchorRow(
+    accountUserId: accountUserId ?? this.accountUserId,
+    membershipManifest: membershipManifest ?? this.membershipManifest,
+    membershipManifestDigest:
+        membershipManifestDigest ?? this.membershipManifestDigest,
+    securityGeneration: securityGeneration ?? this.securityGeneration,
+    keyEpoch: keyEpoch ?? this.keyEpoch,
+    transitionVersion: transitionVersion ?? this.transitionVersion,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeVerifiedMembershipAnchorRow copyWithCompanion(
+    E2eeVerifiedMembershipAnchorRowsCompanion data,
+  ) {
+    return E2eeVerifiedMembershipAnchorRow(
+      accountUserId: data.accountUserId.present
+          ? data.accountUserId.value
+          : this.accountUserId,
+      membershipManifest: data.membershipManifest.present
+          ? data.membershipManifest.value
+          : this.membershipManifest,
+      membershipManifestDigest: data.membershipManifestDigest.present
+          ? data.membershipManifestDigest.value
+          : this.membershipManifestDigest,
+      securityGeneration: data.securityGeneration.present
+          ? data.securityGeneration.value
+          : this.securityGeneration,
+      keyEpoch: data.keyEpoch.present ? data.keyEpoch.value : this.keyEpoch,
+      transitionVersion: data.transitionVersion.present
+          ? data.transitionVersion.value
+          : this.transitionVersion,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeVerifiedMembershipAnchorRow(')
+          ..write('accountUserId: $accountUserId, ')
+          ..write('membershipManifest: $membershipManifest, ')
+          ..write('membershipManifestDigest: $membershipManifestDigest, ')
+          ..write('securityGeneration: $securityGeneration, ')
+          ..write('keyEpoch: $keyEpoch, ')
+          ..write('transitionVersion: $transitionVersion, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    accountUserId,
+    $driftBlobEquality.hash(membershipManifest),
+    $driftBlobEquality.hash(membershipManifestDigest),
+    securityGeneration,
+    keyEpoch,
+    transitionVersion,
+    createdAt,
+    updatedAt,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeVerifiedMembershipAnchorRow &&
+          other.accountUserId == this.accountUserId &&
+          $driftBlobEquality.equals(
+            other.membershipManifest,
+            this.membershipManifest,
+          ) &&
+          $driftBlobEquality.equals(
+            other.membershipManifestDigest,
+            this.membershipManifestDigest,
+          ) &&
+          other.securityGeneration == this.securityGeneration &&
+          other.keyEpoch == this.keyEpoch &&
+          other.transitionVersion == this.transitionVersion &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeVerifiedMembershipAnchorRowsCompanion
+    extends UpdateCompanion<E2eeVerifiedMembershipAnchorRow> {
+  final Value<String> accountUserId;
+  final Value<Uint8List> membershipManifest;
+  final Value<Uint8List> membershipManifestDigest;
+  final Value<int> securityGeneration;
+  final Value<int> keyEpoch;
+  final Value<int> transitionVersion;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  final Value<int> rowid;
+  const E2eeVerifiedMembershipAnchorRowsCompanion({
+    this.accountUserId = const Value.absent(),
+    this.membershipManifest = const Value.absent(),
+    this.membershipManifestDigest = const Value.absent(),
+    this.securityGeneration = const Value.absent(),
+    this.keyEpoch = const Value.absent(),
+    this.transitionVersion = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  E2eeVerifiedMembershipAnchorRowsCompanion.insert({
+    required String accountUserId,
+    required Uint8List membershipManifest,
+    required Uint8List membershipManifestDigest,
+    required int securityGeneration,
+    required int keyEpoch,
+    required int transitionVersion,
+    required DateTime createdAt,
+    required DateTime updatedAt,
+    this.rowid = const Value.absent(),
+  }) : accountUserId = Value(accountUserId),
+       membershipManifest = Value(membershipManifest),
+       membershipManifestDigest = Value(membershipManifestDigest),
+       securityGeneration = Value(securityGeneration),
+       keyEpoch = Value(keyEpoch),
+       transitionVersion = Value(transitionVersion),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeVerifiedMembershipAnchorRow> custom({
+    Expression<String>? accountUserId,
+    Expression<Uint8List>? membershipManifest,
+    Expression<Uint8List>? membershipManifestDigest,
+    Expression<int>? securityGeneration,
+    Expression<int>? keyEpoch,
+    Expression<int>? transitionVersion,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (accountUserId != null) 'account_user_id': accountUserId,
+      if (membershipManifest != null) 'membership_manifest': membershipManifest,
+      if (membershipManifestDigest != null)
+        'membership_manifest_digest': membershipManifestDigest,
+      if (securityGeneration != null) 'security_generation': securityGeneration,
+      if (keyEpoch != null) 'key_epoch': keyEpoch,
+      if (transitionVersion != null) 'transition_version': transitionVersion,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  E2eeVerifiedMembershipAnchorRowsCompanion copyWith({
+    Value<String>? accountUserId,
+    Value<Uint8List>? membershipManifest,
+    Value<Uint8List>? membershipManifestDigest,
+    Value<int>? securityGeneration,
+    Value<int>? keyEpoch,
+    Value<int>? transitionVersion,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+    Value<int>? rowid,
+  }) {
+    return E2eeVerifiedMembershipAnchorRowsCompanion(
+      accountUserId: accountUserId ?? this.accountUserId,
+      membershipManifest: membershipManifest ?? this.membershipManifest,
+      membershipManifestDigest:
+          membershipManifestDigest ?? this.membershipManifestDigest,
+      securityGeneration: securityGeneration ?? this.securityGeneration,
+      keyEpoch: keyEpoch ?? this.keyEpoch,
+      transitionVersion: transitionVersion ?? this.transitionVersion,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (accountUserId.present) {
+      map['account_user_id'] = Variable<String>(accountUserId.value);
+    }
+    if (membershipManifest.present) {
+      map['membership_manifest'] = Variable<Uint8List>(
+        membershipManifest.value,
+      );
+    }
+    if (membershipManifestDigest.present) {
+      map['membership_manifest_digest'] = Variable<Uint8List>(
+        membershipManifestDigest.value,
+      );
+    }
+    if (securityGeneration.present) {
+      map['security_generation'] = Variable<int>(securityGeneration.value);
+    }
+    if (keyEpoch.present) {
+      map['key_epoch'] = Variable<int>(keyEpoch.value);
+    }
+    if (transitionVersion.present) {
+      map['transition_version'] = Variable<int>(transitionVersion.value);
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(
+        $E2eeVerifiedMembershipAnchorRowsTable.$convertercreatedAt.toSql(
+          createdAt.value,
+        ),
+      );
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeVerifiedMembershipAnchorRowsTable.$converterupdatedAt.toSql(
+          updatedAt.value,
+        ),
+      );
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeVerifiedMembershipAnchorRowsCompanion(')
+          ..write('accountUserId: $accountUserId, ')
+          ..write('membershipManifest: $membershipManifest, ')
+          ..write('membershipManifestDigest: $membershipManifestDigest, ')
+          ..write('securityGeneration: $securityGeneration, ')
+          ..write('keyEpoch: $keyEpoch, ')
+          ..write('transitionVersion: $transitionVersion, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $E2eeConfigEntryRowsTable extends E2eeConfigEntryRows
     with TableInfo<$E2eeConfigEntryRowsTable, E2eeConfigEntryRow> {
   @override
@@ -17988,6 +18577,10 @@ abstract class _$AppDatabase extends GeneratedDatabase {
       $E2eeSyncRemoteRecordRowsTable(this);
   late final $E2eeSyncPullCheckpointRowsTable e2eeSyncPullCheckpointRows =
       $E2eeSyncPullCheckpointRowsTable(this);
+  late final $E2eeVerifiedMembershipAnchorRowsTable
+  e2eeVerifiedMembershipAnchorRows = $E2eeVerifiedMembershipAnchorRowsTable(
+    this,
+  );
   late final $E2eeConfigEntryRowsTable e2eeConfigEntryRows =
       $E2eeConfigEntryRowsTable(this);
   late final $E2eeAttachmentUploadRowsTable e2eeAttachmentUploadRows =
@@ -18122,6 +18715,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     e2eeSyncOutboxRows,
     e2eeSyncRemoteRecordRows,
     e2eeSyncPullCheckpointRows,
+    e2eeVerifiedMembershipAnchorRows,
     e2eeConfigEntryRows,
     e2eeAttachmentUploadRows,
     e2eeAttachmentDownloadRows,
@@ -28493,6 +29087,295 @@ typedef $$E2eeSyncPullCheckpointRowsTableProcessedTableManager =
       E2eeSyncPullCheckpointRow,
       PrefetchHooks Function()
     >;
+typedef $$E2eeVerifiedMembershipAnchorRowsTableCreateCompanionBuilder =
+    E2eeVerifiedMembershipAnchorRowsCompanion Function({
+      required String accountUserId,
+      required Uint8List membershipManifest,
+      required Uint8List membershipManifestDigest,
+      required int securityGeneration,
+      required int keyEpoch,
+      required int transitionVersion,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+      Value<int> rowid,
+    });
+typedef $$E2eeVerifiedMembershipAnchorRowsTableUpdateCompanionBuilder =
+    E2eeVerifiedMembershipAnchorRowsCompanion Function({
+      Value<String> accountUserId,
+      Value<Uint8List> membershipManifest,
+      Value<Uint8List> membershipManifestDigest,
+      Value<int> securityGeneration,
+      Value<int> keyEpoch,
+      Value<int> transitionVersion,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+      Value<int> rowid,
+    });
+
+class $$E2eeVerifiedMembershipAnchorRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeVerifiedMembershipAnchorRowsTable> {
+  $$E2eeVerifiedMembershipAnchorRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get membershipManifest => $composableBuilder(
+    column: $table.membershipManifest,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get membershipManifestDigest => $composableBuilder(
+    column: $table.membershipManifestDigest,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get securityGeneration => $composableBuilder(
+    column: $table.securityGeneration,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get keyEpoch => $composableBuilder(
+    column: $table.keyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get createdAt =>
+      $composableBuilder(
+        column: $table.createdAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeVerifiedMembershipAnchorRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeVerifiedMembershipAnchorRowsTable> {
+  $$E2eeVerifiedMembershipAnchorRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get membershipManifest => $composableBuilder(
+    column: $table.membershipManifest,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get membershipManifestDigest => $composableBuilder(
+    column: $table.membershipManifestDigest,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get securityGeneration => $composableBuilder(
+    column: $table.securityGeneration,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get keyEpoch => $composableBuilder(
+    column: $table.keyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeVerifiedMembershipAnchorRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeVerifiedMembershipAnchorRowsTable> {
+  $$E2eeVerifiedMembershipAnchorRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get accountUserId => $composableBuilder(
+    column: $table.accountUserId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<Uint8List> get membershipManifest => $composableBuilder(
+    column: $table.membershipManifest,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<Uint8List> get membershipManifestDigest => $composableBuilder(
+    column: $table.membershipManifestDigest,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get securityGeneration => $composableBuilder(
+    column: $table.securityGeneration,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get keyEpoch =>
+      $composableBuilder(column: $table.keyEpoch, builder: (column) => column);
+
+  GeneratedColumn<int> get transitionVersion => $composableBuilder(
+    column: $table.transitionVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeVerifiedMembershipAnchorRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeVerifiedMembershipAnchorRowsTable,
+          E2eeVerifiedMembershipAnchorRow,
+          $$E2eeVerifiedMembershipAnchorRowsTableFilterComposer,
+          $$E2eeVerifiedMembershipAnchorRowsTableOrderingComposer,
+          $$E2eeVerifiedMembershipAnchorRowsTableAnnotationComposer,
+          $$E2eeVerifiedMembershipAnchorRowsTableCreateCompanionBuilder,
+          $$E2eeVerifiedMembershipAnchorRowsTableUpdateCompanionBuilder,
+          (
+            E2eeVerifiedMembershipAnchorRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeVerifiedMembershipAnchorRowsTable,
+              E2eeVerifiedMembershipAnchorRow
+            >,
+          ),
+          E2eeVerifiedMembershipAnchorRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeVerifiedMembershipAnchorRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeVerifiedMembershipAnchorRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeVerifiedMembershipAnchorRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeVerifiedMembershipAnchorRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeVerifiedMembershipAnchorRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<String> accountUserId = const Value.absent(),
+                Value<Uint8List> membershipManifest = const Value.absent(),
+                Value<Uint8List> membershipManifestDigest =
+                    const Value.absent(),
+                Value<int> securityGeneration = const Value.absent(),
+                Value<int> keyEpoch = const Value.absent(),
+                Value<int> transitionVersion = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeVerifiedMembershipAnchorRowsCompanion(
+                accountUserId: accountUserId,
+                membershipManifest: membershipManifest,
+                membershipManifestDigest: membershipManifestDigest,
+                securityGeneration: securityGeneration,
+                keyEpoch: keyEpoch,
+                transitionVersion: transitionVersion,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String accountUserId,
+                required Uint8List membershipManifest,
+                required Uint8List membershipManifestDigest,
+                required int securityGeneration,
+                required int keyEpoch,
+                required int transitionVersion,
+                required DateTime createdAt,
+                required DateTime updatedAt,
+                Value<int> rowid = const Value.absent(),
+              }) => E2eeVerifiedMembershipAnchorRowsCompanion.insert(
+                accountUserId: accountUserId,
+                membershipManifest: membershipManifest,
+                membershipManifestDigest: membershipManifestDigest,
+                securityGeneration: securityGeneration,
+                keyEpoch: keyEpoch,
+                transitionVersion: transitionVersion,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeVerifiedMembershipAnchorRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeVerifiedMembershipAnchorRowsTable,
+      E2eeVerifiedMembershipAnchorRow,
+      $$E2eeVerifiedMembershipAnchorRowsTableFilterComposer,
+      $$E2eeVerifiedMembershipAnchorRowsTableOrderingComposer,
+      $$E2eeVerifiedMembershipAnchorRowsTableAnnotationComposer,
+      $$E2eeVerifiedMembershipAnchorRowsTableCreateCompanionBuilder,
+      $$E2eeVerifiedMembershipAnchorRowsTableUpdateCompanionBuilder,
+      (
+        E2eeVerifiedMembershipAnchorRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeVerifiedMembershipAnchorRowsTable,
+          E2eeVerifiedMembershipAnchorRow
+        >,
+      ),
+      E2eeVerifiedMembershipAnchorRow,
+      PrefetchHooks Function()
+    >;
 typedef $$E2eeConfigEntryRowsTableCreateCompanionBuilder =
     E2eeConfigEntryRowsCompanion Function({
       required String entityType,
@@ -30378,6 +31261,12 @@ class $AppDatabaseManager {
       $$E2eeSyncPullCheckpointRowsTableTableManager(
         _db,
         _db.e2eeSyncPullCheckpointRows,
+      );
+  $$E2eeVerifiedMembershipAnchorRowsTableTableManager
+  get e2eeVerifiedMembershipAnchorRows =>
+      $$E2eeVerifiedMembershipAnchorRowsTableTableManager(
+        _db,
+        _db.e2eeVerifiedMembershipAnchorRows,
       );
   $$E2eeConfigEntryRowsTableTableManager get e2eeConfigEntryRows =>
       $$E2eeConfigEntryRowsTableTableManager(_db, _db.e2eeConfigEntryRows);

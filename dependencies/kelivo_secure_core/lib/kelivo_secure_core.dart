@@ -12,9 +12,9 @@ import 'kelivo_secure_core_bindings_generated.dart' as native;
 part 'src/device_core.dart';
 part 'src/attachment_crypto.dart';
 
-const _expectedAbiVersion = 10;
-const _keySlotIdLength = 16;
-const _keyPolicyVersion = 1;
+const _expectedAbiVersion = native.KELIVO_CORE_ABI_VERSION;
+const _keySlotIdLength = native.KELIVO_KEY_SLOT_ID_SIZE;
+const _keyPolicyVersion = native.KELIVO_KEY_POLICY_VERSION;
 const _keySlotsCapability = 1 << 0;
 const _backgroundAccessCapability = 1 << 1;
 const _recordEnvelopesCapability = 1 << 2;
@@ -23,6 +23,7 @@ const _sqlCipherDatabaseAttachCapability = 1 << 4;
 const _opaqueClientCapability = 1 << 5;
 const _deviceE2eeCoreCapability = 1 << 6;
 const _attachmentCryptoCapability = 1 << 7;
+const _accountTrustSigningCapability = 1 << 8;
 const _secureStorageCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
@@ -33,7 +34,8 @@ const _knownCapabilityFlags =
     _secureStorageCapabilityFlags |
     _opaqueClientCapability |
     _deviceE2eeCoreCapability |
-    _attachmentCryptoCapability;
+    _attachmentCryptoCapability |
+    _accountTrustSigningCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
@@ -66,7 +68,8 @@ enum KelivoSecureStorageBackend {
   none(0),
   windowsDpapi(1),
   androidKeystore(2),
-  linuxSecretService(3);
+  linuxSecretService(3),
+  iosKeychain(4);
 
   const KelivoSecureStorageBackend(this.code);
 
@@ -120,6 +123,7 @@ enum KelivoSecureCoreStatus {
   invalidAttachmentDataKeyHandle(36),
   attachmentEnvelopeInvalid(37),
   attachmentAuthenticationFailed(38),
+  slotInUse(39),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);
@@ -146,6 +150,7 @@ final class KelivoCoreCapabilities {
     required this.supportsOpaqueClient,
     required this.supportsDeviceE2eeCore,
     required this.supportsAttachmentCrypto,
+    required this.supportsAccountTrustSigning,
   });
 
   final int abiVersion;
@@ -158,6 +163,7 @@ final class KelivoCoreCapabilities {
   final bool supportsOpaqueClient;
   final bool supportsDeviceE2eeCore;
   final bool supportsAttachmentCrypto;
+  final bool supportsAccountTrustSigning;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -420,6 +426,11 @@ final class KelivoSecureCore {
   Future<KelivoKeyHandle> openSlot(Uint8List slotId) {
     final copiedSlotId = Uint8List.fromList(slotId);
     return Isolate.run(() => _openKeySlot(copiedSlotId, create: false));
+  }
+
+  Future<void> deleteSlot(Uint8List slotId) {
+    final copiedSlotId = Uint8List.fromList(slotId);
+    return Isolate.run(() => _deleteKeySlot(copiedSlotId));
   }
 
   Future<Uint8List> sealRecord(
@@ -1061,6 +1072,10 @@ KelivoCoreCapabilities _readCapabilities() {
         capabilities.flags & _deviceE2eeCoreCapability == 0) {
       throw StateError('安全核心在缺少设备 E2EE 核心时声明了附件加密能力');
     }
+    if (capabilities.flags & _accountTrustSigningCapability != 0 &&
+        capabilities.flags & _deviceE2eeCoreCapability == 0) {
+      throw StateError('安全核心在缺少设备 E2EE 核心时声明了账户信任签名能力');
+    }
 
     return KelivoCoreCapabilities(
       abiVersion: capabilities.abi_version,
@@ -1079,6 +1094,8 @@ KelivoCoreCapabilities _readCapabilities() {
           capabilities.flags & _deviceE2eeCoreCapability != 0,
       supportsAttachmentCrypto:
           capabilities.flags & _attachmentCryptoCapability != 0,
+      supportsAccountTrustSigning:
+          capabilities.flags & _accountTrustSigningCapability != 0,
     );
   } finally {
     calloc.free(output);
@@ -1161,6 +1178,32 @@ KelivoKeyHandle _openKeySlot(Uint8List slotId, {required bool create}) {
     slotIdPointer.asTypedList(slotId.length).fillRange(0, slotId.length, 0);
     calloc.free(slotIdPointer);
     calloc.free(output);
+  }
+}
+
+void _deleteKeySlot(Uint8List slotId) {
+  if (slotId.length != _keySlotIdLength) {
+    throw ArgumentError.value(
+      slotId.length,
+      'slotId',
+      '槽位标识必须为 $_keySlotIdLength 字节',
+    );
+  }
+
+  final slotIdPointer = calloc<ffi.Uint8>(slotId.length);
+  try {
+    slotIdPointer.asTypedList(slotId.length).setAll(0, slotId);
+    _throwOnError(
+      operation: 'key_slot_delete',
+      statusCode: native.kelivo_key_slot_delete(
+        slotIdPointer,
+        slotId.length,
+        _keyPolicyVersion,
+      ),
+    );
+  } finally {
+    slotIdPointer.asTypedList(slotId.length).fillRange(0, slotId.length, 0);
+    calloc.free(slotIdPointer);
   }
 }
 

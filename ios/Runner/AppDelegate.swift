@@ -1,4 +1,5 @@
 import Flutter
+import workmanager_apple
 import UIKit
 import BackgroundTasks
 import UserNotifications
@@ -6,6 +7,7 @@ import ActivityKit
 
 private let backgroundRefreshIdentifier = "psyche.kelivo.background-generation.refresh"
 private let backgroundProcessingIdentifier = "psyche.kelivo.background-generation.processing"
+private let e2eeBackgroundSyncIdentifier = "psyche.kelivo.e2ee-sync.periodic"
 
 @main
 @objc class AppDelegate: FlutterAppDelegate {
@@ -16,6 +18,13 @@ private let backgroundProcessingIdentifier = "psyche.kelivo.background-generatio
     _ application: UIApplication,
     didFinishLaunchingWithOptions launchOptions: [UIApplication.LaunchOptionsKey: Any]?
   ) -> Bool {
+    WorkmanagerPlugin.setPluginRegistrantCallback { registry in
+      GeneratedPluginRegistrant.register(with: registry)
+    }
+    WorkmanagerPlugin.registerPeriodicTask(
+      withIdentifier: e2eeBackgroundSyncIdentifier,
+      frequency: NSNumber(value: 15 * 60)
+    )
     GeneratedPluginRegistrant.register(with: self)
     backgroundGenerationHandler.registerBackgroundTasks()
     if let controller = window?.rootViewController as? FlutterViewController {

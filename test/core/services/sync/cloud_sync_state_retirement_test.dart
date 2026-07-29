@@ -379,13 +379,17 @@ void main() {
     addTearDown(() => core.closeDeviceIdentity(identity));
 
     KelivoAccountRootKeyHandle? sourceArk = await core.generateAccountRootKey(
+      userId: _rawStateUuid(_stateTestUserId),
       keyEpoch: 6,
     );
     addTearDown(() async {
       final handle = sourceArk;
       if (handle != null) await core.closeAccountRootKey(handle);
     });
-    final epoch7Source = await core.generateAccountRootKey(keyEpoch: 7);
+    final epoch7Source = await core.generateAccountRootKey(
+      userId: _rawStateUuid(_stateTestUserId),
+      keyEpoch: 7,
+    );
     try {
       await core.addAccountRootKeyEpoch(sourceArk, source: epoch7Source);
     } finally {
@@ -719,7 +723,10 @@ void main() {
     const core = KelivoSecureCore();
     final rawCipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
-      accountRootKey: await core.generateAccountRootKey(keyEpoch: 7),
+      accountRootKey: await core.generateAccountRootKey(
+        userId: _rawStateUuid(_stateTestUserId),
+        keyEpoch: 7,
+      ),
       userId: _stateTestUserId,
       currentKeyEpoch: 7,
     );
@@ -791,7 +798,10 @@ Future<E2eeAccountRecordStateCodec> _createStateCodec() async {
   return E2eeAccountRecordStateCodec.takeOwnership(
     E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
-      accountRootKey: await core.generateAccountRootKey(keyEpoch: 7),
+      accountRootKey: await core.generateAccountRootKey(
+        userId: _rawStateUuid(_stateTestUserId),
+        keyEpoch: 7,
+      ),
       userId: _stateTestUserId,
       currentKeyEpoch: 7,
     ),

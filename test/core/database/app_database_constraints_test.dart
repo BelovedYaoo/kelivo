@@ -8,6 +8,7 @@ import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/e2ee_sync_record_ledger.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
@@ -483,7 +484,10 @@ void main() {
     stateCodec = E2eeAccountRecordStateCodec.takeOwnership(
       E2eeAccountRecordCipher.takeOwnership(
         secureCore: secureCore,
-        accountRootKey: await secureCore.generateAccountRootKey(keyEpoch: 7),
+        accountRootKey: await secureCore.generateAccountRootKey(
+          userId: Uuid.parseAsByteList(_ledgerUserId),
+          keyEpoch: 7,
+        ),
         userId: _ledgerUserId,
         currentKeyEpoch: 7,
       ),
@@ -503,6 +507,86 @@ void main() {
     await repository.close();
     await directory.delete(recursive: true);
   });
+
+  Future<
+    ({
+      KelivoAccountRootKeyHandle ark,
+      E2eeVerifiedMembership initialized,
+      E2eeVerifiedMembership paired,
+      E2eeVerifiedMembership revoked,
+    })
+  >
+  createMembershipChain() async {
+    const secureCore = KelivoSecureCore();
+    const manifestModule = E2eeAccountTrustManifestModule();
+    final ark = await secureCore.generateAccountRootKey(
+      userId: Uuid.parseAsByteList(_syncAccountUserId),
+      keyEpoch: 1,
+    );
+    try {
+      final issuer = await _newDatabaseMembershipDevice(
+        secureCore,
+        deviceId: _syncActorDeviceId,
+        authGeneration: 0,
+      );
+      final subject = await _newDatabaseMembershipDevice(
+        secureCore,
+        deviceId: _syncUuid(101),
+        authGeneration: 1,
+      );
+      final recoveryPublicKey = await _newDatabaseRecoveryPublicKey(secureCore);
+      final initialized = await manifestModule.create(
+        ark: ark,
+        change: E2eeInitializeMembershipChange(
+          userId: _syncAccountUserId,
+          operationId: _syncOperationId,
+          member: issuer,
+          recoveryPublicKeyVersion: 1,
+          recoveryPublicKey: recoveryPublicKey,
+          recoveryCapsuleVersion: 1,
+          recoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x41),
+        ),
+      );
+      final paired = await manifestModule.create(
+        ark: ark,
+        change: E2eeAddDeviceMembershipChange(
+          previous: initialized,
+          pairingId: _syncUuid(102),
+          issuerDeviceId: issuer.deviceId,
+          subject: subject,
+        ),
+      );
+      final epoch2 = await secureCore.generateAccountRootKey(
+        userId: Uuid.parseAsByteList(_syncAccountUserId),
+        keyEpoch: 2,
+      );
+      try {
+        await secureCore.addAccountRootKeyEpoch(ark, source: epoch2);
+      } finally {
+        await secureCore.closeAccountRootKey(epoch2);
+      }
+      final revoked = await manifestModule.create(
+        ark: ark,
+        change: E2eeRevokeRotateMembershipChange(
+          previous: paired,
+          operationId: _syncUuid(105),
+          issuerDeviceId: issuer.deviceId,
+          revokedDeviceId: subject.deviceId,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x42),
+        ),
+      );
+      return (
+        ark: ark,
+        initialized: initialized,
+        paired: paired,
+        revoked: revoked,
+      );
+    } catch (_) {
+      await secureCore.closeAccountRootKey(ark);
+      rethrow;
+    }
+  }
 
   Future<E2eeAuthenticatedAccountRecordState> createAuthenticatedState({
     SyncEntityKey entityKey = _ledgerEntityKey,
@@ -1040,6 +1124,375 @@ void main() {
               ),
             ),
         throwsRemoteSqliteException(),
+      );
+    });
+  });
+
+  group('E2EE verified membership anchor schema', () {
+    Future<void> insertAnchor({
+      String accountUserId = _syncAccountUserId,
+      int manifestLength = 444,
+      int digestLength = 32,
+      int securityGeneration = 1,
+      int keyEpoch = 1,
+      int transitionVersion = 1,
+      DateTime? createdAt,
+      DateTime? updatedAt,
+    }) {
+      final created = createdAt ?? DateTime.utc(2026, 7, 29);
+      return database
+          .into(database.e2eeVerifiedMembershipAnchorRows)
+          .insert(
+            E2eeVerifiedMembershipAnchorRowsCompanion.insert(
+              accountUserId: accountUserId,
+              membershipManifest: Uint8List(manifestLength),
+              membershipManifestDigest: Uint8List(digestLength),
+              securityGeneration: securityGeneration,
+              keyEpoch: keyEpoch,
+              transitionVersion: transitionVersion,
+              createdAt: created,
+              updatedAt: updatedAt ?? created,
+            ),
+          );
+    }
+
+    test('接受规范大小与整数边界', () async {
+      await insertAnchor();
+      await insertAnchor(
+        accountUserId: _syncUuid(250),
+        manifestLength: 22884,
+        securityGeneration: 2147483647,
+        keyEpoch: 4294967295,
+        transitionVersion: 9223372036854775807,
+      );
+
+      expect(
+        await database.select(database.e2eeVerifiedMembershipAnchorRows).get(),
+        hasLength(2),
+      );
+    });
+
+    test('拒绝非法身份、字节长度、整数和时间关系', () async {
+      final createdAt = DateTime.utc(2026, 7, 29);
+      final invalidWrites = <Future<void> Function()>[
+        () => insertAnchor(
+          accountUserId: _syncAccountUserId.replaceFirst('-4000-', '-5000-'),
+        ),
+        () => insertAnchor(manifestLength: 356),
+        () => insertAnchor(manifestLength: 443),
+        () => insertAnchor(manifestLength: 445),
+        () => insertAnchor(manifestLength: 22885),
+        () => insertAnchor(digestLength: 31),
+        () => insertAnchor(digestLength: 33),
+        () => insertAnchor(securityGeneration: 0),
+        () => insertAnchor(securityGeneration: 2147483648),
+        () => insertAnchor(keyEpoch: 0),
+        () => insertAnchor(keyEpoch: 4294967296),
+        () => insertAnchor(transitionVersion: 0),
+        () => insertAnchor(
+          createdAt: createdAt,
+          updatedAt: createdAt.subtract(const Duration(microseconds: 1)),
+        ),
+      ];
+      for (final write in invalidWrites) {
+        await expectLater(write(), throwsRemoteSqliteException());
+      }
+    });
+
+    test('每个账户只允许一个锚点', () async {
+      await insertAnchor();
+      await expectLater(insertAnchor(), throwsRemoteSqliteException());
+    });
+  });
+
+  group('E2EE verified membership anchor commands', () {
+    test('已验证清单安装、重启验签、推进与响应丢失重放闭环', () async {
+      const secureCore = KelivoSecureCore();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+      var commands = repository.e2eeVerifiedMembershipAnchorCommands;
+      final installed = await commands.install(
+        membership: chain.initialized,
+        now: DateTime.utc(2026, 7, 29),
+      );
+      expect(installed.transitionVersion, 1);
+      final installedReplay = await commands.install(
+        membership: chain.initialized,
+        now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+      );
+      expect(installedReplay.transitionVersion, 1);
+      expect(installedReplay.createdAt, installed.createdAt);
+      expect(installedReplay.updatedAt, installed.updatedAt);
+
+      await repository.close();
+      database = AppDatabase.open(
+        file: File('${directory.path}/constraints.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      await database.customSelect('SELECT 1;').getSingle();
+      repository = ChatDatabaseRepository(
+        database,
+        databaseCipher: testDatabaseCipher,
+      );
+      commands = repository.e2eeVerifiedMembershipAnchorCommands;
+
+      final reopened = await commands.readVerified(
+        accountUserId: _syncAccountUserId,
+        ark: chain.ark,
+      );
+      expect(reopened, isA<E2eeLocallyVerifiedMembershipAnchor>());
+      expect(
+        reopened!.membership.digest,
+        orderedEquals(chain.initialized.digest),
+      );
+      expect(reopened.transitionVersion, 1);
+
+      final advanced = await commands.advance(
+        expected: reopened,
+        next: chain.paired,
+        now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+      );
+      expect(advanced.membership.digest, orderedEquals(chain.paired.digest));
+      expect(advanced.transitionVersion, 2);
+
+      final replayed = await commands.advance(
+        expected: reopened,
+        next: chain.paired,
+        now: DateTime.utc(2026, 7, 29, 0, 0, 2),
+      );
+      expect(replayed.transitionVersion, 2);
+      expect(replayed.updatedAt, advanced.updatedAt);
+
+      final revoked = await commands.advance(
+        expected: advanced,
+        next: chain.revoked,
+        now: DateTime.utc(2026, 7, 29, 0, 0, 3),
+      );
+      expect(revoked.membership.keyEpoch, 2);
+      expect(revoked.membership.digest, orderedEquals(chain.revoked.digest));
+      expect(revoked.transitionVersion, 3);
+
+      await repository.close();
+      database = AppDatabase.open(
+        file: File('${directory.path}/constraints.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      await database.customSelect('SELECT 1;').getSingle();
+      repository = ChatDatabaseRepository(
+        database,
+        databaseCipher: testDatabaseCipher,
+      );
+      final reopenedRevoked = await repository
+          .e2eeVerifiedMembershipAnchorCommands
+          .readVerified(accountUserId: _syncAccountUserId, ark: chain.ark);
+      expect(reopenedRevoked!.transitionVersion, 3);
+      expect(
+        reopenedRevoked.membership.digest,
+        orderedEquals(chain.revoked.digest),
+      );
+    });
+
+    test('现有锚点拒绝覆盖、非后继与陈旧分叉', () async {
+      const secureCore = KelivoSecureCore();
+      const manifestModule = E2eeAccountTrustManifestModule();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+      final commands = repository.e2eeVerifiedMembershipAnchorCommands;
+      final installed = await commands.install(
+        membership: chain.initialized,
+        now: DateTime.utc(2026, 7, 29),
+      );
+
+      await expectLater(
+        commands.install(
+          membership: chain.paired,
+          now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+        ),
+        throwsA(isA<E2eeVerifiedMembershipAnchorConflict>()),
+      );
+      expect(
+        () => commands.advance(
+          expected: installed,
+          next: chain.initialized,
+          now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+        ),
+        throwsFormatException,
+      );
+
+      await commands.advance(
+        expected: installed,
+        next: chain.paired,
+        now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+      );
+      final alternativeSubject = await _newDatabaseMembershipDevice(
+        secureCore,
+        deviceId: _syncUuid(103),
+        authGeneration: 1,
+      );
+      final alternative = await manifestModule.create(
+        ark: chain.ark,
+        change: E2eeAddDeviceMembershipChange(
+          previous: chain.initialized,
+          pairingId: _syncUuid(104),
+          issuerDeviceId: _syncActorDeviceId,
+          subject: alternativeSubject,
+        ),
+      );
+      await expectLater(
+        commands.advance(
+          expected: installed,
+          next: alternative,
+          now: DateTime.utc(2026, 7, 29, 0, 0, 2),
+        ),
+        throwsA(isA<E2eeVerifiedMembershipAnchorStale>()),
+      );
+    });
+
+    test('双连接安装与相同推进精确幂等且能力不可跨连接', () async {
+      const secureCore = KelivoSecureCore();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+      final secondDatabase = AppDatabase.open(
+        file: File('${directory.path}/constraints.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      await secondDatabase.customSelect('SELECT 1;').getSingle();
+      final secondRepository = ChatDatabaseRepository(
+        secondDatabase,
+        databaseCipher: testDatabaseCipher,
+      );
+      try {
+        final firstCommands = repository.e2eeVerifiedMembershipAnchorCommands;
+        final secondCommands =
+            secondRepository.e2eeVerifiedMembershipAnchorCommands;
+        final installed =
+            await Future.wait(<Future<E2eeLocallyVerifiedMembershipAnchor>>[
+              firstCommands.install(
+                membership: chain.initialized,
+                now: DateTime.utc(2026, 7, 29),
+              ),
+              secondCommands.install(
+                membership: chain.initialized,
+                now: DateTime.utc(2026, 7, 29),
+              ),
+            ]);
+        expect(
+          installed.map((anchor) => anchor.transitionVersion),
+          everyElement(1),
+        );
+        expect(
+          () => secondCommands.advance(
+            expected: installed.first,
+            next: chain.paired,
+            now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+          ),
+          throwsA(isA<E2eeVerifiedMembershipAnchorStale>()),
+        );
+
+        final secondExpected = await secondCommands.readVerified(
+          accountUserId: _syncAccountUserId,
+          ark: chain.ark,
+        );
+        final advanced =
+            await Future.wait(<Future<E2eeLocallyVerifiedMembershipAnchor>>[
+              firstCommands.advance(
+                expected: installed.first,
+                next: chain.paired,
+                now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+              ),
+              secondCommands.advance(
+                expected: secondExpected!,
+                next: chain.paired,
+                now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+              ),
+            ]);
+        expect(
+          advanced.map((anchor) => anchor.transitionVersion),
+          everyElement(2),
+        );
+        expect(advanced.first.updatedAt, advanced.last.updatedAt);
+        expect(
+          advanced.map((anchor) => anchor.membership.digest),
+          everyElement(orderedEquals(chain.paired.digest)),
+        );
+      } finally {
+        await secondRepository.close();
+      }
+    });
+
+    test('推进拒绝已耗尽的本地 transitionVersion', () async {
+      const secureCore = KelivoSecureCore();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+      final commands = repository.e2eeVerifiedMembershipAnchorCommands;
+      await commands.install(
+        membership: chain.initialized,
+        now: DateTime.utc(2026, 7, 29),
+      );
+      await database
+          .update(database.e2eeVerifiedMembershipAnchorRows)
+          .write(
+            const E2eeVerifiedMembershipAnchorRowsCompanion(
+              transitionVersion: Value(9223372036854775807),
+            ),
+          );
+      final exhausted = await commands.readVerified(
+        accountUserId: _syncAccountUserId,
+        ark: chain.ark,
+      );
+      expect(
+        () => commands.advance(
+          expected: exhausted!,
+          next: chain.paired,
+          now: DateTime.utc(2026, 7, 29, 0, 0, 1),
+        ),
+        throwsStateError,
+      );
+    });
+
+    test('读取拒绝摘要与当前 ARK 签名篡改', () async {
+      const secureCore = KelivoSecureCore();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+      final commands = repository.e2eeVerifiedMembershipAnchorCommands;
+      await commands.install(
+        membership: chain.initialized,
+        now: DateTime.utc(2026, 7, 29),
+      );
+
+      await database
+          .update(database.e2eeVerifiedMembershipAnchorRows)
+          .write(
+            E2eeVerifiedMembershipAnchorRowsCompanion(
+              membershipManifestDigest: Value(Uint8List(32)..[0] = 1),
+            ),
+          );
+      await expectLater(
+        commands.readVerified(
+          accountUserId: _syncAccountUserId,
+          ark: chain.ark,
+        ),
+        throwsStateError,
+      );
+
+      final tamperedManifest = Uint8List.fromList(chain.initialized.manifest)
+        ..[chain.initialized.manifest.length - 1] ^= 1;
+      await database
+          .update(database.e2eeVerifiedMembershipAnchorRows)
+          .write(
+            E2eeVerifiedMembershipAnchorRowsCompanion(
+              membershipManifest: Value(tamperedManifest),
+              membershipManifestDigest: Value(
+                Uint8List.fromList(sha256.convert(tamperedManifest).bytes),
+              ),
+            ),
+          );
+      await expectLater(
+        commands.readVerified(
+          accountUserId: _syncAccountUserId,
+          ark: chain.ark,
+        ),
+        throwsA(isA<KelivoSecureCoreException>()),
       );
     });
   });
@@ -5117,6 +5570,7 @@ void main() {
         E2eeAccountRecordCipher.takeOwnership(
           secureCore: secureCore,
           accountRootKey: await secureCore.generateAccountRootKey(
+            userId: Uuid.parseAsByteList(_ledgerUserId),
             keyEpoch: 0xffffffff,
           ),
           userId: _ledgerUserId,
@@ -5406,6 +5860,7 @@ void main() {
         E2eeAccountRecordCipher.takeOwnership(
           secureCore: secureCore,
           accountRootKey: await secureCore.generateAccountRootKey(
+            userId: Uuid.parseAsByteList(_ledgerUserId),
             keyEpoch: 0xffffffff,
           ),
           userId: _ledgerUserId,
@@ -6182,7 +6637,10 @@ void main() {
 
   test('附件清单密文往返并隐藏敏感元数据', () async {
     const secureCore = KelivoSecureCore();
-    final accountRootKey = await secureCore.generateAccountRootKey(keyEpoch: 7);
+    final accountRootKey = await secureCore.generateAccountRootKey(
+      userId: Uuid.parseAsByteList(_ledgerUserId),
+      keyEpoch: 7,
+    );
     final attachmentDataKey = await secureCore.generateAttachmentDataKey();
     final attachmentId = Uuid.unparse(attachmentDataKey.attachmentId);
     const uploadId = 'a0000000-0000-4000-8000-000000000001';
@@ -6261,7 +6719,10 @@ void main() {
 
   test('附件清单拒绝篡改和外层身份错配', () async {
     const secureCore = KelivoSecureCore();
-    final accountRootKey = await secureCore.generateAccountRootKey(keyEpoch: 7);
+    final accountRootKey = await secureCore.generateAccountRootKey(
+      userId: Uuid.parseAsByteList(_ledgerUserId),
+      keyEpoch: 7,
+    );
     final attachmentDataKey = await secureCore.generateAttachmentDataKey();
     final attachmentId = Uuid.unparse(attachmentDataKey.attachmentId);
     const uploadId = 'a0000000-0000-4000-8000-000000000002';
@@ -6778,5 +7239,37 @@ final class _ApplyingOutboxTransport
           changeSeq: 100 + index,
         ),
     ];
+  }
+}
+
+Future<E2eeMembershipDeviceInput> _newDatabaseMembershipDevice(
+  KelivoSecureCore secureCore, {
+  required String deviceId,
+  required int authGeneration,
+}) async {
+  final identity = await secureCore.generateDeviceIdentity();
+  try {
+    final publicKeys = await secureCore.readDevicePublicKeys(identity);
+    return E2eeMembershipDeviceInput(
+      deviceId: deviceId,
+      keyVersion: 1,
+      authGeneration: authGeneration,
+      signingPublicKey: publicKeys.signingPublicKey,
+      keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+    );
+  } finally {
+    await secureCore.closeDeviceIdentity(identity);
+  }
+}
+
+Future<Uint8List> _newDatabaseRecoveryPublicKey(
+  KelivoSecureCore secureCore,
+) async {
+  final identity = await secureCore.generateDeviceIdentity();
+  try {
+    final publicKeys = await secureCore.readDevicePublicKeys(identity);
+    return Uint8List.fromList(publicKeys.keyAgreementPublicKey);
+  } finally {
+    await secureCore.closeDeviceIdentity(identity);
   }
 }

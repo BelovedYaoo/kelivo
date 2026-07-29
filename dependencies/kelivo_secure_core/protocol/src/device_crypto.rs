@@ -48,6 +48,13 @@ const ARK_ENVELOPE_FLAGS: u16 = 0;
 const ARK_ENVELOPE_RESERVED: u16 = 0;
 const ARK_ENVELOPE_HEADER_LENGTH: usize = 12;
 pub const ACCOUNT_ROOT_KEY_LENGTH: usize = 32;
+pub const ACCOUNT_TRUST_PUBLIC_KEY_LENGTH: usize = 32;
+pub const ACCOUNT_TRUST_SIGNATURE_LENGTH: usize = 64;
+pub const ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH: usize = 64 * 1024;
+const ACCOUNT_TRUST_SEED_INFO_DOMAIN: &[u8] = b"kelivo.account-trust-root.ed25519-seed.v1\0";
+const ACCOUNT_TRUST_SIGNATURE_DOMAIN: &[u8] = b"kelivo.account-trust-root.signature.v1\0";
+const ACCOUNT_TRUST_SEED_INFO_LENGTH: usize =
+    ACCOUNT_TRUST_SEED_INFO_DOMAIN.len() + UUID_LENGTH + size_of::<u32>();
 pub const ARK_HPKE_ENCAPSULATED_KEY_LENGTH: usize = 32;
 pub const ARK_HPKE_CIPHERTEXT_LENGTH: usize = ACCOUNT_ROOT_KEY_LENGTH + 16;
 pub const ARK_ENVELOPE_LENGTH: usize = 336;
@@ -125,8 +132,14 @@ pub enum DeviceCryptoError {
     UnsupportedDeviceProofVersion(u16),
     UnsupportedDeviceProofKind(u8),
     UnsupportedDeviceProofFlags(u8),
-    InvalidDeviceProofLength { expected: usize, actual: usize },
-    InvalidDeviceProofSignatureLength { expected: usize, actual: usize },
+    InvalidDeviceProofLength {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidDeviceProofSignatureLength {
+        expected: usize,
+        actual: usize,
+    },
     DeviceProofBindingMismatch,
     DeviceProofSignatureInvalid,
     InvalidKeyEpoch,
@@ -134,20 +147,43 @@ pub enum DeviceCryptoError {
     ArkKeyEpochNotIncreasing,
     ArkKeyringCapacityExceeded,
     ArkCurrentEpochRemoval,
+    InvalidAccountTrustPayloadLength {
+        min: usize,
+        max: usize,
+        actual: usize,
+    },
+    InvalidAccountTrustSignatureLength {
+        expected: usize,
+        actual: usize,
+    },
+    AccountTrustKeyDerivationFailed,
+    AccountTrustSignatureInvalid,
     InvalidArkEnvelopeMagic,
     UnsupportedArkEnvelopeVersion(u16),
     UnsupportedArkEnvelopeSuite(u16),
     UnsupportedArkEnvelopeFlags(u16),
     UnsupportedArkEnvelopeReserved(u16),
-    InvalidArkEnvelopeLength { expected: usize, actual: usize },
+    InvalidArkEnvelopeLength {
+        expected: usize,
+        actual: usize,
+    },
     ArkEnvelopeBindingMismatch,
     ArkEnvelopeSignatureInvalid,
     KeyAgreementKeyMismatch,
     ArkEnvelopeSealFailed,
     ArkEnvelopeOpenFailed,
-    InvalidPrimaryPayloadLength { expected: usize, actual: usize },
-    InvalidEnvelopePayloadLength { expected: usize, actual: usize },
-    InvalidPairingAuthenticatorLength { expected: usize, actual: usize },
+    InvalidPrimaryPayloadLength {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidEnvelopePayloadLength {
+        expected: usize,
+        actual: usize,
+    },
+    InvalidPairingAuthenticatorLength {
+        expected: usize,
+        actual: usize,
+    },
     PairingAuthenticatorCryptoFailed,
     PairingAuthenticatorInvalid,
     InvalidDeviceStateMagic,
@@ -155,7 +191,10 @@ pub enum DeviceCryptoError {
     UnsupportedDeviceStateSuite(u16),
     UnsupportedDeviceStateFlags(u16),
     UnsupportedDeviceStateReserved(u16),
-    InvalidDeviceStateLength { expected: usize, actual: usize },
+    InvalidDeviceStateLength {
+        expected: usize,
+        actual: usize,
+    },
     InvalidDeviceKeyVersion,
     DeviceStateBindingMismatch,
     DeviceStateCryptoFailed,
@@ -203,6 +242,18 @@ impl fmt::Display for DeviceCryptoError {
             }
             Self::ArkKeyringCapacityExceeded => formatter.write_str("ARK 密钥环已达到容量上限"),
             Self::ArkCurrentEpochRemoval => formatter.write_str("不得移除当前 ARK 代次"),
+            Self::InvalidAccountTrustPayloadLength { min, max, actual } => write!(
+                formatter,
+                "账户信任根签名载荷长度无效，范围 {min} 至 {max}，实际 {actual}"
+            ),
+            Self::InvalidAccountTrustSignatureLength { expected, actual } => write!(
+                formatter,
+                "账户信任根签名长度无效，预期 {expected}，实际 {actual}"
+            ),
+            Self::AccountTrustKeyDerivationFailed => {
+                formatter.write_str("账户信任根签名密钥派生失败")
+            }
+            Self::AccountTrustSignatureInvalid => formatter.write_str("账户信任根签名无效"),
             Self::InvalidArkEnvelopeMagic => formatter.write_str("ARK 信封魔数无效"),
             Self::UnsupportedArkEnvelopeVersion(version) => {
                 write!(formatter, "不支持的 ARK 信封版本：{version}")
@@ -985,6 +1036,143 @@ impl Drop for AccountRootKey {
     fn drop(&mut self) {
         self.zeroize();
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AccountTrustBinding {
+    pub user_id: UserId,
+    pub key_epoch: u32,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AccountTrustPublicKey([u8; ACCOUNT_TRUST_PUBLIC_KEY_LENGTH]);
+
+impl AccountTrustPublicKey {
+    pub fn from_bytes(
+        bytes: [u8; ACCOUNT_TRUST_PUBLIC_KEY_LENGTH],
+    ) -> Result<Self, DeviceCryptoError> {
+        strict_verifying_key(&bytes)?;
+        Ok(Self(bytes))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; ACCOUNT_TRUST_PUBLIC_KEY_LENGTH] {
+        &self.0
+    }
+
+    fn verifying_key(&self) -> Result<VerifyingKey, DeviceCryptoError> {
+        strict_verifying_key(&self.0)
+    }
+}
+
+pub struct AccountTrustSignature([u8; ACCOUNT_TRUST_SIGNATURE_LENGTH]);
+
+impl AccountTrustSignature {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, DeviceCryptoError> {
+        if bytes.len() != ACCOUNT_TRUST_SIGNATURE_LENGTH {
+            return Err(DeviceCryptoError::InvalidAccountTrustSignatureLength {
+                expected: ACCOUNT_TRUST_SIGNATURE_LENGTH,
+                actual: bytes.len(),
+            });
+        }
+        Ok(Self(copy_array(bytes)))
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; ACCOUNT_TRUST_SIGNATURE_LENGTH] {
+        &self.0
+    }
+}
+
+pub fn derive_account_trust_public_key(
+    ark: &AccountRootKey,
+    binding: AccountTrustBinding,
+) -> Result<AccountTrustPublicKey, DeviceCryptoError> {
+    with_account_trust_signing_key(ark, binding, |key| {
+        Ok(AccountTrustPublicKey(*key.public_key().as_bytes()))
+    })
+}
+
+pub fn sign_account_trust_payload(
+    ark: &AccountRootKey,
+    binding: AccountTrustBinding,
+    canonical_payload: &[u8],
+) -> Result<AccountTrustSignature, DeviceCryptoError> {
+    let transcript = account_trust_payload_transcript(binding, canonical_payload)?;
+    with_account_trust_signing_key(ark, binding, |key| {
+        Ok(AccountTrustSignature(
+            key.signing_key().sign(&transcript).to_bytes(),
+        ))
+    })
+}
+
+pub fn verify_account_trust_payload(
+    public_key: &AccountTrustPublicKey,
+    binding: AccountTrustBinding,
+    canonical_payload: &[u8],
+    signature: &AccountTrustSignature,
+) -> Result<(), DeviceCryptoError> {
+    let transcript = account_trust_payload_transcript(binding, canonical_payload)?;
+    let verifying_key = public_key.verifying_key()?;
+    if !verify_strict_device_signature(
+        &verifying_key,
+        &transcript,
+        &Signature::from_bytes(&signature.0),
+    ) {
+        return Err(DeviceCryptoError::AccountTrustSignatureInvalid);
+    }
+    Ok(())
+}
+
+fn with_account_trust_signing_key<T>(
+    ark: &AccountRootKey,
+    binding: AccountTrustBinding,
+    operation: impl FnOnce(&DeviceSigningPrivateKey) -> Result<T, DeviceCryptoError>,
+) -> Result<T, DeviceCryptoError> {
+    if binding.key_epoch == 0 {
+        return Err(DeviceCryptoError::InvalidKeyEpoch);
+    }
+    let mut info = [0_u8; ACCOUNT_TRUST_SEED_INFO_LENGTH];
+    let user_offset = ACCOUNT_TRUST_SEED_INFO_DOMAIN.len();
+    let epoch_offset = user_offset + UUID_LENGTH;
+    info[..user_offset].copy_from_slice(ACCOUNT_TRUST_SEED_INFO_DOMAIN);
+    info[user_offset..epoch_offset].copy_from_slice(binding.user_id.as_bytes());
+    info[epoch_offset..].copy_from_slice(&binding.key_epoch.to_be_bytes());
+
+    // HKDF 直接写入具备 Drop 清理的种子对象，避免产生裸 seed 临时副本。
+    let mut signing_key = DeviceSigningPrivateKey::from_seed([0; DEVICE_PRIVATE_KEY_LENGTH]);
+    Hkdf::<Sha256>::new(None, ark.as_bytes())
+        .expand(&info, &mut signing_key.0)
+        .map_err(|_| DeviceCryptoError::AccountTrustKeyDerivationFailed)?;
+    operation(&signing_key)
+}
+
+fn account_trust_payload_transcript(
+    binding: AccountTrustBinding,
+    canonical_payload: &[u8],
+) -> Result<[u8; SHA256_DIGEST_LENGTH], DeviceCryptoError> {
+    if binding.key_epoch == 0 {
+        return Err(DeviceCryptoError::InvalidKeyEpoch);
+    }
+    if canonical_payload.is_empty() || canonical_payload.len() > ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH {
+        return Err(DeviceCryptoError::InvalidAccountTrustPayloadLength {
+            min: 1,
+            max: ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH,
+            actual: canonical_payload.len(),
+        });
+    }
+    let payload_length = u32::try_from(canonical_payload.len()).map_err(|_| {
+        DeviceCryptoError::InvalidAccountTrustPayloadLength {
+            min: 1,
+            max: ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH,
+            actual: canonical_payload.len(),
+        }
+    })?;
+    let mut transcript = Sha256::new();
+    transcript.update(ACCOUNT_TRUST_SIGNATURE_DOMAIN);
+    transcript.update(binding.user_id.as_bytes());
+    transcript.update(binding.key_epoch.to_be_bytes());
+    transcript.update(payload_length.to_be_bytes());
+    transcript.update(canonical_payload);
+    Ok(transcript.finalize().into())
 }
 
 struct AccountRootKeyEpoch {
@@ -1800,6 +1988,7 @@ mod tests {
     fn x25519_secrets_have_compile_time_zeroize_on_drop_contract() {
         fn require_zeroize_on_drop<T: ZeroizeOnDrop>() {}
 
+        require_zeroize_on_drop::<SigningKey>();
         require_zeroize_on_drop::<x25519_dalek::StaticSecret>();
         require_zeroize_on_drop::<x25519_dalek::SharedSecret>();
     }
@@ -2787,6 +2976,112 @@ mod tests {
                 expected: DEVICE_STATE_BLOB_LENGTH,
                 actual: 188,
             })
+        ));
+    }
+
+    #[test]
+    fn account_trust_root_signing_is_deterministic_strict_and_context_bound() {
+        let ark = AccountRootKey::from_bytes([0x41; ACCOUNT_ROOT_KEY_LENGTH]);
+        let binding = AccountTrustBinding {
+            user_id: UserId::new(uuid_v4(0x42)).expect("账户 UUID 应有效"),
+            key_epoch: 7,
+        };
+        let canonical_payload = b"canonical-member-set-v1";
+
+        let public_key = derive_account_trust_public_key(&ark, binding).expect("公钥派生应成功");
+        let repeated_public_key =
+            derive_account_trust_public_key(&ark, binding).expect("重复公钥派生应成功");
+        assert_eq!(public_key, repeated_public_key);
+        let signature =
+            sign_account_trust_payload(&ark, binding, canonical_payload).expect("签名应成功");
+        let repeated_signature =
+            sign_account_trust_payload(&ark, binding, canonical_payload).expect("重复签名应成功");
+        assert_eq!(signature.as_bytes(), repeated_signature.as_bytes());
+        verify_account_trust_payload(&public_key, binding, canonical_payload, &signature)
+            .expect("规范上下文应严格验签通过");
+
+        let other_user_binding = AccountTrustBinding {
+            user_id: UserId::new(uuid_v4(0x43)).expect("另一账户 UUID 应有效"),
+            key_epoch: binding.key_epoch,
+        };
+        let other_epoch_binding = AccountTrustBinding {
+            user_id: binding.user_id,
+            key_epoch: binding.key_epoch + 1,
+        };
+        assert_ne!(
+            public_key,
+            derive_account_trust_public_key(&ark, other_user_binding)
+                .expect("另一账户公钥派生应成功")
+        );
+        assert_ne!(
+            public_key,
+            derive_account_trust_public_key(&ark, other_epoch_binding)
+                .expect("另一代次公钥派生应成功")
+        );
+        for (wrong_binding, wrong_payload) in [
+            (other_user_binding, canonical_payload.as_slice()),
+            (other_epoch_binding, canonical_payload.as_slice()),
+            (binding, b"changed-member-set-v1".as_slice()),
+        ] {
+            assert!(matches!(
+                verify_account_trust_payload(&public_key, wrong_binding, wrong_payload, &signature,),
+                Err(DeviceCryptoError::AccountTrustSignatureInvalid)
+            ));
+        }
+
+        let mut tampered_signature = *signature.as_bytes();
+        tampered_signature[ACCOUNT_TRUST_SIGNATURE_LENGTH - 1] ^= 1;
+        let tampered_signature = AccountTrustSignature::from_bytes(&tampered_signature)
+            .expect("固定长度篡改签名仍可进入严格验签");
+        assert!(matches!(
+            verify_account_trust_payload(
+                &public_key,
+                binding,
+                canonical_payload,
+                &tampered_signature,
+            ),
+            Err(DeviceCryptoError::AccountTrustSignatureInvalid)
+        ));
+        assert!(matches!(
+            AccountTrustPublicKey::from_bytes([0; ACCOUNT_TRUST_PUBLIC_KEY_LENGTH]),
+            Err(DeviceCryptoError::InvalidSigningPublicKey)
+        ));
+        assert!(matches!(
+            AccountTrustSignature::from_bytes(&[0; ACCOUNT_TRUST_SIGNATURE_LENGTH - 1]),
+            Err(DeviceCryptoError::InvalidAccountTrustSignatureLength { .. })
+        ));
+
+        assert!(matches!(
+            sign_account_trust_payload(&ark, binding, &[]),
+            Err(DeviceCryptoError::InvalidAccountTrustPayloadLength { actual: 0, .. })
+        ));
+        let oversized_payload = vec![0x44; ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH + 1];
+        assert!(matches!(
+            sign_account_trust_payload(&ark, binding, &oversized_payload),
+            Err(DeviceCryptoError::InvalidAccountTrustPayloadLength { .. })
+        ));
+        let maximum_payload = vec![0x45; ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH];
+        let maximum_signature = sign_account_trust_payload(&ark, binding, &maximum_payload)
+            .expect("最大规范载荷应可签名");
+        verify_account_trust_payload(&public_key, binding, &maximum_payload, &maximum_signature)
+            .expect("最大规范载荷应可严格验证");
+
+        let zero_epoch_binding = AccountTrustBinding {
+            user_id: binding.user_id,
+            key_epoch: 0,
+        };
+        assert!(matches!(
+            derive_account_trust_public_key(&ark, zero_epoch_binding),
+            Err(DeviceCryptoError::InvalidKeyEpoch)
+        ));
+        assert!(matches!(
+            verify_account_trust_payload(
+                &public_key,
+                zero_epoch_binding,
+                canonical_payload,
+                &signature,
+            ),
+            Err(DeviceCryptoError::InvalidKeyEpoch)
         ));
     }
 

@@ -4,6 +4,7 @@ import 'package:code_assets/code_assets.dart';
 import 'package:hooks/hooks.dart';
 
 const _assetName = 'kelivo_secure_core_bindings_generated.dart';
+const _minimumIOSVersion = 14;
 
 void main(List<String> arguments) async {
   await build(arguments, (input, output) async {
@@ -40,7 +41,7 @@ void main(List<String> arguments) async {
       'cargo',
       cargoArguments,
       workingDirectory: nativeRoot.toFilePath(),
-      environment: _cargoEnvironment(code, target),
+      environment: await _cargoEnvironment(code, target),
     );
     final cargoStdout = cargoResult.stdout.toString();
     final cargoStderr = cargoResult.stderr.toString();
@@ -83,6 +84,10 @@ _CargoTarget _resolveTarget(CodeConfig code) {
   final os = code.targetOS;
   final architecture = code.targetArchitecture;
 
+  if (os == OS.iOS && code.iOS.targetVersion < _minimumIOSVersion) {
+    throw BuildError(message: 'Kelivo 安全核心要求 iOS 14 或更高版本。');
+  }
+
   if (os == OS.windows && architecture == Architecture.x64) {
     return const _CargoTarget(
       rustTriple: 'x86_64-pc-windows-msvc',
@@ -110,6 +115,22 @@ _CargoTarget _resolveTarget(CodeConfig code) {
       androidClangPrefix: 'x86_64-linux-android',
     );
   }
+  if (os == OS.iOS && architecture == Architecture.arm64) {
+    return _CargoTarget(
+      rustTriple: code.iOS.targetSdk == IOSSdk.iPhoneOS
+          ? 'aarch64-apple-ios'
+          : 'aarch64-apple-ios-sim',
+      libraryFileName: 'libkelivo_secure_core.dylib',
+    );
+  }
+  if (os == OS.iOS &&
+      architecture == Architecture.x64 &&
+      code.iOS.targetSdk == IOSSdk.iPhoneSimulator) {
+    return const _CargoTarget(
+      rustTriple: 'x86_64-apple-ios',
+      libraryFileName: 'libkelivo_secure_core.dylib',
+    );
+  }
   if (os == OS.linux && architecture == Architecture.x64) {
     return const _CargoTarget(
       rustTriple: 'x86_64-unknown-linux-gnu',
@@ -128,7 +149,10 @@ _CargoTarget _resolveTarget(CodeConfig code) {
   );
 }
 
-Map<String, String> _cargoEnvironment(CodeConfig code, _CargoTarget target) {
+Future<Map<String, String>> _cargoEnvironment(
+  CodeConfig code,
+  _CargoTarget target,
+) async {
   final compiler = code.cCompiler;
   if (compiler == null) {
     throw BuildError(
@@ -184,8 +208,30 @@ Map<String, String> _cargoEnvironment(CodeConfig code, _CargoTarget target) {
     // 不同 Android 架构的 NDK 默认页大小并不一致，统一约束才能避免 16 KiB 设备拒绝加载。
     environment['CARGO_TARGET_${rustTargetKey}_RUSTFLAGS'] =
         '-C link-arg=-Wl,-z,max-page-size=16384';
+  } else if (code.targetOS == OS.iOS) {
+    // 显式锁定 SDK 与部署版本，避免 Cargo 从宿主环境误选 macOS 或另一套模拟器 SDK。
+    environment['SDKROOT'] = await _resolveIOSSDK(code.iOS.targetSdk);
+    environment['IPHONEOS_DEPLOYMENT_TARGET'] = '${code.iOS.targetVersion}.0';
   }
   return environment;
+}
+
+Future<String> _resolveIOSSDK(IOSSdk sdk) async {
+  final result = await Process.run('xcrun', [
+    '--sdk',
+    sdk.type,
+    '--show-sdk-path',
+  ]);
+  if (result.exitCode != 0) {
+    throw BuildError(
+      message: '无法解析 ${sdk.type} SDK：${result.stderr.toString().trim()}',
+    );
+  }
+  final path = result.stdout.toString().trim();
+  if (path.isEmpty || !Directory(path).existsSync()) {
+    throw BuildError(message: '${sdk.type} SDK 路径无效：$path');
+  }
+  return path;
 }
 
 List<Uri> _nativeDependencies(Uri nativeRoot, Uri protocolRoot) {

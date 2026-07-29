@@ -45,6 +45,15 @@ external int kelivo_key_slot_open(
   ffi.Pointer<ffi.Uint64> out_handle,
 );
 
+@ffi.Native<
+  KelivoStatus Function(ffi.Pointer<ffi.Uint8>, ffi.Size, ffi.Uint32)
+>()
+external int kelivo_key_slot_delete(
+  ffi.Pointer<ffi.Uint8> slot_id,
+  int slot_id_length,
+  int policy_version,
+);
+
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_key_handle_close(int handle);
 
@@ -483,6 +492,18 @@ external int kelivo_device_identity_public_keys(
   ffi.Pointer<ffi.Size> out_public_keys_length,
 );
 
+@ffi.Native<KelivoStatus Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>()
+external int kelivo_device_signing_public_key_validate(
+  ffi.Pointer<ffi.Uint8> public_key,
+  int public_key_length,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Pointer<ffi.Uint8>, ffi.Size)>()
+external int kelivo_device_key_agreement_public_key_validate(
+  ffi.Pointer<ffi.Uint8> public_key,
+  int public_key_length,
+);
+
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_device_identity_handle_close(int identity_handle);
 
@@ -553,8 +574,17 @@ external int kelivo_pending_pairing_bind(
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_pending_pairing_handle_close(int pending_handle);
 
-@ffi.Native<KelivoStatus Function(ffi.Uint32, ffi.Pointer<ffi.Uint64>)>()
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint64>,
+  )
+>()
 external int kelivo_account_root_key_generate(
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
   int key_epoch,
   ffi.Pointer<ffi.Uint64> out_handle,
 );
@@ -564,6 +594,7 @@ external int kelivo_account_root_key_generate(
     ffi.Uint64,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
+    ffi.Uint32,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
     ffi.Pointer<ffi.Size>,
@@ -573,9 +604,81 @@ external int kelivo_account_record_id_derive(
   int ark_handle,
   ffi.Pointer<ffi.Uint8> canonical_entity_key,
   int canonical_entity_key_length,
+  int key_epoch,
   ffi.Pointer<ffi.Uint8> out_record_id,
   int out_record_id_capacity,
   ffi.Pointer<ffi.Size> out_record_id_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_trust_public_key_derive(
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> out_public_key,
+  int out_public_key_capacity,
+  ffi.Pointer<ffi.Size> out_public_key_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_trust_payload_sign(
+  int ark_handle,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> canonical_payload,
+  int canonical_payload_length,
+  ffi.Pointer<ffi.Uint8> out_signature,
+  int out_signature_capacity,
+  ffi.Pointer<ffi.Size> out_signature_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+  )
+>()
+external int kelivo_account_trust_payload_verify(
+  ffi.Pointer<ffi.Uint8> public_key,
+  int public_key_length,
+  ffi.Pointer<ffi.Uint8> user_id,
+  int user_id_length,
+  int key_epoch,
+  ffi.Pointer<ffi.Uint8> canonical_payload,
+  int canonical_payload_length,
+  ffi.Pointer<ffi.Uint8> signature,
+  int signature_length,
 );
 
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
@@ -1038,7 +1141,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 10;
+const int KELIVO_CORE_ABI_VERSION = 14;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -1126,6 +1229,8 @@ const int KELIVO_STATUS_ATTACHMENT_ENVELOPE_INVALID = 37;
 
 const int KELIVO_STATUS_ATTACHMENT_AUTHENTICATION_FAILED = 38;
 
+const int KELIVO_STATUS_SLOT_IN_USE = 39;
+
 const int KELIVO_STATUS_UNSUPPORTED_PLATFORM = 100;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_NONE = 0;
@@ -1135,6 +1240,8 @@ const int KELIVO_SECURE_STORAGE_BACKEND_WINDOWS_DPAPI = 1;
 const int KELIVO_SECURE_STORAGE_BACKEND_ANDROID_KEYSTORE = 2;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_LINUX_SECRET_SERVICE = 3;
+
+const int KELIVO_SECURE_STORAGE_BACKEND_IOS_KEYCHAIN = 4;
 
 const int KELIVO_CAPABILITY_FLAGS_NONE = 0;
 
@@ -1153,6 +1260,8 @@ const int KELIVO_CAPABILITY_OPAQUE_CLIENT = 32;
 const int KELIVO_CAPABILITY_DEVICE_E2EE_CORE = 64;
 
 const int KELIVO_CAPABILITY_ATTACHMENT_CRYPTO = 128;
+
+const int KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING = 256;
 
 const int KELIVO_RECORD_ID_SIZE = 16;
 
@@ -1215,6 +1324,12 @@ const int KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE = 400;
 const int KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE = 432;
 
 const int KELIVO_ACCOUNT_ROOT_KEYRING_CAPACITY = 8;
+
+const int KELIVO_ACCOUNT_TRUST_PUBLIC_KEY_SIZE = 32;
+
+const int KELIVO_ACCOUNT_TRUST_SIGNATURE_SIZE = 64;
+
+const int KELIVO_ACCOUNT_TRUST_PAYLOAD_MAX_SIZE = 65536;
 
 const int KELIVO_DEVICE_STATE_BLOB_SIZE = 448;
 

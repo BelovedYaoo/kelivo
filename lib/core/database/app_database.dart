@@ -1245,6 +1245,55 @@ class E2eeSyncPullCheckpointRows extends Table {
   ];
 }
 
+class E2eeVerifiedMembershipAnchorRows extends Table {
+  TextColumn get accountUserId => text()();
+  BlobColumn get membershipManifest => blob()();
+  BlobColumn get membershipManifestDigest => blob()();
+  IntColumn get securityGeneration => integer()();
+  IntColumn get keyEpoch => integer()();
+  IntColumn get transitionVersion => integer()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {accountUserId};
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(account_user_id) = 'text' "
+        'AND length(account_user_id) = 36 '
+        'AND account_user_id = lower(account_user_id) '
+        "AND account_user_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(account_user_id, 9, 1) = '-' "
+        "AND substr(account_user_id, 14, 1) = '-' "
+        "AND substr(account_user_id, 15, 1) = '4' "
+        "AND substr(account_user_id, 19, 1) = '-' "
+        "AND substr(account_user_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(account_user_id, 24, 1) = '-' "
+        "AND substr(account_user_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(account_user_id, 25, 12) NOT GLOB '*-*')",
+    // 至少保留一名可信设备；固定步长阻止数据库承载解析器永远不会接受的清单形状。
+    "CHECK (typeof(membership_manifest) = 'blob' "
+        'AND length(membership_manifest) BETWEEN 444 AND 22884 '
+        'AND (length(membership_manifest) - 356) % 88 = 0)',
+    "CHECK (typeof(membership_manifest_digest) = 'blob' "
+        'AND length(membership_manifest_digest) = 32)',
+    "CHECK (typeof(security_generation) = 'integer' "
+        'AND security_generation BETWEEN 1 AND 2147483647)',
+    "CHECK (typeof(key_epoch) = 'integer' "
+        'AND key_epoch BETWEEN 1 AND 4294967295)',
+    "CHECK (typeof(transition_version) = 'integer' "
+        'AND transition_version BETWEEN 1 AND 9223372036854775807)',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+  ];
+}
+
 class E2eeConfigEntryRows extends Table {
   TextColumn get entityType => text()();
   TextColumn get entityId => text()();
@@ -1789,6 +1838,7 @@ class E2eeAttachmentDownloadRows extends Table {
     E2eeSyncOutboxRows,
     E2eeSyncRemoteRecordRows,
     E2eeSyncPullCheckpointRows,
+    E2eeVerifiedMembershipAnchorRows,
     E2eeConfigEntryRows,
     E2eeAttachmentUploadRows,
     E2eeAttachmentDownloadRows,
@@ -1799,8 +1849,8 @@ class AppDatabase extends _$AppDatabase {
 
   static const databaseFileName = 'kelivo.db';
 
-  // 消息附件身份已成为 SQLCipher 一等模型，schema 18 无法无损表达有序远端引用。
-  static const currentSchemaVersion = 19;
+  // 已验证成员清单锚点必须与内容数据库同受 SQLCipher 和硬切安装门保护。
+  static const currentSchemaVersion = 21;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

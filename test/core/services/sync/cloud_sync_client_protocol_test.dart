@@ -21,6 +21,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_key_lease.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_crypto_session.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_file_store.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
@@ -190,6 +191,7 @@ Future<E2eeUntrustedAccountRecordEnvelope> _sealRawAccountRecord({
   try {
     final recordId = await core.deriveAccountRecordId(
       ark,
+      keyEpoch: keyEpoch,
       canonicalEntityKey: canonicalKey,
     );
     ciphertext = await core.sealAccountRecord(
@@ -821,7 +823,10 @@ void main() {
     final slotId = _authenticatorSlotId(baseUrl, loginName);
     final key = await core.createSlot(slotId);
     final identity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final stateBlob = await core.sealDeviceState(
       key,
       identity,
@@ -1833,7 +1838,10 @@ void main() {
     final store = DeviceStateBlobStore(installationRoot: root);
     final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
     final identity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final targetIdentity = await core.generateDeviceIdentity();
     final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
     final fullState = await core.sealDeviceState(
@@ -2081,7 +2089,10 @@ void main() {
     final pairingSecret = decoded.takePairingSecret();
     decoded.dispose();
     final issuerIdentity = await core.generateDeviceIdentity();
-    final issuerArk = await core.generateAccountRootKey(keyEpoch: 7);
+    final issuerArk = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final issuerPublicKeys = await core.readDevicePublicKeys(issuerIdentity);
     late final KelivoPairingApprovalBundle approvalBundle;
     try {
@@ -3094,7 +3105,10 @@ void main() {
 
   test('账户记录加密器派生稳定不透明标识并限制明文生命周期', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3141,9 +3155,118 @@ void main() {
     expect(payload, orderedEquals(<int>[1, 2, 3]));
   });
 
+  test('账户记录加密器按记录代次派生标识并在裁剪后失败关闭', () async {
+    const core = KelivoSecureCore();
+    final slotId = Uint8List.fromList(
+      sha256
+          .convert(utf8.encode('e2ee-record-epoch-derivation'))
+          .bytes
+          .sublist(0, 16),
+    );
+    late final KelivoKeyHandle key;
+    try {
+      key = await core.createSlot(slotId);
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status != KelivoSecureCoreStatus.slotAlreadyExists) rethrow;
+      key = await core.openSlot(slotId);
+    }
+    addTearDown(() => core.close(key));
+
+    final userId = _rawUuid(_userId);
+    final identity = await core.generateDeviceIdentity();
+    addTearDown(() => core.closeDeviceIdentity(identity));
+    final initialArk = await core.generateAccountRootKey(
+      userId: userId,
+      keyEpoch: 1,
+    );
+    addTearDown(() => core.closeAccountRootKey(initialArk));
+    final stateBlob = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: _rawUuid(_deviceId1),
+      keyVersion: 1,
+      ark: initialArk,
+      account: KelivoDeviceStateAccountBinding(userId: userId, keyEpoch: 1),
+    );
+
+    final epochOneState = await core.openDeviceState(key, stateBlob: stateBlob);
+    addTearDown(() => core.closeDeviceIdentity(epochOneState.identity));
+    final epochOneCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: epochOneState.ark!,
+      userId: _userId,
+      currentKeyEpoch: 1,
+    );
+    addTearDown(epochOneCipher.close);
+
+    const entityKey = SyncEntityKey(
+      entityType: 'conversation',
+      entityId: 'record-epoch-history',
+    );
+    final payload = Uint8List.fromList(<int>[1, 7, 9]);
+    final epochOneRecord = await epochOneCipher.seal(
+      entityKey: entityKey,
+      payload: payload,
+    );
+
+    final epochTwoArk = await core.generateAccountRootKey(
+      userId: userId,
+      keyEpoch: 2,
+    );
+    addTearDown(() => core.closeAccountRootKey(epochTwoArk));
+
+    final currentState = await core.openDeviceState(key, stateBlob: stateBlob);
+    addTearDown(() => core.closeDeviceIdentity(currentState.identity));
+    await core.addAccountRootKeyEpoch(currentState.ark!, source: epochTwoArk);
+    final currentCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: currentState.ark!,
+      userId: _userId,
+      currentKeyEpoch: 2,
+    );
+    addTearDown(currentCipher.close);
+
+    final epochTwoId = await currentCipher.deriveRecordId(entityKey);
+    expect(epochTwoId, isNot(epochOneRecord.recordId));
+    final opened = await currentCipher.open(
+      _untrustedRecord(epochOneRecord),
+      decode: (_, borrowed) => Uint8List.fromList(borrowed),
+    );
+    expect(opened, orderedEquals(payload));
+
+    final prunedState = await core.openDeviceState(key, stateBlob: stateBlob);
+    addTearDown(() => core.closeDeviceIdentity(prunedState.identity));
+    await core.addAccountRootKeyEpoch(prunedState.ark!, source: epochTwoArk);
+    await core.pruneAccountRootKeyEpoch(prunedState.ark!, keyEpoch: 1);
+    final prunedCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: core,
+      accountRootKey: prunedState.ark!,
+      userId: _userId,
+      currentKeyEpoch: 2,
+    );
+    addTearDown(prunedCipher.close);
+
+    await expectLater(
+      prunedCipher.open(
+        _untrustedRecord(epochOneRecord),
+        decode: (_, borrowed) => Uint8List.fromList(borrowed),
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.recordAuthenticationFailed,
+        ),
+      ),
+    );
+  });
+
   test('账户记录加密器接受完整正 uint32 密钥世代', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 0xffffffff);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 0xffffffff,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3168,7 +3291,10 @@ void main() {
     expect(sealed.keyEpoch, 0xffffffff);
     expect(opened, orderedEquals(<int>[4, 2]));
 
-    final overflowArk = await core.generateAccountRootKey(keyEpoch: 1);
+    final overflowArk = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 1,
+    );
     expect(
       () => E2eeAccountRecordCipher.takeOwnership(
         secureCore: core,
@@ -3219,6 +3345,7 @@ void main() {
     await lease.close();
     final recordId = await core.deriveAccountRecordId(
       ark,
+      keyEpoch: session.keyEpoch,
       canonicalEntityKey: Uint8List.fromList(utf8.encode('conversation:id')),
     );
     expect(recordId, hasLength(16));
@@ -3697,7 +3824,10 @@ void main() {
 
   test('账户记录加密器拒绝篡改、错误标识、未来世代与越界内容', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3787,7 +3917,7 @@ void main() {
     );
   });
 
-  test('账户记录加密器隔离用户 AAD 并拒绝帧内实体键替换', () async {
+  test('账户记录加密器拒绝跨账户句柄包装与帧内实体键替换', () async {
     const core = KelivoSecureCore();
     const firstKey = SyncEntityKey(
       entityType: 'conversation',
@@ -3798,27 +3928,25 @@ void main() {
       entityId: 'conversation-2',
     );
 
-    final aadArk = await core.generateAccountRootKey(keyEpoch: 7);
-    final wrongUserRecord = await _sealRawAccountRecord(
-      core: core,
-      ark: aadArk,
-      recordIdKey: firstKey,
-      frameKey: firstKey,
-      userId: _userId,
+    final aadArk = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
     );
-    final wrongUserCipher = E2eeAccountRecordCipher.takeOwnership(
-      secureCore: core,
-      accountRootKey: aadArk,
-      userId: _accountContextId,
-      currentKeyEpoch: 7,
+    expect(
+      () => E2eeAccountRecordCipher.takeOwnership(
+        secureCore: core,
+        accountRootKey: aadArk,
+        userId: _accountContextId,
+        currentKeyEpoch: 7,
+      ),
+      throwsA(isA<FormatException>()),
     );
-    addTearDown(wrongUserCipher.close);
-    await expectLater(
-      wrongUserCipher.open<Object?>(wrongUserRecord, decode: (_, _) => null),
-      throwsA(isA<KelivoSecureCoreException>()),
-    );
+    await core.closeAccountRootKey(aadArk);
 
-    final identityArk = await core.generateAccountRootKey(keyEpoch: 7);
+    final identityArk = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final mismatchedRecord = await _sealRawAccountRecord(
       core: core,
       ark: identityArk,
@@ -3888,7 +4016,10 @@ void main() {
 
   test('v3 推送接受完整 uint32 keyEpoch 并解析三类结果', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 0xffffffff);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 0xffffffff,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -4058,7 +4189,10 @@ void main() {
 
   test('v3 推送在发网前拒绝 mutationId 与认证 operationId 不一致', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -4615,7 +4749,10 @@ void main() {
 
   test('v3 推送在发网前拒绝非法标识与批量边界', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey(keyEpoch: 7);
+    final ark = await core.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 7,
+    );
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -6759,6 +6896,711 @@ void main() {
     expect(await File(zeroStored.storagePath).length(), 0);
     await store.verifyContent(zeroStored);
   });
+
+  test('账户信任成员清单双签名链覆盖初始化配对撤销与恢复绑定', () async {
+    const secureCore = KelivoSecureCore();
+    const manifestModule = E2eeAccountTrustManifestModule();
+    final ark = await secureCore.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 1,
+    );
+    addTearDown(() => secureCore.closeAccountRootKey(ark));
+    final issuer = await _newMembershipDevice(
+      secureCore,
+      deviceId: _issuerDeviceId,
+      authGeneration: 0,
+    );
+    final subject = await _newMembershipDevice(
+      secureCore,
+      deviceId: _deviceId1,
+      authGeneration: 1,
+    );
+    final recoveryPublicKey = await _newRecoveryPublicKey(secureCore);
+    final recoveryCapsule1 = _filledBytes(80, 0x41);
+    final recoveryCapsule2 = _filledBytes(80, 0x42);
+
+    final initialized = await manifestModule.create(
+      ark: ark,
+      change: E2eeInitializeMembershipChange(
+        userId: _userId,
+        operationId: _mutationId1,
+        member: issuer,
+        recoveryPublicKeyVersion: 1,
+        recoveryPublicKey: recoveryPublicKey,
+        recoveryCapsuleVersion: 1,
+        recoveryCapsule: recoveryCapsule1,
+      ),
+    );
+    expect(initialized.manifest, hasLength(444));
+    expect(
+      initialized.manifest.sublist(
+        initialized.manifest.length - 128,
+        initialized.manifest.length - 64,
+      ),
+      everyElement(0),
+    );
+    expect(e2eeAccountTrustManifestMaximumLength, 22884);
+    final initializedProjection = _membershipProjection(
+      initialized,
+      recoveryCapsule: recoveryCapsule1,
+      lastOperationId: _mutationId1,
+      dataRekeyPhase: E2eeDataRekeyPhase.ready,
+    );
+    final initializedFromServer = await manifestModule.verify(
+      ark: ark,
+      expectation: E2eeInitializeMembershipExpectation(
+        projection: initializedProjection,
+        operationId: _mutationId1,
+        member: issuer,
+      ),
+    );
+    final paired = await manifestModule.create(
+      ark: ark,
+      change: E2eeAddDeviceMembershipChange(
+        previous: initializedFromServer,
+        pairingId: _pairingId,
+        issuerDeviceId: _issuerDeviceId,
+        subject: subject,
+      ),
+    );
+    expect(paired.manifest, hasLength(532));
+    expect(paired.previousDigest, orderedEquals(initialized.digest));
+    expect(
+      paired.members.map((member) => member.deviceId),
+      orderedEquals(<String>[_deviceId1, _issuerDeviceId]),
+    );
+    final pairedProjection = _membershipProjection(
+      paired,
+      recoveryCapsule: recoveryCapsule1,
+      lastOperationId: _pairingId,
+      dataRekeyPhase: E2eeDataRekeyPhase.ready,
+    );
+    final pairedFromServer = await manifestModule.verify(
+      ark: ark,
+      expectation: E2eeAddDeviceMembershipExpectation(
+        projection: pairedProjection,
+        previous: initializedFromServer,
+        pairingId: _pairingId,
+        issuerDeviceId: _issuerDeviceId,
+        subject: subject,
+      ),
+    );
+    final bootstrapped = await manifestModule.verify(
+      ark: ark,
+      expectation: E2eePairingBootstrapMembershipExpectation(
+        projection: pairedProjection,
+        consumedKeyEpoch: paired.keyEpoch,
+        consumedSecurityGeneration: paired.securityGeneration,
+        consumedMembershipManifestDigest: paired.digest,
+        pairingId: _pairingId,
+        issuerDeviceId: _issuerDeviceId,
+        localMember: subject,
+      ),
+    );
+    expect(bootstrapped.digest, orderedEquals(paired.digest));
+    final pairedFromHistory = await manifestModule.verifyHistoryBatch(
+      previous: initializedFromServer,
+      entries: <E2eeMembershipHistoryEntry>[_membershipHistoryEntry(paired)],
+    );
+    expect(pairedFromHistory.digest, orderedEquals(paired.digest));
+
+    final epoch2 = await secureCore.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 2,
+    );
+    await secureCore.addAccountRootKeyEpoch(ark, source: epoch2);
+    await secureCore.closeAccountRootKey(epoch2);
+    final rotated = await manifestModule.create(
+      ark: ark,
+      change: E2eeRevokeRotateMembershipChange(
+        previous: pairedFromServer,
+        operationId: _mutationId2,
+        issuerDeviceId: _deviceId1,
+        revokedDeviceId: _issuerDeviceId,
+        nextRecoveryCapsuleVersion: 2,
+        nextRecoveryCapsule: recoveryCapsule2,
+      ),
+    );
+    expect(rotated.keyEpoch, 2);
+    expect(rotated.securityGeneration, 3);
+    expect(rotated.members.single.deviceId, _deviceId1);
+    expect(
+      rotated.currentAccountTrustPublicKey,
+      isNot(orderedEquals(paired.currentAccountTrustPublicKey)),
+    );
+    expect(
+      rotated.manifest.sublist(
+        rotated.manifest.length - 128,
+        rotated.manifest.length - 64,
+      ),
+      isNot(everyElement(0)),
+    );
+    final rotatedProjection = _membershipProjection(
+      rotated,
+      recoveryCapsule: recoveryCapsule2,
+      lastOperationId: _mutationId2,
+      dataRekeyPhase: E2eeDataRekeyPhase.rekeyPending,
+    );
+    final rotatedFromServer = await manifestModule.verify(
+      ark: ark,
+      expectation: E2eeRevokeRotateMembershipExpectation(
+        projection: rotatedProjection,
+        previous: pairedFromServer,
+        operationId: _mutationId2,
+        issuerDeviceId: _deviceId1,
+        revokedDeviceId: _issuerDeviceId,
+      ),
+    );
+    final rotatedFromHistory = await manifestModule.verifyHistoryBatch(
+      previous: pairedFromHistory,
+      entries: <E2eeMembershipHistoryEntry>[_membershipHistoryEntry(rotated)],
+    );
+    final recovered = await manifestModule.verifyCurrentState(
+      ark: ark,
+      historyHead: rotatedFromHistory,
+      projection: rotatedProjection,
+    );
+    expect(
+      recovered.membership.digest,
+      orderedEquals(rotatedFromServer.digest),
+    );
+    expect(recovered.reportedDataRekeyPhase, E2eeDataRekeyPhase.rekeyPending);
+  });
+
+  test('成员信任链拒绝双签名篡改', () async {
+    const secureCore = KelivoSecureCore();
+    const manifestModule = E2eeAccountTrustManifestModule();
+    final ark = await secureCore.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 1,
+    );
+    addTearDown(() => secureCore.closeAccountRootKey(ark));
+    final issuer = await _newMembershipDevice(
+      secureCore,
+      deviceId: _issuerDeviceId,
+      authGeneration: 0,
+    );
+    final subject = await _newMembershipDevice(
+      secureCore,
+      deviceId: _deviceId1,
+      authGeneration: 1,
+    );
+    final recoveryPublicKey = await _newRecoveryPublicKey(secureCore);
+    final recoveryCapsule1 = _filledBytes(80, 0x51);
+    final recoveryCapsule2 = _filledBytes(80, 0x52);
+    final initializeChange = E2eeInitializeMembershipChange(
+      userId: _userId,
+      operationId: _mutationId1,
+      member: issuer,
+      recoveryPublicKeyVersion: 1,
+      recoveryPublicKey: recoveryPublicKey,
+      recoveryCapsuleVersion: 1,
+      recoveryCapsule: recoveryCapsule1,
+    );
+    final initialized = await manifestModule.create(
+      ark: ark,
+      change: initializeChange,
+    );
+
+    final paired = await manifestModule.create(
+      ark: ark,
+      change: E2eeAddDeviceMembershipChange(
+        previous: initialized,
+        pairingId: _pairingId,
+        issuerDeviceId: _issuerDeviceId,
+        subject: subject,
+      ),
+    );
+    final transitionTampered = Uint8List.fromList(paired.manifest)
+      ..[paired.manifest.length - 128] ^= 1;
+    await expectLater(
+      manifestModule.verifyHistoryBatch(
+        previous: initialized,
+        entries: <E2eeMembershipHistoryEntry>[
+          _membershipHistoryEntryFromBytes(transitionTampered),
+        ],
+      ),
+      throwsStateError,
+    );
+    final currentTampered = Uint8List.fromList(paired.manifest)
+      ..[paired.manifest.length - 1] ^= 1;
+    await expectLater(
+      manifestModule.verifyHistoryBatch(
+        previous: initialized,
+        entries: <E2eeMembershipHistoryEntry>[
+          _membershipHistoryEntryFromBytes(currentTampered),
+        ],
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+    final pairedFromHistory = await manifestModule.verifyHistoryBatch(
+      previous: initialized,
+      entries: <E2eeMembershipHistoryEntry>[_membershipHistoryEntry(paired)],
+    );
+
+    final epoch2 = await secureCore.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 2,
+    );
+    await secureCore.addAccountRootKeyEpoch(ark, source: epoch2);
+    await secureCore.closeAccountRootKey(epoch2);
+    final rotated = await manifestModule.create(
+      ark: ark,
+      change: E2eeRevokeRotateMembershipChange(
+        previous: paired,
+        operationId: _mutationId2,
+        issuerDeviceId: _deviceId1,
+        revokedDeviceId: _issuerDeviceId,
+        nextRecoveryCapsuleVersion: 2,
+        nextRecoveryCapsule: recoveryCapsule2,
+      ),
+    );
+    final rotationTransitionTampered = Uint8List.fromList(rotated.manifest)
+      ..[rotated.manifest.length - 128] ^= 1;
+    await expectLater(
+      manifestModule.verifyHistoryBatch(
+        previous: pairedFromHistory,
+        entries: <E2eeMembershipHistoryEntry>[
+          _membershipHistoryEntryFromBytes(rotationTransitionTampered),
+        ],
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+    final rotatedFromHistory = await manifestModule.verifyHistoryBatch(
+      previous: pairedFromHistory,
+      entries: <E2eeMembershipHistoryEntry>[_membershipHistoryEntry(rotated)],
+    );
+    final fakeEpoch2Ark = await secureCore.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 2,
+    );
+    await expectLater(
+      manifestModule.verifyCurrentState(
+        ark: fakeEpoch2Ark,
+        historyHead: rotatedFromHistory,
+        projection: _membershipProjection(
+          rotated,
+          recoveryCapsule: recoveryCapsule2,
+          lastOperationId: _mutationId2,
+          dataRekeyPhase: E2eeDataRekeyPhase.rekeyPending,
+        ),
+      ),
+      throwsStateError,
+    );
+    await secureCore.closeAccountRootKey(fakeEpoch2Ark);
+  });
+
+  test('成员清单拒绝密钥复用配对偏差计数器溢出与自撤销', () async {
+    const secureCore = KelivoSecureCore();
+    const manifestModule = E2eeAccountTrustManifestModule();
+    final issuer = await _newMembershipDevice(
+      secureCore,
+      deviceId: _issuerDeviceId,
+      authGeneration: 0,
+    );
+    final subject = await _newMembershipDevice(
+      secureCore,
+      deviceId: _deviceId1,
+      authGeneration: 1,
+    );
+    final pendingSubject = await _newMembershipDevice(
+      secureCore,
+      deviceId: _deviceId2,
+      authGeneration: 0,
+    );
+    expect(
+      () => E2eeMembershipDeviceInput(
+        deviceId: _deviceId2,
+        keyVersion: 0x80000000,
+        authGeneration: 0,
+        signingPublicKey: pendingSubject.signingPublicKey,
+        keyAgreementPublicKey: pendingSubject.keyAgreementPublicKey,
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => E2eeMembershipDeviceInput(
+        deviceId: _deviceId2,
+        keyVersion: 1,
+        authGeneration: 0x80000000,
+        signingPublicKey: pendingSubject.signingPublicKey,
+        keyAgreementPublicKey: pendingSubject.keyAgreementPublicKey,
+      ),
+      throwsArgumentError,
+    );
+    expect(e2eeAccountTrustManifestMinimumLength, 444);
+    expect(
+      () => E2eeMembershipHistoryEntry(
+        manifest: Uint8List(356),
+        manifestDigest: Uint8List(32),
+      ),
+      throwsArgumentError,
+    );
+    expect(
+      () => E2eeInitializeMembershipChange(
+        userId: _userId,
+        operationId: _mutationId1,
+        member: issuer,
+        recoveryPublicKeyVersion: 1,
+        recoveryPublicKey: issuer.keyAgreementPublicKey,
+        recoveryCapsuleVersion: 1,
+        recoveryCapsule: Uint8List(
+          e2eeAccountTrustManifestMaximumRecoveryCapsuleLength + 1,
+        ),
+      ),
+      throwsArgumentError,
+    );
+
+    final recoveryPublicKey = await _newRecoveryPublicKey(secureCore);
+    final recoveryCapsule = _filledBytes(80, 0x61);
+    final ark = await secureCore.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 1,
+    );
+    addTearDown(() => secureCore.closeAccountRootKey(ark));
+    await expectLater(
+      manifestModule.create(
+        ark: ark,
+        change: E2eeInitializeMembershipChange(
+          userId: _userId,
+          operationId: _mutationId1,
+          member: issuer,
+          recoveryPublicKeyVersion: 1,
+          recoveryPublicKey: issuer.keyAgreementPublicKey,
+          recoveryCapsuleVersion: 1,
+          recoveryCapsule: recoveryCapsule,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      manifestModule.create(
+        ark: ark,
+        change: E2eeInitializeMembershipChange(
+          userId: _userId,
+          operationId: _mutationId1,
+          member: E2eeMembershipDeviceInput(
+            deviceId: _issuerDeviceId,
+            keyVersion: 1,
+            authGeneration: 0,
+            signingPublicKey: Uint8List(32),
+            keyAgreementPublicKey: issuer.keyAgreementPublicKey,
+          ),
+          recoveryPublicKeyVersion: 1,
+          recoveryPublicKey: recoveryPublicKey,
+          recoveryCapsuleVersion: 1,
+          recoveryCapsule: recoveryCapsule,
+        ),
+      ),
+      throwsA(isA<KelivoSecureCoreException>()),
+    );
+    final initialized = await manifestModule.create(
+      ark: ark,
+      change: E2eeInitializeMembershipChange(
+        userId: _userId,
+        operationId: _mutationId1,
+        member: issuer,
+        recoveryPublicKeyVersion: 1,
+        recoveryPublicKey: recoveryPublicKey,
+        recoveryCapsuleVersion: 1,
+        recoveryCapsule: recoveryCapsule,
+      ),
+    );
+    final recoveryKeyReusedManifest = Uint8List.fromList(initialized.manifest)
+      ..setRange(104, 136, issuer.keyAgreementPublicKey);
+    await expectLater(
+      manifestModule.verify(
+        ark: ark,
+        expectation: E2eeInitializeMembershipExpectation(
+          projection: E2eeMembershipServerProjection(
+            userId: initialized.userId,
+            securityGeneration: initialized.securityGeneration,
+            keyEpoch: initialized.keyEpoch,
+            membershipManifestVersion: e2eeAccountTrustManifestFormatVersion,
+            membershipManifest: recoveryKeyReusedManifest,
+            membershipManifestDigest: Uint8List.fromList(
+              sha256.convert(recoveryKeyReusedManifest).bytes,
+            ),
+            recoveryPublicKeyVersion: initialized.recoveryPublicKeyVersion,
+            recoveryPublicKey: issuer.keyAgreementPublicKey,
+            recoveryCapsuleVersion: initialized.recoveryCapsuleVersion,
+            recoveryCapsule: recoveryCapsule,
+            lastOperationId: _mutationId1,
+            dataRekeyPhase: E2eeDataRekeyPhase.ready,
+          ),
+          operationId: _mutationId1,
+          member: issuer,
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    final recoveryKeyReusedSubject = E2eeMembershipDeviceInput(
+      deviceId: _deviceId2,
+      keyVersion: 1,
+      authGeneration: 1,
+      signingPublicKey: pendingSubject.signingPublicKey,
+      keyAgreementPublicKey: recoveryPublicKey,
+    );
+    await expectLater(
+      manifestModule.create(
+        ark: ark,
+        change: E2eeAddDeviceMembershipChange(
+          previous: initialized,
+          pairingId: _pairingId,
+          issuerDeviceId: _issuerDeviceId,
+          subject: recoveryKeyReusedSubject,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      manifestModule.verify(
+        ark: ark,
+        expectation: E2eeInitializeMembershipExpectation(
+          projection: _membershipProjection(
+            initialized,
+            recoveryCapsule: recoveryCapsule,
+            lastOperationId: _mutationId2,
+            dataRekeyPhase: E2eeDataRekeyPhase.ready,
+          ),
+          operationId: _mutationId1,
+          member: issuer,
+        ),
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      manifestModule.create(
+        ark: ark,
+        change: E2eeAddDeviceMembershipChange(
+          previous: initialized,
+          pairingId: _pairingId,
+          issuerDeviceId: _issuerDeviceId,
+          subject: pendingSubject,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    final paired = await manifestModule.create(
+      ark: ark,
+      change: E2eeAddDeviceMembershipChange(
+        previous: initialized,
+        pairingId: _pairingId,
+        issuerDeviceId: _issuerDeviceId,
+        subject: subject,
+      ),
+    );
+    final pairedProjection = _membershipProjection(
+      paired,
+      recoveryCapsule: recoveryCapsule,
+      lastOperationId: _pairingId,
+      dataRekeyPhase: E2eeDataRekeyPhase.ready,
+    );
+    await expectLater(
+      manifestModule.verify(
+        ark: ark,
+        expectation: E2eeAddDeviceMembershipExpectation(
+          projection: _membershipProjection(
+            paired,
+            recoveryCapsule: recoveryCapsule,
+            lastOperationId: _pairingId,
+            dataRekeyPhase: E2eeDataRekeyPhase.rekeyPending,
+          ),
+          previous: initialized,
+          pairingId: _pairingId,
+          issuerDeviceId: _issuerDeviceId,
+          subject: subject,
+        ),
+      ),
+      throwsStateError,
+    );
+    final wrongDigest = Uint8List.fromList(paired.digest)..[0] ^= 1;
+    for (final expectation in <E2eePairingBootstrapMembershipExpectation>[
+      E2eePairingBootstrapMembershipExpectation(
+        projection: pairedProjection,
+        consumedKeyEpoch: paired.keyEpoch + 1,
+        consumedSecurityGeneration: paired.securityGeneration,
+        consumedMembershipManifestDigest: paired.digest,
+        pairingId: _pairingId,
+        issuerDeviceId: _issuerDeviceId,
+        localMember: subject,
+      ),
+      E2eePairingBootstrapMembershipExpectation(
+        projection: pairedProjection,
+        consumedKeyEpoch: paired.keyEpoch,
+        consumedSecurityGeneration: paired.securityGeneration + 1,
+        consumedMembershipManifestDigest: paired.digest,
+        pairingId: _pairingId,
+        issuerDeviceId: _issuerDeviceId,
+        localMember: subject,
+      ),
+      E2eePairingBootstrapMembershipExpectation(
+        projection: pairedProjection,
+        consumedKeyEpoch: paired.keyEpoch,
+        consumedSecurityGeneration: paired.securityGeneration,
+        consumedMembershipManifestDigest: wrongDigest,
+        pairingId: _pairingId,
+        issuerDeviceId: _issuerDeviceId,
+        localMember: subject,
+      ),
+    ]) {
+      await expectLater(
+        manifestModule.verify(ark: ark, expectation: expectation),
+        throwsStateError,
+      );
+    }
+
+    final epoch2 = await secureCore.generateAccountRootKey(
+      userId: _rawUuid(_userId),
+      keyEpoch: 2,
+    );
+    await secureCore.addAccountRootKeyEpoch(ark, source: epoch2);
+    await secureCore.closeAccountRootKey(epoch2);
+    await expectLater(
+      manifestModule.create(
+        ark: ark,
+        change: E2eeRevokeRotateMembershipChange(
+          previous: paired,
+          operationId: _mutationId2,
+          issuerDeviceId: _deviceId1,
+          revokedDeviceId: _deviceId1,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: _filledBytes(80, 0x62),
+        ),
+      ),
+      throwsArgumentError,
+    );
+    final rotated = await manifestModule.create(
+      ark: ark,
+      change: E2eeRevokeRotateMembershipChange(
+        previous: paired,
+        operationId: _mutationId3,
+        issuerDeviceId: _issuerDeviceId,
+        revokedDeviceId: _deviceId1,
+        nextRecoveryCapsuleVersion: 2,
+        nextRecoveryCapsule: _filledBytes(80, 0x63),
+      ),
+    );
+    await expectLater(
+      manifestModule.verify(
+        ark: ark,
+        expectation: E2eeRevokeRotateMembershipExpectation(
+          projection: _membershipProjection(
+            rotated,
+            recoveryCapsule: _filledBytes(80, 0x63),
+            lastOperationId: _mutationId3,
+            dataRekeyPhase: E2eeDataRekeyPhase.ready,
+          ),
+          previous: paired,
+          operationId: _mutationId3,
+          issuerDeviceId: _issuerDeviceId,
+          revokedDeviceId: _deviceId1,
+        ),
+      ),
+      throwsStateError,
+    );
+    await expectLater(
+      manifestModule.create(
+        ark: ark,
+        change: E2eeRevokeRotateMembershipChange(
+          previous: paired,
+          operationId: _mutationId2,
+          issuerDeviceId: _issuerDeviceId,
+          revokedDeviceId: _deviceId1,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: recoveryCapsule,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      manifestModule.verifyHistoryBatch(
+        previous: initialized,
+        entries: const <E2eeMembershipHistoryEntry>[],
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      manifestModule.verifyHistoryBatch(
+        previous: initialized,
+        entries: List<E2eeMembershipHistoryEntry>.filled(
+          e2eeAccountTrustManifestMaximumHistoryBatchEntries + 1,
+          _membershipHistoryEntry(paired),
+        ),
+      ),
+      throwsArgumentError,
+    );
+  });
+}
+
+Future<E2eeMembershipDeviceInput> _newMembershipDevice(
+  KelivoSecureCore secureCore, {
+  required String deviceId,
+  required int authGeneration,
+}) async {
+  final identity = await secureCore.generateDeviceIdentity();
+  try {
+    final publicKeys = await secureCore.readDevicePublicKeys(identity);
+    return E2eeMembershipDeviceInput(
+      deviceId: deviceId,
+      keyVersion: 1,
+      authGeneration: authGeneration,
+      signingPublicKey: publicKeys.signingPublicKey,
+      keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+    );
+  } finally {
+    await secureCore.closeDeviceIdentity(identity);
+  }
+}
+
+Future<Uint8List> _newRecoveryPublicKey(KelivoSecureCore secureCore) async {
+  final identity = await secureCore.generateDeviceIdentity();
+  try {
+    final publicKeys = await secureCore.readDevicePublicKeys(identity);
+    return Uint8List.fromList(publicKeys.keyAgreementPublicKey);
+  } finally {
+    await secureCore.closeDeviceIdentity(identity);
+  }
+}
+
+E2eeMembershipServerProjection _membershipProjection(
+  E2eeVerifiedMembership membership, {
+  required Uint8List recoveryCapsule,
+  required String lastOperationId,
+  required E2eeDataRekeyPhase dataRekeyPhase,
+}) {
+  return E2eeMembershipServerProjection(
+    userId: membership.userId,
+    securityGeneration: membership.securityGeneration,
+    keyEpoch: membership.keyEpoch,
+    membershipManifestVersion: e2eeAccountTrustManifestFormatVersion,
+    membershipManifest: membership.manifest,
+    membershipManifestDigest: membership.digest,
+    recoveryPublicKeyVersion: membership.recoveryPublicKeyVersion,
+    recoveryPublicKey: membership.recoveryPublicKey,
+    recoveryCapsuleVersion: membership.recoveryCapsuleVersion,
+    recoveryCapsule: recoveryCapsule,
+    lastOperationId: lastOperationId,
+    dataRekeyPhase: dataRekeyPhase,
+  );
+}
+
+E2eeMembershipHistoryEntry _membershipHistoryEntry(
+  E2eeVerifiedMembership membership,
+) {
+  return E2eeMembershipHistoryEntry(
+    manifest: membership.manifest,
+    manifestDigest: membership.digest,
+  );
+}
+
+E2eeMembershipHistoryEntry _membershipHistoryEntryFromBytes(
+  Uint8List manifest,
+) {
+  return E2eeMembershipHistoryEntry(
+    manifest: manifest,
+    manifestDigest: Uint8List.fromList(sha256.convert(manifest).bytes),
+  );
 }
 
 final class _AttachmentUploadFixture {
@@ -7355,7 +8197,12 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
   final identity = await core.generateDeviceIdentity();
   KelivoAccountRootKeyHandle? ark;
   try {
-    if (bound) ark = await core.generateAccountRootKey(keyEpoch: 7);
+    if (bound) {
+      ark = await core.generateAccountRootKey(
+        userId: _rawUuid(_userId),
+        keyEpoch: 7,
+      );
+    }
     final blob = await core.sealDeviceState(
       key,
       identity,
@@ -7455,9 +8302,9 @@ Future<Map<String, Object?>> _seedPendingRegistration({
   };
   final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
   final identity = await core.generateDeviceIdentity();
-  final ark = await core.generateAccountRootKey(keyEpoch: 1);
   final deviceId = _rawUuid(_deviceId1);
   final userId = _rawUuid(_userId);
+  final ark = await core.generateAccountRootKey(userId: userId, keyEpoch: 1);
   final identityOnlyState = Uint8List.fromList(
     await core.sealDeviceState(
       key,

@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(10)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(14)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -67,12 +67,14 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_INVALID_ATTACHMENT_DATA_KEY_HANDLE INT32_C(36)
 #define KELIVO_STATUS_ATTACHMENT_ENVELOPE_INVALID INT32_C(37)
 #define KELIVO_STATUS_ATTACHMENT_AUTHENTICATION_FAILED INT32_C(38)
+#define KELIVO_STATUS_SLOT_IN_USE INT32_C(39)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
 #define KELIVO_SECURE_STORAGE_BACKEND_WINDOWS_DPAPI UINT32_C(1)
 #define KELIVO_SECURE_STORAGE_BACKEND_ANDROID_KEYSTORE UINT32_C(2)
 #define KELIVO_SECURE_STORAGE_BACKEND_LINUX_SECRET_SERVICE UINT32_C(3)
+#define KELIVO_SECURE_STORAGE_BACKEND_IOS_KEYCHAIN UINT32_C(4)
 #define KELIVO_CAPABILITY_FLAGS_NONE UINT64_C(0)
 #define KELIVO_CAPABILITY_KEY_SLOTS (UINT64_C(1) << 0)
 #define KELIVO_CAPABILITY_BACKGROUND_ACCESS (UINT64_C(1) << 1)
@@ -82,6 +84,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_OPAQUE_CLIENT (UINT64_C(1) << 5)
 #define KELIVO_CAPABILITY_DEVICE_E2EE_CORE (UINT64_C(1) << 6)
 #define KELIVO_CAPABILITY_ATTACHMENT_CRYPTO (UINT64_C(1) << 7)
+#define KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING (UINT64_C(1) << 8)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_ENTITY_KEY_MAX_SIZE ((size_t)2048)
@@ -114,6 +117,9 @@ typedef int32_t KelivoStatus;
 #define KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE ((size_t)400)
 #define KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE ((size_t)432)
 #define KELIVO_ACCOUNT_ROOT_KEYRING_CAPACITY ((size_t)8)
+#define KELIVO_ACCOUNT_TRUST_PUBLIC_KEY_SIZE ((size_t)32)
+#define KELIVO_ACCOUNT_TRUST_SIGNATURE_SIZE ((size_t)64)
+#define KELIVO_ACCOUNT_TRUST_PAYLOAD_MAX_SIZE ((size_t)(64 * 1024))
 #define KELIVO_DEVICE_STATE_BLOB_SIZE ((size_t)448)
 #define KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE UINT32_C(48)
 #define KELIVO_DEVICE_STATE_BINDING_FLAG_ACCOUNT (UINT32_C(1) << 0)
@@ -206,6 +212,16 @@ KELIVO_CORE_API KelivoStatus kelivo_key_slot_open(
     size_t slot_id_length,
     uint32_t policy_version,
     uint64_t *out_handle);
+
+/*
+ * 删除本机平台安全存储中的槽位。目标不存在时幂等成功；同进程仍持有该
+ * 槽位句柄时返回 SLOT_IN_USE。调用方必须先关闭相关句柄，本函数不会代为
+ * 关闭或使已取出的密钥失效；系统存储错误不得伪装为成功。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_key_slot_delete(
+    const uint8_t *slot_id,
+    size_t slot_id_length,
+    uint32_t policy_version);
 
 /*
  * 关闭非零不透明句柄。句柄仅在当前进程内有效，关闭后永久失效且数值不得
@@ -499,6 +515,20 @@ KELIVO_CORE_API KelivoStatus kelivo_device_identity_public_keys(
     size_t out_public_keys_capacity,
     size_t *out_public_keys_length);
 
+/*
+ * 严格验证外部 Ed25519 公钥：拒绝非规范编码、小阶点和扭转分量。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_signing_public_key_validate(
+    const uint8_t *public_key,
+    size_t public_key_length);
+
+/*
+ * 严格验证外部 X25519 公钥：必须能完成 HPKE 封装且不能产生全零共享值。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_device_key_agreement_public_key_validate(
+    const uint8_t *public_key,
+    size_t public_key_length);
+
 KELIVO_CORE_API KelivoStatus kelivo_device_identity_handle_close(
     uint64_t identity_handle);
 
@@ -545,33 +575,83 @@ KELIVO_CORE_API KelivoStatus kelivo_pending_pairing_handle_close(
     uint64_t pending_handle);
 
 /*
- * 为正 key_epoch 生成 ARK，并直接注册为仅含该代次的不透明密钥环句柄。
- * 不存在未绑定状态或原始字节导出接口；key_epoch=0 必须失败。
+ * 为规范 user_id 和正 key_epoch 生成 ARK，并直接注册为仅含该代次的账户绑定
+ * 不透明密钥环句柄。不存在未绑定状态或原始字节导出接口；key_epoch=0 必须失败。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_generate(
+    const uint8_t *user_id,
+    size_t user_id_length,
     uint32_t key_epoch,
     uint64_t *out_handle);
 
 /*
- * 使用 ARK 对调用方提供的非空规范实体键执行 v1 域分离 keyed PRF，输出固定
- * 16 字节不透明记录 ID，并设置 RFC 4122 UUIDv4/variant 位。实体键最长 2048
- * 字节；原始 ARK 和完整 PRF 输出均不会通过 ABI 暴露。
+ * 使用句柄中指定且必须存在的 ARK 代次，对调用方提供的非空规范实体键执行
+ * v1 域分离 keyed PRF，输出固定 16 字节不透明记录 ID，并设置 RFC 4122
+ * UUIDv4/variant 位。实体键最长 2048 字节；原始 ARK 和完整 PRF 输出均不
+ * 会通过 ABI 暴露。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_record_id_derive(
     uint64_t ark_handle,
     const uint8_t *canonical_entity_key,
     size_t canonical_entity_key_length,
+    uint32_t key_epoch,
     uint8_t *out_record_id,
     size_t out_record_id_capacity,
     size_t *out_record_id_length);
+
+/*
+ * 从指定且必须存在的 ARK 代次派生账户信任根 Ed25519 验证钥。user_id 必须
+ * 等于句柄固有账户；HKDF 固定绑定 user_id 与 key_epoch。成功只输出 32 字节
+ * 公钥，原始 ARK 与 seed 不跨 ABI。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_trust_public_key_derive(
+    uint64_t ark_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t key_epoch,
+    uint8_t *out_public_key,
+    size_t out_public_key_capacity,
+    size_t *out_public_key_length);
+
+/*
+ * 对 1 至 65536 字节规范载荷签名。user_id 必须等于句柄固有账户；签名
+ * transcript 固定绑定协议域、user_id、key_epoch 与载荷长度。成功固定输出
+ * 64 字节，任何失败都清零可写输出。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_trust_payload_sign(
+    uint64_t ark_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t key_epoch,
+    const uint8_t *canonical_payload,
+    size_t canonical_payload_length,
+    uint8_t *out_signature,
+    size_t out_signature_capacity,
+    size_t *out_signature_length);
+
+/*
+ * 使用严格 Ed25519 语义验证规范载荷。public_key 必须由客户端从已认证 ARK
+ * 本地派生；服务器随清单返回的裸公钥不得作为信任根。该函数不建立公钥信任。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_trust_payload_verify(
+    const uint8_t *public_key,
+    size_t public_key_length,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t key_epoch,
+    const uint8_t *canonical_payload,
+    size_t canonical_payload_length,
+    const uint8_t *signature,
+    size_t signature_length);
 
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_handle_close(
     uint64_t ark_handle);
 
 /*
- * 将 source 单槽密钥环原子加入 target 并设为当前代次。source 必须仅含一个
- * 严格高于 target 当前值的代次；重复、非递增、容量已满或任一句柄无效时，
- * target 保持不变。两个句柄都继续有效，ARK 原始字节不会跨越 ABI。
+ * 将 source 单槽密钥环原子加入同账户 target 并设为当前代次。source 必须
+ * 绑定同一 user_id，且仅含一个严格高于 target 当前值的代次；跨账户、重复、
+ * 非递增、容量已满或任一句柄无效时，target 保持不变。两个句柄都继续有效，
+ * ARK 原始字节不会跨越 ABI。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_root_keyring_add_epoch(
     uint64_t target_ark_handle,
@@ -586,9 +666,10 @@ KELIVO_CORE_API KelivoStatus kelivo_account_root_keyring_prune_epoch(
     uint32_t key_epoch);
 
 /*
- * 签发设备将不透明 ARK 封装给任意目标设备。签发公钥由 identity_handle
- * 内部取得；调用方只提供目标公钥与完整可信绑定。成功固定输出 336 字节；
- * 其他验证失败将保持长度为零并清零可写输出，容量不足返回所需长度 336。
+ * 签发设备将不透明 ARK 封装给任意目标设备。user_id 必须等于 ARK 句柄
+ * 固有账户；签发公钥由 identity_handle 内部取得，调用方只提供目标公钥与
+ * 完整可信绑定。成功固定输出 336 字节；其他验证失败将保持长度为零并清零
+ * 可写输出，容量不足返回所需长度 336。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_envelope_seal(
     uint64_t issuer_identity_handle,

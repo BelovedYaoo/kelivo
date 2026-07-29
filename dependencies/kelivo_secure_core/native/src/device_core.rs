@@ -18,6 +18,9 @@ use crate::{
 };
 
 pub(super) const DEVICE_PUBLIC_KEYS_LENGTH: usize = crypto::DEVICE_PUBLIC_KEY_LENGTH * 2;
+pub(super) const ACCOUNT_TRUST_PUBLIC_KEY_LENGTH: usize = crypto::ACCOUNT_TRUST_PUBLIC_KEY_LENGTH;
+pub(super) const ACCOUNT_TRUST_SIGNATURE_LENGTH: usize = crypto::ACCOUNT_TRUST_SIGNATURE_LENGTH;
+pub(super) const ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH: usize = crypto::ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH;
 pub(super) const REGISTRATION_FINISH_BUNDLE_LENGTH: usize =
     crypto::ARK_ENVELOPE_LENGTH + crypto::DEVICE_PROOF_SIGNATURE_LENGTH;
 pub(super) const PAIRING_APPROVAL_BUNDLE_LENGTH: usize = crypto::ARK_ENVELOPE_LENGTH
@@ -109,9 +112,13 @@ fn identity_registry() -> &'static Mutex<SecretRegistry<crypto::DeviceIdentity>>
     REGISTRY.get_or_init(|| Mutex::new(SecretRegistry::default()))
 }
 
-fn ark_registry() -> &'static Mutex<SecretRegistry<Mutex<crypto::AccountRootKeyring>>> {
-    static REGISTRY: OnceLock<Mutex<SecretRegistry<Mutex<crypto::AccountRootKeyring>>>> =
-        OnceLock::new();
+struct BoundAccountRootKeyring {
+    user_id: crypto::UserId,
+    keyring: Mutex<crypto::AccountRootKeyring>,
+}
+
+fn ark_registry() -> &'static Mutex<SecretRegistry<BoundAccountRootKeyring>> {
+    static REGISTRY: OnceLock<Mutex<SecretRegistry<BoundAccountRootKeyring>>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(SecretRegistry::default()))
 }
 
@@ -391,21 +398,31 @@ fn close_identity(handle: u64) -> Result<(), KelivoStatus> {
     )
 }
 
-fn register_ark(epoch: u32, ark: crypto::AccountRootKey) -> Result<u64, KelivoStatus> {
+fn register_ark(
+    user_id: crypto::UserId,
+    epoch: u32,
+    ark: crypto::AccountRootKey,
+) -> Result<u64, KelivoStatus> {
     let keyring = crypto::AccountRootKeyring::new(epoch, ark).map_err(device_error_status)?;
-    register_keyring(keyring)
+    register_keyring(user_id, keyring)
 }
 
-fn register_keyring(keyring: crypto::AccountRootKeyring) -> Result<u64, KelivoStatus> {
+fn register_keyring(
+    user_id: crypto::UserId,
+    keyring: crypto::AccountRootKeyring,
+) -> Result<u64, KelivoStatus> {
     register_secret(
         ark_registry(),
-        Mutex::new(keyring),
+        BoundAccountRootKeyring {
+            user_id,
+            keyring: Mutex::new(keyring),
+        },
         ACCOUNT_ROOT_KEY_HANDLE_TAG,
         MAX_ACTIVE_ACCOUNT_ROOT_KEYS,
     )
 }
 
-fn keyring_for_handle(handle: u64) -> Result<Arc<Mutex<crypto::AccountRootKeyring>>, KelivoStatus> {
+fn bound_keyring_for_handle(handle: u64) -> Result<Arc<BoundAccountRootKeyring>, KelivoStatus> {
     secret_for_handle(
         ark_registry(),
         handle,
@@ -414,33 +431,73 @@ fn keyring_for_handle(handle: u64) -> Result<Arc<Mutex<crypto::AccountRootKeyrin
     )
 }
 
+fn require_ark_account(
+    bound: &BoundAccountRootKeyring,
+    expected_user_id: crypto::UserId,
+) -> Result<(), KelivoStatus> {
+    if bound.user_id != expected_user_id {
+        return Err(KelivoStatus::DeviceAuthenticationFailed);
+    }
+    Ok(())
+}
+
 pub(super) fn ark_for_handle(
     handle: u64,
     epoch: u32,
 ) -> Result<crypto::AccountRootKey, KelivoStatus> {
-    let keyring = keyring_for_handle(handle)?;
-    let keyring = keyring.lock().map_err(|_| KelivoStatus::InternalState)?;
+    let bound = bound_keyring_for_handle(handle)?;
+    with_ark_for_bound_keyring(&bound, epoch, |key| {
+        Ok(crypto::AccountRootKey::from_bytes(*key.as_bytes()))
+    })
+}
+
+pub(super) fn ark_for_account_handle(
+    handle: u64,
+    expected_user_id: crypto::UserId,
+    epoch: u32,
+) -> Result<crypto::AccountRootKey, KelivoStatus> {
+    with_ark_for_account_handle(handle, expected_user_id, epoch, |key| {
+        Ok(crypto::AccountRootKey::from_bytes(*key.as_bytes()))
+    })
+}
+
+fn with_ark_for_account_handle<T>(
+    handle: u64,
+    expected_user_id: crypto::UserId,
+    epoch: u32,
+    operation: impl FnOnce(&crypto::AccountRootKey) -> Result<T, KelivoStatus>,
+) -> Result<T, KelivoStatus> {
+    let bound = bound_keyring_for_handle(handle)?;
+    require_ark_account(&bound, expected_user_id)?;
+    with_ark_for_bound_keyring(&bound, epoch, operation)
+}
+
+fn with_ark_for_bound_keyring<T>(
+    bound: &BoundAccountRootKeyring,
+    epoch: u32,
+    operation: impl FnOnce(&crypto::AccountRootKey) -> Result<T, KelivoStatus>,
+) -> Result<T, KelivoStatus> {
+    let keyring = bound
+        .keyring
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?;
     let key = keyring
         .key_for_epoch(epoch)
         .map_err(|_| KelivoStatus::InvalidArgument)?;
-    Ok(crypto::AccountRootKey::from_bytes(*key.as_bytes()))
-}
-
-fn current_ark_for_handle(handle: u64) -> Result<crypto::AccountRootKey, KelivoStatus> {
-    let keyring = keyring_for_handle(handle)?;
-    let keyring = keyring.lock().map_err(|_| KelivoStatus::InternalState)?;
-    let key = keyring
-        .key_for_epoch(keyring.current_epoch())
-        .map_err(|_| KelivoStatus::InternalState)?;
-    Ok(crypto::AccountRootKey::from_bytes(*key.as_bytes()))
+    operation(key)
 }
 
 fn keyring_snapshot_for_handle(
     handle: u64,
+    expected_user_id: crypto::UserId,
     expected_current_epoch: u32,
 ) -> Result<crypto::AccountRootKeyring, KelivoStatus> {
-    let keyring = keyring_for_handle(handle)?;
-    let keyring = keyring.lock().map_err(|_| KelivoStatus::InternalState)?;
+    let bound = bound_keyring_for_handle(handle)?;
+    require_ark_account(&bound, expected_user_id)?;
+    let keyring = bound
+        .keyring
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?;
     if keyring.current_epoch() != expected_current_epoch {
         return Err(KelivoStatus::DeviceStateInvalid);
     }
@@ -463,17 +520,24 @@ fn merge_ark_epoch(target_handle: u64, source_handle: u64) -> Result<(), KelivoS
     if target_handle == source_handle {
         return Err(KelivoStatus::InvalidArgument);
     }
-    let source = keyring_for_handle(source_handle)?;
+    let source = bound_keyring_for_handle(source_handle)?;
+    let target = bound_keyring_for_handle(target_handle)?;
+    if source.user_id != target.user_id {
+        return Err(KelivoStatus::DeviceAuthenticationFailed);
+    }
     let (epoch, key) = {
-        let source = source.lock().map_err(|_| KelivoStatus::InternalState)?;
+        let source = source
+            .keyring
+            .lock()
+            .map_err(|_| KelivoStatus::InternalState)?;
         if source.len() != 1 {
             return Err(KelivoStatus::InvalidArgument);
         }
         let (epoch, key) = source.entries().next().ok_or(KelivoStatus::InternalState)?;
         (epoch, crypto::AccountRootKey::from_bytes(*key.as_bytes()))
     };
-    let target = keyring_for_handle(target_handle)?;
     target
+        .keyring
         .lock()
         .map_err(|_| KelivoStatus::InternalState)?
         .add_current(epoch, key)
@@ -481,8 +545,9 @@ fn merge_ark_epoch(target_handle: u64, source_handle: u64) -> Result<(), KelivoS
 }
 
 fn prune_ark_epoch(handle: u64, epoch: u32) -> Result<(), KelivoStatus> {
-    let keyring = keyring_for_handle(handle)?;
-    keyring
+    let bound = bound_keyring_for_handle(handle)?;
+    bound
+        .keyring
         .lock()
         .map_err(|_| KelivoStatus::InternalState)?
         .prune(epoch)
@@ -539,6 +604,7 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         | Error::DeviceProofSignatureInvalid
         | Error::ArkEnvelopeBindingMismatch
         | Error::ArkEnvelopeSignatureInvalid
+        | Error::AccountTrustSignatureInvalid
         | Error::KeyAgreementKeyMismatch
         | Error::ArkEnvelopeOpenFailed
         | Error::PairingAuthenticatorInvalid => KelivoStatus::DeviceAuthenticationFailed,
@@ -551,9 +617,9 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         | Error::InvalidDeviceKeyVersion
         | Error::DeviceStateBindingMismatch => KelivoStatus::DeviceStateInvalid,
         Error::DeviceStateAuthenticationFailed => KelivoStatus::DeviceStateAuthenticationFailed,
-        Error::DeviceStateCryptoFailed | Error::PairingAuthenticatorCryptoFailed => {
-            KelivoStatus::InternalState
-        }
+        Error::DeviceStateCryptoFailed
+        | Error::PairingAuthenticatorCryptoFailed
+        | Error::AccountTrustKeyDerivationFailed => KelivoStatus::InternalState,
         Error::InvalidUuidV4
         | Error::InvalidExpiry
         | Error::InvalidSigningPublicKey
@@ -571,6 +637,8 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         | Error::ArkKeyEpochNotIncreasing
         | Error::ArkKeyringCapacityExceeded
         | Error::ArkCurrentEpochRemoval
+        | Error::InvalidAccountTrustPayloadLength { .. }
+        | Error::InvalidAccountTrustSignatureLength { .. }
         | Error::InvalidArkEnvelopeMagic
         | Error::UnsupportedArkEnvelopeVersion(_)
         | Error::UnsupportedArkEnvelopeSuite(_)
@@ -875,6 +943,42 @@ pub unsafe extern "C" fn kelivo_device_identity_public_keys(
 }
 
 #[unsafe(no_mangle)]
+/// # Safety
+///
+/// `public_key` 必须覆盖声明长度。
+pub unsafe extern "C" fn kelivo_device_signing_public_key_validate(
+    public_key: *const u8,
+    public_key_length: usize,
+) -> i32 {
+    let bytes = match unsafe { read_fixed(public_key, public_key_length) } {
+        Ok(bytes) => bytes,
+        Err(status) => return status.code(),
+    };
+    match crypto::DeviceSigningPublicKey::from_bytes(bytes) {
+        Ok(_) => KelivoStatus::Ok.code(),
+        Err(error) => device_error_status(error).code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `public_key` 必须覆盖声明长度。
+pub unsafe extern "C" fn kelivo_device_key_agreement_public_key_validate(
+    public_key: *const u8,
+    public_key_length: usize,
+) -> i32 {
+    let bytes = match unsafe { read_fixed(public_key, public_key_length) } {
+        Ok(bytes) => bytes,
+        Err(status) => return status.code(),
+    };
+    match crypto::DeviceKeyAgreementPublicKey::from_bytes(bytes) {
+        Ok(_) => KelivoStatus::Ok.code(),
+        Err(error) => device_error_status(error).code(),
+    }
+}
+
+#[unsafe(no_mangle)]
 pub extern "C" fn kelivo_device_identity_handle_close(identity_handle: u64) -> i32 {
     match close_identity(identity_handle) {
         Ok(()) => KelivoStatus::Ok.code(),
@@ -1028,6 +1132,8 @@ pub extern "C" fn kelivo_pending_pairing_handle_close(pending_handle: u64) -> i3
 ///
 /// `out_handle` 必须指向可写的 `uint64_t`。
 pub unsafe extern "C" fn kelivo_account_root_key_generate(
+    user_id: *const u8,
+    user_id_length: usize,
     key_epoch: u32,
     out_handle: *mut u64,
 ) -> i32 {
@@ -1037,6 +1143,10 @@ pub unsafe extern "C" fn kelivo_account_root_key_generate(
     if key_epoch == 0 {
         return KelivoStatus::InvalidArgument.code();
     }
+    let user_id = match unsafe { read_user_id(user_id, user_id_length) } {
+        Ok(user_id) => user_id,
+        Err(status) => return status.code(),
+    };
     let mut rng = match protocol::system_rng() {
         Ok(rng) => rng,
         Err(_) => return KelivoStatus::RandomSourceFailure.code(),
@@ -1045,7 +1155,7 @@ pub unsafe extern "C" fn kelivo_account_root_key_generate(
         Ok(ark) => ark,
         Err(error) => return device_error_status(error).code(),
     };
-    let handle = match register_ark(key_epoch, ark) {
+    let handle = match register_ark(user_id, key_epoch, ark) {
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };
@@ -1056,12 +1166,13 @@ pub unsafe extern "C" fn kelivo_account_root_key_generate(
 #[unsafe(no_mangle)]
 /// # Safety
 ///
-/// `canonical_entity_key` 必须覆盖声明长度；输出指针必须覆盖声明容量，长度指针
-/// 必须可写，且所有缓冲区不得重叠。
+/// `canonical_entity_key` 必须覆盖声明长度，`key_epoch` 必须为正数；输出指针
+/// 必须覆盖声明容量，长度指针必须可写，且所有缓冲区不得重叠。
 pub unsafe extern "C" fn kelivo_account_record_id_derive(
     ark_handle: u64,
     canonical_entity_key: *const u8,
     canonical_entity_key_length: usize,
+    key_epoch: u32,
     out_record_id: *mut u8,
     out_record_id_capacity: usize,
     out_record_id_length: *mut usize,
@@ -1076,7 +1187,7 @@ pub unsafe extern "C" fn kelivo_account_record_id_derive(
     } {
         return status.code();
     }
-    if canonical_entity_key_length == 0 {
+    if key_epoch == 0 || canonical_entity_key_length == 0 {
         return KelivoStatus::InvalidArgument.code();
     }
     if canonical_entity_key_length > RECORD_ENTITY_KEY_MAX_LENGTH {
@@ -1087,11 +1198,13 @@ pub unsafe extern "C" fn kelivo_account_record_id_derive(
             Ok(value) => value,
             Err(status) => return status.code(),
         };
-    let ark = match current_ark_for_handle(ark_handle) {
-        Ok(ark) => ark,
+    let bound = match bound_keyring_for_handle(ark_handle) {
+        Ok(bound) => bound,
         Err(status) => return status.code(),
     };
-    let record_id = match derive_account_record_id(&ark, canonical_entity_key) {
+    let record_id = match with_ark_for_bound_keyring(&bound, key_epoch, |ark| {
+        derive_account_record_id(ark, canonical_entity_key)
+    }) {
         Ok(record_id) => record_id,
         Err(status) => return status.code(),
     };
@@ -1105,6 +1218,178 @@ pub unsafe extern "C" fn kelivo_account_record_id_derive(
         .expect("已验证的不透明记录 ID 输出必须可写");
     }
     KelivoStatus::Ok.code()
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// `user_id` 必须覆盖声明长度；输出缓冲区与长度指针必须可写且互不重叠。
+pub unsafe extern "C" fn kelivo_account_trust_public_key_derive(
+    ark_handle: u64,
+    user_id: *const u8,
+    user_id_length: usize,
+    key_epoch: u32,
+    out_public_key: *mut u8,
+    out_public_key_capacity: usize,
+    out_public_key_length: *mut usize,
+) -> i32 {
+    if let Err(status) = unsafe {
+        prepare_zeroed_fixed_output(
+            out_public_key,
+            out_public_key_capacity,
+            out_public_key_length,
+            ACCOUNT_TRUST_PUBLIC_KEY_LENGTH,
+        )
+    } {
+        return status.code();
+    }
+    if key_epoch == 0 {
+        return KelivoStatus::InvalidArgument.code();
+    }
+    let user_id = match unsafe { read_user_id(user_id, user_id_length) } {
+        Ok(user_id) => user_id,
+        Err(status) => return status.code(),
+    };
+    let binding = crypto::AccountTrustBinding { user_id, key_epoch };
+    let public_key = match with_ark_for_account_handle(ark_handle, user_id, key_epoch, |ark| {
+        crypto::derive_account_trust_public_key(ark, binding).map_err(device_error_status)
+    }) {
+        Ok(public_key) => public_key,
+        Err(status) => return status.code(),
+    };
+    unsafe {
+        write_bytes(
+            out_public_key,
+            out_public_key_capacity,
+            public_key.as_bytes(),
+            out_public_key_length,
+        )
+        .expect("已清零且验证的账户信任根公钥输出必须可写")
+    };
+    KelivoStatus::Ok.code()
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// 所有输入指针必须覆盖声明长度；输出缓冲区与长度指针必须可写且互不重叠。
+pub unsafe extern "C" fn kelivo_account_trust_payload_sign(
+    ark_handle: u64,
+    user_id: *const u8,
+    user_id_length: usize,
+    key_epoch: u32,
+    canonical_payload: *const u8,
+    canonical_payload_length: usize,
+    out_signature: *mut u8,
+    out_signature_capacity: usize,
+    out_signature_length: *mut usize,
+) -> i32 {
+    if let Err(status) = unsafe {
+        prepare_zeroed_fixed_output(
+            out_signature,
+            out_signature_capacity,
+            out_signature_length,
+            ACCOUNT_TRUST_SIGNATURE_LENGTH,
+        )
+    } {
+        return status.code();
+    }
+    if key_epoch == 0 {
+        return KelivoStatus::InvalidArgument.code();
+    }
+    let user_id = match unsafe { read_user_id(user_id, user_id_length) } {
+        Ok(user_id) => user_id,
+        Err(status) => return status.code(),
+    };
+    let canonical_payload =
+        match unsafe { read_account_trust_payload(canonical_payload, canonical_payload_length) } {
+            Ok(payload) => payload,
+            Err(status) => return status.code(),
+        };
+    let binding = crypto::AccountTrustBinding { user_id, key_epoch };
+    let signature = match with_ark_for_account_handle(ark_handle, user_id, key_epoch, |ark| {
+        crypto::sign_account_trust_payload(ark, binding, canonical_payload)
+            .map_err(device_error_status)
+    }) {
+        Ok(signature) => signature,
+        Err(status) => return status.code(),
+    };
+    unsafe {
+        write_bytes(
+            out_signature,
+            out_signature_capacity,
+            signature.as_bytes(),
+            out_signature_length,
+        )
+        .expect("已清零且验证的账户信任根签名输出必须可写")
+    };
+    KelivoStatus::Ok.code()
+}
+
+#[unsafe(no_mangle)]
+/// # Safety
+///
+/// 所有输入指针必须覆盖声明长度。验证钥必须来自本地已认证 ARK 的派生结果，
+/// 该函数本身只验证密码学签名，不建立验证钥的信任来源。
+pub unsafe extern "C" fn kelivo_account_trust_payload_verify(
+    public_key: *const u8,
+    public_key_length: usize,
+    user_id: *const u8,
+    user_id_length: usize,
+    key_epoch: u32,
+    canonical_payload: *const u8,
+    canonical_payload_length: usize,
+    signature: *const u8,
+    signature_length: usize,
+) -> i32 {
+    if key_epoch == 0 {
+        return KelivoStatus::InvalidArgument.code();
+    }
+    let public_key = match unsafe { read_fixed(public_key, public_key_length) } {
+        Ok(bytes) => match crypto::AccountTrustPublicKey::from_bytes(bytes) {
+            Ok(public_key) => public_key,
+            Err(error) => return device_error_status(error).code(),
+        },
+        Err(status) => return status.code(),
+    };
+    let user_id = match unsafe { read_user_id(user_id, user_id_length) } {
+        Ok(user_id) => user_id,
+        Err(status) => return status.code(),
+    };
+    let canonical_payload =
+        match unsafe { read_account_trust_payload(canonical_payload, canonical_payload_length) } {
+            Ok(payload) => payload,
+            Err(status) => return status.code(),
+        };
+    let signature = match unsafe { read_input(signature, signature_length) } {
+        Ok(bytes) => match crypto::AccountTrustSignature::from_bytes(bytes) {
+            Ok(signature) => signature,
+            Err(error) => return device_error_status(error).code(),
+        },
+        Err(status) => return status.code(),
+    };
+    match crypto::verify_account_trust_payload(
+        &public_key,
+        crypto::AccountTrustBinding { user_id, key_epoch },
+        canonical_payload,
+        &signature,
+    ) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(error) => device_error_status(error).code(),
+    }
+}
+
+unsafe fn read_account_trust_payload<'a>(
+    input: *const u8,
+    input_length: usize,
+) -> Result<&'a [u8], KelivoStatus> {
+    if input_length == 0 {
+        return Err(KelivoStatus::InvalidArgument);
+    }
+    if input_length > ACCOUNT_TRUST_PAYLOAD_MAX_LENGTH {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    unsafe { read_input(input, input_length) }
 }
 
 #[unsafe(no_mangle)]
@@ -1198,7 +1483,7 @@ pub unsafe extern "C" fn kelivo_account_root_key_envelope_seal(
         Ok(identity) => identity,
         Err(status) => return status.code(),
     };
-    let ark = match ark_for_handle(ark_handle, key_epoch) {
+    let ark = match ark_for_account_handle(ark_handle, user_id, key_epoch) {
         Ok(ark) => ark,
         Err(status) => return status.code(),
     };
@@ -1333,7 +1618,7 @@ pub unsafe extern "C" fn kelivo_account_root_key_envelope_open(
         Ok(ark) => ark,
         Err(error) => return device_error_status(error).code(),
     };
-    let ark_handle = match register_ark(key_epoch, ark) {
+    let ark_handle = match register_ark(user_id, key_epoch, ark) {
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };
@@ -1496,7 +1781,8 @@ pub unsafe extern "C" fn kelivo_device_state_seal(
     let keyring = if ark_handle == INVALID_KEY_HANDLE {
         None
     } else {
-        match keyring_snapshot_for_handle(ark_handle, key_epoch) {
+        let (user_id, key_epoch) = account.expect("已验证的账户绑定必须存在");
+        match keyring_snapshot_for_handle(ark_handle, user_id, key_epoch) {
             Ok(keyring) => Some(keyring),
             Err(status) => return status.code(),
         }
@@ -1564,15 +1850,20 @@ pub unsafe extern "C" fn kelivo_device_state_open(
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };
-    let ark_handle = match keyring {
-        Some(keyring) => match register_keyring(keyring) {
+    let account_user_id = binding.account.map(|account| account.user_id);
+    let ark_handle = match (keyring, account_user_id) {
+        (Some(keyring), Some(user_id)) => match register_keyring(user_id, keyring) {
             Ok(handle) => handle,
             Err(status) => {
                 let _ = close_identity(identity_handle);
                 return status.code();
             }
         },
-        None => INVALID_KEY_HANDLE,
+        (None, None) => INVALID_KEY_HANDLE,
+        _ => {
+            let _ = close_identity(identity_handle);
+            return KelivoStatus::DeviceStateInvalid.code();
+        }
     };
     unsafe {
         write_output(out_binding, authenticated_binding).expect("已验证的设备状态绑定输出必须可写");
@@ -1652,7 +1943,7 @@ pub unsafe extern "C" fn kelivo_device_registration_finish_create(
         Ok(identity) => identity,
         Err(status) => return status.code(),
     };
-    let ark = match ark_for_handle(ark_handle, key_epoch) {
+    let ark = match ark_for_account_handle(ark_handle, user_id, key_epoch) {
         Ok(ark) => ark,
         Err(status) => return status.code(),
     };
@@ -1779,7 +2070,7 @@ pub unsafe extern "C" fn kelivo_device_pairing_approval_create(
         Ok(identity) => identity,
         Err(status) => return status.code(),
     };
-    let ark = match ark_for_handle(ark_handle, key_epoch) {
+    let ark = match ark_for_account_handle(ark_handle, user_id, key_epoch) {
         Ok(ark) => ark,
         Err(status) => return status.code(),
     };
@@ -1960,7 +2251,7 @@ pub unsafe extern "C" fn kelivo_device_pairing_approval_accept(
         Ok(blob) => blob,
         Err(status) => return status.code(),
     };
-    let ark_handle = match register_keyring(keyring) {
+    let ark_handle = match register_keyring(bound.user_id, keyring) {
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };
