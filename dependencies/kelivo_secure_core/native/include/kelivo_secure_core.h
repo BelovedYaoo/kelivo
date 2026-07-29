@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(14)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(15)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -68,6 +68,14 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_ATTACHMENT_ENVELOPE_INVALID INT32_C(37)
 #define KELIVO_STATUS_ATTACHMENT_AUTHENTICATION_FAILED INT32_C(38)
 #define KELIVO_STATUS_SLOT_IN_USE INT32_C(39)
+#define KELIVO_STATUS_INVALID_RECOVERY_HANDLE INT32_C(40)
+#define KELIVO_STATUS_RECOVERY_CAPSULE_INVALID INT32_C(41)
+#define KELIVO_STATUS_RECOVERY_CAPSULE_AUTHENTICATION_FAILED INT32_C(42)
+#define KELIVO_STATUS_RECOVERY_MEDIA_INVALID INT32_C(43)
+#define KELIVO_STATUS_RECOVERY_MEDIA_AUTHENTICATION_FAILED INT32_C(44)
+#define KELIVO_STATUS_RECOVERY_GENESIS_INVALID INT32_C(45)
+#define KELIVO_STATUS_RECOVERY_ORIGIN_MISMATCH INT32_C(46)
+#define KELIVO_STATUS_RECOVERY_PASSPHRASE_INVALID INT32_C(47)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
@@ -85,6 +93,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_DEVICE_E2EE_CORE (UINT64_C(1) << 6)
 #define KELIVO_CAPABILITY_ATTACHMENT_CRYPTO (UINT64_C(1) << 7)
 #define KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING (UINT64_C(1) << 8)
+#define KELIVO_CAPABILITY_RECOVERY_MEDIA (UINT64_C(1) << 9)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_ENTITY_KEY_MAX_SIZE ((size_t)2048)
@@ -132,6 +141,14 @@ typedef int32_t KelivoStatus;
               KELIVO_ATTACHMENT_CHUNK_ENVELOPE_OVERHEAD))
 #define KELIVO_ATTACHMENT_MAX_CHUNK_COUNT UINT32_C(1000)
 #define KELIVO_ATTACHMENT_MAX_TOTAL_PLAINTEXT_BYTES UINT64_C(4194184000)
+#define KELIVO_RECOVERY_INVALID_HANDLE UINT64_C(0)
+#define KELIVO_RECOVERY_PUBLIC_KEY_SIZE ((size_t)32)
+#define KELIVO_RECOVERY_CAPSULE_SIZE ((size_t)156)
+#define KELIVO_RECOVERY_MEDIA_SIZE ((size_t)644)
+#define KELIVO_RECOVERY_GENESIS_SIZE ((size_t)444)
+#define KELIVO_RECOVERY_SERVICE_ORIGIN_SHA256_SIZE ((size_t)32)
+#define KELIVO_RECOVERY_IMPORT_BINDING_STRUCT_SIZE UINT32_C(24)
+#define KELIVO_RECOVERY_CAPSULE_BINDING_STRUCT_SIZE UINT32_C(28)
 
 typedef struct KelivoDeviceStateBinding {
     uint32_t struct_size;
@@ -141,6 +158,19 @@ typedef struct KelivoDeviceStateBinding {
     uint8_t user_id[KELIVO_DEVICE_UUID_SIZE];
     uint32_t key_epoch;
 } KelivoDeviceStateBinding;
+
+typedef struct KelivoRecoveryImportBinding {
+    uint32_t struct_size;
+    uint8_t user_id[KELIVO_DEVICE_UUID_SIZE];
+    uint32_t recovery_public_key_version;
+} KelivoRecoveryImportBinding;
+
+typedef struct KelivoRecoveryCapsuleBinding {
+    uint32_t struct_size;
+    uint8_t user_id[KELIVO_DEVICE_UUID_SIZE];
+    uint32_t key_epoch;
+    uint32_t capsule_version;
+} KelivoRecoveryCapsuleBinding;
 
 typedef int32_t (*KelivoSqlCipherKeyCallback)(
     void *database,
@@ -851,6 +881,84 @@ KELIVO_CORE_API KelivoStatus kelivo_device_state_open(
     size_t blob_length,
     KelivoDeviceStateBinding *out_binding,
     uint64_t *out_identity_handle,
+    uint64_t *out_ark_handle);
+
+/*
+ * 生成独立恢复 X25519 身份；私钥只存在于不透明句柄。失败时句柄、长度和
+ * 可写输出范围均清零。recovery_public_key_version 必须为正整数。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_recovery_identity_generate(
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t recovery_public_key_version,
+    uint64_t *out_handle,
+    uint8_t *out_public_key,
+    size_t out_public_key_capacity,
+    size_t *out_public_key_length);
+
+/* 关闭未消费的恢复句柄；使用中返回 SLOT_IN_USE，禁止并发关闭。 */
+KELIVO_CORE_API KelivoStatus kelivo_recovery_handle_close(
+    uint64_t recovery_handle);
+
+/*
+ * 用指定账户和精确 ARK epoch 密封固定 156 字节 capsule。恢复公钥、版本、
+ * capsule 版本及完整 76 字节头均被 HPKE 认证。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_recovery_capsule_seal(
+    uint64_t ark_handle,
+    const uint8_t *user_id,
+    size_t user_id_length,
+    uint32_t key_epoch,
+    uint32_t recovery_public_key_version,
+    uint32_t capsule_version,
+    const uint8_t *recovery_public_key,
+    size_t recovery_public_key_length,
+    uint8_t *out_capsule,
+    size_t out_capsule_capacity,
+    size_t *out_capsule_length);
+
+/*
+ * 仅接受严格有效的 444 字节 genesis 清单和独立恢复口令，输出固定 644
+ * 字节二进制帧。不会导出恢复私钥或任何明文包装格式。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_recovery_media_export(
+    uint64_t recovery_handle,
+    const uint8_t *genesis,
+    size_t genesis_length,
+    const uint8_t *passphrase,
+    size_t passphrase_length,
+    const uint8_t *service_origin_sha256,
+    size_t service_origin_sha256_length,
+    uint8_t *out_media,
+    size_t out_media_capacity,
+    size_t *out_media_length);
+
+/*
+ * 认证口令、服务源、genesis 摘要/结构/签名及恢复公钥绑定后，返回恢复句柄
+ * 和不可伪造 genesis capability 字节。任何失败均不会发布部分结果。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_recovery_media_import(
+    const uint8_t *media,
+    size_t media_length,
+    const uint8_t *passphrase,
+    size_t passphrase_length,
+    const uint8_t *expected_service_origin_sha256,
+    size_t expected_service_origin_sha256_length,
+    uint64_t *out_handle,
+    KelivoRecoveryImportBinding *out_binding,
+    uint8_t *out_genesis,
+    size_t out_genesis_capacity,
+    size_t *out_genesis_length);
+
+/*
+ * 成功时原子消费 import 句柄并返回绑定 userId/keyEpoch 的 ARK 句柄；任何
+ * 结构、绑定或认证失败都会保留同一 import 句柄，以便重试正确 capsule。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_recovery_capsule_open(
+    uint64_t recovery_handle,
+    const uint8_t *capsule,
+    size_t capsule_length,
+    KelivoRecoveryCapsuleBinding *out_binding,
     uint64_t *out_ark_handle);
 
 #ifdef __cplusplus

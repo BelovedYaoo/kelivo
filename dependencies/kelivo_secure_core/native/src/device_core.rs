@@ -398,7 +398,7 @@ fn close_identity(handle: u64) -> Result<(), KelivoStatus> {
     )
 }
 
-fn register_ark(
+pub(super) fn register_ark(
     user_id: crypto::UserId,
     epoch: u32,
     ark: crypto::AccountRootKey,
@@ -554,7 +554,7 @@ fn prune_ark_epoch(handle: u64, epoch: u32) -> Result<(), KelivoStatus> {
         .map_err(|_| KelivoStatus::InvalidArgument)
 }
 
-fn close_ark(handle: u64) -> Result<(), KelivoStatus> {
+pub(super) fn close_ark(handle: u64) -> Result<(), KelivoStatus> {
     close_secret(
         ark_registry(),
         handle,
@@ -794,7 +794,7 @@ unsafe fn reset_handle_and_length(
     }
 }
 
-unsafe fn prepare_fixed_output(
+pub(super) unsafe fn prepare_fixed_output(
     output: *mut u8,
     output_capacity: usize,
     output_length: *mut usize,

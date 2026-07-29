@@ -8,3 +8,4 @@
 - 场景：覆盖生成、导出、导入、当前与 epoch 2 以后 capsule；口令 12 scalar/128 UTF-8 字节边界；错误口令/origin/长度/篡改/genesis/capsule；句柄关闭、并发关闭、失败重试、成功消费与输出清零。
 - 已确认：三步流程为恢复身份生成 -> capsule 封装 -> genesis 签名后导出 media，用于解除 capsule 摘要与 genesis 的环依赖。
 - 已完成：protocol 固定 156/644 字节格式、生产 Argon2id+HKDF、HPKE/XChaCha、严格 444 字节 genesis 验签与 epoch 2 旧介质打开新 capsule；45 项与 doctest 全过，严格 Clippy 全过。
+- 已完成：native ABI v15 增加恢复能力、64 个句柄上限、并发关闭门禁、失败输出清零与 capsule 打开失败归还/成功消费；54 项全过，严格 Clippy 全过。
