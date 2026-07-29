@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
+import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
@@ -46,15 +47,55 @@ void main() {
     String? groupId,
     int version = 0,
     bool isStreaming = false,
+    String? content,
+    Iterable<ChatMessageAttachment> attachments = const [],
   }) {
     return ChatMessage(
       id: id,
       role: role,
-      content: id,
+      content: content ?? id,
+      attachments: attachments,
       conversationId: conversationId,
       groupId: groupId ?? id,
       version: version,
       isStreaming: isStreaming,
+    );
+  }
+
+  ChatMessageAttachment attachment(
+    int index, {
+    String? assetId,
+    String? contentHash,
+    bool withRemoteIdentity = false,
+    int keyEpoch = 1,
+  }) {
+    final kind = index.isEven ? 'image' : 'file';
+    final suffix = (index + 1).toString().padLeft(12, '0');
+    return ChatMessageAttachment(
+      assetId: assetId ?? 'asset-$index',
+      path: 'D:\\workspace\\assets\\asset-$index.bin',
+      contentHash: contentHash ?? index.toRadixString(16).padLeft(64, '0'),
+      byteSize: index + 1,
+      kind: kind,
+      displayName: kind == 'file' ? 'asset-$index.bin' : null,
+      mediaType: kind == 'file' ? 'application/octet-stream' : null,
+      attachmentId: withRemoteIdentity
+          ? 'a0000000-0000-4000-8000-$suffix'
+          : null,
+      uploadId: withRemoteIdentity ? 'b0000000-0000-4000-8000-$suffix' : null,
+      keyEpoch: withRemoteIdentity ? keyEpoch : null,
+    );
+  }
+
+  ChatMessageAttachment withoutRemoteIdentity(ChatMessageAttachment source) {
+    return ChatMessageAttachment(
+      assetId: source.assetId,
+      path: source.path,
+      contentHash: source.contentHash,
+      byteSize: source.byteSize,
+      kind: source.kind,
+      displayName: source.displayName,
+      mediaType: source.mediaType,
     );
   }
 
@@ -102,6 +143,215 @@ void main() {
       expect(await repository.getActiveStreamingIds(), isEmpty);
     },
   );
+
+  test('结构化附件按 ordinal 原子写入并从资产联表水合', () async {
+    final now = DateTime.utc(2026, 7, 29, 12);
+    final attachments = List<ChatMessageAttachment>.generate(
+      ChatMessage.maximumAttachmentCount,
+      (index) => attachment(
+        index,
+        withRemoteIdentity: index == 0 || index == 31,
+        keyEpoch: index == 31 ? 0xffffffff : 7,
+      ),
+      growable: false,
+    );
+    final structured = message(
+      id: 'message-assets',
+      role: 'user',
+      content: 'structured assets',
+      attachments: attachments,
+    );
+    await repository.putConversation(conversation());
+    final commands = await repository.acquireE2eeSyncOutboxCommands(now: now);
+
+    await commands.runLocalWriteAtomically<void>(
+      intents: <E2eeSyncLocalWriteIntent>[
+        E2eeSyncLocalWriteIntent(
+          intentId: 'c0000000-0000-4000-8000-000000000001',
+          entityKey: const SyncEntityKey(
+            entityType: 'message',
+            entityId: 'message-assets',
+          ),
+        ),
+      ],
+      writerSessionId: 'test-writer',
+      now: now,
+      write: () => repository.putMessage(structured),
+    );
+
+    final persisted = (await repository.getMessage(structured.id))!;
+    expect(persisted.attachments, hasLength(32));
+    expect(persisted.attachments.first.assetId, 'asset-0');
+    expect(persisted.attachments.first.kind, 'image');
+    expect(
+      persisted.attachments.first.attachmentId,
+      'a0000000-0000-4000-8000-000000000001',
+    );
+    expect(persisted.attachments.first.keyEpoch, 7);
+    expect(persisted.attachments.last.assetId, 'asset-31');
+    expect(persisted.attachments.last.kind, 'file');
+    expect(persisted.attachments.last.displayName, 'asset-31.bin');
+    expect(persisted.attachments.last.mediaType, 'application/octet-stream');
+    expect(persisted.attachments.last.keyEpoch, 0xffffffff);
+    expect(
+      (await repository.getMessagesRange(
+        structured.conversationId,
+        start: 0,
+        limit: 10,
+      )).single.attachments,
+      hasLength(32),
+    );
+    expect(
+      (await repository.getSelectedContextMessages(
+        structured.conversationId,
+        truncateIndex: 0,
+        limit: 10,
+      )).single.attachments.last.assetId,
+      'asset-31',
+    );
+
+    final database = sqlite.sqlite3.open(databaseFile.path);
+    testDatabaseCipher.apply(database, createSlotIfMissing: false);
+    addTearDown(database.close);
+    final references = database.select(
+      'SELECT ordinal, asset_id FROM message_asset_rows '
+      'WHERE revision_id = ? ORDER BY ordinal',
+      <Object?>[structured.id],
+    );
+    expect(references, hasLength(32));
+    expect(references.first['ordinal'], 0);
+    expect(references.first['asset_id'], 'asset-0');
+    expect(references.last['ordinal'], 31);
+    expect(references.last['asset_id'], 'asset-31');
+    expect(
+      database.select(
+        'SELECT phase FROM e2ee_sync_intent_rows '
+        'WHERE entity_type = ? AND entity_id = ?',
+        <Object?>['message', structured.id],
+      ).single['phase'],
+      'dirty',
+    );
+
+    final staleLocalAttachments = persisted.attachments
+        .map(withoutRemoteIdentity)
+        .toList(growable: false);
+    await repository.updateMessage(
+      persisted.copyWith(
+        content: 'updated without stale remote overwrite',
+        attachments: staleLocalAttachments,
+      ),
+    );
+    final afterTextUpdate = (await repository.getMessage(structured.id))!;
+    expect(afterTextUpdate.attachments.first.attachmentId, isNotNull);
+    expect(afterTextUpdate.attachments.last.keyEpoch, 0xffffffff);
+
+    await repository.updateMessage(afterTextUpdate.copyWith(attachments: []));
+    expect((await repository.getMessage(structured.id))!.attachments, isEmpty);
+    expect(
+      database.select(
+        'SELECT ordinal FROM message_asset_rows WHERE revision_id = ?',
+        <Object?>[structured.id],
+      ),
+      isEmpty,
+    );
+  });
+
+  test('附件写入失败时消息资产引用与 dirty intent 整体回滚', () async {
+    final now = DateTime.utc(2026, 7, 29, 13);
+    final duplicateHash = List<String>.filled(64, 'd').join();
+    final invalid = message(
+      id: 'message-assets-invalid',
+      role: 'user',
+      attachments: <ChatMessageAttachment>[
+        attachment(1, assetId: 'asset-invalid-1', contentHash: duplicateHash),
+        attachment(3, assetId: 'asset-invalid-2', contentHash: duplicateHash),
+      ],
+    );
+    await repository.putConversation(conversation());
+    final commands = await repository.acquireE2eeSyncOutboxCommands(now: now);
+
+    await expectLater(
+      commands.runLocalWriteAtomically<void>(
+        intents: <E2eeSyncLocalWriteIntent>[
+          E2eeSyncLocalWriteIntent(
+            intentId: 'c0000000-0000-4000-8000-000000000002',
+            entityKey: const SyncEntityKey(
+              entityType: 'message',
+              entityId: 'message-assets-invalid',
+            ),
+          ),
+        ],
+        writerSessionId: 'test-writer',
+        now: now,
+        write: () => repository.putMessage(invalid),
+      ),
+      throwsA(
+        predicate<Object>(
+          (error) =>
+              error.toString().contains('UNIQUE constraint failed') &&
+              error.toString().contains('asset_rows.content_hash'),
+        ),
+      ),
+    );
+
+    expect(await repository.getMessage(invalid.id), isNull);
+    final database = sqlite.sqlite3.open(databaseFile.path);
+    testDatabaseCipher.apply(database, createSlotIfMissing: false);
+    addTearDown(database.close);
+    expect(
+      database.select('SELECT id FROM asset_rows WHERE id IN (?, ?)', <Object?>[
+        'asset-invalid-1',
+        'asset-invalid-2',
+      ]),
+      isEmpty,
+    );
+    expect(
+      database.select(
+        'SELECT ordinal FROM message_asset_rows WHERE revision_id = ?',
+        <Object?>[invalid.id],
+      ),
+      isEmpty,
+    );
+    expect(
+      database.select(
+        'SELECT phase FROM e2ee_sync_intent_rows '
+        'WHERE entity_type = ? AND entity_id = ?',
+        <Object?>['message', invalid.id],
+      ),
+      isEmpty,
+    );
+  });
+
+  test('附件 marker 不会隐式生成资产引用', () async {
+    await repository.putConversation(conversation());
+    final marker = message(
+      id: 'message-marker',
+      role: 'user',
+      content: r'[file:D:\workspace\legacy.txt|legacy.txt|text/plain]',
+    );
+
+    await repository.putMessage(marker);
+
+    expect((await repository.getMessage(marker.id))!.attachments, isEmpty);
+    final database = sqlite.sqlite3.open(databaseFile.path);
+    testDatabaseCipher.apply(database, createSlotIfMissing: false);
+    addTearDown(database.close);
+    expect(
+      database.select(
+        'SELECT ordinal FROM message_asset_rows WHERE revision_id = ?',
+        <Object?>[marker.id],
+      ),
+      isEmpty,
+    );
+    expect(
+      database.select(
+        'SELECT revision_id FROM asset_reference_dirty_rows '
+        'WHERE revision_id = ?',
+        <Object?>[marker.id],
+      ),
+      isEmpty,
+    );
+  });
 
   test('损坏的会话与工具 JSON 不会静默退化为空集合', () async {
     await repository.putMigrationBatch(

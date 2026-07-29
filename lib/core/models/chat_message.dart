@@ -1,6 +1,169 @@
 import 'package:uuid/uuid.dart';
 
+final class ChatMessageAttachment {
+  static final RegExp _contentHashPattern = RegExp(r'^[0-9a-f]{64}$');
+  static final RegExp _uuidV4Pattern = RegExp(
+    r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+  );
+
+  factory ChatMessageAttachment({
+    required String assetId,
+    required String path,
+    required String contentHash,
+    required int byteSize,
+    required String kind,
+    String? displayName,
+    String? mediaType,
+    String? attachmentId,
+    String? uploadId,
+    int? keyEpoch,
+  }) {
+    if (assetId.trim().isEmpty || assetId.contains('\u0000')) {
+      throw ArgumentError.value(assetId, 'assetId');
+    }
+    if (path.trim().isEmpty || path.contains('\u0000')) {
+      throw ArgumentError.value(path, 'path');
+    }
+    if (!_contentHashPattern.hasMatch(contentHash)) {
+      throw ArgumentError.value(contentHash, 'contentHash');
+    }
+    if (byteSize < 0) {
+      throw ArgumentError.value(byteSize, 'byteSize');
+    }
+    if (kind != 'image' && kind != 'file') {
+      throw ArgumentError.value(kind, 'kind');
+    }
+    if (displayName != null &&
+        (displayName.trim().isEmpty ||
+            displayName.contains('\u0000') ||
+            displayName.contains('/') ||
+            displayName.contains('\\'))) {
+      throw ArgumentError.value(displayName, 'displayName');
+    }
+    if (mediaType != null &&
+        (mediaType.trim() != mediaType ||
+            mediaType.indexOf('/') <= 0 ||
+            mediaType.endsWith('/'))) {
+      throw ArgumentError.value(mediaType, 'mediaType');
+    }
+    if (kind == 'file' && (displayName == null || mediaType == null)) {
+      throw ArgumentError.value((displayName, mediaType), 'fileMetadata');
+    }
+    final remoteFields = <Object?>[attachmentId, uploadId, keyEpoch];
+    final hasRemoteIdentity = remoteFields.every((value) => value != null);
+    if (!hasRemoteIdentity && remoteFields.any((value) => value != null)) {
+      throw ArgumentError.value(remoteFields, 'remoteIdentity');
+    }
+    if (hasRemoteIdentity) {
+      if (!_uuidV4Pattern.hasMatch(attachmentId!)) {
+        throw ArgumentError.value(attachmentId, 'attachmentId');
+      }
+      if (!_uuidV4Pattern.hasMatch(uploadId!)) {
+        throw ArgumentError.value(uploadId, 'uploadId');
+      }
+      if (keyEpoch! < 1 || keyEpoch > 0xffffffff) {
+        throw ArgumentError.value(keyEpoch, 'keyEpoch');
+      }
+    }
+    return ChatMessageAttachment._(
+      assetId: assetId,
+      path: path,
+      contentHash: contentHash,
+      byteSize: byteSize,
+      kind: kind,
+      displayName: displayName,
+      mediaType: mediaType,
+      attachmentId: attachmentId,
+      uploadId: uploadId,
+      keyEpoch: keyEpoch,
+    );
+  }
+
+  const ChatMessageAttachment._({
+    required this.assetId,
+    required this.path,
+    required this.contentHash,
+    required this.byteSize,
+    required this.kind,
+    required this.displayName,
+    required this.mediaType,
+    required this.attachmentId,
+    required this.uploadId,
+    required this.keyEpoch,
+  });
+
+  final String assetId;
+  final String path;
+  final String contentHash;
+  final int byteSize;
+  final String kind;
+  final String? displayName;
+  final String? mediaType;
+  final String? attachmentId;
+  final String? uploadId;
+  final int? keyEpoch;
+
+  bool get hasRemoteIdentity => attachmentId != null;
+
+  Map<String, Object?> toJson() => <String, Object?>{
+    'assetId': assetId,
+    'path': path,
+    'contentHash': contentHash,
+    'byteSize': byteSize,
+    'kind': kind,
+    'displayName': displayName,
+    'mediaType': mediaType,
+    'attachmentId': attachmentId,
+    'uploadId': uploadId,
+    'keyEpoch': keyEpoch,
+  };
+
+  factory ChatMessageAttachment.fromJson(Map<String, Object?> json) {
+    return ChatMessageAttachment(
+      assetId: _requiredString(json, 'assetId'),
+      path: _requiredString(json, 'path'),
+      contentHash: _requiredString(json, 'contentHash'),
+      byteSize: _requiredInt(json, 'byteSize'),
+      kind: _requiredString(json, 'kind'),
+      displayName: _optionalString(json, 'displayName'),
+      mediaType: _optionalString(json, 'mediaType'),
+      attachmentId: _optionalString(json, 'attachmentId'),
+      uploadId: _optionalString(json, 'uploadId'),
+      keyEpoch: _optionalInt(json, 'keyEpoch'),
+    );
+  }
+
+  static String _requiredString(Map<String, Object?> json, String key) {
+    final value = json[key];
+    if (value is! String) throw FormatException('chat_attachment.$key');
+    return value;
+  }
+
+  static int _requiredInt(Map<String, Object?> json, String key) {
+    final value = json[key];
+    if (value is! int) throw FormatException('chat_attachment.$key');
+    return value;
+  }
+
+  static String? _optionalString(Map<String, Object?> json, String key) {
+    final value = json[key];
+    if (value != null && value is! String) {
+      throw FormatException('chat_attachment.$key');
+    }
+    return value as String?;
+  }
+
+  static int? _optionalInt(Map<String, Object?> json, String key) {
+    final value = json[key];
+    if (value != null && value is! int) {
+      throw FormatException('chat_attachment.$key');
+    }
+    return value as int?;
+  }
+}
+
 class ChatMessage {
+  static const int maximumAttachmentCount = 32;
   static const String generationStatusDraft = 'draft';
   static const String generationStatusCompleted = 'completed';
   static const String generationStatusInterrupted = 'interrupted';
@@ -18,6 +181,8 @@ class ChatMessage {
   final String role; // 'user' or 'assistant'
 
   final String content;
+
+  final List<ChatMessageAttachment> attachments;
 
   final DateTime timestamp;
 
@@ -66,6 +231,7 @@ class ChatMessage {
     String? id,
     required String role,
     required String content,
+    Iterable<ChatMessageAttachment> attachments = const [],
     DateTime? timestamp,
     String? modelId,
     String? providerId,
@@ -92,6 +258,7 @@ class ChatMessage {
       id: resolvedId,
       role: role,
       content: content,
+      attachments: _freezeAttachments(attachments),
       timestamp: timestamp ?? DateTime.now(),
       modelId: modelId,
       providerId: providerId,
@@ -121,6 +288,7 @@ class ChatMessage {
     required this.id,
     required this.role,
     required this.content,
+    required this.attachments,
     required this.timestamp,
     required this.modelId,
     required this.providerId,
@@ -147,6 +315,21 @@ class ChatMessage {
     return normalized == null || normalized.isEmpty ? null : normalized;
   }
 
+  static List<ChatMessageAttachment> _freezeAttachments(
+    Iterable<ChatMessageAttachment> attachments,
+  ) {
+    final frozen = List<ChatMessageAttachment>.unmodifiable(attachments);
+    if (frozen.length > maximumAttachmentCount) {
+      throw RangeError.range(
+        frozen.length,
+        0,
+        maximumAttachmentCount,
+        'attachments.length',
+      );
+    }
+    return frozen;
+  }
+
   static String _resolveGenerationStatus(
     String? value, {
     required bool isStreaming,
@@ -162,6 +345,7 @@ class ChatMessage {
     String? id,
     String? role,
     String? content,
+    Iterable<ChatMessageAttachment>? attachments,
     DateTime? timestamp,
     String? modelId,
     String? providerId,
@@ -198,6 +382,7 @@ class ChatMessage {
       id: id ?? this.id,
       role: role ?? this.role,
       content: content ?? this.content,
+      attachments: attachments ?? this.attachments,
       timestamp: timestamp ?? this.timestamp,
       modelId: modelId ?? this.modelId,
       providerId: providerId ?? this.providerId,
@@ -226,6 +411,9 @@ class ChatMessage {
       'id': id,
       'role': role,
       'content': content,
+      'attachments': attachments
+          .map((attachment) => attachment.toJson())
+          .toList(growable: false),
       'timestamp': timestamp.toIso8601String(),
       'modelId': modelId,
       'providerId': providerId,
@@ -249,10 +437,28 @@ class ChatMessage {
   }
 
   factory ChatMessage.fromJson(Map<String, dynamic> json) {
+    final rawAttachments = json['attachments'];
+    if (rawAttachments is! List<Object?>) {
+      throw const FormatException('chat_message.attachments');
+    }
     return ChatMessage(
       id: json['id'] as String,
       role: json['role'] as String,
       content: json['content'] as String,
+      attachments: rawAttachments.map((value) {
+        if (value is! Map<Object?, Object?>) {
+          throw const FormatException('chat_message.attachments.item');
+        }
+        final attachment = <String, Object?>{};
+        for (final entry in value.entries) {
+          final key = entry.key;
+          if (key is! String) {
+            throw const FormatException('chat_message.attachments.item');
+          }
+          attachment[key] = entry.value;
+        }
+        return ChatMessageAttachment.fromJson(attachment);
+      }),
       timestamp: DateTime.parse(json['timestamp'] as String),
       modelId: json['modelId'] as String?,
       providerId: json['providerId'] as String?,

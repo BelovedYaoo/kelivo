@@ -33,7 +33,7 @@ void main() {
     });
   });
 
-  group('ChatMessage sync compatibility', () {
+  group('ChatMessage domain', () {
     test('new messages derive stable group and turn ids from generated id', () {
       final message = ChatMessage(
         role: 'user',
@@ -63,12 +63,13 @@ void main() {
     });
 
     test(
-      'legacy json infers status and ids without changing persisted ids',
+      'persisted json infers status and ids without changing persisted ids',
       () {
         final message = ChatMessage.fromJson({
           'id': 'message-1',
           'role': 'assistant',
           'content': 'partial',
+          'attachments': <Object?>[],
           'timestamp': '2026-07-15T00:00:00.000Z',
           'conversationId': 'conversation-1',
           'isStreaming': true,
@@ -79,6 +80,99 @@ void main() {
         expect(message.generationStatus, ChatMessage.generationStatusDraft);
       },
     );
+
+    test(
+      'structured attachments are immutable and survive JSON round trips',
+      () {
+        final source = <ChatMessageAttachment>[
+          ChatMessageAttachment(
+            assetId: 'asset-1',
+            path: r'D:\workspace\assets\file.txt',
+            contentHash: List<String>.filled(64, 'a').join(),
+            byteSize: 42,
+            kind: 'file',
+            displayName: 'file.txt',
+            mediaType: 'text/plain',
+            attachmentId: 'a0000000-0000-4000-8000-000000000001',
+            uploadId: 'b0000000-0000-4000-8000-000000000001',
+            keyEpoch: 7,
+          ),
+        ];
+        final message = ChatMessage(
+          id: 'message-attachment-1',
+          role: 'user',
+          content: 'file',
+          attachments: source,
+          conversationId: 'conversation-1',
+        );
+
+        source.clear();
+        expect(message.attachments, hasLength(1));
+        expect(
+          () => message.attachments.add(message.attachments.single),
+          throwsUnsupportedError,
+        );
+
+        final restored = ChatMessage.fromJson(message.toJson());
+        final attachment = restored.attachments.single;
+        expect(attachment.assetId, 'asset-1');
+        expect(attachment.path, r'D:\workspace\assets\file.txt');
+        expect(attachment.contentHash, List<String>.filled(64, 'a').join());
+        expect(attachment.byteSize, 42);
+        expect(attachment.kind, 'file');
+        expect(attachment.displayName, 'file.txt');
+        expect(attachment.mediaType, 'text/plain');
+        expect(attachment.attachmentId, 'a0000000-0000-4000-8000-000000000001');
+        expect(attachment.uploadId, 'b0000000-0000-4000-8000-000000000001');
+        expect(attachment.keyEpoch, 7);
+        expect(restored.copyWith(content: 'updated').attachments, hasLength(1));
+        expect(restored.copyWith(attachments: const []).attachments, isEmpty);
+      },
+    );
+
+    test('structured attachment JSON and remote identity fail closed', () {
+      expect(
+        () => ChatMessage.fromJson({
+          'id': 'message-1',
+          'role': 'user',
+          'content': 'plain',
+          'timestamp': '2026-07-15T00:00:00.000Z',
+          'conversationId': 'conversation-1',
+        }),
+        throwsFormatException,
+      );
+      expect(
+        () => ChatMessageAttachment(
+          assetId: 'asset-1',
+          path: r'D:\workspace\assets\file.txt',
+          contentHash: List<String>.filled(64, 'a').join(),
+          byteSize: 42,
+          kind: 'file',
+          displayName: 'file.txt',
+          mediaType: 'text/plain',
+          attachmentId: 'a0000000-0000-4000-8000-000000000001',
+        ),
+        throwsArgumentError,
+      );
+      final attachment = ChatMessageAttachment(
+        assetId: 'asset-1',
+        path: r'D:\workspace\assets\file.txt',
+        contentHash: List<String>.filled(64, 'a').join(),
+        byteSize: 42,
+        kind: 'file',
+        displayName: 'file.txt',
+        mediaType: 'text/plain',
+      );
+      expect(
+        () => ChatMessage(
+          role: 'user',
+          content: 'too many files',
+          attachments: List<ChatMessageAttachment>.filled(33, attachment),
+          conversationId: 'conversation-1',
+        ),
+        throwsRangeError,
+      );
+    });
 
     test('copyWith completes ordinary streams but keeps explicit failures', () {
       final draft = ChatMessage(

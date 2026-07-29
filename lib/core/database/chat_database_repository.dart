@@ -2444,9 +2444,16 @@ LIMIT 1;
               ),
             );
       }
+      final attachmentsById = await _messageAttachmentsForRevisionIds(
+        rowsById.keys.toSet(),
+      );
       return [
         for (final message in rowsById.values)
-          _messageFromRow(message, authoritativeParts: partsById[message.id]),
+          _messageFromRow(
+            message,
+            authoritativeParts: partsById[message.id],
+            attachments: attachmentsById[message.id] ?? const [],
+          ),
       ];
     }, resultCount: (rows) => rows.length);
   }
@@ -3281,6 +3288,14 @@ LIMIT 1;
     required String expectedContent,
     required List<MessageAssetRegistration> assets,
   }) async {
+    if (assets.length > ChatMessage.maximumAttachmentCount) {
+      throw RangeError.range(
+        assets.length,
+        0,
+        ChatMessage.maximumAttachmentCount,
+        'assets.length',
+      );
+    }
     return _db.transaction(() async {
       final current = await (_db.select(
         _db.messageRows,
@@ -3306,13 +3321,17 @@ LIMIT 1;
           ON CONFLICT(id) DO UPDATE SET
             path = excluded.path,
             byte_size = excluded.byte_size,
-            width = excluded.width,
-            height = excluded.height,
-            thumbnail_path = excluded.thumbnail_path,
+            width = COALESCE(excluded.width, asset_rows.width),
+            height = COALESCE(excluded.height, asset_rows.height),
+            thumbnail_path = COALESCE(
+              excluded.thumbnail_path,
+              asset_rows.thumbnail_path
+            ),
             last_referenced_at = MAX(
               asset_rows.last_referenced_at + 1,
               excluded.last_referenced_at
-            );
+            )
+          WHERE asset_rows.content_hash = excluded.content_hash;
         ''',
           [
             asset.assetId,
@@ -3326,6 +3345,12 @@ LIMIT 1;
             now,
           ],
         );
+        final assetChanged =
+            (await _db.customSelect('SELECT changes() AS changed;').getSingle())
+                .read<int>('changed');
+        if (assetChanged != 1) {
+          throw StateError('message_asset_content_identity_mismatch');
+        }
         await _db.customStatement(
           '''
           INSERT INTO message_asset_rows(
@@ -4518,14 +4543,70 @@ LIMIT 1;
     });
   }
 
+  Future<void> _replaceMessageAttachments(ChatMessage message) async {
+    final current =
+        (await _messageAttachmentsForRevisionIds({message.id}))[message.id] ??
+        const <ChatMessageAttachment>[];
+    if (_matchesLocalMessageAttachments(current, message.attachments)) {
+      return;
+    }
+    final replaced = await replaceMessageAssetReferences(
+      conversationId: message.conversationId,
+      revisionId: message.id,
+      expectedContent: message.content,
+      assets: [
+        for (final attachment in message.attachments)
+          MessageAssetRegistration(
+            assetId: attachment.assetId,
+            contentHash: attachment.contentHash,
+            path: attachment.path,
+            byteSize: attachment.byteSize,
+            kind: attachment.kind,
+            displayName: attachment.displayName,
+            mediaType: attachment.mediaType,
+            attachmentId: attachment.attachmentId,
+            uploadId: attachment.uploadId,
+            keyEpoch: attachment.keyEpoch,
+          ),
+      ],
+    );
+    if (!replaced) {
+      throw StateError('message_asset_replace_identity_mismatch');
+    }
+  }
+
+  bool _matchesLocalMessageAttachments(
+    List<ChatMessageAttachment> current,
+    List<ChatMessageAttachment> incoming,
+  ) {
+    if (current.length != incoming.length) return false;
+    for (var index = 0; index < current.length; index++) {
+      final persisted = current[index];
+      final candidate = incoming[index];
+      if (persisted.assetId != candidate.assetId ||
+          persisted.path != candidate.path ||
+          persisted.contentHash != candidate.contentHash ||
+          persisted.byteSize != candidate.byteSize ||
+          persisted.kind != candidate.kind ||
+          persisted.displayName != candidate.displayName ||
+          persisted.mediaType != candidate.mediaType) {
+        return false;
+      }
+      if (candidate.hasRemoteIdentity &&
+          (persisted.attachmentId != candidate.attachmentId ||
+              persisted.uploadId != candidate.uploadId ||
+              persisted.keyEpoch != candidate.keyEpoch)) {
+        return false;
+      }
+    }
+    return true;
+  }
+
   Future<void> _replaceMessageParts(
     ChatMessage message, {
     List<Map<String, dynamic>>? toolEvents,
   }) async {
-    if (message.content.contains('[image:') ||
-        message.content.contains('[file:')) {
-      await markMessageAssetReferencesDirty(message.id);
-    }
+    await _replaceMessageAttachments(message);
     final preservedToolEvents = toolEvents ?? await getToolEvents(message.id);
     await (_db.delete(
       _db.messagePartRows,
@@ -4638,6 +4719,7 @@ LIMIT 1;
       await _db
           .into(_db.messageRows)
           .insert(_messageCompanion(message, order), mode: InsertMode.insert);
+      await _replaceMessageAttachments(message);
     });
     return persisted;
   }
@@ -4690,6 +4772,7 @@ LIMIT 1;
         await _db
             .into(_db.messageRows)
             .insert(_messageCompanion(message, index), mode: InsertMode.insert);
+        await _replaceMessageAttachments(message);
       }
     });
   }
@@ -5435,6 +5518,9 @@ LIMIT 1;
         );
       }
     });
+    for (final entry in messages) {
+      await _replaceMessageAttachments(entry.message);
+    }
   }
 
   Future<void> updateMessage(ChatMessage message) async {
@@ -5605,6 +5691,7 @@ LIMIT 1;
       if (deletedRows.length != messageIds.length) {
         throw StateError('delete_messages_not_found');
       }
+      final deletedMessages = await _messagesFromRowsWithParts(deletedRows);
 
       final orderedIds = rows
           .where((row) => !messageIds.contains(row.id))
@@ -5662,10 +5749,7 @@ LIMIT 1;
       await (_db.update(_db.conversationRows)
             ..where((row) => row.id.equals(conversationId)))
           .write(_conversationCompanion(conversation));
-      return (
-        conversation: conversation,
-        messages: deletedRows.map(_messageFromRow).toList(growable: false),
-      );
+      return (conversation: conversation, messages: deletedMessages);
     });
   }
 
@@ -5889,7 +5973,7 @@ LIMIT 1;
     final rows = await (_db.select(
       _db.messageRows,
     )..where((row) => row.isStreaming.equals(true))).get();
-    return rows.map(_messageFromRow).toList(growable: false);
+    return _messagesFromRowsWithParts(rows);
   }
 
   Future<void> clearActiveStreamingIds() async {
@@ -6107,16 +6191,70 @@ LIMIT 1;
     for (final part in parts) {
       byRevision.putIfAbsent(part.revisionId, () => []).add(part);
     }
+    final attachmentsByRevision = await _messageAttachmentsForRevisionIds(ids);
     return [
       for (final row in rows)
-        _messageFromRow(row, authoritativeParts: byRevision[row.id]),
+        _messageFromRow(
+          row,
+          authoritativeParts: byRevision[row.id],
+          attachments: attachmentsByRevision[row.id] ?? const [],
+        ),
     ];
+  }
+
+  Future<Map<String, List<ChatMessageAttachment>>>
+  _messageAttachmentsForRevisionIds(Set<String> revisionIds) async {
+    if (revisionIds.isEmpty) return const {};
+    final query =
+        _db.select(_db.messageAssetRows).join([
+            innerJoin(
+              _db.assetRows,
+              _db.assetRows.id.equalsExp(_db.messageAssetRows.assetId),
+            ),
+          ])
+          ..where(_db.messageAssetRows.revisionId.isIn(revisionIds))
+          ..orderBy([
+            OrderingTerm.asc(_db.messageAssetRows.revisionId),
+            OrderingTerm.asc(_db.messageAssetRows.ordinal),
+          ]);
+    final rows = await query.get();
+    final attachments = <String, List<ChatMessageAttachment>>{};
+    for (final row in rows) {
+      final reference = row.readTable(_db.messageAssetRows);
+      final asset = row.readTable(_db.assetRows);
+      final ordered = attachments.putIfAbsent(
+        reference.revisionId,
+        () => <ChatMessageAttachment>[],
+      );
+      if (reference.ordinal != ordered.length) {
+        throw StateError('message_asset_ordinal_not_contiguous');
+      }
+      ordered.add(
+        ChatMessageAttachment(
+          assetId: asset.id,
+          path: asset.path,
+          contentHash: asset.contentHash,
+          byteSize: asset.byteSize,
+          kind: reference.kind,
+          displayName: reference.displayName,
+          mediaType: reference.mediaType,
+          attachmentId: reference.attachmentId,
+          uploadId: reference.uploadId,
+          keyEpoch: reference.keyEpoch,
+        ),
+      );
+    }
+    return <String, List<ChatMessageAttachment>>{
+      for (final entry in attachments.entries)
+        entry.key: List<ChatMessageAttachment>.unmodifiable(entry.value),
+    };
   }
 
   /// 存在有序消息部件时以其为权威数据；旧行字段仅作为兼容旧版导入数据的后备。
   ChatMessage _messageFromRow(
     MessageRow row, {
     List<MessagePartRow>? authoritativeParts,
+    List<ChatMessageAttachment> attachments = const [],
   }) {
     final hasAuthoritativeParts = authoritativeParts?.isNotEmpty ?? false;
     final text = hasAuthoritativeParts
@@ -6135,6 +6273,7 @@ LIMIT 1;
       id: row.id,
       role: row.role,
       content: text,
+      attachments: attachments,
       timestamp: row.timestamp,
       modelId: row.modelId,
       providerId: row.providerId,
