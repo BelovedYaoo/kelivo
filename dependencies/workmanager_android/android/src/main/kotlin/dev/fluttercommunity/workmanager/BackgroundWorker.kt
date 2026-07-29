@@ -30,6 +30,13 @@ class BackgroundWorker(
 ) : ListenableWorker(applicationContext, workerParams) {
     private lateinit var flutterApi: WorkmanagerFlutterApi
 
+    private enum class LifecycleState {
+        INITIALIZING,
+        EXECUTING,
+        TASK_EXECUTING,
+        TERMINAL,
+    }
+
     companion object {
         const val PAYLOAD_KEY = "dev.fluttercommunity.workmanager.INPUT_DATA"
         const val DART_TASK_KEY = "dev.fluttercommunity.workmanager.DART_TASK"
@@ -58,10 +65,9 @@ class BackgroundWorker(
     private var engine: FlutterEngine? = null
     @Volatile
     private var backgroundChannelReady = false
-    @Volatile
-    private var engineStopped = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lifecycleLock = Any()
+    private var lifecycleState = LifecycleState.INITIALIZING
     private var forcedStop: ScheduledFuture<*>? = null
     private val cancellationScheduler: ScheduledExecutorService =
         ScheduledThreadPoolExecutor(1) { runnable ->
@@ -97,6 +103,10 @@ class BackgroundWorker(
             null,
             mainHandler,
         ) {
+            if (!claimDartExecution()) {
+                return@ensureInitializationCompleteAsync
+            }
+
             val callbackHandle = SharedPreferenceHelper.getCallbackHandle(applicationContext)
             val callbackInfo = FlutterCallbackInformation.lookupCallbackInformation(callbackHandle)
 
@@ -143,13 +153,14 @@ class BackgroundWorker(
 
                 // Initialize the background channel
                 flutterApi.backgroundChannelInitialized {
-                    if (!engineStopped) {
-                        backgroundChannelReady = true
-                        // Channel is initialized, now execute the task
-                        executeBackgroundTask()
-                        if (isStopped) {
-                            notifyDartCancellation()
-                        }
+                    if (!claimBackgroundTaskExecution()) {
+                        return@backgroundChannelInitialized
+                    }
+                    backgroundChannelReady = true
+                    // Channel is initialized, now execute the task
+                    executeBackgroundTask()
+                    if (isStopped) {
+                        notifyDartCancellation()
                     }
                 }
             }
@@ -162,6 +173,35 @@ class BackgroundWorker(
         notifyDartCancellation()
         scheduleForcedStop()
     }
+
+    // 阶段领取与终态共用同一锁，防止迟到回调跨过已经完成的平台任务。
+    private fun claimDartExecution(): Boolean =
+        synchronized(lifecycleLock) {
+            when (lifecycleState) {
+                LifecycleState.INITIALIZING -> {
+                    lifecycleState = LifecycleState.EXECUTING
+                    true
+                }
+                LifecycleState.EXECUTING,
+                LifecycleState.TASK_EXECUTING,
+                LifecycleState.TERMINAL,
+                -> false
+            }
+        }
+
+    private fun claimBackgroundTaskExecution(): Boolean =
+        synchronized(lifecycleLock) {
+            when (lifecycleState) {
+                LifecycleState.EXECUTING -> {
+                    lifecycleState = LifecycleState.TASK_EXECUTING
+                    true
+                }
+                LifecycleState.INITIALIZING,
+                LifecycleState.TASK_EXECUTING,
+                LifecycleState.TERMINAL,
+                -> false
+            }
+        }
 
     private fun notifyDartCancellation() {
         mainHandler.post {
@@ -183,7 +223,7 @@ class BackgroundWorker(
 
     private fun scheduleForcedStop() {
         synchronized(lifecycleLock) {
-            if (engineStopped || forcedStop != null) {
+            if (lifecycleState == LifecycleState.TERMINAL || forcedStop != null) {
                 return
             }
 
@@ -208,8 +248,8 @@ class BackgroundWorker(
     ) {
         val pendingForcedStop: ScheduledFuture<*>?
         synchronized(lifecycleLock) {
-            if (engineStopped) return
-            engineStopped = true
+            if (lifecycleState == LifecycleState.TERMINAL) return
+            lifecycleState = LifecycleState.TERMINAL
             pendingForcedStop = forcedStop
             forcedStop = null
         }

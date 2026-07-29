@@ -1223,6 +1223,75 @@ void main() {
     );
   });
 
+  test('Android 原生生命周期静态契约线性化初始化领取与终态', () async {
+    final androidWorker = await File(
+      'dependencies/workmanager_android/android/src/main/kotlin/'
+      'dev/fluttercommunity/workmanager/BackgroundWorker.kt',
+    ).readAsString();
+
+    expect(
+      androidWorker,
+      matches(
+        RegExp(
+          r'ensureInitializationCompleteAsync\([\s\S]*?'
+          r'\)\s*\{\s*'
+          r'if \(!claimDartExecution\(\)\) \{\s*'
+          r'return@ensureInitializationCompleteAsync\s*'
+          r'\}\s*'
+          r'val callbackHandle',
+        ),
+      ),
+    );
+    expect(
+      androidWorker,
+      matches(
+        RegExp(
+          r'flutterApi\.backgroundChannelInitialized\s*\{\s*'
+          r'if \(!claimBackgroundTaskExecution\(\)\) \{\s*'
+          r'return@backgroundChannelInitialized\s*'
+          r'\}\s*'
+          r'backgroundChannelReady = true',
+        ),
+      ),
+    );
+    expect(
+      androidWorker,
+      matches(
+        RegExp(
+          r'private fun claimBackgroundTaskExecution\(\): Boolean\s*=\s*'
+          r'synchronized\(lifecycleLock\)\s*\{[\s\S]*?'
+          r'LifecycleState\.EXECUTING\s*->\s*\{\s*'
+          r'lifecycleState\s*=\s*LifecycleState\.TASK_EXECUTING\s*'
+          r'true',
+        ),
+      ),
+    );
+    expect(
+      androidWorker,
+      matches(
+        RegExp(
+          r'private fun claimDartExecution\(\): Boolean\s*=\s*'
+          r'synchronized\(lifecycleLock\)\s*\{[\s\S]*?'
+          r'LifecycleState\.INITIALIZING\s*->\s*\{\s*'
+          r'lifecycleState\s*=\s*LifecycleState\.EXECUTING\s*'
+          r'true',
+        ),
+      ),
+    );
+    expect(
+      androidWorker,
+      matches(
+        RegExp(
+          r'private fun stopEngine\([\s\S]*?'
+          r'synchronized\(lifecycleLock\)\s*\{\s*'
+          r'if \(lifecycleState == LifecycleState\.TERMINAL\) return\s*'
+          r'lifecycleState = LifecycleState\.TERMINAL',
+        ),
+      ),
+    );
+    expect(androidWorker, isNot(contains('private var engineStopped')));
+  });
+
   test('移动后台原生桥静态包含独立硬截止与单一终态状态机', () async {
     final androidWorker = await File(
       'dependencies/workmanager_android/android/src/main/kotlin/'
