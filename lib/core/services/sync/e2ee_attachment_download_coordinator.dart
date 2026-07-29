@@ -239,6 +239,9 @@ final class E2eeAttachmentDownloadCoordinator
       E2eeAttachmentDownloadPhase.ready => throw StateError(
         'attachment_download_ready_state_claimed',
       ),
+      E2eeAttachmentDownloadPhase.dormant => throw StateError(
+        'attachment_download_dormant_state_claimed',
+      ),
     };
   }
 
@@ -247,6 +250,16 @@ final class E2eeAttachmentDownloadCoordinator
     _RemoteStepBudget budget,
     E2eeSyncExecutionBudget? executionBudget,
   ) async {
+    final cleanupStagingPath = lease.state.cleanupStagingPath;
+    if (cleanupStagingPath != null) {
+      await _fileStore.deleteStaging(storagePath: cleanupStagingPath);
+      final cleaned = await _commands.completeStagingCleanup(
+        lease: lease,
+        cleanupStagingPath: cleanupStagingPath,
+        now: _utcNow(),
+      );
+      return _DownloadProgressed(cleaned);
+    }
     if (!budget.tryConsume()) return const _DownloadBudgetExhausted();
     final reference = lease.state.reference;
     final identity = _cloudIdentity(reference);

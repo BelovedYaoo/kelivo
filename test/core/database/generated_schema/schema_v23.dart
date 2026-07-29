@@ -3336,6 +3336,14 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  late final GeneratedColumn<String> cleanupStagingPath =
+      GeneratedColumn<String>(
+        'cleanup_staging_path',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   late final GeneratedColumn<String> finalPath = GeneratedColumn<String>(
     'final_path',
     aliasedName,
@@ -3457,6 +3465,7 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
     mediaType,
     localAssetId,
     stagingPath,
+    cleanupStagingPath,
     finalPath,
     nextChunkIndex,
     confirmedPlaintextBytes,
@@ -3501,7 +3510,7 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
     'CHECK (typeof(manifest_key_epoch) = \'integer\' AND manifest_key_epoch BETWEEN chunk_key_epoch AND 4294967295)',
     'CHECK (typeof(manifest_revision) = \'integer\' AND manifest_revision BETWEEN 1 AND 4294967295 AND manifest_key_epoch - chunk_key_epoch = manifest_revision - 1)',
     'CHECK (typeof(kind) = \'text\' AND kind IN (\'image\', \'file\'))',
-    'CHECK (typeof(phase) = \'text\' AND phase IN (\'manifest-pending\', \'downloading\', \'verifying\', \'ready\'))',
+    'CHECK (typeof(phase) = \'text\' AND phase IN (\'manifest-pending\', \'downloading\', \'verifying\', \'ready\', \'dormant\'))',
     'CHECK (manifest_ciphertext IS NULL OR (typeof(manifest_ciphertext) = \'blob\' AND length(manifest_ciphertext) BETWEEN 1 AND 1048576))',
     'CHECK (content_sha256 IS NULL OR (typeof(content_sha256) = \'blob\' AND length(content_sha256) = 32))',
     'CHECK (wrapped_data_key IS NULL OR (typeof(wrapped_data_key) = \'blob\' AND length(wrapped_data_key) = 116))',
@@ -3513,11 +3522,14 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
     'CHECK (media_type IS NULL OR (typeof(media_type) = \'text\' AND length(CAST(media_type AS BLOB)) BETWEEN 3 AND 255 AND instr(media_type, \'/\') BETWEEN 2 AND length(media_type) - 1))',
     'CHECK (local_asset_id IS NULL OR (typeof(local_asset_id) = \'text\' AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(local_asset_id, char(0)) = 0))',
     'CHECK (staging_path IS NULL OR (typeof(staging_path) = \'text\' AND length(CAST(staging_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(staging_path, char(0)) = 0))',
+    'CHECK (cleanup_staging_path IS NULL OR (typeof(cleanup_staging_path) = \'text\' AND length(CAST(cleanup_staging_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(cleanup_staging_path, char(0)) = 0))',
     'CHECK (final_path IS NULL OR (typeof(final_path) = \'text\' AND length(CAST(final_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(final_path, char(0)) = 0))',
     'CHECK (staging_path IS NULL OR final_path IS NULL OR staging_path != final_path)',
+    'CHECK (cleanup_staging_path IS NULL OR final_path IS NULL OR cleanup_staging_path != final_path)',
+    'CHECK (staging_path IS NULL OR cleanup_staging_path IS NULL)',
     'CHECK (typeof(next_chunk_index) = \'integer\' AND next_chunk_index BETWEEN 0 AND 1000)',
     'CHECK (typeof(confirmed_plaintext_bytes) = \'integer\' AND confirmed_plaintext_bytes BETWEEN 0 AND 4194184000)',
-    'CHECK ((phase = \'manifest-pending\' AND manifest_ciphertext IS NULL AND content_sha256 IS NULL AND wrapped_data_key IS NULL AND total_plaintext_bytes IS NULL AND chunk_count IS NULL AND total_ciphertext_bytes IS NULL AND display_name IS NULL AND media_type IS NULL AND staging_path IS NULL AND ((local_asset_id IS NULL AND final_path IS NULL) OR (local_asset_id IS NOT NULL AND final_path IS NOT NULL)) AND next_chunk_index = 0 AND confirmed_plaintext_bytes = 0) OR (phase = \'downloading\' AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL AND local_asset_id IS NOT NULL AND staging_path IS NOT NULL AND final_path IS NOT NULL AND next_chunk_index < chunk_count AND confirmed_plaintext_bytes = MIN(next_chunk_index * 4194184, total_plaintext_bytes) AND ((kind = \'image\') OR (display_name IS NOT NULL AND media_type IS NOT NULL))) OR (phase = \'verifying\' AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL AND local_asset_id IS NOT NULL AND staging_path IS NOT NULL AND final_path IS NOT NULL AND next_chunk_index = chunk_count AND confirmed_plaintext_bytes = total_plaintext_bytes AND ((kind = \'image\') OR (display_name IS NOT NULL AND media_type IS NOT NULL))) OR (phase = \'ready\' AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL AND local_asset_id IS NOT NULL AND staging_path IS NULL AND final_path IS NOT NULL AND next_chunk_index = chunk_count AND confirmed_plaintext_bytes = total_plaintext_bytes AND ((kind = \'image\') OR (display_name IS NOT NULL AND media_type IS NOT NULL))))',
+    'CHECK ((phase = \'manifest-pending\' AND manifest_ciphertext IS NULL AND content_sha256 IS NULL AND wrapped_data_key IS NULL AND total_plaintext_bytes IS NULL AND chunk_count IS NULL AND total_ciphertext_bytes IS NULL AND display_name IS NULL AND media_type IS NULL AND staging_path IS NULL AND ((local_asset_id IS NULL AND final_path IS NULL) OR (local_asset_id IS NOT NULL AND final_path IS NOT NULL)) AND next_chunk_index = 0 AND confirmed_plaintext_bytes = 0) OR (phase = \'dormant\' AND manifest_ciphertext IS NULL AND content_sha256 IS NULL AND wrapped_data_key IS NULL AND total_plaintext_bytes IS NULL AND chunk_count IS NULL AND total_ciphertext_bytes IS NULL AND display_name IS NULL AND media_type IS NULL AND local_asset_id IS NULL AND staging_path IS NULL AND final_path IS NULL AND next_chunk_index = 0 AND confirmed_plaintext_bytes = 0 AND consecutive_failure_count = 0 AND last_failure_kind IS NULL AND terminal_failure_kind IS NULL) OR (phase = \'downloading\' AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL AND local_asset_id IS NOT NULL AND staging_path IS NOT NULL AND cleanup_staging_path IS NULL AND final_path IS NOT NULL AND next_chunk_index < chunk_count AND confirmed_plaintext_bytes = MIN(next_chunk_index * 4194184, total_plaintext_bytes) AND ((kind = \'image\') OR (display_name IS NOT NULL AND media_type IS NOT NULL))) OR (phase = \'verifying\' AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL AND local_asset_id IS NOT NULL AND staging_path IS NOT NULL AND cleanup_staging_path IS NULL AND final_path IS NOT NULL AND next_chunk_index = chunk_count AND confirmed_plaintext_bytes = total_plaintext_bytes AND ((kind = \'image\') OR (display_name IS NOT NULL AND media_type IS NOT NULL))) OR (phase = \'ready\' AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL AND local_asset_id IS NOT NULL AND staging_path IS NULL AND cleanup_staging_path IS NULL AND final_path IS NOT NULL AND next_chunk_index = chunk_count AND confirmed_plaintext_bytes = total_plaintext_bytes AND ((kind = \'image\') OR (display_name IS NOT NULL AND media_type IS NOT NULL))))',
     'CHECK (lease_token IS NULL OR (typeof(lease_token) = \'text\' AND length(CAST(lease_token AS BLOB)) BETWEEN 1 AND 1024))',
     'CHECK (lease_owner_session_id IS NULL OR (typeof(lease_owner_session_id) = \'text\' AND length(CAST(lease_owner_session_id AS BLOB)) BETWEEN 1 AND 1024))',
     'CHECK ((lease_token IS NULL AND lease_owner_session_id IS NULL AND lease_expires_at IS NULL) OR (phase IN (\'manifest-pending\', \'downloading\', \'verifying\') AND terminal_failure_kind IS NULL AND lease_token IS NOT NULL AND lease_owner_session_id IS NOT NULL AND typeof(lease_expires_at) = \'integer\' AND lease_expires_at >= 0))',
@@ -3535,8 +3547,8 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
   ];
 }
 
-class DatabaseAtV22 extends GeneratedDatabase {
-  DatabaseAtV22(QueryExecutor e) : super(e);
+class DatabaseAtV23 extends GeneratedDatabase {
+  DatabaseAtV23(QueryExecutor e) : super(e);
   late final ConversationRows conversationRows = ConversationRows(this);
   late final MessageRows messageRows = MessageRows(this);
   late final AssetRows assetRows = AssetRows(this);
@@ -3745,5 +3757,5 @@ class DatabaseAtV22 extends GeneratedDatabase {
     idxE2eeAttachmentDownloadLocalAsset,
   ];
   @override
-  int get schemaVersion => 22;
+  int get schemaVersion => 23;
 }

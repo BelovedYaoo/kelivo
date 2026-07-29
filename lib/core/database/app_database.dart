@@ -1644,6 +1644,7 @@ class E2eeAttachmentDownloadRows extends Table {
   TextColumn get mediaType => text().nullable()();
   TextColumn get localAssetId => text().nullable()();
   TextColumn get stagingPath => text().nullable()();
+  TextColumn get cleanupStagingPath => text().nullable()();
   TextColumn get finalPath => text().nullable()();
   IntColumn get nextChunkIndex => integer()();
   IntColumn get confirmedPlaintextBytes => integer()();
@@ -1710,7 +1711,8 @@ class E2eeAttachmentDownloadRows extends Table {
         'AND manifest_key_epoch - chunk_key_epoch = manifest_revision - 1)',
     "CHECK (typeof(kind) = 'text' AND kind IN ('image', 'file'))",
     "CHECK (typeof(phase) = 'text' AND phase IN "
-        "('manifest-pending', 'downloading', 'verifying', 'ready'))",
+        "('manifest-pending', 'downloading', 'verifying', 'ready', "
+        "'dormant'))",
     'CHECK (manifest_ciphertext IS NULL OR '
         "(typeof(manifest_ciphertext) = 'blob' "
         'AND length(manifest_ciphertext) BETWEEN 1 AND 1048576))',
@@ -1754,12 +1756,19 @@ class E2eeAttachmentDownloadRows extends Table {
         "(typeof(staging_path) = 'text' "
         'AND length(CAST(staging_path AS BLOB)) BETWEEN 1 AND 32768 '
         'AND instr(staging_path, char(0)) = 0))',
+    'CHECK (cleanup_staging_path IS NULL OR '
+        "(typeof(cleanup_staging_path) = 'text' "
+        'AND length(CAST(cleanup_staging_path AS BLOB)) BETWEEN 1 AND 32768 '
+        'AND instr(cleanup_staging_path, char(0)) = 0))',
     'CHECK (final_path IS NULL OR '
         "(typeof(final_path) = 'text' "
         'AND length(CAST(final_path AS BLOB)) BETWEEN 1 AND 32768 '
         'AND instr(final_path, char(0)) = 0))',
     'CHECK (staging_path IS NULL OR final_path IS NULL '
         'OR staging_path != final_path)',
+    'CHECK (cleanup_staging_path IS NULL OR final_path IS NULL '
+        'OR cleanup_staging_path != final_path)',
+    'CHECK (staging_path IS NULL OR cleanup_staging_path IS NULL)',
     "CHECK (typeof(next_chunk_index) = 'integer' "
         'AND next_chunk_index BETWEEN 0 AND 1000)',
     "CHECK (typeof(confirmed_plaintext_bytes) = 'integer' "
@@ -1774,11 +1783,23 @@ class E2eeAttachmentDownloadRows extends Table {
         '(local_asset_id IS NOT NULL AND final_path IS NOT NULL)) '
         'AND next_chunk_index = 0 '
         'AND confirmed_plaintext_bytes = 0) OR '
+        '(phase = \'dormant\' '
+        'AND manifest_ciphertext IS NULL AND content_sha256 IS NULL '
+        'AND wrapped_data_key IS NULL AND total_plaintext_bytes IS NULL '
+        'AND chunk_count IS NULL AND total_ciphertext_bytes IS NULL '
+        'AND display_name IS NULL AND media_type IS NULL '
+        'AND local_asset_id IS NULL AND staging_path IS NULL '
+        'AND final_path IS NULL AND next_chunk_index = 0 '
+        'AND confirmed_plaintext_bytes = 0 '
+        'AND consecutive_failure_count = 0 '
+        'AND last_failure_kind IS NULL '
+        'AND terminal_failure_kind IS NULL) OR '
         '(phase = \'downloading\' '
         'AND manifest_ciphertext IS NOT NULL AND content_sha256 IS NOT NULL '
         'AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL '
         'AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL '
         'AND local_asset_id IS NOT NULL AND staging_path IS NOT NULL '
+        'AND cleanup_staging_path IS NULL '
         'AND final_path IS NOT NULL AND next_chunk_index < chunk_count '
         'AND confirmed_plaintext_bytes = '
         'MIN(next_chunk_index * 4194184, total_plaintext_bytes) '
@@ -1789,6 +1810,7 @@ class E2eeAttachmentDownloadRows extends Table {
         'AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL '
         'AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL '
         'AND local_asset_id IS NOT NULL AND staging_path IS NOT NULL '
+        'AND cleanup_staging_path IS NULL '
         'AND final_path IS NOT NULL AND next_chunk_index = chunk_count '
         'AND confirmed_plaintext_bytes = total_plaintext_bytes '
         'AND ((kind = \'image\') OR '
@@ -1798,6 +1820,7 @@ class E2eeAttachmentDownloadRows extends Table {
         'AND wrapped_data_key IS NOT NULL AND total_plaintext_bytes IS NOT NULL '
         'AND chunk_count IS NOT NULL AND total_ciphertext_bytes IS NOT NULL '
         'AND local_asset_id IS NOT NULL AND staging_path IS NULL '
+        'AND cleanup_staging_path IS NULL '
         'AND final_path IS NOT NULL AND next_chunk_index = chunk_count '
         'AND confirmed_plaintext_bytes = total_plaintext_bytes '
         'AND ((kind = \'image\') OR '
@@ -1884,7 +1907,7 @@ class AppDatabase extends _$AppDatabase {
   static const databaseFileName = 'kelivo.db';
 
   // 已验证成员清单锚点必须与内容数据库同受 SQLCipher 和硬切安装门保护。
-  static const currentSchemaVersion = 22;
+  static const currentSchemaVersion = 23;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

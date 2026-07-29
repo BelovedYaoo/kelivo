@@ -17212,6 +17212,17 @@ class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
     type: DriftSqlType.string,
     requiredDuringInsert: false,
   );
+  static const VerificationMeta _cleanupStagingPathMeta =
+      const VerificationMeta('cleanupStagingPath');
+  @override
+  late final GeneratedColumn<String> cleanupStagingPath =
+      GeneratedColumn<String>(
+        'cleanup_staging_path',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
   static const VerificationMeta _finalPathMeta = const VerificationMeta(
     'finalPath',
   );
@@ -17385,6 +17396,7 @@ class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
     mediaType,
     localAssetId,
     stagingPath,
+    cleanupStagingPath,
     finalPath,
     nextChunkIndex,
     confirmedPlaintextBytes,
@@ -17561,6 +17573,15 @@ class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
         stagingPath.isAcceptableOrUnknown(
           data['staging_path']!,
           _stagingPathMeta,
+        ),
+      );
+    }
+    if (data.containsKey('cleanup_staging_path')) {
+      context.handle(
+        _cleanupStagingPathMeta,
+        cleanupStagingPath.isAcceptableOrUnknown(
+          data['cleanup_staging_path']!,
+          _cleanupStagingPathMeta,
         ),
       );
     }
@@ -17742,6 +17763,10 @@ class $E2eeAttachmentDownloadRowsTable extends E2eeAttachmentDownloadRows
         DriftSqlType.string,
         data['${effectivePrefix}staging_path'],
       ),
+      cleanupStagingPath: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}cleanup_staging_path'],
+      ),
       finalPath: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}final_path'],
@@ -17847,6 +17872,7 @@ class E2eeAttachmentDownloadRow extends DataClass
   final String? mediaType;
   final String? localAssetId;
   final String? stagingPath;
+  final String? cleanupStagingPath;
   final String? finalPath;
   final int nextChunkIndex;
   final int confirmedPlaintextBytes;
@@ -17879,6 +17905,7 @@ class E2eeAttachmentDownloadRow extends DataClass
     this.mediaType,
     this.localAssetId,
     this.stagingPath,
+    this.cleanupStagingPath,
     this.finalPath,
     required this.nextChunkIndex,
     required this.confirmedPlaintextBytes,
@@ -17933,6 +17960,9 @@ class E2eeAttachmentDownloadRow extends DataClass
     }
     if (!nullToAbsent || stagingPath != null) {
       map['staging_path'] = Variable<String>(stagingPath);
+    }
+    if (!nullToAbsent || cleanupStagingPath != null) {
+      map['cleanup_staging_path'] = Variable<String>(cleanupStagingPath);
     }
     if (!nullToAbsent || finalPath != null) {
       map['final_path'] = Variable<String>(finalPath);
@@ -18020,6 +18050,9 @@ class E2eeAttachmentDownloadRow extends DataClass
       stagingPath: stagingPath == null && nullToAbsent
           ? const Value.absent()
           : Value(stagingPath),
+      cleanupStagingPath: cleanupStagingPath == null && nullToAbsent
+          ? const Value.absent()
+          : Value(cleanupStagingPath),
       finalPath: finalPath == null && nullToAbsent
           ? const Value.absent()
           : Value(finalPath),
@@ -18078,6 +18111,9 @@ class E2eeAttachmentDownloadRow extends DataClass
       mediaType: serializer.fromJson<String?>(json['mediaType']),
       localAssetId: serializer.fromJson<String?>(json['localAssetId']),
       stagingPath: serializer.fromJson<String?>(json['stagingPath']),
+      cleanupStagingPath: serializer.fromJson<String?>(
+        json['cleanupStagingPath'],
+      ),
       finalPath: serializer.fromJson<String?>(json['finalPath']),
       nextChunkIndex: serializer.fromJson<int>(json['nextChunkIndex']),
       confirmedPlaintextBytes: serializer.fromJson<int>(
@@ -18123,6 +18159,7 @@ class E2eeAttachmentDownloadRow extends DataClass
       'mediaType': serializer.toJson<String?>(mediaType),
       'localAssetId': serializer.toJson<String?>(localAssetId),
       'stagingPath': serializer.toJson<String?>(stagingPath),
+      'cleanupStagingPath': serializer.toJson<String?>(cleanupStagingPath),
       'finalPath': serializer.toJson<String?>(finalPath),
       'nextChunkIndex': serializer.toJson<int>(nextChunkIndex),
       'confirmedPlaintextBytes': serializer.toJson<int>(
@@ -18162,6 +18199,7 @@ class E2eeAttachmentDownloadRow extends DataClass
     Value<String?> mediaType = const Value.absent(),
     Value<String?> localAssetId = const Value.absent(),
     Value<String?> stagingPath = const Value.absent(),
+    Value<String?> cleanupStagingPath = const Value.absent(),
     Value<String?> finalPath = const Value.absent(),
     int? nextChunkIndex,
     int? confirmedPlaintextBytes,
@@ -18204,6 +18242,9 @@ class E2eeAttachmentDownloadRow extends DataClass
     mediaType: mediaType.present ? mediaType.value : this.mediaType,
     localAssetId: localAssetId.present ? localAssetId.value : this.localAssetId,
     stagingPath: stagingPath.present ? stagingPath.value : this.stagingPath,
+    cleanupStagingPath: cleanupStagingPath.present
+        ? cleanupStagingPath.value
+        : this.cleanupStagingPath,
     finalPath: finalPath.present ? finalPath.value : this.finalPath,
     nextChunkIndex: nextChunkIndex ?? this.nextChunkIndex,
     confirmedPlaintextBytes:
@@ -18276,6 +18317,9 @@ class E2eeAttachmentDownloadRow extends DataClass
       stagingPath: data.stagingPath.present
           ? data.stagingPath.value
           : this.stagingPath,
+      cleanupStagingPath: data.cleanupStagingPath.present
+          ? data.cleanupStagingPath.value
+          : this.cleanupStagingPath,
       finalPath: data.finalPath.present ? data.finalPath.value : this.finalPath,
       nextChunkIndex: data.nextChunkIndex.present
           ? data.nextChunkIndex.value
@@ -18335,6 +18379,7 @@ class E2eeAttachmentDownloadRow extends DataClass
           ..write('mediaType: $mediaType, ')
           ..write('localAssetId: $localAssetId, ')
           ..write('stagingPath: $stagingPath, ')
+          ..write('cleanupStagingPath: $cleanupStagingPath, ')
           ..write('finalPath: $finalPath, ')
           ..write('nextChunkIndex: $nextChunkIndex, ')
           ..write('confirmedPlaintextBytes: $confirmedPlaintextBytes, ')
@@ -18372,6 +18417,7 @@ class E2eeAttachmentDownloadRow extends DataClass
     mediaType,
     localAssetId,
     stagingPath,
+    cleanupStagingPath,
     finalPath,
     nextChunkIndex,
     confirmedPlaintextBytes,
@@ -18414,6 +18460,7 @@ class E2eeAttachmentDownloadRow extends DataClass
           other.mediaType == this.mediaType &&
           other.localAssetId == this.localAssetId &&
           other.stagingPath == this.stagingPath &&
+          other.cleanupStagingPath == this.cleanupStagingPath &&
           other.finalPath == this.finalPath &&
           other.nextChunkIndex == this.nextChunkIndex &&
           other.confirmedPlaintextBytes == this.confirmedPlaintextBytes &&
@@ -18449,6 +18496,7 @@ class E2eeAttachmentDownloadRowsCompanion
   final Value<String?> mediaType;
   final Value<String?> localAssetId;
   final Value<String?> stagingPath;
+  final Value<String?> cleanupStagingPath;
   final Value<String?> finalPath;
   final Value<int> nextChunkIndex;
   final Value<int> confirmedPlaintextBytes;
@@ -18482,6 +18530,7 @@ class E2eeAttachmentDownloadRowsCompanion
     this.mediaType = const Value.absent(),
     this.localAssetId = const Value.absent(),
     this.stagingPath = const Value.absent(),
+    this.cleanupStagingPath = const Value.absent(),
     this.finalPath = const Value.absent(),
     this.nextChunkIndex = const Value.absent(),
     this.confirmedPlaintextBytes = const Value.absent(),
@@ -18516,6 +18565,7 @@ class E2eeAttachmentDownloadRowsCompanion
     this.mediaType = const Value.absent(),
     this.localAssetId = const Value.absent(),
     this.stagingPath = const Value.absent(),
+    this.cleanupStagingPath = const Value.absent(),
     this.finalPath = const Value.absent(),
     required int nextChunkIndex,
     required int confirmedPlaintextBytes,
@@ -18564,6 +18614,7 @@ class E2eeAttachmentDownloadRowsCompanion
     Expression<String>? mediaType,
     Expression<String>? localAssetId,
     Expression<String>? stagingPath,
+    Expression<String>? cleanupStagingPath,
     Expression<String>? finalPath,
     Expression<int>? nextChunkIndex,
     Expression<int>? confirmedPlaintextBytes,
@@ -18600,6 +18651,8 @@ class E2eeAttachmentDownloadRowsCompanion
       if (mediaType != null) 'media_type': mediaType,
       if (localAssetId != null) 'local_asset_id': localAssetId,
       if (stagingPath != null) 'staging_path': stagingPath,
+      if (cleanupStagingPath != null)
+        'cleanup_staging_path': cleanupStagingPath,
       if (finalPath != null) 'final_path': finalPath,
       if (nextChunkIndex != null) 'next_chunk_index': nextChunkIndex,
       if (confirmedPlaintextBytes != null)
@@ -18640,6 +18693,7 @@ class E2eeAttachmentDownloadRowsCompanion
     Value<String?>? mediaType,
     Value<String?>? localAssetId,
     Value<String?>? stagingPath,
+    Value<String?>? cleanupStagingPath,
     Value<String?>? finalPath,
     Value<int>? nextChunkIndex,
     Value<int>? confirmedPlaintextBytes,
@@ -18674,6 +18728,7 @@ class E2eeAttachmentDownloadRowsCompanion
       mediaType: mediaType ?? this.mediaType,
       localAssetId: localAssetId ?? this.localAssetId,
       stagingPath: stagingPath ?? this.stagingPath,
+      cleanupStagingPath: cleanupStagingPath ?? this.cleanupStagingPath,
       finalPath: finalPath ?? this.finalPath,
       nextChunkIndex: nextChunkIndex ?? this.nextChunkIndex,
       confirmedPlaintextBytes:
@@ -18749,6 +18804,9 @@ class E2eeAttachmentDownloadRowsCompanion
     }
     if (stagingPath.present) {
       map['staging_path'] = Variable<String>(stagingPath.value);
+    }
+    if (cleanupStagingPath.present) {
+      map['cleanup_staging_path'] = Variable<String>(cleanupStagingPath.value);
     }
     if (finalPath.present) {
       map['final_path'] = Variable<String>(finalPath.value);
@@ -18842,6 +18900,7 @@ class E2eeAttachmentDownloadRowsCompanion
           ..write('mediaType: $mediaType, ')
           ..write('localAssetId: $localAssetId, ')
           ..write('stagingPath: $stagingPath, ')
+          ..write('cleanupStagingPath: $cleanupStagingPath, ')
           ..write('finalPath: $finalPath, ')
           ..write('nextChunkIndex: $nextChunkIndex, ')
           ..write('confirmedPlaintextBytes: $confirmedPlaintextBytes, ')
@@ -30903,6 +30962,7 @@ typedef $$E2eeAttachmentDownloadRowsTableCreateCompanionBuilder =
       Value<String?> mediaType,
       Value<String?> localAssetId,
       Value<String?> stagingPath,
+      Value<String?> cleanupStagingPath,
       Value<String?> finalPath,
       required int nextChunkIndex,
       required int confirmedPlaintextBytes,
@@ -30938,6 +30998,7 @@ typedef $$E2eeAttachmentDownloadRowsTableUpdateCompanionBuilder =
       Value<String?> mediaType,
       Value<String?> localAssetId,
       Value<String?> stagingPath,
+      Value<String?> cleanupStagingPath,
       Value<String?> finalPath,
       Value<int> nextChunkIndex,
       Value<int> confirmedPlaintextBytes,
@@ -31046,6 +31107,11 @@ class $$E2eeAttachmentDownloadRowsTableFilterComposer
 
   ColumnFilters<String> get stagingPath => $composableBuilder(
     column: $table.stagingPath,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get cleanupStagingPath => $composableBuilder(
+    column: $table.cleanupStagingPath,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -31218,6 +31284,11 @@ class $$E2eeAttachmentDownloadRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get cleanupStagingPath => $composableBuilder(
+    column: $table.cleanupStagingPath,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get finalPath => $composableBuilder(
     column: $table.finalPath,
     builder: (column) => ColumnOrderings(column),
@@ -31375,6 +31446,11 @@ class $$E2eeAttachmentDownloadRowsTableAnnotationComposer
     builder: (column) => column,
   );
 
+  GeneratedColumn<String> get cleanupStagingPath => $composableBuilder(
+    column: $table.cleanupStagingPath,
+    builder: (column) => column,
+  );
+
   GeneratedColumn<String> get finalPath =>
       $composableBuilder(column: $table.finalPath, builder: (column) => column);
 
@@ -31505,6 +31581,7 @@ class $$E2eeAttachmentDownloadRowsTableTableManager
                 Value<String?> mediaType = const Value.absent(),
                 Value<String?> localAssetId = const Value.absent(),
                 Value<String?> stagingPath = const Value.absent(),
+                Value<String?> cleanupStagingPath = const Value.absent(),
                 Value<String?> finalPath = const Value.absent(),
                 Value<int> nextChunkIndex = const Value.absent(),
                 Value<int> confirmedPlaintextBytes = const Value.absent(),
@@ -31538,6 +31615,7 @@ class $$E2eeAttachmentDownloadRowsTableTableManager
                 mediaType: mediaType,
                 localAssetId: localAssetId,
                 stagingPath: stagingPath,
+                cleanupStagingPath: cleanupStagingPath,
                 finalPath: finalPath,
                 nextChunkIndex: nextChunkIndex,
                 confirmedPlaintextBytes: confirmedPlaintextBytes,
@@ -31573,6 +31651,7 @@ class $$E2eeAttachmentDownloadRowsTableTableManager
                 Value<String?> mediaType = const Value.absent(),
                 Value<String?> localAssetId = const Value.absent(),
                 Value<String?> stagingPath = const Value.absent(),
+                Value<String?> cleanupStagingPath = const Value.absent(),
                 Value<String?> finalPath = const Value.absent(),
                 required int nextChunkIndex,
                 required int confirmedPlaintextBytes,
@@ -31606,6 +31685,7 @@ class $$E2eeAttachmentDownloadRowsTableTableManager
                 mediaType: mediaType,
                 localAssetId: localAssetId,
                 stagingPath: stagingPath,
+                cleanupStagingPath: cleanupStagingPath,
                 finalPath: finalPath,
                 nextChunkIndex: nextChunkIndex,
                 confirmedPlaintextBytes: confirmedPlaintextBytes,

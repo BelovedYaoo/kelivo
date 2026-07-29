@@ -11,7 +11,8 @@ enum E2eeAttachmentDownloadPhase {
   manifestPending('manifest-pending'),
   downloading('downloading'),
   verifying('verifying'),
-  ready('ready');
+  ready('ready'),
+  dormant('dormant');
 
   const E2eeAttachmentDownloadPhase(this.wireValue);
 
@@ -69,6 +70,7 @@ final class E2eeAttachmentDownloadState {
     required this.descriptor,
     required this.localAssetId,
     required this.stagingPath,
+    required this.cleanupStagingPath,
     required this.finalPath,
     required this.nextChunkIndex,
     required this.confirmedPlaintextBytes,
@@ -90,6 +92,7 @@ final class E2eeAttachmentDownloadState {
   final E2eeAttachmentDescriptor? descriptor;
   final String? localAssetId;
   final String? stagingPath;
+  final String? cleanupStagingPath;
   final String? finalPath;
   final int nextChunkIndex;
   final int confirmedPlaintextBytes;
@@ -171,14 +174,58 @@ final class E2eeAttachmentDownloadCommands {
             throw StateError('attachment_download_identity_conflict');
           }
           if (_sameDownloadReference(existingReference, reference)) {
-            return _attachmentDownloadStateFromRow(existing);
+            if (existing.phase !=
+                E2eeAttachmentDownloadPhase.dormant.wireValue) {
+              return _attachmentDownloadStateFromRow(existing);
+            }
+            if (existing.transitionVersion >=
+                _attachmentUploadMaxPositiveInt63) {
+              throw StateError('附件下载 transitionVersion 已耗尽');
+            }
+            final reactivated =
+                await (_database.update(table)..where(
+                      (row) =>
+                          _matchesAttachmentDownloadReference(
+                            row,
+                            existingReference,
+                          ) &
+                          row.phase.equals(
+                            E2eeAttachmentDownloadPhase.dormant.wireValue,
+                          ) &
+                          row.transitionVersion.equals(
+                            existing.transitionVersion,
+                          ),
+                    ))
+                    .write(
+                      E2eeAttachmentDownloadRowsCompanion(
+                        phase: Value(
+                          E2eeAttachmentDownloadPhase.manifestPending.wireValue,
+                        ),
+                        transitionVersion: Value(
+                          existing.transitionVersion + 1,
+                        ),
+                        consecutiveFailureCount: const Value(0),
+                        nextAttemptAt: Value(timestamp),
+                        lastFailureKind: const Value(null),
+                        terminalFailureKind: const Value(null),
+                        updatedAt: Value(timestamp),
+                      ),
+                    );
+            if (reactivated != 1) {
+              throw StateError('附件下载休眠重激活 CAS 失败');
+            }
+            return _attachmentDownloadStateFromRow(
+              await _attachmentDownloadRow(reference),
+            );
           }
           _requireForwardManifestTransition(existingReference, reference);
           if (existing.transitionVersion >= _attachmentUploadMaxPositiveInt63) {
             throw StateError('附件下载 transitionVersion 已耗尽');
           }
           final retainReadyCandidate =
-              existing.phase == E2eeAttachmentDownloadPhase.ready.wireValue &&
+              (existing.phase == E2eeAttachmentDownloadPhase.ready.wireValue ||
+                  existing.phase ==
+                      E2eeAttachmentDownloadPhase.manifestPending.wireValue) &&
               existing.localAssetId != null &&
               existing.finalPath != null;
           final updated =
@@ -212,6 +259,9 @@ final class E2eeAttachmentDownloadCommands {
                         retainReadyCandidate ? existing.localAssetId : null,
                       ),
                       stagingPath: const Value(null),
+                      cleanupStagingPath: Value(
+                        existing.stagingPath ?? existing.cleanupStagingPath,
+                      ),
                       finalPath: Value(
                         retainReadyCandidate ? existing.finalPath : null,
                       ),
@@ -698,6 +748,30 @@ final class E2eeAttachmentDownloadCommands {
     );
   }
 
+  Future<E2eeAttachmentDownloadLease> completeStagingCleanup({
+    required E2eeAttachmentDownloadLease lease,
+    required String cleanupStagingPath,
+    required DateTime now,
+  }) {
+    final cleanupPath = _requireAttachmentStorageText(
+      cleanupStagingPath,
+      'cleanupStagingPath',
+      32768,
+    );
+    if (lease.state.phase != E2eeAttachmentDownloadPhase.manifestPending ||
+        lease.state.cleanupStagingPath != cleanupPath) {
+      throw StateError('附件下载暂存清理回执不一致');
+    }
+    return _transitionDownloadLease(
+      lease: lease,
+      now: now,
+      resetFailureState: false,
+      changes: const E2eeAttachmentDownloadRowsCompanion(
+        cleanupStagingPath: Value(null),
+      ),
+    );
+  }
+
   Future<bool> release({
     required E2eeAttachmentDownloadLease lease,
     required DateTime now,
@@ -780,44 +854,134 @@ final class E2eeAttachmentDownloadCommands {
   Future<bool> deleteFailedForRebuild({
     required E2eeAttachmentDownloadReference reference,
     required int expectedTransitionVersion,
+    required DateTime now,
   }) async {
     if (expectedTransitionVersion < 1 ||
         expectedTransitionVersion > _attachmentUploadMaxPositiveInt63) {
       throw const FormatException('expectedTransitionVersion 超出有效范围');
     }
-    final table = _database.e2eeAttachmentDownloadRows;
-    final deleted =
-        await (_database.delete(table)..where(
-              (row) =>
-                  row.attachmentId.equals(reference.attachmentId) &
-                  row.uploadId.equals(reference.uploadId) &
-                  row.chunkKeyEpoch.equals(reference.chunkKeyEpoch) &
-                  row.manifestKeyEpoch.equals(reference.manifestKeyEpoch) &
-                  row.manifestRevision.equals(reference.manifestRevision) &
-                  row.kind.equals(reference.kind.name) &
-                  row.transitionVersion.equals(expectedTransitionVersion) &
-                  row.terminalFailureKind.isNotNull() &
-                  row.leaseToken.isNull(),
-            ))
-            .go();
-    if (deleted > 1) throw StateError('附件下载重建 CAS 删除了多行');
-    return deleted == 1;
+    if (expectedTransitionVersion == _attachmentUploadMaxPositiveInt63) {
+      throw StateError('附件下载 transitionVersion 已耗尽');
+    }
+    final timestamp = _requireStorageTime(now, 'now');
+    final updated = await _database.customUpdate(
+      '''
+      UPDATE e2ee_attachment_download_rows
+      SET phase = 'dormant',
+          manifest_ciphertext = NULL,
+          content_sha256 = NULL,
+          wrapped_data_key = NULL,
+          total_plaintext_bytes = NULL,
+          chunk_count = NULL,
+          total_ciphertext_bytes = NULL,
+          display_name = NULL,
+          media_type = NULL,
+          local_asset_id = NULL,
+          cleanup_staging_path = COALESCE(staging_path, cleanup_staging_path),
+          staging_path = NULL,
+          final_path = NULL,
+          next_chunk_index = 0,
+          confirmed_plaintext_bytes = 0,
+          transition_version = transition_version + 1,
+          consecutive_failure_count = 0,
+          next_attempt_at = ?,
+          last_failure_kind = NULL,
+          terminal_failure_kind = NULL,
+          updated_at = ?
+      WHERE attachment_id = ?
+        AND upload_id = ?
+        AND chunk_key_epoch = ?
+        AND manifest_key_epoch = ?
+        AND manifest_revision = ?
+        AND kind = ?
+        AND transition_version = ?
+        AND terminal_failure_kind IS NOT NULL
+        AND lease_token IS NULL;
+      ''',
+      variables: <Variable<Object>>[
+        Variable<int>(timestamp.microsecondsSinceEpoch),
+        Variable<int>(timestamp.microsecondsSinceEpoch),
+        Variable<String>(reference.attachmentId),
+        Variable<String>(reference.uploadId),
+        Variable<int>(reference.chunkKeyEpoch),
+        Variable<int>(reference.manifestKeyEpoch),
+        Variable<int>(reference.manifestRevision),
+        Variable<String>(reference.kind.name),
+        Variable<int>(expectedTransitionVersion),
+      ],
+      updates: {_database.e2eeAttachmentDownloadRows},
+    );
+    if (updated > 1) throw StateError('附件下载重建 CAS 更新了多行');
+    return updated == 1;
   }
 
-  Future<int> invalidateReadyByLocalAssetId(String localAssetId) {
+  Future<int> invalidateReadyByLocalAssetId(
+    String localAssetId, {
+    required DateTime now,
+  }) {
     final id = _requireAttachmentStorageText(
       localAssetId,
       'localAssetId',
       1024,
     );
-    final table = _database.e2eeAttachmentDownloadRows;
-    return (_database.delete(table)..where(
-          (row) =>
-              row.localAssetId.equals(id) &
-              row.phase.equals(E2eeAttachmentDownloadPhase.ready.wireValue) &
-              row.leaseToken.isNull(),
-        ))
-        .go();
+    final timestamp = _requireStorageTime(now, 'now');
+    return _database.transaction(() async {
+      final exhausted = await _database
+          .customSelect(
+            '''
+        SELECT 1 AS exhausted
+        FROM e2ee_attachment_download_rows
+        WHERE local_asset_id = ?
+          AND phase = 'ready'
+          AND lease_token IS NULL
+          AND transition_version >= ?
+        LIMIT 1;
+        ''',
+            variables: <Variable<Object>>[
+              Variable<String>(id),
+              Variable<int>(_attachmentUploadMaxPositiveInt63),
+            ],
+          )
+          .getSingleOrNull();
+      if (exhausted != null) {
+        throw StateError('附件下载 transitionVersion 已耗尽');
+      }
+      return _database.customUpdate(
+        '''
+        UPDATE e2ee_attachment_download_rows
+        SET phase = 'dormant',
+            manifest_ciphertext = NULL,
+            content_sha256 = NULL,
+            wrapped_data_key = NULL,
+            total_plaintext_bytes = NULL,
+            chunk_count = NULL,
+            total_ciphertext_bytes = NULL,
+            display_name = NULL,
+            media_type = NULL,
+            local_asset_id = NULL,
+            cleanup_staging_path = NULL,
+            staging_path = NULL,
+            final_path = NULL,
+            next_chunk_index = 0,
+            confirmed_plaintext_bytes = 0,
+            transition_version = transition_version + 1,
+            consecutive_failure_count = 0,
+            next_attempt_at = ?,
+            last_failure_kind = NULL,
+            terminal_failure_kind = NULL,
+            updated_at = ?
+        WHERE local_asset_id = ?
+          AND phase = 'ready'
+          AND lease_token IS NULL;
+        ''',
+        variables: <Variable<Object>>[
+          Variable<int>(timestamp.microsecondsSinceEpoch),
+          Variable<int>(timestamp.microsecondsSinceEpoch),
+          Variable<String>(id),
+        ],
+        updates: {_database.e2eeAttachmentDownloadRows},
+      );
+    });
   }
 
   Future<E2eeAttachmentDownloadLease> _transitionDownloadLease({
@@ -1042,6 +1206,7 @@ E2eeAttachmentDownloadState _attachmentDownloadStateFromRow(
       descriptor: descriptor,
       localAssetId: row.localAssetId,
       stagingPath: row.stagingPath,
+      cleanupStagingPath: row.cleanupStagingPath,
       finalPath: row.finalPath,
       nextChunkIndex: row.nextChunkIndex,
       confirmedPlaintextBytes: row.confirmedPlaintextBytes,

@@ -8252,6 +8252,8 @@ void main() {
       plaintext: Uint8List.fromList(<int>[8, 9, 10]),
       openCoordinator: false,
       includePreviousKeyEpoch: true,
+      currentKeyEpoch: 8,
+      previousKeyEpoch: 6,
     );
     addTearDown(fixture.close);
     const secureCore = KelivoSecureCore();
@@ -8283,7 +8285,7 @@ void main() {
       );
       sourceDescriptor = E2eeAttachmentDescriptor(
         attachmentId: attachmentId,
-        chunkKeyEpoch: 6,
+        chunkKeyEpoch: 1,
         kind: E2eeAttachmentKind.file,
         totalPlaintextBytes: fixture.plaintext.length,
         contentSha256: Uint8List.fromList(
@@ -8303,7 +8305,7 @@ void main() {
           attachment: KelivoAttachmentContext(
             userId: userId,
             attachmentId: generated.attachmentId,
-            keyEpoch: 6,
+            keyEpoch: 1,
           ),
           uploadId: _rawUuid(_uploadId),
         ),
@@ -8339,7 +8341,7 @@ void main() {
           descriptor: sourceDescriptor,
           uploadId: _uploadId,
           manifestKeyEpoch: 6,
-          manifestRevision: 1,
+          manifestRevision: 6,
         ),
       );
     } finally {
@@ -8352,29 +8354,40 @@ void main() {
     final sourceOpened = await session.openManifest(
       attachmentId: attachmentId,
       uploadId: _uploadId,
-      chunkKeyEpoch: 6,
+      chunkKeyEpoch: 1,
       manifestKeyEpoch: 6,
-      manifestRevision: 1,
+      manifestRevision: 6,
       ciphertext: sourceSealed.ciphertext,
     );
     await expectLater(
-      session.rewrapManifest(source: sourceOpened, targetManifestRevision: 3),
+      session.rewrapManifest(source: sourceOpened, targetManifestRevision: 7),
+      throwsFormatException,
+    );
+    await expectLater(
+      session.rewrapManifest(source: sourceOpened, targetManifestRevision: 6),
+      throwsFormatException,
+    );
+    await expectLater(
+      session.rewrapManifest(
+        source: sourceOpened,
+        targetManifestRevision: 0x100000000,
+      ),
       throwsFormatException,
     );
     final targetSealed = await session.rewrapManifest(
       source: sourceOpened,
-      targetManifestRevision: 2,
+      targetManifestRevision: 8,
     );
-    expect(targetSealed.chunkKeyEpoch, 6);
-    expect(targetSealed.manifestKeyEpoch, 7);
-    expect(targetSealed.manifestRevision, 2);
+    expect(targetSealed.chunkKeyEpoch, 1);
+    expect(targetSealed.manifestKeyEpoch, 8);
+    expect(targetSealed.manifestRevision, 8);
 
     final targetOpened = await session.openManifest(
       attachmentId: attachmentId,
       uploadId: _uploadId,
-      chunkKeyEpoch: 6,
-      manifestKeyEpoch: 7,
-      manifestRevision: 2,
+      chunkKeyEpoch: 1,
+      manifestKeyEpoch: 8,
+      manifestRevision: 8,
       ciphertext: targetSealed.ciphertext,
     );
     expect(
@@ -8395,7 +8408,7 @@ void main() {
         context: KelivoAttachmentContext(
           userId: userId,
           attachmentId: generated.attachmentId,
-          keyEpoch: 7,
+          keyEpoch: 8,
         ),
         wrappedKey: targetOpened.wrappedDataKey,
       );
@@ -11384,6 +11397,8 @@ final class _AttachmentUploadFixture {
     bool openCoordinator = true,
     int transientVerifyFailures = 0,
     bool includePreviousKeyEpoch = false,
+    int currentKeyEpoch = 7,
+    int previousKeyEpoch = 6,
   }) async {
     final directory = await Directory.current.createTemp(
       'kelivo_attachment_upload_coordinator_',
@@ -11413,6 +11428,8 @@ final class _AttachmentUploadFixture {
         baseUrl: 'https://upload-$nonce.example.com',
         loginName: 'upload-$nonce',
         includePreviousKeyEpoch: includePreviousKeyEpoch,
+        currentKeyEpoch: currentKeyEpoch,
+        previousKeyEpoch: previousKeyEpoch,
       );
       final dataKey = await secureCore.generateAttachmentDataKey();
       final attachmentId = _uuidStringForTest(dataKey.attachmentId);
@@ -12041,6 +12058,8 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
   required String loginName,
   bool bound = true,
   bool includePreviousKeyEpoch = false,
+  int currentKeyEpoch = 7,
+  int previousKeyEpoch = 6,
 }) async {
   final key = await core.createSlot(
     E2eeDeviceStateAccess.deriveSlotId(
@@ -12055,12 +12074,12 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
     if (bound) {
       ark = await core.generateAccountRootKey(
         userId: _rawUuid(_userId),
-        keyEpoch: includePreviousKeyEpoch ? 6 : 7,
+        keyEpoch: includePreviousKeyEpoch ? previousKeyEpoch : currentKeyEpoch,
       );
       if (includePreviousKeyEpoch) {
         nextArk = await core.generateAccountRootKey(
           userId: _rawUuid(_userId),
-          keyEpoch: 7,
+          keyEpoch: currentKeyEpoch,
         );
         await core.addAccountRootKeyEpoch(ark, source: nextArk);
       }
@@ -12074,7 +12093,7 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
       account: bound
           ? KelivoDeviceStateAccountBinding(
               userId: _rawUuid(_userId),
-              keyEpoch: 7,
+              keyEpoch: currentKeyEpoch,
             )
           : null,
     );
@@ -12089,7 +12108,11 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
     await core.closeDeviceIdentity(identity);
     await core.close(key);
   }
-  return _accountKeyLeaseSession(baseUrl: baseUrl, loginName: loginName);
+  return _accountKeyLeaseSession(
+    baseUrl: baseUrl,
+    loginName: loginName,
+    keyEpoch: currentKeyEpoch,
+  );
 }
 
 CloudSyncAccountSession _accountKeyLeaseSession({

@@ -35,58 +35,62 @@ void main() {
     },
   );
 
-  test('installation gate hard-cuts every obsolete SQLite schema', () async {
-    for (
-      var schemaVersion = 1;
-      schemaVersion < AppDatabase.currentSchemaVersion;
-      schemaVersion++
-    ) {
-      final directory = await Directory.systemTemp.createTemp(
-        'kelivo_reject_schema_${schemaVersion}_',
-      );
-      addTearDown(() async {
-        if (await directory.exists()) {
-          await directory.delete(recursive: true);
-        }
-      });
-      final file = File(p.join(directory.path, AppDatabase.databaseFileName));
-      final database = sqlite.sqlite3.open(file.path);
-      testDatabaseCipher.apply(database, createSlotIfMissing: true);
-      database.execute('CREATE TABLE intermediate_only (value TEXT);');
-      database.userVersion = schemaVersion;
-      database.close();
-
-      final receipt = await DatabaseInstallationGate.ensureReady(
-        appDataDirectory: directory,
-        cipher: testDatabaseCipher,
-      );
-
-      final after = sqlite.sqlite3.open(
-        file.path,
-        mode: sqlite.OpenMode.readOnly,
-      );
-      try {
-        testDatabaseCipher.apply(after, createSlotIfMissing: false);
-        expect(after.userVersion, AppDatabase.currentSchemaVersion);
-        expect(
-          after.select(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?;",
-            ['intermediate_only'],
-          ),
-          isEmpty,
+  test(
+    'installation gate hard-cuts every obsolete SQLite schema',
+    () async {
+      for (
+        var schemaVersion = 1;
+        schemaVersion < AppDatabase.currentSchemaVersion;
+        schemaVersion++
+      ) {
+        final directory = await Directory.systemTemp.createTemp(
+          'kelivo_reject_schema_${schemaVersion}_',
         );
-      } finally {
-        after.close();
-      }
-      expect(
-        ChatDatabaseRepository.inspectInstalledDatabase(
-          file,
+        addTearDown(() async {
+          if (await directory.exists()) {
+            await directory.delete(recursive: true);
+          }
+        });
+        final file = File(p.join(directory.path, AppDatabase.databaseFileName));
+        final database = sqlite.sqlite3.open(file.path);
+        testDatabaseCipher.apply(database, createSlotIfMissing: true);
+        database.execute('CREATE TABLE intermediate_only (value TEXT);');
+        database.userVersion = schemaVersion;
+        database.close();
+
+        final receipt = await DatabaseInstallationGate.ensureReady(
+          appDataDirectory: directory,
           cipher: testDatabaseCipher,
-        ).databaseId,
-        receipt.databaseId,
-      );
-    }
-  });
+        );
+
+        final after = sqlite.sqlite3.open(
+          file.path,
+          mode: sqlite.OpenMode.readOnly,
+        );
+        try {
+          testDatabaseCipher.apply(after, createSlotIfMissing: false);
+          expect(after.userVersion, AppDatabase.currentSchemaVersion);
+          expect(
+            after.select(
+              "SELECT name FROM sqlite_master WHERE type='table' AND name=?;",
+              ['intermediate_only'],
+            ),
+            isEmpty,
+          );
+        } finally {
+          after.close();
+        }
+        expect(
+          ChatDatabaseRepository.inspectInstalledDatabase(
+            file,
+            cipher: testDatabaseCipher,
+          ).databaseId,
+          receipt.databaseId,
+        );
+      }
+    },
+    timeout: const Timeout(Duration(minutes: 2)),
+  );
 
   test(
     'obsolete schema hard-cut discards unreadable receipts before rebuild',

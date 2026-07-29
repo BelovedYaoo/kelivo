@@ -6322,6 +6322,10 @@ void main() {
       expect(rotated.descriptor, equals(null));
       expect(rotated.localAssetId, equals(null));
       expect(rotated.stagingPath, equals(null));
+      expect(
+        rotated.cleanupStagingPath,
+        'D:\\workspace\\upload\\e2ee\\tmp\\stale.part',
+      );
       expect(rotated.finalPath, equals(null));
       expect(await attachmentDownloads.read(reference), equals(null));
       expect(
@@ -6352,13 +6356,37 @@ void main() {
       expect(offlineJump.manifestKeyEpoch, 8);
       expect(offlineJump.manifestRevision, 3);
       expect(
+        offlineJump.cleanupStagingPath,
+        'D:\\workspace\\upload\\e2ee\\tmp\\stale.part',
+      );
+      expect(
         await database.select(database.e2eeAttachmentDownloadRows).get(),
         hasLength(1),
+      );
+      final cleanupLease = (await attachmentDownloads.claimDue(
+        reference: offlineJumpReference,
+        leaseToken: 'download-cleanup-after-manifest-rotation',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now.add(const Duration(seconds: 7)),
+      ))!;
+      final cleanedLease = await attachmentDownloads.completeStagingCleanup(
+        lease: cleanupLease,
+        cleanupStagingPath: offlineJump.cleanupStagingPath!,
+        now: now.add(const Duration(seconds: 8)),
+      );
+      expect(cleanedLease.state.cleanupStagingPath, equals(null));
+      expect(
+        await attachmentDownloads.release(
+          lease: cleanedLease,
+          now: now.add(const Duration(seconds: 9)),
+        ),
+        isTrue,
       );
       await expectLater(
         attachmentDownloads.ensure(
           reference: rotatedReference,
-          now: now.add(const Duration(seconds: 7)),
+          now: now.add(const Duration(seconds: 10)),
         ),
         throwsStateError,
       );
@@ -6371,7 +6399,7 @@ void main() {
             manifestKeyEpoch: 8,
             manifestRevision: 3,
           ),
-          now: now.add(const Duration(seconds: 8)),
+          now: now.add(const Duration(seconds: 11)),
         ),
         throwsStateError,
       );
@@ -6383,7 +6411,7 @@ void main() {
             manifestKeyEpoch: 8,
             manifestRevision: 3,
           ),
-          now: now.add(const Duration(seconds: 9)),
+          now: now.add(const Duration(seconds: 12)),
         ),
         throwsStateError,
       );
@@ -6536,6 +6564,23 @@ void main() {
       expect(reuseCandidate.finalPath, finalPath);
       expect(await repository.scheduleUnreferencedAssetGc(notBefore: now), 0);
 
+      final consecutiveCandidate = await attachmentDownloads.ensure(
+        reference: downloadReference(
+          attachmentId: reuseCandidate.attachmentId,
+          uploadId: reuseCandidate.uploadId,
+          chunkKeyEpoch: reuseCandidate.chunkKeyEpoch,
+          manifestKeyEpoch: reuseCandidate.manifestKeyEpoch + 1,
+          manifestRevision: reuseCandidate.manifestRevision + 1,
+        ),
+        now: now.add(const Duration(seconds: 5)),
+      );
+      expect(
+        consecutiveCandidate.phase,
+        E2eeAttachmentDownloadPhase.manifestPending,
+      );
+      expect(consecutiveCandidate.localAssetId, assetId);
+      expect(consecutiveCandidate.finalPath, finalPath);
+
       final assetCount = await database
           .customSelect(
             'SELECT COUNT(*) AS item_count FROM asset_rows WHERE id = ?;',
@@ -6559,6 +6604,22 @@ void main() {
           )
           .getSingle();
       expect(pendingGc.read<int>('item_count'), 0);
+
+      expect(
+        await attachmentDownloads.invalidateReadyByLocalAssetId(
+          assetId,
+          now: now.add(const Duration(seconds: 6)),
+        ),
+        1,
+      );
+      final invalidated = (await attachmentDownloads.read(references.last))!;
+      expect(invalidated.phase, E2eeAttachmentDownloadPhase.dormant);
+      expect(invalidated.localAssetId, equals(null));
+      final reactivated = await attachmentDownloads.ensure(
+        reference: references.last,
+        now: now.add(const Duration(seconds: 7)),
+      );
+      expect(reactivated.phase, E2eeAttachmentDownloadPhase.manifestPending);
     });
 
     test('重建暂存与永久失败保留进度并要求精确 CAS', () async {
@@ -6566,6 +6627,9 @@ void main() {
       final reference = downloadReference(
         attachmentId: 'f0000000-0000-4000-8000-000000000020',
         uploadId: 'f1000000-0000-4000-8000-000000000020',
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 8,
+        manifestRevision: 2,
       );
       await attachmentDownloads.ensure(reference: reference, now: now);
       var lease = (await attachmentDownloads.claimDue(
@@ -6619,6 +6683,7 @@ void main() {
         await attachmentDownloads.deleteFailedForRebuild(
           reference: reference,
           expectedTransitionVersion: terminal.transitionVersion - 1,
+          now: now.add(const Duration(seconds: 5)),
         ),
         isFalse,
       );
@@ -6626,8 +6691,126 @@ void main() {
         await attachmentDownloads.deleteFailedForRebuild(
           reference: reference,
           expectedTransitionVersion: terminal.transitionVersion,
+          now: now.add(const Duration(seconds: 6)),
         ),
         isTrue,
+      );
+      final dormant = (await attachmentDownloads.read(reference))!;
+      expect(dormant.phase, E2eeAttachmentDownloadPhase.dormant);
+      expect(
+        dormant.cleanupStagingPath,
+        'D:\\workspace\\upload\\e2ee\\tmp\\after.part',
+      );
+      await expectLater(
+        attachmentDownloads.ensure(
+          reference: downloadReference(
+            attachmentId: reference.attachmentId,
+            uploadId: reference.uploadId,
+            chunkKeyEpoch: 7,
+            manifestKeyEpoch: 7,
+            manifestRevision: 1,
+          ),
+          now: now.add(const Duration(seconds: 7)),
+        ),
+        throwsStateError,
+      );
+      final reactivated = await attachmentDownloads.ensure(
+        reference: reference,
+        now: now.add(const Duration(seconds: 8)),
+      );
+      expect(reactivated.phase, E2eeAttachmentDownloadPhase.manifestPending);
+      expect(reactivated.cleanupStagingPath, dormant.cleanupStagingPath);
+    });
+
+    test('资产回收仅休眠下载身份并保留非回滚高水位', () async {
+      final now = DateTime.utc(2026, 7, 29, 8);
+      final reference = downloadReference(
+        attachmentId: 'f0000000-0000-4000-8000-000000000030',
+        uploadId: 'f1000000-0000-4000-8000-000000000030',
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 8,
+        manifestRevision: 2,
+      );
+      final manifest = downloadManifest(reference);
+      final contentHash = manifest.contentSha256
+          .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+          .join();
+      final assetId = 'asset_$contentHash';
+      const finalPath = 'D:\\workspace\\upload\\e2ee\\content\\gc-ready';
+      await attachmentDownloads.ensure(reference: reference, now: now);
+      var lease = (await attachmentDownloads.claimDue(
+        reference: reference,
+        leaseToken: 'download-ready-for-gc',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now,
+      ))!;
+      lease = await attachmentDownloads.attachManifest(
+        lease: lease,
+        manifest: manifest,
+        manifestCiphertext: Uint8List.fromList([1, 2, 3]),
+        stagingPath: 'D:\\workspace\\upload\\e2ee\\tmp\\gc-ready.part',
+        finalPath: finalPath,
+        now: now.add(const Duration(seconds: 1)),
+      );
+      lease = await attachmentDownloads.acknowledgeChunk(
+        lease: lease,
+        chunkIndex: 0,
+        confirmedPlaintextBytes: 0,
+        now: now.add(const Duration(seconds: 2)),
+      );
+      await attachmentDownloads.markReady(
+        lease: lease,
+        asset: MessageAssetRegistration(
+          assetId: assetId,
+          contentHash: contentHash,
+          path: finalPath,
+          byteSize: 0,
+          kind: 'file',
+          displayName: 'download.txt',
+          mediaType: 'text/plain',
+          attachmentId: reference.attachmentId,
+          uploadId: reference.uploadId,
+          chunkKeyEpoch: reference.chunkKeyEpoch,
+          manifestKeyEpoch: reference.manifestKeyEpoch,
+          manifestRevision: reference.manifestRevision,
+        ),
+        now: now.add(const Duration(seconds: 3)),
+      );
+      expect(await repository.scheduleUnreferencedAssetGc(notBefore: now), 1);
+      final candidate = (await repository.claimAssetGc(now: now)).single;
+      const quarantinePath = 'D:\\workspace\\quarantine\\gc-ready';
+      await repository.recordAssetGcQuarantine(
+        assetId: assetId,
+        generation: candidate.generation,
+        originalPath: finalPath,
+        quarantinePath: quarantinePath,
+        createdAt: now,
+      );
+      expect(
+        await repository.completeAssetGc(
+          assetId: assetId,
+          expectedGeneration: candidate.generation,
+          expectedQuarantinePaths: const {quarantinePath},
+          now: now.add(const Duration(seconds: 4)),
+        ),
+        isTrue,
+      );
+      final dormant = (await attachmentDownloads.read(reference))!;
+      expect(dormant.phase, E2eeAttachmentDownloadPhase.dormant);
+      expect(dormant.localAssetId, equals(null));
+      await expectLater(
+        attachmentDownloads.ensure(
+          reference: downloadReference(
+            attachmentId: reference.attachmentId,
+            uploadId: reference.uploadId,
+            chunkKeyEpoch: 7,
+            manifestKeyEpoch: 7,
+            manifestRevision: 1,
+          ),
+          now: now.add(const Duration(seconds: 5)),
+        ),
+        throwsStateError,
       );
     });
   });
@@ -6937,6 +7120,98 @@ void main() {
       await rotatedCoordinator.close();
     });
 
+    test('清理暂存回执在物理删除后崩溃可幂等恢复且先于发网', () async {
+      final plaintextChunks = <Uint8List>[
+        Uint8List.fromList(<int>[1, 2, 3]),
+      ];
+      final oldManifest = createManifest(plaintextChunks: plaintextChunks);
+      final fileStore = _DeleteAfterRemovalFailingAttachmentFileStore(
+        E2eeAttachmentMemoryFileStore(),
+      );
+      var now = DateTime.utc(2026, 7, 29, 8, 45);
+      final oldCoordinator = createCoordinator(
+        transport: _FakeAttachmentTransport(oldManifest),
+        crypto: _FakeAttachmentCrypto(
+          currentKeyEpoch: 7,
+          manifest: oldManifest,
+          plaintextChunks: plaintextChunks,
+        ),
+        fileStore: fileStore,
+        utcNow: () => now,
+      );
+      final oldRevision = await createMessageChange(
+        operation: 213,
+        messageId: 'download-cleanup-old-revision',
+      );
+      expect(
+        await oldCoordinator.preparePage(<E2eeSyncPulledChange>[
+          oldRevision,
+        ], maximumRemoteSteps: 1),
+        E2eeSyncPullPagePreparationDisposition.pending,
+      );
+      await oldCoordinator.close();
+
+      now = now.add(const Duration(seconds: 1));
+      final rotatedManifest = createManifest(
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 8,
+        manifestRevision: 2,
+        plaintextChunks: plaintextChunks,
+      );
+      final rotatedTransport = _FakeAttachmentTransport(rotatedManifest);
+      final rotatedCoordinator = createCoordinator(
+        transport: rotatedTransport,
+        crypto: _FakeAttachmentCrypto(
+          currentKeyEpoch: 8,
+          manifest: rotatedManifest,
+          plaintextChunks: plaintextChunks,
+        ),
+        fileStore: fileStore,
+        utcNow: () => now,
+      );
+      final rotatedRevision = await createMessageChange(
+        operation: 214,
+        messageId: 'download-cleanup-rotated-revision',
+        manifestKeyEpoch: 8,
+        manifestRevision: 2,
+      );
+      fileStore.failNextDeleteAfterRemoval = true;
+
+      expect(
+        await rotatedCoordinator.preparePage(<E2eeSyncPulledChange>[
+          rotatedRevision,
+        ], maximumRemoteSteps: 1),
+        E2eeSyncPullPagePreparationDisposition.pending,
+      );
+      expect(fileStore.deleteRequests, 1);
+      expect(rotatedTransport.manifestRequests, 0);
+      final reference = E2eeAttachmentDownloadReference(
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+        chunkKeyEpoch: 7,
+        manifestKeyEpoch: 8,
+        manifestRevision: 2,
+        kind: E2eeAttachmentKind.file,
+      );
+      final failedCleanup = (await attachmentDownloads.read(reference))!;
+      expect(failedCleanup.cleanupStagingPath, isNot(equals(null)));
+      expect(failedCleanup.lastFailureKind, 'local-io-manifest-pending');
+
+      now = now.add(const Duration(seconds: 2));
+      expect(
+        await rotatedCoordinator.preparePage(<E2eeSyncPulledChange>[
+          rotatedRevision,
+        ], maximumRemoteSteps: 1),
+        E2eeSyncPullPagePreparationDisposition.pending,
+      );
+      expect(fileStore.deleteRequests, 2);
+      expect(rotatedTransport.manifestRequests, 1);
+      final recovered = (await attachmentDownloads.read(reference))!;
+      expect(recovered.cleanupStagingPath, equals(null));
+      expect(recovered.phase, E2eeAttachmentDownloadPhase.downloading);
+      await rotatedCoordinator.close();
+    });
+
     test('未来附件代次在建状态和发网前暂停', () async {
       final manifest = createManifest();
       final transport = _FakeAttachmentTransport(manifest);
@@ -7022,6 +7297,7 @@ void main() {
           expectedTransitionVersion: (await attachmentDownloads.read(
             reference,
           ))!.transitionVersion,
+          now: now,
         ),
         isTrue,
       );
@@ -7559,6 +7835,112 @@ final class _FixedMessageAttachmentReadiness
   ) async {
     messageIds.add(messageChange.state.entityKey.entityId);
     return _assets;
+  }
+}
+
+final class _DeleteAfterRemovalFailingAttachmentFileStore
+    implements E2eeAttachmentFileStore {
+  _DeleteAfterRemovalFailingAttachmentFileStore(this._delegate);
+
+  final E2eeAttachmentFileStore _delegate;
+  bool failNextDeleteAfterRemoval = false;
+  int deleteRequests = 0;
+
+  @override
+  Future<E2eeAttachmentStoredFile> publish({
+    required E2eeAttachmentFileLocation location,
+    required Stream<List<int>> source,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) => _delegate.publish(
+    location: location,
+    source: source,
+    checkCanContinue: checkCanContinue,
+  );
+
+  @override
+  Future<Uint8List> readVerified(
+    E2eeAttachmentStoredFile storedFile, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) => _delegate.readVerified(storedFile, checkCanContinue: checkCanContinue);
+
+  @override
+  Future<Uint8List> readContentRange({
+    required E2eeAttachmentStoredFile storedFile,
+    required int offset,
+    required int length,
+  }) => _delegate.readContentRange(
+    storedFile: storedFile,
+    offset: offset,
+    length: length,
+  );
+
+  @override
+  Future<E2eeAttachmentVerifiedContent> openVerifiedContent({
+    required E2eeAttachmentStoredFile storedFile,
+    required List<int> chunkPlaintextBytes,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) => _delegate.openVerifiedContent(
+    storedFile: storedFile,
+    chunkPlaintextBytes: chunkPlaintextBytes,
+    checkCanContinue: checkCanContinue,
+  );
+
+  @override
+  Future<void> verifyContent(E2eeAttachmentStoredFile storedFile) =>
+      _delegate.verifyContent(storedFile);
+
+  @override
+  Future<String> resolveContentStoragePath(Uint8List contentSha256) =>
+      _delegate.resolveContentStoragePath(contentSha256);
+
+  @override
+  Future<String> openDownloadPlaintextStaging({
+    required CloudSyncAttachmentIdentity identity,
+    required String? persistedStoragePath,
+    required int confirmedPlaintextBytes,
+  }) => _delegate.openDownloadPlaintextStaging(
+    identity: identity,
+    persistedStoragePath: persistedStoragePath,
+    confirmedPlaintextBytes: confirmedPlaintextBytes,
+  );
+
+  @override
+  Future<void> appendDownloadPlaintextChunk({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedOffset,
+    required Uint8List plaintext,
+  }) => _delegate.appendDownloadPlaintextChunk(
+    identity: identity,
+    stagingPath: stagingPath,
+    expectedOffset: expectedOffset,
+    plaintext: plaintext,
+  );
+
+  @override
+  Future<E2eeAttachmentStoredFile> publishDownloadPlaintext({
+    required CloudSyncAttachmentIdentity identity,
+    required String stagingPath,
+    required int expectedPlaintextBytes,
+    required Uint8List expectedSha256,
+  }) => _delegate.publishDownloadPlaintext(
+    identity: identity,
+    stagingPath: stagingPath,
+    expectedPlaintextBytes: expectedPlaintextBytes,
+    expectedSha256: expectedSha256,
+  );
+
+  @override
+  Future<void> deleteStaging({required String storagePath}) async {
+    deleteRequests++;
+    await _delegate.deleteStaging(storagePath: storagePath);
+    if (failNextDeleteAfterRemoval) {
+      failNextDeleteAfterRemoval = false;
+      throw FileSystemException(
+        'e2ee_attachment_delete_interrupted_after_removal',
+        storagePath,
+      );
+    }
   }
 }
 

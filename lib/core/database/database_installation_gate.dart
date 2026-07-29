@@ -13,30 +13,38 @@ final class DatabaseInstallationReceipt {
   const DatabaseInstallationReceipt({
     required this.installationId,
     required this.databaseId,
+    required this.attachmentStagingCutoverVersion,
   });
 
-  static const formatVersion = 1;
+  static const formatVersion = 2;
+  static const currentAttachmentStagingCutoverVersion = 23;
 
   final String installationId;
   final String databaseId;
+  final int attachmentStagingCutoverVersion;
 
   Map<String, Object> toJson() => {
     'version': formatVersion,
     'installationId': installationId,
     'databaseId': databaseId,
+    'attachmentStagingCutoverVersion': attachmentStagingCutoverVersion,
   };
 
   static DatabaseInstallationReceipt fromJson(Object? value) {
     if (value is! Map<String, dynamic> ||
-        value.length != 3 ||
+        value.length != 4 ||
         value['version'] != formatVersion ||
         value['installationId'] is! String ||
-        value['databaseId'] is! String) {
+        value['databaseId'] is! String ||
+        value['attachmentStagingCutoverVersion'] !=
+            currentAttachmentStagingCutoverVersion) {
       throw const FormatException('database_installation_receipt');
     }
     final receipt = DatabaseInstallationReceipt(
       installationId: value['installationId'] as String,
       databaseId: value['databaseId'] as String,
+      attachmentStagingCutoverVersion:
+          value['attachmentStagingCutoverVersion'] as int,
     );
     if (!_isUuid(receipt.installationId) || !_isUuid(receipt.databaseId)) {
       throw const FormatException('database_installation_receipt');
@@ -166,9 +174,15 @@ final class DatabaseInstallationGate {
     if (installationIds.length > 1) {
       throw StateError('database_installation_identity_mismatch');
     }
+    await _discardObsoleteAttachmentStaging(
+      appDataDirectory: appDataDirectory,
+      durability: resolvedDurability,
+    );
     final updated = DatabaseInstallationReceipt(
       installationId: installationIds.firstOrNull ?? const Uuid().v4(),
       databaseId: databaseId,
+      attachmentStagingCutoverVersion:
+          DatabaseInstallationReceipt.currentAttachmentStagingCutoverVersion,
     );
     final receiptFile = File(
       p.join(
@@ -257,6 +271,68 @@ final class DatabaseInstallationGate {
       await file.delete();
     }
     await durability.syncDirectory(appDataDirectory, fullBarrier: true);
+  }
+
+  static Future<void> _discardObsoleteAttachmentStaging({
+    required Directory appDataDirectory,
+    required RestoreDurability durability,
+  }) async {
+    final workspaceRoot = p.normalize(p.absolute(appDataDirectory.path));
+    final uploadDirectory = Directory(p.join(workspaceRoot, 'upload'));
+    final ownedRoot = Directory(p.join(uploadDirectory.path, 'e2ee'));
+    final stagingRoot = Directory(p.join(ownedRoot.path, 'staging'));
+    if (!p.isWithin(workspaceRoot, stagingRoot.path)) {
+      throw StateError('e2ee_attachment_staging_cutover_path');
+    }
+    for (final directory in <Directory>[uploadDirectory, ownedRoot]) {
+      final type = await FileSystemEntity.type(
+        directory.path,
+        followLinks: false,
+      );
+      if (type == FileSystemEntityType.notFound) return;
+      if (type != FileSystemEntityType.directory) {
+        throw StateError('e2ee_attachment_staging_cutover_type');
+      }
+    }
+    final stagingType = await FileSystemEntity.type(
+      stagingRoot.path,
+      followLinks: false,
+    );
+    if (stagingType == FileSystemEntityType.notFound) return;
+    if (stagingType != FileSystemEntityType.directory) {
+      throw StateError('e2ee_attachment_staging_cutover_type');
+    }
+    await _deleteAttachmentStagingDirectory(
+      stagingRoot,
+      durability: durability,
+    );
+  }
+
+  static Future<void> _deleteAttachmentStagingDirectory(
+    Directory directory, {
+    required RestoreDurability durability,
+  }) async {
+    await for (final entity in directory.list(followLinks: false)) {
+      final type = await FileSystemEntity.type(entity.path, followLinks: false);
+      switch (type) {
+        case FileSystemEntityType.file:
+          await File(entity.path).delete();
+        case FileSystemEntityType.directory:
+          await _deleteAttachmentStagingDirectory(
+            Directory(entity.path),
+            durability: durability,
+          );
+        case FileSystemEntityType.notFound:
+        case FileSystemEntityType.link:
+        case FileSystemEntityType.pipe:
+        case FileSystemEntityType.unixDomainSock:
+          throw StateError('e2ee_attachment_staging_cutover_type');
+      }
+    }
+    await durability.syncDirectory(directory, fullBarrier: true);
+    final parent = directory.parent;
+    await directory.delete();
+    await durability.syncDirectory(parent, fullBarrier: true);
   }
 
   static Future<List<({File file, DatabaseInstallationReceipt receipt})>>

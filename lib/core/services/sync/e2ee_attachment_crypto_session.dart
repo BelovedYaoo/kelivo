@@ -266,9 +266,14 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
     required int targetManifestRevision,
   }) {
     return _runWhileOpen(() async {
-      if (currentKeyEpoch != source.manifestKeyEpoch + 1 ||
-          source.manifestRevision == 0xffffffff ||
-          targetManifestRevision != source.manifestRevision + 1) {
+      final keyEpochDelta = currentKeyEpoch - source.manifestKeyEpoch;
+      final manifestRevisionDelta =
+          targetManifestRevision - source.manifestRevision;
+      if (currentKeyEpoch > 0xffffffff ||
+          targetManifestRevision > 0xffffffff ||
+          keyEpochDelta <= 0 ||
+          manifestRevisionDelta <= 0 ||
+          manifestRevisionDelta != keyEpochDelta) {
         throw const FormatException('附件清单重包目标身份无效');
       }
       return _withDataKey(

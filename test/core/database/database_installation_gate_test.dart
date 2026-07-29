@@ -57,6 +57,7 @@ void main() {
       );
 
       expect(await databaseFile(directory).exists(), isTrue);
+      expect(receipt.attachmentStagingCutoverVersion, 23);
       final info = ChatDatabaseRepository.inspectInstalledDatabase(
         databaseFile(directory),
         cipher: testDatabaseCipher,
@@ -220,6 +221,19 @@ void main() {
       }
       final staleJournal = File('${file.path}-journal');
       await staleJournal.writeAsBytes(const [], flush: true);
+      final stagingRoot = Directory(
+        p.join(directory.path, 'upload', 'e2ee', 'staging'),
+      );
+      final plaintextStaging = File(
+        p.join(stagingRoot.path, 'download', 'plaintext.part'),
+      );
+      await plaintextStaging.create(recursive: true);
+      await plaintextStaging.writeAsBytes([1, 2, 3], flush: true);
+      final content = File(
+        p.join(directory.path, 'upload', 'e2ee', 'content', 'retained'),
+      );
+      await content.create(recursive: true);
+      await content.writeAsBytes([4, 5, 6], flush: true);
 
       final replacement = await DatabaseInstallationGate.ensureReady(
         appDataDirectory: directory,
@@ -228,6 +242,8 @@ void main() {
       expect(replacement.installationId, isNot(original.installationId));
       expect(replacement.databaseId, isNot(original.databaseId));
       expect(await staleJournal.exists(), isFalse);
+      expect(await stagingRoot.exists(), isFalse);
+      expect(await content.readAsBytes(), [4, 5, 6]);
       final after = sqlite.sqlite3.open(
         file.path,
         mode: sqlite.OpenMode.readOnly,
@@ -245,6 +261,77 @@ void main() {
       } finally {
         after.close();
       }
+    });
+
+    test('附件暂存硬切耐久确认失败会阻断并在下次启动幂等恢复', () async {
+      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
+      final file = databaseFile(directory);
+      final before = sqlite.sqlite3.open(file.path);
+      try {
+        testDatabaseCipher.apply(before, createSlotIfMissing: false);
+        before.userVersion = AppDatabase.currentSchemaVersion - 1;
+      } finally {
+        before.close();
+      }
+      final stagingRoot = Directory(
+        p.join(directory.path, 'upload', 'e2ee', 'staging'),
+      );
+      final plaintextStaging = File(
+        p.join(stagingRoot.path, 'download', 'plaintext.part'),
+      );
+      await plaintextStaging.create(recursive: true);
+      await plaintextStaging.writeAsBytes([1, 2, 3], flush: true);
+      final durability = _FailOnceOnE2eeDirectorySyncDurability();
+
+      await expectLater(
+        DatabaseInstallationGate.ensureReady(
+          appDataDirectory: directory,
+          durability: durability,
+        ),
+        throwsA(isA<FileSystemException>()),
+      );
+      expect(await stagingRoot.exists(), isFalse);
+      expect(
+        await DatabaseInstallationGate.read(appDataDirectory: directory),
+        equals(null),
+      );
+
+      final recovered = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+      );
+      expect(recovered.attachmentStagingCutoverVersion, 23);
+    });
+
+    test('附件暂存硬切遇到非目录拓扑时失败关闭', () async {
+      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
+      final file = databaseFile(directory);
+      final before = sqlite.sqlite3.open(file.path);
+      try {
+        testDatabaseCipher.apply(before, createSlotIfMissing: false);
+        before.userVersion = AppDatabase.currentSchemaVersion - 1;
+      } finally {
+        before.close();
+      }
+      final stagingRoot = File(
+        p.join(directory.path, 'upload', 'e2ee', 'staging'),
+      );
+      await stagingRoot.create(recursive: true);
+
+      await expectLater(
+        DatabaseInstallationGate.ensureReady(appDataDirectory: directory),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'e2ee_attachment_staging_cutover_type',
+          ),
+        ),
+      );
+      expect(await stagingRoot.exists(), isTrue);
+      expect(
+        await DatabaseInstallationGate.read(appDataDirectory: directory),
+        equals(null),
+      );
     });
 
     test('已有 receipt 但数据库缺失时拒绝且不创建空库', () async {
@@ -662,6 +749,41 @@ void main() {
       expect(await invalidSidecar.exists(), isTrue);
     });
   });
+}
+
+final class _FailOnceOnE2eeDirectorySyncDurability
+    implements RestoreDurability {
+  final RestoreDurability _delegate = RestorePlatformDurability();
+  var _failed = false;
+
+  @override
+  Future<void> restrictDirectory(Directory directory) =>
+      _delegate.restrictDirectory(directory);
+
+  @override
+  Future<void> restrictFile(File file) => _delegate.restrictFile(file);
+
+  @override
+  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
+    if (!_failed && p.basename(directory.path) == 'e2ee') {
+      _failed = true;
+      throw FileSystemException(
+        'e2ee_attachment_staging_cutover_sync_failed',
+        directory.path,
+      );
+    }
+    return _delegate.syncDirectory(directory, fullBarrier: fullBarrier);
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) =>
+      _delegate.syncFile(file, fullBarrier: fullBarrier);
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) => _delegate.renameAndSync(source: source, targetPath: targetPath);
 }
 
 Future<bool> _hasPlaintextSqliteHeader(File file) async {

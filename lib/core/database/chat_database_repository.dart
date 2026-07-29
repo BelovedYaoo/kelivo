@@ -955,6 +955,7 @@ class ChatDatabaseRepository {
         'media_type',
         'local_asset_id',
         'staging_path',
+        'cleanup_staging_path',
         'final_path',
         'next_chunk_index',
         'confirmed_plaintext_bytes',
@@ -1314,6 +1315,7 @@ class ChatDatabaseRepository {
             'media_type': (type: 'TEXT', notNull: 0, primaryKey: 0),
             'local_asset_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
             'staging_path': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'cleanup_staging_path': (type: 'TEXT', notNull: 0, primaryKey: 0),
             'final_path': (type: 'TEXT', notNull: 0, primaryKey: 0),
             'next_chunk_index': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'confirmed_plaintext_bytes': (
@@ -1591,9 +1593,14 @@ class ChatDatabaseRepository {
             'AND manifest_key_epoch - chunk_key_epoch = '
             'manifest_revision - 1)',
         "CHECK (typeof(phase) = 'text' AND phase IN "
-            "('manifest-pending', 'downloading', 'verifying', 'ready'))",
+            "('manifest-pending', 'downloading', 'verifying', 'ready', "
+            "'dormant'))",
         'CHECK (staging_path IS NULL OR final_path IS NULL '
             'OR staging_path != final_path)',
+        'CHECK (staging_path IS NULL OR cleanup_staging_path IS NULL)',
+        "(phase = 'dormant' "
+            'AND manifest_ciphertext IS NULL '
+            'AND content_sha256 IS NULL',
         "(phase = 'ready' "
             'AND manifest_ciphertext IS NOT NULL '
             'AND content_sha256 IS NOT NULL',
@@ -3944,12 +3951,67 @@ LIMIT 1;
           )
           .getSingleOrNull();
       if (claim == null) return false;
-      await _db.customStatement(
-        'DELETE FROM e2ee_attachment_download_rows '
-        "WHERE local_asset_id = ? AND phase = 'ready' "
-        'AND lease_token IS NULL;',
-        [assetId],
+      final readyMappings = await _db
+          .customSelect(
+            '''
+            SELECT COUNT(*) AS item_count,
+                   MAX(transition_version) AS maximum_transition_version
+            FROM e2ee_attachment_download_rows
+            WHERE local_asset_id = ?
+              AND phase = 'ready'
+              AND lease_token IS NULL;
+            ''',
+            variables: [Variable<String>(assetId)],
+          )
+          .getSingle();
+      final readyMappingCount = readyMappings.read<int>('item_count');
+      final maximumTransitionVersion = readyMappings.readNullable<int>(
+        'maximum_transition_version',
       );
+      if (maximumTransitionVersion != null &&
+          maximumTransitionVersion >= _attachmentUploadMaxPositiveInt63) {
+        throw StateError('附件下载 transitionVersion 已耗尽');
+      }
+      await _db.customStatement(
+        '''
+        UPDATE e2ee_attachment_download_rows
+        SET phase = 'dormant',
+            manifest_ciphertext = NULL,
+            content_sha256 = NULL,
+            wrapped_data_key = NULL,
+            total_plaintext_bytes = NULL,
+            chunk_count = NULL,
+            total_ciphertext_bytes = NULL,
+            display_name = NULL,
+            media_type = NULL,
+            local_asset_id = NULL,
+            cleanup_staging_path = NULL,
+            staging_path = NULL,
+            final_path = NULL,
+            next_chunk_index = 0,
+            confirmed_plaintext_bytes = 0,
+            transition_version = transition_version + 1,
+            consecutive_failure_count = 0,
+            next_attempt_at = ?,
+            last_failure_kind = NULL,
+            terminal_failure_kind = NULL,
+            updated_at = ?
+        WHERE local_asset_id = ?
+          AND phase = 'ready'
+          AND lease_token IS NULL;
+        ''',
+        [
+          now.toUtc().microsecondsSinceEpoch,
+          now.toUtc().microsecondsSinceEpoch,
+          assetId,
+        ],
+      );
+      final retiredMappingCount =
+          (await _db.customSelect('SELECT changes() AS changed;').getSingle())
+              .read<int>('changed');
+      if (retiredMappingCount != readyMappingCount) {
+        throw StateError('附件下载资产回收休眠数量不一致');
+      }
       await _db.customStatement('DELETE FROM asset_rows WHERE id = ?;', [
         assetId,
       ]);

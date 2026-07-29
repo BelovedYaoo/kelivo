@@ -4,18 +4,18 @@
 //
 import 'package:drift/drift.dart';
 import 'package:drift/internal/migrations.dart';
-import 'schema_v22.dart' as v22;
+import 'schema_v23.dart' as v23;
 
 class GeneratedHelper implements SchemaInstantiationHelper {
   @override
   GeneratedDatabase databaseForVersion(QueryExecutor db, int version) {
     switch (version) {
-      case 22:
-        return v22.DatabaseAtV22(db);
+      case 23:
+        return v23.DatabaseAtV23(db);
       default:
         throw MissingSchemaException(version, versions);
     }
   }
 
-  static const versions = const [22];
+  static const versions = const [23];
 }
