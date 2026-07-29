@@ -68,7 +68,8 @@ enum KelivoSecureStorageBackend {
   none(0),
   windowsDpapi(1),
   androidKeystore(2),
-  linuxSecretService(3);
+  linuxSecretService(3),
+  iosKeychain(4);
 
   const KelivoSecureStorageBackend(this.code);
 

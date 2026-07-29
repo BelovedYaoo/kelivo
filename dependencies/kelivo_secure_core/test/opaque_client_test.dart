@@ -31,15 +31,22 @@ void main() {
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
-      Platform.isWindows || Platform.isAndroid,
+      Platform.isWindows || Platform.isAndroid || Platform.isIOS,
     );
     expect(
       capabilities.supportsAttachmentCrypto,
-      Platform.isWindows || Platform.isAndroid,
+      Platform.isWindows || Platform.isAndroid || Platform.isIOS,
     );
     expect(
       capabilities.supportsAccountTrustSigning,
-      Platform.isWindows || Platform.isAndroid,
+      Platform.isWindows || Platform.isAndroid || Platform.isIOS,
+    );
+  });
+
+  test('安全存储后端代码包含 iOS Keychain', () {
+    expect(
+      KelivoSecureStorageBackend.fromCode(4),
+      KelivoSecureStorageBackend.iosKeychain,
     );
   });
 
