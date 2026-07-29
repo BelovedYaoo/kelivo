@@ -59,7 +59,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 16;
+const ABI_VERSION: u32 = 17;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;

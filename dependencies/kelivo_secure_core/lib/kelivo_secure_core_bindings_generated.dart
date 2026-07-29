@@ -54,6 +54,9 @@ external int kelivo_key_slot_delete(
   int policy_version,
 );
 
+@ffi.Native<KelivoStatus Function()>()
+external int kelivo_key_slots_delete_all();
+
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_key_handle_close(int handle);
 
@@ -1321,7 +1324,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 16;
+const int KELIVO_CORE_ABI_VERSION = 17;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 

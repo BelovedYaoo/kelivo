@@ -43,10 +43,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v16 及恢复介质支持', () async {
+  test('能力门禁声明 ABI v17 及恢复介质支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 16);
+    expect(capabilities.abiVersion, 17);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,

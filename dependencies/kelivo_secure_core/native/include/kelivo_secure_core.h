@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(16)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(17)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -257,6 +257,14 @@ KELIVO_CORE_API KelivoStatus kelivo_key_slot_delete(
     const uint8_t *slot_id,
     size_t slot_id_length,
     uint32_t policy_version);
+
+/*
+ * 删除当前安装在 Kelivo 固定平台命名空间中的全部槽位及遗留临时材料。
+ * 任一同进程持久槽位句柄仍打开时返回 SLOT_IN_USE，且不得开始平台删除；
+ * 本函数与槽位创建、打开和单槽删除串行。命名空间缺失时幂等成功，系统
+ * 存储错误不得伪装为成功。本函数不删除数据库、附件或其他应用文件。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_key_slots_delete_all(void);
 
 /*
  * 关闭非零不透明句柄。句柄仅在当前进程内有效，关闭后永久失效且数值不得

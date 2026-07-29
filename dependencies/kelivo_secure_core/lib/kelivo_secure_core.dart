@@ -448,6 +448,8 @@ final class KelivoSecureCore {
     return Isolate.run(() => _deleteKeySlot(copiedSlotId));
   }
 
+  Future<void> deleteAllSlots() => Isolate.run(_deleteAllKeySlots);
+
   Future<Uint8List> sealRecord(
     KelivoKeyHandle handle, {
     required Uint8List recordId,
@@ -1225,6 +1227,13 @@ void _deleteKeySlot(Uint8List slotId) {
     slotIdPointer.asTypedList(slotId.length).fillRange(0, slotId.length, 0);
     calloc.free(slotIdPointer);
   }
+}
+
+void _deleteAllKeySlots() {
+  _throwOnError(
+    operation: 'key_slots_delete_all',
+    statusCode: native.kelivo_key_slots_delete_all(),
+  );
 }
 
 void _validateRecordContext({
