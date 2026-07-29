@@ -29,6 +29,7 @@ import 'package:Kelivo/core/services/sync/e2ee_background_sync_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_provider_binding.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
+import 'package:Kelivo/core/services/sync/e2ee_mobile_background_sync.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
@@ -846,6 +847,215 @@ void main() {
     expect(firstOutcome.disposition, E2eeBackgroundSyncDisposition.completed);
     expect(content.runCalls, 1);
     expect(host.maximumConcurrentWorkspaces, 1);
+  });
+
+  test('移动后台同步缺少可信安全锚点时取消任务且不构造 Runner', () async {
+    final gate = _TestVerifiedStateGate.fixed(false);
+    var runnerCreations = 0;
+    var cancellationCalls = 0;
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      verifiedStateGate: gate,
+      runnerFactory: () {
+        runnerCreations++;
+        return E2eeBackgroundSyncRunner.forTesting(
+          const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+        );
+      },
+      cancelScheduledTask: () async => cancellationCalls++,
+    );
+
+    await expectLater(
+      executor.execute(e2eeMobileBackgroundTaskName),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'e2ee_background_security_anchor_unverified',
+        ),
+      ),
+    );
+
+    expect(gate.calls, 1);
+    expect(runnerCreations, 0);
+    expect(cancellationCalls, 1);
+  });
+
+  test('移动后台同步安全锚点读取异常时失败关闭且不构造 Runner', () async {
+    final gate = _TestVerifiedStateGate.failure(StateError('anchor-read'));
+    var runnerCreations = 0;
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      verifiedStateGate: gate,
+      runnerFactory: () {
+        runnerCreations++;
+        return E2eeBackgroundSyncRunner.forTesting(
+          const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+        );
+      },
+      cancelScheduledTask: () async {},
+    );
+
+    await expectLater(
+      executor.execute(e2eeMobileBackgroundTaskUniqueName),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'anchor-read',
+        ),
+      ),
+    );
+
+    expect(gate.calls, 1);
+    expect(runnerCreations, 0);
+  });
+
+  test('移动后台同步拒绝未知系统任务且不读取安全状态', () async {
+    final gate = _TestVerifiedStateGate.fixed(true);
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      verifiedStateGate: gate,
+      runnerFactory: () => E2eeBackgroundSyncRunner.forTesting(
+        const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+      ),
+      cancelScheduledTask: () async {},
+    );
+
+    expect(
+      () => executor.execute('other-background-task'),
+      throwsA(isA<UnsupportedError>()),
+    );
+    expect(gate.calls, 0);
+  });
+
+  test('移动后台同步并发系统回调共享一次安全预检与 Runner', () async {
+    final gateResult = Completer<bool>();
+    final gate = _TestVerifiedStateGate.pending(gateResult);
+    var runnerCreations = 0;
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      verifiedStateGate: gate,
+      runnerFactory: () {
+        runnerCreations++;
+        return E2eeBackgroundSyncRunner.forTesting(
+          const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+        );
+      },
+      cancelScheduledTask: () async {},
+    );
+
+    final first = executor.execute(e2eeMobileBackgroundTaskName);
+    final second = executor.execute(e2eeMobileBackgroundTaskName);
+    expect(gate.calls, 1);
+    expect(runnerCreations, 0);
+
+    gateResult.complete(true);
+    expect(await Future.wait(<Future<bool>>[first, second]), <bool>[
+      true,
+      true,
+    ]);
+    expect(gate.calls, 1);
+    expect(runnerCreations, 1);
+  });
+
+  test('移动后台同步发现持久会话已清除时取消后续系统任务', () async {
+    final workspace = _FakeBackgroundWorkspace(
+      events: <String>[],
+      session: null,
+      contentAcquisition: const E2eeBackgroundContentBusy(),
+    );
+    var cancellationCalls = 0;
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      verifiedStateGate: _TestVerifiedStateGate.fixed(true),
+      runnerFactory: () => E2eeBackgroundSyncRunner.forTesting(
+        _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      ),
+      cancelScheduledTask: () async => cancellationCalls++,
+    );
+
+    expect(await executor.execute(e2eeMobileBackgroundTaskName), isTrue);
+    expect(cancellationCalls, 1);
+    expect(workspace.contentAcquisitionCalls, 0);
+  });
+
+  test('移动后台调度把登录就绪与登出转换为串行注册和取消', () async {
+    final platform = _RecordingMobileBackgroundSchedulerPlatform();
+    final scheduler = E2eeMobileBackgroundSyncScheduler.forTesting(platform);
+    final state = _TestMobileBackgroundAccountState();
+    final lifecycle = E2eeMobileBackgroundSyncLifecycle(
+      accountState: state,
+      scheduler: scheduler,
+    );
+    addTearDown(lifecycle.dispose);
+
+    await _waitUntil(() => platform.disableCalls == 1);
+    state.update(signedIn: true, contentSyncEnabled: true);
+    await _waitUntil(() => platform.enableCalls == 1);
+    state.update(signedIn: false, contentSyncEnabled: false);
+    await _waitUntil(() => platform.disableCalls == 2);
+
+    expect(platform.events, <String>['disable', 'enable', 'disable']);
+    expect(platform.maximumConcurrentCalls, 1);
+  });
+
+  test('移动后台调度在注册进行中收到登出时完成后立即取消', () async {
+    final enableRelease = Completer<void>();
+    final platform = _RecordingMobileBackgroundSchedulerPlatform(
+      enableRelease: enableRelease,
+    );
+    final scheduler = E2eeMobileBackgroundSyncScheduler.forTesting(platform);
+
+    final enabling = scheduler.setEnabled(true);
+    await _waitUntil(() => platform.enableCalls == 1);
+    final disabling = scheduler.setEnabled(false);
+    enableRelease.complete();
+    await Future.wait(<Future<void>>[enabling, disabling]);
+
+    expect(platform.events, <String>['enable', 'disable']);
+    expect(platform.maximumConcurrentCalls, 1);
+  });
+
+  test('移动后台注册失败但同时登出时仍执行取消且保留原始错误', () async {
+    final enableRelease = Completer<void>();
+    final platform = _RecordingMobileBackgroundSchedulerPlatform(
+      enableRelease: enableRelease,
+      enableError: StateError('enable-failed'),
+    );
+    final scheduler = E2eeMobileBackgroundSyncScheduler.forTesting(platform);
+
+    final enabling = scheduler.setEnabled(true);
+    await _waitUntil(() => platform.enableCalls == 1);
+    final disabling = scheduler.setEnabled(false);
+    enableRelease.complete();
+
+    await expectLater(
+      enabling,
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'enable-failed',
+        ),
+      ),
+    );
+    await expectLater(disabling, throwsA(isA<StateError>()));
+    expect(platform.events, <String>['enable', 'disable']);
+    expect(platform.maximumConcurrentCalls, 1);
+  });
+
+  test('移动后台生命周期释放后不再响应账户状态变化', () async {
+    final platform = _RecordingMobileBackgroundSchedulerPlatform();
+    final scheduler = E2eeMobileBackgroundSyncScheduler.forTesting(platform);
+    final state = _TestMobileBackgroundAccountState();
+    final lifecycle = E2eeMobileBackgroundSyncLifecycle(
+      accountState: state,
+      scheduler: scheduler,
+    );
+    await _waitUntil(() => platform.disableCalls == 1);
+
+    lifecycle.dispose();
+    state.update(signedIn: true, contentSyncEnabled: true);
+    await Future<void>.delayed(Duration.zero);
+
+    expect(platform.enableCalls, 0);
+    expect(platform.events, <String>['disable']);
   });
 
   test('E2EE headless 运行时直接使用 Vault 完成单次周期且不启动轮询', () async {
@@ -3252,6 +3462,101 @@ final class _MemoryAccountSessionTokenStore
   ) {
     return '${accountDirectory.absolute.path}|'
         '${reference.slot}|${reference.generation}';
+  }
+}
+
+final class _TestVerifiedStateGate
+    implements E2eeBackgroundSyncVerifiedStateGate {
+  _TestVerifiedStateGate.fixed(bool result)
+    : _result = result,
+      _error = null,
+      _pending = null;
+
+  _TestVerifiedStateGate.failure(Object error)
+    : _result = null,
+      _error = error,
+      _pending = null;
+
+  _TestVerifiedStateGate.pending(Completer<bool> pending)
+    : _result = null,
+      _error = null,
+      _pending = pending;
+
+  final bool? _result;
+  final Object? _error;
+  final Completer<bool>? _pending;
+  int calls = 0;
+
+  @override
+  Future<bool> hasVerifiedSecurityAnchor() async {
+    calls++;
+    final error = _error;
+    if (error != null) throw error;
+    final pending = _pending;
+    if (pending != null) return pending.future;
+    return _result!;
+  }
+}
+
+final class _RecordingMobileBackgroundSchedulerPlatform
+    implements E2eeMobileBackgroundSchedulerPlatform {
+  _RecordingMobileBackgroundSchedulerPlatform({
+    this.enableRelease,
+    this.enableError,
+  });
+
+  final Completer<void>? enableRelease;
+  final Object? enableError;
+  final List<String> events = <String>[];
+  int enableCalls = 0;
+  int disableCalls = 0;
+  int _concurrentCalls = 0;
+  int maximumConcurrentCalls = 0;
+
+  @override
+  Future<void> enable() async {
+    enableCalls++;
+    await _run('enable', release: enableRelease, error: enableError);
+  }
+
+  @override
+  Future<void> disable() => _run('disable');
+
+  Future<void> _run(
+    String operation, {
+    Completer<void>? release,
+    Object? error,
+  }) async {
+    events.add(operation);
+    if (operation == 'disable') disableCalls++;
+    _concurrentCalls++;
+    if (_concurrentCalls > maximumConcurrentCalls) {
+      maximumConcurrentCalls = _concurrentCalls;
+    }
+    try {
+      if (release != null) await release.future;
+      if (error != null) throw error;
+    } finally {
+      _concurrentCalls--;
+    }
+  }
+}
+
+final class _TestMobileBackgroundAccountState extends ChangeNotifier
+    implements E2eeMobileBackgroundSyncAccountState {
+  bool _signedIn = false;
+  bool _contentSyncEnabled = false;
+
+  @override
+  bool get signedIn => _signedIn;
+
+  @override
+  bool get contentSyncEnabled => _contentSyncEnabled;
+
+  void update({required bool signedIn, required bool contentSyncEnabled}) {
+    _signedIn = signedIn;
+    _contentSyncEnabled = contentSyncEnabled;
+    notifyListeners();
   }
 }
 

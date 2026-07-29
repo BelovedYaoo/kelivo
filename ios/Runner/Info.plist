@@ -34,6 +34,7 @@
 	<array>
 		<string>psyche.kelivo.background-generation.refresh</string>
 		<string>psyche.kelivo.background-generation.processing</string>
+		<string>psyche.kelivo.e2ee-sync.periodic</string>
 	</array>
 	<key>LSRequiresIPhoneOS</key>
 	<true/>

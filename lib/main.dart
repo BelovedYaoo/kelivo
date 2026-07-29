@@ -42,6 +42,7 @@ import 'core/services/sync/cloud_sync_client.dart';
 import 'core/services/sync/cloud_sync_types.dart';
 import 'core/services/sync/e2ee_chat_content_runtime.dart';
 import 'core/services/sync/e2ee_config_provider_binding.dart';
+import 'core/services/sync/e2ee_mobile_background_sync.dart';
 import 'core/services/sync/sync_write_executor.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
 import 'core/services/workspace/device_state_blob_store.dart';
@@ -137,6 +138,8 @@ Future<void> main() async {
   await runZoned(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      final mobileBackgroundSyncScheduler =
+          E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
       final AccountWorkspaceRuntime workspaceRuntime;
       try {
         workspaceRuntime = await AccountWorkspaceRuntime.bootstrap();
@@ -259,6 +262,7 @@ Future<void> main() async {
         MyApp(
           workspaceRuntime: workspaceRuntime,
           databaseGateway: databaseGateway,
+          mobileBackgroundSyncScheduler: mobileBackgroundSyncScheduler,
           chatContentRuntime: chatContentRuntime,
           restoreOutcome: restoreOutcome?.state,
         ),
@@ -386,6 +390,7 @@ class MyApp extends StatelessWidget {
   const MyApp({
     required this.workspaceRuntime,
     required this.databaseGateway,
+    required this.mobileBackgroundSyncScheduler,
     super.key,
     this.chatContentRuntime,
     this.restoreOutcome,
@@ -393,6 +398,7 @@ class MyApp extends StatelessWidget {
 
   final AccountWorkspaceRuntime workspaceRuntime;
   final ChatDatabaseGateway databaseGateway;
+  final E2eeMobileBackgroundSyncScheduler mobileBackgroundSyncScheduler;
   final E2eeChatContentRuntime? chatContentRuntime;
   final RestoreReceiptState? restoreOutcome;
 
@@ -521,6 +527,14 @@ class MyApp extends StatelessWidget {
             unawaited(provider.initialize());
             return provider;
           },
+        ),
+        Provider<E2eeMobileBackgroundSyncLifecycle>(
+          lazy: false,
+          create: (ctx) => E2eeMobileBackgroundSyncLifecycle(
+            accountState: ctx.read<CloudSyncProvider>(),
+            scheduler: mobileBackgroundSyncScheduler,
+          ),
+          dispose: (_, lifecycle) => lifecycle.dispose(),
         ),
       ],
       child: Builder(

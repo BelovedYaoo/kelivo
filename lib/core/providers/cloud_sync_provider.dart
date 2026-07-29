@@ -11,6 +11,7 @@ import '../services/sync/cloud_sync_content_runtime.dart';
 import '../services/sync/cloud_sync_terminal_session_retirement.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/sync/e2ee_account_authenticator.dart';
+import '../services/sync/e2ee_mobile_background_sync.dart';
 import '../services/workspace/account_workspace_runtime.dart';
 import '../services/workspace/device_state_blob_store.dart';
 
@@ -36,7 +37,8 @@ enum CloudSyncProviderStatus {
   error,
 }
 
-final class CloudSyncProvider extends ChangeNotifier {
+final class CloudSyncProvider extends ChangeNotifier
+    implements E2eeMobileBackgroundSyncAccountState {
   factory CloudSyncProvider.controlPlaneOnly(
     AccountWorkspaceRuntime workspaceRuntime, {
     CloudSyncAccountClientFactory clientFactory = _createCloudSyncAccountClient,
@@ -130,11 +132,13 @@ final class CloudSyncProvider extends ChangeNotifier {
       _pendingPairingSession?.expiresAt;
   int get pendingDevicePairingGeneration => _pendingPairingGeneration;
   bool get devicePairingApprovalInProgress => _devicePairingApprovalInProgress;
+  @override
   bool get contentSyncEnabled =>
       _contentRuntime != null && _contentRuntimeReady && !_contentRuntimeClosed;
   List<CloudSyncDeviceSession> get devices =>
       List<CloudSyncDeviceSession>.unmodifiable(_devices);
   bool get initialized => _ready;
+  @override
   bool get signedIn => _session != null;
   bool get workspaceRestartRequired => _workspaceRestartRequired;
   bool get devicesLoading => _devicesLoading;
