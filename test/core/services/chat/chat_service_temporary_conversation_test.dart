@@ -717,6 +717,203 @@ void main() {
   });
 
   test(
+    'asset maintenance retries a materialized source retirement created after startup',
+    () async {
+      final service = createService();
+      await service.init();
+      await service.runAssetMaintenance();
+      final uploadDirectory = await AppDirectories.getUploadDirectory();
+      final original = File(
+        p.join(uploadDirectory.path, 'materialized-source-original.txt'),
+      );
+      await original.writeAsString('managed plaintext');
+      final quarantine = File(
+        p.join(
+          uploadDirectory.path,
+          '.kelivo-gc',
+          '75000000-0000-4000-8000-000000000001',
+        ),
+      );
+      final repository = ChatDatabaseRepository.open(
+        file: File(p.join(tempDir.path, AppDatabase.databaseFileName)),
+        cipher: testDatabaseCipher,
+      );
+      addTearDown(repository.close);
+      await repository.recordMaterializedSourceRetirement(
+        retirementId: '75000000-0000-4000-8000-000000000001',
+        originalPath: original.path,
+        quarantinePath: quarantine.path,
+        createdAt: DateTime.utc(2026, 7, 29, 13),
+      );
+
+      await service.runAssetMaintenance();
+
+      expect(await original.exists(), isFalse);
+      expect(await quarantine.exists(), isFalse);
+      expect(await repository.listAssetGcQuarantines(), isEmpty);
+    },
+  );
+
+  test(
+    'materialized source retirement recovers interrupted file states',
+    () async {
+      final service = createService();
+      await service.init();
+      await service.runAssetMaintenance();
+      final uploadDirectory = await AppDirectories.getUploadDirectory();
+      final quarantineDirectory = Directory(
+        p.join(uploadDirectory.path, '.kelivo-gc'),
+      );
+      await quarantineDirectory.create();
+      final repository = ChatDatabaseRepository.open(
+        file: File(p.join(tempDir.path, AppDatabase.databaseFileName)),
+        cipher: testDatabaseCipher,
+      );
+      addTearDown(repository.close);
+      final now = DateTime.utc(2026, 7, 29, 14);
+
+      final disposableOriginal = File(
+        p.join(uploadDirectory.path, 'retirement-disposable.txt'),
+      );
+      await disposableOriginal.writeAsString('disposable plaintext');
+      final disposableQuarantine = File(
+        p.join(
+          quarantineDirectory.path,
+          '75000000-0000-4000-8000-000000000002',
+        ),
+      );
+      await repository.recordMaterializedSourceRetirement(
+        retirementId: '75000000-0000-4000-8000-000000000002',
+        originalPath: disposableOriginal.path,
+        quarantinePath: disposableQuarantine.path,
+        createdAt: now,
+      );
+      await disposableOriginal.rename(disposableQuarantine.path);
+
+      final demandedOriginal = File(
+        p.join(uploadDirectory.path, 'retirement-demanded.txt'),
+      );
+      await demandedOriginal.writeAsString('demanded plaintext');
+      final demandedQuarantine = File(
+        p.join(
+          quarantineDirectory.path,
+          '75000000-0000-4000-8000-000000000003',
+        ),
+      );
+      await repository.registerAsset(
+        id: 'asset-retirement-demanded',
+        contentHash: List.filled(64, '6').join(),
+        path: demandedOriginal.path,
+        byteSize: await demandedOriginal.length(),
+        createdAt: now,
+      );
+      await repository.recordMaterializedSourceRetirement(
+        retirementId: '75000000-0000-4000-8000-000000000003',
+        originalPath: demandedOriginal.path,
+        quarantinePath: demandedQuarantine.path,
+        createdAt: now.add(const Duration(microseconds: 1)),
+      );
+      await demandedOriginal.rename(demandedQuarantine.path);
+
+      final missingOriginal = File(
+        p.join(uploadDirectory.path, 'retirement-missing.txt'),
+      );
+      final missingQuarantine = File(
+        p.join(
+          quarantineDirectory.path,
+          '75000000-0000-4000-8000-000000000004',
+        ),
+      );
+      await repository.recordMaterializedSourceRetirement(
+        retirementId: '75000000-0000-4000-8000-000000000004',
+        originalPath: missingOriginal.path,
+        quarantinePath: missingQuarantine.path,
+        createdAt: now.add(const Duration(microseconds: 2)),
+      );
+
+      final completedOriginal = File(
+        p.join(uploadDirectory.path, 'retirement-completed.txt'),
+      );
+      await completedOriginal.writeAsString('completed plaintext');
+      final completedQuarantine = File(
+        p.join(
+          quarantineDirectory.path,
+          '75000000-0000-4000-8000-000000000006',
+        ),
+      );
+      await repository.recordMaterializedSourceRetirement(
+        retirementId: '75000000-0000-4000-8000-000000000006',
+        originalPath: completedOriginal.path,
+        quarantinePath: completedQuarantine.path,
+        createdAt: now.add(const Duration(microseconds: 3)),
+      );
+      await completedOriginal.rename(completedQuarantine.path);
+      final completedRecord = await repository.getAssetGcQuarantine(
+        completedQuarantine.path,
+      );
+      expect(
+        await repository.completeMaterializedSourceRetirement(
+          expectedRecord: completedRecord!,
+        ),
+        isTrue,
+      );
+
+      await service.runAssetMaintenance();
+
+      expect(await disposableOriginal.exists(), isFalse);
+      expect(await disposableQuarantine.exists(), isFalse);
+      expect(await demandedOriginal.readAsString(), 'demanded plaintext');
+      expect(await demandedQuarantine.exists(), isFalse);
+      expect(await missingOriginal.exists(), isFalse);
+      expect(await missingQuarantine.exists(), isFalse);
+      expect(await completedOriginal.exists(), isFalse);
+      expect(await completedQuarantine.exists(), isFalse);
+      final remaining = await repository.listAssetGcQuarantines();
+      expect(remaining, hasLength(1));
+      expect(remaining.single.originalPath, demandedOriginal.path);
+      expect(remaining.single.state, AssetGcQuarantineState.pending);
+    },
+  );
+
+  test('ambiguous materialized source retirement fails closed', () async {
+    final service = createService();
+    await service.init();
+    await service.runAssetMaintenance();
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final original = File(
+      p.join(uploadDirectory.path, 'retirement-ambiguous.txt'),
+    );
+    await original.writeAsString('original plaintext');
+    final quarantine = File(
+      p.join(
+        uploadDirectory.path,
+        '.kelivo-gc',
+        '75000000-0000-4000-8000-000000000005',
+      ),
+    );
+    await quarantine.parent.create();
+    await quarantine.writeAsString('quarantine plaintext');
+    final repository = ChatDatabaseRepository.open(
+      file: File(p.join(tempDir.path, AppDatabase.databaseFileName)),
+      cipher: testDatabaseCipher,
+    );
+    addTearDown(repository.close);
+    await repository.recordMaterializedSourceRetirement(
+      retirementId: '75000000-0000-4000-8000-000000000005',
+      originalPath: original.path,
+      quarantinePath: quarantine.path,
+      createdAt: DateTime.utc(2026, 7, 29, 15),
+    );
+
+    await expectLater(service.runAssetMaintenance(), throwsStateError);
+
+    expect(await original.readAsString(), 'original plaintext');
+    expect(await quarantine.readAsString(), 'quarantine plaintext');
+    final pending = await repository.getAssetGcQuarantine(quarantine.path);
+    expect(pending?.state, AssetGcQuarantineState.pending);
+  });
+
+  test(
     'cold maintenance clears a pending record when the rename never happened',
     () async {
       final contentHash = List.filled(64, 'b').join();

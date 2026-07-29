@@ -1,11 +1,14 @@
 import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:sqlite3/sqlite3.dart' as sqlite;
 
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
 
 import 'test_database_cipher.dart';
 
@@ -488,11 +491,89 @@ void main() {
     },
   );
 
+  test('dirty references restore a completed quarantine fail closed', () async {
+    final root = await Directory.systemTemp.createTemp(
+      'asset_gc_completed_unrelated_dirty_test_',
+    );
+    final repository = ChatDatabaseRepository.open(
+      file: File('${root.path}/assets.sqlite'),
+      cipher: testDatabaseCipher,
+    );
+    addTearDown(() async {
+      await repository.close();
+      await root.delete(recursive: true);
+    });
+    final now = DateTime.utc(2026, 7, 12);
+    final conversation = Conversation(
+      id: 'conversation-unrelated-dirty',
+      title: 'Assets',
+      createdAt: now,
+      updatedAt: now,
+      messageIds: const ['revision-unrelated-dirty'],
+    );
+    final message = ChatMessage(
+      id: 'revision-unrelated-dirty',
+      role: 'user',
+      content: '[file:${root.path}/other.txt|other.txt|text/plain]',
+      timestamp: now,
+      conversationId: conversation.id,
+    );
+    await repository.putMigrationBatch(
+      conversations: [conversation],
+      messages: [(message: message, messageOrder: 0)],
+      toolEventsByMessageId: const {},
+      geminiSignaturesByMessageId: const {},
+    );
+    final completedPath = '${root.path}/completed.txt';
+    await repository.registerAsset(
+      id: 'asset-unrelated-dirty',
+      contentHash: List.filled(64, '1').join(),
+      path: completedPath,
+      byteSize: 4096,
+      createdAt: now,
+    );
+    await repository.scheduleUnreferencedAssetGc(notBefore: now);
+    final candidate = (await repository.claimAssetGc(now: now)).single;
+    final quarantinePath = '${root.path}/quarantine/unrelated-dirty';
+    await repository.recordAssetGcQuarantine(
+      assetId: candidate.assetId,
+      generation: candidate.generation,
+      originalPath: candidate.path,
+      quarantinePath: quarantinePath,
+      createdAt: now,
+    );
+    expect(
+      await repository.completeAssetGc(
+        assetId: candidate.assetId,
+        expectedGeneration: candidate.generation,
+        expectedQuarantinePaths: {quarantinePath},
+        now: now,
+      ),
+      isTrue,
+    );
+    await repository.markMessageAssetReferencesDirty(message.id);
+    expect(await repository.isManagedPathDemanded(completedPath), isTrue);
+
+    AssetGcCompletedDisposition? disposition;
+    final completedRecord = await repository.getAssetGcQuarantine(
+      quarantinePath,
+    );
+    expect(completedRecord, isNotNull);
+    await repository.settleCompletedAssetGcQuarantine(
+      expectedRecord: completedRecord!,
+      settleFile: (value) async {
+        disposition = value;
+      },
+    );
+
+    expect(disposition, AssetGcCompletedDisposition.restore);
+  });
+
   test(
-    'unrelated dirty references do not orphan a completed quarantine',
+    'managed path demand follows active download paths until terminal failure',
     () async {
       final root = await Directory.systemTemp.createTemp(
-        'asset_gc_completed_unrelated_dirty_test_',
+        'asset_download_path_demand_test_',
       );
       final repository = ChatDatabaseRepository.open(
         file: File('${root.path}/assets.sqlite'),
@@ -502,18 +583,152 @@ void main() {
         await repository.close();
         await root.delete(recursive: true);
       });
-      final now = DateTime.utc(2026, 7, 12);
+      final now = DateTime.utc(2026, 7, 29, 11);
+      final stagingPath = '${root.path}/upload/e2ee/tmp/attachment.part';
+      final finalPath = '${root.path}/upload/e2ee/content/attachment';
+      final reference = E2eeAttachmentDownloadReference(
+        attachmentId: '76000000-0000-4000-8000-000000000001',
+        uploadId: '76000000-0000-4000-8000-000000000002',
+        keyEpoch: 1,
+        kind: E2eeAttachmentKind.file,
+      );
+      final commands = repository.e2eeAttachmentDownloadCommands;
+      await commands.ensure(reference: reference, now: now);
+      var lease = (await commands.claimDue(
+        reference: reference,
+        leaseToken: 'download-path-demand-lease',
+        leaseOwner: 'asset-gc-test',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now,
+      ))!;
+      lease = await commands.attachManifest(
+        lease: lease,
+        manifest: E2eeAttachmentManifest(
+          attachmentId: reference.attachmentId,
+          uploadId: reference.uploadId,
+          keyEpoch: reference.keyEpoch,
+          kind: reference.kind,
+          totalPlaintextBytes: 0,
+          contentSha256: Uint8List(32),
+          wrappedDataKey: Uint8List(KelivoAttachmentLimits.wrappedDataKeyBytes),
+          chunkCiphertextBytes: const [
+            KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+          ],
+          displayName: 'attachment.txt',
+          mediaType: 'text/plain',
+        ),
+        manifestCiphertext: Uint8List.fromList(const [1, 2, 3]),
+        stagingPath: stagingPath,
+        finalPath: finalPath,
+        now: now.add(const Duration(seconds: 1)),
+      );
+
+      expect(await repository.isManagedPathDemanded(stagingPath), isTrue);
+      expect(await repository.isManagedPathDemanded(finalPath), isTrue);
+
+      await commands.markPermanentlyFailed(
+        lease: lease,
+        failureKind: 'download-source-unavailable',
+        now: now.add(const Duration(seconds: 2)),
+      );
+      expect(await repository.isManagedPathDemanded(stagingPath), isFalse);
+      expect(await repository.isManagedPathDemanded(finalPath), isFalse);
+    },
+  );
+
+  test(
+    'materialized source retirement completes only without path demand',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'materialized_source_retirement_test_',
+      );
+      final repository = ChatDatabaseRepository.open(
+        file: File('${root.path}/assets.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      addTearDown(() async {
+        await repository.close();
+        await root.delete(recursive: true);
+      });
+      final originalPath = '${root.path}/upload/original.txt';
+      final quarantinePath = '${root.path}/upload/.kelivo-gc/retirement';
+      final now = DateTime.utc(2026, 7, 29, 12);
+
+      expect(await repository.isManagedPathDemanded(originalPath), isFalse);
+      expect(
+        () => repository.recordMaterializedSourceRetirement(
+          retirementId: 'not-a-uuid',
+          originalPath: originalPath,
+          quarantinePath: quarantinePath,
+          createdAt: now,
+        ),
+        throwsFormatException,
+      );
+      await repository.recordMaterializedSourceRetirement(
+        retirementId: '77000000-0000-4000-8000-000000000001',
+        originalPath: originalPath,
+        quarantinePath: quarantinePath,
+        createdAt: now,
+      );
+      final pending = await repository.getAssetGcQuarantine(quarantinePath);
+      expect(pending, isNotNull);
+      expect(pending!.isMaterializedSourceRetirement, isTrue);
+      expect(pending.state, AssetGcQuarantineState.pending);
+
+      expect(
+        await repository.completeMaterializedSourceRetirement(
+          expectedRecord: pending,
+        ),
+        isTrue,
+      );
+      final completed = await repository.getAssetGcQuarantine(quarantinePath);
+      expect(completed?.state, AssetGcQuarantineState.completed);
+      AssetGcCompletedDisposition? disposition;
+      await repository.settleCompletedAssetGcQuarantine(
+        expectedRecord: completed!,
+        settleFile: (value) async {
+          disposition = value;
+        },
+      );
+      expect(disposition, AssetGcCompletedDisposition.delete);
+      expect(await repository.listAssetGcQuarantines(), isEmpty);
+    },
+  );
+
+  test(
+    'materialized source retirement rechecks demand before completion',
+    () async {
+      final root = await Directory.systemTemp.createTemp(
+        'materialized_source_retirement_recheck_test_',
+      );
+      final repository = ChatDatabaseRepository.open(
+        file: File('${root.path}/assets.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      addTearDown(() async {
+        await repository.close();
+        await root.delete(recursive: true);
+      });
+      final now = DateTime.utc(2026, 7, 29, 12, 30);
+      final originalPath = '${root.path}/upload/referenced-after-receipt.txt';
+      final quarantinePath = '${root.path}/upload/.kelivo-gc/recheck';
+      await repository.recordMaterializedSourceRetirement(
+        retirementId: '77000000-0000-4000-8000-000000000002',
+        originalPath: originalPath,
+        quarantinePath: quarantinePath,
+        createdAt: now,
+      );
       final conversation = Conversation(
-        id: 'conversation-unrelated-dirty',
+        id: 'conversation-retirement-recheck',
         title: 'Assets',
         createdAt: now,
         updatedAt: now,
-        messageIds: const ['revision-unrelated-dirty'],
+        messageIds: const ['revision-retirement-recheck'],
       );
       final message = ChatMessage(
-        id: 'revision-unrelated-dirty',
+        id: 'revision-retirement-recheck',
         role: 'user',
-        content: '[file:${root.path}/other.txt|other.txt|text/plain]',
+        content: '[file:$originalPath|recheck.txt|text/plain]',
         timestamp: now,
         conversationId: conversation.id,
       );
@@ -523,48 +738,19 @@ void main() {
         toolEventsByMessageId: const {},
         geminiSignaturesByMessageId: const {},
       );
-      final completedPath = '${root.path}/completed.txt';
-      await repository.registerAsset(
-        id: 'asset-unrelated-dirty',
-        contentHash: List.filled(64, '1').join(),
-        path: completedPath,
-        byteSize: 4096,
-        createdAt: now,
-      );
-      await repository.scheduleUnreferencedAssetGc(notBefore: now);
-      final candidate = (await repository.claimAssetGc(now: now)).single;
-      final quarantinePath = '${root.path}/quarantine/unrelated-dirty';
-      await repository.recordAssetGcQuarantine(
-        assetId: candidate.assetId,
-        generation: candidate.generation,
-        originalPath: candidate.path,
-        quarantinePath: quarantinePath,
-        createdAt: now,
+      final pending = await repository.getAssetGcQuarantine(quarantinePath);
+
+      expect(await repository.isManagedPathDemanded(originalPath), isTrue);
+      expect(
+        await repository.completeMaterializedSourceRetirement(
+          expectedRecord: pending!,
+        ),
+        isFalse,
       );
       expect(
-        await repository.completeAssetGc(
-          assetId: candidate.assetId,
-          expectedGeneration: candidate.generation,
-          expectedQuarantinePaths: {quarantinePath},
-          now: now,
-        ),
-        isTrue,
+        (await repository.getAssetGcQuarantine(quarantinePath))?.state,
+        AssetGcQuarantineState.pending,
       );
-      await repository.markMessageAssetReferencesDirty(message.id);
-
-      AssetGcCompletedDisposition? disposition;
-      final completedRecord = await repository.getAssetGcQuarantine(
-        quarantinePath,
-      );
-      expect(completedRecord, isNotNull);
-      await repository.settleCompletedAssetGcQuarantine(
-        expectedRecord: completedRecord!,
-        settleFile: (value) async {
-          disposition = value;
-        },
-      );
-
-      expect(disposition, AssetGcCompletedDisposition.delete);
     },
   );
 

@@ -8244,6 +8244,64 @@ void main() {
     );
   });
 
+  test('E2EE 附件平台文件 adapter 只清理无引用内容文件并拒绝异常实体', () async {
+    final root = await Directory.current.createTemp(
+      'kelivo-e2ee-content-reconcile-',
+    );
+    addTearDown(() async {
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+    final installation = await Directory(
+      p.join(root.path, 'installation'),
+    ).create();
+    final workspace = await Directory(
+      p.join(root.path, 'account-workspace'),
+    ).create();
+    AppDirectories.bindWorkspaceRoot(
+      workspace,
+      installationRoot: installation,
+      accountWorkspace: true,
+    );
+
+    final store = E2eeAttachmentPlatformFileStore();
+    final retainedBytes = Uint8List.fromList(<int>[1, 2, 3]);
+    final retained = await store.publish(
+      location: E2eeAttachmentFileLocation.content(
+        contentSha256: Uint8List.fromList(sha256.convert(retainedBytes).bytes),
+      ),
+      source: Stream<List<int>>.value(retainedBytes),
+    );
+    final orphanedBytes = Uint8List.fromList(<int>[4, 5, 6]);
+    final orphaned = await store.publish(
+      location: E2eeAttachmentFileLocation.content(
+        contentSha256: Uint8List.fromList(sha256.convert(orphanedBytes).bytes),
+      ),
+      source: Stream<List<int>>.value(orphanedBytes),
+    );
+    final contentDirectory = File(retained.storagePath).parent;
+    final unknown = File(p.join(contentDirectory.path, 'unknown-file'));
+    await unknown.writeAsString('leave untouched', flush: true);
+
+    expect(
+      await store.reconcileUnreferencedContent(
+        isPathDemanded: (path) async => p.equals(path, retained.storagePath),
+      ),
+      1,
+    );
+    expect(await File(retained.storagePath).exists(), isTrue);
+    expect(await File(orphaned.storagePath).exists(), isFalse);
+    expect(await unknown.exists(), isTrue);
+
+    final unsafe = Directory(
+      p.join(contentDirectory.path, List<String>.filled(64, 'f').join()),
+    );
+    await unsafe.create();
+    await expectLater(
+      store.reconcileUnreferencedContent(isPathDemanded: (_) async => true),
+      throwsA(isA<StateError>()),
+    );
+  });
+
   test('E2EE 附件内存下载明文 staging 只按持久确认进度恢复并幂等发布', () async {
     final store = E2eeAttachmentMemoryFileStore();
     final identity = CloudSyncAttachmentIdentity(

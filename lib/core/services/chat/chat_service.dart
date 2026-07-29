@@ -2158,6 +2158,97 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
   }
 
+  Future<void> _recoverPendingMaterializedSourceRetirement(
+    _AssetGcQuarantine quarantine,
+    AssetGcQuarantineRecord record, {
+    required FileSystemEntityType originalType,
+    required FileSystemEntityType quarantineType,
+  }) async {
+    var currentOriginalType = originalType;
+    var currentQuarantineType = quarantineType;
+    if (currentOriginalType == FileSystemEntityType.file &&
+        currentQuarantineType == FileSystemEntityType.notFound) {
+      if (await _repo.isManagedPathDemanded(record.originalPath)) return;
+      await _ensureAssetGcQuarantineDirectory(quarantine.root);
+      if (!SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.original.path,
+            managedDirectory: quarantine.root,
+          ) ||
+          !SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.quarantine.path,
+            managedDirectory: quarantine.root,
+          )) {
+        throw StateError('asset_gc_quarantine_path_escaped_managed_root');
+      }
+      currentOriginalType = await FileSystemEntity.type(
+        quarantine.original.path,
+        followLinks: false,
+      );
+      currentQuarantineType = await FileSystemEntity.type(
+        quarantine.quarantine.path,
+        followLinks: false,
+      );
+      if (currentOriginalType != FileSystemEntityType.file ||
+          currentQuarantineType != FileSystemEntityType.notFound) {
+        throw StateError('asset_gc_pending_quarantine_ambiguous');
+      }
+      await _renewAssetGcLease();
+      await quarantine.original.rename(quarantine.quarantine.path);
+      currentOriginalType = FileSystemEntityType.notFound;
+      currentQuarantineType = await FileSystemEntity.type(
+        quarantine.quarantine.path,
+        followLinks: false,
+      );
+      if (currentQuarantineType != FileSystemEntityType.file ||
+          !SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.quarantine.path,
+            managedDirectory: quarantine.root,
+          )) {
+        throw StateError('asset_gc_quarantine_move_invalid');
+      }
+    }
+
+    if (currentOriginalType != FileSystemEntityType.notFound ||
+        (currentQuarantineType != FileSystemEntityType.file &&
+            currentQuarantineType != FileSystemEntityType.notFound)) {
+      throw StateError('asset_gc_pending_quarantine_ambiguous');
+    }
+
+    await _renewAssetGcLease();
+    final completed = await _repo.completeMaterializedSourceRetirement(
+      expectedRecord: record,
+    );
+    if (!completed) {
+      if (currentQuarantineType == FileSystemEntityType.notFound) return;
+      if (!SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.original.path,
+            managedDirectory: quarantine.root,
+          ) ||
+          !SandboxPathResolver.isOwnedManagedPath(
+            path: quarantine.quarantine.path,
+            managedDirectory: quarantine.root,
+          ) ||
+          await FileSystemEntity.type(
+                quarantine.original.path,
+                followLinks: false,
+              ) !=
+              FileSystemEntityType.notFound ||
+          await FileSystemEntity.type(
+                quarantine.quarantine.path,
+                followLinks: false,
+              ) !=
+              FileSystemEntityType.file) {
+        throw StateError('asset_gc_pending_restore_ambiguous');
+      }
+      await _renewAssetGcLease();
+      await quarantine.quarantine.rename(quarantine.original.path);
+      return;
+    }
+
+    // 回执已成为文件去向的唯一真相，立即走同一 completed 结算协议。
+    await _recoverAssetGcQuarantine(quarantine);
+  }
+
   Future<void> _recoverAssetGcQuarantine(_AssetGcQuarantine quarantine) async {
     await _renewAssetGcLease();
     final record = await _repo.getAssetGcQuarantine(
@@ -2189,6 +2280,15 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
     switch (record.state) {
       case AssetGcQuarantineState.pending:
+        if (record.isMaterializedSourceRetirement) {
+          await _recoverPendingMaterializedSourceRetirement(
+            quarantine,
+            record,
+            originalType: originalType,
+            quarantineType: quarantineType,
+          );
+          return;
+        }
         if (originalType == FileSystemEntityType.file &&
             quarantineType == FileSystemEntityType.notFound) {
           await _renewAssetGcLease();
@@ -2259,6 +2359,25 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
             }
           },
         );
+    }
+  }
+
+  Future<void> _recoverMaterializedSourceRetirements(
+    List<Directory> managedRoots,
+  ) async {
+    final records = await _repo.listAssetGcQuarantines();
+    final seenPaths = <String>{};
+    final retirements = <_AssetGcQuarantine>[];
+    for (final record in records) {
+      final pathKey = _assetGcPathKey(record.quarantinePath);
+      if (!seenPaths.add(pathKey)) {
+        throw StateError('asset_gc_quarantine_path_collision');
+      }
+      if (!record.isMaterializedSourceRetirement) continue;
+      retirements.add(_validateAssetGcQuarantineRecord(record, managedRoots));
+    }
+    for (final retirement in retirements) {
+      await _recoverAssetGcQuarantine(retirement);
     }
   }
 
@@ -2378,6 +2497,12 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         await AppDirectories.getUploadDirectory(),
         await AppDirectories.getImagesDirectory(),
       ];
+      try {
+        await _recoverMaterializedSourceRetirements(managedRoots);
+      } catch (_) {
+        _assetGcRecoveryComplete = false;
+        rethrow;
+      }
       await _renewAssetGcLease();
       await _repo.scheduleUnreferencedAssetGc(
         notBefore: effectiveNow.add(_assetGcDelay),
@@ -3004,7 +3129,23 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     );
     final targetConversation = conversation;
 
-    Future<ChatMessage> write() async {
+    void publish(Conversation persistedConversation) {
+      _draftConversations.remove(conversationId);
+      _conversationsCache[conversationId] = persistedConversation;
+      conversation = persistedConversation;
+      final order = _messageOrderIds.putIfAbsent(
+        conversationId,
+        () => <String>[],
+      );
+      if (!order.contains(message.id)) order.add(message.id);
+      _messageCounts[conversationId] = order.length;
+      if (_messagesCache.containsKey(conversationId)) {
+        _messagesCache[conversationId]!.add(message);
+      }
+      notifyListeners();
+    }
+
+    Future<ChatMessage> writeTemporary() async {
       if (temporary) {
         targetConversation.messageIds.add(message.id);
         targetConversation.updatedAt = DateTime.now();
@@ -3013,26 +3154,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
               message.version;
         }
         _messagesCache.putIfAbsent(conversationId, () => <ChatMessage>[]);
-      } else {
-        if (_conversationsCache.containsKey(conversationId)) {
-          await _loadMessageOrder(conversationId);
-        }
-        final persisted = await _repo.appendLinearMessageToConversation(
-          conversation: targetConversation,
-          message: message,
-          selectVersion: selectVersion,
-        );
-        _draftConversations.remove(conversationId);
-        _conversationsCache[conversationId] = persisted;
-        conversation = persisted;
-        final order = _messageOrderIds.putIfAbsent(
-          conversationId,
-          () => <String>[],
-        );
-        if (!order.contains(message.id)) order.add(message.id);
-        _messageCounts[conversationId] = order.length;
       }
-
       if (_messagesCache.containsKey(conversationId)) {
         _messagesCache[conversationId]!.add(message);
       }
@@ -3040,7 +3162,30 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       return message;
     }
 
-    if (temporary || !_isTerminalMessage(message)) return write();
+    if (temporary) return writeTemporary();
+    if (_conversationsCache.containsKey(conversationId)) {
+      await _loadMessageOrder(conversationId);
+    }
+    Conversation? persistedConversation;
+    Future<ChatMessage> persist() async {
+      persistedConversation = await _repo.appendLinearMessageToConversation(
+        conversation: targetConversation,
+        message: message,
+        selectVersion: selectVersion,
+      );
+      return message;
+    }
+
+    if (!_isTerminalMessage(message)) {
+      final persistedMessage = await persist();
+      final committedConversation = persistedConversation;
+      if (committedConversation == null) {
+        throw StateError('message_persisted_conversation_missing');
+      }
+      publish(committedConversation);
+      return persistedMessage;
+    }
+
     final keys = message.role == 'assistant'
         ? _messageGraphKeys(message)
         : <SyncEntityKey>{
@@ -3048,12 +3193,18 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
             _turnKey(message.turnId),
             _messageKey(message.id),
           };
-    return _runLocalMessageBatch<ChatMessage>(
+    final persistedMessage = await _runLocalMessageBatch<ChatMessage>(
       keys: keys,
       targetRevisionId: message.id,
       attachments: message.attachments,
-      write: write,
+      write: persist,
     );
+    final committedConversation = persistedConversation;
+    if (committedConversation == null) {
+      throw StateError('message_persisted_conversation_missing');
+    }
+    publish(committedConversation);
+    return persistedMessage;
   }
 
   Future<GenerationBeginResult> beginSendGeneration({
@@ -3092,7 +3243,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       isStreaming: true,
       turnId: turnId,
     );
-    return _runLocalMessageBatch<GenerationBeginResult>(
+    final result = await _runLocalMessageBatch<GenerationBeginResult>(
       keys: <SyncEntityKey>{
         _conversationKey(conversationId),
         _turnKey(turnId),
@@ -3107,10 +3258,11 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           assistantMessage: assistantMessage,
           runId: const Uuid().v4(),
         );
-        _publishGenerationBegin(result);
         return result;
       },
     );
+    _publishGenerationBegin(result);
+    return result;
   }
 
   Future<GenerationBeginResult> beginRegeneration({
@@ -3715,7 +3867,8 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       if (original.role == 'assistant') _toolEventKey(newMessageId),
       if (original.role == 'assistant') _thoughtSignatureKey(newMessageId),
     };
-    return _runLocalMessageBatch<ChatMessage?>(
+    Conversation? persistedConversation;
+    final newMessage = await _runLocalMessageBatch<ChatMessage?>(
       keys: keys,
       targetRevisionId: newMessageId,
       attachments: preparedAttachments,
@@ -3728,18 +3881,27 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
           newMessageId: newMessageId,
         );
         if (result == null) return null;
-        final newMsg = result.message;
-        final cid = newMsg.conversationId;
-        _conversationsCache[cid] = result.conversation;
-        final order = _messageOrderIds.putIfAbsent(cid, () => <String>[]);
-        if (!order.contains(newMsg.id)) order.add(newMsg.id);
-        _messageCounts[cid] = order.length;
-        final arr = _messagesCache[cid];
-        if (arr != null) arr.add(newMsg);
-        notifyListeners();
-        return newMsg;
+        persistedConversation = result.conversation;
+        return result.message;
       },
     );
+    if (newMessage == null) return null;
+    final conversation = persistedConversation;
+    if (conversation == null) {
+      throw StateError('message_version_persisted_conversation_missing');
+    }
+    final conversationId = newMessage.conversationId;
+    _conversationsCache[conversationId] = conversation;
+    final order = _messageOrderIds.putIfAbsent(
+      conversationId,
+      () => <String>[],
+    );
+    if (!order.contains(newMessage.id)) order.add(newMessage.id);
+    _messageCounts[conversationId] = order.length;
+    final messages = _messagesCache[conversationId];
+    if (messages != null) messages.add(newMessage);
+    notifyListeners();
+    return newMessage;
   }
 
   Map<String, int> getVersionSelections(String conversationId) {

@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
+import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
 import 'package:Kelivo/core/providers/instruction_injection_provider.dart';
@@ -2941,6 +2942,238 @@ void main() {
     await instance.runtime.close();
   });
 
+  test('附件草稿事务失败时普通消息不会进入缓存或通知 UI', () async {
+    final harness = await _RollbackAttachmentWriteHarness.create();
+    addTearDown(harness.close);
+    final conversation = await harness.chatService.createConversation(
+      title: '附件回滚',
+    );
+    await harness.chatService.loadMessages(conversation.id);
+    final source = await harness.createSource('plain-message.txt');
+    var notifications = 0;
+    harness.chatService.addListener(() => notifications++);
+
+    await expectLater(
+      harness.chatService.addMessage(
+        conversationId: conversation.id,
+        role: 'user',
+        content: '不会发布',
+        attachments: <LocalMessageAttachmentInput>[
+          LocalMessageAttachmentInput.file(
+            path: source.path,
+            displayName: 'plain-message.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'attachment-draft-failed',
+        ),
+      ),
+    );
+
+    expect(
+      await harness.chatService.loadMessagesForSync(conversation.id),
+      isEmpty,
+    );
+    expect(harness.chatService.getMessages(conversation.id), isEmpty);
+    expect(harness.chatService.getMessageCount(conversation.id), 0);
+    expect(notifications, 0);
+  });
+
+  test('附件草稿事务失败时生成消息与助手占位不会发布', () async {
+    final harness = await _RollbackAttachmentWriteHarness.create();
+    addTearDown(harness.close);
+    final conversation = await harness.chatService.createConversation(
+      title: '生成回滚',
+    );
+    await harness.chatService.loadMessages(conversation.id);
+    final source = await harness.createSource('generation-message.txt');
+    var notifications = 0;
+    harness.chatService.addListener(() => notifications++);
+
+    await expectLater(
+      harness.chatService.beginSendGeneration(
+        conversationId: conversation.id,
+        userContent: '不会发布生成',
+        userAttachments: <LocalMessageAttachmentInput>[
+          LocalMessageAttachmentInput.file(
+            path: source.path,
+            displayName: 'generation-message.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
+        modelId: 'model',
+        providerId: 'provider',
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'attachment-draft-failed',
+        ),
+      ),
+    );
+
+    expect(
+      await harness.chatService.loadMessagesForSync(conversation.id),
+      isEmpty,
+    );
+    expect(harness.chatService.getMessages(conversation.id), isEmpty);
+    expect(harness.chatService.getMessageCount(conversation.id), 0);
+    expect(notifications, 0);
+  });
+
+  test('附件草稿事务失败时编辑版本与选择状态不会发布', () async {
+    final harness = await _RollbackAttachmentWriteHarness.create();
+    addTearDown(harness.close);
+    final conversation = await harness.chatService.createConversation(
+      title: '版本回滚',
+    );
+    final original = await harness.chatService.addMessage(
+      conversationId: conversation.id,
+      role: 'user',
+      content: '原始版本',
+    );
+    await harness.chatService.loadMessages(conversation.id);
+    final selectionsBefore = harness.chatService.getVersionSelections(
+      conversation.id,
+    );
+    final source = await harness.createSource('version-message.txt');
+    var notifications = 0;
+    harness.chatService.addListener(() => notifications++);
+
+    await expectLater(
+      harness.chatService.appendMessageVersion(
+        messageId: original.id,
+        content: '不会发布的新版本',
+        attachments: <LocalMessageAttachmentInput>[
+          LocalMessageAttachmentInput.file(
+            path: source.path,
+            displayName: 'version-message.txt',
+            mediaType: 'text/plain',
+          ),
+        ],
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'attachment-draft-failed',
+        ),
+      ),
+    );
+
+    expect(
+      await harness.chatService.loadMessagesForSync(conversation.id),
+      hasLength(1),
+    );
+    expect(harness.chatService.getMessages(conversation.id), hasLength(1));
+    expect(harness.chatService.getMessageCount(conversation.id), 1);
+    expect(
+      harness.chatService.getVersionSelections(conversation.id),
+      selectionsBefore,
+    );
+    expect(notifications, 0);
+  });
+
+  test('附件旧扫描的 false 不会覆盖扫描期间提交的新上传工作', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final scanRead = Completer<void>();
+    final releaseScan = Completer<void>();
+    var armScanBarrier = false;
+    addTearDown(() {
+      if (!releaseScan.isCompleted) releaseScan.complete();
+    });
+    final instance = harness.createInstance(
+      blockInitialPull: true,
+      attachmentWorkScanner: (commands) async {
+        final result = await commands.hasRetryableWork();
+        if (armScanBarrier && !result && !scanRead.isCompleted) {
+          scanRead.complete();
+          await releaseScan.future;
+        }
+        return result;
+      },
+    );
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls == 1);
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final firstSource = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}scan-first.txt',
+    );
+    await firstSource.writeAsString('first attachment', flush: true);
+    final conversation = await instance.chatService.createConversation(
+      title: '扫描世代',
+    );
+    await instance.chatService.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '第一个附件',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.file(
+          path: firstSource.path,
+          displayName: 'scan-first.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+
+    armScanBarrier = true;
+    instance.pull.releaseBlockedPull();
+    await scanRead.future.timeout(const Duration(seconds: 15));
+    final secondSource = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}scan-second.txt',
+    );
+    await secondSource.writeAsString('second attachment', flush: true);
+    await instance.chatService.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '第二个附件',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.file(
+          path: secondSource.path,
+          displayName: 'scan-second.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    releaseScan.complete();
+
+    await _waitUntil(() => instance.pull.pullCalls >= 4);
+    expect(instance.attachments.createCalls, 2);
+    expect(instance.attachments.commitCalls, 2);
+  });
+
+  test('无附件本地写入唤醒同步周期时不会额外扫描附件表', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    var scanCalls = 0;
+    final instance = harness.createInstance(
+      attachmentWorkScanner: (commands) async {
+        scanCalls++;
+        return commands.hasRetryableWork();
+      },
+    );
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+    final scansAfterInitialization = scanCalls;
+    final pullsBeforeWrite = instance.pull.pullCalls;
+
+    await instance.chatService.createConversation(title: '纯文本唤醒');
+
+    await _waitUntil(() => instance.pull.pullCalls >= pullsBeforeWrite + 2);
+    expect(scansAfterInitialization, 1);
+    expect(scanCalls, scansAfterInitialization);
+    expect(instance.attachments.createCalls, 0);
+  });
+
   test('E2EE 附件草稿与消息 outbox 原子提交且远端提交后才发送记录', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -2977,6 +3210,7 @@ void main() {
     expect(beforeUpload, isNotNull);
     expect(beforeUpload!.attachments.single.hasRemoteIdentity, isFalse);
     expect(beforeUpload.attachments.single.path, isNot(source.path));
+    final materializedPath = beforeUpload.attachments.single.path;
 
     final inspectionLease = await harness._databaseGateway.acquire(
       harness._databaseFile,
@@ -3016,7 +3250,154 @@ void main() {
       instance.transportEvents.indexOf('attachment-commit'),
       lessThan(instance.transportEvents.indexOf('push')),
     );
+    await _waitUntil(() => !source.existsSync());
+    expect(File(materializedPath).existsSync(), isTrue);
     await instance.runtime.close();
+  });
+
+  test('E2EE 附件消息事务回滚保留受管源文件且重启清理无引用副本', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final first = harness.createInstance();
+    await first.runtime.initialize().timeout(const Duration(seconds: 15));
+
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}rollback-source.txt',
+    );
+    final bytes = utf8.encode('rollback attachment payload');
+    await source.writeAsBytes(bytes, flush: true);
+    final contentHash = sha256.convert(bytes).toString();
+    final materialized = await first.runtime
+        .materializeLocalAttachments(<ChatMessageAttachment>[
+          ChatMessageAttachment(
+            assetId: 'rollback-asset',
+            path: source.path,
+            contentHash: contentHash,
+            byteSize: bytes.length,
+            kind: 'file',
+            displayName: 'rollback-source.txt',
+            mediaType: 'text/plain',
+          ),
+        ]);
+    final materializedPath = materialized.single.path;
+    expect(await File(materializedPath).exists(), isTrue);
+
+    await expectLater(
+      first.runtime.runLocalBatchWithMessageAttachments<void>(
+        keys: const <SyncEntityKey>[
+          SyncEntityKey(entityType: 'message', entityId: 'rollback-message'),
+        ],
+        targetRevisionId: 'rollback-revision',
+        attachments: materialized,
+        targetWasPersisted: (_) => true,
+        write: () => throw StateError('rollback-message-write'),
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'rollback-message-write',
+        ),
+      ),
+    );
+    expect(await source.exists(), isTrue);
+    expect(await File(materializedPath).exists(), isTrue);
+    await first.runtime.close();
+
+    final restarted = harness.createInstance();
+    await restarted.runtime.initialize().timeout(const Duration(seconds: 15));
+    expect(await source.exists(), isTrue);
+    expect(await File(materializedPath).exists(), isFalse);
+  });
+
+  test('E2EE 附件受管源路径仍被其他资产引用时不得淘汰', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(blockInitialPull: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}shared-source.txt',
+    );
+    await source.writeAsString('shared source payload', flush: true);
+    final conversation = await instance.chatService.createConversation(
+      title: '共享源路径',
+    );
+    final existing = await instance.chatService.addMessage(
+      conversationId: conversation.id,
+      role: 'user',
+      content: '已有引用',
+    );
+    final lease = await harness._databaseGateway.acquire(harness._databaseFile);
+    try {
+      await lease.repository.registerAsset(
+        id: 'shared-source-owner',
+        contentHash: List<String>.filled(64, 'b').join(),
+        path: source.path,
+        byteSize: await source.length(),
+      );
+      await lease.repository.linkMessageAsset(
+        conversationId: conversation.id,
+        revisionId: existing.id,
+        ordinal: 0,
+        assetId: 'shared-source-owner',
+        kind: 'file',
+        displayName: 'shared-source.txt',
+        mediaType: 'text/plain',
+      );
+    } finally {
+      await lease.release();
+    }
+
+    final generation = await instance.chatService.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '再次使用同一路径',
+      userAttachments: <LocalMessageAttachmentInput>[
+        LocalMessageAttachmentInput.file(
+          path: source.path,
+          displayName: 'shared-source.txt',
+          mediaType: 'text/plain',
+        ),
+      ],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    final persisted = await instance.chatService.loadMessageForSync(
+      generation.userMessage!.id,
+    );
+    expect(persisted, isNotNull);
+    expect(persisted!.attachments.single.path, isNot(source.path));
+
+    await instance.chatService.runAssetMaintenance();
+    await instance.chatService.runAssetMaintenance();
+    expect(await source.exists(), isTrue);
+    expect(await File(persisted.attachments.single.path).exists(), isTrue);
+
+    final replacement = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}shared-replacement.txt',
+    );
+    await replacement.writeAsString('shared source payload', flush: true);
+    final updateLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      await updateLease.repository.registerAsset(
+        id: 'shared-source-owner',
+        contentHash: List<String>.filled(64, 'b').join(),
+        path: replacement.path,
+        byteSize: await replacement.length(),
+      );
+    } finally {
+      await updateLease.release();
+    }
+
+    await instance.chatService.runAssetMaintenance();
+    await instance.chatService.runAssetMaintenance();
+    expect(await source.exists(), isFalse);
+    expect(await replacement.exists(), isTrue);
+    expect(await File(persisted.attachments.single.path).exists(), isTrue);
   });
 
   test('E2EE 内容运行时在本地事务提交后唤醒密文发送周期', () async {
@@ -3881,6 +4262,8 @@ final class _E2eeRuntimeHarness {
     CloudSyncSecurityBootstrapCommitHandler? securityBootstrapCommitHandler,
     CloudSyncAccountSession? sessionOverride,
     void Function()? onTransportCreated,
+    E2eeAttachmentUploadWorkScanner attachmentWorkScanner =
+        _defaultRuntimeAttachmentWorkScanner,
   }) {
     final activeSession = sessionOverride ?? session;
     final transportEvents = <String>[];
@@ -3917,6 +4300,7 @@ final class _E2eeRuntimeHarness {
       databaseFile: _databaseFile,
       client: CloudSyncClient.forTesting(baseUrl: activeSession.baseUrl),
       transportFactory: createTransports,
+      attachmentWorkScanner: attachmentWorkScanner,
     );
     if (securityBootstrapCommitHandler != null) {
       runtime.bindSecurityBootstrapCommitHandler(
@@ -3957,6 +4341,124 @@ final class _E2eeRuntimeHarness {
     }
     _instances.clear();
     if (await root.exists()) await root.delete(recursive: true);
+  }
+}
+
+Future<bool> _defaultRuntimeAttachmentWorkScanner(
+  E2eeAttachmentUploadCommands commands,
+) => commands.hasRetryableWork();
+
+final class _RollbackAttachmentWriteHarness {
+  const _RollbackAttachmentWriteHarness._({
+    required this.root,
+    required this.chatService,
+  });
+
+  final Directory root;
+  final ChatService chatService;
+
+  static Future<_RollbackAttachmentWriteHarness> create() async {
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}attachment_rollback_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('rollback-');
+    final installationRoot = Directory(
+      '${root.path}${Platform.pathSeparator}installation',
+    );
+    final workspaceRoot = Directory(
+      '${root.path}${Platform.pathSeparator}workspace',
+    );
+    await installationRoot.create(recursive: true);
+    await workspaceRoot.create(recursive: true);
+    AppDirectories.bindWorkspaceRoot(
+      workspaceRoot,
+      installationRoot: installationRoot,
+      accountWorkspace: true,
+    );
+    await SandboxPathResolver.init();
+    final databaseFile = File(
+      '${workspaceRoot.path}${Platform.pathSeparator}'
+      '${AppDatabase.databaseFileName}',
+    );
+    final gateway = ChatDatabaseGateway(cipher: testDatabaseCipher);
+    final executor = _RollbackAttachmentSyncWriteExecutor(
+      databaseGateway: gateway,
+      databaseFile: databaseFile,
+    );
+    final chatService = ChatService(executor, databaseGateway: gateway);
+    await chatService.init();
+    return _RollbackAttachmentWriteHarness._(
+      root: root,
+      chatService: chatService,
+    );
+  }
+
+  Future<File> createSource(String name) async {
+    final directory = await AppDirectories.getUploadDirectory();
+    final file = File('${directory.path}${Platform.pathSeparator}$name');
+    await file.writeAsString('attachment rollback payload', flush: true);
+    return file;
+  }
+
+  Future<void> close() async {
+    await chatService.close();
+    chatService.dispose();
+    if (await root.exists()) await root.delete(recursive: true);
+  }
+}
+
+final class _RollbackAttachmentSyncWriteExecutor
+    implements StructuredAttachmentSyncWriteExecutor {
+  const _RollbackAttachmentSyncWriteExecutor({
+    required this._databaseGateway,
+    required this._databaseFile,
+  });
+
+  final ChatDatabaseGateway _databaseGateway;
+  final File _databaseFile;
+
+  @override
+  Future<List<ChatMessageAttachment>> materializeLocalAttachments(
+    Iterable<ChatMessageAttachment> attachments,
+  ) async {
+    return List<ChatMessageAttachment>.unmodifiable(attachments);
+  }
+
+  @override
+  Future<T> runLocal<T>({
+    required SyncEntityKey key,
+    required Future<T> Function() write,
+  }) {
+    return Future<T>.sync(write);
+  }
+
+  @override
+  Future<T> runLocalBatch<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Future<T> Function() write,
+  }) {
+    return Future<T>.sync(write);
+  }
+
+  @override
+  Future<T> runLocalBatchWithMessageAttachments<T>({
+    required Iterable<SyncEntityKey> keys,
+    required String targetRevisionId,
+    required Iterable<ChatMessageAttachment> attachments,
+    required bool Function(T result) targetWasPersisted,
+    required Future<T> Function() write,
+  }) async {
+    final lease = await _databaseGateway.acquire(_databaseFile);
+    try {
+      return lease.repository.runInTransaction<T>(() async {
+        await write();
+        throw StateError('attachment-draft-failed');
+      });
+    } finally {
+      await lease.release();
+    }
   }
 }
 
