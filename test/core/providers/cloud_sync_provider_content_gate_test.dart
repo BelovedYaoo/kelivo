@@ -1860,7 +1860,7 @@ final class _E2eeConfigBindingHarness {
     final codec = E2eeAccountRecordStateCodec.takeOwnership(
       E2eeAccountRecordCipher.takeOwnership(
         secureCore: secureCore,
-        accountRootKey: await secureCore.generateAccountRootKey(),
+        accountRootKey: await secureCore.generateAccountRootKey(keyEpoch: 1),
         userId: _userId,
         currentKeyEpoch: 1,
       ),
@@ -2269,7 +2269,9 @@ Future<void> _seedRuntimeDeviceState({
     ),
   );
   final identity = await secureCore.generateDeviceIdentity();
-  final ark = await secureCore.generateAccountRootKey();
+  final ark = await secureCore.generateAccountRootKey(
+    keyEpoch: session.keyEpoch,
+  );
   Uint8List? blob;
   try {
     blob = Uint8List.fromList(

@@ -23,6 +23,7 @@ pub use device_core::{
     KelivoDeviceStateBinding, kelivo_account_record_id_derive,
     kelivo_account_root_key_envelope_open, kelivo_account_root_key_envelope_seal,
     kelivo_account_root_key_generate, kelivo_account_root_key_handle_close,
+    kelivo_account_root_keyring_add_epoch, kelivo_account_root_keyring_prune_epoch,
     kelivo_device_identity_generate, kelivo_device_identity_handle_close,
     kelivo_device_identity_public_keys, kelivo_device_login_proof_sign,
     kelivo_device_pairing_approval_accept, kelivo_device_pairing_approval_create,
@@ -44,7 +45,7 @@ mod android;
 #[cfg(target_os = "android")]
 use android as platform;
 
-const ABI_VERSION: u32 = 9;
+const ABI_VERSION: u32 = 10;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -499,7 +500,7 @@ enum RecordKeySource {
 
 enum RecordMasterKey {
     LocalSlot(Arc<LocalKey>),
-    AccountRoot(Arc<kelivo_secure_core_protocol::device_crypto::AccountRootKey>),
+    AccountRoot(kelivo_secure_core_protocol::device_crypto::AccountRootKey),
 }
 
 impl RecordMasterKey {
@@ -514,11 +515,17 @@ impl RecordMasterKey {
 fn record_key_for_handle(
     handle: u64,
     source: RecordKeySource,
+    epoch: u64,
 ) -> Result<RecordMasterKey, KelivoStatus> {
     match source {
         RecordKeySource::LocalSlot => key_for_handle(handle).map(RecordMasterKey::LocalSlot),
         RecordKeySource::AccountRoot => {
-            device_core::ark_for_handle(handle).map(RecordMasterKey::AccountRoot)
+            let epoch = u32::try_from(epoch).map_err(|_| KelivoStatus::InvalidArgument)?;
+            match device_core::ark_for_handle(handle, epoch) {
+                Ok(key) => Ok(RecordMasterKey::AccountRoot(key)),
+                Err(KelivoStatus::InvalidArgument) => Err(KelivoStatus::RecordAuthenticationFailed),
+                Err(status) => Err(status),
+            }
         }
     }
 }
@@ -694,7 +701,7 @@ unsafe fn record_seal_with_handle(
         Ok(value) => value,
         Err(status) => return status.code(),
     };
-    let key = match record_key_for_handle(handle, key_source) {
+    let key = match record_key_for_handle(handle, key_source, epoch) {
         Ok(value) => value,
         Err(status) => return status.code(),
     };
@@ -846,7 +853,7 @@ unsafe fn record_open_with_handle(
         Ok(value) => value,
         Err(status) => return status.code(),
     };
-    let key = match record_key_for_handle(handle, key_source) {
+    let key = match record_key_for_handle(handle, key_source, epoch) {
         Ok(value) => value,
         Err(status) => return status.code(),
     };
@@ -1678,7 +1685,7 @@ mod tests {
     fn account_root_handle_seals_and_opens_record_through_c_abi() {
         let mut ark_handle = 0_u64;
         assert_eq!(
-            unsafe { kelivo_account_root_key_generate(&mut ark_handle) },
+            unsafe { kelivo_account_root_key_generate(KEY_EPOCH, &mut ark_handle) },
             KelivoStatus::Ok.code()
         );
         let record_id = [0x51_u8; 16];
@@ -1751,7 +1758,7 @@ mod tests {
 
         let mut other_ark_handle = 0_u64;
         assert_eq!(
-            unsafe { kelivo_account_root_key_generate(&mut other_ark_handle) },
+            unsafe { kelivo_account_root_key_generate(KEY_EPOCH, &mut other_ark_handle) },
             KelivoStatus::Ok.code()
         );
         let mut rejected_length = usize::MAX;
@@ -2474,10 +2481,10 @@ mod tests {
         handle
     }
 
-    fn generate_ark() -> u64 {
+    fn generate_ark(key_epoch: u32) -> u64 {
         let mut handle = INVALID_KEY_HANDLE;
         assert_eq!(
-            unsafe { kelivo_account_root_key_generate(&mut handle) },
+            unsafe { kelivo_account_root_key_generate(key_epoch, &mut handle) },
             KelivoStatus::Ok.code()
         );
         assert!(handle_has_tag(handle, ACCOUNT_ROOT_KEY_HANDLE_TAG));
@@ -2486,7 +2493,7 @@ mod tests {
 
     #[test]
     fn account_record_id_derivation_enforces_keyed_uuid_contract() {
-        let ark = generate_ark();
+        let ark = generate_ark(1);
         let canonical_key = b"chat-message/018f2f89-8d5a-7bd2-a459-5d540a8f90ab";
         let mut first = [0_u8; 16];
         let mut first_length = usize::MAX;
@@ -2652,7 +2659,7 @@ mod tests {
     #[test]
     fn device_and_ark_handles_are_strongly_typed_and_close_once() {
         let identity = generate_device_identity();
-        let ark = generate_ark();
+        let ark = generate_ark(1);
         let public_keys = device_public_keys(identity);
         assert!(public_keys.iter().any(|byte| *byte != 0));
 
@@ -2683,9 +2690,115 @@ mod tests {
     }
 
     #[test]
+    fn ark_keyring_abi_enforces_exact_epoch_capacity_and_atomic_mutation() {
+        let mut rejected = u64::MAX;
+        assert_eq!(
+            unsafe { kelivo_account_root_key_generate(0, &mut rejected) },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(rejected, INVALID_KEY_HANDLE);
+
+        let target = generate_ark(1);
+        let epoch_two = generate_ark(2);
+        assert_eq!(
+            kelivo_account_root_keyring_add_epoch(target, epoch_two),
+            KelivoStatus::Ok.code()
+        );
+        assert!(device_core::ark_for_handle(target, 1).is_ok());
+        assert!(device_core::ark_for_handle(target, 2).is_ok());
+        assert_eq!(
+            kelivo_account_root_keyring_add_epoch(target, epoch_two),
+            KelivoStatus::InvalidArgument.code()
+        );
+
+        let duplicate_or_older = generate_ark(1);
+        assert_eq!(
+            kelivo_account_root_keyring_add_epoch(target, duplicate_or_older),
+            KelivoStatus::InvalidArgument.code()
+        );
+
+        let mut added_sources = Vec::new();
+        for epoch in 3..=crypto::ACCOUNT_ROOT_KEYRING_CAPACITY as u32 {
+            let source = generate_ark(epoch);
+            assert_eq!(
+                kelivo_account_root_keyring_add_epoch(target, source),
+                KelivoStatus::Ok.code()
+            );
+            added_sources.push(source);
+        }
+        let over_capacity = generate_ark(crypto::ACCOUNT_ROOT_KEYRING_CAPACITY as u32 + 1);
+        assert_eq!(
+            kelivo_account_root_keyring_add_epoch(target, over_capacity),
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert!(
+            device_core::ark_for_handle(target, crypto::ACCOUNT_ROOT_KEYRING_CAPACITY as u32 + 1,)
+                .is_err()
+        );
+
+        assert_eq!(
+            kelivo_account_root_keyring_prune_epoch(
+                target,
+                crypto::ACCOUNT_ROOT_KEYRING_CAPACITY as u32,
+            ),
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(
+            kelivo_account_root_keyring_prune_epoch(target, 2),
+            KelivoStatus::Ok.code()
+        );
+        assert!(device_core::ark_for_handle(target, 2).is_err());
+        assert_eq!(
+            kelivo_account_root_keyring_prune_epoch(target, 2),
+            KelivoStatus::InvalidArgument.code()
+        );
+
+        let closed_source = generate_ark(9);
+        assert_eq!(
+            kelivo_account_root_key_handle_close(closed_source),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_keyring_add_epoch(target, closed_source),
+            KelivoStatus::InvalidAccountRootKeyHandle.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(target),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_keyring_prune_epoch(target, 1),
+            KelivoStatus::InvalidAccountRootKeyHandle.code()
+        );
+        assert_eq!(
+            kelivo_account_root_keyring_add_epoch(target, epoch_two),
+            KelivoStatus::InvalidAccountRootKeyHandle.code()
+        );
+
+        for source in added_sources {
+            assert_eq!(
+                kelivo_account_root_key_handle_close(source),
+                KelivoStatus::Ok.code()
+            );
+        }
+        assert_eq!(
+            kelivo_account_root_key_handle_close(over_capacity),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(duplicate_or_older),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_account_root_key_handle_close(epoch_two),
+            KelivoStatus::Ok.code()
+        );
+    }
+
+    #[test]
     fn registration_and_login_proofs_hash_only_strict_raw_payloads_in_rust() {
         let identity = generate_device_identity();
-        let ark = generate_ark();
+        let ark = generate_ark(1);
         let public_keys = device_public_keys(identity);
         let signing_public_key = crypto::DeviceSigningPublicKey::from_bytes(
             public_keys[..crypto::DEVICE_PUBLIC_KEY_LENGTH]
@@ -2841,7 +2954,7 @@ mod tests {
         ))
         .expect("测试槽位主密钥应注册");
         let issuer_identity = generate_device_identity();
-        let issuer_ark = generate_ark();
+        let issuer_ark = generate_ark(7);
         let target_identity = generate_device_identity();
         let target_device_id = account_id(0x31);
         let issuer_device_id = account_id(0x32);
@@ -2962,6 +3075,27 @@ mod tests {
                     key_handle,
                     pending_blob.as_ptr(),
                     pending_blob.len() - 1,
+                    &mut rejected_binding,
+                    &mut rejected_identity,
+                    &mut rejected_ark,
+                )
+            },
+            KelivoStatus::DeviceStateInvalid.code()
+        );
+        assert_eq!(rejected_binding, KelivoDeviceStateBinding::default());
+        assert_eq!(rejected_identity, INVALID_KEY_HANDLE);
+        assert_eq!(rejected_ark, INVALID_KEY_HANDLE);
+
+        let legacy_v1_blob = [0_u8; 188];
+        rejected_binding = sentinel_device_state_binding();
+        rejected_identity = u64::MAX;
+        rejected_ark = u64::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_device_state_open(
+                    key_handle,
+                    legacy_v1_blob.as_ptr(),
+                    legacy_v1_blob.len(),
                     &mut rejected_binding,
                     &mut rejected_identity,
                     &mut rejected_ark,
@@ -3402,7 +3536,7 @@ mod tests {
     fn ark_rotation_envelope_round_trips_maximum_epoch_without_exporting_ark() {
         let issuer_identity = generate_device_identity();
         let target_identity = generate_device_identity();
-        let issuer_ark = generate_ark();
+        let issuer_ark = generate_ark(u32::MAX);
         let issuer_public_keys = device_public_keys(issuer_identity);
         let target_public_keys = device_public_keys(target_identity);
         let user_id = account_id(0x91);
@@ -3543,7 +3677,7 @@ mod tests {
         let issuer_identity = generate_device_identity();
         let target_identity = generate_device_identity();
         let other_identity = generate_device_identity();
-        let issuer_ark = generate_ark();
+        let issuer_ark = generate_ark(7);
         let issuer_public_keys = device_public_keys(issuer_identity);
         let target_public_keys = device_public_keys(target_identity);
         let other_public_keys = device_public_keys(other_identity);

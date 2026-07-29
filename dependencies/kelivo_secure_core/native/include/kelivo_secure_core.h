@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(9)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(10)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -113,7 +113,8 @@ typedef int32_t KelivoStatus;
 #define KELIVO_PENDING_PAIRING_MATERIAL_SIZE ((size_t)80)
 #define KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE ((size_t)400)
 #define KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE ((size_t)432)
-#define KELIVO_DEVICE_STATE_BLOB_SIZE ((size_t)188)
+#define KELIVO_ACCOUNT_ROOT_KEYRING_CAPACITY ((size_t)8)
+#define KELIVO_DEVICE_STATE_BLOB_SIZE ((size_t)448)
 #define KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE UINT32_C(48)
 #define KELIVO_DEVICE_STATE_BINDING_FLAG_ACCOUNT (UINT32_C(1) << 0)
 #define KELIVO_ATTACHMENT_ID_SIZE ((size_t)16)
@@ -543,8 +544,12 @@ KELIVO_CORE_API KelivoStatus kelivo_pending_pairing_bind(
 KELIVO_CORE_API KelivoStatus kelivo_pending_pairing_handle_close(
     uint64_t pending_handle);
 
-/* ARK 只以不透明句柄生成和使用，不存在原始字节导出接口。 */
+/*
+ * 为正 key_epoch 生成 ARK，并直接注册为仅含该代次的不透明密钥环句柄。
+ * 不存在未绑定状态或原始字节导出接口；key_epoch=0 必须失败。
+ */
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_generate(
+    uint32_t key_epoch,
     uint64_t *out_handle);
 
 /*
@@ -562,6 +567,23 @@ KELIVO_CORE_API KelivoStatus kelivo_account_record_id_derive(
 
 KELIVO_CORE_API KelivoStatus kelivo_account_root_key_handle_close(
     uint64_t ark_handle);
+
+/*
+ * 将 source 单槽密钥环原子加入 target 并设为当前代次。source 必须仅含一个
+ * 严格高于 target 当前值的代次；重复、非递增、容量已满或任一句柄无效时，
+ * target 保持不变。两个句柄都继续有效，ARK 原始字节不会跨越 ABI。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_root_keyring_add_epoch(
+    uint64_t target_ark_handle,
+    uint64_t source_ark_handle);
+
+/*
+ * 从密钥环原子移除指定旧代次。不得移除当前代次；代次不存在、为零或句柄
+ * 无效时密钥环保持不变。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_root_keyring_prune_epoch(
+    uint64_t ark_handle,
+    uint32_t key_epoch);
 
 /*
  * 签发设备将不透明 ARK 封装给任意目标设备。签发公钥由 identity_handle
@@ -692,7 +714,7 @@ KELIVO_CORE_API KelivoStatus kelivo_device_pairing_approval_create(
  * 目标端深验证入口。pairingId、userId、目标设备、公钥、过期时间、challenge
  * 与 raw secret 均只从 pending_handle 读取；Dart 无法重新提供这些值。函数先
  * 验证墙钟与单调时钟，再验证 authenticator、KDPF、KAEK，最后解封 ARK。
- * 成功会原子消费并清零 pending，同时输出 ARK 句柄和 188 字节完整状态；
+ * 成功会原子消费并清零 pending，同时输出 ARK 句柄和 448 字节完整状态；
  * 认证失败会归还 pending 供重试，输出句柄与长度保持为零。
  */
 KELIVO_CORE_API KelivoStatus kelivo_device_pairing_approval_accept(
@@ -720,7 +742,8 @@ KELIVO_CORE_API KelivoStatus kelivo_device_pairing_approval_accept(
 
 /*
  * 使用平台槽位句柄密封单一设备状态。ark_handle=0 时必须同时使用空 user_id
- * 和 key_epoch=0，得到 identity-only 状态；完整态必须三者同时存在。
+ * 和 key_epoch=0，得到 identity-only 状态；完整态会一次认证地封装最多八个
+ * ARK 代次，且 key_epoch 必须精确等于密钥环当前代次。
  */
 KELIVO_CORE_API KelivoStatus kelivo_device_state_seal(
     uint64_t key_handle,

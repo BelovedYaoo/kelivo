@@ -378,11 +378,19 @@ void main() {
     final identity = await core.generateDeviceIdentity();
     addTearDown(() => core.closeDeviceIdentity(identity));
 
-    KelivoAccountRootKeyHandle? sourceArk = await core.generateAccountRootKey();
+    KelivoAccountRootKeyHandle? sourceArk = await core.generateAccountRootKey(
+      keyEpoch: 6,
+    );
     addTearDown(() async {
       final handle = sourceArk;
       if (handle != null) await core.closeAccountRootKey(handle);
     });
+    final epoch7Source = await core.generateAccountRootKey(keyEpoch: 7);
+    try {
+      await core.addAccountRootKeyEpoch(sourceArk, source: epoch7Source);
+    } finally {
+      await core.closeAccountRootKey(epoch7Source);
+    }
     final stateBlob = await core.sealDeviceState(
       slot,
       identity,
@@ -711,7 +719,7 @@ void main() {
     const core = KelivoSecureCore();
     final rawCipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
-      accountRootKey: await core.generateAccountRootKey(),
+      accountRootKey: await core.generateAccountRootKey(keyEpoch: 7),
       userId: _stateTestUserId,
       currentKeyEpoch: 7,
     );
@@ -783,7 +791,7 @@ Future<E2eeAccountRecordStateCodec> _createStateCodec() async {
   return E2eeAccountRecordStateCodec.takeOwnership(
     E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
-      accountRootKey: await core.generateAccountRootKey(),
+      accountRootKey: await core.generateAccountRootKey(keyEpoch: 7),
       userId: _stateTestUserId,
       currentKeyEpoch: 7,
     ),

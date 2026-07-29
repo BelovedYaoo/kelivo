@@ -53,20 +53,25 @@ pub const ARK_HPKE_CIPHERTEXT_LENGTH: usize = ACCOUNT_ROOT_KEY_LENGTH + 16;
 pub const ARK_ENVELOPE_LENGTH: usize = 336;
 const ARK_ENVELOPE_SIGNATURE_LENGTH: usize = 64;
 const DEVICE_STATE_MAGIC: [u8; 4] = *b"KDST";
-pub const DEVICE_STATE_VERSION: u16 = 1;
+pub const DEVICE_STATE_VERSION: u16 = 2;
 pub const DEVICE_STATE_SUITE_ID: u16 = 1;
 const DEVICE_STATE_FLAG_ARK_PRESENT: u16 = 1;
 const DEVICE_STATE_SUPPORTED_FLAGS: u16 = DEVICE_STATE_FLAG_ARK_PRESENT;
 const DEVICE_STATE_RESERVED: u16 = 0;
 const DEVICE_STATE_HEADER_LENGTH: usize = 12;
-const DEVICE_STATE_METADATA_LENGTH: usize = 40;
+const DEVICE_STATE_METADATA_LENGTH: usize = 44;
 const DEVICE_STATE_NONCE_LENGTH: usize = 24;
-const DEVICE_STATE_SECRET_LENGTH: usize = DEVICE_PRIVATE_KEY_LENGTH * 2 + ACCOUNT_ROOT_KEY_LENGTH;
+pub const ACCOUNT_ROOT_KEYRING_CAPACITY: usize = 8;
+const DEVICE_STATE_ARK_ENTRY_LENGTH: usize = size_of::<u32>() + ACCOUNT_ROOT_KEY_LENGTH;
+const DEVICE_STATE_IDENTITY_SECRET_LENGTH: usize = DEVICE_PRIVATE_KEY_LENGTH * 2;
+const DEVICE_STATE_SECRET_LENGTH: usize = DEVICE_STATE_IDENTITY_SECRET_LENGTH
+    + ACCOUNT_ROOT_KEYRING_CAPACITY * DEVICE_STATE_ARK_ENTRY_LENGTH;
 const DEVICE_STATE_TAG_LENGTH: usize = 16;
 const DEVICE_STATE_DEVICE_ID_OFFSET: usize = DEVICE_STATE_HEADER_LENGTH;
 const DEVICE_STATE_KEY_VERSION_OFFSET: usize = DEVICE_STATE_DEVICE_ID_OFFSET + UUID_LENGTH;
 const DEVICE_STATE_USER_ID_OFFSET: usize = DEVICE_STATE_KEY_VERSION_OFFSET + size_of::<u32>();
 const DEVICE_STATE_KEY_EPOCH_OFFSET: usize = DEVICE_STATE_USER_ID_OFFSET + UUID_LENGTH;
+const DEVICE_STATE_KEY_COUNT_OFFSET: usize = DEVICE_STATE_KEY_EPOCH_OFFSET + size_of::<u32>();
 const DEVICE_STATE_NONCE_OFFSET: usize = DEVICE_STATE_HEADER_LENGTH + DEVICE_STATE_METADATA_LENGTH;
 const DEVICE_STATE_CIPHERTEXT_OFFSET: usize = DEVICE_STATE_NONCE_OFFSET + DEVICE_STATE_NONCE_LENGTH;
 const DEVICE_STATE_TAG_OFFSET: usize = DEVICE_STATE_CIPHERTEXT_OFFSET + DEVICE_STATE_SECRET_LENGTH;
@@ -103,8 +108,8 @@ const _: () = {
     assert!(PROOF_ENVELOPE_HASH_OFFSET + SHA256_DIGEST_LENGTH == DEVICE_PROOF_MESSAGE_LENGTH);
     assert!(ARK_ENCAPSULATED_KEY_OFFSET == 192);
     assert!(ARK_SIGNATURE_OFFSET + ARK_ENVELOPE_SIGNATURE_LENGTH == ARK_ENVELOPE_LENGTH);
-    assert!(DEVICE_STATE_KEY_EPOCH_OFFSET + size_of::<u32>() == DEVICE_STATE_NONCE_OFFSET);
-    assert!(DEVICE_STATE_BLOB_LENGTH == 188);
+    assert!(DEVICE_STATE_KEY_COUNT_OFFSET + size_of::<u32>() == DEVICE_STATE_NONCE_OFFSET);
+    assert!(DEVICE_STATE_BLOB_LENGTH == 448);
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -125,6 +130,10 @@ pub enum DeviceCryptoError {
     DeviceProofBindingMismatch,
     DeviceProofSignatureInvalid,
     InvalidKeyEpoch,
+    ArkKeyEpochNotFound,
+    ArkKeyEpochNotIncreasing,
+    ArkKeyringCapacityExceeded,
+    ArkCurrentEpochRemoval,
     InvalidArkEnvelopeMagic,
     UnsupportedArkEnvelopeVersion(u16),
     UnsupportedArkEnvelopeSuite(u16),
@@ -188,6 +197,12 @@ impl fmt::Display for DeviceCryptoError {
             }
             Self::DeviceProofSignatureInvalid => formatter.write_str("设备证明签名无效"),
             Self::InvalidKeyEpoch => formatter.write_str("ARK 密钥代次无效"),
+            Self::ArkKeyEpochNotFound => formatter.write_str("ARK 密钥环中不存在指定代次"),
+            Self::ArkKeyEpochNotIncreasing => {
+                formatter.write_str("新增 ARK 代次必须严格大于当前代次")
+            }
+            Self::ArkKeyringCapacityExceeded => formatter.write_str("ARK 密钥环已达到容量上限"),
+            Self::ArkCurrentEpochRemoval => formatter.write_str("不得移除当前 ARK 代次"),
             Self::InvalidArkEnvelopeMagic => formatter.write_str("ARK 信封魔数无效"),
             Self::UnsupportedArkEnvelopeVersion(version) => {
                 write!(formatter, "不支持的 ARK 信封版本：{version}")
@@ -972,6 +987,84 @@ impl Drop for AccountRootKey {
     }
 }
 
+struct AccountRootKeyEpoch {
+    epoch: u32,
+    key: AccountRootKey,
+}
+
+pub struct AccountRootKeyring {
+    entries: Vec<AccountRootKeyEpoch>,
+}
+
+impl AccountRootKeyring {
+    pub fn new(epoch: u32, key: AccountRootKey) -> Result<Self, DeviceCryptoError> {
+        if epoch == 0 {
+            return Err(DeviceCryptoError::InvalidKeyEpoch);
+        }
+        Ok(Self {
+            entries: vec![AccountRootKeyEpoch { epoch, key }],
+        })
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn current_epoch(&self) -> u32 {
+        self.entries
+            .last()
+            .expect("ARK 密钥环构造后始终至少保留当前代次")
+            .epoch
+    }
+
+    pub fn key_for_epoch(&self, epoch: u32) -> Result<&AccountRootKey, DeviceCryptoError> {
+        if epoch == 0 {
+            return Err(DeviceCryptoError::InvalidKeyEpoch);
+        }
+        self.entries
+            .binary_search_by_key(&epoch, |entry| entry.epoch)
+            .map(|index| &self.entries[index].key)
+            .map_err(|_| DeviceCryptoError::ArkKeyEpochNotFound)
+    }
+
+    pub fn entries(&self) -> impl ExactSizeIterator<Item = (u32, &AccountRootKey)> {
+        self.entries.iter().map(|entry| (entry.epoch, &entry.key))
+    }
+
+    pub fn add_current(
+        &mut self,
+        epoch: u32,
+        key: AccountRootKey,
+    ) -> Result<(), DeviceCryptoError> {
+        if epoch == 0 {
+            return Err(DeviceCryptoError::InvalidKeyEpoch);
+        }
+        if self.entries.len() >= ACCOUNT_ROOT_KEYRING_CAPACITY {
+            return Err(DeviceCryptoError::ArkKeyringCapacityExceeded);
+        }
+        if epoch <= self.current_epoch() {
+            return Err(DeviceCryptoError::ArkKeyEpochNotIncreasing);
+        }
+        self.entries.push(AccountRootKeyEpoch { epoch, key });
+        Ok(())
+    }
+
+    pub fn prune(&mut self, epoch: u32) -> Result<(), DeviceCryptoError> {
+        if epoch == 0 {
+            return Err(DeviceCryptoError::InvalidKeyEpoch);
+        }
+        if epoch == self.current_epoch() {
+            return Err(DeviceCryptoError::ArkCurrentEpochRemoval);
+        }
+        let index = self
+            .entries
+            .binary_search_by_key(&epoch, |entry| entry.epoch)
+            .map_err(|_| DeviceCryptoError::ArkKeyEpochNotFound)?;
+        self.entries.remove(index);
+        Ok(())
+    }
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub struct ArkEnvelopeBinding {
     pub user_id: UserId,
@@ -1246,7 +1339,7 @@ impl DeviceStateBlob {
         &self.0
     }
 
-    fn authenticated_binding(&self) -> Result<DeviceStateBinding, DeviceCryptoError> {
+    fn authenticated_binding(&self) -> Result<(DeviceStateBinding, usize), DeviceCryptoError> {
         let flags = u16::from_be_bytes(copy_array(&self.0[8..10]));
         let device_id = DeviceId::new(copy_array(
             &self.0[DEVICE_STATE_DEVICE_ID_OFFSET..DEVICE_STATE_KEY_VERSION_OFFSET],
@@ -1260,27 +1353,33 @@ impl DeviceStateBlob {
         let user_id_bytes =
             copy_array(&self.0[DEVICE_STATE_USER_ID_OFFSET..DEVICE_STATE_KEY_EPOCH_OFFSET]);
         let key_epoch = u32::from_be_bytes(copy_array(
-            &self.0[DEVICE_STATE_KEY_EPOCH_OFFSET..DEVICE_STATE_NONCE_OFFSET],
+            &self.0[DEVICE_STATE_KEY_EPOCH_OFFSET..DEVICE_STATE_KEY_COUNT_OFFSET],
         ));
+        let key_count = u32::from_be_bytes(copy_array(
+            &self.0[DEVICE_STATE_KEY_COUNT_OFFSET..DEVICE_STATE_NONCE_OFFSET],
+        )) as usize;
         let account = if flags & DEVICE_STATE_FLAG_ARK_PRESENT != 0 {
-            if key_epoch == 0 {
-                return Err(DeviceCryptoError::InvalidKeyEpoch);
+            if key_epoch == 0 || !(1..=ACCOUNT_ROOT_KEYRING_CAPACITY).contains(&key_count) {
+                return Err(DeviceCryptoError::DeviceStateBindingMismatch);
             }
             Some(DeviceStateAccountBinding {
                 user_id: UserId::new(user_id_bytes)?,
                 key_epoch,
             })
         } else {
-            if user_id_bytes != [0; UUID_LENGTH] || key_epoch != 0 {
+            if user_id_bytes != [0; UUID_LENGTH] || key_epoch != 0 || key_count != 0 {
                 return Err(DeviceCryptoError::DeviceStateBindingMismatch);
             }
             None
         };
-        Ok(DeviceStateBinding {
-            device_id,
-            key_version,
-            account,
-        })
+        Ok((
+            DeviceStateBinding {
+                device_id,
+                key_version,
+                account,
+            },
+            key_count,
+        ))
     }
 }
 
@@ -1288,7 +1387,7 @@ pub fn seal_device_state<R>(
     rng: &mut R,
     state_key: &[u8; DEVICE_STATE_KEY_LENGTH],
     identity: &DeviceIdentity,
-    ark: Option<&AccountRootKey>,
+    keyring: Option<&AccountRootKeyring>,
     binding: DeviceStateBinding,
 ) -> Result<DeviceStateBlob, DeviceCryptoError>
 where
@@ -1297,7 +1396,7 @@ where
     if binding.key_version == 0 {
         return Err(DeviceCryptoError::InvalidDeviceKeyVersion);
     }
-    if ark.is_some() != binding.account.is_some() {
+    if keyring.is_some() != binding.account.is_some() {
         return Err(DeviceCryptoError::DeviceStateBindingMismatch);
     }
 
@@ -1317,13 +1416,16 @@ where
     bytes[DEVICE_STATE_KEY_VERSION_OFFSET..DEVICE_STATE_USER_ID_OFFSET]
         .copy_from_slice(&binding.key_version.to_be_bytes());
     if let Some(account) = binding.account {
-        if account.key_epoch == 0 {
-            return Err(DeviceCryptoError::InvalidKeyEpoch);
+        let keyring = keyring.expect("账户绑定已与 ARK 密钥环存在性匹配");
+        if account.key_epoch == 0 || account.key_epoch != keyring.current_epoch() {
+            return Err(DeviceCryptoError::DeviceStateBindingMismatch);
         }
         bytes[DEVICE_STATE_USER_ID_OFFSET..DEVICE_STATE_KEY_EPOCH_OFFSET]
             .copy_from_slice(account.user_id.as_bytes());
-        bytes[DEVICE_STATE_KEY_EPOCH_OFFSET..DEVICE_STATE_NONCE_OFFSET]
+        bytes[DEVICE_STATE_KEY_EPOCH_OFFSET..DEVICE_STATE_KEY_COUNT_OFFSET]
             .copy_from_slice(&account.key_epoch.to_be_bytes());
+        bytes[DEVICE_STATE_KEY_COUNT_OFFSET..DEVICE_STATE_NONCE_OFFSET]
+            .copy_from_slice(&(keyring.len() as u32).to_be_bytes());
     }
 
     let mut nonce_bytes = [0_u8; DEVICE_STATE_NONCE_LENGTH];
@@ -1333,10 +1435,17 @@ where
 
     let mut plaintext = Zeroizing::new([0_u8; DEVICE_STATE_SECRET_LENGTH]);
     plaintext[..DEVICE_PRIVATE_KEY_LENGTH].copy_from_slice(&identity.signing.0);
-    plaintext[DEVICE_PRIVATE_KEY_LENGTH..DEVICE_PRIVATE_KEY_LENGTH * 2]
+    plaintext[DEVICE_PRIVATE_KEY_LENGTH..DEVICE_STATE_IDENTITY_SECRET_LENGTH]
         .copy_from_slice(&identity.key_agreement.0);
-    if let Some(ark) = ark {
-        plaintext[DEVICE_PRIVATE_KEY_LENGTH * 2..].copy_from_slice(&ark.0);
+    if let Some(keyring) = keyring {
+        for (index, (epoch, key)) in keyring.entries().enumerate() {
+            let entry_offset =
+                DEVICE_STATE_IDENTITY_SECRET_LENGTH + index * DEVICE_STATE_ARK_ENTRY_LENGTH;
+            let key_offset = entry_offset + size_of::<u32>();
+            plaintext[entry_offset..key_offset].copy_from_slice(&epoch.to_be_bytes());
+            plaintext[key_offset..key_offset + ACCOUNT_ROOT_KEY_LENGTH]
+                .copy_from_slice(key.as_bytes());
+        }
     }
 
     let cipher = XChaCha20Poly1305::new_from_slice(state_key)
@@ -1358,7 +1467,14 @@ where
 pub fn open_device_state(
     state_key: &[u8; DEVICE_STATE_KEY_LENGTH],
     blob: &DeviceStateBlob,
-) -> Result<(DeviceStateBinding, DeviceIdentity, Option<AccountRootKey>), DeviceCryptoError> {
+) -> Result<
+    (
+        DeviceStateBinding,
+        DeviceIdentity,
+        Option<AccountRootKeyring>,
+    ),
+    DeviceCryptoError,
+> {
     let nonce_bytes: [u8; DEVICE_STATE_NONCE_LENGTH] = blob.0
         [DEVICE_STATE_NONCE_OFFSET..DEVICE_STATE_CIPHERTEXT_OFFSET]
         .try_into()
@@ -1381,23 +1497,53 @@ pub fn open_device_state(
         .map_err(|_| DeviceCryptoError::DeviceStateAuthenticationFailed)?;
 
     // 元数据与秘密使用同一 AEAD tag；认证前不得把 clear metadata 提升为可信绑定。
-    let binding = blob.authenticated_binding()?;
+    let (binding, key_count) = blob.authenticated_binding()?;
 
     let signing_seed = Zeroizing::new(copy_array(&plaintext[..DEVICE_PRIVATE_KEY_LENGTH]));
     let key_agreement_bytes = Zeroizing::new(copy_array(
-        &plaintext[DEVICE_PRIVATE_KEY_LENGTH..DEVICE_PRIVATE_KEY_LENGTH * 2],
+        &plaintext[DEVICE_PRIVATE_KEY_LENGTH..DEVICE_STATE_IDENTITY_SECRET_LENGTH],
     ));
-    let ark_bytes = Zeroizing::new(copy_array(&plaintext[DEVICE_PRIVATE_KEY_LENGTH * 2..]));
     let identity = DeviceIdentity::from_private_bytes(*signing_seed, *key_agreement_bytes)?;
-    let ark = if binding.account.is_some() {
-        Some(AccountRootKey::from_bytes(*ark_bytes))
+    let keyring_bytes = &plaintext[DEVICE_STATE_IDENTITY_SECRET_LENGTH..];
+    let keyring = if let Some(account) = binding.account {
+        let mut keyring: Option<AccountRootKeyring> = None;
+        for index in 0..key_count {
+            let entry_offset = index * DEVICE_STATE_ARK_ENTRY_LENGTH;
+            let key_offset = entry_offset + size_of::<u32>();
+            let epoch = u32::from_be_bytes(copy_array(&keyring_bytes[entry_offset..key_offset]));
+            let key = AccountRootKey::from_bytes(copy_array(
+                &keyring_bytes[key_offset..key_offset + ACCOUNT_ROOT_KEY_LENGTH],
+            ));
+            match keyring.as_mut() {
+                Some(keyring) => keyring
+                    .add_current(epoch, key)
+                    .map_err(|_| DeviceCryptoError::DeviceStateBindingMismatch)?,
+                None => {
+                    keyring = Some(
+                        AccountRootKeyring::new(epoch, key)
+                            .map_err(|_| DeviceCryptoError::DeviceStateBindingMismatch)?,
+                    )
+                }
+            }
+        }
+        if keyring_bytes[key_count * DEVICE_STATE_ARK_ENTRY_LENGTH..]
+            .iter()
+            .any(|byte| *byte != 0)
+        {
+            return Err(DeviceCryptoError::DeviceStateBindingMismatch);
+        }
+        let keyring = keyring.ok_or(DeviceCryptoError::DeviceStateBindingMismatch)?;
+        if keyring.current_epoch() != account.key_epoch {
+            return Err(DeviceCryptoError::DeviceStateBindingMismatch);
+        }
+        Some(keyring)
     } else {
-        if *ark_bytes != [0; ACCOUNT_ROOT_KEY_LENGTH] {
+        if keyring_bytes.iter().any(|byte| *byte != 0) {
             return Err(DeviceCryptoError::DeviceStateAuthenticationFailed);
         }
         None
     };
-    Ok((binding, identity, ark))
+    Ok((binding, identity, keyring))
 }
 
 struct HpkeRngAdapter<'a, R>(&'a mut R);
@@ -2524,20 +2670,36 @@ mod tests {
         assert_eq!(reopened_identity.public_keys(), public_keys);
         assert!(reopened_ark.is_none());
 
-        let ark = AccountRootKey::from_bytes([0x55; ACCOUNT_ROOT_KEY_LENGTH]);
+        let mut keyring = AccountRootKeyring::new(
+            3,
+            AccountRootKey::from_bytes([0x33; ACCOUNT_ROOT_KEY_LENGTH]),
+        )
+        .expect("首个 ARK 代次应有效");
+        keyring
+            .add_current(
+                7,
+                AccountRootKey::from_bytes([0x55; ACCOUNT_ROOT_KEY_LENGTH]),
+            )
+            .expect("更高 ARK 代次应可加入");
+        keyring
+            .add_current(
+                9,
+                AccountRootKey::from_bytes([0x77; ACCOUNT_ROOT_KEY_LENGTH]),
+            )
+            .expect("当前 ARK 代次应可推进");
         let installed_binding = DeviceStateBinding {
             device_id: pending_binding.device_id,
             key_version: pending_binding.key_version,
             account: Some(DeviceStateAccountBinding {
                 user_id: UserId::new(uuid_v4(2)).expect("用户 UUID 应有效"),
-                key_epoch: 7,
+                key_epoch: 9,
             }),
         };
         let installed = seal_device_state(
             &mut TestRng(2),
             &state_key,
             &reopened_identity,
-            Some(&ark),
+            Some(&keyring),
             installed_binding,
         )
         .expect("安装 ARK 后应可重封");
@@ -2545,11 +2707,34 @@ mod tests {
             u16::from_be_bytes(copy_array(&installed.as_bytes()[8..10])),
             DEVICE_STATE_FLAG_ARK_PRESENT
         );
-        let (reopened_installed_binding, installed_identity, installed_ark) =
+        let (reopened_installed_binding, installed_identity, installed_keyring) =
             open_device_state(&state_key, &installed).expect("完整状态应可重开");
         assert_eq!(reopened_installed_binding, installed_binding);
         assert_eq!(installed_identity.public_keys(), public_keys);
-        assert_eq!(installed_ark.expect("完整状态必须产生 ARK").0, ark.0);
+        let installed_keyring = installed_keyring.expect("完整状态必须产生 ARK 密钥环");
+        assert_eq!(installed_keyring.len(), 3);
+        assert_eq!(installed_keyring.current_epoch(), 9);
+        assert_eq!(
+            installed_keyring
+                .key_for_epoch(3)
+                .expect("旧代次必须保留")
+                .as_bytes(),
+            &[0x33; ACCOUNT_ROOT_KEY_LENGTH]
+        );
+        assert_eq!(
+            installed_keyring
+                .key_for_epoch(7)
+                .expect("中间代次必须保留")
+                .as_bytes(),
+            &[0x55; ACCOUNT_ROOT_KEY_LENGTH]
+        );
+        assert_eq!(
+            installed_keyring
+                .key_for_epoch(9)
+                .expect("当前代次必须保留")
+                .as_bytes(),
+            &[0x77; ACCOUNT_ROOT_KEY_LENGTH]
+        );
 
         let mut tampered = *installed.as_bytes();
         tampered[DEVICE_STATE_CIPHERTEXT_OFFSET] ^= 1;
@@ -2570,6 +2755,56 @@ mod tests {
         assert!(matches!(
             open_device_state(&[0x92; DEVICE_STATE_KEY_LENGTH], &installed),
             Err(DeviceCryptoError::DeviceStateAuthenticationFailed)
+        ));
+        assert!(matches!(
+            DeviceStateBlob::from_bytes(&[0_u8; 188]),
+            Err(DeviceCryptoError::InvalidDeviceStateLength {
+                expected: DEVICE_STATE_BLOB_LENGTH,
+                actual: 188,
+            })
+        ));
+    }
+
+    #[test]
+    fn account_root_keyring_enforces_rotation_and_pruning_boundaries() {
+        let mut keyring =
+            AccountRootKeyring::new(1, AccountRootKey::from_bytes([1; ACCOUNT_ROOT_KEY_LENGTH]))
+                .expect("首个正代次应有效");
+        assert!(matches!(
+            keyring.add_current(1, AccountRootKey::from_bytes([2; ACCOUNT_ROOT_KEY_LENGTH])),
+            Err(DeviceCryptoError::ArkKeyEpochNotIncreasing)
+        ));
+        assert!(matches!(
+            keyring.add_current(0, AccountRootKey::from_bytes([2; ACCOUNT_ROOT_KEY_LENGTH])),
+            Err(DeviceCryptoError::InvalidKeyEpoch)
+        ));
+        for epoch in 2..=ACCOUNT_ROOT_KEYRING_CAPACITY as u32 {
+            keyring
+                .add_current(
+                    epoch,
+                    AccountRootKey::from_bytes([epoch as u8; ACCOUNT_ROOT_KEY_LENGTH]),
+                )
+                .expect("容量内的严格递增代次应成功");
+        }
+        assert!(matches!(
+            keyring.add_current(
+                ACCOUNT_ROOT_KEYRING_CAPACITY as u32 + 1,
+                AccountRootKey::from_bytes([0xaa; ACCOUNT_ROOT_KEY_LENGTH]),
+            ),
+            Err(DeviceCryptoError::ArkKeyringCapacityExceeded)
+        ));
+        assert!(matches!(
+            keyring.prune(keyring.current_epoch()),
+            Err(DeviceCryptoError::ArkCurrentEpochRemoval)
+        ));
+        assert!(matches!(
+            keyring.prune(99),
+            Err(DeviceCryptoError::ArkKeyEpochNotFound)
+        ));
+        keyring.prune(1).expect("旧代次应可移除");
+        assert!(matches!(
+            keyring.key_for_epoch(1),
+            Err(DeviceCryptoError::ArkKeyEpochNotFound)
         ));
     }
 }

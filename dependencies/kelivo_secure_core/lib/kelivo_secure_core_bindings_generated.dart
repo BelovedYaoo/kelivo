@@ -553,8 +553,9 @@ external int kelivo_pending_pairing_bind(
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_pending_pairing_handle_close(int pending_handle);
 
-@ffi.Native<KelivoStatus Function(ffi.Pointer<ffi.Uint64>)>()
+@ffi.Native<KelivoStatus Function(ffi.Uint32, ffi.Pointer<ffi.Uint64>)>()
 external int kelivo_account_root_key_generate(
+  int key_epoch,
   ffi.Pointer<ffi.Uint64> out_handle,
 );
 
@@ -579,6 +580,18 @@ external int kelivo_account_record_id_derive(
 
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_account_root_key_handle_close(int ark_handle);
+
+@ffi.Native<KelivoStatus Function(ffi.Uint64, ffi.Uint64)>()
+external int kelivo_account_root_keyring_add_epoch(
+  int target_ark_handle,
+  int source_ark_handle,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Uint64, ffi.Uint32)>()
+external int kelivo_account_root_keyring_prune_epoch(
+  int ark_handle,
+  int key_epoch,
+);
 
 @ffi.Native<
   KelivoStatus Function(
@@ -1025,7 +1038,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 9;
+const int KELIVO_CORE_ABI_VERSION = 10;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -1201,7 +1214,9 @@ const int KELIVO_REGISTRATION_FINISH_BUNDLE_SIZE = 400;
 
 const int KELIVO_PAIRING_APPROVAL_BUNDLE_SIZE = 432;
 
-const int KELIVO_DEVICE_STATE_BLOB_SIZE = 188;
+const int KELIVO_ACCOUNT_ROOT_KEYRING_CAPACITY = 8;
+
+const int KELIVO_DEVICE_STATE_BLOB_SIZE = 448;
 
 const int KELIVO_DEVICE_STATE_BINDING_STRUCT_SIZE = 48;
 

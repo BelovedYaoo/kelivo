@@ -128,7 +128,10 @@ void main() {
     const baseUrl = 'https://kelivo.bemylover.top';
     const loginName = 'alice.private@example.com';
     final state = Uint8List.fromList(
-      List<int>.generate(188, (index) => index & 0xff),
+      List<int>.generate(
+        DeviceStateBlobStore.blobLength,
+        (index) => index & 0xff,
+      ),
     );
 
     expect(
@@ -549,8 +552,10 @@ void main() {
 
   test('设备状态删除只清理指定身份且删除后与损坏严格区分', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
-    final first = Uint8List(188)..fillRange(0, 188, 0x11);
-    final second = Uint8List(188)..fillRange(0, 188, 0x22);
+    final first = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x11);
+    final second = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x22);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'alice',
@@ -585,7 +590,8 @@ void main() {
 
   test('设备状态删除发布tombstone后遇路径异常仍不得复活', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
-    final state = Uint8List(188)..fillRange(0, 188, 0x23);
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x23);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'unsafe-delete',
@@ -620,7 +626,8 @@ void main() {
   });
 
   test('设备状态删除发布第二代tombstone后清理中断不得复活旧代', () async {
-    final state = Uint8List(188)..fillRange(0, 188, 0x24);
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x24);
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
@@ -668,7 +675,8 @@ void main() {
     );
     await beforeRoot.create();
     await afterRenameRoot.create();
-    final state = Uint8List(188)..fillRange(0, 188, 0x25);
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x25);
     final beforeStore = DeviceStateBlobStore(installationRoot: beforeRoot);
     await beforeStore.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
@@ -735,7 +743,12 @@ void main() {
       await store.write(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'cleanup-$failOnCleanupSync',
-        blob: Uint8List(188)..fillRange(0, 188, 0x25 + failOnCleanupSync),
+        blob: Uint8List(DeviceStateBlobStore.blobLength)
+          ..fillRange(
+            0,
+            DeviceStateBlobStore.blobLength,
+            0x25 + failOnCleanupSync,
+          ),
       );
 
       await expectLater(
@@ -774,7 +787,8 @@ void main() {
     await corruptStore.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'corrupt-tombstone',
-      blob: Uint8List(188)..fillRange(0, 188, 0x28),
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x28),
     );
     await corruptStore.delete(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
@@ -800,7 +814,8 @@ void main() {
       corruptStore.write(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'corrupt-tombstone',
-        blob: Uint8List(188)..fillRange(0, 188, 0x29),
+        blob: Uint8List(DeviceStateBlobStore.blobLength)
+          ..fillRange(0, DeviceStateBlobStore.blobLength, 0x29),
       ),
       throwsA(isA<FormatException>()),
     );
@@ -820,7 +835,8 @@ void main() {
     await maximumStore.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'maximum-tombstone',
-      blob: Uint8List(188)..fillRange(0, 188, 0x2a),
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x2a),
     );
     await maximumStore.delete(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
@@ -846,7 +862,8 @@ void main() {
       maximumStore.write(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'maximum-tombstone',
-        blob: Uint8List(188)..fillRange(0, 188, 0x2b),
+        blob: Uint8List(DeviceStateBlobStore.blobLength)
+          ..fillRange(0, DeviceStateBlobStore.blobLength, 0x2b),
       ),
       throwsA(isA<StateError>()),
     );
@@ -862,8 +879,10 @@ void main() {
 
   test('设备状态重建清除tombstone的目录屏障失败时只暴露新代', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
-    final oldState = Uint8List(188)..fillRange(0, 188, 0x2c);
-    final newState = Uint8List(188)..fillRange(0, 188, 0x2d);
+    final oldState = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x2c);
+    final newState = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x2d);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'tombstone-clear-failure',
@@ -896,13 +915,13 @@ void main() {
     );
   });
 
-  test('设备状态只接受188字节且不同规范身份拥有独立代次', () async {
+  test('设备状态硬切448字节并拒绝v1状态且不同规范身份拥有独立代次', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     expect(
       () => store.write(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'alice',
-        blob: Uint8List(187),
+        blob: Uint8List(188),
       ),
       throwsA(isA<FormatException>()),
     );
@@ -910,15 +929,27 @@ void main() {
       () => store.write(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'alice',
-        blob: Uint8List(189),
+        blob: Uint8List(DeviceStateBlobStore.blobLength - 1),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    expect(
+      () => store.write(
+        normalizedBaseUrl: 'https://kelivo.bemylover.top',
+        normalizedLoginName: 'alice',
+        blob: Uint8List(DeviceStateBlobStore.blobLength + 1),
       ),
       throwsA(isA<FormatException>()),
     );
 
-    final first = Uint8List(188)..fillRange(0, 188, 0x31);
-    final second = Uint8List(188)..fillRange(0, 188, 0x32);
-    final third = Uint8List(188)..fillRange(0, 188, 0x33);
-    final otherIdentity = Uint8List(188)..fillRange(0, 188, 0x44);
+    final first = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x31);
+    final second = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x32);
+    final third = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x33);
+    final otherIdentity = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x44);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'alice',
@@ -958,8 +989,10 @@ void main() {
 
   test('设备状态当前manifest或slot损坏时拒绝回退旧代', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
-    final first = Uint8List(188)..fillRange(0, 188, 0x51);
-    final second = Uint8List(188)..fillRange(0, 188, 0x52);
+    final first = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x51);
+    final second = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x52);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'manifest-corrupt',
@@ -990,7 +1023,8 @@ void main() {
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'manifest-corrupt',
     );
-    final state = Uint8List(188)..fillRange(0, 188, 0x61);
+    final state = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x61);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'manifest-corrupt',
@@ -1015,8 +1049,10 @@ void main() {
   });
 
   test('设备状态slot持久化但manifest发布失败时仍读取旧代', () async {
-    final first = Uint8List(188)..fillRange(0, 188, 0x71);
-    final second = Uint8List(188)..fillRange(0, 188, 0x72);
+    final first = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x71);
+    final second = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x72);
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
@@ -1062,8 +1098,10 @@ void main() {
   });
 
   test('设备状态写入不使用可预测固定临时路径', () async {
-    final first = Uint8List(188)..fillRange(0, 188, 0x73);
-    final second = Uint8List(188)..fillRange(0, 188, 0x74);
+    final first = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x73);
+    final second = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x74);
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
@@ -1097,7 +1135,8 @@ void main() {
       store.write(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'unpredictable-temporary',
-        blob: Uint8List(188)..fillRange(0, 188, 0x75),
+        blob: Uint8List(DeviceStateBlobStore.blobLength)
+          ..fillRange(0, DeviceStateBlobStore.blobLength, 0x75),
       ),
       throwsA(isA<StateError>()),
     );
@@ -1117,7 +1156,8 @@ void main() {
     await lockStore.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'unsafe-lock',
-      blob: Uint8List(188)..fillRange(0, 188, 0x75),
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x75),
     );
     final lockLocator = await _deviceStateLocatorDirectory(
       lockRoot,
@@ -1137,7 +1177,8 @@ void main() {
       lockStore.write(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'unsafe-lock',
-        blob: Uint8List(188)..fillRange(0, 188, 0x76),
+        blob: Uint8List(DeviceStateBlobStore.blobLength)
+          ..fillRange(0, DeviceStateBlobStore.blobLength, 0x76),
       ),
       throwsA(isA<StateError>()),
     );
@@ -1157,7 +1198,8 @@ void main() {
     await locatorStore.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'unsafe-locator',
-      blob: Uint8List(188)..fillRange(0, 188, 0x77),
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, 0x77),
     );
     final locator = await _deviceStateLocatorDirectory(
       locatorRoot,
@@ -1179,9 +1221,12 @@ void main() {
   });
 
   test('设备状态真实isolate并发写同一locator时由操作系统锁顺序提交', () async {
-    final initial = Uint8List(188)..fillRange(0, 188, 0x81);
-    final expectedSecondGeneration = Uint8List(188)..fillRange(0, 188, 0x82);
-    final expectedFinal = Uint8List(188)..fillRange(0, 188, 0x83);
+    final initial = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x81);
+    final expectedSecondGeneration = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x82);
+    final expectedFinal = Uint8List(DeviceStateBlobStore.blobLength)
+      ..fillRange(0, DeviceStateBlobStore.blobLength, 0x83);
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     await store.write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
@@ -1263,7 +1308,8 @@ void main() {
       await store.write(
         normalizedBaseUrl: 'https://kelivo.bemylover.top',
         normalizedLoginName: 'isolate-lock',
-        blob: Uint8List(188)..fillRange(0, 188, 0x81),
+        blob: Uint8List(DeviceStateBlobStore.blobLength)
+          ..fillRange(0, DeviceStateBlobStore.blobLength, 0x81),
       );
       final controls = Directory(p.join(root.path, 'controls'));
       await controls.create();
@@ -3659,7 +3705,8 @@ Future<void> _writeDeviceStateFromIsolate({
     ).write(
       normalizedBaseUrl: 'https://kelivo.bemylover.top',
       normalizedLoginName: 'isolate-lock',
-      blob: Uint8List(188)..fillRange(0, 188, value),
+      blob: Uint8List(DeviceStateBlobStore.blobLength)
+        ..fillRange(0, DeviceStateBlobStore.blobLength, value),
     );
     await File(completedPath).writeAsString('completed', flush: true);
   } catch (error, stackTrace) {

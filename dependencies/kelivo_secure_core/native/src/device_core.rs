@@ -109,8 +109,9 @@ fn identity_registry() -> &'static Mutex<SecretRegistry<crypto::DeviceIdentity>>
     REGISTRY.get_or_init(|| Mutex::new(SecretRegistry::default()))
 }
 
-fn ark_registry() -> &'static Mutex<SecretRegistry<crypto::AccountRootKey>> {
-    static REGISTRY: OnceLock<Mutex<SecretRegistry<crypto::AccountRootKey>>> = OnceLock::new();
+fn ark_registry() -> &'static Mutex<SecretRegistry<Mutex<crypto::AccountRootKeyring>>> {
+    static REGISTRY: OnceLock<Mutex<SecretRegistry<Mutex<crypto::AccountRootKeyring>>>> =
+        OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(SecretRegistry::default()))
 }
 
@@ -390,22 +391,102 @@ fn close_identity(handle: u64) -> Result<(), KelivoStatus> {
     )
 }
 
-fn register_ark(ark: crypto::AccountRootKey) -> Result<u64, KelivoStatus> {
+fn register_ark(epoch: u32, ark: crypto::AccountRootKey) -> Result<u64, KelivoStatus> {
+    let keyring = crypto::AccountRootKeyring::new(epoch, ark).map_err(device_error_status)?;
+    register_keyring(keyring)
+}
+
+fn register_keyring(keyring: crypto::AccountRootKeyring) -> Result<u64, KelivoStatus> {
     register_secret(
         ark_registry(),
-        ark,
+        Mutex::new(keyring),
         ACCOUNT_ROOT_KEY_HANDLE_TAG,
         MAX_ACTIVE_ACCOUNT_ROOT_KEYS,
     )
 }
 
-pub(super) fn ark_for_handle(handle: u64) -> Result<Arc<crypto::AccountRootKey>, KelivoStatus> {
+fn keyring_for_handle(handle: u64) -> Result<Arc<Mutex<crypto::AccountRootKeyring>>, KelivoStatus> {
     secret_for_handle(
         ark_registry(),
         handle,
         ACCOUNT_ROOT_KEY_HANDLE_TAG,
         KelivoStatus::InvalidAccountRootKeyHandle,
     )
+}
+
+pub(super) fn ark_for_handle(
+    handle: u64,
+    epoch: u32,
+) -> Result<crypto::AccountRootKey, KelivoStatus> {
+    let keyring = keyring_for_handle(handle)?;
+    let keyring = keyring.lock().map_err(|_| KelivoStatus::InternalState)?;
+    let key = keyring
+        .key_for_epoch(epoch)
+        .map_err(|_| KelivoStatus::InvalidArgument)?;
+    Ok(crypto::AccountRootKey::from_bytes(*key.as_bytes()))
+}
+
+fn current_ark_for_handle(handle: u64) -> Result<crypto::AccountRootKey, KelivoStatus> {
+    let keyring = keyring_for_handle(handle)?;
+    let keyring = keyring.lock().map_err(|_| KelivoStatus::InternalState)?;
+    let key = keyring
+        .key_for_epoch(keyring.current_epoch())
+        .map_err(|_| KelivoStatus::InternalState)?;
+    Ok(crypto::AccountRootKey::from_bytes(*key.as_bytes()))
+}
+
+fn keyring_snapshot_for_handle(
+    handle: u64,
+    expected_current_epoch: u32,
+) -> Result<crypto::AccountRootKeyring, KelivoStatus> {
+    let keyring = keyring_for_handle(handle)?;
+    let keyring = keyring.lock().map_err(|_| KelivoStatus::InternalState)?;
+    if keyring.current_epoch() != expected_current_epoch {
+        return Err(KelivoStatus::DeviceStateInvalid);
+    }
+    let mut entries = keyring.entries();
+    let (first_epoch, first_key) = entries.next().ok_or(KelivoStatus::InternalState)?;
+    let mut snapshot = crypto::AccountRootKeyring::new(
+        first_epoch,
+        crypto::AccountRootKey::from_bytes(*first_key.as_bytes()),
+    )
+    .map_err(device_error_status)?;
+    for (epoch, key) in entries {
+        snapshot
+            .add_current(epoch, crypto::AccountRootKey::from_bytes(*key.as_bytes()))
+            .map_err(device_error_status)?;
+    }
+    Ok(snapshot)
+}
+
+fn merge_ark_epoch(target_handle: u64, source_handle: u64) -> Result<(), KelivoStatus> {
+    if target_handle == source_handle {
+        return Err(KelivoStatus::InvalidArgument);
+    }
+    let source = keyring_for_handle(source_handle)?;
+    let (epoch, key) = {
+        let source = source.lock().map_err(|_| KelivoStatus::InternalState)?;
+        if source.len() != 1 {
+            return Err(KelivoStatus::InvalidArgument);
+        }
+        let (epoch, key) = source.entries().next().ok_or(KelivoStatus::InternalState)?;
+        (epoch, crypto::AccountRootKey::from_bytes(*key.as_bytes()))
+    };
+    let target = keyring_for_handle(target_handle)?;
+    target
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?
+        .add_current(epoch, key)
+        .map_err(|_| KelivoStatus::InvalidArgument)
+}
+
+fn prune_ark_epoch(handle: u64, epoch: u32) -> Result<(), KelivoStatus> {
+    let keyring = keyring_for_handle(handle)?;
+    keyring
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?
+        .prune(epoch)
+        .map_err(|_| KelivoStatus::InvalidArgument)
 }
 
 fn close_ark(handle: u64) -> Result<(), KelivoStatus> {
@@ -486,6 +567,10 @@ fn device_error_status(error: crypto::DeviceCryptoError) -> KelivoStatus {
         | Error::InvalidDeviceProofLength { .. }
         | Error::InvalidDeviceProofSignatureLength { .. }
         | Error::InvalidKeyEpoch
+        | Error::ArkKeyEpochNotFound
+        | Error::ArkKeyEpochNotIncreasing
+        | Error::ArkKeyringCapacityExceeded
+        | Error::ArkCurrentEpochRemoval
         | Error::InvalidArkEnvelopeMagic
         | Error::UnsupportedArkEnvelopeVersion(_)
         | Error::UnsupportedArkEnvelopeSuite(_)
@@ -942,9 +1027,15 @@ pub extern "C" fn kelivo_pending_pairing_handle_close(pending_handle: u64) -> i3
 /// # Safety
 ///
 /// `out_handle` 必须指向可写的 `uint64_t`。
-pub unsafe extern "C" fn kelivo_account_root_key_generate(out_handle: *mut u64) -> i32 {
+pub unsafe extern "C" fn kelivo_account_root_key_generate(
+    key_epoch: u32,
+    out_handle: *mut u64,
+) -> i32 {
     if let Err(status) = unsafe { reset_handle(out_handle) } {
         return status.code();
+    }
+    if key_epoch == 0 {
+        return KelivoStatus::InvalidArgument.code();
     }
     let mut rng = match protocol::system_rng() {
         Ok(rng) => rng,
@@ -954,7 +1045,7 @@ pub unsafe extern "C" fn kelivo_account_root_key_generate(out_handle: *mut u64) 
         Ok(ark) => ark,
         Err(error) => return device_error_status(error).code(),
     };
-    let handle = match register_ark(ark) {
+    let handle = match register_ark(key_epoch, ark) {
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };
@@ -996,7 +1087,7 @@ pub unsafe extern "C" fn kelivo_account_record_id_derive(
             Ok(value) => value,
             Err(status) => return status.code(),
         };
-    let ark = match ark_for_handle(ark_handle) {
+    let ark = match current_ark_for_handle(ark_handle) {
         Ok(ark) => ark,
         Err(status) => return status.code(),
     };
@@ -1019,6 +1110,25 @@ pub unsafe extern "C" fn kelivo_account_record_id_derive(
 #[unsafe(no_mangle)]
 pub extern "C" fn kelivo_account_root_key_handle_close(ark_handle: u64) -> i32 {
     match close_ark(ark_handle) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kelivo_account_root_keyring_add_epoch(
+    target_ark_handle: u64,
+    source_ark_handle: u64,
+) -> i32 {
+    match merge_ark_epoch(target_ark_handle, source_ark_handle) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kelivo_account_root_keyring_prune_epoch(ark_handle: u64, key_epoch: u32) -> i32 {
+    match prune_ark_epoch(ark_handle, key_epoch) {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(status) => status.code(),
     }
@@ -1088,7 +1198,7 @@ pub unsafe extern "C" fn kelivo_account_root_key_envelope_seal(
         Ok(identity) => identity,
         Err(status) => return status.code(),
     };
-    let ark = match ark_for_handle(ark_handle) {
+    let ark = match ark_for_handle(ark_handle, key_epoch) {
         Ok(ark) => ark,
         Err(status) => return status.code(),
     };
@@ -1223,7 +1333,7 @@ pub unsafe extern "C" fn kelivo_account_root_key_envelope_open(
         Ok(ark) => ark,
         Err(error) => return device_error_status(error).code(),
     };
-    let ark_handle = match register_ark(ark) {
+    let ark_handle = match register_ark(key_epoch, ark) {
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };
@@ -1333,12 +1443,12 @@ unsafe fn read_optional_account_binding(
 fn seal_state_value(
     key: &LocalKey,
     identity: &crypto::DeviceIdentity,
-    ark: Option<&crypto::AccountRootKey>,
+    keyring: Option<&crypto::AccountRootKeyring>,
     binding: crypto::DeviceStateBinding,
 ) -> Result<crypto::DeviceStateBlob, KelivoStatus> {
     let state_key = derive_state_key(key)?;
     let mut rng = protocol::system_rng().map_err(|_| KelivoStatus::RandomSourceFailure)?;
-    crypto::seal_device_state(&mut rng, &state_key, identity, ark, binding)
+    crypto::seal_device_state(&mut rng, &state_key, identity, keyring, binding)
         .map_err(device_error_status)
 }
 
@@ -1383,16 +1493,16 @@ pub unsafe extern "C" fn kelivo_device_state_seal(
         Ok(identity) => identity,
         Err(status) => return status.code(),
     };
-    let ark = if ark_handle == INVALID_KEY_HANDLE {
+    let keyring = if ark_handle == INVALID_KEY_HANDLE {
         None
     } else {
-        match ark_for_handle(ark_handle) {
-            Ok(ark) => Some(ark),
+        match keyring_snapshot_for_handle(ark_handle, key_epoch) {
+            Ok(keyring) => Some(keyring),
             Err(status) => return status.code(),
         }
     };
     let binding = state_binding(device_id, key_version, account);
-    let blob = match seal_state_value(&key, &identity, ark.as_deref(), binding) {
+    let blob = match seal_state_value(&key, &identity, keyring.as_ref(), binding) {
         Ok(blob) => blob,
         Err(status) => return status.code(),
     };
@@ -1444,7 +1554,7 @@ pub unsafe extern "C" fn kelivo_device_state_open(
         Ok(key) => key,
         Err(status) => return status.code(),
     };
-    let (binding, identity, ark) = match crypto::open_device_state(&state_key, &blob) {
+    let (binding, identity, keyring) = match crypto::open_device_state(&state_key, &blob) {
         Ok(opened) => opened,
         Err(error) => return device_error_status(error).code(),
     };
@@ -1454,8 +1564,8 @@ pub unsafe extern "C" fn kelivo_device_state_open(
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };
-    let ark_handle = match ark {
-        Some(ark) => match register_ark(ark) {
+    let ark_handle = match keyring {
+        Some(keyring) => match register_keyring(keyring) {
             Ok(handle) => handle,
             Err(status) => {
                 let _ = close_identity(identity_handle);
@@ -1542,7 +1652,7 @@ pub unsafe extern "C" fn kelivo_device_registration_finish_create(
         Ok(identity) => identity,
         Err(status) => return status.code(),
     };
-    let ark = match ark_for_handle(ark_handle) {
+    let ark = match ark_for_handle(ark_handle, key_epoch) {
         Ok(ark) => ark,
         Err(status) => return status.code(),
     };
@@ -1669,7 +1779,7 @@ pub unsafe extern "C" fn kelivo_device_pairing_approval_create(
         Ok(identity) => identity,
         Err(status) => return status.code(),
     };
-    let ark = match ark_for_handle(ark_handle) {
+    let ark = match ark_for_handle(ark_handle, key_epoch) {
         Ok(ark) => ark,
         Err(status) => return status.code(),
     };
@@ -1837,16 +1947,20 @@ pub unsafe extern "C" fn kelivo_device_pairing_approval_accept(
         Ok(ark) => ark,
         Err(error) => return device_error_status(error).code(),
     };
+    let keyring = match crypto::AccountRootKeyring::new(key_epoch, ark) {
+        Ok(keyring) => keyring,
+        Err(error) => return device_error_status(error).code(),
+    };
     let binding = state_binding(
         pending.target_device_id,
         pending.target_key_version,
         Some((bound.user_id, key_epoch)),
     );
-    let blob = match seal_state_value(&key, &identity, Some(&ark), binding) {
+    let blob = match seal_state_value(&key, &identity, Some(&keyring), binding) {
         Ok(blob) => blob,
         Err(status) => return status.code(),
     };
-    let ark_handle = match register_ark(ark) {
+    let ark_handle = match register_keyring(keyring) {
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };

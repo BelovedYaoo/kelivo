@@ -356,11 +356,15 @@ extension KelivoDeviceCore on KelivoSecureCore {
         invalidStatus: KelivoSecureCoreStatus.invalidDeviceIdentityHandle,
       );
 
-  Future<KelivoAccountRootKeyHandle> generateAccountRootKey() async {
+  Future<KelivoAccountRootKeyHandle> generateAccountRootKey({
+    required int keyEpoch,
+  }) async {
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
     final value = await Isolate.run(
       () => _generateDeviceHandle(
         operation: 'account_root_key_generate',
-        generate: native.kelivo_account_root_key_generate,
+        generate: (output) =>
+            native.kelivo_account_root_key_generate(keyEpoch, output),
       ),
     );
     return KelivoAccountRootKeyHandle._(value);
@@ -373,6 +377,47 @@ extension KelivoDeviceCore on KelivoSecureCore {
         close: native.kelivo_account_root_key_handle_close,
         invalidStatus: KelivoSecureCoreStatus.invalidAccountRootKeyHandle,
       );
+
+  Future<void> addAccountRootKeyEpoch(
+    KelivoAccountRootKeyHandle target, {
+    required KelivoAccountRootKeyHandle source,
+  }) async {
+    final handles = _beginDeviceHandlePair(target._state, source._state);
+    try {
+      await Isolate.run(
+        () => _throwOnError(
+          operation: 'account_root_keyring_add_epoch',
+          statusCode: native.kelivo_account_root_keyring_add_epoch(
+            handles.$1,
+            handles.$2,
+          ),
+        ),
+      );
+    } finally {
+      _completeDeviceHandlePair(target._state, source._state);
+    }
+  }
+
+  Future<void> pruneAccountRootKeyEpoch(
+    KelivoAccountRootKeyHandle ark, {
+    required int keyEpoch,
+  }) async {
+    _validatePositiveUint32(keyEpoch, 'keyEpoch');
+    final value = ark._state.beginUse();
+    try {
+      await Isolate.run(
+        () => _throwOnError(
+          operation: 'account_root_keyring_prune_epoch',
+          statusCode: native.kelivo_account_root_keyring_prune_epoch(
+            value,
+            keyEpoch,
+          ),
+        ),
+      );
+    } finally {
+      ark._state.completeUse();
+    }
+  }
 
   Future<KelivoAccountRootKeyEnvelope> sealAccountRootKeyEnvelope(
     KelivoDeviceIdentityHandle issuerIdentity,

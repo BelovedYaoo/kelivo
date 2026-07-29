@@ -218,7 +218,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         response: start.registrationResponse,
         accountId: _uuidBytes(start.accountBinding),
       );
-      ark = await _secureCore.generateAccountRootKey();
+      ark = await _secureCore.generateAccountRootKey(keyEpoch: 1);
       final userId = _uuidBytes(start.userId);
       final registrationBundle = await _secureCore
           .createDeviceRegistrationFinish(

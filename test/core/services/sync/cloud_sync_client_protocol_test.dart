@@ -795,7 +795,7 @@ void main() {
     final slotId = _authenticatorSlotId(baseUrl, loginName);
     final key = await core.createSlot(slotId);
     final identity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 7);
     final stateBlob = await core.sealDeviceState(
       key,
       identity,
@@ -1740,7 +1740,7 @@ void main() {
     final store = DeviceStateBlobStore(installationRoot: root);
     final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
     final identity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 7);
     final targetIdentity = await core.generateDeviceIdentity();
     final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
     final fullState = await core.sealDeviceState(
@@ -2020,7 +2020,7 @@ void main() {
     final pairingSecret = decoded.takePairingSecret();
     decoded.dispose();
     final issuerIdentity = await core.generateDeviceIdentity();
-    final issuerArk = await core.generateAccountRootKey();
+    final issuerArk = await core.generateAccountRootKey(keyEpoch: 7);
     final issuerPublicKeys = await core.readDevicePublicKeys(issuerIdentity);
     late final KelivoPairingApprovalBundle approvalBundle;
     try {
@@ -3005,7 +3005,7 @@ void main() {
 
   test('账户记录加密器派生稳定不透明标识并限制明文生命周期', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 7);
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3054,7 +3054,7 @@ void main() {
 
   test('账户记录加密器接受完整正 uint32 密钥世代', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 0xffffffff);
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3079,7 +3079,7 @@ void main() {
     expect(sealed.keyEpoch, 0xffffffff);
     expect(opened, orderedEquals(<int>[4, 2]));
 
-    final overflowArk = await core.generateAccountRootKey();
+    final overflowArk = await core.generateAccountRootKey(keyEpoch: 1);
     expect(
       () => E2eeAccountRecordCipher.takeOwnership(
         secureCore: core,
@@ -3608,7 +3608,7 @@ void main() {
 
   test('账户记录加密器拒绝篡改、错误标识、未来世代与越界内容', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 7);
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3709,7 +3709,7 @@ void main() {
       entityId: 'conversation-2',
     );
 
-    final aadArk = await core.generateAccountRootKey();
+    final aadArk = await core.generateAccountRootKey(keyEpoch: 7);
     final wrongUserRecord = await _sealRawAccountRecord(
       core: core,
       ark: aadArk,
@@ -3729,7 +3729,7 @@ void main() {
       throwsA(isA<KelivoSecureCoreException>()),
     );
 
-    final identityArk = await core.generateAccountRootKey();
+    final identityArk = await core.generateAccountRootKey(keyEpoch: 7);
     final mismatchedRecord = await _sealRawAccountRecord(
       core: core,
       ark: identityArk,
@@ -3799,7 +3799,7 @@ void main() {
 
   test('v3 推送接受完整 uint32 keyEpoch 并解析三类结果', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 0xffffffff);
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -3969,7 +3969,7 @@ void main() {
 
   test('v3 推送在发网前拒绝 mutationId 与认证 operationId 不一致', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 7);
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -4526,7 +4526,7 @@ void main() {
 
   test('v3 推送在发网前拒绝非法标识与批量边界', () async {
     const core = KelivoSecureCore();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 7);
     final cipher = E2eeAccountRecordCipher.takeOwnership(
       secureCore: core,
       accountRootKey: ark,
@@ -7266,7 +7266,7 @@ Future<CloudSyncAccountSession> _seedAccountKeyLeaseState({
   final identity = await core.generateDeviceIdentity();
   KelivoAccountRootKeyHandle? ark;
   try {
-    if (bound) ark = await core.generateAccountRootKey();
+    if (bound) ark = await core.generateAccountRootKey(keyEpoch: 7);
     final blob = await core.sealDeviceState(
       key,
       identity,
@@ -7366,7 +7366,7 @@ Future<Map<String, Object?>> _seedPendingRegistration({
   };
   final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
   final identity = await core.generateDeviceIdentity();
-  final ark = await core.generateAccountRootKey();
+  final ark = await core.generateAccountRootKey(keyEpoch: 1);
   final deviceId = _rawUuid(_deviceId1);
   final userId = _rawUuid(_userId);
   final identityOnlyState = Uint8List.fromList(
@@ -7387,7 +7387,10 @@ Future<Map<String, Object?>> _seedPendingRegistration({
       account: KelivoDeviceStateAccountBinding(userId: userId, keyEpoch: 1),
     ),
   );
-  final frame = Uint8List(892);
+  const registrationStateOffset = 704;
+  final frame = Uint8List(
+    registrationStateOffset + DeviceStateBlobStore.blobLength,
+  );
   final magic = ascii.encode('KELVRT01');
   frame.setRange(0, magic.length, magic);
   final fields = ByteData.sublistView(frame);
@@ -7408,7 +7411,7 @@ Future<Map<String, Object?>> _seedPendingRegistration({
   frame.setRange(96, 304, registrationUpload);
   frame.setRange(304, 640, accountKeyEnvelope);
   frame.setRange(640, 704, deviceProof);
-  frame.setRange(704, 892, fullState);
+  frame.setRange(registrationStateOffset, frame.length, fullState);
   final recordId = Uint8List.fromList(
     sha256
         .convert(

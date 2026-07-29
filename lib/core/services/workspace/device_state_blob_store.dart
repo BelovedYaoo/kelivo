@@ -20,7 +20,7 @@ final class DeviceStateBlobStore {
        ),
        _durability = durability ?? RestorePlatformDurability();
 
-  static const blobLength = 188;
+  static const blobLength = 448;
   // 固定注册载荷不足 2 KiB；预留协议升级空间，同时限制损坏文件的读取分配。
   static const pendingRegistrationEnvelopeMaxLength = 4096;
   // 配对恢复事务包含两个设备状态和一次性能力；保留升级空间但拒绝无界读取。

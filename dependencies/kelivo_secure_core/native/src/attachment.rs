@@ -268,8 +268,11 @@ pub unsafe extern "C" fn kelivo_attachment_data_key_wrap(
         Ok(context) => context,
         Err(status) => return status.code(),
     };
-    let ark = match device_core::ark_for_handle(ark_handle) {
+    let ark = match device_core::ark_for_handle(ark_handle, key_epoch) {
         Ok(ark) => ark,
+        Err(KelivoStatus::InvalidArgument) => {
+            return KelivoStatus::AttachmentAuthenticationFailed.code();
+        }
         Err(status) => return status.code(),
     };
     let key = match attachment_key_for_handle(data_key_handle) {
@@ -346,8 +349,11 @@ pub unsafe extern "C" fn kelivo_attachment_data_key_unwrap(
         Ok(wrapped) => wrapped,
         Err(status) => return status.code(),
     };
-    let ark = match device_core::ark_for_handle(ark_handle) {
+    let ark = match device_core::ark_for_handle(ark_handle, key_epoch) {
         Ok(ark) => ark,
+        Err(KelivoStatus::InvalidArgument) => {
+            return KelivoStatus::AttachmentAuthenticationFailed.code();
+        }
         Err(status) => return status.code(),
     };
     let key = match crypto::unwrap_attachment_data_key(&ark, context, wrapped_key) {
@@ -610,7 +616,7 @@ mod tests {
     fn wrapped_key_and_chunk_round_trip_through_c_abi() {
         let mut ark = 0;
         assert_eq!(
-            unsafe { kelivo_account_root_key_generate(&mut ark) },
+            unsafe { kelivo_account_root_key_generate(3, &mut ark) },
             KelivoStatus::Ok.code()
         );
         let (key, attachment_id) = generate_key();

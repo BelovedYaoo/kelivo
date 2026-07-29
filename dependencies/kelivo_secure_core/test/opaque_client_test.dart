@@ -24,10 +24,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v9 OPAQUE、设备 E2EE 与附件加密支持', () async {
+  test('能力门禁声明 ABI v10 OPAQUE、设备 E2EE 与附件加密支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 9);
+    expect(capabilities.abiVersion, 10);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -155,7 +155,7 @@ void main() {
   test('设备证明与注册 bundle 仅返回固定公开材料', () async {
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final identity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 1);
     final userId = accountId(0x41);
     final deviceId = accountId(0x42);
     final attemptId = accountId(0x43);
@@ -207,7 +207,7 @@ void main() {
 
   test('账户根密钥稳定派生不透明 UUIDv4 记录标识并拒绝非法实体键', () async {
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 1);
     final canonicalKey = Uint8List.fromList(
       'chat-message/018f2f89-8d5a-7bd2-a459-5d540a8f90ab'.codeUnits,
     );
@@ -261,7 +261,7 @@ void main() {
     final issuerIdentity = await core.generateDeviceIdentity();
     final targetIdentity = await core.generateDeviceIdentity();
     final otherIdentity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 0xffffffff);
     final issuerPublicKeys = await core.readDevicePublicKeys(issuerIdentity);
     final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
     final otherPublicKeys = await core.readDevicePublicKeys(otherIdentity);
@@ -453,7 +453,7 @@ void main() {
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final key = await openOrCreateTestSlot();
     final identity = await core.generateDeviceIdentity();
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 7);
     final userId = accountId(0x48);
     final deviceId = accountId(0x49);
     final recordId = accountId(0x4a);
@@ -499,7 +499,7 @@ void main() {
         KelivoSecureCoreStatus.recordAuthenticationFailed,
       ),
     );
-    final otherArk = await core.generateAccountRootKey();
+    final otherArk = await core.generateAccountRootKey(keyEpoch: keyEpoch);
     await expectLater(
       core.openAccountRecord(
         otherArk,
@@ -553,7 +553,7 @@ void main() {
       authenticationFailure,
     );
 
-    final closedArk = await core.generateAccountRootKey();
+    final closedArk = await core.generateAccountRootKey(keyEpoch: keyEpoch);
     await core.closeAccountRootKey(closedArk);
     await expectLater(
       core.openAccountRecord(
@@ -574,11 +574,117 @@ void main() {
     await core.close(key);
   });
 
+  test('ARK密钥环跨设备状态保留历史代次并按精确代次裁剪', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final key = await openOrCreateTestSlot();
+    final identity = await core.generateDeviceIdentity();
+    final keyring = await core.generateAccountRootKey(keyEpoch: 1);
+    final epochTwo = await core.generateAccountRootKey(keyEpoch: 2);
+    final duplicate = await core.generateAccountRootKey(keyEpoch: 2);
+    final recordId = accountId(0x4c);
+    final userId = accountId(0x4d);
+    final deviceId = accountId(0x4e);
+    final associatedData = Uint8List.fromList('sync/keyring'.codeUnits);
+    final epochOneEnvelope = await core.sealAccountRecord(
+      keyring,
+      recordId: recordId,
+      keyEpoch: 1,
+      associatedData: associatedData,
+      plaintext: Uint8List.fromList(<int>[1]),
+    );
+
+    await core.addAccountRootKeyEpoch(keyring, source: epochTwo);
+    await expectLater(
+      core.addAccountRootKeyEpoch(keyring, source: duplicate),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.invalidArgument,
+        ),
+      ),
+    );
+    final epochTwoEnvelope = await core.sealAccountRecord(
+      keyring,
+      recordId: recordId,
+      keyEpoch: 2,
+      associatedData: associatedData,
+      plaintext: Uint8List.fromList(<int>[2]),
+    );
+    final stateBlob = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: deviceId,
+      keyVersion: 1,
+      ark: keyring,
+      account: KelivoDeviceStateAccountBinding(userId: userId, keyEpoch: 2),
+    );
+    expect(stateBlob, hasLength(448));
+    final reopened = await core.openDeviceState(key, stateBlob: stateBlob);
+    final reopenedKeyring = reopened.ark!;
+    expect(
+      await core.openAccountRecord(
+        reopenedKeyring,
+        recordId: recordId,
+        keyEpoch: 1,
+        associatedData: associatedData,
+        envelope: epochOneEnvelope,
+      ),
+      orderedEquals(<int>[1]),
+    );
+    expect(
+      await core.openAccountRecord(
+        reopenedKeyring,
+        recordId: recordId,
+        keyEpoch: 2,
+        associatedData: associatedData,
+        envelope: epochTwoEnvelope,
+      ),
+      orderedEquals(<int>[2]),
+    );
+
+    await core.pruneAccountRootKeyEpoch(reopenedKeyring, keyEpoch: 1);
+    await expectLater(
+      core.openAccountRecord(
+        reopenedKeyring,
+        recordId: recordId,
+        keyEpoch: 1,
+        associatedData: associatedData,
+        envelope: epochOneEnvelope,
+      ),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.recordAuthenticationFailed,
+        ),
+      ),
+    );
+    await expectLater(
+      core.pruneAccountRootKeyEpoch(reopenedKeyring, keyEpoch: 2),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.invalidArgument,
+        ),
+      ),
+    );
+
+    await core.closeAccountRootKey(duplicate);
+    await core.closeAccountRootKey(epochTwo);
+    await core.closeAccountRootKey(reopenedKeyring);
+    await core.closeDeviceIdentity(reopened.identity);
+    await core.closeAccountRootKey(keyring);
+    await core.closeDeviceIdentity(identity);
+    await core.close(key);
+  });
+
   test('一次性 pending 配对失败可重试且成功后原子消费', () async {
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final key = await openOrCreateTestSlot();
     final issuerIdentity = await core.generateDeviceIdentity();
-    final issuerArk = await core.generateAccountRootKey();
+    final issuerArk = await core.generateAccountRootKey(keyEpoch: 7);
     final targetIdentity = await core.generateDeviceIdentity();
     final issuerDeviceId = accountId(0x51);
     final targetDeviceId = accountId(0x52);
@@ -595,7 +701,7 @@ void main() {
       deviceId: targetDeviceId,
       keyVersion: keyVersion,
     );
-    expect(pendingState, hasLength(188));
+    expect(pendingState, hasLength(448));
     await core.closeDeviceIdentity(targetIdentity);
 
     final reopenedPending = await core.openDeviceState(
@@ -722,7 +828,7 @@ void main() {
       issuerPublicKeys: issuerPublicKeys,
       approval: approval,
     );
-    expect(accepted.stateBlob, hasLength(188));
+    expect(accepted.stateBlob, hasLength(448));
     await expectLater(
       core.acceptPairingApproval(
         key,
@@ -769,7 +875,7 @@ void main() {
 
   test('附件数据密钥全程保持不透明并可经 ARK 包装后跨句柄解密', () async {
     if (!(await core.getCapabilities()).supportsAttachmentCrypto) return;
-    final ark = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 7);
     final created = await core.generateAttachmentDataKey();
     final context = KelivoAttachmentContext(
       userId: accountId(0x81),
@@ -839,8 +945,8 @@ void main() {
 
   test('附件块拒绝篡改、截断、替换及所有认证上下文错配', () async {
     if (!(await core.getCapabilities()).supportsAttachmentCrypto) return;
-    final ark = await core.generateAccountRootKey();
-    final otherArk = await core.generateAccountRootKey();
+    final ark = await core.generateAccountRootKey(keyEpoch: 11);
+    final otherArk = await core.generateAccountRootKey(keyEpoch: 11);
     final created = await core.generateAttachmentDataKey();
     final replacement = await core.generateAttachmentDataKey();
     final context = KelivoAttachmentContext(

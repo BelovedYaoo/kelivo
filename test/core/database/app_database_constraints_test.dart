@@ -482,7 +482,7 @@ void main() {
     stateCodec = E2eeAccountRecordStateCodec.takeOwnership(
       E2eeAccountRecordCipher.takeOwnership(
         secureCore: secureCore,
-        accountRootKey: await secureCore.generateAccountRootKey(),
+        accountRootKey: await secureCore.generateAccountRootKey(keyEpoch: 7),
         userId: _ledgerUserId,
         currentKeyEpoch: 7,
       ),
@@ -5055,7 +5055,9 @@ void main() {
       final manifestCipher = E2eeAttachmentManifestCipher.takeOwnership(
         E2eeAccountRecordCipher.takeOwnership(
           secureCore: secureCore,
-          accountRootKey: await secureCore.generateAccountRootKey(),
+          accountRootKey: await secureCore.generateAccountRootKey(
+            keyEpoch: 0xffffffff,
+          ),
           userId: _ledgerUserId,
           currentKeyEpoch: 0xffffffff,
         ),
@@ -5342,7 +5344,9 @@ void main() {
       final manifestCipher = E2eeAttachmentManifestCipher.takeOwnership(
         E2eeAccountRecordCipher.takeOwnership(
           secureCore: secureCore,
-          accountRootKey: await secureCore.generateAccountRootKey(),
+          accountRootKey: await secureCore.generateAccountRootKey(
+            keyEpoch: 0xffffffff,
+          ),
           userId: _ledgerUserId,
           currentKeyEpoch: 0xffffffff,
         ),
@@ -6117,7 +6121,7 @@ void main() {
 
   test('附件清单密文往返并隐藏敏感元数据', () async {
     const secureCore = KelivoSecureCore();
-    final accountRootKey = await secureCore.generateAccountRootKey();
+    final accountRootKey = await secureCore.generateAccountRootKey(keyEpoch: 7);
     final attachmentDataKey = await secureCore.generateAttachmentDataKey();
     final attachmentId = Uuid.unparse(attachmentDataKey.attachmentId);
     const uploadId = 'a0000000-0000-4000-8000-000000000001';
@@ -6196,7 +6200,7 @@ void main() {
 
   test('附件清单拒绝篡改和外层身份错配', () async {
     const secureCore = KelivoSecureCore();
-    final accountRootKey = await secureCore.generateAccountRootKey();
+    final accountRootKey = await secureCore.generateAccountRootKey(keyEpoch: 7);
     final attachmentDataKey = await secureCore.generateAttachmentDataKey();
     final attachmentId = Uuid.unparse(attachmentDataKey.attachmentId);
     const uploadId = 'a0000000-0000-4000-8000-000000000002';
