@@ -33,6 +33,10 @@ Serializers _$serializers =
           ..add(AttachmentStoredChunkDataStatusEnum.serializer)
           ..add(AttachmentUploadData.serializer)
           ..add(AttachmentUploadDataStatusEnum.serializer)
+          ..add(CommitDeviceRotationData.serializer)
+          ..add(CommitDeviceRotationDataResultEnum.serializer)
+          ..add(CommitDeviceRotationRequest.serializer)
+          ..add(CommitDeviceRotationResponse.serializer)
           ..add(CommitEncryptedAttachmentUploadResponse.serializer)
           ..add(CreateEncryptedAttachmentUploadResponse.serializer)
           ..add(DeleteEncryptedAttachmentResponse.serializer)
@@ -60,10 +64,16 @@ Serializers _$serializers =
           ..add(DevicePairingQueryDataOneOfStatusEnum.serializer)
           ..add(DevicePairingQueryRequest.serializer)
           ..add(DevicePairingQueryResponse.serializer)
+          ..add(DeviceSecurityStateData.serializer)
+          ..add(DeviceSecurityStateEnvelope.serializer)
           ..add(ErrorResponse.serializer)
           ..add(ErrorResponseError.serializer)
+          ..add(GetDeviceSecurityStateResponse.serializer)
           ..add(GetEncryptedAttachmentChunkResponse.serializer)
           ..add(GetEncryptedAttachmentManifestResponse.serializer)
+          ..add(InitializeDeviceSecurityStateEnvelope.serializer)
+          ..add(InitializeDeviceSecurityStateRequest.serializer)
+          ..add(InitializeDeviceSecurityStateResponse.serializer)
           ..add(ListAdminDevicesData.serializer)
           ..add(ListAdminDevicesRequest.serializer)
           ..add(ListAdminDevicesRequestStatusEnum.serializer)
@@ -111,9 +121,6 @@ Serializers _$serializers =
           ..add(RevokeAdminDeviceData.serializer)
           ..add(RevokeAdminDeviceRequest.serializer)
           ..add(RevokeAdminDeviceResponse.serializer)
-          ..add(RevokeTrustedDeviceData.serializer)
-          ..add(RevokeTrustedDeviceRequest.serializer)
-          ..add(RevokeTrustedDeviceResponse.serializer)
           ..add(SyncAppliedMutationResult.serializer)
           ..add(SyncAppliedMutationResultStatusEnum.serializer)
           ..add(SyncChange.serializer)
@@ -169,6 +176,18 @@ Serializers _$serializers =
               const FullType(AttachmentManifestChunk),
             ]),
             () => ListBuilder<AttachmentManifestChunk>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(DeviceSecurityStateEnvelope),
+            ]),
+            () => ListBuilder<DeviceSecurityStateEnvelope>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(InitializeDeviceSecurityStateEnvelope),
+            ]),
+            () => ListBuilder<InitializeDeviceSecurityStateEnvelope>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncChange)]),

@@ -39,7 +39,7 @@ abstract class AdminUserSummary
 
   @BuiltValueField(wireName: r'status')
   AdminUserSummaryStatusEnum get status;
-  // enum statusEnum {  active,  disabled,  };
+  // enum statusEnum {  active,  disabled,  deleting,  };
 
   /// 附件配额字节数，0 表示禁止占用附件存储
   @BuiltValueField(wireName: r'attachmentQuotaBytes')
@@ -290,6 +290,9 @@ class AdminUserSummaryStatusEnum extends EnumClass {
   @BuiltValueEnumConst(wireName: r'disabled')
   static const AdminUserSummaryStatusEnum disabled =
       _$adminUserSummaryStatusEnum_disabled;
+  @BuiltValueEnumConst(wireName: r'deleting')
+  static const AdminUserSummaryStatusEnum deleting =
+      _$adminUserSummaryStatusEnum_deleting;
 
   static Serializer<AdminUserSummaryStatusEnum> get serializer =>
       _$adminUserSummaryStatusEnumSerializer;

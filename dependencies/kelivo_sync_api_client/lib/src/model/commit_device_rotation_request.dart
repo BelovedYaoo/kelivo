@@ -3,43 +3,45 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:built_collection/built_collection.dart';
+import 'package:kelivo_sync_api_client/src/model/initialize_device_security_state_envelope.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'device_pairing_approve_request.g.dart';
+part 'commit_device_rotation_request.g.dart';
 
-/// DevicePairingApproveRequest
+/// CommitDeviceRotationRequest
 ///
 /// Properties:
-/// * [protocolVersion]
-/// * [pairingId]
-/// * [keyEpoch]
-/// * [expectedSecurityGeneration]
+/// * [expectedGeneration]
+/// * [expectedKeyEpoch]
 /// * [expectedMembershipManifestDigest]
+/// * [operationId]
+/// * [revokeDeviceId]
 /// * [nextMembershipManifestVersion]
 /// * [nextMembershipManifest]
 /// * [nextMembershipManifestDigest]
-/// * [accountKeyEnvelope]
-/// * [deviceProof]
-/// * [pairingAuthenticator]
+/// * [nextRecoveryCapsuleVersion]
+/// * [nextRecoveryCapsule]
+/// * [envelopes]
 @BuiltValue()
-abstract class DevicePairingApproveRequest
+abstract class CommitDeviceRotationRequest
     implements
-        Built<DevicePairingApproveRequest, DevicePairingApproveRequestBuilder> {
-  @BuiltValueField(wireName: r'protocolVersion')
-  int get protocolVersion;
+        Built<CommitDeviceRotationRequest, CommitDeviceRotationRequestBuilder> {
+  @BuiltValueField(wireName: r'expectedGeneration')
+  int get expectedGeneration;
 
-  @BuiltValueField(wireName: r'pairingId')
-  String get pairingId;
-
-  @BuiltValueField(wireName: r'keyEpoch')
-  int get keyEpoch;
-
-  @BuiltValueField(wireName: r'expectedSecurityGeneration')
-  int get expectedSecurityGeneration;
+  @BuiltValueField(wireName: r'expectedKeyEpoch')
+  int get expectedKeyEpoch;
 
   @BuiltValueField(wireName: r'expectedMembershipManifestDigest')
   String get expectedMembershipManifestDigest;
+
+  @BuiltValueField(wireName: r'operationId')
+  String get operationId;
+
+  @BuiltValueField(wireName: r'revokeDeviceId')
+  String get revokeDeviceId;
 
   @BuiltValueField(wireName: r'nextMembershipManifestVersion')
   int get nextMembershipManifestVersion;
@@ -50,68 +52,68 @@ abstract class DevicePairingApproveRequest
   @BuiltValueField(wireName: r'nextMembershipManifestDigest')
   String get nextMembershipManifestDigest;
 
-  @BuiltValueField(wireName: r'accountKeyEnvelope')
-  String get accountKeyEnvelope;
+  @BuiltValueField(wireName: r'nextRecoveryCapsuleVersion')
+  int get nextRecoveryCapsuleVersion;
 
-  @BuiltValueField(wireName: r'deviceProof')
-  String get deviceProof;
+  @BuiltValueField(wireName: r'nextRecoveryCapsule')
+  String get nextRecoveryCapsule;
 
-  @BuiltValueField(wireName: r'pairingAuthenticator')
-  String get pairingAuthenticator;
+  @BuiltValueField(wireName: r'envelopes')
+  BuiltList<InitializeDeviceSecurityStateEnvelope> get envelopes;
 
-  DevicePairingApproveRequest._();
+  CommitDeviceRotationRequest._();
 
-  factory DevicePairingApproveRequest([
-    void updates(DevicePairingApproveRequestBuilder b),
-  ]) = _$DevicePairingApproveRequest;
+  factory CommitDeviceRotationRequest([
+    void updates(CommitDeviceRotationRequestBuilder b),
+  ]) = _$CommitDeviceRotationRequest;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(DevicePairingApproveRequestBuilder b) => b;
+  static void _defaults(CommitDeviceRotationRequestBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<DevicePairingApproveRequest> get serializer =>
-      _$DevicePairingApproveRequestSerializer();
+  static Serializer<CommitDeviceRotationRequest> get serializer =>
+      _$CommitDeviceRotationRequestSerializer();
 }
 
-class _$DevicePairingApproveRequestSerializer
-    implements PrimitiveSerializer<DevicePairingApproveRequest> {
+class _$CommitDeviceRotationRequestSerializer
+    implements PrimitiveSerializer<CommitDeviceRotationRequest> {
   @override
   final Iterable<Type> types = const [
-    DevicePairingApproveRequest,
-    _$DevicePairingApproveRequest,
+    CommitDeviceRotationRequest,
+    _$CommitDeviceRotationRequest,
   ];
 
   @override
-  final String wireName = r'DevicePairingApproveRequest';
+  final String wireName = r'CommitDeviceRotationRequest';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    DevicePairingApproveRequest object, {
+    CommitDeviceRotationRequest object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    yield r'protocolVersion';
+    yield r'expectedGeneration';
     yield serializers.serialize(
-      object.protocolVersion,
+      object.expectedGeneration,
       specifiedType: const FullType(int),
     );
-    yield r'pairingId';
+    yield r'expectedKeyEpoch';
     yield serializers.serialize(
-      object.pairingId,
-      specifiedType: const FullType(String),
-    );
-    yield r'keyEpoch';
-    yield serializers.serialize(
-      object.keyEpoch,
-      specifiedType: const FullType(int),
-    );
-    yield r'expectedSecurityGeneration';
-    yield serializers.serialize(
-      object.expectedSecurityGeneration,
+      object.expectedKeyEpoch,
       specifiedType: const FullType(int),
     );
     yield r'expectedMembershipManifestDigest';
     yield serializers.serialize(
       object.expectedMembershipManifestDigest,
+      specifiedType: const FullType(String),
+    );
+    yield r'operationId';
+    yield serializers.serialize(
+      object.operationId,
+      specifiedType: const FullType(String),
+    );
+    yield r'revokeDeviceId';
+    yield serializers.serialize(
+      object.revokeDeviceId,
       specifiedType: const FullType(String),
     );
     yield r'nextMembershipManifestVersion';
@@ -129,27 +131,29 @@ class _$DevicePairingApproveRequestSerializer
       object.nextMembershipManifestDigest,
       specifiedType: const FullType(String),
     );
-    yield r'accountKeyEnvelope';
+    yield r'nextRecoveryCapsuleVersion';
     yield serializers.serialize(
-      object.accountKeyEnvelope,
+      object.nextRecoveryCapsuleVersion,
+      specifiedType: const FullType(int),
+    );
+    yield r'nextRecoveryCapsule';
+    yield serializers.serialize(
+      object.nextRecoveryCapsule,
       specifiedType: const FullType(String),
     );
-    yield r'deviceProof';
+    yield r'envelopes';
     yield serializers.serialize(
-      object.deviceProof,
-      specifiedType: const FullType(String),
-    );
-    yield r'pairingAuthenticator';
-    yield serializers.serialize(
-      object.pairingAuthenticator,
-      specifiedType: const FullType(String),
+      object.envelopes,
+      specifiedType: const FullType(BuiltList, [
+        FullType(InitializeDeviceSecurityStateEnvelope),
+      ]),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    DevicePairingApproveRequest object, {
+    CommitDeviceRotationRequest object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -164,39 +168,24 @@ class _$DevicePairingApproveRequestSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required DevicePairingApproveRequestBuilder result,
+    required CommitDeviceRotationRequestBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'protocolVersion':
+        case r'expectedGeneration':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.protocolVersion = valueDes;
+          result.expectedGeneration = valueDes;
           break;
-        case r'pairingId':
-          final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType(String),
-                  )
-                  as String;
-          result.pairingId = valueDes;
-          break;
-        case r'keyEpoch':
+        case r'expectedKeyEpoch':
           final valueDes =
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
-          result.keyEpoch = valueDes;
-          break;
-        case r'expectedSecurityGeneration':
-          final valueDes =
-              serializers.deserialize(value, specifiedType: const FullType(int))
-                  as int;
-          result.expectedSecurityGeneration = valueDes;
+          result.expectedKeyEpoch = valueDes;
           break;
         case r'expectedMembershipManifestDigest':
           final valueDes =
@@ -206,6 +195,24 @@ class _$DevicePairingApproveRequestSerializer
                   )
                   as String;
           result.expectedMembershipManifestDigest = valueDes;
+          break;
+        case r'operationId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.operationId = valueDes;
+          break;
+        case r'revokeDeviceId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.revokeDeviceId = valueDes;
           break;
         case r'nextMembershipManifestVersion':
           final valueDes =
@@ -231,32 +238,31 @@ class _$DevicePairingApproveRequestSerializer
                   as String;
           result.nextMembershipManifestDigest = valueDes;
           break;
-        case r'accountKeyEnvelope':
+        case r'nextRecoveryCapsuleVersion':
           final valueDes =
-              serializers.deserialize(
-                    value,
-                    specifiedType: const FullType(String),
-                  )
-                  as String;
-          result.accountKeyEnvelope = valueDes;
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.nextRecoveryCapsuleVersion = valueDes;
           break;
-        case r'deviceProof':
+        case r'nextRecoveryCapsule':
           final valueDes =
               serializers.deserialize(
                     value,
                     specifiedType: const FullType(String),
                   )
                   as String;
-          result.deviceProof = valueDes;
+          result.nextRecoveryCapsule = valueDes;
           break;
-        case r'pairingAuthenticator':
+        case r'envelopes':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(String),
+                    specifiedType: const FullType(BuiltList, [
+                      FullType(InitializeDeviceSecurityStateEnvelope),
+                    ]),
                   )
-                  as String;
-          result.pairingAuthenticator = valueDes;
+                  as BuiltList<InitializeDeviceSecurityStateEnvelope>;
+          result.envelopes.replace(valueDes);
           break;
         default:
           unhandled.add(key);
@@ -267,12 +273,12 @@ class _$DevicePairingApproveRequestSerializer
   }
 
   @override
-  DevicePairingApproveRequest deserialize(
+  CommitDeviceRotationRequest deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = DevicePairingApproveRequestBuilder();
+    final result = CommitDeviceRotationRequestBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

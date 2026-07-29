@@ -11,6 +11,8 @@ class _$DevicePairingConsumeRequest extends DevicePairingConsumeRequest {
   final int protocolVersion;
   @override
   final String pairingId;
+  @override
+  final String sessionToken;
 
   factory _$DevicePairingConsumeRequest([
     void Function(DevicePairingConsumeRequestBuilder)? updates,
@@ -19,6 +21,7 @@ class _$DevicePairingConsumeRequest extends DevicePairingConsumeRequest {
   _$DevicePairingConsumeRequest._({
     required this.protocolVersion,
     required this.pairingId,
+    required this.sessionToken,
   }) : super._();
   @override
   DevicePairingConsumeRequest rebuild(
@@ -34,7 +37,8 @@ class _$DevicePairingConsumeRequest extends DevicePairingConsumeRequest {
     if (identical(other, this)) return true;
     return other is DevicePairingConsumeRequest &&
         protocolVersion == other.protocolVersion &&
-        pairingId == other.pairingId;
+        pairingId == other.pairingId &&
+        sessionToken == other.sessionToken;
   }
 
   @override
@@ -42,6 +46,7 @@ class _$DevicePairingConsumeRequest extends DevicePairingConsumeRequest {
     var _$hash = 0;
     _$hash = $jc(_$hash, protocolVersion.hashCode);
     _$hash = $jc(_$hash, pairingId.hashCode);
+    _$hash = $jc(_$hash, sessionToken.hashCode);
     _$hash = $jf(_$hash);
     return _$hash;
   }
@@ -50,7 +55,8 @@ class _$DevicePairingConsumeRequest extends DevicePairingConsumeRequest {
   String toString() {
     return (newBuiltValueToStringHelper(r'DevicePairingConsumeRequest')
           ..add('protocolVersion', protocolVersion)
-          ..add('pairingId', pairingId))
+          ..add('pairingId', pairingId)
+          ..add('sessionToken', sessionToken))
         .toString();
   }
 }
@@ -72,6 +78,10 @@ class DevicePairingConsumeRequestBuilder
   String? get pairingId => _$this._pairingId;
   set pairingId(String? pairingId) => _$this._pairingId = pairingId;
 
+  String? _sessionToken;
+  String? get sessionToken => _$this._sessionToken;
+  set sessionToken(String? sessionToken) => _$this._sessionToken = sessionToken;
+
   DevicePairingConsumeRequestBuilder() {
     DevicePairingConsumeRequest._defaults(this);
   }
@@ -81,6 +91,7 @@ class DevicePairingConsumeRequestBuilder
     if ($v != null) {
       _protocolVersion = $v.protocolVersion;
       _pairingId = $v.pairingId;
+      _sessionToken = $v.sessionToken;
       _$v = null;
     }
     return this;
@@ -112,6 +123,11 @@ class DevicePairingConsumeRequestBuilder
             pairingId,
             r'DevicePairingConsumeRequest',
             'pairingId',
+          ),
+          sessionToken: BuiltValueNullFieldError.checkNotNull(
+            sessionToken,
+            r'DevicePairingConsumeRequest',
+            'sessionToken',
           ),
         );
     replace(_$result);

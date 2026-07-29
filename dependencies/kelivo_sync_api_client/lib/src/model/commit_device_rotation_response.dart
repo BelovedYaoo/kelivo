@@ -3,63 +3,67 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_data.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'revoke_trusted_device_request.g.dart';
+part 'commit_device_rotation_response.g.dart';
 
-/// RevokeTrustedDeviceRequest
+/// CommitDeviceRotationResponse
 ///
 /// Properties:
-/// * [deviceId]
+/// * [data]
 @BuiltValue()
-abstract class RevokeTrustedDeviceRequest
+abstract class CommitDeviceRotationResponse
     implements
-        Built<RevokeTrustedDeviceRequest, RevokeTrustedDeviceRequestBuilder> {
-  @BuiltValueField(wireName: r'deviceId')
-  String get deviceId;
+        Built<
+          CommitDeviceRotationResponse,
+          CommitDeviceRotationResponseBuilder
+        > {
+  @BuiltValueField(wireName: r'data')
+  CommitDeviceRotationData get data;
 
-  RevokeTrustedDeviceRequest._();
+  CommitDeviceRotationResponse._();
 
-  factory RevokeTrustedDeviceRequest([
-    void updates(RevokeTrustedDeviceRequestBuilder b),
-  ]) = _$RevokeTrustedDeviceRequest;
+  factory CommitDeviceRotationResponse([
+    void updates(CommitDeviceRotationResponseBuilder b),
+  ]) = _$CommitDeviceRotationResponse;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(RevokeTrustedDeviceRequestBuilder b) => b;
+  static void _defaults(CommitDeviceRotationResponseBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<RevokeTrustedDeviceRequest> get serializer =>
-      _$RevokeTrustedDeviceRequestSerializer();
+  static Serializer<CommitDeviceRotationResponse> get serializer =>
+      _$CommitDeviceRotationResponseSerializer();
 }
 
-class _$RevokeTrustedDeviceRequestSerializer
-    implements PrimitiveSerializer<RevokeTrustedDeviceRequest> {
+class _$CommitDeviceRotationResponseSerializer
+    implements PrimitiveSerializer<CommitDeviceRotationResponse> {
   @override
   final Iterable<Type> types = const [
-    RevokeTrustedDeviceRequest,
-    _$RevokeTrustedDeviceRequest,
+    CommitDeviceRotationResponse,
+    _$CommitDeviceRotationResponse,
   ];
 
   @override
-  final String wireName = r'RevokeTrustedDeviceRequest';
+  final String wireName = r'CommitDeviceRotationResponse';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    RevokeTrustedDeviceRequest object, {
+    CommitDeviceRotationResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
-    yield r'deviceId';
+    yield r'data';
     yield serializers.serialize(
-      object.deviceId,
-      specifiedType: const FullType(String),
+      object.data,
+      specifiedType: const FullType(CommitDeviceRotationData),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    RevokeTrustedDeviceRequest object, {
+    CommitDeviceRotationResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -74,21 +78,21 @@ class _$RevokeTrustedDeviceRequestSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required RevokeTrustedDeviceRequestBuilder result,
+    required CommitDeviceRotationResponseBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
       final key = serializedList[i] as String;
       final value = serializedList[i + 1];
       switch (key) {
-        case r'deviceId':
+        case r'data':
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(String),
+                    specifiedType: const FullType(CommitDeviceRotationData),
                   )
-                  as String;
-          result.deviceId = valueDes;
+                  as CommitDeviceRotationData;
+          result.data.replace(valueDes);
           break;
         default:
           unhandled.add(key);
@@ -99,12 +103,12 @@ class _$RevokeTrustedDeviceRequestSerializer
   }
 
   @override
-  RevokeTrustedDeviceRequest deserialize(
+  CommitDeviceRotationResponse deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = RevokeTrustedDeviceRequestBuilder();
+    final result = CommitDeviceRotationResponseBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

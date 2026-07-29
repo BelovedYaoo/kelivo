@@ -42,6 +42,9 @@ const ListAdminUsersRequestStatusEnum _$listAdminUsersRequestStatusEnum_active =
 const ListAdminUsersRequestStatusEnum
 _$listAdminUsersRequestStatusEnum_disabled =
     const ListAdminUsersRequestStatusEnum._('disabled');
+const ListAdminUsersRequestStatusEnum
+_$listAdminUsersRequestStatusEnum_deleting =
+    const ListAdminUsersRequestStatusEnum._('deleting');
 
 ListAdminUsersRequestStatusEnum _$listAdminUsersRequestStatusEnumValueOf(
   String name,
@@ -51,6 +54,8 @@ ListAdminUsersRequestStatusEnum _$listAdminUsersRequestStatusEnumValueOf(
       return _$listAdminUsersRequestStatusEnum_active;
     case 'disabled':
       return _$listAdminUsersRequestStatusEnum_disabled;
+    case 'deleting':
+      return _$listAdminUsersRequestStatusEnum_deleting;
     default:
       throw ArgumentError(name);
   }
@@ -62,6 +67,7 @@ _$listAdminUsersRequestStatusEnumValues =
       const <ListAdminUsersRequestStatusEnum>[
         _$listAdminUsersRequestStatusEnum_active,
         _$listAdminUsersRequestStatusEnum_disabled,
+        _$listAdminUsersRequestStatusEnum_deleting,
       ],
     );
 
@@ -112,10 +118,12 @@ class _$ListAdminUsersRequestStatusEnumSerializer
   static const Map<String, Object> _toWire = const <String, Object>{
     'active': 'active',
     'disabled': 'disabled',
+    'deleting': 'deleting',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
     'active': 'active',
     'disabled': 'disabled',
+    'deleting': 'deleting',
   };
 
   @override

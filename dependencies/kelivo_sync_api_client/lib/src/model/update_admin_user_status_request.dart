@@ -26,7 +26,7 @@ abstract class UpdateAdminUserStatusRequest
 
   @BuiltValueField(wireName: r'status')
   UpdateAdminUserStatusRequestStatusEnum get status;
-  // enum statusEnum {  active,  disabled,  };
+  // enum statusEnum {  active,  disabled,  deleting,  };
 
   UpdateAdminUserStatusRequest._();
 
@@ -151,6 +151,9 @@ class UpdateAdminUserStatusRequestStatusEnum extends EnumClass {
   @BuiltValueEnumConst(wireName: r'disabled')
   static const UpdateAdminUserStatusRequestStatusEnum disabled =
       _$updateAdminUserStatusRequestStatusEnum_disabled;
+  @BuiltValueEnumConst(wireName: r'deleting')
+  static const UpdateAdminUserStatusRequestStatusEnum deleting =
+      _$updateAdminUserStatusRequestStatusEnum_deleting;
 
   static Serializer<UpdateAdminUserStatusRequestStatusEnum> get serializer =>
       _$updateAdminUserStatusRequestStatusEnumSerializer;

@@ -3,64 +3,67 @@
 //
 
 // ignore_for_file: unused_element
-import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_data.dart';
+import 'package:kelivo_sync_api_client/src/model/device_security_state_data.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
 
-part 'revoke_trusted_device_response.g.dart';
+part 'get_device_security_state_response.g.dart';
 
-/// RevokeTrustedDeviceResponse
+/// GetDeviceSecurityStateResponse
 ///
 /// Properties:
 /// * [data]
 @BuiltValue()
-abstract class RevokeTrustedDeviceResponse
+abstract class GetDeviceSecurityStateResponse
     implements
-        Built<RevokeTrustedDeviceResponse, RevokeTrustedDeviceResponseBuilder> {
+        Built<
+          GetDeviceSecurityStateResponse,
+          GetDeviceSecurityStateResponseBuilder
+        > {
   @BuiltValueField(wireName: r'data')
-  RevokeTrustedDeviceData get data;
+  DeviceSecurityStateData get data;
 
-  RevokeTrustedDeviceResponse._();
+  GetDeviceSecurityStateResponse._();
 
-  factory RevokeTrustedDeviceResponse([
-    void updates(RevokeTrustedDeviceResponseBuilder b),
-  ]) = _$RevokeTrustedDeviceResponse;
+  factory GetDeviceSecurityStateResponse([
+    void updates(GetDeviceSecurityStateResponseBuilder b),
+  ]) = _$GetDeviceSecurityStateResponse;
 
   @BuiltValueHook(initializeBuilder: true)
-  static void _defaults(RevokeTrustedDeviceResponseBuilder b) => b;
+  static void _defaults(GetDeviceSecurityStateResponseBuilder b) => b;
 
   @BuiltValueSerializer(custom: true)
-  static Serializer<RevokeTrustedDeviceResponse> get serializer =>
-      _$RevokeTrustedDeviceResponseSerializer();
+  static Serializer<GetDeviceSecurityStateResponse> get serializer =>
+      _$GetDeviceSecurityStateResponseSerializer();
 }
 
-class _$RevokeTrustedDeviceResponseSerializer
-    implements PrimitiveSerializer<RevokeTrustedDeviceResponse> {
+class _$GetDeviceSecurityStateResponseSerializer
+    implements PrimitiveSerializer<GetDeviceSecurityStateResponse> {
   @override
   final Iterable<Type> types = const [
-    RevokeTrustedDeviceResponse,
-    _$RevokeTrustedDeviceResponse,
+    GetDeviceSecurityStateResponse,
+    _$GetDeviceSecurityStateResponse,
   ];
 
   @override
-  final String wireName = r'RevokeTrustedDeviceResponse';
+  final String wireName = r'GetDeviceSecurityStateResponse';
 
   Iterable<Object?> _serializeProperties(
     Serializers serializers,
-    RevokeTrustedDeviceResponse object, {
+    GetDeviceSecurityStateResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) sync* {
     yield r'data';
     yield serializers.serialize(
       object.data,
-      specifiedType: const FullType(RevokeTrustedDeviceData),
+      specifiedType: const FullType(DeviceSecurityStateData),
     );
   }
 
   @override
   Object serialize(
     Serializers serializers,
-    RevokeTrustedDeviceResponse object, {
+    GetDeviceSecurityStateResponse object, {
     FullType specifiedType = FullType.unspecified,
   }) {
     return _serializeProperties(
@@ -75,7 +78,7 @@ class _$RevokeTrustedDeviceResponseSerializer
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
     required List<Object?> serializedList,
-    required RevokeTrustedDeviceResponseBuilder result,
+    required GetDeviceSecurityStateResponseBuilder result,
     required List<Object?> unhandled,
   }) {
     for (var i = 0; i < serializedList.length; i += 2) {
@@ -86,9 +89,9 @@ class _$RevokeTrustedDeviceResponseSerializer
           final valueDes =
               serializers.deserialize(
                     value,
-                    specifiedType: const FullType(RevokeTrustedDeviceData),
+                    specifiedType: const FullType(DeviceSecurityStateData),
                   )
-                  as RevokeTrustedDeviceData;
+                  as DeviceSecurityStateData;
           result.data.replace(valueDes);
           break;
         default:
@@ -100,12 +103,12 @@ class _$RevokeTrustedDeviceResponseSerializer
   }
 
   @override
-  RevokeTrustedDeviceResponse deserialize(
+  GetDeviceSecurityStateResponse deserialize(
     Serializers serializers,
     Object serialized, {
     FullType specifiedType = FullType.unspecified,
   }) {
-    final result = RevokeTrustedDeviceResponseBuilder();
+    final result = GetDeviceSecurityStateResponseBuilder();
     final serializedList = (serialized as Iterable<Object?>).toList();
     final unhandled = <Object?>[];
     _deserializeProperties(

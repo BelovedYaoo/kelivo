@@ -30,6 +30,9 @@ import 'package:kelivo_sync_api_client/src/model/attachment_manifest_data.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_put_chunk_request.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_stored_chunk_data.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_upload_data.dart';
+import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_data.dart';
+import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_request.dart';
+import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_response.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_encrypted_attachment_upload_response.dart';
 import 'package:kelivo_sync_api_client/src/model/create_encrypted_attachment_upload_response.dart';
 import 'package:kelivo_sync_api_client/src/model/delete_encrypted_attachment_response.dart';
@@ -51,10 +54,16 @@ import 'package:kelivo_sync_api_client/src/model/device_pairing_query_data_one_o
 import 'package:kelivo_sync_api_client/src/model/device_pairing_query_data_one_of1.dart';
 import 'package:kelivo_sync_api_client/src/model/device_pairing_query_request.dart';
 import 'package:kelivo_sync_api_client/src/model/device_pairing_query_response.dart';
+import 'package:kelivo_sync_api_client/src/model/device_security_state_data.dart';
+import 'package:kelivo_sync_api_client/src/model/device_security_state_envelope.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response_error.dart';
+import 'package:kelivo_sync_api_client/src/model/get_device_security_state_response.dart';
 import 'package:kelivo_sync_api_client/src/model/get_encrypted_attachment_chunk_response.dart';
 import 'package:kelivo_sync_api_client/src/model/get_encrypted_attachment_manifest_response.dart';
+import 'package:kelivo_sync_api_client/src/model/initialize_device_security_state_envelope.dart';
+import 'package:kelivo_sync_api_client/src/model/initialize_device_security_state_request.dart';
+import 'package:kelivo_sync_api_client/src/model/initialize_device_security_state_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_data.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_request.dart';
 import 'package:kelivo_sync_api_client/src/model/list_admin_devices_response.dart';
@@ -88,9 +97,6 @@ import 'package:kelivo_sync_api_client/src/model/put_encrypted_attachment_chunk_
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_data.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_request.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_response.dart';
-import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_data.dart';
-import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_request.dart';
-import 'package:kelivo_sync_api_client/src/model/revoke_trusted_device_response.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_applied_mutation_result.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_change.dart';
 import 'package:kelivo_sync_api_client/src/model/sync_conflict_mutation_result.dart';
@@ -134,6 +140,9 @@ part 'serializers.g.dart';
   AttachmentPutChunkRequest,
   AttachmentStoredChunkData,
   AttachmentUploadData,
+  CommitDeviceRotationData,
+  CommitDeviceRotationRequest,
+  CommitDeviceRotationResponse,
   CommitEncryptedAttachmentUploadResponse,
   CreateEncryptedAttachmentUploadResponse,
   DeleteEncryptedAttachmentResponse,
@@ -155,10 +164,16 @@ part 'serializers.g.dart';
   DevicePairingQueryDataOneOf1,
   DevicePairingQueryRequest,
   DevicePairingQueryResponse,
+  DeviceSecurityStateData,
+  DeviceSecurityStateEnvelope,
   ErrorResponse,
   ErrorResponseError,
+  GetDeviceSecurityStateResponse,
   GetEncryptedAttachmentChunkResponse,
   GetEncryptedAttachmentManifestResponse,
+  InitializeDeviceSecurityStateEnvelope,
+  InitializeDeviceSecurityStateRequest,
+  InitializeDeviceSecurityStateResponse,
   ListAdminDevicesData,
   ListAdminDevicesRequest,
   ListAdminDevicesResponse,
@@ -192,9 +207,6 @@ part 'serializers.g.dart';
   RevokeAdminDeviceData,
   RevokeAdminDeviceRequest,
   RevokeAdminDeviceResponse,
-  RevokeTrustedDeviceData,
-  RevokeTrustedDeviceRequest,
-  RevokeTrustedDeviceResponse,
   SyncAppliedMutationResult,
   SyncChange,
   SyncConflictMutationResult,

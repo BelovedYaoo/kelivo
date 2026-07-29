@@ -17,6 +17,8 @@ part 'device_pairing_consume_data.g.dart';
 /// * [protocolVersion]
 /// * [result]
 /// * [keyEpoch]
+/// * [securityGeneration]
+/// * [membershipManifestDigest]
 /// * [token]
 /// * [tokenExpiresAt]
 /// * [user]
@@ -34,6 +36,12 @@ abstract class DevicePairingConsumeData
 
   @BuiltValueField(wireName: r'keyEpoch')
   int get keyEpoch;
+
+  @BuiltValueField(wireName: r'securityGeneration')
+  int get securityGeneration;
+
+  @BuiltValueField(wireName: r'membershipManifestDigest')
+  String get membershipManifestDigest;
 
   @BuiltValueField(wireName: r'token')
   String get token;
@@ -91,6 +99,16 @@ class _$DevicePairingConsumeDataSerializer
     yield serializers.serialize(
       object.keyEpoch,
       specifiedType: const FullType(int),
+    );
+    yield r'securityGeneration';
+    yield serializers.serialize(
+      object.securityGeneration,
+      specifiedType: const FullType(int),
+    );
+    yield r'membershipManifestDigest';
+    yield serializers.serialize(
+      object.membershipManifestDigest,
+      specifiedType: const FullType(String),
     );
     yield r'token';
     yield serializers.serialize(
@@ -161,6 +179,21 @@ class _$DevicePairingConsumeDataSerializer
               serializers.deserialize(value, specifiedType: const FullType(int))
                   as int;
           result.keyEpoch = valueDes;
+          break;
+        case r'securityGeneration':
+          final valueDes =
+              serializers.deserialize(value, specifiedType: const FullType(int))
+                  as int;
+          result.securityGeneration = valueDes;
+          break;
+        case r'membershipManifestDigest':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.membershipManifestDigest = valueDes;
           break;
         case r'token':
           final valueDes =

@@ -13,6 +13,7 @@ part 'device_pairing_consume_request.g.dart';
 /// Properties:
 /// * [protocolVersion]
 /// * [pairingId]
+/// * [sessionToken]
 @BuiltValue()
 abstract class DevicePairingConsumeRequest
     implements
@@ -22,6 +23,9 @@ abstract class DevicePairingConsumeRequest
 
   @BuiltValueField(wireName: r'pairingId')
   String get pairingId;
+
+  @BuiltValueField(wireName: r'sessionToken')
+  String get sessionToken;
 
   DevicePairingConsumeRequest._();
 
@@ -61,6 +65,11 @@ class _$DevicePairingConsumeRequestSerializer
     yield r'pairingId';
     yield serializers.serialize(
       object.pairingId,
+      specifiedType: const FullType(String),
+    );
+    yield r'sessionToken';
+    yield serializers.serialize(
+      object.sessionToken,
       specifiedType: const FullType(String),
     );
   }
@@ -104,6 +113,15 @@ class _$DevicePairingConsumeRequestSerializer
                   )
                   as String;
           result.pairingId = valueDes;
+          break;
+        case r'sessionToken':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.sessionToken = valueDes;
           break;
         default:
           unhandled.add(key);
