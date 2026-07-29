@@ -7,3 +7,4 @@
 - Risks：genesis 清单必须由原生同时验证线结构、账户信任签名和恢复公钥绑定；Argon2id 峰值资源需在移动端目标编译层验证；句柄成功消费与失败恢复必须无竞态。
 - 场景：覆盖生成、导出、导入、当前与 epoch 2 以后 capsule；口令 12 scalar/128 UTF-8 字节边界；错误口令/origin/长度/篡改/genesis/capsule；句柄关闭、并发关闭、失败重试、成功消费与输出清零。
 - 已确认：三步流程为恢复身份生成 -> capsule 封装 -> genesis 签名后导出 media，用于解除 capsule 摘要与 genesis 的环依赖。
+- 已完成：protocol 固定 156/644 字节格式、生产 Argon2id+HKDF、HPKE/XChaCha、严格 444 字节 genesis 验签与 epoch 2 旧介质打开新 capsule；45 项与 doctest 全过，严格 Clippy 全过。

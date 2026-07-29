@@ -1208,6 +1208,10 @@ impl AccountRootKeyring {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn current_epoch(&self) -> u32 {
         self.entries[self.len - 1].epoch
     }
