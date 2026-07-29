@@ -19,6 +19,7 @@ import 'image_preview_sheet.dart';
 import '../../../icons/lucide_adapter.dart';
 import '../../../core/models/chat_message.dart';
 import '../../../core/models/conversation.dart';
+import '../../../core/utils/chat_message_attachment_utils.dart';
 import '../../../core/providers/settings_provider.dart';
 import '../../../core/providers/model_provider.dart';
 import '../../../core/providers/user_provider.dart';
@@ -109,49 +110,6 @@ String _getRoleNameFromDependencies({
     return l10n.messageExportSheetAssistant;
   }
   return msg.role;
-}
-
-_Parsed _parseContent(String raw) {
-  // Robustly parse inline attachments in the form [image:...] and [file:path|name|mime]
-  // without requiring escaping backslashes, and guard against malformed tokens.
-  final images = <String>[];
-  final docs = <_DocRef>[];
-  final buffer = StringBuffer();
-  int idx = 0;
-  while (idx < raw.length) {
-    // Fast path: only try to parse when current char is '['
-    if (raw.codeUnitAt(idx) == 0x5B /* '[' */ ) {
-      final sub = raw.substring(idx);
-      // [image:...]
-      final mImg = RegExp(r"^\[image:([^\]]+)\]").firstMatch(sub);
-      if (mImg != null) {
-        final p = (mImg.groupCount >= 1 ? mImg.group(1) : null)?.trim();
-        if (p != null && p.isNotEmpty) images.add(p);
-        idx += mImg.group(0)!.length;
-        continue;
-      }
-      // [file:path|name|mime]
-      final mFile = RegExp(
-        r"^\[file:([^|\]]+)\|([^|\]]+)\|([^\]]+)\]",
-      ).firstMatch(sub);
-      if (mFile != null) {
-        final path =
-            (mFile.groupCount >= 1 ? mFile.group(1) : null)?.trim() ?? '';
-        final name =
-            (mFile.groupCount >= 2 ? mFile.group(2) : null)?.trim() ?? 'file';
-        final mime =
-            (mFile.groupCount >= 3 ? mFile.group(3) : null)?.trim() ??
-            'text/plain';
-        docs.add(_DocRef(path: path, fileName: name, mime: mime));
-        idx += mFile.group(0)!.length;
-        continue;
-      }
-    }
-    // Fallback: normal character
-    buffer.write(raw[idx]);
-    idx++;
-  }
-  return _Parsed(buffer.toString().trim(), images, docs);
 }
 
 String _softBreakMd(String input) {
@@ -493,32 +451,34 @@ Future<void> exportChatMessagesMarkdown(
           : null;
       final contentForExport = exportData?.cleanedContent ?? msg.content;
 
-      final parsed = _parseContent(contentForExport);
+      final parsed = parseRemoteInlineImages(contentForExport);
       if (parsed.text.isNotEmpty) {
         buf.writeln(parsed.text);
         buf.writeln('');
       }
 
-      for (final p in parsed.images) {
-        final fixed = SandboxPathResolver.fix(p);
-        try {
-          final f = File(fixed);
-          if (await f.exists()) {
-            final bytes = await f.readAsBytes();
-            final b64 = base64Encode(bytes);
-            final mime = _guessImageMime(fixed);
-            buf.writeln('![](data:$mime;base64,$b64)');
-          } else {
-            buf.writeln('![image]($fixed)');
-          }
-        } catch (_) {
-          buf.writeln('![image]($fixed)');
-        }
+      for (final source in parsed.imageSources) {
+        buf.writeln('![]($source)');
         buf.writeln('');
       }
 
-      for (final d in parsed.docs) {
-        buf.writeln('- ${d.fileName}  `(${d.mime})`');
+      for (final attachment in msg.attachments) {
+        final name = chatMessageAttachmentDisplayName(attachment);
+        final mime = attachment.mediaType ?? _guessImageMime(attachment.path);
+        if (attachment.kind == 'image') {
+          try {
+            final file = File(SandboxPathResolver.fix(attachment.path));
+            if (await file.exists()) {
+              final bytes = await file.readAsBytes();
+              buf.writeln('![](data:$mime;base64,${base64Encode(bytes)})');
+              buf.writeln('');
+              continue;
+            }
+          } catch (_) {
+            // 附件不可读时只导出可读名称，避免把本地绝对路径写入文件。
+          }
+        }
+        buf.writeln('- $name  `($mime)`');
       }
 
       if (includeThinking &&
@@ -605,14 +565,16 @@ Future<void> exportChatMessagesTxt(
           : null;
       final contentForExport = exportData?.cleanedContent ?? msg.content;
 
-      final parsed = _parseContent(contentForExport);
+      final parsed = parseRemoteInlineImages(contentForExport);
       if (parsed.text.isNotEmpty) {
         buf.writeln(parsed.text);
         buf.writeln('');
       }
 
-      for (final d in parsed.docs) {
-        buf.writeln('- ${d.fileName} (${d.mime})');
+      for (final attachment in msg.attachments) {
+        final name = chatMessageAttachmentDisplayName(attachment);
+        final mime = attachment.mediaType ?? _guessImageMime(attachment.path);
+        buf.writeln('- $name ($mime)');
       }
 
       if (includeThinking &&
@@ -2859,14 +2821,20 @@ class _ExportedBubble extends StatelessWidget {
         isAssistant && (assistant?.useAssistantAvatar == true);
     final useAssistName = isAssistant && (assistant?.useAssistantName == true);
 
-    final parsed = _parseContent(messageForExport.content);
+    final parsed = parseRemoteInlineImages(messageForExport.content);
     final mdText = StringBuffer();
     if (parsed.text.isNotEmpty) mdText.writeln(_softBreakMd(parsed.text));
-    for (final p in parsed.images) {
-      mdText.writeln('\n![](${SandboxPathResolver.fix(p)})\n');
+    for (final source in parsed.imageSources) {
+      mdText.writeln('\n![]($source)\n');
     }
-    for (final d in parsed.docs) {
-      mdText.writeln('\n- ${d.fileName}  `(${d.mime})`');
+    for (final attachment in messageForExport.attachments) {
+      final name = chatMessageAttachmentDisplayName(attachment);
+      final mime = attachment.mediaType ?? _guessImageMime(attachment.path);
+      if (attachment.kind == 'image') {
+        mdText.writeln('\n![](${SandboxPathResolver.fix(attachment.path)})\n');
+      } else {
+        mdText.writeln('\n- $name  `($mime)`');
+      }
     }
     final Widget contentWidget = (mdText.toString().trim().isNotEmpty)
         ? DefaultTextStyle.merge(
@@ -3006,20 +2974,6 @@ Future<void> _runWithExportingOverlay(
       await Future<void>.delayed(Duration.zero);
     }
   }
-}
-
-class _Parsed {
-  final String text;
-  final List<String> images;
-  final List<_DocRef> docs;
-  _Parsed(this.text, this.images, this.docs);
-}
-
-class _DocRef {
-  final String path;
-  final String fileName;
-  final String mime;
-  _DocRef({required this.path, required this.fileName, required this.mime});
 }
 
 class _ExportOptionTile extends StatelessWidget {

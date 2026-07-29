@@ -15,6 +15,7 @@ import 'dart:convert';
 import '../../home/widgets/file_processing_indicator.dart';
 import '../pages/image_viewer_page.dart';
 import '../../../core/models/chat_message.dart';
+import '../../../core/utils/chat_message_attachment_utils.dart';
 import '../../../icons/lucide_adapter.dart';
 import '../../../icons/reasoning_icons.dart';
 // import '../../../theme/design_tokens.dart';
@@ -1286,7 +1287,7 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
     final userProvider = context.watch<UserProvider>();
     final l10n = AppLocalizations.of(context)!;
     final settings = context.watch<SettingsProvider>();
-    final parsed = _parseUserContent(widget.message.content);
+    final parsed = _parseUserContent(widget.message);
     final assistant = _assistantForMessage();
     final visualText = applyAssistantRegexes(
       parsed.text,
@@ -1621,179 +1622,228 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
     required _ParsedUserContent parsed,
     required bool isDark,
   }) {
-    if (parsed.images.isEmpty && parsed.docs.isEmpty) return null;
+    if (parsed.attachments.isEmpty) return null;
 
-    final cs = Theme.of(context).colorScheme;
     final l10n = AppLocalizations.of(context)!;
-    final imageItems = <Widget>[];
-    final docItems = <Widget>[];
-
-    if (parsed.images.isNotEmpty) {
-      final imgs = parsed.images;
-      imageItems.addAll(
-        imgs.asMap().entries.map((entry) {
-          final idx = entry.key;
-          final p = entry.value;
-          return IosCardPress(
-            baseColor: Colors.transparent,
-            pressedScale: 0.985,
-            borderRadius: BorderRadius.circular(10),
-            padding: EdgeInsets.zero,
-            onTap: () {
-              Navigator.of(context).push(
-                PageRouteBuilder(
-                  pageBuilder: (_, __, ___) =>
-                      ImageViewerPage(images: imgs, initialIndex: idx),
-                  transitionDuration: const Duration(milliseconds: 360),
-                  reverseTransitionDuration: const Duration(milliseconds: 280),
-                  transitionsBuilder: (context, anim, sec, child) {
-                    final curved = CurvedAnimation(
-                      parent: anim,
-                      curve: Curves.easeOutCubic,
-                      reverseCurve: Curves.easeInCubic,
-                    );
-                    return FadeTransition(
-                      opacity: curved,
-                      child: SlideTransition(
-                        position: Tween<Offset>(
-                          begin: const Offset(0, 0.02),
-                          end: Offset.zero,
-                        ).animate(curved),
-                        child: child,
-                      ),
-                    );
-                  },
-                ),
-              );
-            },
-            child: ClipRRect(
-              borderRadius: BorderRadius.circular(10),
-              child: Hero(
-                tag: 'img:$p',
-                child: Image.file(
-                  File(SandboxPathResolver.fix(p)),
-                  width: 112,
-                  height: 112,
-                  fit: BoxFit.cover,
-                  errorBuilder: (_, __, ___) => Container(
-                    width: 112,
-                    height: 112,
-                    color: isDark
-                        ? Colors.white.withValues(alpha: 0.08)
-                        : Colors.black.withValues(alpha: 0.06),
-                    child: Icon(
-                      Icons.broken_image,
-                      color: cs.onSurface.withValues(alpha: 0.45),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          );
-        }),
+    final imageSources = parsed.attachments
+        .whereType<_UserImageRef>()
+        .map((attachment) => attachment.source)
+        .toList(growable: false);
+    final items = <Widget>[];
+    var imageIndex = 0;
+    for (var index = 0; index < parsed.attachments.length; index += 1) {
+      final attachment = parsed.attachments[index];
+      final key = ValueKey(
+        'user-message-attachment:${widget.message.id}:$index',
       );
-    }
-
-    if (parsed.docs.isNotEmpty) {
-      docItems.addAll(
-        parsed.docs.map((d) {
-          return IosCardPress(
-            baseColor: isDark
-                ? Colors.white.withValues(alpha: 0.08)
-                : cs.surface.withValues(alpha: 0.92),
-            pressedScale: 0.99,
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: cs.outlineVariant.withValues(alpha: 0.18),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-            onTap: () async {
-              try {
-                final fixed = SandboxPathResolver.fix(d.path);
-                final f = File(fixed);
-                if (!(await f.exists())) {
-                  if (!context.mounted) return;
-                  showAppSnackBar(
-                    context,
-                    message: l10n.chatMessageWidgetFileNotFound(d.fileName),
-                    type: NotificationType.error,
-                  );
-                  return;
-                }
-                final res = await OpenFilex.open(fixed, type: d.mime);
-                if (res.type != ResultType.done) {
-                  if (!context.mounted) return;
-                  final openMessage = res.message;
-                  showAppSnackBar(
-                    context,
-                    message: l10n.chatMessageWidgetCannotOpenFile(
-                      openMessage.isNotEmpty
-                          ? openMessage
-                          : res.type.toString(),
-                    ),
-                    type: NotificationType.error,
-                  );
-                }
-              } catch (e) {
-                if (!context.mounted) return;
-                showAppSnackBar(
-                  context,
-                  message: l10n.chatMessageWidgetOpenFileError(e.toString()),
-                  type: NotificationType.error,
-                );
-              }
-            },
-            child: Row(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(
-                  Icons.insert_drive_file,
-                  size: 16,
-                  color: cs.onSurface.withValues(alpha: 0.72),
-                ),
-                const SizedBox(width: 6),
-                ConstrainedBox(
-                  constraints: const BoxConstraints(maxWidth: 180),
-                  child: Text(
-                    d.fileName,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 13,
-                      color: cs.onSurface.withValues(alpha: 0.86),
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        }),
-      );
+      if (attachment is _UserImageRef) {
+        items.add(
+          _buildUserImageAttachment(
+            context,
+            key: key,
+            source: attachment.source,
+            imageSources: imageSources,
+            imageIndex: imageIndex,
+            isDark: isDark,
+          ),
+        );
+        imageIndex += 1;
+      } else if (attachment is _UserFileRef) {
+        items.add(
+          _buildUserFileAttachment(
+            context,
+            key: key,
+            attachment: attachment,
+            isDark: isDark,
+            l10n: l10n,
+          ),
+        );
+      }
     }
 
     return Align(
       key: ValueKey('user-message-attachments:${widget.message.id}'),
       alignment: Alignment.centerRight,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
+      child: Wrap(
+        key: ValueKey('user-message-attachment-list:${widget.message.id}'),
+        alignment: WrapAlignment.end,
+        spacing: 8,
+        runSpacing: 8,
+        children: items,
+      ),
+    );
+  }
+
+  Widget _buildUserImageAttachment(
+    BuildContext context, {
+    required Key key,
+    required String source,
+    required List<String> imageSources,
+    required int imageIndex,
+    required bool isDark,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    final error = Container(
+      width: 112,
+      height: 112,
+      color: isDark
+          ? Colors.white.withValues(alpha: 0.08)
+          : Colors.black.withValues(alpha: 0.06),
+      child: Icon(
+        Icons.broken_image,
+        color: cs.onSurface.withValues(alpha: 0.45),
+      ),
+    );
+
+    Widget image;
+    if (source.startsWith('http://') || source.startsWith('https://')) {
+      image = Image.network(
+        source,
+        width: 112,
+        height: 112,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => error,
+      );
+    } else if (source.startsWith('data:image/')) {
+      try {
+        final separator = source.indexOf(',');
+        if (separator <= 0) throw const FormatException();
+        final metadata = source.substring(0, separator);
+        final payload = source.substring(separator + 1);
+        final bytes = metadata.endsWith(';base64')
+            ? base64Decode(payload)
+            : Uint8List.fromList(utf8.encode(Uri.decodeComponent(payload)));
+        image = Image.memory(
+          bytes,
+          width: 112,
+          height: 112,
+          fit: BoxFit.cover,
+          errorBuilder: (_, __, ___) => error,
+        );
+      } catch (_) {
+        image = error;
+      }
+    } else {
+      image = Image.file(
+        File(SandboxPathResolver.fix(source)),
+        width: 112,
+        height: 112,
+        fit: BoxFit.cover,
+        errorBuilder: (_, __, ___) => error,
+      );
+    }
+
+    return IosCardPress(
+      key: key,
+      baseColor: Colors.transparent,
+      pressedScale: 0.985,
+      borderRadius: BorderRadius.circular(10),
+      padding: EdgeInsets.zero,
+      onTap: () {
+        Navigator.of(context).push(
+          PageRouteBuilder(
+            pageBuilder: (_, __, ___) =>
+                ImageViewerPage(images: imageSources, initialIndex: imageIndex),
+            transitionDuration: const Duration(milliseconds: 360),
+            reverseTransitionDuration: const Duration(milliseconds: 280),
+            transitionsBuilder: (context, animation, secondary, child) {
+              final curved = CurvedAnimation(
+                parent: animation,
+                curve: Curves.easeOutCubic,
+                reverseCurve: Curves.easeInCubic,
+              );
+              return FadeTransition(
+                opacity: curved,
+                child: SlideTransition(
+                  position: Tween<Offset>(
+                    begin: const Offset(0, 0.02),
+                    end: Offset.zero,
+                  ).animate(curved),
+                  child: child,
+                ),
+              );
+            },
+          ),
+        );
+      },
+      child: ClipRRect(
+        borderRadius: BorderRadius.circular(10),
+        child: Hero(tag: 'img:$source', child: image),
+      ),
+    );
+  }
+
+  Widget _buildUserFileAttachment(
+    BuildContext context, {
+    required Key key,
+    required _UserFileRef attachment,
+    required bool isDark,
+    required AppLocalizations l10n,
+  }) {
+    final cs = Theme.of(context).colorScheme;
+    return IosCardPress(
+      key: key,
+      baseColor: isDark
+          ? Colors.white.withValues(alpha: 0.08)
+          : cs.surface.withValues(alpha: 0.92),
+      pressedScale: 0.99,
+      borderRadius: BorderRadius.circular(10),
+      border: Border.all(color: cs.outlineVariant.withValues(alpha: 0.18)),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      onTap: () async {
+        try {
+          final fixed = SandboxPathResolver.fix(attachment.path);
+          final file = File(fixed);
+          if (!(await file.exists())) {
+            if (!context.mounted) return;
+            showAppSnackBar(
+              context,
+              message: l10n.chatMessageWidgetFileNotFound(attachment.fileName),
+              type: NotificationType.error,
+            );
+            return;
+          }
+          final result = await OpenFilex.open(fixed, type: attachment.mime);
+          if (result.type != ResultType.done) {
+            if (!context.mounted) return;
+            final openMessage = result.message;
+            showAppSnackBar(
+              context,
+              message: l10n.chatMessageWidgetCannotOpenFile(
+                openMessage.isNotEmpty ? openMessage : result.type.toString(),
+              ),
+              type: NotificationType.error,
+            );
+          }
+        } catch (error) {
+          if (!context.mounted) return;
+          showAppSnackBar(
+            context,
+            message: l10n.chatMessageWidgetOpenFileError(error.toString()),
+            type: NotificationType.error,
+          );
+        }
+      },
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
         children: [
-          if (imageItems.isNotEmpty)
-            Wrap(
-              key: ValueKey('user-message-images:${widget.message.id}'),
-              alignment: WrapAlignment.end,
-              spacing: 8,
-              runSpacing: 8,
-              children: imageItems,
+          Icon(
+            Icons.insert_drive_file,
+            size: 16,
+            color: cs.onSurface.withValues(alpha: 0.72),
+          ),
+          const SizedBox(width: 6),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 180),
+            child: Text(
+              attachment.fileName,
+              overflow: TextOverflow.ellipsis,
+              style: TextStyle(
+                fontSize: 13,
+                color: cs.onSurface.withValues(alpha: 0.86),
+              ),
             ),
-          if (imageItems.isNotEmpty && docItems.isNotEmpty)
-            const SizedBox(height: 8),
-          if (docItems.isNotEmpty)
-            Wrap(
-              key: ValueKey('user-message-docs:${widget.message.id}'),
-              alignment: WrapAlignment.end,
-              spacing: 8,
-              runSpacing: 8,
-              children: docItems,
-            ),
+          ),
         ],
       ),
     );
@@ -1829,34 +1879,21 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
     return _buildBubbleContainer(context: context, isUser: false, child: child);
   }
 
-  _ParsedUserContent _parseUserContent(String raw) {
-    final imgRe = RegExp(r"\[image:(.+?)\]");
-    final fileRe = RegExp(r"\[file:(.+?)\|(.+?)\|(.+?)\]");
-    final images = <String>[];
-    final docs = <_DocRef>[];
-    final buffer = StringBuffer();
-    int idx = 0;
-    while (idx < raw.length) {
-      final m1 = imgRe.matchAsPrefix(raw, idx);
-      final m2 = fileRe.matchAsPrefix(raw, idx);
-      if (m1 != null) {
-        final p = m1.group(1)?.trim();
-        if (p != null && p.isNotEmpty) images.add(p);
-        idx = m1.end;
-        continue;
-      }
-      if (m2 != null) {
-        final path = m2.group(1)?.trim() ?? '';
-        final name = m2.group(2)?.trim() ?? 'file';
-        final mime = m2.group(3)?.trim() ?? 'text/plain';
-        docs.add(_DocRef(path: path, fileName: name, mime: mime));
-        idx = m2.end;
-        continue;
-      }
-      buffer.write(raw[idx]);
-      idx++;
-    }
-    return _ParsedUserContent(buffer.toString().trim(), images, docs);
+  _ParsedUserContent _parseUserContent(ChatMessage message) {
+    final inline = parseRemoteInlineImages(message.content);
+    final attachments = <_UserAttachmentRef>[
+      for (final attachment in message.attachments)
+        if (attachment.kind == 'image')
+          _UserImageRef(attachment.path)
+        else
+          _UserFileRef(
+            path: attachment.path,
+            fileName: attachment.displayName!,
+            mime: attachment.mediaType!,
+          ),
+      for (final source in inline.imageSources) _UserImageRef(source),
+    ];
+    return _ParsedUserContent(inline.text, attachments);
   }
 
   Widget _buildAssistantTextContent(
@@ -3302,16 +3339,30 @@ class _StreamingAssistantMessageMotion extends StatelessWidget {
 
 class _ParsedUserContent {
   final String text;
-  final List<String> images;
-  final List<_DocRef> docs;
-  _ParsedUserContent(this.text, this.images, this.docs);
+  final List<_UserAttachmentRef> attachments;
+  _ParsedUserContent(this.text, this.attachments);
 }
 
-class _DocRef {
+sealed class _UserAttachmentRef {
+  const _UserAttachmentRef();
+}
+
+final class _UserImageRef extends _UserAttachmentRef {
+  const _UserImageRef(this.source);
+
+  final String source;
+}
+
+final class _UserFileRef extends _UserAttachmentRef {
+  const _UserFileRef({
+    required this.path,
+    required this.fileName,
+    required this.mime,
+  });
+
   final String path;
   final String fileName;
   final String mime;
-  _DocRef({required this.path, required this.fileName, required this.mime});
 }
 
 // UI data for MCP tool calls/results

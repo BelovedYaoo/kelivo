@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:io';
 import 'package:flutter/widgets.dart';
 import 'package:provider/provider.dart';
+import 'package:uuid/uuid.dart';
 import '../../../core/models/assistant.dart';
 import '../../../core/models/chat_input_data.dart';
 import '../../../core/models/chat_message.dart';
@@ -22,6 +23,7 @@ import '../../../core/providers/world_book_provider.dart';
 import '../../../core/services/api/builtin_tools.dart';
 import '../../../core/models/assistant_regex.dart';
 import '../../../core/utils/multimodal_input_utils.dart';
+import '../../../core/utils/chat_message_attachment_utils.dart';
 import '../../../utils/assistant_regex.dart';
 import '../../../utils/markdown_media_sanitizer.dart';
 
@@ -38,6 +40,11 @@ import '../../../utils/markdown_media_sanitizer.dart';
 /// - Inlining local images for model context
 class MessageBuilderService {
   static const String internalMediaPathsKey = multimodalInternalMediaPathsKey;
+
+  final String _structuredAttachmentMarkerNonce = const Uuid().v4();
+  late final RegExp _structuredAttachmentMarkerPattern = RegExp(
+    '\\[kelivo-attachment:${RegExp.escape(_structuredAttachmentMarkerNonce)}:([A-Za-z0-9_-]+)\\]',
+  );
 
   MessageBuilderService({
     required this.chatService,
@@ -105,7 +112,7 @@ class MessageBuilderService {
 
   /// Build API messages list from current conversation state.
   ///
-  /// Applies truncation, version collapsing, and strips [image:] / [file:] markers.
+  /// 在发送阶段处理输入前完成截断与版本折叠。
   List<Map<String, dynamic>> buildApiMessages({
     required List<ChatMessage> messages,
     required Map<String, int> versionSelections,
@@ -193,6 +200,12 @@ class MessageBuilderService {
       }
 
       var content = m.content;
+      if (m.role == 'user' && m.attachments.isNotEmpty) {
+        final markers = m.attachments
+            .map(_encodeStructuredAttachmentMarker)
+            .join('\n');
+        content = content.isEmpty ? markers : '$content\n$markers';
+      }
       if (m.role == 'assistant' && geminiThoughtSignatureHandler != null) {
         content = geminiThoughtSignatureHandler!(m, content);
       }
@@ -258,36 +271,51 @@ class MessageBuilderService {
     String raw, {
     bool includeMediaFilePathsAsImages = true,
   }) {
-    final imgRe = RegExp(r"\[image:(.+?)\]");
-    final fileRe = RegExp(r"\[file:(.+?)\|(.+?)\|(.+?)\]");
+    final imgRe = RegExp(r"\[image:([^\]]+)\]");
     final images = <String>[];
     final docs = <DocumentAttachment>[];
     final buffer = StringBuffer();
     int idx = 0;
     while (idx < raw.length) {
+      final attachmentMatch = _structuredAttachmentMarkerPattern.matchAsPrefix(
+        raw,
+        idx,
+      );
       final imgMatch = imgRe.matchAsPrefix(raw, idx);
-      final fileMatch = fileRe.matchAsPrefix(raw, idx);
-      if (imgMatch != null) {
-        final p = imgMatch.group(1)?.trim();
-        if (p != null && p.isNotEmpty) images.add(p);
-        idx = imgMatch.end;
+      if (attachmentMatch != null) {
+        final attachment = _decodeStructuredAttachmentMarker(
+          attachmentMatch.group(1) ?? '',
+        );
+        if (attachment == null) {
+          buffer.write(attachmentMatch.group(0));
+          idx = attachmentMatch.end;
+          continue;
+        }
+        if (attachment.kind == 'image') {
+          images.add(attachment.path);
+        } else {
+          final document = DocumentAttachment(
+            path: attachment.path,
+            fileName: attachment.displayName!,
+            mime: attachment.mediaType!,
+          );
+          docs.add(document);
+          final effectiveMime = _effectiveAttachmentMime(document);
+          if (includeMediaFilePathsAsImages &&
+              (isVideoMime(effectiveMime) || isAudioMime(effectiveMime))) {
+            images.add(attachment.path);
+          }
+        }
+        idx = attachmentMatch.end;
         continue;
       }
-      if (fileMatch != null) {
-        final path = fileMatch.group(1)?.trim() ?? '';
-        final name = fileMatch.group(2)?.trim() ?? 'file';
-        final mime = fileMatch.group(3)?.trim() ?? 'text/plain';
-        final doc = DocumentAttachment(path: path, fileName: name, mime: mime);
-        docs.add(doc);
-        // Treat media attachments as image-style attachments for downstream API builders.
-        final effectiveMime = _effectiveAttachmentMime(doc);
-        if (includeMediaFilePathsAsImages &&
-            (isVideoMime(effectiveMime) || isAudioMime(effectiveMime)) &&
-            path.isNotEmpty) {
-          images.add(path);
+      if (imgMatch != null) {
+        final p = imgMatch.group(1)?.trim();
+        if (p != null && p.isNotEmpty && isRemoteInlineImageSource(p)) {
+          images.add(p);
+          idx = imgMatch.end;
+          continue;
         }
-        idx = fileMatch.end;
-        continue;
       }
       buffer.write(raw[idx]);
       idx++;
@@ -297,6 +325,56 @@ class MessageBuilderService {
       imagePaths: images,
       documents: docs,
     );
+  }
+
+  String _encodeStructuredAttachmentMarker(ChatMessageAttachment attachment) {
+    final payload = jsonEncode(<String, Object?>{
+      'kind': attachment.kind,
+      'path': attachment.path,
+      'displayName': attachment.displayName,
+      'mediaType': attachment.mediaType,
+    });
+    final encoded = base64UrlEncode(utf8.encode(payload)).replaceAll('=', '');
+    return '[kelivo-attachment:$_structuredAttachmentMarkerNonce:$encoded]';
+  }
+
+  _StructuredAttachmentInput? _decodeStructuredAttachmentMarker(
+    String encoded,
+  ) {
+    try {
+      final paddedLength = ((encoded.length + 3) ~/ 4) * 4;
+      final payload = utf8.decode(
+        base64Url.decode(encoded.padRight(paddedLength, '=')),
+      );
+      final decoded = jsonDecode(payload);
+      if (decoded is! Map) return null;
+
+      final kind = decoded['kind'];
+      final path = decoded['path'];
+      final displayName = decoded['displayName'];
+      final mediaType = decoded['mediaType'];
+      if (kind is! String ||
+          path is! String ||
+          path.isEmpty ||
+          (kind != 'image' && kind != 'file')) {
+        return null;
+      }
+      if (kind == 'file' &&
+          (displayName is! String ||
+              displayName.isEmpty ||
+              mediaType is! String ||
+              mediaType.isEmpty)) {
+        return null;
+      }
+      return _StructuredAttachmentInput(
+        kind: kind,
+        path: path,
+        displayName: displayName is String ? displayName : null,
+        mediaType: mediaType is String ? mediaType : null,
+      );
+    } catch (_) {
+      return null;
+    }
   }
 
   String _effectiveAttachmentMime(DocumentAttachment attachment) {
@@ -995,4 +1073,18 @@ class _DocTextCacheEntry {
   final String? text;
   final int modifiedMs;
   final int size;
+}
+
+final class _StructuredAttachmentInput {
+  const _StructuredAttachmentInput({
+    required this.kind,
+    required this.path,
+    required this.displayName,
+    required this.mediaType,
+  });
+
+  final String kind;
+  final String path;
+  final String? displayName;
+  final String? mediaType;
 }

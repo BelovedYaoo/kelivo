@@ -1,9 +1,14 @@
+import 'dart:convert';
+import 'dart:io';
+
 import 'package:flutter/widgets.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'package:Kelivo/core/models/assistant.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/models/conversation.dart';
+import 'package:Kelivo/core/providers/settings_provider.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/features/home/services/message_builder_service.dart';
@@ -42,28 +47,78 @@ ChatMessage _message({
   required String role,
   required String content,
   String? reasoningText,
+  List<ChatMessageAttachment> attachments = const [],
 }) {
   return ChatMessage(
     id: id,
     role: role,
     content: content,
+    attachments: attachments,
     conversationId: 'conversation-1',
     reasoningText: reasoningText,
   );
 }
 
+ChatMessageAttachment _attachment({
+  required String assetId,
+  required String path,
+  required String kind,
+  String? displayName,
+  String? mediaType,
+}) {
+  return ChatMessageAttachment(
+    assetId: assetId,
+    path: path,
+    contentHash:
+        'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+    byteSize: 1,
+    kind: kind,
+    displayName: displayName,
+    mediaType: mediaType,
+  );
+}
+
 void main() {
+  setUp(() {
+    SharedPreferences.setMockInitialValues(<String, Object>{});
+  });
+
   group('MessageBuilderService.parseInputFromRaw', () {
-    test('默认将视频和音频文件路径纳入媒体路径供 API 使用', () {
+    test('只解析本次请求生成的结构化附件标记', () {
       final service = MessageBuilderService(
         chatService: _FakeChatService(const {}),
         contextProvider: _FakeBuildContext(),
       );
 
+      final apiMessages = service.buildApiMessages(
+        messages: [
+          _message(
+            id: 'u1',
+            role: 'user',
+            content: 'media',
+            attachments: [
+              _attachment(
+                assetId: 'clip',
+                path: 'C:/tmp/clip.mp4',
+                kind: 'file',
+                displayName: 'clip.mp4',
+                mediaType: 'video/mp4',
+              ),
+              _attachment(
+                assetId: 'audio',
+                path: 'C:/tmp/audio.wav',
+                kind: 'file',
+                displayName: 'audio.wav',
+                mediaType: 'audio/wav',
+              ),
+            ],
+          ),
+        ],
+        versionSelections: const {},
+        currentConversation: Conversation(title: 'test'),
+      );
       final input = service.parseInputFromRaw(
-        'media\n'
-        '[file:C:/tmp/clip.mp4|clip.mp4|video/mp4]\n'
-        '[file:C:/tmp/audio.wav|audio.wav|audio/wav]',
+        apiMessages.single['content'] as String,
       );
 
       expect(input.text, 'media');
@@ -74,30 +129,139 @@ void main() {
       ]);
     });
 
-    test('编辑恢复草稿时不把视频和音频文件伪装成图片', () {
+    test('本地旧标记按普通文本保留，远程图片标记继续解析', () {
       final service = MessageBuilderService(
         chatService: _FakeChatService(const {}),
         contextProvider: _FakeBuildContext(),
       );
 
       final input = service.parseInputFromRaw(
-        'media\n'
+        'local\n'
         '[image:C:/tmp/photo.png]\n'
         '[file:C:/tmp/clip.mp4|clip.mp4|video/mp4]\n'
-        '[file:C:/tmp/audio.wav|audio.wav|audio/wav]',
-        includeMediaFilePathsAsImages: false,
+        '[image:https://example.com/remote.png]\n'
+        '[image:data:image/png;base64,AA==]',
       );
 
-      expect(input.text, 'media');
-      expect(input.imagePaths, ['C:/tmp/photo.png']);
-      expect(input.documents.map((document) => document.fileName), [
-        'clip.mp4',
-        'audio.wav',
+      expect(input.text, contains('[image:C:/tmp/photo.png]'));
+      expect(input.text, contains('[file:C:/tmp/clip.mp4|clip.mp4|video/mp4]'));
+      expect(input.imagePaths, [
+        'https://example.com/remote.png',
+        'data:image/png;base64,AA==',
       ]);
+      expect(input.documents, isEmpty);
     });
   });
 
   group('MessageBuilderService.buildApiMessages', () {
+    test('结构化附件保持顺序且仅附件消息不会被丢弃', () {
+      final service = MessageBuilderService(
+        chatService: _FakeChatService(const {}),
+        contextProvider: _FakeBuildContext(),
+      );
+      final attachments = [
+        _attachment(assetId: 'image-a', path: 'C:/tmp/a.png', kind: 'image'),
+        _attachment(
+          assetId: 'file-b',
+          path: 'C:/tmp/b.txt',
+          kind: 'file',
+          displayName: 'b.txt',
+          mediaType: 'text/plain',
+        ),
+        _attachment(assetId: 'image-c', path: 'C:/tmp/c.png', kind: 'image'),
+      ];
+
+      final apiMessages = service.buildApiMessages(
+        messages: [
+          _message(
+            id: 'u1',
+            role: 'user',
+            content: '',
+            attachments: attachments,
+          ),
+        ],
+        versionSelections: const {},
+        currentConversation: Conversation(title: 'test'),
+      );
+
+      expect(apiMessages, hasLength(1));
+      final content = apiMessages.single['content'] as String;
+      final kinds = RegExp(r'\[kelivo-attachment:[^:]+:([A-Za-z0-9_-]+)\]')
+          .allMatches(content)
+          .map((match) {
+            final encoded = match.group(1)!;
+            final paddedLength = ((encoded.length + 3) ~/ 4) * 4;
+            final payload = utf8.decode(
+              base64Url.decode(encoded.padRight(paddedLength, '=')),
+            );
+            return (jsonDecode(payload) as Map<String, dynamic>)['kind'];
+          });
+      expect(kinds, ['image', 'file', 'image']);
+    });
+
+    test('结构化附件进入 API 内容且不会遗留内部标记', () async {
+      final service = MessageBuilderService(
+        chatService: _FakeChatService(const {}),
+        contextProvider: _FakeBuildContext(),
+      );
+      final tempDirectory = await Directory.systemTemp.createTemp(
+        'kelivo-attachment-read-',
+      );
+      addTearDown(() => tempDirectory.delete(recursive: true));
+      final document = File(
+        '${tempDirectory.path}${Platform.pathSeparator}说明.txt',
+      );
+      await document.writeAsString('结构化文件正文');
+      final imagePath = '${tempDirectory.path}${Platform.pathSeparator}图片.png';
+      final apiMessages = service.buildApiMessages(
+        messages: [
+          _message(
+            id: 'u1',
+            role: 'user',
+            content:
+                '请处理附件\n[image:C:/legacy.png]\n[image:https://example.com/remote.png]',
+            attachments: [
+              _attachment(assetId: 'image', path: imagePath, kind: 'image'),
+              _attachment(
+                assetId: 'document',
+                path: document.path,
+                kind: 'file',
+                displayName: '说明.txt',
+                mediaType: 'text/plain',
+              ),
+            ],
+          ),
+        ],
+        versionSelections: const {},
+        currentConversation: Conversation(title: 'test'),
+      );
+
+      final imagePaths = await service.processUserMessagesForApi(
+        apiMessages,
+        SettingsProvider(
+          syncWriteExecutor: const UntrackedSyncWriteExecutor.forTests(),
+        ),
+        const Assistant(id: 'assistant-1', name: 'test'),
+      );
+
+      final content = apiMessages.single['content'] as String;
+      expect(imagePaths, ['https://example.com/remote.png', imagePath]);
+      expect(content, contains('[image:C:/legacy.png]'));
+      expect(content, contains('[image:https://example.com/remote.png]'));
+      expect(content, contains('[image:$imagePath]'));
+      expect(content, contains('说明.txt'));
+      expect(content, contains('结构化文件正文'));
+      expect(content, isNot(contains('[kelivo-attachment:')));
+      expect(
+        apiMessages.single.keys.toSet().difference(const {
+          'role',
+          'content',
+          MessageBuilderService.internalMediaPathsKey,
+        }),
+        isEmpty,
+      );
+    });
+
     test('有工具调用时会把 reasoning_content 回填到 assistant tool 消息', () {
       final service = MessageBuilderService(
         chatService: _FakeChatService({

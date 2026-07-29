@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image/image.dart' as image_lib;
 
+import 'package:Kelivo/core/models/chat_message.dart';
+import 'package:Kelivo/core/utils/chat_message_attachment_utils.dart';
 import 'package:Kelivo/features/chat/widgets/message_export_sheet.dart';
 
 Uint8List _solidPng({
@@ -47,6 +49,61 @@ Uint8List _blankPaddedPng({
 }
 
 void main() {
+  test('附件导出名称不包含本地绝对路径', () {
+    final fileAttachment = ChatMessageAttachment(
+      assetId: 'file',
+      path: r'C:\Users\ovo\Private\spec.pdf',
+      contentHash:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      byteSize: 1,
+      kind: 'file',
+      displayName: 'spec.pdf',
+      mediaType: 'application/pdf',
+    );
+    final imageAttachment = ChatMessageAttachment(
+      assetId: 'image',
+      path: '/home/ovo/private/photo.png',
+      contentHash:
+          'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+      byteSize: 1,
+      kind: 'image',
+    );
+
+    expect(chatMessageAttachmentDisplayName(fileAttachment), 'spec.pdf');
+    expect(chatMessageAttachmentDisplayName(imageAttachment), 'photo.png');
+    expect(
+      chatMessageReadablePreview(
+        ChatMessage(
+          role: 'user',
+          content: '',
+          attachments: [fileAttachment, imageAttachment],
+          conversationId: 'conversation-1',
+        ),
+      ),
+      'spec.pdf photo.png',
+    );
+    expect(
+      '${chatMessageAttachmentDisplayName(fileAttachment)} '
+      '${chatMessageAttachmentDisplayName(imageAttachment)}',
+      isNot(anyOf(contains('C:\\Users'), contains('/home/ovo'))),
+    );
+  });
+
+  test('导出正文只剥离远程图片标记', () {
+    final parsed = parseRemoteInlineImages(
+      '正文\n[image:C:/private/local.png]\n'
+      '[file:C:/private/spec.pdf|spec.pdf|application/pdf]\n'
+      '[image:https://example.com/remote.png]',
+    );
+
+    expect(parsed.text, contains('[image:C:/private/local.png]'));
+    expect(
+      parsed.text,
+      contains('[file:C:/private/spec.pdf|spec.pdf|application/pdf]'),
+    );
+    expect(parsed.imageSources, ['https://example.com/remote.png']);
+  });
+
   testWidgets('export capture root keeps the captured theme', (tester) async {
     final exportTheme = ThemeData(
       colorScheme: ColorScheme.fromSeed(seedColor: Colors.blue),

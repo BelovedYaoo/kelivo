@@ -2,6 +2,7 @@ import 'dart:math';
 
 import 'package:flutter/material.dart';
 import '../../../core/models/chat_message.dart';
+import '../../../core/utils/chat_message_attachment_utils.dart';
 import '../../../icons/lucide_adapter.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../theme/app_font_weights.dart';
@@ -344,8 +345,12 @@ class _MiniMapSheetState extends State<_MiniMapSheet>
     final needle = _query.trim().toLowerCase();
     if (needle.isEmpty) return base;
     return base.where((pair) {
-      final user = pair.user?.content.toLowerCase() ?? '';
-      final asst = pair.assistant?.content.toLowerCase() ?? '';
+      final user = pair.user == null
+          ? ''
+          : chatMessageReadablePreview(pair.user!).toLowerCase();
+      final asst = pair.assistant == null
+          ? ''
+          : chatMessageReadablePreview(pair.assistant!).toLowerCase();
       return user.contains(needle) || asst.contains(needle);
     }).toList();
   }
@@ -370,10 +375,8 @@ class _MiniMapRow extends StatelessWidget {
     this.onToggleSelection,
   });
 
-  String _oneLine(String s) {
-    // Strip inline embed markers used in user messages to avoid noise
-    var t = s
-        // remove vendor inline reasoning blocks if present
+  String _oneLine(ChatMessage message) {
+    return chatMessageReadablePreview(message)
         .replaceAll(
           RegExp(
             r'<(?:think|thought)>[\s\S]*?<\/(?:think|thought)>',
@@ -381,20 +384,17 @@ class _MiniMapRow extends StatelessWidget {
           ),
           '',
         )
-        .replaceAll(RegExp(r"\[image:[^\]]+\]"), "")
-        .replaceAll(RegExp(r"\[file:[^\]]+\]"), "")
         .replaceAll('\n', ' ')
         .replaceAll(RegExp(r'\s+'), ' ')
         .trim();
-    return t;
   }
 
   @override
   Widget build(BuildContext context) {
     final cs = Theme.of(context).colorScheme;
     final isDark = Theme.of(context).brightness == Brightness.dark;
-    final userText = pair.user?.content ?? '';
-    final asstText = pair.assistant?.content ?? '';
+    final userText = pair.user == null ? '' : _oneLine(pair.user!);
+    final asstText = pair.assistant == null ? '' : _oneLine(pair.assistant!);
 
     final bool userSelected =
         selectedMessageIds != null &&
@@ -454,7 +454,7 @@ class _MiniMapRow extends StatelessWidget {
                                 : null,
                           ),
                           child: Text(
-                            userText.isNotEmpty ? _oneLine(userText) : ' ',
+                            userText.isNotEmpty ? userText : ' ',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -481,7 +481,7 @@ class _MiniMapRow extends StatelessWidget {
                             borderRadius: BorderRadius.circular(16),
                           ),
                           child: Text(
-                            userText.isNotEmpty ? _oneLine(userText) : ' ',
+                            userText.isNotEmpty ? userText : ' ',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(
@@ -529,7 +529,7 @@ class _MiniMapRow extends StatelessWidget {
                                 : null,
                           ),
                           child: Text(
-                            asstText.isNotEmpty ? _oneLine(asstText) : ' ',
+                            asstText.isNotEmpty ? asstText : ' ',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 15.7, height: 1.5),
@@ -553,7 +553,7 @@ class _MiniMapRow extends StatelessWidget {
                             borderRadius: BorderRadius.circular(16),
                           ),
                           child: Text(
-                            asstText.isNotEmpty ? _oneLine(asstText) : ' ',
+                            asstText.isNotEmpty ? asstText : ' ',
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: TextStyle(fontSize: 15.7, height: 1.5),
