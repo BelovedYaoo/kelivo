@@ -9,6 +9,8 @@ pub mod device_crypto;
 #[cfg(feature = "device-crypto")]
 pub mod recovery_crypto;
 mod recovery_history;
+#[cfg(feature = "device-crypto")]
+mod zeroizing_hkdf;
 
 use std::fmt;
 use std::ops::Deref;

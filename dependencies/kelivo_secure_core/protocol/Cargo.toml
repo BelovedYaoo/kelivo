@@ -10,7 +10,6 @@ device-crypto = [
   "dep:argon2",
   "dep:curve25519-dalek",
   "dep:ed25519-dalek",
-  "dep:hkdf",
   "dep:hpke",
   "dep:hmac",
   "dep:sha2_device",
@@ -35,7 +34,6 @@ hpke = { version = "=0.14.0", default-features = false, optional = true, feature
   "chacha",
   "x25519",
 ] }
-hkdf = { version = "=0.13.0", default-features = false, optional = true }
 hmac = { version = "=0.13.0", default-features = false, optional = true, features = [
   "zeroize",
 ] }

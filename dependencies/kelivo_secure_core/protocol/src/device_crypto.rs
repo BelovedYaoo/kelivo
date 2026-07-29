@@ -11,7 +11,6 @@ use chacha20poly1305::{
 };
 use curve25519_dalek::edwards::CompressedEdwardsY;
 use ed25519_dalek::{Signature, Signer, SigningKey, VerifyingKey};
-use hkdf::Hkdf;
 use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use hpke::{
     Deserializable, Kem as HpkeKemTrait, OpModeR, OpModeS, Serializable,
@@ -24,6 +23,8 @@ use hpke::{
 use rand::{CryptoRng, RngCore};
 use sha2_device::{Digest, Sha256};
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
+
+use crate::zeroizing_hkdf::expand_hkdf_sha256_single_block;
 
 const DEVICE_PROOF_MAGIC: [u8; 4] = *b"KDPF";
 pub const DEVICE_PROOF_VERSION: u16 = 1;
@@ -1211,9 +1212,13 @@ fn derive_pairing_authenticator_key(
 ) -> Result<Zeroizing<[u8; PAIRING_AUTHENTICATOR_LENGTH]>, DeviceCryptoError> {
     require_exact_length(pairing_secret, PAIRING_SECRET_LENGTH, true)?;
     let mut key = Zeroizing::new([0_u8; PAIRING_AUTHENTICATOR_LENGTH]);
-    Hkdf::<Sha256>::new(Some(&[]), pairing_secret)
-        .expand(PAIRING_AUTHENTICATOR_INFO, key.as_mut_slice())
-        .map_err(|_| DeviceCryptoError::PairingAuthenticatorCryptoFailed)?;
+    expand_hkdf_sha256_single_block(
+        Some(&[]),
+        pairing_secret,
+        PAIRING_AUTHENTICATOR_INFO,
+        &mut key,
+    )
+    .map_err(|_| DeviceCryptoError::PairingAuthenticatorCryptoFailed)?;
     Ok(key)
 }
 
@@ -1352,10 +1357,8 @@ fn with_account_trust_signing_key<T>(
     info[user_offset..epoch_offset].copy_from_slice(binding.user_id.as_bytes());
     info[epoch_offset..].copy_from_slice(&binding.key_epoch.to_be_bytes());
 
-    // HKDF 直接写入具备 Drop 清理的种子对象，避免产生裸 seed 临时副本。
     let mut signing_key = DeviceSigningPrivateKey::from_seed([0; DEVICE_PRIVATE_KEY_LENGTH]);
-    Hkdf::<Sha256>::new(None, ark.as_bytes())
-        .expand(&info, &mut signing_key.0)
+    expand_hkdf_sha256_single_block(None, ark.as_bytes(), &info, &mut signing_key.0)
         .map_err(|_| DeviceCryptoError::AccountTrustKeyDerivationFailed)?;
     operation(&signing_key)
 }

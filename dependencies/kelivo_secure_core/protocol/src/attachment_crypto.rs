@@ -2,12 +2,13 @@ use chacha20poly1305::{
     XChaCha20Poly1305, XNonce,
     aead::{Aead, KeyInit, Payload},
 };
-use hkdf::Hkdf;
 use rand::{CryptoRng, RngCore};
-use sha2_device::Sha256;
 use zeroize::{Zeroize, ZeroizeOnDrop, Zeroizing};
 
-use crate::device_crypto::{AccountRootKey, UserId};
+use crate::{
+    device_crypto::{AccountRootKey, UserId},
+    zeroizing_hkdf::expand_hkdf_sha256_single_block,
+};
 
 const UUID_LENGTH: usize = 16;
 const DATA_KEY_LENGTH: usize = 32;
@@ -359,9 +360,13 @@ fn derive_wrapping_key(
 ) -> Result<Zeroizing<[u8; DATA_KEY_LENGTH]>, AttachmentCryptoError> {
     let context_bytes = encode_context_binding(context);
     let mut key = Zeroizing::new([0_u8; DATA_KEY_LENGTH]);
-    Hkdf::<Sha256>::new(Some(&context_bytes), ark.as_bytes())
-        .expand(WRAP_KEY_INFO, key.as_mut_slice())
-        .map_err(|_| AttachmentCryptoError::CryptoFailed)?;
+    expand_hkdf_sha256_single_block(
+        Some(&context_bytes),
+        ark.as_bytes(),
+        WRAP_KEY_INFO,
+        &mut key,
+    )
+    .map_err(|_| AttachmentCryptoError::CryptoFailed)?;
     Ok(key)
 }
 
@@ -374,9 +379,13 @@ fn derive_chunk_key(
     salt.extend_from_slice(context.upload_id.as_bytes());
     salt.extend_from_slice(&context.chunk_index.to_be_bytes());
     let mut key = Zeroizing::new([0_u8; DATA_KEY_LENGTH]);
-    Hkdf::<Sha256>::new(Some(salt.as_slice()), data_key.as_bytes())
-        .expand(CHUNK_KEY_INFO, key.as_mut_slice())
-        .map_err(|_| AttachmentCryptoError::CryptoFailed)?;
+    expand_hkdf_sha256_single_block(
+        Some(salt.as_slice()),
+        data_key.as_bytes(),
+        CHUNK_KEY_INFO,
+        &mut key,
+    )
+    .map_err(|_| AttachmentCryptoError::CryptoFailed)?;
     Ok(key)
 }
 
