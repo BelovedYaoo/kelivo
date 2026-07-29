@@ -90,7 +90,13 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncSignInSection => '登录';
 
   @override
+  String get cloudSyncRegisterSection => '注册账户';
+
+  @override
   String get cloudSyncLoginName => '账号';
+
+  @override
+  String get cloudSyncDisplayName => '显示名称';
 
   @override
   String get cloudSyncPassword => '密码';
@@ -108,6 +114,12 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get cloudSyncSigningIn => '正在登录…';
+
+  @override
+  String get cloudSyncRegister => '注册';
+
+  @override
+  String get cloudSyncRegistering => '正在注册…';
 
   @override
   String get cloudSyncPairingSection => '设备批准';
@@ -130,7 +142,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncApproveDeviceSuccess => '设备已批准';
 
   @override
-  String get cloudSyncRequiredFields => '请填写服务地址、账号、密码和设备名称。';
+  String get cloudSyncRequiredFields => '请填写账号、密码和设备名称。';
+
+  @override
+  String get cloudSyncRegistrationRequiredFields => '请填写账号、显示名称、密码和设备名称。';
 
   @override
   String get cloudSyncAccountSection => '账户';
@@ -5701,7 +5716,13 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncSignInSection => '登录';
 
   @override
+  String get cloudSyncRegisterSection => '注册账户';
+
+  @override
   String get cloudSyncLoginName => '账号';
+
+  @override
+  String get cloudSyncDisplayName => '显示名称';
 
   @override
   String get cloudSyncPassword => '密码';
@@ -5719,6 +5740,12 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get cloudSyncSigningIn => '正在登录…';
+
+  @override
+  String get cloudSyncRegister => '注册';
+
+  @override
+  String get cloudSyncRegistering => '正在注册…';
 
   @override
   String get cloudSyncPairingSection => '设备批准';
@@ -5741,7 +5768,10 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncApproveDeviceSuccess => '设备已批准';
 
   @override
-  String get cloudSyncRequiredFields => '请填写服务地址、账号、密码和设备名称。';
+  String get cloudSyncRequiredFields => '请填写账号、密码和设备名称。';
+
+  @override
+  String get cloudSyncRegistrationRequiredFields => '请填写账号、显示名称、密码和设备名称。';
 
   @override
   String get cloudSyncAccountSection => '账户';
@@ -11312,7 +11342,13 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncSignInSection => '登入';
 
   @override
+  String get cloudSyncRegisterSection => '註冊帳戶';
+
+  @override
   String get cloudSyncLoginName => '帳號';
+
+  @override
+  String get cloudSyncDisplayName => '顯示名稱';
 
   @override
   String get cloudSyncPassword => '密碼';
@@ -11330,6 +11366,12 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get cloudSyncSigningIn => '正在登入…';
+
+  @override
+  String get cloudSyncRegister => '註冊';
+
+  @override
+  String get cloudSyncRegistering => '正在註冊…';
 
   @override
   String get cloudSyncPairingSection => '裝置批准';
@@ -11352,7 +11394,10 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncApproveDeviceSuccess => '裝置已批准';
 
   @override
-  String get cloudSyncRequiredFields => '請填寫服務位址、帳號、密碼和裝置名稱。';
+  String get cloudSyncRequiredFields => '請填寫帳號、密碼和裝置名稱。';
+
+  @override
+  String get cloudSyncRegistrationRequiredFields => '請填寫帳號、顯示名稱、密碼和裝置名稱。';
 
   @override
   String get cloudSyncAccountSection => '帳戶';

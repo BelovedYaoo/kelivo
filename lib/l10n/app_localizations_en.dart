@@ -92,7 +92,13 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudSyncSignInSection => 'Sign In';
 
   @override
+  String get cloudSyncRegisterSection => 'Create Account';
+
+  @override
   String get cloudSyncLoginName => 'Account';
+
+  @override
+  String get cloudSyncDisplayName => 'Display Name';
 
   @override
   String get cloudSyncPassword => 'Password';
@@ -110,6 +116,12 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cloudSyncSigningIn => 'Signing In…';
+
+  @override
+  String get cloudSyncRegister => 'Register';
+
+  @override
+  String get cloudSyncRegistering => 'Registering…';
 
   @override
   String get cloudSyncPairingSection => 'Device Approval';
@@ -134,7 +146,11 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cloudSyncRequiredFields =>
-      'Complete the service URL, account, password, and device name.';
+      'Complete the account, password, and device name.';
+
+  @override
+  String get cloudSyncRegistrationRequiredFields =>
+      'Complete the account, display name, password, and device name.';
 
   @override
   String get cloudSyncAccountSection => 'Account';

@@ -48,11 +48,17 @@ class CloudSyncSettingsContent extends StatefulWidget {
       _CloudSyncSettingsContentState();
 }
 
+enum _CloudSyncAuthenticationMode { signIn, register }
+
 class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   final TextEditingController _loginNameController = TextEditingController();
+  final TextEditingController _displayNameController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
   final TextEditingController _deviceNameController = TextEditingController();
 
+  _CloudSyncAuthenticationMode _authenticationMode =
+      _CloudSyncAuthenticationMode.signIn;
+  bool _submitting = false;
   bool _deviceNameInitialized = false;
   String? _requestedDeviceScope;
   CloudSyncProvider? _provider;
@@ -81,6 +87,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     }
     _pendingPairingQrImage = null;
     _loginNameController.dispose();
+    _displayNameController.dispose();
     _passwordController.dispose();
     _deviceNameController.dispose();
     super.dispose();
@@ -121,7 +128,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
           if (provider.pendingDeviceApproval case final approval?)
             _buildPendingPairingSection(context, provider, approval)
           else
-            _buildSignInSection(context, provider)
+            _buildAuthenticationSection(context, provider)
         else ...[
           _buildAccountSection(context, provider, session),
           const SizedBox(height: 14),
@@ -270,18 +277,69 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     );
   }
 
-  Widget _buildSignInSection(BuildContext context, CloudSyncProvider provider) {
+  Widget _buildAuthenticationSection(
+    BuildContext context,
+    CloudSyncProvider provider,
+  ) {
     final l10n = AppLocalizations.of(context)!;
+    final registering = _registrationSelected;
     final busy =
+        _submitting ||
         provider.status == CloudSyncProviderStatus.initializing ||
         provider.status == CloudSyncProviderStatus.signingIn ||
         provider.status == CloudSyncProviderStatus.awaitingDeviceApproval ||
         provider.status == CloudSyncProviderStatus.signingOut ||
         provider.status == CloudSyncProviderStatus.workspaceChangePending;
     return _Section(
-      title: l10n.cloudSyncSignInSection,
+      title: registering
+          ? l10n.cloudSyncRegisterSection
+          : l10n.cloudSyncSignInSection,
       children: [
+        if (_supportsRegistration) ...[
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: Row(
+              children: [
+                Expanded(
+                  child: IosTileButton(
+                    key: const ValueKey<String>('cloud-sync-sign-in-mode'),
+                    label: l10n.cloudSyncSignIn,
+                    icon: Lucide.User,
+                    enabled: !busy,
+                    backgroundColor:
+                        _authenticationMode ==
+                            _CloudSyncAuthenticationMode.signIn
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                    onTap: () => _selectAuthenticationMode(
+                      _CloudSyncAuthenticationMode.signIn,
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: IosTileButton(
+                    key: const ValueKey<String>('cloud-sync-register-mode'),
+                    label: l10n.cloudSyncRegister,
+                    icon: Lucide.Plus,
+                    enabled: !busy,
+                    backgroundColor:
+                        _authenticationMode ==
+                            _CloudSyncAuthenticationMode.register
+                        ? Theme.of(context).colorScheme.primary
+                        : null,
+                    onTap: () => _selectAuthenticationMode(
+                      _CloudSyncAuthenticationMode.register,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          const _SectionDivider(),
+        ],
         IosFormTextField(
+          key: const ValueKey<String>('cloud-sync-login-name-field'),
           label: l10n.cloudSyncLoginName,
           controller: _loginNameController,
           inlineLabel: widget.desktop,
@@ -290,8 +348,20 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
           autocorrect: false,
           enableSuggestions: false,
         ),
+        if (registering) ...[
+          const _SectionDivider(),
+          IosFormTextField(
+            key: const ValueKey<String>('cloud-sync-display-name-field'),
+            label: l10n.cloudSyncDisplayName,
+            controller: _displayNameController,
+            inlineLabel: widget.desktop,
+            textInputAction: TextInputAction.next,
+            enabled: !busy,
+          ),
+        ],
         const _SectionDivider(),
         IosFormTextField(
+          key: const ValueKey<String>('cloud-sync-password-field'),
           label: l10n.cloudSyncPassword,
           controller: _passwordController,
           inlineLabel: widget.desktop,
@@ -303,6 +373,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
         ),
         const _SectionDivider(),
         IosFormTextField(
+          key: const ValueKey<String>('cloud-sync-device-name-field'),
           label: l10n.cloudSyncDeviceName,
           controller: _deviceNameController,
           inlineLabel: widget.desktop,
@@ -315,14 +386,21 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
           child: SizedBox(
             width: double.infinity,
             child: IosTileButton(
-              label: provider.status == CloudSyncProviderStatus.signingIn
-                  ? l10n.cloudSyncSigningIn
+              key: const ValueKey<String>('cloud-sync-authentication-submit'),
+              label:
+                  _submitting ||
+                      provider.status == CloudSyncProviderStatus.signingIn
+                  ? registering
+                        ? l10n.cloudSyncRegistering
+                        : l10n.cloudSyncSigningIn
+                  : registering
+                  ? l10n.cloudSyncRegister
                   : l10n.cloudSyncSignIn,
-              icon: Lucide.User,
+              icon: registering ? Lucide.Plus : Lucide.User,
               enabled: !busy,
               backgroundColor: Theme.of(context).colorScheme.primary,
               foregroundColor: Theme.of(context).colorScheme.primary,
-              onTap: () => unawaited(_signIn()),
+              onTap: () => unawaited(registering ? _register() : _signIn()),
             ),
           ),
         ),
@@ -446,6 +524,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   }
 
   Future<void> _signIn() async {
+    if (_submitting) return;
     final l10n = AppLocalizations.of(context)!;
     final loginName = _loginNameController.text.trim();
     final password = _passwordController.text;
@@ -459,12 +538,18 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       return;
     }
 
+    setState(() => _submitting = true);
     final provider = context.read<CloudSyncProvider>();
-    final success = await provider.login(
-      loginName: loginName,
-      password: password,
-      deviceName: deviceName,
-    );
+    late final bool success;
+    try {
+      success = await provider.login(
+        loginName: loginName,
+        password: password,
+        deviceName: deviceName,
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
     if (!mounted) return;
     if (provider.signedIn) {
       _passwordController.clear();
@@ -489,6 +574,74 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       ),
       type: NotificationType.error,
     );
+  }
+
+  Future<void> _register() async {
+    if (_submitting || !_supportsRegistration) return;
+    final l10n = AppLocalizations.of(context)!;
+    final loginName = _loginNameController.text.trim();
+    final displayName = _displayNameController.text.trim();
+    final password = _passwordController.text;
+    final deviceName = _deviceNameController.text.trim();
+    if (loginName.isEmpty ||
+        displayName.isEmpty ||
+        password.isEmpty ||
+        deviceName.isEmpty) {
+      showAppSnackBar(
+        context,
+        message: l10n.cloudSyncRegistrationRequiredFields,
+        type: NotificationType.warning,
+      );
+      return;
+    }
+
+    setState(() => _submitting = true);
+    final provider = context.read<CloudSyncProvider>();
+    late final bool success;
+    try {
+      success = await provider.register(
+        loginName: loginName,
+        displayName: displayName,
+        password: password,
+        deviceName: deviceName,
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+    if (!mounted) return;
+    if (success || provider.signedIn) {
+      _passwordController.clear();
+      return;
+    }
+    showAppSnackBar(
+      context,
+      message: cloudSyncFailureText(
+        l10n,
+        provider.lastError ??
+            const CloudSyncException(
+              kind: CloudSyncFailureKind.unknown,
+              retryable: false,
+            ),
+      ),
+      type: NotificationType.error,
+    );
+  }
+
+  bool get _supportsRegistration {
+    if (kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
+  bool get _registrationSelected {
+    return _supportsRegistration &&
+        _authenticationMode == _CloudSyncAuthenticationMode.register;
+  }
+
+  void _selectAuthenticationMode(_CloudSyncAuthenticationMode mode) {
+    if (_submitting || mode == _authenticationMode) return;
+    context.read<CloudSyncProvider>().clearError();
+    setState(() => _authenticationMode = mode);
   }
 
   bool get _supportsPairingApproval {

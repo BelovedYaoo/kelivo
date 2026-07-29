@@ -262,11 +262,23 @@ abstract class AppLocalizations {
   /// **'Sign In'**
   String get cloudSyncSignInSection;
 
+  /// No description provided for @cloudSyncRegisterSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Create Account'**
+  String get cloudSyncRegisterSection;
+
   /// No description provided for @cloudSyncLoginName.
   ///
   /// In en, this message translates to:
   /// **'Account'**
   String get cloudSyncLoginName;
+
+  /// No description provided for @cloudSyncDisplayName.
+  ///
+  /// In en, this message translates to:
+  /// **'Display Name'**
+  String get cloudSyncDisplayName;
 
   /// No description provided for @cloudSyncPassword.
   ///
@@ -297,6 +309,18 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Signing In…'**
   String get cloudSyncSigningIn;
+
+  /// No description provided for @cloudSyncRegister.
+  ///
+  /// In en, this message translates to:
+  /// **'Register'**
+  String get cloudSyncRegister;
+
+  /// No description provided for @cloudSyncRegistering.
+  ///
+  /// In en, this message translates to:
+  /// **'Registering…'**
+  String get cloudSyncRegistering;
 
   /// No description provided for @cloudSyncPairingSection.
   ///
@@ -337,8 +361,14 @@ abstract class AppLocalizations {
   /// No description provided for @cloudSyncRequiredFields.
   ///
   /// In en, this message translates to:
-  /// **'Complete the service URL, account, password, and device name.'**
+  /// **'Complete the account, password, and device name.'**
   String get cloudSyncRequiredFields;
+
+  /// No description provided for @cloudSyncRegistrationRequiredFields.
+  ///
+  /// In en, this message translates to:
+  /// **'Complete the account, display name, password, and device name.'**
+  String get cloudSyncRegistrationRequiredFields;
 
   /// No description provided for @cloudSyncAccountSection.
   ///

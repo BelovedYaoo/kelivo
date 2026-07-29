@@ -39,6 +39,7 @@ import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:Kelivo/features/settings/pages/cloud_sync_page.dart'
     hide CloudSyncPage;
 import 'package:Kelivo/l10n/app_localizations.dart';
+import 'package:Kelivo/shared/widgets/ios_tile_button.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:Kelivo/utils/sandbox_path_resolver.dart';
 import 'package:crypto/crypto.dart';
@@ -916,6 +917,241 @@ void main() {
     expect(find.text('退出登录'), findsOneWidget);
   });
 
+  testWidgets('移动平台展示注册模式且桌面平台仅保留登录', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final fixture = await tester.runAsync(_createSignedOutFixture);
+    if (fixture == null) {
+      throw StateError('registration_ui_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+
+    for (final platform in <TargetPlatform>[
+      TargetPlatform.android,
+      TargetPlatform.iOS,
+    ]) {
+      debugDefaultTargetPlatformOverride = platform;
+      await tester.pumpWidget(
+        _cloudSyncTestApp(
+          fixture.provider,
+          contentKey: ValueKey<TargetPlatform>(platform),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+        findsOneWidget,
+      );
+    }
+
+    for (final platform in <TargetPlatform>[
+      TargetPlatform.windows,
+      TargetPlatform.linux,
+      TargetPlatform.macOS,
+    ]) {
+      debugDefaultTargetPlatformOverride = platform;
+      await tester.pumpWidget(
+        _cloudSyncTestApp(
+          fixture.provider,
+          contentKey: ValueKey<TargetPlatform>(platform),
+        ),
+      );
+      await tester.pump();
+
+      expect(
+        find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('cloud-sync-display-name-field')),
+        findsNothing,
+      );
+      expect(
+        find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+        findsOneWidget,
+      );
+      expect(find.text('登录'), findsWidgets);
+    }
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('桌面登录表单仍提交登录参数', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final fixture = await tester.runAsync(_createSignedOutFixture);
+    if (fixture == null) {
+      throw StateError('sign_in_ui_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', ' ovo ');
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-device-name-field',
+      ' Windows 电脑 ',
+    );
+    final submit = find.byKey(
+      const ValueKey<String>('cloud-sync-authentication-submit'),
+    );
+    expect(tester.widget<IosTileButton>(submit).enabled, isTrue);
+    await tester.tap(submit);
+    await _pumpCloudSyncUntil(
+      tester,
+      () => fixture.authentication.requestNames.contains('login'),
+    );
+    await _pumpCloudSyncUntil(
+      tester,
+      () => fixture.provider.workspaceRestartRequired,
+    );
+
+    expect(fixture.authentication.requestNames.first, 'login');
+    expect(fixture.authentication.lastLoginName, 'ovo');
+    expect(fixture.authentication.lastPassword, 'password');
+    expect(fixture.authentication.lastDeviceName, 'Windows 电脑');
+    expect(fixture.authentication.lastPlatform, CloudSyncPlatform.windows);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('移动注册提交参数且请求期间禁止重复提交', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final registrationBarrier = Completer<void>();
+    addTearDown(() {
+      if (!registrationBarrier.isCompleted) registrationBarrier.complete();
+    });
+    final authentication = _FakeE2eeAccountAuthentication(
+      registrationBarrier: registrationBarrier.future,
+    );
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(authentication: authentication),
+    );
+    if (fixture == null) throw StateError('register_ui_fixture_not_created');
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', ' ovo ');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-display-name-field',
+      ' Ovo 用户 ',
+    );
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-device-name-field',
+      ' 安卓手机 ',
+    );
+    final submit = find.byKey(
+      const ValueKey<String>('cloud-sync-authentication-submit'),
+    );
+    await tester.tap(submit);
+    await _pumpCloudSyncUntil(
+      tester,
+      () => authentication.requestNames.contains('register'),
+    );
+    await tester.pump();
+
+    expect(tester.widget<IosTileButton>(submit).enabled, isFalse);
+    await tester.tap(submit);
+    await tester.pump();
+    expect(
+      authentication.requestNames.where((name) => name == 'register'),
+      hasLength(1),
+    );
+
+    registrationBarrier.complete();
+    await _pumpCloudSyncUntil(
+      tester,
+      () => fixture.provider.workspaceRestartRequired,
+    );
+    expect(authentication.lastLoginName, 'ovo');
+    expect(authentication.lastDisplayName, 'Ovo 用户');
+    expect(authentication.lastPassword, 'password');
+    expect(authentication.lastDeviceName, '安卓手机');
+    expect(authentication.lastPlatform, CloudSyncPlatform.android);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('移动注册失败保持登出并展示账户错误', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final authentication = _FakeE2eeAccountAuthentication(
+      registrationFailure: const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'AUTH_REGISTRATION_CONFLICT',
+      ),
+    );
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(authentication: authentication),
+    );
+    if (fixture == null) {
+      throw StateError('register_failure_ui_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-device-name-field',
+      'iPhone',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+    );
+    await _pumpCloudSyncUntil(tester, () => fixture.provider.lastError != null);
+    await tester.pump(const Duration(seconds: 4));
+    await tester.pumpAndSettle();
+
+    expect(fixture.provider.status, CloudSyncProviderStatus.signedOut);
+    expect(fixture.provider.signedIn, isFalse);
+    expect(
+      fixture.provider.lastError?.serverCode,
+      'AUTH_REGISTRATION_CONFLICT',
+    );
+    expect(find.text('数据已在其他设备发生变化，请重新同步。'), findsWidgets);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('待批准登录显示二进制二维码且页面退出时取消配对', (tester) async {
     tester.view.physicalSize = const Size(1000, 1600);
     tester.view.devicePixelRatio = 1;
@@ -1109,6 +1345,55 @@ void main() {
     expect(instance.records.mutationCount, 1);
     await instance.runtime.close();
   });
+}
+
+Widget _cloudSyncTestApp(CloudSyncProvider provider, {Key? contentKey}) {
+  return ChangeNotifierProvider<CloudSyncProvider>.value(
+    value: provider,
+    child: MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: Scaffold(body: CloudSyncSettingsContent(key: contentKey)),
+    ),
+  );
+}
+
+Future<void> _enterCloudSyncField(
+  WidgetTester tester,
+  String key,
+  String value,
+) async {
+  final field = find.descendant(
+    of: find.byKey(ValueKey<String>(key)),
+    matching: find.byType(EditableText),
+  );
+  expect(field, findsOneWidget);
+  await tester.enterText(field, value);
+}
+
+Future<void> _pumpCloudSyncUntil(
+  WidgetTester tester,
+  bool Function() condition,
+) async {
+  for (var attempt = 0; attempt < 100; attempt++) {
+    if (condition()) return;
+    await tester.pump(const Duration(milliseconds: 20));
+    await tester.runAsync(
+      () => Future<void>.delayed(const Duration(milliseconds: 10)),
+    );
+  }
+  fail('等待云同步页面状态收敛超时');
+}
+
+void _setCloudSyncPackageInfo() {
+  PackageInfo.setMockInitialValues(
+    appName: 'Kelivo',
+    packageName: 'Kelivo',
+    version: '1.1.17',
+    buildNumber: '1',
+    buildSignature: 'test',
+  );
 }
 
 Future<_Fixture> _createSignedInFixture({
@@ -1992,6 +2277,7 @@ final class _FakeE2eeAccountAuthentication
     this.loginFailure,
     this.registrationFailure,
     this.confirmationFailure,
+    this.registrationBarrier,
   }) : loginResult =
            loginResult ??
            E2eeAccountLoginAuthenticated(_authenticatedSession()),
@@ -2004,6 +2290,7 @@ final class _FakeE2eeAccountAuthentication
   final Object? loginFailure;
   final Object? registrationFailure;
   final Object? confirmationFailure;
+  final Future<void>? registrationBarrier;
   final List<String> requestNames = <String>[];
   String? lastLoginName;
   String? lastDisplayName;
@@ -2053,6 +2340,8 @@ final class _FakeE2eeAccountAuthentication
     lastPlatform = platform;
     lastClientVersion = clientVersion;
     try {
+      final barrier = registrationBarrier;
+      if (barrier != null) await barrier;
       final failure = registrationFailure;
       if (failure != null) throw failure;
       return registrationSession;
