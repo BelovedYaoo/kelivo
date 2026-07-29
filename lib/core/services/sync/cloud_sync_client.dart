@@ -146,6 +146,26 @@ abstract interface class CloudSyncDataRekeyTransport {
   Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
     CloudSyncDataRekeyLeaseClaimRequest request,
   );
+
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  );
+
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  );
+
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  );
+
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  );
+
+  Future<CloudSyncDataRekeyFinalizeResult> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  );
 }
 
 final class CloudSyncClient
@@ -1194,6 +1214,207 @@ final class CloudSyncClient
   }
 
   @override
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  ) {
+    return _guard(() async {
+      final activeLease = request.activeLease;
+      final operation = activeLease.operation;
+      final generatedRequest = api.DataRekeySourceRecordListRequest(
+        (builder) => builder
+          ..operationId = operation.operationId
+          ..sourceDataGeneration = operation.sourceDataGeneration
+          ..sourceKeyEpoch = operation.sourceKeyEpoch
+          ..targetKeyEpoch = operation.targetKeyEpoch
+          ..leaseToken = activeLease.leaseToken
+          ..leaseVersion = activeLease.leaseVersion
+          ..afterRecordId = request.afterRecordId
+          ..limit = request.limit,
+      );
+      final response = await _client
+          .getDataRekeyApi()
+          .listDataRekeySourceRecords(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            dataRekeySourceRecordListRequest: generatedRequest,
+            headers: _requireFullSessionHeaders(),
+            extra: _strictResponseExtra,
+          );
+      return _parseDataRekeySourceRecordPage(
+        response.extra[_rawResponseKey],
+        request: request,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  ) {
+    return _guard(() async {
+      final activeLease = request.activeLease;
+      final operation = activeLease.operation;
+      final generatedRequest = api.DataRekeySourceAttachmentListRequest(
+        (builder) => builder
+          ..operationId = operation.operationId
+          ..sourceDataGeneration = operation.sourceDataGeneration
+          ..sourceKeyEpoch = operation.sourceKeyEpoch
+          ..targetKeyEpoch = operation.targetKeyEpoch
+          ..leaseToken = activeLease.leaseToken
+          ..leaseVersion = activeLease.leaseVersion
+          ..afterAttachmentId = request.afterCursor?.attachmentId
+          ..afterUploadId = request.afterCursor?.uploadId
+          ..limit = request.limit,
+      );
+      final response = await _client
+          .getDataRekeyApi()
+          .listDataRekeySourceAttachments(
+            xKelivoSyncProtocolVersion: _syncProtocolVersion,
+            dataRekeySourceAttachmentListRequest: generatedRequest,
+            headers: _requireFullSessionHeaders(),
+            extra: _strictResponseExtra,
+          );
+      return _parseDataRekeySourceAttachmentPage(
+        response.extra[_rawResponseKey],
+        request: request,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  ) {
+    return _guard(() async {
+      final activeLease = request.activeLease;
+      final operation = activeLease.operation;
+      final generatedRequest = api.DataRekeyRecordStageRequest(
+        (builder) => builder
+          ..operationId = operation.operationId
+          ..sourceDataGeneration = operation.sourceDataGeneration
+          ..sourceKeyEpoch = operation.sourceKeyEpoch
+          ..targetKeyEpoch = operation.targetKeyEpoch
+          ..leaseToken = activeLease.leaseToken
+          ..leaseVersion = activeLease.leaseVersion
+          ..mutationId = request.mutationId
+          ..sourceRecordId = request.sourceRecordId
+          ..targetRecordId = request.targetRecordId
+          ..sourceRevision = request.sourceRevision
+          ..envelopeVersion = request.envelopeVersion
+          ..ciphertext = _encodeBinaryForRequest(request.ciphertext),
+      );
+      final response = await _client.getDataRekeyApi().stageDataRekeyRecord(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
+        dataRekeyRecordStageRequest: generatedRequest,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseDataRekeyRecordStageResult(
+        response.extra[_rawResponseKey],
+        request: request,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  ) {
+    return _guard(() async {
+      final activeLease = request.activeLease;
+      final operation = activeLease.operation;
+      final generatedRequest = api.DataRekeyAttachmentStageRequest(
+        (builder) => builder
+          ..operationId = operation.operationId
+          ..sourceDataGeneration = operation.sourceDataGeneration
+          ..sourceKeyEpoch = operation.sourceKeyEpoch
+          ..targetKeyEpoch = operation.targetKeyEpoch
+          ..leaseToken = activeLease.leaseToken
+          ..leaseVersion = activeLease.leaseVersion
+          ..mutationId = request.mutationId
+          ..attachmentId = request.attachmentId
+          ..uploadId = request.uploadId
+          ..sourceManifestRevision = request.sourceManifestRevision
+          ..manifestKeyEpoch = request.manifestKeyEpoch
+          ..manifestRevision = request.manifestRevision
+          ..manifestCiphertext = _encodeBinaryForRequest(
+            request.manifestCiphertext,
+          ),
+      );
+      final response = await _client.getDataRekeyApi().stageDataRekeyAttachment(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
+        dataRekeyAttachmentStageRequest: generatedRequest,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseDataRekeyAttachmentStageResult(
+        response.extra[_rawResponseKey],
+        request: request,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeResult> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) {
+    return _guard(() async {
+      final activeLease = request.activeLease;
+      final operation = activeLease.operation;
+      final proof = request.proof;
+      final generatedProof = api.DataRekeyFinalizeRequestProof((builder) {
+        builder
+          ..proofVersion = proof.proofVersion
+          ..issuerDeviceId = proof.issuerDeviceId
+          ..targetDataGeneration = request.targetDataGeneration
+          ..sourceSnapshotRoot = _encodeBinaryForRequest(
+            proof.sourceSnapshotRoot,
+          )
+          ..sourceRecordCount = proof.sourceRecordCount
+          ..sourceAttachmentCount = proof.sourceAttachmentCount
+          ..sourceMaximumChangeSeq = proof.sourceMaximumChangeSeq
+          ..sourceRecordCursorEnd = proof.sourceRecordCursorEnd
+          ..membershipGeneration = proof.membershipGeneration
+          ..membershipManifestDigest = _encodeBinaryForRequest(
+            proof.membershipManifestDigest,
+          )
+          ..stagedRecordCount = proof.stagedRecordCount
+          ..stagedAttachmentCount = proof.stagedAttachmentCount
+          ..stagedCiphertextSetDigest = _encodeBinaryForRequest(
+            proof.stagedCiphertextSetDigest,
+          )
+          ..signature = _encodeBinaryForRequest(proof.signature);
+        final attachmentCursor = proof.sourceAttachmentCursorEnd;
+        if (attachmentCursor != null) {
+          builder.sourceAttachmentCursorEnd
+            ..attachmentId = attachmentCursor.attachmentId
+            ..uploadId = attachmentCursor.uploadId;
+        }
+      });
+      final generatedRequest = api.DataRekeyFinalizeRequest(
+        (builder) => builder
+          ..operationId = operation.operationId
+          ..sourceDataGeneration = operation.sourceDataGeneration
+          ..sourceKeyEpoch = operation.sourceKeyEpoch
+          ..targetKeyEpoch = operation.targetKeyEpoch
+          ..leaseToken = activeLease.leaseToken
+          ..leaseVersion = activeLease.leaseVersion
+          ..mutationId = request.mutationId
+          ..proof.replace(generatedProof),
+      );
+      final response = await _client.getDataRekeyApi().finalizeDataRekey(
+        xKelivoSyncProtocolVersion: _syncProtocolVersion,
+        dataRekeyFinalizeRequest: generatedRequest,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseDataRekeyFinalizeResult(
+        response.extra[_rawResponseKey],
+        request: request,
+      );
+    });
+  }
+
+  @override
   Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
     int afterGeneration = 0,
     int pageSize = 20,
@@ -1867,6 +2088,86 @@ CloudSyncDataRekeyLeaseClaim _parseDataRekeyLeaseClaim(
   );
   return CloudSyncDataRekeyLeaseClaim.fromJson(
     copyCloudSyncJsonMap(envelope['data']),
+    request: request,
+  );
+}
+
+CloudSyncDataRekeySourceRecordPage _parseDataRekeySourceRecordPage(
+  Object? rawResponse, {
+  required CloudSyncDataRekeySourceRecordListRequest request,
+}) {
+  return CloudSyncDataRekeySourceRecordPage.fromJson(
+    _strictResponseData(rawResponse, const <String>{
+      'records',
+      'nextAfterRecordId',
+      'hasMore',
+    }, 'data-rekey 源记录分页响应'),
+    request: request,
+  );
+}
+
+CloudSyncDataRekeySourceAttachmentPage _parseDataRekeySourceAttachmentPage(
+  Object? rawResponse, {
+  required CloudSyncDataRekeySourceAttachmentListRequest request,
+}) {
+  return CloudSyncDataRekeySourceAttachmentPage.fromJson(
+    _strictResponseData(rawResponse, const <String>{
+      'attachments',
+      'nextAfterAttachmentId',
+      'nextAfterUploadId',
+      'hasMore',
+    }, 'data-rekey 源附件分页响应'),
+    request: request,
+  );
+}
+
+CloudSyncDataRekeyRecordStageResult _parseDataRekeyRecordStageResult(
+  Object? rawResponse, {
+  required CloudSyncDataRekeyRecordStageRequest request,
+}) {
+  return CloudSyncDataRekeyRecordStageResult.fromJson(
+    _strictResponseData(rawResponse, const <String>{
+      'result',
+      'operationId',
+      'mutationId',
+      'sourceRecordId',
+      'targetRecordId',
+      'leaseVersion',
+    }, 'data-rekey 记录暂存响应'),
+    request: request,
+  );
+}
+
+CloudSyncDataRekeyAttachmentStageResult _parseDataRekeyAttachmentStageResult(
+  Object? rawResponse, {
+  required CloudSyncDataRekeyAttachmentStageRequest request,
+}) {
+  return CloudSyncDataRekeyAttachmentStageResult.fromJson(
+    _strictResponseData(rawResponse, const <String>{
+      'result',
+      'operationId',
+      'mutationId',
+      'attachmentId',
+      'uploadId',
+      'manifestRevision',
+      'leaseVersion',
+    }, 'data-rekey 附件暂存响应'),
+    request: request,
+  );
+}
+
+CloudSyncDataRekeyFinalizeResult _parseDataRekeyFinalizeResult(
+  Object? rawResponse, {
+  required CloudSyncDataRekeyFinalizeRequest request,
+}) {
+  return CloudSyncDataRekeyFinalizeResult.fromJson(
+    _strictResponseData(rawResponse, const <String>{
+      'result',
+      'dataGeneration',
+      'dataKeyEpoch',
+      'changeWatermark',
+      'completion',
+    }, 'data-rekey 最终提交响应'),
     request: request,
   );
 }
