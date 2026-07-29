@@ -120,6 +120,17 @@ abstract interface class CloudSyncAccountClient {
     required String pairingId,
   });
 
+  Future<CloudSyncAccountSecurityState> getSecurityState();
+
+  Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
+    int afterGeneration = 0,
+    int pageSize = 20,
+  });
+
+  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
+    CloudSyncDeviceRotationRequest request,
+  );
+
   Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
     CloudSyncDeviceStatus? status,
     int pageIndex = 1,
@@ -1123,6 +1134,90 @@ final class CloudSyncClient
   }
 
   @override
+  Future<CloudSyncAccountSecurityState> getSecurityState() {
+    return _guard(() async {
+      final response = await _client.getDeviceApi().getDeviceSecurityState(
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseAccountSecurityState(response.extra[_rawResponseKey]);
+    });
+  }
+
+  @override
+  Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
+    int afterGeneration = 0,
+    int pageSize = 20,
+  }) {
+    if (afterGeneration < 0 ||
+        afterGeneration > 0x7fffffff ||
+        pageSize < 1 ||
+        pageSize > 100) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      );
+    }
+    return _guard(() async {
+      final request = api.ListAccountSecurityStateHistoryRequest(
+        (builder) => builder
+          ..afterGeneration = afterGeneration
+          ..pageSize = pageSize,
+      );
+      final response = await _client
+          .getDeviceApi()
+          .listDeviceSecurityStateHistory(
+            listAccountSecurityStateHistoryRequest: request,
+            headers: _requireFullSessionHeaders(),
+            extra: _strictResponseExtra,
+          );
+      return _parseAccountSecurityStateHistory(
+        response.extra[_rawResponseKey],
+        expectedAfterGeneration: afterGeneration,
+        expectedPageSize: pageSize,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
+    CloudSyncDeviceRotationRequest request,
+  ) {
+    return _guard(() async {
+      final generatedRequest = api.CommitDeviceRotationRequest(
+        (builder) => builder
+          ..expectedGeneration = request.expectedGeneration
+          ..expectedKeyEpoch = request.expectedKeyEpoch
+          ..expectedMembershipManifestDigest =
+              request.expectedMembershipManifestDigest.encoded
+          ..operationId = request.operationId
+          ..revokeDeviceId = request.revokeDeviceId
+          ..nextMembershipManifest = _encodeBinaryForRequest(
+            request.nextMembershipManifest,
+          )
+          ..nextMembershipManifestDigest =
+              request.nextMembershipManifestDigest.encoded
+          ..nextRecoveryCapsuleVersion = request.nextRecoveryCapsuleVersion
+          ..nextRecoveryCapsule = _encodeBinaryForRequest(
+            request.nextRecoveryCapsule,
+          )
+          ..envelopes.replace(
+            request.envelopes.map(_toGeneratedRotationEnvelope),
+          ),
+      );
+      final response = await _client.getDeviceApi().commitDeviceRotation(
+        commitDeviceRotationRequest: generatedRequest,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return _parseDeviceRotationResult(
+        response.extra[_rawResponseKey],
+        request: request,
+      );
+    });
+  }
+
+  @override
   Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
     CloudSyncDeviceStatus? status,
     int pageIndex = 1,
@@ -1207,6 +1302,21 @@ api.AttachmentManifestChunk _toGeneratedManifestChunk(
     (builder) => builder
       ..chunkIndex = chunk.chunkIndex
       ..ciphertextBytes = chunk.ciphertextBytes,
+  );
+}
+
+api.UnsignedAccountSecurityStateEnvelope _toGeneratedRotationEnvelope(
+  CloudSyncDeviceRotationEnvelope envelope,
+) {
+  return api.UnsignedAccountSecurityStateEnvelope(
+    (builder) => builder
+      ..targetDeviceId = envelope.targetDeviceId
+      ..envelopeVersion = envelope.envelopeVersion
+      ..keyEpoch = envelope.keyEpoch
+      ..accountKeyEnvelope = _encodeFixedBinaryForRequest(
+        envelope.accountKeyEnvelope,
+        cloudSyncAccountKeyEnvelopeBytes,
+      ),
   );
 }
 
@@ -1676,6 +1786,50 @@ CloudSyncJsonMap _strictResponseData(
   final data = copyCloudSyncJsonMap(envelope['data']);
   _requireRawExactKeys(data, expectedDataKeys, '$context data');
   return data;
+}
+
+CloudSyncAccountSecurityState _parseAccountSecurityState(Object? rawResponse) {
+  return CloudSyncAccountSecurityState.fromJson(
+    _strictResponseData(rawResponse, _accountSecurityStateDataKeys, '账户安全状态响应'),
+  );
+}
+
+CloudSyncAccountSecurityHistoryPage _parseAccountSecurityStateHistory(
+  Object? rawResponse, {
+  required int expectedAfterGeneration,
+  required int expectedPageSize,
+}) {
+  final page = CloudSyncAccountSecurityHistoryPage.fromJson(
+    _strictResponseData(
+      rawResponse,
+      _accountSecurityStateHistoryDataKeys,
+      '账户安全状态历史响应',
+    ),
+  );
+  if (page.afterGeneration != expectedAfterGeneration ||
+      page.pageSize != expectedPageSize) {
+    throw const FormatException('账户安全状态历史未回显请求分页');
+  }
+  return page;
+}
+
+CloudSyncDeviceRotationResult _parseDeviceRotationResult(
+  Object? rawResponse, {
+  required CloudSyncDeviceRotationRequest request,
+}) {
+  final result = CloudSyncDeviceRotationResult.fromJson(
+    _strictResponseData(rawResponse, _deviceRotationResultDataKeys, '设备轮换响应'),
+  );
+  if (result.operationId != request.operationId ||
+      result.revokedDeviceId != request.revokeDeviceId ||
+      result.fromGeneration != request.expectedGeneration ||
+      result.generation != request.expectedGeneration + 1 ||
+      result.keyEpoch != request.expectedKeyEpoch + 1 ||
+      result.membershipManifestDigest.encoded !=
+          request.nextMembershipManifestDigest.encoded) {
+    throw const FormatException('设备轮换响应未绑定原始请求');
+  }
+  return result;
 }
 
 void _requireRawExactKeys(
@@ -2261,6 +2415,39 @@ const _strictResponseMarker = 'kelivo.strict-response';
 const _rawResponseKey = 'kelivo.raw-response';
 const _strictResponseExtra = <String, Object>{_strictResponseMarker: true};
 const _strictResponseEnvelopeKeys = <String>{'data'};
+const _accountSecurityStateDataKeys = <String>{
+  'generation',
+  'keyEpoch',
+  'dataRekeyPhase',
+  'membershipManifest',
+  'membershipManifestDigest',
+  'recoveryPublicKeyVersion',
+  'recoveryPublicKey',
+  'recoveryCapsuleVersion',
+  'recoveryCapsule',
+  'lastOperationId',
+  'updatedAt',
+  'envelopes',
+};
+const _accountSecurityStateHistoryDataKeys = <String>{
+  'items',
+  'afterGeneration',
+  'nextAfterGeneration',
+  'pageSize',
+  'hasMore',
+  'currentState',
+};
+const _deviceRotationResultDataKeys = <String>{
+  'result',
+  'operationId',
+  'revokedDeviceId',
+  'fromGeneration',
+  'generation',
+  'keyEpoch',
+  'dataRekeyPhase',
+  'membershipManifestDigest',
+  'committedAt',
+};
 const _registrationSessionDataKeys = <String>{
   'protocolVersion',
   'result',

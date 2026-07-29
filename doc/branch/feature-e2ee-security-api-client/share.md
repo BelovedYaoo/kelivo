@@ -26,3 +26,12 @@
 - 前台 Provider 与 headless 后台运行时共用同一提交顺序；确认或会话重写失败会保留 bootstrap，重启后可幂等重放，冲突锚点失败关闭。
 - 注册恢复测试夹具已硬切 `KELVRT02`，使用真实 ARK 签名 genesis；附件测试已分别断言 `chunkKeyEpoch`、`manifestKeyEpoch`、`manifestRevision`，不再沿用旧 `keyEpoch` HTTP 字段。
 - 验证：`flutter analyze lib test` 通过；协议 122/122、Provider/内容运行时 79/79、工作区 101/101 通过。全仓 `flutter analyze` 被未改动的 `dependencies/mcp_client` 缺少 `package:test` 阻断；全量 `flutter test` 在 10 分钟执行上限内未退出，不能计为通过。
+
+## 稳定安全控制面客户端
+
+- 手写客户端已接入当前安全状态 GET、连续历史 POST、设备轮换 POST；严格校验原始响应字段，并绑定历史游标与轮换 operationId、设备、generation、keyEpoch、清单摘要。
+- 新增客户端自有强类型，冻结成员清单、公开恢复材料、恢复胶囊和账户密钥信封；轮换信封必须按设备 ID 严格递增并使用下一 keyEpoch。
+- 服务端查询、历史和轮换允许 1–4096 字节不透明恢复胶囊；首设备注册仍保持本地恢复事务帧要求的 156 字节，不扩大注册契约。
+- 恢复口令只用于加密离线二维码/恢复文件，不进入安全控制面 API、账号会话、bootstrap 或日志；本分支未实现恢复介质格式。
+- 已创建 Issue #69 跟踪客户端误拒绝可变长恢复胶囊；待本分支合入主分支后关闭。
+- 验证：`flutter analyze lib test`、协议测试 126/126、Provider/内容运行时测试 79/79 通过。

@@ -3663,6 +3663,26 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
   }
 
   @override
+  Future<CloudSyncAccountSecurityState> getSecurityState() {
+    throw UnsupportedError('unexpected_security_state_get');
+  }
+
+  @override
+  Future<CloudSyncAccountSecurityHistoryPage> listSecurityStateHistory({
+    int afterGeneration = 0,
+    int pageSize = 20,
+  }) {
+    throw UnsupportedError('unexpected_security_state_history_list');
+  }
+
+  @override
+  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
+    CloudSyncDeviceRotationRequest request,
+  ) {
+    throw UnsupportedError('unexpected_device_rotation_commit');
+  }
+
+  @override
   Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
     CloudSyncDeviceStatus? status,
     int pageIndex = 1,

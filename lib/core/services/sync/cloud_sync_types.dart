@@ -400,10 +400,11 @@ final class CloudSyncAccountSecurityState {
         'recoveryPublicKey',
       ),
       _requirePositiveInt32(recoveryCapsuleVersion, 'recoveryCapsuleVersion'),
-      _copyFixedBytes(
+      _copyRangedBytes(
         recoveryCapsule,
-        cloudSyncRecoveryCapsuleBytes,
-        'recoveryCapsule',
+        minimumLength: 1,
+        maximumLength: cloudSyncRecoveryCapsuleMaximumBytes,
+        field: 'recoveryCapsule',
       ),
       _requireCanonicalUuid(lastOperationId, 'lastOperationId'),
       updatedAt.toUtc(),
@@ -514,6 +515,548 @@ final class CloudSyncAccountSecurityState {
     'updatedAt': updatedAt.toIso8601String(),
     'envelopes': envelopes.map((value) => value.toJson()).toList(),
   };
+}
+
+final class CloudSyncAccountSecurityHistoryItem {
+  factory CloudSyncAccountSecurityHistoryItem({
+    required int generation,
+    required int keyEpoch,
+    required Uint8List membershipManifest,
+    required CloudSyncMembershipManifestDigest membershipManifestDigest,
+    required int recoveryPublicKeyVersion,
+    required Uint8List recoveryPublicKey,
+    required int recoveryCapsuleVersion,
+    required Uint8List recoveryCapsule,
+    required String operationId,
+    required DateTime committedAt,
+  }) {
+    final manifest = _copyRangedBytes(
+      membershipManifest,
+      minimumLength: cloudSyncMembershipManifestMinimumBytes,
+      maximumLength: cloudSyncMembershipManifestMaximumBytes,
+      field: 'membershipManifest',
+    );
+    final actualDigest = Uint8List.fromList(sha256.convert(manifest).bytes);
+    if (!_sameBytes(actualDigest, membershipManifestDigest.bytes)) {
+      throw const FormatException('历史成员清单摘要与清单字节不一致');
+    }
+    return CloudSyncAccountSecurityHistoryItem._(
+      generation: _requirePositiveInt32(generation, 'generation'),
+      keyEpoch: _requirePositiveUint32(keyEpoch, 'keyEpoch'),
+      membershipManifest: manifest,
+      membershipManifestDigest: membershipManifestDigest,
+      recoveryPublicKeyVersion: _requirePositiveInt32(
+        recoveryPublicKeyVersion,
+        'recoveryPublicKeyVersion',
+      ),
+      recoveryPublicKey: _copyFixedBytes(
+        recoveryPublicKey,
+        cloudSyncRecoveryPublicKeyBytes,
+        'recoveryPublicKey',
+      ),
+      recoveryCapsuleVersion: _requirePositiveInt32(
+        recoveryCapsuleVersion,
+        'recoveryCapsuleVersion',
+      ),
+      recoveryCapsule: _copyRangedBytes(
+        recoveryCapsule,
+        minimumLength: 1,
+        maximumLength: cloudSyncRecoveryCapsuleMaximumBytes,
+        field: 'recoveryCapsule',
+      ),
+      operationId: _requireCanonicalUuid(operationId, 'operationId'),
+      committedAt: committedAt.toUtc(),
+    );
+  }
+
+  const CloudSyncAccountSecurityHistoryItem._({
+    required this.generation,
+    required this.keyEpoch,
+    required this.membershipManifest,
+    required this.membershipManifestDigest,
+    required this.recoveryPublicKeyVersion,
+    required this.recoveryPublicKey,
+    required this.recoveryCapsuleVersion,
+    required this.recoveryCapsule,
+    required this.operationId,
+    required this.committedAt,
+  });
+
+  factory CloudSyncAccountSecurityHistoryItem.fromJson(CloudSyncJsonMap json) {
+    _requireExactKeys(json, _jsonKeys, '账户安全状态历史项');
+    return CloudSyncAccountSecurityHistoryItem(
+      generation: _requireInt(json, 'generation'),
+      keyEpoch: _requireInt(json, 'keyEpoch'),
+      membershipManifest: _decodeCanonicalBinary(
+        _requireString(json, 'membershipManifest'),
+        field: 'membershipManifest',
+        minimumLength: cloudSyncMembershipManifestMinimumBytes,
+        maximumLength: cloudSyncMembershipManifestMaximumBytes,
+      ),
+      membershipManifestDigest: CloudSyncMembershipManifestDigest.parse(
+        _requireString(json, 'membershipManifestDigest'),
+      ),
+      recoveryPublicKeyVersion: _requireInt(json, 'recoveryPublicKeyVersion'),
+      recoveryPublicKey: _decodeCanonicalBinary(
+        _requireString(json, 'recoveryPublicKey'),
+        field: 'recoveryPublicKey',
+        exactLength: cloudSyncRecoveryPublicKeyBytes,
+      ),
+      recoveryCapsuleVersion: _requireInt(json, 'recoveryCapsuleVersion'),
+      recoveryCapsule: _decodeCanonicalBinary(
+        _requireString(json, 'recoveryCapsule'),
+        field: 'recoveryCapsule',
+        minimumLength: 1,
+        maximumLength: cloudSyncRecoveryCapsuleMaximumBytes,
+      ),
+      operationId: _requireString(json, 'operationId'),
+      committedAt: _requireCanonicalUtcDateTime(json, 'committedAt'),
+    );
+  }
+
+  static const _jsonKeys = <String>{
+    'generation',
+    'keyEpoch',
+    'membershipManifest',
+    'membershipManifestDigest',
+    'recoveryPublicKeyVersion',
+    'recoveryPublicKey',
+    'recoveryCapsuleVersion',
+    'recoveryCapsule',
+    'operationId',
+    'committedAt',
+  };
+
+  final int generation;
+  final int keyEpoch;
+  final Uint8List membershipManifest;
+  final CloudSyncMembershipManifestDigest membershipManifestDigest;
+  final int recoveryPublicKeyVersion;
+  final Uint8List recoveryPublicKey;
+  final int recoveryCapsuleVersion;
+  final Uint8List recoveryCapsule;
+  final String operationId;
+  final DateTime committedAt;
+}
+
+final class CloudSyncAccountSecurityCurrentProjection {
+  CloudSyncAccountSecurityCurrentProjection({
+    required int generation,
+    required int keyEpoch,
+    required this.dataRekeyPhase,
+    required this.membershipManifestDigest,
+    required int recoveryPublicKeyVersion,
+    required Uint8List recoveryPublicKey,
+    required int recoveryCapsuleVersion,
+    required DateTime updatedAt,
+  }) : generation = _requirePositiveInt32(generation, 'generation'),
+       keyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch'),
+       recoveryPublicKeyVersion = _requirePositiveInt32(
+         recoveryPublicKeyVersion,
+         'recoveryPublicKeyVersion',
+       ),
+       recoveryPublicKey = _copyFixedBytes(
+         recoveryPublicKey,
+         cloudSyncRecoveryPublicKeyBytes,
+         'recoveryPublicKey',
+       ),
+       recoveryCapsuleVersion = _requirePositiveInt32(
+         recoveryCapsuleVersion,
+         'recoveryCapsuleVersion',
+       ),
+       updatedAt = updatedAt.toUtc();
+
+  factory CloudSyncAccountSecurityCurrentProjection.fromJson(
+    CloudSyncJsonMap json,
+  ) {
+    _requireExactKeys(json, _jsonKeys, '账户安全状态当前投影');
+    return CloudSyncAccountSecurityCurrentProjection(
+      generation: _requireInt(json, 'generation'),
+      keyEpoch: _requireInt(json, 'keyEpoch'),
+      dataRekeyPhase: _parseDataRekeyPhase(
+        _requireString(json, 'dataRekeyPhase'),
+      ),
+      membershipManifestDigest: CloudSyncMembershipManifestDigest.parse(
+        _requireString(json, 'membershipManifestDigest'),
+      ),
+      recoveryPublicKeyVersion: _requireInt(json, 'recoveryPublicKeyVersion'),
+      recoveryPublicKey: _decodeCanonicalBinary(
+        _requireString(json, 'recoveryPublicKey'),
+        field: 'recoveryPublicKey',
+        exactLength: cloudSyncRecoveryPublicKeyBytes,
+      ),
+      recoveryCapsuleVersion: _requireInt(json, 'recoveryCapsuleVersion'),
+      updatedAt: _requireCanonicalUtcDateTime(json, 'updatedAt'),
+    );
+  }
+
+  static const _jsonKeys = <String>{
+    'generation',
+    'keyEpoch',
+    'dataRekeyPhase',
+    'membershipManifestDigest',
+    'recoveryPublicKeyVersion',
+    'recoveryPublicKey',
+    'recoveryCapsuleVersion',
+    'updatedAt',
+  };
+
+  final int generation;
+  final int keyEpoch;
+  final CloudSyncDataRekeyPhase dataRekeyPhase;
+  final CloudSyncMembershipManifestDigest membershipManifestDigest;
+  final int recoveryPublicKeyVersion;
+  final Uint8List recoveryPublicKey;
+  final int recoveryCapsuleVersion;
+  final DateTime updatedAt;
+}
+
+final class CloudSyncAccountSecurityHistoryPage {
+  factory CloudSyncAccountSecurityHistoryPage({
+    required List<CloudSyncAccountSecurityHistoryItem> items,
+    required int afterGeneration,
+    required int nextAfterGeneration,
+    required int pageSize,
+    required bool hasMore,
+    required CloudSyncAccountSecurityCurrentProjection currentState,
+  }) {
+    final checkedAfterGeneration = _requireNonNegativeInt32(
+      afterGeneration,
+      'afterGeneration',
+    );
+    final checkedNextAfterGeneration = _requireNonNegativeInt32(
+      nextAfterGeneration,
+      'nextAfterGeneration',
+    );
+    final checkedPageSize = _requireBoundedInt(
+      pageSize,
+      'pageSize',
+      maximum: 100,
+    );
+    final snapshot = List<CloudSyncAccountSecurityHistoryItem>.of(
+      items,
+      growable: false,
+    );
+    if (snapshot.length > checkedPageSize ||
+        checkedAfterGeneration > currentState.generation) {
+      throw const FormatException('安全状态历史分页边界无效');
+    }
+    var expectedGeneration = checkedAfterGeneration + 1;
+    for (final item in snapshot) {
+      if (item.generation != expectedGeneration ||
+          item.generation > currentState.generation) {
+        throw const FormatException('安全状态历史 generation 不连续');
+      }
+      expectedGeneration += 1;
+    }
+    final expectedNextAfterGeneration = snapshot.isEmpty
+        ? checkedAfterGeneration
+        : snapshot.last.generation;
+    final expectedHasMore =
+        expectedNextAfterGeneration < currentState.generation;
+    if (checkedNextAfterGeneration != expectedNextAfterGeneration ||
+        hasMore != expectedHasMore ||
+        (snapshot.isEmpty && expectedHasMore)) {
+      throw const FormatException('安全状态历史游标或剩余状态无效');
+    }
+    if (snapshot.isNotEmpty &&
+        snapshot.last.generation == currentState.generation) {
+      final latest = snapshot.last;
+      if (latest.keyEpoch != currentState.keyEpoch ||
+          !_sameBytes(
+            latest.membershipManifestDigest.bytes,
+            currentState.membershipManifestDigest.bytes,
+          ) ||
+          latest.recoveryPublicKeyVersion !=
+              currentState.recoveryPublicKeyVersion ||
+          !_sameBytes(
+            latest.recoveryPublicKey,
+            currentState.recoveryPublicKey,
+          ) ||
+          latest.recoveryCapsuleVersion !=
+              currentState.recoveryCapsuleVersion) {
+        throw const FormatException('安全状态历史末项与当前投影不一致');
+      }
+    }
+    return CloudSyncAccountSecurityHistoryPage._(
+      items: List<CloudSyncAccountSecurityHistoryItem>.unmodifiable(snapshot),
+      afterGeneration: checkedAfterGeneration,
+      nextAfterGeneration: checkedNextAfterGeneration,
+      pageSize: checkedPageSize,
+      hasMore: hasMore,
+      currentState: currentState,
+    );
+  }
+
+  const CloudSyncAccountSecurityHistoryPage._({
+    required this.items,
+    required this.afterGeneration,
+    required this.nextAfterGeneration,
+    required this.pageSize,
+    required this.hasMore,
+    required this.currentState,
+  });
+
+  factory CloudSyncAccountSecurityHistoryPage.fromJson(CloudSyncJsonMap json) {
+    _requireExactKeys(json, _jsonKeys, '账户安全状态历史页');
+    final rawItems = json['items'];
+    if (rawItems is! List<Object?>) {
+      throw const FormatException('items 必须为数组');
+    }
+    return CloudSyncAccountSecurityHistoryPage(
+      items: rawItems
+          .map(
+            (value) => CloudSyncAccountSecurityHistoryItem.fromJson(
+              copyCloudSyncJsonMap(value),
+            ),
+          )
+          .toList(growable: false),
+      afterGeneration: _requireInt(json, 'afterGeneration'),
+      nextAfterGeneration: _requireInt(json, 'nextAfterGeneration'),
+      pageSize: _requireInt(json, 'pageSize'),
+      hasMore: _requireBool(json, 'hasMore'),
+      currentState: CloudSyncAccountSecurityCurrentProjection.fromJson(
+        copyCloudSyncJsonMap(json['currentState']),
+      ),
+    );
+  }
+
+  static const _jsonKeys = <String>{
+    'items',
+    'afterGeneration',
+    'nextAfterGeneration',
+    'pageSize',
+    'hasMore',
+    'currentState',
+  };
+
+  final List<CloudSyncAccountSecurityHistoryItem> items;
+  final int afterGeneration;
+  final int nextAfterGeneration;
+  final int pageSize;
+  final bool hasMore;
+  final CloudSyncAccountSecurityCurrentProjection currentState;
+}
+
+final class CloudSyncDeviceRotationEnvelope {
+  CloudSyncDeviceRotationEnvelope({
+    required String targetDeviceId,
+    required int envelopeVersion,
+    required int keyEpoch,
+    required Uint8List accountKeyEnvelope,
+  }) : targetDeviceId = _requireCanonicalUuid(targetDeviceId, 'targetDeviceId'),
+       envelopeVersion = _requireProtocolLiteral(
+         envelopeVersion,
+         'envelopeVersion',
+       ),
+       keyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch'),
+       accountKeyEnvelope = _copyFixedBytes(
+         accountKeyEnvelope,
+         cloudSyncAccountKeyEnvelopeBytes,
+         'accountKeyEnvelope',
+       );
+
+  final String targetDeviceId;
+  final int envelopeVersion;
+  final int keyEpoch;
+  final Uint8List accountKeyEnvelope;
+}
+
+// 恢复口令只保护离线恢复介质，服务端轮换协议仅承载不透明恢复胶囊。
+final class CloudSyncDeviceRotationRequest {
+  factory CloudSyncDeviceRotationRequest({
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required CloudSyncMembershipManifestDigest expectedMembershipManifestDigest,
+    required String operationId,
+    required String revokeDeviceId,
+    required Uint8List nextMembershipManifest,
+    required int nextRecoveryCapsuleVersion,
+    required Uint8List nextRecoveryCapsule,
+    required List<CloudSyncDeviceRotationEnvelope> envelopes,
+  }) {
+    final checkedGeneration = _requireBoundedInt(
+      expectedGeneration,
+      'expectedGeneration',
+      maximum: 0x7ffffffe,
+    );
+    final checkedKeyEpoch = _requireBoundedInt(
+      expectedKeyEpoch,
+      'expectedKeyEpoch',
+      maximum: 0xfffffffe,
+    );
+    final checkedRevokeDeviceId = _requireCanonicalUuid(
+      revokeDeviceId,
+      'revokeDeviceId',
+    );
+    final manifest = _copyRangedBytes(
+      nextMembershipManifest,
+      minimumLength: cloudSyncMembershipManifestMinimumBytes,
+      maximumLength: cloudSyncMembershipManifestMaximumBytes,
+      field: 'nextMembershipManifest',
+    );
+    final nextDigest = CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List.fromList(sha256.convert(manifest).bytes),
+    );
+    if (_sameBytes(expectedMembershipManifestDigest.bytes, nextDigest.bytes)) {
+      throw const FormatException('设备轮换必须更换成员清单');
+    }
+    final envelopeSnapshot = List<CloudSyncDeviceRotationEnvelope>.of(
+      envelopes,
+      growable: false,
+    );
+    if (envelopeSnapshot.isEmpty ||
+        envelopeSnapshot.length >
+            cloudSyncAccountSecurityEnvelopeMaximumCount) {
+      throw const FormatException('设备轮换信封数量无效');
+    }
+    final nextKeyEpoch = checkedKeyEpoch + 1;
+    String? previousTargetDeviceId;
+    for (final envelope in envelopeSnapshot) {
+      if (envelope.keyEpoch != nextKeyEpoch ||
+          envelope.targetDeviceId == checkedRevokeDeviceId ||
+          (previousTargetDeviceId != null &&
+              previousTargetDeviceId.compareTo(envelope.targetDeviceId) >= 0)) {
+        throw const FormatException('设备轮换信封身份、顺序或密钥代次无效');
+      }
+      previousTargetDeviceId = envelope.targetDeviceId;
+    }
+    return CloudSyncDeviceRotationRequest._(
+      expectedGeneration: checkedGeneration,
+      expectedKeyEpoch: checkedKeyEpoch,
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      operationId: _requireCanonicalUuid(operationId, 'operationId'),
+      revokeDeviceId: checkedRevokeDeviceId,
+      nextMembershipManifest: manifest,
+      nextMembershipManifestDigest: nextDigest,
+      nextRecoveryCapsuleVersion: _requirePositiveInt32(
+        nextRecoveryCapsuleVersion,
+        'nextRecoveryCapsuleVersion',
+      ),
+      nextRecoveryCapsule: _copyRangedBytes(
+        nextRecoveryCapsule,
+        minimumLength: 1,
+        maximumLength: cloudSyncRecoveryCapsuleMaximumBytes,
+        field: 'nextRecoveryCapsule',
+      ),
+      envelopes: List<CloudSyncDeviceRotationEnvelope>.unmodifiable(
+        envelopeSnapshot,
+      ),
+    );
+  }
+
+  const CloudSyncDeviceRotationRequest._({
+    required this.expectedGeneration,
+    required this.expectedKeyEpoch,
+    required this.expectedMembershipManifestDigest,
+    required this.operationId,
+    required this.revokeDeviceId,
+    required this.nextMembershipManifest,
+    required this.nextMembershipManifestDigest,
+    required this.nextRecoveryCapsuleVersion,
+    required this.nextRecoveryCapsule,
+    required this.envelopes,
+  });
+
+  final int expectedGeneration;
+  final int expectedKeyEpoch;
+  final CloudSyncMembershipManifestDigest expectedMembershipManifestDigest;
+  final String operationId;
+  final String revokeDeviceId;
+  final Uint8List nextMembershipManifest;
+  final CloudSyncMembershipManifestDigest nextMembershipManifestDigest;
+  final int nextRecoveryCapsuleVersion;
+  final Uint8List nextRecoveryCapsule;
+  final List<CloudSyncDeviceRotationEnvelope> envelopes;
+}
+
+final class CloudSyncDeviceRotationResult {
+  factory CloudSyncDeviceRotationResult({
+    required String operationId,
+    required String revokedDeviceId,
+    required int fromGeneration,
+    required int generation,
+    required int keyEpoch,
+    required CloudSyncDataRekeyPhase dataRekeyPhase,
+    required CloudSyncMembershipManifestDigest membershipManifestDigest,
+    required DateTime committedAt,
+  }) {
+    final checkedFromGeneration = _requirePositiveInt32(
+      fromGeneration,
+      'fromGeneration',
+    );
+    final checkedGeneration = _requirePositiveInt32(generation, 'generation');
+    if (checkedGeneration != checkedFromGeneration + 1 ||
+        dataRekeyPhase != CloudSyncDataRekeyPhase.rekeyPending) {
+      throw const FormatException('设备轮换结果代次或重加密状态无效');
+    }
+    return CloudSyncDeviceRotationResult._(
+      operationId: _requireCanonicalUuid(operationId, 'operationId'),
+      revokedDeviceId: _requireCanonicalUuid(
+        revokedDeviceId,
+        'revokedDeviceId',
+      ),
+      fromGeneration: checkedFromGeneration,
+      generation: checkedGeneration,
+      keyEpoch: _requirePositiveUint32(keyEpoch, 'keyEpoch'),
+      dataRekeyPhase: dataRekeyPhase,
+      membershipManifestDigest: membershipManifestDigest,
+      committedAt: committedAt.toUtc(),
+    );
+  }
+
+  const CloudSyncDeviceRotationResult._({
+    required this.operationId,
+    required this.revokedDeviceId,
+    required this.fromGeneration,
+    required this.generation,
+    required this.keyEpoch,
+    required this.dataRekeyPhase,
+    required this.membershipManifestDigest,
+    required this.committedAt,
+  });
+
+  factory CloudSyncDeviceRotationResult.fromJson(CloudSyncJsonMap json) {
+    _requireExactKeys(json, _jsonKeys, '设备轮换结果');
+    if (_requireString(json, 'result') != 'committed') {
+      throw const FormatException('设备轮换结果枚举值无效');
+    }
+    return CloudSyncDeviceRotationResult(
+      operationId: _requireString(json, 'operationId'),
+      revokedDeviceId: _requireString(json, 'revokedDeviceId'),
+      fromGeneration: _requireInt(json, 'fromGeneration'),
+      generation: _requireInt(json, 'generation'),
+      keyEpoch: _requireInt(json, 'keyEpoch'),
+      dataRekeyPhase: _parseDataRekeyPhase(
+        _requireString(json, 'dataRekeyPhase'),
+      ),
+      membershipManifestDigest: CloudSyncMembershipManifestDigest.parse(
+        _requireString(json, 'membershipManifestDigest'),
+      ),
+      committedAt: _requireCanonicalUtcDateTime(json, 'committedAt'),
+    );
+  }
+
+  static const _jsonKeys = <String>{
+    'result',
+    'operationId',
+    'revokedDeviceId',
+    'fromGeneration',
+    'generation',
+    'keyEpoch',
+    'dataRekeyPhase',
+    'membershipManifestDigest',
+    'committedAt',
+  };
+
+  final String operationId;
+  final String revokedDeviceId;
+  final int fromGeneration;
+  final int generation;
+  final int keyEpoch;
+  final CloudSyncDataRekeyPhase dataRekeyPhase;
+  final CloudSyncMembershipManifestDigest membershipManifestDigest;
+  final DateTime committedAt;
 }
 
 final class CloudSyncGenesisSecurityState {
@@ -1763,6 +2306,14 @@ int _requireInt(CloudSyncJsonMap json, String key) {
   final value = json[key];
   if (value is! int) {
     throw FormatException('$key 必须为整数');
+  }
+  return value;
+}
+
+bool _requireBool(CloudSyncJsonMap json, String key) {
+  final value = json[key];
+  if (value is! bool) {
+    throw FormatException('$key 必须为布尔值');
   }
   return value;
 }

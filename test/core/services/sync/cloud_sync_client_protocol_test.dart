@@ -363,6 +363,88 @@ Map<String, Object?> _registrationSecurityStateData({
   };
 }
 
+Map<String, Object?> _securityStateDataForTest({
+  required int generation,
+  required int keyEpoch,
+  required String dataRekeyPhase,
+  required Uint8List membershipManifest,
+  required int recoveryCapsuleVersion,
+  required Uint8List recoveryCapsule,
+  required String operationId,
+  String updatedAt = '2026-07-29T05:00:00.000Z',
+}) {
+  return <String, Object?>{
+    'generation': generation,
+    'keyEpoch': keyEpoch,
+    'dataRekeyPhase': dataRekeyPhase,
+    'membershipManifest': _encodedData(membershipManifest),
+    'membershipManifestDigest': _encodedData(
+      Uint8List.fromList(sha256.convert(membershipManifest).bytes),
+    ),
+    'recoveryPublicKeyVersion': 1,
+    'recoveryPublicKey': _encodedBytes(cloudSyncRecoveryPublicKeyBytes, 71),
+    'recoveryCapsuleVersion': recoveryCapsuleVersion,
+    'recoveryCapsule': _encodedData(recoveryCapsule),
+    'lastOperationId': operationId,
+    'updatedAt': updatedAt,
+    'envelopes': <Object?>[
+      <String, Object?>{
+        'targetDeviceId': _deviceId1,
+        'issuerDeviceId': _issuerDeviceId,
+        'envelopeVersion': 1,
+        'keyEpoch': keyEpoch,
+        'accountKeyEnvelope': _encodedBytes(
+          cloudSyncAccountKeyEnvelopeBytes,
+          72,
+        ),
+      },
+    ],
+  };
+}
+
+Map<String, Object?> _securityHistoryItemForTest({
+  required int generation,
+  required int keyEpoch,
+  required int manifestSeed,
+  required int recoveryCapsuleVersion,
+  required String operationId,
+}) {
+  final manifest = _filledBytes(
+    cloudSyncMembershipManifestMinimumBytes,
+    manifestSeed,
+  );
+  return <String, Object?>{
+    'generation': generation,
+    'keyEpoch': keyEpoch,
+    'membershipManifest': _encodedData(manifest),
+    'membershipManifestDigest': _encodedData(
+      Uint8List.fromList(sha256.convert(manifest).bytes),
+    ),
+    'recoveryPublicKeyVersion': 1,
+    'recoveryPublicKey': _encodedBytes(cloudSyncRecoveryPublicKeyBytes, 71),
+    'recoveryCapsuleVersion': recoveryCapsuleVersion,
+    'recoveryCapsule': _encodedBytes(160 + generation, 73 + generation),
+    'operationId': operationId,
+    'committedAt':
+        '2026-07-29T${generation.toString().padLeft(2, '0')}:00:00.000Z',
+  };
+}
+
+Map<String, Object?> _securityCurrentProjectionForTest(
+  Map<String, Object?> state,
+) {
+  return <String, Object?>{
+    'generation': state['generation'],
+    'keyEpoch': state['keyEpoch'],
+    'dataRekeyPhase': state['dataRekeyPhase'],
+    'membershipManifestDigest': state['membershipManifestDigest'],
+    'recoveryPublicKeyVersion': state['recoveryPublicKeyVersion'],
+    'recoveryPublicKey': state['recoveryPublicKey'],
+    'recoveryCapsuleVersion': state['recoveryCapsuleVersion'],
+    'updatedAt': state['updatedAt'],
+  };
+}
+
 Map<String, Object?> _registrationAuthenticatedData({
   Map<String, Object?>? securityState,
   String deviceId = _deviceId1,
@@ -1528,6 +1610,517 @@ void main() {
     ]) {
       expect(invalidFactory, throwsFormatException);
     }
+  });
+
+  test('账户安全状态接受服务端边界内的可变长恢复胶囊', () {
+    final manifest = _filledBytes(cloudSyncMembershipManifestMinimumBytes, 31);
+    final recoveryCapsule = _filledBytes(208, 32);
+    final state = CloudSyncAccountSecurityState(
+      generation: 2,
+      keyEpoch: 2,
+      dataRekeyPhase: CloudSyncDataRekeyPhase.ready,
+      membershipManifest: manifest,
+      membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+        Uint8List.fromList(sha256.convert(manifest).bytes),
+      ),
+      recoveryPublicKeyVersion: 1,
+      recoveryPublicKey: _filledBytes(cloudSyncRecoveryPublicKeyBytes, 33),
+      recoveryCapsuleVersion: 2,
+      recoveryCapsule: recoveryCapsule,
+      lastOperationId: _attemptId2,
+      updatedAt: DateTime.utc(2026, 7, 29),
+      envelopes: <CloudSyncAccountSecurityEnvelope>[
+        CloudSyncAccountSecurityEnvelope(
+          targetDeviceId: _deviceId1,
+          issuerDeviceId: _issuerDeviceId,
+          envelopeVersion: 1,
+          keyEpoch: 2,
+          accountKeyEnvelope: _filledBytes(
+            cloudSyncAccountKeyEnvelopeBytes,
+            34,
+          ),
+        ),
+      ],
+    );
+    recoveryCapsule.fillRange(0, recoveryCapsule.length, 0);
+
+    expect(state.recoveryCapsule, everyElement(32));
+    expect(state.recoveryCapsule, hasLength(208));
+    final completedHistory = CloudSyncAccountSecurityHistoryPage(
+      items: const <CloudSyncAccountSecurityHistoryItem>[],
+      afterGeneration: state.generation,
+      nextAfterGeneration: state.generation,
+      pageSize: 100,
+      hasMore: false,
+      currentState: CloudSyncAccountSecurityCurrentProjection(
+        generation: state.generation,
+        keyEpoch: state.keyEpoch,
+        dataRekeyPhase: state.dataRekeyPhase,
+        membershipManifestDigest: state.membershipManifestDigest,
+        recoveryPublicKeyVersion: state.recoveryPublicKeyVersion,
+        recoveryPublicKey: state.recoveryPublicKey,
+        recoveryCapsuleVersion: state.recoveryCapsuleVersion,
+        updatedAt: state.updatedAt,
+      ),
+    );
+    expect(completedHistory.items, isEmpty);
+    expect(completedHistory.hasMore, isFalse);
+  });
+
+  test('设备轮换请求冻结公开密文并拒绝信封串线', () {
+    final currentManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      41,
+    );
+    final nextManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      42,
+    );
+    final nextRecoveryCapsule = _filledBytes(208, 43);
+    final accountKeyEnvelope = _filledBytes(
+      cloudSyncAccountKeyEnvelopeBytes,
+      44,
+    );
+    final currentDigest = CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List.fromList(sha256.convert(currentManifest).bytes),
+    );
+    final request = CloudSyncDeviceRotationRequest(
+      expectedGeneration: 2,
+      expectedKeyEpoch: 2,
+      expectedMembershipManifestDigest: currentDigest,
+      operationId: _mutationId3,
+      revokeDeviceId: _deviceId2,
+      nextMembershipManifest: nextManifest,
+      nextRecoveryCapsuleVersion: 3,
+      nextRecoveryCapsule: nextRecoveryCapsule,
+      envelopes: <CloudSyncDeviceRotationEnvelope>[
+        CloudSyncDeviceRotationEnvelope(
+          targetDeviceId: _deviceId1,
+          envelopeVersion: 1,
+          keyEpoch: 3,
+          accountKeyEnvelope: accountKeyEnvelope,
+        ),
+      ],
+    );
+    nextManifest.fillRange(0, nextManifest.length, 0);
+    nextRecoveryCapsule.fillRange(0, nextRecoveryCapsule.length, 0);
+    accountKeyEnvelope.fillRange(0, accountKeyEnvelope.length, 0);
+
+    expect(request.nextMembershipManifest, everyElement(42));
+    expect(request.nextRecoveryCapsule, everyElement(43));
+    expect(request.envelopes.single.accountKeyEnvelope, everyElement(44));
+    expect(
+      request.nextMembershipManifestDigest.bytes,
+      sha256.convert(request.nextMembershipManifest).bytes,
+    );
+    final maximumCapsuleRequest = CloudSyncDeviceRotationRequest(
+      expectedGeneration: 2,
+      expectedKeyEpoch: 2,
+      expectedMembershipManifestDigest: currentDigest,
+      operationId: _mutationId3,
+      revokeDeviceId: _deviceId2,
+      nextMembershipManifest: request.nextMembershipManifest,
+      nextRecoveryCapsuleVersion: 3,
+      nextRecoveryCapsule: _filledBytes(
+        cloudSyncRecoveryCapsuleMaximumBytes,
+        45,
+      ),
+      envelopes: request.envelopes,
+    );
+    expect(
+      maximumCapsuleRequest.nextRecoveryCapsule,
+      hasLength(cloudSyncRecoveryCapsuleMaximumBytes),
+    );
+
+    for (final invalidFactory in <Object? Function()>[
+      () => CloudSyncDeviceRotationRequest(
+        expectedGeneration: 2,
+        expectedKeyEpoch: 2,
+        expectedMembershipManifestDigest: request.nextMembershipManifestDigest,
+        operationId: _mutationId3,
+        revokeDeviceId: _deviceId2,
+        nextMembershipManifest: request.nextMembershipManifest,
+        nextRecoveryCapsuleVersion: 3,
+        nextRecoveryCapsule: request.nextRecoveryCapsule,
+        envelopes: request.envelopes,
+      ),
+      () => CloudSyncDeviceRotationRequest(
+        expectedGeneration: 2,
+        expectedKeyEpoch: 2,
+        expectedMembershipManifestDigest: currentDigest,
+        operationId: _mutationId3,
+        revokeDeviceId: _deviceId2,
+        nextMembershipManifest: request.nextMembershipManifest,
+        nextRecoveryCapsuleVersion: 3,
+        nextRecoveryCapsule: request.nextRecoveryCapsule,
+        envelopes: <CloudSyncDeviceRotationEnvelope>[
+          CloudSyncDeviceRotationEnvelope(
+            targetDeviceId: _deviceId1,
+            envelopeVersion: 1,
+            keyEpoch: 2,
+            accountKeyEnvelope: request.envelopes.single.accountKeyEnvelope,
+          ),
+        ],
+      ),
+      () => CloudSyncDeviceRotationRequest(
+        expectedGeneration: 2,
+        expectedKeyEpoch: 2,
+        expectedMembershipManifestDigest: currentDigest,
+        operationId: _mutationId3,
+        revokeDeviceId: _deviceId2,
+        nextMembershipManifest: request.nextMembershipManifest,
+        nextRecoveryCapsuleVersion: 3,
+        nextRecoveryCapsule: request.nextRecoveryCapsule,
+        envelopes: <CloudSyncDeviceRotationEnvelope>[
+          CloudSyncDeviceRotationEnvelope(
+            targetDeviceId: _issuerDeviceId,
+            envelopeVersion: 1,
+            keyEpoch: 3,
+            accountKeyEnvelope: request.envelopes.single.accountKeyEnvelope,
+          ),
+          request.envelopes.single,
+        ],
+      ),
+      () => CloudSyncDeviceRotationRequest(
+        expectedGeneration: 2,
+        expectedKeyEpoch: 2,
+        expectedMembershipManifestDigest: currentDigest,
+        operationId: _mutationId3,
+        revokeDeviceId: _deviceId2,
+        nextMembershipManifest: request.nextMembershipManifest,
+        nextRecoveryCapsuleVersion: 3,
+        nextRecoveryCapsule: request.nextRecoveryCapsule,
+        envelopes: <CloudSyncDeviceRotationEnvelope>[
+          CloudSyncDeviceRotationEnvelope(
+            targetDeviceId: _deviceId2,
+            envelopeVersion: 1,
+            keyEpoch: 3,
+            accountKeyEnvelope: request.envelopes.single.accountKeyEnvelope,
+          ),
+        ],
+      ),
+      () => CloudSyncDeviceRotationRequest(
+        expectedGeneration: 2,
+        expectedKeyEpoch: 0xffffffff,
+        expectedMembershipManifestDigest: currentDigest,
+        operationId: _mutationId3,
+        revokeDeviceId: _deviceId2,
+        nextMembershipManifest: request.nextMembershipManifest,
+        nextRecoveryCapsuleVersion: 3,
+        nextRecoveryCapsule: request.nextRecoveryCapsule,
+        envelopes: const <CloudSyncDeviceRotationEnvelope>[],
+      ),
+      () => CloudSyncDeviceRotationRequest(
+        expectedGeneration: 2,
+        expectedKeyEpoch: 2,
+        expectedMembershipManifestDigest: currentDigest,
+        operationId: _mutationId3,
+        revokeDeviceId: _deviceId2,
+        nextMembershipManifest: request.nextMembershipManifest,
+        nextRecoveryCapsuleVersion: 3,
+        nextRecoveryCapsule: Uint8List(0),
+        envelopes: request.envelopes,
+      ),
+      () => CloudSyncDeviceRotationRequest(
+        expectedGeneration: 2,
+        expectedKeyEpoch: 2,
+        expectedMembershipManifestDigest: currentDigest,
+        operationId: _mutationId3,
+        revokeDeviceId: _deviceId2,
+        nextMembershipManifest: request.nextMembershipManifest,
+        nextRecoveryCapsuleVersion: 3,
+        nextRecoveryCapsule: Uint8List(
+          cloudSyncRecoveryCapsuleMaximumBytes + 1,
+        ),
+        envelopes: request.envelopes,
+      ),
+    ]) {
+      expect(invalidFactory, throwsFormatException);
+    }
+  });
+
+  test('安全状态历史与设备轮换使用稳定端点并保持恢复密文不透明', () async {
+    final currentManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      81,
+    );
+    final currentStateData = _securityStateDataForTest(
+      generation: 3,
+      keyEpoch: 2,
+      dataRekeyPhase: 'ready',
+      membershipManifest: currentManifest,
+      recoveryCapsuleVersion: 2,
+      recoveryCapsule: _filledBytes(208, 82),
+      operationId: _attemptId2,
+    );
+    final nextManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      83,
+    );
+    final rotation = CloudSyncDeviceRotationRequest(
+      expectedGeneration: 3,
+      expectedKeyEpoch: 2,
+      expectedMembershipManifestDigest: CloudSyncMembershipManifestDigest.parse(
+        _requiredTestString(currentStateData, 'membershipManifestDigest'),
+      ),
+      operationId: _mutationId3,
+      revokeDeviceId: _deviceId2,
+      nextMembershipManifest: nextManifest,
+      nextRecoveryCapsuleVersion: 3,
+      nextRecoveryCapsule: _filledBytes(212, 84),
+      envelopes: <CloudSyncDeviceRotationEnvelope>[
+        CloudSyncDeviceRotationEnvelope(
+          targetDeviceId: _deviceId1,
+          envelopeVersion: 1,
+          keyEpoch: 3,
+          accountKeyEnvelope: _filledBytes(
+            cloudSyncAccountKeyEnvelopeBytes,
+            85,
+          ),
+        ),
+      ],
+    );
+    final requests = <(String, String, String?, CloudSyncJsonMap)>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      final rawBody = await utf8.decoder.bind(request).join();
+      final body = rawBody.isEmpty
+          ? <String, Object?>{}
+          : copyCloudSyncJsonMap(jsonDecode(rawBody));
+      requests.add((
+        request.method,
+        request.uri.path,
+        request.headers.value(HttpHeaders.authorizationHeader),
+        body,
+      ));
+      final Object data = switch (request.uri.path) {
+        '/api/device/security-state/get' => currentStateData,
+        '/api/device/security-state/history/list' => <String, Object?>{
+          'items': <Object?>[
+            _securityHistoryItemForTest(
+              generation: 1,
+              keyEpoch: 1,
+              manifestSeed: 77,
+              recoveryCapsuleVersion: 1,
+              operationId: _attemptId1,
+            ),
+            _securityHistoryItemForTest(
+              generation: 2,
+              keyEpoch: 1,
+              manifestSeed: 78,
+              recoveryCapsuleVersion: 1,
+              operationId: _pairingId,
+            ),
+          ],
+          'afterGeneration': 0,
+          'nextAfterGeneration': 2,
+          'pageSize': 2,
+          'hasMore': true,
+          'currentState': _securityCurrentProjectionForTest(currentStateData),
+        },
+        '/api/device/rotation/commit' => <String, Object?>{
+          'result': 'committed',
+          'operationId': rotation.operationId,
+          'revokedDeviceId': rotation.revokeDeviceId,
+          'fromGeneration': rotation.expectedGeneration,
+          'generation': rotation.expectedGeneration + 1,
+          'keyEpoch': rotation.expectedKeyEpoch + 1,
+          'dataRekeyPhase': 'rekey-pending',
+          'membershipManifestDigest':
+              rotation.nextMembershipManifestDigest.encoded,
+          'committedAt': '2026-07-29T05:01:00.000Z',
+        },
+        _ => throw StateError('未预期的请求路径：${request.uri.path}'),
+      };
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(<String, Object?>{'data': data}));
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    final currentState = await client.getSecurityState();
+    final history = await client.listSecurityStateHistory(pageSize: 2);
+    final result = await client.commitDeviceRotation(rotation);
+
+    expect(currentState.generation, 3);
+    expect(currentState.recoveryCapsule, hasLength(208));
+    expect(history.items.map((item) => item.generation), <int>[1, 2]);
+    expect(history.nextAfterGeneration, 2);
+    expect(history.hasMore, isTrue);
+    expect(history.currentState.generation, 3);
+    expect(result.generation, 4);
+    expect(result.keyEpoch, 3);
+    expect(result.dataRekeyPhase, CloudSyncDataRekeyPhase.rekeyPending);
+
+    expect(
+      requests.map((request) => (request.$1, request.$2)).toList(),
+      <(String, String)>[
+        ('GET', '/api/device/security-state/get'),
+        ('POST', '/api/device/security-state/history/list'),
+        ('POST', '/api/device/rotation/commit'),
+      ],
+    );
+    expect(
+      requests.map((request) => request.$3),
+      everyElement('Bearer $_fullTokenValue'),
+    );
+    expect(requests[0].$4, isEmpty);
+    expect(requests[1].$4, <String, Object?>{
+      'afterGeneration': 0,
+      'pageSize': 2,
+    });
+    expect(requests[2].$4, <String, Object?>{
+      'expectedGeneration': 3,
+      'expectedKeyEpoch': 2,
+      'expectedMembershipManifestDigest':
+          rotation.expectedMembershipManifestDigest.encoded,
+      'operationId': rotation.operationId,
+      'revokeDeviceId': rotation.revokeDeviceId,
+      'nextMembershipManifest': _encodedData(rotation.nextMembershipManifest),
+      'nextMembershipManifestDigest':
+          rotation.nextMembershipManifestDigest.encoded,
+      'nextRecoveryCapsuleVersion': rotation.nextRecoveryCapsuleVersion,
+      'nextRecoveryCapsule': _encodedData(rotation.nextRecoveryCapsule),
+      'envelopes': <Object?>[
+        <String, Object?>{
+          'targetDeviceId': _deviceId1,
+          'envelopeVersion': 1,
+          'keyEpoch': 3,
+          'accountKeyEnvelope': _encodedData(
+            rotation.envelopes.single.accountKeyEnvelope,
+          ),
+        },
+      ],
+    });
+  });
+
+  test('安全控制面拒绝未知字段、历史串线与轮换错配回执', () async {
+    final historyManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      91,
+    );
+    final stateData = _securityStateDataForTest(
+      generation: 2,
+      keyEpoch: 1,
+      dataRekeyPhase: 'ready',
+      membershipManifest: historyManifest,
+      recoveryCapsuleVersion: 2,
+      recoveryCapsule: _filledBytes(209, 92),
+      operationId: _attemptId2,
+    );
+    final historyItem = <String, Object?>{
+      ..._securityHistoryItemForTest(
+        generation: 2,
+        keyEpoch: 1,
+        manifestSeed: 91,
+        recoveryCapsuleVersion: 2,
+        operationId: _attemptId2,
+      ),
+      'recoveryPublicKey': stateData['recoveryPublicKey'],
+    };
+    final nextManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      93,
+    );
+    final rotation = CloudSyncDeviceRotationRequest(
+      expectedGeneration: 2,
+      expectedKeyEpoch: 1,
+      expectedMembershipManifestDigest: CloudSyncMembershipManifestDigest.parse(
+        _requiredTestString(stateData, 'membershipManifestDigest'),
+      ),
+      operationId: _mutationId3,
+      revokeDeviceId: _deviceId2,
+      nextMembershipManifest: nextManifest,
+      nextRecoveryCapsuleVersion: 3,
+      nextRecoveryCapsule: _filledBytes(213, 94),
+      envelopes: <CloudSyncDeviceRotationEnvelope>[
+        CloudSyncDeviceRotationEnvelope(
+          targetDeviceId: _deviceId1,
+          envelopeVersion: 1,
+          keyEpoch: 2,
+          accountKeyEnvelope: _filledBytes(
+            cloudSyncAccountKeyEnvelopeBytes,
+            95,
+          ),
+        ),
+      ],
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      final Object data = switch (request.uri.path) {
+        '/api/device/security-state/get' => <String, Object?>{
+          ...stateData,
+          'unknownField': true,
+        },
+        '/api/device/security-state/history/list' => <String, Object?>{
+          'items': <Object?>[historyItem],
+          'afterGeneration': 1,
+          'nextAfterGeneration': 2,
+          'pageSize': 2,
+          'hasMore': false,
+          'currentState': _securityCurrentProjectionForTest(stateData),
+        },
+        '/api/device/rotation/commit' => <String, Object?>{
+          'result': 'committed',
+          'operationId': _mutationId2,
+          'revokedDeviceId': rotation.revokeDeviceId,
+          'fromGeneration': rotation.expectedGeneration,
+          'generation': rotation.expectedGeneration + 1,
+          'keyEpoch': rotation.expectedKeyEpoch + 1,
+          'dataRekeyPhase': 'rekey-pending',
+          'membershipManifestDigest':
+              rotation.nextMembershipManifestDigest.encoded,
+          'committedAt': '2026-07-29T05:01:00.000Z',
+        },
+        _ => throw StateError('未预期的请求路径：${request.uri.path}'),
+      };
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(<String, Object?>{'data': data}));
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final invalidResponse = isA<CloudSyncException>().having(
+      (error) => error.kind,
+      'kind',
+      CloudSyncFailureKind.invalidResponse,
+    );
+
+    await expectLater(client.getSecurityState(), throwsA(invalidResponse));
+    await expectLater(
+      client.listSecurityStateHistory(pageSize: 2),
+      throwsA(invalidResponse),
+    );
+    await expectLater(
+      client.commitDeviceRotation(rotation),
+      throwsA(invalidResponse),
+    );
+    expect(
+      () => client.listSecurityStateHistory(afterGeneration: -1),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.validation,
+        ),
+      ),
+    );
   });
 
   test('持久账户会话恢复认证会话时保留设备密钥版本', () {
