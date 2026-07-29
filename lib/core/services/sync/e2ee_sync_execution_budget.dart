@@ -37,6 +37,59 @@ abstract interface class E2eeSyncCancellationRegistration {
   void unregister();
 }
 
+final class E2eeSyncCancellationController
+    implements E2eeSyncCancellationSignal {
+  final Set<void Function()> _listeners = <void Function()>{};
+  bool _cancelled = false;
+
+  bool get isCancelled => _cancelled;
+
+  @override
+  E2eeSyncCancellationRegistration register(void Function() onCancelled) {
+    if (_cancelled) {
+      onCancelled();
+      return const _NoopSyncCancellationRegistration();
+    }
+    _listeners.add(onCancelled);
+    return _SyncCancellationRegistration(() {
+      _listeners.remove(onCancelled);
+    });
+  }
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    final listeners = _listeners.toList(growable: false);
+    _listeners.clear();
+    for (final listener in listeners) {
+      listener();
+    }
+  }
+}
+
+final class _SyncCancellationRegistration
+    implements E2eeSyncCancellationRegistration {
+  _SyncCancellationRegistration(this._unregister);
+
+  final void Function() _unregister;
+  bool _registered = true;
+
+  @override
+  void unregister() {
+    if (!_registered) return;
+    _registered = false;
+    _unregister();
+  }
+}
+
+final class _NoopSyncCancellationRegistration
+    implements E2eeSyncCancellationRegistration {
+  const _NoopSyncCancellationRegistration();
+
+  @override
+  void unregister() {}
+}
+
 /// 为一次同步统一核算网络、附件和单调墙钟预算。
 ///
 /// 截止或取消不会只让上层 Future 超时返回，而是先中止同一网络客户端，

@@ -20,6 +20,60 @@ import 'e2ee_chat_content_runtime.dart';
 import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_scheduler.dart';
 
+final class E2eeBackgroundSyncCapability {
+  E2eeBackgroundSyncCapability({
+    required String accountUserId,
+    required String deviceId,
+    required int sessionGeneration,
+    required int authGeneration,
+    required int keyEpoch,
+    required String manifestDigest,
+  }) : accountUserId = _requireCapabilityIdentifier(
+         accountUserId,
+         'accountUserId',
+       ),
+       deviceId = _requireCapabilityIdentifier(deviceId, 'deviceId'),
+       sessionGeneration = _requireCapabilityPositiveGeneration(
+         sessionGeneration,
+         'sessionGeneration',
+       ),
+       authGeneration = _requireCapabilityNonNegativeGeneration(
+         authGeneration,
+         'authGeneration',
+       ),
+       keyEpoch = _requireCapabilityKeyEpoch(keyEpoch),
+       manifestDigest = _requireCapabilityManifestDigest(manifestDigest);
+
+  final String accountUserId;
+  final String deviceId;
+  final int sessionGeneration;
+  final int authGeneration;
+  final int keyEpoch;
+  final String manifestDigest;
+
+  bool hasSameBinding(E2eeBackgroundSyncCapability other) {
+    return accountUserId == other.accountUserId &&
+        deviceId == other.deviceId &&
+        sessionGeneration == other.sessionGeneration &&
+        authGeneration == other.authGeneration &&
+        keyEpoch == other.keyEpoch &&
+        manifestDigest == other.manifestDigest;
+  }
+
+  bool matchesSession(CloudSyncAccountSession session) {
+    return accountUserId == session.userId &&
+        deviceId == session.deviceId &&
+        keyEpoch == session.keyEpoch;
+  }
+}
+
+abstract interface class E2eeBackgroundSyncTrustedCapabilityGate {
+  /// 每次调用都必须从设备密钥保护的持久可信状态重新读取并完成验签。
+  Future<E2eeBackgroundSyncCapability> loadVerifiedCapability(
+    E2eeSyncExecutionBudget executionBudget,
+  );
+}
+
 final class E2eeBackgroundSyncLimits {
   const E2eeBackgroundSyncLimits({
     this.maximumNetworkSteps = 17,
@@ -160,19 +214,26 @@ abstract interface class E2eeBackgroundSyncContent {
 
 /// 平台后台回调只需调用一次 [run]；工作区、密钥、数据库与网络所有权均在内部闭环。
 final class E2eeBackgroundSyncRunner {
-  factory E2eeBackgroundSyncRunner({Directory? installationRoot}) {
+  factory E2eeBackgroundSyncRunner({
+    required E2eeBackgroundSyncTrustedCapabilityGate capabilityGate,
+    Directory? installationRoot,
+  }) {
     return E2eeBackgroundSyncRunner._(
       _ProductionBackgroundSyncHost(installationRoot),
+      capabilityGate,
     );
   }
 
   @visibleForTesting
-  const E2eeBackgroundSyncRunner.forTesting(E2eeBackgroundSyncHost host)
-    : this._(host);
+  const E2eeBackgroundSyncRunner.forTesting(
+    E2eeBackgroundSyncHost host, {
+    E2eeBackgroundSyncTrustedCapabilityGate? capabilityGate,
+  }) : this._(host, capabilityGate);
 
-  const E2eeBackgroundSyncRunner._(this._host);
+  const E2eeBackgroundSyncRunner._(this._host, this._capabilityGate);
 
   final E2eeBackgroundSyncHost _host;
+  final E2eeBackgroundSyncTrustedCapabilityGate? _capabilityGate;
 
   Future<E2eeBackgroundSyncOutcome> run({
     E2eeBackgroundSyncLimits limits = const E2eeBackgroundSyncLimits(),
@@ -191,11 +252,19 @@ final class E2eeBackgroundSyncRunner {
     try {
       var terminalRetirementAttempted = false;
       E2eeBackgroundSyncOutcome? outcome;
+      E2eeBackgroundSyncCapability? expectedCapability;
       Object? primaryError;
       StackTrace? primaryStackTrace;
 
       try {
         executionBudget.checkCanContinue();
+        final capabilityGate = _capabilityGate;
+        if (capabilityGate != null) {
+          expectedCapability = await capabilityGate.loadVerifiedCapability(
+            executionBudget,
+          );
+          executionBudget.checkCanContinue();
+        }
         final workspaceAcquisition = await _host.tryAcquireWorkspace(
           executionBudget,
         );
@@ -209,9 +278,28 @@ final class E2eeBackgroundSyncRunner {
 
         if (outcome == null) {
           final activeWorkspace = workspace!;
-          if (activeWorkspace.session == null) {
+          final activeSession = activeWorkspace.session;
+          if (activeSession == null) {
             outcome = const E2eeBackgroundSyncOutcome.noSession();
           } else {
+            final capabilityGate = _capabilityGate;
+            final expected = expectedCapability;
+            if (capabilityGate != null && expected != null) {
+              final current = await capabilityGate.loadVerifiedCapability(
+                executionBudget,
+              );
+              executionBudget.checkCanContinue();
+              if (!expected.hasSameBinding(current)) {
+                throw StateError(
+                  'e2ee_background_sync_capability_generation_changed',
+                );
+              }
+              if (!current.matchesSession(activeSession)) {
+                throw StateError(
+                  'e2ee_background_sync_capability_session_mismatch',
+                );
+              }
+            }
             final contentAcquisition = await activeWorkspace.tryAcquireContent(
               executionBudget,
             );
@@ -248,6 +336,7 @@ final class E2eeBackgroundSyncRunner {
               releaseAccountLease: activeContent.closeAccountLease,
               releaseWorkspaceLease: activeWorkspace.closeWorkspaceLease,
             );
+            executionBudget.checkCanContinue();
             outcome = const E2eeBackgroundSyncOutcome.authenticationRetired();
           }
         }
@@ -259,11 +348,23 @@ final class E2eeBackgroundSyncRunner {
       if (!terminalRetirementAttempted) {
         final cleanup = _BackgroundCleanupAccumulator();
         if (content != null) {
-          await cleanup.run('关闭后台 E2EE 内容运行时失败', content.closeRuntime);
-          await cleanup.run('释放后台账户业务租约失败', content.closeAccountLease);
+          await cleanup.run(
+            '关闭后台 E2EE 内容运行时失败',
+            content.closeRuntime,
+            executionBudget,
+          );
+          await cleanup.run(
+            '释放后台账户业务租约失败',
+            content.closeAccountLease,
+            executionBudget,
+          );
         }
         if (workspace != null) {
-          await cleanup.run('释放后台工作区租约失败', workspace.closeWorkspaceLease);
+          await cleanup.run(
+            '释放后台工作区租约失败',
+            workspace.closeWorkspaceLease,
+            executionBudget,
+          );
         }
         if (primaryError == null && cleanup.error != null) {
           primaryError = cleanup.error;
@@ -456,15 +557,28 @@ final class _BackgroundCleanupAccumulator {
   Object? error;
   StackTrace? stackTrace;
 
-  Future<void> run(String operation, Future<void> Function() action) async {
+  Future<void> run(
+    String operation,
+    Future<void> Function() action,
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
     try {
       await action();
     } catch (nextError, nextStackTrace) {
-      if (error == null) {
-        error = nextError;
-        stackTrace = nextStackTrace;
-        return;
-      }
+      _record(operation, nextError, nextStackTrace);
+    }
+    try {
+      executionBudget.checkCanContinue();
+    } catch (nextError, nextStackTrace) {
+      _record('后台 E2EE 清理超过系统执行预算', nextError, nextStackTrace);
+    }
+  }
+
+  void _record(String operation, Object nextError, StackTrace nextStackTrace) {
+    if (error == null) {
+      error = nextError;
+      stackTrace = nextStackTrace;
+    } else {
       developer.log(
         operation,
         name: 'Kelivo.E2eeBackgroundSyncRunner',
@@ -474,4 +588,39 @@ final class _BackgroundCleanupAccumulator {
       );
     }
   }
+}
+
+String _requireCapabilityIdentifier(String value, String field) {
+  if (value.isEmpty || value.trim() != value) {
+    throw FormatException('$field 必须为非空规范标识符');
+  }
+  return value;
+}
+
+int _requireCapabilityPositiveGeneration(int value, String field) {
+  if (value < 1 || value > 0x7fffffff) {
+    throw FormatException('$field 必须位于正 int32 范围');
+  }
+  return value;
+}
+
+int _requireCapabilityNonNegativeGeneration(int value, String field) {
+  if (value < 0 || value > 0x7fffffff) {
+    throw FormatException('$field 必须位于非负 int32 范围');
+  }
+  return value;
+}
+
+int _requireCapabilityKeyEpoch(int value) {
+  if (value < 1 || value > 0xffffffff) {
+    throw const FormatException('keyEpoch 必须位于正 uint32 范围');
+  }
+  return value;
+}
+
+String _requireCapabilityManifestDigest(String value) {
+  if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(value)) {
+    throw const FormatException('manifestDigest 必须为规范 SHA-256 十六进制摘要');
+  }
+  return value;
 }

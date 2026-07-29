@@ -110,7 +110,8 @@ dependencies:
   flutter_tts:
     path: ./dependencies/flutter_tts
   flutter_background: ^1.3.0+1
-  workmanager: ^0.9.0+3
+  workmanager:
+    path: ./dependencies/workmanager
   flutter_local_notifications: ^17.2.3
   image: ^4.8.0
   math_expressions: ^2.6.2

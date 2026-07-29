@@ -477,6 +477,96 @@ void main() {
     expect(events, <String>['workspace-close']);
   });
 
+  test('E2EE 后台同步总截止从持久可信 capability 读取前开始核算', () async {
+    final gateResult = Completer<E2eeBackgroundSyncCapability>();
+    final gate = _TestVerifiedStateGate.pending(gateResult);
+    final host = _DelayedBackgroundHost(
+      const E2eeBackgroundWorkspaceBusy(),
+      Duration.zero,
+    );
+    final runner = E2eeBackgroundSyncRunner.forTesting(
+      host,
+      capabilityGate: gate,
+    );
+    Future<void>.delayed(
+      const Duration(milliseconds: 30),
+      () => gateResult.complete(_capability()),
+    );
+
+    await expectLater(
+      runner.run(
+        limits: const E2eeBackgroundSyncLimits(
+          maximumDuration: Duration(milliseconds: 10),
+        ),
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
+    expect(gate.calls, 1);
+    expect(host.acquisitionCalls, 0);
+  });
+
+  test('E2EE 后台同步在工作区租约内拒绝 capability 世代变化', () async {
+    final events = <String>[];
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: const E2eeBackgroundContentBusy(),
+    );
+    final gate = _TestVerifiedStateGate.sequence(<E2eeBackgroundSyncCapability>[
+      _capability(sessionGeneration: 7, authGeneration: 3),
+      _capability(sessionGeneration: 8, authGeneration: 3),
+    ]);
+    final runner = E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      capabilityGate: gate,
+    );
+
+    await expectLater(
+      runner.run(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'e2ee_background_sync_capability_generation_changed',
+        ),
+      ),
+    );
+
+    expect(gate.calls, 2);
+    expect(workspace.contentAcquisitionCalls, 0);
+    expect(events, <String>['workspace-close']);
+  });
+
+  test('E2EE 后台同步在工作区租约内拒绝 capability 会话绑定不一致', () async {
+    final events = <String>[];
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: const E2eeBackgroundContentBusy(),
+    );
+    final gate = _TestVerifiedStateGate.fixed(_capability(keyEpoch: 2));
+    final runner = E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      capabilityGate: gate,
+    );
+
+    await expectLater(
+      runner.run(),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'e2ee_background_sync_capability_session_mismatch',
+        ),
+      ),
+    );
+
+    expect(gate.calls, 2);
+    expect(workspace.contentAcquisitionCalls, 0);
+    expect(events, <String>['workspace-close']);
+  });
+
   test('E2EE 后台同步账户租约占用时释放工作区且不创建内容运行时', () async {
     final events = <String>[];
     final workspace = _FakeBackgroundWorkspace(
@@ -525,6 +615,40 @@ void main() {
 
     expect(outcome.disposition, E2eeBackgroundSyncDisposition.completed);
     expect(content.runCalls, 1);
+    expect(events, <String>[
+      'content-acquire',
+      'run',
+      'runtime-close',
+      'account-lease-close',
+      'workspace-close',
+    ]);
+  });
+
+  test('E2EE 后台同步清理超过总截止时不向平台伪报成功', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) async =>
+          _backgroundCycleReport(E2eeSyncCycleDisposition.completed),
+      closeRuntimeDelay: const Duration(milliseconds: 30),
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(
+        _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      ).run(
+        limits: const E2eeBackgroundSyncLimits(
+          maximumDuration: Duration(milliseconds: 10),
+        ),
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
     expect(events, <String>[
       'content-acquire',
       'run',
@@ -849,16 +973,19 @@ void main() {
     expect(host.maximumConcurrentWorkspaces, 1);
   });
 
-  test('移动后台同步缺少可信安全锚点时取消任务且不构造 Runner', () async {
-    final gate = _TestVerifiedStateGate.fixed(false);
+  test('移动后台同步缺少可信安全锚点时失败关闭但保留周期任务', () async {
+    final gate = _TestVerifiedStateGate.failure(
+      StateError('e2ee_background_security_anchor_unverified'),
+    );
     var runnerCreations = 0;
     var cancellationCalls = 0;
     final executor = E2eeMobileBackgroundTaskExecutor(
-      verifiedStateGate: gate,
-      runnerFactory: () {
+      capabilityGate: gate,
+      runnerFactory: (capabilityGate) {
         runnerCreations++;
         return E2eeBackgroundSyncRunner.forTesting(
           const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+          capabilityGate: capabilityGate,
         );
       },
       cancelScheduledTask: () async => cancellationCalls++,
@@ -876,19 +1003,20 @@ void main() {
     );
 
     expect(gate.calls, 1);
-    expect(runnerCreations, 0);
-    expect(cancellationCalls, 1);
+    expect(runnerCreations, 1);
+    expect(cancellationCalls, 0);
   });
 
-  test('移动后台同步安全锚点读取异常时失败关闭且不构造 Runner', () async {
+  test('移动后台同步安全锚点读取异常时失败关闭且不取消任务', () async {
     final gate = _TestVerifiedStateGate.failure(StateError('anchor-read'));
     var runnerCreations = 0;
     final executor = E2eeMobileBackgroundTaskExecutor(
-      verifiedStateGate: gate,
-      runnerFactory: () {
+      capabilityGate: gate,
+      runnerFactory: (capabilityGate) {
         runnerCreations++;
         return E2eeBackgroundSyncRunner.forTesting(
           const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+          capabilityGate: capabilityGate,
         );
       },
       cancelScheduledTask: () async {},
@@ -906,15 +1034,16 @@ void main() {
     );
 
     expect(gate.calls, 1);
-    expect(runnerCreations, 0);
+    expect(runnerCreations, 1);
   });
 
   test('移动后台同步拒绝未知系统任务且不读取安全状态', () async {
-    final gate = _TestVerifiedStateGate.fixed(true);
+    final gate = _TestVerifiedStateGate.fixed(_capability());
     final executor = E2eeMobileBackgroundTaskExecutor(
-      verifiedStateGate: gate,
-      runnerFactory: () => E2eeBackgroundSyncRunner.forTesting(
+      capabilityGate: gate,
+      runnerFactory: (capabilityGate) => E2eeBackgroundSyncRunner.forTesting(
         const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+        capabilityGate: capabilityGate,
       ),
       cancelScheduledTask: () async {},
     );
@@ -927,15 +1056,16 @@ void main() {
   });
 
   test('移动后台同步并发系统回调共享一次安全预检与 Runner', () async {
-    final gateResult = Completer<bool>();
+    final gateResult = Completer<E2eeBackgroundSyncCapability>();
     final gate = _TestVerifiedStateGate.pending(gateResult);
     var runnerCreations = 0;
     final executor = E2eeMobileBackgroundTaskExecutor(
-      verifiedStateGate: gate,
-      runnerFactory: () {
+      capabilityGate: gate,
+      runnerFactory: (capabilityGate) {
         runnerCreations++;
         return E2eeBackgroundSyncRunner.forTesting(
           const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+          capabilityGate: capabilityGate,
         );
       },
       cancelScheduledTask: () async {},
@@ -944,15 +1074,42 @@ void main() {
     final first = executor.execute(e2eeMobileBackgroundTaskName);
     final second = executor.execute(e2eeMobileBackgroundTaskName);
     expect(gate.calls, 1);
-    expect(runnerCreations, 0);
+    expect(runnerCreations, 1);
 
-    gateResult.complete(true);
+    gateResult.complete(_capability());
     expect(await Future.wait(<Future<bool>>[first, second]), <bool>[
       true,
       true,
     ]);
     expect(gate.calls, 1);
     expect(runnerCreations, 1);
+  });
+
+  test('移动后台同步把平台取消信号贯穿到 Runner 且不获取工作区', () async {
+    final cancellation = _TrackedSyncCancellationSignal()..cancel();
+    final host = _DelayedBackgroundHost(
+      const E2eeBackgroundWorkspaceBusy(),
+      Duration.zero,
+    );
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      capabilityGate: _TestVerifiedStateGate.fixed(_capability()),
+      runnerFactory: (capabilityGate) => E2eeBackgroundSyncRunner.forTesting(
+        host,
+        capabilityGate: capabilityGate,
+      ),
+      cancelScheduledTask: () async {},
+    );
+
+    await expectLater(
+      executor.execute(
+        e2eeMobileBackgroundTaskName,
+        cancellationSignal: cancellation,
+      ),
+      throwsA(isA<E2eeSyncExecutionCancelled>()),
+    );
+
+    expect(host.acquisitionCalls, 0);
+    expect(cancellation.activeListenerCount, 0);
   });
 
   test('移动后台同步发现持久会话已清除时取消后续系统任务', () async {
@@ -963,9 +1120,10 @@ void main() {
     );
     var cancellationCalls = 0;
     final executor = E2eeMobileBackgroundTaskExecutor(
-      verifiedStateGate: _TestVerifiedStateGate.fixed(true),
-      runnerFactory: () => E2eeBackgroundSyncRunner.forTesting(
+      capabilityGate: _TestVerifiedStateGate.fixed(_capability()),
+      runnerFactory: (capabilityGate) => E2eeBackgroundSyncRunner.forTesting(
         _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+        capabilityGate: capabilityGate,
       ),
       cancelScheduledTask: () async => cancellationCalls++,
     );
@@ -2446,6 +2604,23 @@ CloudSyncAccountSession _session({DateTime? tokenExpiresAt}) {
   );
 }
 
+E2eeBackgroundSyncCapability _capability({
+  int sessionGeneration = 1,
+  int authGeneration = 0,
+  int keyEpoch = 1,
+  String manifestDigest =
+      '0000000000000000000000000000000000000000000000000000000000000000',
+}) {
+  return E2eeBackgroundSyncCapability(
+    accountUserId: _userId,
+    deviceId: _deviceId,
+    sessionGeneration: sessionGeneration,
+    authGeneration: authGeneration,
+    keyEpoch: keyEpoch,
+    manifestDigest: manifestDigest,
+  );
+}
+
 CloudSyncAuthenticatedSession _authenticatedSession({
   DateTime? tokenExpiresAt,
   int keyEpoch = 1,
@@ -3466,35 +3641,46 @@ final class _MemoryAccountSessionTokenStore
 }
 
 final class _TestVerifiedStateGate
-    implements E2eeBackgroundSyncVerifiedStateGate {
-  _TestVerifiedStateGate.fixed(bool result)
-    : _result = result,
+    implements E2eeBackgroundSyncTrustedCapabilityGate {
+  _TestVerifiedStateGate.fixed(E2eeBackgroundSyncCapability result)
+    : _results = <E2eeBackgroundSyncCapability>[result],
       _error = null,
       _pending = null;
 
   _TestVerifiedStateGate.failure(Object error)
-    : _result = null,
+    : _results = const <E2eeBackgroundSyncCapability>[],
       _error = error,
       _pending = null;
 
-  _TestVerifiedStateGate.pending(Completer<bool> pending)
-    : _result = null,
+  _TestVerifiedStateGate.pending(
+    Completer<E2eeBackgroundSyncCapability> pending,
+  ) : _results = const <E2eeBackgroundSyncCapability>[],
       _error = null,
       _pending = pending;
 
-  final bool? _result;
+  _TestVerifiedStateGate.sequence(List<E2eeBackgroundSyncCapability> results)
+    : _results = List<E2eeBackgroundSyncCapability>.of(results),
+      _error = null,
+      _pending = null;
+
+  final List<E2eeBackgroundSyncCapability> _results;
   final Object? _error;
-  final Completer<bool>? _pending;
+  final Completer<E2eeBackgroundSyncCapability>? _pending;
   int calls = 0;
 
   @override
-  Future<bool> hasVerifiedSecurityAnchor() async {
+  Future<E2eeBackgroundSyncCapability> loadVerifiedCapability(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
     calls++;
+    executionBudget.checkCanContinue();
     final error = _error;
     if (error != null) throw error;
     final pending = _pending;
     if (pending != null) return pending.future;
-    return _result!;
+    if (_results.length == 1) return _results.single;
+    if (_results.isEmpty) throw StateError('test_capability_results_empty');
+    return _results.removeAt(0);
   }
 }
 
@@ -3740,10 +3926,15 @@ typedef _FakeBackgroundRun =
     );
 
 final class _FakeBackgroundContent implements E2eeBackgroundSyncContent {
-  _FakeBackgroundContent({required this.events, required this.run});
+  _FakeBackgroundContent({
+    required this.events,
+    required this.run,
+    this.closeRuntimeDelay = Duration.zero,
+  });
 
   final List<String> events;
   final _FakeBackgroundRun run;
+  final Duration closeRuntimeDelay;
   int runCalls = 0;
   bool _runtimeClosed = false;
   bool _accountLeaseClosed = false;
@@ -3766,6 +3957,9 @@ final class _FakeBackgroundContent implements E2eeBackgroundSyncContent {
   Future<void> closeRuntime() async {
     if (_runtimeClosed) return;
     _runtimeClosed = true;
+    if (closeRuntimeDelay > Duration.zero) {
+      await Future<void>.delayed(closeRuntimeDelay);
+    }
     events.add('runtime-close');
   }
 
