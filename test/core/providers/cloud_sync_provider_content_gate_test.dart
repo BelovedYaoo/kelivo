@@ -501,6 +501,33 @@ void main() {
     expect(host.acquisitionCalls, 1);
   });
 
+  test('E2EE 后台同步工作区先结算但返回前截止时仍释放所有权', () async {
+    final events = <String>[];
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: const E2eeBackgroundContentBusy(),
+    );
+    final host = _BlockingBackgroundHost(
+      E2eeBackgroundWorkspaceAcquired(workspace),
+      const Duration(milliseconds: 20),
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(host).run(
+        limits: const E2eeBackgroundSyncLimits(
+          maximumDuration: Duration(milliseconds: 5),
+          maximumShutdownDuration: Duration(milliseconds: 20),
+        ),
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
+    expect(host.acquisitionCalls, 1);
+    expect(workspace.contentAcquisitionCalls, 0);
+    expect(events, <String>['workspace-close']);
+  });
+
   test('E2EE 后台同步账户租约占用时释放工作区且不创建内容运行时', () async {
     final events = <String>[];
     final workspace = _FakeBackgroundWorkspace(
@@ -519,9 +546,16 @@ void main() {
     expect(events, <String>['content-acquire', 'workspace-close']);
   });
 
-  test('E2EE 后台同步内容初始化永不完成时仍按总截止释放工作区', () async {
+  test('E2EE 后台同步迟到内容严格释放后才释放工作区且各一次', () async {
     final events = <String>[];
     final pending = Completer<E2eeBackgroundContentAcquisition>();
+    final runtimeClose = Completer<void>();
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) async =>
+          _backgroundCycleReport(E2eeSyncCycleDisposition.completed),
+      closeRuntimeBarrier: runtimeClose.future,
+    );
     final workspace = _PendingContentBackgroundWorkspace(
       events: events,
       session: _session(),
@@ -547,7 +581,98 @@ void main() {
       throwsA(isA<E2eeSyncDeadlineExceeded>()),
     );
 
+    expect(events, <String>['content-acquire']);
+
+    pending.complete(E2eeBackgroundContentAcquired(content));
+    await _waitUntil(() => events.contains('runtime-close-start'));
+    expect(events, <String>['content-acquire', 'runtime-close-start']);
+
+    runtimeClose.complete();
+    await _waitUntil(() => events.contains('workspace-close'));
+
+    expect(events, <String>[
+      'content-acquire',
+      'runtime-close-start',
+      'runtime-close',
+      'account-lease-close',
+      'workspace-close',
+    ]);
+    expect(events.where((event) => event == 'runtime-close'), hasLength(1));
+    expect(
+      events.where((event) => event == 'account-lease-close'),
+      hasLength(1),
+    );
+    expect(events.where((event) => event == 'workspace-close'), hasLength(1));
+    expect(content.closeRuntimeCalls, 1);
+    expect(content.closeAccountLeaseCalls, 1);
+    expect(workspace.workspaceCloseCalls, 1);
+  });
+
+  test('E2EE 后台同步迟到内容占用结果释放工作区且仅一次', () async {
+    final events = <String>[];
+    final pending = Completer<E2eeBackgroundContentAcquisition>();
+    final workspace = _PendingContentBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      acquisition: pending.future,
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(
+        _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      ).run(
+        limits: const E2eeBackgroundSyncLimits(
+          maximumDuration: Duration(milliseconds: 10),
+          maximumShutdownDuration: Duration(milliseconds: 20),
+        ),
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+    expect(events, <String>['content-acquire']);
+
+    pending.complete(const E2eeBackgroundContentBusy());
+    await _waitUntil(() => events.contains('workspace-close'));
+
     expect(events, <String>['content-acquire', 'workspace-close']);
+    expect(workspace.workspaceCloseCalls, 1);
+  });
+
+  test('E2EE 后台同步迟到内容失败仍上报并释放工作区', () async {
+    final reportedErrors = <FlutterErrorDetails>[];
+    final previousErrorHandler = FlutterError.onError;
+    FlutterError.onError = reportedErrors.add;
+    addTearDown(() => FlutterError.onError = previousErrorHandler);
+    final events = <String>[];
+    final pending = Completer<E2eeBackgroundContentAcquisition>();
+    final workspace = _PendingContentBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      acquisition: pending.future,
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(
+        _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      ).run(
+        limits: const E2eeBackgroundSyncLimits(
+          maximumDuration: Duration(milliseconds: 10),
+          maximumShutdownDuration: Duration(milliseconds: 20),
+        ),
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+    expect(events, <String>['content-acquire']);
+
+    final acquisitionError = StateError('late-content-acquisition-failed');
+    pending.completeError(acquisitionError, StackTrace.current);
+    await _waitUntil(
+      () => events.contains('workspace-close') && reportedErrors.isNotEmpty,
+    );
+
+    expect(events, <String>['content-acquire', 'workspace-close']);
+    expect(workspace.workspaceCloseCalls, 1);
+    expect(reportedErrors, hasLength(1));
+    expect(reportedErrors.single.exception, same(acquisitionError));
   });
 
   test('E2EE 后台同步正常有界执行并按所有权逆序关闭', () async {
@@ -1023,6 +1148,49 @@ void main() {
     expect(abortCalls, 1);
   });
 
+  test('E2EE 单调预算迟到释放超过宽限后仍报告失败', () async {
+    final reportedErrors = <FlutterErrorDetails>[];
+    final previousErrorHandler = FlutterError.onError;
+    FlutterError.onError = reportedErrors.add;
+    addTearDown(() => FlutterError.onError = previousErrorHandler);
+    final releaseStarted = Completer<void>();
+    final release = Completer<void>();
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 1,
+      maximumAttachmentBytes: 0,
+      maximumDuration: const Duration(milliseconds: 5),
+      maximumShutdownDuration: const Duration(milliseconds: 10),
+      abortInFlightNetwork: () {},
+    );
+    addTearDown(budget.dispose);
+
+    await expectLater(
+      budget.runBoundedStep<String>(
+        operation: (_) {
+          final stopwatch = Stopwatch()..start();
+          while (stopwatch.elapsed < const Duration(milliseconds: 20)) {}
+          return Future<String>.value('owned-value');
+        },
+        releaseInterruptedValue: (_) {
+          releaseStarted.complete();
+          return release.future;
+        },
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
+    await releaseStarted.future.timeout(const Duration(milliseconds: 100));
+    release.completeError(StateError('late-release-failed'));
+    await _waitUntil(() => reportedErrors.isNotEmpty);
+
+    expect(reportedErrors, hasLength(1));
+    expect(reportedErrors.single.exception, isA<StateError>());
+    expect(
+      reportedErrors.single.context.toString(),
+      contains('释放截止后才返回的后台同步所有权失败'),
+    );
+  });
+
   test('移动后台原生取消桥在宽限期后强制释放引擎并完成平台任务', () async {
     final androidWorker = await File(
       'dependencies/workmanager_android/android/src/main/kotlin/'
@@ -1036,22 +1204,76 @@ void main() {
       'dependencies/workmanager_apple/ios/Sources/workmanager_apple/'
       'BackgroundWorker.swift',
     ).readAsString();
+    final applePlugin = await File(
+      'dependencies/workmanager_apple/ios/Sources/workmanager_apple/'
+      'WorkmanagerPlugin.swift',
+    ).readAsString();
 
     expect(androidWorker, contains('CANCELLATION_GRACE_MILLIS'));
-    expect(androidWorker, contains('postDelayed'));
-    expect(androidWorker, contains('removeCallbacks'));
-    expect(androidWorker, contains('stopEngine(null)'));
+    expect(androidWorker, contains('ScheduledExecutorService'));
+    expect(androidWorker, contains('ScheduledFuture'));
+    expect(androidWorker, contains('ScheduledThreadPoolExecutor'));
+    expect(androidWorker, contains('cancellationScheduler.schedule('));
+    expect(androidWorker, contains('TimeUnit.MILLISECONDS'));
+    expect(androidWorker, contains('stopEngine(Result.failure()'));
+    expect(androidWorker, contains('pendingForcedStop?.cancel(false)'));
+    expect(androidWorker, contains('completer?.set(result)'));
+    expect(androidWorker, contains('scheduleEngineDestruction()'));
+    expect(androidWorker, isNot(contains('postDelayed')));
+    expect(androidWorker, isNot(contains('stopEngine(null)')));
+    expect(
+      androidWorker.indexOf('completer?.set(result)'),
+      lessThan(androidWorker.indexOf('scheduleEngineDestruction()')),
+    );
     expect(appleOperation, contains('cancellationGrace'));
     expect(appleOperation, contains('DispatchQueue.global(qos: .utility)'));
     expect(appleOperation, contains('requestForcedCancellationCleanup'));
     expect(appleOperation, contains('self.finish()'));
     expect(appleOperation, contains('completionSemaphore.signal()'));
+    expect(
+      appleOperation,
+      contains('private var backgroundResult = UIBackgroundFetchResult.failed'),
+    );
+    expect(appleOperation, contains('var wasSuccessful: Bool'));
+    expect(appleWorker, contains('legacyFetchHardBound'));
+    expect(
+      appleWorker,
+      contains('DispatchQueue.global(qos: .utility).asyncAfter('),
+    );
     expect(appleWorker, contains('DispatchQueue.main.async'));
     expect(appleWorker, contains('guard !isCompletionDelivered()'));
     expect(appleWorker, contains('if forceCancellationRequested'));
     expect(appleWorker, contains('guard self.installCancellationNotifier'));
     expect(appleWorker, contains('let completionLock = NSRecursiveLock()'));
     expect(appleWorker, contains('guard runWhileActive({'));
+    expect(appleWorker, contains('completer?()'));
+    expect(appleWorker, contains('platformCompletion()'));
+    expect(
+      appleWorker.indexOf('completer?()'),
+      lessThan(appleWorker.indexOf('platformCompletion()')),
+    );
+    expect(
+      appleWorker,
+      contains('guard claimExecution() else { return false }'),
+    );
+    expect(appleWorker, contains('flutterEngine = FlutterEngine('));
+    expect(
+      appleWorker.indexOf('guard claimExecution() else { return false }'),
+      lessThan(appleWorker.indexOf('flutterEngine = FlutterEngine(')),
+    );
+    expect(
+      applePlugin,
+      contains(
+        'task.setTaskCompleted(success: operation?.wasSuccessful ?? false)',
+      ),
+    );
+    expect(applePlugin, contains('operation?.requestBestEffortCleanup()'));
+    expect(
+      applePlugin.indexOf(
+        'task.setTaskCompleted(success: operation?.wasSuccessful ?? false)',
+      ),
+      lessThan(applePlugin.indexOf('operation?.requestBestEffortCleanup()')),
+    );
   });
 
   test('E2EE 后台同步同一账户并发只允许一个执行', () async {
@@ -1133,6 +1355,30 @@ void main() {
       true,
     ]);
     expect(runnerCreations, 1);
+  });
+
+  test('移动后台同步密钥世代阻塞时向平台返回失败', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) async =>
+          _backgroundCycleReport(E2eeSyncCycleDisposition.keyEpochUnavailable),
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+    );
+    var cancellationCalls = 0;
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      runnerFactory: () => E2eeBackgroundSyncRunner.forTesting(
+        _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      ),
+      cancelScheduledTask: () async => cancellationCalls++,
+    );
+
+    expect(await executor.execute(e2eeMobileBackgroundTaskName), isFalse);
+    expect(cancellationCalls, 0);
   });
 
   test('移动后台同步把平台取消信号贯穿到 Runner 且不获取工作区', () async {
@@ -3817,6 +4063,24 @@ final class _PendingBackgroundHost implements E2eeBackgroundSyncHost {
   }
 }
 
+final class _BlockingBackgroundHost implements E2eeBackgroundSyncHost {
+  _BlockingBackgroundHost(this.acquisition, this.blockDuration);
+
+  final E2eeBackgroundWorkspaceAcquisition acquisition;
+  final Duration blockDuration;
+  int acquisitionCalls = 0;
+
+  @override
+  Future<E2eeBackgroundWorkspaceAcquisition> tryAcquireWorkspace(
+    E2eeSyncExecutionBudget executionBudget,
+  ) {
+    acquisitionCalls++;
+    final stopwatch = Stopwatch()..start();
+    while (stopwatch.elapsed < blockDuration) {}
+    return Future<E2eeBackgroundWorkspaceAcquisition>.value(acquisition);
+  }
+}
+
 final class _ExclusiveBackgroundHost implements E2eeBackgroundSyncHost {
   _ExclusiveBackgroundHost(this._workspace);
 
@@ -3895,6 +4159,7 @@ final class _FakeBackgroundWorkspace implements E2eeBackgroundSyncWorkspace {
   @override
   CloudSyncAccountSession? session;
   int contentAcquisitionCalls = 0;
+  int workspaceCloseCalls = 0;
   bool _closed = false;
 
   @override
@@ -3919,6 +4184,10 @@ final class _FakeBackgroundWorkspace implements E2eeBackgroundSyncWorkspace {
 
   @override
   Future<void> closeWorkspaceLease() async {
+    workspaceCloseCalls++;
+    if (workspaceCloseCalls > 1) {
+      throw StateError('background_workspace_closed_more_than_once');
+    }
     if (_closed) return;
     _closed = true;
     events.add('workspace-close');
@@ -3937,6 +4206,7 @@ final class _PendingContentBackgroundWorkspace
   final Future<E2eeBackgroundContentAcquisition> acquisition;
   @override
   CloudSyncAccountSession? session;
+  int workspaceCloseCalls = 0;
 
   @override
   Future<E2eeBackgroundContentAcquisition> tryAcquireContent(
@@ -3954,6 +4224,10 @@ final class _PendingContentBackgroundWorkspace
 
   @override
   Future<void> closeWorkspaceLease() async {
+    workspaceCloseCalls++;
+    if (workspaceCloseCalls > 1) {
+      throw StateError('pending_background_workspace_closed_more_than_once');
+    }
     events.add('workspace-close');
   }
 }
@@ -3976,6 +4250,8 @@ final class _FakeBackgroundContent implements E2eeBackgroundSyncContent {
   final Duration closeRuntimeDelay;
   final Future<void>? closeRuntimeBarrier;
   int runCalls = 0;
+  int closeRuntimeCalls = 0;
+  int closeAccountLeaseCalls = 0;
   bool _runtimeClosed = false;
   bool _accountLeaseClosed = false;
 
@@ -3995,6 +4271,10 @@ final class _FakeBackgroundContent implements E2eeBackgroundSyncContent {
 
   @override
   Future<void> closeRuntime() async {
+    closeRuntimeCalls++;
+    if (closeRuntimeCalls > 1) {
+      throw StateError('background_runtime_closed_more_than_once');
+    }
     if (_runtimeClosed) return;
     _runtimeClosed = true;
     final barrier = closeRuntimeBarrier;
@@ -4010,6 +4290,10 @@ final class _FakeBackgroundContent implements E2eeBackgroundSyncContent {
 
   @override
   Future<void> closeAccountLease() async {
+    closeAccountLeaseCalls++;
+    if (closeAccountLeaseCalls > 1) {
+      throw StateError('background_account_lease_closed_more_than_once');
+    }
     if (_accountLeaseClosed) return;
     _accountLeaseClosed = true;
     events.add('account-lease-close');

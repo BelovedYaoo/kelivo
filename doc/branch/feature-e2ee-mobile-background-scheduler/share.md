@@ -15,12 +15,9 @@
 - 失败路径：无会话、已登出、同步暂停、认证撤销、安全状态未验证、插件初始化失败时不运行同步且不报告成功。
 - 状态转换：登录/启用时注册，暂停/登出时取消，恢复启用后重新注册；终止认证清理后后续回调不再执行。
 
-## 进度
+## 结果
 
-- Android/iOS 系统调度、登录状态串行注册、进程内回调去重和无通知静默执行已完成；iOS 最低版本为 14。
-- 单次执行的工作区获取、内容初始化、网络、终止认证和资源清理均受同一单调截止约束；截止或取消后最多共享 2 秒关闭宽限，迟到所有权仍会异步释放。
-- Android `onStopped` 与 iOS expiration 会先通知 Dart；4 秒后无条件释放平台任务。iOS 平台完成不再依赖主线程或 `destroyContext()` 返回，迟到的通道回调不会重新启动任务。
-- 已删除公开 capability 与生产 Runner 构造入口。生产 Runner 只能由私有已验证内容工厂创建；schema 21 尚未提供原子验证绑定时，注册会在 Workmanager 初始化前明确失败，历史任务会取消自身并返回失败，测试 Host 无法注入生产回调。
-- `BGTaskScheduler.submit` 与 pending request 校验、Android 唯一周期任务、iOS 独立 BGAppRefreshTask 标识及 15 分钟最早周期均已接通。
-- 验证完成：根目录定向 `flutter analyze`、四个本地 Workmanager 包各自 `flutter analyze lib`、专项测试 79/79、Android debug APK 构建均通过。Windows 无法编译 Swift，iOS 仍需 macOS CI 或真机验证。
-- Issue #56 保持开启，等待 schema 21 提供设备密钥封存、ARK 验签、会话世代与认证世代的私有原子绑定工厂后才能启用生产后台同步；Kotlin 未来兼容警告由 #60 跟踪。
+- 已补齐结算后截止的所有权转移、迟到内容取得结算屏障、严格 `runtime -> account -> workspace` 单次释放，以及迟到清理失败的异步错误上报；密钥世代阻塞会向平台返回失败。
+- Android 使用独立调度线程保证取消后 4 秒内结算平台任务；iOS Operation 与 legacy fetch 各自保证 4 秒硬终态，平台完成不再等待主线程引擎销毁。iOS 最低版本保持 14。
+- 生产 Runner 工厂继续返回 `null`；schema 21 原子验证绑定完成前不启用真实后台内容同步，Issue #56 保持开启。
+- 验证通过：专项测试 83/83、`flutter analyze lib`、改动测试文件分析、四个 Workmanager 包分析、Android debug APK 构建和最终原生契约测试。根目录全量分析仍受既有 #33 影响；根目录全量测试命中既有 #53 挂起后已停止并清理残留进程。Windows 无法执行 Xcode/iOS 实机构建，仍需 macOS CI 或真机覆盖。

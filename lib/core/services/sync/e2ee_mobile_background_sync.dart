@@ -88,9 +88,10 @@ final class E2eeMobileBackgroundTaskExecutor {
         return true;
       case E2eeBackgroundSyncDisposition.workspaceBusy:
       case E2eeBackgroundSyncDisposition.completed:
-      case E2eeBackgroundSyncDisposition.blockedByKeyEpoch:
       case E2eeBackgroundSyncDisposition.budgetExhausted:
         return true;
+      case E2eeBackgroundSyncDisposition.blockedByKeyEpoch:
+        return false;
     }
   }
 

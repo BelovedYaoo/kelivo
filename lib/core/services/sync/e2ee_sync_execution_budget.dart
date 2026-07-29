@@ -1,6 +1,8 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 
+import 'package:flutter/foundation.dart';
+
 enum E2eeSyncBudgetExhaustion { networkSteps, attachmentBytes }
 
 final class E2eeSyncBudgetExhausted implements Exception {
@@ -167,6 +169,7 @@ final class E2eeSyncExecutionBudget {
   Future<T> runBoundedStep<T>({
     required Future<T> Function(Duration remaining) operation,
     Future<void> Function(T value)? releaseInterruptedValue,
+    void Function()? transferInterruptedOwnership,
   }) async {
     checkCanContinue();
     if (_activeInterruption != null) {
@@ -185,6 +188,13 @@ final class E2eeSyncExecutionBudget {
           onError: (Object error, StackTrace stackTrace) =>
               _NetworkFailed<T>(error, stackTrace),
         );
+    var ownershipTransferred = false;
+
+    void transferOwnership() {
+      if (ownershipTransferred) return;
+      ownershipTransferred = true;
+      transferInterruptedOwnership?.call();
+    }
 
     try {
       final winner = await Future.any<Object>(<Future<Object>>[
@@ -192,6 +202,7 @@ final class E2eeSyncExecutionBudget {
         interruption.future,
       ]);
       if (winner case _ExecutionInterruption interruptionReason) {
+        transferOwnership();
         _beginShutdown();
         final settled = await _waitForBoundedSettlement(operationOutcome);
         await _releaseInterruptedOutcome(
@@ -207,7 +218,17 @@ final class E2eeSyncExecutionBudget {
         case _NetworkFailed<T>(:final error, :final stackTrace):
           Error.throwWithStackTrace(error, stackTrace);
         case _NetworkSucceeded<T>(:final value):
-          checkCanContinue();
+          try {
+            checkCanContinue();
+          } catch (error, stackTrace) {
+            transferOwnership();
+            _beginShutdown();
+            await _releaseInterruptedValue(
+              value: value,
+              release: releaseInterruptedValue,
+            );
+            Error.throwWithStackTrace(error, stackTrace);
+          }
           return value;
       }
     } finally {
@@ -431,45 +452,62 @@ final class E2eeSyncExecutionBudget {
   }) async {
     if (release == null) return;
     if (settled case _NetworkSucceeded<T>(:final value)) {
-      final releaseOutcome = Future<void>.sync(() => release(value))
-          .then<_NetworkOutcome<void>>(
-            _NetworkSucceeded<void>.new,
-            onError: (Object error, StackTrace stackTrace) =>
-                _NetworkFailed<void>(error, stackTrace),
-          );
-      final releaseResult = await _waitForBoundedSettlement(releaseOutcome);
-      if (releaseResult case _NetworkFailed<void>(
-        :final error,
-        :final stackTrace,
-      )) {
-        developer.log(
-          '释放截止后才返回的后台同步所有权失败',
-          name: 'Kelivo.E2eeSyncExecutionBudget',
-          level: 1000,
-          error: error,
-          stackTrace: stackTrace,
-        );
-      }
+      await _releaseInterruptedValue(value: value, release: release);
       return;
     }
     if (settled != null) return;
     unawaited(
-      operationOutcome.then((outcome) async {
+      operationOutcome.then((outcome) {
         if (outcome case _NetworkSucceeded<T>(:final value)) {
-          try {
-            await release(value);
-          } catch (error, stackTrace) {
-            developer.log(
-              '释放关闭宽限期后才返回的后台同步所有权失败',
-              name: 'Kelivo.E2eeSyncExecutionBudget',
-              level: 1000,
-              error: error,
-              stackTrace: stackTrace,
-            );
-          }
+          return _observedInterruptedRelease(value: value, release: release);
         }
+        return Future<void>.value();
       }),
     );
+  }
+
+  Future<void> _releaseInterruptedValue<T>({
+    required T value,
+    required Future<void> Function(T value)? release,
+  }) async {
+    if (release == null) return;
+    final releaseOutcome = _observedInterruptedRelease(
+      value: value,
+      release: release,
+    ).then<_NetworkOutcome<void>>((_) => const _NetworkSucceeded<void>(null));
+    await _waitForBoundedSettlement(releaseOutcome);
+  }
+
+  Future<void> _observedInterruptedRelease<T>({
+    required T value,
+    required Future<void> Function(T value) release,
+  }) async {
+    try {
+      await release(value);
+    } catch (error, stackTrace) {
+      unawaited(
+        Future<void>(() {
+          try {
+            FlutterError.reportError(
+              FlutterErrorDetails(
+                exception: error,
+                stack: stackTrace,
+                library: 'Kelivo E2EE 后台同步',
+                context: ErrorDescription('释放截止后才返回的后台同步所有权失败'),
+              ),
+            );
+          } catch (reportError, reportStackTrace) {
+            developer.log(
+              '上报后台同步迟到所有权释放失败时发生异常',
+              name: 'Kelivo.E2eeSyncExecutionBudget',
+              level: 1000,
+              error: reportError,
+              stackTrace: reportStackTrace,
+            );
+          }
+        }),
+      );
+    }
   }
 
   void _interrupt(_ExecutionInterruption interruption) {

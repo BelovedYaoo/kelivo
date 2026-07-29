@@ -207,11 +207,38 @@ final class E2eeBackgroundSyncRunner {
           if (activeSession == null) {
             outcome = const E2eeBackgroundSyncOutcome.noSession();
           } else {
-            final contentAcquisition = await executionBudget.runBoundedStep(
-              operation: (_) =>
-                  activeWorkspace.tryAcquireContent(executionBudget),
-              releaseInterruptedValue: _releaseInterruptedContent,
+            final interruptedCleanup =
+                _InterruptedContentAcquisitionCleanupBarrier(
+                  workspace: activeWorkspace,
+                  transferWorkspaceOwnership: () {
+                    if (!identical(workspace, activeWorkspace)) {
+                      throw StateError(
+                        'e2ee_background_workspace_ownership_mismatch',
+                      );
+                    }
+                    workspace = null;
+                  },
+                );
+            final contentAttempt = await executionBudget.runBoundedStep(
+              operation: (_) => _captureContentAcquisition(
+                activeWorkspace.tryAcquireContent(executionBudget),
+              ),
+              releaseInterruptedValue: interruptedCleanup.release,
+              transferInterruptedOwnership:
+                  interruptedCleanup.takeWorkspaceOwnership,
             );
+            final E2eeBackgroundContentAcquisition contentAcquisition;
+            switch (contentAttempt) {
+              case _BackgroundContentAcquisitionCompleted(
+                acquisition: final value,
+              ):
+                contentAcquisition = value;
+              case _BackgroundContentAcquisitionFailed(
+                :final error,
+                :final stackTrace,
+              ):
+                Error.throwWithStackTrace(error, stackTrace);
+            }
             switch (contentAcquisition) {
               case E2eeBackgroundContentBusy():
                 outcome = const E2eeBackgroundSyncOutcome.workspaceBusy();
@@ -269,10 +296,11 @@ final class E2eeBackgroundSyncRunner {
             executionBudget,
           );
         }
-        if (workspace != null) {
+        final activeWorkspace = workspace;
+        if (activeWorkspace != null) {
           await cleanup.run(
             '释放后台工作区租约失败',
-            workspace.closeWorkspaceLease,
+            activeWorkspace.closeWorkspaceLease,
             executionBudget,
           );
         }
@@ -303,14 +331,102 @@ Future<void> _releaseInterruptedWorkspace(
   }
 }
 
-Future<void> _releaseInterruptedContent(
-  E2eeBackgroundContentAcquisition acquisition,
+sealed class _BackgroundContentAcquisitionAttempt {
+  const _BackgroundContentAcquisitionAttempt();
+}
+
+final class _BackgroundContentAcquisitionCompleted
+    extends _BackgroundContentAcquisitionAttempt {
+  const _BackgroundContentAcquisitionCompleted(this.acquisition);
+
+  final E2eeBackgroundContentAcquisition acquisition;
+}
+
+final class _BackgroundContentAcquisitionFailed
+    extends _BackgroundContentAcquisitionAttempt {
+  const _BackgroundContentAcquisitionFailed(this.error, this.stackTrace);
+
+  final Object error;
+  final StackTrace stackTrace;
+}
+
+Future<_BackgroundContentAcquisitionAttempt> _captureContentAcquisition(
+  Future<E2eeBackgroundContentAcquisition> acquisition,
 ) async {
-  if (acquisition case E2eeBackgroundContentAcquired(content: final value)) {
-    await Future.wait<void>(<Future<void>>[
-      value.closeRuntime(),
-      value.closeAccountLease(),
-    ]);
+  try {
+    return _BackgroundContentAcquisitionCompleted(await acquisition);
+  } catch (error, stackTrace) {
+    return _BackgroundContentAcquisitionFailed(error, stackTrace);
+  }
+}
+
+final class _InterruptedContentAcquisitionCleanupBarrier {
+  _InterruptedContentAcquisitionCleanupBarrier({
+    required this.workspace,
+    required this.transferWorkspaceOwnership,
+  });
+
+  final E2eeBackgroundSyncWorkspace workspace;
+  final void Function() transferWorkspaceOwnership;
+  bool _ownershipTransferred = false;
+  Future<void>? _cleanup;
+
+  void takeWorkspaceOwnership() {
+    if (_ownershipTransferred) return;
+    _ownershipTransferred = true;
+    transferWorkspaceOwnership();
+  }
+
+  Future<void> release(_BackgroundContentAcquisitionAttempt attempt) {
+    if (!_ownershipTransferred) {
+      throw StateError('e2ee_background_content_cleanup_without_ownership');
+    }
+    return _cleanup ??= _releaseOnce(attempt);
+  }
+
+  Future<void> _releaseOnce(
+    _BackgroundContentAcquisitionAttempt attempt,
+  ) async {
+    Object? primaryError;
+    StackTrace? primaryStackTrace;
+
+    Future<void> run(String operation, Future<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        if (primaryError == null) {
+          primaryError = error;
+          primaryStackTrace = stackTrace;
+        } else {
+          developer.log(
+            operation,
+            name: 'Kelivo.E2eeBackgroundSyncRunner',
+            level: 1000,
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+      }
+    }
+
+    switch (attempt) {
+      case _BackgroundContentAcquisitionCompleted(
+        acquisition: E2eeBackgroundContentAcquired(content: final content),
+      ):
+        await run('关闭迟到的后台 E2EE 内容运行时失败', content.closeRuntime);
+        await run('释放迟到的后台账户业务租约失败', content.closeAccountLease);
+      case _BackgroundContentAcquisitionCompleted():
+        break;
+      case _BackgroundContentAcquisitionFailed(:final error, :final stackTrace):
+        primaryError = error;
+        primaryStackTrace = stackTrace;
+    }
+    await run('释放迟到内容获取持有的工作区租约失败', workspace.closeWorkspaceLease);
+
+    final error = primaryError;
+    if (error != null) {
+      Error.throwWithStackTrace(error, primaryStackTrace!);
+    }
   }
 }
 

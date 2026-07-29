@@ -14,6 +14,10 @@ import io.flutter.embedding.engine.dart.DartExecutor
 import io.flutter.embedding.engine.loader.FlutterLoader
 import io.flutter.view.FlutterCallbackInformation
 import java.util.Random
+import java.util.concurrent.ScheduledExecutorService
+import java.util.concurrent.ScheduledFuture
+import java.util.concurrent.ScheduledThreadPoolExecutor
+import java.util.concurrent.TimeUnit
 
 /**
  * A simple worker that posts your input back to your Flutter application.
@@ -58,7 +62,16 @@ class BackgroundWorker(
     private var engineStopped = false
     private val mainHandler = Handler(Looper.getMainLooper())
     private val lifecycleLock = Any()
-    private var forcedStop: Runnable? = null
+    private var forcedStop: ScheduledFuture<*>? = null
+    private val cancellationScheduler: ScheduledExecutorService =
+        ScheduledThreadPoolExecutor(1) { runnable ->
+            Thread(runnable, "workmanager-cancellation-timeout").apply {
+                isDaemon = true
+            }
+        }.apply {
+            setRemoveOnCancelPolicy(true)
+            setExecuteExistingDelayedTasksAfterShutdownPolicy(false)
+        }
 
     private var startTime: Long = 0
 
@@ -90,7 +103,7 @@ class BackgroundWorker(
             if (callbackInfo == null) {
                 val exception = IllegalStateException("Failed to resolve Dart callback for handle $callbackHandle")
                 WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
-                completer?.set(Result.failure())
+                stopEngine(Result.failure(), exception.message)
                 return@ensureInitializationCompleteAsync
             }
 
@@ -99,7 +112,7 @@ class BackgroundWorker(
             if (localDartTask == null) {
                 val exception = IllegalStateException("Dart task is null")
                 WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
-                completer?.set(Result.failure())
+                stopEngine(Result.failure(), exception.message)
                 return@ensureInitializationCompleteAsync
             }
 
@@ -169,47 +182,49 @@ class BackgroundWorker(
     }
 
     private fun scheduleForcedStop() {
-        mainHandler.post {
-            val stop =
-                synchronized(lifecycleLock) {
-                    if (engineStopped || forcedStop != null) {
-                        null
-                    } else {
-                        // Dart 关闭预算为 2 秒，额外余量只用于平台通道和 finally 调度。
-                        Runnable { stopEngine(null) }.also { forcedStop = it }
-                    }
-                }
-            if (stop != null) {
-                mainHandler.postDelayed(stop, CANCELLATION_GRACE_MILLIS)
+        synchronized(lifecycleLock) {
+            if (engineStopped || forcedStop != null) {
+                return
             }
+
+            // 独立计时线程避免主线程阻塞使硬截止失效；主线程只负责最终的引擎销毁。
+            forcedStop =
+                cancellationScheduler.schedule(
+                    {
+                        stopEngine(
+                            Result.failure(),
+                            "Task cancellation timed out",
+                        )
+                    },
+                    CANCELLATION_GRACE_MILLIS,
+                    TimeUnit.MILLISECONDS,
+                )
         }
     }
 
     private fun stopEngine(
-        result: Result?,
+        result: Result,
         errorMessage: String? = null,
     ) {
-        val pendingForcedStop: Runnable?
+        val pendingForcedStop: ScheduledFuture<*>?
         synchronized(lifecycleLock) {
             if (engineStopped) return
             engineStopped = true
             pendingForcedStop = forcedStop
             forcedStop = null
         }
-        pendingForcedStop?.let { mainHandler.removeCallbacks(it) }
-        val fetchDuration = System.currentTimeMillis() - startTime
+        pendingForcedStop?.cancel(false)
 
         val localDartTask = dartTask
+        completer?.set(result)
+        scheduleEngineDestruction()
+        cancellationScheduler.shutdown()
+
+        val fetchDuration = System.currentTimeMillis() - startTime
 
         if (localDartTask == null) {
             val exception = IllegalStateException("Dart task is null")
             WorkmanagerDebug.onExceptionEncountered(applicationContext, null, exception)
-            completer?.set(Result.failure())
-            mainHandler.post {
-                backgroundChannelReady = false
-                engine?.destroy()
-                engine = null
-            }
             return
         }
 
@@ -238,14 +253,10 @@ class BackgroundWorker(
                 else -> TaskStatus.FAILED
             }
         WorkmanagerDebug.onTaskStatusUpdate(applicationContext, taskInfo, status, taskResult)
+    }
 
-        // No result indicates we were signalled to stop by WorkManager.  The result is already
-        // STOPPED, so no need to resolve another one.
-        if (result != null) {
-            this.completer?.set(result)
-        }
-
-        // If stopEngine is called from `onStopped`, it may not be from the main thread.
+    private fun scheduleEngineDestruction() {
+        // FlutterEngine 必须在主线程销毁；硬截止只保证结果结算，此处属于尽力清理。
         mainHandler.post {
             backgroundChannelReady = false
             engine?.destroy()
@@ -269,7 +280,7 @@ class BackgroundWorker(
 
         flutterApi.executeTask(localDartTask, pigeonPayload) { result ->
             if (isStopped) {
-                stopEngine(null)
+                stopEngine(Result.failure(), "Task was cancelled")
                 return@executeTask
             }
             when {

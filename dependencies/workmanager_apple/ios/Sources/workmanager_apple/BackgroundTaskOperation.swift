@@ -28,6 +28,13 @@ class BackgroundTaskOperation: Operation, @unchecked Sendable {
     private let lifecycleLock = NSLock()
     private var completed = false
     private var forcedCancellation: DispatchWorkItem?
+    private var backgroundResult = UIBackgroundFetchResult.failed
+
+    var wasSuccessful: Bool {
+        lifecycleLock.lock()
+        defer { lifecycleLock.unlock() }
+        return completed && !isCancelled && backgroundResult != .failed
+    }
 
     init(_ identifier: String,
          inputData: [String: Any]?,
@@ -47,8 +54,8 @@ class BackgroundTaskOperation: Operation, @unchecked Sendable {
 
     override func main() {
         DispatchQueue.main.async {
-            self.worker.performBackgroundRequest { _ in
-                self.finish()
+            self.worker.performBackgroundRequest { result in
+                self.finish(result: result)
             }
         }
 
@@ -62,8 +69,9 @@ class BackgroundTaskOperation: Operation, @unchecked Sendable {
         }
         let forcedCancellation = DispatchWorkItem { [weak self] in
             guard let self else { return }
-            self.worker.requestForcedCancellationCleanup()
-            self.finish()
+            self.worker.requestForcedCancellationCleanup {
+                self.finish()
+            }
         }
         lifecycleLock.lock()
         if completed || self.forcedCancellation != nil {
@@ -79,7 +87,15 @@ class BackgroundTaskOperation: Operation, @unchecked Sendable {
         )
     }
 
+    func requestBestEffortCleanup() {
+        worker.requestBestEffortCleanup()
+    }
+
     private func finish() {
+        finish(result: .failed)
+    }
+
+    private func finish(result: UIBackgroundFetchResult) {
         let pendingCancellation: DispatchWorkItem?
         lifecycleLock.lock()
         if completed {
@@ -87,6 +103,7 @@ class BackgroundTaskOperation: Operation, @unchecked Sendable {
             return
         }
         completed = true
+        backgroundResult = result
         pendingCancellation = forcedCancellation
         forcedCancellation = nil
         lifecycleLock.unlock()
