@@ -1009,26 +1009,31 @@ extension KelivoDeviceCore on KelivoSecureCore {
     }
   }
 
-  Future<void> cancelPendingPairing(KelivoPendingPairingHandle pending) async {
-    final value = pending._beginClose();
+  Future<void> cancelPendingPairing(KelivoPendingPairingHandle pending) {
     try {
-      await Isolate.run(
-        () => _throwOnError(
+      final value = pending._beginClose();
+      try {
+        // 取消必须在任何网络等待前同步析构 Rust 中的 Zeroizing secret。
+        _throwOnError(
           operation: 'pending_pairing_handle_close',
           statusCode: native.kelivo_pending_pairing_handle_close(value),
-        ),
-      );
-      pending._completeClose();
-    } on KelivoSecureCoreException catch (error) {
-      if (error.status == KelivoSecureCoreStatus.invalidPendingPairingHandle) {
+        );
         pending._completeClose();
-      } else {
+      } on KelivoSecureCoreException catch (error) {
+        if (error.status ==
+            KelivoSecureCoreStatus.invalidPendingPairingHandle) {
+          pending._completeClose();
+        } else {
+          pending._cancelClose();
+        }
+        rethrow;
+      } catch (_) {
         pending._cancelClose();
+        rethrow;
       }
-      rethrow;
-    } catch (_) {
-      pending._cancelClose();
-      rethrow;
+      return Future<void>.value();
+    } catch (error, stackTrace) {
+      return Future<void>.error(error, stackTrace);
     }
   }
 

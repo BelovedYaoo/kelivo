@@ -630,6 +630,7 @@ CloudSyncDevicePairingCreated _pairingQrCreated({DateTime? expiresAt}) {
 
 CloudSyncDevicePairingQrPayload _pairingQrPayload({
   required Uint8List pairingSecret,
+  String normalizedServiceOrigin = defaultCloudSyncBaseUrl,
   DateTime? now,
   DateTime? expiresAt,
   int protocolVersion = cloudSyncOpaqueProtocolVersion,
@@ -645,6 +646,7 @@ CloudSyncDevicePairingQrPayload _pairingQrPayload({
   Uint8List? keyAgreementPublicKey,
 }) {
   return CloudSyncDevicePairingQrPayload.takeOwnership(
+    normalizedServiceOrigin: normalizedServiceOrigin,
     protocolVersion: protocolVersion,
     platform: platform,
     untrustedDeviceName: deviceName,
@@ -685,6 +687,36 @@ void _refreshPairingQrCrc(Uint8List frame) {
     getCrc32(Uint8List.sublistView(frame, 0, crcOffset)),
     Endian.big,
   );
+}
+
+Uint8List _replacePairingQrServiceOrigin(
+  Uint8List validFrame,
+  String serviceOrigin,
+) {
+  final originBytes = ascii.encode(serviceOrigin);
+  if (originBytes.length > 0xff) {
+    throw ArgumentError.value(serviceOrigin, 'serviceOrigin');
+  }
+  final previousOriginLength = validFrame[15];
+  final frame = Uint8List(
+    validFrame.length - previousOriginLength + originBytes.length,
+  );
+  frame.setRange(0, 208, validFrame);
+  frame[15] = originBytes.length;
+  ByteData.sublistView(frame).setUint16(6, frame.length, Endian.big);
+  frame.setRange(208, 208 + originBytes.length, originBytes);
+  frame.setRange(
+    208 + originBytes.length,
+    frame.length - 4,
+    Uint8List.sublistView(
+      validFrame,
+      208 + previousOriginLength,
+      validFrame.length - 4,
+    ),
+  );
+  _refreshPairingQrCrc(frame);
+  validFrame.fillRange(0, validFrame.length, 0);
+  return frame;
 }
 
 Map<String, Object?> _trustedDeviceJson({String status = 'active'}) {
@@ -3644,7 +3676,8 @@ void main() {
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
-    final baseUrl = 'http://${server.address.address}:${server.port}';
+    final transportBaseUrl = 'http://${server.address.address}:${server.port}';
+    final serviceBaseUrl = 'https://pairing-target-${server.port}.example';
     const loginName = 'pairing-target';
     final testRoot = Directory(
       '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -3653,7 +3686,9 @@ void main() {
     await testRoot.create(recursive: true);
     final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
     final store = DeviceStateBlobStore(installationRoot: root);
-    final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
+    final key = await core.createSlot(
+      _authenticatorSlotId(serviceBaseUrl, loginName),
+    );
     final identity = await core.generateDeviceIdentity();
     final publicKeys = await core.readDevicePublicKeys(identity);
     final identityState = await core.sealDeviceState(
@@ -3663,16 +3698,16 @@ void main() {
       keyVersion: 1,
     );
     await store.write(
-      normalizedBaseUrl: baseUrl,
+      normalizedBaseUrl: serviceBaseUrl,
       normalizedLoginName: loginName,
       blob: identityState,
     );
     await core.closeDeviceIdentity(identity);
     await core.close(key);
 
-    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final client = CloudSyncClient.forTesting(baseUrl: transportBaseUrl);
     final authenticator = E2eeAccountAuthenticator(
-      baseUrl: baseUrl,
+      baseUrl: serviceBaseUrl,
       accountClient: client,
       deviceStateStore: store,
       secureCore: core,
@@ -3759,9 +3794,9 @@ void main() {
     expect(decoded.targetDeviceId, _deviceId2);
     decoded.dispose();
 
-    final foreignClient = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final foreignClient = CloudSyncClient.forTesting(baseUrl: transportBaseUrl);
     final foreignAuthenticator = E2eeAccountAuthenticator(
-      baseUrl: baseUrl,
+      baseUrl: serviceBaseUrl,
       accountClient: foreignClient,
       deviceStateStore: store,
       secureCore: core,
@@ -3792,23 +3827,16 @@ void main() {
       ),
     );
 
-    final cancelFuture = authenticator.cancelDevicePairing(pending);
+    final cancelFuture = pending.cancel();
+    expect(identical(pending.cancel(), cancelFuture), isTrue);
     expect(await requests.moveNext(), isTrue);
     final cancelRequest = requests.current;
     expect(cancelRequest.uri.path, '/api/auth/device-pairing/cancel');
-    cancelRequest.response.headers.contentType = ContentType.json;
-    cancelRequest.response.write(
-      jsonEncode(<String, Object?>{
-        'data': <String, Object?>{
-          'protocolVersion': cloudSyncOpaqueProtocolVersion,
-          'pairingId': pairingId,
-          'result': 'cancelled',
-          'cancelledAt': DateTime.now().toUtc().toIso8601String(),
-        },
-      }),
-    );
-    await cancelRequest.response.close();
-    await cancelFuture;
+    await waitingExpectation;
+    final cancelSocket = await cancelRequest.response.detachSocket();
+    cancelSocket.destroy();
+    await expectLater(cancelFuture, throwsA(isA<CloudSyncException>()));
+    await expectLater(pending.cancel(), throwsA(isA<CloudSyncException>()));
     queryRequest.response.headers.contentType = ContentType.json;
     queryRequest.response.write(
       jsonEncode(<String, Object?>{
@@ -3837,7 +3865,6 @@ void main() {
       }),
     );
     await queryRequest.response.close();
-    await waitingExpectation;
 
     final rejectedStart = authenticator.startDevicePairing(approvalRequired);
     await respondToCreate(onboardingExpiresAt.add(const Duration(seconds: 1)));
@@ -3849,7 +3876,8 @@ void main() {
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
-    final baseUrl = 'http://${server.address.address}:${server.port}';
+    final transportBaseUrl = 'http://${server.address.address}:${server.port}';
+    final serviceBaseUrl = 'https://pairing-issuer-${server.port}.example';
     const loginName = 'pairing-issuer';
     final testRoot = Directory(
       '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -3858,7 +3886,9 @@ void main() {
     await testRoot.create(recursive: true);
     final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
     final store = DeviceStateBlobStore(installationRoot: root);
-    final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
+    final key = await core.createSlot(
+      _authenticatorSlotId(serviceBaseUrl, loginName),
+    );
     final identity = await core.generateDeviceIdentity();
     final ark = await core.generateAccountRootKey(
       userId: _rawUuid(_userId),
@@ -3878,7 +3908,7 @@ void main() {
       ),
     );
     await store.write(
-      normalizedBaseUrl: baseUrl,
+      normalizedBaseUrl: serviceBaseUrl,
       normalizedLoginName: loginName,
       blob: fullState,
     );
@@ -3887,9 +3917,9 @@ void main() {
     await core.closeDeviceIdentity(identity);
     await core.close(key);
 
-    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final client = CloudSyncClient.forTesting(baseUrl: transportBaseUrl);
     final authenticator = E2eeAccountAuthenticator(
-      baseUrl: baseUrl,
+      baseUrl: serviceBaseUrl,
       accountClient: client,
       deviceStateStore: store,
       secureCore: core,
@@ -4013,7 +4043,8 @@ void main() {
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = StreamIterator<HttpRequest>(server);
-    final baseUrl = 'http://${server.address.address}:${server.port}';
+    final transportBaseUrl = 'http://${server.address.address}:${server.port}';
+    final serviceBaseUrl = 'https://pairing-consumer-${server.port}.example';
     const loginName = 'pairing-consumer';
     final testRoot = Directory(
       '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -4022,7 +4053,9 @@ void main() {
     await testRoot.create(recursive: true);
     final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
     final store = DeviceStateBlobStore(installationRoot: root);
-    final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
+    final key = await core.createSlot(
+      _authenticatorSlotId(serviceBaseUrl, loginName),
+    );
     final targetIdentity = await core.generateDeviceIdentity();
     final targetPublicKeys = await core.readDevicePublicKeys(targetIdentity);
     final identityState = await core.sealDeviceState(
@@ -4032,16 +4065,16 @@ void main() {
       keyVersion: 1,
     );
     await store.write(
-      normalizedBaseUrl: baseUrl,
+      normalizedBaseUrl: serviceBaseUrl,
       normalizedLoginName: loginName,
       blob: identityState,
     );
     await core.closeDeviceIdentity(targetIdentity);
     await core.close(key);
 
-    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final client = CloudSyncClient.forTesting(baseUrl: transportBaseUrl);
     final authenticator = E2eeAccountAuthenticator(
-      baseUrl: baseUrl,
+      baseUrl: serviceBaseUrl,
       accountClient: client,
       deviceStateStore: store,
       secureCore: core,
@@ -4292,18 +4325,18 @@ void main() {
     );
     expect(
       await store.readPendingPairingEnvelope(
-        normalizedBaseUrl: baseUrl,
+        normalizedBaseUrl: serviceBaseUrl,
         normalizedLoginName: loginName,
       ),
       isNotNull,
     );
     final persistedKey = await core.openSlot(
-      _authenticatorSlotId(baseUrl, loginName),
+      _authenticatorSlotId(serviceBaseUrl, loginName),
     );
     final persistedState = await core.openDeviceState(
       persistedKey,
       stateBlob: (await store.read(
-        normalizedBaseUrl: baseUrl,
+        normalizedBaseUrl: serviceBaseUrl,
         normalizedLoginName: loginName,
       ))!,
     );
@@ -4321,9 +4354,11 @@ void main() {
     await expectLater(completionFuture, throwsA(isA<CloudSyncException>()));
     client.close(force: true);
 
-    final recoveryClient = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final recoveryClient = CloudSyncClient.forTesting(
+      baseUrl: transportBaseUrl,
+    );
     final recoveryAuthenticator = E2eeAccountAuthenticator(
-      baseUrl: baseUrl,
+      baseUrl: serviceBaseUrl,
       accountClient: recoveryClient,
       deviceStateStore: store,
       secureCore: core,
@@ -4372,22 +4407,25 @@ void main() {
     expect(password, everyElement(0));
     expect(
       await store.readPendingPairingEnvelope(
-        normalizedBaseUrl: baseUrl,
+        normalizedBaseUrl: serviceBaseUrl,
         normalizedLoginName: loginName,
       ),
       isNotNull,
     );
 
     final originalPendingEnvelope = (await store.readPendingPairingEnvelope(
-      normalizedBaseUrl: baseUrl,
+      normalizedBaseUrl: serviceBaseUrl,
       normalizedLoginName: loginName,
     ))!;
     final recoveryKey = await core.openSlot(
-      _authenticatorSlotId(baseUrl, loginName),
+      _authenticatorSlotId(serviceBaseUrl, loginName),
     );
-    final recoveryRecordId = _pairingRecoveryRecordId(baseUrl, loginName);
+    final recoveryRecordId = _pairingRecoveryRecordId(
+      serviceBaseUrl,
+      loginName,
+    );
     final recoveryAssociatedData = _pairingRecoveryAssociatedData(
-      baseUrl,
+      serviceBaseUrl,
       loginName,
     );
     Uint8List? recoveryFrame;
@@ -4421,7 +4459,7 @@ void main() {
         );
         try {
           final removedOriginal = await store.deletePendingPairingEnvelope(
-            normalizedBaseUrl: baseUrl,
+            normalizedBaseUrl: serviceBaseUrl,
             normalizedLoginName: loginName,
             expectedDigest: Uint8List.fromList(
               sha256.convert(originalPendingEnvelope).bytes,
@@ -4429,7 +4467,7 @@ void main() {
           );
           expect(removedOriginal, isTrue, reason: corruption);
           await store.writePendingPairingEnvelope(
-            normalizedBaseUrl: baseUrl,
+            normalizedBaseUrl: serviceBaseUrl,
             normalizedLoginName: loginName,
             envelope: corruptedEnvelope,
           );
@@ -4445,7 +4483,7 @@ void main() {
           corruptedFrame.fillRange(0, corruptedFrame.length, 0);
           corruptedPayload.fillRange(0, corruptedPayload.length, 0);
           await store.deletePendingPairingEnvelope(
-            normalizedBaseUrl: baseUrl,
+            normalizedBaseUrl: serviceBaseUrl,
             normalizedLoginName: loginName,
             expectedDigest: Uint8List.fromList(
               sha256.convert(corruptedEnvelope).bytes,
@@ -4453,7 +4491,7 @@ void main() {
           );
           corruptedEnvelope.fillRange(0, corruptedEnvelope.length, 0);
           await store.writePendingPairingEnvelope(
-            normalizedBaseUrl: baseUrl,
+            normalizedBaseUrl: serviceBaseUrl,
             normalizedLoginName: loginName,
             envelope: originalPendingEnvelope,
           );
@@ -4561,7 +4599,7 @@ void main() {
     );
     expect(
       await store.readPendingPairingEnvelope(
-        normalizedBaseUrl: baseUrl,
+        normalizedBaseUrl: serviceBaseUrl,
         normalizedLoginName: loginName,
       ),
       isNotNull,
@@ -4572,7 +4610,7 @@ void main() {
     );
     expect(
       await store.readPendingPairingEnvelope(
-        normalizedBaseUrl: baseUrl,
+        normalizedBaseUrl: serviceBaseUrl,
         normalizedLoginName: loginName,
       ),
       isNull,
@@ -4826,20 +4864,23 @@ void main() {
     final sourceSecret = _filledBytes(cloudSyncPairingSecretBytes, 24);
     final payload = CloudSyncDevicePairingQrPayload.fromCreatedPairing(
       created: _pairingQrCreated(),
+      normalizedServiceOrigin: defaultCloudSyncBaseUrl,
       pairingSecret: sourceSecret,
       now: now,
     );
     final frame = CloudSyncDevicePairingQrCodec.encode(payload, now: now);
+    final serviceOriginBytes = ascii.encode(defaultCloudSyncBaseUrl);
     final deviceNameBytes = utf8.encode('Android 手机');
     final clientVersionBytes = ascii.encode('1.2.3');
     final expectedLength =
         cloudSyncPairingQrMinimumFrameBytes +
+        serviceOriginBytes.length +
         deviceNameBytes.length +
         clientVersionBytes.length;
     final frameData = ByteData.sublistView(frame);
 
     expect(frame, hasLength(expectedLength));
-    expect(frame.sublist(0, 16), <int>[
+    expect(frame.sublist(0, 20), <int>[
       0x4b,
       0x4c,
       0x50,
@@ -4855,20 +4896,38 @@ void main() {
       1,
       deviceNameBytes.length,
       clientVersionBytes.length,
+      serviceOriginBytes.length,
+      0,
+      0,
+      0,
       0,
     ]);
-    expect(frameData.getUint32(16, Endian.big), 1);
+    expect(frameData.getUint32(20, Endian.big), 1);
     expect(
-      frameData.getUint64(20, Endian.big),
+      frameData.getUint64(24, Endian.big),
       DateTime.utc(2026, 7, 26, 5, 5).millisecondsSinceEpoch,
     );
-    expect(frame.sublist(76, 108), everyElement(18));
-    expect(frame.sublist(108, 140), everyElement(4));
-    expect(frame.sublist(140, 172), everyElement(5));
-    expect(frame.sublist(172, 204), everyElement(24));
-    expect(frame.sublist(204, 204 + deviceNameBytes.length), deviceNameBytes);
+    expect(frame.sublist(80, 112), everyElement(18));
+    expect(frame.sublist(112, 144), everyElement(4));
+    expect(frame.sublist(144, 176), everyElement(5));
+    expect(frame.sublist(176, 208), everyElement(24));
     expect(
-      frame.sublist(204 + deviceNameBytes.length, frame.length - 4),
+      frame.sublist(208, 208 + serviceOriginBytes.length),
+      serviceOriginBytes,
+    );
+    final deviceNameOffset = 208 + serviceOriginBytes.length;
+    expect(
+      frame.sublist(
+        deviceNameOffset,
+        deviceNameOffset + deviceNameBytes.length,
+      ),
+      deviceNameBytes,
+    );
+    expect(
+      frame.sublist(
+        deviceNameOffset + deviceNameBytes.length,
+        frame.length - 4,
+      ),
       clientVersionBytes,
     );
     expect(
@@ -4884,6 +4943,15 @@ void main() {
     );
     expect(frame, everyElement(0));
     expect(decoded.protocolVersion, cloudSyncOpaqueProtocolVersion);
+    expect(decoded.normalizedServiceOrigin, defaultCloudSyncBaseUrl);
+    expect(
+      () => decoded.requireServiceOriginMatches('https://other.example'),
+      throwsFormatException,
+    );
+    expect(
+      () => decoded.requireServiceOriginMatches(defaultCloudSyncBaseUrl),
+      returnsNormally,
+    );
     expect(decoded.platform, CloudSyncPlatform.android);
     expect(decoded.untrustedDeviceName, 'Android 手机');
     expect(decoded.untrustedClientVersion, '1.2.3');
@@ -4932,6 +5000,27 @@ void main() {
           create: (secret) => _pairingQrPayload(
             pairingSecret: secret,
             protocolVersion: cloudSyncOpaqueProtocolVersion + 1,
+          ),
+        ),
+        (
+          name: '服务 origin 非 HTTPS',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            normalizedServiceOrigin: 'http://localhost',
+          ),
+        ),
+        (
+          name: '服务 origin 尾斜杠',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            normalizedServiceOrigin: '$defaultCloudSyncBaseUrl/',
+          ),
+        ),
+        (
+          name: '服务 origin 规范化差异',
+          create: (secret) => _pairingQrPayload(
+            pairingSecret: secret,
+            normalizedServiceOrigin: 'https://KELIVO.bemylover.top',
           ),
         ),
         (
@@ -5057,8 +5146,8 @@ void main() {
   final invalidPairingQrFrames =
       <({String name, void Function(Uint8List frame) mutate})>[
         (name: 'magic', mutate: (frame) => frame[0] ^= 0xff),
-        (name: '帧版本', mutate: (frame) => frame[4] = 2),
-        (name: 'flags', mutate: (frame) => frame[5] = 1),
+        (name: 'v1 帧版本', mutate: (frame) => frame[4] = 1),
+        (name: '未知 flags', mutate: (frame) => frame[5] = 1),
         (
           name: 'totalLength',
           mutate: (frame) => ByteData.sublistView(
@@ -5066,8 +5155,9 @@ void main() {
           ).setUint16(6, frame.length - 1, Endian.big),
         ),
         (name: '设备名长度', mutate: (frame) => frame[13] += 1),
-        (name: 'reserved', mutate: (frame) => frame[15] = 1),
-        (name: 'CRC', mutate: (frame) => frame[172] ^= 0xff),
+        (name: '服务 origin 长度', mutate: (frame) => frame[15] += 1),
+        (name: '未知保留字段', mutate: (frame) => frame[16] = 1),
+        (name: 'CRC', mutate: (frame) => frame[176] ^= 0xff),
       ];
   for (final invalid in invalidPairingQrFrames) {
     test('设备配对 QR 解码拒绝非法${invalid.name}并清零帧', () {
@@ -5104,7 +5194,7 @@ void main() {
         (
           name: 'keyVersion',
           mutate: (frame) {
-            ByteData.sublistView(frame).setUint32(16, 0, Endian.big);
+            ByteData.sublistView(frame).setUint32(20, 0, Endian.big);
             _refreshPairingQrCrc(frame);
           },
         ),
@@ -5113,42 +5203,49 @@ void main() {
           mutate: (frame) {
             ByteData.sublistView(
               frame,
-            ).setUint64(20, 0xffffffffffffffff, Endian.big);
+            ).setUint64(24, 0xffffffffffffffff, Endian.big);
             _refreshPairingQrCrc(frame);
           },
         ),
         (
           name: 'pairingId UUID',
           mutate: (frame) {
-            frame[28 + 6] = (frame[28 + 6] & 0x0f) | 0x30;
+            frame[32 + 6] = (frame[32 + 6] & 0x0f) | 0x30;
             _refreshPairingQrCrc(frame);
           },
         ),
         (
           name: 'accountContextId UUID',
           mutate: (frame) {
-            frame[44 + 8] = (frame[44 + 8] & 0x3f) | 0x40;
+            frame[48 + 8] = (frame[48 + 8] & 0x3f) | 0x40;
             _refreshPairingQrCrc(frame);
           },
         ),
         (
           name: 'targetDeviceId UUID',
           mutate: (frame) {
-            frame[60 + 6] = (frame[60 + 6] & 0x0f) | 0x50;
+            frame[64 + 6] = (frame[64 + 6] & 0x0f) | 0x50;
+            _refreshPairingQrCrc(frame);
+          },
+        ),
+        (
+          name: '服务 origin 规范化差异',
+          mutate: (frame) {
+            frame[208 + 'https://'.length] = 0x4b;
             _refreshPairingQrCrc(frame);
           },
         ),
         (
           name: '设备名 UTF-8',
           mutate: (frame) {
-            frame[204] = 0xff;
+            frame[208 + frame[15]] = 0xff;
             _refreshPairingQrCrc(frame);
           },
         ),
         (
           name: 'clientVersion',
           mutate: (frame) {
-            final clientVersionOffset = 204 + frame[13];
+            final clientVersionOffset = 208 + frame[15] + frame[13];
             frame[clientVersionOffset] = 0x2f;
             _refreshPairingQrCrc(frame);
           },
@@ -5158,6 +5255,28 @@ void main() {
     test('设备配对 QR 解码拒绝非法${invalid.name}并清零帧', () {
       final frame = _validPairingQrFrame();
       invalid.mutate(frame);
+
+      expect(
+        () => CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+          frame,
+          now: DateTime.utc(2026, 7, 26, 5),
+        ),
+        throwsA(isA<FormatException>()),
+      );
+      expect(frame, everyElement(0));
+    });
+  }
+
+  for (final invalidOrigin in <String>[
+    'http://kelivo.bemylover.top',
+    '$defaultCloudSyncBaseUrl/',
+    'https://KELIVO.bemylover.top',
+  ]) {
+    test('设备配对 QR 解码拒绝非规范服务 origin $invalidOrigin 并清零帧', () {
+      final frame = _replacePairingQrServiceOrigin(
+        _validPairingQrFrame(),
+        invalidOrigin,
+      );
 
       expect(
         () => CloudSyncDevicePairingQrCodec.decodeTakingOwnership(

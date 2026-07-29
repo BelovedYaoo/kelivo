@@ -7,12 +7,13 @@ import 'package:uuid/uuid.dart';
 import 'cloud_sync_types.dart';
 
 const cloudSyncPairingSecretBytes = 32;
-const cloudSyncPairingQrFrameVersion = 1;
-const cloudSyncPairingQrMinimumFrameBytes = 208;
+const cloudSyncPairingQrFrameVersion = 2;
+const cloudSyncPairingQrMinimumFrameBytes = 212;
 const cloudSyncPairingQrMaximumLifetime = Duration(minutes: 5);
 
 final class CloudSyncDevicePairingQrPayload {
   CloudSyncDevicePairingQrPayload._({
+    required this.normalizedServiceOrigin,
     required this.protocolVersion,
     required this.platform,
     required this.untrustedDeviceName,
@@ -35,6 +36,7 @@ final class CloudSyncDevicePairingQrPayload {
 
   /// 接管 secret 后由单一对象负责清零，避免调用方与 QR 流程各留一份所有权。
   factory CloudSyncDevicePairingQrPayload.takeOwnership({
+    required String normalizedServiceOrigin,
     required int protocolVersion,
     required CloudSyncPlatform platform,
     required String untrustedDeviceName,
@@ -56,6 +58,9 @@ final class CloudSyncDevicePairingQrPayload {
         throw const FormatException('pairingSecret 长度无效');
       }
       return CloudSyncDevicePairingQrPayload._(
+        normalizedServiceOrigin: _requireNormalizedHttpsServiceOrigin(
+          normalizedServiceOrigin,
+        ),
         protocolVersion: _requireProtocolVersion(protocolVersion),
         platform: platform,
         untrustedDeviceName: _requireDeviceName(untrustedDeviceName),
@@ -96,11 +101,13 @@ final class CloudSyncDevicePairingQrPayload {
 
   factory CloudSyncDevicePairingQrPayload.fromCreatedPairing({
     required CloudSyncDevicePairingCreated created,
+    required String normalizedServiceOrigin,
     required Uint8List pairingSecret,
     required DateTime now,
   }) {
     final target = created.targetDevice;
     return CloudSyncDevicePairingQrPayload.takeOwnership(
+      normalizedServiceOrigin: normalizedServiceOrigin,
       protocolVersion: cloudSyncOpaqueProtocolVersion,
       platform: target.platform,
       untrustedDeviceName: target.name,
@@ -118,6 +125,7 @@ final class CloudSyncDevicePairingQrPayload {
     );
   }
 
+  final String normalizedServiceOrigin;
   final int protocolVersion;
   final CloudSyncPlatform platform;
 
@@ -154,6 +162,15 @@ final class CloudSyncDevicePairingQrPayload {
       if (localUserIdBytes[index] != accountContextIdBytes[index]) {
         throw const FormatException('配对 QR 与当前账号不匹配');
       }
+    }
+  }
+
+  void requireServiceOriginMatches(String normalizedServiceOrigin) {
+    final expected = _requireNormalizedHttpsServiceOrigin(
+      normalizedServiceOrigin,
+    );
+    if (this.normalizedServiceOrigin != expected) {
+      throw const FormatException('配对 QR 与当前同步服务不匹配');
     }
   }
 
@@ -195,17 +212,19 @@ abstract final class CloudSyncDevicePairingQrCodec {
   static const _platformOffset = 12;
   static const _deviceNameLengthOffset = 13;
   static const _clientVersionLengthOffset = 14;
-  static const _reservedOffset = 15;
-  static const _keyVersionOffset = 16;
-  static const _expiresAtOffset = 20;
-  static const _pairingIdOffset = 28;
-  static const _accountContextIdOffset = 44;
-  static const _targetDeviceIdOffset = 60;
-  static const _challengeOffset = 76;
-  static const _signingPublicKeyOffset = 108;
-  static const _keyAgreementPublicKeyOffset = 140;
-  static const _pairingSecretOffset = 172;
-  static const _displayFieldsOffset = 204;
+  static const _serviceOriginLengthOffset = 15;
+  static const _reservedOffset = 16;
+  static const _reservedEndOffset = 20;
+  static const _keyVersionOffset = 20;
+  static const _expiresAtOffset = 24;
+  static const _pairingIdOffset = 32;
+  static const _accountContextIdOffset = 48;
+  static const _targetDeviceIdOffset = 64;
+  static const _challengeOffset = 80;
+  static const _signingPublicKeyOffset = 112;
+  static const _keyAgreementPublicKeyOffset = 144;
+  static const _pairingSecretOffset = 176;
+  static const _dynamicFieldsOffset = 208;
   static const _crcBytes = 4;
 
   /// 返回帧包含 raw secret；完成 QR 渲染或传输后调用方必须清零缓冲区。
@@ -216,13 +235,19 @@ abstract final class CloudSyncDevicePairingQrCodec {
     _requireProtocolVersion(payload.protocolVersion);
     final expiresAt = _requireActivePairingExpiry(payload.expiresAt, now);
     final secret = payload._activePairingSecret;
+    final serviceOriginBytes = ascii.encode(
+      _requireNormalizedHttpsServiceOrigin(payload.normalizedServiceOrigin),
+    );
     final deviceNameBytes = utf8.encode(payload.untrustedDeviceName);
     final clientVersionBytes = ascii.encode(payload.untrustedClientVersion);
-    if (deviceNameBytes.length > 0xff || clientVersionBytes.length > 0xff) {
+    if (serviceOriginBytes.length > 0xff ||
+        deviceNameBytes.length > 0xff ||
+        clientVersionBytes.length > 0xff) {
       throw const FormatException('配对 QR 展示字段编码长度越界');
     }
     final totalLength =
-        _displayFieldsOffset +
+        _dynamicFieldsOffset +
+        serviceOriginBytes.length +
         deviceNameBytes.length +
         clientVersionBytes.length +
         _crcBytes;
@@ -245,7 +270,7 @@ abstract final class CloudSyncDevicePairingQrCodec {
       bytes.setUint8(_platformOffset, _platformCode(payload.platform));
       bytes.setUint8(_deviceNameLengthOffset, deviceNameBytes.length);
       bytes.setUint8(_clientVersionLengthOffset, clientVersionBytes.length);
-      bytes.setUint8(_reservedOffset, 0);
+      bytes.setUint8(_serviceOriginLengthOffset, serviceOriginBytes.length);
       bytes.setUint32(_keyVersionOffset, payload.keyVersion, Endian.big);
       bytes.setUint64(
         _expiresAtOffset,
@@ -282,14 +307,16 @@ abstract final class CloudSyncDevicePairingQrCodec {
         _pairingSecretOffset,
         payload.keyAgreementPublicKey,
       );
-      frame.setRange(_pairingSecretOffset, _displayFieldsOffset, secret);
-      final clientVersionOffset = _displayFieldsOffset + deviceNameBytes.length;
+      frame.setRange(_pairingSecretOffset, _dynamicFieldsOffset, secret);
+      final deviceNameOffset = _dynamicFieldsOffset + serviceOriginBytes.length;
+      final clientVersionOffset = deviceNameOffset + deviceNameBytes.length;
       final crcOffset = clientVersionOffset + clientVersionBytes.length;
       frame.setRange(
-        _displayFieldsOffset,
-        clientVersionOffset,
-        deviceNameBytes,
+        _dynamicFieldsOffset,
+        deviceNameOffset,
+        serviceOriginBytes,
       );
+      frame.setRange(deviceNameOffset, clientVersionOffset, deviceNameBytes);
       frame.setRange(clientVersionOffset, crcOffset, clientVersionBytes);
       bytes.setUint32(
         crcOffset,
@@ -323,17 +350,27 @@ abstract final class CloudSyncDevicePairingQrCodec {
       if (bytes.getUint8(_versionOffset) != cloudSyncPairingQrFrameVersion) {
         throw const FormatException('不支持的配对 QR 帧版本');
       }
-      if (bytes.getUint8(_flagsOffset) != 0 ||
-          bytes.getUint8(_reservedOffset) != 0) {
+      if (bytes.getUint8(_flagsOffset) != 0) {
         throw const FormatException('配对 QR 帧保留字段无效');
+      }
+      for (
+        var offset = _reservedOffset;
+        offset < _reservedEndOffset;
+        offset++
+      ) {
+        if (bytes.getUint8(offset) != 0) {
+          throw const FormatException('配对 QR 帧保留字段无效');
+        }
       }
       if (bytes.getUint16(_totalLengthOffset, Endian.big) != frame.length) {
         throw const FormatException('配对 QR 总长度无效');
       }
       final deviceNameLength = bytes.getUint8(_deviceNameLengthOffset);
       final clientVersionLength = bytes.getUint8(_clientVersionLengthOffset);
+      final serviceOriginLength = bytes.getUint8(_serviceOriginLengthOffset);
       final expectedLength =
-          _displayFieldsOffset +
+          _dynamicFieldsOffset +
+          serviceOriginLength +
           deviceNameLength +
           clientVersionLength +
           _crcBytes;
@@ -379,14 +416,17 @@ abstract final class CloudSyncDevicePairingQrCodec {
         _challengeOffset,
         'targetDeviceId',
       );
-      final clientVersionOffset = _displayFieldsOffset + deviceNameLength;
+      final deviceNameOffset = _dynamicFieldsOffset + serviceOriginLength;
+      final clientVersionOffset = deviceNameOffset + deviceNameLength;
+      final normalizedServiceOrigin = _requireNormalizedHttpsServiceOrigin(
+        ascii.decode(
+          Uint8List.sublistView(frame, _dynamicFieldsOffset, deviceNameOffset),
+          allowInvalid: false,
+        ),
+      );
       final deviceName = _requireDeviceName(
         utf8.decode(
-          Uint8List.sublistView(
-            frame,
-            _displayFieldsOffset,
-            clientVersionOffset,
-          ),
+          Uint8List.sublistView(frame, deviceNameOffset, clientVersionOffset),
           allowMalformed: false,
         ),
       );
@@ -400,11 +440,12 @@ abstract final class CloudSyncDevicePairingQrCodec {
         Uint8List.sublistView(
           frame,
           _pairingSecretOffset,
-          _displayFieldsOffset,
+          _dynamicFieldsOffset,
         ),
       );
       try {
         return CloudSyncDevicePairingQrPayload._(
+          normalizedServiceOrigin: normalizedServiceOrigin,
           protocolVersion: protocolVersion,
           platform: platform,
           untrustedDeviceName: deviceName,
@@ -442,6 +483,23 @@ abstract final class CloudSyncDevicePairingQrCodec {
 }
 
 final _clientVersionPattern = RegExp(r'^[0-9A-Za-z][0-9A-Za-z.+_-]*$');
+
+String _requireNormalizedHttpsServiceOrigin(String value) {
+  try {
+    final uri = Uri.parse(value);
+    final normalized = normalizeCloudSyncBaseUrl(value);
+    final encoded = ascii.encode(value);
+    if (uri.scheme != 'https' ||
+        value != normalized ||
+        encoded.isEmpty ||
+        encoded.length > 0xff) {
+      throw const FormatException('配对 QR 服务 origin 不是规范 HTTPS origin');
+    }
+    return normalized;
+  } on FormatException {
+    throw const FormatException('配对 QR 服务 origin 不是规范 HTTPS origin');
+  }
+}
 
 Uint8List _parseCanonicalUuidV4(String value, String field) {
   final bytes = Uuid.parseAsByteList(value);

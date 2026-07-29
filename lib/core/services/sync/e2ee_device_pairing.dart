@@ -69,6 +69,7 @@ final class E2eePendingDevicePairing implements E2eeDevicePairingSession {
   final Completer<void> _waitFinished = Completer<void>();
   _E2eePendingPairingState _state = _E2eePendingPairingState.active;
   bool _cancelInterruptedWait = false;
+  Future<void>? _cancellationTask;
 
   @override
   Uint8List takeQrFrame({required DateTime now}) {
@@ -95,7 +96,13 @@ final class E2eePendingDevicePairing implements E2eeDevicePairingSession {
 
   @override
   Future<void> cancel() {
-    return E2eeDevicePairingAuthentication(_owner).cancelDevicePairing(this);
+    final existing = _cancellationTask;
+    if (existing != null) return existing;
+    final task = E2eeDevicePairingAuthentication(
+      _owner,
+    ).cancelDevicePairing(this);
+    _cancellationTask = task;
+    return task;
   }
 
   bool _isWaitingFor(E2eeAccountAuthenticator owner) {
@@ -103,7 +110,7 @@ final class E2eePendingDevicePairing implements E2eeDevicePairingSession {
         _state == _E2eePendingPairingState.waiting;
   }
 
-  void _beginCancel(E2eeAccountAuthenticator owner) {
+  KelivoPendingPairingHandle? _beginCancel(E2eeAccountAuthenticator owner) {
     if (!identical(owner, _owner)) {
       throw StateError('设备配对不属于当前认证器');
     }
@@ -114,6 +121,11 @@ final class E2eePendingDevicePairing implements E2eeDevicePairingSession {
     _cancelInterruptedWait = _state == _E2eePendingPairingState.waiting;
     _state = _E2eePendingPairingState.cancelling;
     _cancellationRequested.complete();
+    _qrPayload?.dispose();
+    _qrPayload = null;
+    final pending = _pendingHandle;
+    _pendingHandle = null;
+    return pending;
   }
 
   void _beginWait(E2eeAccountAuthenticator owner) {
@@ -187,13 +199,11 @@ final class E2eePendingDevicePairing implements E2eeDevicePairingSession {
     }
   }
 
-  KelivoPendingPairingHandle? _finishCancel() {
+  void _finishCancel() {
     _state = _E2eePendingPairingState.cancelled;
     _qrPayload?.dispose();
     _qrPayload = null;
-    final pending = _pendingHandle;
     _pendingHandle = null;
-    return pending;
   }
 }
 
@@ -628,6 +638,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
       pairingSecret = started.takePairingSecret();
       payload = CloudSyncDevicePairingQrPayload.fromCreatedPairing(
         created: created,
+        normalizedServiceOrigin: _baseUrl,
         pairingSecret: pairingSecret,
         now: validatedAt,
       );
@@ -681,8 +692,11 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
     KelivoPendingPairingHandle? pending;
     var cancellationStarted = false;
     try {
-      pairing._beginCancel(this);
+      pending = pairing._beginCancel(this);
       cancellationStarted = true;
+      if (pending != null) {
+        await _secureCore.cancelPendingPairing(pending);
+      }
       await _accountClient.cancelDevicePairing(
         token: pairing._onboardingToken,
         pairingId: pairing._pairingId,
@@ -693,10 +707,7 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
     } finally {
       try {
         if (cancellationStarted) {
-          pending = pairing._finishCancel();
-          if (pending != null) {
-            await _secureCore.cancelPendingPairing(pending);
-          }
+          pairing._finishCancel();
           if (interruptsActiveWait) {
             await pairing._waitFinishedFuture;
           }
@@ -995,6 +1006,11 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         throw UnsupportedError('设备配对只能由移动可信设备批准');
       }
 
+      payload = CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
+        qrFrame,
+        now: now,
+      );
+      payload.requireServiceOriginMatches(_baseUrl);
       context = await _openDeviceContext(normalizedLoginName);
       _authenticatedLoginResult(context, session);
       final account = context.account;
@@ -1003,10 +1019,6 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         throw StateError('配对签发设备缺少账户密钥状态');
       }
 
-      payload = CloudSyncDevicePairingQrCodec.decodeTakingOwnership(
-        qrFrame,
-        now: now,
-      );
       payload.requireAccountContextMatchesLocalUserId(session.user.id);
       final membershipCommit = _requirePairingMembershipCommit(
         session: session,
