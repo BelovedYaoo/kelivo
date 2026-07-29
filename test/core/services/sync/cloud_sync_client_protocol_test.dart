@@ -168,6 +168,14 @@ String _encodedData(Uint8List value) {
   return base64Url.encode(value).replaceAll('=', '');
 }
 
+Uint8List _sha256Bytes(Uint8List value) {
+  return Uint8List.fromList(sha256.convert(value).bytes);
+}
+
+String _encodedSha256(Uint8List value) {
+  return _encodedData(_sha256Bytes(value));
+}
+
 String _encodedRecordCiphertext(E2eeSealedAccountRecordEnvelope record) {
   return base64Url.encode(record.ciphertext).replaceAll('=', '');
 }
@@ -2400,6 +2408,948 @@ void main() {
       client.claimDataRekeyLease(claimRequest),
       throwsA(invalidResponse),
     );
+  });
+
+  test('data-rekey 源记录分页发送租约范围并返回严格密文元数据', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final listRequest = CloudSyncDataRekeySourceRecordListRequest(
+      activeLease: activeLease,
+      afterRecordId: _recordId1,
+      limit: 2,
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final pageFuture = client.listDataRekeySourceRecords(listRequest);
+    final request = await requestFuture;
+    final body = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+    );
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/api/data-rekey/source/record-list');
+    expect(body, <String, Object?>{
+      'operationId': _mutationId3,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 2,
+      'targetKeyEpoch': 3,
+      'leaseToken': _mutationId4,
+      'leaseVersion': 7,
+      'afterRecordId': _recordId1,
+      'limit': 2,
+    });
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'records': <Object?>[
+            <String, Object?>{
+              'recordId': _recordId2,
+              'revision': 0xffffffff,
+              'envelopeVersion': 1,
+              'keyEpoch': 2,
+              'ciphertext': _encodedBytes(3, 4),
+              'ciphertextBytes': 3,
+              'updatedAt': '2026-07-29T06:00:00.000Z',
+              'updatedByDeviceId': _deviceId1,
+              'lastChangeSeq': 16,
+              'kind': 'put',
+              'ciphertextDigest': _encodedSha256(_filledBytes(3, 4)),
+            },
+          ],
+          'nextAfterRecordId': null,
+          'hasMore': false,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final page = await pageFuture;
+    expect(page.records, hasLength(1));
+    expect(page.records.single.recordId, _recordId2);
+    expect(page.records.single.revision, 0xffffffff);
+    expect(page.records.single.keyEpoch, 2);
+    expect(page.records.single.ciphertext, <int>[4, 4, 4]);
+    expect(
+      page.records.single.ciphertextDigest,
+      _sha256Bytes(_filledBytes(3, 4)),
+    );
+    expect(page.nextAfterRecordId, isNull);
+    expect(page.hasMore, isFalse);
+  });
+
+  test('data-rekey 源附件分页保留分块代次并认证完整元数据', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final listRequest = CloudSyncDataRekeySourceAttachmentListRequest(
+      activeLease: activeLease,
+      limit: 2,
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final pageFuture = client.listDataRekeySourceAttachments(listRequest);
+    final request = await requestFuture;
+    final body = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+    );
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/api/data-rekey/source/attachment-list');
+    expect(body, <String, Object?>{
+      'operationId': _mutationId3,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 2,
+      'targetKeyEpoch': 3,
+      'leaseToken': _mutationId4,
+      'leaseVersion': 7,
+      'limit': 2,
+    });
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'attachments': <Object?>[
+            <String, Object?>{
+              'attachmentId': _attachmentId,
+              'uploadId': _uploadId,
+              'chunkKeyEpoch': 1,
+              'manifestKeyEpoch': 2,
+              'manifestRevision': 9,
+              'chunkCount': 2,
+              'totalCiphertextBytes': 5,
+              'manifestCiphertext': _encodedBytes(4, 6),
+              'manifestCiphertextBytes': 4,
+              'manifestCiphertextDigest': _encodedSha256(_filledBytes(4, 6)),
+              'chunks': <Object?>[
+                <String, Object?>{
+                  'chunkIndex': 0,
+                  'ciphertextBytes': 2,
+                  'ciphertextDigest': _encodedBytes(32, 8),
+                },
+                <String, Object?>{
+                  'chunkIndex': 1,
+                  'ciphertextBytes': 3,
+                  'ciphertextDigest': _encodedBytes(32, 9),
+                },
+              ],
+              'committedAt': '2026-07-29T06:00:00.000Z',
+            },
+          ],
+          'nextAfterAttachmentId': null,
+          'nextAfterUploadId': null,
+          'hasMore': false,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final page = await pageFuture;
+    expect(page.attachments, hasLength(1));
+    final attachment = page.attachments.single;
+    expect(attachment.attachmentId, _attachmentId);
+    expect(attachment.uploadId, _uploadId);
+    expect(attachment.chunkKeyEpoch, 1);
+    expect(attachment.manifestKeyEpoch, 2);
+    expect(attachment.manifestRevision, 9);
+    expect(attachment.manifestCiphertext, <int>[6, 6, 6, 6]);
+    expect(attachment.chunks.map((chunk) => chunk.chunkIndex), <int>[0, 1]);
+    expect(page.nextCursor, isNull);
+    expect(page.hasMore, isFalse);
+  });
+
+  test('data-rekey 记录暂存绑定租约、源版本与幂等变更', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final stageRequest = CloudSyncDataRekeyRecordStageRequest(
+      activeLease: activeLease,
+      mutationId: _mutationId5,
+      sourceRecordId: _recordId1,
+      targetRecordId: _recordId2,
+      sourceRevision: 9,
+      ciphertext: _filledBytes(4, 10),
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final resultFuture = client.stageDataRekeyRecord(stageRequest);
+    final request = await requestFuture;
+    final body = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+    );
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/api/data-rekey/record/stage');
+    expect(body, <String, Object?>{
+      'operationId': _mutationId3,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 2,
+      'targetKeyEpoch': 3,
+      'leaseToken': _mutationId4,
+      'leaseVersion': 7,
+      'mutationId': _mutationId5,
+      'sourceRecordId': _recordId1,
+      'targetRecordId': _recordId2,
+      'sourceRevision': 9,
+      'envelopeVersion': 1,
+      'ciphertext': _encodedBytes(4, 10),
+    });
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'result': 'staged',
+          'operationId': _mutationId3,
+          'mutationId': _mutationId5,
+          'sourceRecordId': _recordId1,
+          'targetRecordId': _recordId2,
+          'leaseVersion': 7,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final result = await resultFuture;
+    expect(result.mutationId, _mutationId5);
+    expect(result.sourceRecordId, _recordId1);
+    expect(result.targetRecordId, _recordId2);
+    expect(result.leaseVersion, 7);
+  });
+
+  test('data-rekey 附件暂存仅提升 manifest 代次与版本', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final stageRequest = CloudSyncDataRekeyAttachmentStageRequest(
+      activeLease: activeLease,
+      mutationId: _mutationId5,
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      sourceManifestRevision: 9,
+      manifestCiphertext: _filledBytes(4, 11),
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final resultFuture = client.stageDataRekeyAttachment(stageRequest);
+    final request = await requestFuture;
+    final body = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+    );
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/api/data-rekey/attachment/stage');
+    expect(body, <String, Object?>{
+      'operationId': _mutationId3,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 2,
+      'targetKeyEpoch': 3,
+      'leaseToken': _mutationId4,
+      'leaseVersion': 7,
+      'mutationId': _mutationId5,
+      'attachmentId': _attachmentId,
+      'uploadId': _uploadId,
+      'sourceManifestRevision': 9,
+      'manifestKeyEpoch': 3,
+      'manifestRevision': 10,
+      'manifestCiphertext': _encodedBytes(4, 11),
+    });
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'result': 'staged',
+          'operationId': _mutationId3,
+          'mutationId': _mutationId5,
+          'attachmentId': _attachmentId,
+          'uploadId': _uploadId,
+          'manifestRevision': 10,
+          'leaseVersion': 7,
+        },
+      }),
+    );
+    await request.response.close();
+
+    final result = await resultFuture;
+    expect(result.mutationId, _mutationId5);
+    expect(result.attachmentId, _attachmentId);
+    expect(result.uploadId, _uploadId);
+    expect(result.manifestRevision, 10);
+    expect(result.leaseVersion, 7);
+  });
+
+  test('data-rekey 最终提交绑定完整证明并严格解析完成回执', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final proof = CloudSyncDataRekeyFinalizeProof(
+      issuerDeviceId: _deviceId1,
+      sourceSnapshotRoot: _filledBytes(32, 12),
+      sourceRecordCount: 1,
+      sourceAttachmentCount: 1,
+      sourceMaximumChangeSeq: 16,
+      sourceRecordCursorEnd: _recordId1,
+      sourceAttachmentCursorEnd: CloudSyncDataRekeyAttachmentCursor(
+        attachmentId: _attachmentId,
+        uploadId: _uploadId,
+      ),
+      membershipGeneration: 8,
+      membershipManifestDigest: _filledBytes(32, 13),
+      stagedRecordCount: 1,
+      stagedAttachmentCount: 1,
+      stagedCiphertextSetDigest: _filledBytes(32, 14),
+      signature: _filledBytes(64, 15),
+    );
+    final finalizeRequest = CloudSyncDataRekeyFinalizeRequest(
+      activeLease: activeLease,
+      mutationId: _mutationId6,
+      proof: proof,
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final resultFuture = client.finalizeDataRekey(finalizeRequest);
+    final request = await requestFuture;
+    final body = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(request).join()),
+    );
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/api/data-rekey/operation/finalize');
+    expect(body, <String, Object?>{
+      'operationId': _mutationId3,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 2,
+      'targetKeyEpoch': 3,
+      'leaseToken': _mutationId4,
+      'leaseVersion': 7,
+      'mutationId': _mutationId6,
+      'proof': <String, Object?>{
+        'proofVersion': 2,
+        'issuerDeviceId': _deviceId1,
+        'targetDataGeneration': 5,
+        'sourceSnapshotRoot': _encodedBytes(32, 12),
+        'sourceRecordCount': 1,
+        'sourceAttachmentCount': 1,
+        'sourceMaximumChangeSeq': 16,
+        'sourceRecordCursorEnd': _recordId1,
+        'sourceAttachmentCursorEnd': <String, Object?>{
+          'attachmentId': _attachmentId,
+          'uploadId': _uploadId,
+        },
+        'membershipGeneration': 8,
+        'membershipManifestDigest': _encodedBytes(32, 13),
+        'stagedRecordCount': 1,
+        'stagedAttachmentCount': 1,
+        'stagedCiphertextSetDigest': _encodedBytes(32, 14),
+        'signature': _encodedBytes(64, 15),
+      },
+    });
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'result': 'finalized',
+          'dataGeneration': 5,
+          'dataKeyEpoch': 3,
+          'changeWatermark': 18,
+          'completion': <String, Object?>{
+            'proofVersion': 2,
+            'operationId': _mutationId3,
+            'issuerDeviceId': _deviceId1,
+            'sourceDataGeneration': 4,
+            'targetDataGeneration': 5,
+            'sourceKeyEpoch': 2,
+            'targetKeyEpoch': 3,
+            'sourceSnapshotRoot': _encodedBytes(32, 12),
+            'sourceRecordCount': 1,
+            'sourceAttachmentCount': 1,
+            'sourceMaximumChangeSeq': 16,
+            'sourceRecordCursorEnd': _recordId1,
+            'sourceAttachmentCursorEnd': <String, Object?>{
+              'attachmentId': _attachmentId,
+              'uploadId': _uploadId,
+            },
+            'membershipGeneration': 8,
+            'membershipManifestDigest': _encodedBytes(32, 13),
+            'stagedRecordCount': 1,
+            'stagedAttachmentCount': 1,
+            'stagedCiphertextSetDigest': _encodedBytes(32, 14),
+            'proofFrame': _encodedBytes(270, 16),
+            'proofDigest': _encodedBytes(32, 17),
+            'signature': _encodedBytes(64, 15),
+            'finalizedAt': '2026-07-29T06:00:00.000Z',
+          },
+        },
+      }),
+    );
+    await request.response.close();
+
+    final result = await resultFuture;
+    expect(result.dataGeneration, 5);
+    expect(result.dataKeyEpoch, 3);
+    expect(result.changeWatermark, 18);
+    expect(result.completion.operationId, _mutationId3);
+    expect(result.completion.signature, _filledBytes(64, 15));
+  });
+
+  test('data-rekey 传输 DTO 在发网前拒绝非法边界', () {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    CloudSyncDataRekeyFinalizeProof proof({
+      int sourceSnapshotRootBytes = 32,
+      int sourceRecordCount = 0,
+      int stagedRecordCount = 0,
+      String? sourceRecordCursorEnd,
+    }) {
+      return CloudSyncDataRekeyFinalizeProof(
+        issuerDeviceId: _deviceId1,
+        sourceSnapshotRoot: _filledBytes(sourceSnapshotRootBytes),
+        sourceRecordCount: sourceRecordCount,
+        sourceAttachmentCount: 0,
+        sourceMaximumChangeSeq: 0,
+        sourceRecordCursorEnd: sourceRecordCursorEnd,
+        sourceAttachmentCursorEnd: null,
+        membershipGeneration: 1,
+        membershipManifestDigest: _filledBytes(32),
+        stagedRecordCount: stagedRecordCount,
+        stagedAttachmentCount: 0,
+        stagedCiphertextSetDigest: _filledBytes(32),
+        signature: _filledBytes(64),
+      );
+    }
+
+    expect(
+      () => CloudSyncDataRekeySourceRecordListRequest(
+        activeLease: activeLease,
+        limit: 0,
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => CloudSyncDataRekeyRecordStageRequest(
+        activeLease: activeLease,
+        mutationId: _mutationId5,
+        sourceRecordId: _recordId1,
+        targetRecordId: _recordId1,
+        sourceRevision: 1,
+        ciphertext: _filledBytes(1),
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => CloudSyncDataRekeyAttachmentStageRequest(
+        activeLease: activeLease,
+        mutationId: _mutationId5,
+        attachmentId: _attachmentId,
+        uploadId: _uploadId,
+        sourceManifestRevision: 0xffffffff,
+        manifestCiphertext: _filledBytes(1),
+      ),
+      throwsFormatException,
+    );
+    expect(() => proof(sourceSnapshotRootBytes: 31), throwsFormatException);
+    expect(
+      () => proof(
+        sourceRecordCount: 1,
+        stagedRecordCount: 0,
+        sourceRecordCursorEnd: _recordId1,
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => proof(sourceRecordCount: 1, stagedRecordCount: 1),
+      throwsFormatException,
+    );
+  });
+
+  test('data-rekey 源记录分页拒绝未知字段和非法线格式', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final listRequest = CloudSyncDataRekeySourceRecordListRequest(
+      activeLease: activeLease,
+      limit: 2,
+    );
+    CloudSyncJsonMap record() => <String, Object?>{
+      'recordId': _recordId1,
+      'revision': 1,
+      'envelopeVersion': 1,
+      'keyEpoch': 2,
+      'ciphertext': _encodedBytes(3, 1),
+      'ciphertextBytes': 3,
+      'updatedAt': '2026-07-29T06:00:00.000Z',
+      'updatedByDeviceId': _deviceId1,
+      'lastChangeSeq': 16,
+      'kind': 'put',
+      'ciphertextDigest': _encodedSha256(_filledBytes(3, 1)),
+    };
+    CloudSyncJsonMap page(CloudSyncJsonMap item) => <String, Object?>{
+      'records': <Object?>[item],
+      'nextAfterRecordId': null,
+      'hasMore': false,
+    };
+    final responses = <CloudSyncJsonMap>[
+      page(<String, Object?>{...record(), 'unknownField': true}),
+      page(<String, Object?>{
+        ...record(),
+        'recordId': '10000000-0000-4000-8000-00000000000A',
+      }),
+      page(<String, Object?>{
+        ...record(),
+        'ciphertextDigest': '${_encodedSha256(_filledBytes(3, 1))}=',
+      }),
+      page(<String, Object?>{
+        ...record(),
+        'ciphertextDigest': _encodedBytes(32, 2),
+      }),
+      page(<String, Object?>{
+        ...record(),
+        'updatedAt': '2026-07-29T06:00:00.000+00:00',
+      }),
+      page(<String, Object?>{...record(), 'keyEpoch': 3}),
+      <String, Object?>{
+        'records': <Object?>[record()],
+        'nextAfterRecordId': _recordId2,
+        'hasMore': true,
+      },
+      page(<String, Object?>{...record(), 'revision': 0}),
+    ];
+    var responseIndex = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{'data': responses[responseIndex++]}),
+      );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final invalidResponse = isA<CloudSyncException>().having(
+      (error) => error.kind,
+      'kind',
+      CloudSyncFailureKind.invalidResponse,
+    );
+
+    for (var index = 0; index < responses.length; index++) {
+      await expectLater(
+        client.listDataRekeySourceRecords(listRequest),
+        throwsA(invalidResponse),
+      );
+    }
+  });
+
+  test('data-rekey 源附件分页拒绝分块篡改与游标错配', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final listRequest = CloudSyncDataRekeySourceAttachmentListRequest(
+      activeLease: activeLease,
+      limit: 2,
+    );
+    CloudSyncJsonMap chunk() => <String, Object?>{
+      'chunkIndex': 0,
+      'ciphertextBytes': 3,
+      'ciphertextDigest': _encodedBytes(32, 3),
+    };
+    CloudSyncJsonMap attachment() => <String, Object?>{
+      'attachmentId': _attachmentId,
+      'uploadId': _uploadId,
+      'chunkKeyEpoch': 1,
+      'manifestKeyEpoch': 2,
+      'manifestRevision': 9,
+      'chunkCount': 1,
+      'totalCiphertextBytes': 3,
+      'manifestCiphertext': _encodedBytes(4, 4),
+      'manifestCiphertextBytes': 4,
+      'manifestCiphertextDigest': _encodedSha256(_filledBytes(4, 4)),
+      'chunks': <Object?>[chunk()],
+      'committedAt': '2026-07-29T06:00:00.000Z',
+    };
+    CloudSyncJsonMap page(CloudSyncJsonMap item) => <String, Object?>{
+      'attachments': <Object?>[item],
+      'nextAfterAttachmentId': null,
+      'nextAfterUploadId': null,
+      'hasMore': false,
+    };
+    final responses = <CloudSyncJsonMap>[
+      page(<String, Object?>{...attachment(), 'unknownField': true}),
+      page(<String, Object?>{...attachment(), 'manifestKeyEpoch': 3}),
+      page(<String, Object?>{...attachment(), 'chunkKeyEpoch': 0}),
+      page(<String, Object?>{...attachment(), 'chunkKeyEpoch': 3}),
+      page(<String, Object?>{
+        ...attachment(),
+        'chunks': <Object?>[
+          <String, Object?>{...chunk(), 'chunkIndex': 1},
+        ],
+      }),
+      page(<String, Object?>{
+        ...attachment(),
+        'manifestCiphertextDigest': _encodedBytes(32, 5),
+      }),
+      page(<String, Object?>{
+        ...attachment(),
+        'chunks': <Object?>[
+          <String, Object?>{
+            ...chunk(),
+            'ciphertextDigest': '${_encodedBytes(32, 3)}=',
+          },
+        ],
+      }),
+      page(<String, Object?>{...attachment(), 'totalCiphertextBytes': 4}),
+      page(<String, Object?>{
+        ...attachment(),
+        'committedAt': '2026-07-29T06:00:00.000+00:00',
+      }),
+      <String, Object?>{
+        'attachments': <Object?>[attachment()],
+        'nextAfterAttachmentId': _attachmentId,
+        'nextAfterUploadId': null,
+        'hasMore': true,
+      },
+    ];
+    var responseIndex = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{'data': responses[responseIndex++]}),
+      );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final invalidResponse = isA<CloudSyncException>().having(
+      (error) => error.kind,
+      'kind',
+      CloudSyncFailureKind.invalidResponse,
+    );
+
+    for (var index = 0; index < responses.length; index++) {
+      await expectLater(
+        client.listDataRekeySourceAttachments(listRequest),
+        throwsA(invalidResponse),
+      );
+    }
+  });
+
+  test('data-rekey 暂存回执拒绝未知字段与请求绑定错配', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final recordRequest = CloudSyncDataRekeyRecordStageRequest(
+      activeLease: activeLease,
+      mutationId: _mutationId5,
+      sourceRecordId: _recordId1,
+      targetRecordId: _recordId2,
+      sourceRevision: 1,
+      ciphertext: _filledBytes(1),
+    );
+    final attachmentRequest = CloudSyncDataRekeyAttachmentStageRequest(
+      activeLease: activeLease,
+      mutationId: _mutationId6,
+      attachmentId: _attachmentId,
+      uploadId: _uploadId,
+      sourceManifestRevision: 9,
+      manifestCiphertext: _filledBytes(1),
+    );
+    CloudSyncJsonMap recordResult() => <String, Object?>{
+      'result': 'staged',
+      'operationId': _mutationId3,
+      'mutationId': _mutationId5,
+      'sourceRecordId': _recordId1,
+      'targetRecordId': _recordId2,
+      'leaseVersion': 7,
+    };
+    CloudSyncJsonMap attachmentResult() => <String, Object?>{
+      'result': 'staged',
+      'operationId': _mutationId3,
+      'mutationId': _mutationId6,
+      'attachmentId': _attachmentId,
+      'uploadId': _uploadId,
+      'manifestRevision': 10,
+      'leaseVersion': 7,
+    };
+    final responses = <CloudSyncJsonMap>[
+      <String, Object?>{...recordResult(), 'unknownField': true},
+      <String, Object?>{...recordResult(), 'leaseVersion': 8},
+      <String, Object?>{...attachmentResult(), 'unknownField': true},
+      <String, Object?>{...attachmentResult(), 'manifestRevision': 9},
+    ];
+    var responseIndex = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{'data': responses[responseIndex++]}),
+      );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final invalidResponse = isA<CloudSyncException>().having(
+      (error) => error.kind,
+      'kind',
+      CloudSyncFailureKind.invalidResponse,
+    );
+
+    await expectLater(
+      client.stageDataRekeyRecord(recordRequest),
+      throwsA(invalidResponse),
+    );
+    await expectLater(
+      client.stageDataRekeyRecord(recordRequest),
+      throwsA(invalidResponse),
+    );
+    await expectLater(
+      client.stageDataRekeyAttachment(attachmentRequest),
+      throwsA(invalidResponse),
+    );
+    await expectLater(
+      client.stageDataRekeyAttachment(attachmentRequest),
+      throwsA(invalidResponse),
+    );
+  });
+
+  test('data-rekey 最终回执拒绝证明篡改与目标状态错配', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final proof = CloudSyncDataRekeyFinalizeProof(
+      issuerDeviceId: _deviceId1,
+      sourceSnapshotRoot: _filledBytes(32, 12),
+      sourceRecordCount: 0,
+      sourceAttachmentCount: 0,
+      sourceMaximumChangeSeq: 16,
+      sourceRecordCursorEnd: null,
+      sourceAttachmentCursorEnd: null,
+      membershipGeneration: 8,
+      membershipManifestDigest: _filledBytes(32, 13),
+      stagedRecordCount: 0,
+      stagedAttachmentCount: 0,
+      stagedCiphertextSetDigest: _filledBytes(32, 14),
+      signature: _filledBytes(64, 15),
+    );
+    final finalizeRequest = CloudSyncDataRekeyFinalizeRequest(
+      activeLease: activeLease,
+      mutationId: _mutationId6,
+      proof: proof,
+    );
+    CloudSyncJsonMap completion() => <String, Object?>{
+      'proofVersion': 2,
+      'operationId': _mutationId3,
+      'issuerDeviceId': _deviceId1,
+      'sourceDataGeneration': 4,
+      'targetDataGeneration': 5,
+      'sourceKeyEpoch': 2,
+      'targetKeyEpoch': 3,
+      'sourceSnapshotRoot': _encodedBytes(32, 12),
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 16,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': null,
+      'membershipGeneration': 8,
+      'membershipManifestDigest': _encodedBytes(32, 13),
+      'stagedRecordCount': 0,
+      'stagedAttachmentCount': 0,
+      'stagedCiphertextSetDigest': _encodedBytes(32, 14),
+      'proofFrame': _encodedBytes(270, 16),
+      'proofDigest': _encodedBytes(32, 17),
+      'signature': _encodedBytes(64, 15),
+      'finalizedAt': '2026-07-29T06:00:00.000Z',
+    };
+    CloudSyncJsonMap result(CloudSyncJsonMap proofResult) => <String, Object?>{
+      'result': 'finalized',
+      'dataGeneration': 5,
+      'dataKeyEpoch': 3,
+      'changeWatermark': 18,
+      'completion': proofResult,
+    };
+    final responses = <CloudSyncJsonMap>[
+      <String, Object?>{...result(completion()), 'unknownField': true},
+      <String, Object?>{...result(completion()), 'dataGeneration': 6},
+      <String, Object?>{...result(completion()), 'changeWatermark': 15},
+      result(<String, Object?>{...completion(), 'operationId': _mutationId2}),
+      result(<String, Object?>{
+        ...completion(),
+        'signature': _encodedBytes(64, 18),
+      }),
+      result(<String, Object?>{
+        ...completion(),
+        'proofFrame': _encodedBytes(269, 16),
+      }),
+      result(<String, Object?>{
+        ...completion(),
+        'finalizedAt': '2026-07-29T06:00:00.000+00:00',
+      }),
+    ];
+    var responseIndex = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      await request.drain<void>();
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{'data': responses[responseIndex++]}),
+      );
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final invalidResponse = isA<CloudSyncException>().having(
+      (error) => error.kind,
+      'kind',
+      CloudSyncFailureKind.invalidResponse,
+    );
+
+    for (var index = 0; index < responses.length; index++) {
+      await expectLater(
+        client.finalizeDataRekey(finalizeRequest),
+        throwsA(invalidResponse),
+      );
+    }
   });
 
   test('持久账户会话恢复认证会话时保留设备密钥版本', () {
