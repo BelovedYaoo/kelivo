@@ -166,16 +166,31 @@ final class E2eeChatSyncAdapter {
     final message = await _repository.getMessage(entityKey.entityId);
     if (message == null) return const E2eeSyncTombstoneSnapshot();
     _requireTerminalMessage(message);
-    if (_containsLocalAttachmentMarker(message.content) ||
-        await _repository.hasMessageAssetReferences(message.id)) {
-      throw StateError('sync_message_attachments_not_supported');
+    if (_containsLocalAttachmentMarker(message.content)) {
+      throw StateError('sync_message_local_attachment_marker_rejected');
+    }
+    if (message.attachments.any(
+      (attachment) => !attachment.hasRemoteIdentity,
+    )) {
+      throw const E2eeSyncOutboxBlocked(
+        E2eeSyncOutboxBlockReason.attachmentPending,
+      );
     }
     return _encodeValue(entityKey, <String, Object?>{
       'conversationId': message.conversationId,
       'turnId': message.turnId,
       'role': message.role,
       'content': message.content,
-      'attachments': const <Object?>[],
+      'attachments': <Object?>[
+        for (var index = 0; index < message.attachments.length; index++)
+          <String, Object?>{
+            'attachmentId': message.attachments[index].attachmentId!,
+            'uploadId': message.attachments[index].uploadId!,
+            'keyEpoch': message.attachments[index].keyEpoch!,
+            'kind': message.attachments[index].kind,
+            'order': index,
+          },
+      ],
       'timestamp': _canonicalUtc(message.timestamp),
       'groupId': message.groupId ?? message.id,
       'version': message.version,

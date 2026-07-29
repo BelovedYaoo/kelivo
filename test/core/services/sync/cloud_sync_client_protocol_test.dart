@@ -28,6 +28,7 @@ import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_upload_coordinator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
+import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
@@ -5674,6 +5675,53 @@ void main() {
       E2eeAttachmentUploadPhase.committed,
     );
     expect(await fixture.coordinator.advance(1), 0);
+  });
+
+  test('E2EE 附件上传协调器将网络与密文字节计入单次执行预算', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[1, 2, 3, 4]),
+    );
+    addTearDown(fixture.close);
+    final exhausted = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 4,
+      maximumAttachmentBytes: 0,
+      maximumDuration: const Duration(seconds: 5),
+      abortInFlightNetwork: () {},
+    );
+    addTearDown(exhausted.dispose);
+
+    await expectLater(
+      fixture.coordinator.advance(4, executionBudget: exhausted),
+      throwsA(
+        isA<E2eeSyncBudgetExhausted>().having(
+          (error) => error.reason,
+          'reason',
+          E2eeSyncBudgetExhaustion.attachmentBytes,
+        ),
+      ),
+    );
+    expect(fixture.transport.createRequests, hasLength(1));
+    expect(fixture.transport.putAttempts, isEmpty);
+    final pending = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(pending!.phase, E2eeAttachmentUploadPhase.uploading);
+    expect(pending.pendingChunk, isNotNull);
+
+    final resumed = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 3,
+      maximumAttachmentBytes: 2 * 1024 * 1024,
+      maximumDuration: const Duration(seconds: 5),
+      abortInFlightNetwork: () {},
+    );
+    addTearDown(resumed.dispose);
+    expect(await fixture.coordinator.advance(3, executionBudget: resumed), 2);
+    expect(resumed.networkStepsConsumed, 2);
+    expect(
+      resumed.attachmentBytesConsumed,
+      fixture.transport.putAttempts.single.ciphertext.length +
+          fixture.transport.commitRequests.single.manifestCiphertext.length,
+    );
   });
 
   test('E2EE 附件上传协调器在源认证耗尽租约后重新 claim 才发起远端请求', () async {

@@ -14,6 +14,14 @@ import 'e2ee_attachment_manifest.dart';
 abstract interface class E2eeAttachmentCrypto {
   int get keyEpoch;
 
+  Future<E2eeAttachmentDescriptor> createUploadDescriptor({
+    required E2eeAttachmentKind kind,
+    required int totalPlaintextBytes,
+    required Uint8List contentSha256,
+    String? displayName,
+    String? mediaType,
+  });
+
   Future<E2eeSealedAttachmentManifest> sealManifest({
     required E2eeAttachmentDescriptor descriptor,
     required String uploadId,
@@ -125,6 +133,76 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
       );
       Error.throwWithStackTrace(error, stackTrace);
     }
+  }
+
+  @override
+  Future<E2eeAttachmentDescriptor> createUploadDescriptor({
+    required E2eeAttachmentKind kind,
+    required int totalPlaintextBytes,
+    required Uint8List contentSha256,
+    String? displayName,
+    String? mediaType,
+  }) {
+    return _runWhileOpen(() async {
+      await _closeRetainedDataKeys();
+      final layout = KelivoAttachmentLayout(
+        totalPlaintextBytes: totalPlaintextBytes,
+      );
+      final generated = await _secureCore.generateAttachmentDataKey();
+      Uint8List? wrappedDataKey;
+      Object? primaryError;
+      StackTrace? primaryStackTrace;
+      E2eeAttachmentDescriptor? descriptor;
+      try {
+        wrappedDataKey = await _secureCore.wrapAttachmentDataKey(
+          _chunkAccountRootKey,
+          generated.key,
+          context: KelivoAttachmentContext(
+            userId: _userId,
+            attachmentId: generated.attachmentId,
+            keyEpoch: keyEpoch,
+          ),
+        );
+        descriptor = E2eeAttachmentDescriptor(
+          attachmentId: Uuid.unparse(generated.attachmentId),
+          keyEpoch: keyEpoch,
+          kind: kind,
+          totalPlaintextBytes: totalPlaintextBytes,
+          contentSha256: contentSha256,
+          wrappedDataKey: wrappedDataKey,
+          chunkCiphertextBytes: <int>[
+            for (var index = 0; index < layout.chunkCount; index++)
+              layout.plaintextLengthForChunk(index) +
+                  KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
+          ],
+          displayName: displayName,
+          mediaType: mediaType,
+        );
+      } catch (error, stackTrace) {
+        primaryError = error;
+        primaryStackTrace = stackTrace;
+      }
+
+      try {
+        await _closeDataKeyOrRetain(generated.key);
+      } catch (error, stackTrace) {
+        if (primaryError == null) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+        developer.log(
+          '生成附件上传描述失败后的数据密钥清理失败',
+          name: 'Kelivo.E2eeAttachmentCryptoSession',
+          error: error,
+          stackTrace: stackTrace,
+        );
+      } finally {
+        wrappedDataKey?.fillRange(0, wrappedDataKey.length, 0);
+      }
+      if (primaryError != null && primaryStackTrace != null) {
+        Error.throwWithStackTrace(primaryError, primaryStackTrace);
+      }
+      return descriptor!;
+    });
   }
 
   @override
