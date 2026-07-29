@@ -6865,15 +6865,6 @@ void main() {
         member: issuer,
       ),
     );
-    final genesis = await manifestModule.verifyRecoveryGenesis(
-      expectation: E2eeRecoveryGenesisMembershipExpectation(
-        genesisManifest: initialized.manifest,
-        genesisManifestDigest: initialized.digest,
-        accountTrustPublicKey: initialized.currentAccountTrustPublicKey,
-      ),
-    );
-    expect(genesis.digest, orderedEquals(initialized.digest));
-
     final paired = await manifestModule.create(
       ark: ark,
       change: E2eeAddDeviceMembershipChange(
@@ -6919,7 +6910,7 @@ void main() {
     );
     expect(bootstrapped.digest, orderedEquals(paired.digest));
     final pairedFromHistory = await manifestModule.verifyHistoryBatch(
-      previous: genesis,
+      previous: initializedFromServer,
       entries: <E2eeMembershipHistoryEntry>[_membershipHistoryEntry(paired)],
     );
     expect(pairedFromHistory.digest, orderedEquals(paired.digest));
@@ -6987,7 +6978,7 @@ void main() {
     expect(recovered.reportedDataRekeyPhase, E2eeDataRekeyPhase.rekeyPending);
   });
 
-  test('恢复信任链拒绝假ARK自签锚与双签名篡改', () async {
+  test('成员信任链拒绝双签名篡改', () async {
     const secureCore = KelivoSecureCore();
     const manifestModule = E2eeAccountTrustManifestModule();
     final ark = await secureCore.generateAccountRootKey(
@@ -7021,33 +7012,6 @@ void main() {
       ark: ark,
       change: initializeChange,
     );
-    final genesis = await manifestModule.verifyRecoveryGenesis(
-      expectation: E2eeRecoveryGenesisMembershipExpectation(
-        genesisManifest: initialized.manifest,
-        genesisManifestDigest: initialized.digest,
-        accountTrustPublicKey: initialized.currentAccountTrustPublicKey,
-      ),
-    );
-
-    final fakeArk = await secureCore.generateAccountRootKey(
-      userId: _rawUuid(_userId),
-      keyEpoch: 1,
-    );
-    final fakeGenesis = await manifestModule.create(
-      ark: fakeArk,
-      change: initializeChange,
-    );
-    await secureCore.closeAccountRootKey(fakeArk);
-    await expectLater(
-      manifestModule.verifyRecoveryGenesis(
-        expectation: E2eeRecoveryGenesisMembershipExpectation(
-          genesisManifest: fakeGenesis.manifest,
-          genesisManifestDigest: fakeGenesis.digest,
-          accountTrustPublicKey: initialized.currentAccountTrustPublicKey,
-        ),
-      ),
-      throwsStateError,
-    );
 
     final paired = await manifestModule.create(
       ark: ark,
@@ -7062,7 +7026,7 @@ void main() {
       ..[paired.manifest.length - 128] ^= 1;
     await expectLater(
       manifestModule.verifyHistoryBatch(
-        previous: genesis,
+        previous: initialized,
         entries: <E2eeMembershipHistoryEntry>[
           _membershipHistoryEntryFromBytes(transitionTampered),
         ],
@@ -7073,7 +7037,7 @@ void main() {
       ..[paired.manifest.length - 1] ^= 1;
     await expectLater(
       manifestModule.verifyHistoryBatch(
-        previous: genesis,
+        previous: initialized,
         entries: <E2eeMembershipHistoryEntry>[
           _membershipHistoryEntryFromBytes(currentTampered),
         ],
@@ -7081,7 +7045,7 @@ void main() {
       throwsA(isA<KelivoSecureCoreException>()),
     );
     final pairedFromHistory = await manifestModule.verifyHistoryBatch(
-      previous: genesis,
+      previous: initialized,
       entries: <E2eeMembershipHistoryEntry>[_membershipHistoryEntry(paired)],
     );
 
@@ -7137,7 +7101,7 @@ void main() {
     await secureCore.closeAccountRootKey(fakeEpoch2Ark);
   });
 
-  test('成员清单拒绝配对回执偏差计数器溢出与自撤销', () async {
+  test('成员清单拒绝密钥复用配对偏差计数器溢出与自撤销', () async {
     const secureCore = KelivoSecureCore();
     const manifestModule = E2eeAccountTrustManifestModule();
     final issuer = await _newMembershipDevice(
@@ -7211,6 +7175,21 @@ void main() {
         change: E2eeInitializeMembershipChange(
           userId: _userId,
           operationId: _mutationId1,
+          member: issuer,
+          recoveryPublicKeyVersion: 1,
+          recoveryPublicKey: issuer.keyAgreementPublicKey,
+          recoveryCapsuleVersion: 1,
+          recoveryCapsule: recoveryCapsule,
+        ),
+      ),
+      throwsArgumentError,
+    );
+    await expectLater(
+      manifestModule.create(
+        ark: ark,
+        change: E2eeInitializeMembershipChange(
+          userId: _userId,
+          operationId: _mutationId1,
           member: E2eeMembershipDeviceInput(
             deviceId: _issuerDeviceId,
             keyVersion: 1,
@@ -7237,6 +7216,53 @@ void main() {
         recoveryCapsuleVersion: 1,
         recoveryCapsule: recoveryCapsule,
       ),
+    );
+    final recoveryKeyReusedManifest = Uint8List.fromList(initialized.manifest)
+      ..setRange(104, 136, issuer.keyAgreementPublicKey);
+    await expectLater(
+      manifestModule.verify(
+        ark: ark,
+        expectation: E2eeInitializeMembershipExpectation(
+          projection: E2eeMembershipServerProjection(
+            userId: initialized.userId,
+            securityGeneration: initialized.securityGeneration,
+            keyEpoch: initialized.keyEpoch,
+            membershipManifestVersion: e2eeAccountTrustManifestFormatVersion,
+            membershipManifest: recoveryKeyReusedManifest,
+            membershipManifestDigest: Uint8List.fromList(
+              sha256.convert(recoveryKeyReusedManifest).bytes,
+            ),
+            recoveryPublicKeyVersion: initialized.recoveryPublicKeyVersion,
+            recoveryPublicKey: issuer.keyAgreementPublicKey,
+            recoveryCapsuleVersion: initialized.recoveryCapsuleVersion,
+            recoveryCapsule: recoveryCapsule,
+            lastOperationId: _mutationId1,
+            dataRekeyPhase: E2eeDataRekeyPhase.ready,
+          ),
+          operationId: _mutationId1,
+          member: issuer,
+        ),
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    final recoveryKeyReusedSubject = E2eeMembershipDeviceInput(
+      deviceId: _deviceId2,
+      keyVersion: 1,
+      authGeneration: 1,
+      signingPublicKey: pendingSubject.signingPublicKey,
+      keyAgreementPublicKey: recoveryPublicKey,
+    );
+    await expectLater(
+      manifestModule.create(
+        ark: ark,
+        change: E2eeAddDeviceMembershipChange(
+          previous: initialized,
+          pairingId: _pairingId,
+          issuerDeviceId: _issuerDeviceId,
+          subject: recoveryKeyReusedSubject,
+        ),
+      ),
+      throwsArgumentError,
     );
     await expectLater(
       manifestModule.verify(
