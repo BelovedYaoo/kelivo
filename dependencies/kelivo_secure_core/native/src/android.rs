@@ -49,6 +49,10 @@ pub(super) fn delete_slot(slot_id: &[u8; 16]) -> Result<(), KelivoStatus> {
     default_store()?.delete_slot(slot_id)
 }
 
+pub(super) fn delete_all_slots() -> Result<(), KelivoStatus> {
+    default_store()?.delete_all_slots()
+}
+
 pub(super) fn fill_random(output: &mut [u8]) -> Result<(), KelivoStatus> {
     getrandom::getrandom(output).map_err(|_| KelivoStatus::RandomSourceFailure)
 }
@@ -68,6 +72,7 @@ impl SlotStore {
 
     fn create_slot(&self, slot_id: &[u8; 16]) -> Result<LocalKey, KelivoStatus> {
         self.ensure_root()?;
+        let _lock = StoreLock::acquire(&self.root)?;
         let slot_path = self.slot_path(slot_id);
         match slot_path.try_exists() {
             Ok(true) => return Err(KelivoStatus::SlotAlreadyExists),
@@ -79,11 +84,13 @@ impl SlotStore {
         fill_random(&mut key[..])?;
         let protected_key = protect_key(&key[..], slot_id)?;
         let encoded = encode_slot_file(&protected_key)?;
-        self.write_atomic(&slot_path, &encoded)?;
+        self.write_atomic_locked(&slot_path, &encoded)?;
         Ok(key)
     }
 
     fn open_slot(&self, slot_id: &[u8; 16]) -> Result<LocalKey, KelivoStatus> {
+        self.validate_existing_root()?;
+        let _lock = StoreLock::acquire(&self.root)?;
         let encoded = read_slot_file(&self.slot_path(slot_id))?;
         let protected_key = decode_slot_file(&encoded)?;
         unprotect_key(protected_key, slot_id)
@@ -100,6 +107,18 @@ impl SlotStore {
         }
     }
 
+    fn delete_all_slots(&self) -> Result<(), KelivoStatus> {
+        self.ensure_root()?;
+        let _lock = StoreLock::acquire(&self.root)?;
+        let entries = self.deletable_entries()?;
+        // 先摧毁共享包装根密钥；之后即使文件系统清理失败，旧槽密文也不可再解密。
+        delete_wrapping_key()?;
+        for path in entries {
+            fs::remove_file(path).map_err(|_| KelivoStatus::IoFailure)?;
+        }
+        sync_directory(&self.root)
+    }
+
     fn ensure_root(&self) -> Result<(), KelivoStatus> {
         let mut builder = DirBuilder::new();
         builder.recursive(true).mode(0o700);
@@ -114,11 +133,48 @@ impl SlotStore {
             .map_err(|_| KelivoStatus::IoFailure)
     }
 
+    fn validate_existing_root(&self) -> Result<(), KelivoStatus> {
+        let metadata = match fs::symlink_metadata(&self.root) {
+            Ok(metadata) => metadata,
+            Err(error) if error.kind() == ErrorKind::NotFound => {
+                return Err(KelivoStatus::SlotNotFound);
+            }
+            Err(_) => return Err(KelivoStatus::IoFailure),
+        };
+        if metadata.file_type().is_dir() {
+            Ok(())
+        } else {
+            Err(KelivoStatus::IoFailure)
+        }
+    }
+
+    fn deletable_entries(&self) -> Result<Vec<PathBuf>, KelivoStatus> {
+        let mut entries = Vec::new();
+        for entry in fs::read_dir(&self.root).map_err(|_| KelivoStatus::IoFailure)? {
+            let entry = entry.map_err(|_| KelivoStatus::IoFailure)?;
+            let name = entry
+                .file_name()
+                .into_string()
+                .map_err(|_| KelivoStatus::IoFailure)?;
+            if name == ".slot-store.lock" {
+                continue;
+            }
+            let file_type = entry.file_type().map_err(|_| KelivoStatus::IoFailure)?;
+            if !file_type.is_file()
+                || (!is_slot_file_name(&name) && !is_temporary_slot_file_name(&name))
+            {
+                return Err(KelivoStatus::IoFailure);
+            }
+            entries.push(entry.path());
+        }
+        Ok(entries)
+    }
+
     fn slot_path(&self, slot_id: &[u8; 16]) -> PathBuf {
         self.root.join(format!("{}.bin", encode_hex(slot_id)))
     }
 
-    fn write_atomic(&self, destination: &Path, contents: &[u8]) -> Result<(), KelivoStatus> {
+    fn write_atomic_locked(&self, destination: &Path, contents: &[u8]) -> Result<(), KelivoStatus> {
         let (temporary_path, mut temporary_file) = self.create_temporary_file(destination)?;
         let write_result = temporary_file
             .write_all(contents)
@@ -183,7 +239,6 @@ fn publish_without_replacement(
     source: &Path,
     destination: &Path,
 ) -> Result<(), KelivoStatus> {
-    let _lock = StoreLock::acquire(root)?;
     match destination.try_exists() {
         Ok(true) => return Err(KelivoStatus::SlotAlreadyExists),
         Ok(false) => {}
@@ -209,8 +264,17 @@ impl StoreLock {
             .create(true)
             .truncate(false)
             .mode(0o600)
+            .custom_flags(libc::O_CLOEXEC | libc::O_NOFOLLOW)
             .open(root.join(".slot-store.lock"))
             .map_err(|_| KelivoStatus::IoFailure)?;
+        if !file
+            .metadata()
+            .map_err(|_| KelivoStatus::IoFailure)?
+            .file_type()
+            .is_file()
+        {
+            return Err(KelivoStatus::IoFailure);
+        }
         loop {
             let result = unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) };
             if result == 0 {
@@ -317,6 +381,22 @@ fn slot_aad(slot_id: &[u8; 16]) -> [u8; 32] {
     aad[..ANDROID_SLOT_AAD_PREFIX.len()].copy_from_slice(&ANDROID_SLOT_AAD_PREFIX);
     aad[ANDROID_SLOT_AAD_PREFIX.len()..].copy_from_slice(slot_id);
     aad
+}
+
+fn delete_wrapping_key() -> Result<(), KelivoStatus> {
+    let context = jni_context()?;
+    let mut env = context
+        .java_vm
+        .attach_current_thread()
+        .map_err(|_| KelivoStatus::SecureStorageUnavailable)?;
+    let bridge_class = load_bridge_class(&mut env, &context.class_loader)?;
+    match env.call_static_method(bridge_class, "deleteWrappingKey", "()V", &[]) {
+        Ok(_) => Ok(()),
+        Err(_) => {
+            clear_pending_exception(&mut env);
+            Err(KelivoStatus::SecureStorageUnavailable)
+        }
+    }
 }
 
 fn invoke_bridge_crypto(
@@ -520,9 +600,47 @@ fn encode_hex(input: &[u8]) -> String {
     encoded
 }
 
+fn is_slot_file_name(name: &str) -> bool {
+    name.len() == 36 && name.ends_with(".bin") && is_lower_hex(&name[..32])
+}
+
+fn is_temporary_slot_file_name(name: &str) -> bool {
+    name.len() == 74
+        && name.starts_with('.')
+        && is_slot_file_name(&name[1..37])
+        && &name[37..38] == "."
+        && is_lower_hex(&name[38..70])
+        && name.ends_with(".tmp")
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn all_slots_delete_names_are_strict_and_include_legacy_temporary_files() {
+        assert!(is_slot_file_name(&format!("{}.bin", "ab".repeat(16))));
+        assert!(is_temporary_slot_file_name(&format!(
+            ".{}.bin.{}.tmp",
+            "ab".repeat(16),
+            "cd".repeat(16)
+        )));
+        for invalid in [
+            format!("{}.BIN", "ab".repeat(16)),
+            format!("{}.bin", "AB".repeat(16)),
+            ".slot-store.lock.tmp".to_owned(),
+            "unexpected-entry".to_owned(),
+        ] {
+            assert!(!is_slot_file_name(&invalid));
+            assert!(!is_temporary_slot_file_name(&invalid));
+        }
+    }
 
     #[test]
     fn slot_file_delete_is_idempotent_and_syncs_the_store() {
@@ -541,6 +659,28 @@ mod tests {
         assert!(!store.slot_path(&slot_id).exists());
         store.delete_slot(&slot_id).expect("缺失槽位应幂等成功");
 
+        fs::remove_dir_all(root).expect("测试目录应清理成功");
+    }
+
+    #[test]
+    fn all_slots_delete_preflight_rejects_unknown_entries() {
+        let mut suffix = [0_u8; 16];
+        fill_random(&mut suffix).expect("测试目录随机后缀应生成成功");
+        let root = std::env::temp_dir().join(format!(
+            "kelivo_secure_core_android_delete_all_{}",
+            encode_hex(&suffix)
+        ));
+        let store = SlotStore::new(root.clone());
+        store.ensure_root().expect("测试槽位目录应创建成功");
+        fs::write(root.join("unexpected-entry"), b"must-remain").expect("异常条目应写入成功");
+
+        let result = store.deletable_entries();
+
+        assert_eq!(result, Err(KelivoStatus::IoFailure));
+        assert_eq!(
+            fs::read(root.join("unexpected-entry")).expect("异常条目不得被删除"),
+            b"must-remain"
+        );
         fs::remove_dir_all(root).expect("测试目录应清理成功");
     }
 }

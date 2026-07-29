@@ -130,6 +130,10 @@ mod platform {
         Err(KelivoStatus::UnsupportedPlatform)
     }
 
+    pub(super) fn delete_all_slots() -> Result<(), KelivoStatus> {
+        Err(KelivoStatus::UnsupportedPlatform)
+    }
+
     pub(super) fn fill_random(_output: &mut [u8]) -> Result<(), KelivoStatus> {
         Err(KelivoStatus::UnsupportedPlatform)
     }
@@ -443,6 +447,21 @@ fn ensure_slot_unused(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<(), KelivoStat
     }
 }
 
+fn ensure_all_slots_unused() -> Result<(), KelivoStatus> {
+    let registry = key_registry()
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?;
+    if registry
+        .active
+        .values()
+        .any(|entry| entry.slot_id.is_some())
+    {
+        Err(KelivoStatus::SlotInUse)
+    } else {
+        Ok(())
+    }
+}
+
 fn key_slot_lifecycle_lock() -> &'static Mutex<()> {
     // 串行化同进程的打开、创建和擦除，避免删除检查与新句柄注册之间出现窗口。
     static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
@@ -586,6 +605,21 @@ pub unsafe extern "C" fn kelivo_key_slot_delete(
         return status.code();
     }
     match platform::delete_slot(&slot_id) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kelivo_key_slots_delete_all() -> i32 {
+    let _lifecycle_guard = match key_slot_lifecycle_lock().lock() {
+        Ok(guard) => guard,
+        Err(_) => return KelivoStatus::InternalState.code(),
+    };
+    if let Err(status) = ensure_all_slots_unused() {
+        return status.code();
+    }
+    match platform::delete_all_slots() {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(status) => status.code(),
     }
@@ -1474,6 +1508,8 @@ mod tests {
     #[cfg(target_os = "windows")]
     #[test]
     fn key_slot_delete_requires_closed_handles_and_is_idempotent() {
+        let production_canary = platform::ProductionStoreCanary::capture();
+        let test_store_scope = platform::TestStoreScope::enter("single_slot_delete");
         let mut slot_id = [0_u8; KEY_SLOT_ID_SIZE];
         platform::fill_random(&mut slot_id).expect("删除测试槽位标识应生成成功");
         assert_eq!(
@@ -1521,6 +1557,95 @@ mod tests {
             unsafe { kelivo_key_slot_delete(slot_id.as_ptr(), slot_id.len(), KEY_POLICY_VERSION,) },
             KelivoStatus::Ok.code()
         );
+        drop(test_store_scope);
+        production_canary.assert_unchanged();
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn key_slots_delete_all_rejects_any_open_slot_and_is_idempotent() {
+        let production_canary = platform::ProductionStoreCanary::capture();
+        let test_store_scope = platform::TestStoreScope::enter("all_slots_delete");
+        let mut first_slot_id = [0_u8; KEY_SLOT_ID_SIZE];
+        let mut second_slot_id = [0_u8; KEY_SLOT_ID_SIZE];
+        platform::fill_random(&mut first_slot_id).expect("首个全量删除测试槽位标识应生成成功");
+        platform::fill_random(&mut second_slot_id).expect("第二个全量删除测试槽位标识应生成成功");
+        assert_ne!(first_slot_id, second_slot_id);
+        assert_eq!(kelivo_key_slots_delete_all(), KelivoStatus::Ok.code());
+
+        let mut first_handle = INVALID_KEY_HANDLE;
+        let mut second_handle = INVALID_KEY_HANDLE;
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_create(
+                    first_slot_id.as_ptr(),
+                    first_slot_id.len(),
+                    KEY_POLICY_VERSION,
+                    &mut first_handle,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_create(
+                    second_slot_id.as_ptr(),
+                    second_slot_id.len(),
+                    KEY_POLICY_VERSION,
+                    &mut second_handle,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_key_handle_close(second_handle),
+            KelivoStatus::Ok.code()
+        );
+
+        assert_eq!(
+            kelivo_key_slots_delete_all(),
+            KelivoStatus::SlotInUse.code()
+        );
+        let mut reopened_second = INVALID_KEY_HANDLE;
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_open(
+                    second_slot_id.as_ptr(),
+                    second_slot_id.len(),
+                    KEY_POLICY_VERSION,
+                    &mut reopened_second,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_key_handle_close(reopened_second),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_key_handle_close(first_handle),
+            KelivoStatus::Ok.code()
+        );
+
+        assert_eq!(kelivo_key_slots_delete_all(), KelivoStatus::Ok.code());
+        for slot_id in [first_slot_id, second_slot_id] {
+            let mut reopened = 42_u64;
+            assert_eq!(
+                unsafe {
+                    kelivo_key_slot_open(
+                        slot_id.as_ptr(),
+                        slot_id.len(),
+                        KEY_POLICY_VERSION,
+                        &mut reopened,
+                    )
+                },
+                KelivoStatus::SlotNotFound.code()
+            );
+            assert_eq!(reopened, INVALID_KEY_HANDLE);
+        }
+        assert_eq!(kelivo_key_slots_delete_all(), KelivoStatus::Ok.code());
+        drop(test_store_scope);
+        production_canary.assert_unchanged();
     }
 
     #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))]

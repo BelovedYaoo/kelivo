@@ -10,27 +10,33 @@ use std::{
     fs::{File, OpenOptions},
     io::{Read, Write},
     os::windows::{
-        ffi::OsStrExt,
+        ffi::{OsStrExt, OsStringExt},
         fs::{MetadataExt, OpenOptionsExt},
         io::{AsRawHandle, FromRawHandle},
     },
     path::{Component, Path, PathBuf, Prefix},
     ptr, slice,
 };
+#[cfg(test)]
+use std::{
+    fs,
+    io::ErrorKind,
+    sync::{Mutex, MutexGuard, OnceLock},
+};
 use windows_sys::{
     Wdk::{
         Foundation::OBJECT_ATTRIBUTES,
         Storage::FileSystem::{
-            FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE, FILE_OPEN, FILE_OPEN_IF,
-            FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION, FILE_RENAME_INFORMATION_0,
-            FILE_SYNCHRONOUS_IO_NONALERT, FileRenameInformation, NtCreateFile,
-            NtSetInformationFile,
+            FILE_BOTH_DIR_INFORMATION, FILE_CREATE, FILE_DIRECTORY_FILE, FILE_NON_DIRECTORY_FILE,
+            FILE_OPEN, FILE_OPEN_IF, FILE_OPEN_REPARSE_POINT, FILE_RENAME_INFORMATION,
+            FILE_RENAME_INFORMATION_0, FILE_SYNCHRONOUS_IO_NONALERT, FileBothDirectoryInformation,
+            FileRenameInformation, NtCreateFile, NtQueryDirectoryFile, NtSetInformationFile,
         },
     },
     Win32::{
         Foundation::{
             HANDLE, INVALID_HANDLE_VALUE, LocalFree, OBJ_CASE_INSENSITIVE, OBJ_DONT_REPARSE,
-            STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
+            STATUS_NO_MORE_FILES, STATUS_OBJECT_NAME_COLLISION, STATUS_OBJECT_NAME_NOT_FOUND,
             STATUS_OBJECT_PATH_NOT_FOUND, UNICODE_STRING,
         },
         Security::Cryptography::{
@@ -39,9 +45,10 @@ use windows_sys::{
         },
         Storage::FileSystem::{
             DELETE, FILE_ATTRIBUTE_DIRECTORY, FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO,
-            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_READ_ATTRIBUTES,
-            FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE,
-            FILE_WRITE_DATA, FileDispositionInfo, SYNCHRONIZE, SetFileInformationByHandle,
+            FILE_FLAG_BACKUP_SEMANTICS, FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY,
+            FILE_READ_ATTRIBUTES, FILE_READ_DATA, FILE_SHARE_DELETE, FILE_SHARE_READ,
+            FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA, FileDispositionInfo, SYNCHRONIZE,
+            SetFileInformationByHandle,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -61,6 +68,7 @@ const SLOT_HEADER_SIZE: usize = SLOT_MAGIC.len() + size_of::<u32>();
 const MAX_PROTECTED_KEY_SIZE: usize = 64 * 1024;
 const MAX_SLOT_FILE_SIZE: usize = SLOT_HEADER_SIZE + MAX_PROTECTED_KEY_SIZE;
 const TEMP_FILE_ATTEMPTS: usize = 16;
+const DIRECTORY_QUERY_BUFFER_SIZE: usize = 64 * 1024;
 
 pub(super) fn create_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, KelivoStatus> {
     default_store()?.create_slot(slot_id)
@@ -72,6 +80,10 @@ pub(super) fn open_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, Ke
 
 pub(super) fn delete_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<(), KelivoStatus> {
     default_store()?.delete_slot(slot_id)
+}
+
+pub(super) fn delete_all_slots() -> Result<(), KelivoStatus> {
+    default_store()?.delete_all_slots()
 }
 
 pub(super) fn fill_random(output: &mut [u8]) -> Result<(), KelivoStatus> {
@@ -95,7 +107,7 @@ pub(super) fn fill_random(output: &mut [u8]) -> Result<(), KelivoStatus> {
     }
 }
 
-fn default_store() -> Result<SlotStore, KelivoStatus> {
+fn production_store_root() -> Result<PathBuf, KelivoStatus> {
     let local_app_data = env::var_os("LOCALAPPDATA")
         .filter(|value| !value.is_empty())
         .ok_or(KelivoStatus::SecureStorageUnavailable)?;
@@ -104,13 +116,204 @@ fn default_store() -> Result<SlotStore, KelivoStatus> {
         return Err(KelivoStatus::SecureStorageUnavailable);
     }
 
-    Ok(SlotStore::new(
-        local_app_data
-            .join("Kelivo")
-            .join("secure-core")
-            .join("v1")
-            .join("slots"),
-    ))
+    Ok(local_app_data
+        .join("Kelivo")
+        .join("secure-core")
+        .join("v1")
+        .join("slots"))
+}
+
+#[cfg(not(test))]
+fn default_store() -> Result<SlotStore, KelivoStatus> {
+    Ok(SlotStore::new(production_store_root()?))
+}
+
+#[cfg(test)]
+fn default_store() -> Result<SlotStore, KelivoStatus> {
+    // 测试产物不得继承生产根；遗漏显式作用域时必须失败，不能便利性回退。
+    let root = test_store_root()
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?
+        .clone()
+        .ok_or(KelivoStatus::InternalState)?;
+    let temporary_root = env::temp_dir()
+        .canonicalize()
+        .map_err(|_| KelivoStatus::InternalState)?;
+    let canonical_root = root
+        .canonicalize()
+        .map_err(|_| KelivoStatus::InternalState)?;
+    if !canonical_root.starts_with(&temporary_root) {
+        return Err(KelivoStatus::InternalState);
+    }
+    Ok(SlotStore::new(canonical_root))
+}
+
+#[cfg(test)]
+fn test_store_root() -> &'static Mutex<Option<PathBuf>> {
+    static ROOT: OnceLock<Mutex<Option<PathBuf>>> = OnceLock::new();
+    ROOT.get_or_init(|| Mutex::new(None))
+}
+
+#[cfg(test)]
+fn test_store_serialization_lock() -> &'static Mutex<()> {
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
+}
+
+#[cfg(test)]
+pub(super) struct TestStoreScope {
+    root: PathBuf,
+    _serialization_guard: MutexGuard<'static, ()>,
+}
+
+#[cfg(test)]
+impl TestStoreScope {
+    pub(super) fn enter(label: &str) -> Self {
+        let serialization_guard = test_store_serialization_lock()
+            .lock()
+            .expect("测试槽位作用域串行锁不得中毒");
+        let temporary_root = env::temp_dir()
+            .canonicalize()
+            .expect("系统临时目录必须可解析");
+        let root = create_scoped_test_store_root(&temporary_root, label);
+        let mut active_root = test_store_root().lock().expect("测试槽位根状态不得中毒");
+        assert!(active_root.is_none(), "同一进程只能激活一个测试槽位根");
+        *active_root = Some(root.clone());
+        drop(active_root);
+        Self {
+            root,
+            _serialization_guard: serialization_guard,
+        }
+    }
+}
+
+#[cfg(test)]
+impl Drop for TestStoreScope {
+    fn drop(&mut self) {
+        let mut active_root = test_store_root().lock().expect("测试槽位根状态不得中毒");
+        assert_eq!(active_root.as_ref(), Some(&self.root));
+        *active_root = None;
+        drop(active_root);
+        let temporary_root = env::temp_dir()
+            .canonicalize()
+            .expect("系统临时目录必须可复查");
+        let canonical_root = self.root.canonicalize().expect("测试槽位根必须可复查");
+        assert!(
+            canonical_root.starts_with(&temporary_root),
+            "只允许清理系统临时目录内的测试槽位根"
+        );
+        fs::remove_dir_all(&self.root).expect("测试槽位临时目录必须可清理");
+    }
+}
+
+#[cfg(test)]
+fn create_scoped_test_store_root(temporary_root: &Path, label: &str) -> PathBuf {
+    assert!(
+        !label.is_empty()
+            && label
+                .bytes()
+                .all(|byte| byte.is_ascii_lowercase() || byte == b'_'),
+        "测试槽位标签只能使用小写 ASCII 与下划线"
+    );
+    for _ in 0..TEMP_FILE_ATTEMPTS {
+        let mut suffix = [0_u8; 16];
+        fill_random(&mut suffix).expect("测试槽位目录随机后缀应生成成功");
+        let root = temporary_root.join(format!(
+            "kelivo_secure_core_c_abi_{label}_{}",
+            encode_hex(&suffix)
+        ));
+        match fs::create_dir(&root) {
+            Ok(()) => {
+                let canonical_root = root.canonicalize().expect("测试槽位根必须可解析");
+                assert!(
+                    canonical_root.starts_with(temporary_root),
+                    "测试槽位根必须位于系统临时目录"
+                );
+                return canonical_root;
+            }
+            Err(error) if error.kind() == ErrorKind::AlreadyExists => continue,
+            Err(error) => panic!("测试槽位根创建失败：{error}"),
+        }
+    }
+    panic!("无法分配唯一测试槽位根")
+}
+
+#[cfg(test)]
+#[derive(Debug, Eq, PartialEq)]
+struct ProductionEntrySnapshot {
+    name: OsString,
+    attributes: u32,
+    creation_time: u64,
+    last_write_time: u64,
+    length: u64,
+}
+
+#[cfg(test)]
+#[derive(Debug, Eq, PartialEq)]
+enum ProductionStoreSnapshot {
+    Missing,
+    Present {
+        attributes: u32,
+        creation_time: u64,
+        last_write_time: u64,
+        entries: Vec<ProductionEntrySnapshot>,
+    },
+}
+
+#[cfg(test)]
+pub(super) struct ProductionStoreCanary {
+    root: PathBuf,
+    before: ProductionStoreSnapshot,
+}
+
+#[cfg(test)]
+impl ProductionStoreCanary {
+    pub(super) fn capture() -> Self {
+        let root = production_store_root().expect("生产槽位根必须可解析");
+        let before = snapshot_production_store(&root).expect("生产槽位 canary 必须可读取元数据");
+        Self { root, before }
+    }
+
+    pub(super) fn assert_unchanged(self) {
+        let after =
+            snapshot_production_store(&self.root).expect("生产槽位 canary 必须可复查元数据");
+        assert_eq!(after, self.before, "C ABI 测试不得改动生产槽位目录");
+    }
+}
+
+#[cfg(test)]
+fn snapshot_production_store(path: &Path) -> std::io::Result<ProductionStoreSnapshot> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            return Ok(ProductionStoreSnapshot::Missing);
+        }
+        Err(error) => return Err(error),
+    };
+    let mut entries = Vec::new();
+    // Canary 只取元数据且不跟随重解析根；它用于证明测试未触碰生产存储，不读取槽内容。
+    if metadata.file_type().is_dir()
+        && metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT == 0
+    {
+        for entry in fs::read_dir(path)? {
+            let entry = entry?;
+            let entry_metadata = fs::symlink_metadata(entry.path())?;
+            entries.push(ProductionEntrySnapshot {
+                name: entry.file_name(),
+                attributes: entry_metadata.file_attributes(),
+                creation_time: entry_metadata.creation_time(),
+                last_write_time: entry_metadata.last_write_time(),
+                length: entry_metadata.len(),
+            });
+        }
+    }
+    entries.sort_by(|left, right| left.name.cmp(&right.name));
+    Ok(ProductionStoreSnapshot::Present {
+        attributes: metadata.file_attributes(),
+        creation_time: metadata.creation_time(),
+        last_write_time: metadata.last_write_time(),
+        entries,
+    })
 }
 
 struct SlotStore {
@@ -162,6 +365,24 @@ impl SlotStore {
         };
         let slot_name = Self::slot_name(slot_id);
         delete_slot_file(&directory, OsStr::new(&slot_name))
+    }
+
+    fn delete_all_slots(&self) -> Result<(), KelivoStatus> {
+        let Some(directory) = open_directory_chain(&self.root)? else {
+            return Ok(());
+        };
+        let entries = enumerate_directory_entries(&directory)?;
+        for entry in &entries {
+            validate_deletable_entry(entry)?;
+        }
+        for entry in entries {
+            delete_slot_file(&directory, &entry.name)?;
+        }
+        if enumerate_directory_entries(&directory)?.is_empty() {
+            Ok(())
+        } else {
+            Err(KelivoStatus::IoFailure)
+        }
     }
 
     fn slot_name(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> String {
@@ -250,7 +471,7 @@ fn open_directory_chain_with_mode(
         match nt_create_relative(
             &directory,
             &component,
-            FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+            FILE_LIST_DIRECTORY | FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
             FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE,
             disposition,
             FILE_DIRECTORY_FILE | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
@@ -576,6 +797,137 @@ fn validate_slot_file_attributes(attributes: u32) -> Result<(), KelivoStatus> {
     Ok(())
 }
 
+struct DirectoryEntry {
+    name: OsString,
+    attributes: u32,
+}
+
+fn enumerate_directory_entries(
+    directory: &DirectoryChainGuard,
+) -> Result<Vec<DirectoryEntry>, KelivoStatus> {
+    let word_count = DIRECTORY_QUERY_BUFFER_SIZE.div_ceil(size_of::<u64>());
+    let mut buffer = vec![0_u64; word_count];
+    let mut entries = Vec::new();
+    let mut restart_scan = true;
+    loop {
+        let mut io_status = IO_STATUS_BLOCK::default();
+        let status = unsafe {
+            NtQueryDirectoryFile(
+                directory.directory.as_raw_handle(),
+                ptr::null_mut(),
+                None,
+                ptr::null(),
+                &mut io_status,
+                buffer.as_mut_ptr().cast(),
+                u32::try_from(DIRECTORY_QUERY_BUFFER_SIZE)
+                    .map_err(|_| KelivoStatus::InternalState)?,
+                FileBothDirectoryInformation,
+                false,
+                ptr::null(),
+                restart_scan,
+            )
+        };
+        restart_scan = false;
+        if status == STATUS_NO_MORE_FILES {
+            break;
+        }
+        if status != 0
+            || io_status.Information == 0
+            || io_status.Information > DIRECTORY_QUERY_BUFFER_SIZE
+        {
+            return Err(KelivoStatus::IoFailure);
+        }
+        parse_directory_entries(buffer.as_ptr().cast(), io_status.Information, &mut entries)?;
+    }
+    Ok(entries)
+}
+
+fn parse_directory_entries(
+    buffer: *const u8,
+    buffer_length: usize,
+    output: &mut Vec<DirectoryEntry>,
+) -> Result<(), KelivoStatus> {
+    let file_name_offset = core::mem::offset_of!(FILE_BOTH_DIR_INFORMATION, FileName);
+    let mut offset = 0_usize;
+    loop {
+        let remaining = buffer_length
+            .checked_sub(offset)
+            .ok_or(KelivoStatus::IoFailure)?;
+        if remaining < file_name_offset {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let information =
+            unsafe { ptr::read_unaligned(buffer.add(offset).cast::<FILE_BOTH_DIR_INFORMATION>()) };
+        let file_name_length =
+            usize::try_from(information.FileNameLength).map_err(|_| KelivoStatus::IoFailure)?;
+        if file_name_length % size_of::<u16>() != 0
+            || file_name_length > remaining - file_name_offset
+        {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let file_name = unsafe {
+            slice::from_raw_parts(
+                buffer.add(offset + file_name_offset).cast::<u16>(),
+                file_name_length / size_of::<u16>(),
+            )
+        };
+        let name = OsString::from_wide(file_name);
+        if name != "." && name != ".." {
+            output.push(DirectoryEntry {
+                name,
+                attributes: information.FileAttributes,
+            });
+        }
+
+        if information.NextEntryOffset == 0 {
+            break;
+        }
+        let next_offset =
+            usize::try_from(information.NextEntryOffset).map_err(|_| KelivoStatus::IoFailure)?;
+        if next_offset < file_name_offset + file_name_length || next_offset >= remaining {
+            return Err(KelivoStatus::IoFailure);
+        }
+        offset = offset
+            .checked_add(next_offset)
+            .ok_or(KelivoStatus::IoFailure)?;
+    }
+    Ok(())
+}
+
+fn validate_deletable_entry(entry: &DirectoryEntry) -> Result<(), KelivoStatus> {
+    validate_slot_file_attributes(entry.attributes)?;
+    let name = entry.name.to_str().ok_or(KelivoStatus::IoFailure)?;
+    if is_slot_file_name(name) || is_temporary_slot_file_name(name) {
+        Ok(())
+    } else {
+        Err(KelivoStatus::IoFailure)
+    }
+}
+
+fn is_slot_file_name(name: &str) -> bool {
+    name.len() == KEY_SLOT_ID_SIZE * 2 + 4
+        && name.ends_with(".bin")
+        && is_lower_hex(&name[..KEY_SLOT_ID_SIZE * 2])
+}
+
+fn is_temporary_slot_file_name(name: &str) -> bool {
+    let slot_name_length = KEY_SLOT_ID_SIZE * 2 + 4;
+    let suffix_length = 16 * 2;
+    let expected_length = 1 + slot_name_length + 1 + suffix_length + 4;
+    name.len() == expected_length
+        && name.starts_with('.')
+        && is_slot_file_name(&name[1..1 + slot_name_length])
+        && &name[1 + slot_name_length..2 + slot_name_length] == "."
+        && is_lower_hex(&name[2 + slot_name_length..2 + slot_name_length + suffix_length])
+        && name.ends_with(".tmp")
+}
+
+fn is_lower_hex(value: &str) -> bool {
+    value
+        .bytes()
+        .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
 fn encode_slot_file(protected_key: &[u8]) -> Result<Vec<u8>, KelivoStatus> {
     if protected_key.is_empty() || protected_key.len() > MAX_PROTECTED_KEY_SIZE {
         return Err(KelivoStatus::SlotDataInvalid);
@@ -726,6 +1078,23 @@ fn encode_hex(input: &[u8]) -> String {
 mod tests {
     use super::*;
     use std::{fs, os::windows::fs::symlink_file, process::Command};
+
+    #[test]
+    fn native_test_default_store_requires_explicit_temporary_scope() {
+        let _serialization_guard = test_store_serialization_lock()
+            .lock()
+            .expect("测试槽位作用域串行锁不得中毒");
+        assert!(
+            test_store_root()
+                .lock()
+                .expect("测试槽位根状态不得中毒")
+                .is_none()
+        );
+        match default_store() {
+            Ok(_) => panic!("测试态默认存储不得回落生产目录"),
+            Err(status) => assert_eq!(status, KelivoStatus::InternalState),
+        }
+    }
 
     fn create_test_store(label: &str) -> (SlotStore, PathBuf) {
         let mut suffix = [0_u8; 16];
@@ -1021,6 +1390,87 @@ mod tests {
 
         assert_eq!(external_contents, sentinel);
         assert!(link_remains, "失败关闭不得移除符号链接");
+        expect_empty_status(result, KelivoStatus::IoFailure);
+    }
+
+    #[test]
+    fn all_slots_delete_removes_slot_files_and_legacy_temporary_files() {
+        let (store, root) = create_test_store("delete_all");
+        let first_slot_id = [0x71; KEY_SLOT_ID_SIZE];
+        let second_slot_id = [0x72; KEY_SLOT_ID_SIZE];
+        let _first_key = store
+            .create_slot(&first_slot_id)
+            .expect("首个测试槽应创建成功");
+        let _second_key = store
+            .create_slot(&second_slot_id)
+            .expect("第二个测试槽应创建成功");
+        let temporary_name = format!(
+            ".{}.{}.tmp",
+            SlotStore::slot_name(&first_slot_id),
+            "ab".repeat(16)
+        );
+        fs::write(root.join(&temporary_name), b"legacy-partial-write")
+            .expect("遗留临时文件应创建成功");
+
+        store.delete_all_slots().expect("全部槽材料应删除成功");
+
+        assert!(!store.slot_path(&first_slot_id).exists());
+        assert!(!store.slot_path(&second_slot_id).exists());
+        assert!(!root.join(temporary_name).exists());
+        store.delete_all_slots().expect("空目录应幂等删除成功");
+        fs::remove_dir_all(root).expect("测试目录应清理成功");
+    }
+
+    #[test]
+    fn all_slots_delete_rejects_unknown_entry_before_deleting_valid_slots() {
+        let (store, root) = create_test_store("delete_all_unknown");
+        let slot_id = [0x73; KEY_SLOT_ID_SIZE];
+        let _key = store.create_slot(&slot_id).expect("测试槽应创建成功");
+        let unknown = root.join("unexpected-entry");
+        fs::write(&unknown, b"must-not-be-touched").expect("异常条目应创建成功");
+
+        let result = store.delete_all_slots();
+
+        assert!(
+            store.slot_path(&slot_id).exists(),
+            "预检失败不得先删除合法槽"
+        );
+        assert_eq!(
+            fs::read(&unknown).expect("异常条目应保持原样"),
+            b"must-not-be-touched"
+        );
+        fs::remove_dir_all(root).expect("测试目录应清理成功");
+        expect_empty_status(result, KelivoStatus::IoFailure);
+    }
+
+    #[test]
+    fn all_slots_delete_rejects_reparse_entry_without_touching_external_target() {
+        let (_unused_store, sandbox) = create_test_store("delete_all_reparse");
+        let root = sandbox.join("slots");
+        fs::create_dir(&root).expect("槽目录应创建成功");
+        let store = SlotStore::new(root.clone());
+        let valid_slot_id = [0x74; KEY_SLOT_ID_SIZE];
+        let linked_slot_id = [0x75; KEY_SLOT_ID_SIZE];
+        let _key = store
+            .create_slot(&valid_slot_id)
+            .expect("合法测试槽应创建成功");
+        let external = sandbox.join("external.bin");
+        fs::write(&external, b"external-must-remain").expect("外部目标应创建成功");
+        symlink_file(&external, store.slot_path(&linked_slot_id))
+            .expect("伪装为槽位的重解析点应创建成功");
+
+        let result = store.delete_all_slots();
+
+        assert!(
+            store.slot_path(&valid_slot_id).exists(),
+            "重解析点预检失败不得删除其他合法槽"
+        );
+        assert_eq!(
+            fs::read(&external).expect("外部目标不得被删除"),
+            b"external-must-remain"
+        );
+        fs::remove_file(store.slot_path(&linked_slot_id)).expect("测试链接应清理成功");
+        fs::remove_dir_all(sandbox).expect("测试目录应清理成功");
         expect_empty_status(result, KelivoStatus::IoFailure);
     }
 

@@ -5,6 +5,7 @@ use super::{
 };
 use core_foundation::{
     base::{TCFType, kCFAllocatorDefault, kCFAllocatorNull},
+    boolean::CFBoolean,
     data::CFData,
     dictionary::CFDictionary,
     string::CFString,
@@ -17,8 +18,11 @@ use security_framework::{
 };
 use security_framework_sys::{
     base::{errSecAuthFailed, errSecDuplicateItem, errSecItemNotFound, errSecSuccess},
-    item::kSecValueData,
-    keychain_item::SecItemAdd,
+    item::{
+        kSecAttrService, kSecAttrSynchronizable, kSecClass, kSecClassGenericPassword,
+        kSecUseDataProtectionKeychain, kSecValueData,
+    },
+    keychain_item::{SecItemAdd, SecItemDelete},
     random::{SecRandomCopyBytes, kSecRandomDefault},
 };
 use std::ptr;
@@ -58,6 +62,29 @@ pub(super) fn open_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, Ke
 
 pub(super) fn delete_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<(), KelivoStatus> {
     delete_generic_password_options(slot_options(slot_id)).or_else(map_delete_error)
+}
+
+pub(super) fn delete_all_slots() -> Result<(), KelivoStatus> {
+    let query = CFDictionary::from_CFType_pairs(&[
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecClass) },
+            unsafe { CFString::wrap_under_get_rule(kSecClassGenericPassword) }.into_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecAttrService) },
+            CFString::from(SLOT_SERVICE).into_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecAttrSynchronizable) },
+            CFBoolean::from(false).into_CFType(),
+        ),
+        (
+            unsafe { CFString::wrap_under_get_rule(kSecUseDataProtectionKeychain) },
+            CFBoolean::from(true).into_CFType(),
+        ),
+    ]);
+    let status = unsafe { SecItemDelete(query.as_concrete_TypeRef()) };
+    map_delete_all_status(status)
 }
 
 fn copy_opened_key(source: &[u8]) -> Result<LocalKey, KelivoStatus> {
@@ -139,6 +166,16 @@ fn map_delete_error(error: Error) -> Result<(), KelivoStatus> {
     }
 }
 
+fn map_delete_all_status(status: i32) -> Result<(), KelivoStatus> {
+    if status == errSecSuccess || status == errSecItemNotFound {
+        Ok(())
+    } else if status == errSecAuthFailed {
+        Err(KelivoStatus::SlotUnwrapFailed)
+    } else {
+        Err(KelivoStatus::SecureStorageUnavailable)
+    }
+}
+
 fn encode_hex(bytes: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
     let mut output = String::with_capacity(bytes.len() * 2);
@@ -179,6 +216,16 @@ mod tests {
         );
         assert_eq!(
             map_delete_error(Error::from_code(-50)),
+            Err(KelivoStatus::SecureStorageUnavailable)
+        );
+        assert_eq!(map_delete_all_status(errSecSuccess), Ok(()));
+        assert_eq!(map_delete_all_status(errSecItemNotFound), Ok(()));
+        assert_eq!(
+            map_delete_all_status(errSecAuthFailed),
+            Err(KelivoStatus::SlotUnwrapFailed)
+        );
+        assert_eq!(
+            map_delete_all_status(-50),
             Err(KelivoStatus::SecureStorageUnavailable)
         );
     }

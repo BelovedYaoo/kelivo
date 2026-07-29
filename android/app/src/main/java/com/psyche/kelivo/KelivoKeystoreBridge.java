@@ -112,6 +112,17 @@ public final class KelivoKeystoreBridge {
         return target.position();
     }
 
+    @Keep
+    public static void deleteWrappingKey() throws GeneralSecurityException {
+        synchronized (KEY_LOCK) {
+            final KeyStore keyStore = loadKeyStore();
+            keyStore.deleteEntry(WRAPPING_KEY_ALIAS);
+            if (keyStore.containsAlias(WRAPPING_KEY_ALIAS)) {
+                throw new GeneralSecurityException("Android Keystore 包装密钥删除后仍然存在");
+            }
+        }
+    }
+
     private static ByteBuffer requireDirectInput(
             ByteBuffer buffer,
             int expectedSize,
