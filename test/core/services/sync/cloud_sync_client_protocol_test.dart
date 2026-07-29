@@ -5724,6 +5724,167 @@ void main() {
     );
   });
 
+  test('E2EE 附件上传协调器在源文件认证边界响应取消且不固化失败', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(List<int>.filled(128 * 1024, 0x35)),
+    );
+    addTearDown(fixture.close);
+    final cancellation = _AttachmentCancellationSignal();
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 4,
+      maximumAttachmentBytes: 2 * 1024 * 1024,
+      maximumDuration: const Duration(seconds: 5),
+      abortInFlightNetwork: () {},
+      cancellationSignal: cancellation,
+    );
+    addTearDown(budget.dispose);
+    fixture.fileStore.beforeOpenVerifiedContent = cancellation.cancel;
+
+    await expectLater(
+      fixture.coordinator.advance(4, executionBudget: budget),
+      throwsA(isA<E2eeSyncExecutionCancelled>()),
+    );
+    expect(fixture.fileStore.verifiedContentOpens, 0);
+    expect(fixture.transport.remoteCalls, 0);
+    final released = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(released!.terminalFailureKind, isNull);
+  });
+
+  test('E2EE 附件上传协调器在源文件认证边界保留截止异常', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(List<int>.filled(128 * 1024, 0x39)),
+    );
+    addTearDown(fixture.close);
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 4,
+      maximumAttachmentBytes: 2 * 1024 * 1024,
+      maximumDuration: const Duration(milliseconds: 5),
+      abortInFlightNetwork: () {},
+    );
+    addTearDown(budget.dispose);
+    fixture.fileStore.beforeOpenVerifiedContent = () {
+      sleep(const Duration(milliseconds: 20));
+    };
+
+    await expectLater(
+      fixture.coordinator.advance(4, executionBudget: budget),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+    expect(fixture.fileStore.verifiedContentOpens, 0);
+    expect(fixture.transport.remoteCalls, 0);
+    final released = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(released!.terminalFailureKind, isNull);
+  });
+
+  test('E2EE 附件上传协调器在分块读取边界响应取消且不创建 staging', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(List<int>.filled(128 * 1024, 0x36)),
+    );
+    addTearDown(fixture.close);
+    expect(await fixture.coordinator.advance(1), 1);
+
+    final cancellation = _AttachmentCancellationSignal();
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 3,
+      maximumAttachmentBytes: 2 * 1024 * 1024,
+      maximumDuration: const Duration(seconds: 5),
+      abortInFlightNetwork: () {},
+      cancellationSignal: cancellation,
+    );
+    addTearDown(budget.dispose);
+    fixture.fileStore.beforeVerifiedChunkRead = cancellation.cancel;
+
+    await expectLater(
+      fixture.coordinator.advance(3, executionBudget: budget),
+      throwsA(isA<E2eeSyncExecutionCancelled>()),
+    );
+    expect(fixture.transport.putAttempts, isEmpty);
+    final released = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(released!.pendingChunk, isNull);
+    expect(released.terminalFailureKind, isNull);
+  });
+
+  test('E2EE 附件上传协调器在 staging 写入边界响应取消且不转移所有权', () async {
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(List<int>.filled(128 * 1024, 0x37)),
+    );
+    addTearDown(fixture.close);
+    expect(await fixture.coordinator.advance(1), 1);
+
+    final cancellation = _AttachmentCancellationSignal();
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 3,
+      maximumAttachmentBytes: 2 * 1024 * 1024,
+      maximumDuration: const Duration(seconds: 5),
+      abortInFlightNetwork: () {},
+      cancellationSignal: cancellation,
+    );
+    addTearDown(budget.dispose);
+    fixture.fileStore.beforePublish = cancellation.cancel;
+
+    await expectLater(
+      fixture.coordinator.advance(3, executionBudget: budget),
+      throwsA(isA<E2eeSyncExecutionCancelled>()),
+    );
+    expect(fixture.transport.putAttempts, isEmpty);
+    final released = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(released!.pendingChunk, isNull);
+    expect(released.terminalFailureKind, isNull);
+  });
+
+  test('E2EE 附件上传协调器在 pending 密文读取边界响应取消并保留断点', () async {
+    final transport = _AttachmentUploadTransport(
+      retryablePutFailuresRemaining: 1,
+    );
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(List<int>.filled(128 * 1024, 0x38)),
+      transport: transport,
+    );
+    addTearDown(fixture.close);
+    expect(await fixture.coordinator.advance(2), 2);
+    final pending = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(pending!.pendingChunk, isNotNull);
+    final completedReadsBeforeCancellation =
+        fixture.fileStore.completedVerifiedReads;
+    fixture.clock.value = pending.nextAttemptAt;
+
+    final cancellation = _AttachmentCancellationSignal();
+    final budget = E2eeSyncExecutionBudget(
+      maximumNetworkSteps: 2,
+      maximumAttachmentBytes: 2 * 1024 * 1024,
+      maximumDuration: const Duration(seconds: 5),
+      abortInFlightNetwork: () {},
+      cancellationSignal: cancellation,
+    );
+    addTearDown(budget.dispose);
+    fixture.fileStore.beforeReadVerified = cancellation.cancel;
+
+    await expectLater(
+      fixture.coordinator.advance(2, executionBudget: budget),
+      throwsA(isA<E2eeSyncExecutionCancelled>()),
+    );
+    expect(
+      fixture.fileStore.completedVerifiedReads,
+      completedReadsBeforeCancellation,
+    );
+    expect(transport.putAttempts, hasLength(1));
+    final retained = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(retained!.pendingChunk, isNotNull);
+    expect(retained.terminalFailureKind, isNull);
+  });
+
   test('E2EE 附件上传协调器在源认证耗尽租约后重新 claim 才发起远端请求', () async {
     final fixture = await _AttachmentUploadFixture.create(
       plaintext: Uint8List.fromList(<int>[5, 6]),
@@ -5806,6 +5967,130 @@ void main() {
     );
   });
 
+  test('E2EE 附件上传协调器在途取消仅释放 create chunk commit 租约', () async {
+    for (final stage in <String>['create', 'chunk', 'commit']) {
+      final transport = _AttachmentUploadTransport();
+      final fixture = await _AttachmentUploadFixture.create(
+        plaintext: Uint8List.fromList(<int>[8, 9, 10]),
+        transport: transport,
+      );
+      try {
+        switch (stage) {
+          case 'chunk':
+            expect(await fixture.coordinator.advance(1), 1);
+          case 'commit':
+            expect(await fixture.coordinator.advance(2), 2);
+        }
+
+        final started = Completer<void>();
+        final release = Completer<void>();
+        Future<void> blockInFlight() {
+          started.complete();
+          return release.future;
+        }
+
+        const cancellation = CloudSyncException(
+          kind: CloudSyncFailureKind.cancelled,
+          retryable: false,
+        );
+        switch (stage) {
+          case 'create':
+            transport
+              ..beforeCreate = blockInFlight
+              ..createFailure = cancellation;
+          case 'chunk':
+            transport
+              ..beforePut = blockInFlight
+              ..putFailure = cancellation;
+          case 'commit':
+            transport
+              ..beforeCommit = blockInFlight
+              ..commitFailure = cancellation;
+        }
+
+        final advance = fixture.coordinator.advance(1);
+        await started.future;
+        release.complete();
+        await expectLater(
+          advance,
+          throwsA(
+            isA<CloudSyncException>().having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.cancelled,
+            ),
+          ),
+          reason: stage,
+        );
+        final released = await fixture.commands.readByAttachmentId(
+          fixture.descriptor.attachmentId,
+        );
+        expect(released!.terminalFailureKind, isNull, reason: stage);
+
+        transport
+          ..beforeCreate = null
+          ..beforePut = null
+          ..beforeCommit = null
+          ..createFailure = null
+          ..putFailure = null
+          ..commitFailure = null;
+        expect(await fixture.coordinator.advance(4), greaterThan(0));
+        expect(
+          (await fixture.commands.readByAttachmentId(
+            fixture.descriptor.attachmentId,
+          ))!.phase,
+          E2eeAttachmentUploadPhase.committed,
+          reason: stage,
+        );
+      } finally {
+        await fixture.close();
+      }
+    }
+  });
+
+  test('E2EE 附件上传协调器保留终止认证错误供上层退役会话', () async {
+    for (final kind in <CloudSyncFailureKind>[
+      CloudSyncFailureKind.unauthenticated,
+      CloudSyncFailureKind.forbidden,
+    ]) {
+      final transport = _AttachmentUploadTransport(
+        createFailure: CloudSyncException(kind: kind, retryable: false),
+      );
+      final fixture = await _AttachmentUploadFixture.create(
+        plaintext: Uint8List.fromList(<int>[9, 10, 11]),
+        transport: transport,
+      );
+      try {
+        await expectLater(
+          fixture.coordinator.advance(1),
+          throwsA(
+            isA<CloudSyncException>().having(
+              (error) => error.kind,
+              'kind',
+              kind,
+            ),
+          ),
+          reason: kind.name,
+        );
+        final released = await fixture.commands.readByAttachmentId(
+          fixture.descriptor.attachmentId,
+        );
+        expect(released!.terminalFailureKind, isNull, reason: kind.name);
+        transport.createFailure = null;
+        expect(await fixture.coordinator.advance(3), 3, reason: kind.name);
+        expect(
+          (await fixture.commands.readByAttachmentId(
+            fixture.descriptor.attachmentId,
+          ))!.phase,
+          E2eeAttachmentUploadPhase.committed,
+          reason: kind.name,
+        );
+      } finally {
+        await fixture.close();
+      }
+    }
+  });
+
   test('E2EE 附件上传协调器将不可重试响应固化为终止状态', () async {
     final transport = _AttachmentUploadTransport(
       permanentPutFailure: const CloudSyncException(
@@ -5828,6 +6113,24 @@ void main() {
     fixture.clock.value = fixture.clock.value.add(const Duration(days: 1));
     expect(await fixture.coordinator.advance(10), 0);
     expect(transport.putAttempts, hasLength(1));
+  });
+
+  test('E2EE 附件上传协调器仍将远端身份错配响应固化为终止状态', () async {
+    final transport = _AttachmentUploadTransport(
+      returnInvalidCreateResponse: true,
+    );
+    final fixture = await _AttachmentUploadFixture.create(
+      plaintext: Uint8List.fromList(<int>[11, 12]),
+      transport: transport,
+    );
+    addTearDown(fixture.close);
+
+    expect(await fixture.coordinator.advance(1), 1);
+    final terminal = await fixture.commands.readByAttachmentId(
+      fixture.descriptor.attachmentId,
+    );
+    expect(terminal!.terminalFailureKind, 'remote-invalid-response');
+    expect(transport.createRequests, hasLength(1));
   });
 
   test('E2EE 附件上传协调器在任何远端写入前终止源摘要错配', () async {
@@ -6306,6 +6609,47 @@ void main() {
       isTrue,
     );
 
+    final boundedLocation = E2eeAttachmentFileLocation.stagingUploadChunk(
+      chunk: CloudSyncAttachmentChunkIdentity(
+        identity: identity,
+        chunkIndex: 997,
+      ),
+      mutationId: _mutationId3,
+    );
+    final boundedCiphertext = Uint8List.fromList(
+      List<int>.filled(3 * 64 * 1024, 0x61),
+    );
+    for (final interruptAt in <int>[3, 8]) {
+      var stagingChecks = 0;
+      await expectLater(
+        store.publish(
+          location: boundedLocation,
+          source: Stream<List<int>>.value(boundedCiphertext),
+          checkCanContinue: () {
+            stagingChecks++;
+            if (stagingChecks == interruptAt) {
+              throw const E2eeSyncDeadlineExceeded();
+            }
+          },
+        ),
+        throwsA(isA<E2eeSyncDeadlineExceeded>()),
+      );
+      expect(stagingChecks, interruptAt);
+      expect(
+        await File(
+          p.join(stagingDirectory.path, '997-$_mutationId3.ciphertext'),
+        ).exists(),
+        isFalse,
+      );
+      expect(
+        await stagingDirectory
+            .list(followLinks: false)
+            .where((entity) => p.basename(entity.path).endsWith('.next'))
+            .isEmpty,
+        isTrue,
+      );
+    }
+
     await expectLater(
       store.readVerified(
         E2eeAttachmentStoredFile(
@@ -6375,6 +6719,41 @@ void main() {
     );
     expect(await contentReader.readChunk(1), orderedEquals(<int>[12, 13]));
     await contentReader.close();
+
+    final boundedContent = Uint8List.fromList(
+      List<int>.filled(3 * 64 * 1024, 0x62),
+    );
+    final boundedContentDigest = Uint8List.fromList(
+      sha256.convert(boundedContent).bytes,
+    );
+    final boundedContentStored = await store.publish(
+      location: E2eeAttachmentFileLocation.content(
+        contentSha256: boundedContentDigest,
+      ),
+      source: Stream<List<int>>.value(boundedContent),
+    );
+    var verificationChecks = 0;
+    await expectLater(
+      store.openVerifiedContent(
+        storedFile: boundedContentStored,
+        chunkPlaintextBytes: <int>[boundedContent.length],
+        checkCanContinue: () {
+          verificationChecks++;
+          if (verificationChecks == 6) {
+            throw const E2eeSyncExecutionCancelled();
+          }
+        },
+      ),
+      throwsA(isA<E2eeSyncExecutionCancelled>()),
+    );
+    expect(verificationChecks, 6);
+    final renamedBoundedContent = File(
+      '${boundedContentStored.storagePath}.moved',
+    );
+    await File(
+      boundedContentStored.storagePath,
+    ).rename(renamedBoundedContent.path);
+    await renamedBoundedContent.rename(boundedContentStored.storagePath);
     await store.verifyContent(contentStored);
     await expectLater(
       store.readContentRange(storedFile: contentStored, offset: -1, length: 1),
@@ -7826,6 +8205,51 @@ final class _MutableAttachmentClock {
   DateTime call() => value;
 }
 
+final class _AttachmentCancellationSignal
+    implements E2eeSyncCancellationSignal {
+  final Set<void Function()> _listeners = <void Function()>{};
+  bool _cancelled = false;
+
+  @override
+  E2eeSyncCancellationRegistration register(void Function() onCancelled) {
+    if (_cancelled) {
+      onCancelled();
+      return _AttachmentCancellationRegistration.noop();
+    }
+    _listeners.add(onCancelled);
+    return _AttachmentCancellationRegistration(() {
+      _listeners.remove(onCancelled);
+    });
+  }
+
+  void cancel() {
+    if (_cancelled) return;
+    _cancelled = true;
+    final listeners = _listeners.toList(growable: false);
+    _listeners.clear();
+    for (final listener in listeners) {
+      listener();
+    }
+  }
+}
+
+final class _AttachmentCancellationRegistration
+    implements E2eeSyncCancellationRegistration {
+  _AttachmentCancellationRegistration.noop() : _unregister = null;
+
+  _AttachmentCancellationRegistration(this._unregister);
+
+  final void Function()? _unregister;
+  bool _registered = true;
+
+  @override
+  void unregister() {
+    if (!_registered) return;
+    _registered = false;
+    _unregister?.call();
+  }
+}
+
 final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
   _AttachmentTestFileStore(this._delegate, {this.transientVerifyFailures = 0});
 
@@ -7833,10 +8257,14 @@ final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
   int transientVerifyFailures;
   bool rejectPendingReads = false;
   bool reportPendingMissing = false;
+  void Function()? beforeReadVerified;
   void Function()? beforeOpenVerifiedContent;
+  void Function()? beforeVerifiedChunkRead;
+  void Function()? beforePublish;
   void Function(E2eeAttachmentStoredFile stored)? afterPublish;
   int verifiedContentCloseFailures = 0;
   int verifiedContentOpens = 0;
+  int completedVerifiedReads = 0;
   int verifiedChunkReads = 0;
   int unverifiedRangeReads = 0;
 
@@ -7844,14 +8272,26 @@ final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
   Future<E2eeAttachmentStoredFile> publish({
     required E2eeAttachmentFileLocation location,
     required Stream<List<int>> source,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
   }) async {
-    final stored = await _delegate.publish(location: location, source: source);
+    beforePublish?.call();
+    checkCanContinue?.call();
+    final stored = await _delegate.publish(
+      location: location,
+      source: source,
+      checkCanContinue: checkCanContinue,
+    );
     afterPublish?.call(stored);
     return stored;
   }
 
   @override
-  Future<Uint8List> readVerified(E2eeAttachmentStoredFile storedFile) {
+  Future<Uint8List> readVerified(
+    E2eeAttachmentStoredFile storedFile, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) async {
+    beforeReadVerified?.call();
+    checkCanContinue?.call();
     if (rejectPendingReads) {
       if (reportPendingMissing) {
         throw FileSystemException(
@@ -7861,7 +8301,12 @@ final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
       }
       throw const FormatException('e2ee_attachment_file_integrity');
     }
-    return _delegate.readVerified(storedFile);
+    final bytes = await _delegate.readVerified(
+      storedFile,
+      checkCanContinue: checkCanContinue,
+    );
+    completedVerifiedReads++;
+    return bytes;
   }
 
   @override
@@ -7882,8 +8327,10 @@ final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
   Future<E2eeAttachmentVerifiedContent> openVerifiedContent({
     required E2eeAttachmentStoredFile storedFile,
     required List<int> chunkPlaintextBytes,
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
   }) async {
     beforeOpenVerifiedContent?.call();
+    checkCanContinue?.call();
     if (transientVerifyFailures > 0) {
       transientVerifyFailures--;
       throw FileSystemException('temporary-sharing-violation');
@@ -7891,6 +8338,7 @@ final class _AttachmentTestFileStore implements E2eeAttachmentFileStore {
     final reader = await _delegate.openVerifiedContent(
       storedFile: storedFile,
       chunkPlaintextBytes: chunkPlaintextBytes,
+      checkCanContinue: checkCanContinue,
     );
     verifiedContentOpens++;
     return _AttachmentTestVerifiedContent(reader, this);
@@ -7963,9 +8411,14 @@ final class _AttachmentTestVerifiedContent
   final _AttachmentTestFileStore _owner;
 
   @override
-  Future<Uint8List> readChunk(int chunkIndex) {
+  Future<Uint8List> readChunk(
+    int chunkIndex, {
+    E2eeAttachmentCheckCanContinue? checkCanContinue,
+  }) {
     _owner.verifiedChunkReads++;
-    return _delegate.readChunk(chunkIndex);
+    _owner.beforeVerifiedChunkRead?.call();
+    checkCanContinue?.call();
+    return _delegate.readChunk(chunkIndex, checkCanContinue: checkCanContinue);
   }
 
   @override
@@ -7994,10 +8447,19 @@ final class _AttachmentUploadTransport implements CloudSyncAttachmentTransport {
   _AttachmentUploadTransport({
     this.retryablePutFailuresRemaining = 0,
     this.permanentPutFailure,
+    this.createFailure,
+    this.returnInvalidCreateResponse = false,
   });
 
   int retryablePutFailuresRemaining;
   final CloudSyncException? permanentPutFailure;
+  CloudSyncException? createFailure;
+  final bool returnInvalidCreateResponse;
+  CloudSyncException? putFailure;
+  CloudSyncException? commitFailure;
+  Future<void> Function()? beforeCreate;
+  Future<void> Function()? beforePut;
+  Future<void> Function()? beforeCommit;
   void Function()? afterCreate;
   void Function()? afterPut;
   void Function()? afterCommit;
@@ -8016,10 +8478,15 @@ final class _AttachmentUploadTransport implements CloudSyncAttachmentTransport {
     required CloudSyncAttachmentCreateUploadRequest request,
   }) async {
     createRequests.add(request);
+    await beforeCreate?.call();
     afterCreate?.call();
+    final failure = createFailure;
+    if (failure != null) throw failure;
     return CloudSyncAttachmentUpload(
       identity: CloudSyncAttachmentIdentity(
-        attachmentId: request.attachmentId,
+        attachmentId: returnInvalidCreateResponse
+            ? _mutationId3
+            : request.attachmentId,
         uploadId: _uploadId,
         keyEpoch: request.keyEpoch,
       ),
@@ -8041,6 +8508,7 @@ final class _AttachmentUploadTransport implements CloudSyncAttachmentTransport {
         ciphertext: request.ciphertext,
       ),
     );
+    await beforePut?.call();
     afterPut?.call();
     if (retryablePutFailuresRemaining > 0) {
       retryablePutFailuresRemaining--;
@@ -8049,7 +8517,7 @@ final class _AttachmentUploadTransport implements CloudSyncAttachmentTransport {
         retryable: true,
       );
     }
-    final permanent = permanentPutFailure;
+    final permanent = putFailure ?? permanentPutFailure;
     if (permanent != null) throw permanent;
     return CloudSyncAttachmentStoredChunk(
       chunk: request.chunk,
@@ -8063,7 +8531,10 @@ final class _AttachmentUploadTransport implements CloudSyncAttachmentTransport {
     required CloudSyncAttachmentCommitUploadRequest request,
   }) async {
     commitRequests.add(request);
+    await beforeCommit?.call();
     afterCommit?.call();
+    final failure = commitFailure;
+    if (failure != null) throw failure;
     return CloudSyncAttachmentCommittedUpload(
       identity: request.identity,
       committedAt: DateTime.utc(2026, 7, 29, 8, 1),
