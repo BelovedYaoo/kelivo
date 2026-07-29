@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(13)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(14)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -67,12 +67,14 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_INVALID_ATTACHMENT_DATA_KEY_HANDLE INT32_C(36)
 #define KELIVO_STATUS_ATTACHMENT_ENVELOPE_INVALID INT32_C(37)
 #define KELIVO_STATUS_ATTACHMENT_AUTHENTICATION_FAILED INT32_C(38)
+#define KELIVO_STATUS_SLOT_IN_USE INT32_C(39)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
 #define KELIVO_SECURE_STORAGE_BACKEND_WINDOWS_DPAPI UINT32_C(1)
 #define KELIVO_SECURE_STORAGE_BACKEND_ANDROID_KEYSTORE UINT32_C(2)
 #define KELIVO_SECURE_STORAGE_BACKEND_LINUX_SECRET_SERVICE UINT32_C(3)
+#define KELIVO_SECURE_STORAGE_BACKEND_IOS_KEYCHAIN UINT32_C(4)
 #define KELIVO_CAPABILITY_FLAGS_NONE UINT64_C(0)
 #define KELIVO_CAPABILITY_KEY_SLOTS (UINT64_C(1) << 0)
 #define KELIVO_CAPABILITY_BACKGROUND_ACCESS (UINT64_C(1) << 1)
@@ -210,6 +212,16 @@ KELIVO_CORE_API KelivoStatus kelivo_key_slot_open(
     size_t slot_id_length,
     uint32_t policy_version,
     uint64_t *out_handle);
+
+/*
+ * 删除本机平台安全存储中的槽位。目标不存在时幂等成功；同进程仍持有该
+ * 槽位句柄时返回 SLOT_IN_USE。调用方必须先关闭相关句柄，本函数不会代为
+ * 关闭或使已取出的密钥失效；系统存储错误不得伪装为成功。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_key_slot_delete(
+    const uint8_t *slot_id,
+    size_t slot_id_length,
+    uint32_t policy_version);
 
 /*
  * 关闭非零不透明句柄。句柄仅在当前进程内有效，关闭后永久失效且数值不得

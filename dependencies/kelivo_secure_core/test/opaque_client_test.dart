@@ -1,4 +1,5 @@
 import 'dart:io';
+import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
@@ -24,10 +25,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v13 OPAQUE、设备 E2EE、附件加密与账户信任签名支持', () async {
+  test('能力门禁声明 ABI v14 OPAQUE、设备 E2EE、附件加密与账户信任签名支持', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 13);
+    expect(capabilities.abiVersion, 14);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -48,6 +49,45 @@ void main() {
       KelivoSecureStorageBackend.fromCode(4),
       KelivoSecureStorageBackend.iosKeychain,
     );
+  });
+
+  test('本机密钥槽删除要求关闭句柄并可幂等重试', () async {
+    await expectLater(core.deleteSlot(Uint8List(15)), throwsArgumentError);
+    if (!(await core.getCapabilities()).supportsKeySlots) return;
+
+    final random = Random.secure();
+    final slotId = Uint8List.fromList(
+      List<int>.generate(16, (_) => random.nextInt(256)),
+    );
+    await core.deleteSlot(slotId);
+    final handle = await core.createSlot(slotId);
+    try {
+      await expectLater(
+        core.deleteSlot(slotId),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.slotInUse,
+          ),
+        ),
+      );
+    } finally {
+      await core.close(handle);
+      await core.deleteSlot(slotId);
+    }
+
+    await expectLater(
+      core.openSlot(slotId),
+      throwsA(
+        isA<KelivoSecureCoreException>().having(
+          (error) => error.status,
+          'status',
+          KelivoSecureCoreStatus.slotNotFound,
+        ),
+      ),
+    );
+    await core.deleteSlot(slotId);
   });
 
   test('外部设备公钥必须通过安全核心严格验证', () async {

@@ -52,7 +52,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 13;
+const ABI_VERSION: u32 = 14;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -118,6 +118,10 @@ mod platform {
         Err(KelivoStatus::UnsupportedPlatform)
     }
 
+    pub(super) fn delete_slot(_slot_id: &[u8; 16]) -> Result<(), KelivoStatus> {
+        Err(KelivoStatus::UnsupportedPlatform)
+    }
+
     pub(super) fn fill_random(_output: &mut [u8]) -> Result<(), KelivoStatus> {
         Err(KelivoStatus::UnsupportedPlatform)
     }
@@ -180,6 +184,7 @@ pub(crate) enum KelivoStatus {
     InvalidAttachmentDataKeyHandle = 36,
     AttachmentEnvelopeInvalid = 37,
     AttachmentAuthenticationFailed = 38,
+    SlotInUse = 39,
     UnsupportedPlatform = 100,
 }
 
@@ -269,16 +274,11 @@ unsafe fn write_bytes(
     Ok(())
 }
 
-unsafe fn validate_key_slot_request(
+unsafe fn read_key_slot_id(
     slot_id: *const u8,
     slot_id_length: usize,
     policy_version: u32,
-    out_handle: *mut u64,
 ) -> Result<[u8; KEY_SLOT_ID_SIZE], KelivoStatus> {
-    unsafe {
-        write_output(out_handle, INVALID_KEY_HANDLE)?;
-    }
-
     if slot_id.is_null() {
         return Err(KelivoStatus::NullPointer);
     }
@@ -295,8 +295,14 @@ unsafe fn validate_key_slot_request(
     Ok(validated)
 }
 
+struct RegisteredKey {
+    key: Arc<LocalKey>,
+    // 删除按持久槽位判定；测试注入的临时密钥没有平台槽位身份。
+    slot_id: Option<[u8; KEY_SLOT_ID_SIZE]>,
+}
+
 struct KeyRegistry {
-    active: HashMap<u64, Arc<LocalKey>>,
+    active: HashMap<u64, RegisteredKey>,
     next_sequence: u64,
 }
 
@@ -335,7 +341,19 @@ fn key_registry() -> &'static Mutex<KeyRegistry> {
     REGISTRY.get_or_init(|| Mutex::new(KeyRegistry::default()))
 }
 
+#[cfg(test)]
 fn register_key(key: LocalKey) -> Result<u64, KelivoStatus> {
+    register_key_with_slot(key, None)
+}
+
+fn register_slot_key(key: LocalKey, slot_id: [u8; KEY_SLOT_ID_SIZE]) -> Result<u64, KelivoStatus> {
+    register_key_with_slot(key, Some(slot_id))
+}
+
+fn register_key_with_slot(
+    key: LocalKey,
+    slot_id: Option<[u8; KEY_SLOT_ID_SIZE]>,
+) -> Result<u64, KelivoStatus> {
     let mut registry = key_registry()
         .lock()
         .map_err(|_| KelivoStatus::InternalState)?;
@@ -344,7 +362,13 @@ fn register_key(key: LocalKey) -> Result<u64, KelivoStatus> {
         return Err(KelivoStatus::TooManyActiveHandles);
     }
     let handle = issue_typed_handle(KEY_HANDLE_TAG, &mut registry.next_sequence)?;
-    let replaced = registry.active.insert(handle, Arc::new(key));
+    let replaced = registry.active.insert(
+        handle,
+        RegisteredKey {
+            key: Arc::new(key),
+            slot_id,
+        },
+    );
     debug_assert!(replaced.is_none());
     Ok(handle)
 }
@@ -358,7 +382,7 @@ fn key_for_handle(handle: u64) -> Result<Arc<LocalKey>, KelivoStatus> {
         .map_err(|_| KelivoStatus::InternalState)?
         .active
         .get(&handle)
-        .cloned()
+        .map(|entry| Arc::clone(&entry.key))
         .ok_or(KelivoStatus::InvalidKeyHandle)
 }
 
@@ -367,14 +391,44 @@ fn close_key_handle(handle: u64) -> Result<(), KelivoStatus> {
         return Err(KelivoStatus::InvalidKeyHandle);
     }
 
-    let removed = key_registry()
+    let mut registry = key_registry()
         .lock()
-        .map_err(|_| KelivoStatus::InternalState)?
+        .map_err(|_| KelivoStatus::InternalState)?;
+    let entry = registry
+        .active
+        .get(&handle)
+        .ok_or(KelivoStatus::InvalidKeyHandle)?;
+    // 新借用也必须取得同一把注册表锁；计数为一时才能原子移除并清零。
+    if Arc::strong_count(&entry.key) != 1 {
+        return Err(KelivoStatus::SlotInUse);
+    }
+    let removed = registry
         .active
         .remove(&handle)
-        .ok_or(KelivoStatus::InvalidKeyHandle)?;
+        .ok_or(KelivoStatus::InternalState)?;
     drop(removed);
     Ok(())
+}
+
+fn ensure_slot_unused(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<(), KelivoStatus> {
+    let registry = key_registry()
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?;
+    if registry
+        .active
+        .values()
+        .any(|entry| entry.slot_id.as_ref() == Some(slot_id))
+    {
+        Err(KelivoStatus::SlotInUse)
+    } else {
+        Ok(())
+    }
+}
+
+fn key_slot_lifecycle_lock() -> &'static Mutex<()> {
+    // 串行化同进程的打开、创建和擦除，避免删除检查与新句柄注册之间出现窗口。
+    static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+    LOCK.get_or_init(|| Mutex::new(()))
 }
 
 #[unsafe(no_mangle)]
@@ -430,11 +484,16 @@ unsafe fn key_slot_operation(
     out_handle: *mut u64,
     create: bool,
 ) -> i32 {
-    let slot_id = match unsafe {
-        validate_key_slot_request(slot_id, slot_id_length, policy_version, out_handle)
-    } {
+    if let Err(status) = unsafe { write_output(out_handle, INVALID_KEY_HANDLE) } {
+        return status.code();
+    }
+    let slot_id = match unsafe { read_key_slot_id(slot_id, slot_id_length, policy_version) } {
         Ok(slot_id) => slot_id,
         Err(status) => return status.code(),
+    };
+    let _lifecycle_guard = match key_slot_lifecycle_lock().lock() {
+        Ok(guard) => guard,
+        Err(_) => return KelivoStatus::InternalState.code(),
     };
 
     let key = if create {
@@ -442,7 +501,7 @@ unsafe fn key_slot_operation(
     } else {
         platform::open_slot(&slot_id)
     };
-    let handle = match key.and_then(register_key) {
+    let handle = match key.and_then(|key| register_slot_key(key, slot_id)) {
         Ok(handle) => handle,
         Err(status) => return status.code(),
     };
@@ -480,6 +539,33 @@ pub unsafe extern "C" fn kelivo_key_slot_open(
     out_handle: *mut u64,
 ) -> i32 {
     unsafe { key_slot_operation(slot_id, slot_id_length, policy_version, out_handle, false) }
+}
+
+/// # Safety
+///
+/// `slot_id` 必须指向 `slot_id_length` 字节的可读内存。目标槽位缺失时幂等
+/// 成功；同进程仍持有该槽位句柄时拒绝删除。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_key_slot_delete(
+    slot_id: *const u8,
+    slot_id_length: usize,
+    policy_version: u32,
+) -> i32 {
+    let slot_id = match unsafe { read_key_slot_id(slot_id, slot_id_length, policy_version) } {
+        Ok(slot_id) => slot_id,
+        Err(status) => return status.code(),
+    };
+    let _lifecycle_guard = match key_slot_lifecycle_lock().lock() {
+        Ok(guard) => guard,
+        Err(_) => return KelivoStatus::InternalState.code(),
+    };
+    if let Err(status) = ensure_slot_unused(&slot_id) {
+        return status.code();
+    }
+    match platform::delete_slot(&slot_id) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -1184,7 +1270,81 @@ mod tests {
         assert_eq!(handle, INVALID_KEY_HANDLE);
     }
 
-    #[cfg(not(target_os = "windows"))]
+    #[test]
+    fn key_slot_delete_rejects_every_invalid_boundary() {
+        let slot_id = [0_u8; KEY_SLOT_ID_SIZE];
+
+        assert_eq!(
+            unsafe { kelivo_key_slot_delete(ptr::null(), slot_id.len(), KEY_POLICY_VERSION) },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_delete(slot_id.as_ptr(), slot_id.len() - 1, KEY_POLICY_VERSION)
+            },
+            KelivoStatus::InvalidSlotIdLength.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_delete(slot_id.as_ptr(), slot_id.len(), KEY_POLICY_VERSION + 1)
+            },
+            KelivoStatus::UnsupportedPolicy.code()
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn key_slot_delete_requires_closed_handles_and_is_idempotent() {
+        let mut slot_id = [0_u8; KEY_SLOT_ID_SIZE];
+        platform::fill_random(&mut slot_id).expect("删除测试槽位标识应生成成功");
+        assert_eq!(
+            unsafe { kelivo_key_slot_delete(slot_id.as_ptr(), slot_id.len(), KEY_POLICY_VERSION,) },
+            KelivoStatus::Ok.code()
+        );
+
+        let mut handle = INVALID_KEY_HANDLE;
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_create(
+                    slot_id.as_ptr(),
+                    slot_id.len(),
+                    KEY_POLICY_VERSION,
+                    &mut handle,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_ne!(handle, INVALID_KEY_HANDLE);
+        assert_eq!(
+            unsafe { kelivo_key_slot_delete(slot_id.as_ptr(), slot_id.len(), KEY_POLICY_VERSION,) },
+            KelivoStatus::SlotInUse.code()
+        );
+        assert_eq!(kelivo_key_handle_close(handle), KelivoStatus::Ok.code());
+        assert_eq!(
+            unsafe { kelivo_key_slot_delete(slot_id.as_ptr(), slot_id.len(), KEY_POLICY_VERSION,) },
+            KelivoStatus::Ok.code()
+        );
+
+        let mut reopened_handle = 42_u64;
+        assert_eq!(
+            unsafe {
+                kelivo_key_slot_open(
+                    slot_id.as_ptr(),
+                    slot_id.len(),
+                    KEY_POLICY_VERSION,
+                    &mut reopened_handle,
+                )
+            },
+            KelivoStatus::SlotNotFound.code()
+        );
+        assert_eq!(reopened_handle, INVALID_KEY_HANDLE);
+        assert_eq!(
+            unsafe { kelivo_key_slot_delete(slot_id.as_ptr(), slot_id.len(), KEY_POLICY_VERSION,) },
+            KelivoStatus::Ok.code()
+        );
+    }
+
+    #[cfg(not(any(target_os = "android", target_os = "ios", target_os = "windows")))]
     #[test]
     fn unsupported_platform_key_slots_fail_closed() {
         let slot_id = [0_u8; KEY_SLOT_ID_SIZE];
@@ -1202,6 +1362,10 @@ mod tests {
         );
         assert_eq!(handle, INVALID_KEY_HANDLE);
         assert_eq!(
+            unsafe { kelivo_key_slot_delete(slot_id.as_ptr(), slot_id.len(), KEY_POLICY_VERSION,) },
+            KelivoStatus::UnsupportedPlatform.code()
+        );
+        assert_eq!(
             kelivo_key_handle_close(INVALID_KEY_HANDLE),
             KelivoStatus::InvalidKeyHandle.code()
         );
@@ -1213,6 +1377,12 @@ mod tests {
         let first = register_key(Zeroizing::new(vec![1; LOCAL_KEY_SIZE].into_boxed_slice()))
             .expect("首个密钥句柄应注册成功");
         assert_ne!(first, INVALID_KEY_HANDLE);
+        let borrowed = key_for_handle(first).expect("活动句柄应允许借用密钥");
+        assert_eq!(
+            kelivo_key_handle_close(first),
+            KelivoStatus::SlotInUse.code()
+        );
+        drop(borrowed);
         assert_eq!(kelivo_key_handle_close(first), KelivoStatus::Ok.code());
         assert_eq!(
             kelivo_key_handle_close(first),
