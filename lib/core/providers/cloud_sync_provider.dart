@@ -11,6 +11,7 @@ import '../services/sync/cloud_sync_content_runtime.dart';
 import '../services/sync/cloud_sync_terminal_session_retirement.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/sync/e2ee_account_authenticator.dart';
+import '../services/sync/e2ee_device_pairing_membership_commit.dart';
 import '../services/sync/e2ee_mobile_background_sync.dart';
 import '../services/workspace/account_workspace_runtime.dart';
 import '../services/workspace/device_state_blob_store.dart';
@@ -52,6 +53,7 @@ final class CloudSyncProvider extends ChangeNotifier
       contentRuntime: null,
       clientFactory: clientFactory,
       authenticationFactory: authenticationFactory,
+      devicePairingMembershipCommitPreparer: null,
     );
   }
 
@@ -60,12 +62,16 @@ final class CloudSyncProvider extends ChangeNotifier
     required CloudSyncContentRuntime contentRuntime,
     CloudSyncAccountClientFactory clientFactory = _createCloudSyncAccountClient,
     E2eeAccountAuthenticationFactory? authenticationFactory,
+    E2eeDevicePairingMembershipCommitPreparer?
+    devicePairingMembershipCommitPreparer,
   }) {
     return CloudSyncProvider._(
       workspaceRuntime,
       contentRuntime: contentRuntime,
       clientFactory: clientFactory,
       authenticationFactory: authenticationFactory,
+      devicePairingMembershipCommitPreparer:
+          devicePairingMembershipCommitPreparer,
     );
   }
 
@@ -74,13 +80,21 @@ final class CloudSyncProvider extends ChangeNotifier
     required this._contentRuntime,
     required CloudSyncAccountClientFactory clientFactory,
     required E2eeAccountAuthenticationFactory? authenticationFactory,
+    required E2eeDevicePairingMembershipCommitPreparer?
+    devicePairingMembershipCommitPreparer,
   }) {
-    _configureFactories(clientFactory, authenticationFactory);
+    _configureFactories(
+      clientFactory,
+      authenticationFactory,
+      devicePairingMembershipCommitPreparer,
+    );
   }
 
   void _configureFactories(
     CloudSyncAccountClientFactory clientFactory,
     E2eeAccountAuthenticationFactory? authenticationFactory,
+    E2eeDevicePairingMembershipCommitPreparer?
+    devicePairingMembershipCommitPreparer,
   ) {
     _clientFactory = clientFactory;
     _authenticationFactory =
@@ -94,6 +108,8 @@ final class CloudSyncProvider extends ChangeNotifier
               ),
               secureCore: const KelivoSecureCore(),
               firstDeviceBootstrapPreparer: firstDeviceBootstrapPreparer,
+              devicePairingMembershipCommitPreparer:
+                  devicePairingMembershipCommitPreparer,
             );
   }
 

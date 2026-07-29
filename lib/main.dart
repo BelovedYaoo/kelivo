@@ -39,6 +39,7 @@ import 'core/services/sync/cloud_sync_client.dart';
 import 'core/services/sync/cloud_sync_types.dart';
 import 'core/services/sync/e2ee_chat_content_runtime.dart';
 import 'core/services/sync/e2ee_config_provider_binding.dart';
+import 'core/services/sync/e2ee_device_pairing_membership_commit.dart';
 import 'core/services/sync/e2ee_mobile_background_sync.dart';
 import 'core/services/sync/sync_write_executor.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
@@ -311,13 +312,16 @@ E2eeChatContentRuntime? _createE2eeChatContentRuntime({
     ),
     secureCore: const KelivoSecureCore(),
     databaseGateway: databaseGateway,
-    databaseFile: File(
-      '${workspaceRuntime.current.dataDirectory.path}'
-      '${Platform.pathSeparator}${AppDatabase.databaseFileName}',
-    ),
+    databaseFile: _currentAccountDatabaseFile(workspaceRuntime),
     client: CloudSyncClient(token: session.token),
   );
 }
+
+File _currentAccountDatabaseFile(AccountWorkspaceRuntime workspaceRuntime) =>
+    File(
+      '${workspaceRuntime.current.dataDirectory.path}'
+      '${Platform.pathSeparator}${AppDatabase.databaseFileName}',
+    );
 
 Future<void> _initRestoreFailureWindow() async {
   if (kIsWeb) return;
@@ -527,6 +531,13 @@ class MyApp extends StatelessWidget {
                 : CloudSyncProvider.withContentRuntime(
                     workspaceRuntime,
                     contentRuntime: runtime,
+                    devicePairingMembershipCommitPreparer:
+                        E2eeDevicePairingMembershipCommitCoordinator(
+                          databaseGateway,
+                          databaseFile: _currentAccountDatabaseFile(
+                            workspaceRuntime,
+                          ),
+                        ),
                   );
             unawaited(provider.initialize());
             return provider;

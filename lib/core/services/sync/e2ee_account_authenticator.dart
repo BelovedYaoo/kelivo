@@ -12,6 +12,7 @@ import 'cloud_sync_client.dart';
 import 'cloud_sync_pairing_qr_codec.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_trust_manifest.dart';
+import 'e2ee_device_pairing_membership_commit.dart';
 import 'e2ee_device_state_access.dart';
 
 part 'e2ee_device_pairing.dart';
@@ -165,6 +166,8 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     required DeviceStateBlobStore deviceStateStore,
     required KelivoSecureCore secureCore,
     E2eeFirstDeviceSecurityBootstrapPreparer? firstDeviceBootstrapPreparer,
+    E2eeDevicePairingMembershipCommitPreparer?
+    devicePairingMembershipCommitPreparer,
   }) {
     return E2eeAccountAuthenticator._(
       normalizeCloudSyncBaseUrl(baseUrl),
@@ -172,6 +175,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       deviceStateStore,
       secureCore,
       firstDeviceBootstrapPreparer,
+      devicePairingMembershipCommitPreparer,
     );
   }
 
@@ -181,6 +185,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     this._deviceStateStore,
     this._secureCore,
     this._firstDeviceBootstrapPreparer,
+    this._devicePairingMembershipCommitPreparer,
   );
 
   static const _registrationRecordDomain =
@@ -223,6 +228,8 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   final DeviceStateBlobStore _deviceStateStore;
   final KelivoSecureCore _secureCore;
   final E2eeFirstDeviceSecurityBootstrapPreparer? _firstDeviceBootstrapPreparer;
+  final E2eeDevicePairingMembershipCommitPreparer?
+  _devicePairingMembershipCommitPreparer;
   late final E2eeDeviceStateAccess _deviceStateAccess = E2eeDeviceStateAccess(
     baseUrl: _baseUrl,
     deviceStateStore: _deviceStateStore,

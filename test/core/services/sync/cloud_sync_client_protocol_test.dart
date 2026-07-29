@@ -3939,6 +3939,7 @@ void main() {
       pairingSecret: _filledBytes(cloudSyncPairingSecretBytes, 24),
       now: now,
       expiresAt: now.add(const Duration(minutes: 4)),
+      normalizedServiceOrigin: serviceBaseUrl,
       signingPublicKey: targetPublicKeys.signingPublicKey,
       keyAgreementPublicKey: targetPublicKeys.keyAgreementPublicKey,
     );
@@ -3985,6 +3986,7 @@ void main() {
         pairingSecret: _filledBytes(cloudSyncPairingSecretBytes, secretByte),
         now: now,
         expiresAt: now.add(const Duration(minutes: 4)),
+        normalizedServiceOrigin: serviceBaseUrl,
         accountContextId: accountContextId,
         signingPublicKey: targetPublicKeys.signingPublicKey,
         keyAgreementPublicKey: targetPublicKeys.keyAgreementPublicKey,

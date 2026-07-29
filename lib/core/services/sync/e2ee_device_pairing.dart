@@ -1020,9 +1020,15 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
       }
 
       payload.requireAccountContextMatchesLocalUserId(session.user.id);
-      final membershipCommit = _requirePairingMembershipCommit(
+      final membershipCommitPreparer =
+          _devicePairingMembershipCommitPreparer ??
+          (throw UnsupportedError('账户信任成员清单尚未接入设备配对批准'));
+      final preparedMembershipCommit = await _preparePairingMembershipCommit(
+        context: context,
+        accountRootKey: ark,
         session: session,
         payload: payload,
+        preparer: membershipCommitPreparer,
       );
       pairingSecret = payload.takePairingSecret();
       late final KelivoPairingApprovalBundle bundle;
@@ -1048,15 +1054,24 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
         pairingSecret = null;
       }
 
+      // 本地锚点不参与服务端 CAS，网络写入前后都要复核同一 capability。
+      await membershipCommitPreparer.requireStillCurrent(
+        accountRootKey: ark,
+        prepared: preparedMembershipCommit,
+      );
       final approval = await _approvePairingBundleWithRetry(
         session: session,
         payload: payload,
         bundle: bundle,
-        membershipCommit: membershipCommit,
+        membershipCommit: preparedMembershipCommit.commit,
       );
       if (approval.pairingId != payload.pairingId) {
         throw StateError('服务端批准结果与扫码配对不匹配');
       }
+      await membershipCommitPreparer.requireStillCurrent(
+        accountRootKey: ark,
+        prepared: preparedMembershipCommit,
+      );
       return approval;
     } catch (error) {
       primaryError = error;
@@ -1114,12 +1129,43 @@ extension E2eeDevicePairingAuthentication on E2eeAccountAuthenticator {
     }
   }
 
-  CloudSyncDevicePairingMembershipCommit _requirePairingMembershipCommit({
+  Future<E2eePreparedDevicePairingMembershipCommit>
+  _preparePairingMembershipCommit({
+    required _DeviceContext context,
+    required KelivoAccountRootKeyHandle accountRootKey,
     required CloudSyncAuthenticatedSession session,
     required CloudSyncDevicePairingQrPayload payload,
-  }) {
-    // 配对 CAS 必须使用账户信任模块签发的完整清单；接入前只能失败关闭。
-    throw UnsupportedError('账户信任成员清单尚未接入设备配对批准');
+    required E2eeDevicePairingMembershipCommitPreparer preparer,
+  }) async {
+    final issuerPublicKeys = await _secureCore.readDevicePublicKeys(
+      context.identity,
+    );
+    final issuer = E2eeMembershipDeviceInput(
+      deviceId: context.deviceIdText,
+      keyVersion: context.keyVersion,
+      authGeneration: session.authGeneration,
+      signingPublicKey: issuerPublicKeys.signingPublicKey,
+      keyAgreementPublicKey: issuerPublicKeys.keyAgreementPublicKey,
+    );
+    // pending 设备在服务端创建和续期时始终保持 generation 0，消费原子激活为 1。
+    final subject = E2eeMembershipDeviceInput(
+      deviceId: payload.targetDeviceId,
+      keyVersion: payload.keyVersion,
+      authGeneration: 1,
+      signingPublicKey: payload.signingPublicKey,
+      keyAgreementPublicKey: payload.keyAgreementPublicKey,
+    );
+    _accountClient.setToken(session.token);
+    final currentSecurityState = await _accountClient.getSecurityState();
+    return preparer.prepare(
+      accountRootKey: accountRootKey,
+      userId: session.user.id,
+      keyEpoch: session.keyEpoch,
+      currentSecurityState: currentSecurityState,
+      pairingId: payload.pairingId,
+      issuer: issuer,
+      subject: subject,
+    );
   }
 
   Future<CloudSyncDevicePairingApproved> _waitForPairingApproval(
