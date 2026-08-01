@@ -86,3 +86,4 @@
 - 复审阻塞：#85 将 Android `/data/user/0` 固定视为符号链接，但现代 AOSP/API 36 使用与 `/data/data` 同身份的 bind mount，当前实现会使合法安装根打开失败并阻断启动；正补系统别名身份验证与隔离 AVD 回归，修复前 #84/#85 均不集成。
 - 复审阻塞：Apple 耐久偏好尚缺 headless isolate 注册，且无类型 JSON 会丢失积分 Double 类型；绝对路径重解析、rename 后目录耐久 barrier、写前尺寸门禁、PrivacyInfo reason 与 SwiftPM FlutterFramework 依赖也需修复。#86 在 Apple 编译、XCTest、模拟器和真机验证前保持打开。
 - 复审阻塞：服务端 #40 自撤销分支缺主体 intent 签名、pending 权限收窄与有界请求，终态非单调；另有 op4 交错回执、D1 单 SQL 100 参数、token 指纹和 OpenAPI 窄令牌合同问题。分支已冻结并按红测修复，未部署、未操作远端 D1/R2。
+- 同步发布门禁：服务端 #40 已将成员清单硬切 v2（header 260 字节，offset 224 新增 32 字节 operationAuthorizationDigest，memberCount 移至 offset 256）；客户端 Dart 与 Rust 仍是 v1。#51 负责 Dart v2 及 op3 intent 绑定，#49 负责 Rust 历史解析与 op4/op5 builder；两端固定向量一致前，API 与客户端都不可发布。
