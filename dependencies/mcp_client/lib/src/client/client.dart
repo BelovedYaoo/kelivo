@@ -332,7 +332,7 @@ class Client {
 
   /// Validate protocol version compatibility
   void _validateProtocolVersion(String serverProtoVersion) {
-    _logger.warning(
+    _logger.warn(
       'Protocol version mismatch: Client=$protocolVersion, Server=$serverProtoVersion',
     );
 
@@ -342,15 +342,13 @@ class Client {
       final serverDate = DateTime.parse(serverProtoVersion);
 
       if (serverDate.isBefore(clientDate)) {
-        _logger.warning(
+        _logger.warn(
           'Server protocol version ($serverProtoVersion) is older than client protocol version ($protocolVersion)',
         );
       }
     } catch (e) {
       // Date parsing failed, fallback to string comparison
-      _logger.warning(
-        'Unable to parse protocol versions as dates for comparison',
-      );
+      _logger.warn('Unable to parse protocol versions as dates for comparison');
     }
   }
 

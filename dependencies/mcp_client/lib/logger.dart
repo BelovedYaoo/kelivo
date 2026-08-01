@@ -5,7 +5,8 @@ import 'package:logging/logging.dart';
 
 // Extension methods for backward compatibility
 extension LoggerExtensions on Logger {
-  void debug(String message) => fine(message);
-  void error(String message) => severe(message);
-  void warn(String message) => warning(message);
+  // MCP 载荷、地址和子进程错误均不可信，只允许向系统日志发送固定事件。
+  void debug(String _) => fine('[McpClient] debug event');
+  void error(String _) => severe('[McpClient] error event');
+  void warn(String _) => warning('[McpClient] warning event');
 }
