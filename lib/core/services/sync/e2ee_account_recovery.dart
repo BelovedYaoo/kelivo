@@ -357,6 +357,162 @@ final class E2eeAuthorizedAccountRecovery {
   final E2eeAccountRecoveryKeyLease keyLease;
 }
 
+enum E2eeAccountRecoveryStage { challenged, proofReady, authorized }
+
+final class E2eeAccountRecoveryCheckpoint {
+  factory E2eeAccountRecoveryCheckpoint.challenged({
+    required String expectedDeviceId,
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryChallenge challenge,
+  }) {
+    return E2eeAccountRecoveryCheckpoint._(
+      E2eeAccountRecoveryStage.challenged,
+      _canonicalUuid(expectedDeviceId, 'expectedDeviceId'),
+      recoveryToken,
+      challenge,
+      null,
+      null,
+      null,
+      null,
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint._(
+    this.stage,
+    this.expectedDeviceId,
+    this.recoveryToken,
+    this.challenge,
+    this._nonceProof,
+    this._trustSignature,
+    this.recoveryTokenExpiresAt,
+    this.nextAction,
+  );
+
+  final E2eeAccountRecoveryStage stage;
+  final String expectedDeviceId;
+  final CloudSyncAccountRecoveryToken recoveryToken;
+  final E2eeAccountRecoveryChallenge challenge;
+  final Uint8List? _nonceProof;
+  final Uint8List? _trustSignature;
+  final DateTime? recoveryTokenExpiresAt;
+  final E2eeAccountRecoveryNextAction? nextAction;
+
+  String get attemptId => challenge.attemptId;
+
+  E2eeAccountRecoveryCheckpoint withProof({
+    required Uint8List nonceProof,
+    required Uint8List trustSignature,
+  }) {
+    if (stage != E2eeAccountRecoveryStage.challenged) {
+      nonceProof.fillRange(0, nonceProof.length, 0);
+      trustSignature.fillRange(0, trustSignature.length, 0);
+      throw StateError('账户恢复 checkpoint 不处于 challenge 阶段');
+    }
+    Uint8List? ownedNonceProof;
+    Uint8List? ownedTrustSignature;
+    try {
+      ownedNonceProof = _fixedMutableBytes(
+        nonceProof,
+        e2eeAccountRecoveryNonceProofBytes,
+        'nonceProof',
+      );
+      ownedTrustSignature = _fixedMutableBytes(
+        trustSignature,
+        e2eeAccountRecoveryTrustSignatureBytes,
+        'trustSignature',
+      );
+      return E2eeAccountRecoveryCheckpoint._(
+        E2eeAccountRecoveryStage.proofReady,
+        expectedDeviceId,
+        recoveryToken,
+        challenge,
+        ownedNonceProof.asUnmodifiableView(),
+        ownedTrustSignature.asUnmodifiableView(),
+        null,
+        null,
+      );
+    } catch (_) {
+      _clear(ownedNonceProof);
+      _clear(ownedTrustSignature);
+      rethrow;
+    }
+  }
+
+  E2eeAccountRecoveryCheckpoint authorized({
+    required DateTime recoveryTokenExpiresAt,
+    required E2eeAccountRecoveryNextAction nextAction,
+  }) {
+    if (stage != E2eeAccountRecoveryStage.proofReady) {
+      throw StateError('账户恢复 checkpoint 尚未生成 proof');
+    }
+    final expiresAt = recoveryTokenExpiresAt.toUtc();
+    if (expiresAt.millisecondsSinceEpoch <= 0) {
+      throw const FormatException('账户恢复 token 过期时间无效');
+    }
+    return E2eeAccountRecoveryCheckpoint._(
+      E2eeAccountRecoveryStage.authorized,
+      expectedDeviceId,
+      recoveryToken,
+      challenge,
+      _nonceProof,
+      _trustSignature,
+      expiresAt,
+      nextAction,
+    );
+  }
+
+  Uint8List copyNonceProof() {
+    final value = _nonceProof;
+    if (stage == E2eeAccountRecoveryStage.challenged || value == null) {
+      throw StateError('账户恢复 checkpoint 不含 nonce proof');
+    }
+    return Uint8List.fromList(value);
+  }
+
+  Uint8List copyTrustSignature() {
+    final value = _trustSignature;
+    if (stage == E2eeAccountRecoveryStage.challenged || value == null) {
+      throw StateError('账户恢复 checkpoint 不含信任签名');
+    }
+    return Uint8List.fromList(value);
+  }
+}
+
+final class E2eeAccountRecoveryCheckpointSnapshot {
+  factory E2eeAccountRecoveryCheckpointSnapshot({
+    required E2eeAccountRecoveryCheckpoint checkpoint,
+    required Uint8List envelopeDigest,
+  }) {
+    return E2eeAccountRecoveryCheckpointSnapshot._(
+      checkpoint,
+      _fixedBytes(envelopeDigest, 32, 'envelopeDigest'),
+    );
+  }
+
+  const E2eeAccountRecoveryCheckpointSnapshot._(
+    this.checkpoint,
+    this.envelopeDigest,
+  );
+
+  final E2eeAccountRecoveryCheckpoint checkpoint;
+  final Uint8List envelopeDigest;
+}
+
+abstract interface class E2eeAccountRecoveryCheckpointPersistence {
+  Future<E2eeAccountRecoveryCheckpointSnapshot?> read();
+
+  Future<E2eeAccountRecoveryCheckpointSnapshot> create(
+    E2eeAccountRecoveryCheckpoint checkpoint,
+  );
+
+  Future<E2eeAccountRecoveryCheckpointSnapshot> advance({
+    required Uint8List expectedEnvelopeDigest,
+    required E2eeAccountRecoveryCheckpoint checkpoint,
+  });
+
+  Future<bool> delete(E2eeAccountRecoveryCheckpointSnapshot snapshot);
+}
+
 typedef E2eeAccountRecoveryAttemptIdFactory = String Function();
 typedef E2eeAccountRecoveryTokenFactory =
     CloudSyncAccountRecoveryToken Function();
@@ -366,6 +522,7 @@ final class E2eeAccountRecoveryAuthorizer {
   factory E2eeAccountRecoveryAuthorizer({
     required E2eeAccountRecoveryTransport transport,
     required E2eeAccountRecoveryProofCore proofCore,
+    required E2eeAccountRecoveryCheckpointPersistence checkpointPersistence,
     required Uint8List serviceOriginSha256,
     required E2eeAccountRecoveryAttemptIdFactory attemptIdFactory,
     required E2eeAccountRecoveryTokenFactory recoveryTokenFactory,
@@ -374,6 +531,7 @@ final class E2eeAccountRecoveryAuthorizer {
     return E2eeAccountRecoveryAuthorizer._(
       transport,
       proofCore,
+      checkpointPersistence,
       _fixedBytes(serviceOriginSha256, 32, 'serviceOriginSha256'),
       attemptIdFactory,
       recoveryTokenFactory,
@@ -384,6 +542,7 @@ final class E2eeAccountRecoveryAuthorizer {
   const E2eeAccountRecoveryAuthorizer._(
     this._transport,
     this._proofCore,
+    this._checkpointPersistence,
     this._serviceOriginSha256,
     this._attemptIdFactory,
     this._recoveryTokenFactory,
@@ -392,6 +551,7 @@ final class E2eeAccountRecoveryAuthorizer {
 
   final E2eeAccountRecoveryTransport _transport;
   final E2eeAccountRecoveryProofCore _proofCore;
+  final E2eeAccountRecoveryCheckpointPersistence _checkpointPersistence;
   final Uint8List _serviceOriginSha256;
   final E2eeAccountRecoveryAttemptIdFactory _attemptIdFactory;
   final E2eeAccountRecoveryTokenFactory _recoveryTokenFactory;
@@ -404,7 +564,6 @@ final class E2eeAccountRecoveryAuthorizer {
     required Uint8List recoveryPassphrase,
   }) async {
     final deviceId = _canonicalUuid(expectedDeviceId, 'expectedDeviceId');
-    final attemptId = _canonicalUuid(_attemptIdFactory(), 'attemptId');
     E2eeAccountRecoveryProof? proof;
     Uint8List? tokenBytes;
     Uint8List? tokenDigest;
@@ -412,23 +571,49 @@ final class E2eeAccountRecoveryAuthorizer {
     Uint8List? trustSignature;
     var retainLease = false;
     try {
-      final challenge = await _transport.createChallenge(
-        onboardingToken: onboardingToken,
-        attemptId: attemptId,
-      );
-      if (challenge.attemptId != attemptId) {
-        throw const FormatException('账户恢复 challenge attempt 不一致');
+      var checkpointSnapshot = await _checkpointPersistence.read();
+      var checkpoint = checkpointSnapshot?.checkpoint;
+      if (checkpoint != null && checkpoint.expectedDeviceId != deviceId) {
+        throw const FormatException('账户恢复 checkpoint 目标设备不一致');
       }
+
       final now = _now().toUtc();
-      if (!now.isBefore(challenge.expiresAt)) {
+      if (checkpoint == null) {
+        final attemptId = _canonicalUuid(_attemptIdFactory(), 'attemptId');
+        final challenge = await _transport.createChallenge(
+          onboardingToken: onboardingToken,
+          attemptId: attemptId,
+        );
+        if (challenge.attemptId != attemptId) {
+          throw const FormatException('账户恢复 challenge attempt 不一致');
+        }
+        if (!now.isBefore(challenge.expiresAt)) {
+          throw const E2eeAccountRecoveryExpired();
+        }
+        checkpoint = E2eeAccountRecoveryCheckpoint.challenged(
+          expectedDeviceId: deviceId,
+          recoveryToken: _recoveryTokenFactory(),
+          challenge: challenge,
+        );
+        checkpointSnapshot = await _checkpointPersistence.create(checkpoint);
+        checkpoint = checkpointSnapshot.checkpoint;
+      } else if (checkpoint.stage == E2eeAccountRecoveryStage.authorized) {
+        final expiresAt = checkpoint.recoveryTokenExpiresAt;
+        if (expiresAt == null || !now.isBefore(expiresAt)) {
+          throw const E2eeAccountRecoveryExpired();
+        }
+      } else if (!now.isBefore(checkpoint.challenge.expiresAt)) {
         throw const E2eeAccountRecoveryExpired();
       }
+
+      final challenge = checkpoint.challenge;
+      final attemptId = checkpoint.attemptId;
       final history = await _readFrozenHistory(
         onboardingToken: onboardingToken,
         challenge: challenge,
       );
       final sourceCapsule = _sourceCapsule(challenge, history);
-      final recoveryToken = _recoveryTokenFactory();
+      final recoveryToken = checkpoint.recoveryToken;
       tokenBytes = Uint8List.fromList(utf8.encode(recoveryToken.value));
       tokenDigest = Uint8List.fromList(sha256.convert(tokenBytes).bytes);
       proof = await _proofCore.verifyHistoryAndCreateProof(
@@ -453,6 +638,54 @@ final class E2eeAccountRecoveryAuthorizer {
       }
       nonceProof = proof.takeNonceProof();
       trustSignature = proof.takeTrustSignature();
+      if (checkpoint.stage == E2eeAccountRecoveryStage.challenged) {
+        final proofReady = checkpoint.withProof(
+          nonceProof: nonceProof,
+          trustSignature: trustSignature,
+        );
+        nonceProof = null;
+        trustSignature = null;
+        final challengedSnapshot = checkpointSnapshot;
+        if (challengedSnapshot == null) {
+          throw StateError('账户恢复 checkpoint 快照缺失');
+        }
+        checkpointSnapshot = await _checkpointPersistence.advance(
+          expectedEnvelopeDigest: challengedSnapshot.envelopeDigest,
+          checkpoint: proofReady,
+        );
+        checkpoint = checkpointSnapshot.checkpoint;
+      } else {
+        final expectedNonceProof = checkpoint.copyNonceProof();
+        final expectedTrustSignature = checkpoint.copyTrustSignature();
+        try {
+          if (!_sameBytes(nonceProof, expectedNonceProof) ||
+              !_sameBytes(trustSignature, expectedTrustSignature)) {
+            throw const FormatException('账户恢复 Native proof 与 checkpoint 不一致');
+          }
+        } finally {
+          _clear(expectedNonceProof);
+          _clear(expectedTrustSignature);
+          _clear(nonceProof);
+          _clear(trustSignature);
+          nonceProof = null;
+          trustSignature = null;
+        }
+      }
+
+      if (checkpoint.stage == E2eeAccountRecoveryStage.authorized) {
+        retainLease = true;
+        return E2eeAuthorizedAccountRecovery._(
+          attemptId: attemptId,
+          recoveryToken: recoveryToken,
+          recoveryTokenExpiresAt: checkpoint.recoveryTokenExpiresAt!,
+          nextAction: checkpoint.nextAction!,
+          challenge: challenge,
+          keyLease: proof.keyLease,
+        );
+      }
+
+      nonceProof = checkpoint.copyNonceProof();
+      trustSignature = checkpoint.copyTrustSignature();
       final receipt = await _transport.authorize(
         attemptId: attemptId,
         challengeRequestDigest: challenge.requestDigest,
@@ -464,6 +697,18 @@ final class E2eeAccountRecoveryAuthorizer {
           !_now().toUtc().isBefore(receipt.recoveryTokenExpiresAt)) {
         throw const FormatException('账户恢复授权回执不一致或已过期');
       }
+      final authorizedCheckpoint = checkpoint.authorized(
+        recoveryTokenExpiresAt: receipt.recoveryTokenExpiresAt,
+        nextAction: receipt.nextAction,
+      );
+      final proofReadySnapshot = checkpointSnapshot;
+      if (proofReadySnapshot == null) {
+        throw StateError('账户恢复 checkpoint 快照缺失');
+      }
+      checkpointSnapshot = await _checkpointPersistence.advance(
+        expectedEnvelopeDigest: proofReadySnapshot.envelopeDigest,
+        checkpoint: authorizedCheckpoint,
+      );
       retainLease = true;
       return E2eeAuthorizedAccountRecovery._(
         attemptId: attemptId,

@@ -18,7 +18,10 @@
 - checkpoint 使用固定二进制 v1 帧并由安装级本地槽认证密封，覆盖 `challenged -> proofReady -> authorized`；恢复 token 在磁盘上仅存在于密文载荷，编码临时字节主动清零，错误槽无法解开。
 - 首次创建和阶段推进的语义重放均在重新密封前比较规范明文状态，避免随机 nonce 导致相同 checkpoint 被误判为并发冲突；并发同值赢家也可由失败方复读确认。
 - authorized checkpoint 保留公开且已绑定 challenge/token 的 proof，进程重启后可与 Native 重新生成结果逐字比较并安全重放授权请求。
-- 验证：定向 `dart analyze` 无问题；授权 2 项、密文槽 2 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 115 项 Flutter 测试通过。
+- 授权协调器已接入加密 checkpoint：challenge 返回后先持久化 `challenged`，Native proof 生成后先持久化 `proofReady`，服务端授权回执校验后再持久化 `authorized`。
+- `proofReady` 重启会复用原 attempt/token，对 Native 重算 proof 做常数时间比较后重放授权；不一致时在发请求前失败关闭并释放 key lease。
+- 服务端稳定硬切 wire 已固定在 `60d6f93b5ec296293c1f7071ba9ccf5da9d67c00`；客户端不再接旧 challenge 预期链头字段。
+- 验证：`flutter analyze lib test` 无问题；授权 4 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 116 项 Flutter 测试通过。全仓 `flutter analyze` 仍被未安装开发依赖的 `mcp_client` 测试与 Workmanager Pigeon 输入阻断，与本次改动无关。
 
 ## 协作边界
 
@@ -28,6 +31,6 @@
 
 ## 后续依赖
 
-- 等服务端修复分支给出稳定 OpenAPI 后接入真实 `CloudSyncClient` transport。
+- 按服务端稳定提交 `60d6f93b5ec296293c1f7071ba9ccf5da9d67c00` 接入真实 `CloudSyncClient` transport。
 - ABI18 集成后以 ABI19 实现单次 Native 恢复 proof 事务；当前没有生产适配器，因此 UI 不得宣称恢复可用。
 - 继续实现加密 checkpoint、重启/过期接管、op4/op5 与工作区耐久提交，再接 Android/iOS 二维码和恢复文件入口。

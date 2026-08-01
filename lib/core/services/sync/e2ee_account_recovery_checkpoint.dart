@@ -20,138 +20,8 @@ final _canonicalUuidV4Pattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
 
-enum E2eeAccountRecoveryStage { challenged, proofReady, authorized }
-
-final class E2eeAccountRecoveryCheckpoint {
-  factory E2eeAccountRecoveryCheckpoint.challenged({
-    required String expectedDeviceId,
-    required CloudSyncAccountRecoveryToken recoveryToken,
-    required E2eeAccountRecoveryChallenge challenge,
-  }) {
-    return E2eeAccountRecoveryCheckpoint._(
-      E2eeAccountRecoveryStage.challenged,
-      _canonicalUuid(expectedDeviceId, 'expectedDeviceId'),
-      recoveryToken,
-      challenge,
-      null,
-      null,
-      null,
-      null,
-    );
-  }
-
-  E2eeAccountRecoveryCheckpoint._(
-    this.stage,
-    this.expectedDeviceId,
-    this.recoveryToken,
-    this.challenge,
-    this._nonceProof,
-    this._trustSignature,
-    this.recoveryTokenExpiresAt,
-    this.nextAction,
-  );
-
-  final E2eeAccountRecoveryStage stage;
-  final String expectedDeviceId;
-  final CloudSyncAccountRecoveryToken recoveryToken;
-  final E2eeAccountRecoveryChallenge challenge;
-  final Uint8List? _nonceProof;
-  final Uint8List? _trustSignature;
-  final DateTime? recoveryTokenExpiresAt;
-  final E2eeAccountRecoveryNextAction? nextAction;
-
-  String get attemptId => challenge.attemptId;
-
-  E2eeAccountRecoveryCheckpoint withProof({
-    required Uint8List nonceProof,
-    required Uint8List trustSignature,
-  }) {
-    if (stage != E2eeAccountRecoveryStage.challenged) {
-      nonceProof.fillRange(0, nonceProof.length, 0);
-      trustSignature.fillRange(0, trustSignature.length, 0);
-      throw StateError('账户恢复 checkpoint 不处于 challenge 阶段');
-    }
-    Uint8List? ownedNonceProof;
-    Uint8List? ownedTrustSignature;
-    try {
-      ownedNonceProof = _consumeFixedBytes(
-        nonceProof,
-        e2eeAccountRecoveryNonceProofBytes,
-        'nonceProof',
-      );
-      ownedTrustSignature = _consumeFixedBytes(
-        trustSignature,
-        e2eeAccountRecoveryTrustSignatureBytes,
-        'trustSignature',
-      );
-      return E2eeAccountRecoveryCheckpoint._(
-        E2eeAccountRecoveryStage.proofReady,
-        expectedDeviceId,
-        recoveryToken,
-        challenge,
-        ownedNonceProof.asUnmodifiableView(),
-        ownedTrustSignature.asUnmodifiableView(),
-        null,
-        null,
-      );
-    } catch (_) {
-      _clear(ownedNonceProof);
-      _clear(ownedTrustSignature);
-      rethrow;
-    }
-  }
-
-  E2eeAccountRecoveryCheckpoint authorized({
-    required DateTime recoveryTokenExpiresAt,
-    required E2eeAccountRecoveryNextAction nextAction,
-  }) {
-    if (stage != E2eeAccountRecoveryStage.proofReady) {
-      throw StateError('账户恢复 checkpoint 尚未生成 proof');
-    }
-    final expiresAt = recoveryTokenExpiresAt.toUtc();
-    if (expiresAt.millisecondsSinceEpoch <= 0) {
-      throw const FormatException('账户恢复 token 过期时间无效');
-    }
-    return E2eeAccountRecoveryCheckpoint._(
-      E2eeAccountRecoveryStage.authorized,
-      expectedDeviceId,
-      recoveryToken,
-      challenge,
-      _nonceProof,
-      _trustSignature,
-      expiresAt,
-      nextAction,
-    );
-  }
-
-  Uint8List copyNonceProof() {
-    final value = _nonceProof;
-    if (stage == E2eeAccountRecoveryStage.challenged || value == null) {
-      throw StateError('账户恢复 checkpoint 不含 nonce proof');
-    }
-    return Uint8List.fromList(value);
-  }
-
-  Uint8List copyTrustSignature() {
-    final value = _trustSignature;
-    if (stage == E2eeAccountRecoveryStage.challenged || value == null) {
-      throw StateError('账户恢复 checkpoint 不含信任签名');
-    }
-    return Uint8List.fromList(value);
-  }
-}
-
-final class E2eeAccountRecoveryCheckpointSnapshot {
-  E2eeAccountRecoveryCheckpointSnapshot._({
-    required this.checkpoint,
-    required Uint8List envelopeDigest,
-  }) : envelopeDigest = Uint8List.fromList(envelopeDigest).asUnmodifiableView();
-
-  final E2eeAccountRecoveryCheckpoint checkpoint;
-  final Uint8List envelopeDigest;
-}
-
-final class E2eeAccountRecoveryCheckpointStore {
+final class E2eeAccountRecoveryCheckpointStore
+    implements E2eeAccountRecoveryCheckpointPersistence {
   factory E2eeAccountRecoveryCheckpointStore({
     required String normalizedBaseUrl,
     required String normalizedLoginName,
@@ -204,6 +74,7 @@ final class E2eeAccountRecoveryCheckpointStore {
   final Uint8List _recordId;
   final Uint8List _associatedData;
 
+  @override
   Future<E2eeAccountRecoveryCheckpointSnapshot?> read() async {
     Uint8List? envelope;
     Uint8List? plaintext;
@@ -220,7 +91,7 @@ final class E2eeAccountRecoveryCheckpointStore {
         associatedData: _associatedData,
         envelope: envelope,
       );
-      return E2eeAccountRecoveryCheckpointSnapshot._(
+      return E2eeAccountRecoveryCheckpointSnapshot(
         checkpoint: _decodeCheckpoint(plaintext),
         envelopeDigest: _digest(envelope),
       );
@@ -230,6 +101,7 @@ final class E2eeAccountRecoveryCheckpointStore {
     }
   }
 
+  @override
   Future<E2eeAccountRecoveryCheckpointSnapshot> create(
     E2eeAccountRecoveryCheckpoint checkpoint,
   ) async {
@@ -253,7 +125,7 @@ final class E2eeAccountRecoveryCheckpointStore {
         }
         rethrow;
       }
-      return E2eeAccountRecoveryCheckpointSnapshot._(
+      return E2eeAccountRecoveryCheckpointSnapshot(
         checkpoint: checkpoint,
         envelopeDigest: _digest(envelope),
       );
@@ -262,6 +134,7 @@ final class E2eeAccountRecoveryCheckpointStore {
     }
   }
 
+  @override
   Future<E2eeAccountRecoveryCheckpointSnapshot> advance({
     required Uint8List expectedEnvelopeDigest,
     required E2eeAccountRecoveryCheckpoint checkpoint,
@@ -295,7 +168,7 @@ final class E2eeAccountRecoveryCheckpointStore {
         }
         rethrow;
       }
-      return E2eeAccountRecoveryCheckpointSnapshot._(
+      return E2eeAccountRecoveryCheckpointSnapshot(
         checkpoint: checkpoint,
         envelopeDigest: _digest(envelope),
       );
@@ -304,6 +177,7 @@ final class E2eeAccountRecoveryCheckpointStore {
     }
   }
 
+  @override
   Future<bool> delete(E2eeAccountRecoveryCheckpointSnapshot snapshot) {
     return _deviceStateStore.deletePendingAccountRecoveryEnvelope(
       normalizedBaseUrl: _normalizedBaseUrl,
@@ -602,29 +476,19 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
           nextActionCode == 0) {
         throw const FormatException('账户恢复授权 checkpoint 状态无效');
       }
-      final ownedNonceProof = _consumeFixedBytes(
-        nonceProof,
-        e2eeAccountRecoveryNonceProofBytes,
-        'nonceProof',
-      );
-      final ownedTrustSignature = _consumeFixedBytes(
-        trustSignature,
-        e2eeAccountRecoveryTrustSignatureBytes,
-        'trustSignature',
-      );
-      return E2eeAccountRecoveryCheckpoint._(
-        E2eeAccountRecoveryStage.authorized,
-        expectedDeviceId,
-        recoveryToken,
-        challenge,
-        ownedNonceProof.asUnmodifiableView(),
-        ownedTrustSignature.asUnmodifiableView(),
-        DateTime.fromMillisecondsSinceEpoch(
-          recoveryTokenExpiresAtMs,
-          isUtc: true,
-        ),
-        _parseNextAction(nextActionCode),
-      );
+      return E2eeAccountRecoveryCheckpoint.challenged(
+            expectedDeviceId: expectedDeviceId,
+            recoveryToken: recoveryToken,
+            challenge: challenge,
+          )
+          .withProof(nonceProof: nonceProof, trustSignature: trustSignature)
+          .authorized(
+            recoveryTokenExpiresAt: DateTime.fromMillisecondsSinceEpoch(
+              recoveryTokenExpiresAtMs,
+              isUtc: true,
+            ),
+            nextAction: _parseNextAction(nextActionCode),
+          );
   }
 }
 
@@ -738,16 +602,6 @@ String _canonicalUuid(String value, String field) {
     throw FormatException('$field 不是规范 UUID v4');
   }
   return value;
-}
-
-Uint8List _consumeFixedBytes(Uint8List value, int length, String field) {
-  if (value.length != length) {
-    value.fillRange(0, value.length, 0);
-    throw FormatException('$field 长度必须为 $length 字节');
-  }
-  final copy = Uint8List.fromList(value);
-  value.fillRange(0, value.length, 0);
-  return copy;
 }
 
 Uint8List _digest(Uint8List value) =>

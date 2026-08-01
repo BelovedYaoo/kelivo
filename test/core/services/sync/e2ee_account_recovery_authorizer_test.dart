@@ -76,9 +76,11 @@ void main() {
       callOrder: callOrder,
     );
     final proofCore = _FakeRecoveryProofCore(callOrder);
+    final checkpointPersistence = _MemoryCheckpointPersistence(callOrder);
     final authorizer = E2eeAccountRecoveryAuthorizer(
       transport: transport,
       proofCore: proofCore,
+      checkpointPersistence: checkpointPersistence,
       serviceOriginSha256: _bytes(32, 0x61),
       attemptIdFactory: () => _uuid(1),
       recoveryTokenFactory: () => CloudSyncAccountRecoveryToken.parse(
@@ -98,11 +100,15 @@ void main() {
     );
 
     expect(callOrder, <String>[
+      'checkpoint:read',
       'challenge',
+      'checkpoint:create',
       'history:0',
       'history:1',
       'native',
+      'checkpoint:proofReady',
       'authorize',
+      'checkpoint:authorized',
     ]);
     expect(proofCore.receivedHistory, <Uint8List>[
       firstManifest,
@@ -172,10 +178,12 @@ void main() {
       callOrder: callOrder,
     );
     final proofCore = _FakeRecoveryProofCore(callOrder);
+    final checkpointPersistence = _MemoryCheckpointPersistence(callOrder);
     final passphrase = Uint8List.fromList(utf8.encode('correct horse battery'));
     final authorizer = E2eeAccountRecoveryAuthorizer(
       transport: transport,
       proofCore: proofCore,
+      checkpointPersistence: checkpointPersistence,
       serviceOriginSha256: _bytes(32, 0x61),
       attemptIdFactory: () => _uuid(1),
       recoveryTokenFactory: () => CloudSyncAccountRecoveryToken.generate(),
@@ -194,10 +202,176 @@ void main() {
       throwsA(isA<FormatException>()),
     );
 
-    expect(callOrder, <String>['challenge', 'history:0']);
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'challenge',
+      'checkpoint:create',
+      'history:0',
+    ]);
     expect(proofCore.receivedHistory, isNull);
     expect(passphrase, everyElement(0));
   });
+
+  test('proofReady 重启时复用恢复令牌与 proof 重放授权', () async {
+    final fixture = _readyRecoveryFixture();
+    final callOrder = <String>[];
+    final recoveryToken = CloudSyncAccountRecoveryToken.parse(
+      'kelivo_recovery_${base64Url.encode(_bytes(32, 0x71)).replaceAll('=', '')}',
+    );
+    final proofReady = E2eeAccountRecoveryCheckpoint.challenged(
+      expectedDeviceId: _uuid(5),
+      recoveryToken: recoveryToken,
+      challenge: fixture.challenge,
+    ).withProof(nonceProof: _bytes(32, 0x81), trustSignature: _bytes(64, 0x82));
+    final checkpointPersistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: proofReady,
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: fixture.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[fixture.historyPage],
+      callOrder: callOrder,
+    );
+    final proofCore = _FakeRecoveryProofCore(callOrder);
+    final authorizer = E2eeAccountRecoveryAuthorizer(
+      transport: transport,
+      proofCore: proofCore,
+      checkpointPersistence: checkpointPersistence,
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => throw StateError('不应创建新 attempt'),
+      recoveryTokenFactory: () => throw StateError('不应创建新恢复令牌'),
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+    final passphrase = Uint8List.fromList(utf8.encode('correct horse battery'));
+
+    final authorized = await authorizer.authorize(
+      onboardingToken: CloudSyncOnboardingToken.parse(
+        'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+      ),
+      expectedDeviceId: _uuid(5),
+      recoveryMedia: _bytes(644, 0x73),
+      recoveryPassphrase: passphrase,
+    );
+
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'history:0',
+      'native',
+      'authorize',
+      'checkpoint:authorized',
+    ]);
+    expect(transport.receivedRecoveryToken?.value, recoveryToken.value);
+    expect(authorized.recoveryToken.value, recoveryToken.value);
+    expect(
+      checkpointPersistence.current?.stage,
+      E2eeAccountRecoveryStage.authorized,
+    );
+    expect(passphrase, everyElement(0));
+  });
+
+  test('proofReady 与 Native 重算结果不一致时失败关闭 key lease', () async {
+    final fixture = _readyRecoveryFixture();
+    final callOrder = <String>[];
+    final proofReady = E2eeAccountRecoveryCheckpoint.challenged(
+      expectedDeviceId: _uuid(5),
+      recoveryToken: CloudSyncAccountRecoveryToken.generate(),
+      challenge: fixture.challenge,
+    ).withProof(nonceProof: _bytes(32, 0x83), trustSignature: _bytes(64, 0x82));
+    final checkpointPersistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: proofReady,
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: fixture.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[fixture.historyPage],
+      callOrder: callOrder,
+    );
+    final proofCore = _FakeRecoveryProofCore(callOrder);
+    final passphrase = Uint8List.fromList(utf8.encode('correct horse battery'));
+    final authorizer = E2eeAccountRecoveryAuthorizer(
+      transport: transport,
+      proofCore: proofCore,
+      checkpointPersistence: checkpointPersistence,
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => throw StateError('不应创建新 attempt'),
+      recoveryTokenFactory: () => throw StateError('不应创建新恢复令牌'),
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+
+    await expectLater(
+      authorizer.authorize(
+        onboardingToken: CloudSyncOnboardingToken.parse(
+          'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+        ),
+        expectedDeviceId: _uuid(5),
+        recoveryMedia: _bytes(644, 0x73),
+        recoveryPassphrase: passphrase,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+
+    expect(callOrder, <String>['checkpoint:read', 'history:0', 'native']);
+    expect(proofCore.lastLease?.closed, isTrue);
+    expect(
+      checkpointPersistence.current?.stage,
+      E2eeAccountRecoveryStage.proofReady,
+    );
+    expect(passphrase, everyElement(0));
+  });
+}
+
+({
+  E2eeAccountRecoveryChallenge challenge,
+  CloudSyncAccountSecurityHistoryPage historyPage,
+})
+_readyRecoveryFixture() {
+  final manifest = _bytes(444, 0x21);
+  final capsule = _bytes(156, 0x51);
+  final challenge = E2eeAccountRecoveryChallenge(
+    attemptId: _uuid(1),
+    requestDigest: _bytes(32, 0x31),
+    challengeFrame: _bytes(316, 0x32),
+    sealedNonce: _bytes(100, 0x33),
+    securityGeneration: 1,
+    keyEpoch: 2,
+    membershipManifestDigest: _digest(manifest),
+    recoveryPublicKeyVersion: 1,
+    recoveryPublicKey: _bytes(32, 0x34),
+    recoveryCapsuleVersion: 1,
+    recoveryCapsule: capsule,
+    recoveryCapsuleDigest: _digest(capsule),
+    dataState: E2eeAccountRecoveryDataState.ready(
+      dataGeneration: 7,
+      dataKeyEpoch: 2,
+    ),
+    expiresAt: DateTime.utc(2026, 8, 1, 1),
+  );
+  final projection = CloudSyncAccountSecurityCurrentProjection(
+    generation: 1,
+    keyEpoch: 2,
+    dataRekeyPhase: CloudSyncDataRekeyPhase.ready,
+    membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+      _digest(manifest),
+    ),
+    recoveryPublicKeyVersion: 1,
+    recoveryPublicKey: challenge.recoveryPublicKey,
+    recoveryCapsuleVersion: 1,
+    updatedAt: DateTime.utc(2026, 8, 1),
+  );
+  return (
+    challenge: challenge,
+    historyPage: _historyPage(
+      afterGeneration: 0,
+      item: _historyItem(
+        generation: 1,
+        keyEpoch: 2,
+        manifest: manifest,
+        capsule: capsule,
+        operationId: _uuid(2),
+      ),
+      currentProjection: projection,
+    ),
+  );
 }
 
 CloudSyncAccountSecurityHistoryPage _historyPage({
@@ -250,6 +424,7 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
   final List<String> callOrder;
   Uint8List? receivedNonceProof;
   Uint8List? receivedTrustSignature;
+  CloudSyncAccountRecoveryToken? receivedRecoveryToken;
 
   @override
   Future<E2eeAccountRecoveryChallenge> createChallenge({
@@ -281,6 +456,7 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
     required Uint8List trustSignature,
   }) async {
     callOrder.add('authorize');
+    receivedRecoveryToken = recoveryToken;
     receivedNonceProof = Uint8List.fromList(nonceProof);
     receivedTrustSignature = Uint8List.fromList(trustSignature);
     return E2eeAccountRecoveryAuthorizationReceipt(
@@ -300,6 +476,7 @@ final class _FakeRecoveryProofCore implements E2eeAccountRecoveryProofCore {
   Uint8List? receivedCurrentCapsule;
   Uint8List? receivedSourceCapsule;
   String? receivedExpectedDeviceId;
+  _FakeRecoveryKeyLease? lastLease;
 
   @override
   Future<E2eeAccountRecoveryProof> verifyHistoryAndCreateProof({
@@ -325,8 +502,10 @@ final class _FakeRecoveryProofCore implements E2eeAccountRecoveryProofCore {
         : Uint8List.fromList(sourceCapsule);
     receivedExpectedDeviceId = expectedDeviceId;
     recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
+    final lease = _FakeRecoveryKeyLease(2);
+    lastLease = lease;
     return E2eeAccountRecoveryProof(
-      keyLease: _FakeRecoveryKeyLease(2),
+      keyLease: lease,
       nonceProof: _bytes(32, 0x81),
       trustSignature: _bytes(64, 0x82),
     );
@@ -339,8 +518,72 @@ final class _FakeRecoveryKeyLease implements E2eeAccountRecoveryKeyLease {
   @override
   final int keyEpoch;
 
+  bool closed = false;
+
   @override
-  Future<void> close() async {}
+  Future<void> close() async {
+    closed = true;
+  }
+}
+
+final class _MemoryCheckpointPersistence
+    implements E2eeAccountRecoveryCheckpointPersistence {
+  _MemoryCheckpointPersistence(
+    this.callOrder, {
+    E2eeAccountRecoveryCheckpoint? initialCheckpoint,
+  }) : _snapshot = initialCheckpoint == null
+           ? null
+           : E2eeAccountRecoveryCheckpointSnapshot(
+               checkpoint: initialCheckpoint,
+               envelopeDigest: _bytes(32, 0x90),
+             );
+
+  final List<String> callOrder;
+  E2eeAccountRecoveryCheckpointSnapshot? _snapshot;
+
+  E2eeAccountRecoveryCheckpoint? get current => _snapshot?.checkpoint;
+
+  @override
+  Future<E2eeAccountRecoveryCheckpointSnapshot?> read() async {
+    callOrder.add('checkpoint:read');
+    return _snapshot;
+  }
+
+  @override
+  Future<E2eeAccountRecoveryCheckpointSnapshot> create(
+    E2eeAccountRecoveryCheckpoint checkpoint,
+  ) async {
+    callOrder.add('checkpoint:create');
+    final snapshot = E2eeAccountRecoveryCheckpointSnapshot(
+      checkpoint: checkpoint,
+      envelopeDigest: _bytes(32, 0x91),
+    );
+    _snapshot = snapshot;
+    return snapshot;
+  }
+
+  @override
+  Future<E2eeAccountRecoveryCheckpointSnapshot> advance({
+    required Uint8List expectedEnvelopeDigest,
+    required E2eeAccountRecoveryCheckpoint checkpoint,
+  }) async {
+    callOrder.add('checkpoint:${checkpoint.stage.name}');
+    final snapshot = E2eeAccountRecoveryCheckpointSnapshot(
+      checkpoint: checkpoint,
+      envelopeDigest: _bytes(
+        32,
+        checkpoint.stage == E2eeAccountRecoveryStage.proofReady ? 0x92 : 0x93,
+      ),
+    );
+    _snapshot = snapshot;
+    return snapshot;
+  }
+
+  @override
+  Future<bool> delete(E2eeAccountRecoveryCheckpointSnapshot snapshot) async {
+    _snapshot = null;
+    return true;
+  }
 }
 
 Uint8List _digest(Uint8List value) =>
