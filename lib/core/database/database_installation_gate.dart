@@ -64,11 +64,13 @@ final class DatabaseInstallationGate {
   static Future<DatabaseInstallationReceipt> ensureReady({
     required Directory appDataDirectory,
     required DatabaseCipher cipher,
+    required Future<void> Function() retireAttachmentStaging,
     bool allowDatabaseIdentityChange = false,
     RestoreDurability? durability,
   }) async {
     final resolvedDurability = durability ?? RestorePlatformDurability();
     await appDataDirectory.create(recursive: true);
+    await retireAttachmentStaging();
     final databaseFile = File(
       p.join(appDataDirectory.path, AppDatabase.databaseFileName),
     );
@@ -174,10 +176,6 @@ final class DatabaseInstallationGate {
     if (installationIds.length > 1) {
       throw StateError('database_installation_identity_mismatch');
     }
-    await _discardObsoleteAttachmentStaging(
-      appDataDirectory: appDataDirectory,
-      durability: resolvedDurability,
-    );
     final updated = DatabaseInstallationReceipt(
       installationId: installationIds.firstOrNull ?? const Uuid().v4(),
       databaseId: databaseId,
@@ -271,68 +269,6 @@ final class DatabaseInstallationGate {
       await file.delete();
     }
     await durability.syncDirectory(appDataDirectory, fullBarrier: true);
-  }
-
-  static Future<void> _discardObsoleteAttachmentStaging({
-    required Directory appDataDirectory,
-    required RestoreDurability durability,
-  }) async {
-    final workspaceRoot = p.normalize(p.absolute(appDataDirectory.path));
-    final uploadDirectory = Directory(p.join(workspaceRoot, 'upload'));
-    final ownedRoot = Directory(p.join(uploadDirectory.path, 'e2ee'));
-    final stagingRoot = Directory(p.join(ownedRoot.path, 'staging'));
-    if (!p.isWithin(workspaceRoot, stagingRoot.path)) {
-      throw StateError('e2ee_attachment_staging_cutover_path');
-    }
-    for (final directory in <Directory>[uploadDirectory, ownedRoot]) {
-      final type = await FileSystemEntity.type(
-        directory.path,
-        followLinks: false,
-      );
-      if (type == FileSystemEntityType.notFound) return;
-      if (type != FileSystemEntityType.directory) {
-        throw StateError('e2ee_attachment_staging_cutover_type');
-      }
-    }
-    final stagingType = await FileSystemEntity.type(
-      stagingRoot.path,
-      followLinks: false,
-    );
-    if (stagingType == FileSystemEntityType.notFound) return;
-    if (stagingType != FileSystemEntityType.directory) {
-      throw StateError('e2ee_attachment_staging_cutover_type');
-    }
-    await _deleteAttachmentStagingDirectory(
-      stagingRoot,
-      durability: durability,
-    );
-  }
-
-  static Future<void> _deleteAttachmentStagingDirectory(
-    Directory directory, {
-    required RestoreDurability durability,
-  }) async {
-    await for (final entity in directory.list(followLinks: false)) {
-      final type = await FileSystemEntity.type(entity.path, followLinks: false);
-      switch (type) {
-        case FileSystemEntityType.file:
-          await File(entity.path).delete();
-        case FileSystemEntityType.directory:
-          await _deleteAttachmentStagingDirectory(
-            Directory(entity.path),
-            durability: durability,
-          );
-        case FileSystemEntityType.notFound:
-        case FileSystemEntityType.link:
-        case FileSystemEntityType.pipe:
-        case FileSystemEntityType.unixDomainSock:
-          throw StateError('e2ee_attachment_staging_cutover_type');
-      }
-    }
-    await durability.syncDirectory(directory, fullBarrier: true);
-    final parent = directory.parent;
-    await directory.delete();
-    await durability.syncDirectory(parent, fullBarrier: true);
   }
 
   static Future<List<({File file, DatabaseInstallationReceipt receipt})>>

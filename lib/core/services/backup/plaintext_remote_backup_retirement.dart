@@ -1,6 +1,4 @@
-import 'dart:io';
-
-import 'package:path/path.dart' as p;
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../storage/durable_shared_preferences_store.dart';
@@ -10,7 +8,7 @@ final class PlaintextRemoteBackupRetirement {
   const PlaintextRemoteBackupRetirement({
     required this.preferenceStore,
     required this.registeredPreferencePrefixes,
-    required this.temporaryDirectory,
+    required this.retirePlaintextBackups,
   });
 
   static const Set<String> retiredPreferenceKeys = <String>{
@@ -28,19 +26,13 @@ final class PlaintextRemoteBackupRetirement {
     'log_max_size_mb_v1',
   };
 
-  static const Set<String> _retiredLooseFileNames = <String>{
-    '_bk_settings.json',
-    '_bk_chats.json',
-    '_bk_manifest.json',
-    '_bk_kelivo.db',
-  };
   static const _localPreferencePrefix = 'flutter.';
   static const _accountPreferencePrefix = 'kelivo.account.';
   static final _workspaceKeyPattern = RegExp(r'^[0-9a-f]{64}$');
 
   final DurableSharedPreferencesStore preferenceStore;
   final Set<String> registeredPreferencePrefixes;
-  final Directory temporaryDirectory;
+  final Future<void> Function() retirePlaintextBackups;
 
   static Future<void> retireCurrentInstallation({
     required AccountWorkspaceRuntime workspaceRuntime,
@@ -48,12 +40,18 @@ final class PlaintextRemoteBackupRetirement {
     final registeredPreferencePrefixes = await workspaceRuntime
         .registeredPreferencesPrefixes();
     final temporaryDirectory = await getTemporaryDirectory();
-    await PlaintextRemoteBackupRetirement(
-      preferenceStore:
-          PlatformDurableSharedPreferencesStore.forCurrentPlatform(),
-      registeredPreferencePrefixes: registeredPreferencePrefixes,
-      temporaryDirectory: temporaryDirectory,
-    ).retire();
+    final temporaryRootSession = await const KelivoSecureCore()
+        .openTemporaryRoot(temporaryDirectory.path);
+    try {
+      await PlaintextRemoteBackupRetirement(
+        preferenceStore:
+            PlatformDurableSharedPreferencesStore.forCurrentPlatform(),
+        registeredPreferencePrefixes: registeredPreferencePrefixes,
+        retirePlaintextBackups: temporaryRootSession.retirePlaintextBackups,
+      ).retire();
+    } finally {
+      await temporaryRootSession.close();
+    }
   }
 
   Future<void> retire() async {
@@ -77,32 +75,7 @@ final class PlaintextRemoteBackupRetirement {
     for (final rawKey in existingRetiredKeys) {
       await preferenceStore.remove(rawKey);
     }
-
-    final rootType = await FileSystemEntity.type(
-      temporaryDirectory.path,
-      followLinks: false,
-    );
-    if (rootType == FileSystemEntityType.notFound) return;
-    if (rootType != FileSystemEntityType.directory) {
-      throw StateError('plaintext_remote_backup_temp_root');
-    }
-
-    await for (final entity in temporaryDirectory.list(followLinks: false)) {
-      final name = p.basename(entity.path);
-      final type = await FileSystemEntity.type(entity.path, followLinks: false);
-      final isRetiredDirectory =
-          type == FileSystemEntityType.directory &&
-          name.startsWith('kelivo_backup_');
-      final isRetiredFile =
-          type == FileSystemEntityType.file &&
-          (_retiredLooseFileNames.contains(name) ||
-              (name.startsWith('kelivo_backup_') && name.endsWith('.zip')));
-      if (isRetiredDirectory) {
-        await _deleteDirectoryWithoutFollowingLinks(Directory(entity.path));
-      } else if (isRetiredFile) {
-        await File(entity.path).delete();
-      }
-    }
+    await retirePlaintextBackups();
   }
 
   void _validateRegisteredPreferencePrefixes() {
@@ -140,29 +113,5 @@ final class PlaintextRemoteBackupRetirement {
       );
     }
     return '$_accountPreferencePrefix$workspaceKey.';
-  }
-
-  static Future<void> _deleteDirectoryWithoutFollowingLinks(
-    Directory directory,
-  ) async {
-    await for (final entity in directory.list(followLinks: false)) {
-      final type = await FileSystemEntity.type(entity.path, followLinks: false);
-      switch (type) {
-        case FileSystemEntityType.directory:
-          await _deleteDirectoryWithoutFollowingLinks(Directory(entity.path));
-          break;
-        case FileSystemEntityType.file:
-          await File(entity.path).delete();
-          break;
-        case FileSystemEntityType.link:
-          await Link(entity.path).delete();
-          break;
-        case FileSystemEntityType.notFound:
-          throw StateError('plaintext_remote_backup_artifact_changed');
-        default:
-          throw StateError('plaintext_remote_backup_artifact_type');
-      }
-    }
-    await directory.delete();
   }
 }

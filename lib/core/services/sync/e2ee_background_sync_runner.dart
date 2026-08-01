@@ -469,22 +469,37 @@ final class _ProductionBackgroundSyncHost implements E2eeBackgroundSyncHost {
     } on InstallationBusinessLeaseUnavailable {
       return const E2eeBackgroundWorkspaceBusy();
     }
+    KelivoInstallationRootSession? installationRootSession;
     try {
+      executionBudget.checkCanContinue();
+      installationRootSession = await const KelivoSecureCore()
+          .openInstallationRoot(installationRoot.path);
       executionBudget.checkCanContinue();
       final runtime = await AccountWorkspaceRuntime.bootstrap(
         installationRoot: installationRoot,
       );
       return E2eeBackgroundWorkspaceAcquired(
-        _ProductionBackgroundSyncWorkspace(runtime, installationBusinessLease),
+        _ProductionBackgroundSyncWorkspace(
+          runtime,
+          installationBusinessLease,
+          installationRootSession,
+        ),
       );
     } on RestoreBusinessLeaseUnavailable {
+      await installationRootSession?.close();
       await installationBusinessLease.close();
       return const E2eeBackgroundWorkspaceBusy();
     } catch (error, stackTrace) {
+      final sessionToClose = installationRootSession;
       await rethrowCloudSyncPrimaryAfterCleanup(
         primaryError: error,
         primaryStackTrace: stackTrace,
         cleanupSteps: <CloudSyncFailureCleanupStep>[
+          if (sessionToClose != null)
+            CloudSyncFailureCleanupStep(
+              operation: '后台工作区构造失败后的受管安装根会话释放失败',
+              cleanup: sessionToClose.close,
+            ),
           CloudSyncFailureCleanupStep(
             operation: '后台工作区构造失败后的安装业务租约释放失败',
             cleanup: installationBusinessLease.close,
@@ -500,10 +515,12 @@ final class _ProductionBackgroundSyncWorkspace
   _ProductionBackgroundSyncWorkspace(
     this._workspaceRuntime,
     this._installationBusinessLease,
+    this._installationRootSession,
   );
 
   final AccountWorkspaceRuntime _workspaceRuntime;
   final InstallationBusinessLease _installationBusinessLease;
+  final KelivoInstallationRootSession _installationRootSession;
 
   @override
   CloudSyncAccountSession? get session => _workspaceRuntime.current.session;
@@ -535,7 +552,9 @@ final class _ProductionBackgroundSyncWorkspace
         _workspaceRuntime.current.workspaceKey,
       );
       executionBudget.checkCanContinue();
-      await _workspaceRuntime.discardPlaintextLocalState();
+      await _workspaceRuntime.discardPlaintextLocalState(
+        retirePersistentLogs: _installationRootSession.retirePersistentLogs,
+      );
       executionBudget.checkCanContinue();
       final restoreOutcome =
           await RestoreStartupGate.recoverAndRequireBusinessReady(
@@ -547,6 +566,8 @@ final class _ProductionBackgroundSyncWorkspace
       await DatabaseInstallationGate.ensureReady(
         appDataDirectory: appDataDirectory,
         cipher: databaseCipher,
+        retireAttachmentStaging:
+            _installationRootSession.retireAttachmentStaging,
         allowDatabaseIdentityChange:
             restoreOutcome?.selectedComponents.contains(
               RestoreComponent.database,
@@ -619,11 +640,16 @@ final class _ProductionBackgroundSyncWorkspace
   Future<void> closeWorkspaceLease() async {
     try {
       await _workspaceRuntime.close();
+      await _installationRootSession.close();
     } catch (error, stackTrace) {
       await rethrowCloudSyncPrimaryAfterCleanup(
         primaryError: error,
         primaryStackTrace: stackTrace,
         cleanupSteps: <CloudSyncFailureCleanupStep>[
+          CloudSyncFailureCleanupStep(
+            operation: '后台工作区关闭失败后的受管安装根会话释放失败',
+            cleanup: _installationRootSession.close,
+          ),
           CloudSyncFailureCleanupStep(
             operation: '后台工作区关闭失败后的安装业务租约释放失败',
             cleanup: _installationBusinessLease.close,

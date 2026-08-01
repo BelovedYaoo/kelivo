@@ -12,6 +12,9 @@
 - Windows 原生测试 89/89、Linux 容器测试 64/64 通过；非 root 权限边界另行实跑 1/1。
 - Windows/Linux/Android 严格 Clippy 与 Linux/Android 交叉编译通过。
 - 正在拆分 C ABI、Dart 封装和四个生产调用点；当前分支 ABI 暂定 19，最终集成需与恢复介质分支顺延合并。
+- 应用层已接入同一安装根会话：本地擦除不再传根路径，数据库门禁每次准入都调用固定附件退役操作，后台生命周期显式关闭会话。
+- 旧备份退役已移除 Dart 目录遍历，改由系统临时根会话执行固定白名单操作；持久日志调用点由 #84 在同一会话上接入。
+- 相关 Flutter 测试 66/66 通过，`flutter analyze --no-pub lib test` 通过；无范围分析仍受 path dependency 既有开发依赖缺失阻断。
 
 ## 约束
 

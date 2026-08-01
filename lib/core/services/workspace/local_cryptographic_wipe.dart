@@ -9,10 +9,7 @@ import 'local_wipe_marker_topology.dart';
 
 typedef LocalCryptographicWipeStep = Future<void> Function();
 typedef LocalInstallationRootWipe =
-    Future<void> Function({
-      required String rootPath,
-      required String preservedEntryName,
-    });
+    Future<void> Function({required String preservedEntryName});
 typedef _LocalCryptographicWipeRuntime = ({
   bool isSupported,
   Future<Directory> Function() applicationCacheDirectory,
@@ -507,7 +504,6 @@ final class InstallationLocalCryptographicWipe
   }
 
   Future<void> _wipeInstallationContents() => _runtime.wipeInstallationRoot(
-    rootPath: _installationRoot.path,
     preservedEntryName:
         LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
   );

@@ -65,49 +65,12 @@ void main() {
     final preferenceStore = _MemoryPlaintextRemoteBackupPreferenceStore(
       initialPreferences,
     );
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'kelivo_remote_backup_retirement_test_',
-    );
-    addTearDown(() async {
-      if (await temporaryDirectory.exists()) {
-        await temporaryDirectory.delete(recursive: true);
-      }
-    });
-
-    final staleDirectory = Directory(
-      '${temporaryDirectory.path}${Platform.pathSeparator}'
-      'kelivo_backup_2026-07-01T00-00-00.000000',
-    );
-    await staleDirectory.create();
-    await File(
-      '${staleDirectory.path}${Platform.pathSeparator}'
-      'kelivo_backup_2026-07-01T00-00-00.000000.zip',
-    ).writeAsString('plaintext');
-    for (final name in <String>[
-      'kelivo_backup_old.zip',
-      '_bk_settings.json',
-      '_bk_chats.json',
-      '_bk_manifest.json',
-      '_bk_kelivo.db',
-    ]) {
-      await File(
-        '${temporaryDirectory.path}${Platform.pathSeparator}$name',
-      ).writeAsString('plaintext');
-    }
-    final localExportDirectory = Directory(
-      '${temporaryDirectory.path}${Platform.pathSeparator}'
-      'kelivo_local_export_in_progress',
-    );
-    await localExportDirectory.create();
-    final unrelatedFile = File(
-      '${temporaryDirectory.path}${Platform.pathSeparator}user_export.zip',
-    );
-    await unrelatedFile.writeAsString('kept');
+    var retirementCalls = 0;
 
     await PlaintextRemoteBackupRetirement(
       preferenceStore: preferenceStore,
       registeredPreferencePrefixes: prefixes,
-      temporaryDirectory: temporaryDirectory,
+      retirePlaintextBackups: () async => retirementCalls += 1,
     ).retire();
 
     expect(PlaintextRemoteBackupRetirement.retiredPreferenceKeys, retiredKeys);
@@ -119,13 +82,7 @@ void main() {
     expect(preferenceStore['flutter.unrelated_preference'], 'kept');
     expect(preferenceStore['flutter.webdav_config_v1_extra'], 'kept-similar');
     expect(preferenceStore['other.app.webdav_config_v1'], 'kept-other-app');
-    expect(await staleDirectory.exists(), isFalse);
-    expect(
-      await File('${temporaryDirectory.path}/kelivo_backup_old.zip').exists(),
-      isFalse,
-    );
-    expect(await localExportDirectory.exists(), isTrue);
-    expect(await unrelatedFile.exists(), isTrue);
+    expect(retirementCalls, 1);
   });
 
   test('发现未注册账号命名空间时在任何删除前显式失败', () async {
@@ -136,20 +93,13 @@ void main() {
           'flutter.webdav_config_v1': 'known-secret',
           'kelivo.account.$unknownWorkspaceKey.s3_config_v1': 'unknown-secret',
         });
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'kelivo_remote_backup_unknown_namespace_test_',
-    );
-    addTearDown(() async {
-      if (await temporaryDirectory.exists()) {
-        await temporaryDirectory.delete(recursive: true);
-      }
-    });
+    var retirementCalled = false;
 
     await expectLater(
       PlaintextRemoteBackupRetirement(
         preferenceStore: preferenceStore,
         registeredPreferencePrefixes: const <String>{'flutter.'},
-        temporaryDirectory: temporaryDirectory,
+        retirePlaintextBackups: () async => retirementCalled = true,
       ).retire(),
       throwsA(
         isA<StateError>().having(
@@ -169,31 +119,21 @@ void main() {
       isTrue,
     );
     expect(preferenceStore.removeCallCount, 0);
+    expect(retirementCalled, isFalse);
   });
 
-  test('偏好后端未实际删除时阻止完成且不继续清理临时文件', () async {
+  test('偏好后端未实际删除时阻止完成且不调用原生退役', () async {
     final preferenceStore = _MemoryPlaintextRemoteBackupPreferenceStore(
       <String, Object>{'flutter.s3_config_v1': 'secret'},
       removeSucceeds: false,
     );
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'kelivo_remote_backup_remove_failure_test_',
-    );
-    final staleFile = File(
-      '${temporaryDirectory.path}${Platform.pathSeparator}_bk_settings.json',
-    );
-    await staleFile.writeAsString('plaintext', flush: true);
-    addTearDown(() async {
-      if (await temporaryDirectory.exists()) {
-        await temporaryDirectory.delete(recursive: true);
-      }
-    });
+    var retirementCalled = false;
 
     await expectLater(
       PlaintextRemoteBackupRetirement(
         preferenceStore: preferenceStore,
         registeredPreferencePrefixes: const <String>{'flutter.'},
-        temporaryDirectory: temporaryDirectory,
+        retirePlaintextBackups: () async => retirementCalled = true,
       ).retire(),
       throwsA(
         isA<StateError>().having(
@@ -206,25 +146,18 @@ void main() {
     );
 
     expect(preferenceStore.containsKey('flutter.s3_config_v1'), isTrue);
-    expect(await staleFile.exists(), isTrue);
+    expect(retirementCalled, isFalse);
   });
 
   test('安装级退役重复执行保持幂等且不重复删除', () async {
     final preferenceStore = _MemoryPlaintextRemoteBackupPreferenceStore(
       <String, Object>{'flutter.webdav_config_v1': 'secret'},
     );
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'kelivo_remote_backup_idempotent_test_',
-    );
-    addTearDown(() async {
-      if (await temporaryDirectory.exists()) {
-        await temporaryDirectory.delete(recursive: true);
-      }
-    });
+    var retirementCalls = 0;
     final retirement = PlaintextRemoteBackupRetirement(
       preferenceStore: preferenceStore,
       registeredPreferencePrefixes: const <String>{'flutter.'},
-      temporaryDirectory: temporaryDirectory,
+      retirePlaintextBackups: () async => retirementCalls += 1,
     );
 
     await retirement.retire();
@@ -232,31 +165,25 @@ void main() {
 
     expect(preferenceStore.containsKey('flutter.webdav_config_v1'), isFalse);
     expect(preferenceStore.removeCallCount, 1);
+    expect(retirementCalls, 2);
   });
 
-  test('启动退役遇到异常临时根时显式失败', () async {
-    final root = await Directory.systemTemp.createTemp(
-      'kelivo_remote_backup_invalid_root_test_',
-    );
-    final invalidRoot = File('${root.path}${Platform.pathSeparator}temp-root');
-    await invalidRoot.writeAsString('not-a-directory');
-    addTearDown(() async {
-      if (await root.exists()) await root.delete(recursive: true);
-    });
-
+  test('原生明文备份退役失败时显式阻断', () async {
     await expectLater(
       PlaintextRemoteBackupRetirement(
         preferenceStore: _MemoryPlaintextRemoteBackupPreferenceStore(
           const <String, Object>{},
         ),
         registeredPreferencePrefixes: const <String>{'flutter.'},
-        temporaryDirectory: Directory(invalidRoot.path),
+        retirePlaintextBackups: () async {
+          throw StateError('managed_root_retirement_failed');
+        },
       ).retire(),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
           'message',
-          'plaintext_remote_backup_temp_root',
+          'managed_root_retirement_failed',
         ),
       ),
     );
@@ -269,20 +196,13 @@ void main() {
       'flutter.webdav_config_v1': 'known-secret',
       'kelivo.account.$unknownWorkspaceKey.s3_config_v1': 'unknown-secret',
     });
-    final temporaryDirectory = await Directory.systemTemp.createTemp(
-      'kelivo_remote_backup_unknown_namespace_test_',
-    );
-    addTearDown(() async {
-      if (await temporaryDirectory.exists()) {
-        await temporaryDirectory.delete(recursive: true);
-      }
-    });
+    var retirementCalled = false;
 
     await expectLater(
       PlaintextRemoteBackupRetirement(
         preferenceStore: _createDurablePreferencesStore(platform),
         registeredPreferencePrefixes: const <String>{'flutter.'},
-        temporaryDirectory: temporaryDirectory,
+        retirePlaintextBackups: () async => retirementCalled = true,
       ).retire(),
       throwsStateError,
     );
@@ -293,6 +213,7 @@ void main() {
       remaining['kelivo.account.$unknownWorkspaceKey.s3_config_v1'],
       'unknown-secret',
     );
+    expect(retirementCalled, isFalse);
   });
 }
 

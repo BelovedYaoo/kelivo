@@ -34,13 +34,9 @@ void main() {
   });
 
   Future<void> wipeInstallationRootForTest({
-    required String rootPath,
     required String preservedEntryName,
   }) async {
-    expect(rootPath, installationRoot.path);
-    final entities = await Directory(
-      rootPath,
-    ).list(followLinks: false).toList();
+    final entities = await installationRoot.list(followLinks: false).toList();
     for (final entity in entities) {
       final name = entity.uri.pathSegments
           .where((segment) => segment.isNotEmpty)
@@ -153,22 +149,16 @@ void main() {
         return cacheRoot;
       },
       deleteAllSecureSlots: () async => events.add('secure-slots'),
-      wipeInstallationRoot:
-          ({
-            required String rootPath,
-            required String preservedEntryName,
-          }) async {
-            expect(rootPath, installationRoot.path);
-            expect(
-              preservedEntryName,
-              LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
-            );
-            events.add('installation-root');
-            await wipeInstallationRootForTest(
-              rootPath: rootPath,
-              preservedEntryName: preservedEntryName,
-            );
-          },
+      wipeInstallationRoot: ({required String preservedEntryName}) async {
+        expect(
+          preservedEntryName,
+          LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+        );
+        events.add('installation-root');
+        await wipeInstallationRootForTest(
+          preservedEntryName: preservedEntryName,
+        );
+      },
       clearAllPreferences: () async {
         expect(await installationRoot.exists(), isTrue);
         expect(
@@ -244,11 +234,8 @@ void main() {
     final unsupportedWipe = createWipe(
       isSupported: false,
       deleteAllSecureSlots: () async => events.add('secure-slots'),
-      wipeInstallationRoot:
-          ({
-            required String rootPath,
-            required String preservedEntryName,
-          }) async => events.add('installation-root'),
+      wipeInstallationRoot: ({required String preservedEntryName}) async =>
+          events.add('installation-root'),
       clearAllPreferences: () async => events.add('preferences'),
     );
 
@@ -267,21 +254,16 @@ void main() {
     var failNextWipe = true;
     var wipeCalls = 0;
     final wipe = createWipe(
-      wipeInstallationRoot:
-          ({
-            required String rootPath,
-            required String preservedEntryName,
-          }) async {
-            wipeCalls += 1;
-            if (failNextWipe) {
-              failNextWipe = false;
-              throw StateError('injected_installation_root_wipe');
-            }
-            await wipeInstallationRootForTest(
-              rootPath: rootPath,
-              preservedEntryName: preservedEntryName,
-            );
-          },
+      wipeInstallationRoot: ({required String preservedEntryName}) async {
+        wipeCalls += 1;
+        if (failNextWipe) {
+          failNextWipe = false;
+          throw StateError('injected_installation_root_wipe');
+        }
+        await wipeInstallationRootForTest(
+          preservedEntryName: preservedEntryName,
+        );
+      },
     );
     await markConfirmed(wipe);
 
@@ -310,18 +292,13 @@ void main() {
     await writeInstallationFixture();
     var wipeCalls = 0;
     final wipe = createWipe(
-      wipeInstallationRoot:
-          ({
-            required String rootPath,
-            required String preservedEntryName,
-          }) async {
-            expect(rootPath, installationRoot.path);
-            expect(
-              preservedEntryName,
-              LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
-            );
-            wipeCalls += 1;
-          },
+      wipeInstallationRoot: ({required String preservedEntryName}) async {
+        expect(
+          preservedEntryName,
+          LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+        );
+        wipeCalls += 1;
+      },
     );
     await markConfirmed(wipe);
 

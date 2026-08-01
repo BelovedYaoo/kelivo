@@ -147,9 +147,13 @@ Future<void> main() async {
       const secureCore = KelivoSecureCore();
       late final Directory installationRoot;
       late final KelivoCoreCapabilities secureCoreCapabilities;
+      late final KelivoInstallationRootSession installationRootSession;
       try {
         installationRoot = await AppDirectories.getInstallationRootDirectory();
         secureCoreCapabilities = await secureCore.getCapabilities();
+        installationRootSession = await secureCore.openInstallationRoot(
+          installationRoot.path,
+        );
       } catch (error) {
         stderr.writeln('[InstallationBootstrap] failed');
         await _initRestoreFailureWindow();
@@ -162,10 +166,10 @@ Future<void> main() async {
       }
       final localCryptographicWipe = InstallationLocalCryptographicWipe(
         installationRoot: installationRoot,
-        isSupported: secureCoreCapabilities.supportsInstallationRootWipe,
+        isSupported: secureCoreCapabilities.supportsManagedRootRetirement,
         applicationCacheDirectory: getApplicationCacheDirectory,
         deleteAllSecureSlots: secureCore.deleteAllSlots,
-        wipeInstallationRoot: secureCore.wipeInstallationRoot,
+        wipeInstallationRoot: installationRootSession.wipeInstallationRoot,
         clearAllPreferences: _clearAllPreferencesForLocalWipe,
       );
       final installationOperationLease = InstallationOperationLease(
@@ -249,7 +253,9 @@ Future<void> main() async {
         final businessLease = await RestoreBusinessLease.acquire(
           appDataDirectory: appDataDirectory,
         );
-        await workspaceRuntime.discardPlaintextLocalState();
+        await workspaceRuntime.discardPlaintextLocalState(
+          retirePersistentLogs: installationRootSession.retirePersistentLogs,
+        );
         restoreOutcome =
             await RestoreStartupGate.recoverAndRequireBusinessReady(
               appDataDirectory: appDataDirectory,
@@ -285,6 +291,8 @@ Future<void> main() async {
         final installationReceipt = await DatabaseInstallationGate.ensureReady(
           appDataDirectory: appDataDirectory,
           cipher: databaseCipher,
+          retireAttachmentStaging:
+              installationRootSession.retireAttachmentStaging,
           allowDatabaseIdentityChange:
               restoreOutcome?.selectedComponents.contains(
                 RestoreComponent.database,

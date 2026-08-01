@@ -19,11 +19,13 @@ final class DatabaseInstallationGate {
     required Directory appDataDirectory,
     bool allowDatabaseIdentityChange = false,
     RestoreDurability? durability,
+    Future<void> Function()? retireAttachmentStaging,
   }) => production.DatabaseInstallationGate.ensureReady(
     appDataDirectory: appDataDirectory,
     cipher: testDatabaseCipher,
     allowDatabaseIdentityChange: allowDatabaseIdentityChange,
     durability: durability,
+    retireAttachmentStaging: retireAttachmentStaging ?? () async {},
   );
 
   static Future<DatabaseInstallationReceipt?> read({
@@ -237,6 +239,10 @@ void main() {
 
       final replacement = await DatabaseInstallationGate.ensureReady(
         appDataDirectory: directory,
+        retireAttachmentStaging: () async {
+          expect(await plaintextStaging.exists(), isTrue);
+          await stagingRoot.delete(recursive: true);
+        },
       );
 
       expect(replacement.installationId, isNot(original.installationId));
@@ -263,8 +269,10 @@ void main() {
       }
     });
 
-    test('附件暂存硬切耐久确认失败会阻断并在下次启动幂等恢复', () async {
-      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
+    test('原生附件暂存退役失败会在数据库变更前阻断并可重试', () async {
+      final original = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+      );
       final file = databaseFile(directory);
       final before = sqlite.sqlite3.open(file.path);
       try {
@@ -273,65 +281,62 @@ void main() {
       } finally {
         before.close();
       }
-      final stagingRoot = Directory(
-        p.join(directory.path, 'upload', 'e2ee', 'staging'),
-      );
-      final plaintextStaging = File(
-        p.join(stagingRoot.path, 'download', 'plaintext.part'),
-      );
-      await plaintextStaging.create(recursive: true);
-      await plaintextStaging.writeAsBytes([1, 2, 3], flush: true);
-      final durability = _FailOnceOnE2eeDirectorySyncDurability();
+      var retirementCalls = 0;
 
       await expectLater(
         DatabaseInstallationGate.ensureReady(
           appDataDirectory: directory,
-          durability: durability,
+          retireAttachmentStaging: () async {
+            retirementCalls += 1;
+            throw StateError('managed_root_retirement_failed');
+          },
         ),
-        throwsA(isA<FileSystemException>()),
-      );
-      expect(await stagingRoot.exists(), isFalse);
-      expect(
-        await DatabaseInstallationGate.read(appDataDirectory: directory),
-        equals(null),
-      );
-
-      final recovered = await DatabaseInstallationGate.ensureReady(
-        appDataDirectory: directory,
-      );
-      expect(recovered.attachmentStagingCutoverVersion, 23);
-    });
-
-    test('附件暂存硬切遇到非目录拓扑时失败关闭', () async {
-      await DatabaseInstallationGate.ensureReady(appDataDirectory: directory);
-      final file = databaseFile(directory);
-      final before = sqlite.sqlite3.open(file.path);
-      try {
-        testDatabaseCipher.apply(before, createSlotIfMissing: false);
-        before.userVersion = AppDatabase.currentSchemaVersion - 1;
-      } finally {
-        before.close();
-      }
-      final stagingRoot = File(
-        p.join(directory.path, 'upload', 'e2ee', 'staging'),
-      );
-      await stagingRoot.create(recursive: true);
-
-      await expectLater(
-        DatabaseInstallationGate.ensureReady(appDataDirectory: directory),
         throwsA(
           isA<StateError>().having(
             (error) => error.message,
             'message',
-            'e2ee_attachment_staging_cutover_type',
+            'managed_root_retirement_failed',
           ),
         ),
       );
-      expect(await stagingRoot.exists(), isTrue);
-      expect(
-        await DatabaseInstallationGate.read(appDataDirectory: directory),
-        equals(null),
+      final unchanged = sqlite.sqlite3.open(
+        file.path,
+        mode: sqlite.OpenMode.readOnly,
       );
+      try {
+        testDatabaseCipher.apply(unchanged, createSlotIfMissing: false);
+        expect(unchanged.userVersion, AppDatabase.currentSchemaVersion - 1);
+      } finally {
+        unchanged.close();
+      }
+
+      final recovered = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+        retireAttachmentStaging: () async => retirementCalls += 1,
+      );
+      expect(recovered.attachmentStagingCutoverVersion, 23);
+      expect(recovered.databaseId, isNot(original.databaseId));
+      expect(retirementCalls, 2);
+    });
+
+    test('已有安装回执时仍执行原生附件暂存退役', () async {
+      var retirementCalls = 0;
+      final first = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+        retireAttachmentStaging: () async => retirementCalls += 1,
+      );
+      final second = await DatabaseInstallationGate.ensureReady(
+        appDataDirectory: directory,
+        retireAttachmentStaging: () async => retirementCalls += 1,
+      );
+
+      expect(second.installationId, first.installationId);
+      expect(second.databaseId, first.databaseId);
+      expect(
+        second.attachmentStagingCutoverVersion,
+        first.attachmentStagingCutoverVersion,
+      );
+      expect(retirementCalls, 2);
     });
 
     test('已有 receipt 但数据库缺失时拒绝且不创建空库', () async {
@@ -749,41 +754,6 @@ void main() {
       expect(await invalidSidecar.exists(), isTrue);
     });
   });
-}
-
-final class _FailOnceOnE2eeDirectorySyncDurability
-    implements RestoreDurability {
-  final RestoreDurability _delegate = RestorePlatformDurability();
-  var _failed = false;
-
-  @override
-  Future<void> restrictDirectory(Directory directory) =>
-      _delegate.restrictDirectory(directory);
-
-  @override
-  Future<void> restrictFile(File file) => _delegate.restrictFile(file);
-
-  @override
-  Future<void> syncDirectory(Directory directory, {bool fullBarrier = false}) {
-    if (!_failed && p.basename(directory.path) == 'e2ee') {
-      _failed = true;
-      throw FileSystemException(
-        'e2ee_attachment_staging_cutover_sync_failed',
-        directory.path,
-      );
-    }
-    return _delegate.syncDirectory(directory, fullBarrier: fullBarrier);
-  }
-
-  @override
-  Future<void> syncFile(File file, {bool fullBarrier = false}) =>
-      _delegate.syncFile(file, fullBarrier: fullBarrier);
-
-  @override
-  Future<void> renameAndSync({
-    required FileSystemEntity source,
-    required String targetPath,
-  }) => _delegate.renameAndSync(source: source, targetPath: targetPath);
 }
 
 Future<bool> _hasPlaintextSqliteHeader(File file) async {
