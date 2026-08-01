@@ -701,6 +701,7 @@ final class E2eeAccountRecoveryCheckpoint {
       null,
       null,
       null,
+      null,
     );
   }
 
@@ -714,6 +715,7 @@ final class E2eeAccountRecoveryCheckpoint {
     this.recoveryTokenExpiresAt,
     this.nextAction,
     this.preparedCommit,
+    this.commitReceipt,
   );
 
   final E2eeAccountRecoveryStage stage;
@@ -725,6 +727,7 @@ final class E2eeAccountRecoveryCheckpoint {
   final DateTime? recoveryTokenExpiresAt;
   final E2eeAccountRecoveryNextAction? nextAction;
   final E2eeAccountRecoveryPreparedCommit? preparedCommit;
+  final E2eeAccountRecoveryCommitReceipt? commitReceipt;
 
   String get attemptId => challenge.attemptId;
 
@@ -757,6 +760,7 @@ final class E2eeAccountRecoveryCheckpoint {
         challenge,
         ownedNonceProof.asUnmodifiableView(),
         ownedTrustSignature.asUnmodifiableView(),
+        null,
         null,
         null,
         null,
@@ -800,6 +804,7 @@ final class E2eeAccountRecoveryCheckpoint {
       expiresAt,
       nextAction,
       null,
+      null,
     );
   }
 
@@ -830,6 +835,55 @@ final class E2eeAccountRecoveryCheckpoint {
       recoveryTokenExpiresAt,
       nextAction,
       commit,
+      null,
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint withCommitReceipt(
+    E2eeAccountRecoveryCommitReceipt receipt,
+  ) {
+    final prepared = preparedCommit;
+    if (stage != E2eeAccountRecoveryStage.authorized ||
+        prepared == null ||
+        commitReceipt != null) {
+      throw StateError('账户恢复 checkpoint 不可写入成员提交回执');
+    }
+    final membership = prepared.membership;
+    final expectedRekeyOperationId = switch (prepared) {
+      E2eeAccountRecoveryResumeCommit(:final rekeyOperationId) =>
+        rekeyOperationId,
+      E2eeAccountRecoveryReplacementCommit() => membership.operationId,
+    };
+    final expectedKeyEpoch = switch (prepared) {
+      E2eeAccountRecoveryResumeCommit() => membership.expectedKeyEpoch,
+      E2eeAccountRecoveryReplacementCommit() => membership.expectedKeyEpoch + 1,
+    };
+    final expectedNextAction = switch (prepared) {
+      E2eeAccountRecoveryResumeCommit() =>
+        E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+      E2eeAccountRecoveryReplacementCommit() =>
+        E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+    };
+    if (receipt.kind != prepared.kind ||
+        receipt.attemptId != attemptId ||
+        receipt.membershipOperationId != membership.operationId ||
+        receipt.rekeyOperationId != expectedRekeyOperationId ||
+        receipt.generation != membership.expectedGeneration + 1 ||
+        receipt.keyEpoch != expectedKeyEpoch ||
+        receipt.nextAction != expectedNextAction) {
+      throw const FormatException('账户恢复成员提交回执未绑定待提交请求');
+    }
+    return E2eeAccountRecoveryCheckpoint._(
+      stage,
+      expectedDeviceId,
+      recoveryToken,
+      challenge,
+      _nonceProof,
+      _trustSignature,
+      recoveryTokenExpiresAt,
+      receipt.nextAction,
+      prepared,
+      receipt,
     );
   }
 

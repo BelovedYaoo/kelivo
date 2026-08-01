@@ -8,16 +8,16 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_recovery.dart';
 
-const _checkpointVersion = 2;
+const _checkpointVersion = 3;
 const _checkpointRecordEpoch = 1;
 const _checkpointFixedLength = 819;
 const _checkpointTokenLength = 59;
 const _checkpointFullSessionTokenLength = 50;
 const _checkpointCapsuleMaximumLength = 4096;
-const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v2';
+const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v3';
 const _checkpointAssociatedDataDomain =
-    'kelivo.account-recovery.checkpoint.aad.v2';
-final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC2'));
+    'kelivo.account-recovery.checkpoint.aad.v3';
+final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC3'));
 final _canonicalUuidV4Pattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
@@ -246,7 +246,8 @@ Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
     final frame = Uint8List(
       _checkpointFixedLength +
           capsule.length +
-          _preparedCommitFrameLength(checkpoint.preparedCommit),
+          _preparedCommitFrameLength(checkpoint.preparedCommit) +
+          _commitReceiptFrameLength(checkpoint.commitReceipt),
     );
     final view = ByteData.sublistView(frame);
     var offset = 0;
@@ -318,6 +319,7 @@ Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
       offset,
       checkpoint.preparedCommit,
     );
+    offset = _writeCommitReceipt(frame, view, offset, checkpoint.commitReceipt);
     if (offset != frame.length) {
       frame.fillRange(0, frame.length, 0);
       throw StateError('账户恢复 checkpoint 编码长度不一致');
@@ -407,8 +409,41 @@ int _writePreparedCommit(
   }
 }
 
+int _commitReceiptFrameLength(E2eeAccountRecoveryCommitReceipt? receipt) =>
+    receipt == null ? 4 : 72;
+
+int _writeCommitReceipt(
+  Uint8List frame,
+  ByteData view,
+  int offset,
+  E2eeAccountRecoveryCommitReceipt? receipt,
+) {
+  if (receipt == null) return _writeUint32(view, offset, 0);
+  offset = _writeUint32(view, offset, 1);
+  offset = _writeUint32(
+    view,
+    offset,
+    receipt.result == E2eeAccountRecoveryCommitResult.committed ? 1 : 2,
+  );
+  offset = _writeUint32(
+    view,
+    offset,
+    receipt.kind == E2eeAccountRecoveryCommitKind.resume ? 1 : 2,
+  );
+  offset = _writeBytes(frame, offset, _uuidBytes(receipt.attemptId));
+  offset = _writeBytes(
+    frame,
+    offset,
+    _uuidBytes(receipt.membershipOperationId),
+  );
+  offset = _writeBytes(frame, offset, _uuidBytes(receipt.rekeyOperationId));
+  offset = _writeUint32(view, offset, receipt.generation);
+  offset = _writeUint32(view, offset, receipt.keyEpoch);
+  return _writeUint32(view, offset, _nextActionCode(receipt.nextAction));
+}
+
 E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
-  if (frame.length < _checkpointFixedLength + 4 ||
+  if (frame.length < _checkpointFixedLength + 8 ||
       !_startsWith(frame, _checkpointMagic)) {
     throw const FormatException('账户恢复 checkpoint 帧无效');
   }
@@ -454,7 +489,7 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
   offset += 4;
   if (capsuleLength <= 0 ||
       capsuleLength > _checkpointCapsuleMaximumLength ||
-      frame.length < _checkpointFixedLength + capsuleLength + 4) {
+      frame.length < _checkpointFixedLength + capsuleLength + 8) {
     throw const FormatException('账户恢复 checkpoint capsule 边界无效');
   }
   final recoveryCapsule = _readBytes(frame, offset, capsuleLength);
@@ -498,6 +533,8 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
     attemptId: attemptId,
   );
   offset = prepared.offset;
+  final receipt = _readCommitReceipt(frame, view, offset);
+  offset = receipt.offset;
   if (offset != frame.length || expiresAtMs <= 0) {
     throw const FormatException('账户恢复 checkpoint 尾部状态无效');
   }
@@ -546,7 +583,8 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
           !_allZero(trustSignature) ||
           recoveryTokenExpiresAtMs != 0 ||
           nextActionCode != 0 ||
-          prepared.commit != null) {
+          prepared.commit != null ||
+          receipt.receipt != null) {
         throw const FormatException('账户恢复 challenge checkpoint 状态无效');
       }
       return E2eeAccountRecoveryCheckpoint.challenged(
@@ -559,7 +597,8 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
           _allZero(trustSignature) ||
           recoveryTokenExpiresAtMs != 0 ||
           nextActionCode != 0 ||
-          prepared.commit != null) {
+          prepared.commit != null ||
+          receipt.receipt != null) {
         throw const FormatException('账户恢复 proof checkpoint 状态无效');
       }
       return E2eeAccountRecoveryCheckpoint.challenged(
@@ -574,6 +613,22 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
           nextActionCode == 0) {
         throw const FormatException('账户恢复授权 checkpoint 状态无效');
       }
+      final persistedNextAction = _parseNextAction(nextActionCode);
+      final preparedCommit = prepared.commit;
+      final commitReceipt = receipt.receipt;
+      if (commitReceipt != null &&
+          (preparedCommit == null ||
+              commitReceipt.nextAction != persistedNextAction)) {
+        throw const FormatException('账户恢复 checkpoint 回执状态不一致');
+      }
+      final initialNextAction = commitReceipt == null
+          ? persistedNextAction
+          : switch (preparedCommit!) {
+              E2eeAccountRecoveryResumeCommit() =>
+                E2eeAccountRecoveryNextAction.recoverResume,
+              E2eeAccountRecoveryReplacementCommit() =>
+                E2eeAccountRecoveryNextAction.recoverReplace,
+            };
       final authorized =
           E2eeAccountRecoveryCheckpoint.challenged(
                 expectedDeviceId: expectedDeviceId,
@@ -586,12 +641,13 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
                   recoveryTokenExpiresAtMs,
                   isUtc: true,
                 ),
-                nextAction: _parseNextAction(nextActionCode),
+                nextAction: initialNextAction,
               );
-      final preparedCommit = prepared.commit;
-      return preparedCommit == null
-          ? authorized
-          : authorized.withPreparedCommit(preparedCommit);
+      if (preparedCommit == null) return authorized;
+      final preparedCheckpoint = authorized.withPreparedCommit(preparedCommit);
+      return commitReceipt == null
+          ? preparedCheckpoint
+          : preparedCheckpoint.withCommitReceipt(commitReceipt);
   }
 }
 
@@ -720,6 +776,58 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
   } finally {
     _clear(completionSessionTokenBytes);
   }
+}
+
+({E2eeAccountRecoveryCommitReceipt? receipt, int offset}) _readCommitReceipt(
+  Uint8List frame,
+  ByteData view,
+  int offset,
+) {
+  _requireRemaining(frame, offset, 4);
+  final marker = _readUint32(view, offset);
+  offset += 4;
+  if (marker == 0) return (receipt: null, offset: offset);
+  if (marker != 1) {
+    throw const FormatException('账户恢复 checkpoint 回执标记无效');
+  }
+  _requireRemaining(frame, offset, 68);
+  final result = switch (_readUint32(view, offset)) {
+    1 => E2eeAccountRecoveryCommitResult.committed,
+    2 => E2eeAccountRecoveryCommitResult.replayed,
+    _ => throw const FormatException('账户恢复 checkpoint 回执结果无效'),
+  };
+  offset += 4;
+  final kind = switch (_readUint32(view, offset)) {
+    1 => E2eeAccountRecoveryCommitKind.resume,
+    2 => E2eeAccountRecoveryCommitKind.replacement,
+    _ => throw const FormatException('账户恢复 checkpoint 回执类型无效'),
+  };
+  offset += 4;
+  final attemptId = _uuidString(frame, offset);
+  offset += 16;
+  final membershipOperationId = _uuidString(frame, offset);
+  offset += 16;
+  final rekeyOperationId = _uuidString(frame, offset);
+  offset += 16;
+  final generation = _readUint32(view, offset);
+  offset += 4;
+  final keyEpoch = _readUint32(view, offset);
+  offset += 4;
+  final nextAction = _parseNextAction(_readUint32(view, offset));
+  offset += 4;
+  return (
+    receipt: E2eeAccountRecoveryCommitReceipt(
+      result: result,
+      kind: kind,
+      attemptId: attemptId,
+      membershipOperationId: membershipOperationId,
+      rekeyOperationId: rekeyOperationId,
+      generation: generation,
+      keyEpoch: keyEpoch,
+      nextAction: nextAction,
+    ),
+    offset: offset,
+  );
 }
 
 void _requireRemaining(Uint8List frame, int offset, int length) {

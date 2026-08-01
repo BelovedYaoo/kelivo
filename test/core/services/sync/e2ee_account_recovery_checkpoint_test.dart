@@ -194,7 +194,7 @@ void main() {
       () => preparedResume.withPreparedCommit(resumeRequest),
       throwsA(isA<StateError>()),
     );
-    final preparedResumeSnapshot = await reopened.advance(
+    await reopened.advance(
       expectedEnvelopeDigest: authorizedSnapshot.envelopeDigest,
       checkpoint: preparedResume,
     );
@@ -207,7 +207,37 @@ void main() {
       restoredResume.membership.nextMembershipManifest,
       resumeRequest.membership.nextMembershipManifest,
     );
-    expect(await reopened.delete(preparedResumeSnapshot), isTrue);
+    final resumeReceipt = E2eeAccountRecoveryCommitReceipt(
+      result: E2eeAccountRecoveryCommitResult.committed,
+      kind: E2eeAccountRecoveryCommitKind.resume,
+      attemptId: resumeRequest.attemptId,
+      membershipOperationId: resumeRequest.membership.operationId,
+      rekeyOperationId: resumeRequest.rekeyOperationId,
+      generation: resumeRequest.membership.expectedGeneration + 1,
+      keyEpoch: resumeRequest.membership.expectedKeyEpoch,
+      nextAction: E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    );
+    final committedResume = restoredResumeSnapshot.checkpoint.withCommitReceipt(
+      resumeReceipt,
+    );
+    expect(
+      () => committedResume.withCommitReceipt(resumeReceipt),
+      throwsA(isA<StateError>()),
+    );
+    final committedResumeSnapshot = await reopened.advance(
+      expectedEnvelopeDigest: restoredResumeSnapshot.envelopeDigest,
+      checkpoint: committedResume,
+    );
+    final restoredCommittedResume = await reopened.read();
+    expect(
+      restoredCommittedResume!.checkpoint.nextAction,
+      E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    );
+    expect(
+      restoredCommittedResume.checkpoint.commitReceipt?.membershipOperationId,
+      resumeRequest.membership.operationId,
+    );
+    expect(await reopened.delete(committedResumeSnapshot), isTrue);
 
     final replacementChallenge = _challenge(rekeyPending: false);
     final replacementBase =
@@ -271,6 +301,31 @@ void main() {
     expect(
       restoredReplacement.completionSessionToken.value,
       completionSessionToken.value,
+    );
+    final replacementReceipt = E2eeAccountRecoveryCommitReceipt(
+      result: E2eeAccountRecoveryCommitResult.replayed,
+      kind: E2eeAccountRecoveryCommitKind.replacement,
+      attemptId: replacementRequest.attemptId,
+      membershipOperationId: replacementRequest.membership.operationId,
+      rekeyOperationId: replacementRequest.membership.operationId,
+      generation: replacementRequest.membership.expectedGeneration + 1,
+      keyEpoch: replacementRequest.membership.expectedKeyEpoch + 1,
+      nextAction: E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+    );
+    await reopened.advance(
+      expectedEnvelopeDigest: restoredReplacementSnapshot.envelopeDigest,
+      checkpoint: restoredReplacementSnapshot.checkpoint.withCommitReceipt(
+        replacementReceipt,
+      ),
+    );
+    final restoredCommittedReplacement = await reopened.read();
+    expect(
+      restoredCommittedReplacement!.checkpoint.nextAction,
+      E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+    );
+    expect(
+      restoredCommittedReplacement.checkpoint.commitReceipt?.result,
+      E2eeAccountRecoveryCommitResult.replayed,
     );
     final preparedDiskEnvelope = await deviceStateStore
         .readPendingAccountRecoveryEnvelope(
