@@ -25,4 +25,6 @@
 - 已完成：成员清单保留完整有序最小 operation lineage。恢复接续可从当前 head 严格追溯触发 data-rekey 的 op3/op5，允许同一 R 在 pending 期间发生 1..N 次连续 recovery-resume takeover；最终绑定取最新 op4 的 issuer/generation/digest，错误 R 或不连续历史失败关闭。data 已 ready 的首次恢复仍允许直接 recoverReplace。
 - 已完成：恢复 checkpoint 硬切 v4，在任何远端成员 commit 前强制持久化 source/unpruned/target-only candidate 三份精确随机密文；candidate 显式按 `candidatePrepared -> proofVerified -> activated` 单向推进，回执前不可验证、proof 前不可激活，重启后保持逐字 CAS，不允许后填或重封。
 - 已完成：账户密钥变更 ready confirmation 补齐 user/issuer/operation/generation/epoch/digest 全绑定，独立调用本地 committer 也拒绝跨账户或跨签发设备复用确认。
+- 已完成：CloudSync data-rekey 增加账户恢复令牌专用传输。七个换代接口共享不可变 bearer 作用域，不修改完整会话令牌；允许仅持恢复令牌执行换代，同时普通请求继续失败关闭。
 - 验证：恢复 checkpoint 安全测试 1/1、恢复授权/提交协调 11/11、账户密钥变更编排 8/8 通过；测试使用显式 Native 测试存储和独立 C: TEMP，未访问默认安全槽。
+- 验证：恢复 data-rekey 令牌隔离协议测试 2/2 通过；定向分析无问题。

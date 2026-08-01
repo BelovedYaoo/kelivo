@@ -2943,6 +2943,99 @@ void main() {
     expect(pending.lease?.ownedByCurrentDevice, isTrue);
   });
 
+  test('账户恢复 data-rekey 传输固定使用恢复令牌且不污染完整会话', () async {
+    final recoveryToken = CloudSyncAccountRecoveryToken.parse(
+      'kelivo_recovery_${_encodedBytes(32, 108)}',
+    );
+    final authorizations = <String?>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      expect(request.method, 'GET');
+      expect(request.uri.path, '/api/data-rekey/state/get');
+      authorizations.add(
+        request.headers.value(HttpHeaders.authorizationHeader),
+      );
+      await _writeJsonResponse(request, <String, Object?>{
+        'data': <String, Object?>{
+          'phase': 'ready',
+          'dataGeneration': 4,
+          'dataKeyEpoch': 3,
+          'changeWatermark': 16,
+          'lastCompletion': null,
+          'updatedAt': '2026-08-01T06:00:00.000Z',
+        },
+      });
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    await client.getDataRekeyState();
+    await client
+        .accountRecoveryDataRekeyTransport(recoveryToken)
+        .getDataRekeyState();
+    await client.getDataRekeyState();
+
+    expect(authorizations, <String?>[
+      'Bearer $_fullTokenValue',
+      'Bearer ${recoveryToken.value}',
+      'Bearer $_fullTokenValue',
+    ]);
+  });
+
+  test('账户恢复 data-rekey 传输不依赖完整会话', () async {
+    final recoveryToken = CloudSyncAccountRecoveryToken.parse(
+      'kelivo_recovery_${_encodedBytes(32, 109)}',
+    );
+    final authorizations = <String?>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      authorizations.add(
+        request.headers.value(HttpHeaders.authorizationHeader),
+      );
+      await _writeJsonResponse(request, <String, Object?>{
+        'data': <String, Object?>{
+          'phase': 'ready',
+          'dataGeneration': 4,
+          'dataKeyEpoch': 3,
+          'changeWatermark': 16,
+          'lastCompletion': null,
+          'updatedAt': '2026-08-01T06:00:00.000Z',
+        },
+      });
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    await client
+        .accountRecoveryDataRekeyTransport(recoveryToken)
+        .getDataRekeyState();
+    await expectLater(
+      client.getDataRekeyState(),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.unauthenticated,
+        ),
+      ),
+    );
+
+    expect(authorizations, <String?>['Bearer ${recoveryToken.value}']);
+  });
+
   test('data-rekey 状态拒绝未知字段与冻结游标错配', () async {
     CloudSyncJsonMap pendingState({required int sourceRecordCount}) =>
         <String, Object?>{
