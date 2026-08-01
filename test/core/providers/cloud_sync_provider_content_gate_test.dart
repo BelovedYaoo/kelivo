@@ -26,6 +26,7 @@ import 'package:Kelivo/core/services/sync/cloud_sync_terminal_session_retirement
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_recovery_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
@@ -3076,6 +3077,140 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
   });
 
+  test('移动账户恢复成功后绑定会话并清理全部提交材料', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final runner = _FakeE2eeAccountRecoveryRunner();
+    final fixture = await _createSignedOutFixture(
+      accountRecoveryRunnerFactory:
+          ({required accountClient, required authentication}) => runner,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+    final password = Uint8List.fromList(utf8.encode('account-password'));
+    final recoveryPassphrase = Uint8List.fromList(
+      utf8.encode('correct horse battery staple'),
+    );
+    final recoveryMedia = Uint8List(644)..[0] = 7;
+    final command = E2eeAccountRecoveryCommand(
+      loginName: 'ovo',
+      deviceName: 'Pixel',
+      accountPassword: password,
+      recoveryPassphrase: recoveryPassphrase,
+      encryptedRecoveryMedia: recoveryMedia,
+    );
+
+    expect(password, everyElement(0));
+    expect(recoveryPassphrase, everyElement(0));
+    expect(recoveryMedia, everyElement(0));
+    expect(kIsWeb, isFalse);
+    expect(defaultTargetPlatform, TargetPlatform.android);
+    expect(fixture.provider.accountRecoverySupported, isTrue);
+
+    final recovered = await fixture.provider.startAccountRecovery(command);
+    expect(
+      recovered,
+      isTrue,
+      reason:
+          '${fixture.provider.lastError}; ${fixture.provider.status}; '
+          '${fixture.provider.accountRecoveryProgress}',
+    );
+
+    expect(runner.loginName, 'ovo');
+    expect(runner.deviceName, 'Pixel');
+    expect(runner.passwordText, 'account-password');
+    expect(runner.recoveryPassphraseText, 'correct horse battery staple');
+    expect(runner.recoveryMediaFirstByte, 7);
+    expect(runner.retainedPassword, everyElement(0));
+    expect(runner.retainedRecoveryPassphrase, everyElement(0));
+    expect(runner.retainedRecoveryMedia, everyElement(0));
+    expect(runner.closed, isTrue);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(
+      fixture.provider.accountRecoveryProgress,
+      E2eeAccountRecoveryProgress.completed,
+    );
+  });
+
+  test('账户恢复失败保持登出并清理 runner 已观察的材料', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final runner = _FakeE2eeAccountRecoveryRunner(
+      failure: const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+        serverCode: 'AUTH_ACCOUNT_RECOVERY_MEDIA_INVALID',
+      ),
+    );
+    final fixture = await _createSignedOutFixture(
+      accountRecoveryRunnerFactory:
+          ({required accountClient, required authentication}) => runner,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+    final command = E2eeAccountRecoveryCommand(
+      loginName: 'ovo',
+      deviceName: 'iPhone',
+      accountPassword: Uint8List.fromList(utf8.encode('account-password')),
+      recoveryPassphrase: Uint8List.fromList(
+        utf8.encode('correct horse battery staple'),
+      ),
+      encryptedRecoveryMedia: Uint8List(644),
+    );
+
+    expect(await fixture.provider.startAccountRecovery(command), isFalse);
+
+    expect(fixture.provider.signedIn, isFalse);
+    expect(fixture.provider.status, CloudSyncProviderStatus.signedOut);
+    expect(
+      fixture.provider.lastError?.serverCode,
+      'AUTH_ACCOUNT_RECOVERY_MEDIA_INVALID',
+    );
+    expect(
+      fixture.provider.accountRecoveryProgress,
+      E2eeAccountRecoveryProgress.failed,
+    );
+    expect(runner.retainedPassword, everyElement(0));
+    expect(runner.retainedRecoveryPassphrase, everyElement(0));
+    expect(runner.retainedRecoveryMedia, everyElement(0));
+    expect(runner.closed, isTrue);
+  });
+
+  test('桌面平台拒绝账户恢复且不构造 runner', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    var factoryCalls = 0;
+    final fixture = await _createSignedOutFixture(
+      accountRecoveryRunnerFactory:
+          ({required accountClient, required authentication}) {
+            factoryCalls++;
+            return _FakeE2eeAccountRecoveryRunner();
+          },
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+    final command = E2eeAccountRecoveryCommand(
+      loginName: 'ovo',
+      deviceName: 'Windows',
+      accountPassword: Uint8List.fromList(utf8.encode('account-password')),
+      recoveryPassphrase: Uint8List.fromList(
+        utf8.encode('correct horse battery staple'),
+      ),
+      encryptedRecoveryMedia: Uint8List(644),
+    );
+
+    expect(fixture.provider.accountRecoverySupported, isFalse);
+    expect(await fixture.provider.startAccountRecovery(command), isFalse);
+    expect(factoryCalls, 0);
+    expect(
+      fixture.provider.lastError?.serverCode,
+      'SYNC_ACCOUNT_RECOVERY_UNSUPPORTED',
+    );
+  });
+
   testWidgets('移动平台展示注册模式且桌面平台仅保留登录', (tester) async {
     tester.view.physicalSize = const Size(1000, 1600);
     tester.view.devicePixelRatio = 1;
@@ -4696,6 +4831,7 @@ Future<_Fixture> _createSignedOutFixture({
   _FakeCloudSyncAccountClient? client,
   _FakeE2eeAccountAuthentication? authentication,
   E2eeFirstDeviceRecoveryBootstrapFactory? firstDeviceRecoveryBootstrapFactory,
+  E2eeAccountRecoveryRunnerFactory? accountRecoveryRunnerFactory,
 }) async {
   final testRoot = Directory(
     '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -4725,6 +4861,7 @@ Future<_Fixture> _createSignedOutFixture({
     },
     firstDeviceRecoveryBootstrapFactory:
         firstDeviceRecoveryBootstrapFactory ?? _createTrackingRecoveryBootstrap,
+    accountRecoveryRunnerFactory: accountRecoveryRunnerFactory,
   );
   return _Fixture(
     root: root,
@@ -6372,6 +6509,50 @@ final class _FakeE2eeAccountAuthentication
     } finally {
       qrFrame.fillRange(0, qrFrame.length, 0);
     }
+  }
+}
+
+final class _FakeE2eeAccountRecoveryRunner
+    implements E2eeAccountRecoveryRunner {
+  _FakeE2eeAccountRecoveryRunner({this.failure});
+
+  final Object? failure;
+  bool closed = false;
+  String? loginName;
+  String? deviceName;
+  String? passwordText;
+  String? recoveryPassphraseText;
+  int? recoveryMediaFirstByte;
+  Uint8List? retainedPassword;
+  Uint8List? retainedRecoveryPassphrase;
+  Uint8List? retainedRecoveryMedia;
+
+  @override
+  Future<CloudSyncAuthenticatedSession> recover({
+    required E2eeAccountRecoveryInput input,
+    required CloudSyncPlatform platform,
+    required String clientVersion,
+    required E2eeAccountRecoveryProgressCallback onProgress,
+  }) async {
+    loginName = input.loginName;
+    deviceName = input.deviceName;
+    retainedPassword = input.accountPassword;
+    retainedRecoveryPassphrase = input.recoveryPassphrase;
+    retainedRecoveryMedia = input.encryptedRecoveryMedia;
+    passwordText = utf8.decode(input.accountPassword);
+    recoveryPassphraseText = utf8.decode(input.recoveryPassphrase);
+    recoveryMediaFirstByte = input.encryptedRecoveryMedia.first;
+    onProgress(E2eeAccountRecoveryProgress.verifyingRecoveryMedia);
+    final currentFailure = failure;
+    if (currentFailure != null) throw currentFailure;
+    onProgress(E2eeAccountRecoveryProgress.rebuildingTrustedDevice);
+    onProgress(E2eeAccountRecoveryProgress.restoringEncryptedData);
+    return _authenticatedSession();
+  }
+
+  @override
+  Future<void> close() async {
+    closed = true;
   }
 }
 

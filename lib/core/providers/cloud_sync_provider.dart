@@ -11,6 +11,7 @@ import '../services/sync/cloud_sync_content_runtime.dart';
 import '../services/sync/cloud_sync_terminal_session_retirement.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/sync/e2ee_account_authenticator.dart';
+import '../services/sync/e2ee_account_recovery_runner.dart';
 import '../services/sync/e2ee_device_pairing_membership_commit.dart';
 import '../services/sync/e2ee_first_device_recovery_bootstrap.dart';
 import '../services/sync/e2ee_first_device_registration_commit_coordinator.dart';
@@ -32,6 +33,11 @@ typedef E2eeFirstDeviceRecoveryBootstrapFactory =
     E2eeFirstDeviceSecurityBootstrapPreparer Function({
       required Uint8List recoveryPassphrase,
       required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
+    });
+typedef E2eeAccountRecoveryRunnerFactory =
+    E2eeAccountRecoveryRunner Function({
+      required CloudSyncAccountClient accountClient,
+      required E2eeAccountAuthentication authentication,
     });
 typedef CloudSyncCurrentDeviceRevocationCommitter =
     Future<CloudSyncDeviceRotationResult> Function({
@@ -62,6 +68,7 @@ enum CloudSyncProviderStatus {
   initializing,
   signedOut,
   signingIn,
+  recoveringAccount,
   awaitingDeviceApproval,
   signingOut,
   workspaceChangePending,
@@ -78,6 +85,7 @@ final class CloudSyncProvider extends ChangeNotifier
     E2eeFirstDeviceRecoveryBootstrapFactory
         firstDeviceRecoveryBootstrapFactory =
         _createFirstDeviceRecoveryBootstrap,
+    E2eeAccountRecoveryRunnerFactory? accountRecoveryRunnerFactory,
     LocalCryptographicWipe? localCryptographicWipe,
     InstallationOperationLease? installationOperationLease,
     InstallationBusinessLease? installationBusinessLease,
@@ -92,6 +100,7 @@ final class CloudSyncProvider extends ChangeNotifier
       clientFactory: clientFactory,
       authenticationFactory: authenticationFactory,
       firstDeviceRecoveryBootstrapFactory: firstDeviceRecoveryBootstrapFactory,
+      accountRecoveryRunnerFactory: accountRecoveryRunnerFactory,
       devicePairingMembershipCommitPreparer: null,
       localCryptographicWipe: localCryptographicWipe,
       installationOperationLease: installationOperationLease,
@@ -111,6 +120,7 @@ final class CloudSyncProvider extends ChangeNotifier
     E2eeFirstDeviceRecoveryBootstrapFactory
         firstDeviceRecoveryBootstrapFactory =
         _createFirstDeviceRecoveryBootstrap,
+    E2eeAccountRecoveryRunnerFactory? accountRecoveryRunnerFactory,
     E2eeDevicePairingMembershipCommitPreparer?
     devicePairingMembershipCommitPreparer,
     LocalCryptographicWipe? localCryptographicWipe,
@@ -127,6 +137,7 @@ final class CloudSyncProvider extends ChangeNotifier
       clientFactory: clientFactory,
       authenticationFactory: authenticationFactory,
       firstDeviceRecoveryBootstrapFactory: firstDeviceRecoveryBootstrapFactory,
+      accountRecoveryRunnerFactory: accountRecoveryRunnerFactory,
       devicePairingMembershipCommitPreparer:
           devicePairingMembershipCommitPreparer,
       localCryptographicWipe: localCryptographicWipe,
@@ -146,6 +157,7 @@ final class CloudSyncProvider extends ChangeNotifier
     required E2eeAccountAuthenticationFactory? authenticationFactory,
     required E2eeFirstDeviceRecoveryBootstrapFactory
     firstDeviceRecoveryBootstrapFactory,
+    required E2eeAccountRecoveryRunnerFactory? accountRecoveryRunnerFactory,
     required E2eeDevicePairingMembershipCommitPreparer?
     devicePairingMembershipCommitPreparer,
     required LocalCryptographicWipe? localCryptographicWipe,
@@ -158,6 +170,7 @@ final class CloudSyncProvider extends ChangeNotifier
     required LocalCryptographicWipeStep? restartForLocalDeviceWipe,
   }) {
     _localCryptographicWipe = localCryptographicWipe;
+    _accountRecoveryRunnerFactory = accountRecoveryRunnerFactory;
     _installationOperationLease = installationOperationLease;
     _installationBusinessLease = installationBusinessLease;
     _currentDeviceRevocationCommitter = currentDeviceRevocationCommitter;
@@ -212,6 +225,7 @@ final class CloudSyncProvider extends ChangeNotifier
   late final E2eeAccountAuthenticationFactory _authenticationFactory;
   late final E2eeFirstDeviceRecoveryBootstrapFactory
   _firstDeviceRecoveryBootstrapFactory;
+  late final E2eeAccountRecoveryRunnerFactory? _accountRecoveryRunnerFactory;
 
   CloudSyncProviderStatus _status = CloudSyncProviderStatus.initializing;
   CloudSyncAccountSession? _session;
@@ -233,6 +247,7 @@ final class CloudSyncProvider extends ChangeNotifier
   bool _disposed = false;
   bool _workspaceRestartRequired = false;
   bool _localDeviceWipePending = false;
+  E2eeAccountRecoveryProgress? _accountRecoveryProgress;
   bool _workspaceClosedForLocalWipe = false;
   _CurrentDeviceRevocationAttempt? _currentDeviceRevocationAttempt;
   Future<bool>? _localDeviceRevocationContinuation;
@@ -262,6 +277,14 @@ final class CloudSyncProvider extends ChangeNotifier
   bool get signedIn => _session != null;
   bool get workspaceRestartRequired => _workspaceRestartRequired;
   bool get localDeviceWipePending => _localDeviceWipePending;
+  E2eeAccountRecoveryProgress? get accountRecoveryProgress =>
+      _accountRecoveryProgress;
+  bool get accountRecoverySupported {
+    if (_accountRecoveryRunnerFactory == null || kIsWeb) return false;
+    return defaultTargetPlatform == TargetPlatform.android ||
+        defaultTargetPlatform == TargetPlatform.iOS;
+  }
+
   bool get localDeviceWipeSupported =>
       (_localCryptographicWipe?.isSupported ?? false) &&
       _installationOperationLease != null &&
@@ -457,6 +480,135 @@ final class CloudSyncProvider extends ChangeNotifier
       loginClient?.close(force: true);
       _endSessionMutation();
     }
+  }
+
+  Future<bool> startAccountRecovery(E2eeAccountRecoveryCommand command) async {
+    E2eeAccountRecoveryRunner? runner;
+    CloudSyncAccountClient? recoveryClient;
+    Object? failure;
+    StackTrace? failureStackTrace;
+    var completed = false;
+    var mutationStarted = false;
+    try {
+      await initialize();
+      if (!_ready || _disposed || _localDeviceWipePending) return false;
+      if (!accountRecoverySupported) {
+        _lastError = const CloudSyncException(
+          kind: CloudSyncFailureKind.forbidden,
+          retryable: false,
+          serverCode: e2eeAccountRecoveryUnsupportedCode,
+        );
+        _accountRecoveryProgress = E2eeAccountRecoveryProgress.failed;
+        _notify();
+        return false;
+      }
+      if (_session != null ||
+          _sessionMutationInProgress ||
+          _pendingPairingSession != null) {
+        _lastError = const CloudSyncException(
+          kind: CloudSyncFailureKind.conflict,
+          retryable: false,
+          serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
+        );
+        _accountRecoveryProgress = E2eeAccountRecoveryProgress.failed;
+        _notify();
+        return false;
+      }
+
+      _beginSessionMutation();
+      mutationStarted = true;
+      _lastError = null;
+      _deviceError = null;
+      _pendingDeviceApproval = null;
+      _devicesLoading = false;
+      _accountRecoveryProgress = E2eeAccountRecoveryProgress.authenticating;
+      _setStatus(CloudSyncProviderStatus.recoveringAccount);
+
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (_disposed) return false;
+      recoveryClient = _clientFactory();
+      final authentication = _authenticationFactory(recoveryClient);
+      runner = _accountRecoveryRunnerFactory!(
+        accountClient: recoveryClient,
+        authentication: authentication,
+      );
+      final platform = _currentPlatform();
+      final authenticatedSession = await command.use(
+        (input) => runner!.recover(
+          input: input,
+          platform: platform,
+          clientVersion: packageInfo.version,
+          onProgress: _advanceAccountRecoveryProgress,
+        ),
+      );
+      await runner.close();
+      runner = null;
+      if (_disposed) return false;
+      _advanceAccountRecoveryProgress(E2eeAccountRecoveryProgress.completing);
+      final connected = await _bindAuthenticatedSession(
+        authenticatedSession,
+        recoveryClient,
+      );
+      if (connected) {
+        recoveryClient = null;
+      }
+      _accountRecoveryProgress = E2eeAccountRecoveryProgress.completed;
+      completed = true;
+      _notify();
+    } catch (error, stackTrace) {
+      failure = error;
+      failureStackTrace = stackTrace;
+    } finally {
+      command.dispose();
+      try {
+        await runner?.close();
+      } catch (error, stackTrace) {
+        if (failure == null) {
+          failure = error;
+          failureStackTrace = stackTrace;
+        } else {
+          developer.log(
+            '账户恢复失败后的 runner 清理未完成',
+            name: 'Kelivo.CloudSyncProvider',
+            level: 1000,
+            error: error,
+            stackTrace: stackTrace,
+          );
+        }
+      }
+      recoveryClient?.close(force: true);
+      if (mutationStarted) _endSessionMutation();
+    }
+
+    if (failure != null) {
+      _accountRecoveryProgress = E2eeAccountRecoveryProgress.failed;
+      _recordFailure(
+        failure,
+        failureStackTrace ?? StackTrace.current,
+        operation: '恢复云同步账户',
+        status: CloudSyncProviderStatus.signedOut,
+      );
+      return false;
+    }
+    return completed;
+  }
+
+  void _advanceAccountRecoveryProgress(E2eeAccountRecoveryProgress progress) {
+    if (_disposed) return;
+    final current = _accountRecoveryProgress;
+    if (progress == E2eeAccountRecoveryProgress.failed ||
+        progress == E2eeAccountRecoveryProgress.completed) {
+      throw StateError('恢复 runner 不能直接发布终态');
+    }
+    if (current != null &&
+        current != E2eeAccountRecoveryProgress.failed &&
+        current != E2eeAccountRecoveryProgress.completed &&
+        progress.index < current.index) {
+      throw StateError('账户恢复进度不能回退');
+    }
+    if (current == progress) return;
+    _accountRecoveryProgress = progress;
+    _notify();
   }
 
   Future<bool> register({
