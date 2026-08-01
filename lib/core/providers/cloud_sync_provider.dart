@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
@@ -12,7 +11,10 @@ import '../services/sync/cloud_sync_terminal_session_retirement.dart';
 import '../services/sync/cloud_sync_types.dart';
 import '../services/sync/e2ee_account_authenticator.dart';
 import '../services/sync/e2ee_device_pairing_membership_commit.dart';
+import '../services/sync/e2ee_first_device_recovery_bootstrap.dart';
+import '../services/sync/e2ee_first_device_registration_commit_coordinator.dart';
 import '../services/sync/e2ee_mobile_background_sync.dart';
+import '../services/sync/sensitive_utf8.dart';
 import '../services/workspace/account_workspace_runtime.dart';
 import '../services/workspace/device_state_blob_store.dart';
 
@@ -23,11 +25,27 @@ typedef E2eeAccountAuthenticationFactory =
       CloudSyncAccountClient accountClient, {
       E2eeFirstDeviceSecurityBootstrapPreparer? firstDeviceBootstrapPreparer,
     });
+typedef E2eeFirstDeviceRecoveryBootstrapFactory =
+    E2eeFirstDeviceSecurityBootstrapPreparer Function({
+      required Uint8List recoveryPassphrase,
+      required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
+    });
 
 CloudSyncAccountClient _createCloudSyncAccountClient({
   CloudSyncFullSessionToken? token,
 }) {
   return CloudSyncClient(token: token);
+}
+
+E2eeFirstDeviceSecurityBootstrapPreparer _createFirstDeviceRecoveryBootstrap({
+  required Uint8List recoveryPassphrase,
+  required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
+}) {
+  return E2eeFirstDeviceRecoveryBootstrapPreparer(
+    recoveryPassphrase: recoveryPassphrase,
+    serviceOrigin: e2eeCanonicalRecoveryServiceOrigin,
+    encryptedMediaExporter: encryptedMediaExporter,
+  );
 }
 
 enum CloudSyncProviderStatus {
@@ -47,12 +65,16 @@ final class CloudSyncProvider extends ChangeNotifier
     AccountWorkspaceRuntime workspaceRuntime, {
     CloudSyncAccountClientFactory clientFactory = _createCloudSyncAccountClient,
     E2eeAccountAuthenticationFactory? authenticationFactory,
+    E2eeFirstDeviceRecoveryBootstrapFactory
+        firstDeviceRecoveryBootstrapFactory =
+        _createFirstDeviceRecoveryBootstrap,
   }) {
     return CloudSyncProvider._(
       workspaceRuntime,
       contentRuntime: null,
       clientFactory: clientFactory,
       authenticationFactory: authenticationFactory,
+      firstDeviceRecoveryBootstrapFactory: firstDeviceRecoveryBootstrapFactory,
       devicePairingMembershipCommitPreparer: null,
     );
   }
@@ -62,6 +84,9 @@ final class CloudSyncProvider extends ChangeNotifier
     required CloudSyncContentRuntime contentRuntime,
     CloudSyncAccountClientFactory clientFactory = _createCloudSyncAccountClient,
     E2eeAccountAuthenticationFactory? authenticationFactory,
+    E2eeFirstDeviceRecoveryBootstrapFactory
+        firstDeviceRecoveryBootstrapFactory =
+        _createFirstDeviceRecoveryBootstrap,
     E2eeDevicePairingMembershipCommitPreparer?
     devicePairingMembershipCommitPreparer,
   }) {
@@ -70,6 +95,7 @@ final class CloudSyncProvider extends ChangeNotifier
       contentRuntime: contentRuntime,
       clientFactory: clientFactory,
       authenticationFactory: authenticationFactory,
+      firstDeviceRecoveryBootstrapFactory: firstDeviceRecoveryBootstrapFactory,
       devicePairingMembershipCommitPreparer:
           devicePairingMembershipCommitPreparer,
     );
@@ -80,12 +106,15 @@ final class CloudSyncProvider extends ChangeNotifier
     required this._contentRuntime,
     required CloudSyncAccountClientFactory clientFactory,
     required E2eeAccountAuthenticationFactory? authenticationFactory,
+    required E2eeFirstDeviceRecoveryBootstrapFactory
+    firstDeviceRecoveryBootstrapFactory,
     required E2eeDevicePairingMembershipCommitPreparer?
     devicePairingMembershipCommitPreparer,
   }) {
     _configureFactories(
       clientFactory,
       authenticationFactory,
+      firstDeviceRecoveryBootstrapFactory,
       devicePairingMembershipCommitPreparer,
     );
   }
@@ -93,10 +122,12 @@ final class CloudSyncProvider extends ChangeNotifier
   void _configureFactories(
     CloudSyncAccountClientFactory clientFactory,
     E2eeAccountAuthenticationFactory? authenticationFactory,
+    E2eeFirstDeviceRecoveryBootstrapFactory firstDeviceRecoveryBootstrapFactory,
     E2eeDevicePairingMembershipCommitPreparer?
     devicePairingMembershipCommitPreparer,
   ) {
     _clientFactory = clientFactory;
+    _firstDeviceRecoveryBootstrapFactory = firstDeviceRecoveryBootstrapFactory;
     _authenticationFactory =
         authenticationFactory ??
         (accountClient, {firstDeviceBootstrapPreparer}) =>
@@ -117,6 +148,8 @@ final class CloudSyncProvider extends ChangeNotifier
   final CloudSyncContentRuntime? _contentRuntime;
   late final CloudSyncAccountClientFactory _clientFactory;
   late final E2eeAccountAuthenticationFactory _authenticationFactory;
+  late final E2eeFirstDeviceRecoveryBootstrapFactory
+  _firstDeviceRecoveryBootstrapFactory;
 
   CloudSyncProviderStatus _status = CloudSyncProviderStatus.initializing;
   CloudSyncAccountSession? _session;
@@ -278,14 +311,16 @@ final class CloudSyncProvider extends ChangeNotifier
     _devicesLoading = false;
     _setStatus(CloudSyncProviderStatus.signingIn);
     CloudSyncAccountClient? loginClient;
+    Uint8List? passwordBytes;
     try {
       final packageInfo = await PackageInfo.fromPlatform();
       if (_disposed) return false;
       loginClient = _clientFactory();
       final authentication = _authenticationFactory(loginClient);
+      passwordBytes = encodeSensitiveUtf8(password);
       final loginResult = await authentication.loginDevice(
         loginName: loginName.trim(),
-        password: Uint8List.fromList(utf8.encode(password)),
+        password: passwordBytes,
         deviceName: deviceName.trim(),
         platform: _currentPlatform(),
         clientVersion: packageInfo.version,
@@ -344,6 +379,7 @@ final class CloudSyncProvider extends ChangeNotifier
       );
       return false;
     } finally {
+      clearSensitiveBytes(passwordBytes);
       loginClient?.close(force: true);
       _endSessionMutation();
     }
@@ -353,71 +389,184 @@ final class CloudSyncProvider extends ChangeNotifier
     required String loginName,
     required String displayName,
     required String password,
+    required String recoveryPassphrase,
     required String deviceName,
-    required E2eeFirstDeviceSecurityBootstrapPreparer
-    firstDeviceBootstrapPreparer,
+    required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
   }) async {
-    try {
-      await initialize();
-      if (!_ready || _disposed) return false;
-      if (_session != null ||
-          _sessionMutationInProgress ||
-          _pendingPairingSession != null) {
-        _lastError = const CloudSyncException(
-          kind: CloudSyncFailureKind.conflict,
-          retryable: false,
-          serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
-        );
-        _notify();
-        return false;
-      }
+    await initialize();
+    if (!_ready || _disposed) return false;
+    if (sensitiveUtf8Equals(password, recoveryPassphrase)) {
+      _lastError = const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+        serverCode: e2eeRecoveryPassphraseMatchesPasswordCode,
+      );
+      _notify();
+      return false;
+    }
+    if (_session != null ||
+        _sessionMutationInProgress ||
+        _pendingPairingSession != null) {
+      _lastError = const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
+      );
+      _notify();
+      return false;
+    }
 
-      _beginSessionMutation();
-      _lastError = null;
-      _deviceError = null;
-      _pendingDeviceApproval = null;
-      _devicesLoading = false;
-      _setStatus(CloudSyncProviderStatus.signingIn);
-      CloudSyncAccountClient? registrationClient;
-      try {
-        final packageInfo = await PackageInfo.fromPlatform();
-        if (_disposed) return false;
-        registrationClient = _clientFactory();
-        final authentication = _authenticationFactory(
-          registrationClient,
-          firstDeviceBootstrapPreparer: firstDeviceBootstrapPreparer,
-        );
-        final authenticatedSession = await authentication.registerFirstDevice(
-          loginName: loginName.trim(),
-          displayName: displayName.trim(),
-          password: Uint8List.fromList(utf8.encode(password)),
-          deviceName: deviceName.trim(),
-          platform: _currentPlatform(),
-          clientVersion: packageInfo.version,
-        );
-        if (_disposed) return false;
-        final connected = await _bindAuthenticatedSession(
-          authenticatedSession,
-          registrationClient,
-        );
-        if (connected) registrationClient = null;
-        return true;
-      } catch (error, stackTrace) {
-        _recordFailure(
-          error,
-          stackTrace,
-          operation: '注册云同步账户',
-          status: _session == null
-              ? CloudSyncProviderStatus.signedOut
-              : CloudSyncProviderStatus.error,
-        );
-        return false;
-      } finally {
-        registrationClient?.close(force: true);
-        _endSessionMutation();
-      }
+    _beginSessionMutation();
+    _lastError = null;
+    _deviceError = null;
+    _pendingDeviceApproval = null;
+    _devicesLoading = false;
+    _setStatus(CloudSyncProviderStatus.signingIn);
+    CloudSyncAccountClient? registrationClient;
+    Uint8List? passwordBytes;
+    Uint8List? recoveryPassphraseBytes;
+    E2eeFirstDeviceSecurityBootstrapPreparer? bootstrapPreparer;
+    try {
+      final packageInfo = await PackageInfo.fromPlatform();
+      if (_disposed) return false;
+      recoveryPassphraseBytes = encodeSensitiveUtf8(recoveryPassphrase);
+      bootstrapPreparer = _firstDeviceRecoveryBootstrapFactory(
+        recoveryPassphrase: recoveryPassphraseBytes,
+        encryptedMediaExporter: encryptedMediaExporter,
+      );
+      registrationClient = _clientFactory();
+      final authentication = _authenticationFactory(
+        registrationClient,
+        firstDeviceBootstrapPreparer: bootstrapPreparer,
+      );
+      passwordBytes = encodeSensitiveUtf8(password);
+      final authenticatedSession = await authentication.registerFirstDevice(
+        loginName: loginName.trim(),
+        displayName: displayName.trim(),
+        password: passwordBytes,
+        deviceName: deviceName.trim(),
+        platform: _currentPlatform(),
+        clientVersion: packageInfo.version,
+      );
+      if (_disposed) return false;
+      final connected = await _bindAuthenticatedSession(
+        authenticatedSession,
+        registrationClient,
+      );
+      if (connected) registrationClient = null;
+      return true;
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '注册云同步账户',
+        status: _session == null
+            ? CloudSyncProviderStatus.signedOut
+            : CloudSyncProviderStatus.error,
+      );
+      return false;
     } finally {
-      firstDeviceBootstrapPreparer.close();
+      bootstrapPreparer?.close();
+      clearSensitiveBytes(passwordBytes);
+      clearSensitiveBytes(recoveryPassphraseBytes);
+      registrationClient?.close(force: true);
+      _endSessionMutation();
+    }
+  }
+
+  Future<bool> resumeFirstDeviceRegistration({
+    required String loginName,
+    required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
+  }) async {
+    await initialize();
+    if (!_ready || _disposed) return false;
+    if (_session != null ||
+        _sessionMutationInProgress ||
+        _pendingPairingSession != null) {
+      _lastError = const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
+      );
+      _notify();
+      return false;
+    }
+
+    _beginSessionMutation();
+    _lastError = null;
+    _setStatus(CloudSyncProviderStatus.signingIn);
+    CloudSyncAccountClient? registrationClient;
+    try {
+      registrationClient = _clientFactory();
+      final authentication = _authenticationFactory(registrationClient);
+      final authenticatedSession = await authentication
+          .resumeFirstDeviceRegistration(
+            loginName: loginName.trim(),
+            encryptedMediaExporter: encryptedMediaExporter,
+          );
+      if (_disposed) return false;
+      final connected = await _bindAuthenticatedSession(
+        authenticatedSession,
+        registrationClient,
+      );
+      if (connected) registrationClient = null;
+      return true;
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '恢复首设备注册',
+        status: _session == null
+            ? CloudSyncProviderStatus.signedOut
+            : CloudSyncProviderStatus.error,
+      );
+      return false;
+    } finally {
+      registrationClient?.close(force: true);
+      _endSessionMutation();
+    }
+  }
+
+  Future<bool> discardPendingFirstDeviceRegistration({
+    required String loginName,
+  }) async {
+    await initialize();
+    if (!_ready || _disposed) return false;
+    if (_session != null ||
+        _sessionMutationInProgress ||
+        _pendingPairingSession != null) {
+      _lastError = const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_SESSION_ALREADY_ACTIVE',
+      );
+      _notify();
+      return false;
+    }
+
+    _beginSessionMutation();
+    _lastError = null;
+    _setStatus(CloudSyncProviderStatus.signingIn);
+    CloudSyncAccountClient? registrationClient;
+    try {
+      registrationClient = _clientFactory();
+      final authentication = _authenticationFactory(registrationClient);
+      await authentication.discardFirstDeviceRegistration(
+        loginName: loginName.trim(),
+      );
+      _setStatus(CloudSyncProviderStatus.signedOut);
+      return true;
+    } catch (error, stackTrace) {
+      _recordFailure(
+        error,
+        stackTrace,
+        operation: '废弃首设备注册',
+        status: CloudSyncProviderStatus.signedOut,
+      );
+      return false;
+    } finally {
+      registrationClient?.close(force: true);
+      _endSessionMutation();
     }
   }
 
@@ -966,6 +1115,13 @@ final class CloudSyncProvider extends ChangeNotifier
 
   CloudSyncException _normalizeFailure(Object error) {
     if (error is CloudSyncException) return error;
+    if (error is E2eeRecoveryMediaExportCancelled) {
+      return const CloudSyncException(
+        kind: CloudSyncFailureKind.cancelled,
+        retryable: false,
+        serverCode: e2eePendingRegistrationExportRequiredCode,
+      );
+    }
     if (error is FormatException) {
       return const CloudSyncException(
         kind: CloudSyncFailureKind.invalidResponse,

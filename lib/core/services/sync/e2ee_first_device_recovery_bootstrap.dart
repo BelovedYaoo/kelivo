@@ -1,4 +1,3 @@
-import 'dart:convert';
 import 'dart:developer' as developer;
 import 'dart:typed_data';
 
@@ -9,8 +8,9 @@ import 'package:uuid/uuid.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_authenticator.dart';
 import 'e2ee_account_trust_manifest.dart';
+import 'e2ee_first_device_registration_commit_coordinator.dart';
+import 'sensitive_utf8.dart';
 
-const e2eeEncryptedRecoveryMediaBytes = 644;
 const e2eeCanonicalRecoveryServiceOrigin = 'https://kelivo.bemylover.top';
 const _recoveryPassphraseMinimumScalars = 12;
 const _recoveryPassphraseMaximumUtf8Bytes = 128;
@@ -24,7 +24,7 @@ E2eeRecoveryPassphraseValidation validateE2eeRecoveryPassphraseText(
 ) {
   late final Uint8List encoded;
   try {
-    encoded = Uint8List.fromList(utf8.encode(passphrase));
+    encoded = encodeSensitiveUtf8(passphrase);
   } on FormatException {
     return E2eeRecoveryPassphraseValidation.invalidUtf8;
   }
@@ -40,7 +40,7 @@ E2eeRecoveryPassphraseValidation validateE2eeRecoveryPassphraseText(
     }
     return E2eeRecoveryPassphraseValidation.invalidUtf8;
   } finally {
-    _clearSensitiveBytes(encoded);
+    clearSensitiveBytes(encoded);
   }
 }
 
@@ -82,9 +82,6 @@ const _canonicalRecoveryServiceOriginSha256 = <int>[
   0x9f,
 ];
 
-typedef E2eeEncryptedRecoveryMediaExporter =
-    Future<bool> Function(Uint8List encryptedMedia);
-
 abstract interface class E2eeFirstDeviceRecoveryIdentity {
   Uint8List get publicKey;
 }
@@ -120,7 +117,7 @@ abstract interface class E2eeFirstDeviceRecoveryCore {
 
 final class E2eeFirstDeviceRecoveryBootstrapPreparer
     implements E2eeFirstDeviceSecurityBootstrapPreparer {
-  /// 构造时复制并清零调用方口令；exporter 确认成功后接管其收到的密文缓冲区。
+  /// 构造时复制并清零调用方口令；exporter 在事务耐久保存后消费密文缓冲区。
   factory E2eeFirstDeviceRecoveryBootstrapPreparer({
     required Uint8List recoveryPassphrase,
     required String serviceOrigin,
@@ -191,6 +188,8 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
 
   _RecoveryBootstrapPreparerState _state =
       _RecoveryBootstrapPreparerState.ready;
+  bool _hasPreparedBootstrap = false;
+  bool _exporterClosed = false;
 
   /// 上层注册在调用 prepare 前中止时，用它销毁已接管的口令。
   @override
@@ -198,11 +197,13 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
     switch (_state) {
       case _RecoveryBootstrapPreparerState.ready:
         _clearSensitiveBytes(_recoveryPassphrase);
+        _exporterClosed = true;
         _state = _RecoveryBootstrapPreparerState.closed;
         return;
       case _RecoveryBootstrapPreparerState.preparing:
         throw StateError('首设备恢复安全 bootstrap 正在生成');
       case _RecoveryBootstrapPreparerState.closed:
+        _exporterClosed = true;
         return;
     }
   }
@@ -219,15 +220,34 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
     }
     _state = _RecoveryBootstrapPreparerState.preparing;
     try {
-      return await _prepareOnce(
+      final prepared = await _prepareOnce(
         accountRootKey: accountRootKey,
         userId: userId,
         operationId: operationId,
         localMember: localMember,
       );
+      _hasPreparedBootstrap = true;
+      return prepared;
     } finally {
       _clearSensitiveBytes(_recoveryPassphrase);
       _state = _RecoveryBootstrapPreparerState.closed;
+    }
+  }
+
+  @override
+  Future<bool> exportEncryptedRecoveryMedia(Uint8List encryptedMedia) async {
+    if (!_hasPreparedBootstrap || _exporterClosed) {
+      _clearSensitiveBytes(encryptedMedia);
+      throw StateError('首设备恢复介质 exporter 不可用');
+    }
+    _exporterClosed = true;
+    try {
+      if (encryptedMedia.length != e2eeEncryptedRecoveryMediaBytes) {
+        throw const FormatException('加密恢复介质长度无效');
+      }
+      return await _encryptedMediaExporter(encryptedMedia);
+    } finally {
+      _clearSensitiveBytes(encryptedMedia);
     }
   }
 
@@ -299,10 +319,6 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
         recoveryCapsuleVersion: _initialSecurityVersion,
         recoveryCapsule: recoveryCapsule,
       );
-      prepared = E2eePreparedFirstDeviceSecurityBootstrap(
-        securityState: securityState,
-        membership: membership,
-      );
       encryptedMedia = await _recoveryCore.exportRecoveryMedia(
         recoveryIdentity,
         accountRootKey,
@@ -316,6 +332,12 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
       if (encryptedMedia.length != e2eeEncryptedRecoveryMediaBytes) {
         throw FormatException('加密恢复介质长度无效：${encryptedMedia.length}');
       }
+      prepared = E2eePreparedFirstDeviceSecurityBootstrap(
+        securityState: securityState,
+        membership: membership,
+        encryptedRecoveryMedia: encryptedMedia,
+      );
+      encryptedMedia = null;
     } catch (error, stackTrace) {
       failure = error;
       failureStackTrace = stackTrace;
@@ -343,25 +365,13 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
 
     if (failure != null && failureStackTrace != null) {
       _clearSensitiveBytes(encryptedMedia);
+      prepared?.dispose();
       Error.throwWithStackTrace(failure, failureStackTrace);
     }
-    final media = encryptedMedia;
     final result = prepared;
-    if (media == null || result == null) {
-      _clearSensitiveBytes(media);
+    if (result == null) {
+      _clearSensitiveBytes(encryptedMedia);
       throw StateError('首设备恢复安全 bootstrap 未完整生成');
-    }
-
-    late final bool exported;
-    try {
-      exported = await _encryptedMediaExporter(media);
-    } catch (_) {
-      _clearSensitiveBytes(media);
-      rethrow;
-    }
-    if (!exported) {
-      _clearSensitiveBytes(media);
-      throw StateError('加密恢复介质未确认持久化');
     }
     return result;
   }

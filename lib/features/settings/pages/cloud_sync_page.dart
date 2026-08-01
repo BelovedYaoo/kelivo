@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
@@ -7,9 +6,10 @@ import 'package:pretty_qr_code/pretty_qr_code.dart';
 import 'package:provider/provider.dart';
 
 import '../../../core/providers/cloud_sync_provider.dart';
-import '../../../core/services/sync/e2ee_account_authenticator.dart';
 import '../../../core/services/sync/cloud_sync_types.dart';
+import '../../../core/services/sync/e2ee_account_authenticator.dart';
 import '../../../core/services/sync/e2ee_first_device_recovery_bootstrap.dart';
+import '../../../core/services/sync/sensitive_utf8.dart';
 import '../../../icons/lucide_adapter.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../shared/widgets/ios_form_text_field.dart';
@@ -52,6 +52,10 @@ class CloudSyncSettingsContent extends StatefulWidget {
 }
 
 enum _CloudSyncAuthenticationMode { signIn, register }
+
+enum _PendingRegistrationAction { resume, discard }
+
+enum _PendingRegistrationState { awaitingExport, exportConfirmed, unsupported }
 
 class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   final TextEditingController _loginNameController = TextEditingController();
@@ -630,8 +634,8 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
     final loginName = _loginNameController.text.trim();
     final displayName = _displayNameController.text.trim();
     final password = _passwordController.text;
-    var recoveryPassphrase = _recoveryPassphraseController.text;
-    var recoveryPassphraseConfirm = _recoveryPassphraseConfirmController.text;
+    final recoveryPassphrase = _recoveryPassphraseController.text;
+    final recoveryPassphraseConfirm = _recoveryPassphraseConfirmController.text;
     final deviceName = _deviceNameController.text.trim();
     if (loginName.isEmpty ||
         displayName.isEmpty ||
@@ -650,6 +654,14 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       showAppSnackBar(
         context,
         message: l10n.cloudSyncRecoveryPassphraseMismatch,
+        type: NotificationType.warning,
+      );
+      return;
+    }
+    if (sensitiveUtf8Equals(password, recoveryPassphrase)) {
+      showAppSnackBar(
+        context,
+        message: l10n.cloudSyncRecoveryPassphraseMatchesPassword,
         type: NotificationType.warning,
       );
       return;
@@ -676,59 +688,173 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
 
     setState(() => _submitting = true);
     final provider = context.read<CloudSyncProvider>();
-    E2eeFirstDeviceRecoveryBootstrapPreparer? bootstrapPreparer;
     MobileRecoveryMediaExportResult? exportResult;
     late final bool success;
     try {
-      final recoveryPassphraseBytes = Uint8List.fromList(
-        utf8.encode(recoveryPassphrase),
-      );
-      try {
-        bootstrapPreparer = E2eeFirstDeviceRecoveryBootstrapPreparer(
-          recoveryPassphrase: recoveryPassphraseBytes,
-          serviceOrigin: e2eeCanonicalRecoveryServiceOrigin,
-          encryptedMediaExporter: (encryptedMedia) async {
-            try {
-              if (!mounted) {
-                exportResult = MobileRecoveryMediaExportResult.cancelled;
-                return false;
-              }
-              exportResult =
-                  await Navigator.of(
-                    context,
-                  ).push<MobileRecoveryMediaExportResult>(
-                    MaterialPageRoute<MobileRecoveryMediaExportResult>(
-                      builder: (_) => MobileRecoveryMediaExportPage(
-                        encryptedMedia: encryptedMedia,
-                      ),
-                    ),
-                  ) ??
-                  MobileRecoveryMediaExportResult.cancelled;
-              return exportResult == MobileRecoveryMediaExportResult.confirmed;
-            } finally {
-              encryptedMedia.fillRange(0, encryptedMedia.length, 0);
-            }
-          },
-        );
-      } finally {
-        recoveryPassphraseBytes.fillRange(0, recoveryPassphraseBytes.length, 0);
-        // 尽早解除 async 状态机对不可主动清零 String 的引用。
-        recoveryPassphrase = '';
-        recoveryPassphraseConfirm = '';
-        _recoveryPassphraseController.clear();
-        _recoveryPassphraseConfirmController.clear();
-      }
       success = await provider.register(
         loginName: loginName,
         displayName: displayName,
         password: password,
+        recoveryPassphrase: recoveryPassphrase,
         deviceName: deviceName,
-        firstDeviceBootstrapPreparer: bootstrapPreparer,
+        encryptedMediaExporter: (encryptedMedia) async {
+          exportResult = await _showRecoveryMediaExport(encryptedMedia);
+          return exportResult == MobileRecoveryMediaExportResult.confirmed;
+        },
       );
     } finally {
-      bootstrapPreparer?.close();
       _recoveryPassphraseController.clear();
       _recoveryPassphraseConfirmController.clear();
+      if (mounted) setState(() => _submitting = false);
+    }
+    if (!mounted) return;
+    if (success || provider.signedIn) {
+      _passwordController.clear();
+      return;
+    }
+    if (exportResult == MobileRecoveryMediaExportResult.fileSaveFailed) {
+      showAppSnackBar(
+        context,
+        message: l10n.cloudSyncRecoveryMediaSaveFailed,
+        type: NotificationType.error,
+      );
+    }
+    final pendingCode = provider.lastError?.serverCode;
+    final pendingAwaitingExport =
+        pendingCode == e2eePendingRegistrationExportRequiredCode ||
+        exportResult == MobileRecoveryMediaExportResult.cancelled ||
+        exportResult == MobileRecoveryMediaExportResult.fileSaveFailed;
+    final pendingExportConfirmed =
+        pendingCode == e2eePendingRegistrationSubmitRequiredCode ||
+        exportResult == MobileRecoveryMediaExportResult.confirmed;
+    final pendingUnsupported =
+        pendingCode == e2eePendingRegistrationUnsupportedCode;
+    if (pendingAwaitingExport || pendingExportConfirmed || pendingUnsupported) {
+      provider.clearError();
+      await _resolvePendingRegistration(
+        loginName: loginName,
+        state: pendingUnsupported
+            ? _PendingRegistrationState.unsupported
+            : pendingAwaitingExport
+            ? _PendingRegistrationState.awaitingExport
+            : _PendingRegistrationState.exportConfirmed,
+      );
+      return;
+    }
+    showAppSnackBar(
+      context,
+      message: cloudSyncFailureText(
+        l10n,
+        provider.lastError ??
+            const CloudSyncException(
+              kind: CloudSyncFailureKind.unknown,
+              retryable: false,
+            ),
+      ),
+      type: NotificationType.error,
+    );
+  }
+
+  Future<MobileRecoveryMediaExportResult> _showRecoveryMediaExport(
+    Uint8List encryptedMedia,
+  ) async {
+    try {
+      if (!mounted) return MobileRecoveryMediaExportResult.cancelled;
+      return await Navigator.of(context).push<MobileRecoveryMediaExportResult>(
+            MaterialPageRoute<MobileRecoveryMediaExportResult>(
+              builder: (_) =>
+                  MobileRecoveryMediaExportPage(encryptedMedia: encryptedMedia),
+            ),
+          ) ??
+          MobileRecoveryMediaExportResult.cancelled;
+    } finally {
+      clearSensitiveBytes(encryptedMedia);
+    }
+  }
+
+  Future<void> _resolvePendingRegistration({
+    required String loginName,
+    required _PendingRegistrationState state,
+  }) async {
+    if (!mounted) return;
+    final action = await _showPendingRegistrationDialog(state: state);
+    if (!mounted || action == null) return;
+    switch (action) {
+      case _PendingRegistrationAction.resume:
+        await _resumePendingRegistration(loginName);
+      case _PendingRegistrationAction.discard:
+        await _discardPendingRegistration(loginName);
+    }
+  }
+
+  Future<_PendingRegistrationAction?> _showPendingRegistrationDialog({
+    required _PendingRegistrationState state,
+  }) {
+    final l10n = AppLocalizations.of(context)!;
+    return showDialog<_PendingRegistrationAction>(
+      context: context,
+      builder: (dialogContext) => _CloudSyncDialog(
+        title: l10n.cloudSyncPendingRegistrationTitle,
+        message: switch (state) {
+          _PendingRegistrationState.awaitingExport =>
+            l10n.cloudSyncPendingRegistrationExportMessage,
+          _PendingRegistrationState.exportConfirmed =>
+            l10n.cloudSyncPendingRegistrationSubmitMessage,
+          _PendingRegistrationState.unsupported =>
+            l10n.cloudSyncPendingRegistrationUnsupportedMessage,
+        },
+        actions: [
+          if (state != _PendingRegistrationState.unsupported)
+            IosTileButton(
+              key: const ValueKey<String>(
+                'cloud-sync-pending-registration-resume',
+              ),
+              label: l10n.cloudSyncPendingRegistrationResume,
+              icon: Lucide.RotateCcw,
+              backgroundColor: Theme.of(dialogContext).colorScheme.primary,
+              foregroundColor: Theme.of(dialogContext).colorScheme.primary,
+              onTap: () => Navigator.of(
+                dialogContext,
+              ).pop(_PendingRegistrationAction.resume),
+            ),
+          if (state != _PendingRegistrationState.exportConfirmed)
+            IosTileButton(
+              key: const ValueKey<String>(
+                'cloud-sync-pending-registration-discard',
+              ),
+              label: l10n.cloudSyncPendingRegistrationDiscard,
+              icon: Lucide.Trash2,
+              backgroundColor: Theme.of(dialogContext).colorScheme.error,
+              foregroundColor: Theme.of(dialogContext).colorScheme.error,
+              onTap: () => Navigator.of(
+                dialogContext,
+              ).pop(_PendingRegistrationAction.discard),
+            ),
+          IosTileButton(
+            label: l10n.cloudSyncCancel,
+            icon: Lucide.ArrowLeft,
+            onTap: () => Navigator.of(dialogContext).pop(),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _resumePendingRegistration(String loginName) async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    final provider = context.read<CloudSyncProvider>();
+    MobileRecoveryMediaExportResult? exportResult;
+    late final bool success;
+    try {
+      success = await provider.resumeFirstDeviceRegistration(
+        loginName: loginName,
+        encryptedMediaExporter: (encryptedMedia) async {
+          exportResult = await _showRecoveryMediaExport(encryptedMedia);
+          return exportResult == MobileRecoveryMediaExportResult.confirmed;
+        },
+      );
+    } finally {
       if (mounted) setState(() => _submitting = false);
     }
     if (!mounted) return;
@@ -744,8 +870,47 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       provider.clearError();
       showAppSnackBar(
         context,
-        message: l10n.cloudSyncRecoveryMediaSaveFailed,
+        message: AppLocalizations.of(context)!.cloudSyncRecoveryMediaSaveFailed,
         type: NotificationType.error,
+      );
+      return;
+    }
+    showAppSnackBar(
+      context,
+      message: cloudSyncFailureText(
+        AppLocalizations.of(context)!,
+        provider.lastError ??
+            const CloudSyncException(
+              kind: CloudSyncFailureKind.unknown,
+              retryable: false,
+            ),
+      ),
+      type: NotificationType.error,
+    );
+  }
+
+  Future<void> _discardPendingRegistration(String loginName) async {
+    if (_submitting) return;
+    setState(() => _submitting = true);
+    final provider = context.read<CloudSyncProvider>();
+    late final bool success;
+    try {
+      success = await provider.discardPendingFirstDeviceRegistration(
+        loginName: loginName,
+      );
+    } finally {
+      if (mounted) setState(() => _submitting = false);
+    }
+    if (!mounted) return;
+    final l10n = AppLocalizations.of(context)!;
+    if (success) {
+      _passwordController.clear();
+      _recoveryPassphraseController.clear();
+      _recoveryPassphraseConfirmController.clear();
+      showAppSnackBar(
+        context,
+        message: l10n.cloudSyncPendingRegistrationDiscarded,
+        type: NotificationType.success,
       );
       return;
     }
@@ -1310,6 +1475,18 @@ class _CloudSyncDialog extends StatelessWidget {
 }
 
 String cloudSyncFailureText(AppLocalizations l10n, CloudSyncException error) {
+  final protocolMessage = switch (error.serverCode) {
+    e2eeRecoveryPassphraseMatchesPasswordCode =>
+      l10n.cloudSyncRecoveryPassphraseMatchesPassword,
+    e2eePendingRegistrationExportRequiredCode =>
+      l10n.cloudSyncPendingRegistrationExportMessage,
+    e2eePendingRegistrationSubmitRequiredCode =>
+      l10n.cloudSyncPendingRegistrationSubmitMessage,
+    e2eePendingRegistrationUnsupportedCode =>
+      l10n.cloudSyncPendingRegistrationUnsupportedMessage,
+    _ => null,
+  };
+  if (protocolMessage != null) return protocolMessage;
   return switch (error.kind) {
     CloudSyncFailureKind.invalidBaseUrl => l10n.cloudSyncFailureInvalidBaseUrl,
     CloudSyncFailureKind.unauthenticated =>

@@ -70,7 +70,7 @@ final class DeviceStateBlobStore {
        _durability = durability ?? RestorePlatformDurability();
 
   static const blobLength = 448;
-  // 固定注册载荷不足 2 KiB；预留协议升级空间，同时限制损坏文件的读取分配。
+  // 固定注册载荷与恢复介质不足 3 KiB；预留协议升级空间并限制损坏文件的读取分配。
   static const pendingRegistrationEnvelopeMaxLength = 4096;
   // 配对恢复事务包含两个设备状态和一次性能力；保留升级空间但拒绝无界读取。
   static const pendingPairingEnvelopeMaxLength = 4096;
@@ -81,6 +81,8 @@ final class DeviceStateBlobStore {
   static const _manifestFilePrefix = 'manifest';
   static const _tombstoneFileName = 'tombstone.bin';
   static const _pendingRegistrationFileName = 'registration-pending.bin';
+  static const _registrationMediaConfirmationFileName =
+      'registration-media-confirmed.bin';
   static const _pendingPairingFileName = 'pairing-pending.bin';
   static const _lockFileName = '.lock';
   static const _stateFrameHeaderLength = 20;
@@ -91,8 +93,10 @@ final class DeviceStateBlobStore {
   static const _tombstoneFrameLength = _tombstoneHeaderLength + 32;
   static const _pendingRegistrationHeaderLength = 44;
   static const _pendingRegistrationDigestOffset = 12;
+  static const _registrationMediaConfirmationFrameLength = 44;
+  static const _registrationMediaConfirmationDigestOffset = 12;
   static final RegExp _temporaryFilePattern = RegExp(
-    r'^\.(?:state-[ab]|manifest-[ab]|tombstone|registration-pending|pairing-pending)-[0-9a-f]{32}\.next$',
+    r'^\.(?:state-[ab]|manifest-[ab]|tombstone|registration-pending|registration-media-confirmed|pairing-pending)-[0-9a-f]{32}\.next$',
   );
   static final Random _secureRandom = Random.secure();
   static final Uint8List _stateFrameMagic = Uint8List.fromList(
@@ -110,6 +114,8 @@ final class DeviceStateBlobStore {
   static final Uint8List _pendingPairingFrameMagic = Uint8List.fromList(
     ascii.encode('KELVPP01'),
   );
+  static final Uint8List _registrationMediaConfirmationFrameMagic =
+      Uint8List.fromList(ascii.encode('KELVRC01'));
 
   final Directory _installationRoot;
   final RestoreDurability _durability;
@@ -275,6 +281,103 @@ final class DeviceStateBlobStore {
     kind: _PendingEnvelopeKind.registration,
   );
 
+  Future<Uint8List?> readPendingRegistrationMediaConfirmation({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+  }) {
+    final locator = _deriveLocator(
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    return _withLocatorLock(locator, (directory) async {
+      if (await _readTombstone(directory) != null) return null;
+      final manifest = await _readCurrentManifest(directory);
+      final confirmation = await _readRegistrationMediaConfirmation(directory);
+      if (manifest == null) {
+        if (confirmation != null) {
+          throw const FormatException(
+            'device_state_store_registration_confirmation_orphan',
+          );
+        }
+        return null;
+      }
+      await _readPublishedState(directory, manifest);
+      if (confirmation == null) return null;
+      final pending = await _readPendingEnvelope(
+        directory,
+        _PendingEnvelopeKind.registration,
+      );
+      if (pending == null ||
+          !_sameBytes(
+            confirmation,
+            Uint8List.fromList(sha256.convert(pending).bytes),
+          )) {
+        throw const FormatException(
+          'device_state_store_registration_confirmation_orphan',
+        );
+      }
+      return confirmation;
+    });
+  }
+
+  Future<void> writePendingRegistrationMediaConfirmation({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+    required Uint8List pendingEnvelopeDigest,
+  }) {
+    if (pendingEnvelopeDigest.length != 32) {
+      throw const FormatException(
+        'device_state_store_registration_confirmation_digest_length',
+      );
+    }
+    final copiedDigest = Uint8List.fromList(pendingEnvelopeDigest);
+    final locator = _deriveLocator(
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    return _withLocatorLock(locator, (directory) async {
+      if (await _readTombstone(directory) != null) {
+        throw StateError(
+          'device_state_store_registration_confirmation_deleted',
+        );
+      }
+      final manifest = await _readCurrentManifest(directory);
+      if (manifest == null) {
+        throw StateError(
+          'device_state_store_registration_confirmation_state_missing',
+        );
+      }
+      await _readPublishedState(directory, manifest);
+      await _cleanupTemporaryFiles(directory);
+      final pending = await _readPendingEnvelope(
+        directory,
+        _PendingEnvelopeKind.registration,
+      );
+      if (pending == null ||
+          !_sameBytes(
+            copiedDigest,
+            Uint8List.fromList(sha256.convert(pending).bytes),
+          )) {
+        throw StateError(
+          'device_state_store_registration_confirmation_pending_changed',
+        );
+      }
+      final current = await _readRegistrationMediaConfirmation(directory);
+      if (current != null) {
+        if (_sameBytes(current, copiedDigest)) return;
+        throw StateError(
+          'device_state_store_registration_confirmation_changed',
+        );
+      }
+      await _publishFile(
+        directory: directory,
+        target: _registrationMediaConfirmationFile(directory),
+        bytes: _encodeRegistrationMediaConfirmationFrame(copiedDigest),
+        replaceExisting: false,
+      );
+    });
+  }
+
   Future<bool> deletePendingRegistrationEnvelope({
     required String normalizedBaseUrl,
     required String normalizedLoginName,
@@ -370,6 +473,10 @@ final class DeviceStateBlobStore {
         if (_sameBytes(current, copiedEnvelope)) return;
         throw StateError('${_pendingEnvelopeCode(kind)}_pending');
       }
+      if (kind == _PendingEnvelopeKind.registration &&
+          await _readRegistrationMediaConfirmation(directory) != null) {
+        throw StateError('device_state_store_registration_confirmation_orphan');
+      }
       await _publishFile(
         directory: directory,
         target: _pendingEnvelopeFile(directory, kind),
@@ -400,6 +507,22 @@ final class DeviceStateBlobStore {
       final currentDigest = Uint8List.fromList(sha256.convert(current).bytes);
       if (!_sameBytes(currentDigest, copiedDigest)) {
         throw StateError('${_pendingEnvelopeCode(kind)}_changed');
+      }
+      if (kind == _PendingEnvelopeKind.registration) {
+        final confirmation = await _readRegistrationMediaConfirmation(
+          directory,
+        );
+        if (confirmation != null) {
+          if (!_sameBytes(confirmation, currentDigest)) {
+            throw StateError(
+              'device_state_store_registration_confirmation_changed',
+            );
+          }
+          await _deleteRegularFile(
+            _registrationMediaConfirmationFile(directory),
+          );
+          await _durability.syncDirectory(directory, fullBarrier: true);
+        }
       }
       await _deleteRegularFile(_pendingEnvelopeFile(directory, kind));
       await _durability.syncDirectory(directory, fullBarrier: true);
@@ -599,6 +722,7 @@ final class DeviceStateBlobStore {
       for (final slot in const <String>['a', 'b']) _stateFile(directory, slot),
       for (final kind in _PendingEnvelopeKind.values)
         _pendingEnvelopeFile(directory, kind),
+      _registrationMediaConfirmationFile(directory),
       ...temporaryFiles,
     ];
     for (final file in <File>[...manifests, ...remainingFiles]) {
@@ -718,6 +842,33 @@ final class DeviceStateBlobStore {
       throw FormatException(corruptCode);
     }
     return envelope;
+  }
+
+  Future<Uint8List?> _readRegistrationMediaConfirmation(
+    Directory directory,
+  ) async {
+    final file = _registrationMediaConfirmationFile(directory);
+    final type = await FileSystemEntity.type(file.path, followLinks: false);
+    if (type == FileSystemEntityType.notFound) return null;
+    if (type != FileSystemEntityType.file) {
+      throw StateError('device_state_store_owned_file_unsafe');
+    }
+    final frame = await _readExactFrame(
+      file,
+      _registrationMediaConfirmationFrameLength,
+    );
+    if (!_startsWith(frame, _registrationMediaConfirmationFrameMagic) ||
+        frame[8] != 0 ||
+        frame[9] != 0 ||
+        frame[10] != 0 ||
+        frame[11] != 0) {
+      throw const FormatException(
+        'device_state_store_registration_confirmation_corrupt',
+      );
+    }
+    return Uint8List.fromList(
+      frame.sublist(_registrationMediaConfirmationDigestOffset),
+    );
   }
 
   Future<void> _retireManifest(Directory directory, String slot) async {
@@ -851,6 +1002,23 @@ final class DeviceStateBlobStore {
       sha256.convert(envelope).bytes,
     );
     frame.setRange(_pendingRegistrationHeaderLength, frame.length, envelope);
+    return frame;
+  }
+
+  static Uint8List _encodeRegistrationMediaConfirmationFrame(
+    Uint8List pendingEnvelopeDigest,
+  ) {
+    final frame = Uint8List(_registrationMediaConfirmationFrameLength);
+    frame.setRange(
+      0,
+      _registrationMediaConfirmationFrameMagic.length,
+      _registrationMediaConfirmationFrameMagic,
+    );
+    frame.setRange(
+      _registrationMediaConfirmationDigestOffset,
+      frame.length,
+      pendingEnvelopeDigest,
+    );
     return frame;
   }
 
@@ -1008,6 +1176,10 @@ final class DeviceStateBlobStore {
       _PendingEnvelopeKind.pairing => _pendingPairingFileName,
     };
     return File(p.join(directory.path, fileName));
+  }
+
+  static File _registrationMediaConfirmationFile(Directory directory) {
+    return File(p.join(directory.path, _registrationMediaConfirmationFileName));
   }
 
   static int _pendingEnvelopeMaxLength(_PendingEnvelopeKind kind) {

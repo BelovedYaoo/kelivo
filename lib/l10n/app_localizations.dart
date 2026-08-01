@@ -310,6 +310,12 @@ abstract class AppLocalizations {
   /// **'The recovery passphrases do not match.'**
   String get cloudSyncRecoveryPassphraseMismatch;
 
+  /// No description provided for @cloudSyncRecoveryPassphraseMatchesPassword.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery passphrase must be different from the account password.'**
+  String get cloudSyncRecoveryPassphraseMatchesPassword;
+
   /// No description provided for @cloudSyncRecoveryPassphraseTooShort.
   ///
   /// In en, this message translates to:
@@ -477,6 +483,48 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'The recovery file was not saved. Registration was cancelled.'**
   String get cloudSyncRecoveryMediaSaveFailed;
+
+  /// No description provided for @cloudSyncPendingRegistrationTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Unfinished Registration'**
+  String get cloudSyncPendingRegistrationTitle;
+
+  /// No description provided for @cloudSyncPendingRegistrationExportMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This account has a saved registration in progress. Continue to export the original recovery media, or discard it before starting over.'**
+  String get cloudSyncPendingRegistrationExportMessage;
+
+  /// No description provided for @cloudSyncPendingRegistrationSubmitMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery media export was already confirmed. Continue the saved registration; it can no longer be discarded safely.'**
+  String get cloudSyncPendingRegistrationSubmitMessage;
+
+  /// No description provided for @cloudSyncPendingRegistrationUnsupportedMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This saved registration belongs to an unsupported version or is damaged. Discard it before starting over.'**
+  String get cloudSyncPendingRegistrationUnsupportedMessage;
+
+  /// No description provided for @cloudSyncPendingRegistrationResume.
+  ///
+  /// In en, this message translates to:
+  /// **'Continue Registration'**
+  String get cloudSyncPendingRegistrationResume;
+
+  /// No description provided for @cloudSyncPendingRegistrationDiscard.
+  ///
+  /// In en, this message translates to:
+  /// **'Discard and Start Over'**
+  String get cloudSyncPendingRegistrationDiscard;
+
+  /// No description provided for @cloudSyncPendingRegistrationDiscarded.
+  ///
+  /// In en, this message translates to:
+  /// **'The unfinished registration was discarded.'**
+  String get cloudSyncPendingRegistrationDiscarded;
 
   /// No description provided for @cloudSyncAccountSection.
   ///

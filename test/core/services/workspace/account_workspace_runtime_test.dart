@@ -550,7 +550,7 @@ void main() {
     );
   });
 
-  test('首设备注册事务信封只允许原样重放并按摘要确认删除', () async {
+  test('首设备注册事务以绑定信封摘要的独立耐久标记确认导出', () async {
     final store = DeviceStateBlobStore(installationRoot: installationRoot);
     const baseUrl = 'https://kelivo.bemylover.top';
     const loginName = 'pending-registration';
@@ -626,6 +626,38 @@ void main() {
       throwsA(isA<StateError>()),
     );
     await expectLater(
+      store.writePendingRegistrationMediaConfirmation(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        pendingEnvelopeDigest: Uint8List(32)..fillRange(0, 32, 0x44),
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      await store.readPendingRegistrationMediaConfirmation(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
+    );
+    await store.writePendingRegistrationMediaConfirmation(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      pendingEnvelopeDigest: digest,
+    );
+    await store.writePendingRegistrationMediaConfirmation(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      pendingEnvelopeDigest: Uint8List.fromList(digest),
+    );
+    expect(
+      await store.readPendingRegistrationMediaConfirmation(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      orderedEquals(digest),
+    );
+    await expectLater(
       store.deletePendingRegistrationEnvelope(
         normalizedBaseUrl: baseUrl,
         normalizedLoginName: loginName,
@@ -648,6 +680,13 @@ void main() {
         expectedDigest: digest,
       ),
       isTrue,
+    );
+    expect(
+      await store.readPendingRegistrationMediaConfirmation(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      isNull,
     );
     expect(
       await store.deletePendingRegistrationEnvelope(

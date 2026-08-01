@@ -9,6 +9,7 @@ import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_first_device_recovery_bootstrap.dart';
+import 'package:Kelivo/core/services/sync/e2ee_first_device_registration_commit_coordinator.dart';
 
 const _serviceOrigin = 'https://kelivo.bemylover.top';
 const _userId = '40000000-0000-4000-8000-000000000001';
@@ -40,7 +41,7 @@ void main() {
       );
     });
 
-    test('恢复介质确认持久化后才交付本地验签的 genesis', () async {
+    test('prepare 仅生成恢复介质，由耐久提交器另行确认导出', () async {
       final context = await _BootstrapContext.create();
       addTearDown(context.close);
       final passphrase = _validPassphrase();
@@ -62,29 +63,29 @@ void main() {
       );
       expect(passphrase, everyElement(0));
 
-      final prepareFuture = preparer.prepare(
+      final prepared = await preparer.prepare(
         accountRootKey: context.ark,
         userId: _userId,
         operationId: _operationId,
         localMember: context.localMember,
       );
-      var delivered = false;
-      final delivery = prepareFuture.then((value) {
-        delivered = true;
-        return value;
-      });
+      expect(exportStarted.isCompleted, isFalse);
+      final encryptedMedia = prepared.takeEncryptedRecoveryMedia();
+      final exportFuture = preparer.exportEncryptedRecoveryMedia(
+        encryptedMedia,
+      );
 
       await exportStarted.future;
       await Future<void>.delayed(Duration.zero);
-      expect(delivered, isFalse);
+      expect(encryptedMedia, everyElement(0xa7));
       exportAck.complete(true);
-      final prepared = await delivery;
+      expect(await exportFuture, isTrue);
 
-      expect(delivered, isTrue);
       expect(passphrase, everyElement(0));
       expect(recoveryCore.closeCount, 1);
       expect(exportedMedia, hasLength(e2eeEncryptedRecoveryMediaBytes));
-      expect(exportedMedia, everyElement(0xa7));
+      expect(exportedMedia, everyElement(0));
+      expect(encryptedMedia, everyElement(0));
       expect(
         recoveryCore.serviceOriginSha256,
         orderedEquals(
@@ -176,7 +177,7 @@ void main() {
       expect(passphrase, everyElement(0));
     });
 
-    test('exporter 未确认持久化时失败关闭且不交付 bootstrap', () async {
+    test('exporter 未确认时返回失败并清零已生成介质', () async {
       final context = await _BootstrapContext.create();
       addTearDown(context.close);
       final passphrase = _validPassphrase();
@@ -190,19 +191,22 @@ void main() {
         recoveryCore: recoveryCore,
       );
 
-      await expectLater(
-        preparer.prepare(
-          accountRootKey: context.ark,
-          userId: _userId,
-          operationId: _operationId,
-          localMember: context.localMember,
-        ),
-        throwsStateError,
+      final prepared = await preparer.prepare(
+        accountRootKey: context.ark,
+        userId: _userId,
+        operationId: _operationId,
+        localMember: context.localMember,
+      );
+      final encryptedMedia = prepared.takeEncryptedRecoveryMedia();
+      expect(
+        await preparer.exportEncryptedRecoveryMedia(encryptedMedia),
+        isFalse,
       );
 
       expect(passphrase, everyElement(0));
       expect(recoveryCore.closeCount, 1);
       expect(recoveryCore.media, everyElement(0));
+      expect(encryptedMedia, everyElement(0));
     });
 
     test('exporter 异常时清理恢复资源并保留原始错误', () async {
@@ -221,13 +225,15 @@ void main() {
         recoveryCore: recoveryCore,
       );
 
+      final prepared = await preparer.prepare(
+        accountRootKey: context.ark,
+        userId: _userId,
+        operationId: _operationId,
+        localMember: context.localMember,
+      );
+      final encryptedMedia = prepared.takeEncryptedRecoveryMedia();
       await expectLater(
-        preparer.prepare(
-          accountRootKey: context.ark,
-          userId: _userId,
-          operationId: _operationId,
-          localMember: context.localMember,
-        ),
+        preparer.exportEncryptedRecoveryMedia(encryptedMedia),
         throwsA(
           isA<FormatException>().having(
             (error) => error.message,
@@ -240,6 +246,7 @@ void main() {
       expect(passphrase, everyElement(0));
       expect(recoveryCore.closeCount, 1);
       expect(recoveryCore.media, everyElement(0));
+      expect(encryptedMedia, everyElement(0));
     });
 
     test('仅接受规范的新服务 origin 并在拒绝时清零口令', () {
@@ -278,11 +285,16 @@ void main() {
         },
         recoveryCore: recoveryCore,
       );
-      await preparer.prepare(
+      final prepared = await preparer.prepare(
         accountRootKey: context.ark,
         userId: _userId,
         operationId: _operationId,
         localMember: context.localMember,
+      );
+      final encryptedMedia = prepared.takeEncryptedRecoveryMedia();
+      expect(
+        await preparer.exportEncryptedRecoveryMedia(encryptedMedia),
+        isTrue,
       );
 
       await expectLater(
@@ -296,6 +308,7 @@ void main() {
       );
 
       expect(exporterCalls, 1);
+      expect(encryptedMedia, everyElement(0));
       expect(recoveryCore.closeCount, 1);
     });
 

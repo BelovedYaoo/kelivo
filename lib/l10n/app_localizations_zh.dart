@@ -115,6 +115,9 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncRecoveryPassphraseMismatch => '两次输入的恢复口令不一致。';
 
   @override
+  String get cloudSyncRecoveryPassphraseMatchesPassword => '恢复口令必须与账户密码不同。';
+
+  @override
   String get cloudSyncRecoveryPassphraseTooShort => '恢复口令至少需要 12 个字符。';
 
   @override
@@ -204,6 +207,30 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get cloudSyncRecoveryMediaSaveFailed => '恢复文件未保存，注册已取消。';
+
+  @override
+  String get cloudSyncPendingRegistrationTitle => '注册尚未完成';
+
+  @override
+  String get cloudSyncPendingRegistrationExportMessage =>
+      '此账户存在已保存的注册事务。请继续导出原恢复介质，或先丢弃事务再重新开始。';
+
+  @override
+  String get cloudSyncPendingRegistrationSubmitMessage =>
+      '恢复介质导出已经确认。请继续提交已保存的注册事务；为避免账户无法恢复，当前事务不能再丢弃。';
+
+  @override
+  String get cloudSyncPendingRegistrationUnsupportedMessage =>
+      '已保存的注册事务版本不受支持或已经损坏。请先丢弃事务再重新开始。';
+
+  @override
+  String get cloudSyncPendingRegistrationResume => '继续注册';
+
+  @override
+  String get cloudSyncPendingRegistrationDiscard => '丢弃并重新开始';
+
+  @override
+  String get cloudSyncPendingRegistrationDiscarded => '未完成的注册事务已丢弃。';
 
   @override
   String get cloudSyncAccountSection => '账户';
@@ -5804,6 +5831,9 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncRecoveryPassphraseMismatch => '两次输入的恢复口令不一致。';
 
   @override
+  String get cloudSyncRecoveryPassphraseMatchesPassword => '恢复口令必须与账户密码不同。';
+
+  @override
   String get cloudSyncRecoveryPassphraseTooShort => '恢复口令至少需要 12 个字符。';
 
   @override
@@ -5893,6 +5923,30 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get cloudSyncRecoveryMediaSaveFailed => '恢复文件未保存，注册已取消。';
+
+  @override
+  String get cloudSyncPendingRegistrationTitle => '注册尚未完成';
+
+  @override
+  String get cloudSyncPendingRegistrationExportMessage =>
+      '此账户存在已保存的注册事务。请继续导出原恢复介质，或先丢弃事务再重新开始。';
+
+  @override
+  String get cloudSyncPendingRegistrationSubmitMessage =>
+      '恢复介质导出已经确认。请继续提交已保存的注册事务；为避免账户无法恢复，当前事务不能再丢弃。';
+
+  @override
+  String get cloudSyncPendingRegistrationUnsupportedMessage =>
+      '已保存的注册事务版本不受支持或已经损坏。请先丢弃事务再重新开始。';
+
+  @override
+  String get cloudSyncPendingRegistrationResume => '继续注册';
+
+  @override
+  String get cloudSyncPendingRegistrationDiscard => '丢弃并重新开始';
+
+  @override
+  String get cloudSyncPendingRegistrationDiscarded => '未完成的注册事务已丢弃。';
 
   @override
   String get cloudSyncAccountSection => '账户';
@@ -11493,6 +11547,9 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncRecoveryPassphraseMismatch => '兩次輸入的復原口令不一致。';
 
   @override
+  String get cloudSyncRecoveryPassphraseMatchesPassword => '復原口令必須與帳戶密碼不同。';
+
+  @override
   String get cloudSyncRecoveryPassphraseTooShort => '復原口令至少需要 12 個字元。';
 
   @override
@@ -11583,6 +11640,30 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get cloudSyncRecoveryMediaSaveFailed => '復原檔案未儲存，註冊已取消。';
+
+  @override
+  String get cloudSyncPendingRegistrationTitle => '註冊尚未完成';
+
+  @override
+  String get cloudSyncPendingRegistrationExportMessage =>
+      '此帳戶存在已儲存的註冊交易。請繼續匯出原復原媒介，或先捨棄交易再重新開始。';
+
+  @override
+  String get cloudSyncPendingRegistrationSubmitMessage =>
+      '復原媒介匯出已經確認。請繼續提交已儲存的註冊交易；為避免帳戶無法復原，目前交易不能再捨棄。';
+
+  @override
+  String get cloudSyncPendingRegistrationUnsupportedMessage =>
+      '已儲存的註冊交易版本不受支援或已經損壞。請先捨棄交易再重新開始。';
+
+  @override
+  String get cloudSyncPendingRegistrationResume => '繼續註冊';
+
+  @override
+  String get cloudSyncPendingRegistrationDiscard => '捨棄並重新開始';
+
+  @override
+  String get cloudSyncPendingRegistrationDiscarded => '未完成的註冊交易已捨棄。';
 
   @override
   String get cloudSyncAccountSection => '帳戶';

@@ -119,6 +119,10 @@ class AppLocalizationsEn extends AppLocalizations {
       'The recovery passphrases do not match.';
 
   @override
+  String get cloudSyncRecoveryPassphraseMatchesPassword =>
+      'The recovery passphrase must be different from the account password.';
+
+  @override
   String get cloudSyncRecoveryPassphraseTooShort =>
       'The recovery passphrase must contain at least 12 characters.';
 
@@ -217,6 +221,31 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get cloudSyncRecoveryMediaSaveFailed =>
       'The recovery file was not saved. Registration was cancelled.';
+
+  @override
+  String get cloudSyncPendingRegistrationTitle => 'Unfinished Registration';
+
+  @override
+  String get cloudSyncPendingRegistrationExportMessage =>
+      'This account has a saved registration in progress. Continue to export the original recovery media, or discard it before starting over.';
+
+  @override
+  String get cloudSyncPendingRegistrationSubmitMessage =>
+      'Recovery media export was already confirmed. Continue the saved registration; it can no longer be discarded safely.';
+
+  @override
+  String get cloudSyncPendingRegistrationUnsupportedMessage =>
+      'This saved registration belongs to an unsupported version or is damaged. Discard it before starting over.';
+
+  @override
+  String get cloudSyncPendingRegistrationResume => 'Continue Registration';
+
+  @override
+  String get cloudSyncPendingRegistrationDiscard => 'Discard and Start Over';
+
+  @override
+  String get cloudSyncPendingRegistrationDiscarded =>
+      'The unfinished registration was discarded.';
 
   @override
   String get cloudSyncAccountSection => 'Account';

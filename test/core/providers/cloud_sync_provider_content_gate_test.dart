@@ -17,6 +17,7 @@ import 'package:Kelivo/core/providers/user_provider.dart';
 import 'package:Kelivo/core/providers/world_book_provider.dart';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/chat/chat_service.dart';
+import 'package:Kelivo/core/services/haptics.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_content_runtime.dart';
@@ -32,12 +33,14 @@ import 'package:Kelivo/core/services/sync/e2ee_background_sync_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_content_runtime.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_provider_binding.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
+import 'package:Kelivo/core/services/sync/e2ee_first_device_registration_commit_coordinator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_mobile_background_sync.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_scheduler.dart';
+import 'package:Kelivo/core/services/sync/sensitive_utf8.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
@@ -2406,17 +2409,24 @@ void main() {
       buildNumber: '1',
       buildSignature: 'test',
     );
-    final fixture = await _createSignedOutFixture();
-    addTearDown(fixture.close);
     final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
+    final fixture = await _createSignedOutFixture(
+      firstDeviceRecoveryBootstrapFactory:
+          ({required recoveryPassphrase, required encryptedMediaExporter}) {
+            recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
+            return preparer;
+          },
+    );
+    addTearDown(fixture.close);
 
     expect(
       await fixture.provider.register(
         loginName: '  ovo  ',
         displayName: '  Ovo  ',
         password: 'password',
+        recoveryPassphrase: 'correct horse battery staple',
         deviceName: '  测试手机  ',
-        firstDeviceBootstrapPreparer: preparer,
+        encryptedMediaExporter: (_) async => true,
       ),
       isTrue,
     );
@@ -2449,19 +2459,25 @@ void main() {
     final authentication = _FakeE2eeAccountAuthentication(
       confirmationFailure: StateError('registration_cleanup_failed'),
     );
+    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
     final fixture = await _createSignedOutFixture(
       authentication: authentication,
+      firstDeviceRecoveryBootstrapFactory:
+          ({required recoveryPassphrase, required encryptedMediaExporter}) {
+            recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
+            return preparer;
+          },
     );
     addTearDown(fixture.close);
-    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
 
     expect(
       await fixture.provider.register(
         loginName: 'ovo',
         displayName: 'Ovo',
         password: 'password',
+        recoveryPassphrase: 'correct horse battery staple',
         deviceName: '测试手机',
-        firstDeviceBootstrapPreparer: preparer,
+        encryptedMediaExporter: (_) async => true,
       ),
       isTrue,
     );
@@ -2486,6 +2502,7 @@ void main() {
       buildNumber: '1',
       buildSignature: 'test',
     );
+    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
     final fixture = await _createSignedOutFixture(
       authentication: _FakeE2eeAccountAuthentication(
         registrationFailure: const CloudSyncException(
@@ -2494,17 +2511,22 @@ void main() {
           serverCode: 'AUTH_REGISTRATION_CONFLICT',
         ),
       ),
+      firstDeviceRecoveryBootstrapFactory:
+          ({required recoveryPassphrase, required encryptedMediaExporter}) {
+            recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
+            return preparer;
+          },
     );
     addTearDown(fixture.close);
-    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
 
     expect(
       await fixture.provider.register(
         loginName: 'ovo',
         displayName: 'Ovo',
         password: 'password',
+        recoveryPassphrase: 'correct horse battery staple',
         deviceName: '测试手机',
-        firstDeviceBootstrapPreparer: preparer,
+        encryptedMediaExporter: (_) async => true,
       ),
       isFalse,
     );
@@ -2520,27 +2542,70 @@ void main() {
     expect(preparer.closed, isTrue);
   });
 
-  test('已有会话拒绝注册时仍关闭未消费的恢复 bootstrap', () async {
+  test('Provider 在认证和恢复 bootstrap 前拒绝相同 UTF-8 口令', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     _setCloudSyncPackageInfo();
-    final fixture = await _createSignedInFixture();
+    var bootstrapFactoryCalls = 0;
+    final fixture = await _createSignedOutFixture(
+      firstDeviceRecoveryBootstrapFactory:
+          ({required recoveryPassphrase, required encryptedMediaExporter}) {
+            bootstrapFactoryCalls++;
+            recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
+            return _TrackingFirstDeviceSecurityBootstrapPreparer();
+          },
+    );
+    addTearDown(fixture.close);
+
+    expect(
+      await fixture.provider.register(
+        loginName: 'ovo',
+        displayName: 'Ovo',
+        password: 'same recovery passphrase',
+        recoveryPassphrase: 'same recovery passphrase',
+        deviceName: '测试手机',
+        encryptedMediaExporter: (_) async => true,
+      ),
+      isFalse,
+    );
+
+    expect(bootstrapFactoryCalls, 0);
+    expect(fixture.authentication.requestNames, isEmpty);
+    expect(
+      fixture.provider.lastError?.serverCode,
+      e2eeRecoveryPassphraseMatchesPasswordCode,
+    );
+  });
+
+  test('已有会话拒绝注册时不构造恢复 bootstrap', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    var bootstrapFactoryCalls = 0;
+    final fixture = await _createSignedInFixture(
+      firstDeviceRecoveryBootstrapFactory:
+          ({required recoveryPassphrase, required encryptedMediaExporter}) {
+            bootstrapFactoryCalls++;
+            recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
+            return _TrackingFirstDeviceSecurityBootstrapPreparer();
+          },
+    );
     addTearDown(fixture.close);
     await fixture.provider.initialize();
-    final preparer = _TrackingFirstDeviceSecurityBootstrapPreparer();
 
     expect(
       await fixture.provider.register(
         loginName: 'ovo',
         displayName: 'Ovo',
         password: 'password',
+        recoveryPassphrase: 'correct horse battery staple',
         deviceName: '测试手机',
-        firstDeviceBootstrapPreparer: preparer,
+        encryptedMediaExporter: (_) async => true,
       ),
       isFalse,
     );
 
-    expect(preparer.closed, isTrue);
+    expect(bootstrapFactoryCalls, 0);
     expect(fixture.authentication.requestNames, isEmpty);
   });
 
@@ -2896,6 +2961,235 @@ void main() {
 
     expect(fixture.authentication.requestNames, isEmpty);
     await _expectAndDismissCloudSyncToast(tester, '两次输入的恢复口令不一致。');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('移动注册按 UTF-8 字节拒绝与账户密码相同的恢复口令', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final fixture = await tester.runAsync(_createSignedOutFixture);
+    if (fixture == null) {
+      throw StateError('recovery_passphrase_equality_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-password-field',
+      'same recovery passphrase',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-field',
+      'same recovery passphrase',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      'same recovery passphrase',
+    );
+    await _enterCloudSyncField(tester, 'cloud-sync-device-name-field', '安卓手机');
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+    );
+    await tester.pump();
+
+    expect(fixture.authentication.requestNames, isEmpty);
+    await _expectAndDismissCloudSyncToast(tester, '恢复口令必须与账户密码不同。');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('未确认介质的注册事务要求显式继续或丢弃', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final authentication = _FakeE2eeAccountAuthentication(
+      registrationFailure: const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: e2eePendingRegistrationExportRequiredCode,
+      ),
+    );
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(authentication: authentication),
+    );
+    if (fixture == null) {
+      throw StateError('pending_registration_export_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(tester, 'cloud-sync-device-name-field', '安卓手机');
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+    );
+    await _pumpCloudSyncUntil(
+      tester,
+      () => find
+          .byKey(
+            const ValueKey<String>('cloud-sync-pending-registration-resume'),
+          )
+          .evaluate()
+          .isNotEmpty,
+    );
+
+    expect(
+      find.byKey(
+        const ValueKey<String>('cloud-sync-pending-registration-discard'),
+      ),
+      findsOneWidget,
+    );
+    tester
+        .widget<IosTileButton>(
+          find.byKey(
+            const ValueKey<String>('cloud-sync-pending-registration-discard'),
+          ),
+        )
+        .onTap
+        .call();
+    await tester.pump();
+    await _pumpCloudSyncUntil(
+      tester,
+      () => authentication.requestNames.contains('discard-registration'),
+    );
+    expect(authentication.requestNames, <String>[
+      'register',
+      'discard-registration',
+    ]);
+    await _pumpCloudSyncUntil(
+      tester,
+      () => AppSnackBarManager().activeToasts.any(
+        (entry) => entry.notification.message == '未完成的注册事务已丢弃。',
+      ),
+    );
+    await _expectAndDismissCloudSyncToast(tester, '未完成的注册事务已丢弃。');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('已确认介质的注册事务只能继续提交', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    Haptics.setEnabled(false);
+    addTearDown(() => Haptics.setEnabled(true));
+    _setCloudSyncPackageInfo();
+    final authentication = _FakeE2eeAccountAuthentication(
+      registrationFailure: const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: e2eePendingRegistrationSubmitRequiredCode,
+      ),
+    );
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(authentication: authentication),
+    );
+    if (fixture == null) {
+      throw StateError('pending_registration_submit_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-device-name-field',
+      'iPhone',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+    );
+    await _pumpCloudSyncUntil(
+      tester,
+      () => find
+          .byKey(
+            const ValueKey<String>('cloud-sync-pending-registration-resume'),
+          )
+          .evaluate()
+          .isNotEmpty,
+    );
+
+    expect(
+      find.byKey(
+        const ValueKey<String>('cloud-sync-pending-registration-discard'),
+      ),
+      findsNothing,
+    );
+    tester
+        .widget<IosTileButton>(
+          find.byKey(
+            const ValueKey<String>('cloud-sync-pending-registration-resume'),
+          ),
+        )
+        .onTap
+        .call();
+    await tester.pump();
+    await _pumpCloudSyncUntil(
+      tester,
+      () => fixture.provider.workspaceRestartRequired,
+    );
+    await tester.pumpAndSettle();
+    expect(authentication.requestNames, <String>[
+      'register',
+      'resume-registration',
+    ]);
     debugDefaultTargetPlatformOverride = null;
   });
 
@@ -3895,6 +4189,7 @@ Future<_Fixture> _createSignedInFixture({
   _FakeE2eeAccountAuthentication? authentication,
   CloudSyncAccountSession? session,
   CloudSyncContentRuntime? contentRuntime,
+  E2eeFirstDeviceRecoveryBootstrapFactory? firstDeviceRecoveryBootstrapFactory,
 }) async {
   final testRoot = Directory(
     '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -3935,6 +4230,9 @@ Future<_Fixture> _createSignedInFixture({
                 firstDeviceBootstrapPreparer;
             return accountAuthentication;
           },
+          firstDeviceRecoveryBootstrapFactory:
+              firstDeviceRecoveryBootstrapFactory ??
+              _createTrackingRecoveryBootstrap,
         )
       : CloudSyncProvider.withContentRuntime(
           runtime,
@@ -3948,6 +4246,9 @@ Future<_Fixture> _createSignedInFixture({
                 firstDeviceBootstrapPreparer;
             return accountAuthentication;
           },
+          firstDeviceRecoveryBootstrapFactory:
+              firstDeviceRecoveryBootstrapFactory ??
+              _createTrackingRecoveryBootstrap,
         );
   return _Fixture(
     root: root,
@@ -3961,6 +4262,7 @@ Future<_Fixture> _createSignedInFixture({
 Future<_Fixture> _createSignedOutFixture({
   _FakeCloudSyncAccountClient? client,
   _FakeE2eeAccountAuthentication? authentication,
+  E2eeFirstDeviceRecoveryBootstrapFactory? firstDeviceRecoveryBootstrapFactory,
 }) async {
   final testRoot = Directory(
     '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -3988,6 +4290,8 @@ Future<_Fixture> _createSignedOutFixture({
           firstDeviceBootstrapPreparer;
       return accountAuthentication;
     },
+    firstDeviceRecoveryBootstrapFactory:
+        firstDeviceRecoveryBootstrapFactory ?? _createTrackingRecoveryBootstrap,
   );
   return _Fixture(
     root: root,
@@ -3996,6 +4300,14 @@ Future<_Fixture> _createSignedOutFixture({
     client: accountClient,
     authentication: accountAuthentication,
   );
+}
+
+E2eeFirstDeviceSecurityBootstrapPreparer _createTrackingRecoveryBootstrap({
+  required Uint8List recoveryPassphrase,
+  required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
+}) {
+  recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
+  return _TrackingFirstDeviceSecurityBootstrapPreparer();
 }
 
 CloudSyncAccountSession _session({
@@ -5322,6 +5634,12 @@ final class _TrackingFirstDeviceSecurityBootstrapPreparer
   }) {
     throw UnsupportedError('测试认证器不应消费安全 bootstrap');
   }
+
+  @override
+  Future<bool> exportEncryptedRecoveryMedia(Uint8List encryptedMedia) async {
+    encryptedMedia.fillRange(0, encryptedMedia.length, 0);
+    return true;
+  }
 }
 
 final class _FakeE2eeAccountAuthentication
@@ -5405,6 +5723,24 @@ final class _FakeE2eeAccountAuthentication
     } finally {
       password.fillRange(0, password.length, 0);
     }
+  }
+
+  @override
+  Future<CloudSyncAuthenticatedSession> resumeFirstDeviceRegistration({
+    required String loginName,
+    required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
+  }) async {
+    requestNames.add('resume-registration');
+    lastLoginName = loginName;
+    return registrationSession;
+  }
+
+  @override
+  Future<void> discardFirstDeviceRegistration({
+    required String loginName,
+  }) async {
+    requestNames.add('discard-registration');
+    lastLoginName = loginName;
   }
 
   @override

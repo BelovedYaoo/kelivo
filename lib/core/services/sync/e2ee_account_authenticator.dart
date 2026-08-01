@@ -14,6 +14,7 @@ import 'cloud_sync_types.dart';
 import 'e2ee_account_trust_manifest.dart';
 import 'e2ee_device_pairing_membership_commit.dart';
 import 'e2ee_device_state_access.dart';
+import 'e2ee_first_device_registration_commit_coordinator.dart';
 
 part 'e2ee_device_pairing.dart';
 
@@ -70,52 +71,96 @@ abstract interface class E2eeFirstDeviceSecurityBootstrapPreparer {
     required String operationId,
     required E2eeMembershipDeviceInput localMember,
   });
+
+  /// 注册事务耐久保存后才允许调用；所有退出路径都会清零传入缓冲区。
+  Future<bool> exportEncryptedRecoveryMedia(Uint8List encryptedMedia);
 }
+
+const e2eePendingRegistrationExportRequiredCode =
+    'SYNC_REGISTRATION_RECOVERY_EXPORT_REQUIRED';
+const e2eePendingRegistrationSubmitRequiredCode =
+    'SYNC_REGISTRATION_RECOVERY_SUBMIT_REQUIRED';
+const e2eePendingRegistrationMissingCode = 'SYNC_REGISTRATION_RECOVERY_MISSING';
+const e2eePendingRegistrationUnsupportedCode =
+    'SYNC_REGISTRATION_RECOVERY_UNSUPPORTED';
 
 final class E2eePreparedFirstDeviceSecurityBootstrap {
   factory E2eePreparedFirstDeviceSecurityBootstrap({
     required CloudSyncGenesisSecurityState securityState,
     required E2eeVerifiedMembership membership,
+    required Uint8List encryptedRecoveryMedia,
   }) {
+    if (encryptedRecoveryMedia.length != e2eeEncryptedRecoveryMediaBytes) {
+      encryptedRecoveryMedia.fillRange(0, encryptedRecoveryMedia.length, 0);
+      throw const FormatException('首设备加密恢复介质长度无效');
+    }
+    final ownedRecoveryMedia = Uint8List.fromList(encryptedRecoveryMedia);
+    encryptedRecoveryMedia.fillRange(0, encryptedRecoveryMedia.length, 0);
     final capsuleDigest = Uint8List.fromList(
       sha256.convert(securityState.recoveryCapsule).bytes,
     );
-    if (membership.securityGeneration != 1 ||
-        membership.keyEpoch != 1 ||
-        membership.operationKind != E2eeMembershipOperationKind.initialize ||
-        membership.operationId != securityState.operationId ||
-        !_sameSecurityBytes(
-          membership.manifest,
-          securityState.membershipManifest,
-        ) ||
-        !_sameSecurityBytes(
-          membership.digest,
-          securityState.membershipManifestDigest.bytes,
-        ) ||
-        membership.recoveryPublicKeyVersion !=
-            securityState.recoveryPublicKeyVersion ||
-        !_sameSecurityBytes(
-          membership.recoveryPublicKey,
-          securityState.recoveryPublicKey,
-        ) ||
-        membership.recoveryCapsuleVersion !=
-            securityState.recoveryCapsuleVersion ||
-        !_sameSecurityBytes(membership.recoveryCapsuleDigest, capsuleDigest)) {
-      throw const FormatException('首设备安全 bootstrap 与签名 genesis 不一致');
+    try {
+      if (membership.securityGeneration != 1 ||
+          membership.keyEpoch != 1 ||
+          membership.operationKind != E2eeMembershipOperationKind.initialize ||
+          membership.operationId != securityState.operationId ||
+          !_sameSecurityBytes(
+            membership.manifest,
+            securityState.membershipManifest,
+          ) ||
+          !_sameSecurityBytes(
+            membership.digest,
+            securityState.membershipManifestDigest.bytes,
+          ) ||
+          membership.recoveryPublicKeyVersion !=
+              securityState.recoveryPublicKeyVersion ||
+          !_sameSecurityBytes(
+            membership.recoveryPublicKey,
+            securityState.recoveryPublicKey,
+          ) ||
+          membership.recoveryCapsuleVersion !=
+              securityState.recoveryCapsuleVersion ||
+          !_sameSecurityBytes(
+            membership.recoveryCapsuleDigest,
+            capsuleDigest,
+          )) {
+        throw const FormatException('首设备安全 bootstrap 与签名 genesis 不一致');
+      }
+      return E2eePreparedFirstDeviceSecurityBootstrap._(
+        securityState,
+        membership,
+        ownedRecoveryMedia,
+      );
+    } catch (_) {
+      ownedRecoveryMedia.fillRange(0, ownedRecoveryMedia.length, 0);
+      rethrow;
     }
-    return E2eePreparedFirstDeviceSecurityBootstrap._(
-      securityState,
-      membership,
-    );
   }
 
-  const E2eePreparedFirstDeviceSecurityBootstrap._(
+  E2eePreparedFirstDeviceSecurityBootstrap._(
     this.securityState,
     this.membership,
+    this._encryptedRecoveryMedia,
   );
 
   final CloudSyncGenesisSecurityState securityState;
   final E2eeVerifiedMembership membership;
+  Uint8List? _encryptedRecoveryMedia;
+
+  Uint8List takeEncryptedRecoveryMedia() {
+    final media = _encryptedRecoveryMedia;
+    if (media == null) {
+      throw StateError('首设备加密恢复介质已被消费');
+    }
+    _encryptedRecoveryMedia = null;
+    return media;
+  }
+
+  void dispose() {
+    final media = _encryptedRecoveryMedia;
+    _encryptedRecoveryMedia = null;
+    media?.fillRange(0, media.length, 0);
+  }
 }
 
 abstract interface class E2eeAccountAuthentication {
@@ -128,6 +173,13 @@ abstract interface class E2eeAccountAuthentication {
     required CloudSyncPlatform platform,
     required String clientVersion,
   });
+
+  Future<CloudSyncAuthenticatedSession> resumeFirstDeviceRegistration({
+    required String loginName,
+    required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
+  });
+
+  Future<void> discardFirstDeviceRegistration({required String loginName});
 
   Future<void> confirmFirstDeviceRegistration({
     required String loginName,
@@ -189,11 +241,11 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   );
 
   static const _registrationRecordDomain =
-      'kelivo.e2ee.registration-transaction.record.v1';
+      'kelivo.e2ee.registration-transaction.record.v2';
   static const _registrationAssociatedDataDomain =
-      'kelivo.e2ee.registration-transaction.aad.v1';
+      'kelivo.e2ee.registration-transaction.aad.v2';
   static const _registrationRecordEpoch = 1;
-  static const _registrationFrameVersion = 2;
+  static const _registrationFrameVersion = 3;
   static const _registrationFrameHeaderLength = 120;
   static const _registrationUploadOffset = _registrationFrameHeaderLength;
   static const _registrationEnvelopeOffset =
@@ -211,10 +263,12 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       cloudSyncMembershipManifestDigestBytes;
   static const _registrationRecoveryCapsuleOffset =
       _registrationRecoveryPublicKeyOffset + cloudSyncRecoveryPublicKeyBytes;
-  static const _registrationFrameLength =
+  static const _registrationRecoveryMediaOffset =
       _registrationRecoveryCapsuleOffset + cloudSyncRecoveryCapsuleBytes;
+  static const _registrationFrameLength =
+      _registrationRecoveryMediaOffset + e2eeEncryptedRecoveryMediaBytes;
   static final Uint8List _registrationFrameMagic = Uint8List.fromList(
-    ascii.encode('KELVRT02'),
+    ascii.encode('KELVRT03'),
   );
   static final RegExp _normalizedLoginNamePattern = RegExp(
     r'^[a-z0-9][a-z0-9._-]*$',
@@ -255,6 +309,8 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     Uint8List? accountKeyEnvelope;
     Uint8List? deviceProof;
     Uint8List? fullStateBlob;
+    Uint8List? encryptedRecoveryMedia;
+    Uint8List? pendingEnvelopeDigest;
     E2eePreparedFirstDeviceSecurityBootstrap? preparedSecurity;
     _OpenedPendingRegistration? pending;
     _PendingRegistrationTransaction? transaction;
@@ -266,32 +322,24 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       }
       final normalizedLoginName = _normalizeLoginName(loginName);
       context = await _openDeviceContext(normalizedLoginName);
-      pending = await _readPendingRegistration(context, normalizedLoginName);
+      try {
+        pending = await _readPendingRegistration(context, normalizedLoginName);
+      } on FormatException {
+        throw const CloudSyncException(
+          kind: CloudSyncFailureKind.conflict,
+          retryable: false,
+          serverCode: e2eePendingRegistrationUnsupportedCode,
+        );
+      }
       if (pending != null) {
-        transaction = pending.transaction;
-        await _ensurePendingRegistrationState(
-          context,
-          normalizedLoginName: normalizedLoginName,
-          transaction: transaction,
+        throw CloudSyncException(
+          kind: CloudSyncFailureKind.conflict,
+          retryable: false,
+          serverCode:
+              pending.stage == E2eeRecoveryMediaCommitStage.awaitingExport
+              ? e2eePendingRegistrationExportRequiredCode
+              : e2eePendingRegistrationSubmitRequiredCode,
         );
-        if (context.ark == null) {
-          await _closeHandles(context: context);
-          context = null;
-          context = await _openDeviceContext(normalizedLoginName);
-        }
-        final accountRootKey = context.ark;
-        if (accountRootKey == null) {
-          throw StateError('注册恢复事务缺少账户根密钥');
-        }
-        final session = await _finishPendingRegistration(transaction);
-        final verifiedSession = await _validateRegistrationSession(
-          context,
-          normalizedLoginName: normalizedLoginName,
-          transaction: transaction,
-          session: session,
-          accountRootKey: accountRootKey,
-        );
-        return _bindVerifiedDeviceKeyVersion(context, verifiedSession);
       }
       if (context.account != null || context.ark != null) {
         throw StateError('已绑定账户的设备状态不能再次注册');
@@ -346,6 +394,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         operationId: operationId,
         localMember: localMember,
       );
+      encryptedRecoveryMedia = preparedSecurity.takeEncryptedRecoveryMedia();
       final registrationBundle = await _secureCore
           .createDeviceRegistrationFinish(
             context.identity,
@@ -385,21 +434,43 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         deviceProof: deviceProof,
         fullStateBlob: fullStateBlob,
         securityState: preparedSecurity.securityState,
+        encryptedRecoveryMedia: encryptedRecoveryMedia,
       );
-      // 本地事务是注册提交点；服务端调用只能发生在唯一 ARK 与原样载荷均可恢复之后。
-      await _persistPendingRegistration(
-        context,
-        normalizedLoginName: normalizedLoginName,
-        transaction: transaction,
-      );
-      await _deviceStateStore.compareAndSwap(
-        normalizedBaseUrl: _baseUrl,
-        normalizedLoginName: normalizedLoginName,
-        expectedVersion: context.stateVersion,
-        blob: fullStateBlob,
-      );
-
-      final session = await _finishPendingRegistration(transaction);
+      _clearBytes(encryptedRecoveryMedia);
+      encryptedRecoveryMedia = null;
+      preparedSecurity.dispose();
+      final session = await const E2eeFirstDeviceRegistrationCommitCoordinator()
+          .start<CloudSyncAuthenticatedSession>(
+            persistAwaitingExport: () async {
+              pendingEnvelopeDigest = await _persistPendingRegistration(
+                context!,
+                normalizedLoginName: normalizedLoginName,
+                transaction: transaction!,
+              );
+            },
+            exportRecoveryMedia: () => _exportPendingRecoveryMedia(
+              transaction!,
+              bootstrapPreparer.exportEncryptedRecoveryMedia,
+            ),
+            persistExportConfirmed: () async {
+              final digest = pendingEnvelopeDigest;
+              if (digest == null) {
+                throw StateError('注册恢复事务缺少待确认信封摘要');
+              }
+              await _deviceStateStore.writePendingRegistrationMediaConfirmation(
+                normalizedBaseUrl: _baseUrl,
+                normalizedLoginName: normalizedLoginName,
+                pendingEnvelopeDigest: digest,
+              );
+            },
+            installAccountState: () => _deviceStateStore.compareAndSwap(
+              normalizedBaseUrl: _baseUrl,
+              normalizedLoginName: normalizedLoginName,
+              expectedVersion: context!.stateVersion,
+              blob: transaction!.fullStateBlob,
+            ),
+            submitRegistration: () => _finishPendingRegistration(transaction!),
+          );
       final verifiedSession = await _validateRegistrationSession(
         context,
         normalizedLoginName: normalizedLoginName,
@@ -441,17 +512,162 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
               accountKeyEnvelope,
               deviceProof,
               fullStateBlob,
+              encryptedRecoveryMedia,
+              pendingEnvelopeDigest,
             ],
             ark: ark,
             context: context,
           ),
         );
       } finally {
+        preparedSecurity?.dispose();
         if (pending != null) {
           pending.dispose();
         } else {
           transaction?.dispose();
         }
+      }
+    }
+  }
+
+  @override
+  Future<CloudSyncAuthenticatedSession> resumeFirstDeviceRegistration({
+    required String loginName,
+    required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
+  }) async {
+    _beginExclusiveOperation();
+    _DeviceContext? context;
+    _OpenedPendingRegistration? pending;
+    Object? primaryError;
+    try {
+      final normalizedLoginName = _normalizeLoginName(loginName);
+      context = await _openDeviceContext(normalizedLoginName);
+      pending = await _readPendingRegistration(context, normalizedLoginName);
+      if (pending == null) {
+        throw const CloudSyncException(
+          kind: CloudSyncFailureKind.conflict,
+          retryable: false,
+          serverCode: e2eePendingRegistrationMissingCode,
+        );
+      }
+      final transaction = pending.transaction;
+      await _validatePendingRegistrationState(context, transaction);
+      final session = await const E2eeFirstDeviceRegistrationCommitCoordinator()
+          .resume<CloudSyncAuthenticatedSession>(
+            stage: pending.stage,
+            exportRecoveryMedia: () => _exportPendingRecoveryMedia(
+              transaction,
+              encryptedMediaExporter,
+            ),
+            persistExportConfirmed: () =>
+                _deviceStateStore.writePendingRegistrationMediaConfirmation(
+                  normalizedBaseUrl: _baseUrl,
+                  normalizedLoginName: normalizedLoginName,
+                  pendingEnvelopeDigest: pending!.envelopeDigest,
+                ),
+            installAccountState: () async {
+              await _ensurePendingRegistrationState(
+                context!,
+                normalizedLoginName: normalizedLoginName,
+                transaction: transaction,
+              );
+              if (context!.ark == null) {
+                await _closeHandles(context: context);
+                context = null;
+                context = await _openDeviceContext(normalizedLoginName);
+              }
+            },
+            submitRegistration: () => _finishPendingRegistration(transaction),
+          );
+      final accountRootKey = context!.ark;
+      if (accountRootKey == null) {
+        throw StateError('注册恢复事务缺少账户根密钥');
+      }
+      final verifiedSession = await _validateRegistrationSession(
+        context!,
+        normalizedLoginName: normalizedLoginName,
+        transaction: transaction,
+        session: session,
+        accountRootKey: accountRootKey,
+      );
+      return _bindVerifiedDeviceKeyVersion(context!, verifiedSession);
+    } catch (error, stackTrace) {
+      final transaction = pending?.transaction;
+      final reportedError =
+          transaction != null &&
+              error is CloudSyncException &&
+              _registrationRecoveryRequiresLogin(error, transaction)
+          ? CloudSyncException(
+              kind: CloudSyncFailureKind.unauthenticated,
+              retryable: false,
+              serverCode: 'SYNC_REGISTRATION_RECOVERY_LOGIN_REQUIRED',
+              requestId: error.requestId,
+              statusCode: error.statusCode,
+            )
+          : error;
+      primaryError = reportedError;
+      _clearAccountClientToken();
+      Error.throwWithStackTrace(reportedError, stackTrace);
+    } finally {
+      try {
+        pending?.dispose();
+        await _closeHandles(context: context);
+      } catch (error, stackTrace) {
+        if (primaryError == null) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+        _logSuppressedCleanupFailure(error, stackTrace);
+      } finally {
+        _authenticationInProgress = false;
+      }
+    }
+  }
+
+  @override
+  Future<void> discardFirstDeviceRegistration({
+    required String loginName,
+  }) async {
+    _beginExclusiveOperation();
+    Uint8List? pendingEnvelope;
+    Object? primaryError;
+    try {
+      final normalizedLoginName = _normalizeLoginName(loginName);
+      final confirmation = await _deviceStateStore
+          .readPendingRegistrationMediaConfirmation(
+            normalizedBaseUrl: _baseUrl,
+            normalizedLoginName: normalizedLoginName,
+          );
+      if (confirmation != null) {
+        _clearBytes(confirmation);
+        throw const CloudSyncException(
+          kind: CloudSyncFailureKind.conflict,
+          retryable: false,
+          serverCode: e2eePendingRegistrationSubmitRequiredCode,
+        );
+      }
+      pendingEnvelope = await _deviceStateStore.readPendingRegistrationEnvelope(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+      );
+      if (pendingEnvelope == null) return;
+      // 安装级槽继续复用；tombstone 原子撤销设备状态、ARK 包装和待提交介质。
+      await _deviceStateStore.delete(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+      );
+    } catch (error) {
+      primaryError = error;
+      rethrow;
+    } finally {
+      try {
+        _clearBytes(pendingEnvelope);
+      } catch (error, stackTrace) {
+        if (primaryError == null) {
+          Error.throwWithStackTrace(error, stackTrace);
+        }
+        _logSuppressedCleanupFailure(error, stackTrace);
+      } finally {
+        _authenticationInProgress = false;
       }
     }
   }
@@ -724,7 +940,19 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     );
   }
 
-  Future<void> _persistPendingRegistration(
+  Future<bool> _exportPendingRecoveryMedia(
+    _PendingRegistrationTransaction transaction,
+    E2eeEncryptedRecoveryMediaExporter exporter,
+  ) async {
+    final media = transaction.copyEncryptedRecoveryMedia();
+    try {
+      return await exporter(media);
+    } finally {
+      _clearBytes(media);
+    }
+  }
+
+  Future<Uint8List> _persistPendingRegistration(
     _DeviceContext context, {
     required String normalizedLoginName,
     required _PendingRegistrationTransaction transaction,
@@ -733,6 +961,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     final recordId = _registrationRecordId(normalizedLoginName);
     final associatedData = _registrationAssociatedData(normalizedLoginName);
     Uint8List? envelope;
+    Uint8List? envelopeDigest;
     try {
       envelope = await _secureCore.sealRecord(
         context.key,
@@ -745,16 +974,21 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
           DeviceStateBlobStore.pendingRegistrationEnvelopeMaxLength) {
         throw const FormatException('注册事务密文超过持久化边界');
       }
+      envelopeDigest = Uint8List.fromList(sha256.convert(envelope).bytes);
       await _deviceStateStore.writePendingRegistrationEnvelope(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: normalizedLoginName,
         envelope: envelope,
       );
+      final result = envelopeDigest;
+      envelopeDigest = null;
+      return result;
     } finally {
       _clearBytes(frame);
       _clearBytes(recordId);
       _clearBytes(associatedData);
       _clearBytes(envelope);
+      _clearBytes(envelopeDigest);
     }
   }
 
@@ -771,6 +1005,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     final recordId = _registrationRecordId(normalizedLoginName);
     final associatedData = _registrationAssociatedData(normalizedLoginName);
     Uint8List? plaintext;
+    Uint8List? confirmation;
     try {
       plaintext = await _secureCore.openRecord(
         context.key,
@@ -780,9 +1015,17 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         envelope: envelope,
       );
       final transaction = _decodePendingRegistration(plaintext);
+      confirmation = await _deviceStateStore
+          .readPendingRegistrationMediaConfirmation(
+            normalizedBaseUrl: _baseUrl,
+            normalizedLoginName: normalizedLoginName,
+          );
       return _OpenedPendingRegistration(
         transaction: transaction,
         envelopeDigest: envelopeDigest,
+        stage: confirmation == null
+            ? E2eeRecoveryMediaCommitStage.awaitingExport
+            : E2eeRecoveryMediaCommitStage.exportConfirmed,
       );
     } catch (_) {
       _clearBytes(envelopeDigest);
@@ -792,14 +1035,14 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       _clearBytes(recordId);
       _clearBytes(associatedData);
       _clearBytes(plaintext);
+      _clearBytes(confirmation);
     }
   }
 
-  Future<void> _ensurePendingRegistrationState(
-    _DeviceContext context, {
-    required String normalizedLoginName,
-    required _PendingRegistrationTransaction transaction,
-  }) async {
+  Future<void> _validatePendingRegistrationState(
+    _DeviceContext context,
+    _PendingRegistrationTransaction transaction,
+  ) async {
     if (context.deviceIdText != transaction.deviceId ||
         context.keyVersion != transaction.keyVersion) {
       throw StateError('注册事务与当前设备身份不匹配');
@@ -810,18 +1053,29 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       if (context.ark != null) {
         throw StateError('未绑定设备状态意外包含账户根密钥');
       }
-      await _deviceStateStore.compareAndSwap(
-        normalizedBaseUrl: _baseUrl,
-        normalizedLoginName: normalizedLoginName,
-        expectedVersion: context.stateVersion,
-        blob: transaction.fullStateBlob,
-      );
       return;
     }
     if (context.ark == null ||
         _uuidString(account.userId) != transaction.userId ||
         account.keyEpoch != transaction.keyEpoch) {
       throw StateError('注册事务与已绑定设备状态不匹配');
+    }
+  }
+
+  Future<void> _ensurePendingRegistrationState(
+    _DeviceContext context, {
+    required String normalizedLoginName,
+    required _PendingRegistrationTransaction transaction,
+  }) async {
+    await _validatePendingRegistrationState(context, transaction);
+    final account = context.account;
+    if (account == null) {
+      await _deviceStateStore.compareAndSwap(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+        expectedVersion: context.stateVersion,
+        blob: transaction.fullStateBlob,
+      );
     }
   }
 
@@ -1248,6 +1502,11 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       cloudSyncRecoveryCapsuleBytes,
       'recoveryCapsule',
     );
+    _requireFixedBytes(
+      transaction.encryptedRecoveryMedia,
+      e2eeEncryptedRecoveryMediaBytes,
+      'encryptedRecoveryMedia',
+    );
 
     final frame = Uint8List(_registrationFrameLength);
     frame.setRange(0, _registrationFrameMagic.length, _registrationFrameMagic);
@@ -1314,8 +1573,13 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     );
     frame.setRange(
       _registrationRecoveryCapsuleOffset,
-      _registrationFrameLength,
+      _registrationRecoveryMediaOffset,
       transaction.securityState.recoveryCapsule,
+    );
+    frame.setRange(
+      _registrationRecoveryMediaOffset,
+      _registrationFrameLength,
+      transaction.encryptedRecoveryMedia,
     );
     return frame;
   }
@@ -1389,8 +1653,14 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         ),
         recoveryCapsuleVersion: recoveryCapsuleVersion,
         recoveryCapsule: Uint8List.fromList(
-          frame.sublist(_registrationRecoveryCapsuleOffset),
+          frame.sublist(
+            _registrationRecoveryCapsuleOffset,
+            _registrationRecoveryMediaOffset,
+          ),
         ),
+      ),
+      encryptedRecoveryMedia: Uint8List.fromList(
+        frame.sublist(_registrationRecoveryMediaOffset),
       ),
     );
   }
@@ -1668,11 +1938,13 @@ final class _PendingRegistrationTransaction {
     required Uint8List deviceProof,
     required Uint8List fullStateBlob,
     required this.securityState,
+    required Uint8List encryptedRecoveryMedia,
   }) : attemptExpiresAt = attemptExpiresAt.toUtc(),
        registrationUpload = Uint8List.fromList(registrationUpload),
        accountKeyEnvelope = Uint8List.fromList(accountKeyEnvelope),
        deviceProof = Uint8List.fromList(deviceProof),
-       fullStateBlob = Uint8List.fromList(fullStateBlob);
+       fullStateBlob = Uint8List.fromList(fullStateBlob),
+       encryptedRecoveryMedia = Uint8List.fromList(encryptedRecoveryMedia);
 
   final String attemptId;
   final String userId;
@@ -1686,6 +1958,7 @@ final class _PendingRegistrationTransaction {
   final Uint8List deviceProof;
   final Uint8List fullStateBlob;
   final CloudSyncGenesisSecurityState securityState;
+  final Uint8List encryptedRecoveryMedia;
   bool _disposed = false;
 
   void dispose() {
@@ -1695,6 +1968,12 @@ final class _PendingRegistrationTransaction {
     accountKeyEnvelope.fillRange(0, accountKeyEnvelope.length, 0);
     deviceProof.fillRange(0, deviceProof.length, 0);
     fullStateBlob.fillRange(0, fullStateBlob.length, 0);
+    encryptedRecoveryMedia.fillRange(0, encryptedRecoveryMedia.length, 0);
+  }
+
+  Uint8List copyEncryptedRecoveryMedia() {
+    if (_disposed) throw StateError('注册恢复事务已释放');
+    return Uint8List.fromList(encryptedRecoveryMedia);
   }
 }
 
@@ -1702,10 +1981,12 @@ final class _OpenedPendingRegistration {
   _OpenedPendingRegistration({
     required this.transaction,
     required this.envelopeDigest,
+    required this.stage,
   });
 
   final _PendingRegistrationTransaction transaction;
   final Uint8List envelopeDigest;
+  final E2eeRecoveryMediaCommitStage stage;
   bool _disposed = false;
 
   void dispose() {
