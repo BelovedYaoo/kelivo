@@ -2888,7 +2888,6 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             final c0 = choices[0];
             finishReason = c0['finish_reason'] as String?;
             // if (finishReason != null) {
-            //   print('[ChatApi] Received finishReason from choices: $finishReason');
             // }
 
             // Some providers may include both delta and message.content in SSE chunks.
@@ -3056,9 +3055,6 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
           // XinLiu (iflow.cn) compatibility: tool_calls at root level instead of delta
           final rootToolCalls = json['tool_calls'] as List?;
           if (rootToolCalls != null) {
-            // print('[ChatApi/XinLiu] Detected root-level tool_calls, count: ${rootToolCalls.length}, original finishReason: $finishReason');
-            // print('[ChatApi/XinLiu] Full JSON keys: ${json.keys.toList()}');
-            // print('[ChatApi/XinLiu] Full JSON: ${jsonEncode(json)}');
             for (final t in rootToolCalls) {
               if (t is! Map) continue;
               final id = (t['id'] ?? '').toString();
@@ -3069,7 +3065,6 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
               final name = (func['name'] ?? '').toString();
               final argsStr = (func['arguments'] ?? '').toString();
               if (name.isEmpty) continue;
-              // print('[ChatApi/XinLiu] Tool call: id=$id, name=$name, args=${argsStr.length} chars');
               final idx = toolAcc.length;
               final entry = toolAcc.putIfAbsent(
                 idx,
@@ -3086,7 +3081,6 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             // When root-level tool_calls are present, always treat as tool_calls finish reason
             // (override any other finish_reason from provider)
             if (rootToolCalls.isNotEmpty) {
-              // print('[ChatApi/XinLiu] Overriding finishReason from "$finishReason" to "tool_calls"');
               finishReason = 'tool_calls';
             }
           }
@@ -3118,7 +3112,6 @@ Stream<ChatStreamChunk> _sendOpenAIStream(
             finishReason == 'tool_calls' &&
             toolAcc.isNotEmpty &&
             onToolCall != null) {
-          // print('[ChatApi/XinLiu] Executing tools immediately (finishReason=tool_calls, toolAcc.size=${toolAcc.length})');
           // Some providers (like XinLiu) return tool_calls with finish_reason='tool_calls' but no [DONE]
           // Execute tools immediately in this case
           final calls = <Map<String, dynamic>>[];

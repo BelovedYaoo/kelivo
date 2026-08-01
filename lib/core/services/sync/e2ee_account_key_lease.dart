@@ -77,8 +77,6 @@ final class E2eeAccountKeyLease {
           developer.log(
             'E2EE 账户密钥租约打开时的后续资源清理失败',
             name: 'Kelivo.E2eeAccountKeyLease',
-            error: error,
-            stackTrace: stackTrace,
           );
         }
       }
@@ -138,12 +136,10 @@ final class E2eeAccountKeyLease {
     for (final action in actions) {
       try {
         await action();
-      } catch (error, stackTrace) {
+      } catch (_) {
         developer.log(
           'E2EE 账户密钥租约打开失败后的资源清理失败',
           name: 'Kelivo.E2eeAccountKeyLease',
-          error: error,
-          stackTrace: stackTrace,
         );
       }
     }

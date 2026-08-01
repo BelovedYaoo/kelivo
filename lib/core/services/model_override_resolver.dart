@@ -36,7 +36,7 @@ class ModelOverrideResolver {
       } else if (s == 'image') {
         out.add(Modality.image);
       } else if (s.isNotEmpty) {
-        _logUnknown('modality');
+        _logUnknown();
       }
     }
     if (out.isEmpty) return null;
@@ -54,17 +54,17 @@ class ModelOverrideResolver {
       } else if (s == 'reasoning') {
         out.add(ModelAbility.reasoning);
       } else if (s.isNotEmpty) {
-        _logUnknown('ability');
+        _logUnknown();
       }
     }
     if (out.isEmpty) return null;
     return LinkedHashSet<ModelAbility>.from(out).toList(growable: false);
   }
 
-  static void _logUnknown(String kind) {
+  static void _logUnknown() {
     if (!_unknownValueLoggingEnabled) return;
     if (kDebugMode) {
-      debugPrint('[ModelOverride] Unknown $kind value');
+      debugPrint('[ModelOverride] unknown value ignored');
     }
   }
 

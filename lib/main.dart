@@ -150,8 +150,8 @@ Future<void> main() async {
       try {
         installationRoot = await AppDirectories.getInstallationRootDirectory();
         secureCoreCapabilities = await secureCore.getCapabilities();
-      } catch (error, stackTrace) {
-        stderr.writeln('[InstallationBootstrap] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[InstallationBootstrap] failed');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -190,8 +190,8 @@ Future<void> main() async {
             runApp(const _RestoreColdRestartApp());
             return;
         }
-      } catch (error, stackTrace) {
-        stderr.writeln('[LocalCryptographicWipe] $error\n$stackTrace');
+      } catch (_) {
+        stderr.writeln('[LocalCryptographicWipe] failed');
         await _initRestoreFailureWindow();
         runApp(
           _LocalCryptographicWipeFailureApp(
@@ -208,8 +208,8 @@ Future<void> main() async {
         workspaceRuntime = await AccountWorkspaceRuntime.bootstrap(
           installationRoot: installationRoot,
         );
-      } catch (error, stackTrace) {
-        stderr.writeln('[AccountWorkspace] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[AccountWorkspace] failed');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -222,14 +222,12 @@ Future<void> main() async {
         await PlaintextRemoteBackupRetirement.retireCurrentInstallation(
           workspaceRuntime: workspaceRuntime,
         );
-      } catch (error, stackTrace) {
-        stderr.writeln('[PlaintextRemoteBackupRetirement] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[PlaintextRemoteBackupRetirement] failed');
         try {
           await workspaceRuntime.close();
-        } catch (closeError, closeStackTrace) {
-          stderr.writeln(
-            '[AccountWorkspaceClose] $closeError\n$closeStackTrace',
-          );
+        } catch (_) {
+          stderr.writeln('[AccountWorkspaceClose] failed');
         }
         await _initRestoreFailureWindow();
         runApp(
@@ -262,8 +260,8 @@ Future<void> main() async {
         await _initRestoreFailureWindow();
         runApp(const _RestoreColdRestartApp());
         return;
-      } catch (error, stackTrace) {
-        stderr.writeln('[RestoreStartupGate] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[RestoreStartupGate] failed');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -310,13 +308,13 @@ Future<void> main() async {
               atUtc: DateTime.now().toUtc(),
             );
           }
-        } catch (error) {
+        } catch (_) {
           // 本地推出证据仅用于支持和退役元数据。数据库准入结果仍是权威；
           // 台账失败只会禁用旧数据清理，不会阻塞用户。
-          stderr.writeln('[DatabaseV2Rollout] $error');
+          stderr.writeln('[DatabaseV2Rollout] failed');
         }
-      } catch (error, stackTrace) {
-        stderr.writeln('[DatabaseAdmission] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[DatabaseAdmission] failed');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -345,9 +343,8 @@ Future<void> main() async {
       );
     },
     zoneSpecification: ZoneSpecification(
-      print: (self, parent, zone, line) {
-        parent.print(zone, line);
-      },
+      // 第三方组件的自由文本无法证明已脱敏，生产 Zone 不向系统日志转发。
+      print: (self, parent, zone, line) {},
     ),
   );
 }
@@ -405,8 +402,8 @@ Future<void> _initRestoreFailureWindow() async {
         await windowManager.focus();
       },
     );
-  } catch (error) {
-    stderr.writeln('[RestoreFailureWindow] $error');
+  } catch (_) {
+    stderr.writeln('[RestoreFailureWindow] failed');
   }
 }
 
@@ -714,16 +711,6 @@ class MyApp extends StatelessWidget {
           }
           return DynamicColorBuilder(
             builder: (lightDynamic, darkDynamic) {
-              // if (lightDynamic != null) {
-              //   debugPrint('[DynamicColor] Light dynamic detected. primary=${lightDynamic.primary.value.toRadixString(16)} surface=${lightDynamic.surface.value.toRadixString(16)}');
-              // } else {
-              //   debugPrint('[DynamicColor] Light dynamic not available');
-              // }
-              // if (darkDynamic != null) {
-              //   debugPrint('[DynamicColor] Dark dynamic detected. primary=${darkDynamic.primary.value.toRadixString(16)} surface=${darkDynamic.surface.value.toRadixString(16)}');
-              // } else {
-              //   debugPrint('[DynamicColor] Dark dynamic not available');
-              // }
               final isAndroid =
                   Theme.of(context).platform == TargetPlatform.android;
               // Update dynamic color capability for settings UI (avoid notify during build)
@@ -851,9 +838,6 @@ class MyApp extends StatelessWidget {
 
               final themedLight = applyAppFont(light);
               final themedDark = applyAppFont(dark);
-              // Log top-level colors likely used by widgets (card/bg/shadow approximations)
-              // debugPrint('[Theme/App] Light scaffoldBg=${light.colorScheme.surface.value.toRadixString(16)} card≈${light.colorScheme.surface.value.toRadixString(16)} shadow=${light.colorScheme.shadow.value.toRadixString(16)}');
-              // debugPrint('[Theme/App] Dark scaffoldBg=${dark.colorScheme.surface.value.toRadixString(16)} card≈${dark.colorScheme.surface.value.toRadixString(16)} shadow=${dark.colorScheme.shadow.value.toRadixString(16)}');
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 title: 'Kelivo',

@@ -1170,17 +1170,13 @@ Future<Uint8List?> _captureFullBoundaryPngBytes(
     final expectedWidth = (boundary.size.width * pixelRatio).ceil();
     final expectedHeight = (boundary.size.height * pixelRatio).ceil();
     if (image.width < expectedWidth || image.height < expectedHeight) {
-      debugPrint(
-        'Full export image capture was clipped '
-        '(${image.width}x${image.height}, expected '
-        '${expectedWidth}x$expectedHeight); falling back to slices.',
-      );
+      debugPrint('[MessageExport] full image capture clipped');
       return null;
     }
     final data = await image.toByteData(format: ui.ImageByteFormat.png);
     return data?.buffer.asUint8List();
-  } catch (e) {
-    debugPrint('Full export image capture failed, falling back to slices: $e');
+  } catch (_) {
+    debugPrint('[MessageExport] full image capture failed');
     return null;
   } finally {
     image?.dispose();

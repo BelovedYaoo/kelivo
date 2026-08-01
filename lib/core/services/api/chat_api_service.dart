@@ -1391,10 +1391,8 @@ class ChatApiService {
       props.forEach((key, value) {
         if (value is Map) {
           final propMap = Map<String, dynamic>.from(value);
-          // print('[ChatApi/Schema] Property $key: type=${propMap['type']}, hasItems=${propMap.containsKey('items')}');
           // If type is array but items is missing, add a permissive items schema
           if (propMap['type'] == 'array' && !propMap.containsKey('items')) {
-            // print('[ChatApi/Schema] Adding items to array property: $key');
             propMap['items'] = {'type': 'string'}; // Default to string array
           }
           // Recursively clean nested objects

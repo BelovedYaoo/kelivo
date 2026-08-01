@@ -386,13 +386,8 @@ final class E2eeSyncScheduler {
   void _reportBackgroundError(Object error, StackTrace stackTrace) {
     try {
       _errorReporter(error, stackTrace);
-    } catch (reportingError, reportingStackTrace) {
-      developer.log(
-        'E2EE 后台同步错误报告器自身失败',
-        name: 'Kelivo.E2eeSyncScheduler',
-        error: reportingError,
-        stackTrace: reportingStackTrace,
-      );
+    } catch (_) {
+      developer.log('E2EE 后台同步错误报告器自身失败', name: 'Kelivo.E2eeSyncScheduler');
     }
   }
 
@@ -423,12 +418,7 @@ Timer _defaultTimerFactory(Duration delay, void Function() callback) {
 }
 
 void _defaultErrorReporter(Object error, StackTrace stackTrace) {
-  developer.log(
-    'E2EE 后台同步周期失败',
-    name: 'Kelivo.E2eeSyncScheduler',
-    error: error,
-    stackTrace: stackTrace,
-  );
+  developer.log('E2EE 后台同步周期失败', name: 'Kelivo.E2eeSyncScheduler');
 }
 
 bool _neverTerminalFailure(Object error) => false;

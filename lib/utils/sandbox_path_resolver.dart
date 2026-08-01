@@ -53,9 +53,7 @@ class SandboxPathResolver {
       );
     }
     if (debug) {
-      debugPrint(
-        '[SandboxPathResolver.init] docsDir=$_docsDir supportDir=$_supportDir',
-      );
+      debugPrint('[SandboxPathResolver] initialized');
     }
   }
 
@@ -98,7 +96,6 @@ class SandboxPathResolver {
     // - Windows: .../AppData/Local/Kelivo/<subdir>/... or .../Kelivo/<subdir>/...
     const subdirs = ['avatars', 'fonts', 'images', 'upload'];
     String? tail; // starts with '/'
-    String rootType = 'unknown';
 
     final int iosIdx = raw.indexOf('/Documents/');
     if (iosIdx != -1) {
@@ -108,7 +105,6 @@ class SandboxPathResolver {
       // Check subdir presence to avoid false positives
       if (subdirs.any((s) => candidateTail.startsWith('/$s/'))) {
         tail = candidateTail;
-        rootType = 'documents';
       }
     }
 
@@ -121,7 +117,6 @@ class SandboxPathResolver {
         ); // includes leading '/'
         if (subdirs.any((s) => candidateTail.startsWith('/$s/'))) {
           tail = candidateTail;
-          rootType = 'windows_kelivo';
         }
       }
     }
@@ -133,7 +128,6 @@ class SandboxPathResolver {
           final after = raw.substring(aidx + androidRoot.length);
           if (subdirs.any((s) => after.startsWith('$s/'))) {
             tail = '/$after';
-            rootType = androidRoot.replaceAll('/', '');
             break;
           }
         }
@@ -146,7 +140,6 @@ class SandboxPathResolver {
         final i = raw.indexOf('/$s/');
         if (i != -1) {
           tail = raw.substring(i); // includes leading '/'
-          rootType = 'generic_subdir';
           break;
         }
       }
@@ -163,9 +156,7 @@ class SandboxPathResolver {
       );
       if (validated == null) return _blockedPath(docs, raw);
       if (debug) {
-        debugPrint(
-          '[SandboxPathResolver.fix] input=$path -> skipped (no known subdir pattern found)',
-        );
+        debugPrint('[SandboxPathResolver] unknown path pattern skipped');
       }
       return raw;
     }
@@ -181,23 +172,17 @@ class SandboxPathResolver {
     try {
       if (File(mapped).existsSync()) {
         if (debug) {
-          debugPrint(
-            '[SandboxPathResolver.fix] root=$rootType input=$path -> mappedDocs=$mapped (exists)',
-          );
+          debugPrint('[SandboxPathResolver] documents mapping selected');
         }
         return mappedOutput;
       } else {
         if (debug) {
-          debugPrint(
-            '[SandboxPathResolver.fix] root=$rootType tried mappedDocs=$mapped (missing)',
-          );
+          debugPrint('[SandboxPathResolver] documents mapping missing');
         }
       }
-    } catch (e) {
+    } catch (_) {
       if (debug) {
-        debugPrint(
-          '[SandboxPathResolver.fix] root=$rootType mappedDocs error: $e',
-        );
+        debugPrint('[SandboxPathResolver] documents mapping failed');
       }
     }
 
@@ -212,23 +197,17 @@ class SandboxPathResolver {
       try {
         if (File(alt).existsSync()) {
           if (debug) {
-            debugPrint(
-              '[SandboxPathResolver.fix] root=$rootType input=$path -> mappedSupport=$alt (exists)',
-            );
+            debugPrint('[SandboxPathResolver] support mapping selected');
           }
           return altOutput;
         } else {
           if (debug) {
-            debugPrint(
-              '[SandboxPathResolver.fix] root=$rootType tried mappedSupport=$alt (missing)',
-            );
+            debugPrint('[SandboxPathResolver] support mapping missing');
           }
         }
-      } catch (e) {
+      } catch (_) {
         if (debug) {
-          debugPrint(
-            '[SandboxPathResolver.fix] root=$rootType mappedSupport error: $e',
-          );
+          debugPrint('[SandboxPathResolver] support mapping failed');
         }
       }
     }
@@ -252,31 +231,23 @@ class SandboxPathResolver {
         try {
           if (File(probe).existsSync()) {
             if (debug) {
-              debugPrint(
-                '[SandboxPathResolver.fix] root=$rootType input=$path -> basenameProbe=$probe (exists)',
-              );
+              debugPrint('[SandboxPathResolver] basename mapping selected');
             }
             return probeOutput;
           } else {
             if (debug) {
-              debugPrint(
-                '[SandboxPathResolver.fix] root=$rootType tried basenameProbe=$probe (missing)',
-              );
+              debugPrint('[SandboxPathResolver] basename mapping missing');
             }
           }
-        } catch (e) {
+        } catch (_) {
           if (debug) {
-            debugPrint(
-              '[SandboxPathResolver.fix] root=$rootType basenameProbe error: $e',
-            );
+            debugPrint('[SandboxPathResolver] basename mapping failed');
           }
         }
       }
     }
     if (debug) {
-      debugPrint(
-        '[SandboxPathResolver.fix] root=$rootType input=$path -> unchanged=$raw (no match)',
-      );
+      debugPrint('[SandboxPathResolver] path mapping not found');
     }
     final validated = _validatedWorkspaceCandidate(
       root: docs,

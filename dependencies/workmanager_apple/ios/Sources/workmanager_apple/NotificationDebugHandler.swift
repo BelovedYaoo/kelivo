@@ -89,8 +89,8 @@ public class NotificationDebugHandler: WorkmanagerDebug {
         )
 
         UNUserNotificationCenter.current().add(request) { error in
-            if let error = error {
-                print("Failed to schedule notification: \(error)")
+            if error != nil {
+                NSLog("Workmanager notification scheduling failed")
             }
         }
     }

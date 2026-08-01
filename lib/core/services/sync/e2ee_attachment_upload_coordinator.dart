@@ -390,12 +390,10 @@ final class E2eeAttachmentUploadCoordinator {
           if (now.isBefore(lease.leaseExpiresAt)) {
             try {
               await _releaseLease(lease, now: now);
-            } catch (cleanupError, cleanupStackTrace) {
+            } catch (_) {
               developer.log(
                 'E2EE 附件上传异常后的租约释放失败',
                 name: 'Kelivo.E2eeAttachmentUploadCoordinator',
-                error: cleanupError,
-                stackTrace: cleanupStackTrace,
               );
             }
           }
@@ -483,12 +481,10 @@ final class E2eeAttachmentUploadCoordinator {
       if (staging != null) {
         try {
           await _fileStore.deleteStaging(storagePath: staging.storagePath);
-        } catch (cleanupError, cleanupStackTrace) {
+        } catch (_) {
           developer.log(
             'E2EE 附件分块持久状态接管失败后的 staging 清理失败',
             name: 'Kelivo.E2eeAttachmentUploadCoordinator',
-            error: cleanupError,
-            stackTrace: cleanupStackTrace,
           );
         }
       }
@@ -687,8 +683,6 @@ final class E2eeAttachmentUploadCoordinator {
           developer.log(
             'E2EE 附件上传协调器关闭时的后续资源清理失败',
             name: 'Kelivo.E2eeAttachmentUploadCoordinator',
-            error: error,
-            stackTrace: stackTrace,
           );
         }
       }

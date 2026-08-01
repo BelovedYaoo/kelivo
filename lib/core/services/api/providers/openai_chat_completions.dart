@@ -69,7 +69,6 @@ List<Map<String, dynamic>> _cleanToolsForCompatibility(
     }
     return result;
   }).toList();
-  // print('[ChatApi/Tools] Cleaned ${cleaned.length} tools: ${jsonEncode(cleaned)}');
   return cleaned;
 }
 

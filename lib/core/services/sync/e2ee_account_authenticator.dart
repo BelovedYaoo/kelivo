@@ -1297,13 +1297,11 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         normalizedLoginName: normalizedLoginName,
         expectedDigest: digest,
       );
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
         '账户已认证，遗留注册事务将在后续登录重试清理',
         name: 'Kelivo.E2eeAccountAuthenticator',
         level: 900,
-        error: error,
-        stackTrace: stackTrace,
       );
     } finally {
       _clearBytes(envelope);
@@ -1829,12 +1827,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     Object error,
     StackTrace stackTrace,
   ) {
-    developer.log(
-      'E2EE 认证资源清理失败',
-      name: 'Kelivo.E2eeAccountAuthenticator',
-      error: error,
-      stackTrace: stackTrace,
-    );
+    developer.log('E2EE 认证资源清理失败', name: 'Kelivo.E2eeAccountAuthenticator');
   }
 
   Future<void> _cleanupOperation({

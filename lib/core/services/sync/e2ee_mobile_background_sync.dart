@@ -313,8 +313,6 @@ final class E2eeMobileBackgroundSyncLifecycle {
           enabled ? '注册移动端 E2EE 后台同步失败' : '取消移动端 E2EE 后台同步失败',
           name: 'Kelivo.E2eeMobileBackgroundSync',
           level: 1000,
-          error: error,
-          stackTrace: stackTrace,
         );
       }),
     );

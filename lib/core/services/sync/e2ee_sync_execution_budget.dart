@@ -343,13 +343,11 @@ final class E2eeSyncExecutionBudget {
         _beginShutdown();
         try {
           _abortInFlightNetwork();
-        } catch (error, stackTrace) {
+        } catch (_) {
           developer.log(
             '中止后台同步在途网络请求失败',
             name: 'Kelivo.E2eeSyncExecutionBudget',
             level: 1000,
-            error: error,
-            stackTrace: stackTrace,
           );
         }
         // 系统不会为失控 transport 无限续命；宽限期后由原生桥强制收尾。
@@ -388,13 +386,11 @@ final class E2eeSyncExecutionBudget {
     _cancellationRegistration = null;
     try {
       registration?.unregister();
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
         '解除后台同步取消监听失败',
         name: 'Kelivo.E2eeSyncExecutionBudget',
         level: 1000,
-        error: error,
-        stackTrace: stackTrace,
       );
     }
   }
@@ -494,13 +490,11 @@ final class E2eeSyncExecutionBudget {
             context: ErrorDescription('释放截止后才返回的后台同步所有权失败'),
           ),
         );
-      } catch (reportError, reportStackTrace) {
+      } catch (_) {
         developer.log(
           '上报后台同步迟到所有权释放失败时发生异常',
           name: 'Kelivo.E2eeSyncExecutionBudget',
           level: 1000,
-          error: reportError,
-          stackTrace: reportStackTrace,
         );
       }
     }

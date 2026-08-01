@@ -10,7 +10,6 @@ import '../../../utils/app_directories.dart';
 import '../../database/database_encryption_cutover.dart';
 import '../backup/restore_business_lease.dart';
 import '../backup/restore_durability.dart';
-import '../logging/persistent_plaintext_log_retirement.dart';
 import '../sync/cloud_sync_state_retirement.dart';
 import '../sync/cloud_sync_types.dart';
 import 'account_session_token_store.dart';
@@ -178,14 +177,15 @@ final class AccountWorkspaceRuntime {
     return Set<String>.unmodifiable(prefixes);
   }
 
-  Future<void> discardPlaintextLocalState() async {
+  Future<void> discardPlaintextLocalState({
+    required Future<void> Function() retirePersistentLogs,
+  }) async {
     _requireOpen();
     await _ensureTrustedInstallationRoot(
       directory: installationRoot,
       createMissing: false,
     );
     final dataDirectories = await _existingDataDirectories();
-    const plaintextLogRetirement = PersistentPlaintextLogRetirement();
     // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
     for (final dataDirectory in dataDirectories) {
       await DatabaseEncryptionCutover.validatePlaintextStateTopology(
@@ -194,10 +194,9 @@ final class AccountWorkspaceRuntime {
       await CloudSyncStateRetirement.validatePlaintextStateTopology(
         appDataDirectory: dataDirectory,
       );
-      await plaintextLogRetirement.validatePlaintextStateTopology(
-        appDataDirectory: dataDirectory,
-      );
     }
+    // 原生会话锚定安装根并统一枚举所有工作区；失败时不得先删除其他旧状态。
+    await retirePersistentLogs();
     // 拓扑检查与删除之间不能复用旧路径结论，否则运行期重解析替换会越过安装边界。
     await _ensureTrustedInstallationRoot(
       directory: installationRoot,
@@ -209,10 +208,6 @@ final class AccountWorkspaceRuntime {
         durability: _durability,
       );
       await CloudSyncStateRetirement.discardPlaintextState(
-        appDataDirectory: dataDirectory,
-        durability: _durability,
-      );
-      await plaintextLogRetirement.retire(
         appDataDirectory: dataDirectory,
         durability: _durability,
       );
@@ -633,13 +628,11 @@ final class AccountWorkspaceRuntime {
         durability: durability,
       );
       return true;
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
-        '账号会话已提交，令牌清理将在下次启动重试：$operation:$workspaceKey',
+        '账号会话已提交，令牌清理将在下次启动重试',
         name: 'Kelivo.AccountWorkspaceRuntime',
         level: 900,
-        error: error,
-        stackTrace: stackTrace,
       );
       return false;
     }
@@ -677,13 +670,11 @@ final class AccountWorkspaceRuntime {
         keep: stored?.tokenReference,
         durability: durability,
       );
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
-        '账号令牌待清理项暂时无法恢复，将在下次启动重试：$workspaceKey',
+        '账号令牌待清理项暂时无法恢复，将在下次启动重试',
         name: 'Kelivo.AccountWorkspaceRuntime',
         level: 900,
-        error: error,
-        stackTrace: stackTrace,
       );
       return false;
     }

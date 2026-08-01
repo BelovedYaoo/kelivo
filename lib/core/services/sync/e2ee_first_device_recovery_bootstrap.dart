@@ -355,8 +355,6 @@ final class E2eeFirstDeviceRecoveryBootstrapPreparer
             developer.log(
               '首设备恢复身份关闭失败',
               name: 'kelivo.e2ee.first_device_recovery',
-              error: error,
-              stackTrace: stackTrace,
             );
           }
         }

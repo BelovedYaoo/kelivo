@@ -419,11 +419,9 @@ final class _InterruptedContentAcquisitionCleanupBarrier {
           primaryStackTrace = stackTrace;
         } else {
           developer.log(
-            operation,
+            'E2EE 后台同步后续资源清理失败',
             name: 'Kelivo.E2eeBackgroundSyncRunner',
             level: 1000,
-            error: error,
-            stackTrace: stackTrace,
           );
         }
       }
@@ -736,11 +734,9 @@ final class _BackgroundCleanupAccumulator {
       stackTrace = nextStackTrace;
     } else {
       developer.log(
-        operation,
+        'E2EE 后台同步失败后的后续资源清理失败',
         name: 'Kelivo.E2eeBackgroundSyncRunner',
         level: 1000,
-        error: nextError,
-        stackTrace: nextStackTrace,
       );
     }
   }

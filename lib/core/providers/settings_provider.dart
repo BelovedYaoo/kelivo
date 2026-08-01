@@ -867,8 +867,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     SharedPreferences prefs,
   ) async {
     Map<String, ProviderConfig>? nextProviderConfigs;
-    int providersChanged = 0;
-    int modelsChanged = 0;
 
     for (final entry in _providerConfigs.entries) {
       final providerKey = entry.key;
@@ -898,7 +896,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
           m.remove(k);
         }
         nextOverrides[modelKey] = m;
-        modelsChanged++;
       }
 
       if (nextOverrides == null) continue;
@@ -908,7 +905,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       nextProviderConfigs[providerKey] = cfg.copyWith(
         modelOverrides: nextOverrides,
       );
-      providersChanged++;
     }
 
     if (nextProviderConfigs == null) return _MigrationResult.noChange;
@@ -917,12 +913,11 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       final encoded = jsonEncode(map);
       final persisted = await prefs.setString(_providerConfigsKey, encoded);
       if (!persisted) return _MigrationResult.failed;
-    } catch (e, st) {
+    } catch (_) {
       assert(() {
         debugPrint(
-          '[SettingsProvider] provider configs migration persist failed: $e',
+          '[SettingsProvider] provider configs migration persist failed',
         );
-        debugPrint('$st');
         return true;
       }());
       return _MigrationResult.failed;
@@ -930,9 +925,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
 
     _providerConfigs = nextProviderConfigs;
     assert(() {
-      debugPrint(
-        '[SettingsProvider] embedding overrides migration: providers=$providersChanged, models=$modelsChanged',
-      );
+      debugPrint('[SettingsProvider] embedding overrides migration applied');
       return true;
     }());
     return _MigrationResult.applied;
@@ -979,10 +972,9 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
               MapEntry(k, ProviderConfig.fromJson(v as Map<String, dynamic>)),
         );
         providerConfigsLoaded = true;
-      } catch (e, st) {
+      } catch (_) {
         assert(() {
-          debugPrint('[SettingsProvider] providerConfigs decode failed: $e');
-          debugPrint('$st');
+          debugPrint('[SettingsProvider] provider configs decode failed');
           return true;
         }());
       }

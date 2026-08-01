@@ -196,8 +196,7 @@ class IosBackgroundGenerationService {
         if (onError != null) {
           onError(error, stackTrace);
         } else {
-          debugPrint('[IosBackgroundGeneration] update failed: $error');
-          debugPrint('$stackTrace');
+          debugPrint('[IosBackgroundGeneration] update failed');
         }
       }
     }

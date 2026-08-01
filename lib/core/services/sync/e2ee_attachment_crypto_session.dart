@@ -199,8 +199,6 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
         developer.log(
           '生成附件上传描述失败后的数据密钥清理失败',
           name: 'Kelivo.E2eeAttachmentCryptoSession',
-          error: error,
-          stackTrace: stackTrace,
         );
       } finally {
         wrappedDataKey?.fillRange(0, wrappedDataKey.length, 0);
@@ -491,12 +489,10 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
       if (!_retainedDataKeys.contains(dataKey)) {
         try {
           await _closeDataKeyOrRetain(dataKey);
-        } catch (cleanupError, cleanupStackTrace) {
+        } catch (_) {
           developer.log(
             'E2EE 附件密码操作失败后的数据密钥清理失败',
             name: 'Kelivo.E2eeAttachmentCryptoSession',
-            error: cleanupError,
-            stackTrace: cleanupStackTrace,
           );
         }
       }
@@ -534,8 +530,6 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
           developer.log(
             'E2EE 附件密码会话关闭时的后续数据密钥清理失败',
             name: 'Kelivo.E2eeAttachmentCryptoSession',
-            error: error,
-            stackTrace: stackTrace,
           );
         }
       }
@@ -565,8 +559,6 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
           developer.log(
             'E2EE 附件密码会话关闭时的后续资源清理失败',
             name: 'Kelivo.E2eeAttachmentCryptoSession',
-            error: error,
-            stackTrace: stackTrace,
           );
         }
       }
@@ -607,12 +599,10 @@ Future<void> _cleanupOpenFailure({
   for (final action in cleanup) {
     try {
       await action();
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
         'E2EE 附件密码会话打开失败后的资源清理失败',
         name: 'Kelivo.E2eeAttachmentCryptoSession',
-        error: error,
-        stackTrace: stackTrace,
       );
     }
   }

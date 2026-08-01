@@ -373,12 +373,10 @@ final class E2eeAttachmentPlatformFileStore implements E2eeAttachmentFileStore {
     } catch (error, stackTrace) {
       try {
         await input.close();
-      } catch (cleanupError, cleanupStackTrace) {
+      } catch (_) {
         developer.log(
           'E2EE 附件认证读取打开失败后的文件句柄清理失败',
           name: 'Kelivo.E2eeAttachmentPlatformFileStore',
-          error: cleanupError,
-          stackTrace: cleanupStackTrace,
         );
       }
       Error.throwWithStackTrace(error, stackTrace);

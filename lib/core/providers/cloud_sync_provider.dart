@@ -421,13 +421,11 @@ final class CloudSyncProvider extends ChangeNotifier
             _clearMutableBytes(qrFrame);
             try {
               await pairing.cancel();
-            } catch (cleanupError, cleanupStackTrace) {
+            } catch (_) {
               developer.log(
                 '创建设备配对二维码失败后的清理未完成',
                 name: 'Kelivo.CloudSyncProvider',
                 level: 900,
-                error: cleanupError,
-                stackTrace: cleanupStackTrace,
               );
             }
             Error.throwWithStackTrace(error, stackTrace);
@@ -681,8 +679,6 @@ final class CloudSyncProvider extends ChangeNotifier
           '关闭内容运行时失败后清理账户会话仍然失败',
           name: 'Kelivo.CloudSyncProvider',
           level: 1000,
-          error: error,
-          stackTrace: stackTrace,
         );
       }
     } finally {
@@ -736,8 +732,6 @@ final class CloudSyncProvider extends ChangeNotifier
           '关闭内容运行时失败后释放工作区租约仍然失败',
           name: 'Kelivo.CloudSyncProvider',
           level: 1000,
-          error: error,
-          stackTrace: stackTrace,
         );
       }
     }
@@ -957,14 +951,12 @@ final class CloudSyncProvider extends ChangeNotifier
       // 成功的进程重启不会回到业务界面。若平台实现意外返回，仍保留
       // 本机擦除门禁，等待进程真正退出后由冷启动恢复路径完成删除。
       return true;
-    } catch (error, stackTrace) {
+    } catch (error) {
       await _quiesceAfterLocalWipeFailure();
       developer.log(
         '当前设备远端撤销后，本机密码学擦除尚未完成',
         name: 'Kelivo.CloudSyncProvider',
         level: 1000,
-        error: error,
-        stackTrace: stackTrace,
       );
       _deviceError = error is FormatException
           ? _normalizeFailure(error)
@@ -1037,14 +1029,8 @@ final class CloudSyncProvider extends ChangeNotifier
   ) async {
     try {
       await action();
-    } catch (error, stackTrace) {
-      developer.log(
-        '$operation失败',
-        name: 'Kelivo.CloudSyncProvider',
-        level: 1000,
-        error: error,
-        stackTrace: stackTrace,
-      );
+    } catch (_) {
+      developer.log('云同步清理步骤失败', name: 'Kelivo.CloudSyncProvider', level: 1000);
     }
   }
 
@@ -1075,8 +1061,6 @@ final class CloudSyncProvider extends ChangeNotifier
           '设备配对已先于取消完成提交',
           name: 'Kelivo.CloudSyncProvider',
           level: 800,
-          error: cancellationError,
-          stackTrace: cancellationStackTrace,
         );
         return false;
       }
@@ -1259,7 +1243,7 @@ final class CloudSyncProvider extends ChangeNotifier
       _endSessionMutation();
     }
 
-    debugPrint('云同步会话因终止认证失效：$failure\n$failureStackTrace');
+    debugPrint('[CloudSyncProvider] terminal authentication retired');
     _setStatus(CloudSyncProviderStatus.workspaceChangePending);
   }
 
@@ -1406,7 +1390,7 @@ final class CloudSyncProvider extends ChangeNotifier
     if (status != null) {
       _status = status;
     }
-    debugPrint('$operation失败：$error\n$stackTrace');
+    debugPrint('[CloudSyncProvider] operation failed');
     _notify();
   }
 
@@ -1416,7 +1400,7 @@ final class CloudSyncProvider extends ChangeNotifier
     required String operation,
   }) {
     _deviceError = _normalizeFailure(error);
-    debugPrint('$operation失败：$error\n$stackTrace');
+    debugPrint('[CloudSyncProvider] device operation failed');
     _notify();
   }
 
@@ -1480,8 +1464,6 @@ final class CloudSyncProvider extends ChangeNotifier
             '关闭云同步页面时取消设备配对失败',
             name: 'Kelivo.CloudSyncProvider',
             level: 900,
-            error: error,
-            stackTrace: stackTrace,
           );
         }),
       );
@@ -1496,8 +1478,6 @@ final class CloudSyncProvider extends ChangeNotifier
           '关闭 E2EE 内容同步运行时失败',
           name: 'Kelivo.CloudSyncProvider',
           level: 1000,
-          error: error,
-          stackTrace: stackTrace,
         );
       }),
     );

@@ -31,13 +31,11 @@ Future<Never> rethrowCloudSyncPrimaryAfterCleanup({
   for (final step in cleanupSteps) {
     try {
       await step.cleanup();
-    } catch (cleanupError, cleanupStackTrace) {
+    } catch (_) {
       developer.log(
-        step.operation,
+        '云同步终止会话清理步骤失败',
         name: 'Kelivo.CloudSyncSessionRetirement',
         level: 1000,
-        error: cleanupError,
-        stackTrace: cleanupStackTrace,
       );
     }
   }
@@ -70,11 +68,9 @@ Future<void> retireTerminalCloudSyncSession({
         return;
       }
       developer.log(
-        operation,
+        '云同步终止会话后续清理步骤失败',
         name: 'Kelivo.CloudSyncSessionRetirement',
         level: 1000,
-        error: error,
-        stackTrace: stackTrace,
       );
     }
   }

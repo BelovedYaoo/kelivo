@@ -331,22 +331,18 @@ final class E2eeAttachmentDownloadCoordinator
     try {
       await _fileStore.verifyContent(candidate);
       return true;
-    } on FileSystemException catch (error, stackTrace) {
+    } on FileSystemException catch (error) {
       if (error.message != 'e2ee_attachment_file_missing') rethrow;
       developer.log(
         'E2EE 附件完成文件不存在，按新清单重新下载',
         name: 'Kelivo.E2eeAttachmentDownloadCoordinator',
-        error: error,
-        stackTrace: stackTrace,
       );
       return false;
-    } on FormatException catch (error, stackTrace) {
+    } on FormatException catch (error) {
       if (error.message != 'e2ee_attachment_file_integrity') rethrow;
       developer.log(
         'E2EE 附件完成文件未通过新清单内容校验，重新下载',
         name: 'Kelivo.E2eeAttachmentDownloadCoordinator',
-        error: error,
-        stackTrace: stackTrace,
       );
       return false;
     }

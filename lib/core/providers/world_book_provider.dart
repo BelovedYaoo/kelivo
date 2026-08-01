@@ -63,8 +63,8 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
   Future<void> _loadLocalCollapsedState() async {
     try {
       _collapsedBooks = await WorldBookStore.getCollapsedBooksMap();
-    } catch (error) {
-      debugPrint('Failed to load local world book state: $error');
+    } catch (_) {
+      debugPrint('[WorldBookProvider] local state load failed');
       _collapsedBooks = const <String, bool>{};
     }
   }
@@ -86,8 +86,8 @@ class WorldBookProvider with ChangeNotifier, BatchedChangeNotifier {
       }
 
       notifyListeners();
-    } catch (e) {
-      debugPrint('Failed to load world books: $e');
+    } catch (_) {
+      debugPrint('[WorldBookProvider] load failed');
       _books = const <WorldBook>[];
       _activeIdsByAssistant = const <String, List<String>>{};
       _collapsedBooks = const <String, bool>{};
