@@ -2296,6 +2296,22 @@ void main() {
         1,
       ]);
     }
+    final logDirectories = <Directory>[
+      for (final dataDirectory in <Directory>[
+        installationRoot,
+        localDataDirectory,
+        targetA.dataDirectory,
+        targetB.dataDirectory,
+      ])
+        Directory(p.join(dataDirectory.path, 'logs')),
+    ];
+    for (final logsDirectory in logDirectories) {
+      await logsDirectory.create();
+      await File(p.join(logsDirectory.path, 'logs.txt')).writeAsString(
+        'Authorization: Bearer legacy-plaintext-token',
+        flush: true,
+      );
+    }
     final sessionRecords = await installationRoot
         .list(recursive: true, followLinks: false)
         .where(
@@ -2323,6 +2339,9 @@ void main() {
         isFalse,
         reason: databaseArtifact.path,
       );
+    }
+    for (final logsDirectory in logDirectories) {
+      expect(await logsDirectory.exists(), isFalse, reason: logsDirectory.path);
     }
     for (final sessionRecord in sessionRecords) {
       expect(await sessionRecord.exists(), isTrue, reason: sessionRecord.path);

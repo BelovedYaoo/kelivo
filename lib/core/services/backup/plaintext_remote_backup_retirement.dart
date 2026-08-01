@@ -21,6 +21,11 @@ final class PlaintextRemoteBackupRetirement {
     'backup_reminder_minutes_of_day_v1',
     'backup_reminder_enabled_at_v1',
     'backup_reminder_last_backup_at_v1',
+    'request_log_enabled_v1',
+    'flutter_log_enabled_v1',
+    'log_save_output_v1',
+    'log_auto_delete_days_v1',
+    'log_max_size_mb_v1',
   };
 
   static const Set<String> _retiredLooseFileNames = <String>{

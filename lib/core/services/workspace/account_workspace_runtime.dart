@@ -10,6 +10,7 @@ import '../../../utils/app_directories.dart';
 import '../../database/database_encryption_cutover.dart';
 import '../backup/restore_business_lease.dart';
 import '../backup/restore_durability.dart';
+import '../logging/persistent_plaintext_log_retirement.dart';
 import '../sync/cloud_sync_state_retirement.dart';
 import '../sync/cloud_sync_types.dart';
 import 'account_session_token_store.dart';
@@ -184,12 +185,16 @@ final class AccountWorkspaceRuntime {
       createMissing: false,
     );
     final dataDirectories = await _existingDataDirectories();
+    const plaintextLogRetirement = PersistentPlaintextLogRetirement();
     // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
     for (final dataDirectory in dataDirectories) {
       await DatabaseEncryptionCutover.validatePlaintextStateTopology(
         appDataDirectory: dataDirectory,
       );
       await CloudSyncStateRetirement.validatePlaintextStateTopology(
+        appDataDirectory: dataDirectory,
+      );
+      await plaintextLogRetirement.validatePlaintextStateTopology(
         appDataDirectory: dataDirectory,
       );
     }
@@ -204,6 +209,10 @@ final class AccountWorkspaceRuntime {
         durability: _durability,
       );
       await CloudSyncStateRetirement.discardPlaintextState(
+        appDataDirectory: dataDirectory,
+        durability: _durability,
+      );
+      await plaintextLogRetirement.retire(
         appDataDirectory: dataDirectory,
         durability: _durability,
       );
