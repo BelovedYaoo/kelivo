@@ -21,11 +21,14 @@ import 'package:Kelivo/core/services/sync/e2ee_message_attachment_readiness.dart
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_sync_adapter.dart';
+import 'package:Kelivo/core/services/sync/e2ee_data_rekey_executor.dart';
+import 'package:Kelivo/core/services/sync/e2ee_data_rekey_wire.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
+import 'package:Kelivo/core/services/workspace/e2ee_data_rekey_stage_store.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
 import 'package:crypto/crypto.dart';
@@ -2078,6 +2081,198 @@ void main() {
             ),
         throwsRemoteSqliteException(),
       );
+    });
+  });
+
+  group('E2EE data-rekey 执行器', () {
+    test('跨请求完成空源换代且仅在本地确认后清理耐久状态', () async {
+      final operationId = _syncUuid(320);
+      final transport = _ZeroSourceDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+      );
+      final cryptography = _ZeroSourceDataRekeyCryptography();
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      final executor = E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      final execution = await executor.execute(context);
+
+      expect(execution, isNot(equals(null)));
+      expect(execution!.result.dataGeneration, 5);
+      expect(transport.finalizeRequests, hasLength(2));
+      expect(
+        transport.finalizeRequests[1].mutationId,
+        transport.finalizeRequests[0].mutationId,
+      );
+      expect(
+        transport.finalizeRequests[1].proof.signature,
+        transport.finalizeRequests[0].proof.signature,
+      );
+      expect(cryptography.signatureCount, 1);
+      expect(
+        (await dataRekeyCommands.readActive())?.phase,
+        E2eeDataRekeyJournalPhase.finalizing,
+      );
+      expect(
+        await stageStore.listArtifactIds(
+          normalizedBaseUrl: context.normalizedBaseUrl,
+          normalizedLoginName: context.normalizedLoginName,
+          operationId: operationId,
+          maximumCount: 1,
+        ),
+        hasLength(1),
+      );
+
+      await executor.acknowledgeLocalCommit(
+        context: context,
+        execution: execution,
+      );
+
+      expect(await dataRekeyCommands.readActive(), equals(null));
+      expect(
+        await stageStore.listArtifactIds(
+          normalizedBaseUrl: context.normalizedBaseUrl,
+          normalizedLoginName: context.normalizedLoginName,
+          operationId: operationId,
+          maximumCount: 1,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('stage 回执丢失后原样重放已落盘密文且不重复重包', () async {
+      final operationId = _syncUuid(321);
+      final sourceRecordId = _syncUuid(322);
+      final transport = _RecordResponseLossDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+        sourceRecordId: sourceRecordId,
+      );
+      final cryptography = _RecordDataRekeyCryptography(
+        targetRecordId: _syncUuid(323),
+      );
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey-response-loss',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      E2eeDataRekeyExecutor executor() => E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      await expectLater(
+        executor().execute(context),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated_stage_response_loss',
+          ),
+        ),
+      );
+      final execution = await executor().execute(context);
+
+      expect(execution, isNot(equals(null)));
+      expect(transport.stageRequests, hasLength(2));
+      expect(
+        transport.stageRequests[1].mutationId,
+        transport.stageRequests[0].mutationId,
+      );
+      expect(
+        transport.stageRequests[1].targetRecordId,
+        transport.stageRequests[0].targetRecordId,
+      );
+      expect(
+        transport.stageRequests[1].ciphertext,
+        orderedEquals(transport.stageRequests[0].ciphertext),
+      );
+      expect(cryptography.recordRewrapCount, 1);
+    });
+
+    test('finalize 响应丢失且服务端已 ready 时从耐久请求恢复', () async {
+      final operationId = _syncUuid(324);
+      final transport = _FinalizeResponseLossDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+      );
+      final cryptography = _ZeroSourceDataRekeyCryptography();
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey-finalize-loss',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      E2eeDataRekeyExecutor executor() => E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      await expectLater(
+        executor().execute(context),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated_finalize_response_loss',
+          ),
+        ),
+      );
+      final execution = await executor().execute(context);
+
+      expect(execution, isNot(equals(null)));
+      expect(transport.finalizeRequests, hasLength(2));
+      expect(
+        transport.finalizeRequests[1].mutationId,
+        transport.finalizeRequests[0].mutationId,
+      );
+      expect(
+        transport.finalizeRequests[1].proof.signature,
+        orderedEquals(transport.finalizeRequests[0].proof.signature),
+      );
+      expect(cryptography.signatureCount, 1);
     });
   });
 
@@ -8689,3 +8884,444 @@ Future<Uint8List> _newDatabaseRecoveryPublicKey(
     await secureCore.closeDeviceIdentity(identity);
   }
 }
+
+final class _ZeroSourceDataRekeyCryptography
+    implements E2eeDataRekeyCryptography {
+  int signatureCount = 0;
+
+  @override
+  final String issuerDeviceId = _syncActorDeviceId;
+
+  @override
+  final int targetKeyEpoch = 8;
+
+  @override
+  Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
+    CloudSyncDataRekeySourceRecord source,
+  ) => throw StateError('空源测试不得重包记录');
+
+  @override
+  Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(
+    CloudSyncDataRekeySourceAttachment source,
+  ) => throw StateError('空源测试不得重包附件');
+
+  @override
+  Future<Uint8List> signCompletionProof(Uint8List proofFrame) async {
+    expect(proofFrame, hasLength(e2eeDataRekeyCompletionFrameBytes));
+    signatureCount += 1;
+    return Uint8List(e2eeDataRekeyCompletionSignatureBytes)
+      ..fillRange(0, e2eeDataRekeyCompletionSignatureBytes, 0x5a);
+  }
+}
+
+final class _ZeroSourceDataRekeyTransport
+    implements CloudSyncDataRekeyTransport {
+  _ZeroSourceDataRekeyTransport({
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.operationId,
+  });
+
+  final String userId;
+  final String issuerDeviceId;
+  final String operationId;
+  final List<CloudSyncDataRekeyFinalizeRequest> finalizeRequests =
+      <CloudSyncDataRekeyFinalizeRequest>[];
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() async {
+    return CloudSyncDataRekeyState.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'dataGeneration': 4,
+      'dataKeyEpoch': 7,
+      'changeWatermark': 0,
+      'operationId': operationId,
+      'targetKeyEpoch': 8,
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': null,
+      'lease': null,
+      'lastCompletion': null,
+      'updatedAt': '2026-07-30T05:00:00.000Z',
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  ) async {
+    return CloudSyncDataRekeyLeaseClaim.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'operationId': operationId,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 7,
+      'targetKeyEpoch': 8,
+      'leaseVersion': 1,
+      'leaseExpiresAt': '2026-07-30T05:10:00.000Z',
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': null,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  ) async {
+    expect(request.limit, 10);
+    return CloudSyncDataRekeySourceRecordPage.fromJson(<String, Object?>{
+      'records': <Object?>[],
+      'nextAfterRecordId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  ) async {
+    expect(request.limit, 10);
+    return CloudSyncDataRekeySourceAttachmentPage.fromJson(<String, Object?>{
+      'attachments': <Object?>[],
+      'nextAfterAttachmentId': null,
+      'nextAfterUploadId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  ) => throw StateError('空源测试不得暂存记录');
+
+  @override
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  ) => throw StateError('空源测试不得暂存附件');
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) async {
+    finalizeRequests.add(request);
+    if (finalizeRequests.length == 1) {
+      return CloudSyncDataRekeyFinalizeOutcome.fromJson(<String, Object?>{
+        'result': 'verification-pending',
+        'operationId': operationId,
+        'phase': 'verified',
+        'sourceRecordCount': 0,
+        'sourceAttachmentCount': 0,
+        'stagedRecordCount': 0,
+        'stagedAttachmentCount': 0,
+      }, request: request);
+    }
+    return _finalizedDataRekeyOutcome(userId: userId, request: request);
+  }
+}
+
+final class _FinalizeResponseLossDataRekeyTransport
+    extends _ZeroSourceDataRekeyTransport {
+  _FinalizeResponseLossDataRekeyTransport({
+    required super.userId,
+    required super.issuerDeviceId,
+    required super.operationId,
+  });
+
+  bool _ready = false;
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() {
+    if (!_ready) return super.getDataRekeyState();
+    return Future<CloudSyncDataRekeyState>.value(
+      CloudSyncDataRekeyState.fromJson(<String, Object?>{
+        'phase': 'ready',
+        'dataGeneration': 5,
+        'dataKeyEpoch': 8,
+        'changeWatermark': 0,
+        'lastCompletion': null,
+        'updatedAt': '2026-07-30T05:01:00.000Z',
+      }),
+    );
+  }
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) async {
+    finalizeRequests.add(request);
+    if (finalizeRequests.length == 1) {
+      _ready = true;
+      throw StateError('simulated_finalize_response_loss');
+    }
+    return _finalizedDataRekeyOutcome(userId: userId, request: request);
+  }
+}
+
+final class _RecordDataRekeyCryptography implements E2eeDataRekeyCryptography {
+  _RecordDataRekeyCryptography({required this.targetRecordId});
+
+  final String targetRecordId;
+  int recordRewrapCount = 0;
+
+  @override
+  final String issuerDeviceId = _syncActorDeviceId;
+
+  @override
+  final int targetKeyEpoch = 8;
+
+  @override
+  Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
+    CloudSyncDataRekeySourceRecord source,
+  ) async {
+    recordRewrapCount += 1;
+    return E2eeDataRekeyRewrappedRecord(
+      sourceRecordId: source.recordId,
+      sourceRevision: source.revision,
+      targetRecordId: targetRecordId,
+      targetKeyEpoch: 8,
+      ciphertext: Uint8List.fromList(<int>[9, 8, 7, recordRewrapCount]),
+    );
+  }
+
+  @override
+  Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(
+    CloudSyncDataRekeySourceAttachment source,
+  ) => throw StateError('记录重放测试不得重包附件');
+
+  @override
+  Future<Uint8List> signCompletionProof(Uint8List proofFrame) async {
+    return Uint8List(e2eeDataRekeyCompletionSignatureBytes)
+      ..fillRange(0, e2eeDataRekeyCompletionSignatureBytes, 0x6a);
+  }
+}
+
+final class _RecordResponseLossDataRekeyTransport
+    implements CloudSyncDataRekeyTransport {
+  _RecordResponseLossDataRekeyTransport({
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.operationId,
+    required this.sourceRecordId,
+  });
+
+  final String userId;
+  final String issuerDeviceId;
+  final String operationId;
+  final String sourceRecordId;
+  final List<CloudSyncDataRekeyRecordStageRequest> stageRequests =
+      <CloudSyncDataRekeyRecordStageRequest>[];
+  bool _leaseClaimed = false;
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() async {
+    return CloudSyncDataRekeyState.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'dataGeneration': 4,
+      'dataKeyEpoch': 7,
+      'changeWatermark': 9,
+      'operationId': operationId,
+      'targetKeyEpoch': 8,
+      'sourceRecordCount': 1,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 9,
+      'sourceRecordCursorEnd': sourceRecordId,
+      'sourceAttachmentCursorEnd': null,
+      'lease': _leaseClaimed
+          ? <String, Object?>{
+              'leaseVersion': 1,
+              'ownedByCurrentDevice': true,
+              'expiresAt': '2026-07-30T05:10:00.000Z',
+            }
+          : null,
+      'lastCompletion': null,
+      'updatedAt': '2026-07-30T05:00:00.000Z',
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  ) async {
+    _leaseClaimed = true;
+    return CloudSyncDataRekeyLeaseClaim.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'operationId': operationId,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 7,
+      'targetKeyEpoch': 8,
+      'leaseVersion': 1,
+      'leaseExpiresAt': '2026-07-30T05:10:00.000Z',
+      'sourceRecordCount': 1,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 9,
+      'sourceRecordCursorEnd': sourceRecordId,
+      'sourceAttachmentCursorEnd': null,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  ) async {
+    final ciphertext = Uint8List.fromList(<int>[1, 2, 3]);
+    return CloudSyncDataRekeySourceRecordPage.fromJson(<String, Object?>{
+      'records': <Object?>[
+        <String, Object?>{
+          'recordId': sourceRecordId,
+          'revision': 3,
+          'envelopeVersion': 1,
+          'keyEpoch': 7,
+          'ciphertext': _dataRekeyBinary(ciphertext),
+          'ciphertextBytes': ciphertext.length,
+          'updatedAt': '2026-07-30T04:59:00.000Z',
+          'updatedByDeviceId': issuerDeviceId,
+          'lastChangeSeq': 9,
+          'kind': 'put',
+          'ciphertextDigest': _dataRekeyBinary(
+            Uint8List.fromList(sha256.convert(ciphertext).bytes),
+          ),
+        },
+      ],
+      'nextAfterRecordId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  ) async {
+    return CloudSyncDataRekeySourceAttachmentPage.fromJson(<String, Object?>{
+      'attachments': <Object?>[],
+      'nextAfterAttachmentId': null,
+      'nextAfterUploadId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  ) async {
+    stageRequests.add(request);
+    if (stageRequests.length == 1) {
+      throw StateError('simulated_stage_response_loss');
+    }
+    return CloudSyncDataRekeyRecordStageResult.fromJson(<String, Object?>{
+      'result': 'staged',
+      'operationId': operationId,
+      'mutationId': request.mutationId,
+      'sourceRecordId': request.sourceRecordId,
+      'targetRecordId': request.targetRecordId,
+      'leaseVersion': request.activeLease.leaseVersion,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  ) => throw StateError('记录重放测试不得暂存附件');
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) async {
+    return _finalizedDataRekeyOutcome(userId: userId, request: request);
+  }
+}
+
+CloudSyncDataRekeyFinalizeOutcome _finalizedDataRekeyOutcome({
+  required String userId,
+  required CloudSyncDataRekeyFinalizeRequest request,
+}) {
+  final operation = request.activeLease.operation;
+  final proof = request.proof;
+  final attachmentCursor = proof.sourceAttachmentCursorEnd;
+  final proofFrame = _dataRekeyProofFrame(userId: userId, request: request);
+  final proofDigest = digestE2eeDataRekeyCompletionProof(
+    proofFrame: proofFrame,
+    signature: proof.signature,
+  );
+  return CloudSyncDataRekeyFinalizeOutcome.fromJson(<String, Object?>{
+    'result': 'finalized',
+    'dataGeneration': request.targetDataGeneration,
+    'dataKeyEpoch': operation.targetKeyEpoch,
+    'changeWatermark': proof.sourceMaximumChangeSeq,
+    'completion': <String, Object?>{
+      'proofVersion': 2,
+      'operationId': operation.operationId,
+      'issuerDeviceId': proof.issuerDeviceId,
+      'sourceDataGeneration': operation.sourceDataGeneration,
+      'targetDataGeneration': request.targetDataGeneration,
+      'sourceKeyEpoch': operation.sourceKeyEpoch,
+      'targetKeyEpoch': operation.targetKeyEpoch,
+      'sourceSnapshotRoot': _dataRekeyBinary(proof.sourceSnapshotRoot),
+      'sourceRecordCount': proof.sourceRecordCount,
+      'sourceAttachmentCount': proof.sourceAttachmentCount,
+      'sourceMaximumChangeSeq': proof.sourceMaximumChangeSeq,
+      'sourceRecordCursorEnd': proof.sourceRecordCursorEnd,
+      'sourceAttachmentCursorEnd': attachmentCursor == null
+          ? null
+          : <String, Object?>{
+              'attachmentId': attachmentCursor.attachmentId,
+              'uploadId': attachmentCursor.uploadId,
+            },
+      'membershipGeneration': proof.membershipGeneration,
+      'membershipManifestDigest': _dataRekeyBinary(
+        proof.membershipManifestDigest,
+      ),
+      'stagedRecordCount': proof.stagedRecordCount,
+      'stagedAttachmentCount': proof.stagedAttachmentCount,
+      'stagedCiphertextSetDigest': _dataRekeyBinary(
+        proof.stagedCiphertextSetDigest,
+      ),
+      'proofFrame': _dataRekeyBinary(proofFrame),
+      'proofDigest': _dataRekeyBinary(proofDigest),
+      'signature': _dataRekeyBinary(proof.signature),
+      'finalizedAt': '2026-07-30T05:01:00.000Z',
+    },
+  }, request: request);
+}
+
+Uint8List _dataRekeyProofFrame({
+  required String userId,
+  required CloudSyncDataRekeyFinalizeRequest request,
+}) {
+  final operation = request.activeLease.operation;
+  final proof = request.proof;
+  final attachmentCursor = proof.sourceAttachmentCursorEnd;
+  return buildE2eeDataRekeyCompletionFrame(
+    E2eeDataRekeyCompletionFields(
+      operationId: operation.operationId,
+      userId: userId,
+      issuerDeviceId: proof.issuerDeviceId,
+      sourceDataGeneration: operation.sourceDataGeneration,
+      targetDataGeneration: request.targetDataGeneration,
+      sourceKeyEpoch: operation.sourceKeyEpoch,
+      targetKeyEpoch: operation.targetKeyEpoch,
+      sourceSnapshotRoot: proof.sourceSnapshotRoot,
+      sourceRecordCount: proof.sourceRecordCount,
+      sourceAttachmentCount: proof.sourceAttachmentCount,
+      sourceMaximumChangeSeq: proof.sourceMaximumChangeSeq,
+      sourceRecordCursorEnd: proof.sourceRecordCursorEnd,
+      sourceAttachmentCursorEnd: attachmentCursor == null
+          ? null
+          : E2eeDataRekeyAttachmentCursor(
+              attachmentId: attachmentCursor.attachmentId,
+              uploadId: attachmentCursor.uploadId,
+            ),
+      membershipGeneration: proof.membershipGeneration,
+      membershipManifestDigest: proof.membershipManifestDigest,
+      stagedRecordCount: proof.stagedRecordCount,
+      stagedAttachmentCount: proof.stagedAttachmentCount,
+      stagedCiphertextSetDigest: proof.stagedCiphertextSetDigest,
+    ),
+  );
+}
+
+String _dataRekeyBinary(Uint8List value) =>
+    base64Url.encode(value).replaceAll('=', '');
