@@ -82,3 +82,7 @@
 - 进行中：#84 持久明文请求/运行日志硬切、#85 受管根句柄删除能力、#49 移动恢复 UI 与 #51 data-rekey 执行器并行推进；不部署、不操作远端 D1/R2。
 - 已清理：账户恢复 API/D1 四个已整合工作树与分支，以及客户端账户恢复、data-rekey 基础、本机擦除、移动恢复导出状态和旧 ABI18 工作树与分支；残留编译器/长路径清理由既有 #44/#55 覆盖。
 - 已完成：Android 首次安全槽创建根因修复已合入 `fe61b5cf`；系统托管 data 根只在 Java 边界规范化，Rust 以 `O_PATH` 穿越不可读祖先且应用可写后代继续 nofollow。隔离 API 36 AVD、跨 PID 解封、native 75 项、账号工作区 115 项、Android Debug APK 与根分支静态复验通过，#90 已关闭。
+- 复审阻塞：账户恢复 ABI19 在 `keyEpoch > 1` 且 data-rekey 已 ready 时错误省略最近轮换前驱 capsule，导致完成一次轮换后的后续恢复必然在 proof 前失败；恢复分支正补 rotated-ready 红测与精确历史选择，修复前不集成。
+- 复审阻塞：#85 将 Android `/data/user/0` 固定视为符号链接，但现代 AOSP/API 36 使用与 `/data/data` 同身份的 bind mount，当前实现会使合法安装根打开失败并阻断启动；正补系统别名身份验证与隔离 AVD 回归，修复前 #84/#85 均不集成。
+- 复审阻塞：Apple 耐久偏好尚缺 headless isolate 注册，且无类型 JSON 会丢失积分 Double 类型；绝对路径重解析、rename 后目录耐久 barrier、写前尺寸门禁、PrivacyInfo reason 与 SwiftPM FlutterFramework 依赖也需修复。#86 在 Apple 编译、XCTest、模拟器和真机验证前保持打开。
+- 复审阻塞：服务端 #40 自撤销分支缺主体 intent 签名、pending 权限收窄与有界请求，终态非单调；另有 op4 交错回执、D1 单 SQL 100 参数、token 指纹和 OpenAPI 窄令牌合同问题。分支已冻结并按红测修复，未部署、未操作远端 D1/R2。
