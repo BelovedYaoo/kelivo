@@ -7,11 +7,76 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:Kelivo/l10n/app_localizations.dart';
 import 'package:Kelivo/main.dart' show AssistantDefaultsBootstrap;
+import 'package:Kelivo/core/services/static_unhandled_error_boundary.dart';
 import 'package:Kelivo/shared/widgets/restart_app_action.dart';
 import 'package:Kelivo/shared/widgets/snackbar.dart';
 import 'package:Kelivo/utils/platform_utils.dart';
 
 void main() {
+  test('全局异常边界仅报告固定事件且不向父级转发动态内容', () async {
+    final events = <String>[];
+    final parentZoneErrors = <Object>[];
+    var processFailureMarks = 0;
+    var previousFlutterHandlerCalls = 0;
+    var previousPlatformHandlerCalls = 0;
+    final previousFlutterHandler = FlutterError.onError;
+    final previousPlatformHandler = PlatformDispatcher.instance.onError;
+    FlutterError.onError = (_) => previousFlutterHandlerCalls++;
+    PlatformDispatcher.instance.onError = (_, _) {
+      previousPlatformHandlerCalls++;
+      return false;
+    };
+    final boundary = StaticUnhandledErrorBoundary(
+      reportStaticEvent: events.add,
+      markProcessFailure: () => processFailureMarks++,
+    );
+
+    try {
+      boundary.install();
+      FlutterError.reportError(
+        FlutterErrorDetails(
+          exception: StateError('sensitive-flutter-payload'),
+          stack: StackTrace.fromString('sensitive-flutter-stack'),
+        ),
+      );
+      expect(
+        PlatformDispatcher.instance.onError!(
+          StateError('sensitive-platform-payload'),
+          StackTrace.fromString('sensitive-platform-stack'),
+        ),
+        isTrue,
+      );
+
+      final zoneHandled = Completer<void>();
+      runZonedGuarded(() {
+        runZonedGuarded(
+          () {
+            scheduleMicrotask(() => throw StateError('sensitive-zone-payload'));
+          },
+          (error, stackTrace) {
+            boundary.handleZoneError(error, stackTrace);
+            zoneHandled.complete();
+          },
+        );
+      }, (error, _) => parentZoneErrors.add(error));
+      await zoneHandled.future;
+
+      expect(events, <String>[
+        'flutter_framework_unhandled',
+        'platform_dispatcher_unhandled',
+        'zone_unhandled',
+      ]);
+      expect(events.join(), isNot(contains('sensitive')));
+      expect(previousFlutterHandlerCalls, 0);
+      expect(previousPlatformHandlerCalls, 0);
+      expect(parentZoneErrors, isEmpty);
+      expect(processFailureMarks, 3);
+    } finally {
+      FlutterError.onError = previousFlutterHandler;
+      PlatformDispatcher.instance.onError = previousPlatformHandler;
+    }
+  });
+
   testWidgets('工作区切换待重启时全局门禁替代旧工作区内容', (tester) async {
     var oldWorkspaceTapCount = 0;
     var restartCount = 0;

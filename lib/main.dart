@@ -42,6 +42,7 @@ import 'core/services/sync/e2ee_device_pairing_membership_commit.dart';
 import 'core/services/sync/e2ee_mobile_background_sync.dart';
 import 'core/services/sync/sync_write_executor.dart';
 import 'core/services/storage/durable_shared_preferences_eraser.dart';
+import 'core/services/static_unhandled_error_boundary.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
 import 'core/services/workspace/device_state_blob_store.dart';
 import 'core/services/workspace/installation_operation_lease.dart';
@@ -139,9 +140,11 @@ final class AssistantDefaultsBootstrap {
 }
 
 Future<void> main() async {
-  await runZoned(
+  const staticUnhandledErrorBoundary = StaticUnhandledErrorBoundary();
+  await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      staticUnhandledErrorBoundary.install();
       final mobileBackgroundSyncScheduler =
           E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
       const secureCore = KelivoSecureCore();
@@ -358,6 +361,7 @@ Future<void> main() async {
         ),
       );
     },
+    staticUnhandledErrorBoundary.handleZoneError,
     zoneSpecification: ZoneSpecification(
       // 第三方组件的自由文本无法证明已脱敏，生产 Zone 不向系统日志转发。
       print: (self, parent, zone, line) {},

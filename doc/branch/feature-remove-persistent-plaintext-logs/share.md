@@ -12,3 +12,5 @@
 - 偏好删除证明确定使用最终 ABI20：删除前固定 application-support 根会话，删除后仅从固定根相对打开固定 `shared_preferences.json`；16 MiB 上限内有界读取并结构化解析，文件不存在也必须完成固定根持久屏障与根链复核，任一失败均失败关闭。
 - Android `GeneratedPluginRegistrant.java` 是 Flutter 忽略的生成文件，禁止手改；必须通过可重复的生成源或构建配置消除带异常对象的 `Log.e`，并且插件注册失败不得伪装成功。
 - 恢复介质页两处动态 `developer.log` 本轮直接静态化；根分支集成时必须保留该结果，并统一其他 E2EE 分支的 ABI20。
+- Flutter、PlatformDispatcher 与 Zone 未处理异常改为固定事件且不调用旧动态 handler；三者都会设置非零 `exitCode`，但这只是标记进程最终退出结果，不会立即终止移动端进程。
+- Android 构建按变体在 `compileFlutterBuild<Variant>` 完成后、Java 编译前硬化生成 registrant；每个 catch 必须抛固定 `IllegalStateException`，残留 `Log.e` 或数量不一致会阻断构建。

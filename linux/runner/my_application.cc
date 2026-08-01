@@ -36,8 +36,7 @@ static GdkPixbuf* load_window_icon() {
   GdkPixbuf* icon = gdk_pixbuf_new_from_file_at_scale(icon_path, 16, 16, TRUE,
                                                       &error);
   if (icon == nullptr) {
-    g_warning("Failed to load window icon: %s",
-              error != nullptr ? error->message : "unknown error");
+    g_warning("Window icon loading failed");
   }
   g_clear_error(&error);
   return icon;
@@ -200,7 +199,7 @@ static gboolean my_application_local_command_line(GApplication* application, gch
 
   g_autoptr(GError) error = nullptr;
   if (!g_application_register(application, nullptr, &error)) {
-     g_warning("Failed to register: %s", error->message);
+     g_warning("Application registration failed");
      *exit_status = 1;
      return TRUE;
   }

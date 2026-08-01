@@ -146,3 +146,76 @@ dependencies {
     // Required for core library desugaring (used by flutter_local_notifications)
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.0.4")
 }
+
+val generatedPluginRegistrant =
+    layout.projectDirectory.file("src/main/java/io/flutter/plugins/GeneratedPluginRegistrant.java")
+val generatedPluginFailureLog =
+    Regex(
+        """Log\.e\(\s*TAG\s*,\s*"Error registering plugin [^"]+"\s*,\s*e\s*\);""",
+    )
+val generatedPluginCatch = Regex("""catch\s*\(Exception\s+e\)""")
+val staticPluginRegistrationFailure =
+    "throw new IllegalStateException(\"Plugin registration failed\");"
+
+fun hardenGeneratedPluginRegistrant() {
+    val registrantPath = generatedPluginRegistrant.asFile.toPath()
+    if (!Files.isRegularFile(registrantPath, LinkOption.NOFOLLOW_LINKS)) {
+        throw GradleException("Flutter GeneratedPluginRegistrant.java is missing")
+    }
+    val generatedSource = Files.readString(registrantPath)
+    val hardenedSource =
+        generatedPluginFailureLog.replace(generatedSource) {
+            staticPluginRegistrationFailure
+        }
+    if (hardenedSource != generatedSource) {
+        Files.writeString(registrantPath, hardenedSource)
+    }
+
+    val verifiedSource = Files.readString(registrantPath)
+    val catchCount = generatedPluginCatch.findAll(verifiedSource).count()
+    val staticFailureCount =
+        Regex(Regex.escape(staticPluginRegistrationFailure))
+            .findAll(verifiedSource)
+            .count()
+    if (
+        catchCount == 0 ||
+        catchCount != staticFailureCount ||
+        verifiedSource.contains("Log.e(")
+    ) {
+        throw GradleException(
+            "Flutter GeneratedPluginRegistrant.java contains an unsafe failure branch",
+        )
+    }
+}
+
+tasks.register("hardenKelivoGeneratedPluginRegistrant") {
+    group = "verification"
+    description = "校验当前 Flutter Android 插件注册器的静态失败分支"
+    doLast {
+        hardenGeneratedPluginRegistrant()
+    }
+}
+
+// 每个变体必须在 Flutter 重新生成 registrant 后、Java 编译前独立硬化。
+androidComponents {
+    onVariants(selector().all()) { variant ->
+        val variantName =
+            variant.name.replaceFirstChar { character ->
+                if (character.isLowerCase()) character.titlecase() else character.toString()
+            }
+        val hardenVariantRegistrant =
+            tasks.register("hardenKelivo${variantName}GeneratedPluginRegistrant") {
+                group = "verification"
+                description = "将 $variantName 插件注册失败收敛为静态失败事件"
+                dependsOn("compileFlutterBuild$variantName")
+                doLast {
+                    hardenGeneratedPluginRegistrant()
+                }
+            }
+        tasks
+            .matching { it.name == "compile${variantName}JavaWithJavac" }
+            .configureEach {
+                dependsOn(hardenVariantRegistrant)
+            }
+    }
+}
