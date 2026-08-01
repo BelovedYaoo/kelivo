@@ -1,0 +1,804 @@
+import 'dart:convert';
+import 'dart:io';
+
+import 'package:Kelivo/core/services/backup/restore_durability.dart';
+import 'package:Kelivo/core/services/storage/durable_shared_preferences_eraser.dart';
+import 'package:Kelivo/core/services/storage/durable_shared_preferences_store.dart';
+import 'package:Kelivo/core/services/workspace/local_cryptographic_wipe.dart';
+import 'package:Kelivo/core/services/workspace/local_wipe_marker_topology.dart';
+import 'package:crypto/crypto.dart';
+import 'package:flutter_test/flutter_test.dart';
+import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
+import 'package:shared_preferences_platform_interface/types.dart';
+
+void main() {
+  const deviceId = '00000000-0000-4000-8000-000000000001';
+  const otherDeviceId = '00000000-0000-4000-8000-000000000002';
+  const mutationId = '00000000-0000-4000-8000-000000000003';
+  late Directory root;
+  late Directory installationRoot;
+  late Directory cacheRoot;
+
+  setUp(() async {
+    root = await Directory.systemTemp.createTemp('kelivo-local-wipe-');
+    installationRoot = Directory('${root.path}${Platform.pathSeparator}data');
+    cacheRoot = Directory('${root.path}${Platform.pathSeparator}cache');
+    await installationRoot.create();
+    await cacheRoot.create();
+  });
+
+  tearDown(() async {
+    if (await root.exists()) await root.delete(recursive: true);
+  });
+
+  InstallationLocalCryptographicWipe createWipe({
+    Future<Directory> Function()? applicationCacheDirectory,
+    Future<void> Function()? deleteAllSecureSlots,
+    Future<void> Function()? clearAllPreferences,
+    Future<void> Function()? shutdownLogging,
+    RestoreDurability? durability,
+  }) {
+    return InstallationLocalCryptographicWipe(
+      installationRoot: installationRoot,
+      applicationCacheDirectory:
+          applicationCacheDirectory ?? () async => cacheRoot,
+      deleteAllSecureSlots: deleteAllSecureSlots ?? () async {},
+      clearAllPreferences: clearAllPreferences ?? () async {},
+      shutdownLogging: shutdownLogging ?? () async {},
+      durability: durability,
+    );
+  }
+
+  Future<void> markConfirmed(
+    InstallationLocalCryptographicWipe wipe, {
+    String targetDeviceId = deviceId,
+    String targetMutationId = mutationId,
+  }) async {
+    await wipe.markRevocationRequested(
+      deviceId: targetDeviceId,
+      mutationId: targetMutationId,
+    );
+    await wipe.markRevocationConfirmed(
+      deviceId: targetDeviceId,
+      mutationId: targetMutationId,
+    );
+  }
+
+  Future<void> writeInstallationFixture() async {
+    await File(
+      '${installationRoot.path}${Platform.pathSeparator}account-a.db',
+    ).writeAsString('ciphertext');
+    final nested = Directory(
+      '${installationRoot.path}${Platform.pathSeparator}.kelivo-workspaces'
+      '${Platform.pathSeparator}accounts${Platform.pathSeparator}account-b',
+    );
+    await nested.create(recursive: true);
+    await File(
+      '${nested.path}${Platform.pathSeparator}kelivo.db-wal',
+    ).writeAsString('ciphertext');
+    await File(
+      '${cacheRoot.path}${Platform.pathSeparator}avatar.bin',
+    ).writeAsString('cached');
+  }
+
+  Future<List<FileSystemEntity>> installationEntities() {
+    return installationRoot.list(followLinks: false).toList();
+  }
+
+  Future<File> copyMarkerAsPhase({
+    required String sourceName,
+    required String targetName,
+    required String phase,
+    String? replacementMutationId,
+  }) async {
+    final source = File(
+      '${installationRoot.path}${Platform.pathSeparator}$sourceName',
+    );
+    final decoded = jsonDecode(await source.readAsString());
+    if (decoded is! Map<String, Object?>) {
+      throw StateError('test_marker_json');
+    }
+    final payload = Map<String, Object?>.of(decoded)..remove('checksum');
+    payload['phase'] = phase;
+    if (replacementMutationId != null) {
+      payload['mutationId'] = replacementMutationId;
+    }
+    final checksum = sha256
+        .convert(utf8.encode(jsonEncode(payload)))
+        .toString();
+    final target = File(
+      '${installationRoot.path}${Platform.pathSeparator}$targetName',
+    );
+    await target.writeAsString(
+      jsonEncode(<String, Object?>{...payload, 'checksum': checksum}),
+      flush: true,
+    );
+    return target;
+  }
+
+  test('远端撤销确认后按安全顺序擦除安装数据并最后移除标记', () async {
+    final events = <String>[];
+    await writeInstallationFixture();
+
+    final wipe = createWipe(
+      applicationCacheDirectory: () async {
+        expect(await installationRoot.exists(), isTrue);
+        expect(
+          (await installationEntities()).map((entity) => entity.path),
+          everyElement(
+            endsWith('.kelivo-local-wipe-v2.revocation-confirmed.json'),
+          ),
+        );
+        return cacheRoot;
+      },
+      deleteAllSecureSlots: () async => events.add('secure-slots'),
+      clearAllPreferences: () async {
+        expect(await installationRoot.exists(), isTrue);
+        expect(
+          (await installationEntities()).single.path,
+          endsWith('.kelivo-local-wipe-v2.revocation-confirmed.json'),
+        );
+        await File(
+          '${installationRoot.path}${Platform.pathSeparator}'
+          'shared_preferences.json',
+        ).writeAsString('{}', flush: true);
+        events.add('preferences');
+      },
+      shutdownLogging: () async => events.add('logging'),
+    );
+
+    await markConfirmed(wipe);
+    expect(await wipe.hasPendingWipe(), isTrue);
+
+    final resumed = await wipe.resumePendingAtColdStart(
+      stopBackgroundSync: () async => events.add('background'),
+    );
+
+    expect(resumed, isTrue);
+    expect(events, <String>[
+      'background',
+      'logging',
+      'secure-slots',
+      'preferences',
+    ]);
+    expect(await wipe.hasPendingWipe(), isFalse);
+    expect(await installationRoot.list().toList(), isEmpty);
+    expect(await cacheRoot.list().toList(), isEmpty);
+  });
+
+  test('没有已发布标记时保持安装数据且不执行任何步骤', () async {
+    await writeInstallationFixture();
+    final events = <String>[];
+    final wipe = createWipe(
+      applicationCacheDirectory: () async {
+        events.add('cache');
+        return cacheRoot;
+      },
+      deleteAllSecureSlots: () async => events.add('secure-slots'),
+      clearAllPreferences: () async => events.add('preferences'),
+      shutdownLogging: () async => events.add('logging'),
+    );
+
+    expect(
+      await wipe.resumePendingAtColdStart(
+        stopBackgroundSync: () async => events.add('background'),
+      ),
+      isFalse,
+    );
+
+    expect(events, isEmpty);
+    expect(await installationEntities(), isNotEmpty);
+    expect(await cacheRoot.list().toList(), isNotEmpty);
+  });
+
+  test('requested-only 冷启动只要求确认且不执行任何擦除步骤', () async {
+    await writeInstallationFixture();
+    final events = <String>[];
+    final wipe = createWipe(
+      applicationCacheDirectory: () async {
+        events.add('cache');
+        return cacheRoot;
+      },
+      deleteAllSecureSlots: () async => events.add('secure-slots'),
+      clearAllPreferences: () async => events.add('preferences'),
+      shutdownLogging: () async => events.add('logging'),
+    );
+    await wipe.markRevocationRequested(
+      deviceId: deviceId,
+      mutationId: mutationId,
+    );
+
+    await expectLater(
+      wipe.resumePendingAtColdStart(
+        stopBackgroundSync: () async => events.add('background'),
+      ),
+      throwsA(
+        isA<LocalDeviceRevocationConfirmationRequired>().having(
+          (error) => error.intent.mutationId,
+          'mutationId',
+          mutationId,
+        ),
+      ),
+    );
+
+    expect(events, isEmpty);
+    expect(await wipe.readPendingIntent(), isNotNull);
+    expect(
+      await File(
+        '${installationRoot.path}${Platform.pathSeparator}account-a.db',
+      ).exists(),
+      isTrue,
+    );
+  });
+
+  test('损坏标记失败关闭且不触发清理步骤', () async {
+    await writeInstallationFixture();
+    await File(
+      '${installationRoot.path}${Platform.pathSeparator}'
+      '.kelivo-local-wipe-v2.revocation-requested.json',
+    ).writeAsString('{"format":"tampered"}', flush: true);
+    final events = <String>[];
+    final wipe = createWipe(
+      deleteAllSecureSlots: () async => events.add('secure-slots'),
+      clearAllPreferences: () async => events.add('preferences'),
+      shutdownLogging: () async => events.add('logging'),
+    );
+
+    await expectLater(
+      wipe.resumePendingAtColdStart(
+        stopBackgroundSync: () async => events.add('background'),
+      ),
+      throwsFormatException,
+    );
+
+    expect(events, isEmpty);
+    expect(await installationEntities(), hasLength(3));
+  });
+
+  test('同一远端撤销回执可幂等发布，不同设备不得覆盖标记', () async {
+    final wipe = createWipe();
+
+    await markConfirmed(wipe);
+    final firstMarker = (await installationEntities()).single as File;
+    final firstBytes = await firstMarker.readAsBytes();
+    await wipe.markRevocationRequested(
+      deviceId: deviceId,
+      mutationId: mutationId,
+    );
+    await wipe.markRevocationConfirmed(
+      deviceId: deviceId,
+      mutationId: mutationId,
+    );
+
+    final secondMarker = (await installationEntities()).single as File;
+    expect(await secondMarker.readAsBytes(), firstBytes);
+    await expectLater(
+      wipe.markRevocationRequested(
+        deviceId: otherDeviceId,
+        mutationId: mutationId,
+      ),
+      throwsStateError,
+    );
+    expect(await wipe.hasPendingWipe(), isTrue);
+  });
+
+  test('requested 与 confirmed 同 intent 共存时收敛到 confirmed', () async {
+    final wipe = createWipe();
+    await wipe.markRevocationRequested(
+      deviceId: deviceId,
+      mutationId: mutationId,
+    );
+    await copyMarkerAsPhase(
+      sourceName: LocalWipeMarkerTopology.revocationRequestedMarkerFileName,
+      targetName: LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+      phase: 'revocation-confirmed',
+    );
+
+    final recovered = await wipe.readPendingIntent();
+
+    expect(recovered?.phase, LocalCryptographicWipePhase.revocationConfirmed);
+    expect(
+      (await installationEntities()).single.path,
+      endsWith(LocalWipeMarkerTopology.revocationConfirmedMarkerFileName),
+    );
+  });
+
+  test('requested 与 confirmed 不同 intent 时失败关闭并保留证据', () async {
+    final wipe = createWipe();
+    await wipe.markRevocationRequested(
+      deviceId: deviceId,
+      mutationId: mutationId,
+    );
+    await copyMarkerAsPhase(
+      sourceName: LocalWipeMarkerTopology.revocationRequestedMarkerFileName,
+      targetName: LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+      phase: 'revocation-confirmed',
+      replacementMutationId: otherDeviceId,
+    );
+
+    await expectLater(wipe.readPendingIntent(), throwsStateError);
+
+    expect(await installationEntities(), hasLength(2));
+  });
+
+  test('requested 与 completion 共存属于非法跨阶段状态', () async {
+    final wipe = createWipe();
+    await wipe.markRevocationRequested(
+      deviceId: deviceId,
+      mutationId: mutationId,
+    );
+    await copyMarkerAsPhase(
+      sourceName: LocalWipeMarkerTopology.revocationRequestedMarkerFileName,
+      targetName: LocalWipeMarkerTopology.completionMarkerFileName,
+      phase: 'completion',
+    );
+
+    await expectLater(wipe.readPendingIntent(), throwsStateError);
+
+    expect(await installationEntities(), hasLength(2));
+  });
+
+  test('confirmed 临时文件可依据 requested 重建并收敛', () async {
+    final wipe = createWipe();
+    await wipe.markRevocationRequested(
+      deviceId: deviceId,
+      mutationId: mutationId,
+    );
+    final interrupted = createWipe(
+      durability: _MemoryWipeDurability(failNextRename: true),
+    );
+    await expectLater(
+      interrupted.markRevocationConfirmed(
+        deviceId: deviceId,
+        mutationId: mutationId,
+      ),
+      throwsStateError,
+    );
+
+    final recovered = await createWipe(
+      durability: _MemoryWipeDurability(),
+    ).readPendingIntent();
+
+    expect(recovered?.phase, LocalCryptographicWipePhase.revocationConfirmed);
+    expect(
+      (await installationEntities()).single.path,
+      endsWith(LocalWipeMarkerTopology.revocationConfirmedMarkerFileName),
+    );
+  });
+
+  test('临时标记已落盘但未重命名时重启会恢复而非丢弃', () async {
+    final interruptedDurability = _MemoryWipeDurability(failNextRename: true);
+    final interrupted = createWipe(durability: interruptedDurability);
+
+    await expectLater(
+      interrupted.markRevocationRequested(
+        deviceId: deviceId,
+        mutationId: mutationId,
+      ),
+      throwsStateError,
+    );
+    expect((await installationEntities()).single.path, endsWith('.tmp'));
+
+    final recovered = createWipe(durability: _MemoryWipeDurability());
+    final recoveredIntent = await recovered.readPendingIntent();
+    expect(
+      recoveredIntent?.phase,
+      LocalCryptographicWipePhase.revocationRequested,
+    );
+    expect(
+      (await installationEntities()).single.path,
+      endsWith('.kelivo-local-wipe-v2.revocation-requested.json'),
+    );
+    await expectLater(
+      recovered.resumePendingAtColdStart(stopBackgroundSync: () async {}),
+      throwsA(isA<LocalDeviceRevocationConfirmationRequired>()),
+    );
+    await recovered.markRevocationConfirmed(
+      deviceId: deviceId,
+      mutationId: mutationId,
+    );
+    expect(
+      await recovered.resumePendingAtColdStart(stopBackgroundSync: () async {}),
+      isTrue,
+    );
+    expect(await installationEntities(), isEmpty);
+  });
+
+  test('requested 临时标记只完成部分写入时永久失败关闭', () async {
+    await File(
+      '${installationRoot.path}${Platform.pathSeparator}'
+      '.kelivo-local-wipe-v2.revocation-requested.json.1_1_0.tmp',
+    ).writeAsString('{', flush: true);
+    final wipe = createWipe(durability: _MemoryWipeDurability());
+
+    await expectLater(wipe.readPendingIntent(), throwsFormatException);
+    expect((await installationEntities()).single.path, endsWith('.tmp'));
+  });
+
+  test('最终标记删除后持久屏障失败时恢复标记并可重试', () async {
+    final durability = _MarkerDeletionFailingDurability(installationRoot);
+    final wipe = createWipe(durability: durability);
+    await markConfirmed(wipe);
+
+    await expectLater(
+      wipe.resumePendingAtColdStart(stopBackgroundSync: () async {}),
+      throwsStateError,
+    );
+    expect(await wipe.hasPendingWipe(), isTrue);
+
+    expect(
+      await wipe.resumePendingAtColdStart(stopBackgroundSync: () async {}),
+      isTrue,
+    );
+    expect(await wipe.hasPendingWipe(), isFalse);
+  });
+
+  test('完成标记已发布后重启只收敛提交且不重复清理', () async {
+    final events = <String>[];
+    await writeInstallationFixture();
+    final interrupted = createWipe(
+      applicationCacheDirectory: () async {
+        events.add('cache');
+        return cacheRoot;
+      },
+      deleteAllSecureSlots: () async => events.add('secure-slots'),
+      clearAllPreferences: () async => events.add('preferences'),
+      shutdownLogging: () async => events.add('logging'),
+      durability: _CompletionCommitFailingDurability(installationRoot),
+    );
+    await markConfirmed(interrupted);
+
+    await expectLater(
+      interrupted.resumePendingAtColdStart(
+        stopBackgroundSync: () async => events.add('background'),
+      ),
+      throwsStateError,
+    );
+    expect(
+      (await installationEntities()).single.path,
+      endsWith('.kelivo-local-wipe-v2.completed.json'),
+    );
+    expect(events, <String>[
+      'background',
+      'logging',
+      'secure-slots',
+      'preferences',
+      'cache',
+    ]);
+
+    final recovered = createWipe(durability: _MemoryWipeDurability());
+    expect(
+      await recovered.resumePendingAtColdStart(
+        stopBackgroundSync: () async => events.add('repeated-background'),
+      ),
+      isTrue,
+    );
+    expect(events, isNot(contains(startsWith('repeated-'))));
+    expect(await installationEntities(), isEmpty);
+  });
+
+  for (final failingStep in <String>[
+    'background',
+    'logging',
+    'secure-slots',
+    'preferences',
+    'cache',
+  ]) {
+    test('$failingStep 步骤失败时保留标记且重试只收敛本机清理', () async {
+      await writeInstallationFixture();
+      var shouldFail = true;
+
+      Future<void> step(String name) async {
+        if (shouldFail && name == failingStep) {
+          throw StateError('injected_$name');
+        }
+      }
+
+      final wipe = createWipe(
+        applicationCacheDirectory: () async {
+          await step('cache');
+          return cacheRoot;
+        },
+        deleteAllSecureSlots: () => step('secure-slots'),
+        clearAllPreferences: () => step('preferences'),
+        shutdownLogging: () => step('logging'),
+      );
+      await markConfirmed(wipe);
+
+      await expectLater(
+        wipe.resumePendingAtColdStart(
+          stopBackgroundSync: () => step('background'),
+        ),
+        throwsStateError,
+      );
+      expect(await wipe.hasPendingWipe(), isTrue);
+
+      shouldFail = false;
+      expect(
+        await wipe.resumePendingAtColdStart(
+          stopBackgroundSync: () => step('background'),
+        ),
+        isTrue,
+      );
+      expect(await wipe.hasPendingWipe(), isFalse);
+      expect(await installationRoot.exists(), isTrue);
+      expect(await installationEntities(), isEmpty);
+    });
+  }
+
+  test('系统缓存若是安装根祖先则失败关闭且不得删除根外文件', () async {
+    final outside = File(
+      '${root.path}${Platform.pathSeparator}outside-recovery.kelivo',
+    );
+    await outside.writeAsString('user-export');
+    await writeInstallationFixture();
+    final wipe = createWipe(applicationCacheDirectory: () async => root);
+    await markConfirmed(wipe);
+
+    await expectLater(
+      wipe.resumePendingAtColdStart(stopBackgroundSync: () async {}),
+      throwsStateError,
+    );
+
+    expect(await wipe.hasPendingWipe(), isTrue);
+    expect(await outside.readAsString(), 'user-export');
+  });
+
+  group('持久删除全部偏好', () {
+    test('逐键删除全部原始键并复核为空', () async {
+      final store = InMemorySharedPreferencesStore.withData(<String, Object>{
+        'flutter.account': 'alice',
+        'raw.installation-key': 'secret',
+      });
+
+      await DurableSharedPreferencesEraser(
+        store: _createDurablePreferencesStore(store),
+      ).eraseAll();
+
+      expect(await _readAllRawPreferences(store), isEmpty);
+    });
+
+    test('空偏好库可幂等完成', () async {
+      final store = InMemorySharedPreferencesStore.empty();
+
+      await DurableSharedPreferencesEraser(
+        store: _createDurablePreferencesStore(store),
+      ).eraseAll();
+
+      expect(await _readAllRawPreferences(store), isEmpty);
+    });
+
+    test('任一原始键删除回执为假时失败关闭', () async {
+      final store = _RemoveRejectedPreferencesStore(<String, Object>{
+        'flutter.account': 'alice',
+      });
+
+      await expectLater(
+        DurableSharedPreferencesEraser(
+          store: _createDurablePreferencesStore(store),
+        ).eraseAll(),
+        throwsStateError,
+      );
+      expect(await _readAllRawPreferences(store), isNotEmpty);
+    });
+
+    test('平台谎报删除成功但仍有残留时失败关闭', () async {
+      final store = _ResidualPreferencesStore(<String, Object>{
+        'flutter.account': 'alice',
+      });
+
+      await expectLater(
+        DurableSharedPreferencesEraser(
+          store: _createDurablePreferencesStore(store),
+        ).eraseAll(),
+        throwsStateError,
+      );
+      expect(await _readAllRawPreferences(store), isNotEmpty);
+    });
+
+    test('Windows Linux 物理偏好文件完成双重持久屏障后才确认删除', () async {
+      final preferencesRoot = Directory(
+        '${root.path}${Platform.pathSeparator}preferences',
+      );
+      await preferencesRoot.create();
+      final preferencesFile = File(
+        '${preferencesRoot.path}${Platform.pathSeparator}'
+        'shared_preferences.json',
+      );
+      await preferencesFile.writeAsString(
+        '{"flutter.remaining":"kept"}',
+        flush: true,
+      );
+      final durability = _RecordingPreferencesDurability();
+      final proof = JsonFileSharedPreferencesRemovalProof(
+        applicationSupportDirectory: () async => preferencesRoot,
+        durability: durability,
+      );
+
+      await proof.confirmRemoval('flutter.removed');
+
+      expect(durability.events, <String>['file', 'directory']);
+    });
+
+    test('Windows Linux 物理偏好文件仍含目标键时失败关闭', () async {
+      final preferencesRoot = Directory(
+        '${root.path}${Platform.pathSeparator}preferences-residual',
+      );
+      await preferencesRoot.create();
+      final preferencesFile = File(
+        '${preferencesRoot.path}${Platform.pathSeparator}'
+        'shared_preferences.json',
+      );
+      await preferencesFile.writeAsString(
+        '{"flutter.removed":"secret"}',
+        flush: true,
+      );
+      final durability = _RecordingPreferencesDurability();
+      final proof = JsonFileSharedPreferencesRemovalProof(
+        applicationSupportDirectory: () async => preferencesRoot,
+        durability: durability,
+      );
+
+      await expectLater(
+        proof.confirmRemoval('flutter.removed'),
+        throwsStateError,
+      );
+      expect(durability.events, <String>['file', 'directory']);
+    });
+  });
+}
+
+PlatformDurableSharedPreferencesStore _createDurablePreferencesStore(
+  SharedPreferencesStorePlatform platform,
+) {
+  return PlatformDurableSharedPreferencesStore(
+    platform,
+    removalProof: const _TestSharedPreferencesRemovalProof(),
+  );
+}
+
+Future<Map<String, Object>> _readAllRawPreferences(
+  SharedPreferencesStorePlatform store,
+) {
+  return store.getAllWithParameters(
+    GetAllParameters(filter: PreferencesFilter(prefix: '')),
+  );
+}
+
+final class _RemoveRejectedPreferencesStore
+    extends InMemorySharedPreferencesStore {
+  _RemoveRejectedPreferencesStore(super.data) : super.withData();
+
+  @override
+  Future<bool> remove(String key) async => false;
+}
+
+final class _ResidualPreferencesStore extends InMemorySharedPreferencesStore {
+  _ResidualPreferencesStore(super.data) : super.withData();
+
+  @override
+  Future<bool> remove(String key) async => true;
+}
+
+final class _RecordingPreferencesDurability implements RestoreDurability {
+  final List<String> events = <String>[];
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {}
+
+  @override
+  Future<void> restrictDirectory(Directory directory) async {}
+
+  @override
+  Future<void> restrictFile(File file) async {}
+
+  @override
+  Future<void> syncDirectory(
+    Directory directory, {
+    bool fullBarrier = false,
+  }) async {
+    expect(fullBarrier, isTrue);
+    events.add('directory');
+  }
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) async {
+    expect(fullBarrier, isTrue);
+    events.add('file');
+  }
+}
+
+final class _TestSharedPreferencesRemovalProof
+    implements DurableSharedPreferencesRemovalProof {
+  const _TestSharedPreferencesRemovalProof();
+
+  @override
+  Future<void> confirmRemoval(String rawKey) async {}
+}
+
+class _MemoryWipeDurability implements RestoreDurability {
+  _MemoryWipeDurability({this.failNextRename = false});
+
+  bool failNextRename;
+
+  @override
+  Future<void> renameAndSync({
+    required FileSystemEntity source,
+    required String targetPath,
+  }) async {
+    if (failNextRename) {
+      failNextRename = false;
+      throw StateError('injected_rename_failure');
+    }
+    final type = await FileSystemEntity.type(source.path, followLinks: false);
+    switch (type) {
+      case FileSystemEntityType.file:
+        await File(source.path).rename(targetPath);
+        return;
+      case FileSystemEntityType.directory:
+        await Directory(source.path).rename(targetPath);
+        return;
+      default:
+        throw StateError('injected_rename_source_type');
+    }
+  }
+
+  @override
+  Future<void> restrictDirectory(Directory directory) async {}
+
+  @override
+  Future<void> restrictFile(File file) async {}
+
+  @override
+  Future<void> syncDirectory(
+    Directory directory, {
+    bool fullBarrier = false,
+  }) async {}
+
+  @override
+  Future<void> syncFile(File file, {bool fullBarrier = false}) async {}
+}
+
+final class _MarkerDeletionFailingDurability extends _MemoryWipeDurability {
+  _MarkerDeletionFailingDurability(this.installationRoot);
+
+  final Directory installationRoot;
+  bool _failed = false;
+
+  @override
+  Future<void> syncDirectory(
+    Directory directory, {
+    bool fullBarrier = false,
+  }) async {
+    if (!_failed &&
+        directory.path == installationRoot.path &&
+        await directory.list(followLinks: false).isEmpty) {
+      _failed = true;
+      throw StateError('injected_marker_directory_sync_failure');
+    }
+  }
+}
+
+final class _CompletionCommitFailingDurability extends _MemoryWipeDurability {
+  _CompletionCommitFailingDurability(this.installationRoot);
+
+  final Directory installationRoot;
+  bool _failed = false;
+
+  @override
+  Future<void> syncDirectory(
+    Directory directory, {
+    bool fullBarrier = false,
+  }) async {
+    if (_failed || directory.path != installationRoot.path) return;
+    final retained = await directory.list(followLinks: false).toList();
+    if (retained.length == 1 &&
+        retained.single.path.endsWith('.kelivo-local-wipe-v2.completed.json')) {
+      _failed = true;
+      throw StateError('injected_completion_commit_failure');
+    }
+  }
+}
