@@ -79,6 +79,7 @@ import 'core/services/android_background.dart';
 import 'core/services/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
+import 'package:kelivo_durable_preferences/kelivo_durable_preferences.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 final RouteObserver<ModalRoute<dynamic>> routeObserver =
@@ -151,6 +152,7 @@ Future<void> main() async {
       late final Directory installationRoot;
       late final KelivoCoreCapabilities secureCoreCapabilities;
       try {
+        await KelivoDurablePreferences.registerForCurrentPlatform();
         installationRoot = await AppDirectories.getInstallationRootDirectory();
         secureCoreCapabilities = await secureCore.getCapabilities();
       } catch (error, stackTrace) {
