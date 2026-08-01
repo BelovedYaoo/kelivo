@@ -22,11 +22,13 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(17)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(18)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
 #define KELIVO_INVALID_KEY_HANDLE UINT64_C(0)
+#define KELIVO_INSTALLATION_ROOT_PATH_MAX_SIZE ((size_t)(64 * 1024))
+#define KELIVO_INSTALLATION_ROOT_ENTRY_NAME_MAX_SIZE ((size_t)1024)
 
 #define KELIVO_STATUS_OK INT32_C(0)
 #define KELIVO_STATUS_NULL_POINTER INT32_C(1)
@@ -96,6 +98,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_ATTACHMENT_CRYPTO (UINT64_C(1) << 7)
 #define KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING (UINT64_C(1) << 8)
 #define KELIVO_CAPABILITY_RECOVERY_MEDIA (UINT64_C(1) << 9)
+#define KELIVO_CAPABILITY_INSTALLATION_ROOT_WIPE (UINT64_C(1) << 10)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_ENTITY_KEY_MAX_SIZE ((size_t)2048)
@@ -265,6 +268,21 @@ KELIVO_CORE_API KelivoStatus kelivo_key_slot_delete(
  * 存储错误不得伪装为成功。本函数不删除数据库、附件或其他应用文件。
  */
 KELIVO_CORE_API KelivoStatus kelivo_key_slots_delete_all(void);
+
+/*
+ * 擦除调用方指定安装根中的全部内容，仅保留 preserved_entry_name 对应的直属
+ * 普通文件。路径和名称必须是 UTF-8；安装根必须是已存在的绝对非根路径，保留
+ * 名称必须是单一目录项。实现会以 no-follow 原生句柄固定安装根与保留文件，
+ * 拒绝链接、重解析点、跨挂载及类型替换，并在成功前完成文件和父目录持久化
+ * 屏障。中途失败可能留下部分已擦除状态，调用方可用同一参数幂等重试。
+ * Android 仅在应用 UID 沙箱、安装根独占锁及 openat2 约束均可用时开放；
+ * Linux 与 Apple 平台明确返回 UNSUPPORTED_PLATFORM，且不得回退到路径递归删除。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_installation_root_wipe(
+    const uint8_t *root_path_utf8,
+    size_t root_path_length,
+    const uint8_t *preserved_entry_name_utf8,
+    size_t preserved_entry_name_length);
 
 /*
  * 关闭非零不透明句柄。句柄仅在当前进程内有效，关闭后永久失效且数值不得

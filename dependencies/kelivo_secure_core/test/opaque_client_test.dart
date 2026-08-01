@@ -53,10 +53,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v17 及恢复介质支持', () async {
+  test('能力门禁声明 ABI v18、恢复介质及受支持平台安装根擦除', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 17);
+    expect(capabilities.abiVersion, 18);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -74,6 +74,61 @@ void main() {
       capabilities.supportsRecoveryMedia,
       Platform.isAndroid || Platform.isIOS,
     );
+    if (Platform.isWindows) {
+      expect(capabilities.supportsInstallationRootWipe, isTrue);
+    } else if (!Platform.isAndroid) {
+      expect(capabilities.supportsInstallationRootWipe, isFalse);
+    }
+  });
+
+  test('安装根擦除仅使用显式隔离根并精准保留完成标记', () async {
+    final capabilities = await core.getCapabilities();
+    if (!capabilities.supportsInstallationRootWipe) {
+      await expectLater(
+        core.wipeInstallationRoot(
+          rootPath: 'capability-gated-test-root',
+          preservedEntryName: 'wipe-complete',
+        ),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.unsupportedPlatform,
+          ),
+        ),
+      );
+      return;
+    }
+
+    final root = await Directory.systemTemp.createTemp(
+      'kelivo-secure-core-root-wipe-',
+    );
+    try {
+      final marker = File('${root.path}${Platform.pathSeparator}wipe-complete');
+      await marker.writeAsString('done', flush: true);
+      final nested = Directory('${root.path}${Platform.pathSeparator}nested');
+      await nested.create();
+      await File(
+        '${nested.path}${Platform.pathSeparator}secret.bin',
+      ).writeAsBytes(const <int>[1, 2, 3], flush: true);
+
+      await core.wipeInstallationRoot(
+        rootPath: root.path,
+        preservedEntryName: 'wipe-complete',
+      );
+      await core.wipeInstallationRoot(
+        rootPath: root.path,
+        preservedEntryName: 'wipe-complete',
+      );
+
+      final names = await root.list().map((entry) => entry.path).toList();
+      expect(names, <String>[marker.path]);
+      expect(await marker.readAsString(), 'done');
+    } finally {
+      if (await root.exists()) {
+        await root.delete(recursive: true);
+      }
+    }
   });
 
   test('安全存储后端代码包含 iOS Keychain', () {

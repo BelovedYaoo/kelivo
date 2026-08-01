@@ -26,6 +26,7 @@ const _deviceE2eeCoreCapability = 1 << 6;
 const _attachmentCryptoCapability = 1 << 7;
 const _accountTrustSigningCapability = 1 << 8;
 const _recoveryMediaCapability = 1 << 9;
+const _installationRootWipeCapability = 1 << 10;
 const _secureStorageCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
@@ -38,7 +39,8 @@ const _knownCapabilityFlags =
     _deviceE2eeCoreCapability |
     _attachmentCryptoCapability |
     _accountTrustSigningCapability |
-    _recoveryMediaCapability;
+    _recoveryMediaCapability |
+    _installationRootWipeCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
@@ -165,6 +167,7 @@ final class KelivoCoreCapabilities {
     required this.supportsAttachmentCrypto,
     required this.supportsAccountTrustSigning,
     required this.supportsRecoveryMedia,
+    required this.supportsInstallationRootWipe,
   });
 
   final int abiVersion;
@@ -179,6 +182,7 @@ final class KelivoCoreCapabilities {
   final bool supportsAttachmentCrypto;
   final bool supportsAccountTrustSigning;
   final bool supportsRecoveryMedia;
+  final bool supportsInstallationRootWipe;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -449,6 +453,22 @@ final class KelivoSecureCore {
   }
 
   Future<void> deleteAllSlots() => Isolate.run(_deleteAllKeySlots);
+
+  Future<void> wipeInstallationRoot({
+    required String rootPath,
+    required String preservedEntryName,
+  }) async {
+    final capabilities = await getCapabilities();
+    if (!capabilities.supportsInstallationRootWipe) {
+      throw const KelivoSecureCoreException(
+        operation: 'installation_root_wipe',
+        status: KelivoSecureCoreStatus.unsupportedPlatform,
+      );
+    }
+    await Isolate.run(
+      () => _wipeInstallationRoot(rootPath, preservedEntryName),
+    );
+  }
 
   Future<Uint8List> sealRecord(
     KelivoKeyHandle handle, {
@@ -1118,6 +1138,8 @@ KelivoCoreCapabilities _readCapabilities() {
       supportsAccountTrustSigning:
           capabilities.flags & _accountTrustSigningCapability != 0,
       supportsRecoveryMedia: capabilities.flags & _recoveryMediaCapability != 0,
+      supportsInstallationRootWipe:
+          capabilities.flags & _installationRootWipeCapability != 0,
     );
   } finally {
     calloc.free(output);
@@ -1234,6 +1256,29 @@ void _deleteAllKeySlots() {
     operation: 'key_slots_delete_all',
     statusCode: native.kelivo_key_slots_delete_all(),
   );
+}
+
+void _wipeInstallationRoot(String rootPath, String preservedEntryName) {
+  final rootPathBytes = Uint8List.fromList(utf8.encode(rootPath));
+  final preservedEntryNameBytes = Uint8List.fromList(
+    utf8.encode(preservedEntryName),
+  );
+  final rootPathPointer = _copyToNative(rootPathBytes);
+  final preservedEntryNamePointer = _copyToNative(preservedEntryNameBytes);
+  try {
+    _throwOnError(
+      operation: 'installation_root_wipe',
+      statusCode: native.kelivo_installation_root_wipe(
+        rootPathPointer,
+        rootPathBytes.length,
+        preservedEntryNamePointer,
+        preservedEntryNameBytes.length,
+      ),
+    );
+  } finally {
+    _clearAndFree(rootPathPointer, rootPathBytes.length);
+    _clearAndFree(preservedEntryNamePointer, preservedEntryNameBytes.length);
+  }
 }
 
 void _validateRecordContext({

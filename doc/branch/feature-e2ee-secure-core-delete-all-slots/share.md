@@ -1,10 +1,9 @@
 # 协作摘要
 
-- 基线：已安全重放至 `feature/e2ee-chat-runtime@75b0342a`，跟踪 Issue #66 / #81；范围仅为 secure core 安装级全槽删除，不包含上层运行时、界面、数据库或附件擦除。
-- ABI：升级至 v17，新增 `kelivo_key_slots_delete_all`，header、ffigen 绑定和 Dart `deleteAllSlots` 已闭环。
-- 并发语义：创建、打开、单槽删除和全槽删除共用生命周期锁；任一持久槽句柄仍打开时，全槽删除在平台调用前返回 `SLOT_IN_USE`。
-- 平台边界：Windows 通过 Known Folder 定位生产根，所有槽操作共用跨进程命名空间锁，并以 no-reparse 相对句柄删除；Android 从 `/` 逐级 no-follow 固定根 FD，锁内只用 `openat` / `unlinkat` / `renameat2`；iOS 只删除固定 service、非同步、Data Protection Keychain 的通用密码项。
-- 审查修复：共享 ASCII 名称解析先拒绝 Unicode，消除字节切片 panic；Android 每次枚举使用固定根下独立目录描述，避免共享偏移导致最终复核假空；Windows 目录查询解析完整校验固定头、长度和未对齐读取。
-- 测试隔离：Windows `cfg(test)` 永不解析生产根；Dart 槽测试必须经 marker + compile-time define 启用 feature-only 随机测试库，遗漏入口在任何 FFI 槽操作前失败。正式 release 不包含测试 ABI。
-- 验证：native 75 项、测试库生命周期用例、Windows 默认/测试 feature 严格 Clippy、Android 三目标及 ARM64 测试目标、iOS 三目标、依赖包全量和根改动文件 Flutter analyze 均通过；显式 Dart 测试库的依赖包与根调用链用例通过；正式 release 55 项 header/导出一致且无测试符号，测试 feature 仅增加两个作用域符号。
-- 未覆盖：根项目全量 analyze 受既有子依赖缺少 `test` / `pigeon` 开发依赖阻断；Windows release marker 负向构建卡在 VS `CompilerIdCXX`、未到 hook；Android Keystore/祖先换链和 iOS Keychain 尚未在真机或模拟器执行。所有测试均未访问默认生产槽。
+- 基线：父提交 `26b06cd96d73ae2e601b248c635ccc663806a536` 已完成 ABI17 全槽删除；本次范围只新增安装根安全擦除 ABI，不接入上层 provider、lease 或生产调用点。
+- ABI：升级至 v18，新增 capability bit 10、`kelivo_installation_root_wipe`、ffigen 绑定及 Dart `wipeInstallationRoot`；Dart 先校验 ABI/capability，再在 isolate 调用 native，绝无路径递归降级。
+- Windows：仅接受严格本地绝对路径；以 no-reparse 相对句柄固定根、直属 marker 和后代项，拒绝 reparse、跨卷、硬链接及类型替换；所有固定句柄拒绝 `FILE_SHARE_DELETE`，确定性阻断 marker、根和已打开子目录的并发 rename，并在每次删除后刷新父目录。
+- Android：仅在应用 UID 沙箱、安装根 `flock` 独占且内核支持 `openat2` 时发布 capability；后代解析使用 `RESOLVE_NO_XDEV | RESOLVE_NO_SYMLINKS | RESOLVE_BENEATH`，拒绝同文件系统 bind mount、跨挂载、链接和 inode 替换。旧内核失败关闭。
+- 平台边界：Linux、macOS、iOS 明确不发布 capability 并返回 `UNSUPPORTED_PLATFORM`。Linux 只在测试构建复用 Android 算法，不作为生产支持平台。
+- 验证：Windows native 83/83；Linux 容器隔离算法 9/9；Dart 包 28/28；包级 analyze；Windows、Android 三 ABI、Linux 双 ABI、iOS 三 ABI strict Clippy；release ABI header/绑定/导出均为 56 项且无测试符号。所有擦除测试仅使用显式隔离临时根，未访问默认生产根或槽。
+- 后续边界：Dart 用户确认到 native 打开根之间尚无同一身份凭据，不能证明调用时根仍是确认时根；Issue #85 必须通过两阶段 pin/token 契约解决后，生产调用点才可接入。Android 真机内核 capability 和独占协议仍需设备级验证。

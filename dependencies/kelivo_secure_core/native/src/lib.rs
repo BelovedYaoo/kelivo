@@ -10,6 +10,7 @@ use zeroize::Zeroizing;
 mod attachment;
 mod database;
 mod device_core;
+mod installation_root_wipe;
 mod opaque_client;
 mod record;
 mod recovery;
@@ -61,7 +62,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 17;
+const ABI_VERSION: u32 = 18;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -109,6 +110,9 @@ const DEVICE_E2EE_CORE_CAPABILITY: u64 = 1 << 6;
 const ATTACHMENT_CRYPTO_CAPABILITY: u64 = 1 << 7;
 const ACCOUNT_TRUST_SIGNING_CAPABILITY: u64 = 1 << 8;
 const RECOVERY_MEDIA_CAPABILITY: u64 = 1 << 9;
+const INSTALLATION_ROOT_WIPE_CAPABILITY: u64 = 1 << 10;
+const INSTALLATION_ROOT_PATH_MAX_SIZE: usize = 64 * 1024;
+const INSTALLATION_ROOT_ENTRY_NAME_MAX_SIZE: usize = 1024;
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
 type LocalKey = Zeroizing<Box<[u8]>>;
@@ -510,6 +514,11 @@ pub unsafe extern "C" fn kelivo_core_get_capabilities(
                 RECOVERY_MEDIA_CAPABILITY
             } else {
                 0
+            }
+            | if installation_root_wipe::is_supported() {
+                INSTALLATION_ROOT_WIPE_CAPABILITY
+            } else {
+                0
             },
         secure_storage_backend: platform::SECURE_STORAGE_BACKEND,
         reserved: [0; 3],
@@ -622,6 +631,44 @@ pub extern "C" fn kelivo_key_slots_delete_all() -> i32 {
         return status.code();
     }
     match platform::delete_all_slots() {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
+/// # Safety
+///
+/// 两个输入指针必须分别覆盖声明的可读字节数；字节必须是有效 UTF-8。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_installation_root_wipe(
+    root_path_utf8: *const u8,
+    root_path_length: usize,
+    preserved_entry_name_utf8: *const u8,
+    preserved_entry_name_length: usize,
+) -> i32 {
+    let root_path = match unsafe { read_input(root_path_utf8, root_path_length) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let preserved_entry_name =
+        match unsafe { read_input(preserved_entry_name_utf8, preserved_entry_name_length) } {
+            Ok(value) => value,
+            Err(status) => return status.code(),
+        };
+    if root_path.len() > INSTALLATION_ROOT_PATH_MAX_SIZE
+        || preserved_entry_name.len() > INSTALLATION_ROOT_ENTRY_NAME_MAX_SIZE
+    {
+        return KelivoStatus::InputTooLarge.code();
+    }
+    let root_path = match core::str::from_utf8(root_path) {
+        Ok(value) if !value.is_empty() && !value.contains('\0') => value,
+        _ => return KelivoStatus::InvalidArgument.code(),
+    };
+    let preserved_entry_name = match core::str::from_utf8(preserved_entry_name) {
+        Ok(value) if !value.is_empty() && !value.contains('\0') => value,
+        _ => return KelivoStatus::InvalidArgument.code(),
+    };
+    match installation_root_wipe::wipe(root_path, preserved_entry_name) {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(status) => status.code(),
     }
@@ -1423,6 +1470,11 @@ mod tests {
                 } else {
                     0
                 }
+                | if installation_root_wipe::is_supported() {
+                    INSTALLATION_ROOT_WIPE_CAPABILITY
+                } else {
+                    0
+                }
         );
         assert_eq!(
             output.secure_storage_backend,
@@ -1453,6 +1505,55 @@ mod tests {
                 | DEVICE_E2EE_CORE_CAPABILITY
                 | ATTACHMENT_CRYPTO_CAPABILITY
                 | ACCOUNT_TRUST_SIGNING_CAPABILITY
+                | INSTALLATION_ROOT_WIPE_CAPABILITY
+        );
+    }
+
+    #[test]
+    fn installation_root_wipe_rejects_invalid_ffi_inputs_before_platform_access() {
+        let marker = b"wipe-complete";
+        assert_eq!(
+            unsafe { kelivo_installation_root_wipe(ptr::null(), 1, marker.as_ptr(), marker.len()) },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(
+            unsafe { kelivo_installation_root_wipe(ptr::null(), 0, marker.as_ptr(), marker.len()) },
+            KelivoStatus::InvalidArgument.code()
+        );
+        let malformed_utf8 = [0xff_u8];
+        assert_eq!(
+            unsafe {
+                kelivo_installation_root_wipe(
+                    malformed_utf8.as_ptr(),
+                    malformed_utf8.len(),
+                    marker.as_ptr(),
+                    marker.len(),
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        let oversized = vec![b'a'; INSTALLATION_ROOT_PATH_MAX_SIZE + 1];
+        assert_eq!(
+            unsafe {
+                kelivo_installation_root_wipe(
+                    oversized.as_ptr(),
+                    oversized.len(),
+                    marker.as_ptr(),
+                    marker.len(),
+                )
+            },
+            KelivoStatus::InputTooLarge.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_installation_root_wipe(
+                    b"C:\\isolated".as_ptr(),
+                    b"C:\\isolated".len(),
+                    ptr::null(),
+                    1,
+                )
+            },
+            KelivoStatus::NullPointer.code()
         );
     }
 

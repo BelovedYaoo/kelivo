@@ -57,6 +57,21 @@ external int kelivo_key_slot_delete(
 @ffi.Native<KelivoStatus Function()>()
 external int kelivo_key_slots_delete_all();
 
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+  )
+>()
+external int kelivo_installation_root_wipe(
+  ffi.Pointer<ffi.Uint8> root_path_utf8,
+  int root_path_length,
+  ffi.Pointer<ffi.Uint8> preserved_entry_name_utf8,
+  int preserved_entry_name_length,
+);
+
 @ffi.Native<KelivoStatus Function(ffi.Uint64)>()
 external int kelivo_key_handle_close(int handle);
 
@@ -1324,7 +1339,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 17;
+const int KELIVO_CORE_ABI_VERSION = 18;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -1333,6 +1348,10 @@ const int KELIVO_KEY_SLOT_ID_SIZE = 16;
 const int KELIVO_KEY_POLICY_VERSION = 1;
 
 const int KELIVO_INVALID_KEY_HANDLE = 0;
+
+const int KELIVO_INSTALLATION_ROOT_PATH_MAX_SIZE = 65536;
+
+const int KELIVO_INSTALLATION_ROOT_ENTRY_NAME_MAX_SIZE = 1024;
 
 const int KELIVO_STATUS_OK = 0;
 
@@ -1467,6 +1486,8 @@ const int KELIVO_CAPABILITY_ATTACHMENT_CRYPTO = 128;
 const int KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING = 256;
 
 const int KELIVO_CAPABILITY_RECOVERY_MEDIA = 512;
+
+const int KELIVO_CAPABILITY_INSTALLATION_ROOT_WIPE = 1024;
 
 const int KELIVO_RECORD_ID_SIZE = 16;
 
