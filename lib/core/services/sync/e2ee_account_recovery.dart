@@ -25,6 +25,15 @@ enum E2eeAccountRecoveryAuthorizationResult { authorized, replayed }
 
 enum E2eeAccountRecoveryNextAction { recoverResume, recoverReplace }
 
+enum E2eeAccountRecoveryCommitResult { committed, replayed }
+
+enum E2eeAccountRecoveryCommitKind { resume, replacement }
+
+enum E2eeAccountRecoveryCommitNextAction {
+  finishFirstDataRekey,
+  finishSecondDataRekey,
+}
+
 final class CloudSyncAccountRecoveryToken {
   CloudSyncAccountRecoveryToken._(this.value);
 
@@ -269,6 +278,192 @@ final class E2eeAccountRecoveryTokenUnavailable implements Exception {
   String toString() => 'E2eeAccountRecoveryTokenUnavailable';
 }
 
+final class E2eeAccountRecoveryEnvelope {
+  factory E2eeAccountRecoveryEnvelope({
+    required int envelopeVersion,
+    required int keyEpoch,
+    required Uint8List accountKeyEnvelope,
+  }) {
+    if (envelopeVersion != 1) {
+      throw const FormatException('账户恢复信封版本无效');
+    }
+    return E2eeAccountRecoveryEnvelope._(
+      envelopeVersion,
+      _positiveUint32(keyEpoch, 'keyEpoch'),
+      _fixedBytes(
+        accountKeyEnvelope,
+        cloudSyncAccountKeyEnvelopeBytes,
+        'accountKeyEnvelope',
+      ),
+    );
+  }
+
+  const E2eeAccountRecoveryEnvelope._(
+    this.envelopeVersion,
+    this.keyEpoch,
+    this.accountKeyEnvelope,
+  );
+
+  final int envelopeVersion;
+  final int keyEpoch;
+  final Uint8List accountKeyEnvelope;
+}
+
+final class E2eeAccountRecoveryMembershipCommit {
+  factory E2eeAccountRecoveryMembershipCommit({
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required CloudSyncMembershipManifestDigest expectedMembershipManifestDigest,
+    required String operationId,
+    required Uint8List nextMembershipManifest,
+    required CloudSyncMembershipManifestDigest nextMembershipManifestDigest,
+    required E2eeAccountRecoveryEnvelope envelope,
+  }) {
+    final generation = _positiveInt32(expectedGeneration, 'expectedGeneration');
+    final keyEpoch = _positiveUint32(expectedKeyEpoch, 'expectedKeyEpoch');
+    if (generation == 0x7fffffff || keyEpoch == 0xffffffff) {
+      throw const FormatException('账户恢复成员提交代次无法继续推进');
+    }
+    final manifest = _rangedBytes(
+      nextMembershipManifest,
+      minimum: cloudSyncMembershipManifestMinimumBytes,
+      maximum: cloudSyncMembershipManifestMaximumBytes,
+      field: 'nextMembershipManifest',
+    );
+    final actualDigest = Uint8List.fromList(sha256.convert(manifest).bytes);
+    if (!_sameBytes(actualDigest, nextMembershipManifestDigest.bytes)) {
+      throw const FormatException('账户恢复下一成员清单摘要不匹配');
+    }
+    return E2eeAccountRecoveryMembershipCommit._(
+      generation,
+      keyEpoch,
+      expectedMembershipManifestDigest,
+      _canonicalUuid(operationId, 'operationId'),
+      manifest,
+      nextMembershipManifestDigest,
+      envelope,
+    );
+  }
+
+  const E2eeAccountRecoveryMembershipCommit._(
+    this.expectedGeneration,
+    this.expectedKeyEpoch,
+    this.expectedMembershipManifestDigest,
+    this.operationId,
+    this.nextMembershipManifest,
+    this.nextMembershipManifestDigest,
+    this.envelope,
+  );
+
+  final int expectedGeneration;
+  final int expectedKeyEpoch;
+  final CloudSyncMembershipManifestDigest expectedMembershipManifestDigest;
+  final String operationId;
+  final Uint8List nextMembershipManifest;
+  final CloudSyncMembershipManifestDigest nextMembershipManifestDigest;
+  final E2eeAccountRecoveryEnvelope envelope;
+}
+
+final class E2eeAccountRecoveryResumeCommit {
+  factory E2eeAccountRecoveryResumeCommit({
+    required String attemptId,
+    required E2eeAccountRecoveryMembershipCommit membership,
+    required String rekeyOperationId,
+  }) {
+    if (membership.envelope.keyEpoch != membership.expectedKeyEpoch) {
+      throw const FormatException('账户恢复接续信封密钥代次无效');
+    }
+    return E2eeAccountRecoveryResumeCommit._(
+      _canonicalUuid(attemptId, 'attemptId'),
+      membership,
+      _canonicalUuid(rekeyOperationId, 'rekeyOperationId'),
+    );
+  }
+
+  const E2eeAccountRecoveryResumeCommit._(
+    this.attemptId,
+    this.membership,
+    this.rekeyOperationId,
+  );
+
+  final String attemptId;
+  final E2eeAccountRecoveryMembershipCommit membership;
+  final String rekeyOperationId;
+}
+
+final class E2eeAccountRecoveryReplacementCommit {
+  factory E2eeAccountRecoveryReplacementCommit({
+    required String attemptId,
+    required E2eeAccountRecoveryMembershipCommit membership,
+    required int nextRecoveryCapsuleVersion,
+    required Uint8List nextRecoveryCapsule,
+    required String completionSessionId,
+    required CloudSyncFullSessionToken completionSessionToken,
+  }) {
+    if (membership.envelope.keyEpoch != membership.expectedKeyEpoch + 1) {
+      throw const FormatException('账户恢复替换信封密钥代次无效');
+    }
+    return E2eeAccountRecoveryReplacementCommit._(
+      _canonicalUuid(attemptId, 'attemptId'),
+      membership,
+      _positiveInt32(nextRecoveryCapsuleVersion, 'nextRecoveryCapsuleVersion'),
+      _rangedBytes(
+        nextRecoveryCapsule,
+        minimum: 1,
+        maximum: cloudSyncRecoveryCapsuleMaximumBytes,
+        field: 'nextRecoveryCapsule',
+      ),
+      _canonicalUuid(completionSessionId, 'completionSessionId'),
+      completionSessionToken,
+    );
+  }
+
+  const E2eeAccountRecoveryReplacementCommit._(
+    this.attemptId,
+    this.membership,
+    this.nextRecoveryCapsuleVersion,
+    this.nextRecoveryCapsule,
+    this.completionSessionId,
+    this.completionSessionToken,
+  );
+
+  final String attemptId;
+  final E2eeAccountRecoveryMembershipCommit membership;
+  final int nextRecoveryCapsuleVersion;
+  final Uint8List nextRecoveryCapsule;
+  final String completionSessionId;
+  final CloudSyncFullSessionToken completionSessionToken;
+}
+
+final class E2eeAccountRecoveryCommitReceipt {
+  E2eeAccountRecoveryCommitReceipt({
+    required this.result,
+    required this.kind,
+    required String attemptId,
+    required String membershipOperationId,
+    required String rekeyOperationId,
+    required int generation,
+    required int keyEpoch,
+    required this.nextAction,
+  }) : attemptId = _canonicalUuid(attemptId, 'attemptId'),
+       membershipOperationId = _canonicalUuid(
+         membershipOperationId,
+         'membershipOperationId',
+       ),
+       rekeyOperationId = _canonicalUuid(rekeyOperationId, 'rekeyOperationId'),
+       generation = _positiveInt32(generation, 'generation'),
+       keyEpoch = _positiveUint32(keyEpoch, 'keyEpoch');
+
+  final E2eeAccountRecoveryCommitResult result;
+  final E2eeAccountRecoveryCommitKind kind;
+  final String attemptId;
+  final String membershipOperationId;
+  final String rekeyOperationId;
+  final int generation;
+  final int keyEpoch;
+  final E2eeAccountRecoveryCommitNextAction nextAction;
+}
+
 sealed class E2eeAccountRecoveryBearer {
   const E2eeAccountRecoveryBearer();
 
@@ -329,6 +524,16 @@ abstract interface class E2eeAccountRecoveryTransport {
     required CloudSyncAccountRecoveryToken recoveryToken,
     required Uint8List nonceProof,
     required Uint8List trustSignature,
+  });
+
+  Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryResume({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryResumeCommit request,
+  });
+
+  Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryReplacement({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryReplacementCommit request,
   });
 }
 

@@ -23,7 +23,8 @@
 - 服务端稳定硬切 wire 已固定在 `60d6f93b5ec296293c1f7071ba9ccf5da9d67c00`；客户端不再接旧 challenge 预期链头字段。
 - 已由稳定 OpenAPI 通过生成命令引入账户恢复 API client，并完成 challenge、冻结历史与授权 transport；请求 bearer 由强类型 onboarding/recovery 联合显式选择，响应保持精确字段集校验。
 - `proofReady` 重启会先用密文 checkpoint 中的恢复 token 读取 `state/get`：只有服务端精确返回 token 尚不可用才继续 onboarding；已授权则校验安全 head/data state 与冻结 challenge 一致，先持久化 `authorized` 再改用 recovery bearer。网络或其他错误不回退。
-- 验证：`flutter analyze lib test` 无问题；授权 4 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 116 项 Flutter 测试通过。全仓 `flutter analyze` 仍被未安装开发依赖的 `mcp_client` 测试与 Workmanager Pigeon 输入阻断，与本次改动无关。
+- 已接入 `recover-resume` / `recover-replace` 原子提交 transport：请求严格验证成员清单摘要、信封代次与 capsule/session 边界；回执绑定原 attempt、membership operation、rekey operation、代次与下一动作，重放不得宽松接收。
+- 验证：`flutter analyze lib test` 无问题；授权 5 项、恢复提交协议 2 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 116 项 Flutter 测试通过。全仓 `flutter analyze` 仍被未安装开发依赖的 `mcp_client` 测试与 Workmanager Pigeon 输入阻断，与本次改动无关。
 
 ## 协作边界
 
@@ -33,6 +34,6 @@
 
 ## 后续依赖
 
-- 继续接入 resume/replacement commit 和后续 data-rekey，并为完整恢复业务状态增加独立耐久 checkpoint。
+- 继续接入 resume/replacement 的 Native 准备与后续 data-rekey，并为完整恢复业务状态增加独立耐久 checkpoint。
 - ABI18 集成后以 ABI19 实现单次 Native 恢复 proof 事务；当前没有生产适配器，因此 UI 不得宣称恢复可用。
 - 继续实现加密 checkpoint、重启/过期接管、op4/op5 与工作区耐久提交，再接 Android/iOS 二维码和恢复文件入口。

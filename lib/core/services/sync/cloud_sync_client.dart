@@ -672,6 +672,115 @@ final class CloudSyncClient
   }
 
   @override
+  Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryResume({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryResumeCommit request,
+  }) {
+    final membership = request.membership;
+    return _guard(() async {
+      final generatedRequest = api.AccountRecoveryResumeCommitRequest((
+        builder,
+      ) {
+        builder
+          ..protocolVersion = e2eeAccountRecoveryProtocolVersion
+          ..expectedGeneration = membership.expectedGeneration
+          ..expectedKeyEpoch = membership.expectedKeyEpoch
+          ..expectedMembershipManifestDigest =
+              membership.expectedMembershipManifestDigest.encoded
+          ..operationId = membership.operationId
+          ..nextMembershipManifest = _encodeBinaryForRequest(
+            membership.nextMembershipManifest,
+          )
+          ..nextMembershipManifestDigest =
+              membership.nextMembershipManifestDigest.encoded
+          ..rekeyOperationId = request.rekeyOperationId;
+        builder.envelope
+          ..envelopeVersion = membership.envelope.envelopeVersion
+          ..keyEpoch = membership.envelope.keyEpoch
+          ..accountKeyEnvelope = _encodeFixedBinaryForRequest(
+            membership.envelope.accountKeyEnvelope,
+            cloudSyncAccountKeyEnvelopeBytes,
+          );
+      });
+      final response = await _client
+          .getAccountRecoveryApi()
+          .commitAccountRecoveryResume(
+            accountRecoveryResumeCommitRequest: generatedRequest,
+            headers: _authorizationHeaders(recoveryToken.value),
+            extra: _strictResponseExtra,
+          );
+      return _parseAccountRecoveryCommitReceipt(
+        response.extra[_rawResponseKey],
+        expectedKind: E2eeAccountRecoveryCommitKind.resume,
+        expectedAttemptId: request.attemptId,
+        expectedMembershipOperationId: membership.operationId,
+        expectedRekeyOperationId: request.rekeyOperationId,
+        expectedGeneration: membership.expectedGeneration + 1,
+        expectedKeyEpoch: membership.expectedKeyEpoch,
+        expectedNextAction:
+            E2eeAccountRecoveryCommitNextAction.finishFirstDataRekey,
+      );
+    });
+  }
+
+  @override
+  Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryReplacement({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryReplacementCommit request,
+  }) {
+    final membership = request.membership;
+    return _guard(() async {
+      final generatedRequest = api.AccountRecoveryReplacementCommitRequest((
+        builder,
+      ) {
+        builder
+          ..protocolVersion = e2eeAccountRecoveryProtocolVersion
+          ..expectedGeneration = membership.expectedGeneration
+          ..expectedKeyEpoch = membership.expectedKeyEpoch
+          ..expectedMembershipManifestDigest =
+              membership.expectedMembershipManifestDigest.encoded
+          ..operationId = membership.operationId
+          ..nextMembershipManifest = _encodeBinaryForRequest(
+            membership.nextMembershipManifest,
+          )
+          ..nextMembershipManifestDigest =
+              membership.nextMembershipManifestDigest.encoded
+          ..nextRecoveryCapsuleVersion = request.nextRecoveryCapsuleVersion
+          ..nextRecoveryCapsule = _encodeBinaryForRequest(
+            request.nextRecoveryCapsule,
+          )
+          ..completionSessionId = request.completionSessionId
+          ..completionSessionToken = request.completionSessionToken.value;
+        builder.envelope
+          ..envelopeVersion = membership.envelope.envelopeVersion
+          ..keyEpoch = membership.envelope.keyEpoch
+          ..accountKeyEnvelope = _encodeFixedBinaryForRequest(
+            membership.envelope.accountKeyEnvelope,
+            cloudSyncAccountKeyEnvelopeBytes,
+          );
+      });
+      final response = await _client
+          .getAccountRecoveryApi()
+          .commitAccountRecoveryReplacement(
+            accountRecoveryReplacementCommitRequest: generatedRequest,
+            headers: _authorizationHeaders(recoveryToken.value),
+            extra: _strictResponseExtra,
+          );
+      return _parseAccountRecoveryCommitReceipt(
+        response.extra[_rawResponseKey],
+        expectedKind: E2eeAccountRecoveryCommitKind.replacement,
+        expectedAttemptId: request.attemptId,
+        expectedMembershipOperationId: membership.operationId,
+        expectedRekeyOperationId: membership.operationId,
+        expectedGeneration: membership.expectedGeneration + 1,
+        expectedKeyEpoch: membership.expectedKeyEpoch + 1,
+        expectedNextAction:
+            E2eeAccountRecoveryCommitNextAction.finishSecondDataRekey,
+      );
+    });
+  }
+
+  @override
   Future<CloudSyncDevicePairingCreated> createDevicePairing({
     required CloudSyncOnboardingToken token,
     required String pairingId,
@@ -2382,6 +2491,60 @@ _parseAccountRecoveryAuthorizationReceipt(
   );
 }
 
+E2eeAccountRecoveryCommitReceipt _parseAccountRecoveryCommitReceipt(
+  Object? rawResponse, {
+  required E2eeAccountRecoveryCommitKind expectedKind,
+  required String expectedAttemptId,
+  required String expectedMembershipOperationId,
+  required String expectedRekeyOperationId,
+  required int expectedGeneration,
+  required int expectedKeyEpoch,
+  required E2eeAccountRecoveryCommitNextAction expectedNextAction,
+}) {
+  final data = _strictResponseData(
+    rawResponse,
+    _accountRecoveryCommitDataKeys,
+    '账户恢复成员提交响应',
+  );
+  final result = switch (_rawString(data, 'result')) {
+    'committed' => E2eeAccountRecoveryCommitResult.committed,
+    'replayed' => E2eeAccountRecoveryCommitResult.replayed,
+    _ => throw const FormatException('账户恢复成员提交结果无效'),
+  };
+  final kind = switch (_rawString(data, 'status')) {
+    'resume-committed' => E2eeAccountRecoveryCommitKind.resume,
+    'replacement-committed' => E2eeAccountRecoveryCommitKind.replacement,
+    _ => throw const FormatException('账户恢复成员提交状态无效'),
+  };
+  final nextAction = switch (_rawString(data, 'nextAction')) {
+    'finish-first-data-rekey' =>
+      E2eeAccountRecoveryCommitNextAction.finishFirstDataRekey,
+    'finish-second-data-rekey' =>
+      E2eeAccountRecoveryCommitNextAction.finishSecondDataRekey,
+    _ => throw const FormatException('账户恢复成员提交下一步无效'),
+  };
+  final receipt = E2eeAccountRecoveryCommitReceipt(
+    result: result,
+    kind: kind,
+    attemptId: _rawString(data, 'attemptId'),
+    membershipOperationId: _rawString(data, 'membershipOperationId'),
+    rekeyOperationId: _rawString(data, 'rekeyOperationId'),
+    generation: _rawInt(data, 'generation'),
+    keyEpoch: _rawInt(data, 'keyEpoch'),
+    nextAction: nextAction,
+  );
+  if (receipt.kind != expectedKind ||
+      receipt.attemptId != expectedAttemptId ||
+      receipt.membershipOperationId != expectedMembershipOperationId ||
+      receipt.rekeyOperationId != expectedRekeyOperationId ||
+      receipt.generation != expectedGeneration ||
+      receipt.keyEpoch != expectedKeyEpoch ||
+      receipt.nextAction != expectedNextAction) {
+    throw const FormatException('账户恢复成员提交响应未绑定原请求');
+  }
+  return receipt;
+}
+
 CloudSyncAccountSecurityState _parseAccountSecurityState(Object? rawResponse) {
   return CloudSyncAccountSecurityState.fromJson(
     _strictResponseData(rawResponse, _accountSecurityStateDataKeys, '账户安全状态响应'),
@@ -3354,6 +3517,16 @@ const _accountRecoveryStateDataKeys = <String>{
   'recoveryTokenExpiresAt',
   'securityState',
   'dataState',
+};
+const _accountRecoveryCommitDataKeys = <String>{
+  'result',
+  'attemptId',
+  'status',
+  'membershipOperationId',
+  'rekeyOperationId',
+  'generation',
+  'keyEpoch',
+  'nextAction',
 };
 
 final _syncIdentifierPattern = RegExp(

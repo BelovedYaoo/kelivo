@@ -585,6 +585,22 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
       recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
     );
   }
+
+  @override
+  Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryResume({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryResumeCommit request,
+  }) {
+    throw StateError('授权测试不应提交恢复接续');
+  }
+
+  @override
+  Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryReplacement({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryReplacementCommit request,
+  }) {
+    throw StateError('授权测试不应提交恢复替换');
+  }
 }
 
 final class _FakeRecoveryProofCore implements E2eeAccountRecoveryProofCore {

@@ -2337,6 +2337,329 @@ void main() {
     );
   });
 
+  test('账户恢复 resume 与 replacement 提交使用稳定协议并严格绑定回执', () async {
+    final expectedManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      101,
+    );
+    final resumeManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      102,
+    );
+    final replacementManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      103,
+    );
+    final resumeEnvelope = _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 104);
+    final replacementEnvelope = _filledBytes(
+      cloudSyncAccountKeyEnvelopeBytes,
+      105,
+    );
+    final replacementCapsule = _filledBytes(cloudSyncRecoveryCapsuleBytes, 106);
+    final recoveryToken = CloudSyncAccountRecoveryToken.parse(
+      'kelivo_recovery_${_encodedBytes(32, 107)}',
+    );
+    final resume = E2eeAccountRecoveryResumeCommit(
+      attemptId: _attemptId1,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: 4,
+        expectedKeyEpoch: 5,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              Uint8List.fromList(sha256.convert(expectedManifest).bytes),
+            ),
+        operationId: _mutationId4,
+        nextMembershipManifest: resumeManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              Uint8List.fromList(sha256.convert(resumeManifest).bytes),
+            ),
+        envelope: E2eeAccountRecoveryEnvelope(
+          envelopeVersion: 1,
+          keyEpoch: 5,
+          accountKeyEnvelope: resumeEnvelope,
+        ),
+      ),
+      rekeyOperationId: _mutationId5,
+    );
+    final replacement = E2eeAccountRecoveryReplacementCommit(
+      attemptId: _attemptId2,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: 7,
+        expectedKeyEpoch: 8,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              Uint8List.fromList(sha256.convert(expectedManifest).bytes),
+            ),
+        operationId: _mutationId6,
+        nextMembershipManifest: replacementManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              Uint8List.fromList(sha256.convert(replacementManifest).bytes),
+            ),
+        envelope: E2eeAccountRecoveryEnvelope(
+          envelopeVersion: 1,
+          keyEpoch: 9,
+          accountKeyEnvelope: replacementEnvelope,
+        ),
+      ),
+      nextRecoveryCapsuleVersion: 3,
+      nextRecoveryCapsule: replacementCapsule,
+      completionSessionId: _deviceId5,
+      completionSessionToken: _otherFullToken,
+    );
+    final requests = <(String, String, String?, CloudSyncJsonMap)>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      final body = copyCloudSyncJsonMap(
+        jsonDecode(await utf8.decoder.bind(request).join()),
+      );
+      requests.add((
+        request.method,
+        request.uri.path,
+        request.headers.value(HttpHeaders.authorizationHeader),
+        body,
+      ));
+      final data = switch (request.uri.path) {
+        '/api/auth/account-recovery/resume/commit' => <String, Object?>{
+          'result': 'committed',
+          'attemptId': _attemptId1,
+          'status': 'resume-committed',
+          'membershipOperationId': _mutationId4,
+          'rekeyOperationId': _mutationId5,
+          'generation': 5,
+          'keyEpoch': 5,
+          'nextAction': 'finish-first-data-rekey',
+        },
+        '/api/auth/account-recovery/replacement/commit' => <String, Object?>{
+          'result': 'replayed',
+          'attemptId': _attemptId2,
+          'status': 'replacement-committed',
+          'membershipOperationId': _mutationId6,
+          'rekeyOperationId': _mutationId6,
+          'generation': 8,
+          'keyEpoch': 9,
+          'nextAction': 'finish-second-data-rekey',
+        },
+        _ => throw StateError('未预期的账户恢复提交请求'),
+      };
+      await _writeJsonResponse(request, <String, Object?>{'data': data});
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    final resumeReceipt = await client.commitRecoveryResume(
+      recoveryToken: recoveryToken,
+      request: resume,
+    );
+    final replacementReceipt = await client.commitRecoveryReplacement(
+      recoveryToken: recoveryToken,
+      request: replacement,
+    );
+
+    expect(resumeReceipt.result, E2eeAccountRecoveryCommitResult.committed);
+    expect(resumeReceipt.kind, E2eeAccountRecoveryCommitKind.resume);
+    expect(
+      resumeReceipt.nextAction,
+      E2eeAccountRecoveryCommitNextAction.finishFirstDataRekey,
+    );
+    expect(replacementReceipt.result, E2eeAccountRecoveryCommitResult.replayed);
+    expect(replacementReceipt.kind, E2eeAccountRecoveryCommitKind.replacement);
+    expect(
+      replacementReceipt.nextAction,
+      E2eeAccountRecoveryCommitNextAction.finishSecondDataRekey,
+    );
+    expect(
+      requests.map((request) => (request.$1, request.$2)),
+      <(String, String)>[
+        ('POST', '/api/auth/account-recovery/resume/commit'),
+        ('POST', '/api/auth/account-recovery/replacement/commit'),
+      ],
+    );
+    expect(requests.map((request) => request.$3), <String?>[
+      'Bearer ${recoveryToken.value}',
+      'Bearer ${recoveryToken.value}',
+    ]);
+    expect(requests[0].$4, <String, Object?>{
+      'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+      'expectedGeneration': 4,
+      'expectedKeyEpoch': 5,
+      'expectedMembershipManifestDigest': _encodedData(
+        Uint8List.fromList(sha256.convert(expectedManifest).bytes),
+      ),
+      'operationId': _mutationId4,
+      'nextMembershipManifest': _encodedData(resumeManifest),
+      'nextMembershipManifestDigest': _encodedData(
+        Uint8List.fromList(sha256.convert(resumeManifest).bytes),
+      ),
+      'envelope': <String, Object?>{
+        'envelopeVersion': 1,
+        'keyEpoch': 5,
+        'accountKeyEnvelope': _encodedData(resumeEnvelope),
+      },
+      'rekeyOperationId': _mutationId5,
+    });
+    expect(requests[1].$4, <String, Object?>{
+      'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+      'expectedGeneration': 7,
+      'expectedKeyEpoch': 8,
+      'expectedMembershipManifestDigest': _encodedData(
+        Uint8List.fromList(sha256.convert(expectedManifest).bytes),
+      ),
+      'operationId': _mutationId6,
+      'nextMembershipManifest': _encodedData(replacementManifest),
+      'nextMembershipManifestDigest': _encodedData(
+        Uint8List.fromList(sha256.convert(replacementManifest).bytes),
+      ),
+      'envelope': <String, Object?>{
+        'envelopeVersion': 1,
+        'keyEpoch': 9,
+        'accountKeyEnvelope': _encodedData(replacementEnvelope),
+      },
+      'nextRecoveryCapsuleVersion': 3,
+      'nextRecoveryCapsule': _encodedData(replacementCapsule),
+      'completionSessionId': _deviceId5,
+      'completionSessionToken': _otherFullTokenValue,
+    });
+  });
+
+  test('账户恢复提交拒绝错误清单摘要与错配重放回执', () async {
+    final expectedManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      108,
+    );
+    final nextManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      109,
+    );
+    final expectedDigest = CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List.fromList(sha256.convert(expectedManifest).bytes),
+    );
+    final nextDigest = CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List.fromList(sha256.convert(nextManifest).bytes),
+    );
+    final envelope = E2eeAccountRecoveryEnvelope(
+      envelopeVersion: 1,
+      keyEpoch: 5,
+      accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 110),
+    );
+    expect(
+      () => E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: 4,
+        expectedKeyEpoch: 5,
+        expectedMembershipManifestDigest: expectedDigest,
+        operationId: _mutationId4,
+        nextMembershipManifest: nextManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              _filledBytes(cloudSyncMembershipManifestDigestBytes, 111),
+            ),
+        envelope: envelope,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    final wrongResumeEpochMembership = E2eeAccountRecoveryMembershipCommit(
+      expectedGeneration: 4,
+      expectedKeyEpoch: 5,
+      expectedMembershipManifestDigest: expectedDigest,
+      operationId: _mutationId4,
+      nextMembershipManifest: nextManifest,
+      nextMembershipManifestDigest: nextDigest,
+      envelope: E2eeAccountRecoveryEnvelope(
+        envelopeVersion: 1,
+        keyEpoch: 6,
+        accountKeyEnvelope: _filledBytes(cloudSyncAccountKeyEnvelopeBytes, 112),
+      ),
+    );
+    expect(
+      () => E2eeAccountRecoveryResumeCommit(
+        attemptId: _attemptId1,
+        membership: wrongResumeEpochMembership,
+        rekeyOperationId: _mutationId5,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    final wrongReplacementEpochMembership = E2eeAccountRecoveryMembershipCommit(
+      expectedGeneration: 4,
+      expectedKeyEpoch: 5,
+      expectedMembershipManifestDigest: expectedDigest,
+      operationId: _mutationId4,
+      nextMembershipManifest: nextManifest,
+      nextMembershipManifestDigest: nextDigest,
+      envelope: envelope,
+    );
+    expect(
+      () => E2eeAccountRecoveryReplacementCommit(
+        attemptId: _attemptId1,
+        membership: wrongReplacementEpochMembership,
+        nextRecoveryCapsuleVersion: 2,
+        nextRecoveryCapsule: _filledBytes(cloudSyncRecoveryCapsuleBytes, 113),
+        completionSessionId: _deviceId5,
+        completionSessionToken: _otherFullToken,
+      ),
+      throwsA(isA<FormatException>()),
+    );
+    final request = E2eeAccountRecoveryResumeCommit(
+      attemptId: _attemptId1,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: 4,
+        expectedKeyEpoch: 5,
+        expectedMembershipManifestDigest: expectedDigest,
+        operationId: _mutationId4,
+        nextMembershipManifest: nextManifest,
+        nextMembershipManifestDigest: nextDigest,
+        envelope: envelope,
+      ),
+      rekeyOperationId: _mutationId5,
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+    final recoveryToken = CloudSyncAccountRecoveryToken.generate();
+
+    final receiptFuture = client.commitRecoveryResume(
+      recoveryToken: recoveryToken,
+      request: request,
+    );
+    final httpRequest = await requestFuture;
+    await utf8.decoder.bind(httpRequest).join();
+    await _writeJsonResponse(httpRequest, <String, Object?>{
+      'data': <String, Object?>{
+        'result': 'replayed',
+        'attemptId': _attemptId1,
+        'status': 'resume-committed',
+        'membershipOperationId': _mutationId4,
+        'rekeyOperationId': _mutationId6,
+        'generation': 5,
+        'keyEpoch': 5,
+        'nextAction': 'finish-first-data-rekey',
+      },
+    });
+
+    await expectLater(
+      receiptFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('安全控制面拒绝未知字段、历史串线与轮换错配回执', () async {
     final historyManifest = _filledBytes(
       cloudSyncMembershipManifestMinimumBytes,
