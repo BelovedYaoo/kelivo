@@ -3595,12 +3595,88 @@ void main() {
     );
     await request.response.close();
 
-    final result = await resultFuture;
+    final outcome = await resultFuture;
+    expect(outcome, isA<CloudSyncDataRekeyFinalizeResult>());
+    final result = outcome as CloudSyncDataRekeyFinalizeResult;
     expect(result.dataGeneration, 5);
     expect(result.dataKeyEpoch, 3);
     expect(result.changeWatermark, 18);
     expect(result.completion.operationId, _mutationId3);
     expect(result.completion.signature, _filledBytes(64, 15));
+  });
+
+  test('data-rekey 最终提交严格解析跨请求校验进度', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final request = CloudSyncDataRekeyFinalizeRequest(
+      activeLease: activeLease,
+      mutationId: _mutationId6,
+      proof: CloudSyncDataRekeyFinalizeProof(
+        issuerDeviceId: _deviceId1,
+        sourceSnapshotRoot: _filledBytes(32, 12),
+        sourceRecordCount: 2,
+        sourceAttachmentCount: 1,
+        sourceMaximumChangeSeq: 16,
+        sourceRecordCursorEnd: _recordId1,
+        sourceAttachmentCursorEnd: CloudSyncDataRekeyAttachmentCursor(
+          attachmentId: _attachmentId,
+          uploadId: _uploadId,
+        ),
+        membershipGeneration: 8,
+        membershipManifestDigest: _filledBytes(32, 13),
+        stagedRecordCount: 2,
+        stagedAttachmentCount: 1,
+        stagedCiphertextSetDigest: _filledBytes(32, 14),
+        signature: _filledBytes(64, 15),
+      ),
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final outcomeFuture = client.finalizeDataRekey(request);
+    final httpRequest = await requestFuture;
+    await httpRequest.drain<void>();
+    httpRequest.response.headers.contentType = ContentType.json;
+    httpRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'result': 'verification-pending',
+          'operationId': _mutationId3,
+          'phase': 'staged-records',
+          'sourceRecordCount': 2,
+          'sourceAttachmentCount': 1,
+          'stagedRecordCount': 1,
+          'stagedAttachmentCount': 0,
+        },
+      }),
+    );
+    await httpRequest.response.close();
+
+    final outcome = await outcomeFuture;
+    expect(outcome, isA<CloudSyncDataRekeyFinalizePending>());
+    final pending = outcome as CloudSyncDataRekeyFinalizePending;
+    expect(
+      pending.phase,
+      CloudSyncDataRekeyFinalizeVerificationPhase.stagedRecords,
+    );
+    expect(pending.stagedRecordCount, 1);
+    expect(pending.stagedAttachmentCount, 0);
   });
 
   test('data-rekey 传输 DTO 在发网前拒绝非法边界', () {

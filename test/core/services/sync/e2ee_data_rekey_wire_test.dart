@@ -1,5 +1,6 @@
 import 'dart:typed_data';
 
+import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_data_rekey_wire.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -611,6 +612,97 @@ void main() {
       );
     });
   });
+
+  group('data-rekey 最终校验进度', () {
+    test('接受与 finalize 请求绑定的跨请求检查点', () {
+      final request = _finalizeRequest();
+
+      final outcome =
+          CloudSyncDataRekeyFinalizeOutcome.fromJson(<String, Object?>{
+            'result': 'verification-pending',
+            'operationId': request.activeLease.operation.operationId,
+            'phase': 'staged-records',
+            'sourceRecordCount': 2,
+            'sourceAttachmentCount': 1,
+            'stagedRecordCount': 1,
+            'stagedAttachmentCount': 0,
+          }, request: request);
+
+      expect(outcome, isA<CloudSyncDataRekeyFinalizePending>());
+      final pending = outcome as CloudSyncDataRekeyFinalizePending;
+      expect(
+        pending.phase,
+        CloudSyncDataRekeyFinalizeVerificationPhase.stagedRecords,
+      );
+      expect(pending.stagedRecordCount, 1);
+    });
+
+    test('拒绝越过前置阶段或超出证明数量的检查点', () {
+      final request = _finalizeRequest();
+      for (final progress in <CloudSyncJsonMap>[
+        <String, Object?>{
+          'result': 'verification-pending',
+          'operationId': request.activeLease.operation.operationId,
+          'phase': 'staged-records',
+          'sourceRecordCount': 1,
+          'sourceAttachmentCount': 1,
+          'stagedRecordCount': 1,
+          'stagedAttachmentCount': 0,
+        },
+        <String, Object?>{
+          'result': 'verification-pending',
+          'operationId': request.activeLease.operation.operationId,
+          'phase': 'verified',
+          'sourceRecordCount': 2,
+          'sourceAttachmentCount': 1,
+          'stagedRecordCount': 3,
+          'stagedAttachmentCount': 1,
+        },
+      ]) {
+        expect(
+          () => CloudSyncDataRekeyFinalizeOutcome.fromJson(
+            progress,
+            request: request,
+          ),
+          throwsFormatException,
+        );
+      }
+    });
+  });
+}
+
+CloudSyncDataRekeyFinalizeRequest _finalizeRequest() {
+  return CloudSyncDataRekeyFinalizeRequest(
+    activeLease: CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: '11111111-1111-4111-8111-111111111111',
+        sourceDataGeneration: 7,
+        sourceKeyEpoch: 11,
+        targetKeyEpoch: 12,
+      ),
+      leaseToken: '22222222-2222-4222-8222-222222222222',
+      leaseVersion: 3,
+    ),
+    mutationId: '33333333-3333-4333-8333-333333333333',
+    proof: CloudSyncDataRekeyFinalizeProof(
+      issuerDeviceId: '44444444-4444-4444-8444-444444444444',
+      sourceSnapshotRoot: Uint8List(32),
+      sourceRecordCount: 2,
+      sourceAttachmentCount: 1,
+      sourceMaximumChangeSeq: 9,
+      sourceRecordCursorEnd: '55555555-5555-4555-8555-555555555555',
+      sourceAttachmentCursorEnd: CloudSyncDataRekeyAttachmentCursor(
+        attachmentId: '66666666-6666-4666-8666-666666666666',
+        uploadId: '77777777-7777-4777-8777-777777777777',
+      ),
+      membershipGeneration: 3,
+      membershipManifestDigest: Uint8List(32),
+      stagedRecordCount: 2,
+      stagedAttachmentCount: 1,
+      stagedCiphertextSetDigest: Uint8List(32),
+      signature: Uint8List(64),
+    ),
+  );
 }
 
 E2eeDataRekeyCompletionFields _completionFields({

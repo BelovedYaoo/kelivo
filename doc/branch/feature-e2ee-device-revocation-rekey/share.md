@@ -8,3 +8,4 @@
 - 当前进度：先实现可独立完成的流式 data-rekey 执行器、其他设备撤销与固定 mutation 重放；当前设备 confirmed marker 在 `kelivo-api#40` 完成前保持失败关闭。
 - 已完成：源记录/附件与暂存记录/附件可按有界分页流式累计 SHA-256；严格校验顺序、数量、阶段和最大 changeSeq，结果与既有 TypeScript 固定向量一致。
 - 已完成：data-rekey 单例日志支持严格读取、租约回执耐久记录、单调续租、幂等阶段推进和 finalizing 身份校验后清理；网络延迟后的过期回执仍可落盘，但不得覆盖更新的租约事实。
+- 已完成：CloudSync v4 finalize 公开返回封闭 outcome，严格解析并校验 `verification-pending` 的跨请求分页检查点；执行器可在同一 finalize mutation 的多次请求之间续租，最终仅接收完整 `finalized` 回执。

@@ -165,7 +165,7 @@ abstract interface class CloudSyncDataRekeyTransport {
     CloudSyncDataRekeyAttachmentStageRequest request,
   );
 
-  Future<CloudSyncDataRekeyFinalizeResult> finalizeDataRekey(
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
     CloudSyncDataRekeyFinalizeRequest request,
   );
 }
@@ -1622,7 +1622,7 @@ final class CloudSyncClient
   }
 
   @override
-  Future<CloudSyncDataRekeyFinalizeResult> finalizeDataRekey(
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
     CloudSyncDataRekeyFinalizeRequest request,
   ) {
     return _guard(() async {
@@ -1675,7 +1675,7 @@ final class CloudSyncClient
         headers: _requireFullSessionHeaders(),
         extra: _strictResponseExtra,
       );
-      return _parseDataRekeyFinalizeResult(
+      return _parseDataRekeyFinalizeOutcome(
         response.extra[_rawResponseKey],
         request: request,
       );
@@ -2652,18 +2652,18 @@ CloudSyncDataRekeyAttachmentStageResult _parseDataRekeyAttachmentStageResult(
   );
 }
 
-CloudSyncDataRekeyFinalizeResult _parseDataRekeyFinalizeResult(
+CloudSyncDataRekeyFinalizeOutcome _parseDataRekeyFinalizeOutcome(
   Object? rawResponse, {
   required CloudSyncDataRekeyFinalizeRequest request,
 }) {
-  return CloudSyncDataRekeyFinalizeResult.fromJson(
-    _strictResponseData(rawResponse, const <String>{
-      'result',
-      'dataGeneration',
-      'dataKeyEpoch',
-      'changeWatermark',
-      'completion',
-    }, 'data-rekey 最终提交响应'),
+  final envelope = copyCloudSyncJsonMap(rawResponse);
+  _requireRawExactKeys(
+    envelope,
+    _strictResponseEnvelopeKeys,
+    'data-rekey 最终提交响应',
+  );
+  return CloudSyncDataRekeyFinalizeOutcome.fromJson(
+    copyCloudSyncJsonMap(envelope['data']),
     request: request,
   );
 }
