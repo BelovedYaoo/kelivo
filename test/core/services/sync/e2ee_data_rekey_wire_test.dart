@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/e2ee_data_rekey_artifact_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_data_rekey_wire.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -669,6 +670,150 @@ void main() {
       }
     });
   });
+
+  group('data-rekey 耐久 stage artifact', () {
+    test('记录 pending 可精确重建请求且 confirmed 仅保留规范摘要字段', () {
+      final binding = _artifactBinding();
+      final pending = E2eeDataRekeyPendingRecordArtifact(
+        binding: binding,
+        activeLease: _artifactLease(binding),
+        mutationId: '44444444-4444-4444-8444-444444444444',
+        sourceRecordId: '55555555-5555-4555-8555-555555555555',
+        targetRecordId: '66666666-6666-4666-8666-666666666666',
+        sourceRevision: 9,
+        ciphertext: Uint8List.fromList(<int>[1, 2, 3, 4]),
+      );
+
+      final decoded = E2eeDataRekeyStageArtifact.decode(
+        pending.encode(),
+        expectedBinding: binding,
+      );
+      expect(decoded, isA<E2eeDataRekeyPendingRecordArtifact>());
+      final replay = decoded as E2eeDataRekeyPendingRecordArtifact;
+      expect(replay.request.mutationId, pending.request.mutationId);
+      expect(
+        replay.request.activeLease.leaseToken,
+        '33333333-3333-4333-8333-333333333333',
+      );
+      expect(replay.request.targetRecordId, pending.request.targetRecordId);
+      expect(replay.request.ciphertext, pending.request.ciphertext);
+
+      final confirmed = pending.confirm(
+        CloudSyncDataRekeyRecordStageResult.fromJson(<String, Object?>{
+          'result': 'staged',
+          'operationId': binding.operation.operationId,
+          'mutationId': pending.request.mutationId,
+          'sourceRecordId': pending.request.sourceRecordId,
+          'targetRecordId': pending.request.targetRecordId,
+          'leaseVersion': pending.activeLease.leaseVersion,
+        }, request: pending.request),
+      );
+      final confirmedBytes = confirmed.encode();
+      expect(confirmedBytes.length, lessThan(1024));
+      final restored = E2eeDataRekeyStageArtifact.decode(
+        confirmedBytes,
+        expectedBinding: binding,
+      );
+      expect(restored, isA<E2eeDataRekeyConfirmedRecordArtifact>());
+      final restoredRecord = restored as E2eeDataRekeyConfirmedRecordArtifact;
+      expect(
+        buildE2eeDataRekeyStagedRecordFrame(restoredRecord.digestItem),
+        buildE2eeDataRekeyStagedRecordFrame(confirmed.digestItem),
+      );
+    });
+
+    test('附件 confirmed 只提升 manifest 代次并保留原附件身份', () {
+      final binding = _artifactBinding();
+      final pending = E2eeDataRekeyPendingAttachmentArtifact(
+        binding: binding,
+        activeLease: _artifactLease(binding),
+        mutationId: '77777777-7777-4777-8777-777777777777',
+        attachmentId: '88888888-8888-4888-8888-888888888888',
+        uploadId: '99999999-9999-4999-8999-999999999999',
+        sourceManifestRevision: 4,
+        manifestCiphertext: Uint8List.fromList(<int>[8, 9, 10]),
+      );
+
+      final confirmed = pending.confirm(
+        CloudSyncDataRekeyAttachmentStageResult.fromJson(<String, Object?>{
+          'result': 'staged',
+          'operationId': binding.operation.operationId,
+          'mutationId': pending.request.mutationId,
+          'attachmentId': pending.request.attachmentId,
+          'uploadId': pending.request.uploadId,
+          'manifestRevision': pending.request.manifestRevision,
+          'leaseVersion': pending.activeLease.leaseVersion,
+        }, request: pending.request),
+      );
+      final restored = E2eeDataRekeyStageArtifact.decode(
+        confirmed.encode(),
+        expectedBinding: binding,
+      );
+      expect(restored, isA<E2eeDataRekeyConfirmedAttachmentArtifact>());
+      final attachment = restored as E2eeDataRekeyConfirmedAttachmentArtifact;
+      expect(attachment.digestItem.attachmentId, pending.request.attachmentId);
+      expect(attachment.digestItem.uploadId, pending.request.uploadId);
+      expect(attachment.digestItem.sourceManifestRevision, 4);
+      expect(attachment.digestItem.manifestRevision, 5);
+      expect(attachment.digestItem.manifestKeyEpoch, 12);
+    });
+
+    test('解码拒绝跨账户、issuer 或 operation 使用缓存', () {
+      final binding = _artifactBinding();
+      final pending = E2eeDataRekeyPendingRecordArtifact(
+        binding: binding,
+        activeLease: _artifactLease(binding),
+        mutationId: '44444444-4444-4444-8444-444444444444',
+        sourceRecordId: '55555555-5555-4555-8555-555555555555',
+        targetRecordId: '66666666-6666-4666-8666-666666666666',
+        sourceRevision: 9,
+        ciphertext: Uint8List.fromList(<int>[1]),
+      );
+      final foreignBinding = E2eeDataRekeyArtifactBinding(
+        userId: binding.userId,
+        issuerDeviceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        operation: binding.operation,
+      );
+
+      expect(
+        () => E2eeDataRekeyStageArtifact.decode(
+          pending.encode(),
+          expectedBinding: foreignBinding,
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeDataRekeyStageArtifact.decode(
+          Uint8List.fromList(<int>[0x20, ...pending.encode()]),
+          expectedBinding: binding,
+        ),
+        throwsFormatException,
+      );
+    });
+  });
+}
+
+E2eeDataRekeyArtifactBinding _artifactBinding() {
+  return E2eeDataRekeyArtifactBinding(
+    userId: '11111111-1111-4111-8111-111111111111',
+    issuerDeviceId: '22222222-2222-4222-8222-222222222222',
+    operation: CloudSyncDataRekeyOperationScope(
+      operationId: 'aaaaaaaa-1111-4111-8111-111111111111',
+      sourceDataGeneration: 7,
+      sourceKeyEpoch: 11,
+      targetKeyEpoch: 12,
+    ),
+  );
+}
+
+CloudSyncDataRekeyActiveLease _artifactLease(
+  E2eeDataRekeyArtifactBinding binding,
+) {
+  return CloudSyncDataRekeyActiveLease(
+    operation: binding.operation,
+    leaseToken: '33333333-3333-4333-8333-333333333333',
+    leaseVersion: 5,
+  );
 }
 
 CloudSyncDataRekeyFinalizeRequest _finalizeRequest() {

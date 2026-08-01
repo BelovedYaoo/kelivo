@@ -30,7 +30,8 @@ final class E2eeDataRekeyStageStore {
        ),
        _durability = durability ?? RestorePlatformDurability();
 
-  static const maximumRequestEnvelopeLength = 1049600;
+  // pending JSON 对 1 MiB 密文采用无填充 base64url，外加严格绑定字段。
+  static const maximumRequestEnvelopeLength = 1400000;
   static const maximumConfirmedEnvelopeLength = 1024;
   static const _storeDirectoryName = '.kelivo-data-rekey-v1';
   static const _locatorDomain = 'kelivo.data-rekey.stage.locator.v1';
