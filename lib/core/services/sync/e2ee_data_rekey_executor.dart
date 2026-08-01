@@ -605,7 +605,11 @@ final class E2eeDataRekeyExecutor {
   }) async {
     final artifactId = _deriveDataRekeyMutationId(
       'kelivo.data-rekey.record-stage.v1',
-      <String>[binding.operationId, source.recordId],
+      <String>[
+        binding.operationId,
+        '${journalState.leaseVersion}',
+        source.recordId,
+      ],
     );
     final snapshot = await _stageStore.readArtifact(
       normalizedBaseUrl: context.normalizedBaseUrl,
@@ -681,7 +685,12 @@ final class E2eeDataRekeyExecutor {
   }) async {
     final artifactId = _deriveDataRekeyMutationId(
       'kelivo.data-rekey.attachment-stage.v1',
-      <String>[binding.operationId, source.attachmentId, source.uploadId],
+      <String>[
+        binding.operationId,
+        '${journalState.leaseVersion}',
+        source.attachmentId,
+        source.uploadId,
+      ],
     );
     final snapshot = await _stageStore.readArtifact(
       normalizedBaseUrl: context.normalizedBaseUrl,
@@ -781,7 +790,10 @@ final class E2eeDataRekeyExecutor {
     final signature = await _cryptography.signCompletionProof(expectedFrame);
     final request = CloudSyncDataRekeyFinalizeRequest(
       activeLease: _activeLease(journalState),
-      mutationId: _finalizeArtifactId(binding.operationId),
+      mutationId: _finalizeArtifactId(
+        binding.operationId,
+        journalState.leaseVersion!,
+      ),
       proof: CloudSyncDataRekeyFinalizeProof(
         issuerDeviceId: binding.issuerDeviceId,
         sourceSnapshotRoot: sourceSnapshot.root,
@@ -822,7 +834,10 @@ final class E2eeDataRekeyExecutor {
       normalizedBaseUrl: context.normalizedBaseUrl,
       normalizedLoginName: context.normalizedLoginName,
       operationId: binding.operation.operationId,
-      artifactId: _finalizeArtifactId(binding.operation.operationId),
+      artifactId: _finalizeArtifactId(
+        binding.operation.operationId,
+        journalState.leaseVersion!,
+      ),
     );
     if (snapshot == null) return null;
     if (snapshot.state != E2eeDataRekeyStageArtifactState.requestPending) {
@@ -1166,7 +1181,11 @@ void _requireFinalizeMatchesJournal(
   final proof = request.proof;
   final attachmentCursor = proof.sourceAttachmentCursorEnd;
   if (!_sameLease(request.activeLease, _activeLease(journalState)) ||
-      request.mutationId != _finalizeArtifactId(binding.operationId) ||
+      request.mutationId !=
+          _finalizeArtifactId(
+            binding.operationId,
+            journalState.leaseVersion!,
+          ) ||
       proof.issuerDeviceId != binding.issuerDeviceId ||
       proof.sourceRecordCount != binding.sourceRecordCount ||
       proof.sourceAttachmentCount != binding.sourceAttachmentCount ||
@@ -1373,9 +1392,10 @@ int _finalizeRequestLimit(E2eeDataRekeyOperationBinding binding) {
   return (recordPages + attachmentPages) * 2 + 6;
 }
 
-String _finalizeArtifactId(String operationId) {
+String _finalizeArtifactId(String operationId, int leaseVersion) {
   return _deriveDataRekeyMutationId('kelivo.data-rekey.finalize.v1', <String>[
     operationId,
+    '$leaseVersion',
   ]);
 }
 

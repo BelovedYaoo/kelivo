@@ -13,3 +13,4 @@
 - 已完成：pending/confirmed artifact 严格 codec；规范 JSON、canonical base64url、账户/issuer/operation/lease/mutation 全绑定。pending 可重建逐字相同 stage 请求；confirmed 仅保留生成 84 字节 staged frame 所需字段，并要求已绑定传输回执后才能产生。
 - 已完成：finalize 请求耐久 artifact；签名证明、固定 mutation 与租约可在响应丢失或进程重启后逐字段原样恢复，并严格拒绝跨账户、issuer 或 operation 重放。
 - 已完成：流式 data-rekey 执行器与生产密码适配层；固定 10 条分页完成源快照和暂存摘要，stage/finalize 响应丢失可原样重放，ready 状态可恢复最终回执，客户端复核 270 字节 proof frame/digest。日志与缓存仅在调用方确认本地成员锚和旧 ARK 已提交后清理；密码会话强制绑定 issuer 设备与目标 key epoch。
+- 已完成：租约接管会清除旧本地工件并重新重包；record、attachment 与 finalize mutation 均绑定 leaseVersion，避免服务端保留的旧 mutation 回执与新租约载荷发生指纹冲突。同一租约内仍保持逐字重放。附件换代只更新 manifest，分块身份、chunkKeyEpoch 与分块摘要保持不变。

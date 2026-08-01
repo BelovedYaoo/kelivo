@@ -2221,6 +2221,67 @@ void main() {
       expect(cryptography.recordRewrapCount, 1);
     });
 
+    test('租约被其他设备接管后丢弃旧工件并以新幂等键重新重包', () async {
+      final operationId = _syncUuid(328);
+      final sourceRecordId = _syncUuid(329);
+      final transport = _RecordResponseLossDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+        sourceRecordId: sourceRecordId,
+      );
+      final cryptography = _RecordDataRekeyCryptography(
+        targetRecordId: _syncUuid(330),
+      );
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey-lease-takeover',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      E2eeDataRekeyExecutor executor() => E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      await expectLater(
+        executor().execute(context),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated_stage_response_loss',
+          ),
+        ),
+      );
+      transport.simulateLeaseTakeover();
+      final execution = await executor().execute(context);
+
+      expect(execution, isNot(equals(null)));
+      expect(transport.stageRequests, hasLength(2));
+      expect(transport.stageRequests[0].activeLease.leaseVersion, 1);
+      expect(transport.stageRequests[1].activeLease.leaseVersion, 3);
+      expect(
+        transport.stageRequests[1].mutationId,
+        isNot(transport.stageRequests[0].mutationId),
+      );
+      expect(
+        transport.stageRequests[1].ciphertext,
+        isNot(orderedEquals(transport.stageRequests[0].ciphertext)),
+      );
+      expect(cryptography.recordRewrapCount, 2);
+    });
+
     test('finalize 响应丢失且服务端已 ready 时从耐久请求恢复', () async {
       final operationId = _syncUuid(324);
       final transport = _FinalizeResponseLossDataRekeyTransport(
@@ -2273,6 +2334,56 @@ void main() {
         orderedEquals(transport.finalizeRequests[0].proof.signature),
       );
       expect(cryptography.signatureCount, 1);
+    });
+
+    test('附件换代仅暂存新 manifest 并保持分块身份与摘要', () async {
+      final operationId = _syncUuid(325);
+      final attachmentId = _syncUuid(326);
+      final uploadId = _syncUuid(327);
+      final transport = _AttachmentDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+      );
+      final cryptography = _AttachmentDataRekeyCryptography();
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey-attachment',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      final executor = E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      await executor.execute(context);
+
+      expect(cryptography.attachmentRewrapCount, 1);
+      expect(cryptography.sourceChunkKeyEpoch, 6);
+      expect(cryptography.sourceChunkDigests, <List<int>>[
+        _syncDigest(41),
+        _syncDigest(42),
+      ]);
+      expect(transport.stageRequests, hasLength(1));
+      final request = transport.stageRequests.single;
+      expect(request.attachmentId, attachmentId);
+      expect(request.uploadId, uploadId);
+      expect(request.sourceManifestRevision, 2);
+      expect(request.manifestRevision, 3);
+      expect(request.manifestKeyEpoch, 8);
     });
   });
 
@@ -9115,6 +9226,14 @@ final class _RecordResponseLossDataRekeyTransport
   final List<CloudSyncDataRekeyRecordStageRequest> stageRequests =
       <CloudSyncDataRekeyRecordStageRequest>[];
   bool _leaseClaimed = false;
+  bool _leaseOwned = true;
+  int _leaseVersion = 1;
+
+  void simulateLeaseTakeover() {
+    _leaseClaimed = true;
+    _leaseOwned = false;
+    _leaseVersion = 2;
+  }
 
   @override
   Future<CloudSyncDataRekeyState> getDataRekeyState() async {
@@ -9132,9 +9251,11 @@ final class _RecordResponseLossDataRekeyTransport
       'sourceAttachmentCursorEnd': null,
       'lease': _leaseClaimed
           ? <String, Object?>{
-              'leaseVersion': 1,
-              'ownedByCurrentDevice': true,
-              'expiresAt': '2026-07-30T05:10:00.000Z',
+              'leaseVersion': _leaseVersion,
+              'ownedByCurrentDevice': _leaseOwned,
+              'expiresAt': _leaseVersion == 1
+                  ? '2026-07-30T05:10:00.000Z'
+                  : '2026-07-30T05:15:00.000Z',
             }
           : null,
       'lastCompletion': null,
@@ -9147,14 +9268,20 @@ final class _RecordResponseLossDataRekeyTransport
     CloudSyncDataRekeyLeaseClaimRequest request,
   ) async {
     _leaseClaimed = true;
+    if (!_leaseOwned) {
+      _leaseOwned = true;
+      _leaseVersion += 1;
+    }
     return CloudSyncDataRekeyLeaseClaim.fromJson(<String, Object?>{
       'phase': 'rekey-pending',
       'operationId': operationId,
       'sourceDataGeneration': 4,
       'sourceKeyEpoch': 7,
       'targetKeyEpoch': 8,
-      'leaseVersion': 1,
-      'leaseExpiresAt': '2026-07-30T05:10:00.000Z',
+      'leaseVersion': _leaseVersion,
+      'leaseExpiresAt': _leaseVersion == 1
+          ? '2026-07-30T05:10:00.000Z'
+          : '2026-07-30T05:20:00.000Z',
       'sourceRecordCount': 1,
       'sourceAttachmentCount': 0,
       'sourceMaximumChangeSeq': 9,
@@ -9225,6 +9352,203 @@ final class _RecordResponseLossDataRekeyTransport
   Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
     CloudSyncDataRekeyAttachmentStageRequest request,
   ) => throw StateError('记录重放测试不得暂存附件');
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) async {
+    return _finalizedDataRekeyOutcome(userId: userId, request: request);
+  }
+}
+
+final class _AttachmentDataRekeyCryptography
+    implements E2eeDataRekeyCryptography {
+  @override
+  final String issuerDeviceId = _syncActorDeviceId;
+
+  @override
+  final int targetKeyEpoch = 8;
+
+  int attachmentRewrapCount = 0;
+  int? sourceChunkKeyEpoch;
+  List<List<int>> sourceChunkDigests = const <List<int>>[];
+
+  @override
+  Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
+    CloudSyncDataRekeySourceRecord source,
+  ) => throw StateError('附件换代测试不得重包记录');
+
+  @override
+  Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(
+    CloudSyncDataRekeySourceAttachment source,
+  ) async {
+    attachmentRewrapCount += 1;
+    sourceChunkKeyEpoch = source.chunkKeyEpoch;
+    sourceChunkDigests = <List<int>>[
+      for (final chunk in source.chunks)
+        List<int>.unmodifiable(chunk.ciphertextDigest),
+    ];
+    return E2eeDataRekeyRewrappedAttachmentManifest(
+      attachmentId: source.attachmentId,
+      uploadId: source.uploadId,
+      chunkKeyEpoch: source.chunkKeyEpoch,
+      manifestKeyEpoch: 8,
+      manifestRevision: source.manifestRevision + 1,
+      manifestCiphertext: Uint8List.fromList(<int>[8, 7, 6, 5]),
+    );
+  }
+
+  @override
+  Future<Uint8List> signCompletionProof(Uint8List proofFrame) async {
+    return Uint8List(e2eeDataRekeyCompletionSignatureBytes)
+      ..fillRange(0, e2eeDataRekeyCompletionSignatureBytes, 0x7a);
+  }
+}
+
+final class _AttachmentDataRekeyTransport
+    implements CloudSyncDataRekeyTransport {
+  _AttachmentDataRekeyTransport({
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.operationId,
+    required this.attachmentId,
+    required this.uploadId,
+  });
+
+  final String userId;
+  final String issuerDeviceId;
+  final String operationId;
+  final String attachmentId;
+  final String uploadId;
+  final List<CloudSyncDataRekeyAttachmentStageRequest> stageRequests =
+      <CloudSyncDataRekeyAttachmentStageRequest>[];
+  bool _leaseClaimed = false;
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() async {
+    return CloudSyncDataRekeyState.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'dataGeneration': 4,
+      'dataKeyEpoch': 7,
+      'changeWatermark': 0,
+      'operationId': operationId,
+      'targetKeyEpoch': 8,
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 1,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': <String, Object?>{
+        'attachmentId': attachmentId,
+        'uploadId': uploadId,
+      },
+      'lease': _leaseClaimed
+          ? <String, Object?>{
+              'leaseVersion': 1,
+              'ownedByCurrentDevice': true,
+              'expiresAt': '2026-07-30T05:10:00.000Z',
+            }
+          : null,
+      'lastCompletion': null,
+      'updatedAt': '2026-07-30T05:00:00.000Z',
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  ) async {
+    _leaseClaimed = true;
+    return CloudSyncDataRekeyLeaseClaim.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'operationId': operationId,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 7,
+      'targetKeyEpoch': 8,
+      'leaseVersion': 1,
+      'leaseExpiresAt': '2026-07-30T05:10:00.000Z',
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 1,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': <String, Object?>{
+        'attachmentId': attachmentId,
+        'uploadId': uploadId,
+      },
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  ) async {
+    return CloudSyncDataRekeySourceRecordPage.fromJson(<String, Object?>{
+      'records': <Object?>[],
+      'nextAfterRecordId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  ) async {
+    final manifestCiphertext = Uint8List.fromList(<int>[1, 3, 5, 7]);
+    return CloudSyncDataRekeySourceAttachmentPage.fromJson(<String, Object?>{
+      'attachments': <Object?>[
+        <String, Object?>{
+          'attachmentId': attachmentId,
+          'uploadId': uploadId,
+          'chunkKeyEpoch': 6,
+          'manifestKeyEpoch': 7,
+          'manifestRevision': 2,
+          'chunkCount': 2,
+          'totalCiphertextBytes': 11,
+          'manifestCiphertext': _dataRekeyBinary(manifestCiphertext),
+          'manifestCiphertextBytes': manifestCiphertext.length,
+          'manifestCiphertextDigest': _dataRekeyBinary(
+            Uint8List.fromList(sha256.convert(manifestCiphertext).bytes),
+          ),
+          'chunks': <Object?>[
+            <String, Object?>{
+              'chunkIndex': 0,
+              'ciphertextBytes': 5,
+              'ciphertextDigest': _dataRekeyBinary(_syncDigest(41)),
+            },
+            <String, Object?>{
+              'chunkIndex': 1,
+              'ciphertextBytes': 6,
+              'ciphertextDigest': _dataRekeyBinary(_syncDigest(42)),
+            },
+          ],
+          'committedAt': '2026-07-30T04:59:00.000Z',
+        },
+      ],
+      'nextAfterAttachmentId': null,
+      'nextAfterUploadId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  ) => throw StateError('附件换代测试不得暂存记录');
+
+  @override
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  ) async {
+    stageRequests.add(request);
+    return CloudSyncDataRekeyAttachmentStageResult.fromJson(<String, Object?>{
+      'result': 'staged',
+      'operationId': operationId,
+      'mutationId': request.mutationId,
+      'attachmentId': request.attachmentId,
+      'uploadId': request.uploadId,
+      'manifestRevision': request.manifestRevision,
+      'leaseVersion': request.activeLease.leaseVersion,
+    }, request: request);
+  }
 
   @override
   Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
