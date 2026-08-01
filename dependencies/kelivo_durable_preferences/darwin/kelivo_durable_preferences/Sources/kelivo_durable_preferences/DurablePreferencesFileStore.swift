@@ -394,6 +394,23 @@ final class DurablePreferencesFileStore {
 
   private func withExclusiveLock<Result>(_ operation: () throws -> Result) throws -> Result {
     try requireAnchoredDirectoryIdentity()
+    do {
+      return try performWithExclusiveLock(operation)
+    } catch {
+      let primaryError = error
+      do {
+        try requireAnchoredDirectoryIdentity()
+      } catch {
+        // 路径身份错误优先于业务或耐久错误，避免调用方把脱离规范路径的结果当成普通失败。
+        throw error
+      }
+      throw primaryError
+    }
+  }
+
+  private func performWithExclusiveLock<Result>(
+    _ operation: () throws -> Result
+  ) throws -> Result {
     let descriptor = try openRelativeFile(
       named: Self.lockFileName,
       flags: O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
