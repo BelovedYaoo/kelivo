@@ -56,17 +56,23 @@ final class E2eeDeviceStateKeyTransitionPlan {
     this.binding,
     this.previousMembership,
     this.nextMembership,
-    this.sourceStateBlob,
-    this.unprunedStateBlob,
-    this.prunedStateBlob,
+    this._sourceStateBlob,
+    this._unprunedStateBlob,
+    this._prunedStateBlob,
   );
 
   final E2eeAccountKeyTransitionBinding binding;
   final E2eeVerifiedMembership previousMembership;
   final E2eeVerifiedMembership nextMembership;
-  final Uint8List sourceStateBlob;
-  final Uint8List unprunedStateBlob;
-  final Uint8List prunedStateBlob;
+  final Uint8List _sourceStateBlob;
+  final Uint8List _unprunedStateBlob;
+  final Uint8List _prunedStateBlob;
+
+  Uint8List get sourceStateBlob => Uint8List.fromList(_sourceStateBlob);
+
+  Uint8List get unprunedStateBlob => Uint8List.fromList(_unprunedStateBlob);
+
+  Uint8List get prunedStateBlob => Uint8List.fromList(_prunedStateBlob);
 }
 
 final class E2eeDeviceStateKeyTransitionCommitter
@@ -157,20 +163,20 @@ final class E2eeDeviceStateKeyTransitionCommitter
   Future<_DeviceStateTransitionPosition> _ensureUnprunedStatePublished() async {
     final current = await _readRequiredState();
     try {
-      if (_sameStateBytes(current.blob, _plan.prunedStateBlob)) {
+      if (_sameStateBytes(current.blob, _plan._prunedStateBlob)) {
         return _DeviceStateTransitionPosition.pruned;
       }
-      if (_sameStateBytes(current.blob, _plan.unprunedStateBlob)) {
+      if (_sameStateBytes(current.blob, _plan._unprunedStateBlob)) {
         return _DeviceStateTransitionPosition.unpruned;
       }
-      if (!_sameStateBytes(current.blob, _plan.sourceStateBlob)) {
+      if (!_sameStateBytes(current.blob, _plan._sourceStateBlob)) {
         throw const E2eeDeviceStateKeyTransitionConflict();
       }
       await _deviceStateStore.compareAndSwap(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: _normalizedLoginName,
         expectedVersion: current.version,
-        blob: _plan.unprunedStateBlob,
+        blob: _plan._unprunedStateBlob,
       );
       return _DeviceStateTransitionPosition.unpruned;
     } finally {
@@ -209,15 +215,15 @@ final class E2eeDeviceStateKeyTransitionCommitter
   Future<void> _ensurePrunedStatePublished() async {
     final current = await _readRequiredState();
     try {
-      if (_sameStateBytes(current.blob, _plan.prunedStateBlob)) return;
-      if (!_sameStateBytes(current.blob, _plan.unprunedStateBlob)) {
+      if (_sameStateBytes(current.blob, _plan._prunedStateBlob)) return;
+      if (!_sameStateBytes(current.blob, _plan._unprunedStateBlob)) {
         throw const E2eeDeviceStateKeyTransitionConflict();
       }
       await _deviceStateStore.compareAndSwap(
         normalizedBaseUrl: _baseUrl,
         normalizedLoginName: _normalizedLoginName,
         expectedVersion: current.version,
-        blob: _plan.prunedStateBlob,
+        blob: _plan._prunedStateBlob,
       );
     } finally {
       _clearStateBytes(current.blob);
@@ -227,7 +233,7 @@ final class E2eeDeviceStateKeyTransitionCommitter
   Future<void> _requireCommitted() async {
     final current = await _readRequiredState();
     try {
-      if (!_sameStateBytes(current.blob, _plan.prunedStateBlob)) {
+      if (!_sameStateBytes(current.blob, _plan._prunedStateBlob)) {
         throw const E2eeDeviceStateKeyTransitionConflict();
       }
     } finally {

@@ -2411,6 +2411,112 @@ void main() {
   });
 
   group('E2EE 账户密钥变更编排', () {
+    test('恢复接续拒绝复用遗留数据换代 operationId', () {
+      final operationId = _syncUuid(330);
+
+      expect(
+        () => E2eeAccountKeyTransitionBinding(
+          kind: E2eeAccountKeyTransitionKind.recoveryResume,
+          userId: _syncAccountUserId,
+          issuerDeviceId: _syncActorDeviceId,
+          membershipOperationId: operationId,
+          rekeyOperationId: operationId,
+          securityGeneration: 12,
+          targetKeyEpoch: 8,
+          membershipManifestDigest: _syncDigest(9),
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeAccountKeyTransitionRemoteReceipt(
+          kind: E2eeAccountKeyTransitionKind.recoveryResume,
+          userId: _syncAccountUserId,
+          membershipOperationId: operationId,
+          rekeyOperationId: operationId,
+          securityGeneration: 12,
+          targetKeyEpoch: 8,
+          membershipManifestDigest: _syncDigest(9),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('绑定与回执的安全关键字节不暴露内部存储', () {
+      final expectedDigest = _syncDigest(0x61);
+      final bindingInput = Uint8List.fromList(expectedDigest);
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: _syncUuid(336),
+        rekeyOperationId: _syncUuid(337),
+        securityGeneration: 12,
+        targetKeyEpoch: 8,
+        membershipManifestDigest: bindingInput,
+      );
+      bindingInput[0] ^= 0xff;
+      final exposedBindingDigest = binding.membershipManifestDigest;
+      exposedBindingDigest[1] ^= 0xff;
+      expect(binding.membershipManifestDigest, orderedEquals(expectedDigest));
+
+      final receiptInput = Uint8List.fromList(expectedDigest);
+      final receipt = E2eeAccountKeyTransitionRemoteReceipt(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: _syncAccountUserId,
+        membershipOperationId: _syncUuid(336),
+        rekeyOperationId: _syncUuid(337),
+        securityGeneration: 12,
+        targetKeyEpoch: 8,
+        membershipManifestDigest: receiptInput,
+      );
+      receiptInput[0] ^= 0xff;
+      final exposedReceiptDigest = receipt.membershipManifestDigest;
+      exposedReceiptDigest[1] ^= 0xff;
+      expect(receipt.membershipManifestDigest, orderedEquals(expectedDigest));
+    });
+
+    test('设备状态换代计划不暴露内部快照', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.deviceRevocation,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: chain.revoked.operationId,
+        rekeyOperationId: chain.revoked.operationId,
+        securityGeneration: chain.revoked.securityGeneration,
+        targetKeyEpoch: chain.revoked.keyEpoch,
+        membershipManifestDigest: chain.revoked.digest,
+      );
+      final sourceInput = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1;
+      final unprunedInput = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 2;
+      final prunedInput = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3;
+      final plan = E2eeDeviceStateKeyTransitionPlan(
+        binding: binding,
+        previousMembership: chain.paired,
+        nextMembership: chain.revoked,
+        sourceStateBlob: sourceInput,
+        unprunedStateBlob: unprunedInput,
+        prunedStateBlob: prunedInput,
+      );
+      sourceInput[0] = 4;
+      unprunedInput[0] = 5;
+      prunedInput[0] = 6;
+      final exposedSource = plan.sourceStateBlob;
+      final exposedUnpruned = plan.unprunedStateBlob;
+      final exposedPruned = plan.prunedStateBlob;
+      exposedSource[1] = 4;
+      exposedUnpruned[1] = 5;
+      exposedPruned[1] = 6;
+
+      expect(plan.sourceStateBlob[0], 1);
+      expect(plan.unprunedStateBlob[0], 2);
+      expect(plan.prunedStateBlob[0], 3);
+      expect(plan.sourceStateBlob[1], 0);
+      expect(plan.unprunedStateBlob[1], 0);
+      expect(plan.prunedStateBlob[1], 0);
+    });
+
     test('本地提交后 checkpoint 清理失败可在无换代日志时恢复', () async {
       final operationId = _syncUuid(331);
       final transport = _ZeroSourceDataRekeyTransport(
@@ -2659,6 +2765,18 @@ void main() {
         binding,
         failFirstComplete: false,
       );
+      final transitionPlan = E2eeDeviceStateKeyTransitionPlan(
+        binding: binding,
+        previousMembership: resumed,
+        nextMembership: replaced,
+        sourceStateBlob: sourceStateBlob,
+        unprunedStateBlob: unprunedStateBlob,
+        prunedStateBlob: prunedStateBlob,
+      );
+      binding.membershipManifestDigest[0] ^= 0xff;
+      transitionPlan.sourceStateBlob[0] ^= 0xff;
+      transitionPlan.unprunedStateBlob[0] ^= 0xff;
+      transitionPlan.prunedStateBlob[0] ^= 0xff;
       final coordinator = E2eeAccountKeyTransitionCoordinator(
         dataRekeyExecutor: E2eeDataRekeyExecutor(
           transport: _ZeroSourceDataRekeyTransport(
@@ -2680,14 +2798,7 @@ void main() {
         localCommitter: E2eeDeviceStateKeyTransitionCommitter(
           baseUrl: baseUrl,
           normalizedLoginName: loginName,
-          plan: E2eeDeviceStateKeyTransitionPlan(
-            binding: binding,
-            previousMembership: resumed,
-            nextMembership: replaced,
-            sourceStateBlob: sourceStateBlob,
-            unprunedStateBlob: unprunedStateBlob,
-            prunedStateBlob: prunedStateBlob,
-          ),
+          plan: transitionPlan,
           deviceStateStore: deviceStateStore,
           secureCore: secureCore,
           databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
@@ -9948,7 +10059,7 @@ final class _FakeAccountKeyTransitionRemote
   @override
   Future<E2eeAccountKeyTransitionRemoteReceipt> commit() async {
     commitCalls += 1;
-    return E2eeAccountKeyTransitionRemoteReceipt(
+    final receipt = E2eeAccountKeyTransitionRemoteReceipt(
       kind: binding.kind,
       userId: binding.userId,
       membershipOperationId: binding.membershipOperationId,
@@ -9957,6 +10068,8 @@ final class _FakeAccountKeyTransitionRemote
       targetKeyEpoch: binding.targetKeyEpoch,
       membershipManifestDigest: binding.membershipManifestDigest,
     );
+    receipt.membershipManifestDigest[0] ^= 0xff;
+    return receipt;
   }
 
   @override

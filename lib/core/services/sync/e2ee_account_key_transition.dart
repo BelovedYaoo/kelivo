@@ -48,19 +48,15 @@ final class E2eeAccountKeyTransitionBinding {
          _accountKeyTransitionMaximumUint32,
          'targetKeyEpoch',
        ),
-       membershipManifestDigest = _copyTransitionDigest(
+       _membershipManifestDigest = _copyTransitionDigest(
          membershipManifestDigest,
          'membershipManifestDigest',
        ) {
-    final sameOperation = membershipOperationId == rekeyOperationId;
-    if (kind == E2eeAccountKeyTransitionKind.deviceRevocation &&
-        !sameOperation) {
-      throw const FormatException('设备撤销成员操作与数据换代操作必须相同');
-    }
-    if (kind == E2eeAccountKeyTransitionKind.recoveryReplacement &&
-        !sameOperation) {
-      throw const FormatException('恢复替换成员操作与第二轮数据换代操作必须相同');
-    }
+    _requireTransitionOperationRelationship(
+      kind,
+      membershipOperationId,
+      rekeyOperationId,
+    );
   }
 
   final E2eeAccountKeyTransitionKind kind;
@@ -70,7 +66,10 @@ final class E2eeAccountKeyTransitionBinding {
   final String rekeyOperationId;
   final int securityGeneration;
   final int targetKeyEpoch;
-  final Uint8List membershipManifestDigest;
+  final Uint8List _membershipManifestDigest;
+
+  Uint8List get membershipManifestDigest =>
+      Uint8List.fromList(_membershipManifestDigest);
 }
 
 final class E2eeAccountKeyTransitionRemoteReceipt {
@@ -101,10 +100,16 @@ final class E2eeAccountKeyTransitionRemoteReceipt {
          _accountKeyTransitionMaximumUint32,
          'targetKeyEpoch',
        ),
-       membershipManifestDigest = _copyTransitionDigest(
+       _membershipManifestDigest = _copyTransitionDigest(
          membershipManifestDigest,
          'membershipManifestDigest',
-       );
+       ) {
+    _requireTransitionOperationRelationship(
+      kind,
+      membershipOperationId,
+      rekeyOperationId,
+    );
+  }
 
   final E2eeAccountKeyTransitionKind kind;
   final String userId;
@@ -112,7 +117,10 @@ final class E2eeAccountKeyTransitionRemoteReceipt {
   final String rekeyOperationId;
   final int securityGeneration;
   final int targetKeyEpoch;
-  final Uint8List membershipManifestDigest;
+  final Uint8List _membershipManifestDigest;
+
+  Uint8List get membershipManifestDigest =>
+      Uint8List.fromList(_membershipManifestDigest);
 }
 
 abstract interface class E2eeAccountKeyTransitionRemoteCommit {
@@ -201,7 +209,7 @@ void _requireContextMatchesTransition(
       context.membershipGeneration != binding.securityGeneration ||
       !_sameTransitionBytes(
         context.membershipManifestDigest,
-        binding.membershipManifestDigest,
+        binding._membershipManifestDigest,
       )) {
     throw const FormatException('账户密钥变更与 data-rekey 上下文不匹配');
   }
@@ -218,8 +226,8 @@ void _requireReceiptMatchesTransition(
       receipt.securityGeneration != binding.securityGeneration ||
       receipt.targetKeyEpoch != binding.targetKeyEpoch ||
       !_sameTransitionBytes(
-        receipt.membershipManifestDigest,
-        binding.membershipManifestDigest,
+        receipt._membershipManifestDigest,
+        binding._membershipManifestDigest,
       )) {
     throw const FormatException('账户密钥变更远端回执不匹配');
   }
@@ -241,9 +249,31 @@ void _requireExecutionMatchesTransition(
       completion.membershipGeneration != binding.securityGeneration ||
       !_sameTransitionBytes(
         completion.membershipManifestDigest,
-        binding.membershipManifestDigest,
+        binding._membershipManifestDigest,
       )) {
     throw const FormatException('账户密钥变更 data-rekey 回执不匹配');
+  }
+}
+
+void _requireTransitionOperationRelationship(
+  E2eeAccountKeyTransitionKind kind,
+  String membershipOperationId,
+  String rekeyOperationId,
+) {
+  final sameOperation = membershipOperationId == rekeyOperationId;
+  switch (kind) {
+    case E2eeAccountKeyTransitionKind.deviceRevocation:
+      if (!sameOperation) {
+        throw const FormatException('设备撤销成员操作与数据换代操作必须相同');
+      }
+    case E2eeAccountKeyTransitionKind.recoveryResume:
+      if (sameOperation) {
+        throw const FormatException('恢复接续不得复用遗留数据换代操作');
+      }
+    case E2eeAccountKeyTransitionKind.recoveryReplacement:
+      if (!sameOperation) {
+        throw const FormatException('恢复替换成员操作与第二轮数据换代操作必须相同');
+      }
   }
 }
 
