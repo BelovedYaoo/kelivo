@@ -217,8 +217,11 @@ enum ExecutionState {
 }
 
 enum VerifiedRecoveryChallenge {
-    Initial(protocol::VerifiedAccountRecoveryChallenge),
-    Replacement(protocol::VerifiedAccountRecoveryReplacementChallenge),
+    Initial(Box<protocol::VerifiedAccountRecoveryChallenge>),
+    Replacement {
+        challenge: Box<protocol::VerifiedAccountRecoveryReplacementChallenge>,
+        authorization: protocol::AccountRecoveryReplacementCommitAuthorization,
+    },
 }
 
 #[derive(Clone, Copy)]
@@ -632,7 +635,7 @@ pub unsafe extern "C" fn kelivo_account_recovery_verify_and_prove(
         ark_handle,
         target_auth_generation: expected_device_auth_generation,
         replacement_only: false,
-        verified_challenge: VerifiedRecoveryChallenge::Initial(challenge),
+        verified_challenge: VerifiedRecoveryChallenge::Initial(Box::new(challenge)),
         challenge: execution_challenge,
         history_head: opened.history_head,
         source_operation_authorization_digest,
@@ -949,6 +952,12 @@ pub unsafe extern "C" fn kelivo_account_recovery_replacement_challenge_verify_an
         Ok(value) => value,
         Err(_) => return KelivoStatus::InternalState.code(),
     };
+    let commit_authorization =
+        protocol::AccountRecoveryReplacementCommitAuthorization::from_verified_proof(
+            &challenge,
+            &proof,
+            &trust_signature,
+        );
     let source = opened.source.map(|source| (source.key_epoch, source.ark));
     let ark_handle = match crate::device_core::register_recovered_ark_keyring(
         opened.current.user_id,
@@ -974,7 +983,10 @@ pub unsafe extern "C" fn kelivo_account_recovery_replacement_challenge_verify_an
         ark_handle,
         target_auth_generation: expected_device_auth_generation,
         replacement_only: true,
-        verified_challenge: VerifiedRecoveryChallenge::Replacement(challenge),
+        verified_challenge: VerifiedRecoveryChallenge::Replacement {
+            challenge: Box::new(challenge),
+            authorization: commit_authorization,
+        },
         challenge: execution_challenge,
         history_head: opened.history_head,
         source_operation_authorization_digest,
@@ -1153,16 +1165,18 @@ pub unsafe extern "C" fn kelivo_account_recovery_prepare_commit(
                             protocol_input,
                         )
                     }
-                    VerifiedRecoveryChallenge::Replacement(challenge) => {
-                        protocol::prepare_account_recovery_replacement_commit(
-                            &mut rng,
-                            &current_ark,
-                            &execution.device_identity,
-                            challenge,
-                            &execution.history_head,
-                            protocol_input,
-                        )
-                    }
+                    VerifiedRecoveryChallenge::Replacement {
+                        challenge,
+                        authorization,
+                    } => protocol::prepare_account_recovery_replacement_commit(
+                        &mut rng,
+                        &current_ark,
+                        &execution.device_identity,
+                        challenge,
+                        authorization,
+                        &execution.history_head,
+                        protocol_input,
+                    ),
                 };
                 let prepared = match prepared_result {
                     Ok(value) => value,
@@ -2323,7 +2337,7 @@ pub(super) fn rebuild_test_execution_for_committed(
             ark_handle,
             target_auth_generation: original.target_auth_generation,
             replacement_only: false,
-            verified_challenge: VerifiedRecoveryChallenge::Initial(challenge),
+            verified_challenge: VerifiedRecoveryChallenge::Initial(Box::new(challenge)),
             challenge: RecoveryExecutionChallenge::initial(&challenge),
             history_head,
             source_operation_authorization_digest: if data_ready {

@@ -1,4 +1,4 @@
-//! 账户恢复 challenge、证明与提交准备的唯一 v1 协议实现。
+//! 账户恢复 challenge、证明与提交准备的唯一协议实现。
 
 use std::fmt;
 
@@ -22,8 +22,8 @@ use crate::{
         sign_account_trust_payload,
     },
     recovery_crypto::{
-        RECOVERY_CAPSULE_LENGTH, RecoveryCapsule, RecoveryHistoryMember, RecoveryIdentity,
-        RecoveryPublicKey, VerifiedRecoveryHistoryHead, seal_recovery_capsule,
+        RecoveryCapsule, RecoveryHistoryMember, RecoveryIdentity, RecoveryPublicKey,
+        VerifiedRecoveryHistoryHead, seal_recovery_capsule,
     },
 };
 
@@ -121,7 +121,8 @@ const MEMBERSHIP_MEMBER_LENGTH: usize = 88;
 const MEMBERSHIP_SIGNATURE_SECTION_LENGTH: usize = ACCOUNT_TRUST_SIGNATURE_LENGTH * 2;
 const MEMBERSHIP_MAX_MEMBERS: usize = 256;
 const RESUME_REQUEST_DIGEST_DOMAIN: &[u8] = b"kelivo.account-recovery.resume-commit.v1\0";
-const REPLACEMENT_REQUEST_DIGEST_DOMAIN: &[u8] = b"kelivo.account-recovery.replacement-commit.v1\0";
+const REPLACEMENT_REQUEST_DIGEST_DOMAIN: &[u8] = b"kelivo.account-recovery.replacement-commit.v2\0";
+const REPLACEMENT_COMMIT_VERSION: u32 = 2;
 
 const _: () = {
     assert!(SEALED_NONCE_TAG_OFFSET + HPKE_TAG_LENGTH == ACCOUNT_RECOVERY_SEALED_NONCE_LENGTH);
@@ -646,6 +647,35 @@ pub struct AccountRecoveryReplacementProofMaterial {
     pub trust_signature_message: [u8; 32],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AccountRecoveryReplacementCommitAuthorization {
+    challenge_id: [u8; 16],
+    challenge_request_digest: [u8; 32],
+    nonce_proof: [u8; ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH],
+    trust_signature: [u8; ACCOUNT_TRUST_SIGNATURE_LENGTH],
+}
+
+impl AccountRecoveryReplacementCommitAuthorization {
+    pub fn from_verified_proof(
+        challenge: &VerifiedAccountRecoveryReplacementChallenge,
+        proof: &AccountRecoveryReplacementProofMaterial,
+        trust_signature: &crate::device_crypto::AccountTrustSignature,
+    ) -> Self {
+        Self {
+            challenge_id: challenge.challenge_id,
+            challenge_request_digest: challenge.request_digest,
+            nonce_proof: proof.nonce_proof,
+            trust_signature: *trust_signature.as_bytes(),
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+enum ReplacementCommitAuthorization<'a> {
+    InitialChallenge { challenge_request_digest: [u8; 32] },
+    ReplacementChallenge(&'a AccountRecoveryReplacementCommitAuthorization),
+}
+
 impl Zeroize for AccountRecoveryReplacementProofMaterial {
     fn zeroize(&mut self) {
         self.transcript.zeroize();
@@ -771,12 +801,17 @@ pub fn prepare_account_recovery_commit<R>(
 where
     R: CryptoRng + RngCore,
 {
+    let replacement_authorization = (input.kind == AccountRecoveryCommitKind::Replacement)
+        .then_some(ReplacementCommitAuthorization::InitialChallenge {
+            challenge_request_digest: challenge.request_digest,
+        });
     prepare_account_recovery_commit_from_binding(
         rng,
         current_ark,
         device_identity,
         challenge.commit_binding(),
         history_head,
+        replacement_authorization,
         input,
     )
 }
@@ -786,33 +821,50 @@ pub fn prepare_account_recovery_replacement_commit<R>(
     current_ark: &AccountRootKey,
     device_identity: &crate::device_crypto::DeviceIdentity,
     challenge: &VerifiedAccountRecoveryReplacementChallenge,
+    authorization: &AccountRecoveryReplacementCommitAuthorization,
     history_head: &VerifiedRecoveryHistoryHead,
     input: AccountRecoveryPrepareInput,
 ) -> Result<PreparedAccountRecoveryCommit, AccountRecoveryProtocolError>
 where
     R: CryptoRng + RngCore,
 {
+    if authorization.challenge_id != challenge.challenge_id
+        || authorization.challenge_request_digest != challenge.request_digest
+    {
+        return Err(AccountRecoveryProtocolError::PrepareBindingMismatch);
+    }
     prepare_account_recovery_commit_from_binding(
         rng,
         current_ark,
         device_identity,
         challenge.commit_binding(),
         history_head,
+        Some(ReplacementCommitAuthorization::ReplacementChallenge(
+            authorization,
+        )),
         input,
     )
 }
 
-pub fn prepare_account_recovery_commit_from_binding<R>(
+fn prepare_account_recovery_commit_from_binding<R>(
     rng: &mut R,
     current_ark: &AccountRootKey,
     device_identity: &crate::device_crypto::DeviceIdentity,
     challenge: VerifiedAccountRecoveryCommitBinding,
     history_head: &VerifiedRecoveryHistoryHead,
+    replacement_authorization: Option<ReplacementCommitAuthorization<'_>>,
     input: AccountRecoveryPrepareInput,
 ) -> Result<PreparedAccountRecoveryCommit, AccountRecoveryProtocolError>
 where
     R: CryptoRng + RngCore,
 {
+    if !matches!(
+        (input.kind, replacement_authorization),
+        (AccountRecoveryCommitKind::Resume, None)
+            | (AccountRecoveryCommitKind::Replacement, Some(_))
+    ) {
+        return Err(AccountRecoveryProtocolError::InvalidPrepareInput);
+    }
     validate_prepare_binding(device_identity, &challenge, history_head, input)?;
     let next_generation = history_head
         .security_generation
@@ -863,6 +915,7 @@ where
                 &manifest_digest,
                 history_head.key_epoch,
                 envelope.as_bytes(),
+                replacement_authorization,
                 None,
             )?;
             Ok(PreparedAccountRecoveryCommit {
@@ -941,6 +994,7 @@ where
                 &manifest_digest,
                 next_key_epoch,
                 envelope.as_bytes(),
+                replacement_authorization,
                 Some((next_capsule_version, next_capsule.as_bytes())),
             )?;
             Ok(PreparedAccountRecoveryCommit {
@@ -1152,51 +1206,129 @@ fn commit_request_digest(
     manifest_digest: &[u8; 32],
     envelope_key_epoch: u32,
     envelope: &[u8; ARK_ENVELOPE_LENGTH],
-    replacement: Option<(u32, &[u8; RECOVERY_CAPSULE_LENGTH])>,
+    replacement_authorization: Option<ReplacementCommitAuthorization<'_>>,
+    replacement: Option<(u32, &[u8])>,
 ) -> Result<[u8; 32], AccountRecoveryProtocolError> {
-    let mut frame = Zeroizing::new(Vec::with_capacity(1024 + manifest.len()));
-    frame.extend_from_slice(match input.kind {
-        AccountRecoveryCommitKind::Resume => RESUME_REQUEST_DIGEST_DOMAIN,
-        AccountRecoveryCommitKind::Replacement => REPLACEMENT_REQUEST_DIGEST_DOMAIN,
-    });
-    frame.extend_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
-    frame.extend_from_slice(&challenge.attempt_id);
-    frame.extend_from_slice(challenge.user_id.as_bytes());
-    frame.extend_from_slice(challenge.device_id.as_bytes());
-    frame.extend_from_slice(&history_head.security_generation.to_be_bytes());
-    frame.extend_from_slice(&history_head.key_epoch.to_be_bytes());
-    frame.extend_from_slice(&history_head.digest);
-    frame.extend_from_slice(&input.operation_id);
-    extend_length_prefixed(&mut frame, manifest)?;
-    frame.extend_from_slice(manifest_digest);
-    frame.extend_from_slice(&1_u32.to_be_bytes());
-    frame.extend_from_slice(&envelope_key_epoch.to_be_bytes());
-    extend_length_prefixed(&mut frame, envelope)?;
+    let parts = CommitMembershipDigestParts {
+        attempt_id: &challenge.attempt_id,
+        user_id: challenge.user_id.as_bytes(),
+        device_id: challenge.device_id.as_bytes(),
+        expected_generation: history_head.security_generation,
+        expected_key_epoch: history_head.key_epoch,
+        expected_manifest_digest: &history_head.digest,
+        operation_id: &input.operation_id,
+        next_manifest: manifest,
+        next_manifest_digest: manifest_digest,
+        envelope_version: 1,
+        envelope_key_epoch,
+        envelope,
+    };
     match input.kind {
         AccountRecoveryCommitKind::Resume => {
-            frame.extend_from_slice(
-                &input
-                    .rekey_operation_id
-                    .ok_or(AccountRecoveryProtocolError::InvalidPrepareInput)?,
-            );
+            let rekey_operation_id = input
+                .rekey_operation_id
+                .ok_or(AccountRecoveryProtocolError::InvalidPrepareInput)?;
+            resume_commit_request_digest(parts, &rekey_operation_id)
         }
         AccountRecoveryCommitKind::Replacement => {
             let (capsule_version, capsule) =
                 replacement.ok_or(AccountRecoveryProtocolError::InvalidPrepareInput)?;
-            frame.extend_from_slice(&capsule_version.to_be_bytes());
-            extend_length_prefixed(&mut frame, capsule)?;
-            frame.extend_from_slice(
-                &input
-                    .completion_session_id
-                    .ok_or(AccountRecoveryProtocolError::InvalidPrepareInput)?,
-            );
-            frame.extend_from_slice(
-                &input
-                    .completion_session_token_digest
-                    .ok_or(AccountRecoveryProtocolError::InvalidPrepareInput)?,
-            );
+            let authorization = replacement_authorization
+                .ok_or(AccountRecoveryProtocolError::InvalidPrepareInput)?;
+            let completion_session_id = input
+                .completion_session_id
+                .ok_or(AccountRecoveryProtocolError::InvalidPrepareInput)?;
+            let completion_session_token_digest = input
+                .completion_session_token_digest
+                .ok_or(AccountRecoveryProtocolError::InvalidPrepareInput)?;
+            replacement_commit_request_digest(
+                parts,
+                authorization,
+                capsule_version,
+                capsule,
+                &completion_session_id,
+                &completion_session_token_digest,
+            )
         }
     }
+}
+
+#[derive(Clone, Copy)]
+struct CommitMembershipDigestParts<'a> {
+    attempt_id: &'a [u8; 16],
+    user_id: &'a [u8; 16],
+    device_id: &'a [u8; 16],
+    expected_generation: u32,
+    expected_key_epoch: u32,
+    expected_manifest_digest: &'a [u8; 32],
+    operation_id: &'a [u8; 16],
+    next_manifest: &'a [u8],
+    next_manifest_digest: &'a [u8; 32],
+    envelope_version: u32,
+    envelope_key_epoch: u32,
+    envelope: &'a [u8],
+}
+
+impl CommitMembershipDigestParts<'_> {
+    fn extend(self, frame: &mut Vec<u8>) -> Result<(), AccountRecoveryProtocolError> {
+        frame.extend_from_slice(self.attempt_id);
+        frame.extend_from_slice(self.user_id);
+        frame.extend_from_slice(self.device_id);
+        frame.extend_from_slice(&self.expected_generation.to_be_bytes());
+        frame.extend_from_slice(&self.expected_key_epoch.to_be_bytes());
+        frame.extend_from_slice(self.expected_manifest_digest);
+        frame.extend_from_slice(self.operation_id);
+        extend_length_prefixed(frame, self.next_manifest)?;
+        frame.extend_from_slice(self.next_manifest_digest);
+        frame.extend_from_slice(&self.envelope_version.to_be_bytes());
+        frame.extend_from_slice(&self.envelope_key_epoch.to_be_bytes());
+        extend_length_prefixed(frame, self.envelope)
+    }
+}
+
+fn resume_commit_request_digest(
+    parts: CommitMembershipDigestParts<'_>,
+    rekey_operation_id: &[u8; 16],
+) -> Result<[u8; 32], AccountRecoveryProtocolError> {
+    let mut frame = Zeroizing::new(Vec::with_capacity(1024 + parts.next_manifest.len()));
+    frame.extend_from_slice(RESUME_REQUEST_DIGEST_DOMAIN);
+    frame.extend_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
+    parts.extend(&mut frame)?;
+    frame.extend_from_slice(rekey_operation_id);
+    Ok(Sha256::digest(frame.as_slice()).into())
+}
+
+fn replacement_commit_request_digest(
+    parts: CommitMembershipDigestParts<'_>,
+    authorization: ReplacementCommitAuthorization<'_>,
+    capsule_version: u32,
+    capsule: &[u8],
+    completion_session_id: &[u8; 16],
+    completion_session_token_digest: &[u8; 32],
+) -> Result<[u8; 32], AccountRecoveryProtocolError> {
+    let mut frame = Zeroizing::new(Vec::with_capacity(1200 + parts.next_manifest.len()));
+    frame.extend_from_slice(REPLACEMENT_REQUEST_DIGEST_DOMAIN);
+    frame.extend_from_slice(&REPLACEMENT_COMMIT_VERSION.to_be_bytes());
+    parts.extend(&mut frame)?;
+    match authorization {
+        ReplacementCommitAuthorization::InitialChallenge {
+            challenge_request_digest,
+        } => {
+            frame.extend_from_slice(&0_u32.to_be_bytes());
+            frame.extend_from_slice(&challenge_request_digest);
+        }
+        ReplacementCommitAuthorization::ReplacementChallenge(authorization) => {
+            frame.extend_from_slice(&1_u32.to_be_bytes());
+            frame.extend_from_slice(&authorization.challenge_id);
+            frame.extend_from_slice(&authorization.challenge_request_digest);
+            frame.extend_from_slice(&authorization.nonce_proof);
+            frame.extend_from_slice(&authorization.trust_signature);
+        }
+    }
+    frame.extend_from_slice(&capsule_version.to_be_bytes());
+    extend_length_prefixed(&mut frame, capsule)?;
+    frame.extend_from_slice(completion_session_id);
+    frame.extend_from_slice(completion_session_token_digest);
     Ok(Sha256::digest(frame.as_slice()).into())
 }
 
@@ -1603,6 +1735,12 @@ mod tests {
             &nonce,
         )
         .expect("replacement nonce 应密封");
+        assert_eq!(
+            sealed,
+            decode_hex(
+                "4b454c4956523253000000010020000100030000fd2c4dd1c8a6b88fe1fc59ce441398f5ea83a9296e210997ac63bed970b860287bed76e546d766e03cf46cc28b3868b258e5afc94638e7e0c95d64350435d86b82588b0b7ed4ad9fcf5599692cf19625",
+            ),
+        );
         assert_eq!(&sealed[..8], b"KELIVR2S");
         assert_eq!(
             open_account_recovery_replacement_nonce(&recovery, &challenge, &sealed)
@@ -1617,6 +1755,10 @@ mod tests {
             &[0x61; ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH],
         )
         .expect("replacement proof 应生成");
+        assert_eq!(
+            proof.trust_signature_message,
+            decode_hex("4196c2943b49fa7237427e6a3cb6ebb51b3ce27b7866019309512634a4cc4c2d"),
+        );
         assert_eq!(&proof.transcript[..8], b"KELIVR2P");
         assert_ne!(
             proof.trust_signature_message,
@@ -1630,12 +1772,41 @@ mod tests {
         );
 
         let current_ark = AccountRootKey::from_bytes([0x71; 32]);
+        let trust_binding = AccountTrustBinding {
+            user_id: challenge.user_id,
+            key_epoch: challenge.key_epoch,
+        };
+        let trust_public_key =
+            crate::device_crypto::derive_account_trust_public_key(&current_ark, trust_binding)
+                .expect("replacement trust 公钥应派生");
+        assert_eq!(
+            trust_public_key.as_bytes(),
+            &decode_hex("d667033cecddb0f48bfc2065f2bdacb08c6bdfc38d77d5e9c2961d8c86b41274"),
+        );
+        let trust_signature = crate::device_crypto::sign_account_recovery_trust_message(
+            &current_ark,
+            trust_binding,
+            &proof.trust_signature_message,
+        )
+        .expect("replacement trust signature 应生成");
+        assert_eq!(
+            trust_signature.as_bytes(),
+            &decode_hex(
+                "d158a3f58b881c6cccce03f48d6e4a4de383b287e4d1f686a1172cb2cb3715d0c21b236961fc8b9d1811ec293cf2f21e17266d523aa1e6a648f8d45a52738f08",
+            ),
+        );
+        let authorization = AccountRecoveryReplacementCommitAuthorization::from_verified_proof(
+            &challenge,
+            &proof,
+            &trust_signature,
+        );
         let head = replacement_history_head(expected, &current_ark);
         let prepared = prepare_account_recovery_replacement_commit(
             &mut TestRng(0x61),
             &current_ark,
             &device,
             &challenge,
+            &authorization,
             &head,
             AccountRecoveryPrepareInput {
                 kind: AccountRecoveryCommitKind::Replacement,
@@ -1699,6 +1870,71 @@ mod tests {
             account_recovery_replacement_challenge_request_digest(&frame)
                 .expect("固定 replacement challenge 应可重算摘要"),
             decode_hex("82938822fe5cdf257992508f2ad380c1e845904fe49a7d4079f2c1f6b6190e08",),
+        );
+    }
+
+    #[test]
+    fn replacement_commit_v2_authorization_union_matches_server_vectors() {
+        let attempt_id = uuid(0x11);
+        let user_id = uuid(0x22);
+        let device_id = uuid(0x33);
+        let expected_manifest_digest = [0x11; 32];
+        let operation_id = uuid(0x55);
+        let next_manifest = [0x21; 476];
+        let next_manifest_digest = [0x31; 32];
+        let envelope = [0x41; ARK_ENVELOPE_LENGTH];
+        let capsule = [0x51; 128];
+        let completion_session_id = uuid(0x77);
+        let completion_session_token_digest = [0x61; 32];
+        let parts = CommitMembershipDigestParts {
+            attempt_id: &attempt_id,
+            user_id: &user_id,
+            device_id: &device_id,
+            expected_generation: 7,
+            expected_key_epoch: 9,
+            expected_manifest_digest: &expected_manifest_digest,
+            operation_id: &operation_id,
+            next_manifest: &next_manifest,
+            next_manifest_digest: &next_manifest_digest,
+            envelope_version: 1,
+            envelope_key_epoch: 10,
+            envelope: &envelope,
+        };
+
+        let initial = replacement_commit_request_digest(
+            parts,
+            ReplacementCommitAuthorization::InitialChallenge {
+                challenge_request_digest: [0x71; 32],
+            },
+            4,
+            &capsule,
+            &completion_session_id,
+            &completion_session_token_digest,
+        )
+        .expect("首阶段替换提交摘要应生成");
+        assert_eq!(
+            initial,
+            decode_hex("dc32d63d96509425ab10526607d0c87ebb868f54f0cf1c64dcff5422358021fa")
+        );
+
+        let replacement_authorization = AccountRecoveryReplacementCommitAuthorization {
+            challenge_id: uuid(0x88),
+            challenge_request_digest: [0x71; 32],
+            nonce_proof: [0x72; 32],
+            trust_signature: [0x73; 64],
+        };
+        let replacement = replacement_commit_request_digest(
+            parts,
+            ReplacementCommitAuthorization::ReplacementChallenge(&replacement_authorization),
+            4,
+            &capsule,
+            &completion_session_id,
+            &completion_session_token_digest,
+        )
+        .expect("第二阶段替换提交摘要应生成");
+        assert_eq!(
+            replacement,
+            decode_hex("b5a9048250150e29e22a73d4b2044bb123c3da7049eab4776eab6bed9e903151")
         );
     }
 
