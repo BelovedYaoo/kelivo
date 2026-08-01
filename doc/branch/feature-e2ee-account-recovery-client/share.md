@@ -1,0 +1,29 @@
+# 协作记录
+
+## 目标
+
+- 完成移动端账户恢复客户端闭环，桌面端不开放注册或初始化。
+- 以恢复介质中的 genesis 为唯一信任锚，完整验证冻结历史后才允许 Native 解封 capsule 并签署 proof。
+- 恢复私钥、ARK 和明文 nonce 不进入 Dart；所有失败关闭。
+
+## 当前进度
+
+- 已从 `d697d4c0` 建立独立分支与 worktree。
+- 已完成授权前半程私有协调器：创建冻结 challenge、连续分页读取绑定历史、选择源代 capsule、调用 Native proof 边界、提交公开证明并接管恢复 key lease。
+- challenge、数据状态、恢复 token、授权回执均采用严格强类型；冻结投影或链头不一致、过期 challenge、错误 key epoch 均失败关闭。
+- 恢复口令在所有退出路径清零；Native 边界明确禁止恢复私钥、ARK 和明文 nonce 进入 Dart。
+- 服务端确认 challenge 请求将移除客户端不可知的三个 expected 字段，并由服务端原子冻结 current head；客户端未固化旧 wire。
+- 已在 API Issue #32 补充 challenge 启动循环依赖，并与服务端修复进程确认硬切方向。
+- 验证：定向 `dart analyze` 无问题；授权正常路径和冻结投影篡改失败路径共 2 项 Flutter 测试通过。
+
+## 协作边界
+
+- 不部署，不触碰默认安全槽。
+- 不修改原生 ABI18 擦除实现；Native 账户恢复 proof ABI 未就绪时只保留明确依赖，不加 Dart fallback。
+- 测试缝：账户恢复协调器公开命令/状态流、移动端恢复入口公开交互。
+
+## 后续依赖
+
+- 等服务端修复分支给出稳定 OpenAPI 后接入真实 `CloudSyncClient` transport。
+- ABI18 集成后以 ABI19 实现单次 Native 恢复 proof 事务；当前没有生产适配器，因此 UI 不得宣称恢复可用。
+- 继续实现加密 checkpoint、重启/过期接管、op4/op5 与工作区耐久提交，再接 Android/iOS 二维码和恢复文件入口。
