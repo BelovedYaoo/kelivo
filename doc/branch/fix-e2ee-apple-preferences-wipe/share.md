@@ -22,3 +22,5 @@
 - Apple 官方确认 UserDefaults 先更新内存、异步写盘；普通 `fsync` 也不能提供强掉电持久预期，强预期需 `F_FULLFSYNC`。`shared_preferences_foundation 2.5.6` 的 legacy remove/clear 没有耐久回执，Dart 仍无条件返回成功。
 - 已确认全量 Apple `SharedPreferencesStorePlatform` 硬切到 Kelivo 自有原子 JSON；旧 `flutter.*` 或 `kelivo.account.*` UserDefaults 只尽力清理并写耐久污染标记，永久阻断到应用容器被清空。
 - Dart 公共合同已完成：过滤条件透明传递、快照严格校验、原生失败透传、Apple 初始化成功后才注册；4 个测试与子包 analyze 通过。
+- Darwin store 已实现原生串行队列、跨进程文件锁、同目录临时写入、`F_FULLFSYNC`、原子 rename、父目录 `fsync`、独立新文件描述符复读和崩溃临时文件清理；未知类型、畸形快照及任一系统调用失败均关闭。
+- Swift 合同覆盖跨实例写删、重复删除、目录 barrier 失败重试、旧 UserDefaults 污染永久阻断和崩溃临时文件清理。当前 Windows 没有 Swift/Xcode/CocoaPods，无法执行 Apple 原生测试或编译。
