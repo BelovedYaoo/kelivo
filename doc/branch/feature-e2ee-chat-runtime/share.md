@@ -87,3 +87,9 @@
 - 复审阻塞：Apple 耐久偏好尚缺 headless isolate 注册，且无类型 JSON 会丢失积分 Double 类型；绝对路径重解析、rename 后目录耐久 barrier、写前尺寸门禁、PrivacyInfo reason 与 SwiftPM FlutterFramework 依赖也需修复。#86 在 Apple 编译、XCTest、模拟器和真机验证前保持打开。
 - 复审阻塞：服务端 #40 自撤销分支缺主体 intent 签名、pending 权限收窄与有界请求，终态非单调；另有 op4 交错回执、D1 单 SQL 100 参数、token 指纹和 OpenAPI 窄令牌合同问题。分支已冻结并按红测修复，未部署、未操作远端 D1/R2。
 - 同步发布门禁：服务端 #40 已将成员清单硬切 v2（header 260 字节，offset 224 新增 32 字节 operationAuthorizationDigest，memberCount 移至 offset 256）；客户端 Dart 与 Rust 仍是 v1。#51 负责 Dart v2 及 op3 intent 绑定，#49 负责 Rust 历史解析与 op4/op5 builder；两端固定向量一致前，API 与客户端都不可发布。
+- 已合入：`df137e28` 合并 Apple 耐久偏好安全擦除，包含固定 Library 根身份、异常路径复核、后台门禁和四语恢复提示；Windows 可验证的路径依赖分析、5 项单测及根定向分析通过，Swift/XCTest、iOS 14+ 真机与 macOS APFS 仍是发布门禁。
+- 原子集成门禁：恢复 manifest/media v2 协议提交 `41c95466` 已条件通过独立审查，但必须与 App v2 约束 `e6972d8a` 及最终 ABI20 同批合入；单独发布会让旧 ABI19 动态库绕过版本门禁。
+- 恢复事务模型：同一源换钥允许连续 `recoverResume` 接管，G+2 只是第一次接管；完成凭据必须验证源换钥到最新恢复 head 的完整连续同 epoch 链，并绑定最新 issuer、generation 与 manifest digest。最终 replacement 必须使用独立第二 challenge，禁止复用首次 challenge。
+- 进行中：#92 以 recovery execution 专用原子 ABI 生成 source、双代状态和未激活 target-only candidate；完成 proof 后认证同一候选才允许裁剪旧 epoch。checkpoint 必须在远端提交前持久化三态并显式推进 candidatePrepared -> proofVerified -> activated。
+- 已验证：`kelivo-api@c2972b2` 消除 D1 256 目标时的大 `IN` 与超 100 bind 语句，独立复审实测整批 34 条 SQL、单条最大 99 bind、250 项测试和类型检查通过；连续接管回执与第二 replacement challenge 仍在实现，未部署。
+- 非阻塞清理：仓库基线已跟踪 4 个 Android/iOS `build/**` 产物，Issue #93 负责从索引删除并补齐忽略规则；当前 E2EE 提交未新增或修改这些文件。
