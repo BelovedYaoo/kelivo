@@ -13,7 +13,7 @@ void main() {
     final source = await File('lib/main.dart').readAsString();
     const bootstrapCall = 'AccountWorkspaceRuntime.bootstrap(';
     const retirementCall =
-        'PlaintextRemoteBackupRetirement.retireCurrentInstallation(';
+        'PlaintextPersistenceRetirement.retireCurrentInstallation(';
     final bootstrapOffset = source.indexOf(bootstrapCall);
     final retirementOffset = source.indexOf(retirementCall);
     final retirementEnd = source.indexOf(');', retirementOffset);
@@ -24,6 +24,12 @@ void main() {
     expect(
       source.substring(retirementOffset, retirementEnd),
       contains('workspaceRuntime: workspaceRuntime'),
+    );
+    expect(
+      source.substring(retirementOffset, retirementEnd),
+      contains(
+        'retirePersistentLogs: installationRootSession.retirePersistentLogs',
+      ),
     );
   });
 

@@ -8,4 +8,7 @@
 - 本任务提交为 `4314735f`、`43995c69`、`f2af44a8`、`4506004a`，应用层受管根接线包含在 `7560b16c`。
 - 验证通过：`flutter analyze --no-pub lib integration_test/android_workspace_system_alias_test.dart`；关键 Flutter 回归 182/182；安全核心 Dart 29/29、Windows Rust 89/89、Linux 受管根 21/21；Android x86_64 strict clippy；MCP 152/152；Workmanager Android 单元测试；各路径依赖独立分析。
 - API 36 修复 APK 已安装并运行 30 秒且不再触发 syscall 437 `SIGSYS`，但 Flutter/Gradle 驱动宿主未返回集成断言；Windows Debug 构建在 CMake 阶段超时。Apple 原生源码无法在 Windows 编译，`flutter_tts` 与 `workmanager_apple` 没有包内测试目录。
-- 移动恢复介质页的两处动态诊断由恢复分支负责；根分支集成时需保留其静态化结果，并统一 #85 与恢复模块的最终 ABI20。
+- 复审发现三项发布阻断，正在继续修复：后台冷启动在 `noSession` 前遗漏历史偏好、临时备份、工作区明文状态与持久日志退役；Windows/Linux 偏好删除证明按字符串路径重开文件，存在目录替换竞态；启动、恢复页及 Android/Linux 原生入口仍有动态异常输出。
+- 偏好删除证明确定使用最终 ABI20：删除前固定 application-support 根会话，删除后仅从固定根相对打开固定 `shared_preferences.json`；16 MiB 上限内有界读取并结构化解析，文件不存在也必须完成固定根持久屏障与根链复核，任一失败均失败关闭。
+- Android `GeneratedPluginRegistrant.java` 是 Flutter 忽略的生成文件，禁止手改；必须通过可重复的生成源或构建配置消除带异常对象的 `Log.e`，并且插件注册失败不得伪装成功。
+- 恢复介质页两处动态 `developer.log` 本轮直接静态化；根分支集成时必须保留该结果，并统一其他 E2EE 分支的 ABI20。

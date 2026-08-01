@@ -223,15 +223,26 @@ Future<void> main() async {
         return;
       }
       try {
-        await PlaintextRemoteBackupRetirement.retireCurrentInstallation(
+        await PlaintextPersistenceRetirement.retireCurrentInstallation(
           workspaceRuntime: workspaceRuntime,
+          retirePersistentLogs: installationRootSession.retirePersistentLogs,
         );
       } catch (error) {
-        stderr.writeln('[PlaintextRemoteBackupRetirement] failed');
+        stderr.writeln('[PlaintextPersistenceRetirement] failed');
         try {
           await workspaceRuntime.close();
         } catch (_) {
           stderr.writeln('[AccountWorkspaceClose] failed');
+        }
+        try {
+          await installationRootSession.close();
+        } catch (_) {
+          stderr.writeln('[InstallationRootClose] failed');
+        }
+        try {
+          await installationBusinessLease.close();
+        } catch (_) {
+          stderr.writeln('[InstallationBusinessLeaseClose] failed');
         }
         await _initRestoreFailureWindow();
         runApp(
@@ -252,9 +263,6 @@ Future<void> main() async {
         // 防止另一个实例与业务 I/O 发生竞争。
         final businessLease = await RestoreBusinessLease.acquire(
           appDataDirectory: appDataDirectory,
-        );
-        await workspaceRuntime.discardPlaintextLocalState(
-          retirePersistentLogs: installationRootSession.retirePersistentLogs,
         );
         restoreOutcome =
             await RestoreStartupGate.recoverAndRequireBusinessReady(

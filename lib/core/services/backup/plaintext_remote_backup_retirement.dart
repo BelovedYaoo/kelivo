@@ -4,6 +4,22 @@ import 'package:path_provider/path_provider.dart';
 import '../storage/durable_shared_preferences_store.dart';
 import '../workspace/account_workspace_runtime.dart';
 
+final class PlaintextPersistenceRetirement {
+  const PlaintextPersistenceRetirement._();
+
+  static Future<void> retireCurrentInstallation({
+    required AccountWorkspaceRuntime workspaceRuntime,
+    required Future<void> Function() retirePersistentLogs,
+  }) async {
+    await PlaintextRemoteBackupRetirement.retireCurrentInstallation(
+      workspaceRuntime: workspaceRuntime,
+    );
+    await workspaceRuntime.discardPlaintextLocalState(
+      retirePersistentLogs: retirePersistentLogs,
+    );
+  }
+}
+
 final class PlaintextRemoteBackupRetirement {
   const PlaintextRemoteBackupRetirement({
     required this.preferenceStore,

@@ -435,12 +435,13 @@ void main() {
     expect(timers.nextDelay, isNull);
   });
 
-  test('E2EE 后台同步无持久会话时不打开内容运行时并释放工作区', () async {
+  test('E2EE 后台同步无持久会话时先退役明文且不打开内容运行时', () async {
     final events = <String>[];
     final workspace = _FakeBackgroundWorkspace(
       events: events,
       session: null,
       contentAcquisition: const E2eeBackgroundContentBusy(),
+      recordPlaintextRetirement: true,
     );
     final runner = E2eeBackgroundSyncRunner.forTesting(
       _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
@@ -449,8 +450,103 @@ void main() {
     final outcome = await runner.run();
 
     expect(outcome.disposition, E2eeBackgroundSyncDisposition.noSession);
+    expect(workspace.plaintextRetirementCalls, 1);
     expect(workspace.contentAcquisitionCalls, 0);
-    expect(events, <String>['workspace-close']);
+    expect(events, <String>['plaintext-retire', 'workspace-close']);
+  });
+
+  test('E2EE 后台同步有持久会话时先退役明文再打开内容运行时', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) async =>
+          _backgroundCycleReport(E2eeSyncCycleDisposition.completed),
+    );
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+      recordPlaintextRetirement: true,
+    );
+
+    final outcome = await E2eeBackgroundSyncRunner.forTesting(
+      _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+    ).run();
+
+    expect(outcome.disposition, E2eeBackgroundSyncDisposition.completed);
+    expect(workspace.plaintextRetirementCalls, 1);
+    expect(events, <String>[
+      'plaintext-retire',
+      'content-acquire',
+      'run',
+      'runtime-close',
+      'account-lease-close',
+      'workspace-close',
+    ]);
+  });
+
+  test('E2EE 后台同步明文退役失败时释放工作区且不打开内容或网络', () async {
+    final events = <String>[];
+    final content = _FakeBackgroundContent(
+      events: events,
+      run: (_) async =>
+          _backgroundCycleReport(E2eeSyncCycleDisposition.completed),
+    );
+    final retirementFailure = StateError('background-plaintext-retirement');
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: _session(),
+      contentAcquisition: E2eeBackgroundContentAcquired(content),
+      recordPlaintextRetirement: true,
+      plaintextRetirementFailure: retirementFailure,
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(
+        _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      ).run(),
+      throwsA(same(retirementFailure)),
+    );
+
+    expect(workspace.plaintextRetirementCalls, 1);
+    expect(workspace.contentAcquisitionCalls, 0);
+    expect(content.runCalls, 0);
+    expect(events, <String>['plaintext-retire', 'workspace-close']);
+  });
+
+  test('E2EE 后台同步明文退役迟到结算后再且仅再释放工作区', () async {
+    final events = <String>[];
+    final retirementBarrier = Completer<void>();
+    final workspace = _FakeBackgroundWorkspace(
+      events: events,
+      session: null,
+      contentAcquisition: const E2eeBackgroundContentBusy(),
+      recordPlaintextRetirement: true,
+      plaintextRetirementBarrier: retirementBarrier.future,
+    );
+
+    await expectLater(
+      E2eeBackgroundSyncRunner.forTesting(
+        _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
+      ).run(
+        limits: const E2eeBackgroundSyncLimits(
+          maximumDuration: Duration(milliseconds: 10),
+          maximumShutdownDuration: Duration(milliseconds: 20),
+        ),
+      ),
+      throwsA(isA<E2eeSyncDeadlineExceeded>()),
+    );
+
+    expect(events, <String>['plaintext-retire-start']);
+    retirementBarrier.complete();
+    await _waitUntil(() => workspace.workspaceCloseCalls == 1);
+    expect(events, <String>[
+      'plaintext-retire-start',
+      'plaintext-retire',
+      'workspace-close',
+    ]);
+    expect(workspace.contentAcquisitionCalls, 0);
+    expect(workspace.workspaceCloseCalls, 1);
   });
 
   test('E2EE 后台同步结束后解除永不触发的取消监听', () async {
@@ -6682,6 +6778,11 @@ final class _TrackedBackgroundWorkspace implements E2eeBackgroundSyncWorkspace {
   CloudSyncAccountSession? get session => _delegate.session;
 
   @override
+  Future<void> retirePlaintextState(E2eeSyncExecutionBudget executionBudget) {
+    return _delegate.retirePlaintextState(executionBudget);
+  }
+
+  @override
   Future<E2eeBackgroundContentAcquisition> tryAcquireContent(
     E2eeSyncExecutionBudget executionBudget,
   ) {
@@ -6711,16 +6812,38 @@ final class _FakeBackgroundWorkspace implements E2eeBackgroundSyncWorkspace {
     required this.session,
     required this.contentAcquisition,
     this.persistSessionBarrier,
+    this.recordPlaintextRetirement = false,
+    this.plaintextRetirementFailure,
+    this.plaintextRetirementBarrier,
   });
 
   final List<String> events;
   final E2eeBackgroundContentAcquisition contentAcquisition;
   final Future<void>? persistSessionBarrier;
+  final bool recordPlaintextRetirement;
+  final Object? plaintextRetirementFailure;
+  final Future<void>? plaintextRetirementBarrier;
   @override
   CloudSyncAccountSession? session;
+  int plaintextRetirementCalls = 0;
   int contentAcquisitionCalls = 0;
   int workspaceCloseCalls = 0;
   bool _closed = false;
+
+  @override
+  Future<void> retirePlaintextState(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
+    plaintextRetirementCalls++;
+    final barrier = plaintextRetirementBarrier;
+    if (barrier != null) {
+      if (recordPlaintextRetirement) events.add('plaintext-retire-start');
+      await barrier;
+    }
+    if (recordPlaintextRetirement) events.add('plaintext-retire');
+    final failure = plaintextRetirementFailure;
+    if (failure != null) throw failure;
+  }
 
   @override
   Future<E2eeBackgroundContentAcquisition> tryAcquireContent(
@@ -6767,6 +6890,11 @@ final class _PendingContentBackgroundWorkspace
   @override
   CloudSyncAccountSession? session;
   int workspaceCloseCalls = 0;
+
+  @override
+  Future<void> retirePlaintextState(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {}
 
   @override
   Future<E2eeBackgroundContentAcquisition> tryAcquireContent(

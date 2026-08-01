@@ -9,6 +9,7 @@ import '../../database/app_database.dart';
 import '../../database/chat_database_gateway.dart';
 import '../../database/database_installation_gate.dart';
 import '../../database/sqlcipher_database_key.dart';
+import '../backup/plaintext_remote_backup_retirement.dart';
 import '../backup/restore_business_lease.dart';
 import '../backup/restore_receipt.dart';
 import '../backup/restore_startup_gate.dart';
@@ -149,6 +150,8 @@ abstract interface class E2eeBackgroundSyncHost {
 abstract interface class E2eeBackgroundSyncWorkspace {
   CloudSyncAccountSession? get session;
 
+  Future<void> retirePlaintextState(E2eeSyncExecutionBudget executionBudget);
+
   Future<E2eeBackgroundContentAcquisition> tryAcquireContent(
     E2eeSyncExecutionBudget executionBudget,
   );
@@ -223,6 +226,33 @@ final class E2eeBackgroundSyncRunner {
 
         if (outcome == null) {
           final activeWorkspace = workspace!;
+          final interruptedCleanup =
+              _InterruptedWorkspaceRetirementCleanupBarrier(
+                workspace: activeWorkspace,
+                transferWorkspaceOwnership: () {
+                  if (!identical(workspace, activeWorkspace)) {
+                    throw StateError(
+                      'e2ee_background_workspace_ownership_mismatch',
+                    );
+                  }
+                  workspace = null;
+                },
+              );
+          final retirementAttempt = await executionBudget.runBoundedStep(
+            operation: (_) => _captureWorkspaceRetirement(
+              activeWorkspace.retirePlaintextState(executionBudget),
+            ),
+            releaseInterruptedValue: interruptedCleanup.release,
+            transferInterruptedOwnership:
+                interruptedCleanup.takeWorkspaceOwnership,
+          );
+          if (retirementAttempt case _BackgroundWorkspaceRetirementFailed(
+            :final error,
+            :final stackTrace,
+          )) {
+            Error.throwWithStackTrace(error, stackTrace);
+          }
+          executionBudget.checkCanContinue();
           final activeSession = activeWorkspace.session;
           if (activeSession == null) {
             outcome = const E2eeBackgroundSyncOutcome.noSession();
@@ -348,6 +378,83 @@ Future<void> _releaseInterruptedWorkspace(
     workspace: final value,
   )) {
     await value.closeWorkspaceLease();
+  }
+}
+
+sealed class _BackgroundWorkspaceRetirementAttempt {
+  const _BackgroundWorkspaceRetirementAttempt();
+}
+
+final class _BackgroundWorkspaceRetirementCompleted
+    extends _BackgroundWorkspaceRetirementAttempt {
+  const _BackgroundWorkspaceRetirementCompleted();
+}
+
+final class _BackgroundWorkspaceRetirementFailed
+    extends _BackgroundWorkspaceRetirementAttempt {
+  const _BackgroundWorkspaceRetirementFailed(this.error, this.stackTrace);
+
+  final Object error;
+  final StackTrace stackTrace;
+}
+
+Future<_BackgroundWorkspaceRetirementAttempt> _captureWorkspaceRetirement(
+  Future<void> retirement,
+) async {
+  try {
+    await retirement;
+    return const _BackgroundWorkspaceRetirementCompleted();
+  } catch (error, stackTrace) {
+    return _BackgroundWorkspaceRetirementFailed(error, stackTrace);
+  }
+}
+
+final class _InterruptedWorkspaceRetirementCleanupBarrier {
+  _InterruptedWorkspaceRetirementCleanupBarrier({
+    required this.workspace,
+    required this.transferWorkspaceOwnership,
+  });
+
+  final E2eeBackgroundSyncWorkspace workspace;
+  final void Function() transferWorkspaceOwnership;
+  bool _ownershipTransferred = false;
+  Future<void>? _cleanup;
+
+  void takeWorkspaceOwnership() {
+    if (_ownershipTransferred) return;
+    _ownershipTransferred = true;
+    transferWorkspaceOwnership();
+  }
+
+  Future<void> release(_BackgroundWorkspaceRetirementAttempt attempt) {
+    if (!_ownershipTransferred) {
+      throw StateError('e2ee_background_retirement_cleanup_without_ownership');
+    }
+    return _cleanup ??= _releaseOnce(attempt);
+  }
+
+  Future<void> _releaseOnce(
+    _BackgroundWorkspaceRetirementAttempt attempt,
+  ) async {
+    Object? primaryError;
+    StackTrace? primaryStackTrace;
+    if (attempt case _BackgroundWorkspaceRetirementFailed(
+      :final error,
+      :final stackTrace,
+    )) {
+      primaryError = error;
+      primaryStackTrace = stackTrace;
+    }
+    try {
+      await workspace.closeWorkspaceLease();
+    } catch (error, stackTrace) {
+      primaryError ??= error;
+      primaryStackTrace ??= stackTrace;
+    }
+    final error = primaryError;
+    if (error != null) {
+      Error.throwWithStackTrace(error, primaryStackTrace!);
+    }
   }
 }
 
@@ -526,6 +633,18 @@ final class _ProductionBackgroundSyncWorkspace
   CloudSyncAccountSession? get session => _workspaceRuntime.current.session;
 
   @override
+  Future<void> retirePlaintextState(
+    E2eeSyncExecutionBudget executionBudget,
+  ) async {
+    executionBudget.checkCanContinue();
+    await PlaintextPersistenceRetirement.retireCurrentInstallation(
+      workspaceRuntime: _workspaceRuntime,
+      retirePersistentLogs: _installationRootSession.retirePersistentLogs,
+    );
+    executionBudget.checkCanContinue();
+  }
+
+  @override
   Future<E2eeBackgroundContentAcquisition> tryAcquireContent(
     E2eeSyncExecutionBudget executionBudget,
   ) async {
@@ -550,10 +669,6 @@ final class _ProductionBackgroundSyncWorkspace
       executionBudget.checkCanContinue();
       final databaseCipher = SqlCipherDatabaseKey.forWorkspace(
         _workspaceRuntime.current.workspaceKey,
-      );
-      executionBudget.checkCanContinue();
-      await _workspaceRuntime.discardPlaintextLocalState(
-        retirePersistentLogs: _installationRootSession.retirePersistentLogs,
       );
       executionBudget.checkCanContinue();
       final restoreOutcome =
