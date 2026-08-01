@@ -592,6 +592,8 @@ fn validate_prepare_binding(
             }
             if let Some(existing) = existing_target {
                 if history_head.operation_kind != 4
+                    || history_head.issuer_device_id != challenge.device_id
+                    || history_head.subject_device_id != challenge.device_id
                     || existing.key_version != challenge.device_key_version
                     || existing.auth_generation != input.target_auth_generation
                     || existing.signing_public_key != challenge.device_public_keys.signing
@@ -1152,6 +1154,76 @@ mod tests {
             &head,
             replacement_input,
         ).is_err());
+    }
+
+    #[test]
+    fn replacement_after_resume_rejects_another_existing_subject() {
+        let (device, challenge, mut head, current_ark) =
+            prepare_context(AccountRecoveryDataPhase::Ready);
+        head.operation_kind = 4;
+        head.members.push(RecoveryHistoryMember {
+            device_id: challenge.device_id,
+            key_version: challenge.device_key_version,
+            auth_generation: 1,
+            signing_public_key: challenge.device_public_keys.signing,
+            key_agreement_public_key: challenge.device_public_keys.key_agreement,
+        });
+
+        let error = prepare_account_recovery_commit(
+            &mut TestRng(0x66),
+            &current_ark,
+            &device,
+            &challenge,
+            &head,
+            AccountRecoveryPrepareInput {
+                kind: AccountRecoveryCommitKind::Replacement,
+                operation_id: uuid(0x56),
+                target_auth_generation: 1,
+                rekey_operation_id: None,
+                completion_session_id: Some(uuid(0x57)),
+                completion_session_token_digest: Some([0x58; 32]),
+            },
+        )
+        .err();
+
+        assert_eq!(
+            error,
+            Some(AccountRecoveryProtocolError::PrepareBindingMismatch)
+        );
+    }
+
+    #[test]
+    fn replacement_after_resume_accepts_the_same_subject() {
+        let (device, challenge, mut head, current_ark) =
+            prepare_context(AccountRecoveryDataPhase::Ready);
+        head.operation_kind = 4;
+        head.issuer_device_id = challenge.device_id;
+        head.subject_device_id = challenge.device_id;
+        head.members.push(RecoveryHistoryMember {
+            device_id: challenge.device_id,
+            key_version: challenge.device_key_version,
+            auth_generation: 1,
+            signing_public_key: challenge.device_public_keys.signing,
+            key_agreement_public_key: challenge.device_public_keys.key_agreement,
+        });
+
+        let prepared = prepare_account_recovery_commit(
+            &mut TestRng(0x67),
+            &current_ark,
+            &device,
+            &challenge,
+            &head,
+            AccountRecoveryPrepareInput {
+                kind: AccountRecoveryCommitKind::Replacement,
+                operation_id: uuid(0x56),
+                target_auth_generation: 1,
+                rekey_operation_id: None,
+                completion_session_id: Some(uuid(0x57)),
+                completion_session_token_digest: Some([0x58; 32]),
+            },
+        );
+
+        assert!(prepared.is_ok());
     }
 
     fn prepare_context(
