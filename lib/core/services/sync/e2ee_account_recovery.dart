@@ -237,6 +237,38 @@ final class E2eeAccountRecoveryAuthorizationReceipt {
   final DateTime recoveryTokenExpiresAt;
 }
 
+final class E2eeAccountRecoveryAuthorizedState {
+  E2eeAccountRecoveryAuthorizedState({
+    required String attemptId,
+    required DateTime authorizedAt,
+    required DateTime recoveryTokenExpiresAt,
+    required this.nextAction,
+    required this.securityState,
+    required this.dataState,
+  }) : attemptId = _canonicalUuid(attemptId, 'attemptId'),
+       authorizedAt = authorizedAt.toUtc(),
+       recoveryTokenExpiresAt = recoveryTokenExpiresAt.toUtc() {
+    if (this.authorizedAt.millisecondsSinceEpoch <= 0 ||
+        !this.authorizedAt.isBefore(this.recoveryTokenExpiresAt)) {
+      throw const FormatException('账户恢复远程授权时间无效');
+    }
+  }
+
+  final String attemptId;
+  final DateTime authorizedAt;
+  final DateTime recoveryTokenExpiresAt;
+  final E2eeAccountRecoveryNextAction nextAction;
+  final CloudSyncAccountSecurityState securityState;
+  final E2eeAccountRecoveryDataState dataState;
+}
+
+final class E2eeAccountRecoveryTokenUnavailable implements Exception {
+  const E2eeAccountRecoveryTokenUnavailable();
+
+  @override
+  String toString() => 'E2eeAccountRecoveryTokenUnavailable';
+}
+
 sealed class E2eeAccountRecoveryBearer {
   const E2eeAccountRecoveryBearer();
 
@@ -273,6 +305,10 @@ final class _E2eeAccountRecoveryTokenBearer extends E2eeAccountRecoveryBearer {
 }
 
 abstract interface class E2eeAccountRecoveryTransport {
+  Future<E2eeAccountRecoveryAuthorizedState> getAuthorizedState({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+  });
+
   Future<E2eeAccountRecoveryChallenge> createChallenge({
     required CloudSyncOnboardingToken onboardingToken,
     required String attemptId,
@@ -633,7 +669,35 @@ final class E2eeAccountRecoveryAuthorizer {
         );
         checkpointSnapshot = await _checkpointPersistence.create(checkpoint);
         checkpoint = checkpointSnapshot.checkpoint;
-      } else if (checkpoint.stage == E2eeAccountRecoveryStage.authorized) {
+      } else if (checkpoint.stage == E2eeAccountRecoveryStage.proofReady) {
+        E2eeAccountRecoveryAuthorizedState? authorizedState;
+        try {
+          authorizedState = await _transport.getAuthorizedState(
+            recoveryToken: checkpoint.recoveryToken,
+          );
+        } on E2eeAccountRecoveryTokenUnavailable {
+          authorizedState = null;
+        }
+        if (authorizedState != null) {
+          _validateAuthorizedState(checkpoint.challenge, authorizedState);
+          if (!now.isBefore(authorizedState.recoveryTokenExpiresAt)) {
+            throw const E2eeAccountRecoveryExpired();
+          }
+          final proofReadySnapshot = checkpointSnapshot;
+          if (proofReadySnapshot == null) {
+            throw StateError('账户恢复 checkpoint 快照缺失');
+          }
+          checkpointSnapshot = await _checkpointPersistence.advance(
+            expectedEnvelopeDigest: proofReadySnapshot.envelopeDigest,
+            checkpoint: checkpoint.authorized(
+              recoveryTokenExpiresAt: authorizedState.recoveryTokenExpiresAt,
+              nextAction: authorizedState.nextAction,
+            ),
+          );
+          checkpoint = checkpointSnapshot.checkpoint;
+        }
+      }
+      if (checkpoint.stage == E2eeAccountRecoveryStage.authorized) {
         final expiresAt = checkpoint.recoveryTokenExpiresAt;
         if (expiresAt == null || !now.isBefore(expiresAt)) {
           throw const E2eeAccountRecoveryExpired();
@@ -842,6 +906,49 @@ final class E2eeAccountRecoveryAuthorizer {
         projection.recoveryCapsuleVersion != challenge.recoveryCapsuleVersion) {
       throw const FormatException('账户恢复历史投影未绑定冻结 challenge');
     }
+  }
+
+  static void _validateAuthorizedState(
+    E2eeAccountRecoveryChallenge challenge,
+    E2eeAccountRecoveryAuthorizedState authorized,
+  ) {
+    final security = authorized.securityState;
+    final expectedPhase =
+        challenge.dataState.phase == E2eeAccountRecoveryDataPhase.ready
+        ? CloudSyncDataRekeyPhase.ready
+        : CloudSyncDataRekeyPhase.rekeyPending;
+    final expectedNextAction =
+        challenge.dataState.phase == E2eeAccountRecoveryDataPhase.ready
+        ? E2eeAccountRecoveryNextAction.recoverReplace
+        : E2eeAccountRecoveryNextAction.recoverResume;
+    if (authorized.attemptId != challenge.attemptId ||
+        authorized.nextAction != expectedNextAction ||
+        security.generation != challenge.securityGeneration ||
+        security.keyEpoch != challenge.keyEpoch ||
+        security.dataRekeyPhase != expectedPhase ||
+        !_sameBytes(
+          security.membershipManifestDigest.bytes,
+          challenge.membershipManifestDigest,
+        ) ||
+        security.recoveryPublicKeyVersion !=
+            challenge.recoveryPublicKeyVersion ||
+        !_sameBytes(security.recoveryPublicKey, challenge.recoveryPublicKey) ||
+        security.recoveryCapsuleVersion != challenge.recoveryCapsuleVersion ||
+        !_sameBytes(security.recoveryCapsule, challenge.recoveryCapsule) ||
+        !_sameDataState(authorized.dataState, challenge.dataState)) {
+      throw const FormatException('账户恢复远程授权状态与冻结 challenge 不一致');
+    }
+  }
+
+  static bool _sameDataState(
+    E2eeAccountRecoveryDataState left,
+    E2eeAccountRecoveryDataState right,
+  ) {
+    return left.phase == right.phase &&
+        left.dataGeneration == right.dataGeneration &&
+        left.dataKeyEpoch == right.dataKeyEpoch &&
+        left.operationId == right.operationId &&
+        left.targetKeyEpoch == right.targetKeyEpoch;
   }
 
   static Uint8List? _sourceCapsule(

@@ -512,6 +512,31 @@ final class CloudSyncClient
   }
 
   @override
+  Future<E2eeAccountRecoveryAuthorizedState> getAuthorizedState({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+  }) async {
+    try {
+      return await _guard(() async {
+        final response = await _client
+            .getAccountRecoveryApi()
+            .getAccountRecoveryState(
+              headers: _authorizationHeaders(recoveryToken.value),
+              extra: _strictResponseExtra,
+            );
+        return _parseAccountRecoveryAuthorizedState(
+          response.extra[_rawResponseKey],
+        );
+      });
+    } on CloudSyncException catch (error) {
+      if (error.kind == CloudSyncFailureKind.unauthenticated &&
+          error.serverCode == 'AUTH_ACCOUNT_RECOVERY_TOKEN_INVALID') {
+        throw const E2eeAccountRecoveryTokenUnavailable();
+      }
+      rethrow;
+    }
+  }
+
+  @override
   Future<E2eeAccountRecoveryChallenge> createChallenge({
     required CloudSyncOnboardingToken onboardingToken,
     required String attemptId,
@@ -2271,6 +2296,35 @@ E2eeAccountRecoveryChallenge _parseAccountRecoveryChallenge(
   );
 }
 
+E2eeAccountRecoveryAuthorizedState _parseAccountRecoveryAuthorizedState(
+  Object? rawResponse,
+) {
+  final data = _strictResponseData(
+    rawResponse,
+    _accountRecoveryStateDataKeys,
+    '账户恢复远程状态响应',
+  );
+  if (_rawInt(data, 'protocolVersion') != e2eeAccountRecoveryProtocolVersion ||
+      _rawString(data, 'status') != 'authorized') {
+    throw const FormatException('账户恢复远程状态尚不可接管');
+  }
+  final nextAction = switch (_rawString(data, 'nextAction')) {
+    'recover-resume' => E2eeAccountRecoveryNextAction.recoverResume,
+    'recover-replace' => E2eeAccountRecoveryNextAction.recoverReplace,
+    _ => throw const FormatException('账户恢复远程状态下一步无效'),
+  };
+  return E2eeAccountRecoveryAuthorizedState(
+    attemptId: _rawString(data, 'attemptId'),
+    authorizedAt: _rawUtcDateTime(data, 'authorizedAt'),
+    recoveryTokenExpiresAt: _rawUtcDateTime(data, 'recoveryTokenExpiresAt'),
+    nextAction: nextAction,
+    securityState: CloudSyncAccountSecurityState.fromJson(
+      copyCloudSyncJsonMap(data['securityState']),
+    ),
+    dataState: _parseAccountRecoveryDataState(data['dataState']),
+  );
+}
+
 E2eeAccountRecoveryDataState _parseAccountRecoveryDataState(Object? raw) {
   final data = copyCloudSyncJsonMap(raw);
   _requireRawExactKeys(data, _accountRecoveryDataStateKeys, '账户恢复数据状态');
@@ -3290,6 +3344,16 @@ const _accountRecoveryAuthorizationDataKeys = <String>{
   'status',
   'nextAction',
   'recoveryTokenExpiresAt',
+};
+const _accountRecoveryStateDataKeys = <String>{
+  'protocolVersion',
+  'attemptId',
+  'status',
+  'nextAction',
+  'authorizedAt',
+  'recoveryTokenExpiresAt',
+  'securityState',
+  'dataState',
 };
 
 final _syncIdentifierPattern = RegExp(

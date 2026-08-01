@@ -2115,7 +2115,9 @@ void main() {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final subscription = server.listen((request) async {
       final rawBody = await utf8.decoder.bind(request).join();
-      final body = copyCloudSyncJsonMap(jsonDecode(rawBody));
+      final body = rawBody.isEmpty
+          ? <String, Object?>{}
+          : copyCloudSyncJsonMap(jsonDecode(rawBody));
       requests.add((
         request.method,
         request.uri.path,
@@ -2151,6 +2153,46 @@ void main() {
             },
             'expiresAt': '2026-08-01T02:00:00.000Z',
           },
+        ('/api/auth/account-recovery/state/get', null) => <String, Object?>{
+          'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+          'attemptId': _attemptId1,
+          'status': 'authorized',
+          'nextAction': 'recover-replace',
+          'authorizedAt': '2026-08-01T01:30:00.000Z',
+          'recoveryTokenExpiresAt': '2026-08-01T03:00:00.000Z',
+          'securityState': <String, Object?>{
+            'generation': 1,
+            'keyEpoch': 1,
+            'dataRekeyPhase': 'ready',
+            'membershipManifest': _encodedData(manifest),
+            'membershipManifestDigest': historyItem['membershipManifestDigest'],
+            'recoveryPublicKeyVersion': 1,
+            'recoveryPublicKey': historyItem['recoveryPublicKey'],
+            'recoveryCapsuleVersion': 1,
+            'recoveryCapsule': _encodedData(capsule),
+            'lastOperationId': _mutationId1,
+            'updatedAt': '2026-08-01T01:00:00.000Z',
+            'envelopes': <Object?>[
+              <String, Object?>{
+                'targetDeviceId': _deviceId1,
+                'issuerDeviceId': _issuerDeviceId,
+                'envelopeVersion': 1,
+                'keyEpoch': 1,
+                'accountKeyEnvelope': _encodedBytes(
+                  cloudSyncAccountKeyEnvelopeBytes,
+                  100,
+                ),
+              },
+            ],
+          },
+          'dataState': <String, Object?>{
+            'phase': 'ready',
+            'dataGeneration': 1,
+            'dataKeyEpoch': 1,
+            'operationId': null,
+            'targetKeyEpoch': null,
+          },
+        },
         ('/api/auth/account-recovery/history/list', null) => <String, Object?>{
           'items': <Object?>[historyItem],
           'afterGeneration': 0,
@@ -2200,6 +2242,9 @@ void main() {
       onboardingToken: _onboardingToken,
       attemptId: _attemptId1,
     );
+    final remoteState = await client.getAuthorizedState(
+      recoveryToken: recoveryToken,
+    );
     final history = await client.listFrozenHistory(
       authorization: authorization,
       attemptId: _attemptId1,
@@ -2217,32 +2262,37 @@ void main() {
     );
 
     expect(challenge.recoveryCapsule, capsule);
+    expect(remoteState.securityState.recoveryCapsule, capsule);
     expect(history.items.single.recoveryCapsule, capsule);
     expect(receipt.nextAction, E2eeAccountRecoveryNextAction.recoverReplace);
     expect(
       requests.map((request) => (request.$1, request.$2)),
       <(String, String)>[
         ('POST', '/api/auth/account-recovery/attempt/start'),
+        ('GET', '/api/auth/account-recovery/state/get'),
         ('POST', '/api/auth/account-recovery/history/list'),
         ('POST', '/api/auth/account-recovery/attempt/start'),
       ],
     );
-    expect(
-      requests.map((request) => request.$3),
-      everyElement('Bearer $_onboardingTokenValue'),
-    );
+    expect(requests.map((request) => request.$3), <String?>[
+      'Bearer $_onboardingTokenValue',
+      'Bearer ${recoveryToken.value}',
+      'Bearer $_onboardingTokenValue',
+      'Bearer $_onboardingTokenValue',
+    ]);
     expect(requests[0].$4, <String, Object?>{
       'action': 'challenge',
       'protocolVersion': e2eeAccountRecoveryProtocolVersion,
       'attemptId': _attemptId1,
     });
-    expect(requests[1].$4, <String, Object?>{
+    expect(requests[1].$4, isEmpty);
+    expect(requests[2].$4, <String, Object?>{
       'afterGeneration': 0,
       'pageSize': 100,
       'attemptId': _attemptId1,
       'challengeRequestDigest': _encodedData(requestDigest),
     });
-    expect(requests[2].$4, <String, Object?>{
+    expect(requests[3].$4, <String, Object?>{
       'action': 'authorize',
       'protocolVersion': e2eeAccountRecoveryProtocolVersion,
       'attemptId': _attemptId1,
@@ -2251,6 +2301,40 @@ void main() {
       'nonceProof': _encodedData(nonceProof),
       'trustSignature': _encodedData(trustSignature),
     });
+  });
+
+  test('恢复 token 尚未生效时 state/get 转换为可识别状态', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+    final recoveryToken = CloudSyncAccountRecoveryToken.generate();
+
+    final stateFuture = client.getAuthorizedState(recoveryToken: recoveryToken);
+    final request = await requestFuture;
+    await utf8.decoder.bind(request).join();
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${recoveryToken.value}',
+    );
+    await _writeJsonResponse(request, <String, Object?>{
+      'error': <String, Object?>{
+        'code': 'AUTH_ACCOUNT_RECOVERY_TOKEN_INVALID',
+        'message': 'not authorized yet',
+        'retryable': false,
+      },
+      'requestId': 'account-recovery-state-1',
+    }, statusCode: HttpStatus.unauthorized);
+
+    await expectLater(
+      stateFuture,
+      throwsA(isA<E2eeAccountRecoveryTokenUnavailable>()),
+    );
   });
 
   test('安全控制面拒绝未知字段、历史串线与轮换错配回执', () async {

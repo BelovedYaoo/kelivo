@@ -255,6 +255,7 @@ void main() {
 
     expect(callOrder, <String>[
       'checkpoint:read',
+      'state',
       'history:0',
       'native',
       'authorize',
@@ -310,13 +311,82 @@ void main() {
       throwsA(isA<FormatException>()),
     );
 
-    expect(callOrder, <String>['checkpoint:read', 'history:0', 'native']);
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'state',
+      'history:0',
+      'native',
+    ]);
     expect(proofCore.lastLease?.closed, isTrue);
     expect(
       checkpointPersistence.current?.stage,
       E2eeAccountRecoveryStage.proofReady,
     );
     expect(passphrase, everyElement(0));
+  });
+
+  test('proofReady 重启发现服务端已授权时改用恢复 bearer', () async {
+    final fixture = _readyRecoveryFixture();
+    final callOrder = <String>[];
+    final recoveryToken = CloudSyncAccountRecoveryToken.generate();
+    final proofReady = E2eeAccountRecoveryCheckpoint.challenged(
+      expectedDeviceId: _uuid(5),
+      recoveryToken: recoveryToken,
+      challenge: fixture.challenge,
+    ).withProof(nonceProof: _bytes(32, 0x81), trustSignature: _bytes(64, 0x82));
+    final checkpointPersistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: proofReady,
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: fixture.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[fixture.historyPage],
+      callOrder: callOrder,
+      authorizedState: E2eeAccountRecoveryAuthorizedState(
+        attemptId: fixture.challenge.attemptId,
+        authorizedAt: DateTime.utc(2026, 8, 1),
+        recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
+        nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
+        securityState: _securityStateForFixture(fixture),
+        dataState: fixture.challenge.dataState,
+      ),
+    );
+    final proofCore = _FakeRecoveryProofCore(callOrder);
+    final authorizer = E2eeAccountRecoveryAuthorizer(
+      transport: transport,
+      proofCore: proofCore,
+      checkpointPersistence: checkpointPersistence,
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => throw StateError('不应创建新 attempt'),
+      recoveryTokenFactory: () => throw StateError('不应创建新恢复令牌'),
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+
+    final authorized = await authorizer.authorize(
+      onboardingToken: CloudSyncOnboardingToken.parse(
+        'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+      ),
+      expectedDeviceId: _uuid(5),
+      recoveryMedia: _bytes(644, 0x73),
+      recoveryPassphrase: Uint8List.fromList(
+        utf8.encode('correct horse battery'),
+      ),
+    );
+
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'state',
+      'checkpoint:authorized',
+      'history:0',
+      'native',
+    ]);
+    expect(transport.receivedHistoryBearer, recoveryToken.value);
+    expect(transport.receivedRecoveryToken, isNull);
+    expect(authorized.recoveryToken.value, recoveryToken.value);
+    expect(
+      checkpointPersistence.current?.stage,
+      E2eeAccountRecoveryStage.authorized,
+    );
   });
 }
 
@@ -374,6 +444,38 @@ _readyRecoveryFixture() {
   );
 }
 
+CloudSyncAccountSecurityState _securityStateForFixture(
+  ({
+    E2eeAccountRecoveryChallenge challenge,
+    CloudSyncAccountSecurityHistoryPage historyPage,
+  })
+  fixture,
+) {
+  final head = fixture.historyPage.items.single;
+  return CloudSyncAccountSecurityState(
+    generation: head.generation,
+    keyEpoch: head.keyEpoch,
+    dataRekeyPhase: CloudSyncDataRekeyPhase.ready,
+    membershipManifest: head.membershipManifest,
+    membershipManifestDigest: head.membershipManifestDigest,
+    recoveryPublicKeyVersion: head.recoveryPublicKeyVersion,
+    recoveryPublicKey: head.recoveryPublicKey,
+    recoveryCapsuleVersion: head.recoveryCapsuleVersion,
+    recoveryCapsule: head.recoveryCapsule,
+    lastOperationId: head.operationId,
+    updatedAt: head.committedAt,
+    envelopes: <CloudSyncAccountSecurityEnvelope>[
+      CloudSyncAccountSecurityEnvelope(
+        targetDeviceId: _uuid(5),
+        issuerDeviceId: _uuid(6),
+        envelopeVersion: 1,
+        keyEpoch: head.keyEpoch,
+        accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0x84),
+      ),
+    ],
+  );
+}
+
 CloudSyncAccountSecurityHistoryPage _historyPage({
   required int afterGeneration,
   required CloudSyncAccountSecurityHistoryItem item,
@@ -417,14 +519,29 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
     required this.challenge,
     required this.historyPages,
     required this.callOrder,
+    this.authorizedState,
   });
 
   final E2eeAccountRecoveryChallenge challenge;
   final List<CloudSyncAccountSecurityHistoryPage> historyPages;
   final List<String> callOrder;
+  final E2eeAccountRecoveryAuthorizedState? authorizedState;
   Uint8List? receivedNonceProof;
   Uint8List? receivedTrustSignature;
   CloudSyncAccountRecoveryToken? receivedRecoveryToken;
+  String? receivedHistoryBearer;
+
+  @override
+  Future<E2eeAccountRecoveryAuthorizedState> getAuthorizedState({
+    required CloudSyncAccountRecoveryToken recoveryToken,
+  }) async {
+    callOrder.add('state');
+    final state = authorizedState;
+    if (state == null) {
+      throw const E2eeAccountRecoveryTokenUnavailable();
+    }
+    return state;
+  }
 
   @override
   Future<E2eeAccountRecoveryChallenge> createChallenge({
@@ -444,6 +561,7 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
     required int pageSize,
   }) async {
     callOrder.add('history:$afterGeneration');
+    receivedHistoryBearer = authorization.value;
     return historyPages.removeAt(0);
   }
 
