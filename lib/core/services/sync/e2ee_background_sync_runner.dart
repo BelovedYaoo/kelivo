@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
+import '../../../utils/app_directories.dart';
 import '../../database/app_database.dart';
 import '../../database/chat_database_gateway.dart';
 import '../../database/database_installation_gate.dart';
@@ -13,6 +14,7 @@ import '../backup/restore_receipt.dart';
 import '../backup/restore_startup_gate.dart';
 import '../workspace/account_workspace_runtime.dart';
 import '../workspace/device_state_blob_store.dart';
+import '../workspace/installation_operation_lease.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_terminal_session_retirement.dart';
 import 'cloud_sync_types.dart';
@@ -458,24 +460,52 @@ final class _ProductionBackgroundSyncHost implements E2eeBackgroundSyncHost {
     E2eeSyncExecutionBudget executionBudget,
   ) async {
     executionBudget.checkCanContinue();
+    final installationRoot =
+        _installationRoot ??
+        await AppDirectories.getInstallationRootDirectory();
+    late final InstallationBusinessLease installationBusinessLease;
     try {
+      installationBusinessLease = await InstallationOperationLease(
+        installationRoot: installationRoot,
+      ).acquireBusiness();
+    } on InstallationBusinessLeaseUnavailable {
+      return const E2eeBackgroundWorkspaceBusy();
+    }
+    try {
+      executionBudget.checkCanContinue();
       final runtime = await AccountWorkspaceRuntime.bootstrap(
-        installationRoot: _installationRoot,
+        installationRoot: installationRoot,
       );
       return E2eeBackgroundWorkspaceAcquired(
-        _ProductionBackgroundSyncWorkspace(runtime),
+        _ProductionBackgroundSyncWorkspace(runtime, installationBusinessLease),
       );
     } on RestoreBusinessLeaseUnavailable {
+      await installationBusinessLease.close();
       return const E2eeBackgroundWorkspaceBusy();
+    } catch (error, stackTrace) {
+      await rethrowCloudSyncPrimaryAfterCleanup(
+        primaryError: error,
+        primaryStackTrace: stackTrace,
+        cleanupSteps: <CloudSyncFailureCleanupStep>[
+          CloudSyncFailureCleanupStep(
+            operation: '后台工作区构造失败后的安装业务租约释放失败',
+            cleanup: installationBusinessLease.close,
+          ),
+        ],
+      );
     }
   }
 }
 
 final class _ProductionBackgroundSyncWorkspace
     implements E2eeBackgroundSyncWorkspace {
-  _ProductionBackgroundSyncWorkspace(this._workspaceRuntime);
+  _ProductionBackgroundSyncWorkspace(
+    this._workspaceRuntime,
+    this._installationBusinessLease,
+  );
 
   final AccountWorkspaceRuntime _workspaceRuntime;
+  final InstallationBusinessLease _installationBusinessLease;
 
   @override
   CloudSyncAccountSession? get session => _workspaceRuntime.current.session;
@@ -588,7 +618,23 @@ final class _ProductionBackgroundSyncWorkspace
   }
 
   @override
-  Future<void> closeWorkspaceLease() => _workspaceRuntime.close();
+  Future<void> closeWorkspaceLease() async {
+    try {
+      await _workspaceRuntime.close();
+    } catch (error, stackTrace) {
+      await rethrowCloudSyncPrimaryAfterCleanup(
+        primaryError: error,
+        primaryStackTrace: stackTrace,
+        cleanupSteps: <CloudSyncFailureCleanupStep>[
+          CloudSyncFailureCleanupStep(
+            operation: '后台工作区关闭失败后的安装业务租约释放失败',
+            cleanup: _installationBusinessLease.close,
+          ),
+        ],
+      );
+    }
+    await _installationBusinessLease.close();
+  }
 
   Future<void> _commitSecurityBootstrap(
     CloudSyncAccountSession pendingSession,
