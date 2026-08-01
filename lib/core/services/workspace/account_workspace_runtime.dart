@@ -91,6 +91,8 @@ final class AccountWorkspaceRuntime {
   static const _sessionRecordName = 'session-v2';
   static const _localPreferencesPrefix = 'flutter.';
   static const _accountPreferencesPrefix = 'kelivo.account.';
+  static const _androidUserZeroAlias = '/data/user/0';
+  static const _androidUserZeroCanonical = '/data/data';
 
   final Directory installationRoot;
   final Directory _workspaceRoot;
@@ -1078,7 +1080,7 @@ final class AccountWorkspaceRuntime {
     final normalizedDirectory = Directory(
       p.normalize(p.absolute(directory.path)),
     );
-    // 信任边界只能由调用方给出的词法绝对路径形成，不能由重解析目标反向定义。
+    // 仅验证固定系统别名后映射规范根，任意重解析目标都不能反向定义信任边界。
     await _validateInstallationRootChain(
       normalizedDirectory.path,
       allowMissingTail: createMissing,
@@ -1097,7 +1099,13 @@ final class AccountWorkspaceRuntime {
       allowMissingTail: false,
       errorCode: errorCode,
     );
-    return normalizedDirectory;
+    try {
+      return Directory(
+        p.normalize(await normalizedDirectory.resolveSymbolicLinks()),
+      );
+    } on FileSystemException {
+      throw StateError(errorCode);
+    }
   }
 
   static Future<void> _validateInstallationRootChain(
@@ -1107,20 +1115,33 @@ final class AccountWorkspaceRuntime {
   }) async {
     var current = p.normalize(p.absolute(path));
     var missingTailAllowed = allowMissingTail;
+    final androidUserZeroAliasActive = await _hasTrustedAndroidUserZeroAlias(
+      current,
+    );
     while (true) {
       final type = await FileSystemEntity.type(current, followLinks: false);
       if (type == FileSystemEntityType.notFound) {
         if (!missingTailAllowed) throw StateError('${errorCode}_missing');
       } else {
         missingTailAllowed = false;
-        if (type != FileSystemEntityType.directory) {
+        final isAndroidUserZeroAlias =
+            androidUserZeroAliasActive &&
+            p.equals(current, _androidUserZeroAlias);
+        if (type != FileSystemEntityType.directory &&
+            !(isAndroidUserZeroAlias && type == FileSystemEntityType.link)) {
           throw StateError(errorCode);
         }
         try {
           final canonical = p.normalize(
             await Directory(current).resolveSymbolicLinks(),
           );
-          if (!p.equals(canonical, current)) throw StateError(errorCode);
+          final expectedCanonical = _expectedInstallationCanonicalPath(
+            current,
+            androidUserZeroAliasActive: androidUserZeroAliasActive,
+          );
+          if (!p.equals(canonical, expectedCanonical)) {
+            throw StateError(errorCode);
+          }
         } on FileSystemException {
           throw StateError(errorCode);
         }
@@ -1129,6 +1150,46 @@ final class AccountWorkspaceRuntime {
       if (p.equals(parent, current)) return;
       current = parent;
     }
+  }
+
+  static Future<bool> _hasTrustedAndroidUserZeroAlias(String path) async {
+    if (!Platform.isAndroid ||
+        (!p.equals(path, _androidUserZeroAlias) &&
+            !p.isWithin(_androidUserZeroAlias, path))) {
+      return false;
+    }
+    final type = await FileSystemEntity.type(
+      _androidUserZeroAlias,
+      followLinks: false,
+    );
+    if (type != FileSystemEntityType.link) return false;
+    try {
+      final canonical = p.normalize(
+        await Directory(_androidUserZeroAlias).resolveSymbolicLinks(),
+      );
+      return p.equals(canonical, _androidUserZeroCanonical);
+    } on FileSystemException {
+      return false;
+    }
+  }
+
+  static String _expectedInstallationCanonicalPath(
+    String path, {
+    required bool androidUserZeroAliasActive,
+  }) {
+    if (!androidUserZeroAliasActive) return path;
+    if (p.equals(path, _androidUserZeroAlias)) {
+      return _androidUserZeroCanonical;
+    }
+    if (p.isWithin(_androidUserZeroAlias, path)) {
+      return p.normalize(
+        p.join(
+          _androidUserZeroCanonical,
+          p.relative(path, from: _androidUserZeroAlias),
+        ),
+      );
+    }
+    return path;
   }
 
   static String _workspaceKey(String accountScope) {
