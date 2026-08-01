@@ -1,4 +1,3 @@
-import 'dart:developer' as developer;
 import 'dart:typed_data';
 
 import 'package:file_picker/file_picker.dart';
@@ -309,8 +308,8 @@ final class _MobileAccountRecoveryPageState
       }
       _adoptMedia(media, _RecoveryMediaSource.qr);
       media = null;
-    } catch (error, stackTrace) {
-      _reportMediaFailure(error, stackTrace);
+    } catch (error) {
+      _reportMediaFailure(error);
     } finally {
       media?.fillRange(0, media.length, 0);
       if (mounted) setState(() => _pickingMedia = false);
@@ -330,8 +329,8 @@ final class _MobileAccountRecoveryPageState
       }
       _adoptMedia(media, _RecoveryMediaSource.file);
       media = null;
-    } catch (error, stackTrace) {
-      _reportMediaFailure(error, stackTrace);
+    } catch (error) {
+      _reportMediaFailure(error);
     } finally {
       media?.fillRange(0, media.length, 0);
       if (mounted) setState(() => _pickingMedia = false);
@@ -363,17 +362,11 @@ final class _MobileAccountRecoveryPageState
     media?.fillRange(0, media.length, 0);
   }
 
-  void _reportMediaFailure(Object error, StackTrace stackTrace) {
+  void _reportMediaFailure(Object error) {
     if (!mounted) return;
     if (_encryptedRecoveryMedia != null || _mediaSource != null) {
       setState(_clearRecoveryMedia);
     }
-    developer.log(
-      '读取账户恢复介质失败',
-      name: 'Kelivo.MobileAccountRecovery',
-      error: error.runtimeType,
-      stackTrace: stackTrace,
-    );
     final l10n = AppLocalizations.of(context)!;
     final message =
         error is MobileAccountRecoveryMediaException &&

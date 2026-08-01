@@ -3179,6 +3179,57 @@ void main() {
     expect(runner.closed, isTrue);
   });
 
+  test('账户恢复失败与 runner 清理仅输出静态事件码', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    const protocolSecret = 'protocol-secret-material';
+    const cleanupSecret = r'D:\private\recovery-media';
+    final runner = _FakeE2eeAccountRecoveryRunner(
+      failure: StateError(protocolSecret),
+      closeFailure: StateError(cleanupSecret),
+    );
+    final fixture = await _createSignedOutFixture(
+      accountRecoveryRunnerFactory:
+          ({required accountClient, required authentication}) => runner,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+    final command = E2eeAccountRecoveryCommand(
+      loginName: 'ovo',
+      deviceName: 'Pixel',
+      accountPassword: Uint8List.fromList(
+        utf8.encode('account-password-secret'),
+      ),
+      recoveryPassphrase: Uint8List.fromList(
+        utf8.encode('recovery-passphrase-secret'),
+      ),
+      encryptedRecoveryMedia: Uint8List(644)..[0] = 91,
+    );
+    final messages = <String>[];
+    final previousDebugPrint = debugPrint;
+    debugPrint = (message, {wrapWidth}) {
+      if (message != null) messages.add(message);
+    };
+
+    try {
+      expect(await fixture.provider.startAccountRecovery(command), isFalse);
+    } finally {
+      debugPrint = previousDebugPrint;
+    }
+
+    expect(messages, const <String>[
+      'CLOUD_SYNC_ACCOUNT_RECOVERY_RUNNER_CLEANUP_FAILED',
+      'CLOUD_SYNC_ACCOUNT_RECOVERY_FAILED',
+    ]);
+    final joined = messages.join('\n');
+    expect(joined, isNot(contains(protocolSecret)));
+    expect(joined, isNot(contains(cleanupSecret)));
+    expect(joined, isNot(contains('account-password-secret')));
+    expect(joined, isNot(contains('recovery-passphrase-secret')));
+    expect(runner.closed, isTrue);
+  });
+
   test('桌面平台拒绝账户恢复且不构造 runner', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.windows;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
@@ -6726,9 +6777,14 @@ final class _FakeE2eeAccountAuthentication
 
 final class _FakeE2eeAccountRecoveryRunner
     implements E2eeAccountRecoveryRunner {
-  _FakeE2eeAccountRecoveryRunner({this.failure, this.barrier});
+  _FakeE2eeAccountRecoveryRunner({
+    this.failure,
+    this.closeFailure,
+    this.barrier,
+  });
 
   final Object? failure;
+  final Object? closeFailure;
   final Future<void>? barrier;
   bool closed = false;
   int recoverCalls = 0;
@@ -6770,6 +6826,8 @@ final class _FakeE2eeAccountRecoveryRunner
   @override
   Future<void> close() async {
     closed = true;
+    final currentFailure = closeFailure;
+    if (currentFailure != null) throw currentFailure;
   }
 }
 

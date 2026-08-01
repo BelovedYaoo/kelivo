@@ -486,7 +486,6 @@ final class CloudSyncProvider extends ChangeNotifier
     E2eeAccountRecoveryRunner? runner;
     CloudSyncAccountClient? recoveryClient;
     Object? failure;
-    StackTrace? failureStackTrace;
     var completed = false;
     var mutationStarted = false;
     try {
@@ -555,25 +554,17 @@ final class CloudSyncProvider extends ChangeNotifier
       _accountRecoveryProgress = E2eeAccountRecoveryProgress.completed;
       completed = true;
       _notify();
-    } catch (error, stackTrace) {
+    } catch (error) {
       failure = error;
-      failureStackTrace = stackTrace;
     } finally {
       command.dispose();
       try {
         await runner?.close();
-      } catch (error, stackTrace) {
+      } catch (error) {
         if (failure == null) {
           failure = error;
-          failureStackTrace = stackTrace;
         } else {
-          developer.log(
-            '账户恢复失败后的 runner 清理未完成',
-            name: 'Kelivo.CloudSyncProvider',
-            level: 1000,
-            error: error,
-            stackTrace: stackTrace,
-          );
+          debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_RUNNER_CLEANUP_FAILED');
         }
       }
       recoveryClient?.close(force: true);
@@ -582,12 +573,10 @@ final class CloudSyncProvider extends ChangeNotifier
 
     if (failure != null) {
       _accountRecoveryProgress = E2eeAccountRecoveryProgress.failed;
-      _recordFailure(
-        failure,
-        failureStackTrace ?? StackTrace.current,
-        operation: '恢复云同步账户',
-        status: CloudSyncProviderStatus.signedOut,
-      );
+      _lastError = _normalizeFailure(failure);
+      _status = CloudSyncProviderStatus.signedOut;
+      debugPrint('CLOUD_SYNC_ACCOUNT_RECOVERY_FAILED');
+      _notify();
       return false;
     }
     return completed;
