@@ -8,6 +8,34 @@ part of 'serializers.dart';
 
 Serializers _$serializers =
     (Serializers().toBuilder()
+          ..add(AccountRecoveryAttemptStartData.serializer)
+          ..add(AccountRecoveryAttemptStartDataOneOf.serializer)
+          ..add(AccountRecoveryAttemptStartDataOneOf1.serializer)
+          ..add(AccountRecoveryAttemptStartDataOneOf1ActionEnum.serializer)
+          ..add(AccountRecoveryAttemptStartDataOneOf1NextActionEnum.serializer)
+          ..add(AccountRecoveryAttemptStartDataOneOf1ResultEnum.serializer)
+          ..add(AccountRecoveryAttemptStartDataOneOf1StatusEnum.serializer)
+          ..add(AccountRecoveryAttemptStartDataOneOfActionEnum.serializer)
+          ..add(AccountRecoveryAttemptStartDataOneOfResultEnum.serializer)
+          ..add(AccountRecoveryAttemptStartRequest.serializer)
+          ..add(AccountRecoveryAttemptStartRequestOneOf.serializer)
+          ..add(AccountRecoveryAttemptStartRequestOneOf1.serializer)
+          ..add(AccountRecoveryAttemptStartRequestOneOf1ActionEnum.serializer)
+          ..add(AccountRecoveryAttemptStartRequestOneOfActionEnum.serializer)
+          ..add(AccountRecoveryDataState.serializer)
+          ..add(AccountRecoveryDataStatePhaseEnum.serializer)
+          ..add(AccountRecoveryHistoryListData.serializer)
+          ..add(AccountRecoveryHistoryListRequest.serializer)
+          ..add(AccountRecoveryMembershipCommitData.serializer)
+          ..add(AccountRecoveryMembershipCommitDataNextActionEnum.serializer)
+          ..add(AccountRecoveryMembershipCommitDataResultEnum.serializer)
+          ..add(AccountRecoveryMembershipCommitDataStatusEnum.serializer)
+          ..add(AccountRecoveryReplacementCommitRequest.serializer)
+          ..add(AccountRecoveryResumeCommitRequest.serializer)
+          ..add(AccountRecoveryResumeCommitRequestEnvelope.serializer)
+          ..add(AccountRecoveryStateData.serializer)
+          ..add(AccountRecoveryStateDataNextActionEnum.serializer)
+          ..add(AccountRecoveryStateDataStatusEnum.serializer)
           ..add(AccountSecurityStateCurrentProjection.serializer)
           ..add(
             AccountSecurityStateCurrentProjectionDataRekeyPhaseEnum.serializer,
@@ -44,6 +72,8 @@ Serializers _$serializers =
           ..add(AttachmentUploadData.serializer)
           ..add(AttachmentUploadDataStatusEnum.serializer)
           ..add(ClaimDataRekeyLeaseResponse.serializer)
+          ..add(CommitAccountRecoveryReplacementResponse.serializer)
+          ..add(CommitAccountRecoveryResumeResponse.serializer)
           ..add(CommitDeviceRotationData.serializer)
           ..add(CommitDeviceRotationDataDataRekeyPhaseEnum.serializer)
           ..add(CommitDeviceRotationDataResultEnum.serializer)
@@ -111,10 +141,12 @@ Serializers _$serializers =
           ..add(ErrorResponseError.serializer)
           ..add(FinalizeDataRekeyResponse.serializer)
           ..add(GenesisSecurityState.serializer)
+          ..add(GetAccountRecoveryStateResponse.serializer)
           ..add(GetDataRekeyStateResponse.serializer)
           ..add(GetDeviceSecurityStateResponse.serializer)
           ..add(GetEncryptedAttachmentChunkResponse.serializer)
           ..add(GetEncryptedAttachmentManifestResponse.serializer)
+          ..add(ListAccountRecoveryHistoryResponse.serializer)
           ..add(ListAccountSecurityStateHistoryData.serializer)
           ..add(ListAccountSecurityStateHistoryRequest.serializer)
           ..add(ListAdminDevicesData.serializer)
@@ -169,6 +201,7 @@ Serializers _$serializers =
           ..add(RevokeAdminDeviceResponse.serializer)
           ..add(StageDataRekeyAttachmentResponse.serializer)
           ..add(StageDataRekeyRecordResponse.serializer)
+          ..add(StartAccountRecoveryAttemptResponse.serializer)
           ..add(SyncAppliedMutationResult.serializer)
           ..add(SyncAppliedMutationResultStatusEnum.serializer)
           ..add(SyncChange.serializer)
@@ -212,6 +245,12 @@ Serializers _$serializers =
               const FullType(AccountSecurityStateEnvelope),
             ]),
             () => ListBuilder<AccountSecurityStateEnvelope>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(AccountSecurityStateHistoryItem),
+            ]),
+            () => ListBuilder<AccountSecurityStateHistoryItem>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
