@@ -456,6 +456,14 @@ pub struct RecoveryHistoryMember {
     pub key_agreement_public_key: DeviceKeyAgreementPublicKey,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoveryHistoryOperation {
+    pub kind: u32,
+    pub operation_id: [u8; 16],
+    pub key_epoch: u32,
+    pub authorization_digest: [u8; 32],
+}
+
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct VerifiedRecoveryHistoryHead {
     pub user_id: UserId,
@@ -471,8 +479,9 @@ pub struct VerifiedRecoveryHistoryHead {
     pub operation_id: [u8; 16],
     pub issuer_device_id: DeviceId,
     pub subject_device_id: DeviceId,
+    pub operation_authorization_digest: [u8; 32],
     pub members: Vec<RecoveryHistoryMember>,
-    pub operation_ids: Vec<[u8; 16]>,
+    pub operations: Vec<RecoveryHistoryOperation>,
     pub manifest: Vec<u8>,
 }
 

@@ -2,6 +2,8 @@ part of '../kelivo_secure_core.dart';
 
 const _accountRecoveryChallengeLength =
     native.KELIVO_ACCOUNT_RECOVERY_CHALLENGE_SIZE;
+const _accountRecoveryReplacementChallengeLength =
+    native.KELIVO_ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_SIZE;
 const _accountRecoverySealedNonceLength =
     native.KELIVO_ACCOUNT_RECOVERY_SEALED_NONCE_SIZE;
 const _accountRecoveryTokenDigestLength =
@@ -93,6 +95,7 @@ final class _AccountRecoveryExecutionState {
 final class KelivoAccountRecoveryExecution {
   KelivoAccountRecoveryExecution._({
     required int handle,
+    required this._replacementOnly,
     required this.dataPhase,
     required Uint8List userId,
     required Uint8List deviceId,
@@ -101,11 +104,22 @@ final class KelivoAccountRecoveryExecution {
     required this.deviceKeyVersion,
     required this.targetAuthGeneration,
     required this.recoveryCapsuleVersion,
+    required this.sourceDataGeneration,
+    required this.sourceDataKeyEpoch,
+    required Uint8List sourceDataRekeyOperationId,
+    required Uint8List operationAuthorizationDigest,
   }) : _state = _AccountRecoveryExecutionState(handle),
        userId = _immutableDeviceBytes(userId),
-       deviceId = _immutableDeviceBytes(deviceId);
+       deviceId = _immutableDeviceBytes(deviceId),
+       _sourceDataRekeyOperationId = _immutableDeviceBytes(
+         sourceDataRekeyOperationId,
+       ),
+       _operationAuthorizationDigest = _immutableDeviceBytes(
+         operationAuthorizationDigest,
+       );
 
   final _AccountRecoveryExecutionState _state;
+  final bool _replacementOnly;
   final KelivoAccountRecoveryDataPhase dataPhase;
   final Uint8List userId;
   final Uint8List deviceId;
@@ -114,9 +128,136 @@ final class KelivoAccountRecoveryExecution {
   final int deviceKeyVersion;
   final int targetAuthGeneration;
   final int recoveryCapsuleVersion;
+  final int sourceDataGeneration;
+  final int sourceDataKeyEpoch;
+  final Uint8List _sourceDataRekeyOperationId;
+  final Uint8List _operationAuthorizationDigest;
 
   @override
   String toString() => 'KelivoAccountRecoveryExecution(opaque)';
+}
+
+final class KelivoPreparedAccountRecoveryStateBinding {
+  factory KelivoPreparedAccountRecoveryStateBinding({
+    required KelivoAccountRecoveryCommitKind kind,
+    required KelivoAccountRecoveryDataPhase dataPhase,
+    required int deviceKeyVersion,
+    required Uint8List userId,
+    required Uint8List deviceId,
+    required int sourceKeyEpoch,
+    required int targetKeyEpoch,
+    required int sourceDataGeneration,
+    required int targetDataGeneration,
+    required int membershipGeneration,
+    required Uint8List membershipManifestDigest,
+    required Uint8List rekeyOperationId,
+    required Uint8List operationAuthorizationDigest,
+  }) {
+    _validatePositiveUint32(deviceKeyVersion, 'deviceKeyVersion');
+    _validateUuidV4(userId, 'userId');
+    _validateUuidV4(deviceId, 'deviceId');
+    _validatePositiveUint32(sourceKeyEpoch, 'sourceKeyEpoch');
+    _validatePositiveUint32(targetKeyEpoch, 'targetKeyEpoch');
+    if (sourceKeyEpoch == _maxUint32 || targetKeyEpoch != sourceKeyEpoch + 1) {
+      throw ArgumentError.value(
+        targetKeyEpoch,
+        'targetKeyEpoch',
+        '必须紧邻 sourceKeyEpoch',
+      );
+    }
+    _validatePositiveInt31(sourceDataGeneration, 'sourceDataGeneration');
+    _validatePositiveInt31(targetDataGeneration, 'targetDataGeneration');
+    if (sourceDataGeneration == _maximumPositiveInt31 ||
+        targetDataGeneration != sourceDataGeneration + 1) {
+      throw ArgumentError.value(
+        targetDataGeneration,
+        'targetDataGeneration',
+        '必须紧邻 sourceDataGeneration',
+      );
+    }
+    _validatePositiveInt31(membershipGeneration, 'membershipGeneration');
+    _requireLength(
+      membershipManifestDigest,
+      _accountRecoveryTokenDigestLength,
+      'membershipManifestDigest',
+    );
+    _validateUuidV4(rekeyOperationId, 'rekeyOperationId');
+    _requireLength(
+      operationAuthorizationDigest,
+      _accountRecoveryTokenDigestLength,
+      'operationAuthorizationDigest',
+    );
+    if ((kind == KelivoAccountRecoveryCommitKind.resume) !=
+        (dataPhase == KelivoAccountRecoveryDataPhase.rekeyPending)) {
+      throw ArgumentError('恢复提交类型与数据阶段不一致');
+    }
+    if (kind == KelivoAccountRecoveryCommitKind.replacement &&
+        operationAuthorizationDigest.any((byte) => byte != 0)) {
+      throw ArgumentError.value(
+        operationAuthorizationDigest,
+        'operationAuthorizationDigest',
+        'replacement 必须使用零摘要',
+      );
+    }
+    return KelivoPreparedAccountRecoveryStateBinding._(
+      kind: kind,
+      dataPhase: dataPhase,
+      deviceKeyVersion: deviceKeyVersion,
+      userId: _immutableDeviceBytes(userId),
+      deviceId: _immutableDeviceBytes(deviceId),
+      sourceKeyEpoch: sourceKeyEpoch,
+      targetKeyEpoch: targetKeyEpoch,
+      sourceDataGeneration: sourceDataGeneration,
+      targetDataGeneration: targetDataGeneration,
+      membershipGeneration: membershipGeneration,
+      membershipManifestDigest: _immutableDeviceBytes(membershipManifestDigest),
+      rekeyOperationId: _immutableDeviceBytes(rekeyOperationId),
+      operationAuthorizationDigest: _immutableDeviceBytes(
+        operationAuthorizationDigest,
+      ),
+    );
+  }
+
+  const KelivoPreparedAccountRecoveryStateBinding._({
+    required this.kind,
+    required this.dataPhase,
+    required this.deviceKeyVersion,
+    required this.userId,
+    required this.deviceId,
+    required this.sourceKeyEpoch,
+    required this.targetKeyEpoch,
+    required this.sourceDataGeneration,
+    required this.targetDataGeneration,
+    required this.membershipGeneration,
+    required this.membershipManifestDigest,
+    required this.rekeyOperationId,
+    required this.operationAuthorizationDigest,
+  });
+
+  final KelivoAccountRecoveryCommitKind kind;
+  final KelivoAccountRecoveryDataPhase dataPhase;
+  final int deviceKeyVersion;
+  final Uint8List userId;
+  final Uint8List deviceId;
+  final int sourceKeyEpoch;
+  final int targetKeyEpoch;
+  final int sourceDataGeneration;
+  final int targetDataGeneration;
+  final int membershipGeneration;
+  final Uint8List membershipManifestDigest;
+  final Uint8List rekeyOperationId;
+  final Uint8List operationAuthorizationDigest;
+}
+
+final class KelivoPreparedAccountRecoveryDeviceStates {
+  KelivoPreparedAccountRecoveryDeviceStates._({
+    required Uint8List unprunedStateBlob,
+    required Uint8List prunedCandidate,
+  }) : unprunedStateBlob = _immutableDeviceBytes(unprunedStateBlob),
+       prunedCandidate = _immutableDeviceBytes(prunedCandidate);
+
+  final Uint8List unprunedStateBlob;
+  final Uint8List prunedCandidate;
 }
 
 final class KelivoAccountRecoveryProof {
@@ -128,6 +269,44 @@ final class KelivoAccountRecoveryProof {
        trustSignature = _immutableDeviceBytes(trustSignature);
 
   final KelivoAccountRecoveryExecution execution;
+  final Uint8List nonceProof;
+  final Uint8List trustSignature;
+}
+
+final class KelivoAccountRecoveryReplacementProof {
+  KelivoAccountRecoveryReplacementProof._({
+    required this.execution,
+    required Uint8List challengeId,
+    required Uint8List attemptId,
+    required Uint8List membershipOperationId,
+    required Uint8List membershipManifestDigest,
+    required Uint8List sourceDataRekeyOperationId,
+    required Uint8List completionProofDigest,
+    required Uint8List requestDigest,
+    required Uint8List nonceProof,
+    required Uint8List trustSignature,
+  }) : challengeId = _immutableDeviceBytes(challengeId),
+       attemptId = _immutableDeviceBytes(attemptId),
+       membershipOperationId = _immutableDeviceBytes(membershipOperationId),
+       membershipManifestDigest = _immutableDeviceBytes(
+         membershipManifestDigest,
+       ),
+       sourceDataRekeyOperationId = _immutableDeviceBytes(
+         sourceDataRekeyOperationId,
+       ),
+       completionProofDigest = _immutableDeviceBytes(completionProofDigest),
+       requestDigest = _immutableDeviceBytes(requestDigest),
+       nonceProof = _immutableDeviceBytes(nonceProof),
+       trustSignature = _immutableDeviceBytes(trustSignature);
+
+  final KelivoAccountRecoveryExecution execution;
+  final Uint8List challengeId;
+  final Uint8List attemptId;
+  final Uint8List membershipOperationId;
+  final Uint8List membershipManifestDigest;
+  final Uint8List sourceDataRekeyOperationId;
+  final Uint8List completionProofDigest;
+  final Uint8List requestDigest;
   final Uint8List nonceProof;
   final Uint8List trustSignature;
 }
@@ -145,6 +324,7 @@ final class KelivoPreparedAccountRecoveryCommit {
     required Uint8List membershipManifest,
     required Uint8List accountKeyEnvelope,
     required Uint8List? recoveryCapsule,
+    required this.stateBinding,
   }) : manifestDigest = _immutableDeviceBytes(manifestDigest),
        requestDigest = _immutableDeviceBytes(requestDigest),
        membershipManifest = _immutableDeviceBytes(membershipManifest),
@@ -164,6 +344,7 @@ final class KelivoPreparedAccountRecoveryCommit {
   final Uint8List membershipManifest;
   final Uint8List accountKeyEnvelope;
   final Uint8List? recoveryCapsule;
+  final KelivoPreparedAccountRecoveryStateBinding stateBinding;
 }
 
 extension KelivoAccountRecoveryCore on KelivoSecureCore {
@@ -260,6 +441,7 @@ extension KelivoAccountRecoveryCore on KelivoSecureCore {
         return KelivoAccountRecoveryProof._(
           execution: KelivoAccountRecoveryExecution._(
             handle: result.executionHandle,
+            replacementOnly: false,
             dataPhase: KelivoAccountRecoveryDataPhase.fromCode(
               result.dataPhase,
             ),
@@ -270,7 +452,141 @@ extension KelivoAccountRecoveryCore on KelivoSecureCore {
             deviceKeyVersion: result.deviceKeyVersion,
             targetAuthGeneration: expectedDeviceAuthGeneration,
             recoveryCapsuleVersion: result.recoveryCapsuleVersion,
+            sourceDataGeneration: result.sourceDataGeneration,
+            sourceDataKeyEpoch: result.sourceDataKeyEpoch,
+            sourceDataRekeyOperationId: result.sourceDataRekeyOperationId,
+            operationAuthorizationDigest: result.operationAuthorizationDigest,
           ),
+          nonceProof: result.nonceProof,
+          trustSignature: result.trustSignature,
+        );
+      } finally {
+        deviceIdentity._state.completeUse();
+      }
+    } finally {
+      passphrase.fillRange(0, passphrase.length, 0);
+    }
+  }
+
+  Future<KelivoAccountRecoveryReplacementProof>
+  verifyAccountRecoveryReplacementChallengeAndCreateProof(
+    KelivoDeviceIdentityHandle deviceIdentity, {
+    required int expectedDeviceKeyVersion,
+    required int expectedDeviceAuthGeneration,
+    required Uint8List media,
+    required Uint8List passphrase,
+    required Uint8List serviceOriginSha256,
+    required List<Uint8List> membershipHistory,
+    required Uint8List currentCapsule,
+    required Uint8List sourceCapsule,
+    required Uint8List challengeFrame,
+    required Uint8List sealedNonce,
+    required Uint8List completionProofFrame,
+    required KelivoDataRekeyCompletionProofSignature completionProofSignature,
+    required Uint8List recoveryTokenDigest,
+    required Uint8List expectedChallengeId,
+    required Uint8List expectedAttemptId,
+    required Uint8List expectedDeviceId,
+    required DateTime expectedExpiresAt,
+  }) async {
+    try {
+      _validatePositiveUint32(
+        expectedDeviceKeyVersion,
+        'expectedDeviceKeyVersion',
+      );
+      _validatePositiveInt31(
+        expectedDeviceAuthGeneration,
+        'expectedDeviceAuthGeneration',
+      );
+      _requireLength(media, _recoveryMediaLength, 'media');
+      _validateRecoveryPassphrase(passphrase);
+      _requireLength(
+        serviceOriginSha256,
+        _recoveryOriginDigestLength,
+        'serviceOriginSha256',
+      );
+      _requireLength(currentCapsule, _recoveryCapsuleLength, 'currentCapsule');
+      _requireLength(sourceCapsule, _recoveryCapsuleLength, 'sourceCapsule');
+      _requireLength(
+        challengeFrame,
+        _accountRecoveryReplacementChallengeLength,
+        'challengeFrame',
+      );
+      _requireLength(
+        sealedNonce,
+        _accountRecoverySealedNonceLength,
+        'sealedNonce',
+      );
+      _requireLength(
+        completionProofFrame,
+        _dataRekeyCompletionProofFrameLength,
+        'completionProofFrame',
+      );
+      _requireLength(
+        recoveryTokenDigest,
+        _accountRecoveryTokenDigestLength,
+        'recoveryTokenDigest',
+      );
+      _validateUuidV4(expectedChallengeId, 'expectedChallengeId');
+      _validateUuidV4(expectedAttemptId, 'expectedAttemptId');
+      _validateUuidV4(expectedDeviceId, 'expectedDeviceId');
+      final expectedExpiresAtMs = expectedExpiresAt
+          .toUtc()
+          .millisecondsSinceEpoch;
+      _validateTimestamp(expectedExpiresAtMs, 'expectedExpiresAt');
+      final history = _transferRecoveryHistory(membershipHistory);
+      final identityHandle = deviceIdentity._state.beginUse();
+      try {
+        final result = await _runWithTransferredPassword(passphrase, (
+          workerPassphrase,
+        ) {
+          return _verifyAccountRecoveryReplacementChallengeAndCreateProof(
+            identityHandle,
+            expectedDeviceKeyVersion,
+            expectedDeviceAuthGeneration,
+            Uint8List.fromList(media),
+            workerPassphrase,
+            Uint8List.fromList(serviceOriginSha256),
+            history.materialize().asUint8List(),
+            Uint8List.fromList(sourceCapsule),
+            Uint8List.fromList(currentCapsule),
+            Uint8List.fromList(challengeFrame),
+            Uint8List.fromList(sealedNonce),
+            Uint8List.fromList(completionProofFrame),
+            Uint8List.fromList(completionProofSignature.bytes),
+            Uint8List.fromList(recoveryTokenDigest),
+            Uint8List.fromList(expectedChallengeId),
+            Uint8List.fromList(expectedAttemptId),
+            Uint8List.fromList(expectedDeviceId),
+            expectedExpiresAtMs,
+          );
+        });
+        return KelivoAccountRecoveryReplacementProof._(
+          execution: KelivoAccountRecoveryExecution._(
+            handle: result.executionHandle,
+            replacementOnly: true,
+            dataPhase: KelivoAccountRecoveryDataPhase.ready,
+            userId: result.userId,
+            deviceId: result.deviceId,
+            securityGeneration: result.securityGeneration,
+            keyEpoch: result.keyEpoch,
+            deviceKeyVersion: result.deviceKeyVersion,
+            targetAuthGeneration: expectedDeviceAuthGeneration,
+            recoveryCapsuleVersion: result.recoveryCapsuleVersion,
+            sourceDataGeneration: result.readyDataGeneration,
+            sourceDataKeyEpoch: result.readyDataKeyEpoch,
+            sourceDataRekeyOperationId: result.sourceDataRekeyOperationId,
+            operationAuthorizationDigest: Uint8List(
+              _accountRecoveryTokenDigestLength,
+            ),
+          ),
+          challengeId: result.challengeId,
+          attemptId: result.attemptId,
+          membershipOperationId: result.membershipOperationId,
+          membershipManifestDigest: result.membershipManifestDigest,
+          sourceDataRekeyOperationId: result.sourceDataRekeyOperationId,
+          completionProofDigest: result.completionProofDigest,
+          requestDigest: result.requestDigest,
           nonceProof: result.nonceProof,
           trustSignature: result.trustSignature,
         );
@@ -348,6 +664,13 @@ extension KelivoAccountRecoveryCore on KelivoSecureCore {
           execution.securityGeneration,
           execution.keyEpoch,
           execution.recoveryCapsuleVersion,
+          execution.dataPhase,
+          execution.deviceKeyVersion,
+          Uint8List.fromList(execution.userId),
+          Uint8List.fromList(execution.deviceId),
+          execution.sourceDataGeneration,
+          execution.sourceDataKeyEpoch,
+          Uint8List.fromList(execution._operationAuthorizationDigest),
         ),
       );
       execution._state.completeUse();
@@ -364,6 +687,118 @@ extension KelivoAccountRecoveryCore on KelivoSecureCore {
     } catch (_) {
       execution._state.completeUse();
       rethrow;
+    }
+  }
+
+  Future<KelivoPreparedAccountRecoveryDeviceStates>
+  prepareAccountRecoveryDeviceStates(
+    KelivoAccountRecoveryExecution execution,
+    KelivoKeyHandle key,
+    KelivoPreparedAccountRecoveryCommit prepared,
+  ) async {
+    final binding = prepared.stateBinding;
+    _requireExecutionStateBinding(execution, binding);
+    final executionHandle = execution._state.beginUse();
+    int keyHandle;
+    try {
+      keyHandle = key._beginUse();
+    } catch (_) {
+      execution._state.completeUse();
+      rethrow;
+    }
+    try {
+      final result = await Isolate.run(
+        () => _prepareAccountRecoveryDeviceStates(
+          executionHandle,
+          keyHandle,
+          binding,
+        ),
+      );
+      execution._state.completeUse();
+      return result;
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status ==
+          KelivoSecureCoreStatus.invalidRecoveryExecutionHandle) {
+        execution._state.invalidateUse();
+      } else {
+        execution._state.completeUse();
+      }
+      rethrow;
+    } catch (_) {
+      execution._state.completeUse();
+      rethrow;
+    } finally {
+      key._completeUse();
+    }
+  }
+
+  Future<Uint8List> activatePreparedAccountRecoveryDeviceState(
+    KelivoAccountRecoveryExecution execution,
+    KelivoKeyHandle key, {
+    required KelivoPreparedAccountRecoveryStateBinding stateBinding,
+    required Uint8List prunedCandidate,
+    required Uint8List completionProofFrame,
+    required KelivoDataRekeyCompletionProofSignature completionProofSignature,
+    required Uint8List completionProofDigest,
+  }) async {
+    _requireExecutionStateBinding(execution, stateBinding);
+    _requireLength(prunedCandidate, _deviceStateBlobLength, 'prunedCandidate');
+    _requireLength(
+      completionProofFrame,
+      _dataRekeyCompletionProofFrameLength,
+      'completionProofFrame',
+    );
+    _requireLength(
+      completionProofDigest,
+      _accountRecoveryTokenDigestLength,
+      'completionProofDigest',
+    );
+    final candidate = Uint8List.fromList(prunedCandidate);
+    final frame = Uint8List.fromList(completionProofFrame);
+    final signature = Uint8List.fromList(completionProofSignature.bytes);
+    final proofDigest = Uint8List.fromList(completionProofDigest);
+    final executionHandle = execution._state.beginUse();
+    int keyHandle;
+    try {
+      keyHandle = key._beginUse();
+    } catch (_) {
+      execution._state.completeUse();
+      rethrow;
+    }
+    try {
+      final activated = await Isolate.run(
+        () => _activatePreparedAccountRecoveryDeviceState(
+          executionHandle,
+          keyHandle,
+          stateBinding,
+          candidate,
+          frame,
+          signature,
+          proofDigest,
+        ),
+      );
+      if (!_sameAccountRecoveryBytes(activated, prunedCandidate)) {
+        throw StateError('账户恢复激活未返回 checkpoint 中的精确候选状态');
+      }
+      execution._state.completeUse();
+      return _immutableDeviceBytes(activated);
+    } on KelivoSecureCoreException catch (error) {
+      if (error.status ==
+          KelivoSecureCoreStatus.invalidRecoveryExecutionHandle) {
+        execution._state.invalidateUse();
+      } else {
+        execution._state.completeUse();
+      }
+      rethrow;
+    } catch (_) {
+      execution._state.completeUse();
+      rethrow;
+    } finally {
+      key._completeUse();
+      candidate.fillRange(0, candidate.length, 0);
+      frame.fillRange(0, frame.length, 0);
+      signature.fillRange(0, signature.length, 0);
+      proofDigest.fillRange(0, proofDigest.length, 0);
     }
   }
 
@@ -405,6 +840,10 @@ final class _AccountRecoveryProofNativeResult {
     required this.keyEpoch,
     required this.deviceKeyVersion,
     required this.recoveryCapsuleVersion,
+    required this.sourceDataGeneration,
+    required this.sourceDataKeyEpoch,
+    required this.sourceDataRekeyOperationId,
+    required this.operationAuthorizationDigest,
     required this.nonceProof,
     required this.trustSignature,
   });
@@ -417,8 +856,310 @@ final class _AccountRecoveryProofNativeResult {
   final int keyEpoch;
   final int deviceKeyVersion;
   final int recoveryCapsuleVersion;
+  final int sourceDataGeneration;
+  final int sourceDataKeyEpoch;
+  final Uint8List sourceDataRekeyOperationId;
+  final Uint8List operationAuthorizationDigest;
   final Uint8List nonceProof;
   final Uint8List trustSignature;
+}
+
+final class _AccountRecoveryReplacementProofNativeResult {
+  const _AccountRecoveryReplacementProofNativeResult({
+    required this.executionHandle,
+    required this.challengeId,
+    required this.attemptId,
+    required this.userId,
+    required this.deviceId,
+    required this.securityGeneration,
+    required this.keyEpoch,
+    required this.membershipOperationId,
+    required this.membershipManifestDigest,
+    required this.deviceKeyVersion,
+    required this.recoveryCapsuleVersion,
+    required this.sourceDataRekeyOperationId,
+    required this.readyDataGeneration,
+    required this.readyDataKeyEpoch,
+    required this.completionProofDigest,
+    required this.requestDigest,
+    required this.nonceProof,
+    required this.trustSignature,
+  });
+
+  final int executionHandle;
+  final Uint8List challengeId;
+  final Uint8List attemptId;
+  final Uint8List userId;
+  final Uint8List deviceId;
+  final int securityGeneration;
+  final int keyEpoch;
+  final Uint8List membershipOperationId;
+  final Uint8List membershipManifestDigest;
+  final int deviceKeyVersion;
+  final int recoveryCapsuleVersion;
+  final Uint8List sourceDataRekeyOperationId;
+  final int readyDataGeneration;
+  final int readyDataKeyEpoch;
+  final Uint8List completionProofDigest;
+  final Uint8List requestDigest;
+  final Uint8List nonceProof;
+  final Uint8List trustSignature;
+}
+
+@pragma('vm:never-inline')
+_AccountRecoveryReplacementProofNativeResult
+_verifyAccountRecoveryReplacementChallengeAndCreateProof(
+  int identityHandle,
+  int expectedDeviceKeyVersion,
+  int expectedDeviceAuthGeneration,
+  Uint8List media,
+  Uint8List passphrase,
+  Uint8List origin,
+  Uint8List history,
+  Uint8List sourceCapsule,
+  Uint8List currentCapsule,
+  Uint8List challenge,
+  Uint8List sealedNonce,
+  Uint8List completionProofFrame,
+  Uint8List completionProofSignature,
+  Uint8List recoveryTokenDigest,
+  Uint8List expectedChallengeId,
+  Uint8List expectedAttemptId,
+  Uint8List expectedDeviceId,
+  int expectedExpiresAtMs,
+) {
+  final mediaPointer = _copyToNative(media);
+  final originPointer = _copyToNative(origin);
+  final historyPointer = _copyToNative(history);
+  final sourceCapsulePointer = _copyToNative(sourceCapsule);
+  final currentCapsulePointer = _copyToNative(currentCapsule);
+  final challengePointer = _copyToNative(challenge);
+  final sealedNoncePointer = _copyToNative(sealedNonce);
+  final completionProofFramePointer = _copyToNative(completionProofFrame);
+  final completionProofSignaturePointer = _copyToNative(
+    completionProofSignature,
+  );
+  final recoveryTokenDigestPointer = _copyToNative(recoveryTokenDigest);
+  final expectedChallengeIdPointer = _copyToNative(expectedChallengeId);
+  final expectedAttemptIdPointer = _copyToNative(expectedAttemptId);
+  final expectedDeviceIdPointer = _copyToNative(expectedDeviceId);
+  final outputBinding =
+      calloc<native.KelivoAccountRecoveryReplacementProofBinding>();
+  final outputNonceProof = calloc<ffi.Uint8>(_accountRecoveryNonceProofLength);
+  final outputNonceProofLength = calloc<ffi.Size>();
+  final outputTrustSignature = calloc<ffi.Uint8>(_accountTrustSignatureLength);
+  final outputTrustSignatureLength = calloc<ffi.Size>();
+  var passphrasePointer = ffi.nullptr.cast<ffi.Uint8>();
+  var published = false;
+  try {
+    passphrasePointer = _copyToNative(passphrase);
+    _throwOnError(
+      operation: 'account_recovery_replacement_challenge_verify_and_prove',
+      statusCode: native
+          .kelivo_account_recovery_replacement_challenge_verify_and_prove(
+            identityHandle,
+            expectedDeviceKeyVersion,
+            expectedDeviceAuthGeneration,
+            mediaPointer,
+            media.length,
+            passphrasePointer,
+            passphrase.length,
+            originPointer,
+            origin.length,
+            historyPointer,
+            history.length,
+            sourceCapsulePointer,
+            sourceCapsule.length,
+            currentCapsulePointer,
+            currentCapsule.length,
+            challengePointer,
+            challenge.length,
+            sealedNoncePointer,
+            sealedNonce.length,
+            completionProofFramePointer,
+            completionProofFrame.length,
+            completionProofSignaturePointer,
+            completionProofSignature.length,
+            recoveryTokenDigestPointer,
+            recoveryTokenDigest.length,
+            expectedChallengeIdPointer,
+            expectedChallengeId.length,
+            expectedAttemptIdPointer,
+            expectedAttemptId.length,
+            expectedDeviceIdPointer,
+            expectedDeviceId.length,
+            expectedExpiresAtMs,
+            outputBinding,
+            outputNonceProof,
+            _accountRecoveryNonceProofLength,
+            outputNonceProofLength,
+            outputTrustSignature,
+            _accountTrustSignatureLength,
+            outputTrustSignatureLength,
+          ),
+    );
+    _requireExactOutputLength(
+      operation:
+          'account_recovery_replacement_challenge_verify_and_prove_nonce_proof',
+      expected: _accountRecoveryNonceProofLength,
+      actual: outputNonceProofLength.value,
+    );
+    _requireExactOutputLength(
+      operation:
+          'account_recovery_replacement_challenge_verify_and_prove_trust_signature',
+      expected: _accountTrustSignatureLength,
+      actual: outputTrustSignatureLength.value,
+    );
+    final binding = outputBinding.ref;
+    if (binding.struct_size !=
+            native
+                .KELIVO_ACCOUNT_RECOVERY_REPLACEMENT_PROOF_BINDING_STRUCT_SIZE ||
+        binding.reserved != 0) {
+      throw StateError('账户恢复替换证明返回了未知绑定结构');
+    }
+    if (binding.execution_handle ==
+        native.KELIVO_ACCOUNT_RECOVERY_INVALID_EXECUTION_HANDLE) {
+      throw StateError('账户恢复替换证明成功但未发布有效执行句柄');
+    }
+    final challengeId = _copyNativeByteArray(
+      binding.challenge_id,
+      _deviceUuidLength,
+    );
+    final attemptId = _copyNativeByteArray(
+      binding.attempt_id,
+      _deviceUuidLength,
+    );
+    final userId = _copyNativeByteArray(binding.user_id, _deviceUuidLength);
+    final deviceId = _copyNativeByteArray(binding.device_id, _deviceUuidLength);
+    final membershipOperationId = _copyNativeByteArray(
+      binding.membership_operation_id,
+      _deviceUuidLength,
+    );
+    final sourceDataRekeyOperationId = _copyNativeByteArray(
+      binding.source_data_rekey_operation_id,
+      _deviceUuidLength,
+    );
+    for (final entry in <(Uint8List, String)>[
+      (challengeId, 'challengeId'),
+      (attemptId, 'attemptId'),
+      (userId, 'userId'),
+      (deviceId, 'deviceId'),
+      (membershipOperationId, 'membershipOperationId'),
+      (sourceDataRekeyOperationId, 'sourceDataRekeyOperationId'),
+    ]) {
+      _validateUuidV4(entry.$1, entry.$2);
+    }
+    if (!_sameAccountRecoveryBytes(challengeId, expectedChallengeId) ||
+        !_sameAccountRecoveryBytes(attemptId, expectedAttemptId) ||
+        !_sameAccountRecoveryBytes(deviceId, expectedDeviceId)) {
+      throw StateError('账户恢复替换证明返回的挑战或设备绑定不一致');
+    }
+    _validatePositiveInt31(binding.security_generation, 'securityGeneration');
+    _validatePositiveUint32(binding.key_epoch, 'keyEpoch');
+    _validatePositiveUint32(binding.device_key_version, 'deviceKeyVersion');
+    _validatePositiveInt31(
+      binding.recovery_capsule_version,
+      'recoveryCapsuleVersion',
+    );
+    _validatePositiveInt31(
+      binding.ready_data_generation,
+      'readyDataGeneration',
+    );
+    _validatePositiveUint32(binding.ready_data_key_epoch, 'readyDataKeyEpoch');
+    if (binding.device_key_version != expectedDeviceKeyVersion ||
+        binding.ready_data_key_epoch != binding.key_epoch) {
+      throw StateError('账户恢复替换证明返回的版本或数据代次不一致');
+    }
+    final result = _AccountRecoveryReplacementProofNativeResult(
+      executionHandle: binding.execution_handle,
+      challengeId: challengeId,
+      attemptId: attemptId,
+      userId: userId,
+      deviceId: deviceId,
+      securityGeneration: binding.security_generation,
+      keyEpoch: binding.key_epoch,
+      membershipOperationId: membershipOperationId,
+      membershipManifestDigest: _copyNativeByteArray(
+        binding.membership_manifest_digest,
+        _accountRecoveryTokenDigestLength,
+      ),
+      deviceKeyVersion: binding.device_key_version,
+      recoveryCapsuleVersion: binding.recovery_capsule_version,
+      sourceDataRekeyOperationId: sourceDataRekeyOperationId,
+      readyDataGeneration: binding.ready_data_generation,
+      readyDataKeyEpoch: binding.ready_data_key_epoch,
+      completionProofDigest: _copyNativeByteArray(
+        binding.completion_proof_digest,
+        _accountRecoveryTokenDigestLength,
+      ),
+      requestDigest: _copyNativeByteArray(
+        binding.request_digest,
+        _accountRecoveryTokenDigestLength,
+      ),
+      nonceProof: Uint8List.fromList(
+        outputNonceProof.asTypedList(_accountRecoveryNonceProofLength),
+      ),
+      trustSignature: Uint8List.fromList(
+        outputTrustSignature.asTypedList(_accountTrustSignatureLength),
+      ),
+    );
+    published = true;
+    return result;
+  } finally {
+    if (!published &&
+        outputBinding.ref.execution_handle !=
+            native.KELIVO_ACCOUNT_RECOVERY_INVALID_EXECUTION_HANDLE) {
+      native.kelivo_account_recovery_execution_close(
+        outputBinding.ref.execution_handle,
+      );
+    }
+    for (final entry in <(ffi.Pointer<ffi.Uint8>, int)>[
+      (mediaPointer, media.length),
+      (originPointer, origin.length),
+      (historyPointer, history.length),
+      (sourceCapsulePointer, sourceCapsule.length),
+      (currentCapsulePointer, currentCapsule.length),
+      (challengePointer, challenge.length),
+      (sealedNoncePointer, sealedNonce.length),
+      (completionProofFramePointer, completionProofFrame.length),
+      (completionProofSignaturePointer, completionProofSignature.length),
+      (recoveryTokenDigestPointer, recoveryTokenDigest.length),
+      (expectedChallengeIdPointer, expectedChallengeId.length),
+      (expectedAttemptIdPointer, expectedAttemptId.length),
+      (expectedDeviceIdPointer, expectedDeviceId.length),
+    ]) {
+      _clearAndFree(entry.$1, entry.$2);
+    }
+    if (passphrasePointer.address != 0) {
+      _clearAndFree(passphrasePointer, passphrase.length);
+    }
+    _clearAndFree(
+      outputBinding.cast<ffi.Uint8>(),
+      ffi.sizeOf<native.KelivoAccountRecoveryReplacementProofBinding>(),
+    );
+    _clearAndFree(outputNonceProof, _accountRecoveryNonceProofLength);
+    calloc.free(outputNonceProofLength);
+    _clearAndFree(outputTrustSignature, _accountTrustSignatureLength);
+    calloc.free(outputTrustSignatureLength);
+    for (final value in <Uint8List>[
+      media,
+      passphrase,
+      origin,
+      history,
+      sourceCapsule,
+      currentCapsule,
+      challenge,
+      sealedNonce,
+      completionProofFrame,
+      completionProofSignature,
+      recoveryTokenDigest,
+      expectedChallengeId,
+      expectedAttemptId,
+      expectedDeviceId,
+    ]) {
+      value.fillRange(0, value.length, 0);
+    }
+  }
 }
 
 @pragma('vm:never-inline')
@@ -518,9 +1259,8 @@ _AccountRecoveryProofNativeResult _verifyAccountRecoveryAndCreateProof(
       throw StateError('账户恢复证明返回了未知绑定结构');
     }
     if (binding.execution_handle ==
-            native.KELIVO_ACCOUNT_RECOVERY_INVALID_EXECUTION_HANDLE ||
-        binding.ark_handle == native.KELIVO_DEVICE_INVALID_HANDLE) {
-      throw StateError('账户恢复证明成功但未发布有效秘密句柄');
+        native.KELIVO_ACCOUNT_RECOVERY_INVALID_EXECUTION_HANDLE) {
+      throw StateError('账户恢复证明成功但未发布有效执行句柄');
     }
     final userId = _copyNativeByteArray(binding.user_id, _deviceUuidLength);
     final deviceId = _copyNativeByteArray(binding.device_id, _deviceUuidLength);
@@ -539,7 +1279,42 @@ _AccountRecoveryProofNativeResult _verifyAccountRecoveryAndCreateProof(
     if (binding.device_key_version != expectedDeviceKeyVersion) {
       throw StateError('账户恢复证明返回的设备密钥版本不一致');
     }
-    KelivoAccountRecoveryDataPhase.fromCode(binding.data_phase);
+    final dataPhase = KelivoAccountRecoveryDataPhase.fromCode(
+      binding.data_phase,
+    );
+    _validatePositiveInt31(
+      binding.source_data_generation,
+      'sourceDataGeneration',
+    );
+    _validatePositiveUint32(
+      binding.source_data_key_epoch,
+      'sourceDataKeyEpoch',
+    );
+    final sourceDataRekeyOperationId = _copyNativeByteArray(
+      binding.source_data_rekey_operation_id,
+      _deviceUuidLength,
+    );
+    final operationAuthorizationDigest = _copyNativeByteArray(
+      binding.operation_authorization_digest,
+      _accountRecoveryTokenDigestLength,
+    );
+    switch (dataPhase) {
+      case KelivoAccountRecoveryDataPhase.ready:
+        if (binding.source_data_key_epoch != binding.key_epoch ||
+            sourceDataRekeyOperationId.any((byte) => byte != 0) ||
+            operationAuthorizationDigest.any((byte) => byte != 0)) {
+          throw StateError('账户恢复证明返回的 ready 数据绑定不一致');
+        }
+      case KelivoAccountRecoveryDataPhase.rekeyPending:
+        if (binding.source_data_key_epoch == _maxUint32 ||
+            binding.source_data_key_epoch + 1 != binding.key_epoch) {
+          throw StateError('账户恢复证明返回的 rekey 数据代次不一致');
+        }
+        _validateUuidV4(
+          sourceDataRekeyOperationId,
+          'sourceDataRekeyOperationId',
+        );
+    }
     final result = _AccountRecoveryProofNativeResult(
       executionHandle: binding.execution_handle,
       dataPhase: binding.data_phase,
@@ -549,6 +1324,10 @@ _AccountRecoveryProofNativeResult _verifyAccountRecoveryAndCreateProof(
       keyEpoch: binding.key_epoch,
       deviceKeyVersion: binding.device_key_version,
       recoveryCapsuleVersion: binding.recovery_capsule_version,
+      sourceDataGeneration: binding.source_data_generation,
+      sourceDataKeyEpoch: binding.source_data_key_epoch,
+      sourceDataRekeyOperationId: sourceDataRekeyOperationId,
+      operationAuthorizationDigest: operationAuthorizationDigest,
       nonceProof: Uint8List.fromList(
         outputNonceProof.asTypedList(_accountRecoveryNonceProofLength),
       ),
@@ -616,6 +1395,13 @@ KelivoPreparedAccountRecoveryCommit _prepareAccountRecoveryCommit(
   int expectedGeneration,
   int expectedKeyEpoch,
   int currentRecoveryCapsuleVersion,
+  KelivoAccountRecoveryDataPhase dataPhase,
+  int deviceKeyVersion,
+  Uint8List userId,
+  Uint8List deviceId,
+  int sourceDataGeneration,
+  int sourceDataKeyEpoch,
+  Uint8List operationAuthorizationDigest,
 ) {
   final input = calloc<native.KelivoAccountRecoveryPrepareInput>();
   final outputBinding = calloc<native.KelivoAccountRecoveryPrepareBinding>();
@@ -705,6 +1491,26 @@ KelivoPreparedAccountRecoveryCommit _prepareAccountRecoveryCommit(
           outputCapsule.asTypedList(_recoveryCapsuleLength),
         );
     }
+    final stateBinding = KelivoPreparedAccountRecoveryStateBinding(
+      kind: kind,
+      dataPhase: dataPhase,
+      deviceKeyVersion: deviceKeyVersion,
+      userId: userId,
+      deviceId: deviceId,
+      sourceKeyEpoch: sourceDataKeyEpoch,
+      targetKeyEpoch: binding.next_key_epoch,
+      sourceDataGeneration: sourceDataGeneration,
+      targetDataGeneration: sourceDataGeneration + 1,
+      membershipGeneration: binding.next_generation,
+      membershipManifestDigest: _copyNativeByteArray(
+        binding.manifest_digest,
+        _accountRecoveryTokenDigestLength,
+      ),
+      rekeyOperationId: kind == KelivoAccountRecoveryCommitKind.resume
+          ? rekeyOperationId
+          : operationId,
+      operationAuthorizationDigest: operationAuthorizationDigest,
+    );
     return KelivoPreparedAccountRecoveryCommit._(
       kind: kind,
       expectedGeneration: binding.expected_generation,
@@ -727,6 +1533,7 @@ KelivoPreparedAccountRecoveryCommit _prepareAccountRecoveryCommit(
         outputEnvelope.asTypedList(_accountKeyEnvelopeLength),
       ),
       recoveryCapsule: capsule,
+      stateBinding: stateBinding,
     );
   } finally {
     _clearAndFree(
@@ -754,6 +1561,225 @@ KelivoPreparedAccountRecoveryCommit _prepareAccountRecoveryCommit(
       completionSessionTokenDigest.length,
       0,
     );
+    userId.fillRange(0, userId.length, 0);
+    deviceId.fillRange(0, deviceId.length, 0);
+    operationAuthorizationDigest.fillRange(
+      0,
+      operationAuthorizationDigest.length,
+      0,
+    );
+  }
+}
+
+KelivoPreparedAccountRecoveryDeviceStates _prepareAccountRecoveryDeviceStates(
+  int executionHandle,
+  int keyHandle,
+  KelivoPreparedAccountRecoveryStateBinding stateBinding,
+) {
+  final expected = calloc<native.KelivoAccountRecoveryStateBinding>();
+  final unpruned = calloc<ffi.Uint8>(_deviceStateBlobLength);
+  final unprunedLength = calloc<ffi.Size>();
+  final pruned = calloc<ffi.Uint8>(_deviceStateBlobLength);
+  final prunedLength = calloc<ffi.Size>();
+  try {
+    _writeAccountRecoveryStateBinding(expected.ref, stateBinding);
+    _throwOnError(
+      operation: 'account_recovery_device_states_prepare',
+      statusCode: native.kelivo_account_recovery_device_states_prepare(
+        executionHandle,
+        keyHandle,
+        expected,
+        unpruned,
+        _deviceStateBlobLength,
+        unprunedLength,
+        pruned,
+        _deviceStateBlobLength,
+        prunedLength,
+      ),
+    );
+    _requireExactOutputLength(
+      operation: 'account_recovery_device_states_prepare_unpruned',
+      expected: _deviceStateBlobLength,
+      actual: unprunedLength.value,
+    );
+    _requireExactOutputLength(
+      operation: 'account_recovery_device_states_prepare_pruned',
+      expected: _deviceStateBlobLength,
+      actual: prunedLength.value,
+    );
+    final unprunedBytes = Uint8List.fromList(
+      unpruned.asTypedList(_deviceStateBlobLength),
+    );
+    final prunedBytes = Uint8List.fromList(
+      pruned.asTypedList(_deviceStateBlobLength),
+    );
+    if (_sameAccountRecoveryBytes(unprunedBytes, prunedBytes)) {
+      throw StateError('账户恢复设备状态候选必须彼此不同');
+    }
+    return KelivoPreparedAccountRecoveryDeviceStates._(
+      unprunedStateBlob: unprunedBytes,
+      prunedCandidate: prunedBytes,
+    );
+  } finally {
+    _clearAndFree(
+      expected.cast<ffi.Uint8>(),
+      ffi.sizeOf<native.KelivoAccountRecoveryStateBinding>(),
+    );
+    _clearAndFree(unpruned, _deviceStateBlobLength);
+    calloc.free(unprunedLength);
+    _clearAndFree(pruned, _deviceStateBlobLength);
+    calloc.free(prunedLength);
+  }
+}
+
+Uint8List _activatePreparedAccountRecoveryDeviceState(
+  int executionHandle,
+  int keyHandle,
+  KelivoPreparedAccountRecoveryStateBinding stateBinding,
+  Uint8List prunedCandidate,
+  Uint8List completionProofFrame,
+  Uint8List completionProofSignature,
+  Uint8List completionProofDigest,
+) {
+  final expected = calloc<native.KelivoAccountRecoveryStateBinding>();
+  final candidate = _copyToNative(prunedCandidate);
+  final frame = _copyToNative(completionProofFrame);
+  final signature = _copyToNative(completionProofSignature);
+  final digest = _copyToNative(completionProofDigest);
+  final output = calloc<ffi.Uint8>(_deviceStateBlobLength);
+  final outputLength = calloc<ffi.Size>();
+  try {
+    _writeAccountRecoveryStateBinding(expected.ref, stateBinding);
+    _throwOnError(
+      operation: 'account_recovery_device_state_prune_and_activate',
+      statusCode: native
+          .kelivo_account_recovery_device_state_prune_and_activate(
+            executionHandle,
+            keyHandle,
+            expected,
+            candidate,
+            prunedCandidate.length,
+            frame,
+            completionProofFrame.length,
+            signature,
+            completionProofSignature.length,
+            digest,
+            completionProofDigest.length,
+            output,
+            _deviceStateBlobLength,
+            outputLength,
+          ),
+    );
+    _requireExactOutputLength(
+      operation: 'account_recovery_device_state_prune_and_activate',
+      expected: _deviceStateBlobLength,
+      actual: outputLength.value,
+    );
+    final activated = Uint8List.fromList(
+      output.asTypedList(_deviceStateBlobLength),
+    );
+    if (!_sameAccountRecoveryBytes(activated, prunedCandidate)) {
+      throw StateError('原生账户恢复激活返回了不同候选状态');
+    }
+    return activated;
+  } finally {
+    _clearAndFree(
+      expected.cast<ffi.Uint8>(),
+      ffi.sizeOf<native.KelivoAccountRecoveryStateBinding>(),
+    );
+    _clearAndFree(candidate, prunedCandidate.length);
+    _clearAndFree(frame, completionProofFrame.length);
+    _clearAndFree(signature, completionProofSignature.length);
+    _clearAndFree(digest, completionProofDigest.length);
+    _clearAndFree(output, _deviceStateBlobLength);
+    calloc.free(outputLength);
+    prunedCandidate.fillRange(0, prunedCandidate.length, 0);
+    completionProofFrame.fillRange(0, completionProofFrame.length, 0);
+    completionProofSignature.fillRange(0, completionProofSignature.length, 0);
+    completionProofDigest.fillRange(0, completionProofDigest.length, 0);
+  }
+}
+
+void _writeAccountRecoveryStateBinding(
+  native.KelivoAccountRecoveryStateBinding output,
+  KelivoPreparedAccountRecoveryStateBinding input,
+) {
+  output.struct_size = native.KELIVO_ACCOUNT_RECOVERY_STATE_BINDING_STRUCT_SIZE;
+  output.kind = input.kind.code;
+  output.data_phase = input.dataPhase.code;
+  output.device_key_version = input.deviceKeyVersion;
+  _writeAccountRecoveryArray(output.user_id, input.userId);
+  _writeAccountRecoveryArray(output.device_id, input.deviceId);
+  output.source_key_epoch = input.sourceKeyEpoch;
+  output.target_key_epoch = input.targetKeyEpoch;
+  output.source_data_generation = input.sourceDataGeneration;
+  output.target_data_generation = input.targetDataGeneration;
+  output.membership_generation = input.membershipGeneration;
+  output.reserved = 0;
+  _writeAccountRecoveryArray(
+    output.membership_manifest_digest,
+    input.membershipManifestDigest,
+  );
+  _writeAccountRecoveryArray(output.rekey_operation_id, input.rekeyOperationId);
+  _writeAccountRecoveryArray(
+    output.operation_authorization_digest,
+    input.operationAuthorizationDigest,
+  );
+}
+
+void _requireExecutionStateBinding(
+  KelivoAccountRecoveryExecution execution,
+  KelivoPreparedAccountRecoveryStateBinding binding,
+) {
+  if (execution._replacementOnly &&
+      binding.kind != KelivoAccountRecoveryCommitKind.replacement) {
+    throw ArgumentError.value(binding, 'stateBinding', '第二阶段恢复执行仅接受替换状态');
+  }
+  final sameIdentity =
+      binding.deviceKeyVersion == execution.deviceKeyVersion &&
+      _sameAccountRecoveryBytes(binding.userId, execution.userId) &&
+      _sameAccountRecoveryBytes(binding.deviceId, execution.deviceId);
+  final beforeCommitKindMatches = switch (binding.kind) {
+    KelivoAccountRecoveryCommitKind.resume =>
+      execution.dataPhase == KelivoAccountRecoveryDataPhase.rekeyPending &&
+          _sameAccountRecoveryBytes(
+            binding.rekeyOperationId,
+            execution._sourceDataRekeyOperationId,
+          ) &&
+          _sameAccountRecoveryBytes(
+            binding.operationAuthorizationDigest,
+            execution._operationAuthorizationDigest,
+          ),
+    KelivoAccountRecoveryCommitKind.replacement =>
+      execution.dataPhase == KelivoAccountRecoveryDataPhase.ready,
+  };
+  final beforeCommit =
+      beforeCommitKindMatches &&
+      binding.sourceKeyEpoch == execution.sourceDataKeyEpoch &&
+      binding.sourceDataGeneration == execution.sourceDataGeneration &&
+      binding.membershipGeneration == execution.securityGeneration + 1;
+  final afterCommitPending =
+      execution.dataPhase == KelivoAccountRecoveryDataPhase.rekeyPending &&
+      binding.targetKeyEpoch == execution.keyEpoch &&
+      binding.sourceKeyEpoch == execution.sourceDataKeyEpoch &&
+      binding.sourceDataGeneration == execution.sourceDataGeneration &&
+      binding.membershipGeneration == execution.securityGeneration &&
+      _sameAccountRecoveryBytes(
+        binding.rekeyOperationId,
+        execution._sourceDataRekeyOperationId,
+      ) &&
+      _sameAccountRecoveryBytes(
+        binding.operationAuthorizationDigest,
+        execution._operationAuthorizationDigest,
+      );
+  final afterCommitReady =
+      execution.dataPhase == KelivoAccountRecoveryDataPhase.ready &&
+      binding.targetKeyEpoch == execution.sourceDataKeyEpoch &&
+      binding.targetDataGeneration == execution.sourceDataGeneration &&
+      binding.membershipGeneration == execution.securityGeneration;
+  if (!sameIdentity ||
+      (!beforeCommit && !afterCommitPending && !afterCommitReady)) {
+    throw ArgumentError.value(binding, 'stateBinding', '与账户恢复执行不一致');
   }
 }
 

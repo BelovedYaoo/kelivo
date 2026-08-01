@@ -10,7 +10,8 @@ use crate::{
     recovery_crypto::{
         RECOVERY_CAPSULE_SHA256_LENGTH, RECOVERY_HISTORY_MAX_BYTES, RecoveryCapsule,
         RecoveryCapsuleExpectation, RecoveryCryptoError, RecoveryGenesisCapability,
-        RecoveryHistoryMember, RecoveryPublicKey, VerifiedRecoveryHistoryHead,
+        RecoveryHistoryMember, RecoveryHistoryOperation, RecoveryPublicKey,
+        VerifiedRecoveryHistoryHead,
     },
 };
 
@@ -142,6 +143,7 @@ pub(crate) fn verify_history_head(
     )?;
     let mut operation_ids = HashSet::with_capacity(RECOVERY_HISTORY_MAX_ENTRIES.min(64));
     operation_ids.insert(current.operation_id);
+    let mut operations = vec![recovery_history_operation(&current)];
     offset = first_length;
     let mut entry_count = 1;
     let mut latest_rotation_source = None;
@@ -158,6 +160,7 @@ pub(crate) fn verify_history_head(
             return Err(RecoveryCryptoError::MembershipHistoryTransitionInvalid);
         }
         validate_successor(&current, &next)?;
+        operations.push(recovery_history_operation(&next));
         if matches!(
             next.operation,
             MembershipOperation::RevokeRotate | MembershipOperation::RecoverReplace
@@ -242,6 +245,7 @@ pub(crate) fn verify_history_head(
         operation_id: current.operation_id,
         issuer_device_id: current.issuer_device_id,
         subject_device_id: current.subject_device_id,
+        operation_authorization_digest: current.operation_authorization_digest,
         members: current
             .members
             .iter()
@@ -253,20 +257,40 @@ pub(crate) fn verify_history_head(
                 key_agreement_public_key: member.key_agreement_public_key,
             })
             .collect(),
-        operation_ids: operation_ids.into_iter().collect(),
-        manifest: current.payload.iter().copied().chain(
-            current
-                .transition_signature
-                .iter()
-                .chain(current.current_signature.iter())
-                .copied(),
-        ).collect(),
+        operations,
+        manifest: current
+            .payload
+            .iter()
+            .copied()
+            .chain(
+                current
+                    .transition_signature
+                    .iter()
+                    .chain(current.current_signature.iter())
+                    .copied(),
+            )
+            .collect(),
     };
     Ok(RecoveryCapsuleExpectations {
         current: current_expectation,
         source: source_expectation,
         history_head,
     })
+}
+
+fn recovery_history_operation(manifest: &MembershipManifest) -> RecoveryHistoryOperation {
+    RecoveryHistoryOperation {
+        kind: match manifest.operation {
+            MembershipOperation::Initialize => 1,
+            MembershipOperation::AddDevice => 2,
+            MembershipOperation::RevokeRotate => 3,
+            MembershipOperation::RecoverResume => 4,
+            MembershipOperation::RecoverReplace => 5,
+        },
+        operation_id: manifest.operation_id,
+        key_epoch: manifest.key_epoch,
+        authorization_digest: manifest.operation_authorization_digest,
+    }
 }
 
 fn manifest_length_at(history: &[u8], offset: usize) -> Result<usize, RecoveryCryptoError> {

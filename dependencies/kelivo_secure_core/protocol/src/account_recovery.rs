@@ -16,10 +16,10 @@ use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     device_crypto::{
-        ACCOUNT_TRUST_SIGNATURE_LENGTH, ARK_ENVELOPE_LENGTH, AccountRootKey,
-        AccountTrustBinding, ArkEnvelope, ArkEnvelopeBinding, DeviceId,
-        DeviceKeyAgreementPublicKey, DevicePublicKeys, DeviceSigningPublicKey, HpkeRngAdapter,
-        UserId, derive_account_trust_public_key, sign_account_trust_payload,
+        ACCOUNT_TRUST_SIGNATURE_LENGTH, ARK_ENVELOPE_LENGTH, AccountRootKey, AccountTrustBinding,
+        ArkEnvelope, ArkEnvelopeBinding, DeviceId, DeviceKeyAgreementPublicKey, DevicePublicKeys,
+        DeviceSigningPublicKey, HpkeRngAdapter, UserId, derive_account_trust_public_key,
+        sign_account_trust_payload,
     },
     recovery_crypto::{
         RECOVERY_CAPSULE_LENGTH, RecoveryCapsule, RecoveryHistoryMember, RecoveryIdentity,
@@ -30,14 +30,28 @@ use crate::{
 const CHALLENGE_MAGIC: [u8; 8] = *b"KELIVORC";
 const SEALED_NONCE_MAGIC: [u8; 8] = *b"KELIVORS";
 const PROOF_MAGIC: [u8; 8] = *b"KELIVORP";
+const REPLACEMENT_CHALLENGE_MAGIC: [u8; 8] = *b"KELIVR2C";
+const REPLACEMENT_SEALED_NONCE_MAGIC: [u8; 8] = *b"KELIVR2S";
+const REPLACEMENT_PROOF_MAGIC: [u8; 8] = *b"KELIVR2P";
 const HPKE_INFO_DOMAIN: &[u8] = b"kelivo.account-recovery.hpke-info.v1\0";
 const HPKE_AAD_DOMAIN: &[u8] = b"kelivo.account-recovery.challenge-aad.v1\0";
 const TRUST_SIGNATURE_DOMAIN: &[u8] = b"kelivo.account-recovery.trust-signature.v1\0";
+const REPLACEMENT_HPKE_INFO_DOMAIN: &[u8] =
+    b"kelivo.account-recovery.replacement-challenge.hpke-info.v1\0";
+const REPLACEMENT_HPKE_AAD_DOMAIN: &[u8] =
+    b"kelivo.account-recovery.replacement-challenge.aad.v1\0";
+const REPLACEMENT_TRUST_SIGNATURE_DOMAIN: &[u8] =
+    b"kelivo.account-recovery.replacement-challenge.trust-signature.v1\0";
+const REPLACEMENT_CHALLENGE_REQUEST_DIGEST_DOMAIN: &[u8] =
+    b"kelivo.account-recovery.replacement-challenge.request.v1\0";
 
 pub const ACCOUNT_RECOVERY_PROTOCOL_VERSION: u32 = 1;
 pub const ACCOUNT_RECOVERY_CHALLENGE_LENGTH: usize = 316;
 pub const ACCOUNT_RECOVERY_SEALED_NONCE_LENGTH: usize = 100;
 pub const ACCOUNT_RECOVERY_PROOF_TRANSCRIPT_LENGTH: usize = 108;
+pub const ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH: usize = 376;
+pub const ACCOUNT_RECOVERY_REPLACEMENT_SEALED_NONCE_LENGTH: usize = 100;
+pub const ACCOUNT_RECOVERY_REPLACEMENT_PROOF_TRANSCRIPT_LENGTH: usize = 108;
 pub const ACCOUNT_RECOVERY_NONCE_LENGTH: usize = 32;
 pub const ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH: usize = 32;
 pub const ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH: usize = 32;
@@ -51,8 +65,7 @@ const HPKE_TAG_LENGTH: usize = 16;
 const SEALED_NONCE_ENCAPSULATED_KEY_OFFSET: usize = SEALED_NONCE_HEADER_LENGTH;
 const SEALED_NONCE_CIPHERTEXT_OFFSET: usize =
     SEALED_NONCE_ENCAPSULATED_KEY_OFFSET + HPKE_ENCAPSULATED_KEY_LENGTH;
-const SEALED_NONCE_TAG_OFFSET: usize =
-    SEALED_NONCE_CIPHERTEXT_OFFSET + HPKE_CIPHERTEXT_LENGTH;
+const SEALED_NONCE_TAG_OFFSET: usize = SEALED_NONCE_CIPHERTEXT_OFFSET + HPKE_CIPHERTEXT_LENGTH;
 
 const CHALLENGE_ATTEMPT_OFFSET: usize = 20;
 const CHALLENGE_USER_OFFSET: usize = 36;
@@ -74,6 +87,33 @@ const CHALLENGE_SOURCE_REKEY_OPERATION_OFFSET: usize = 260;
 const CHALLENGE_EXPIRES_AT_OFFSET: usize = 276;
 const CHALLENGE_REQUEST_DIGEST_OFFSET: usize = 284;
 
+const REPLACEMENT_CHALLENGE_ID_OFFSET: usize = 20;
+const REPLACEMENT_CHALLENGE_ATTEMPT_OFFSET: usize = 36;
+const REPLACEMENT_CHALLENGE_USER_OFFSET: usize = 52;
+const REPLACEMENT_CHALLENGE_DEVICE_OFFSET: usize = 68;
+const REPLACEMENT_CHALLENGE_DEVICE_KEY_VERSION_OFFSET: usize = 84;
+const REPLACEMENT_CHALLENGE_DEVICE_SIGNING_KEY_OFFSET: usize = 88;
+const REPLACEMENT_CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET: usize = 120;
+const REPLACEMENT_CHALLENGE_MEMBERSHIP_GENERATION_OFFSET: usize = 152;
+const REPLACEMENT_CHALLENGE_KEY_EPOCH_OFFSET: usize = 156;
+const REPLACEMENT_CHALLENGE_MEMBERSHIP_OPERATION_OFFSET: usize = 160;
+const REPLACEMENT_CHALLENGE_MEMBERSHIP_DIGEST_OFFSET: usize = 176;
+const REPLACEMENT_CHALLENGE_RECOVERY_KEY_VERSION_OFFSET: usize = 208;
+const REPLACEMENT_CHALLENGE_RECOVERY_KEY_OFFSET: usize = 212;
+const REPLACEMENT_CHALLENGE_CAPSULE_VERSION_OFFSET: usize = 244;
+const REPLACEMENT_CHALLENGE_CAPSULE_DIGEST_OFFSET: usize = 248;
+const REPLACEMENT_CHALLENGE_SOURCE_REKEY_OPERATION_OFFSET: usize = 280;
+const REPLACEMENT_CHALLENGE_READY_DATA_GENERATION_OFFSET: usize = 296;
+const REPLACEMENT_CHALLENGE_READY_DATA_KEY_EPOCH_OFFSET: usize = 300;
+const REPLACEMENT_CHALLENGE_COMPLETION_PROOF_DIGEST_OFFSET: usize = 304;
+const REPLACEMENT_CHALLENGE_EXPIRES_AT_OFFSET: usize = 336;
+const REPLACEMENT_CHALLENGE_REQUEST_DIGEST_OFFSET: usize = 344;
+const REPLACEMENT_SEALED_NONCE_ENCAPSULATED_KEY_OFFSET: usize = SEALED_NONCE_HEADER_LENGTH;
+const REPLACEMENT_SEALED_NONCE_CIPHERTEXT_OFFSET: usize =
+    REPLACEMENT_SEALED_NONCE_ENCAPSULATED_KEY_OFFSET + HPKE_ENCAPSULATED_KEY_LENGTH;
+const REPLACEMENT_SEALED_NONCE_TAG_OFFSET: usize =
+    REPLACEMENT_SEALED_NONCE_CIPHERTEXT_OFFSET + HPKE_CIPHERTEXT_LENGTH;
+
 const MEMBERSHIP_MAGIC: [u8; 8] = *b"KELIVOMM";
 const MEMBERSHIP_FORMAT_VERSION: u32 = 2;
 const MEMBERSHIP_HEADER_LENGTH: usize = 260;
@@ -81,13 +121,21 @@ const MEMBERSHIP_MEMBER_LENGTH: usize = 88;
 const MEMBERSHIP_SIGNATURE_SECTION_LENGTH: usize = ACCOUNT_TRUST_SIGNATURE_LENGTH * 2;
 const MEMBERSHIP_MAX_MEMBERS: usize = 256;
 const RESUME_REQUEST_DIGEST_DOMAIN: &[u8] = b"kelivo.account-recovery.resume-commit.v1\0";
-const REPLACEMENT_REQUEST_DIGEST_DOMAIN: &[u8] =
-    b"kelivo.account-recovery.replacement-commit.v1\0";
+const REPLACEMENT_REQUEST_DIGEST_DOMAIN: &[u8] = b"kelivo.account-recovery.replacement-commit.v1\0";
 
 const _: () = {
     assert!(SEALED_NONCE_TAG_OFFSET + HPKE_TAG_LENGTH == ACCOUNT_RECOVERY_SEALED_NONCE_LENGTH);
     assert!(CHALLENGE_REQUEST_DIGEST_OFFSET + 32 == ACCOUNT_RECOVERY_CHALLENGE_LENGTH);
     assert!(8 + 4 + 32 + 32 + 32 == ACCOUNT_RECOVERY_PROOF_TRANSCRIPT_LENGTH);
+    assert!(
+        REPLACEMENT_SEALED_NONCE_TAG_OFFSET + HPKE_TAG_LENGTH
+            == ACCOUNT_RECOVERY_REPLACEMENT_SEALED_NONCE_LENGTH
+    );
+    assert!(
+        REPLACEMENT_CHALLENGE_REQUEST_DIGEST_OFFSET + 32
+            == ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH
+    );
+    assert!(8 + 4 + 32 + 32 + 32 == ACCOUNT_RECOVERY_REPLACEMENT_PROOF_TRANSCRIPT_LENGTH);
 };
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -135,7 +183,9 @@ impl fmt::Display for AccountRecoveryProtocolError {
             }
             Self::InvalidProofInput => formatter.write_str("账户恢复 proof 输入无效"),
             Self::RandomnessUnavailable => formatter.write_str("账户恢复随机源不可用"),
-            Self::SealedNonceCreationFailed => formatter.write_str("账户恢复 sealed nonce 创建失败"),
+            Self::SealedNonceCreationFailed => {
+                formatter.write_str("账户恢复 sealed nonce 创建失败")
+            }
             Self::InvalidPrepareInput => formatter.write_str("账户恢复提交准备输入无效"),
             Self::PrepareBindingMismatch => formatter.write_str("账户恢复提交准备绑定不一致"),
             Self::PrepareCryptoFailed => formatter.write_str("账户恢复提交准备密码学操作失败"),
@@ -219,13 +269,11 @@ impl VerifiedAccountRecoveryChallenge {
         let device_key_version = read_u32(frame, CHALLENGE_DEVICE_KEY_VERSION_OFFSET);
         let device_public_keys = DevicePublicKeys {
             signing: DeviceSigningPublicKey::from_bytes(copy_array(
-                &frame[CHALLENGE_DEVICE_SIGNING_KEY_OFFSET
-                    ..CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET],
+                &frame[CHALLENGE_DEVICE_SIGNING_KEY_OFFSET..CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET],
             ))
             .map_err(|_| AccountRecoveryProtocolError::InvalidChallengeBinding)?,
             key_agreement: DeviceKeyAgreementPublicKey::from_bytes(copy_array(
-                &frame[CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET
-                    ..CHALLENGE_SECURITY_GENERATION_OFFSET],
+                &frame[CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET..CHALLENGE_SECURITY_GENERATION_OFFSET],
             ))
             .map_err(|_| AccountRecoveryProtocolError::InvalidChallengeBinding)?,
         };
@@ -240,9 +288,8 @@ impl VerifiedAccountRecoveryChallenge {
         ))
         .map_err(|_| AccountRecoveryProtocolError::InvalidChallengeBinding)?;
         let recovery_capsule_version = read_u32(frame, CHALLENGE_CAPSULE_VERSION_OFFSET);
-        let recovery_capsule_digest = copy_array(
-            &frame[CHALLENGE_CAPSULE_DIGEST_OFFSET..CHALLENGE_DATA_PHASE_OFFSET],
-        );
+        let recovery_capsule_digest =
+            copy_array(&frame[CHALLENGE_CAPSULE_DIGEST_OFFSET..CHALLENGE_DATA_PHASE_OFFSET]);
         if device_key_version == 0
             || security_generation == 0
             || security_generation > 0x7fff_ffff
@@ -270,7 +317,10 @@ impl VerifiedAccountRecoveryChallenge {
             0 if source_operation == [0; 16] => (AccountRecoveryDataPhase::Ready, None),
             1 if source_operation != [0; 16] => {
                 require_uuid_v4(&source_operation)?;
-                (AccountRecoveryDataPhase::RekeyPending, Some(source_operation))
+                (
+                    AccountRecoveryDataPhase::RekeyPending,
+                    Some(source_operation),
+                )
             }
             _ => return Err(AccountRecoveryProtocolError::InvalidChallengeState),
         };
@@ -332,6 +382,244 @@ impl VerifiedAccountRecoveryChallenge {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct AccountRecoveryReplacementChallengeExpectation {
+    pub challenge_id: [u8; 16],
+    pub attempt_id: [u8; 16],
+    pub user_id: UserId,
+    pub device_id: DeviceId,
+    pub device_key_version: u32,
+    pub device_public_keys: DevicePublicKeys,
+    pub membership_generation: u32,
+    pub key_epoch: u32,
+    pub membership_operation_id: [u8; 16],
+    pub membership_manifest_digest: [u8; 32],
+    pub recovery_public_key_version: u32,
+    pub recovery_public_key: RecoveryPublicKey,
+    pub recovery_capsule_version: u32,
+    pub recovery_capsule_digest: [u8; 32],
+    pub source_data_rekey_operation_id: [u8; 16],
+    pub ready_data_generation: u32,
+    pub ready_data_key_epoch: u32,
+    pub completion_proof_digest: [u8; 32],
+    pub expires_at_ms: u64,
+    pub request_digest: [u8; 32],
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifiedAccountRecoveryReplacementChallenge {
+    pub challenge_id: [u8; 16],
+    pub attempt_id: [u8; 16],
+    pub user_id: UserId,
+    pub device_id: DeviceId,
+    pub device_key_version: u32,
+    pub device_public_keys: DevicePublicKeys,
+    pub membership_generation: u32,
+    pub key_epoch: u32,
+    pub membership_operation_id: [u8; 16],
+    pub membership_manifest_digest: [u8; 32],
+    pub recovery_public_key_version: u32,
+    pub recovery_public_key: RecoveryPublicKey,
+    pub recovery_capsule_version: u32,
+    pub recovery_capsule_digest: [u8; 32],
+    pub source_data_rekey_operation_id: [u8; 16],
+    pub ready_data_generation: u32,
+    pub ready_data_key_epoch: u32,
+    pub completion_proof_digest: [u8; 32],
+    pub expires_at_ms: u64,
+    pub request_digest: [u8; 32],
+    bytes: [u8; ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH],
+}
+
+impl VerifiedAccountRecoveryReplacementChallenge {
+    pub fn parse_and_bind(
+        frame: &[u8],
+        expected: AccountRecoveryReplacementChallengeExpectation,
+    ) -> Result<Self, AccountRecoveryProtocolError> {
+        if frame.len() != ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH {
+            return Err(AccountRecoveryProtocolError::InvalidChallengeLength {
+                actual: frame.len(),
+            });
+        }
+        require_replacement_challenge_header(frame)?;
+        let challenge_id = copy_array(
+            &frame[REPLACEMENT_CHALLENGE_ID_OFFSET..REPLACEMENT_CHALLENGE_ATTEMPT_OFFSET],
+        );
+        require_uuid_v4(&challenge_id)?;
+        let attempt_id = copy_array(
+            &frame[REPLACEMENT_CHALLENGE_ATTEMPT_OFFSET..REPLACEMENT_CHALLENGE_USER_OFFSET],
+        );
+        require_uuid_v4(&attempt_id)?;
+        let user_id = UserId::new(copy_array(
+            &frame[REPLACEMENT_CHALLENGE_USER_OFFSET..REPLACEMENT_CHALLENGE_DEVICE_OFFSET],
+        ))
+        .map_err(|_| AccountRecoveryProtocolError::InvalidChallengeBinding)?;
+        let device_id = DeviceId::new(copy_array(
+            &frame[REPLACEMENT_CHALLENGE_DEVICE_OFFSET
+                ..REPLACEMENT_CHALLENGE_DEVICE_KEY_VERSION_OFFSET],
+        ))
+        .map_err(|_| AccountRecoveryProtocolError::InvalidChallengeBinding)?;
+        let device_key_version = read_u32(frame, REPLACEMENT_CHALLENGE_DEVICE_KEY_VERSION_OFFSET);
+        let device_public_keys = DevicePublicKeys {
+            signing: DeviceSigningPublicKey::from_bytes(copy_array(
+                &frame[REPLACEMENT_CHALLENGE_DEVICE_SIGNING_KEY_OFFSET
+                    ..REPLACEMENT_CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET],
+            ))
+            .map_err(|_| AccountRecoveryProtocolError::InvalidChallengeBinding)?,
+            key_agreement: DeviceKeyAgreementPublicKey::from_bytes(copy_array(
+                &frame[REPLACEMENT_CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET
+                    ..REPLACEMENT_CHALLENGE_MEMBERSHIP_GENERATION_OFFSET],
+            ))
+            .map_err(|_| AccountRecoveryProtocolError::InvalidChallengeBinding)?,
+        };
+        let membership_generation =
+            read_u32(frame, REPLACEMENT_CHALLENGE_MEMBERSHIP_GENERATION_OFFSET);
+        let key_epoch = read_u32(frame, REPLACEMENT_CHALLENGE_KEY_EPOCH_OFFSET);
+        let membership_operation_id = copy_array(
+            &frame[REPLACEMENT_CHALLENGE_MEMBERSHIP_OPERATION_OFFSET
+                ..REPLACEMENT_CHALLENGE_MEMBERSHIP_DIGEST_OFFSET],
+        );
+        require_uuid_v4(&membership_operation_id)?;
+        let membership_manifest_digest = copy_array(
+            &frame[REPLACEMENT_CHALLENGE_MEMBERSHIP_DIGEST_OFFSET
+                ..REPLACEMENT_CHALLENGE_RECOVERY_KEY_VERSION_OFFSET],
+        );
+        let recovery_public_key_version =
+            read_u32(frame, REPLACEMENT_CHALLENGE_RECOVERY_KEY_VERSION_OFFSET);
+        let recovery_public_key = RecoveryPublicKey::from_bytes(copy_array(
+            &frame[REPLACEMENT_CHALLENGE_RECOVERY_KEY_OFFSET
+                ..REPLACEMENT_CHALLENGE_CAPSULE_VERSION_OFFSET],
+        ))
+        .map_err(|_| AccountRecoveryProtocolError::InvalidChallengeBinding)?;
+        let recovery_capsule_version =
+            read_u32(frame, REPLACEMENT_CHALLENGE_CAPSULE_VERSION_OFFSET);
+        let recovery_capsule_digest = copy_array(
+            &frame[REPLACEMENT_CHALLENGE_CAPSULE_DIGEST_OFFSET
+                ..REPLACEMENT_CHALLENGE_SOURCE_REKEY_OPERATION_OFFSET],
+        );
+        let source_data_rekey_operation_id = copy_array(
+            &frame[REPLACEMENT_CHALLENGE_SOURCE_REKEY_OPERATION_OFFSET
+                ..REPLACEMENT_CHALLENGE_READY_DATA_GENERATION_OFFSET],
+        );
+        require_uuid_v4(&source_data_rekey_operation_id)?;
+        let ready_data_generation =
+            read_u32(frame, REPLACEMENT_CHALLENGE_READY_DATA_GENERATION_OFFSET);
+        let ready_data_key_epoch =
+            read_u32(frame, REPLACEMENT_CHALLENGE_READY_DATA_KEY_EPOCH_OFFSET);
+        let completion_proof_digest = copy_array(
+            &frame[REPLACEMENT_CHALLENGE_COMPLETION_PROOF_DIGEST_OFFSET
+                ..REPLACEMENT_CHALLENGE_EXPIRES_AT_OFFSET],
+        );
+        let expires_at_ms = read_u64(frame, REPLACEMENT_CHALLENGE_EXPIRES_AT_OFFSET);
+        let request_digest = copy_array(&frame[REPLACEMENT_CHALLENGE_REQUEST_DIGEST_OFFSET..]);
+        let recomputed_request_digest =
+            account_recovery_replacement_challenge_request_digest(frame)?;
+        if device_key_version == 0
+            || membership_generation == 0
+            || membership_generation > 0x7fff_ffff
+            || key_epoch == 0
+            || recovery_public_key_version == 0
+            || recovery_public_key_version > 0x7fff_ffff
+            || recovery_capsule_version == 0
+            || recovery_capsule_version > 0x7fff_ffff
+            || membership_operation_id == source_data_rekey_operation_id
+            || ready_data_generation == 0
+            || ready_data_generation > 0x7fff_ffff
+            || ready_data_key_epoch != key_epoch
+            || completion_proof_digest == [0; 32]
+            || expires_at_ms == 0
+        {
+            return Err(AccountRecoveryProtocolError::InvalidChallengeState);
+        }
+        if request_digest != recomputed_request_digest {
+            return Err(AccountRecoveryProtocolError::InvalidChallengeBinding);
+        }
+
+        let actual = Self {
+            challenge_id,
+            attempt_id,
+            user_id,
+            device_id,
+            device_key_version,
+            device_public_keys,
+            membership_generation,
+            key_epoch,
+            membership_operation_id,
+            membership_manifest_digest,
+            recovery_public_key_version,
+            recovery_public_key,
+            recovery_capsule_version,
+            recovery_capsule_digest,
+            source_data_rekey_operation_id,
+            ready_data_generation,
+            ready_data_key_epoch,
+            completion_proof_digest,
+            expires_at_ms,
+            request_digest,
+            bytes: copy_array(frame),
+        };
+        if actual.challenge_id != expected.challenge_id
+            || actual.attempt_id != expected.attempt_id
+            || actual.user_id != expected.user_id
+            || actual.device_id != expected.device_id
+            || actual.device_key_version != expected.device_key_version
+            || actual.device_public_keys != expected.device_public_keys
+            || actual.membership_generation != expected.membership_generation
+            || actual.key_epoch != expected.key_epoch
+            || actual.membership_operation_id != expected.membership_operation_id
+            || actual.membership_manifest_digest != expected.membership_manifest_digest
+            || actual.recovery_public_key_version != expected.recovery_public_key_version
+            || actual.recovery_public_key != expected.recovery_public_key
+            || actual.recovery_capsule_version != expected.recovery_capsule_version
+            || actual.recovery_capsule_digest != expected.recovery_capsule_digest
+            || actual.source_data_rekey_operation_id != expected.source_data_rekey_operation_id
+            || actual.ready_data_generation != expected.ready_data_generation
+            || actual.ready_data_key_epoch != expected.ready_data_key_epoch
+            || actual.completion_proof_digest != expected.completion_proof_digest
+            || actual.expires_at_ms != expected.expires_at_ms
+            || actual.request_digest != expected.request_digest
+        {
+            return Err(AccountRecoveryProtocolError::InvalidChallengeBinding);
+        }
+        Ok(actual)
+    }
+
+    pub const fn as_bytes(&self) -> &[u8; ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH] {
+        &self.bytes
+    }
+}
+
+pub fn account_recovery_replacement_challenge_request_digest(
+    frame: &[u8],
+) -> Result<[u8; 32], AccountRecoveryProtocolError> {
+    if frame.len() != ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH {
+        return Err(AccountRecoveryProtocolError::InvalidChallengeLength {
+            actual: frame.len(),
+        });
+    }
+    require_replacement_challenge_header(frame)?;
+    let mut digest = Sha256::new();
+    digest.update(REPLACEMENT_CHALLENGE_REQUEST_DIGEST_DOMAIN);
+    digest.update(&frame[8..12]);
+    digest.update(
+        &frame[REPLACEMENT_CHALLENGE_ID_OFFSET..REPLACEMENT_CHALLENGE_REQUEST_DIGEST_OFFSET],
+    );
+    Ok(digest.finalize().into())
+}
+
+fn require_replacement_challenge_header(frame: &[u8]) -> Result<(), AccountRecoveryProtocolError> {
+    if frame[..8] != REPLACEMENT_CHALLENGE_MAGIC
+        || read_u32(frame, 8) != ACCOUNT_RECOVERY_PROTOCOL_VERSION
+        || read_u16(frame, 12) != HPKE_KEM_ID
+        || read_u16(frame, 14) != HPKE_KDF_ID
+        || read_u16(frame, 16) != HPKE_AEAD_ID
+        || read_u16(frame, 18) != 0
+    {
+        return Err(AccountRecoveryProtocolError::InvalidChallengeHeader);
+    }
+    Ok(())
+}
+
 pub struct AccountRecoveryProofMaterial {
     pub transcript: [u8; ACCOUNT_RECOVERY_PROOF_TRANSCRIPT_LENGTH],
     pub nonce_proof: [u8; ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH],
@@ -347,6 +635,26 @@ impl Zeroize for AccountRecoveryProofMaterial {
 }
 
 impl Drop for AccountRecoveryProofMaterial {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
+}
+
+pub struct AccountRecoveryReplacementProofMaterial {
+    pub transcript: [u8; ACCOUNT_RECOVERY_REPLACEMENT_PROOF_TRANSCRIPT_LENGTH],
+    pub nonce_proof: [u8; ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH],
+    pub trust_signature_message: [u8; 32],
+}
+
+impl Zeroize for AccountRecoveryReplacementProofMaterial {
+    fn zeroize(&mut self) {
+        self.transcript.zeroize();
+        self.nonce_proof.zeroize();
+        self.trust_signature_message.zeroize();
+    }
+}
+
+impl Drop for AccountRecoveryReplacementProofMaterial {
     fn drop(&mut self) {
         self.zeroize();
     }
@@ -383,6 +691,75 @@ pub struct PreparedAccountRecoveryCommit {
     pub request_digest: [u8; 32],
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct VerifiedAccountRecoveryCommitBinding {
+    attempt_id: [u8; 16],
+    user_id: UserId,
+    device_id: DeviceId,
+    device_key_version: u32,
+    device_public_keys: DevicePublicKeys,
+    security_generation: u32,
+    key_epoch: u32,
+    membership_manifest_digest: [u8; 32],
+    recovery_public_key_version: u32,
+    recovery_public_key: RecoveryPublicKey,
+    recovery_capsule_version: u32,
+    recovery_capsule_digest: [u8; 32],
+    data_phase: AccountRecoveryDataPhase,
+    source_data_generation: u32,
+    source_data_key_epoch: u32,
+    source_data_rekey_operation_id: Option<[u8; 16]>,
+    replacement_membership_operation_id: Option<[u8; 16]>,
+}
+
+impl VerifiedAccountRecoveryChallenge {
+    pub const fn commit_binding(&self) -> VerifiedAccountRecoveryCommitBinding {
+        VerifiedAccountRecoveryCommitBinding {
+            attempt_id: self.attempt_id,
+            user_id: self.user_id,
+            device_id: self.device_id,
+            device_key_version: self.device_key_version,
+            device_public_keys: self.device_public_keys,
+            security_generation: self.security_generation,
+            key_epoch: self.key_epoch,
+            membership_manifest_digest: self.membership_manifest_digest,
+            recovery_public_key_version: self.recovery_public_key_version,
+            recovery_public_key: self.recovery_public_key,
+            recovery_capsule_version: self.recovery_capsule_version,
+            recovery_capsule_digest: self.recovery_capsule_digest,
+            data_phase: self.data_phase,
+            source_data_generation: self.source_data_generation,
+            source_data_key_epoch: self.source_data_key_epoch,
+            source_data_rekey_operation_id: self.source_data_rekey_operation_id,
+            replacement_membership_operation_id: None,
+        }
+    }
+}
+
+impl VerifiedAccountRecoveryReplacementChallenge {
+    pub const fn commit_binding(&self) -> VerifiedAccountRecoveryCommitBinding {
+        VerifiedAccountRecoveryCommitBinding {
+            attempt_id: self.attempt_id,
+            user_id: self.user_id,
+            device_id: self.device_id,
+            device_key_version: self.device_key_version,
+            device_public_keys: self.device_public_keys,
+            security_generation: self.membership_generation,
+            key_epoch: self.key_epoch,
+            membership_manifest_digest: self.membership_manifest_digest,
+            recovery_public_key_version: self.recovery_public_key_version,
+            recovery_public_key: self.recovery_public_key,
+            recovery_capsule_version: self.recovery_capsule_version,
+            recovery_capsule_digest: self.recovery_capsule_digest,
+            data_phase: AccountRecoveryDataPhase::Ready,
+            source_data_generation: self.ready_data_generation,
+            source_data_key_epoch: self.ready_data_key_epoch,
+            source_data_rekey_operation_id: None,
+            replacement_membership_operation_id: Some(self.membership_operation_id),
+        }
+    }
+}
+
 pub fn prepare_account_recovery_commit<R>(
     rng: &mut R,
     current_ark: &AccountRootKey,
@@ -394,7 +771,49 @@ pub fn prepare_account_recovery_commit<R>(
 where
     R: CryptoRng + RngCore,
 {
-    validate_prepare_binding(device_identity, challenge, history_head, input)?;
+    prepare_account_recovery_commit_from_binding(
+        rng,
+        current_ark,
+        device_identity,
+        challenge.commit_binding(),
+        history_head,
+        input,
+    )
+}
+
+pub fn prepare_account_recovery_replacement_commit<R>(
+    rng: &mut R,
+    current_ark: &AccountRootKey,
+    device_identity: &crate::device_crypto::DeviceIdentity,
+    challenge: &VerifiedAccountRecoveryReplacementChallenge,
+    history_head: &VerifiedRecoveryHistoryHead,
+    input: AccountRecoveryPrepareInput,
+) -> Result<PreparedAccountRecoveryCommit, AccountRecoveryProtocolError>
+where
+    R: CryptoRng + RngCore,
+{
+    prepare_account_recovery_commit_from_binding(
+        rng,
+        current_ark,
+        device_identity,
+        challenge.commit_binding(),
+        history_head,
+        input,
+    )
+}
+
+pub fn prepare_account_recovery_commit_from_binding<R>(
+    rng: &mut R,
+    current_ark: &AccountRootKey,
+    device_identity: &crate::device_crypto::DeviceIdentity,
+    challenge: VerifiedAccountRecoveryCommitBinding,
+    history_head: &VerifiedRecoveryHistoryHead,
+    input: AccountRecoveryPrepareInput,
+) -> Result<PreparedAccountRecoveryCommit, AccountRecoveryProtocolError>
+where
+    R: CryptoRng + RngCore,
+{
+    validate_prepare_binding(device_identity, &challenge, history_head, input)?;
     let next_generation = history_head
         .security_generation
         .checked_add(1)
@@ -412,7 +831,8 @@ where
         AccountRecoveryCommitKind::Resume => {
             let mut members = history_head.members.clone();
             members.push(target);
-            members.sort_by(|left, right| left.device_id.as_bytes().cmp(right.device_id.as_bytes()));
+            members
+                .sort_by(|left, right| left.device_id.as_bytes().cmp(right.device_id.as_bytes()));
             let manifest = build_membership_manifest(
                 history_head,
                 next_generation,
@@ -431,12 +851,12 @@ where
                 .seal_ark_envelope(
                     rng,
                     current_ark,
-                    self_envelope_binding(challenge, history_head.key_epoch),
+                    self_envelope_binding(&challenge, history_head.key_epoch),
                 )
                 .map_err(|_| AccountRecoveryProtocolError::PrepareCryptoFailed)?;
             let manifest_digest = Sha256::digest(&manifest).into();
             let request_digest = commit_request_digest(
-                challenge,
+                &challenge,
                 input,
                 history_head,
                 &manifest,
@@ -509,12 +929,12 @@ where
                 .seal_ark_envelope(
                     rng,
                     &next_ark,
-                    self_envelope_binding(challenge, next_key_epoch),
+                    self_envelope_binding(&challenge, next_key_epoch),
                 )
                 .map_err(|_| AccountRecoveryProtocolError::PrepareCryptoFailed)?;
             let manifest_digest = Sha256::digest(&manifest).into();
             let request_digest = commit_request_digest(
-                challenge,
+                &challenge,
                 input,
                 history_head,
                 &manifest,
@@ -543,7 +963,7 @@ where
 
 fn validate_prepare_binding(
     device_identity: &crate::device_crypto::DeviceIdentity,
-    challenge: &VerifiedAccountRecoveryChallenge,
+    challenge: &VerifiedAccountRecoveryCommitBinding,
     history_head: &VerifiedRecoveryHistoryHead,
     input: AccountRecoveryPrepareInput,
 ) -> Result<(), AccountRecoveryProtocolError> {
@@ -559,7 +979,10 @@ fn validate_prepare_binding(
         || history_head.recovery_capsule_version != challenge.recovery_capsule_version
         || history_head.recovery_capsule_digest != challenge.recovery_capsule_digest
         || device_identity.public_keys() != challenge.device_public_keys
-        || history_head.operation_ids.contains(&input.operation_id)
+        || history_head
+            .operations
+            .iter()
+            .any(|operation| operation.operation_id == input.operation_id)
     {
         return Err(AccountRecoveryProtocolError::PrepareBindingMismatch);
     }
@@ -601,6 +1024,13 @@ fn validate_prepare_binding(
             if challenge.data_phase != AccountRecoveryDataPhase::Ready
                 || input.rekey_operation_id.is_some()
                 || input.completion_session_token_digest.is_none()
+                || (challenge.replacement_membership_operation_id.is_none()
+                    && existing_target.is_some())
+                || challenge
+                    .replacement_membership_operation_id
+                    .is_some_and(|operation_id| {
+                        history_head.operation_id != operation_id || existing_target.is_none()
+                    })
             {
                 return Err(AccountRecoveryProtocolError::PrepareBindingMismatch);
             }
@@ -625,7 +1055,7 @@ fn validate_prepare_binding(
 }
 
 fn self_envelope_binding(
-    challenge: &VerifiedAccountRecoveryChallenge,
+    challenge: &VerifiedAccountRecoveryCommitBinding,
     key_epoch: u32,
 ) -> ArkEnvelopeBinding {
     ArkEnvelopeBinding {
@@ -681,10 +1111,8 @@ fn build_membership_manifest(
         let offset = MEMBERSHIP_HEADER_LENGTH + index * MEMBERSHIP_MEMBER_LENGTH;
         manifest[offset..offset + 16].copy_from_slice(member.device_id.as_bytes());
         manifest[offset + 16..offset + 20].copy_from_slice(&member.key_version.to_be_bytes());
-        manifest[offset + 20..offset + 24]
-            .copy_from_slice(&member.auth_generation.to_be_bytes());
-        manifest[offset + 24..offset + 56]
-            .copy_from_slice(member.signing_public_key.as_bytes());
+        manifest[offset + 20..offset + 24].copy_from_slice(&member.auth_generation.to_be_bytes());
+        manifest[offset + 24..offset + 56].copy_from_slice(member.signing_public_key.as_bytes());
         manifest[offset + 56..offset + 88]
             .copy_from_slice(member.key_agreement_public_key.as_bytes());
     }
@@ -717,7 +1145,7 @@ fn build_membership_manifest(
 
 #[allow(clippy::too_many_arguments)]
 fn commit_request_digest(
-    challenge: &VerifiedAccountRecoveryChallenge,
+    challenge: &VerifiedAccountRecoveryCommitBinding,
     input: AccountRecoveryPrepareInput,
     history_head: &VerifiedRecoveryHistoryHead,
     manifest: &[u8],
@@ -801,8 +1229,7 @@ pub fn create_account_recovery_proof_material(
         trust_signature_message: [0_u8; 32],
     };
     proof.transcript[..8].copy_from_slice(&PROOF_MAGIC);
-    proof.transcript[8..12]
-        .copy_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
+    proof.transcript[8..12].copy_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
     proof.transcript[12..44].copy_from_slice(&challenge_digest);
     proof.transcript[44..76].copy_from_slice(nonce);
     proof.transcript[76..].copy_from_slice(recovery_token_digest);
@@ -816,17 +1243,83 @@ pub fn create_account_recovery_proof_material(
     Ok(proof)
 }
 
+pub fn create_account_recovery_replacement_proof_material(
+    challenge: &[u8],
+    nonce: &[u8],
+    recovery_token_digest: &[u8],
+) -> Result<AccountRecoveryReplacementProofMaterial, AccountRecoveryProtocolError> {
+    if challenge.len() != ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH
+        || nonce.len() != ACCOUNT_RECOVERY_NONCE_LENGTH
+        || recovery_token_digest.len() != ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH
+    {
+        return Err(AccountRecoveryProtocolError::InvalidProofInput);
+    }
+    let challenge_digest: [u8; 32] = Sha256::digest(challenge).into();
+    let mut proof = AccountRecoveryReplacementProofMaterial {
+        transcript: [0_u8; ACCOUNT_RECOVERY_REPLACEMENT_PROOF_TRANSCRIPT_LENGTH],
+        nonce_proof: [0_u8; ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH],
+        trust_signature_message: [0_u8; 32],
+    };
+    proof.transcript[..8].copy_from_slice(&REPLACEMENT_PROOF_MAGIC);
+    proof.transcript[8..12].copy_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
+    proof.transcript[12..44].copy_from_slice(&challenge_digest);
+    proof.transcript[44..76].copy_from_slice(nonce);
+    proof.transcript[76..].copy_from_slice(recovery_token_digest);
+    proof.nonce_proof = Sha256::digest(&proof.transcript).into();
+    let mut trust_input = Zeroizing::new(Vec::with_capacity(
+        REPLACEMENT_TRUST_SIGNATURE_DOMAIN.len()
+            + ACCOUNT_RECOVERY_REPLACEMENT_PROOF_TRANSCRIPT_LENGTH,
+    ));
+    trust_input.extend_from_slice(REPLACEMENT_TRUST_SIGNATURE_DOMAIN);
+    trust_input.extend_from_slice(&proof.transcript);
+    proof.trust_signature_message = Sha256::digest(trust_input.as_slice()).into();
+    Ok(proof)
+}
+
 pub fn open_account_recovery_nonce(
     identity: &RecoveryIdentity,
     challenge: &VerifiedAccountRecoveryChallenge,
     sealed_nonce: &[u8],
+) -> Result<Zeroizing<[u8; ACCOUNT_RECOVERY_NONCE_LENGTH]>, AccountRecoveryProtocolError> {
+    open_account_recovery_nonce_with_domains(
+        identity,
+        challenge.as_bytes(),
+        sealed_nonce,
+        SEALED_NONCE_MAGIC,
+        HPKE_INFO_DOMAIN,
+        HPKE_AAD_DOMAIN,
+    )
+}
+
+pub fn open_account_recovery_replacement_nonce(
+    identity: &RecoveryIdentity,
+    challenge: &VerifiedAccountRecoveryReplacementChallenge,
+    sealed_nonce: &[u8],
+) -> Result<Zeroizing<[u8; ACCOUNT_RECOVERY_NONCE_LENGTH]>, AccountRecoveryProtocolError> {
+    open_account_recovery_nonce_with_domains(
+        identity,
+        challenge.as_bytes(),
+        sealed_nonce,
+        REPLACEMENT_SEALED_NONCE_MAGIC,
+        REPLACEMENT_HPKE_INFO_DOMAIN,
+        REPLACEMENT_HPKE_AAD_DOMAIN,
+    )
+}
+
+fn open_account_recovery_nonce_with_domains(
+    identity: &RecoveryIdentity,
+    challenge: &[u8],
+    sealed_nonce: &[u8],
+    magic: [u8; 8],
+    info_domain: &[u8],
+    aad_domain: &[u8],
 ) -> Result<Zeroizing<[u8; ACCOUNT_RECOVERY_NONCE_LENGTH]>, AccountRecoveryProtocolError> {
     if sealed_nonce.len() != ACCOUNT_RECOVERY_SEALED_NONCE_LENGTH {
         return Err(AccountRecoveryProtocolError::InvalidSealedNonceLength {
             actual: sealed_nonce.len(),
         });
     }
-    require_sealed_nonce_header(sealed_nonce)?;
+    require_sealed_nonce_header(sealed_nonce, magic)?;
     let private_key = identity
         .hpke_private_key()
         .map_err(|_| AccountRecoveryProtocolError::InvalidSealedNonceKey)?;
@@ -834,16 +1327,12 @@ pub fn open_account_recovery_nonce(
         &sealed_nonce[SEALED_NONCE_ENCAPSULATED_KEY_OFFSET..SEALED_NONCE_CIPHERTEXT_OFFSET],
     )
     .map_err(|_| AccountRecoveryProtocolError::InvalidSealedNonceKey)?;
-    let mut info = Zeroizing::new(Vec::with_capacity(
-        HPKE_INFO_DOMAIN.len() + ACCOUNT_RECOVERY_CHALLENGE_LENGTH,
-    ));
-    info.extend_from_slice(HPKE_INFO_DOMAIN);
-    info.extend_from_slice(challenge.as_bytes());
-    let mut aad = Zeroizing::new(Vec::with_capacity(
-        HPKE_AAD_DOMAIN.len() + ACCOUNT_RECOVERY_CHALLENGE_LENGTH,
-    ));
-    aad.extend_from_slice(HPKE_AAD_DOMAIN);
-    aad.extend_from_slice(challenge.as_bytes());
+    let mut info = Zeroizing::new(Vec::with_capacity(info_domain.len() + challenge.len()));
+    info.extend_from_slice(info_domain);
+    info.extend_from_slice(challenge);
+    let mut aad = Zeroizing::new(Vec::with_capacity(aad_domain.len() + challenge.len()));
+    aad.extend_from_slice(aad_domain);
+    aad.extend_from_slice(challenge);
     let mut context = setup_receiver::<HpkeAead, HpkeKdf, HpkeKem>(
         &OpModeR::Base,
         &private_key,
@@ -871,36 +1360,75 @@ pub fn seal_account_recovery_nonce<R>(
 where
     R: CryptoRng + RngCore,
 {
+    seal_account_recovery_nonce_with_domains(
+        rng,
+        recovery_public_key,
+        challenge,
+        nonce,
+        SEALED_NONCE_MAGIC,
+        HPKE_INFO_DOMAIN,
+        HPKE_AAD_DOMAIN,
+    )
+}
+
+pub fn seal_account_recovery_replacement_nonce<R>(
+    rng: &mut R,
+    recovery_public_key: RecoveryPublicKey,
+    challenge: &[u8; ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH],
+    nonce: &[u8; ACCOUNT_RECOVERY_NONCE_LENGTH],
+) -> Result<[u8; ACCOUNT_RECOVERY_REPLACEMENT_SEALED_NONCE_LENGTH], AccountRecoveryProtocolError>
+where
+    R: CryptoRng + RngCore,
+{
+    seal_account_recovery_nonce_with_domains(
+        rng,
+        recovery_public_key,
+        challenge,
+        nonce,
+        REPLACEMENT_SEALED_NONCE_MAGIC,
+        REPLACEMENT_HPKE_INFO_DOMAIN,
+        REPLACEMENT_HPKE_AAD_DOMAIN,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn seal_account_recovery_nonce_with_domains<R>(
+    rng: &mut R,
+    recovery_public_key: RecoveryPublicKey,
+    challenge: &[u8],
+    nonce: &[u8; ACCOUNT_RECOVERY_NONCE_LENGTH],
+    magic: [u8; 8],
+    info_domain: &[u8],
+    aad_domain: &[u8],
+) -> Result<[u8; ACCOUNT_RECOVERY_SEALED_NONCE_LENGTH], AccountRecoveryProtocolError>
+where
+    R: CryptoRng + RngCore,
+{
     let public_key = <<HpkeKem as HpkeKemTrait>::PublicKey as Deserializable>::from_bytes(
         recovery_public_key.as_bytes(),
     )
     .map_err(|_| AccountRecoveryProtocolError::InvalidSealedNonceKey)?;
-    let mut info = Zeroizing::new(Vec::with_capacity(
-        HPKE_INFO_DOMAIN.len() + ACCOUNT_RECOVERY_CHALLENGE_LENGTH,
-    ));
-    info.extend_from_slice(HPKE_INFO_DOMAIN);
+    let mut info = Zeroizing::new(Vec::with_capacity(info_domain.len() + challenge.len()));
+    info.extend_from_slice(info_domain);
     info.extend_from_slice(challenge);
-    let mut aad = Zeroizing::new(Vec::with_capacity(
-        HPKE_AAD_DOMAIN.len() + ACCOUNT_RECOVERY_CHALLENGE_LENGTH,
-    ));
-    aad.extend_from_slice(HPKE_AAD_DOMAIN);
+    let mut aad = Zeroizing::new(Vec::with_capacity(aad_domain.len() + challenge.len()));
+    aad.extend_from_slice(aad_domain);
     aad.extend_from_slice(challenge);
     let mut rng = HpkeRngAdapter::from_rng(rng)
         .map_err(|_| AccountRecoveryProtocolError::RandomnessUnavailable)?;
-    let (encapsulated_key, mut context) =
-        setup_sender_with_rng::<HpkeAead, HpkeKdf, HpkeKem>(
-            &OpModeS::Base,
-            &public_key,
-            info.as_slice(),
-            &mut rng,
-        )
-        .map_err(|_| AccountRecoveryProtocolError::SealedNonceCreationFailed)?;
+    let (encapsulated_key, mut context) = setup_sender_with_rng::<HpkeAead, HpkeKdf, HpkeKem>(
+        &OpModeS::Base,
+        &public_key,
+        info.as_slice(),
+        &mut rng,
+    )
+    .map_err(|_| AccountRecoveryProtocolError::SealedNonceCreationFailed)?;
     let mut ciphertext = Zeroizing::new(*nonce);
     let tag = context
         .seal_inout_detached(InOutBuf::from(ciphertext.as_mut_slice()), aad.as_slice())
         .map_err(|_| AccountRecoveryProtocolError::SealedNonceCreationFailed)?;
     let mut output = [0_u8; ACCOUNT_RECOVERY_SEALED_NONCE_LENGTH];
-    output[..8].copy_from_slice(&SEALED_NONCE_MAGIC);
+    output[..8].copy_from_slice(&magic);
     output[8..12].copy_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
     output[12..14].copy_from_slice(&HPKE_KEM_ID.to_be_bytes());
     output[14..16].copy_from_slice(&HPKE_KDF_ID.to_be_bytes());
@@ -913,8 +1441,11 @@ where
     Ok(output)
 }
 
-fn require_sealed_nonce_header(wire: &[u8]) -> Result<(), AccountRecoveryProtocolError> {
-    if wire[..8] != SEALED_NONCE_MAGIC
+fn require_sealed_nonce_header(
+    wire: &[u8],
+    magic: [u8; 8],
+) -> Result<(), AccountRecoveryProtocolError> {
+    if wire[..8] != magic
         || read_u32(wire, 8) != ACCOUNT_RECOVERY_PROTOCOL_VERSION
         || read_u16(wire, 12) != HPKE_KEM_ID
         || read_u16(wire, 14) != HPKE_KDF_ID
@@ -955,9 +1486,7 @@ fn copy_array<const LENGTH: usize>(bytes: &[u8]) -> [u8; LENGTH] {
 mod tests {
     use super::*;
     use crate::{
-        device_crypto::{
-            AccountTrustSignature, DeviceIdentity, verify_account_trust_payload,
-        },
+        device_crypto::{AccountTrustSignature, DeviceIdentity, verify_account_trust_payload},
         recovery_crypto::{RecoveryIdentity, VerifiedRecoveryHistoryHead},
     };
 
@@ -999,12 +1528,8 @@ mod tests {
         let challenge = server_vector_challenge();
         let nonce = [0x31; ACCOUNT_RECOVERY_NONCE_LENGTH];
         let token_digest = [0x61; ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH];
-        let mut proof = create_account_recovery_proof_material(
-            &challenge,
-            &nonce,
-            &token_digest,
-        )
-        .expect("固定输入应生成 proof");
+        let mut proof = create_account_recovery_proof_material(&challenge, &nonce, &token_digest)
+            .expect("固定输入应生成 proof");
 
         assert_eq!(
             proof.transcript,
@@ -1014,20 +1539,13 @@ mod tests {
         );
         assert_eq!(
             proof.nonce_proof,
-            decode_hex(
-                "99f8454d1e5250d257767863db8b14e9c35767bbce767b1d57916eaea3d7c11c",
-            ),
+            decode_hex("99f8454d1e5250d257767863db8b14e9c35767bbce767b1d57916eaea3d7c11c",),
         );
         assert!(std::mem::needs_drop::<AccountRecoveryProofMaterial>());
         zeroize::Zeroize::zeroize(&mut proof);
         assert!(proof.transcript.iter().all(|byte| *byte == 0));
         assert!(proof.nonce_proof.iter().all(|byte| *byte == 0));
-        assert!(
-            proof
-                .trust_signature_message
-                .iter()
-                .all(|byte| *byte == 0)
-        );
+        assert!(proof.trust_signature_message.iter().all(|byte| *byte == 0));
     }
 
     #[test]
@@ -1036,11 +1554,10 @@ mod tests {
         VerifiedAccountRecoveryChallenge::parse_and_bind(&frame, expected)
             .expect("完整服务端向量应通过");
 
-        assert!(VerifiedAccountRecoveryChallenge::parse_and_bind(
-            &frame[..frame.len() - 1],
-            expected,
-        )
-        .is_err());
+        assert!(
+            VerifiedAccountRecoveryChallenge::parse_and_bind(&frame[..frame.len() - 1], expected,)
+                .is_err()
+        );
         let mut reserved = frame;
         reserved[19] = 1;
         assert!(VerifiedAccountRecoveryChallenge::parse_and_bind(&reserved, expected).is_err());
@@ -1052,16 +1569,12 @@ mod tests {
     #[test]
     fn hpke_sealed_nonce_matches_server_fixed_vector_and_authenticates_challenge() {
         let frame = server_vector_challenge();
-        let identity = RecoveryIdentity::from_private_bytes([0x21; 32])
-            .expect("固定恢复私钥应有效");
+        let identity =
+            RecoveryIdentity::from_private_bytes([0x21; 32]).expect("固定恢复私钥应有效");
         let public_key = identity.public_key().expect("固定恢复公钥应派生");
-        let sealed = seal_account_recovery_nonce(
-            &mut TestRng(0x41),
-            public_key,
-            &frame,
-            &[0x31; 32],
-        )
-        .expect("固定 HPKE 向量应密封");
+        let sealed =
+            seal_account_recovery_nonce(&mut TestRng(0x41), public_key, &frame, &[0x31; 32])
+                .expect("固定 HPKE 向量应密封");
         assert_eq!(
             sealed,
             decode_hex(
@@ -1071,8 +1584,128 @@ mod tests {
     }
 
     #[test]
+    fn replacement_challenge_has_independent_parser_nonce_and_proof_domains() {
+        let (frame, expected, recovery, device) = valid_replacement_challenge();
+        let challenge =
+            VerifiedAccountRecoveryReplacementChallenge::parse_and_bind(&frame, expected)
+                .expect("完整 replacement challenge 应通过");
+        assert_eq!(challenge.challenge_id, uuid(0x10));
+        assert_eq!(challenge.membership_operation_id, uuid(0x45));
+        assert_eq!(challenge.source_data_rekey_operation_id, uuid(0x44));
+        assert_eq!(challenge.ready_data_generation, 6);
+        assert_eq!(challenge.ready_data_key_epoch, 9);
+
+        let nonce = [0x31; ACCOUNT_RECOVERY_NONCE_LENGTH];
+        let sealed = seal_account_recovery_replacement_nonce(
+            &mut TestRng(0x41),
+            recovery.public_key().expect("恢复公钥应派生"),
+            &frame,
+            &nonce,
+        )
+        .expect("replacement nonce 应密封");
+        assert_eq!(&sealed[..8], b"KELIVR2S");
+        assert_eq!(
+            open_account_recovery_replacement_nonce(&recovery, &challenge, &sealed)
+                .expect("replacement nonce 应解封")
+                .as_slice(),
+            nonce,
+        );
+
+        let proof = create_account_recovery_replacement_proof_material(
+            challenge.as_bytes(),
+            &nonce,
+            &[0x61; ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH],
+        )
+        .expect("replacement proof 应生成");
+        assert_eq!(&proof.transcript[..8], b"KELIVR2P");
+        assert_ne!(
+            proof.trust_signature_message,
+            create_account_recovery_proof_material(
+                &server_vector_challenge(),
+                &nonce,
+                &[0x61; ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH],
+            )
+            .expect("首阶段 proof 应生成")
+            .trust_signature_message,
+        );
+
+        let current_ark = AccountRootKey::from_bytes([0x71; 32]);
+        let head = replacement_history_head(expected, &current_ark);
+        let prepared = prepare_account_recovery_replacement_commit(
+            &mut TestRng(0x61),
+            &current_ark,
+            &device,
+            &challenge,
+            &head,
+            AccountRecoveryPrepareInput {
+                kind: AccountRecoveryCommitKind::Replacement,
+                operation_id: uuid(0x56),
+                target_auth_generation: 1,
+                rekey_operation_id: None,
+                completion_session_id: Some(uuid(0x57)),
+                completion_session_token_digest: Some([0x58; 32]),
+            },
+        )
+        .expect("已验证 replacement challenge 应可直接准备 op5");
+        assert_eq!(prepared.expected_generation, 8);
+        assert_eq!(prepared.expected_key_epoch, 9);
+        assert_eq!(prepared.next_key_epoch, 10);
+    }
+
+    #[test]
+    fn replacement_challenge_and_nonce_tampering_fail_closed() {
+        let (frame, expected, recovery, _) = valid_replacement_challenge();
+        let challenge =
+            VerifiedAccountRecoveryReplacementChallenge::parse_and_bind(&frame, expected)
+                .expect("完整 replacement challenge 应通过");
+        assert!(
+            VerifiedAccountRecoveryReplacementChallenge::parse_and_bind(
+                &frame[..frame.len() - 1],
+                expected,
+            )
+            .is_err()
+        );
+
+        let mut tampered = frame;
+        tampered[REPLACEMENT_CHALLENGE_MEMBERSHIP_OPERATION_OFFSET] ^= 1;
+        assert!(
+            VerifiedAccountRecoveryReplacementChallenge::parse_and_bind(&tampered, expected)
+                .is_err()
+        );
+        let digest = account_recovery_replacement_challenge_request_digest(&tampered)
+            .expect("结构有效的篡改 frame 应可重算摘要");
+        tampered[REPLACEMENT_CHALLENGE_REQUEST_DIGEST_OFFSET..].copy_from_slice(&digest);
+        assert!(
+            VerifiedAccountRecoveryReplacementChallenge::parse_and_bind(&tampered, expected)
+                .is_err()
+        );
+
+        let nonce = [0x31; ACCOUNT_RECOVERY_NONCE_LENGTH];
+        let mut sealed = seal_account_recovery_replacement_nonce(
+            &mut TestRng(0x41),
+            recovery.public_key().expect("恢复公钥应派生"),
+            &frame,
+            &nonce,
+        )
+        .expect("replacement nonce 应密封");
+        sealed[REPLACEMENT_SEALED_NONCE_CIPHERTEXT_OFFSET] ^= 1;
+        assert!(open_account_recovery_replacement_nonce(&recovery, &challenge, &sealed).is_err());
+    }
+
+    #[test]
+    fn replacement_challenge_request_digest_matches_fixed_vector() {
+        let (frame, _, _, _) = valid_replacement_challenge();
+        assert_eq!(
+            account_recovery_replacement_challenge_request_digest(&frame)
+                .expect("固定 replacement challenge 应可重算摘要"),
+            decode_hex("82938822fe5cdf257992508f2ad380c1e845904fe49a7d4079f2c1f6b6190e08",),
+        );
+    }
+
+    #[test]
     fn resume_and_replacement_prepare_bind_the_verified_head_and_mobile_identity() {
-        let (device, challenge, head, current_ark) = prepare_context(AccountRecoveryDataPhase::RekeyPending);
+        let (device, challenge, head, current_ark) =
+            prepare_context(AccountRecoveryDataPhase::RekeyPending);
         let resume = prepare_account_recovery_commit(
             &mut TestRng(0x61),
             &current_ark,
@@ -1101,16 +1734,23 @@ mod tests {
         );
         assert_eq!(resume.next_key_epoch, head.key_epoch);
         assert!(resume.next_recovery_capsule.is_none());
-        verify_manifest_signature(&resume.manifest, &current_ark, head.user_id, head.key_epoch, false);
+        verify_manifest_signature(
+            &resume.manifest,
+            &current_ark,
+            head.user_id,
+            head.key_epoch,
+            false,
+        );
         let opened = device
             .open_ark_envelope(
                 resume.envelope.as_bytes(),
-                self_envelope_binding(&challenge, head.key_epoch),
+                self_envelope_binding(&challenge.commit_binding(), head.key_epoch),
             )
             .expect("恢复接续 KAEK 应由目标移动身份打开");
         assert_eq!(opened.as_bytes(), current_ark.as_bytes());
 
-        let (device, challenge, head, current_ark) = prepare_context(AccountRecoveryDataPhase::Ready);
+        let (device, challenge, head, current_ark) =
+            prepare_context(AccountRecoveryDataPhase::Ready);
         let replacement = prepare_account_recovery_commit(
             &mut TestRng(0x62),
             &current_ark,
@@ -1149,7 +1789,10 @@ mod tests {
             head.key_epoch,
             true,
         );
-        let next_ark = replacement.next_ark.as_ref().expect("替换必须生成下一代 ARK");
+        let next_ark = replacement
+            .next_ark
+            .as_ref()
+            .expect("替换必须生成下一代 ARK");
         verify_current_manifest_signature(
             &replacement.manifest,
             next_ark,
@@ -1159,7 +1802,7 @@ mod tests {
         let opened = device
             .open_ark_envelope(
                 replacement.envelope.as_bytes(),
-                self_envelope_binding(&challenge, head.key_epoch + 1),
+                self_envelope_binding(&challenge.commit_binding(), head.key_epoch + 1),
             )
             .expect("恢复替换 KAEK 应由目标移动身份打开");
         assert_eq!(opened.as_bytes(), next_ark.as_bytes());
@@ -1167,7 +1810,8 @@ mod tests {
 
     #[test]
     fn prepare_rejects_wrong_phase_replay_and_cross_device_identity() {
-        let (device, challenge, head, current_ark) = prepare_context(AccountRecoveryDataPhase::Ready);
+        let (device, challenge, head, current_ark) =
+            prepare_context(AccountRecoveryDataPhase::Ready);
         let resume_input = AccountRecoveryPrepareInput {
             kind: AccountRecoveryCommitKind::Resume,
             operation_id: uuid(0x55),
@@ -1176,14 +1820,17 @@ mod tests {
             completion_session_id: None,
             completion_session_token_digest: None,
         };
-        assert!(prepare_account_recovery_commit(
-            &mut TestRng(0x63),
-            &current_ark,
-            &device,
-            &challenge,
-            &head,
-            resume_input,
-        ).is_err());
+        assert!(
+            prepare_account_recovery_commit(
+                &mut TestRng(0x63),
+                &current_ark,
+                &device,
+                &challenge,
+                &head,
+                resume_input,
+            )
+            .is_err()
+        );
         let other_device = DeviceIdentity::generate(&mut TestRng(0x64)).expect("另一设备应生成");
         let replacement_input = AccountRecoveryPrepareInput {
             kind: AccountRecoveryCommitKind::Replacement,
@@ -1193,14 +1840,17 @@ mod tests {
             completion_session_id: Some(uuid(0x57)),
             completion_session_token_digest: Some([0x58; 32]),
         };
-        assert!(prepare_account_recovery_commit(
-            &mut TestRng(0x65),
-            &current_ark,
-            &other_device,
-            &challenge,
-            &head,
-            replacement_input,
-        ).is_err());
+        assert!(
+            prepare_account_recovery_commit(
+                &mut TestRng(0x65),
+                &current_ark,
+                &other_device,
+                &challenge,
+                &head,
+                replacement_input,
+            )
+            .is_err()
+        );
     }
 
     #[test]
@@ -1240,7 +1890,7 @@ mod tests {
     }
 
     #[test]
-    fn replacement_after_resume_accepts_the_same_subject() {
+    fn initial_ready_challenge_rejects_replacement_after_resume() {
         let (device, challenge, mut head, current_ark) =
             prepare_context(AccountRecoveryDataPhase::Ready);
         head.operation_kind = 4;
@@ -1270,7 +1920,10 @@ mod tests {
             },
         );
 
-        assert!(prepared.is_ok());
+        assert_eq!(
+            prepared.err(),
+            Some(AccountRecoveryProtocolError::PrepareBindingMismatch)
+        );
     }
 
     fn prepare_context(
@@ -1298,8 +1951,7 @@ mod tests {
         match phase {
             AccountRecoveryDataPhase::Ready => {
                 frame[CHALLENGE_DATA_PHASE_OFFSET] = 0;
-                frame[CHALLENGE_SOURCE_REKEY_OPERATION_OFFSET..CHALLENGE_EXPIRES_AT_OFFSET]
-                    .fill(0);
+                frame[CHALLENGE_SOURCE_REKEY_OPERATION_OFFSET..CHALLENGE_EXPIRES_AT_OFFSET].fill(0);
             }
             AccountRecoveryDataPhase::RekeyPending => {}
         }
@@ -1324,11 +1976,14 @@ mod tests {
         let current_ark = AccountRootKey::from_bytes([0x71; 32]);
         let current_trust_public_key = derive_account_trust_public_key(
             &current_ark,
-            AccountTrustBinding { user_id, key_epoch: 9 },
+            AccountTrustBinding {
+                user_id,
+                key_epoch: 9,
+            },
         )
         .expect("当前信任公钥应派生");
-        let existing_identity = DeviceIdentity::generate(&mut TestRng(0x72))
-            .expect("既有设备身份应生成");
+        let existing_identity =
+            DeviceIdentity::generate(&mut TestRng(0x72)).expect("既有设备身份应生成");
         let existing_public = existing_identity.public_keys();
         let existing_device_id = DeviceId::new(uuid(0x73)).expect("既有设备应有效");
         let head = VerifiedRecoveryHistoryHead {
@@ -1345,6 +2000,7 @@ mod tests {
             operation_id: uuid(0x74),
             issuer_device_id: existing_device_id,
             subject_device_id: existing_device_id,
+            operation_authorization_digest: [0x51; 32],
             members: vec![RecoveryHistoryMember {
                 device_id: existing_device_id,
                 key_version: 1,
@@ -1352,7 +2008,12 @@ mod tests {
                 signing_public_key: existing_public.signing,
                 key_agreement_public_key: existing_public.key_agreement,
             }],
-            operation_ids: vec![uuid(0x74)],
+            operations: vec![crate::recovery_crypto::RecoveryHistoryOperation {
+                kind: 3,
+                operation_id: uuid(0x74),
+                key_epoch: 9,
+                authorization_digest: [0x51; 32],
+            }],
             manifest: vec![0_u8; 476],
         };
         (device, challenge, head, current_ark)
@@ -1371,11 +2032,9 @@ mod tests {
         )
         .expect("过渡签名应编码有效");
         if transition_required {
-            let public_key = derive_account_trust_public_key(
-                ark,
-                AccountTrustBinding { user_id, key_epoch },
-            )
-            .expect("过渡公钥应派生");
+            let public_key =
+                derive_account_trust_public_key(ark, AccountTrustBinding { user_id, key_epoch })
+                    .expect("过渡公钥应派生");
             verify_account_trust_payload(
                 &public_key,
                 AccountTrustBinding { user_id, key_epoch },
@@ -1400,11 +2059,9 @@ mod tests {
             &manifest[payload_length + ACCOUNT_TRUST_SIGNATURE_LENGTH..],
         )
         .expect("当前签名应编码有效");
-        let public_key = derive_account_trust_public_key(
-            ark,
-            AccountTrustBinding { user_id, key_epoch },
-        )
-        .expect("当前公钥应派生");
+        let public_key =
+            derive_account_trust_public_key(ark, AccountTrustBinding { user_id, key_epoch })
+                .expect("当前公钥应派生");
         verify_account_trust_payload(
             &public_key,
             AccountTrustBinding { user_id, key_epoch },
@@ -1420,8 +2077,7 @@ mod tests {
     ) {
         let device = DeviceIdentity::generate(&mut TestRng(0x51)).expect("设备身份应生成");
         let device_public_keys = device.public_keys();
-        let recovery =
-            RecoveryIdentity::generate(&mut TestRng(0x52)).expect("恢复身份应生成");
+        let recovery = RecoveryIdentity::generate(&mut TestRng(0x52)).expect("恢复身份应生成");
         let recovery_public_key = recovery.public_key().expect("恢复公钥应派生");
         let attempt_id = uuid(0x11);
         let user_id = UserId::new(uuid(0x22)).expect("账户应有效");
@@ -1454,9 +2110,161 @@ mod tests {
         (frame, expected)
     }
 
+    fn valid_replacement_challenge() -> (
+        [u8; ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH],
+        AccountRecoveryReplacementChallengeExpectation,
+        RecoveryIdentity,
+        DeviceIdentity,
+    ) {
+        let recovery =
+            RecoveryIdentity::from_private_bytes([0x21; 32]).expect("固定恢复私钥应有效");
+        let recovery_public_key = recovery.public_key().expect("恢复公钥应派生");
+        let device = DeviceIdentity::generate(&mut TestRng(0x51)).expect("设备身份应生成");
+        let device_public_keys = device.public_keys();
+        let mut frame = [0_u8; ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH];
+        frame[..8].copy_from_slice(b"KELIVR2C");
+        frame[8..12].copy_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
+        frame[12..14].copy_from_slice(&HPKE_KEM_ID.to_be_bytes());
+        frame[14..16].copy_from_slice(&HPKE_KDF_ID.to_be_bytes());
+        frame[16..18].copy_from_slice(&HPKE_AEAD_ID.to_be_bytes());
+        frame[REPLACEMENT_CHALLENGE_ID_OFFSET..REPLACEMENT_CHALLENGE_ATTEMPT_OFFSET]
+            .copy_from_slice(&uuid(0x10));
+        frame[REPLACEMENT_CHALLENGE_ATTEMPT_OFFSET..REPLACEMENT_CHALLENGE_USER_OFFSET]
+            .copy_from_slice(&uuid(0x11));
+        frame[REPLACEMENT_CHALLENGE_USER_OFFSET..REPLACEMENT_CHALLENGE_DEVICE_OFFSET]
+            .copy_from_slice(&uuid(0x22));
+        frame[REPLACEMENT_CHALLENGE_DEVICE_OFFSET..REPLACEMENT_CHALLENGE_DEVICE_KEY_VERSION_OFFSET]
+            .copy_from_slice(&uuid(0x33));
+        frame[REPLACEMENT_CHALLENGE_DEVICE_KEY_VERSION_OFFSET
+            ..REPLACEMENT_CHALLENGE_DEVICE_SIGNING_KEY_OFFSET]
+            .copy_from_slice(&1_u32.to_be_bytes());
+        frame[REPLACEMENT_CHALLENGE_DEVICE_SIGNING_KEY_OFFSET
+            ..REPLACEMENT_CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET]
+            .copy_from_slice(device_public_keys.signing.as_bytes());
+        frame[REPLACEMENT_CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET
+            ..REPLACEMENT_CHALLENGE_MEMBERSHIP_GENERATION_OFFSET]
+            .copy_from_slice(device_public_keys.key_agreement.as_bytes());
+        frame[REPLACEMENT_CHALLENGE_MEMBERSHIP_GENERATION_OFFSET
+            ..REPLACEMENT_CHALLENGE_KEY_EPOCH_OFFSET]
+            .copy_from_slice(&8_u32.to_be_bytes());
+        frame[REPLACEMENT_CHALLENGE_KEY_EPOCH_OFFSET
+            ..REPLACEMENT_CHALLENGE_MEMBERSHIP_OPERATION_OFFSET]
+            .copy_from_slice(&9_u32.to_be_bytes());
+        frame[REPLACEMENT_CHALLENGE_MEMBERSHIP_OPERATION_OFFSET
+            ..REPLACEMENT_CHALLENGE_MEMBERSHIP_DIGEST_OFFSET]
+            .copy_from_slice(&uuid(0x45));
+        frame[REPLACEMENT_CHALLENGE_MEMBERSHIP_DIGEST_OFFSET
+            ..REPLACEMENT_CHALLENGE_RECOVERY_KEY_VERSION_OFFSET]
+            .fill(0x13);
+        frame[REPLACEMENT_CHALLENGE_RECOVERY_KEY_VERSION_OFFSET
+            ..REPLACEMENT_CHALLENGE_RECOVERY_KEY_OFFSET]
+            .copy_from_slice(&2_u32.to_be_bytes());
+        frame[REPLACEMENT_CHALLENGE_RECOVERY_KEY_OFFSET
+            ..REPLACEMENT_CHALLENGE_CAPSULE_VERSION_OFFSET]
+            .copy_from_slice(recovery_public_key.as_bytes());
+        frame[REPLACEMENT_CHALLENGE_CAPSULE_VERSION_OFFSET
+            ..REPLACEMENT_CHALLENGE_CAPSULE_DIGEST_OFFSET]
+            .copy_from_slice(&3_u32.to_be_bytes());
+        frame[REPLACEMENT_CHALLENGE_CAPSULE_DIGEST_OFFSET
+            ..REPLACEMENT_CHALLENGE_SOURCE_REKEY_OPERATION_OFFSET]
+            .fill(0x15);
+        frame[REPLACEMENT_CHALLENGE_SOURCE_REKEY_OPERATION_OFFSET
+            ..REPLACEMENT_CHALLENGE_READY_DATA_GENERATION_OFFSET]
+            .copy_from_slice(&uuid(0x44));
+        frame[REPLACEMENT_CHALLENGE_READY_DATA_GENERATION_OFFSET
+            ..REPLACEMENT_CHALLENGE_READY_DATA_KEY_EPOCH_OFFSET]
+            .copy_from_slice(&6_u32.to_be_bytes());
+        frame[REPLACEMENT_CHALLENGE_READY_DATA_KEY_EPOCH_OFFSET
+            ..REPLACEMENT_CHALLENGE_COMPLETION_PROOF_DIGEST_OFFSET]
+            .copy_from_slice(&9_u32.to_be_bytes());
+        frame[REPLACEMENT_CHALLENGE_COMPLETION_PROOF_DIGEST_OFFSET
+            ..REPLACEMENT_CHALLENGE_EXPIRES_AT_OFFSET]
+            .fill(0x17);
+        frame[REPLACEMENT_CHALLENGE_EXPIRES_AT_OFFSET..REPLACEMENT_CHALLENGE_REQUEST_DIGEST_OFFSET]
+            .copy_from_slice(&1_785_369_000_000_u64.to_be_bytes());
+        let request_digest = account_recovery_replacement_challenge_request_digest(&frame)
+            .expect("固定 replacement challenge 应可计算摘要");
+        frame[REPLACEMENT_CHALLENGE_REQUEST_DIGEST_OFFSET..].copy_from_slice(&request_digest);
+        let expected = AccountRecoveryReplacementChallengeExpectation {
+            challenge_id: uuid(0x10),
+            attempt_id: uuid(0x11),
+            user_id: UserId::new(uuid(0x22)).expect("账户应有效"),
+            device_id: DeviceId::new(uuid(0x33)).expect("设备应有效"),
+            device_key_version: 1,
+            device_public_keys,
+            membership_generation: 8,
+            key_epoch: 9,
+            membership_operation_id: uuid(0x45),
+            membership_manifest_digest: [0x13; 32],
+            recovery_public_key_version: 2,
+            recovery_public_key,
+            recovery_capsule_version: 3,
+            recovery_capsule_digest: [0x15; 32],
+            source_data_rekey_operation_id: uuid(0x44),
+            ready_data_generation: 6,
+            ready_data_key_epoch: 9,
+            completion_proof_digest: [0x17; 32],
+            expires_at_ms: 1_785_369_000_000,
+            request_digest,
+        };
+        (frame, expected, recovery, device)
+    }
+
+    fn replacement_history_head(
+        challenge: AccountRecoveryReplacementChallengeExpectation,
+        current_ark: &AccountRootKey,
+    ) -> VerifiedRecoveryHistoryHead {
+        let current_trust_public_key = derive_account_trust_public_key(
+            current_ark,
+            AccountTrustBinding {
+                user_id: challenge.user_id,
+                key_epoch: challenge.key_epoch,
+            },
+        )
+        .expect("当前信任公钥应派生");
+        VerifiedRecoveryHistoryHead {
+            user_id: challenge.user_id,
+            security_generation: challenge.membership_generation,
+            key_epoch: challenge.key_epoch,
+            digest: challenge.membership_manifest_digest,
+            current_trust_public_key,
+            recovery_public_key_version: challenge.recovery_public_key_version,
+            recovery_public_key: challenge.recovery_public_key,
+            recovery_capsule_version: challenge.recovery_capsule_version,
+            recovery_capsule_digest: challenge.recovery_capsule_digest,
+            operation_kind: 4,
+            operation_id: challenge.membership_operation_id,
+            issuer_device_id: challenge.device_id,
+            subject_device_id: challenge.device_id,
+            operation_authorization_digest: [0; 32],
+            members: vec![RecoveryHistoryMember {
+                device_id: challenge.device_id,
+                key_version: challenge.device_key_version,
+                auth_generation: 1,
+                signing_public_key: challenge.device_public_keys.signing,
+                key_agreement_public_key: challenge.device_public_keys.key_agreement,
+            }],
+            operations: vec![
+                crate::recovery_crypto::RecoveryHistoryOperation {
+                    kind: 3,
+                    operation_id: challenge.source_data_rekey_operation_id,
+                    key_epoch: challenge.key_epoch,
+                    authorization_digest: [0x51; 32],
+                },
+                crate::recovery_crypto::RecoveryHistoryOperation {
+                    kind: 4,
+                    operation_id: challenge.membership_operation_id,
+                    key_epoch: challenge.key_epoch,
+                    authorization_digest: [0; 32],
+                },
+            ],
+            manifest: vec![0_u8; 476],
+        }
+    }
+
     fn server_vector_challenge() -> [u8; ACCOUNT_RECOVERY_CHALLENGE_LENGTH] {
-        let recovery = RecoveryIdentity::from_private_bytes([0x21; 32])
-            .expect("固定恢复私钥应有效");
+        let recovery =
+            RecoveryIdentity::from_private_bytes([0x21; 32]).expect("固定恢复私钥应有效");
         let recovery_public_key = recovery.public_key().expect("固定恢复公钥应派生");
         let mut frame = [0_u8; ACCOUNT_RECOVERY_CHALLENGE_LENGTH];
         frame[..8].copy_from_slice(&CHALLENGE_MAGIC);
@@ -1478,8 +2286,7 @@ mod tests {
             .copy_from_slice(&7_u32.to_be_bytes());
         frame[CHALLENGE_KEY_EPOCH_OFFSET..CHALLENGE_MEMBERSHIP_DIGEST_OFFSET]
             .copy_from_slice(&9_u32.to_be_bytes());
-        frame[CHALLENGE_MEMBERSHIP_DIGEST_OFFSET..CHALLENGE_RECOVERY_KEY_VERSION_OFFSET]
-            .fill(0x13);
+        frame[CHALLENGE_MEMBERSHIP_DIGEST_OFFSET..CHALLENGE_RECOVERY_KEY_VERSION_OFFSET].fill(0x13);
         frame[CHALLENGE_RECOVERY_KEY_VERSION_OFFSET..CHALLENGE_RECOVERY_KEY_OFFSET]
             .copy_from_slice(&2_u32.to_be_bytes());
         frame[CHALLENGE_RECOVERY_KEY_OFFSET..CHALLENGE_CAPSULE_VERSION_OFFSET]
@@ -1509,8 +2316,7 @@ mod tests {
     ) -> [u8; ACCOUNT_RECOVERY_CHALLENGE_LENGTH] {
         let mut frame = server_vector_challenge();
         frame[CHALLENGE_ATTEMPT_OFFSET..CHALLENGE_USER_OFFSET].copy_from_slice(&attempt_id);
-        frame[CHALLENGE_USER_OFFSET..CHALLENGE_DEVICE_OFFSET]
-            .copy_from_slice(user_id.as_bytes());
+        frame[CHALLENGE_USER_OFFSET..CHALLENGE_DEVICE_OFFSET].copy_from_slice(user_id.as_bytes());
         frame[CHALLENGE_DEVICE_OFFSET..CHALLENGE_DEVICE_KEY_VERSION_OFFSET]
             .copy_from_slice(device_id.as_bytes());
         frame[CHALLENGE_DEVICE_SIGNING_KEY_OFFSET..CHALLENGE_DEVICE_AGREEMENT_KEY_OFFSET]

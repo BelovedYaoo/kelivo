@@ -9,6 +9,7 @@ use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use kelivo_secure_core_protocol::{self as protocol, device_crypto as crypto};
 use rand::RngCore;
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
 use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
@@ -31,6 +32,15 @@ pub(super) const PENDING_PAIRING_MATERIAL_LENGTH: usize =
 pub(super) const DEVICE_STATE_BLOB_LENGTH: usize = crypto::DEVICE_STATE_BLOB_LENGTH;
 pub(super) const DEVICE_STATE_BINDING_STRUCT_SIZE: u32 = 48;
 pub(super) const RECORD_ENTITY_KEY_MAX_LENGTH: usize = 2048;
+
+#[derive(Clone, Copy)]
+pub(super) struct RecoveryDeviceStateContext {
+    pub user_id: crypto::UserId,
+    pub device_id: crypto::DeviceId,
+    pub device_key_version: u32,
+    pub source_key_epoch: u32,
+    pub target_key_epoch: u32,
+}
 
 const UUID_LENGTH: usize = 16;
 pub(super) const DERIVED_RECORD_ID_LENGTH: usize = UUID_LENGTH;
@@ -585,6 +595,172 @@ pub(super) fn add_ark_epoch(
         .map_err(|_| KelivoStatus::InternalState)?
         .add_current(epoch, key)
         .map_err(|_| KelivoStatus::InvalidArgument)
+}
+
+pub(super) fn prepare_recovery_device_states(
+    key_handle: u64,
+    identity: &crypto::DeviceIdentity,
+    ark_handle: u64,
+    context: RecoveryDeviceStateContext,
+) -> Result<(crypto::DeviceStateBlob, crypto::DeviceStateBlob), KelivoStatus> {
+    if context.device_key_version == 0
+        || context.source_key_epoch.checked_add(1) != Some(context.target_key_epoch)
+    {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let key = key_for_handle(key_handle)?;
+    let bound = bound_keyring_for_handle(ark_handle)?;
+    require_ark_account(&bound, context.user_id)?;
+    let keyring = bound
+        .keyring
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?;
+    let unpruned = project_recovery_keyring(
+        &keyring,
+        context.source_key_epoch,
+        context.target_key_epoch,
+        true,
+    )?;
+    let pruned = project_recovery_keyring(
+        &keyring,
+        context.source_key_epoch,
+        context.target_key_epoch,
+        false,
+    )?;
+    let binding = state_binding(
+        context.device_id,
+        context.device_key_version,
+        Some((context.user_id, context.target_key_epoch)),
+    );
+    let unpruned_blob = seal_state_value(&key, identity, Some(&unpruned), binding)?;
+    let pruned_blob = seal_state_value(&key, identity, Some(&pruned), binding)?;
+    if bool::from(unpruned_blob.as_bytes().ct_eq(pruned_blob.as_bytes())) {
+        return Err(KelivoStatus::InternalState);
+    }
+    Ok((unpruned_blob, pruned_blob))
+}
+
+pub(super) fn activate_recovery_device_state(
+    key_handle: u64,
+    identity: &crypto::DeviceIdentity,
+    ark_handle: u64,
+    context: RecoveryDeviceStateContext,
+    candidate: &[u8],
+) -> Result<crypto::DeviceStateBlob, KelivoStatus> {
+    let (candidate, candidate_target) =
+        open_recovery_device_state_candidate(key_handle, identity, context, candidate)?;
+    let bound = bound_keyring_for_handle(ark_handle)?;
+    require_ark_account(&bound, context.user_id)?;
+    let mut keyring = bound
+        .keyring
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?;
+    keyring
+        .key_for_epoch(context.source_key_epoch)
+        .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?;
+    let current_target = keyring
+        .key_for_epoch(context.target_key_epoch)
+        .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?;
+    if !bool::from(candidate_target.as_bytes().ct_eq(current_target.as_bytes())) {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let target = crypto::AccountRootKey::from_bytes(*current_target.as_bytes());
+    let projected = crypto::AccountRootKeyring::new(context.target_key_epoch, target)
+        .map_err(device_error_status)?;
+    // 只有已认证候选与内部 target 常量时间一致时，才允许销毁 source。
+    *keyring = projected;
+    Ok(candidate)
+}
+
+pub(super) fn validate_activated_recovery_device_state(
+    key_handle: u64,
+    identity: &crypto::DeviceIdentity,
+    ark_handle: u64,
+    context: RecoveryDeviceStateContext,
+    candidate: &[u8],
+) -> Result<crypto::DeviceStateBlob, KelivoStatus> {
+    let (candidate, candidate_target) =
+        open_recovery_device_state_candidate(key_handle, identity, context, candidate)?;
+    let bound = bound_keyring_for_handle(ark_handle)?;
+    require_ark_account(&bound, context.user_id)?;
+    let keyring = bound
+        .keyring
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?;
+    if keyring.len() != 1 || keyring.current_epoch() != context.target_key_epoch {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let current_target = keyring
+        .key_for_epoch(context.target_key_epoch)
+        .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?;
+    if !bool::from(candidate_target.as_bytes().ct_eq(current_target.as_bytes())) {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    Ok(candidate)
+}
+
+fn open_recovery_device_state_candidate(
+    key_handle: u64,
+    identity: &crypto::DeviceIdentity,
+    context: RecoveryDeviceStateContext,
+    candidate: &[u8],
+) -> Result<(crypto::DeviceStateBlob, crypto::AccountRootKey), KelivoStatus> {
+    if context.device_key_version == 0
+        || context.source_key_epoch.checked_add(1) != Some(context.target_key_epoch)
+    {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let key = key_for_handle(key_handle)?;
+    let state_key = derive_state_key(&key)?;
+    let candidate = crypto::DeviceStateBlob::from_bytes(candidate).map_err(device_error_status)?;
+    let (candidate_binding, candidate_identity, candidate_keyring) =
+        crypto::open_device_state(&state_key, &candidate).map_err(device_error_status)?;
+    let expected_binding = state_binding(
+        context.device_id,
+        context.device_key_version,
+        Some((context.user_id, context.target_key_epoch)),
+    );
+    if candidate_binding != expected_binding
+        || candidate_identity.public_keys() != identity.public_keys()
+    {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let candidate_keyring = candidate_keyring.ok_or(KelivoStatus::RecoveryPrepareInvalid)?;
+    if candidate_keyring.len() != 1 || candidate_keyring.current_epoch() != context.target_key_epoch
+    {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let candidate_target = candidate_keyring
+        .key_for_epoch(context.target_key_epoch)
+        .map(|value| crypto::AccountRootKey::from_bytes(*value.as_bytes()))
+        .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?;
+    Ok((candidate, candidate_target))
+}
+
+fn project_recovery_keyring(
+    keyring: &crypto::AccountRootKeyring,
+    source_key_epoch: u32,
+    target_key_epoch: u32,
+    include_source: bool,
+) -> Result<crypto::AccountRootKeyring, KelivoStatus> {
+    let target = keyring
+        .key_for_epoch(target_key_epoch)
+        .map(|value| crypto::AccountRootKey::from_bytes(*value.as_bytes()))
+        .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?;
+    if !include_source {
+        return crypto::AccountRootKeyring::new(target_key_epoch, target)
+            .map_err(device_error_status);
+    }
+    let source = keyring
+        .key_for_epoch(source_key_epoch)
+        .map(|value| crypto::AccountRootKey::from_bytes(*value.as_bytes()))
+        .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?;
+    let mut projected =
+        crypto::AccountRootKeyring::new(source_key_epoch, source).map_err(device_error_status)?;
+    projected
+        .add_current(target_key_epoch, target)
+        .map_err(device_error_status)?;
+    Ok(projected)
 }
 
 fn prune_ark_epoch(handle: u64, epoch: u32) -> Result<(), KelivoStatus> {

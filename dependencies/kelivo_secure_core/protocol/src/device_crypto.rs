@@ -41,6 +41,8 @@ pub const DEVICE_PROOF_SIGNATURE_BUNDLE_LENGTH: usize = DEVICE_PROOF_SIGNATURE_L
 pub const DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH: usize = 270;
 pub const DATA_REKEY_COMPLETION_PROOF_SIGNATURE_LENGTH: usize = 64;
 const DATA_REKEY_COMPLETION_PROOF_DOMAIN: [u8; 32] = *b"kelivo-data-rekey-completion-v2\0";
+const DATA_REKEY_COMPLETION_PROOF_DIGEST_DOMAIN: &[u8] =
+    b"kelivo-data-rekey-completion-proof-digest-v2\0";
 pub const PAIRING_SECRET_LENGTH: usize = 32;
 pub const PAIRING_AUTHENTICATOR_LENGTH: usize = 32;
 const PAIRING_AUTHENTICATOR_INFO: &[u8] = b"kelivo.pairing.authenticator.v1\0";
@@ -701,7 +703,7 @@ impl DeviceIdentity {
         &self,
         canonical_frame: &[u8],
     ) -> Result<DataRekeyCompletionProofSignature, DeviceCryptoError> {
-        require_data_rekey_completion_proof_frame(canonical_frame)?;
+        parse_data_rekey_completion_proof_frame(canonical_frame)?;
         Ok(DataRekeyCompletionProofSignature(
             self.signing.signing_key().sign(canonical_frame).to_bytes(),
         ))
@@ -819,12 +821,34 @@ impl DataRekeyCompletionProofSignature {
     }
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct DataRekeyCompletionProofBinding {
+    pub operation_id: [u8; UUID_LENGTH],
+    pub user_id: UserId,
+    pub issuer_device_id: DeviceId,
+    pub source_data_generation: u32,
+    pub target_data_generation: u32,
+    pub source_key_epoch: u32,
+    pub target_key_epoch: u32,
+    pub membership_generation: u32,
+    pub membership_manifest_digest: [u8; SHA256_DIGEST_LENGTH],
+}
+
 pub fn verify_data_rekey_completion_proof(
     signing_public_key: &DeviceSigningPublicKey,
     canonical_frame: &[u8],
     signature: &[u8],
 ) -> Result<(), DeviceCryptoError> {
-    require_data_rekey_completion_proof_frame(canonical_frame)?;
+    verify_and_bind_data_rekey_completion_proof(signing_public_key, canonical_frame, signature)
+        .map(|_| ())
+}
+
+pub fn verify_and_bind_data_rekey_completion_proof(
+    signing_public_key: &DeviceSigningPublicKey,
+    canonical_frame: &[u8],
+    signature: &[u8],
+) -> Result<DataRekeyCompletionProofBinding, DeviceCryptoError> {
+    let binding = parse_data_rekey_completion_proof_frame(canonical_frame)?;
     let signature = DataRekeyCompletionProofSignature::from_bytes(signature)?;
     let verifying_key = signing_public_key.verifying_key()?;
     if !verify_strict_device_signature(
@@ -834,12 +858,25 @@ pub fn verify_data_rekey_completion_proof(
     ) {
         return Err(DeviceCryptoError::DataRekeyCompletionProofSignatureInvalid);
     }
-    Ok(())
+    Ok(binding)
 }
 
-fn require_data_rekey_completion_proof_frame(
+pub fn data_rekey_completion_proof_digest(
     canonical_frame: &[u8],
-) -> Result<(), DeviceCryptoError> {
+    signature: &[u8],
+) -> Result<[u8; SHA256_DIGEST_LENGTH], DeviceCryptoError> {
+    parse_data_rekey_completion_proof_frame(canonical_frame)?;
+    let signature = DataRekeyCompletionProofSignature::from_bytes(signature)?;
+    let mut digest = Sha256::new();
+    digest.update(DATA_REKEY_COMPLETION_PROOF_DIGEST_DOMAIN);
+    digest.update(canonical_frame);
+    digest.update(signature.as_bytes());
+    Ok(digest.finalize().into())
+}
+
+pub fn parse_data_rekey_completion_proof_frame(
+    canonical_frame: &[u8],
+) -> Result<DataRekeyCompletionProofBinding, DeviceCryptoError> {
     if canonical_frame.len() != DATA_REKEY_COMPLETION_PROOF_FRAME_LENGTH {
         return Err(
             DeviceCryptoError::InvalidDataRekeyCompletionProofFrameLength {
@@ -853,17 +890,22 @@ fn require_data_rekey_completion_proof_frame(
     {
         return Err(DeviceCryptoError::InvalidDataRekeyCompletionProofFrame);
     }
-    for uuid_offset in [
-        DATA_REKEY_OPERATION_ID_OFFSET,
-        DATA_REKEY_USER_ID_OFFSET,
-        DATA_REKEY_ISSUER_DEVICE_ID_OFFSET,
-    ] {
-        if !is_uuid_v4(&copy_array(
-            &canonical_frame[uuid_offset..uuid_offset + UUID_LENGTH],
-        )) {
-            return Err(DeviceCryptoError::InvalidDataRekeyCompletionProofFrame);
-        }
+    let operation_id = copy_array(
+        &canonical_frame
+            [DATA_REKEY_OPERATION_ID_OFFSET..DATA_REKEY_OPERATION_ID_OFFSET + UUID_LENGTH],
+    );
+    if !is_uuid_v4(&operation_id) {
+        return Err(DeviceCryptoError::InvalidDataRekeyCompletionProofFrame);
     }
+    let user_id = UserId::new(copy_array(
+        &canonical_frame[DATA_REKEY_USER_ID_OFFSET..DATA_REKEY_USER_ID_OFFSET + UUID_LENGTH],
+    ))
+    .map_err(|_| DeviceCryptoError::InvalidDataRekeyCompletionProofFrame)?;
+    let issuer_device_id = DeviceId::new(copy_array(
+        &canonical_frame
+            [DATA_REKEY_ISSUER_DEVICE_ID_OFFSET..DATA_REKEY_ISSUER_DEVICE_ID_OFFSET + UUID_LENGTH],
+    ))
+    .map_err(|_| DeviceCryptoError::InvalidDataRekeyCompletionProofFrame)?;
     require_canonical_nullable_uuid(
         canonical_frame,
         DATA_REKEY_SOURCE_RECORD_CURSOR_FLAG_OFFSET,
@@ -913,7 +955,20 @@ fn require_data_rekey_completion_proof_frame(
     if !valid_generations || !valid_key_epochs || !valid_counts {
         return Err(DeviceCryptoError::InvalidDataRekeyCompletionProofFrame);
     }
-    Ok(())
+    Ok(DataRekeyCompletionProofBinding {
+        operation_id,
+        user_id,
+        issuer_device_id,
+        source_data_generation: source_generation,
+        target_data_generation: target_generation,
+        source_key_epoch,
+        target_key_epoch,
+        membership_generation,
+        membership_manifest_digest: copy_array(
+            &canonical_frame[DATA_REKEY_MEMBERSHIP_MANIFEST_DIGEST_OFFSET
+                ..DATA_REKEY_MEMBERSHIP_MANIFEST_DIGEST_OFFSET + SHA256_DIGEST_LENGTH],
+        ),
+    })
 }
 
 fn read_data_rekey_u32(canonical_frame: &[u8], offset: usize) -> u32 {
@@ -3411,12 +3466,39 @@ mod tests {
             .sign_data_rekey_completion_proof(&proof_frame)
             .expect("规范 data-rekey completion frame 应可签名");
         assert_eq!(signature.as_bytes(), &expected_signature);
-        verify_data_rekey_completion_proof(
+        let binding = verify_and_bind_data_rekey_completion_proof(
             &identity.public_keys().signing,
             &proof_frame,
             signature.as_bytes(),
         )
         .expect("服务器固定向量应通过设备公钥严格验签");
+        assert_eq!(
+            binding.operation_id,
+            hex_array::<16>("11111111111141118111111111111111")
+        );
+        assert_eq!(
+            binding.user_id.as_bytes(),
+            &hex_array::<16>("22222222222242228222222222222222")
+        );
+        assert_eq!(
+            binding.issuer_device_id.as_bytes(),
+            &hex_array::<16>("33333333333343338333333333333333")
+        );
+        assert_eq!(binding.source_data_generation, 7);
+        assert_eq!(binding.target_data_generation, 8);
+        assert_eq!(binding.source_key_epoch, 11);
+        assert_eq!(binding.target_key_epoch, 12);
+        assert_eq!(binding.membership_generation, 3);
+        assert_eq!(binding.membership_manifest_digest, [0x88; 32]);
+        let digest = data_rekey_completion_proof_digest(&proof_frame, signature.as_bytes())
+            .expect("服务器固定向量应派生完成证明摘要");
+        let mut tampered_signature = *signature.as_bytes();
+        tampered_signature[0] ^= 1;
+        assert_ne!(
+            digest,
+            data_rekey_completion_proof_digest(&proof_frame, &tampered_signature)
+                .expect("固定长度篡改签名仍应产生不同摘要")
+        );
     }
 
     #[test]

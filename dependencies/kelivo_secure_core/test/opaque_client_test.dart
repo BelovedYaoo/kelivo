@@ -89,9 +89,71 @@ void main() {
   });
 
   test('ABI v19 账户恢复结构体布局与 C header 固定尺寸一致', () {
-    expect(ffi.sizeOf<native.KelivoAccountRecoveryProofBinding>(), 72);
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryProofBinding>(), 120);
+    expect(
+      ffi.sizeOf<native.KelivoAccountRecoveryReplacementProofBinding>(),
+      232,
+    );
     expect(ffi.sizeOf<native.KelivoAccountRecoveryPrepareInput>(), 92);
     expect(ffi.sizeOf<native.KelivoAccountRecoveryPrepareBinding>(), 96);
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryStateBinding>(), 152);
+  });
+
+  test('账户恢复状态绑定防御性复制并拒绝非相邻代次', () {
+    final userId = accountId(0xb1);
+    final deviceId = accountId(0xb2);
+    final manifestDigest = Uint8List(32)..fillRange(0, 32, 0xb3);
+    final operationId = accountId(0xb4);
+    final authorizationDigest = Uint8List(32)..fillRange(0, 32, 0xb5);
+    final expectedUserId = Uint8List.fromList(userId);
+    final expectedDeviceId = Uint8List.fromList(deviceId);
+    final expectedOperationId = Uint8List.fromList(operationId);
+    final binding = KelivoPreparedAccountRecoveryStateBinding(
+      kind: KelivoAccountRecoveryCommitKind.resume,
+      dataPhase: KelivoAccountRecoveryDataPhase.rekeyPending,
+      deviceKeyVersion: 1,
+      userId: userId,
+      deviceId: deviceId,
+      sourceKeyEpoch: 7,
+      targetKeyEpoch: 8,
+      sourceDataGeneration: 11,
+      targetDataGeneration: 12,
+      membershipGeneration: 9,
+      membershipManifestDigest: manifestDigest,
+      rekeyOperationId: operationId,
+      operationAuthorizationDigest: authorizationDigest,
+    );
+
+    userId.fillRange(0, userId.length, 0);
+    deviceId.fillRange(0, deviceId.length, 0);
+    manifestDigest.fillRange(0, manifestDigest.length, 0);
+    operationId.fillRange(0, operationId.length, 0);
+    authorizationDigest.fillRange(0, authorizationDigest.length, 0);
+    expect(binding.userId, orderedEquals(expectedUserId));
+    expect(binding.deviceId, orderedEquals(expectedDeviceId));
+    expect(binding.membershipManifestDigest, everyElement(0xb3));
+    expect(binding.rekeyOperationId, orderedEquals(expectedOperationId));
+    expect(binding.operationAuthorizationDigest, everyElement(0xb5));
+    expect(() => binding.userId[0] = 0, throwsUnsupportedError);
+
+    expect(
+      () => KelivoPreparedAccountRecoveryStateBinding(
+        kind: KelivoAccountRecoveryCommitKind.replacement,
+        dataPhase: KelivoAccountRecoveryDataPhase.ready,
+        deviceKeyVersion: 1,
+        userId: accountId(0xb6),
+        deviceId: accountId(0xb7),
+        sourceKeyEpoch: 7,
+        targetKeyEpoch: 9,
+        sourceDataGeneration: 11,
+        targetDataGeneration: 12,
+        membershipGeneration: 9,
+        membershipManifestDigest: Uint8List(32),
+        rekeyOperationId: accountId(0xb8),
+        operationAuthorizationDigest: Uint8List(32),
+      ),
+      throwsArgumentError,
+    );
   });
 
   test('安装根擦除仅使用显式隔离根并精准保留完成标记', () async {
@@ -222,6 +284,50 @@ void main() {
           expectedAttemptId: accountId(0xa3),
           expectedDeviceId: accountId(0xa4),
           expectedRequestDigest: Uint8List(32),
+          expectedExpiresAt: DateTime.utc(2026, 8, 1, 2),
+        ),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.unsupportedPlatform,
+          ),
+        ),
+      );
+      expect(passphrase, everyElement(0));
+    } finally {
+      await core.closeDeviceIdentity(identity);
+    }
+  });
+
+  test('Windows 第二阶段替换 challenge ABI 独立失败关闭并清零恢复口令', () async {
+    if (!Platform.isWindows) return;
+    final identity = await core.generateDeviceIdentity();
+    final passphrase = Uint8List.fromList(
+      utf8.encode('replacement-recovery-passphrase'),
+    );
+    try {
+      await expectLater(
+        core.verifyAccountRecoveryReplacementChallengeAndCreateProof(
+          identity,
+          expectedDeviceKeyVersion: 1,
+          expectedDeviceAuthGeneration: 1,
+          media: Uint8List(676),
+          passphrase: passphrase,
+          serviceOriginSha256: Uint8List(32),
+          membershipHistory: <Uint8List>[Uint8List(476)],
+          currentCapsule: Uint8List(156),
+          sourceCapsule: Uint8List(156),
+          challengeFrame: Uint8List(376),
+          sealedNonce: Uint8List(100),
+          completionProofFrame: Uint8List(270),
+          completionProofSignature: KelivoDataRekeyCompletionProofSignature(
+            Uint8List(64),
+          ),
+          recoveryTokenDigest: Uint8List(32),
+          expectedChallengeId: accountId(0xa5),
+          expectedAttemptId: accountId(0xa6),
+          expectedDeviceId: accountId(0xa7),
           expectedExpiresAt: DateTime.utc(2026, 8, 1, 2),
         ),
         throwsA(
