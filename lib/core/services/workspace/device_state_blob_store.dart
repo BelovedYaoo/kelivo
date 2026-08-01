@@ -1262,6 +1262,27 @@ typedef _DeviceStateGetFileInformationNative =
     Int32 Function(IntPtr, Int32, Pointer<Void>, Uint32);
 typedef _DeviceStateGetFileInformationDart =
     int Function(int, int, Pointer<Void>, int);
+typedef _DeviceStateLockFileNative =
+    Int32 Function(
+      IntPtr,
+      Uint32,
+      Uint32,
+      Uint32,
+      Uint32,
+      Pointer<_DeviceStateOverlapped>,
+    );
+typedef _DeviceStateLockFileDart =
+    int Function(int, int, int, int, int, Pointer<_DeviceStateOverlapped>);
+typedef _DeviceStateUnlockFileNative =
+    Int32 Function(
+      IntPtr,
+      Uint32,
+      Uint32,
+      Uint32,
+      Pointer<_DeviceStateOverlapped>,
+    );
+typedef _DeviceStateUnlockFileDart =
+    int Function(int, int, int, int, Pointer<_DeviceStateOverlapped>);
 typedef _DeviceStateHandleCallNative = Int32 Function(IntPtr);
 typedef _DeviceStateHandleCallDart = int Function(int);
 typedef _DeviceStateGetLastErrorNative = Uint32 Function();
@@ -1273,6 +1294,23 @@ final class _DeviceStateFileAttributeTagInfo extends Struct {
 
   @Uint32()
   external int reparseTag;
+}
+
+final class _DeviceStateOverlapped extends Struct {
+  @IntPtr()
+  external int internal;
+
+  @IntPtr()
+  external int internalHigh;
+
+  @Uint32()
+  external int offset;
+
+  @Uint32()
+  external int offsetHigh;
+
+  @IntPtr()
+  external int event;
 }
 
 final class _WindowsDeviceStateFileLock {
@@ -1288,6 +1326,15 @@ final class _WindowsDeviceStateFileLock {
           _DeviceStateGetFileInformationNative,
           _DeviceStateGetFileInformationDart
         >('GetFileInformationByHandleEx');
+    _lockFile = _library
+        .lookupFunction<_DeviceStateLockFileNative, _DeviceStateLockFileDart>(
+          'LockFileEx',
+        );
+    _unlockFile = _library
+        .lookupFunction<
+          _DeviceStateUnlockFileNative,
+          _DeviceStateUnlockFileDart
+        >('UnlockFileEx');
     _closeHandle = _library
         .lookupFunction<
           _DeviceStateHandleCallNative,
@@ -1302,14 +1349,14 @@ final class _WindowsDeviceStateFileLock {
 
   static const _invalidHandleValue = -1;
   static const _genericReadWrite = 0xc0000000;
+  static const _shareReadWrite = 0x00000003;
   static const _openAlways = 4;
+  static const _lockFileExclusiveLock = 0x00000002;
   static const _fileAttributeDirectory = 0x00000010;
   static const _fileAttributeNormal = 0x00000080;
   static const _fileAttributeReparsePoint = 0x00000400;
   static const _fileFlagOpenReparsePoint = 0x00200000;
   static const _fileAttributeTagInfoClass = 9;
-  static const _errorSharingViolation = 32;
-  static const _errorLockViolation = 33;
   static const _extendedPathPrefix = '\\\\?\\';
   static const _devicePathPrefix = '\\\\.\\';
   static const _uncPathPrefix = '\\\\';
@@ -1318,6 +1365,8 @@ final class _WindowsDeviceStateFileLock {
   final DynamicLibrary _library;
   late final _DeviceStateCreateFileDart _createFile;
   late final _DeviceStateGetFileInformationDart _getFileInformation;
+  late final _DeviceStateLockFileDart _lockFile;
+  late final _DeviceStateUnlockFileDart _unlockFile;
   late final _DeviceStateHandleCallDart _closeHandle;
   late final _DeviceStateGetLastErrorDart _getLastError;
 
@@ -1327,10 +1376,26 @@ final class _WindowsDeviceStateFileLock {
     required Future<T> Function() action,
   }) async {
     final initialType = await _requireLockPath(file, allowMissing: true);
-    final handle = await _openExclusive(file);
+    final overlapped = calloc<_DeviceStateOverlapped>();
+    late final int handle;
+    try {
+      handle = _openShared(file);
+    } catch (_) {
+      calloc.free(overlapped);
+      rethrow;
+    }
+    var locked = false;
     Object? operationError;
     StackTrace? operationStackTrace;
     try {
+      // 由单次阻塞式系统调用完成竞争等待，避免跨 FFI 依赖线程局部错误值。
+      if (_lockFile(handle, _lockFileExclusiveLock, 0, 1, 0, overlapped) == 0) {
+        throw FileSystemException(
+          'device_state_store_lock_acquire:${_getLastError()}',
+          file.path,
+        );
+      }
+      locked = true;
       final info = calloc<_DeviceStateFileAttributeTagInfo>();
       try {
         if (_getFileInformation(
@@ -1364,47 +1429,54 @@ final class _WindowsDeviceStateFileLock {
       operationStackTrace = stackTrace;
       rethrow;
     } finally {
-      if (_closeHandle(handle) == 0 && operationError == null) {
+      Object? cleanupError;
+      if (locked && _unlockFile(handle, 0, 1, 0, overlapped) == 0) {
+        cleanupError = FileSystemException(
+          'device_state_store_lock_release:${_getLastError()}',
+          file.path,
+        );
+      }
+      if (_closeHandle(handle) == 0 && cleanupError == null) {
+        cleanupError = FileSystemException(
+          'device_state_store_lock_close:${_getLastError()}',
+          file.path,
+        );
+      }
+      calloc.free(overlapped);
+      if (cleanupError != null && operationError == null) {
         Error.throwWithStackTrace(
-          FileSystemException(
-            'device_state_store_lock_close:${_getLastError()}',
-            file.path,
-          ),
+          cleanupError,
           operationStackTrace ?? StackTrace.current,
         );
       }
     }
   }
 
-  Future<int> _openExclusive(File file) async {
-    while (true) {
-      final nativePath = _nativePath(file.absolute.path).toNativeUtf16();
-      late final int handle;
-      var error = 0;
-      try {
-        handle = _createFile(
-          nativePath,
-          _genericReadWrite,
-          0,
-          nullptr,
-          _openAlways,
-          _fileAttributeNormal | _fileFlagOpenReparsePoint,
-          0,
-        );
-        if (handle == _invalidHandleValue) error = _getLastError();
-      } finally {
-        malloc.free(nativePath);
-      }
-      if (handle != _invalidHandleValue) return handle;
-      if (error != _errorSharingViolation && error != _errorLockViolation) {
-        throw FileSystemException(
-          'device_state_store_lock_open:$error',
-          file.path,
-        );
-      }
-      await _requireLockPath(file, allowMissing: true);
-      await Future<void>.delayed(const Duration(milliseconds: 10));
+  int _openShared(File file) {
+    final nativePath = _nativePath(file.absolute.path).toNativeUtf16();
+    late final int handle;
+    var error = 0;
+    try {
+      handle = _createFile(
+        nativePath,
+        _genericReadWrite,
+        _shareReadWrite,
+        nullptr,
+        _openAlways,
+        _fileAttributeNormal | _fileFlagOpenReparsePoint,
+        0,
+      );
+      if (handle == _invalidHandleValue) error = _getLastError();
+    } finally {
+      malloc.free(nativePath);
     }
+    if (handle == _invalidHandleValue) {
+      throw FileSystemException(
+        'device_state_store_lock_open:$error',
+        file.path,
+      );
+    }
+    return handle;
   }
 
   static Future<FileSystemEntityType> _requireLockPath(

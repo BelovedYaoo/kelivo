@@ -457,7 +457,7 @@ void main() {
     final secondError = File(p.join(controls.path, 'second-error'));
 
     final first = Isolate.run(
-      () => _compareAndSwapDeviceStateFromIsolate(
+      _compareAndSwapDeviceStateIsolateTask(
         installationRootPath: installationRoot.path,
         value: 0x13,
         readyPath: firstReady.path,
@@ -467,7 +467,7 @@ void main() {
       ),
     );
     final second = Isolate.run(
-      () => _compareAndSwapDeviceStateFromIsolate(
+      _compareAndSwapDeviceStateIsolateTask(
         installationRootPath: installationRoot.path,
         value: 0x14,
         readyPath: secondReady.path,
@@ -476,10 +476,24 @@ void main() {
         errorPath: secondError.path,
       ),
     );
-    await Future.wait(<Future<void>>[
+    final ready = Future.wait(<Future<void>>[
       _waitForFile(firstReady),
       _waitForFile(secondReady),
     ]);
+    await Future.any(<Future<void>>[
+      ready,
+      _failIfIsolateCompletesBeforeSignal(
+        first,
+        signal: firstReady,
+        error: firstError,
+      ),
+      _failIfIsolateCompletesBeforeSignal(
+        second,
+        signal: secondReady,
+        error: secondError,
+      ),
+    ]);
+    await ready;
     await release.writeAsString('release', flush: true);
     await Future.wait(<Future<void>>[
       first,
@@ -1675,7 +1689,7 @@ void main() {
     final secondError = File(p.join(controls.path, 'second-error'));
 
     final firstWrite = Isolate.run(
-      () => _writeDeviceStateFromIsolate(
+      _writeDeviceStateIsolateTask(
         installationRootPath: installationRoot.path,
         value: 0x82,
         startedPath: p.join(controls.path, 'first-started'),
@@ -1687,7 +1701,7 @@ void main() {
     );
     await _waitForFile(paused);
     final secondWrite = Isolate.run(
-      () => _writeDeviceStateFromIsolate(
+      _writeDeviceStateIsolateTask(
         installationRootPath: installationRoot.path,
         value: 0x83,
         startedPath: secondStarted.path,
@@ -1756,7 +1770,7 @@ void main() {
       final operationError = File(p.join(controls.path, '$operation-error'));
 
       final writer = Isolate.run(
-        () => _writeDeviceStateFromIsolate(
+        _writeDeviceStateIsolateTask(
           installationRootPath: root.path,
           value: 0x82,
           startedPath: p.join(controls.path, 'writer-started'),
@@ -1768,7 +1782,7 @@ void main() {
       );
       await _waitForFile(paused);
       final access = Isolate.run(
-        () => _accessDeviceStateFromIsolate(
+        _accessDeviceStateIsolateTask(
           installationRootPath: root.path,
           operation: operation,
           startedPath: operationStarted.path,
@@ -4375,6 +4389,60 @@ final class _BlockingFirstPreferenceSetStore
   }
 }
 
+Future<void> Function() _compareAndSwapDeviceStateIsolateTask({
+  required String installationRootPath,
+  required int value,
+  required String readyPath,
+  required String releasePath,
+  required String outcomePath,
+  required String errorPath,
+}) {
+  return () => _compareAndSwapDeviceStateFromIsolate(
+    installationRootPath: installationRootPath,
+    value: value,
+    readyPath: readyPath,
+    releasePath: releasePath,
+    outcomePath: outcomePath,
+    errorPath: errorPath,
+  );
+}
+
+Future<void> Function() _writeDeviceStateIsolateTask({
+  required String installationRootPath,
+  required int value,
+  required String startedPath,
+  required String completedPath,
+  required String errorPath,
+  String? pausePath,
+  String? releasePath,
+}) {
+  return () => _writeDeviceStateFromIsolate(
+    installationRootPath: installationRootPath,
+    value: value,
+    startedPath: startedPath,
+    completedPath: completedPath,
+    errorPath: errorPath,
+    pausePath: pausePath,
+    releasePath: releasePath,
+  );
+}
+
+Future<void> Function() _accessDeviceStateIsolateTask({
+  required String installationRootPath,
+  required String operation,
+  required String startedPath,
+  required String completedPath,
+  required String errorPath,
+}) {
+  return () => _accessDeviceStateFromIsolate(
+    installationRootPath: installationRootPath,
+    operation: operation,
+    startedPath: startedPath,
+    completedPath: completedPath,
+    errorPath: errorPath,
+  );
+}
+
 Future<void> _compareAndSwapDeviceStateFromIsolate({
   required String installationRootPath,
   required int value,
@@ -4493,6 +4561,19 @@ Future<void> _waitForFile(File file) async {
     }
     await Future<void>.delayed(const Duration(milliseconds: 10));
   }
+}
+
+Future<void> _failIfIsolateCompletesBeforeSignal(
+  Future<void> task, {
+  required File signal,
+  required File error,
+}) async {
+  await task;
+  if (await signal.exists()) return;
+  final details = await error.exists()
+      ? await error.readAsString()
+      : 'device_state_test_isolate_completed_without_signal';
+  throw StateError(details);
 }
 
 Future<Directory> _deviceStateLocatorDirectory(
