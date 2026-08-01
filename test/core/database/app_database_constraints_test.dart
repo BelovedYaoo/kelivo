@@ -464,6 +464,7 @@ void main() {
   late E2eeConfigVaultCommands configVault;
   late E2eeAttachmentUploadCommands attachmentUploads;
   late E2eeAttachmentDownloadCommands attachmentDownloads;
+  late E2eeDataRekeyCommands dataRekeyCommands;
   late E2eeSyncOutboxCommands outboxCommands;
   late E2eeSyncPullCommands pullCommands;
 
@@ -496,6 +497,7 @@ void main() {
     configVault = repository.e2eeConfigVaultCommands;
     attachmentUploads = repository.e2eeAttachmentUploadCommands;
     attachmentDownloads = repository.e2eeAttachmentDownloadCommands;
+    dataRekeyCommands = repository.e2eeDataRekeyCommands;
     outboxCommands = await repository.acquireE2eeSyncOutboxCommands(
       now: DateTime.utc(2026, 7, 28),
     );
@@ -1582,6 +1584,199 @@ void main() {
           ark: chain.ark,
         ),
         throwsA(isA<KelivoSecureCoreException>()),
+      );
+    });
+  });
+
+  group('E2EE data-rekey 持久日志', () {
+    E2eeDataRekeyOperationBinding binding({
+      String? operationId,
+      int sourceKeyEpoch = 7,
+      int targetKeyEpoch = 8,
+      int sourceRecordCount = 2,
+      int sourceAttachmentCount = 1,
+      int membershipGeneration = 12,
+      Uint8List? membershipManifestDigest,
+    }) => E2eeDataRekeyOperationBinding(
+      userId: _syncAccountUserId,
+      issuerDeviceId: _syncActorDeviceId,
+      operationId: operationId ?? _syncUuid(301),
+      sourceDataGeneration: 4,
+      sourceKeyEpoch: sourceKeyEpoch,
+      targetKeyEpoch: targetKeyEpoch,
+      sourceRecordCount: sourceRecordCount,
+      sourceAttachmentCount: sourceAttachmentCount,
+      sourceMaximumChangeSeq: 33,
+      sourceRecordCursorEnd: sourceRecordCount == 0 ? null : _syncUuid(302),
+      sourceAttachmentIdEnd: sourceAttachmentCount == 0 ? null : _syncUuid(303),
+      sourceAttachmentUploadIdEnd: sourceAttachmentCount == 0
+          ? null
+          : _syncUuid(304),
+      membershipGeneration: membershipGeneration,
+      membershipManifestDigest: membershipManifestDigest ?? _syncDigest(9),
+    );
+
+    test('租约意图在重复调用与数据库重开后复用随机身份', () async {
+      final operationBinding = binding();
+      final first = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+      final repeated = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4, 1),
+      );
+
+      expect(first.phase, E2eeDataRekeyJournalPhase.claimPending);
+      expect(first.leaseToken, hasLength(36));
+      expect(first.leaseMutationId, hasLength(36));
+      expect(first.leaseToken, isNot(first.leaseMutationId));
+      expect(repeated.leaseToken, first.leaseToken);
+      expect(repeated.leaseMutationId, first.leaseMutationId);
+      expect(repeated.binding, operationBinding);
+
+      await repository.close();
+      database = AppDatabase.open(
+        file: File('${directory.path}/constraints.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      await database.customSelect('SELECT 1;').getSingle();
+      repository = ChatDatabaseRepository(
+        database,
+        databaseCipher: testDatabaseCipher,
+      );
+      dataRekeyCommands = repository.e2eeDataRekeyCommands;
+
+      final reopened = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4, 2),
+      );
+      expect(reopened.leaseToken, first.leaseToken);
+      expect(reopened.leaseMutationId, first.leaseMutationId);
+      expect(reopened.binding, operationBinding);
+    });
+
+    test('零记录边界有效且成员摘要不暴露可变底层字节', () {
+      final sourceDigest = _syncDigest(19);
+      final operationBinding = binding(
+        sourceRecordCount: 0,
+        sourceAttachmentCount: 0,
+        membershipManifestDigest: sourceDigest,
+      );
+      final expectedDigest = Uint8List.fromList(sourceDigest);
+
+      sourceDigest[0] ^= 0xff;
+      final exposedDigest = operationBinding.membershipManifestDigest;
+      expect(() => exposedDigest[1] ^= 0xff, throwsUnsupportedError);
+
+      expect(operationBinding.sourceRecordCursorEnd, equals(null));
+      expect(operationBinding.sourceAttachmentIdEnd, equals(null));
+      expect(operationBinding.sourceAttachmentUploadIdEnd, equals(null));
+      expect(operationBinding.membershipManifestDigest, expectedDigest);
+    });
+
+    test('拒绝非相邻密钥世代与错误摘要长度', () {
+      expect(() => binding(targetKeyEpoch: 9), throwsA(isA<FormatException>()));
+      expect(
+        () => binding(membershipManifestDigest: Uint8List(31)),
+        throwsA(isA<FormatException>()),
+      );
+    });
+
+    test('同一 operation 绑定漂移时失败关闭并保留原重试身份', () async {
+      final original = binding();
+      final first = await dataRekeyCommands.ensureClaimIntent(
+        binding: original,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+
+      await expectLater(
+        dataRekeyCommands.ensureClaimIntent(
+          binding: binding(membershipGeneration: 13),
+          now: DateTime.utc(2026, 7, 30, 4, 1),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'data_rekey_operation_binding_changed',
+          ),
+        ),
+      );
+
+      final retained = await dataRekeyCommands.ensureClaimIntent(
+        binding: original,
+        now: DateTime.utc(2026, 7, 30, 4, 2),
+      );
+      expect(retained.leaseToken, first.leaseToken);
+      expect(retained.leaseMutationId, first.leaseMutationId);
+    });
+
+    test('旧 operation 未显式完成前拒绝新 operation', () async {
+      final original = binding();
+      final first = await dataRekeyCommands.ensureClaimIntent(
+        binding: original,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+
+      await expectLater(
+        dataRekeyCommands.ensureClaimIntent(
+          binding: binding(operationId: _syncUuid(305)),
+          now: DateTime.utc(2026, 7, 30, 4, 1),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'data_rekey_operation_in_progress',
+          ),
+        ),
+      );
+
+      final retained = await dataRekeyCommands.ensureClaimIntent(
+        binding: original,
+        now: DateTime.utc(2026, 7, 30, 4, 2),
+      );
+      expect(retained.leaseToken, first.leaseToken);
+      expect(retained.leaseMutationId, first.leaseMutationId);
+    });
+
+    test('数据库拒绝未持租约却进入执行阶段的日志', () async {
+      final operationBinding = binding();
+      await expectLater(
+        database
+            .into(database.e2eeDataRekeyOperationRows)
+            .insert(
+              E2eeDataRekeyOperationRowsCompanion.insert(
+                userId: operationBinding.userId,
+                issuerDeviceId: operationBinding.issuerDeviceId,
+                operationId: operationBinding.operationId,
+                sourceDataGeneration: operationBinding.sourceDataGeneration,
+                sourceKeyEpoch: operationBinding.sourceKeyEpoch,
+                targetKeyEpoch: operationBinding.targetKeyEpoch,
+                sourceRecordCount: operationBinding.sourceRecordCount,
+                sourceAttachmentCount: operationBinding.sourceAttachmentCount,
+                sourceMaximumChangeSeq: operationBinding.sourceMaximumChangeSeq,
+                sourceRecordCursorEnd: Value(
+                  operationBinding.sourceRecordCursorEnd,
+                ),
+                sourceAttachmentIdEnd: Value(
+                  operationBinding.sourceAttachmentIdEnd,
+                ),
+                sourceAttachmentUploadIdEnd: Value(
+                  operationBinding.sourceAttachmentUploadIdEnd,
+                ),
+                membershipGeneration: operationBinding.membershipGeneration,
+                membershipManifestDigest:
+                    operationBinding.membershipManifestDigest,
+                phase: E2eeDataRekeyJournalPhase.leased.wireValue,
+                leaseToken: _syncUuid(306),
+                leaseMutationId: _syncUuid(307),
+                createdAt: DateTime.utc(2026, 7, 30, 4),
+                updatedAt: DateTime.utc(2026, 7, 30, 4),
+              ),
+            ),
+        throwsRemoteSqliteException(),
       );
     });
   });

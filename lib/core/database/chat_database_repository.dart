@@ -29,6 +29,7 @@ part 'e2ee_sync_pull_checkpoint_commands.dart';
 part 'e2ee_config_vault_commands.dart';
 part 'e2ee_attachment_upload_commands.dart';
 part 'e2ee_attachment_download_commands.dart';
+part 'e2ee_data_rekey_commands.dart';
 
 typedef ChatDatabaseSnapshotInfo = ({
   int schemaVersion,
@@ -160,6 +161,9 @@ class ChatDatabaseRepository {
 
   E2eeAttachmentDownloadCommands get e2eeAttachmentDownloadCommands =>
       E2eeAttachmentDownloadCommands._(this);
+
+  E2eeDataRekeyCommands get e2eeDataRekeyCommands =>
+      E2eeDataRekeyCommands._(_db);
 
   E2eeSyncPullCommands get e2eeSyncPullCommands => E2eeSyncPullCommands._(_db);
 

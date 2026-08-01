@@ -1313,6 +1313,207 @@ class E2eeVerifiedMembershipAnchorRows extends Table {
   ];
 }
 
+class E2eeDataRekeyOperationRows extends Table {
+  IntColumn get singleton => integer().withDefault(const Constant(1))();
+  TextColumn get userId => text()();
+  TextColumn get issuerDeviceId => text()();
+  TextColumn get operationId => text()();
+  IntColumn get sourceDataGeneration => integer()();
+  IntColumn get sourceKeyEpoch => integer()();
+  IntColumn get targetKeyEpoch => integer()();
+  IntColumn get sourceRecordCount => integer()();
+  IntColumn get sourceAttachmentCount => integer()();
+  IntColumn get sourceMaximumChangeSeq => integer()();
+  TextColumn get sourceRecordCursorEnd => text().nullable()();
+  TextColumn get sourceAttachmentIdEnd => text().nullable()();
+  TextColumn get sourceAttachmentUploadIdEnd => text().nullable()();
+  IntColumn get membershipGeneration => integer()();
+  BlobColumn get membershipManifestDigest => blob()();
+  TextColumn get phase => text()();
+  TextColumn get leaseToken => text()();
+  TextColumn get leaseMutationId => text()();
+  IntColumn get leaseVersion => integer().nullable()();
+  IntColumn get leaseExpiresAt =>
+      integer().map(const MicrosecondDateTimeConverter()).nullable()();
+  IntColumn get createdAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+  IntColumn get updatedAt =>
+      integer().map(const MicrosecondDateTimeConverter())();
+
+  @override
+  Set<Column<Object>> get primaryKey => {singleton};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {operationId},
+    {leaseToken},
+    {leaseMutationId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(singleton) = 'integer' AND singleton = 1)",
+    "CHECK (typeof(user_id) = 'text' AND length(user_id) = 36 "
+        'AND user_id = lower(user_id) '
+        "AND user_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(user_id, 9, 1) = '-' "
+        "AND substr(user_id, 14, 1) = '-' "
+        "AND substr(user_id, 15, 1) = '4' "
+        "AND substr(user_id, 19, 1) = '-' "
+        "AND substr(user_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(user_id, 24, 1) = '-' "
+        "AND substr(user_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(user_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(user_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(user_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(user_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(issuer_device_id) = 'text' "
+        'AND length(issuer_device_id) = 36 '
+        'AND issuer_device_id = lower(issuer_device_id) '
+        "AND issuer_device_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(issuer_device_id, 9, 1) = '-' "
+        "AND substr(issuer_device_id, 14, 1) = '-' "
+        "AND substr(issuer_device_id, 15, 1) = '4' "
+        "AND substr(issuer_device_id, 19, 1) = '-' "
+        "AND substr(issuer_device_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(issuer_device_id, 24, 1) = '-' "
+        "AND substr(issuer_device_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(issuer_device_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(issuer_device_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(issuer_device_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(issuer_device_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(operation_id) = 'text' AND length(operation_id) = 36 "
+        'AND operation_id = lower(operation_id) '
+        "AND operation_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(operation_id, 9, 1) = '-' "
+        "AND substr(operation_id, 14, 1) = '-' "
+        "AND substr(operation_id, 15, 1) = '4' "
+        "AND substr(operation_id, 19, 1) = '-' "
+        "AND substr(operation_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(operation_id, 24, 1) = '-' "
+        "AND substr(operation_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(operation_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(operation_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(lease_token) = 'text' AND length(lease_token) = 36 "
+        'AND lease_token = lower(lease_token) '
+        "AND lease_token NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(lease_token, 9, 1) = '-' "
+        "AND substr(lease_token, 14, 1) = '-' "
+        "AND substr(lease_token, 15, 1) = '4' "
+        "AND substr(lease_token, 19, 1) = '-' "
+        "AND substr(lease_token, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(lease_token, 24, 1) = '-' "
+        "AND substr(lease_token, 1, 8) NOT GLOB '*-*' "
+        "AND substr(lease_token, 10, 4) NOT GLOB '*-*' "
+        "AND substr(lease_token, 15, 4) NOT GLOB '*-*' "
+        "AND substr(lease_token, 20, 4) NOT GLOB '*-*' "
+        "AND substr(lease_token, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(lease_mutation_id) = 'text' "
+        'AND length(lease_mutation_id) = 36 '
+        'AND lease_mutation_id = lower(lease_mutation_id) '
+        "AND lease_mutation_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(lease_mutation_id, 9, 1) = '-' "
+        "AND substr(lease_mutation_id, 14, 1) = '-' "
+        "AND substr(lease_mutation_id, 15, 1) = '4' "
+        "AND substr(lease_mutation_id, 19, 1) = '-' "
+        "AND substr(lease_mutation_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(lease_mutation_id, 24, 1) = '-' "
+        "AND substr(lease_mutation_id, 1, 8) NOT GLOB '*-*' "
+        "AND substr(lease_mutation_id, 10, 4) NOT GLOB '*-*' "
+        "AND substr(lease_mutation_id, 15, 4) NOT GLOB '*-*' "
+        "AND substr(lease_mutation_id, 20, 4) NOT GLOB '*-*' "
+        "AND substr(lease_mutation_id, 25, 12) NOT GLOB '*-*')",
+    "CHECK (typeof(source_data_generation) = 'integer' "
+        'AND source_data_generation BETWEEN 1 AND 2147483647)',
+    "CHECK (typeof(source_key_epoch) = 'integer' "
+        'AND source_key_epoch BETWEEN 1 AND 4294967294)',
+    "CHECK (typeof(target_key_epoch) = 'integer' "
+        'AND target_key_epoch = source_key_epoch + 1 '
+        'AND target_key_epoch BETWEEN 2 AND 4294967295)',
+    "CHECK (typeof(source_record_count) = 'integer' "
+        'AND source_record_count BETWEEN 0 AND 2147483647)',
+    "CHECK (typeof(source_attachment_count) = 'integer' "
+        'AND source_attachment_count BETWEEN 0 AND 2147483647)',
+    "CHECK (typeof(source_maximum_change_seq) = 'integer' "
+        'AND source_maximum_change_seq BETWEEN 0 AND 9223372036854775807)',
+    'CHECK ((source_record_count = 0 AND source_record_cursor_end IS NULL) '
+        'OR (source_record_count > 0 AND source_record_cursor_end IS NOT NULL))',
+    'CHECK ((source_attachment_count = 0 '
+        'AND source_attachment_id_end IS NULL '
+        'AND source_attachment_upload_id_end IS NULL) '
+        'OR (source_attachment_count > 0 '
+        'AND source_attachment_id_end IS NOT NULL '
+        'AND source_attachment_upload_id_end IS NOT NULL))',
+    'CHECK (source_record_cursor_end IS NULL OR '
+        "(typeof(source_record_cursor_end) = 'text' "
+        'AND length(source_record_cursor_end) = 36 '
+        'AND source_record_cursor_end = lower(source_record_cursor_end) '
+        "AND source_record_cursor_end NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(source_record_cursor_end, 9, 1) = '-' "
+        "AND substr(source_record_cursor_end, 14, 1) = '-' "
+        "AND substr(source_record_cursor_end, 15, 1) = '4' "
+        "AND substr(source_record_cursor_end, 19, 1) = '-' "
+        "AND substr(source_record_cursor_end, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(source_record_cursor_end, 24, 1) = '-' "
+        "AND substr(source_record_cursor_end, 1, 8) NOT GLOB '*-*' "
+        "AND substr(source_record_cursor_end, 10, 4) NOT GLOB '*-*' "
+        "AND substr(source_record_cursor_end, 15, 4) NOT GLOB '*-*' "
+        "AND substr(source_record_cursor_end, 20, 4) NOT GLOB '*-*' "
+        "AND substr(source_record_cursor_end, 25, 12) NOT GLOB '*-*'))",
+    'CHECK (source_attachment_id_end IS NULL OR '
+        "(typeof(source_attachment_id_end) = 'text' "
+        'AND length(source_attachment_id_end) = 36 '
+        'AND source_attachment_id_end = lower(source_attachment_id_end) '
+        "AND source_attachment_id_end NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(source_attachment_id_end, 9, 1) = '-' "
+        "AND substr(source_attachment_id_end, 14, 1) = '-' "
+        "AND substr(source_attachment_id_end, 15, 1) = '4' "
+        "AND substr(source_attachment_id_end, 19, 1) = '-' "
+        "AND substr(source_attachment_id_end, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(source_attachment_id_end, 24, 1) = '-' "
+        "AND substr(source_attachment_id_end, 1, 8) NOT GLOB '*-*' "
+        "AND substr(source_attachment_id_end, 10, 4) NOT GLOB '*-*' "
+        "AND substr(source_attachment_id_end, 15, 4) NOT GLOB '*-*' "
+        "AND substr(source_attachment_id_end, 20, 4) NOT GLOB '*-*' "
+        "AND substr(source_attachment_id_end, 25, 12) NOT GLOB '*-*'))",
+    'CHECK (source_attachment_upload_id_end IS NULL OR '
+        "(typeof(source_attachment_upload_id_end) = 'text' "
+        'AND length(source_attachment_upload_id_end) = 36 '
+        'AND source_attachment_upload_id_end = '
+        'lower(source_attachment_upload_id_end) '
+        "AND source_attachment_upload_id_end NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(source_attachment_upload_id_end, 9, 1) = '-' "
+        "AND substr(source_attachment_upload_id_end, 14, 1) = '-' "
+        "AND substr(source_attachment_upload_id_end, 15, 1) = '4' "
+        "AND substr(source_attachment_upload_id_end, 19, 1) = '-' "
+        "AND substr(source_attachment_upload_id_end, 20, 1) "
+        "IN ('8', '9', 'a', 'b') "
+        "AND substr(source_attachment_upload_id_end, 24, 1) = '-' "
+        "AND substr(source_attachment_upload_id_end, 1, 8) NOT GLOB '*-*' "
+        "AND substr(source_attachment_upload_id_end, 10, 4) NOT GLOB '*-*' "
+        "AND substr(source_attachment_upload_id_end, 15, 4) NOT GLOB '*-*' "
+        "AND substr(source_attachment_upload_id_end, 20, 4) NOT GLOB '*-*' "
+        "AND substr(source_attachment_upload_id_end, 25, 12) NOT GLOB '*-*'))",
+    "CHECK (typeof(membership_generation) = 'integer' "
+        'AND membership_generation BETWEEN 1 AND 2147483647)',
+    "CHECK (typeof(membership_manifest_digest) = 'blob' "
+        'AND length(membership_manifest_digest) = 32)',
+    "CHECK (typeof(phase) = 'text' AND phase IN "
+        "('claim-pending', 'leased', 'scanning', 'staging', 'finalizing'))",
+    'CHECK ((phase = \'claim-pending\' '
+        'AND lease_version IS NULL AND lease_expires_at IS NULL) '
+        'OR (phase != \'claim-pending\' '
+        "AND typeof(lease_version) = 'integer' "
+        'AND lease_version BETWEEN 1 AND 2147483647 '
+        "AND typeof(lease_expires_at) = 'integer' "
+        'AND lease_expires_at >= 0))',
+    "CHECK (typeof(created_at) = 'integer' AND created_at >= 0)",
+    "CHECK (typeof(updated_at) = 'integer' AND updated_at >= created_at)",
+  ];
+}
+
 class E2eeConfigEntryRows extends Table {
   TextColumn get entityType => text()();
   TextColumn get entityId => text()();
@@ -1896,6 +2097,7 @@ class E2eeAttachmentDownloadRows extends Table {
     E2eeSyncRemoteRecordRows,
     E2eeSyncPullCheckpointRows,
     E2eeVerifiedMembershipAnchorRows,
+    E2eeDataRekeyOperationRows,
     E2eeConfigEntryRows,
     E2eeAttachmentUploadRows,
     E2eeAttachmentDownloadRows,
@@ -1907,7 +2109,7 @@ class AppDatabase extends _$AppDatabase {
   static const databaseFileName = 'kelivo.db';
 
   // 已验证成员清单锚点必须与内容数据库同受 SQLCipher 和硬切安装门保护。
-  static const currentSchemaVersion = 23;
+  static const currentSchemaVersion = 24;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

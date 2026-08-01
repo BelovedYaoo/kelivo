@@ -14438,6 +14438,1359 @@ class E2eeVerifiedMembershipAnchorRowsCompanion
   }
 }
 
+class $E2eeDataRekeyOperationRowsTable extends E2eeDataRekeyOperationRows
+    with
+        TableInfo<$E2eeDataRekeyOperationRowsTable, E2eeDataRekeyOperationRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $E2eeDataRekeyOperationRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _singletonMeta = const VerificationMeta(
+    'singleton',
+  );
+  @override
+  late final GeneratedColumn<int> singleton = GeneratedColumn<int>(
+    'singleton',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+    defaultValue: const Constant(1),
+  );
+  static const VerificationMeta _userIdMeta = const VerificationMeta('userId');
+  @override
+  late final GeneratedColumn<String> userId = GeneratedColumn<String>(
+    'user_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _issuerDeviceIdMeta = const VerificationMeta(
+    'issuerDeviceId',
+  );
+  @override
+  late final GeneratedColumn<String> issuerDeviceId = GeneratedColumn<String>(
+    'issuer_device_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _operationIdMeta = const VerificationMeta(
+    'operationId',
+  );
+  @override
+  late final GeneratedColumn<String> operationId = GeneratedColumn<String>(
+    'operation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceDataGenerationMeta =
+      const VerificationMeta('sourceDataGeneration');
+  @override
+  late final GeneratedColumn<int> sourceDataGeneration = GeneratedColumn<int>(
+    'source_data_generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceKeyEpochMeta = const VerificationMeta(
+    'sourceKeyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> sourceKeyEpoch = GeneratedColumn<int>(
+    'source_key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _targetKeyEpochMeta = const VerificationMeta(
+    'targetKeyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> targetKeyEpoch = GeneratedColumn<int>(
+    'target_key_epoch',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceRecordCountMeta = const VerificationMeta(
+    'sourceRecordCount',
+  );
+  @override
+  late final GeneratedColumn<int> sourceRecordCount = GeneratedColumn<int>(
+    'source_record_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceAttachmentCountMeta =
+      const VerificationMeta('sourceAttachmentCount');
+  @override
+  late final GeneratedColumn<int> sourceAttachmentCount = GeneratedColumn<int>(
+    'source_attachment_count',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceMaximumChangeSeqMeta =
+      const VerificationMeta('sourceMaximumChangeSeq');
+  @override
+  late final GeneratedColumn<int> sourceMaximumChangeSeq = GeneratedColumn<int>(
+    'source_maximum_change_seq',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _sourceRecordCursorEndMeta =
+      const VerificationMeta('sourceRecordCursorEnd');
+  @override
+  late final GeneratedColumn<String> sourceRecordCursorEnd =
+      GeneratedColumn<String>(
+        'source_record_cursor_end',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _sourceAttachmentIdEndMeta =
+      const VerificationMeta('sourceAttachmentIdEnd');
+  @override
+  late final GeneratedColumn<String> sourceAttachmentIdEnd =
+      GeneratedColumn<String>(
+        'source_attachment_id_end',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _sourceAttachmentUploadIdEndMeta =
+      const VerificationMeta('sourceAttachmentUploadIdEnd');
+  @override
+  late final GeneratedColumn<String> sourceAttachmentUploadIdEnd =
+      GeneratedColumn<String>(
+        'source_attachment_upload_id_end',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _membershipGenerationMeta =
+      const VerificationMeta('membershipGeneration');
+  @override
+  late final GeneratedColumn<int> membershipGeneration = GeneratedColumn<int>(
+    'membership_generation',
+    aliasedName,
+    false,
+    type: DriftSqlType.int,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _membershipManifestDigestMeta =
+      const VerificationMeta('membershipManifestDigest');
+  @override
+  late final GeneratedColumn<Uint8List> membershipManifestDigest =
+      GeneratedColumn<Uint8List>(
+        'membership_manifest_digest',
+        aliasedName,
+        false,
+        type: DriftSqlType.blob,
+        requiredDuringInsert: true,
+      );
+  static const VerificationMeta _phaseMeta = const VerificationMeta('phase');
+  @override
+  late final GeneratedColumn<String> phase = GeneratedColumn<String>(
+    'phase',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _leaseTokenMeta = const VerificationMeta(
+    'leaseToken',
+  );
+  @override
+  late final GeneratedColumn<String> leaseToken = GeneratedColumn<String>(
+    'lease_token',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _leaseMutationIdMeta = const VerificationMeta(
+    'leaseMutationId',
+  );
+  @override
+  late final GeneratedColumn<String> leaseMutationId = GeneratedColumn<String>(
+    'lease_mutation_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _leaseVersionMeta = const VerificationMeta(
+    'leaseVersion',
+  );
+  @override
+  late final GeneratedColumn<int> leaseVersion = GeneratedColumn<int>(
+    'lease_version',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime?, int> leaseExpiresAt =
+      GeneratedColumn<int>(
+        'lease_expires_at',
+        aliasedName,
+        true,
+        type: DriftSqlType.int,
+        requiredDuringInsert: false,
+      ).withConverter<DateTime?>(
+        $E2eeDataRekeyOperationRowsTable.$converterleaseExpiresAtn,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> createdAt =
+      GeneratedColumn<int>(
+        'created_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeDataRekeyOperationRowsTable.$convertercreatedAt,
+      );
+  @override
+  late final GeneratedColumnWithTypeConverter<DateTime, int> updatedAt =
+      GeneratedColumn<int>(
+        'updated_at',
+        aliasedName,
+        false,
+        type: DriftSqlType.int,
+        requiredDuringInsert: true,
+      ).withConverter<DateTime>(
+        $E2eeDataRekeyOperationRowsTable.$converterupdatedAt,
+      );
+  @override
+  List<GeneratedColumn> get $columns => [
+    singleton,
+    userId,
+    issuerDeviceId,
+    operationId,
+    sourceDataGeneration,
+    sourceKeyEpoch,
+    targetKeyEpoch,
+    sourceRecordCount,
+    sourceAttachmentCount,
+    sourceMaximumChangeSeq,
+    sourceRecordCursorEnd,
+    sourceAttachmentIdEnd,
+    sourceAttachmentUploadIdEnd,
+    membershipGeneration,
+    membershipManifestDigest,
+    phase,
+    leaseToken,
+    leaseMutationId,
+    leaseVersion,
+    leaseExpiresAt,
+    createdAt,
+    updatedAt,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'e2ee_data_rekey_operation_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<E2eeDataRekeyOperationRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('singleton')) {
+      context.handle(
+        _singletonMeta,
+        singleton.isAcceptableOrUnknown(data['singleton']!, _singletonMeta),
+      );
+    }
+    if (data.containsKey('user_id')) {
+      context.handle(
+        _userIdMeta,
+        userId.isAcceptableOrUnknown(data['user_id']!, _userIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_userIdMeta);
+    }
+    if (data.containsKey('issuer_device_id')) {
+      context.handle(
+        _issuerDeviceIdMeta,
+        issuerDeviceId.isAcceptableOrUnknown(
+          data['issuer_device_id']!,
+          _issuerDeviceIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_issuerDeviceIdMeta);
+    }
+    if (data.containsKey('operation_id')) {
+      context.handle(
+        _operationIdMeta,
+        operationId.isAcceptableOrUnknown(
+          data['operation_id']!,
+          _operationIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_operationIdMeta);
+    }
+    if (data.containsKey('source_data_generation')) {
+      context.handle(
+        _sourceDataGenerationMeta,
+        sourceDataGeneration.isAcceptableOrUnknown(
+          data['source_data_generation']!,
+          _sourceDataGenerationMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceDataGenerationMeta);
+    }
+    if (data.containsKey('source_key_epoch')) {
+      context.handle(
+        _sourceKeyEpochMeta,
+        sourceKeyEpoch.isAcceptableOrUnknown(
+          data['source_key_epoch']!,
+          _sourceKeyEpochMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceKeyEpochMeta);
+    }
+    if (data.containsKey('target_key_epoch')) {
+      context.handle(
+        _targetKeyEpochMeta,
+        targetKeyEpoch.isAcceptableOrUnknown(
+          data['target_key_epoch']!,
+          _targetKeyEpochMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_targetKeyEpochMeta);
+    }
+    if (data.containsKey('source_record_count')) {
+      context.handle(
+        _sourceRecordCountMeta,
+        sourceRecordCount.isAcceptableOrUnknown(
+          data['source_record_count']!,
+          _sourceRecordCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceRecordCountMeta);
+    }
+    if (data.containsKey('source_attachment_count')) {
+      context.handle(
+        _sourceAttachmentCountMeta,
+        sourceAttachmentCount.isAcceptableOrUnknown(
+          data['source_attachment_count']!,
+          _sourceAttachmentCountMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceAttachmentCountMeta);
+    }
+    if (data.containsKey('source_maximum_change_seq')) {
+      context.handle(
+        _sourceMaximumChangeSeqMeta,
+        sourceMaximumChangeSeq.isAcceptableOrUnknown(
+          data['source_maximum_change_seq']!,
+          _sourceMaximumChangeSeqMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_sourceMaximumChangeSeqMeta);
+    }
+    if (data.containsKey('source_record_cursor_end')) {
+      context.handle(
+        _sourceRecordCursorEndMeta,
+        sourceRecordCursorEnd.isAcceptableOrUnknown(
+          data['source_record_cursor_end']!,
+          _sourceRecordCursorEndMeta,
+        ),
+      );
+    }
+    if (data.containsKey('source_attachment_id_end')) {
+      context.handle(
+        _sourceAttachmentIdEndMeta,
+        sourceAttachmentIdEnd.isAcceptableOrUnknown(
+          data['source_attachment_id_end']!,
+          _sourceAttachmentIdEndMeta,
+        ),
+      );
+    }
+    if (data.containsKey('source_attachment_upload_id_end')) {
+      context.handle(
+        _sourceAttachmentUploadIdEndMeta,
+        sourceAttachmentUploadIdEnd.isAcceptableOrUnknown(
+          data['source_attachment_upload_id_end']!,
+          _sourceAttachmentUploadIdEndMeta,
+        ),
+      );
+    }
+    if (data.containsKey('membership_generation')) {
+      context.handle(
+        _membershipGenerationMeta,
+        membershipGeneration.isAcceptableOrUnknown(
+          data['membership_generation']!,
+          _membershipGenerationMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_membershipGenerationMeta);
+    }
+    if (data.containsKey('membership_manifest_digest')) {
+      context.handle(
+        _membershipManifestDigestMeta,
+        membershipManifestDigest.isAcceptableOrUnknown(
+          data['membership_manifest_digest']!,
+          _membershipManifestDigestMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_membershipManifestDigestMeta);
+    }
+    if (data.containsKey('phase')) {
+      context.handle(
+        _phaseMeta,
+        phase.isAcceptableOrUnknown(data['phase']!, _phaseMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_phaseMeta);
+    }
+    if (data.containsKey('lease_token')) {
+      context.handle(
+        _leaseTokenMeta,
+        leaseToken.isAcceptableOrUnknown(data['lease_token']!, _leaseTokenMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_leaseTokenMeta);
+    }
+    if (data.containsKey('lease_mutation_id')) {
+      context.handle(
+        _leaseMutationIdMeta,
+        leaseMutationId.isAcceptableOrUnknown(
+          data['lease_mutation_id']!,
+          _leaseMutationIdMeta,
+        ),
+      );
+    } else if (isInserting) {
+      context.missing(_leaseMutationIdMeta);
+    }
+    if (data.containsKey('lease_version')) {
+      context.handle(
+        _leaseVersionMeta,
+        leaseVersion.isAcceptableOrUnknown(
+          data['lease_version']!,
+          _leaseVersionMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {singleton};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {operationId},
+    {leaseToken},
+    {leaseMutationId},
+  ];
+  @override
+  E2eeDataRekeyOperationRow map(
+    Map<String, dynamic> data, {
+    String? tablePrefix,
+  }) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return E2eeDataRekeyOperationRow(
+      singleton: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}singleton'],
+      )!,
+      userId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}user_id'],
+      )!,
+      issuerDeviceId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}issuer_device_id'],
+      )!,
+      operationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}operation_id'],
+      )!,
+      sourceDataGeneration: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}source_data_generation'],
+      )!,
+      sourceKeyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}source_key_epoch'],
+      )!,
+      targetKeyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}target_key_epoch'],
+      )!,
+      sourceRecordCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}source_record_count'],
+      )!,
+      sourceAttachmentCount: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}source_attachment_count'],
+      )!,
+      sourceMaximumChangeSeq: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}source_maximum_change_seq'],
+      )!,
+      sourceRecordCursorEnd: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_record_cursor_end'],
+      ),
+      sourceAttachmentIdEnd: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_attachment_id_end'],
+      ),
+      sourceAttachmentUploadIdEnd: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}source_attachment_upload_id_end'],
+      ),
+      membershipGeneration: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}membership_generation'],
+      )!,
+      membershipManifestDigest: attachedDatabase.typeMapping.read(
+        DriftSqlType.blob,
+        data['${effectivePrefix}membership_manifest_digest'],
+      )!,
+      phase: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}phase'],
+      )!,
+      leaseToken: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}lease_token'],
+      )!,
+      leaseMutationId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}lease_mutation_id'],
+      )!,
+      leaseVersion: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}lease_version'],
+      ),
+      leaseExpiresAt: $E2eeDataRekeyOperationRowsTable.$converterleaseExpiresAtn
+          .fromSql(
+            attachedDatabase.typeMapping.read(
+              DriftSqlType.int,
+              data['${effectivePrefix}lease_expires_at'],
+            ),
+          ),
+      createdAt: $E2eeDataRekeyOperationRowsTable.$convertercreatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}created_at'],
+        )!,
+      ),
+      updatedAt: $E2eeDataRekeyOperationRowsTable.$converterupdatedAt.fromSql(
+        attachedDatabase.typeMapping.read(
+          DriftSqlType.int,
+          data['${effectivePrefix}updated_at'],
+        )!,
+      ),
+    );
+  }
+
+  @override
+  $E2eeDataRekeyOperationRowsTable createAlias(String alias) {
+    return $E2eeDataRekeyOperationRowsTable(attachedDatabase, alias);
+  }
+
+  static TypeConverter<DateTime, int> $converterleaseExpiresAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime?, int?> $converterleaseExpiresAtn =
+      NullAwareTypeConverter.wrap($converterleaseExpiresAt);
+  static TypeConverter<DateTime, int> $convertercreatedAt =
+      const MicrosecondDateTimeConverter();
+  static TypeConverter<DateTime, int> $converterupdatedAt =
+      const MicrosecondDateTimeConverter();
+}
+
+class E2eeDataRekeyOperationRow extends DataClass
+    implements Insertable<E2eeDataRekeyOperationRow> {
+  final int singleton;
+  final String userId;
+  final String issuerDeviceId;
+  final String operationId;
+  final int sourceDataGeneration;
+  final int sourceKeyEpoch;
+  final int targetKeyEpoch;
+  final int sourceRecordCount;
+  final int sourceAttachmentCount;
+  final int sourceMaximumChangeSeq;
+  final String? sourceRecordCursorEnd;
+  final String? sourceAttachmentIdEnd;
+  final String? sourceAttachmentUploadIdEnd;
+  final int membershipGeneration;
+  final Uint8List membershipManifestDigest;
+  final String phase;
+  final String leaseToken;
+  final String leaseMutationId;
+  final int? leaseVersion;
+  final DateTime? leaseExpiresAt;
+  final DateTime createdAt;
+  final DateTime updatedAt;
+  const E2eeDataRekeyOperationRow({
+    required this.singleton,
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.operationId,
+    required this.sourceDataGeneration,
+    required this.sourceKeyEpoch,
+    required this.targetKeyEpoch,
+    required this.sourceRecordCount,
+    required this.sourceAttachmentCount,
+    required this.sourceMaximumChangeSeq,
+    this.sourceRecordCursorEnd,
+    this.sourceAttachmentIdEnd,
+    this.sourceAttachmentUploadIdEnd,
+    required this.membershipGeneration,
+    required this.membershipManifestDigest,
+    required this.phase,
+    required this.leaseToken,
+    required this.leaseMutationId,
+    this.leaseVersion,
+    this.leaseExpiresAt,
+    required this.createdAt,
+    required this.updatedAt,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['singleton'] = Variable<int>(singleton);
+    map['user_id'] = Variable<String>(userId);
+    map['issuer_device_id'] = Variable<String>(issuerDeviceId);
+    map['operation_id'] = Variable<String>(operationId);
+    map['source_data_generation'] = Variable<int>(sourceDataGeneration);
+    map['source_key_epoch'] = Variable<int>(sourceKeyEpoch);
+    map['target_key_epoch'] = Variable<int>(targetKeyEpoch);
+    map['source_record_count'] = Variable<int>(sourceRecordCount);
+    map['source_attachment_count'] = Variable<int>(sourceAttachmentCount);
+    map['source_maximum_change_seq'] = Variable<int>(sourceMaximumChangeSeq);
+    if (!nullToAbsent || sourceRecordCursorEnd != null) {
+      map['source_record_cursor_end'] = Variable<String>(sourceRecordCursorEnd);
+    }
+    if (!nullToAbsent || sourceAttachmentIdEnd != null) {
+      map['source_attachment_id_end'] = Variable<String>(sourceAttachmentIdEnd);
+    }
+    if (!nullToAbsent || sourceAttachmentUploadIdEnd != null) {
+      map['source_attachment_upload_id_end'] = Variable<String>(
+        sourceAttachmentUploadIdEnd,
+      );
+    }
+    map['membership_generation'] = Variable<int>(membershipGeneration);
+    map['membership_manifest_digest'] = Variable<Uint8List>(
+      membershipManifestDigest,
+    );
+    map['phase'] = Variable<String>(phase);
+    map['lease_token'] = Variable<String>(leaseToken);
+    map['lease_mutation_id'] = Variable<String>(leaseMutationId);
+    if (!nullToAbsent || leaseVersion != null) {
+      map['lease_version'] = Variable<int>(leaseVersion);
+    }
+    if (!nullToAbsent || leaseExpiresAt != null) {
+      map['lease_expires_at'] = Variable<int>(
+        $E2eeDataRekeyOperationRowsTable.$converterleaseExpiresAtn.toSql(
+          leaseExpiresAt,
+        ),
+      );
+    }
+    {
+      map['created_at'] = Variable<int>(
+        $E2eeDataRekeyOperationRowsTable.$convertercreatedAt.toSql(createdAt),
+      );
+    }
+    {
+      map['updated_at'] = Variable<int>(
+        $E2eeDataRekeyOperationRowsTable.$converterupdatedAt.toSql(updatedAt),
+      );
+    }
+    return map;
+  }
+
+  E2eeDataRekeyOperationRowsCompanion toCompanion(bool nullToAbsent) {
+    return E2eeDataRekeyOperationRowsCompanion(
+      singleton: Value(singleton),
+      userId: Value(userId),
+      issuerDeviceId: Value(issuerDeviceId),
+      operationId: Value(operationId),
+      sourceDataGeneration: Value(sourceDataGeneration),
+      sourceKeyEpoch: Value(sourceKeyEpoch),
+      targetKeyEpoch: Value(targetKeyEpoch),
+      sourceRecordCount: Value(sourceRecordCount),
+      sourceAttachmentCount: Value(sourceAttachmentCount),
+      sourceMaximumChangeSeq: Value(sourceMaximumChangeSeq),
+      sourceRecordCursorEnd: sourceRecordCursorEnd == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceRecordCursorEnd),
+      sourceAttachmentIdEnd: sourceAttachmentIdEnd == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceAttachmentIdEnd),
+      sourceAttachmentUploadIdEnd:
+          sourceAttachmentUploadIdEnd == null && nullToAbsent
+          ? const Value.absent()
+          : Value(sourceAttachmentUploadIdEnd),
+      membershipGeneration: Value(membershipGeneration),
+      membershipManifestDigest: Value(membershipManifestDigest),
+      phase: Value(phase),
+      leaseToken: Value(leaseToken),
+      leaseMutationId: Value(leaseMutationId),
+      leaseVersion: leaseVersion == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaseVersion),
+      leaseExpiresAt: leaseExpiresAt == null && nullToAbsent
+          ? const Value.absent()
+          : Value(leaseExpiresAt),
+      createdAt: Value(createdAt),
+      updatedAt: Value(updatedAt),
+    );
+  }
+
+  factory E2eeDataRekeyOperationRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return E2eeDataRekeyOperationRow(
+      singleton: serializer.fromJson<int>(json['singleton']),
+      userId: serializer.fromJson<String>(json['userId']),
+      issuerDeviceId: serializer.fromJson<String>(json['issuerDeviceId']),
+      operationId: serializer.fromJson<String>(json['operationId']),
+      sourceDataGeneration: serializer.fromJson<int>(
+        json['sourceDataGeneration'],
+      ),
+      sourceKeyEpoch: serializer.fromJson<int>(json['sourceKeyEpoch']),
+      targetKeyEpoch: serializer.fromJson<int>(json['targetKeyEpoch']),
+      sourceRecordCount: serializer.fromJson<int>(json['sourceRecordCount']),
+      sourceAttachmentCount: serializer.fromJson<int>(
+        json['sourceAttachmentCount'],
+      ),
+      sourceMaximumChangeSeq: serializer.fromJson<int>(
+        json['sourceMaximumChangeSeq'],
+      ),
+      sourceRecordCursorEnd: serializer.fromJson<String?>(
+        json['sourceRecordCursorEnd'],
+      ),
+      sourceAttachmentIdEnd: serializer.fromJson<String?>(
+        json['sourceAttachmentIdEnd'],
+      ),
+      sourceAttachmentUploadIdEnd: serializer.fromJson<String?>(
+        json['sourceAttachmentUploadIdEnd'],
+      ),
+      membershipGeneration: serializer.fromJson<int>(
+        json['membershipGeneration'],
+      ),
+      membershipManifestDigest: serializer.fromJson<Uint8List>(
+        json['membershipManifestDigest'],
+      ),
+      phase: serializer.fromJson<String>(json['phase']),
+      leaseToken: serializer.fromJson<String>(json['leaseToken']),
+      leaseMutationId: serializer.fromJson<String>(json['leaseMutationId']),
+      leaseVersion: serializer.fromJson<int?>(json['leaseVersion']),
+      leaseExpiresAt: serializer.fromJson<DateTime?>(json['leaseExpiresAt']),
+      createdAt: serializer.fromJson<DateTime>(json['createdAt']),
+      updatedAt: serializer.fromJson<DateTime>(json['updatedAt']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'singleton': serializer.toJson<int>(singleton),
+      'userId': serializer.toJson<String>(userId),
+      'issuerDeviceId': serializer.toJson<String>(issuerDeviceId),
+      'operationId': serializer.toJson<String>(operationId),
+      'sourceDataGeneration': serializer.toJson<int>(sourceDataGeneration),
+      'sourceKeyEpoch': serializer.toJson<int>(sourceKeyEpoch),
+      'targetKeyEpoch': serializer.toJson<int>(targetKeyEpoch),
+      'sourceRecordCount': serializer.toJson<int>(sourceRecordCount),
+      'sourceAttachmentCount': serializer.toJson<int>(sourceAttachmentCount),
+      'sourceMaximumChangeSeq': serializer.toJson<int>(sourceMaximumChangeSeq),
+      'sourceRecordCursorEnd': serializer.toJson<String?>(
+        sourceRecordCursorEnd,
+      ),
+      'sourceAttachmentIdEnd': serializer.toJson<String?>(
+        sourceAttachmentIdEnd,
+      ),
+      'sourceAttachmentUploadIdEnd': serializer.toJson<String?>(
+        sourceAttachmentUploadIdEnd,
+      ),
+      'membershipGeneration': serializer.toJson<int>(membershipGeneration),
+      'membershipManifestDigest': serializer.toJson<Uint8List>(
+        membershipManifestDigest,
+      ),
+      'phase': serializer.toJson<String>(phase),
+      'leaseToken': serializer.toJson<String>(leaseToken),
+      'leaseMutationId': serializer.toJson<String>(leaseMutationId),
+      'leaseVersion': serializer.toJson<int?>(leaseVersion),
+      'leaseExpiresAt': serializer.toJson<DateTime?>(leaseExpiresAt),
+      'createdAt': serializer.toJson<DateTime>(createdAt),
+      'updatedAt': serializer.toJson<DateTime>(updatedAt),
+    };
+  }
+
+  E2eeDataRekeyOperationRow copyWith({
+    int? singleton,
+    String? userId,
+    String? issuerDeviceId,
+    String? operationId,
+    int? sourceDataGeneration,
+    int? sourceKeyEpoch,
+    int? targetKeyEpoch,
+    int? sourceRecordCount,
+    int? sourceAttachmentCount,
+    int? sourceMaximumChangeSeq,
+    Value<String?> sourceRecordCursorEnd = const Value.absent(),
+    Value<String?> sourceAttachmentIdEnd = const Value.absent(),
+    Value<String?> sourceAttachmentUploadIdEnd = const Value.absent(),
+    int? membershipGeneration,
+    Uint8List? membershipManifestDigest,
+    String? phase,
+    String? leaseToken,
+    String? leaseMutationId,
+    Value<int?> leaseVersion = const Value.absent(),
+    Value<DateTime?> leaseExpiresAt = const Value.absent(),
+    DateTime? createdAt,
+    DateTime? updatedAt,
+  }) => E2eeDataRekeyOperationRow(
+    singleton: singleton ?? this.singleton,
+    userId: userId ?? this.userId,
+    issuerDeviceId: issuerDeviceId ?? this.issuerDeviceId,
+    operationId: operationId ?? this.operationId,
+    sourceDataGeneration: sourceDataGeneration ?? this.sourceDataGeneration,
+    sourceKeyEpoch: sourceKeyEpoch ?? this.sourceKeyEpoch,
+    targetKeyEpoch: targetKeyEpoch ?? this.targetKeyEpoch,
+    sourceRecordCount: sourceRecordCount ?? this.sourceRecordCount,
+    sourceAttachmentCount: sourceAttachmentCount ?? this.sourceAttachmentCount,
+    sourceMaximumChangeSeq:
+        sourceMaximumChangeSeq ?? this.sourceMaximumChangeSeq,
+    sourceRecordCursorEnd: sourceRecordCursorEnd.present
+        ? sourceRecordCursorEnd.value
+        : this.sourceRecordCursorEnd,
+    sourceAttachmentIdEnd: sourceAttachmentIdEnd.present
+        ? sourceAttachmentIdEnd.value
+        : this.sourceAttachmentIdEnd,
+    sourceAttachmentUploadIdEnd: sourceAttachmentUploadIdEnd.present
+        ? sourceAttachmentUploadIdEnd.value
+        : this.sourceAttachmentUploadIdEnd,
+    membershipGeneration: membershipGeneration ?? this.membershipGeneration,
+    membershipManifestDigest:
+        membershipManifestDigest ?? this.membershipManifestDigest,
+    phase: phase ?? this.phase,
+    leaseToken: leaseToken ?? this.leaseToken,
+    leaseMutationId: leaseMutationId ?? this.leaseMutationId,
+    leaseVersion: leaseVersion.present ? leaseVersion.value : this.leaseVersion,
+    leaseExpiresAt: leaseExpiresAt.present
+        ? leaseExpiresAt.value
+        : this.leaseExpiresAt,
+    createdAt: createdAt ?? this.createdAt,
+    updatedAt: updatedAt ?? this.updatedAt,
+  );
+  E2eeDataRekeyOperationRow copyWithCompanion(
+    E2eeDataRekeyOperationRowsCompanion data,
+  ) {
+    return E2eeDataRekeyOperationRow(
+      singleton: data.singleton.present ? data.singleton.value : this.singleton,
+      userId: data.userId.present ? data.userId.value : this.userId,
+      issuerDeviceId: data.issuerDeviceId.present
+          ? data.issuerDeviceId.value
+          : this.issuerDeviceId,
+      operationId: data.operationId.present
+          ? data.operationId.value
+          : this.operationId,
+      sourceDataGeneration: data.sourceDataGeneration.present
+          ? data.sourceDataGeneration.value
+          : this.sourceDataGeneration,
+      sourceKeyEpoch: data.sourceKeyEpoch.present
+          ? data.sourceKeyEpoch.value
+          : this.sourceKeyEpoch,
+      targetKeyEpoch: data.targetKeyEpoch.present
+          ? data.targetKeyEpoch.value
+          : this.targetKeyEpoch,
+      sourceRecordCount: data.sourceRecordCount.present
+          ? data.sourceRecordCount.value
+          : this.sourceRecordCount,
+      sourceAttachmentCount: data.sourceAttachmentCount.present
+          ? data.sourceAttachmentCount.value
+          : this.sourceAttachmentCount,
+      sourceMaximumChangeSeq: data.sourceMaximumChangeSeq.present
+          ? data.sourceMaximumChangeSeq.value
+          : this.sourceMaximumChangeSeq,
+      sourceRecordCursorEnd: data.sourceRecordCursorEnd.present
+          ? data.sourceRecordCursorEnd.value
+          : this.sourceRecordCursorEnd,
+      sourceAttachmentIdEnd: data.sourceAttachmentIdEnd.present
+          ? data.sourceAttachmentIdEnd.value
+          : this.sourceAttachmentIdEnd,
+      sourceAttachmentUploadIdEnd: data.sourceAttachmentUploadIdEnd.present
+          ? data.sourceAttachmentUploadIdEnd.value
+          : this.sourceAttachmentUploadIdEnd,
+      membershipGeneration: data.membershipGeneration.present
+          ? data.membershipGeneration.value
+          : this.membershipGeneration,
+      membershipManifestDigest: data.membershipManifestDigest.present
+          ? data.membershipManifestDigest.value
+          : this.membershipManifestDigest,
+      phase: data.phase.present ? data.phase.value : this.phase,
+      leaseToken: data.leaseToken.present
+          ? data.leaseToken.value
+          : this.leaseToken,
+      leaseMutationId: data.leaseMutationId.present
+          ? data.leaseMutationId.value
+          : this.leaseMutationId,
+      leaseVersion: data.leaseVersion.present
+          ? data.leaseVersion.value
+          : this.leaseVersion,
+      leaseExpiresAt: data.leaseExpiresAt.present
+          ? data.leaseExpiresAt.value
+          : this.leaseExpiresAt,
+      createdAt: data.createdAt.present ? data.createdAt.value : this.createdAt,
+      updatedAt: data.updatedAt.present ? data.updatedAt.value : this.updatedAt,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeDataRekeyOperationRow(')
+          ..write('singleton: $singleton, ')
+          ..write('userId: $userId, ')
+          ..write('issuerDeviceId: $issuerDeviceId, ')
+          ..write('operationId: $operationId, ')
+          ..write('sourceDataGeneration: $sourceDataGeneration, ')
+          ..write('sourceKeyEpoch: $sourceKeyEpoch, ')
+          ..write('targetKeyEpoch: $targetKeyEpoch, ')
+          ..write('sourceRecordCount: $sourceRecordCount, ')
+          ..write('sourceAttachmentCount: $sourceAttachmentCount, ')
+          ..write('sourceMaximumChangeSeq: $sourceMaximumChangeSeq, ')
+          ..write('sourceRecordCursorEnd: $sourceRecordCursorEnd, ')
+          ..write('sourceAttachmentIdEnd: $sourceAttachmentIdEnd, ')
+          ..write('sourceAttachmentUploadIdEnd: $sourceAttachmentUploadIdEnd, ')
+          ..write('membershipGeneration: $membershipGeneration, ')
+          ..write('membershipManifestDigest: $membershipManifestDigest, ')
+          ..write('phase: $phase, ')
+          ..write('leaseToken: $leaseToken, ')
+          ..write('leaseMutationId: $leaseMutationId, ')
+          ..write('leaseVersion: $leaseVersion, ')
+          ..write('leaseExpiresAt: $leaseExpiresAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hashAll([
+    singleton,
+    userId,
+    issuerDeviceId,
+    operationId,
+    sourceDataGeneration,
+    sourceKeyEpoch,
+    targetKeyEpoch,
+    sourceRecordCount,
+    sourceAttachmentCount,
+    sourceMaximumChangeSeq,
+    sourceRecordCursorEnd,
+    sourceAttachmentIdEnd,
+    sourceAttachmentUploadIdEnd,
+    membershipGeneration,
+    $driftBlobEquality.hash(membershipManifestDigest),
+    phase,
+    leaseToken,
+    leaseMutationId,
+    leaseVersion,
+    leaseExpiresAt,
+    createdAt,
+    updatedAt,
+  ]);
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is E2eeDataRekeyOperationRow &&
+          other.singleton == this.singleton &&
+          other.userId == this.userId &&
+          other.issuerDeviceId == this.issuerDeviceId &&
+          other.operationId == this.operationId &&
+          other.sourceDataGeneration == this.sourceDataGeneration &&
+          other.sourceKeyEpoch == this.sourceKeyEpoch &&
+          other.targetKeyEpoch == this.targetKeyEpoch &&
+          other.sourceRecordCount == this.sourceRecordCount &&
+          other.sourceAttachmentCount == this.sourceAttachmentCount &&
+          other.sourceMaximumChangeSeq == this.sourceMaximumChangeSeq &&
+          other.sourceRecordCursorEnd == this.sourceRecordCursorEnd &&
+          other.sourceAttachmentIdEnd == this.sourceAttachmentIdEnd &&
+          other.sourceAttachmentUploadIdEnd ==
+              this.sourceAttachmentUploadIdEnd &&
+          other.membershipGeneration == this.membershipGeneration &&
+          $driftBlobEquality.equals(
+            other.membershipManifestDigest,
+            this.membershipManifestDigest,
+          ) &&
+          other.phase == this.phase &&
+          other.leaseToken == this.leaseToken &&
+          other.leaseMutationId == this.leaseMutationId &&
+          other.leaseVersion == this.leaseVersion &&
+          other.leaseExpiresAt == this.leaseExpiresAt &&
+          other.createdAt == this.createdAt &&
+          other.updatedAt == this.updatedAt);
+}
+
+class E2eeDataRekeyOperationRowsCompanion
+    extends UpdateCompanion<E2eeDataRekeyOperationRow> {
+  final Value<int> singleton;
+  final Value<String> userId;
+  final Value<String> issuerDeviceId;
+  final Value<String> operationId;
+  final Value<int> sourceDataGeneration;
+  final Value<int> sourceKeyEpoch;
+  final Value<int> targetKeyEpoch;
+  final Value<int> sourceRecordCount;
+  final Value<int> sourceAttachmentCount;
+  final Value<int> sourceMaximumChangeSeq;
+  final Value<String?> sourceRecordCursorEnd;
+  final Value<String?> sourceAttachmentIdEnd;
+  final Value<String?> sourceAttachmentUploadIdEnd;
+  final Value<int> membershipGeneration;
+  final Value<Uint8List> membershipManifestDigest;
+  final Value<String> phase;
+  final Value<String> leaseToken;
+  final Value<String> leaseMutationId;
+  final Value<int?> leaseVersion;
+  final Value<DateTime?> leaseExpiresAt;
+  final Value<DateTime> createdAt;
+  final Value<DateTime> updatedAt;
+  const E2eeDataRekeyOperationRowsCompanion({
+    this.singleton = const Value.absent(),
+    this.userId = const Value.absent(),
+    this.issuerDeviceId = const Value.absent(),
+    this.operationId = const Value.absent(),
+    this.sourceDataGeneration = const Value.absent(),
+    this.sourceKeyEpoch = const Value.absent(),
+    this.targetKeyEpoch = const Value.absent(),
+    this.sourceRecordCount = const Value.absent(),
+    this.sourceAttachmentCount = const Value.absent(),
+    this.sourceMaximumChangeSeq = const Value.absent(),
+    this.sourceRecordCursorEnd = const Value.absent(),
+    this.sourceAttachmentIdEnd = const Value.absent(),
+    this.sourceAttachmentUploadIdEnd = const Value.absent(),
+    this.membershipGeneration = const Value.absent(),
+    this.membershipManifestDigest = const Value.absent(),
+    this.phase = const Value.absent(),
+    this.leaseToken = const Value.absent(),
+    this.leaseMutationId = const Value.absent(),
+    this.leaseVersion = const Value.absent(),
+    this.leaseExpiresAt = const Value.absent(),
+    this.createdAt = const Value.absent(),
+    this.updatedAt = const Value.absent(),
+  });
+  E2eeDataRekeyOperationRowsCompanion.insert({
+    this.singleton = const Value.absent(),
+    required String userId,
+    required String issuerDeviceId,
+    required String operationId,
+    required int sourceDataGeneration,
+    required int sourceKeyEpoch,
+    required int targetKeyEpoch,
+    required int sourceRecordCount,
+    required int sourceAttachmentCount,
+    required int sourceMaximumChangeSeq,
+    this.sourceRecordCursorEnd = const Value.absent(),
+    this.sourceAttachmentIdEnd = const Value.absent(),
+    this.sourceAttachmentUploadIdEnd = const Value.absent(),
+    required int membershipGeneration,
+    required Uint8List membershipManifestDigest,
+    required String phase,
+    required String leaseToken,
+    required String leaseMutationId,
+    this.leaseVersion = const Value.absent(),
+    this.leaseExpiresAt = const Value.absent(),
+    required DateTime createdAt,
+    required DateTime updatedAt,
+  }) : userId = Value(userId),
+       issuerDeviceId = Value(issuerDeviceId),
+       operationId = Value(operationId),
+       sourceDataGeneration = Value(sourceDataGeneration),
+       sourceKeyEpoch = Value(sourceKeyEpoch),
+       targetKeyEpoch = Value(targetKeyEpoch),
+       sourceRecordCount = Value(sourceRecordCount),
+       sourceAttachmentCount = Value(sourceAttachmentCount),
+       sourceMaximumChangeSeq = Value(sourceMaximumChangeSeq),
+       membershipGeneration = Value(membershipGeneration),
+       membershipManifestDigest = Value(membershipManifestDigest),
+       phase = Value(phase),
+       leaseToken = Value(leaseToken),
+       leaseMutationId = Value(leaseMutationId),
+       createdAt = Value(createdAt),
+       updatedAt = Value(updatedAt);
+  static Insertable<E2eeDataRekeyOperationRow> custom({
+    Expression<int>? singleton,
+    Expression<String>? userId,
+    Expression<String>? issuerDeviceId,
+    Expression<String>? operationId,
+    Expression<int>? sourceDataGeneration,
+    Expression<int>? sourceKeyEpoch,
+    Expression<int>? targetKeyEpoch,
+    Expression<int>? sourceRecordCount,
+    Expression<int>? sourceAttachmentCount,
+    Expression<int>? sourceMaximumChangeSeq,
+    Expression<String>? sourceRecordCursorEnd,
+    Expression<String>? sourceAttachmentIdEnd,
+    Expression<String>? sourceAttachmentUploadIdEnd,
+    Expression<int>? membershipGeneration,
+    Expression<Uint8List>? membershipManifestDigest,
+    Expression<String>? phase,
+    Expression<String>? leaseToken,
+    Expression<String>? leaseMutationId,
+    Expression<int>? leaseVersion,
+    Expression<int>? leaseExpiresAt,
+    Expression<int>? createdAt,
+    Expression<int>? updatedAt,
+  }) {
+    return RawValuesInsertable({
+      if (singleton != null) 'singleton': singleton,
+      if (userId != null) 'user_id': userId,
+      if (issuerDeviceId != null) 'issuer_device_id': issuerDeviceId,
+      if (operationId != null) 'operation_id': operationId,
+      if (sourceDataGeneration != null)
+        'source_data_generation': sourceDataGeneration,
+      if (sourceKeyEpoch != null) 'source_key_epoch': sourceKeyEpoch,
+      if (targetKeyEpoch != null) 'target_key_epoch': targetKeyEpoch,
+      if (sourceRecordCount != null) 'source_record_count': sourceRecordCount,
+      if (sourceAttachmentCount != null)
+        'source_attachment_count': sourceAttachmentCount,
+      if (sourceMaximumChangeSeq != null)
+        'source_maximum_change_seq': sourceMaximumChangeSeq,
+      if (sourceRecordCursorEnd != null)
+        'source_record_cursor_end': sourceRecordCursorEnd,
+      if (sourceAttachmentIdEnd != null)
+        'source_attachment_id_end': sourceAttachmentIdEnd,
+      if (sourceAttachmentUploadIdEnd != null)
+        'source_attachment_upload_id_end': sourceAttachmentUploadIdEnd,
+      if (membershipGeneration != null)
+        'membership_generation': membershipGeneration,
+      if (membershipManifestDigest != null)
+        'membership_manifest_digest': membershipManifestDigest,
+      if (phase != null) 'phase': phase,
+      if (leaseToken != null) 'lease_token': leaseToken,
+      if (leaseMutationId != null) 'lease_mutation_id': leaseMutationId,
+      if (leaseVersion != null) 'lease_version': leaseVersion,
+      if (leaseExpiresAt != null) 'lease_expires_at': leaseExpiresAt,
+      if (createdAt != null) 'created_at': createdAt,
+      if (updatedAt != null) 'updated_at': updatedAt,
+    });
+  }
+
+  E2eeDataRekeyOperationRowsCompanion copyWith({
+    Value<int>? singleton,
+    Value<String>? userId,
+    Value<String>? issuerDeviceId,
+    Value<String>? operationId,
+    Value<int>? sourceDataGeneration,
+    Value<int>? sourceKeyEpoch,
+    Value<int>? targetKeyEpoch,
+    Value<int>? sourceRecordCount,
+    Value<int>? sourceAttachmentCount,
+    Value<int>? sourceMaximumChangeSeq,
+    Value<String?>? sourceRecordCursorEnd,
+    Value<String?>? sourceAttachmentIdEnd,
+    Value<String?>? sourceAttachmentUploadIdEnd,
+    Value<int>? membershipGeneration,
+    Value<Uint8List>? membershipManifestDigest,
+    Value<String>? phase,
+    Value<String>? leaseToken,
+    Value<String>? leaseMutationId,
+    Value<int?>? leaseVersion,
+    Value<DateTime?>? leaseExpiresAt,
+    Value<DateTime>? createdAt,
+    Value<DateTime>? updatedAt,
+  }) {
+    return E2eeDataRekeyOperationRowsCompanion(
+      singleton: singleton ?? this.singleton,
+      userId: userId ?? this.userId,
+      issuerDeviceId: issuerDeviceId ?? this.issuerDeviceId,
+      operationId: operationId ?? this.operationId,
+      sourceDataGeneration: sourceDataGeneration ?? this.sourceDataGeneration,
+      sourceKeyEpoch: sourceKeyEpoch ?? this.sourceKeyEpoch,
+      targetKeyEpoch: targetKeyEpoch ?? this.targetKeyEpoch,
+      sourceRecordCount: sourceRecordCount ?? this.sourceRecordCount,
+      sourceAttachmentCount:
+          sourceAttachmentCount ?? this.sourceAttachmentCount,
+      sourceMaximumChangeSeq:
+          sourceMaximumChangeSeq ?? this.sourceMaximumChangeSeq,
+      sourceRecordCursorEnd:
+          sourceRecordCursorEnd ?? this.sourceRecordCursorEnd,
+      sourceAttachmentIdEnd:
+          sourceAttachmentIdEnd ?? this.sourceAttachmentIdEnd,
+      sourceAttachmentUploadIdEnd:
+          sourceAttachmentUploadIdEnd ?? this.sourceAttachmentUploadIdEnd,
+      membershipGeneration: membershipGeneration ?? this.membershipGeneration,
+      membershipManifestDigest:
+          membershipManifestDigest ?? this.membershipManifestDigest,
+      phase: phase ?? this.phase,
+      leaseToken: leaseToken ?? this.leaseToken,
+      leaseMutationId: leaseMutationId ?? this.leaseMutationId,
+      leaseVersion: leaseVersion ?? this.leaseVersion,
+      leaseExpiresAt: leaseExpiresAt ?? this.leaseExpiresAt,
+      createdAt: createdAt ?? this.createdAt,
+      updatedAt: updatedAt ?? this.updatedAt,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (singleton.present) {
+      map['singleton'] = Variable<int>(singleton.value);
+    }
+    if (userId.present) {
+      map['user_id'] = Variable<String>(userId.value);
+    }
+    if (issuerDeviceId.present) {
+      map['issuer_device_id'] = Variable<String>(issuerDeviceId.value);
+    }
+    if (operationId.present) {
+      map['operation_id'] = Variable<String>(operationId.value);
+    }
+    if (sourceDataGeneration.present) {
+      map['source_data_generation'] = Variable<int>(sourceDataGeneration.value);
+    }
+    if (sourceKeyEpoch.present) {
+      map['source_key_epoch'] = Variable<int>(sourceKeyEpoch.value);
+    }
+    if (targetKeyEpoch.present) {
+      map['target_key_epoch'] = Variable<int>(targetKeyEpoch.value);
+    }
+    if (sourceRecordCount.present) {
+      map['source_record_count'] = Variable<int>(sourceRecordCount.value);
+    }
+    if (sourceAttachmentCount.present) {
+      map['source_attachment_count'] = Variable<int>(
+        sourceAttachmentCount.value,
+      );
+    }
+    if (sourceMaximumChangeSeq.present) {
+      map['source_maximum_change_seq'] = Variable<int>(
+        sourceMaximumChangeSeq.value,
+      );
+    }
+    if (sourceRecordCursorEnd.present) {
+      map['source_record_cursor_end'] = Variable<String>(
+        sourceRecordCursorEnd.value,
+      );
+    }
+    if (sourceAttachmentIdEnd.present) {
+      map['source_attachment_id_end'] = Variable<String>(
+        sourceAttachmentIdEnd.value,
+      );
+    }
+    if (sourceAttachmentUploadIdEnd.present) {
+      map['source_attachment_upload_id_end'] = Variable<String>(
+        sourceAttachmentUploadIdEnd.value,
+      );
+    }
+    if (membershipGeneration.present) {
+      map['membership_generation'] = Variable<int>(membershipGeneration.value);
+    }
+    if (membershipManifestDigest.present) {
+      map['membership_manifest_digest'] = Variable<Uint8List>(
+        membershipManifestDigest.value,
+      );
+    }
+    if (phase.present) {
+      map['phase'] = Variable<String>(phase.value);
+    }
+    if (leaseToken.present) {
+      map['lease_token'] = Variable<String>(leaseToken.value);
+    }
+    if (leaseMutationId.present) {
+      map['lease_mutation_id'] = Variable<String>(leaseMutationId.value);
+    }
+    if (leaseVersion.present) {
+      map['lease_version'] = Variable<int>(leaseVersion.value);
+    }
+    if (leaseExpiresAt.present) {
+      map['lease_expires_at'] = Variable<int>(
+        $E2eeDataRekeyOperationRowsTable.$converterleaseExpiresAtn.toSql(
+          leaseExpiresAt.value,
+        ),
+      );
+    }
+    if (createdAt.present) {
+      map['created_at'] = Variable<int>(
+        $E2eeDataRekeyOperationRowsTable.$convertercreatedAt.toSql(
+          createdAt.value,
+        ),
+      );
+    }
+    if (updatedAt.present) {
+      map['updated_at'] = Variable<int>(
+        $E2eeDataRekeyOperationRowsTable.$converterupdatedAt.toSql(
+          updatedAt.value,
+        ),
+      );
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('E2eeDataRekeyOperationRowsCompanion(')
+          ..write('singleton: $singleton, ')
+          ..write('userId: $userId, ')
+          ..write('issuerDeviceId: $issuerDeviceId, ')
+          ..write('operationId: $operationId, ')
+          ..write('sourceDataGeneration: $sourceDataGeneration, ')
+          ..write('sourceKeyEpoch: $sourceKeyEpoch, ')
+          ..write('targetKeyEpoch: $targetKeyEpoch, ')
+          ..write('sourceRecordCount: $sourceRecordCount, ')
+          ..write('sourceAttachmentCount: $sourceAttachmentCount, ')
+          ..write('sourceMaximumChangeSeq: $sourceMaximumChangeSeq, ')
+          ..write('sourceRecordCursorEnd: $sourceRecordCursorEnd, ')
+          ..write('sourceAttachmentIdEnd: $sourceAttachmentIdEnd, ')
+          ..write('sourceAttachmentUploadIdEnd: $sourceAttachmentUploadIdEnd, ')
+          ..write('membershipGeneration: $membershipGeneration, ')
+          ..write('membershipManifestDigest: $membershipManifestDigest, ')
+          ..write('phase: $phase, ')
+          ..write('leaseToken: $leaseToken, ')
+          ..write('leaseMutationId: $leaseMutationId, ')
+          ..write('leaseVersion: $leaseVersion, ')
+          ..write('leaseExpiresAt: $leaseExpiresAt, ')
+          ..write('createdAt: $createdAt, ')
+          ..write('updatedAt: $updatedAt')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $E2eeConfigEntryRowsTable extends E2eeConfigEntryRows
     with TableInfo<$E2eeConfigEntryRowsTable, E2eeConfigEntryRow> {
   @override
@@ -18981,6 +20334,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   e2eeVerifiedMembershipAnchorRows = $E2eeVerifiedMembershipAnchorRowsTable(
     this,
   );
+  late final $E2eeDataRekeyOperationRowsTable e2eeDataRekeyOperationRows =
+      $E2eeDataRekeyOperationRowsTable(this);
   late final $E2eeConfigEntryRowsTable e2eeConfigEntryRows =
       $E2eeConfigEntryRowsTable(this);
   late final $E2eeAttachmentUploadRowsTable e2eeAttachmentUploadRows =
@@ -19116,6 +20471,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     e2eeSyncRemoteRecordRows,
     e2eeSyncPullCheckpointRows,
     e2eeVerifiedMembershipAnchorRows,
+    e2eeDataRekeyOperationRows,
     e2eeConfigEntryRows,
     e2eeAttachmentUploadRows,
     e2eeAttachmentDownloadRows,
@@ -29820,6 +31176,583 @@ typedef $$E2eeVerifiedMembershipAnchorRowsTableProcessedTableManager =
       E2eeVerifiedMembershipAnchorRow,
       PrefetchHooks Function()
     >;
+typedef $$E2eeDataRekeyOperationRowsTableCreateCompanionBuilder =
+    E2eeDataRekeyOperationRowsCompanion Function({
+      Value<int> singleton,
+      required String userId,
+      required String issuerDeviceId,
+      required String operationId,
+      required int sourceDataGeneration,
+      required int sourceKeyEpoch,
+      required int targetKeyEpoch,
+      required int sourceRecordCount,
+      required int sourceAttachmentCount,
+      required int sourceMaximumChangeSeq,
+      Value<String?> sourceRecordCursorEnd,
+      Value<String?> sourceAttachmentIdEnd,
+      Value<String?> sourceAttachmentUploadIdEnd,
+      required int membershipGeneration,
+      required Uint8List membershipManifestDigest,
+      required String phase,
+      required String leaseToken,
+      required String leaseMutationId,
+      Value<int?> leaseVersion,
+      Value<DateTime?> leaseExpiresAt,
+      required DateTime createdAt,
+      required DateTime updatedAt,
+    });
+typedef $$E2eeDataRekeyOperationRowsTableUpdateCompanionBuilder =
+    E2eeDataRekeyOperationRowsCompanion Function({
+      Value<int> singleton,
+      Value<String> userId,
+      Value<String> issuerDeviceId,
+      Value<String> operationId,
+      Value<int> sourceDataGeneration,
+      Value<int> sourceKeyEpoch,
+      Value<int> targetKeyEpoch,
+      Value<int> sourceRecordCount,
+      Value<int> sourceAttachmentCount,
+      Value<int> sourceMaximumChangeSeq,
+      Value<String?> sourceRecordCursorEnd,
+      Value<String?> sourceAttachmentIdEnd,
+      Value<String?> sourceAttachmentUploadIdEnd,
+      Value<int> membershipGeneration,
+      Value<Uint8List> membershipManifestDigest,
+      Value<String> phase,
+      Value<String> leaseToken,
+      Value<String> leaseMutationId,
+      Value<int?> leaseVersion,
+      Value<DateTime?> leaseExpiresAt,
+      Value<DateTime> createdAt,
+      Value<DateTime> updatedAt,
+    });
+
+class $$E2eeDataRekeyOperationRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $E2eeDataRekeyOperationRowsTable> {
+  $$E2eeDataRekeyOperationRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<int> get singleton => $composableBuilder(
+    column: $table.singleton,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get userId => $composableBuilder(
+    column: $table.userId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get issuerDeviceId => $composableBuilder(
+    column: $table.issuerDeviceId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sourceDataGeneration => $composableBuilder(
+    column: $table.sourceDataGeneration,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sourceKeyEpoch => $composableBuilder(
+    column: $table.sourceKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get targetKeyEpoch => $composableBuilder(
+    column: $table.targetKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sourceRecordCount => $composableBuilder(
+    column: $table.sourceRecordCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sourceAttachmentCount => $composableBuilder(
+    column: $table.sourceAttachmentCount,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get sourceMaximumChangeSeq => $composableBuilder(
+    column: $table.sourceMaximumChangeSeq,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sourceRecordCursorEnd => $composableBuilder(
+    column: $table.sourceRecordCursorEnd,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sourceAttachmentIdEnd => $composableBuilder(
+    column: $table.sourceAttachmentIdEnd,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get sourceAttachmentUploadIdEnd => $composableBuilder(
+    column: $table.sourceAttachmentUploadIdEnd,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get membershipGeneration => $composableBuilder(
+    column: $table.membershipGeneration,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<Uint8List> get membershipManifestDigest => $composableBuilder(
+    column: $table.membershipManifestDigest,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get leaseMutationId => $composableBuilder(
+    column: $table.leaseMutationId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get leaseVersion => $composableBuilder(
+    column: $table.leaseVersion,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnWithTypeConverterFilters<DateTime?, DateTime, int> get leaseExpiresAt =>
+      $composableBuilder(
+        column: $table.leaseExpiresAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get createdAt =>
+      $composableBuilder(
+        column: $table.createdAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+
+  ColumnWithTypeConverterFilters<DateTime, DateTime, int> get updatedAt =>
+      $composableBuilder(
+        column: $table.updatedAt,
+        builder: (column) => ColumnWithTypeConverterFilters(column),
+      );
+}
+
+class $$E2eeDataRekeyOperationRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $E2eeDataRekeyOperationRowsTable> {
+  $$E2eeDataRekeyOperationRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<int> get singleton => $composableBuilder(
+    column: $table.singleton,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get userId => $composableBuilder(
+    column: $table.userId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get issuerDeviceId => $composableBuilder(
+    column: $table.issuerDeviceId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sourceDataGeneration => $composableBuilder(
+    column: $table.sourceDataGeneration,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sourceKeyEpoch => $composableBuilder(
+    column: $table.sourceKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get targetKeyEpoch => $composableBuilder(
+    column: $table.targetKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sourceRecordCount => $composableBuilder(
+    column: $table.sourceRecordCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sourceAttachmentCount => $composableBuilder(
+    column: $table.sourceAttachmentCount,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get sourceMaximumChangeSeq => $composableBuilder(
+    column: $table.sourceMaximumChangeSeq,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sourceRecordCursorEnd => $composableBuilder(
+    column: $table.sourceRecordCursorEnd,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sourceAttachmentIdEnd => $composableBuilder(
+    column: $table.sourceAttachmentIdEnd,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get sourceAttachmentUploadIdEnd => $composableBuilder(
+    column: $table.sourceAttachmentUploadIdEnd,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get membershipGeneration => $composableBuilder(
+    column: $table.membershipGeneration,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<Uint8List> get membershipManifestDigest => $composableBuilder(
+    column: $table.membershipManifestDigest,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get phase => $composableBuilder(
+    column: $table.phase,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get leaseMutationId => $composableBuilder(
+    column: $table.leaseMutationId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get leaseVersion => $composableBuilder(
+    column: $table.leaseVersion,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get leaseExpiresAt => $composableBuilder(
+    column: $table.leaseExpiresAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get createdAt => $composableBuilder(
+    column: $table.createdAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get updatedAt => $composableBuilder(
+    column: $table.updatedAt,
+    builder: (column) => ColumnOrderings(column),
+  );
+}
+
+class $$E2eeDataRekeyOperationRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $E2eeDataRekeyOperationRowsTable> {
+  $$E2eeDataRekeyOperationRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<int> get singleton =>
+      $composableBuilder(column: $table.singleton, builder: (column) => column);
+
+  GeneratedColumn<String> get userId =>
+      $composableBuilder(column: $table.userId, builder: (column) => column);
+
+  GeneratedColumn<String> get issuerDeviceId => $composableBuilder(
+    column: $table.issuerDeviceId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get operationId => $composableBuilder(
+    column: $table.operationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get sourceDataGeneration => $composableBuilder(
+    column: $table.sourceDataGeneration,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get sourceKeyEpoch => $composableBuilder(
+    column: $table.sourceKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get targetKeyEpoch => $composableBuilder(
+    column: $table.targetKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get sourceRecordCount => $composableBuilder(
+    column: $table.sourceRecordCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get sourceAttachmentCount => $composableBuilder(
+    column: $table.sourceAttachmentCount,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get sourceMaximumChangeSeq => $composableBuilder(
+    column: $table.sourceMaximumChangeSeq,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sourceRecordCursorEnd => $composableBuilder(
+    column: $table.sourceRecordCursorEnd,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sourceAttachmentIdEnd => $composableBuilder(
+    column: $table.sourceAttachmentIdEnd,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get sourceAttachmentUploadIdEnd => $composableBuilder(
+    column: $table.sourceAttachmentUploadIdEnd,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get membershipGeneration => $composableBuilder(
+    column: $table.membershipGeneration,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<Uint8List> get membershipManifestDigest => $composableBuilder(
+    column: $table.membershipManifestDigest,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get phase =>
+      $composableBuilder(column: $table.phase, builder: (column) => column);
+
+  GeneratedColumn<String> get leaseToken => $composableBuilder(
+    column: $table.leaseToken,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get leaseMutationId => $composableBuilder(
+    column: $table.leaseMutationId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get leaseVersion => $composableBuilder(
+    column: $table.leaseVersion,
+    builder: (column) => column,
+  );
+
+  GeneratedColumnWithTypeConverter<DateTime?, int> get leaseExpiresAt =>
+      $composableBuilder(
+        column: $table.leaseExpiresAt,
+        builder: (column) => column,
+      );
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get createdAt =>
+      $composableBuilder(column: $table.createdAt, builder: (column) => column);
+
+  GeneratedColumnWithTypeConverter<DateTime, int> get updatedAt =>
+      $composableBuilder(column: $table.updatedAt, builder: (column) => column);
+}
+
+class $$E2eeDataRekeyOperationRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $E2eeDataRekeyOperationRowsTable,
+          E2eeDataRekeyOperationRow,
+          $$E2eeDataRekeyOperationRowsTableFilterComposer,
+          $$E2eeDataRekeyOperationRowsTableOrderingComposer,
+          $$E2eeDataRekeyOperationRowsTableAnnotationComposer,
+          $$E2eeDataRekeyOperationRowsTableCreateCompanionBuilder,
+          $$E2eeDataRekeyOperationRowsTableUpdateCompanionBuilder,
+          (
+            E2eeDataRekeyOperationRow,
+            BaseReferences<
+              _$AppDatabase,
+              $E2eeDataRekeyOperationRowsTable,
+              E2eeDataRekeyOperationRow
+            >,
+          ),
+          E2eeDataRekeyOperationRow,
+          PrefetchHooks Function()
+        > {
+  $$E2eeDataRekeyOperationRowsTableTableManager(
+    _$AppDatabase db,
+    $E2eeDataRekeyOperationRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$E2eeDataRekeyOperationRowsTableFilterComposer(
+                $db: db,
+                $table: table,
+              ),
+          createOrderingComposer: () =>
+              $$E2eeDataRekeyOperationRowsTableOrderingComposer(
+                $db: db,
+                $table: table,
+              ),
+          createComputedFieldComposer: () =>
+              $$E2eeDataRekeyOperationRowsTableAnnotationComposer(
+                $db: db,
+                $table: table,
+              ),
+          updateCompanionCallback:
+              ({
+                Value<int> singleton = const Value.absent(),
+                Value<String> userId = const Value.absent(),
+                Value<String> issuerDeviceId = const Value.absent(),
+                Value<String> operationId = const Value.absent(),
+                Value<int> sourceDataGeneration = const Value.absent(),
+                Value<int> sourceKeyEpoch = const Value.absent(),
+                Value<int> targetKeyEpoch = const Value.absent(),
+                Value<int> sourceRecordCount = const Value.absent(),
+                Value<int> sourceAttachmentCount = const Value.absent(),
+                Value<int> sourceMaximumChangeSeq = const Value.absent(),
+                Value<String?> sourceRecordCursorEnd = const Value.absent(),
+                Value<String?> sourceAttachmentIdEnd = const Value.absent(),
+                Value<String?> sourceAttachmentUploadIdEnd =
+                    const Value.absent(),
+                Value<int> membershipGeneration = const Value.absent(),
+                Value<Uint8List> membershipManifestDigest =
+                    const Value.absent(),
+                Value<String> phase = const Value.absent(),
+                Value<String> leaseToken = const Value.absent(),
+                Value<String> leaseMutationId = const Value.absent(),
+                Value<int?> leaseVersion = const Value.absent(),
+                Value<DateTime?> leaseExpiresAt = const Value.absent(),
+                Value<DateTime> createdAt = const Value.absent(),
+                Value<DateTime> updatedAt = const Value.absent(),
+              }) => E2eeDataRekeyOperationRowsCompanion(
+                singleton: singleton,
+                userId: userId,
+                issuerDeviceId: issuerDeviceId,
+                operationId: operationId,
+                sourceDataGeneration: sourceDataGeneration,
+                sourceKeyEpoch: sourceKeyEpoch,
+                targetKeyEpoch: targetKeyEpoch,
+                sourceRecordCount: sourceRecordCount,
+                sourceAttachmentCount: sourceAttachmentCount,
+                sourceMaximumChangeSeq: sourceMaximumChangeSeq,
+                sourceRecordCursorEnd: sourceRecordCursorEnd,
+                sourceAttachmentIdEnd: sourceAttachmentIdEnd,
+                sourceAttachmentUploadIdEnd: sourceAttachmentUploadIdEnd,
+                membershipGeneration: membershipGeneration,
+                membershipManifestDigest: membershipManifestDigest,
+                phase: phase,
+                leaseToken: leaseToken,
+                leaseMutationId: leaseMutationId,
+                leaseVersion: leaseVersion,
+                leaseExpiresAt: leaseExpiresAt,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+              ),
+          createCompanionCallback:
+              ({
+                Value<int> singleton = const Value.absent(),
+                required String userId,
+                required String issuerDeviceId,
+                required String operationId,
+                required int sourceDataGeneration,
+                required int sourceKeyEpoch,
+                required int targetKeyEpoch,
+                required int sourceRecordCount,
+                required int sourceAttachmentCount,
+                required int sourceMaximumChangeSeq,
+                Value<String?> sourceRecordCursorEnd = const Value.absent(),
+                Value<String?> sourceAttachmentIdEnd = const Value.absent(),
+                Value<String?> sourceAttachmentUploadIdEnd =
+                    const Value.absent(),
+                required int membershipGeneration,
+                required Uint8List membershipManifestDigest,
+                required String phase,
+                required String leaseToken,
+                required String leaseMutationId,
+                Value<int?> leaseVersion = const Value.absent(),
+                Value<DateTime?> leaseExpiresAt = const Value.absent(),
+                required DateTime createdAt,
+                required DateTime updatedAt,
+              }) => E2eeDataRekeyOperationRowsCompanion.insert(
+                singleton: singleton,
+                userId: userId,
+                issuerDeviceId: issuerDeviceId,
+                operationId: operationId,
+                sourceDataGeneration: sourceDataGeneration,
+                sourceKeyEpoch: sourceKeyEpoch,
+                targetKeyEpoch: targetKeyEpoch,
+                sourceRecordCount: sourceRecordCount,
+                sourceAttachmentCount: sourceAttachmentCount,
+                sourceMaximumChangeSeq: sourceMaximumChangeSeq,
+                sourceRecordCursorEnd: sourceRecordCursorEnd,
+                sourceAttachmentIdEnd: sourceAttachmentIdEnd,
+                sourceAttachmentUploadIdEnd: sourceAttachmentUploadIdEnd,
+                membershipGeneration: membershipGeneration,
+                membershipManifestDigest: membershipManifestDigest,
+                phase: phase,
+                leaseToken: leaseToken,
+                leaseMutationId: leaseMutationId,
+                leaseVersion: leaseVersion,
+                leaseExpiresAt: leaseExpiresAt,
+                createdAt: createdAt,
+                updatedAt: updatedAt,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map((e) => (e.readTable(table), BaseReferences(db, table, e)))
+              .toList(),
+          prefetchHooksCallback: null,
+        ),
+      );
+}
+
+typedef $$E2eeDataRekeyOperationRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $E2eeDataRekeyOperationRowsTable,
+      E2eeDataRekeyOperationRow,
+      $$E2eeDataRekeyOperationRowsTableFilterComposer,
+      $$E2eeDataRekeyOperationRowsTableOrderingComposer,
+      $$E2eeDataRekeyOperationRowsTableAnnotationComposer,
+      $$E2eeDataRekeyOperationRowsTableCreateCompanionBuilder,
+      $$E2eeDataRekeyOperationRowsTableUpdateCompanionBuilder,
+      (
+        E2eeDataRekeyOperationRow,
+        BaseReferences<
+          _$AppDatabase,
+          $E2eeDataRekeyOperationRowsTable,
+          E2eeDataRekeyOperationRow
+        >,
+      ),
+      E2eeDataRekeyOperationRow,
+      PrefetchHooks Function()
+    >;
 typedef $$E2eeConfigEntryRowsTableCreateCompanionBuilder =
     E2eeConfigEntryRowsCompanion Function({
       required String entityType,
@@ -31820,6 +33753,12 @@ class $AppDatabaseManager {
       $$E2eeVerifiedMembershipAnchorRowsTableTableManager(
         _db,
         _db.e2eeVerifiedMembershipAnchorRows,
+      );
+  $$E2eeDataRekeyOperationRowsTableTableManager
+  get e2eeDataRekeyOperationRows =>
+      $$E2eeDataRekeyOperationRowsTableTableManager(
+        _db,
+        _db.e2eeDataRekeyOperationRows,
       );
   $$E2eeConfigEntryRowsTableTableManager get e2eeConfigEntryRows =>
       $$E2eeConfigEntryRowsTableTableManager(_db, _db.e2eeConfigEntryRows);
