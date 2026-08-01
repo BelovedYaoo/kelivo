@@ -155,6 +155,11 @@ void main() {
       authorizedSnapshot.checkpoint.nextAction,
       E2eeAccountRecoveryNextAction.recoverResume,
     );
+    expect(authorizedSnapshot.checkpoint.copyNonceProof(), _bytes(32, 0x81));
+    expect(
+      authorizedSnapshot.checkpoint.copyTrustSignature(),
+      _bytes(64, 0x82),
+    );
   });
 }
 

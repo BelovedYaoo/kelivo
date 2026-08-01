@@ -117,8 +117,8 @@ final class E2eeAccountRecoveryCheckpoint {
       expectedDeviceId,
       recoveryToken,
       challenge,
-      null,
-      null,
+      _nonceProof,
+      _trustSignature,
       expiresAt,
       nextAction,
     );
@@ -126,7 +126,7 @@ final class E2eeAccountRecoveryCheckpoint {
 
   Uint8List copyNonceProof() {
     final value = _nonceProof;
-    if (stage != E2eeAccountRecoveryStage.proofReady || value == null) {
+    if (stage == E2eeAccountRecoveryStage.challenged || value == null) {
       throw StateError('账户恢复 checkpoint 不含 nonce proof');
     }
     return Uint8List.fromList(value);
@@ -134,7 +134,7 @@ final class E2eeAccountRecoveryCheckpoint {
 
   Uint8List copyTrustSignature() {
     final value = _trustSignature;
-    if (stage != E2eeAccountRecoveryStage.proofReady || value == null) {
+    if (stage == E2eeAccountRecoveryStage.challenged || value == null) {
       throw StateError('账户恢复 checkpoint 不含信任签名');
     }
     return Uint8List.fromList(value);
@@ -363,7 +363,7 @@ Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
     if (tokenBytes.length != _checkpointTokenLength) {
       throw const FormatException('账户恢复 checkpoint token 长度无效');
     }
-    if (checkpoint.stage == E2eeAccountRecoveryStage.proofReady) {
+    if (checkpoint.stage != E2eeAccountRecoveryStage.challenged) {
       nonceProof = checkpoint.copyNonceProof();
       trustSignature = checkpoint.copyTrustSignature();
     }
@@ -596,19 +596,29 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
         challenge: challenge,
       ).withProof(nonceProof: nonceProof, trustSignature: trustSignature);
     case E2eeAccountRecoveryStage.authorized:
-      if (!_allZero(nonceProof) ||
-          !_allZero(trustSignature) ||
+      if (_allZero(nonceProof) ||
+          _allZero(trustSignature) ||
           recoveryTokenExpiresAtMs <= 0 ||
           nextActionCode == 0) {
         throw const FormatException('账户恢复授权 checkpoint 状态无效');
       }
+      final ownedNonceProof = _consumeFixedBytes(
+        nonceProof,
+        e2eeAccountRecoveryNonceProofBytes,
+        'nonceProof',
+      );
+      final ownedTrustSignature = _consumeFixedBytes(
+        trustSignature,
+        e2eeAccountRecoveryTrustSignatureBytes,
+        'trustSignature',
+      );
       return E2eeAccountRecoveryCheckpoint._(
         E2eeAccountRecoveryStage.authorized,
         expectedDeviceId,
         recoveryToken,
         challenge,
-        null,
-        null,
+        ownedNonceProof.asUnmodifiableView(),
+        ownedTrustSignature.asUnmodifiableView(),
         DateTime.fromMillisecondsSinceEpoch(
           recoveryTokenExpiresAtMs,
           isUtc: true,

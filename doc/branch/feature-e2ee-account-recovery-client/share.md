@@ -17,6 +17,7 @@
 - 设备状态存储已增加独立 8192 字节上限的账户恢复 checkpoint 密文槽，支持原样重放、旧摘要到新密文的原子替换、摘要 CAS 删除，并随设备状态 tombstone 一并清理；替换回执丢失后重放同一新密文可确认成功。
 - checkpoint 使用固定二进制 v1 帧并由安装级本地槽认证密封，覆盖 `challenged -> proofReady -> authorized`；恢复 token 在磁盘上仅存在于密文载荷，编码临时字节主动清零，错误槽无法解开。
 - 首次创建和阶段推进的语义重放均在重新密封前比较规范明文状态，避免随机 nonce 导致相同 checkpoint 被误判为并发冲突；并发同值赢家也可由失败方复读确认。
+- authorized checkpoint 保留公开且已绑定 challenge/token 的 proof，进程重启后可与 Native 重新生成结果逐字比较并安全重放授权请求。
 - 验证：定向 `dart analyze` 无问题；授权 2 项、密文槽 2 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 115 项 Flutter 测试通过。
 
 ## 协作边界
