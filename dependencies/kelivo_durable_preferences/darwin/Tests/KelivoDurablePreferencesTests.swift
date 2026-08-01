@@ -23,7 +23,7 @@ final class KelivoDurablePreferencesTests: XCTestCase {
   func testWriteAndDeleteSurviveIndependentReopen() throws {
     let directory = root.appendingPathComponent("preferences", isDirectory: true)
     let legacy = StubLegacyPreferences()
-    let first = DurablePreferencesFileStore(
+    let first = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: legacy
@@ -32,7 +32,7 @@ final class KelivoDurablePreferencesTests: XCTestCase {
     try first.initialize()
     try first.set(valueType: "String", key: "flutter.secret", value: "value")
 
-    let reopened = DurablePreferencesFileStore(
+    let reopened = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: legacy
@@ -44,7 +44,7 @@ final class KelivoDurablePreferencesTests: XCTestCase {
     )
 
     try reopened.remove(key: "flutter.secret")
-    let verified = DurablePreferencesFileStore(
+    let verified = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: legacy
@@ -54,25 +54,315 @@ final class KelivoDurablePreferencesTests: XCTestCase {
     XCTAssertNoThrow(try verified.remove(key: "flutter.secret"))
   }
 
-  func testDirectoryBarrierFailureRequiresIdempotentRetry() throws {
+  func testTypedValuesSurviveIndependentReopenWithoutNumericCoercion() throws {
     let directory = root.appendingPathComponent("preferences", isDirectory: true)
     let legacy = StubLegacyPreferences()
-    let initial = DurablePreferencesFileStore(
+    let first = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+
+    try first.initialize()
+    try first.set(valueType: "Bool", key: "flutter.bool", value: NSNumber(value: true))
+    try first.set(valueType: "Double", key: "flutter.double", value: NSNumber(value: 1.0))
+    try first.set(valueType: "Int", key: "flutter.int-min", value: NSNumber(value: Int64.min))
+    try first.set(valueType: "Int", key: "flutter.int-max", value: NSNumber(value: Int64.max))
+    try first.set(valueType: "String", key: "flutter.string", value: "value")
+    try first.set(
+      valueType: "StringList",
+      key: "flutter.list",
+      value: ["first", "second"]
+    )
+
+    let reopened = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try reopened.initialize()
+    let values = try reopened.getAll(prefix: "flutter.", allowList: nil)
+
+    XCTAssertTrue(values["flutter.bool"] is Bool)
+    XCTAssertTrue(values["flutter.double"] is Double)
+    XCTAssertEqual(values["flutter.double"] as? Double, 1.0)
+    XCTAssertTrue(values["flutter.int-min"] is Int64)
+    XCTAssertEqual(values["flutter.int-min"] as? Int64, Int64.min)
+    XCTAssertTrue(values["flutter.int-max"] is Int64)
+    XCTAssertEqual(values["flutter.int-max"] as? Int64, Int64.max)
+    XCTAssertEqual(values["flutter.string"] as? String, "value")
+    XCTAssertEqual(values["flutter.list"] as? [String], ["first", "second"])
+  }
+
+  func testLegacyUntypedSnapshotIsRejectedWithoutMigration() throws {
+    let directory = root.appendingPathComponent("preferences", isDirectory: true)
+    let legacy = StubLegacyPreferences()
+    let first = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try first.initialize()
+    let legacySnapshot = """
+    {"formatVersion":1,"legacyContaminated":false,"values":{"flutter.value":1}}
+    """
+    try Data(legacySnapshot.utf8).write(
+      to: directory.appendingPathComponent(DurablePreferencesFileStore.snapshotFileName)
+    )
+
+    let reopened = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    XCTAssertThrowsError(try reopened.initialize())
+  }
+
+  func testMalformedTypedSnapshotsAreRejected() throws {
+    let malformedValues = [
+      #"{"type":"Double","value":1}"#,
+      #"{"type":"Int","value":"9223372036854775808"}"#,
+      #"{"type":"Bool","value":"true"}"#,
+      #"{"type":"String","value":1}"#,
+      #"{"type":"StringList","value":["valid",1]}"#,
+      #"{"type":"Unknown","value":"value"}"#,
+    ]
+
+    for (index, malformedValue) in malformedValues.enumerated() {
+      let directory = root.appendingPathComponent("preferences-\(index)", isDirectory: true)
+      let legacy = StubLegacyPreferences()
+      let first = try DurablePreferencesFileStore(
+        directory: directory,
+        durability: DarwinPreferencesDurability(),
+        legacyPreferences: legacy
+      )
+      try first.initialize()
+      let malformedSnapshot = """
+      {"formatVersion":2,"legacyContaminated":false,"values":{"flutter.value":\(malformedValue)}}
+      """
+      try Data(malformedSnapshot.utf8).write(
+        to: directory.appendingPathComponent(DurablePreferencesFileStore.snapshotFileName)
+      )
+
+      let reopened = try DurablePreferencesFileStore(
+        directory: directory,
+        durability: DarwinPreferencesDurability(),
+        legacyPreferences: legacy
+      )
+      XCTAssertThrowsError(try reopened.initialize())
+    }
+  }
+
+  func testOversizedMutationLeavesPreviousSnapshotUsable() throws {
+    let directory = root.appendingPathComponent("preferences", isDirectory: true)
+    let legacy = StubLegacyPreferences()
+    let first = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try first.initialize()
+    try first.set(valueType: "String", key: "flutter.value", value: "before")
+
+    XCTAssertThrowsError(
+      try first.set(
+        valueType: "String",
+        key: "flutter.oversized",
+        value: String(repeating: "x", count: 16 * 1024 * 1024)
+      )
+    )
+
+    let reopened = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try reopened.initialize()
+    XCTAssertEqual(
+      try reopened.getAll(prefix: "flutter.", allowList: nil)["flutter.value"] as? String,
+      "before"
+    )
+  }
+
+  func testReplacedDirectoryIdentityCannotSplitTheCrossProcessLock() throws {
+    let directory = root.appendingPathComponent("preferences", isDirectory: true)
+    let detached = root.appendingPathComponent("detached", isDirectory: true)
+    let legacy = StubLegacyPreferences()
+    let first = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try first.initialize()
+    try first.set(valueType: "String", key: "flutter.owner", value: "first")
+    try FileManager.default.moveItem(at: directory, to: detached)
+
+    let replacement = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try replacement.initialize()
+    try replacement.set(valueType: "String", key: "flutter.owner", value: "replacement")
+
+    XCTAssertThrowsError(
+      try first.set(valueType: "String", key: "flutter.owner", value: "escaped")
+    )
+    XCTAssertEqual(
+      try replacement.getAll(prefix: "flutter.", allowList: nil)["flutter.owner"] as? String,
+      "replacement"
+    )
+  }
+
+  func testReplacedIntermediateDirectoryInvalidatesTheAnchoredChain() throws {
+    let detached = root.appendingPathComponent("detached", isDirectory: true)
+    let legacy = StubLegacyPreferences()
+    let first = try DurablePreferencesFileStore(
+      rootDirectory: root,
+      relativeDirectoryComponents: ["application-support", "preferences"],
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try first.initialize()
+    try first.set(valueType: "String", key: "flutter.owner", value: "first")
+    try FileManager.default.moveItem(
+      at: root.appendingPathComponent("application-support", isDirectory: true),
+      to: detached
+    )
+
+    let replacement = try DurablePreferencesFileStore(
+      rootDirectory: root,
+      relativeDirectoryComponents: ["application-support", "preferences"],
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try replacement.initialize()
+
+    XCTAssertThrowsError(
+      try first.set(valueType: "String", key: "flutter.owner", value: "escaped")
+    )
+  }
+
+  func testSymbolicLinkDirectoryIsRejectedBeforeCreatingLockState() throws {
+    let directory = root.appendingPathComponent("preferences", isDirectory: true)
+    let target = root.appendingPathComponent("target", isDirectory: true)
+    try FileManager.default.createDirectory(at: target, withIntermediateDirectories: false)
+    try FileManager.default.createSymbolicLink(
+      atPath: directory.path,
+      withDestinationPath: target.path
+    )
+
+    XCTAssertThrowsError(
+      try DurablePreferencesFileStore(
+        directory: directory,
+        durability: DarwinPreferencesDurability(),
+        legacyPreferences: StubLegacyPreferences()
+      )
+    )
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: target.appendingPathComponent(".preferences-v1.lock").path
+      )
+    )
+  }
+
+  func testNestedDirectoryCreationOrdersDirectorySyncBeforeBarrier() throws {
+    let durability = RecordingDurability()
+
+    _ = try DurablePreferencesFileStore(
+      rootDirectory: root,
+      relativeDirectoryComponents: ["application-support", "preferences"],
+      durability: durability,
+      legacyPreferences: StubLegacyPreferences()
+    )
+
+    XCTAssertEqual(
+      durability.events,
+      [
+        .directory, .barrier,
+        .directory, .barrier,
+        .directory, .barrier,
+        .directory, .barrier,
+      ]
+    )
+  }
+
+  func testDirectorySyncFailureStopsBeforeBarrier() throws {
+    let durability = RecordingDurability(failDirectoryAtCall: 1)
+
+    XCTAssertThrowsError(
+      try DurablePreferencesFileStore(
+        rootDirectory: root,
+        relativeDirectoryComponents: ["preferences"],
+        durability: durability,
+        legacyPreferences: StubLegacyPreferences()
+      )
+    )
+    XCTAssertEqual(durability.events, [.directory])
+  }
+
+  func testBarrierSyncFailureFailsInitialization() throws {
+    let durability = RecordingDurability(failBarrierAtCall: 1)
+
+    XCTAssertThrowsError(
+      try DurablePreferencesFileStore(
+        rootDirectory: root,
+        relativeDirectoryComponents: ["preferences"],
+        durability: durability,
+        legacyPreferences: StubLegacyPreferences()
+      )
+    )
+    XCTAssertEqual(durability.events, [.directory, .barrier])
+  }
+
+  func testDirectorySyncFailureRequiresIdempotentRetry() throws {
+    let directory = root.appendingPathComponent("preferences", isDirectory: true)
+    let legacy = StubLegacyPreferences()
+    let initial = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: legacy
     )
     try initial.initialize()
     try initial.set(valueType: "String", key: "flutter.secret", value: "value")
-    let failing = DurablePreferencesFileStore(
+    let failing = try DurablePreferencesFileStore(
       directory: directory,
-      durability: FailingDirectoryDurability(failAtCall: 2),
+      durability: FailingDirectoryDurability(failAtCall: 4),
       legacyPreferences: legacy
     )
 
     XCTAssertThrowsError(try failing.remove(key: "flutter.secret"))
 
-    let retry = DurablePreferencesFileStore(
+    let retry = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    XCTAssertNoThrow(try retry.initialize())
+    XCTAssertNoThrow(try retry.remove(key: "flutter.secret"))
+    XCTAssertNil(retry.getAll(prefix: "", allowList: nil)["flutter.secret"])
+  }
+
+  func testBarrierSyncFailureRequiresIdempotentRetry() throws {
+    let directory = root.appendingPathComponent("preferences", isDirectory: true)
+    let legacy = StubLegacyPreferences()
+    let initial = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try initial.initialize()
+    try initial.set(valueType: "String", key: "flutter.secret", value: "value")
+    let durability = RecordingDurability(failBarrierAtCall: 4)
+    let failing = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: durability,
+      legacyPreferences: legacy
+    )
+
+    XCTAssertThrowsError(try failing.remove(key: "flutter.secret"))
+
+    let retry = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: legacy
@@ -85,7 +375,7 @@ final class KelivoDurablePreferencesTests: XCTestCase {
   func testLegacyContaminationRemainsBlockedAfterBestEffortCleanup() throws {
     let directory = root.appendingPathComponent("preferences", isDirectory: true)
     let contaminated = StubLegacyPreferences(keys: ["flutter.secret"])
-    let first = DurablePreferencesFileStore(
+    let first = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: contaminated
@@ -95,7 +385,7 @@ final class KelivoDurablePreferencesTests: XCTestCase {
     XCTAssertEqual(contaminated.removedKeys, Set(["flutter.secret"]))
 
     let cleanLegacy = StubLegacyPreferences()
-    let reopened = DurablePreferencesFileStore(
+    let reopened = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: cleanLegacy
@@ -106,19 +396,19 @@ final class KelivoDurablePreferencesTests: XCTestCase {
   func testCrashTemporaryFileIsRemovedBeforeOpeningSnapshot() throws {
     let directory = root.appendingPathComponent("preferences", isDirectory: true)
     let legacy = StubLegacyPreferences()
-    let first = DurablePreferencesFileStore(
+    let first = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: legacy
     )
     try first.initialize()
     let stale = directory.appendingPathComponent(
-      ".preferences-v1.tmp.crashed",
+      DurablePreferencesFileStore.temporaryFileName,
       isDirectory: false
     )
     try Data("secret".utf8).write(to: stale)
 
-    let reopened = DurablePreferencesFileStore(
+    let reopened = try DurablePreferencesFileStore(
       directory: directory,
       durability: DarwinPreferencesDurability(),
       legacyPreferences: legacy
@@ -126,6 +416,50 @@ final class KelivoDurablePreferencesTests: XCTestCase {
     try reopened.initialize()
 
     XCTAssertFalse(FileManager.default.fileExists(atPath: stale.path))
+  }
+
+  func testFailedTemporaryWriteDurablyRemovesTemporaryFile() throws {
+    let directory = root.appendingPathComponent("preferences", isDirectory: true)
+    let legacy = StubLegacyPreferences()
+    let initial = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try initial.initialize()
+    try initial.set(valueType: "String", key: "flutter.value", value: "before")
+
+    let durability = RecordingDurability(failFileAtCall: 1)
+    let failing = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: durability,
+      legacyPreferences: legacy
+    )
+    XCTAssertThrowsError(
+      try failing.set(valueType: "String", key: "flutter.value", value: "after")
+    )
+
+    XCTAssertFalse(
+      FileManager.default.fileExists(
+        atPath: directory.appendingPathComponent(
+          DurablePreferencesFileStore.temporaryFileName
+        ).path
+      )
+    )
+    XCTAssertEqual(
+      Array(durability.events.suffix(3)),
+      [.file, .directory, .barrier]
+    )
+    let reopened = try DurablePreferencesFileStore(
+      directory: directory,
+      durability: DarwinPreferencesDurability(),
+      legacyPreferences: legacy
+    )
+    try reopened.initialize()
+    XCTAssertEqual(
+      try reopened.getAll(prefix: "flutter.", allowList: nil)["flutter.value"] as? String,
+      "before"
+    )
   }
 }
 
@@ -161,6 +495,58 @@ private final class FailingDirectoryDurability: PreferencesDurability {
     directoryCalls += 1
     if directoryCalls == failAtCall {
       throw DurablePreferencesError.directorySyncFailed(errno: EIO)
+    }
+  }
+
+  func syncBarrierFileDescriptor(_ descriptor: Int32) throws {}
+}
+
+private enum DurabilityEvent: Equatable {
+  case file
+  case directory
+  case barrier
+}
+
+private final class RecordingDurability: PreferencesDurability {
+  init(
+    failFileAtCall: Int? = nil,
+    failDirectoryAtCall: Int? = nil,
+    failBarrierAtCall: Int? = nil
+  ) {
+    self.failFileAtCall = failFileAtCall
+    self.failDirectoryAtCall = failDirectoryAtCall
+    self.failBarrierAtCall = failBarrierAtCall
+  }
+
+  private let failFileAtCall: Int?
+  private let failDirectoryAtCall: Int?
+  private let failBarrierAtCall: Int?
+  private var fileCalls = 0
+  private var directoryCalls = 0
+  private var barrierCalls = 0
+  private(set) var events: [DurabilityEvent] = []
+
+  func syncFileDescriptor(_ descriptor: Int32) throws {
+    fileCalls += 1
+    events.append(.file)
+    if let failFileAtCall, fileCalls == failFileAtCall {
+      throw DurablePreferencesError.fileSyncFailed(errno: EIO)
+    }
+  }
+
+  func syncDirectoryDescriptor(_ descriptor: Int32) throws {
+    directoryCalls += 1
+    events.append(.directory)
+    if let failDirectoryAtCall, directoryCalls == failDirectoryAtCall {
+      throw DurablePreferencesError.directorySyncFailed(errno: EIO)
+    }
+  }
+
+  func syncBarrierFileDescriptor(_ descriptor: Int32) throws {
+    barrierCalls += 1
+    events.append(.barrier)
+    if let failBarrierAtCall, barrierCalls == failBarrierAtCall {
+      throw DurablePreferencesError.barrierSyncFailed(errno: EIO)
     }
   }
 }

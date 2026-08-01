@@ -11,6 +11,7 @@ enum DurablePreferencesError: Error, LocalizedError {
   case writeFailed(errno: Int32)
   case fileSyncFailed(errno: Int32)
   case directorySyncFailed(errno: Int32)
+  case barrierSyncFailed(errno: Int32)
   case renameFailed(errno: Int32)
   case snapshotInvalid
   case snapshotTooLarge
@@ -38,6 +39,8 @@ enum DurablePreferencesError: Error, LocalizedError {
       return "kelivo_durable_preferences_file_sync_failed_\(code)"
     case .directorySyncFailed(let code):
       return "kelivo_durable_preferences_directory_sync_failed_\(code)"
+    case .barrierSyncFailed(let code):
+      return "kelivo_durable_preferences_barrier_sync_failed_\(code)"
     case .renameFailed(let code):
       return "kelivo_durable_preferences_rename_failed_\(code)"
     case .snapshotInvalid:
@@ -61,6 +64,7 @@ enum DurablePreferencesError: Error, LocalizedError {
 protocol PreferencesDurability {
   func syncFileDescriptor(_ descriptor: Int32) throws
   func syncDirectoryDescriptor(_ descriptor: Int32) throws
+  func syncBarrierFileDescriptor(_ descriptor: Int32) throws
 }
 
 struct DarwinPreferencesDurability: PreferencesDurability {
@@ -73,6 +77,12 @@ struct DarwinPreferencesDurability: PreferencesDurability {
   func syncDirectoryDescriptor(_ descriptor: Int32) throws {
     guard Darwin.fsync(descriptor) == 0 else {
       throw DurablePreferencesError.directorySyncFailed(errno: errno)
+    }
+  }
+
+  func syncBarrierFileDescriptor(_ descriptor: Int32) throws {
+    guard Darwin.fcntl(descriptor, F_FULLFSYNC) == 0 else {
+      throw DurablePreferencesError.barrierSyncFailed(errno: errno)
     }
   }
 }
@@ -110,31 +120,176 @@ final class SystemLegacyPreferencesAccess: LegacyPreferencesAccess {
 }
 
 final class DurablePreferencesFileStore {
-  init(
+  convenience init(
     directory: URL,
     durability: PreferencesDurability,
     legacyPreferences: LegacyPreferencesAccess
-  ) {
-    self.directory = directory
+  ) throws {
+    let standardizedDirectory = directory.standardizedFileURL
+    let parentURL = standardizedDirectory.deletingLastPathComponent()
+    let directoryName = standardizedDirectory.lastPathComponent
+    guard !directoryName.isEmpty,
+      directoryName != ".",
+      directoryName != "..",
+      !directoryName.contains("/"),
+      parentURL.appendingPathComponent(directoryName, isDirectory: true).standardizedFileURL
+        == standardizedDirectory
+    else {
+      throw DurablePreferencesError.directoryUnsafe
+    }
+
+    try self.init(
+      rootDirectory: parentURL,
+      relativeDirectoryComponents: [directoryName],
+      durability: durability,
+      legacyPreferences: legacyPreferences
+    )
+  }
+
+  init(
+    rootDirectory: URL,
+    relativeDirectoryComponents: [String],
+    durability: PreferencesDurability,
+    legacyPreferences: LegacyPreferencesAccess
+  ) throws {
+    guard rootDirectory.isFileURL,
+      !relativeDirectoryComponents.isEmpty,
+      relativeDirectoryComponents.allSatisfy(Self.isSafeEntryName)
+    else {
+      throw DurablePreferencesError.directoryUnsafe
+    }
+
+    let rootDescriptor = try Self.openAbsoluteDirectory(
+      at: rootDirectory.standardizedFileURL
+    )
+    var directoryDescriptors = [rootDescriptor]
+    var barrierDescriptor: Int32 = -1
+    var descriptorsTransferred = false
+    defer {
+      if !descriptorsTransferred {
+        if barrierDescriptor >= 0 {
+          Darwin.close(barrierDescriptor)
+        }
+        for descriptor in directoryDescriptors.reversed() {
+          Darwin.close(descriptor)
+        }
+      }
+    }
+
+    var rootInfo = stat()
+    guard Darwin.fstat(rootDescriptor, &rootInfo) == 0,
+      Self.isDirectoryMode(rootInfo.st_mode)
+    else {
+      throw DurablePreferencesError.directoryUnsafe
+    }
+
+    for (index, directoryName) in relativeDirectoryComponents.enumerated() {
+      guard let parentDescriptor = directoryDescriptors.last else {
+        throw DurablePreferencesError.directoryUnsafe
+      }
+      let createResult = directoryName.withCString { name in
+        Darwin.mkdirat(
+          parentDescriptor,
+          name,
+          mode_t(S_IRUSR | S_IWUSR | S_IXUSR)
+        )
+      }
+      if createResult != 0 && errno != EEXIST {
+        throw DurablePreferencesError.openFailed(
+          operation: "directory-create",
+          errno: errno
+        )
+      }
+
+      let directoryDescriptor = try Self.openRelativeDirectory(
+        parentDescriptor: parentDescriptor,
+        name: directoryName
+      )
+      directoryDescriptors.append(directoryDescriptor)
+      try Self.requireSameDirectory(
+        parentDescriptor: parentDescriptor,
+        directoryName: directoryName,
+        directoryDescriptor: directoryDescriptor
+      )
+      var directoryInfo = stat()
+      guard Darwin.fstat(directoryDescriptor, &directoryInfo) == 0,
+        Self.isDirectoryMode(directoryInfo.st_mode),
+        rootInfo.st_dev == directoryInfo.st_dev
+      else {
+        throw DurablePreferencesError.directoryUnsafe
+      }
+
+      let currentBarrierDescriptor = try Self.openRelativeFile(
+        directoryDescriptor: directoryDescriptor,
+        named: Self.barrierFileName,
+        flags: O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
+        mode: mode_t(S_IRUSR | S_IWUSR),
+        operation: "barrier"
+      )
+      var barrierTransferred = false
+      defer {
+        if !barrierTransferred {
+          Darwin.close(currentBarrierDescriptor)
+        }
+      }
+      var barrierInfo = stat()
+      guard Darwin.fstat(currentBarrierDescriptor, &barrierInfo) == 0,
+        Self.isRegularFileMode(barrierInfo.st_mode),
+        barrierInfo.st_dev == rootInfo.st_dev
+      else {
+        throw DurablePreferencesError.fileUnsafe
+      }
+
+      // 即使目录已存在也重放完整屏障；上一次可能完成了目录项变更，却在屏障返回前中断。
+      try Self.syncDirectory(
+        directoryDescriptor,
+        barrierDescriptor: currentBarrierDescriptor,
+        durability: durability
+      )
+      try Self.syncDirectory(
+        parentDescriptor,
+        barrierDescriptor: currentBarrierDescriptor,
+        durability: durability
+      )
+
+      if index == relativeDirectoryComponents.index(before: relativeDirectoryComponents.endIndex) {
+        barrierDescriptor = currentBarrierDescriptor
+        barrierTransferred = true
+      }
+    }
+
+    self.directoryDescriptors = directoryDescriptors
+    self.barrierDescriptor = barrierDescriptor
+    self.directoryNames = relativeDirectoryComponents
     self.durability = durability
     self.legacyPreferences = legacyPreferences
+    descriptorsTransferred = true
+  }
+
+  deinit {
+    Darwin.close(barrierDescriptor)
+    for descriptor in directoryDescriptors.reversed() {
+      Darwin.close(descriptor)
+    }
   }
 
   static let snapshotFileName = "preferences-v1.json"
-  static let temporaryFilePrefix = ".preferences-v1.tmp."
+  static let temporaryFileName = ".preferences-v1.tmp"
 
+  private static let barrierFileName = ".kelivo-durable-preferences.barrier"
   private static let lockFileName = ".preferences-v1.lock"
-  private static let formatVersion = 1
+  private static let formatVersion = 2
   // 偏好不是大对象存储；限制损坏文件的内存放大，同时覆盖正常配置规模。
   private static let maximumSnapshotBytes = 16 * 1024 * 1024
 
-  private let directory: URL
+  private let directoryDescriptors: [Int32]
+  private let barrierDescriptor: Int32
+  private let directoryNames: [String]
   private let durability: PreferencesDurability
   private let legacyPreferences: LegacyPreferencesAccess
-  private let fileManager = FileManager.default
 
-  private var snapshotURL: URL {
-    directory.appendingPathComponent(Self.snapshotFileName, isDirectory: false)
+  private var directoryDescriptor: Int32 {
+    directoryDescriptors[directoryDescriptors.index(before: directoryDescriptors.endIndex)]
   }
 
   func initialize() throws {
@@ -149,7 +304,7 @@ final class DurablePreferencesFileStore {
         legacyPreferences.bestEffortRemove(keys: legacyKeys)
         throw DurablePreferencesError.legacyPreferencesContaminated
       }
-      if !fileManager.fileExists(atPath: snapshotURL.path) {
+      if try entityInfo(named: Self.snapshotFileName) == nil {
         try persist(snapshot)
       }
     }
@@ -161,7 +316,7 @@ final class DurablePreferencesFileStore {
       var values: [String: Any] = [:]
       for (key, value) in snapshot.values
       where key.hasPrefix(prefix) && (allowList == nil || allowList!.contains(key)) {
-        values[key] = value
+        values[key] = value.platformValue
       }
       return values
     }
@@ -205,15 +360,20 @@ final class DurablePreferencesFileStore {
   }
 
   private func withExclusiveLock<Result>(_ operation: () throws -> Result) throws -> Result {
-    try ensureDirectory()
-    let lockURL = directory.appendingPathComponent(Self.lockFileName, isDirectory: false)
-    let descriptor = try openFile(
-      at: lockURL,
+    try requireAnchoredDirectoryIdentity()
+    let descriptor = try openRelativeFile(
+      named: Self.lockFileName,
       flags: O_RDWR | O_CREAT | O_CLOEXEC | O_NOFOLLOW,
       mode: mode_t(S_IRUSR | S_IWUSR),
       operation: "lock"
     )
     defer { Darwin.close(descriptor) }
+    var lockInfo = stat()
+    guard Darwin.fstat(descriptor, &lockInfo) == 0,
+      Self.isRegularFileMode(lockInfo.st_mode)
+    else {
+      throw DurablePreferencesError.fileUnsafe
+    }
     // 上一次可能已完成目录变更但在 barrier 返回前失败；每次重试都先确认目录，
     // 不能依据当前目录项是否存在来推断之前已经耐久。
     try syncDirectory()
@@ -222,47 +382,26 @@ final class DurablePreferencesFileStore {
     }
     defer { Darwin.flock(descriptor, LOCK_UN) }
 
-    try removeStaleTemporaryFiles()
-    return try operation()
+    try requireLockIdentity(descriptor)
+    try requireAnchoredDirectoryIdentity()
+    try removeStaleTemporaryFile()
+    let result = try operation()
+    try requireLockIdentity(descriptor)
+    try requireAnchoredDirectoryIdentity()
+    return result
   }
 
-  private func ensureDirectory() throws {
-    let existingMode = try entityMode(at: directory)
-    if existingMode == nil {
-      try fileManager.createDirectory(
-        at: directory,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-      )
-      guard try entityMode(at: directory).map(isDirectoryMode) == true else {
-        throw DurablePreferencesError.directoryUnsafe
-      }
-      try syncDirectory(at: directory.deletingLastPathComponent())
-      try syncDirectory()
-      return
-    }
-    guard existingMode.map(isDirectoryMode) == true else {
-      throw DurablePreferencesError.directoryUnsafe
-    }
-  }
-
-  private func removeStaleTemporaryFiles() throws {
-    let children = try fileManager.contentsOfDirectory(
-      at: directory,
-      includingPropertiesForKeys: nil,
-      options: []
-    )
-    var removed = false
-    for child in children where child.lastPathComponent.hasPrefix(Self.temporaryFilePrefix) {
-      guard try entityMode(at: child).map(isRegularFileMode) == true else {
+  private func removeStaleTemporaryFile() throws {
+    if let info = try entityInfo(named: Self.temporaryFileName) {
+      guard Self.isRegularFileMode(info.st_mode) else {
         throw DurablePreferencesError.fileUnsafe
       }
-      guard Darwin.unlink(child.path) == 0 else {
+      let result = Self.temporaryFileName.withCString { name in
+        Darwin.unlinkat(directoryDescriptor, name, 0)
+      }
+      guard result == 0 else {
         throw DurablePreferencesError.writeFailed(errno: errno)
       }
-      removed = true
-    }
-    if removed {
       try syncDirectory()
     }
   }
@@ -278,23 +417,22 @@ final class DurablePreferencesFileStore {
   }
 
   private func readSnapshot() throws -> Snapshot? {
-    guard let mode = try entityMode(at: snapshotURL) else {
+    guard let info = try entityInfo(named: Self.snapshotFileName) else {
       return nil
     }
-    guard isRegularFileMode(mode) else {
+    guard Self.isRegularFileMode(info.st_mode) else {
       throw DurablePreferencesError.fileUnsafe
     }
-    return try decodeSnapshot(readFile(at: snapshotURL))
+    return try decodeSnapshot(readFile(named: Self.snapshotFileName))
   }
 
   private func persist(_ snapshot: Snapshot) throws {
     let encoded = try encodeSnapshot(snapshot)
-    let temporaryURL = directory.appendingPathComponent(
-      "\(Self.temporaryFilePrefix)\(UUID().uuidString)",
-      isDirectory: false
-    )
-    let descriptor = try openFile(
-      at: temporaryURL,
+    guard encoded.count <= Self.maximumSnapshotBytes else {
+      throw DurablePreferencesError.snapshotTooLarge
+    }
+    let descriptor = try openRelativeFile(
+      named: Self.temporaryFileName,
       flags: O_WRONLY | O_CREAT | O_EXCL | O_CLOEXEC | O_NOFOLLOW,
       mode: mode_t(S_IRUSR | S_IWUSR),
       operation: "temporary"
@@ -306,46 +444,67 @@ final class DurablePreferencesFileStore {
         Darwin.close(descriptor)
       }
       if temporaryExists {
-        Darwin.unlink(temporaryURL.path)
+        Self.temporaryFileName.withCString { name in
+          _ = Darwin.unlinkat(directoryDescriptor, name, 0)
+        }
       }
     }
 
-    try writeAll(encoded, to: descriptor)
-    try durability.syncFileDescriptor(descriptor)
-    guard Darwin.close(descriptor) == 0 else {
+    do {
+      try writeAll(encoded, to: descriptor)
+      try durability.syncFileDescriptor(descriptor)
+      guard Darwin.close(descriptor) == 0 else {
+        descriptorOpen = false
+        throw DurablePreferencesError.writeFailed(errno: errno)
+      }
       descriptorOpen = false
-      throw DurablePreferencesError.writeFailed(errno: errno)
-    }
-    descriptorOpen = false
 
-    if let destinationMode = try entityMode(at: snapshotURL),
-      !isRegularFileMode(destinationMode)
-    {
-      throw DurablePreferencesError.fileUnsafe
-    }
-    let renameResult = temporaryURL.path.withCString { source in
-      snapshotURL.path.withCString { destination in
-        Darwin.rename(source, destination)
+      if let destinationInfo = try entityInfo(named: Self.snapshotFileName),
+        !Self.isRegularFileMode(destinationInfo.st_mode)
+      {
+        throw DurablePreferencesError.fileUnsafe
       }
-    }
-    guard renameResult == 0 else {
-      throw DurablePreferencesError.renameFailed(errno: errno)
-    }
-    temporaryExists = false
-    try syncDirectory()
+      let renameResult = Self.temporaryFileName.withCString { source in
+        Self.snapshotFileName.withCString { destination in
+          Darwin.renameat(
+            directoryDescriptor,
+            source,
+            directoryDescriptor,
+            destination
+          )
+        }
+      }
+      guard renameResult == 0 else {
+        throw DurablePreferencesError.renameFailed(errno: errno)
+      }
+      temporaryExists = false
+      try syncDirectory()
 
-    let reopened = try readFile(at: snapshotURL)
-    guard reopened == encoded else {
-      throw DurablePreferencesError.verificationFailed
+      let reopened = try readFile(named: Self.snapshotFileName)
+      guard reopened == encoded else {
+        throw DurablePreferencesError.verificationFailed
+      }
+      _ = try decodeSnapshot(reopened)
+    } catch {
+      let primaryError = error
+      if descriptorOpen {
+        _ = Darwin.close(descriptor)
+        descriptorOpen = false
+      }
+      if temporaryExists {
+        try removeStaleTemporaryFile()
+        temporaryExists = false
+      }
+      throw primaryError
     }
-    _ = try decodeSnapshot(reopened)
   }
 
   private func encodeSnapshot(_ snapshot: Snapshot) throws -> Data {
+    let encodedValues = snapshot.values.mapValues(\.encodedObject)
     let object: [String: Any] = [
       "formatVersion": Self.formatVersion,
       "legacyContaminated": snapshot.legacyContaminated,
-      "values": snapshot.values,
+      "values": encodedValues,
     ]
     guard JSONSerialization.isValidJSONObject(object) else {
       throw DurablePreferencesError.unsupportedValue
@@ -375,16 +534,18 @@ final class DurablePreferencesFileStore {
     else {
       throw DurablePreferencesError.snapshotInvalid
     }
-    for value in values.values where !isSupportedSnapshotValue(value) {
-      throw DurablePreferencesError.snapshotInvalid
+    var typedValues: [String: StoredPreference] = [:]
+    typedValues.reserveCapacity(values.count)
+    for (key, value) in values {
+      typedValues[key] = try StoredPreference.decode(value)
     }
     return Snapshot(
       legacyContaminated: contaminatedNumber.boolValue,
-      values: values
+      values: typedValues
     )
   }
 
-  private func normalized(value: Any, valueType: String) throws -> Any {
+  private func normalized(value: Any, valueType: String) throws -> StoredPreference {
     switch valueType {
     case "Bool":
       guard let number = value as? NSNumber,
@@ -392,16 +553,15 @@ final class DurablePreferencesFileStore {
       else {
         throw DurablePreferencesError.unsupportedValue
       }
-      return number.boolValue
+      return .boolean(number.boolValue)
     case "Double":
       guard let number = value as? NSNumber,
         CFGetTypeID(number) != CFBooleanGetTypeID(),
-        isFloatingPointNumber(number),
-        number.doubleValue.isFinite
+        isFloatingPointNumber(number)
       else {
         throw DurablePreferencesError.unsupportedValue
       }
-      return number.doubleValue
+      return .double(number.doubleValue)
     case "Int":
       guard let number = value as? NSNumber,
         CFGetTypeID(number) != CFBooleanGetTypeID(),
@@ -409,33 +569,20 @@ final class DurablePreferencesFileStore {
       else {
         throw DurablePreferencesError.unsupportedValue
       }
-      return number.int64Value
+      return .integer(number.int64Value)
     case "String":
       guard let string = value as? String else {
         throw DurablePreferencesError.unsupportedValue
       }
-      return string
+      return .string(string)
     case "StringList":
       guard let list = value as? [Any], list.allSatisfy({ $0 is String }) else {
         throw DurablePreferencesError.unsupportedValue
       }
-      return list.compactMap { $0 as? String }
+      return .stringList(list.compactMap { $0 as? String })
     default:
       throw DurablePreferencesError.unsupportedValue
     }
-  }
-
-  private func isSupportedSnapshotValue(_ value: Any) -> Bool {
-    if value is String {
-      return true
-    }
-    if let number = value as? NSNumber {
-      return CFGetTypeID(number) == CFBooleanGetTypeID() || number.doubleValue.isFinite
-    }
-    if let list = value as? [Any] {
-      return list.allSatisfy { $0 is String }
-    }
-    return false
   }
 
   private func isFloatingPointNumber(_ value: NSNumber) -> Bool {
@@ -443,16 +590,22 @@ final class DurablePreferencesFileStore {
     return encoding == "f" || encoding == "d"
   }
 
-  private func readFile(at url: URL) throws -> Data {
-    let descriptor = try openFile(
-      at: url,
+  private func readFile(named name: String) throws -> Data {
+    guard let expectedInfo = try entityInfo(named: name) else {
+      throw DurablePreferencesError.snapshotInvalid
+    }
+    let descriptor = try openRelativeFile(
+      named: name,
       flags: O_RDONLY | O_CLOEXEC | O_NOFOLLOW,
       mode: 0,
       operation: "snapshot"
     )
     defer { Darwin.close(descriptor) }
     var info = stat()
-    guard Darwin.fstat(descriptor, &info) == 0, isRegularFileMode(info.st_mode) else {
+    guard Darwin.fstat(descriptor, &info) == 0,
+      Self.isRegularFileMode(info.st_mode),
+      Self.isSameEntity(expectedInfo, info)
+    else {
       throw DurablePreferencesError.fileUnsafe
     }
     guard info.st_size >= 0,
@@ -512,28 +665,72 @@ final class DurablePreferencesFileStore {
   }
 
   private func syncDirectory() throws {
-    try syncDirectory(at: directory)
-  }
-
-  private func syncDirectory(at url: URL) throws {
-    let descriptor = try openFile(
-      at: url,
-      flags: O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW,
-      mode: 0,
-      operation: "directory"
+    try Self.syncDirectory(
+      directoryDescriptor,
+      barrierDescriptor: barrierDescriptor,
+      durability: durability
     )
-    defer { Darwin.close(descriptor) }
-    try durability.syncDirectoryDescriptor(descriptor)
   }
 
-  private func openFile(
-    at url: URL,
+  private static func syncDirectory(
+    _ directoryDescriptor: Int32,
+    barrierDescriptor: Int32,
+    durability: PreferencesDurability
+  ) throws {
+    // Apple 仅公开承诺普通文件的 F_FULLFSYNC 屏障语义；目录元数据先通过
+    // fsync 提交，再由同卷稳定文件发出设备屏障。
+    try durability.syncDirectoryDescriptor(directoryDescriptor)
+    try durability.syncBarrierFileDescriptor(barrierDescriptor)
+  }
+
+  private func requireAnchoredDirectoryIdentity() throws {
+    for index in directoryNames.indices {
+      try Self.requireSameDirectory(
+        parentDescriptor: directoryDescriptors[index],
+        directoryName: directoryNames[index],
+        directoryDescriptor: directoryDescriptors[index + 1]
+      )
+    }
+  }
+
+  private func requireLockIdentity(_ descriptor: Int32) throws {
+    var descriptorInfo = stat()
+    guard Darwin.fstat(descriptor, &descriptorInfo) == 0,
+      Self.isRegularFileMode(descriptorInfo.st_mode),
+      let pathInfo = try entityInfo(named: Self.lockFileName),
+      Self.isSameEntity(descriptorInfo, pathInfo)
+    else {
+      throw DurablePreferencesError.fileUnsafe
+    }
+  }
+
+  private func openRelativeFile(
+    named name: String,
     flags: Int32,
     mode: mode_t,
     operation: String
   ) throws -> Int32 {
-    let descriptor = url.path.withCString { path in
-      Darwin.open(path, flags, mode)
+    try Self.openRelativeFile(
+      directoryDescriptor: directoryDescriptor,
+      named: name,
+      flags: flags,
+      mode: mode,
+      operation: operation
+    )
+  }
+
+  private static func openRelativeFile(
+    directoryDescriptor: Int32,
+    named name: String,
+    flags: Int32,
+    mode: mode_t,
+    operation: String
+  ) throws -> Int32 {
+    guard Self.isSafeEntryName(name) else {
+      throw DurablePreferencesError.fileUnsafe
+    }
+    let descriptor = name.withCString { path in
+      Darwin.openat(directoryDescriptor, path, flags, mode)
     }
     guard descriptor >= 0 else {
       throw DurablePreferencesError.openFailed(operation: operation, errno: errno)
@@ -541,25 +738,90 @@ final class DurablePreferencesFileStore {
     return descriptor
   }
 
-  private func entityMode(at url: URL) throws -> mode_t? {
+  private func entityInfo(named name: String) throws -> stat? {
+    guard Self.isSafeEntryName(name) else {
+      throw DurablePreferencesError.fileUnsafe
+    }
     var info = stat()
-    let result = url.path.withCString { path in
-      Darwin.lstat(path, &info)
+    let result = name.withCString { path in
+      Darwin.fstatat(directoryDescriptor, path, &info, AT_SYMLINK_NOFOLLOW)
     }
     if result == 0 {
-      return info.st_mode
+      return info
     }
-    if errno == ENOENT {
+    let code = errno
+    if code == ENOENT {
       return nil
     }
-    throw DurablePreferencesError.openFailed(operation: "metadata", errno: errno)
+    throw DurablePreferencesError.openFailed(operation: "metadata", errno: code)
   }
 
-  private func isDirectoryMode(_ mode: mode_t) -> Bool {
+  private static func openAbsoluteDirectory(at url: URL) throws -> Int32 {
+    let descriptor = url.path.withCString { path in
+      Darwin.open(path, O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW, 0)
+    }
+    guard descriptor >= 0 else {
+      throw DurablePreferencesError.openFailed(operation: "parent-directory", errno: errno)
+    }
+    return descriptor
+  }
+
+  private static func openRelativeDirectory(
+    parentDescriptor: Int32,
+    name: String
+  ) throws -> Int32 {
+    let descriptor = name.withCString { path in
+      Darwin.openat(
+        parentDescriptor,
+        path,
+        O_RDONLY | O_DIRECTORY | O_CLOEXEC | O_NOFOLLOW,
+        0
+      )
+    }
+    guard descriptor >= 0 else {
+      throw DurablePreferencesError.openFailed(operation: "directory", errno: errno)
+    }
+    return descriptor
+  }
+
+  private static func requireSameDirectory(
+    parentDescriptor: Int32,
+    directoryName: String,
+    directoryDescriptor: Int32
+  ) throws {
+    var descriptorInfo = stat()
+    var pathInfo = stat()
+    let pathResult = directoryName.withCString { name in
+      Darwin.fstatat(
+        parentDescriptor,
+        name,
+        &pathInfo,
+        AT_SYMLINK_NOFOLLOW
+      )
+    }
+    guard pathResult == 0,
+      Darwin.fstat(directoryDescriptor, &descriptorInfo) == 0,
+      isDirectoryMode(pathInfo.st_mode),
+      isDirectoryMode(descriptorInfo.st_mode),
+      isSameEntity(pathInfo, descriptorInfo)
+    else {
+      throw DurablePreferencesError.directoryUnsafe
+    }
+  }
+
+  private static func isSafeEntryName(_ name: String) -> Bool {
+    !name.isEmpty && name != "." && name != ".." && !name.contains("/")
+  }
+
+  private static func isSameEntity(_ first: stat, _ second: stat) -> Bool {
+    first.st_dev == second.st_dev && first.st_ino == second.st_ino
+  }
+
+  private static func isDirectoryMode(_ mode: mode_t) -> Bool {
     (mode & mode_t(S_IFMT)) == mode_t(S_IFDIR)
   }
 
-  private func isRegularFileMode(_ mode: mode_t) -> Bool {
+  private static func isRegularFileMode(_ mode: mode_t) -> Bool {
     (mode & mode_t(S_IFMT)) == mode_t(S_IFREG)
   }
 }
@@ -568,5 +830,93 @@ private struct Snapshot {
   static let empty = Snapshot(legacyContaminated: false, values: [:])
 
   var legacyContaminated: Bool
-  var values: [String: Any]
+  var values: [String: StoredPreference]
+}
+
+private enum StoredPreference {
+  case boolean(Bool)
+  case double(Double)
+  case integer(Int64)
+  case string(String)
+  case stringList([String])
+
+  var platformValue: Any {
+    switch self {
+    case .boolean(let value):
+      return value
+    case .double(let value):
+      return value
+    case .integer(let value):
+      return value
+    case .string(let value):
+      return value
+    case .stringList(let value):
+      return value
+    }
+  }
+
+  var encodedObject: [String: Any] {
+    switch self {
+    case .boolean(let value):
+      return ["type": "Bool", "value": value]
+    case .double(let value):
+      // JSON 数字不能可靠区分 1 与 1.0；保存 IEEE-754 位模式同时覆盖
+      // 积分 double、负零与非有限值。
+      return ["type": "Double", "value": String(value.bitPattern)]
+    case .integer(let value):
+      return ["type": "Int", "value": String(value)]
+    case .string(let value):
+      return ["type": "String", "value": value]
+    case .stringList(let value):
+      return ["type": "StringList", "value": value]
+    }
+  }
+
+  static func decode(_ raw: Any) throws -> StoredPreference {
+    guard let object = raw as? [String: Any],
+      Set(object.keys) == Set(["type", "value"]),
+      let type = object["type"] as? String,
+      let value = object["value"]
+    else {
+      throw DurablePreferencesError.snapshotInvalid
+    }
+
+    switch type {
+    case "Bool":
+      guard let number = value as? NSNumber,
+        CFGetTypeID(number) == CFBooleanGetTypeID()
+      else {
+        throw DurablePreferencesError.snapshotInvalid
+      }
+      return .boolean(number.boolValue)
+    case "Double":
+      guard let encoded = value as? String,
+        let bitPattern = UInt64(encoded),
+        String(bitPattern) == encoded
+      else {
+        throw DurablePreferencesError.snapshotInvalid
+      }
+      return .double(Double(bitPattern: bitPattern))
+    case "Int":
+      guard let encoded = value as? String,
+        let integer = Int64(encoded),
+        String(integer) == encoded
+      else {
+        throw DurablePreferencesError.snapshotInvalid
+      }
+      return .integer(integer)
+    case "String":
+      guard let string = value as? String else {
+        throw DurablePreferencesError.snapshotInvalid
+      }
+      return .string(string)
+    case "StringList":
+      guard let list = value as? [Any], list.allSatisfy({ $0 is String }) else {
+        throw DurablePreferencesError.snapshotInvalid
+      }
+      return .stringList(list.compactMap { $0 as? String })
+    default:
+      throw DurablePreferencesError.snapshotInvalid
+    }
+  }
 }

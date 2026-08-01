@@ -106,4 +106,18 @@ void main() {
       ),
     );
   });
+
+  test('读取时严格保留平台回执中的数值类型', () async {
+    messenger.setMockMethodCallHandler(channel, (call) async {
+      return <String, Object>{'flutter.int': 1, 'flutter.double': 1.0};
+    });
+    final store = KelivoDurablePreferences(channel: channel);
+
+    final values = await store.getAllWithParameters(
+      GetAllParameters(filter: PreferencesFilter(prefix: 'flutter.')),
+    );
+
+    expect(values['flutter.int'], isA<int>());
+    expect(values['flutter.double'], isA<double>());
+  });
 }

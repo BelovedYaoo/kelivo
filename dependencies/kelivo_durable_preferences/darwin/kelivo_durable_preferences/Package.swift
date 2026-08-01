@@ -14,9 +14,15 @@ let package = Package(
       targets: ["kelivo_durable_preferences"]
     )
   ],
+  dependencies: [
+    .package(name: "FlutterFramework", path: "../FlutterFramework")
+  ],
   targets: [
     .target(
       name: "kelivo_durable_preferences",
+      dependencies: [
+        .product(name: "FlutterFramework", package: "FlutterFramework")
+      ],
       resources: [.process("Resources")]
     ),
     .testTarget(

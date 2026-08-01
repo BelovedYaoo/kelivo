@@ -17,9 +17,7 @@ public final class KelivoDurablePreferencesPlugin: NSObject, FlutterPlugin {
       name: "kelivo.durable_preferences",
       binaryMessenger: messenger
     )
-    let instance = KelivoDurablePreferencesPlugin(
-      store: Result { try makeStore() }
-    )
+    let instance = KelivoDurablePreferencesPlugin()
     registrar.addMethodCallDelegate(instance, channel: channel)
   }
 
@@ -28,17 +26,16 @@ public final class KelivoDurablePreferencesPlugin: NSObject, FlutterPlugin {
     qos: .userInitiated
   )
 
-  private let store: Result<DurablePreferencesFileStore, Error>
+  private var store: Result<DurablePreferencesFileStore, Error>?
 
-  init(store: Result<DurablePreferencesFileStore, Error>) {
-    self.store = store
+  override init() {
     super.init()
   }
 
   public func handle(_ call: FlutterMethodCall, result: @escaping FlutterResult) {
-    Self.queue.async { [store] in
+    Self.queue.async { [self] in
       do {
-        let value = try Self.handle(call, store: store.get())
+        let value = try Self.handle(call, store: self.resolveStore())
         DispatchQueue.main.async {
           result(value)
         }
@@ -50,6 +47,15 @@ public final class KelivoDurablePreferencesPlugin: NSObject, FlutterPlugin {
         }
       }
     }
+  }
+
+  private func resolveStore() throws -> DurablePreferencesFileStore {
+    if let store {
+      return try store.get()
+    }
+    let created = Result { try Self.makeStore() }
+    store = created
+    return try created.get()
   }
 
   private static func handle(
@@ -117,18 +123,35 @@ public final class KelivoDurablePreferencesPlugin: NSObject, FlutterPlugin {
     guard let bundleIdentifier = Bundle.main.bundleIdentifier else {
       throw DurablePreferencesError.bundleIdentifierUnavailable
     }
-    guard let applicationSupport = FileManager.default.urls(
-      for: .applicationSupportDirectory,
-      in: .userDomainMask
-    ).first else {
+    let libraryDirectory: URL
+    let applicationSupportDirectory: URL
+    do {
+      libraryDirectory = try FileManager.default.url(
+        for: .libraryDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: false
+      )
+      applicationSupportDirectory = try FileManager.default.url(
+        for: .applicationSupportDirectory,
+        in: .userDomainMask,
+        appropriateFor: nil,
+        create: false
+      )
+    } catch {
       throw DurablePreferencesError.applicationSupportUnavailable
     }
-    let directory = applicationSupport.appendingPathComponent(
-      "\(bundleIdentifier).kelivo-durable-preferences-v1",
-      isDirectory: true
-    )
-    return DurablePreferencesFileStore(
-      directory: directory,
+    let standardizedLibrary = libraryDirectory.standardizedFileURL
+    let standardizedApplicationSupport = applicationSupportDirectory.standardizedFileURL
+    guard standardizedApplicationSupport.deletingLastPathComponent() == standardizedLibrary else {
+      throw DurablePreferencesError.applicationSupportUnavailable
+    }
+    return try DurablePreferencesFileStore(
+      rootDirectory: standardizedLibrary,
+      relativeDirectoryComponents: [
+        standardizedApplicationSupport.lastPathComponent,
+        "\(bundleIdentifier).kelivo-durable-preferences-v1",
+      ],
       durability: DarwinPreferencesDurability(),
       legacyPreferences: SystemLegacyPreferencesAccess(
         bundleIdentifier: bundleIdentifier
