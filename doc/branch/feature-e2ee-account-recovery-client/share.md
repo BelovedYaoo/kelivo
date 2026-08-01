@@ -15,7 +15,9 @@
 - 服务端确认 challenge 请求将移除客户端不可知的三个 expected 字段，并由服务端原子冻结 current head；客户端未固化旧 wire。
 - 已在 API Issue #32 补充 challenge 启动循环依赖，并与服务端修复进程确认硬切方向。
 - 设备状态存储已增加独立 8192 字节上限的账户恢复 checkpoint 密文槽，支持原样重放、旧摘要到新密文的原子替换、摘要 CAS 删除，并随设备状态 tombstone 一并清理；替换回执丢失后重放同一新密文可确认成功。
-- 验证：定向 `dart analyze` 无问题；授权 2 项、checkpoint 2 项及工作区存储完整 115 项 Flutter 测试通过。
+- checkpoint 使用固定二进制 v1 帧并由安装级本地槽认证密封，覆盖 `challenged -> proofReady -> authorized`；恢复 token 在磁盘上仅存在于密文载荷，编码临时字节主动清零，错误槽无法解开。
+- 首次创建和阶段推进的语义重放均在重新密封前比较规范明文状态，避免随机 nonce 导致相同 checkpoint 被误判为并发冲突；并发同值赢家也可由失败方复读确认。
+- 验证：定向 `dart analyze` 无问题；授权 2 项、密文槽 2 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 115 项 Flutter 测试通过。
 
 ## 协作边界
 
