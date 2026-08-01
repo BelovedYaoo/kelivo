@@ -630,9 +630,13 @@ final class E2eeVerifiedMembership {
     required Uint8List manifest,
     required Uint8List digest,
     required Set<String> operationIds,
+    required List<_MembershipOperationLineageEntry> operationLineage,
     required this._hasCompleteOperationHistory,
   }) : _data = data,
        _operationIds = Set<String>.unmodifiable(operationIds),
+       _operationLineage = List<_MembershipOperationLineageEntry>.unmodifiable(
+         operationLineage,
+       ),
        manifest = _immutableBytes(manifest),
        digest = _immutableBytes(digest),
        userId = data.userId,
@@ -659,6 +663,7 @@ final class E2eeVerifiedMembership {
 
   final _ManifestData _data;
   final Set<String> _operationIds;
+  final List<_MembershipOperationLineageEntry> _operationLineage;
   final bool _hasCompleteOperationHistory;
   final Uint8List manifest;
   final Uint8List digest;
@@ -680,6 +685,41 @@ final class E2eeVerifiedMembership {
 
   Uint8List get operationAuthorizationDigest =>
       Uint8List.fromList(_operationAuthorizationDigest);
+
+  void requireDataRekeyLineage({required String rekeyOperationId}) {
+    final operationId = _canonicalUuidV4(rekeyOperationId, 'rekeyOperationId');
+    if (!_hasCompleteOperationHistory ||
+        operationKind != E2eeMembershipOperationKind.recoverResume ||
+        _operationLineage.length != securityGeneration) {
+      throw const FormatException('恢复接续缺少完整已验证的数据换代历史');
+    }
+    final sourceIndex = _operationLineage.indexWhere(
+      (entry) => entry.operationId == operationId,
+    );
+    if (sourceIndex < 0) {
+      throw const FormatException('恢复接续未找到对应的数据换代起点');
+    }
+    final source = _operationLineage[sourceIndex];
+    if (source.operationKind != E2eeMembershipOperationKind.revokeRotate &&
+        source.operationKind != E2eeMembershipOperationKind.recoverReplace) {
+      throw const FormatException('恢复接续的数据换代起点类型无效');
+    }
+    final resumeEntries = _operationLineage
+        .skip(sourceIndex + 1)
+        .toList(growable: false);
+    if (resumeEntries.isEmpty ||
+        resumeEntries.last.operationId != this.operationId) {
+      throw const FormatException('恢复接续未位于数据换代历史链头');
+    }
+    for (var index = 0; index < resumeEntries.length; index++) {
+      final entry = resumeEntries[index];
+      if (entry.operationKind != E2eeMembershipOperationKind.recoverResume ||
+          entry.keyEpoch != source.keyEpoch ||
+          entry.securityGeneration != source.securityGeneration + index + 1) {
+        throw const FormatException('恢复接续的数据换代历史不连续');
+      }
+    }
+  }
 }
 
 final class E2eeCurrentSecurityStateVerification {
@@ -705,7 +745,6 @@ final class E2eeAccountTrustManifestModule {
     required KelivoAccountRootKeyHandle ark,
     required E2eeAccountTrustManifestChange change,
   }) async {
-    final operationHistory = _operationHistoryForChange(change);
     final signingContext = _changeSigningContext(change);
     final currentTrustPublicKey = await _secureCore.deriveAccountTrustPublicKey(
       ark,
@@ -734,6 +773,7 @@ final class E2eeAccountTrustManifestModule {
         currentTrustPublicKey.bytes,
       ),
     };
+    final operationHistory = _operationHistoryForChange(change, data);
     _validateRecoveryKeySeparation(data.recoveryPublicKey, data.members);
     await _validatePublicMaterial(data);
     final payload = _encodePayload(data);
@@ -783,7 +823,7 @@ final class E2eeAccountTrustManifestModule {
     final parsed = _parseManifest(manifest);
     final operationHistory = _operationHistoryForExpectation(
       expectation,
-      parsed.data.operationId,
+      parsed.data,
     );
     _validateProjection(parsed.data, projection);
     await _verifyWithAccountRootKey(ark, parsed);
@@ -795,6 +835,7 @@ final class E2eeAccountTrustManifestModule {
       manifest: manifest,
       digest: digest,
       operationIds: operationHistory.ids,
+      operationLineage: operationHistory.lineage,
       hasCompleteOperationHistory: operationHistory.isComplete,
     );
   }
@@ -843,6 +884,9 @@ final class E2eeAccountTrustManifestModule {
       manifest: manifest,
       digest: digest,
       operationIds: <String>{parsed.data.operationId},
+      operationLineage: <_MembershipOperationLineageEntry>[
+        _MembershipOperationLineageEntry.fromData(parsed.data),
+      ],
       hasCompleteOperationHistory: false,
     );
   }
@@ -961,7 +1005,7 @@ final class E2eeAccountTrustManifestModule {
     final parsed = _parseManifest(manifest);
     final operationHistory = _nextOperationHistory(
       previous: previous,
-      operationId: parsed.data.operationId,
+      current: parsed.data,
       requireComplete: _isRecoveryOperation(parsed.data.operationKind),
     );
     _validateHistorySuccessor(parsed.data, previous);
@@ -983,6 +1027,7 @@ final class E2eeAccountTrustManifestModule {
       manifest: manifest,
       digest: digest,
       operationIds: operationHistory.ids,
+      operationLineage: operationHistory.lineage,
       hasCompleteOperationHistory: operationHistory.isComplete,
     );
   }
@@ -1028,31 +1073,57 @@ final class E2eeAccountTrustManifestModule {
   }
 }
 
-typedef _OperationHistory = ({Set<String> ids, bool isComplete});
+final class _MembershipOperationLineageEntry {
+  const _MembershipOperationLineageEntry({
+    required this.operationKind,
+    required this.operationId,
+    required this.securityGeneration,
+    required this.keyEpoch,
+  });
+
+  factory _MembershipOperationLineageEntry.fromData(_ManifestData data) {
+    return _MembershipOperationLineageEntry(
+      operationKind: data.operationKind,
+      operationId: data.operationId,
+      securityGeneration: data.securityGeneration,
+      keyEpoch: data.keyEpoch,
+    );
+  }
+
+  final E2eeMembershipOperationKind operationKind;
+  final String operationId;
+  final int securityGeneration;
+  final int keyEpoch;
+}
+
+typedef _OperationHistory = ({
+  Set<String> ids,
+  bool isComplete,
+  List<_MembershipOperationLineageEntry> lineage,
+});
 
 _OperationHistory _operationHistoryForChange(
   E2eeAccountTrustManifestChange change,
+  _ManifestData current,
 ) {
   return switch (change) {
-    E2eeInitializeMembershipChange value => _initialOperationHistory(
-      value.operationId,
-    ),
+    E2eeInitializeMembershipChange() => _initialOperationHistory(current),
     E2eeAddDeviceMembershipChange value => _nextOperationHistory(
       previous: value.previous,
-      operationId: value.pairingId,
+      current: current,
     ),
     E2eeRevokeRotateMembershipChange value => _nextOperationHistory(
       previous: value.previous,
-      operationId: value.operationId,
+      current: current,
     ),
     E2eeRecoverResumeMembershipChange value => _nextOperationHistory(
       previous: value.previous,
-      operationId: value.operationId,
+      current: current,
       requireComplete: true,
     ),
     E2eeRecoverReplaceMembershipChange value => _nextOperationHistory(
       previous: value.previous,
-      operationId: value.operationId,
+      current: current,
       requireComplete: true,
     ),
   };
@@ -1060,50 +1131,57 @@ _OperationHistory _operationHistoryForChange(
 
 _OperationHistory _operationHistoryForExpectation(
   E2eeAccountTrustManifestExpectation expectation,
-  String operationId,
+  _ManifestData current,
 ) {
   return switch (expectation) {
-    E2eeInitializeMembershipExpectation() => _initialOperationHistory(
-      operationId,
-    ),
+    E2eeInitializeMembershipExpectation() => _initialOperationHistory(current),
     E2eeAddDeviceMembershipExpectation value => _nextOperationHistory(
       previous: value.previous,
-      operationId: operationId,
+      current: current,
     ),
     E2eeRevokeRotateMembershipExpectation value => _nextOperationHistory(
       previous: value.previous,
-      operationId: operationId,
+      current: current,
     ),
     E2eePairingBootstrapMembershipExpectation() => (
-      ids: <String>{operationId},
+      ids: <String>{current.operationId},
       isComplete: false,
+      lineage: <_MembershipOperationLineageEntry>[
+        _MembershipOperationLineageEntry.fromData(current),
+      ],
     ),
     E2eeRecoverResumeMembershipExpectation value => _nextOperationHistory(
       previous: value.previous,
-      operationId: operationId,
+      current: current,
       requireComplete: true,
     ),
     E2eeRecoverReplaceMembershipExpectation value => _nextOperationHistory(
       previous: value.previous,
-      operationId: operationId,
+      current: current,
       requireComplete: true,
     ),
   };
 }
 
-_OperationHistory _initialOperationHistory(String operationId) {
-  return (ids: <String>{operationId}, isComplete: true);
+_OperationHistory _initialOperationHistory(_ManifestData current) {
+  return (
+    ids: <String>{current.operationId},
+    isComplete: true,
+    lineage: <_MembershipOperationLineageEntry>[
+      _MembershipOperationLineageEntry.fromData(current),
+    ],
+  );
 }
 
 _OperationHistory _nextOperationHistory({
   required E2eeVerifiedMembership previous,
-  required String operationId,
+  required _ManifestData current,
   bool requireComplete = false,
 }) {
   if (requireComplete && !previous._hasCompleteOperationHistory) {
     throw StateError('恢复操作必须基于从 genesis 完整验证的成员历史');
   }
-  if (previous._operationIds.contains(operationId)) {
+  if (previous._operationIds.contains(current.operationId)) {
     throw StateError('成员清单 operationId 在完整历史中重复');
   }
   if (previous._operationIds.length >=
@@ -1111,8 +1189,12 @@ _OperationHistory _nextOperationHistory({
     throw StateError('成员清单完整历史已达到 4096 份上限');
   }
   return (
-    ids: <String>{...previous._operationIds, operationId},
+    ids: <String>{...previous._operationIds, current.operationId},
     isComplete: previous._hasCompleteOperationHistory,
+    lineage: <_MembershipOperationLineageEntry>[
+      ...previous._operationLineage,
+      _MembershipOperationLineageEntry.fromData(current),
+    ],
   );
 }
 
@@ -1980,6 +2062,7 @@ E2eeVerifiedMembership _verified(
     manifest: manifest,
     digest: _sha256(manifest),
     operationIds: operationHistory.ids,
+    operationLineage: operationHistory.lineage,
     hasCompleteOperationHistory: operationHistory.isComplete,
   );
 }

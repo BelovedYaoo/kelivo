@@ -3,7 +3,7 @@
 - 基线：`2e97a9a8`，独立 worktree `D:\Projects\Private\kelivo-device-revocation-rekey`。
 - 目标：完成 Issue #51，将成员撤销、耐久 data-rekey、成员锚推进、旧 ARK 裁剪与当前设备确认擦除串成可恢复状态机。
 - 测试接缝：`E2eeDataRekeyCommands`、`CloudSyncClient` v4 data-rekey 协议、`CloudSyncProvider` 撤销与冷启动恢复入口。
-- 约束：固定 operation/lease/mutation 身份；requested-only 不生成新 mutation；远端确认前不推进本地成员锚或裁剪旧 ARK；不修改 Native ABI19、不部署、不访问默认安全槽。
+- 约束：固定 operation/lease/mutation 身份；requested-only 不生成新 mutation；远端确认前不推进本地成员锚或裁剪旧 ARK；Native ABI20 由独立分支实现，不部署、不访问默认安全槽。
 - 协议阻断：服务端禁止轮换 issuer 自撤销，且 op3 会立即吊销目标设备会话；现有协议无法由当前设备本机完成后续 data-rekey，也缺少 requested-only 的同 mutation 受限查询。已登记 `kelivo-api#40` 并回注 App `#51`。
 - 当前进度：先实现可独立完成的流式 data-rekey 执行器、其他设备撤销与固定 mutation 重放；当前设备 confirmed marker 在 `kelivo-api#40` 完成前保持失败关闭。
 - 已完成：源记录/附件与暂存记录/附件可按有界分页流式累计 SHA-256；严格校验顺序、数量、阶段和最大 changeSeq，结果与既有 TypeScript 固定向量一致。
@@ -17,9 +17,12 @@
 - 已完成：本地提交清理由不可伪造的 ready confirmation 门禁；executor 在 finalize 后必须再次 GET ready，并将服务端 completion 与耐久 finalize 请求的 operation、issuer、270 字节 proof frame、proofDigest 和 signature 逐项绑定。pending 或缺失 completion 时保留 finalizing 日志，调用方无法提前 acknowledge。
 - 已完成：统一账户密钥变更编排器与设备状态三阶段提交。服务端 durable commit、data-rekey、独立 ready 确认、本地成员锚推进、旧 ARK 裁剪和远端 checkpoint 清理可跨崩溃幂等恢复；source/unpruned/pruned 状态逐字 CAS，恢复替换真实用例确认最终仅保留新 epoch，且未访问默认安全槽。
 - 已完成：账户密钥变更公开对象的安全复审。op4 强制成员 operation 与遗留 op3 rekey operation 不同；Binding、Receipt 与 Plan 的 digest/blob 私有冻结，对外只返回副本，构造输入与读取结果被改写后真实执行仍保持原绑定。
-- 新阻断：API `a3eb246` 已硬切成员清单 v2，Dart/Rust 客户端仍是 v1；op3/op4/op5 adapter 合入前必须同步 32 字节 operationAuthorizationDigest、头布局、签名/历史校验与固定向量。
+- 已解除：Dart/Rust 已对齐成员清单 v2 的 32 字节 operationAuthorizationDigest、头布局、签名/历史校验与固定向量；API 最终回执与 typed adapter 仍等待最终 OpenAPI SHA。
 - 已完成：Dart 成员清单硬切 v2。固定头扩展为 260 字节，`operationAuthorizationDigest` 纳入双签名载荷；op3 可精确绑定自撤销授权摘要，其他操作严格要求零摘要，构造输入和读取结果均返回隔离副本。
 - 已完成：本地数据库硬切 schema v25，成员清单约束同步为 v2 长度与步长；冻结 schema 仅发布版本 25，旧 v24 数据库不迁移且必须重建。这是主动的破坏性兼容边界。
 - 已完成：根应用恢复介质协议硬切 v2 长度 676 字节，导出页面在进入前拒绝旧 644 字节介质；Native 魔数、版本和解析边界由 ABI19 分支统一实现。
-- 已完成：真实恢复固定向量永久写入现有 Dart 测试，完整链为 init -> addDevice(op2) -> revokeRotate(op3) -> recoverResume(op4) -> recoverReplace(op5)。逐段冻结完整 manifest/digest、operation、generation/epoch、issuer/subject/authDigest 与 previousDigest 链，并验证全部当前代签名及 op3/op5 上一代过渡签名；ABI19 分支已收到同组向量。op4 新 issuer 完成继承 op3 data-rekey 的 G+2 receipt 绑定仍由下一块两阶段恢复状态机单独冻结。
-- 验证：成员清单 v2 布局/摘要防篡改、锚点命令与 SQL 约束、schema v25 硬切、恢复介质页面共 19 个定向用例通过。恢复 checkpoint 测试因当前 Native 动态库缺少 `kelivo_test_key_slot_store_open` 测试符号而无法启动，等待 ABI19 产物更新后补跑。
+- 已完成：真实恢复固定向量永久写入现有 Dart 测试，完整链为 init -> addDevice(op2) -> revokeRotate(op3) -> recoverResume(op4) -> recoverReplace(op5)。逐段冻结完整 manifest/digest、operation、generation/epoch、issuer/subject/authDigest 与 previousDigest 链，并验证全部当前代签名及 op3/op5 上一代过渡签名；ABI20 分支已收到同组向量。
+- 已完成：成员清单保留完整有序最小 operation lineage。恢复接续可从当前 head 严格追溯触发 data-rekey 的 op3/op5，允许同一 R 在 pending 期间发生 1..N 次连续 recovery-resume takeover；最终绑定取最新 op4 的 issuer/generation/digest，错误 R 或不连续历史失败关闭。data 已 ready 的首次恢复仍允许直接 recoverReplace。
+- 已完成：恢复 checkpoint 硬切 v4，在任何远端成员 commit 前强制持久化 source/unpruned/target-only candidate 三份精确随机密文；candidate 显式按 `candidatePrepared -> proofVerified -> activated` 单向推进，回执前不可验证、proof 前不可激活，重启后保持逐字 CAS，不允许后填或重封。
+- 已完成：账户密钥变更 ready confirmation 补齐 user/issuer/operation/generation/epoch/digest 全绑定，独立调用本地 committer 也拒绝跨账户或跨签发设备复用确认。
+- 验证：恢复 checkpoint 安全测试 1/1、恢复授权/提交协调 11/11、账户密钥变更编排 8/8 通过；测试使用显式 Native 测试存储和独立 C: TEMP，未访问默认安全槽。

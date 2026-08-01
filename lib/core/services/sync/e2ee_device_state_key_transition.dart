@@ -347,6 +347,47 @@ void _requireMembershipTransitionMatches(
   if (issuerCount != 1) {
     throw const FormatException('账户密钥变更签发设备不在下一成员清单');
   }
+  switch (binding.kind) {
+    case E2eeAccountKeyTransitionKind.deviceRevocation:
+      break;
+    case E2eeAccountKeyTransitionKind.recoveryResume:
+      final issuedByNewDevice =
+          previous.issuerDeviceId != binding.issuerDeviceId &&
+          !previous.members.any(
+            (member) => member.deviceId == binding.issuerDeviceId,
+          );
+      if (!issuedByNewDevice) {
+        throw const FormatException('恢复接续签发设备不是新的接管设备');
+      }
+      next.requireDataRekeyLineage(rekeyOperationId: binding.rekeyOperationId);
+    case E2eeAccountKeyTransitionKind.recoveryReplacement:
+      if (next.members.length != 1) {
+        throw const FormatException('恢复替换成员清单必须只保留恢复设备');
+      }
+      final replacementMember = next.members.single;
+      final resumesSameDevice =
+          previous.operationKind == E2eeMembershipOperationKind.recoverResume &&
+          previous.issuerDeviceId == binding.issuerDeviceId &&
+          previous.subjectDeviceId == binding.issuerDeviceId;
+      final directReplacement =
+          previous.operationKind != E2eeMembershipOperationKind.recoverResume &&
+          !previous.members.any(
+            (member) =>
+                member.deviceId == binding.issuerDeviceId ||
+                _sameStateBytes(
+                  member.signingPublicKey,
+                  replacementMember.signingPublicKey,
+                ) ||
+                _sameStateBytes(
+                  member.keyAgreementPublicKey,
+                  replacementMember.keyAgreementPublicKey,
+                ),
+          );
+      if (replacementMember.deviceId != binding.issuerDeviceId ||
+          (!resumesSameDevice && !directReplacement)) {
+        throw const FormatException('恢复替换设备与已验证前驱不匹配');
+      }
+  }
 }
 
 void _requireSameBinding(
@@ -375,6 +416,10 @@ void _requireConfirmationMatchesPlan(
   final execution = confirmation.execution;
   final completion = execution.result.completion;
   if (execution.operationId != plan.binding.rekeyOperationId ||
+      execution.userId != plan.binding.userId ||
+      execution.issuerDeviceId != plan.binding.issuerDeviceId ||
+      completion.operationId != plan.binding.rekeyOperationId ||
+      completion.issuerDeviceId != plan.binding.issuerDeviceId ||
       completion.membershipGeneration != plan.binding.securityGeneration ||
       completion.targetKeyEpoch != plan.binding.targetKeyEpoch ||
       !_sameStateBytes(

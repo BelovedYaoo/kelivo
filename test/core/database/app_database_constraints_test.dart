@@ -2761,6 +2761,7 @@ void main() {
         () => E2eeAccountKeyTransitionRemoteReceipt(
           kind: E2eeAccountKeyTransitionKind.recoveryResume,
           userId: _syncAccountUserId,
+          issuerDeviceId: _syncActorDeviceId,
           membershipOperationId: operationId,
           rekeyOperationId: operationId,
           securityGeneration: 12,
@@ -2793,6 +2794,7 @@ void main() {
       final receipt = E2eeAccountKeyTransitionRemoteReceipt(
         kind: E2eeAccountKeyTransitionKind.recoveryResume,
         userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
         membershipOperationId: _syncUuid(336),
         rekeyOperationId: _syncUuid(337),
         securityGeneration: 12,
@@ -2803,6 +2805,80 @@ void main() {
       final exposedReceiptDigest = receipt.membershipManifestDigest;
       exposedReceiptDigest[1] ^= 0xff;
       expect(receipt.membershipManifestDigest, orderedEquals(expectedDigest));
+    });
+
+    test('恢复接续计划允许连续接管并严格追溯最初数据换代', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      const manifestModule = E2eeAccountTrustManifestModule();
+      final takeoverDevice = await _newDatabaseMembershipDevice(
+        const KelivoSecureCore(),
+        deviceId: _syncUuid(109),
+        authGeneration: 1,
+      );
+      final takeover = await manifestModule.create(
+        ark: chain.ark,
+        change: E2eeRecoverResumeMembershipChange(
+          previous: chain.resumed,
+          operationId: _syncUuid(110),
+          subject: takeoverDevice,
+        ),
+      );
+      final sourceState = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1;
+      final unprunedState = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 2;
+      final prunedState = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3;
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: _syncAccountUserId,
+        issuerDeviceId: takeover.issuerDeviceId,
+        membershipOperationId: takeover.operationId,
+        rekeyOperationId: chain.revoked.operationId,
+        securityGeneration: takeover.securityGeneration,
+        targetKeyEpoch: takeover.keyEpoch,
+        membershipManifestDigest: takeover.digest,
+      );
+
+      expect(chain.revoked.issuerDeviceId, isNot(binding.issuerDeviceId));
+      expect(takeover.securityGeneration, chain.paired.securityGeneration + 3);
+      expect(
+        () => takeover.requireDataRekeyLineage(
+          rekeyOperationId: chain.revoked.operationId,
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => E2eeDeviceStateKeyTransitionPlan(
+          binding: binding,
+          previousMembership: chain.resumed,
+          nextMembership: takeover,
+          sourceStateBlob: sourceState,
+          unprunedStateBlob: unprunedState,
+          prunedStateBlob: prunedState,
+        ),
+        returnsNormally,
+      );
+
+      final unrelatedRekeyBinding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: binding.userId,
+        issuerDeviceId: binding.issuerDeviceId,
+        membershipOperationId: binding.membershipOperationId,
+        rekeyOperationId: _syncUuid(339),
+        securityGeneration: binding.securityGeneration,
+        targetKeyEpoch: binding.targetKeyEpoch,
+        membershipManifestDigest: binding.membershipManifestDigest,
+      );
+      expect(
+        () => E2eeDeviceStateKeyTransitionPlan(
+          binding: unrelatedRekeyBinding,
+          previousMembership: chain.resumed,
+          nextMembership: takeover,
+          sourceStateBlob: sourceState,
+          unprunedStateBlob: unprunedState,
+          prunedStateBlob: prunedState,
+        ),
+        throwsFormatException,
+      );
     });
 
     test('设备状态换代计划不暴露内部快照', () async {
@@ -2845,6 +2921,139 @@ void main() {
       expect(plan.sourceStateBlob[1], 0);
       expect(plan.unprunedStateBlob[1], 0);
       expect(plan.prunedStateBlob[1], 0);
+    });
+
+    test('数据已就绪时恢复替换允许从当前成员头直达', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      final recoveryDevice = await _newDatabaseMembershipDevice(
+        const KelivoSecureCore(),
+        deviceId: _syncUuid(111),
+        authGeneration: 1,
+      );
+      final replaced = await const E2eeAccountTrustManifestModule().create(
+        ark: chain.ark,
+        change: E2eeRecoverReplaceMembershipChange(
+          previous: chain.paired,
+          operationId: _syncUuid(112),
+          subject: recoveryDevice,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x66),
+        ),
+      );
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryReplacement,
+        userId: replaced.userId,
+        issuerDeviceId: replaced.issuerDeviceId,
+        membershipOperationId: replaced.operationId,
+        rekeyOperationId: replaced.operationId,
+        securityGeneration: replaced.securityGeneration,
+        targetKeyEpoch: replaced.keyEpoch,
+        membershipManifestDigest: replaced.digest,
+      );
+
+      expect(
+        () => E2eeDeviceStateKeyTransitionPlan(
+          binding: binding,
+          previousMembership: chain.paired,
+          nextMembership: replaced,
+          sourceStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1,
+          unprunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)
+            ..[0] = 2,
+          prunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3,
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('本地提交拒绝跨签发设备复用 ready 确认', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: chain.resumed.userId,
+        issuerDeviceId: chain.resumed.issuerDeviceId,
+        membershipOperationId: chain.resumed.operationId,
+        rekeyOperationId: chain.revoked.operationId,
+        securityGeneration: chain.resumed.securityGeneration,
+        targetKeyEpoch: chain.resumed.keyEpoch,
+        membershipManifestDigest: chain.resumed.digest,
+      );
+      final forgedIssuerBinding = E2eeAccountKeyTransitionBinding(
+        kind: binding.kind,
+        userId: binding.userId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: binding.membershipOperationId,
+        rekeyOperationId: binding.rekeyOperationId,
+        securityGeneration: binding.securityGeneration,
+        targetKeyEpoch: binding.targetKeyEpoch,
+        membershipManifestDigest: binding.membershipManifestDigest,
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: binding.userId,
+        issuerDeviceId: forgedIssuerBinding.issuerDeviceId,
+        membershipGeneration: binding.securityGeneration,
+        membershipManifestDigest: binding.membershipManifestDigest,
+      );
+      final capturingLocal = _CapturingAccountKeyTransitionLocalCommitter();
+      await E2eeAccountKeyTransitionCoordinator(
+        dataRekeyExecutor: E2eeDataRekeyExecutor(
+          transport: _ZeroSourceDataRekeyTransport(
+            userId: binding.userId,
+            issuerDeviceId: forgedIssuerBinding.issuerDeviceId,
+            operationId: binding.rekeyOperationId,
+            sourceKeyEpoch: binding.targetKeyEpoch - 1,
+            targetKeyEpoch: binding.targetKeyEpoch,
+          ),
+          journal: dataRekeyCommands,
+          stageStore: E2eeDataRekeyStageStore(
+            installationRoot: await Directory(
+              '${directory.path}/cross-issuer-ready',
+            ).create(),
+          ),
+          cryptography: _ZeroSourceDataRekeyCryptography(
+            issuerDeviceId: forgedIssuerBinding.issuerDeviceId,
+            targetKeyEpoch: binding.targetKeyEpoch,
+          ),
+          clock: () => DateTime.utc(2026, 7, 30, 5),
+        ),
+        remoteCommit: _FakeAccountKeyTransitionRemote(
+          forgedIssuerBinding,
+          failFirstComplete: false,
+        ),
+        localCommitter: capturingLocal,
+      ).execute(context: context, binding: forgedIssuerBinding);
+      final plan = E2eeDeviceStateKeyTransitionPlan(
+        binding: binding,
+        previousMembership: chain.revoked,
+        nextMembership: chain.resumed,
+        sourceStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1,
+        unprunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 2,
+        prunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3,
+      );
+      final committer = E2eeDeviceStateKeyTransitionCommitter(
+        baseUrl: context.normalizedBaseUrl,
+        normalizedLoginName: context.normalizedLoginName,
+        plan: plan,
+        deviceStateStore: DeviceStateBlobStore(
+          installationRoot: await Directory(
+            '${directory.path}/cross-issuer-state',
+          ).create(),
+        ),
+        secureCore: const KelivoSecureCore(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+        databaseFile: File('${directory.path}/constraints.sqlite'),
+      );
+
+      await expectLater(
+        committer.commit(
+          binding: binding,
+          confirmation: capturingLocal.confirmation!,
+        ),
+        throwsFormatException,
+      );
     });
 
     test('本地提交后 checkpoint 清理失败可在无换代日志时恢复', () async {
@@ -10392,6 +10601,7 @@ final class _FakeAccountKeyTransitionRemote
     final receipt = E2eeAccountKeyTransitionRemoteReceipt(
       kind: binding.kind,
       userId: binding.userId,
+      issuerDeviceId: binding.issuerDeviceId,
       membershipOperationId: binding.membershipOperationId,
       rekeyOperationId: binding.rekeyOperationId,
       securityGeneration: binding.securityGeneration,
@@ -10433,6 +10643,26 @@ final class _FakeAccountKeyTransitionLocalCommitter
   }) async {
     requireCommittedCalls += 1;
     if (!_committed) throw StateError('local_transition_not_committed');
+  }
+}
+
+final class _CapturingAccountKeyTransitionLocalCommitter
+    implements E2eeAccountKeyTransitionLocalCommitter {
+  E2eeDataRekeyReadyConfirmation? confirmation;
+
+  @override
+  Future<void> commit({
+    required E2eeAccountKeyTransitionBinding binding,
+    required E2eeDataRekeyReadyConfirmation confirmation,
+  }) async {
+    this.confirmation = confirmation;
+  }
+
+  @override
+  Future<void> requireCommitted({
+    required E2eeAccountKeyTransitionBinding binding,
+  }) async {
+    throw StateError('捕获 ready 确认测试不得进入恢复提交分支');
   }
 }
 

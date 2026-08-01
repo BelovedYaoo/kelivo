@@ -76,12 +76,17 @@ final class E2eeAccountKeyTransitionRemoteReceipt {
   E2eeAccountKeyTransitionRemoteReceipt({
     required this.kind,
     required String userId,
+    required String issuerDeviceId,
     required String membershipOperationId,
     required String rekeyOperationId,
     required int securityGeneration,
     required int targetKeyEpoch,
     required Uint8List membershipManifestDigest,
   }) : userId = _requireTransitionUuid(userId, 'userId'),
+       issuerDeviceId = _requireTransitionUuid(
+         issuerDeviceId,
+         'issuerDeviceId',
+       ),
        membershipOperationId = _requireTransitionUuid(
          membershipOperationId,
          'membershipOperationId',
@@ -113,6 +118,7 @@ final class E2eeAccountKeyTransitionRemoteReceipt {
 
   final E2eeAccountKeyTransitionKind kind;
   final String userId;
+  final String issuerDeviceId;
   final String membershipOperationId;
   final String rekeyOperationId;
   final int securityGeneration;
@@ -221,6 +227,7 @@ void _requireReceiptMatchesTransition(
 ) {
   if (receipt.kind != binding.kind ||
       receipt.userId != binding.userId ||
+      receipt.issuerDeviceId != binding.issuerDeviceId ||
       receipt.membershipOperationId != binding.membershipOperationId ||
       receipt.rekeyOperationId != binding.rekeyOperationId ||
       receipt.securityGeneration != binding.securityGeneration ||
