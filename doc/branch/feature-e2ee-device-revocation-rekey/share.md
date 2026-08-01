@@ -11,3 +11,4 @@
 - 已完成：CloudSync v4 finalize 公开返回封闭 outcome，严格解析并校验 `verification-pending` 的跨请求分页检查点；执行器可在同一 finalize mutation 的多次请求之间续租，最终仅接收完整 `finalized` 回执。
 - 已完成：按账户 locator 与 operation 隔离的耐久 stage cache；pending 随机密文先原子落盘再发送，确认后先原子发布 compact canonical frame 再清除大密文，支持崩溃窗口精确恢复、数量/大小上限、进程锁、摘要校验和 finalize/abort 清理。清理只遍历白名单文件且不递归；统一句柄级防换链删除仍由 `#85` 收口。
 - 已完成：pending/confirmed artifact 严格 codec；规范 JSON、canonical base64url、账户/issuer/operation/lease/mutation 全绑定。pending 可重建逐字相同 stage 请求；confirmed 仅保留生成 84 字节 staged frame 所需字段，并要求已绑定传输回执后才能产生。
+- 已完成：finalize 请求耐久 artifact；签名证明、固定 mutation 与租约可在响应丢失或进程重启后逐字段原样恢复，并严格拒绝跨账户、issuer 或 operation 重放。

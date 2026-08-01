@@ -790,6 +790,68 @@ void main() {
         throwsFormatException,
       );
     });
+
+    test('finalize 请求可跨重启逐字段重放且拒绝跨账户使用', () {
+      final binding = _artifactBinding();
+      final request = CloudSyncDataRekeyFinalizeRequest(
+        activeLease: _artifactLease(binding),
+        mutationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        proof: CloudSyncDataRekeyFinalizeProof(
+          issuerDeviceId: binding.issuerDeviceId,
+          sourceSnapshotRoot: Uint8List(32)..fillRange(0, 32, 0x11),
+          sourceRecordCount: 1,
+          sourceAttachmentCount: 0,
+          sourceMaximumChangeSeq: 17,
+          sourceRecordCursorEnd: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          sourceAttachmentCursorEnd: null,
+          membershipGeneration: 8,
+          membershipManifestDigest: Uint8List(32)..fillRange(0, 32, 0x22),
+          stagedRecordCount: 1,
+          stagedAttachmentCount: 0,
+          stagedCiphertextSetDigest: Uint8List(32)..fillRange(0, 32, 0x33),
+          signature: Uint8List(64)..fillRange(0, 64, 0x44),
+        ),
+      );
+      final artifact = E2eeDataRekeyFinalizeArtifact(
+        binding: binding,
+        request: request,
+      );
+
+      final restored = E2eeDataRekeyFinalizeArtifact.decode(
+        artifact.encode(),
+        expectedBinding: binding,
+      );
+
+      expect(restored.artifactId, request.mutationId);
+      expect(
+        restored.request.activeLease.leaseToken,
+        request.activeLease.leaseToken,
+      );
+      expect(restored.request.activeLease.leaseVersion, 5);
+      expect(
+        restored.request.proof.sourceSnapshotRoot,
+        request.proof.sourceSnapshotRoot,
+      );
+      expect(
+        restored.request.proof.sourceRecordCursorEnd,
+        request.proof.sourceRecordCursorEnd,
+      );
+      expect(restored.request.proof.sourceAttachmentCursorEnd, isNull);
+      expect(restored.request.proof.signature, request.proof.signature);
+      expect(restored.encode(), orderedEquals(artifact.encode()));
+
+      expect(
+        () => E2eeDataRekeyFinalizeArtifact.decode(
+          artifact.encode(),
+          expectedBinding: E2eeDataRekeyArtifactBinding(
+            userId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            issuerDeviceId: binding.issuerDeviceId,
+            operation: binding.operation,
+          ),
+        ),
+        throwsFormatException,
+      );
+    });
   });
 }
 

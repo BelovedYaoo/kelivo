@@ -66,29 +66,7 @@ sealed class E2eeDataRekeyStageArtifact {
     Uint8List bytes, {
     required E2eeDataRekeyArtifactBinding expectedBinding,
   }) {
-    if (bytes.isEmpty || bytes.length > e2eeDataRekeyArtifactMaximumBytes) {
-      throw const FormatException('data-rekey artifact 长度无效');
-    }
-    final Object? decoded;
-    try {
-      decoded = jsonDecode(utf8.decode(bytes, allowMalformed: false));
-    } on FormatException {
-      rethrow;
-    }
-    if (decoded is! Map<Object?, Object?> ||
-        decoded.keys.any((key) => key is! String)) {
-      throw const FormatException('data-rekey artifact 必须为 JSON 对象');
-    }
-    final json = <String, Object?>{
-      for (final entry in decoded.entries) entry.key! as String: entry.value,
-    };
-    final canonical = Uint8List.fromList(utf8.encode(jsonEncode(json)));
-    if (!_sameArtifactBytes(canonical, bytes)) {
-      throw const FormatException('data-rekey artifact JSON 编码不规范');
-    }
-    if (_requireArtifactInt(json, 'formatVersion') != 1) {
-      throw const FormatException('data-rekey artifact 版本无效');
-    }
+    final json = _decodeArtifactJson(bytes);
     final kind = _requireArtifactString(json, 'kind');
     final common = _decodeCommon(json, expectedBinding: expectedBinding);
     return switch (kind) {
@@ -106,6 +84,137 @@ sealed class E2eeDataRekeyStageArtifact {
         E2eeDataRekeyConfirmedAttachmentArtifact._fromJson(json, common),
       _ => throw const FormatException('data-rekey artifact 类型无效'),
     };
+  }
+}
+
+final class E2eeDataRekeyFinalizeArtifact {
+  factory E2eeDataRekeyFinalizeArtifact({
+    required E2eeDataRekeyArtifactBinding binding,
+    required CloudSyncDataRekeyFinalizeRequest request,
+  }) {
+    _requireLeaseBinding(binding, request.activeLease);
+    if (request.proof.issuerDeviceId != binding.issuerDeviceId) {
+      throw const FormatException('data-rekey finalize 请求未绑定 issuer');
+    }
+    return E2eeDataRekeyFinalizeArtifact._(binding: binding, request: request);
+  }
+
+  const E2eeDataRekeyFinalizeArtifact._({
+    required this.binding,
+    required this.request,
+  });
+
+  factory E2eeDataRekeyFinalizeArtifact.decode(
+    Uint8List bytes, {
+    required E2eeDataRekeyArtifactBinding expectedBinding,
+  }) {
+    final json = _decodeArtifactJson(bytes);
+    _requireArtifactExactKeys(json, _finalizeRequestKeys);
+    if (_requireArtifactString(json, 'kind') != _finalizeRequestKind) {
+      throw const FormatException('data-rekey finalize artifact 类型无效');
+    }
+    final common = _decodeCommon(json, expectedBinding: expectedBinding);
+    final attachmentId = _requireNullableArtifactString(
+      json,
+      'sourceAttachmentIdEnd',
+    );
+    final attachmentUploadId = _requireNullableArtifactString(
+      json,
+      'sourceAttachmentUploadIdEnd',
+    );
+    if ((attachmentId == null) != (attachmentUploadId == null)) {
+      throw const FormatException('data-rekey finalize 附件游标不完整');
+    }
+    final attachmentCursor = attachmentId == null
+        ? null
+        : CloudSyncDataRekeyAttachmentCursor(
+            attachmentId: attachmentId,
+            uploadId: attachmentUploadId!,
+          );
+    return E2eeDataRekeyFinalizeArtifact(
+      binding: common.binding,
+      request: CloudSyncDataRekeyFinalizeRequest(
+        activeLease: common.activeLease,
+        mutationId: common.mutationId,
+        proof: CloudSyncDataRekeyFinalizeProof(
+          issuerDeviceId: common.binding.issuerDeviceId,
+          sourceSnapshotRoot: _decodeArtifactBytes(
+            json,
+            'sourceSnapshotRoot',
+            exactLength: 32,
+          ),
+          sourceRecordCount: _requireArtifactInt(json, 'sourceRecordCount'),
+          sourceAttachmentCount: _requireArtifactInt(
+            json,
+            'sourceAttachmentCount',
+          ),
+          sourceMaximumChangeSeq: _requireArtifactInt(
+            json,
+            'sourceMaximumChangeSeq',
+          ),
+          sourceRecordCursorEnd: _requireNullableArtifactString(
+            json,
+            'sourceRecordCursorEnd',
+          ),
+          sourceAttachmentCursorEnd: attachmentCursor,
+          membershipGeneration: _requireArtifactInt(
+            json,
+            'membershipGeneration',
+          ),
+          membershipManifestDigest: _decodeArtifactBytes(
+            json,
+            'membershipManifestDigest',
+            exactLength: 32,
+          ),
+          stagedRecordCount: _requireArtifactInt(json, 'stagedRecordCount'),
+          stagedAttachmentCount: _requireArtifactInt(
+            json,
+            'stagedAttachmentCount',
+          ),
+          stagedCiphertextSetDigest: _decodeArtifactBytes(
+            json,
+            'stagedCiphertextSetDigest',
+            exactLength: 32,
+          ),
+          signature: _decodeArtifactBytes(json, 'signature', exactLength: 64),
+        ),
+      ),
+    );
+  }
+
+  final E2eeDataRekeyArtifactBinding binding;
+  final CloudSyncDataRekeyFinalizeRequest request;
+
+  String get artifactId => request.mutationId;
+
+  Uint8List encode() {
+    final proof = request.proof;
+    final attachmentCursor = proof.sourceAttachmentCursorEnd;
+    return _encodeArtifact(<String, Object?>{
+      ..._commonJson(
+        kind: _finalizeRequestKind,
+        binding: binding,
+        activeLease: request.activeLease,
+        mutationId: request.mutationId,
+      ),
+      'sourceSnapshotRoot': _encodeArtifactBytes(proof.sourceSnapshotRoot),
+      'sourceRecordCount': proof.sourceRecordCount,
+      'sourceAttachmentCount': proof.sourceAttachmentCount,
+      'sourceMaximumChangeSeq': proof.sourceMaximumChangeSeq,
+      'sourceRecordCursorEnd': proof.sourceRecordCursorEnd,
+      'sourceAttachmentIdEnd': attachmentCursor?.attachmentId,
+      'sourceAttachmentUploadIdEnd': attachmentCursor?.uploadId,
+      'membershipGeneration': proof.membershipGeneration,
+      'membershipManifestDigest': _encodeArtifactBytes(
+        proof.membershipManifestDigest,
+      ),
+      'stagedRecordCount': proof.stagedRecordCount,
+      'stagedAttachmentCount': proof.stagedAttachmentCount,
+      'stagedCiphertextSetDigest': _encodeArtifactBytes(
+        proof.stagedCiphertextSetDigest,
+      ),
+      'signature': _encodeArtifactBytes(proof.signature),
+    });
   }
 }
 
@@ -442,6 +551,7 @@ const _recordRequestKind = 'record-request-v1';
 const _recordConfirmedKind = 'record-confirmed-v1';
 const _attachmentRequestKind = 'attachment-request-v1';
 const _attachmentConfirmedKind = 'attachment-confirmed-v1';
+const _finalizeRequestKind = 'finalize-request-v1';
 
 const _commonKeys = <String>{
   'formatVersion',
@@ -488,6 +598,22 @@ const _attachmentConfirmedKeys = <String>{
   'manifestKeyEpoch',
   'manifestCiphertextBytes',
   'manifestCiphertextDigest',
+};
+const _finalizeRequestKeys = <String>{
+  ..._commonKeys,
+  'sourceSnapshotRoot',
+  'sourceRecordCount',
+  'sourceAttachmentCount',
+  'sourceMaximumChangeSeq',
+  'sourceRecordCursorEnd',
+  'sourceAttachmentIdEnd',
+  'sourceAttachmentUploadIdEnd',
+  'membershipGeneration',
+  'membershipManifestDigest',
+  'stagedRecordCount',
+  'stagedAttachmentCount',
+  'stagedCiphertextSetDigest',
+  'signature',
 };
 
 final class _DecodedArtifactCommon {
@@ -571,6 +697,33 @@ void _requireLeaseBinding(
   }
 }
 
+CloudSyncJsonMap _decodeArtifactJson(Uint8List bytes) {
+  if (bytes.isEmpty || bytes.length > e2eeDataRekeyArtifactMaximumBytes) {
+    throw const FormatException('data-rekey artifact 长度无效');
+  }
+  final Object? decoded;
+  try {
+    decoded = jsonDecode(utf8.decode(bytes, allowMalformed: false));
+  } on FormatException {
+    rethrow;
+  }
+  if (decoded is! Map<Object?, Object?> ||
+      decoded.keys.any((key) => key is! String)) {
+    throw const FormatException('data-rekey artifact 必须为 JSON 对象');
+  }
+  final json = <String, Object?>{
+    for (final entry in decoded.entries) entry.key! as String: entry.value,
+  };
+  final canonical = Uint8List.fromList(utf8.encode(jsonEncode(json)));
+  if (!_sameArtifactBytes(canonical, bytes)) {
+    throw const FormatException('data-rekey artifact JSON 编码不规范');
+  }
+  if (_requireArtifactInt(json, 'formatVersion') != 1) {
+    throw const FormatException('data-rekey artifact 版本无效');
+  }
+  return json;
+}
+
 Uint8List _encodeArtifact(CloudSyncJsonMap json) {
   final bytes = Uint8List.fromList(utf8.encode(jsonEncode(json)));
   if (bytes.length > e2eeDataRekeyArtifactMaximumBytes) {
@@ -628,6 +781,15 @@ int _requireArtifactInt(CloudSyncJsonMap json, String key) {
   final value = json[key];
   if (value is! int) {
     throw FormatException('$key 必须为整数');
+  }
+  return value;
+}
+
+String? _requireNullableArtifactString(CloudSyncJsonMap json, String key) {
+  final value = json[key];
+  if (value == null) return null;
+  if (value is! String || value.isEmpty) {
+    throw FormatException('$key 必须为非空字符串或 null');
   }
   return value;
 }
