@@ -18,3 +18,8 @@
 - 已完成：统一账户密钥变更编排器与设备状态三阶段提交。服务端 durable commit、data-rekey、独立 ready 确认、本地成员锚推进、旧 ARK 裁剪和远端 checkpoint 清理可跨崩溃幂等恢复；source/unpruned/pruned 状态逐字 CAS，恢复替换真实用例确认最终仅保留新 epoch，且未访问默认安全槽。
 - 已完成：账户密钥变更公开对象的安全复审。op4 强制成员 operation 与遗留 op3 rekey operation 不同；Binding、Receipt 与 Plan 的 digest/blob 私有冻结，对外只返回副本，构造输入与读取结果被改写后真实执行仍保持原绑定。
 - 新阻断：API `a3eb246` 已硬切成员清单 v2，Dart/Rust 客户端仍是 v1；op3/op4/op5 adapter 合入前必须同步 32 字节 operationAuthorizationDigest、头布局、签名/历史校验与固定向量。
+- 已完成：Dart 成员清单硬切 v2。固定头扩展为 260 字节，`operationAuthorizationDigest` 纳入双签名载荷；op3 可精确绑定自撤销授权摘要，其他操作严格要求零摘要，构造输入和读取结果均返回隔离副本。
+- 已完成：本地数据库硬切 schema v25，成员清单约束同步为 v2 长度与步长；冻结 schema 仅发布版本 25，旧 v24 数据库不迁移且必须重建。这是主动的破坏性兼容边界。
+- 已完成：根应用恢复介质协议硬切 v2 长度 676 字节，导出页面在进入前拒绝旧 644 字节介质；Native 魔数、版本和解析边界由 ABI19 分支统一实现。
+- 已完成：真实恢复固定向量永久写入现有 Dart 测试，完整链为 init -> addDevice(op2) -> revokeRotate(op3) -> recoverResume(op4) -> recoverReplace(op5)。逐段冻结完整 manifest/digest、operation、generation/epoch、issuer/subject/authDigest 与 previousDigest 链，并验证全部当前代签名及 op3/op5 上一代过渡签名；ABI19 分支已收到同组向量。op4 新 issuer 完成继承 op3 data-rekey 的 G+2 receipt 绑定仍由下一块两阶段恢复状态机单独冻结。
+- 验证：成员清单 v2 布局/摘要防篡改、锚点命令与 SQL 约束、schema v25 硬切、恢复介质页面共 19 个定向用例通过。恢复 checkpoint 测试因当前 Native 动态库缺少 `kelivo_test_key_slot_store_open` 测试符号而无法启动，等待 ABI19 产物更新后补跑。

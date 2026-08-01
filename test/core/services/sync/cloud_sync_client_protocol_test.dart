@@ -11149,7 +11149,7 @@ void main() {
         recoveryCapsule: recoveryCapsule1,
       ),
     );
-    expect(initialized.manifest, hasLength(444));
+    expect(initialized.manifest, hasLength(476));
     expect(
       initialized.manifest.sublist(
         initialized.manifest.length - 128,
@@ -11157,7 +11157,7 @@ void main() {
       ),
       everyElement(0),
     );
-    expect(e2eeAccountTrustManifestMaximumLength, 22884);
+    expect(e2eeAccountTrustManifestMaximumLength, 22916);
     final initializedProjection = _membershipProjection(
       initialized,
       recoveryCapsule: recoveryCapsule1,
@@ -11181,7 +11181,7 @@ void main() {
         subject: subject,
       ),
     );
-    expect(paired.manifest, hasLength(532));
+    expect(paired.manifest, hasLength(564));
     expect(paired.previousDigest, orderedEquals(initialized.digest));
     expect(
       paired.members.map((member) => member.deviceId),
@@ -11446,7 +11446,7 @@ void main() {
       ),
       throwsArgumentError,
     );
-    expect(e2eeAccountTrustManifestMinimumLength, 444);
+    expect(e2eeAccountTrustManifestMinimumLength, 476);
     expect(
       () => E2eeMembershipHistoryEntry(
         manifest: Uint8List(356),

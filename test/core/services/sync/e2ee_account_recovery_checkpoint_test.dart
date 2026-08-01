@@ -352,7 +352,7 @@ void main() {
 }
 
 E2eeAccountRecoveryChallenge _challenge({bool rekeyPending = true}) {
-  final manifest = _bytes(444, 0x11);
+  final manifest = _bytes(476, 0x11);
   final capsule = _bytes(156, 0x41);
   return E2eeAccountRecoveryChallenge(
     attemptId: _uuid(1),

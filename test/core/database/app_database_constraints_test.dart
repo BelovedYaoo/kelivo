@@ -586,6 +586,7 @@ void main() {
           revokedDeviceId: subject.deviceId,
           nextRecoveryCapsuleVersion: 2,
           nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x42),
+          operationAuthorizationDigest: _syncDigest(0x51),
         ),
       );
       final recoveryDevice = await _newDatabaseMembershipDevice(
@@ -1177,7 +1178,7 @@ void main() {
   group('E2EE verified membership anchor schema', () {
     Future<void> insertAnchor({
       String accountUserId = _syncAccountUserId,
-      int manifestLength = 444,
+      int manifestLength = 476,
       int digestLength = 32,
       int securityGeneration = 1,
       int keyEpoch = 1,
@@ -1206,7 +1207,7 @@ void main() {
       await insertAnchor();
       await insertAnchor(
         accountUserId: _syncUuid(250),
-        manifestLength: 22884,
+        manifestLength: 22916,
         securityGeneration: 2147483647,
         keyEpoch: 4294967295,
         transitionVersion: 9223372036854775807,
@@ -1225,9 +1226,9 @@ void main() {
           accountUserId: _syncAccountUserId.replaceFirst('-4000-', '-5000-'),
         ),
         () => insertAnchor(manifestLength: 356),
-        () => insertAnchor(manifestLength: 443),
-        () => insertAnchor(manifestLength: 445),
-        () => insertAnchor(manifestLength: 22885),
+        () => insertAnchor(manifestLength: 475),
+        () => insertAnchor(manifestLength: 477),
+        () => insertAnchor(manifestLength: 22917),
         () => insertAnchor(digestLength: 31),
         () => insertAnchor(digestLength: 33),
         () => insertAnchor(securityGeneration: 0),
@@ -1252,6 +1253,335 @@ void main() {
   });
 
   group('E2EE verified membership anchor commands', () {
+    test('成员清单 v2 固定授权摘要与成员区偏移', () async {
+      const secureCore = KelivoSecureCore();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+
+      expect(e2eeAccountTrustManifestFormatVersion, 2);
+      expect(e2eeAccountTrustManifestMinimumLength, 476);
+      expect(e2eeAccountTrustManifestMaximumLength, 22916);
+      for (final membership in <E2eeVerifiedMembership>[
+        chain.initialized,
+        chain.paired,
+        chain.resumed,
+        chain.replaced,
+      ]) {
+        final fields = ByteData.sublistView(membership.manifest);
+        expect(fields.getUint32(8, Endian.big), 2);
+        expect(membership.manifest.sublist(224, 256), everyElement(0));
+        expect(fields.getUint32(256, Endian.big), membership.members.length);
+        expect(
+          membership.manifest.length,
+          260 + membership.members.length * 88 + 128,
+        );
+      }
+    });
+
+    test('真实恢复五段成员清单 v2 固定向量保持完整签名链', () async {
+      const secureCore = KelivoSecureCore();
+      const vectors =
+          <
+            ({
+              String manifestBase64,
+              String digestBase64,
+              int operationCode,
+              String operationId,
+              int securityGeneration,
+              int keyEpoch,
+              String issuerDeviceId,
+              String subjectDeviceId,
+              String authorizationDigestBase64,
+            })
+          >[
+            (
+              manifestBase64: _frozenInitializedManifestV2,
+              digestBase64: '05HPAtPXROeSH0q-hR9L3XRc1aQPMF8n05DghrDFUi8=',
+              operationCode: 1,
+              operationId: _syncOperationId,
+              securityGeneration: 1,
+              keyEpoch: 1,
+              issuerDeviceId: _syncActorDeviceId,
+              subjectDeviceId: _syncActorDeviceId,
+              authorizationDigestBase64:
+                  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            ),
+            (
+              manifestBase64: _frozenPairedManifestV2,
+              digestBase64: 'YK_d1CAY4CnUQukssxT6jZCY6sSDyZ3cq3TZTszE0iE=',
+              operationCode: 2,
+              operationId: '90000000-0000-4000-8000-000000000102',
+              securityGeneration: 2,
+              keyEpoch: 1,
+              issuerDeviceId: _syncActorDeviceId,
+              subjectDeviceId: '90000000-0000-4000-8000-000000000101',
+              authorizationDigestBase64:
+                  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            ),
+            (
+              manifestBase64: _frozenRevokedManifestV2,
+              digestBase64: 'G7pb1XYcWVtnnG1lZzHl5UivRPBpekjvxp6qUamvEqo=',
+              operationCode: 3,
+              operationId: '90000000-0000-4000-8000-000000000105',
+              securityGeneration: 3,
+              keyEpoch: 2,
+              issuerDeviceId: _syncActorDeviceId,
+              subjectDeviceId: '90000000-0000-4000-8000-000000000101',
+              authorizationDigestBase64:
+                  'UVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVE=',
+            ),
+            (
+              manifestBase64: _frozenResumedManifestV2,
+              digestBase64: 'KUa5iTtfhjRhHm6HgnOqLdKrcMUeq2D9Y90RygxrnKo=',
+              operationCode: 4,
+              operationId: '90000000-0000-4000-8000-000000000107',
+              securityGeneration: 4,
+              keyEpoch: 2,
+              issuerDeviceId: '90000000-0000-4000-8000-000000000106',
+              subjectDeviceId: '90000000-0000-4000-8000-000000000106',
+              authorizationDigestBase64:
+                  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            ),
+            (
+              manifestBase64: _frozenReplacedManifestV2,
+              digestBase64: 'UTGRh5hTkjhzE9CnK0w8AhTQ2hwbbmPuDN919DL48-4=',
+              operationCode: 5,
+              operationId: '90000000-0000-4000-8000-000000000108',
+              securityGeneration: 5,
+              keyEpoch: 3,
+              issuerDeviceId: '90000000-0000-4000-8000-000000000106',
+              subjectDeviceId: '90000000-0000-4000-8000-000000000106',
+              authorizationDigestBase64:
+                  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            ),
+          ];
+      Uint8List? previousManifest;
+      Uint8List? previousDigest;
+
+      for (final vector in vectors) {
+        final manifest = Uint8List.fromList(
+          base64Url.decode(vector.manifestBase64),
+        );
+        final expectedDigest = Uint8List.fromList(
+          base64Url.decode(vector.digestBase64),
+        );
+        final fields = ByteData.sublistView(manifest);
+        final memberCount = fields.getUint32(256, Endian.big);
+        final payloadLength = 260 + memberCount * 88;
+        final payload = Uint8List.sublistView(manifest, 0, payloadLength);
+        final transitionSignature = Uint8List.sublistView(
+          manifest,
+          payloadLength,
+          payloadLength + 64,
+        );
+        final currentSignature = Uint8List.sublistView(
+          manifest,
+          payloadLength + 64,
+        );
+        final userId = Uint8List.sublistView(manifest, 12, 28);
+
+        expect(fields.getUint32(8, Endian.big), 2);
+        expect(manifest, hasLength(payloadLength + 128));
+        expect(
+          Uint8List.fromList(sha256.convert(manifest).bytes),
+          orderedEquals(expectedDigest),
+        );
+        expect(
+          manifest.sublist(36, 68),
+          orderedEquals(previousDigest ?? Uint8List(32)),
+        );
+        expect(fields.getUint32(172, Endian.big), vector.operationCode);
+        expect(fields.getUint32(28, Endian.big), vector.securityGeneration);
+        expect(fields.getUint32(32, Endian.big), vector.keyEpoch);
+        expect(Uuid.unparse(manifest.sublist(176, 192)), vector.operationId);
+        expect(Uuid.unparse(manifest.sublist(192, 208)), vector.issuerDeviceId);
+        expect(
+          Uuid.unparse(manifest.sublist(208, 224)),
+          vector.subjectDeviceId,
+        );
+        expect(
+          manifest.sublist(224, 256),
+          orderedEquals(base64Url.decode(vector.authorizationDigestBase64)),
+        );
+        expect(currentSignature, isNot(everyElement(0)));
+        await secureCore.verifyUntrustedAccountTrustPayload(
+          KelivoUntrustedAccountTrustPublicKey.fromTransport(
+            Uint8List.sublistView(manifest, 68, 100),
+          ),
+          userId: userId,
+          keyEpoch: vector.keyEpoch,
+          canonicalPayload: payload,
+          signature: KelivoAccountTrustSignature(currentSignature),
+        );
+
+        if (vector.operationCode == 3 || vector.operationCode == 5) {
+          final trustedPrevious = previousManifest;
+          if (trustedPrevious == null) {
+            fail('轮换固定向量缺少上一版清单');
+          }
+          final previousFields = ByteData.sublistView(trustedPrevious);
+          expect(transitionSignature, isNot(everyElement(0)));
+          await secureCore.verifyUntrustedAccountTrustPayload(
+            KelivoUntrustedAccountTrustPublicKey.fromTransport(
+              Uint8List.sublistView(trustedPrevious, 68, 100),
+            ),
+            userId: userId,
+            keyEpoch: previousFields.getUint32(32, Endian.big),
+            canonicalPayload: payload,
+            signature: KelivoAccountTrustSignature(transitionSignature),
+          );
+        } else {
+          expect(transitionSignature, everyElement(0));
+        }
+
+        previousManifest = manifest;
+        previousDigest = expectedDigest;
+      }
+    });
+
+    test('协调自撤销摘要进入 op3 双签名载荷且其他操作严格为零', () async {
+      const secureCore = KelivoSecureCore();
+      const manifestModule = E2eeAccountTrustManifestModule();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+      final expectedAuthorizationDigest = _syncDigest(0x71);
+      final authorizationInput = Uint8List.fromList(
+        expectedAuthorizationDigest,
+      );
+      final nextRecoveryCapsule = Uint8List(80)..fillRange(0, 80, 0x72);
+      final change = E2eeRevokeRotateMembershipChange(
+        previous: chain.paired,
+        operationId: _syncUuid(338),
+        issuerDeviceId: _syncUuid(101),
+        revokedDeviceId: _syncActorDeviceId,
+        nextRecoveryCapsuleVersion: 2,
+        nextRecoveryCapsule: nextRecoveryCapsule,
+        operationAuthorizationDigest: authorizationInput,
+      );
+      authorizationInput[0] ^= 0xff;
+      change.operationAuthorizationDigest[1] ^= 0xff;
+
+      final coordinated = await manifestModule.create(
+        ark: chain.ark,
+        change: change,
+      );
+
+      expect(
+        coordinated.operationAuthorizationDigest,
+        orderedEquals(expectedAuthorizationDigest),
+      );
+      coordinated.operationAuthorizationDigest[2] ^= 0xff;
+      expect(
+        coordinated.operationAuthorizationDigest,
+        orderedEquals(expectedAuthorizationDigest),
+      );
+      expect(
+        coordinated.manifest.sublist(224, 256),
+        orderedEquals(expectedAuthorizationDigest),
+      );
+      final verified = await manifestModule.verifyHistoryBatch(
+        previous: chain.paired,
+        entries: <E2eeMembershipHistoryEntry>[
+          E2eeMembershipHistoryEntry(
+            manifest: coordinated.manifest,
+            manifestDigest: coordinated.digest,
+          ),
+        ],
+      );
+      expect(
+        verified.operationAuthorizationDigest,
+        orderedEquals(expectedAuthorizationDigest),
+      );
+      final projection = E2eeMembershipServerProjection(
+        userId: coordinated.userId,
+        securityGeneration: coordinated.securityGeneration,
+        keyEpoch: coordinated.keyEpoch,
+        membershipManifestVersion: e2eeAccountTrustManifestFormatVersion,
+        membershipManifest: coordinated.manifest,
+        membershipManifestDigest: coordinated.digest,
+        recoveryPublicKeyVersion: coordinated.recoveryPublicKeyVersion,
+        recoveryPublicKey: coordinated.recoveryPublicKey,
+        recoveryCapsuleVersion: coordinated.recoveryCapsuleVersion,
+        recoveryCapsule: nextRecoveryCapsule,
+        lastOperationId: coordinated.operationId,
+        dataRekeyPhase: E2eeDataRekeyPhase.rekeyPending,
+      );
+      final expected = E2eeRevokeRotateMembershipExpectation(
+        projection: projection,
+        previous: chain.paired,
+        operationId: coordinated.operationId,
+        issuerDeviceId: coordinated.issuerDeviceId,
+        revokedDeviceId: coordinated.subjectDeviceId,
+        operationAuthorizationDigest: expectedAuthorizationDigest,
+      );
+      expect(
+        (await manifestModule.verify(
+          ark: chain.ark,
+          expectation: expected,
+        )).digest,
+        orderedEquals(coordinated.digest),
+      );
+      await expectLater(
+        manifestModule.verify(
+          ark: chain.ark,
+          expectation: E2eeRevokeRotateMembershipExpectation(
+            projection: projection,
+            previous: chain.paired,
+            operationId: coordinated.operationId,
+            issuerDeviceId: coordinated.issuerDeviceId,
+            revokedDeviceId: coordinated.subjectDeviceId,
+            operationAuthorizationDigest: _syncDigest(0x72),
+          ),
+        ),
+        throwsStateError,
+      );
+
+      final tamperedAuthorization = Uint8List.fromList(coordinated.manifest)
+        ..[224] ^= 0xff;
+      await expectLater(
+        manifestModule.verifyHistoryBatch(
+          previous: chain.paired,
+          entries: <E2eeMembershipHistoryEntry>[
+            E2eeMembershipHistoryEntry(
+              manifest: tamperedAuthorization,
+              manifestDigest: Uint8List.fromList(
+                sha256.convert(tamperedAuthorization).bytes,
+              ),
+            ),
+          ],
+        ),
+        throwsA(isA<KelivoSecureCoreException>()),
+      );
+      final nonRevokeAuthorization = Uint8List.fromList(chain.paired.manifest)
+        ..[224] = 1;
+      await expectLater(
+        manifestModule.verifyHistoryBatch(
+          previous: chain.initialized,
+          entries: <E2eeMembershipHistoryEntry>[
+            E2eeMembershipHistoryEntry(
+              manifest: nonRevokeAuthorization,
+              manifestDigest: Uint8List.fromList(
+                sha256.convert(nonRevokeAuthorization).bytes,
+              ),
+            ),
+          ],
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeRevokeRotateMembershipChange(
+          previous: chain.paired,
+          operationId: _syncUuid(339),
+          issuerDeviceId: _syncUuid(101),
+          revokedDeviceId: _syncActorDeviceId,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x73),
+          operationAuthorizationDigest: Uint8List(32),
+        ),
+        throwsArgumentError,
+      );
+    });
+
     test('已验证清单安装、重启验签、推进与响应丢失重放闭环', () async {
       const secureCore = KelivoSecureCore();
       const manifestModule = E2eeAccountTrustManifestModule();
@@ -10206,3 +10536,62 @@ Uint8List _dataRekeyProofFrame({
 
 String _dataRekeyBinary(Uint8List value) =>
     base64Url.encode(value).replaceAll('=', '');
+
+const _frozenInitializedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAEAAAABAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAADGukVpqxpKKb7327NSIZoQDnypuTvOcwZRu6WPOJ7N9AAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAHZsfPixtUoZopz8iV1xE7Z-Y2caElk'
+    'dhtiFBfv2A16YAAAAAFQAAAAAABAAIAAAAAAAAABgAAAAAAAQACAAAAAAAAAAYAAAAAAAEAA'
+    'gAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAABAAIAA'
+    'AAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbi'
+    'NX4vOAUtEjBjPRRAAdoofmUKAhY9FngVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABRchNtfNvxE9RFzJGH3Dy8lFu43'
+    '7rKxS8XQYcWPoBGwP8dWlf80C2rKqN4xiL-cqN7s-twIEpPX1zb7GD0ulw8=';
+
+const _frozenPairedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAIAAAAB05HPAtPXROeSH0q-hR9L3XRc'
+    '1aQPMF8n05DghrDFUi_GukVpqxpKKb7327NSIZoQDnypuTvOcwZRu6WPOJ7N9AAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAHZsfPixtUoZopz8iV1xE7Z-Y2caElk'
+    'dhtiFBfv2A16YAAAAAKQAAAAAABAAIAAAAAAAAECgAAAAAAAQACAAAAAAAAAAZAAAAAAAEAA'
+    'gAAAAAAAAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAABAAIAA'
+    'AAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbi'
+    'NX4vOAUtEjBjPRRAAdoofmUKAhY9FngVkAAAAAAAQACAAAAAAAABAQAAAAEAAAABJN6Lhjzf'
+    '3JAmNndeTSZas-gkRy_PHT13A3F21JfYcNVx_bKKmvgFLu2jtfVT3SDGmmtPr7kPaIRNDlpg'
+    'aJPONAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAAA8Jp5SY8OMWGQlUuX8P9uByzKZkfZ_BAABAgIMEDbGkcdpkkL8jKHr'
+    'xWfXXMudiusorxqxnFcq6U1RutmjiskC';
+
+const _frozenRevokedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAMAAAACYK_d1CAY4CnUQukssxT6jZCY'
+    '6sSDyZ3cq3TZTszE0iFBKYAXQdhCsoXJ8NK_2xAp7hO3Mi2BBjbO49mscH2EeAAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAKMvCPqXupQkBoOv3kpgEJqpju6Xq63'
+    '7q5HKomKPuN09wAAAAOQAAAAAABAAIAAAAAAAAEFgAAAAAAAQACAAAAAAAAAAZAAAAAAAEAA'
+    'gAAAAAAAAQFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUQAAAAGAAAAAAABAAIAA'
+    'AAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbi'
+    'NX4vOAUtEjBjPRRAAdoofmUKAhY9FngV6P5mgbJusLnAH-4iYHZSzcQe6fAYc27aYm3gdQyO'
+    'XW-MZsfXqL_HQUOPsKEDlj9n8Sh-LOeGddlc2ay7O0ZPDFM00n9-1kLDBZlw-zHyUowk3dAR'
+    'CRnOU8K_klM_Yun_pvWdp3F8RVinPhTH78kF8P2g3psJGoQ72_k5O-xjkQc=';
+
+const _frozenResumedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAQAAAACG7pb1XYcWVtnnG1lZzHl5Uiv'
+    'RPBpekjvxp6qUamvEqpBKYAXQdhCsoXJ8NK_2xAp7hO3Mi2BBjbO49mscH2EeAAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAKMvCPqXupQkBoOv3kpgEJqpju6Xq63'
+    '7q5HKomKPuN09wAAAASQAAAAAABAAIAAAAAAAAEHkAAAAAAAQACAAAAAAAABBpAAAAAAAEAA'
+    'gAAAAAAAAQYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAABAAIAA'
+    'AAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbi'
+    'NX4vOAUtEjBjPRRAAdoofmUKAhY9FngVkAAAAAAAQACAAAAAAAABBgAAAAEAAAABgdIlodNd'
+    'qTKZrV-1klAXdgXZkX--B30hzXsjLBMkKk3Gd8znvWfqfRtKVxTbElc6PyPTRh1foRX3Y6VY'
+    '1-kwewAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAAAywzUx0Vy0qXRMsNYCBwMvpfduygnmZfR1iAkPMTsIb411KqH0Ru3Y'
+    'B-l8QbUc1WZQyMIyPI5kDIPimcijKCEL';
+
+const _frozenReplacedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAUAAAADKUa5iTtfhjRhHm6HgnOqLdKr'
+    'cMUeq2D9Y90RygxrnKqiI_8VH8y31X2yfFQY-X5kcA9Rn_BnnARxRCt-qLc9MAAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAMj5alo_Jncfvde8oXxu6mtnu0hJJ-h'
+    'JJVGKZMV_7x4iQAAAAWQAAAAAABAAIAAAAAAAAEIkAAAAAAAQACAAAAAAAABBpAAAAAAAEAA'
+    'gAAAAAAAAQYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGQAAAAAABAAIAA'
+    'AAAAAAEGAAAAAQAAAAGB0iWh012pMpmtX7WSUBd2BdmRf74HfSHNeyMsEyQqTcZ3zOe9Z-p9'
+    'G0pXFNsSVzo_I9NGHV-hFfdjpVjX6TB7T6V_HIXj7StNhx5Ry0MvFZzvHdtsw5wKWp-vUl2q'
+    '2aSCe9hG1AZ9ex_vHEjKhnNDgSb9YEDUdgzAwV6u3W9lAoWRoPC9qV8tBZ47iKrMKN2MwLWS'
+    'oFE9h4oTfa-zpZrOrqpq5CjsjXW4k_cT7zl40-J66eRal6O_lt4TvKd61wQ=';

@@ -7,7 +7,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:pretty_qr_code/pretty_qr_code.dart';
 
 void main() {
-  testWidgets('固定 644B 恢复介质可完整渲染二维码并经用户确认', (tester) async {
+  testWidgets('固定 676B 恢复介质可完整渲染二维码并经用户确认', (tester) async {
     final harnessKey = GlobalKey<_ExportHarnessState>();
     await tester.pumpWidget(
       _testApp(
@@ -149,6 +149,13 @@ void main() {
       MobileRecoveryMediaExportResult.confirmed,
     );
   });
+
+  testWidgets('旧版 644B 恢复介质在进入导出页前被拒绝', (tester) async {
+    expect(
+      () => MobileRecoveryMediaExportPage(encryptedMedia: Uint8List(644)),
+      throwsArgumentError,
+    );
+  });
 }
 
 Widget _testApp(Widget home) {
@@ -162,7 +169,7 @@ Widget _testApp(Widget home) {
 
 Uint8List _encryptedMedia() {
   return Uint8List.fromList(
-    List<int>.generate(644, (index) => (index * 37 + 11) & 0xff),
+    List<int>.generate(676, (index) => (index * 37 + 11) & 0xff),
   );
 }
 
