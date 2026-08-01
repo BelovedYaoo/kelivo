@@ -22,13 +22,20 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(18)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(19)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
 #define KELIVO_INVALID_KEY_HANDLE UINT64_C(0)
-#define KELIVO_INSTALLATION_ROOT_PATH_MAX_SIZE ((size_t)(64 * 1024))
-#define KELIVO_INSTALLATION_ROOT_ENTRY_NAME_MAX_SIZE ((size_t)1024)
+#define KELIVO_MANAGED_ROOT_PATH_MAX_SIZE ((size_t)(64 * 1024))
+#define KELIVO_MANAGED_ROOT_ARGUMENT_MAX_SIZE ((size_t)1024)
+#define KELIVO_MANAGED_ROOT_INVALID_HANDLE UINT64_C(0)
+#define KELIVO_MANAGED_ROOT_SCOPE_INSTALLATION UINT32_C(1)
+#define KELIVO_MANAGED_ROOT_SCOPE_TEMPORARY UINT32_C(2)
+#define KELIVO_MANAGED_ROOT_OPERATION_RETIRE_PLAINTEXT_BACKUPS UINT32_C(1)
+#define KELIVO_MANAGED_ROOT_OPERATION_RETIRE_ATTACHMENT_STAGING UINT32_C(2)
+#define KELIVO_MANAGED_ROOT_OPERATION_RETIRE_PERSISTENT_LOGS UINT32_C(3)
+#define KELIVO_MANAGED_ROOT_OPERATION_WIPE_INSTALLATION_ROOT UINT32_C(4)
 
 #define KELIVO_STATUS_OK INT32_C(0)
 #define KELIVO_STATUS_NULL_POINTER INT32_C(1)
@@ -80,6 +87,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_RECOVERY_PASSPHRASE_INVALID INT32_C(47)
 #define KELIVO_STATUS_RECOVERY_HISTORY_INVALID INT32_C(48)
 #define KELIVO_STATUS_RECOVERY_HISTORY_AUTHENTICATION_FAILED INT32_C(49)
+#define KELIVO_STATUS_INVALID_MANAGED_ROOT_HANDLE INT32_C(50)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
@@ -98,7 +106,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_ATTACHMENT_CRYPTO (UINT64_C(1) << 7)
 #define KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING (UINT64_C(1) << 8)
 #define KELIVO_CAPABILITY_RECOVERY_MEDIA (UINT64_C(1) << 9)
-#define KELIVO_CAPABILITY_INSTALLATION_ROOT_WIPE (UINT64_C(1) << 10)
+#define KELIVO_CAPABILITY_MANAGED_ROOT_RETIREMENT (UINT64_C(1) << 10)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_ENTITY_KEY_MAX_SIZE ((size_t)2048)
@@ -270,19 +278,31 @@ KELIVO_CORE_API KelivoStatus kelivo_key_slot_delete(
 KELIVO_CORE_API KelivoStatus kelivo_key_slots_delete_all(void);
 
 /*
- * 擦除调用方指定安装根中的全部内容，仅保留 preserved_entry_name 对应的直属
- * 普通文件。路径和名称必须是 UTF-8；安装根必须是已存在的绝对非根路径，保留
- * 名称必须是单一目录项。实现会以 no-follow 原生句柄固定安装根与保留文件，
- * 拒绝链接、重解析点、跨挂载及类型替换，并在成功前完成文件和父目录持久化
- * 屏障。中途失败可能留下部分已擦除状态，调用方可用同一参数幂等重试。
- * Android 仅在应用 UID 沙箱、安装根独占锁及 openat2 约束均可用时开放；
- * Linux 与 Apple 平台明确返回 UNSUPPORTED_PLATFORM，且不得回退到路径递归删除。
+ * 固定一个受管根及其祖先身份并返回进程内不透明会话。scope 只允许安装根或
+ * 系统临时根；路径必须是 UTF-8 绝对非根路径。Windows 持有禁止删除共享的逐级
+ * 目录句柄；Android/Linux 持有逐级 dirfd 并在每次操作前后复核身份。Apple
+ * 在具备等价实现前返回 UNSUPPORTED_PLATFORM。成功句柄必须最终 close。
  */
-KELIVO_CORE_API KelivoStatus kelivo_installation_root_wipe(
+KELIVO_CORE_API KelivoStatus kelivo_managed_root_open(
+    uint32_t scope,
     const uint8_t *root_path_utf8,
     size_t root_path_length,
-    const uint8_t *preserved_entry_name_utf8,
-    size_t preserved_entry_name_length);
+    uint64_t *out_handle);
+
+/*
+ * 在已固定根内执行枚举操作。调用方不能传入任意相对路径：明文备份、附件
+ * staging 与持久日志操作要求 argument 为空；安装根擦除仅接受直属保留 marker
+ * 名称。实现拒绝链接、重解析点、跨挂载、硬链接、类型或身份替换，并在成功前
+ * 刷新文件和父目录。中途失败可用同一会话幂等重试，绝不回退到字符串递归。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_managed_root_execute(
+    uint64_t handle,
+    uint32_t operation,
+    const uint8_t *argument_utf8,
+    size_t argument_length);
+
+/* 关闭受管根会话；关闭后句柄永久失效。操作仍在途时返回 SLOT_IN_USE。 */
+KELIVO_CORE_API KelivoStatus kelivo_managed_root_close(uint64_t handle);
 
 /*
  * 关闭非零不透明句柄。句柄仅在当前进程内有效，关闭后永久失效且数值不得

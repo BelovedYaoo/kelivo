@@ -53,10 +53,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v18、恢复介质及受支持平台安装根擦除', () async {
+  test('能力门禁声明 ABI v19、恢复介质及受支持平台受管根退役', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 18);
+    expect(capabilities.abiVersion, 19);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -74,21 +74,17 @@ void main() {
       capabilities.supportsRecoveryMedia,
       Platform.isAndroid || Platform.isIOS,
     );
-    if (Platform.isWindows) {
-      expect(capabilities.supportsInstallationRootWipe, isTrue);
-    } else if (!Platform.isAndroid) {
-      expect(capabilities.supportsInstallationRootWipe, isFalse);
-    }
+    expect(
+      capabilities.supportsManagedRootRetirement,
+      Platform.isWindows || Platform.isAndroid || Platform.isLinux,
+    );
   });
 
   test('安装根擦除仅使用显式隔离根并精准保留完成标记', () async {
     final capabilities = await core.getCapabilities();
-    if (!capabilities.supportsInstallationRootWipe) {
+    if (!capabilities.supportsManagedRootRetirement) {
       await expectLater(
-        core.wipeInstallationRoot(
-          rootPath: 'capability-gated-test-root',
-          preservedEntryName: 'wipe-complete',
-        ),
+        core.openInstallationRoot('capability-gated-test-root'),
         throwsA(
           isA<KelivoSecureCoreException>().having(
             (error) => error.status,
@@ -103,6 +99,7 @@ void main() {
     final root = await Directory.systemTemp.createTemp(
       'kelivo-secure-core-root-wipe-',
     );
+    KelivoInstallationRootSession? session;
     try {
       final marker = File('${root.path}${Platform.pathSeparator}wipe-complete');
       await marker.writeAsString('done', flush: true);
@@ -112,19 +109,45 @@ void main() {
         '${nested.path}${Platform.pathSeparator}secret.bin',
       ).writeAsBytes(const <int>[1, 2, 3], flush: true);
 
-      await core.wipeInstallationRoot(
-        rootPath: root.path,
-        preservedEntryName: 'wipe-complete',
-      );
-      await core.wipeInstallationRoot(
-        rootPath: root.path,
-        preservedEntryName: 'wipe-complete',
-      );
+      session = await core.openInstallationRoot(root.path);
+      await session.wipeInstallationRoot(preservedEntryName: 'wipe-complete');
+      await session.wipeInstallationRoot(preservedEntryName: 'wipe-complete');
 
       final names = await root.list().map((entry) => entry.path).toList();
       expect(names, <String>[marker.path]);
       expect(await marker.readAsString(), 'done');
     } finally {
+      await session?.close();
+      if (await root.exists()) {
+        await root.delete(recursive: true);
+      }
+    }
+  });
+
+  test('系统临时根会话只退役固定明文备份白名单', () async {
+    final capabilities = await core.getCapabilities();
+    if (!capabilities.supportsManagedRootRetirement) return;
+    final root = await Directory.systemTemp.createTemp(
+      'kelivo-secure-core-backup-retirement-',
+    );
+    KelivoTemporaryRootSession? session;
+    try {
+      final retired = File(
+        '${root.path}${Platform.pathSeparator}_bk_settings.json',
+      );
+      final retained = File(
+        '${root.path}${Platform.pathSeparator}unrelated.txt',
+      );
+      await retired.writeAsString('secret', flush: true);
+      await retained.writeAsString('keep', flush: true);
+      session = await core.openTemporaryRoot(root.path);
+
+      await session.retirePlaintextBackups();
+
+      expect(await retired.exists(), isFalse);
+      expect(await retained.readAsString(), 'keep');
+    } finally {
+      await session?.close();
       if (await root.exists()) {
         await root.delete(recursive: true);
       }
