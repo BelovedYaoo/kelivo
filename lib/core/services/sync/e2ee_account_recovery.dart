@@ -944,6 +944,81 @@ typedef E2eeAccountRecoveryTokenFactory =
     CloudSyncAccountRecoveryToken Function();
 typedef E2eeAccountRecoveryClock = DateTime Function();
 
+final class E2eeAccountRecoveryCommitCoordinator {
+  factory E2eeAccountRecoveryCommitCoordinator({
+    required E2eeAccountRecoveryTransport transport,
+    required E2eeAccountRecoveryCheckpointPersistence checkpointPersistence,
+    E2eeAccountRecoveryClock? now,
+  }) {
+    return E2eeAccountRecoveryCommitCoordinator._(
+      transport,
+      checkpointPersistence,
+      now ?? _utcNow,
+    );
+  }
+
+  const E2eeAccountRecoveryCommitCoordinator._(
+    this._transport,
+    this._checkpointPersistence,
+    this._now,
+  );
+
+  final E2eeAccountRecoveryTransport _transport;
+  final E2eeAccountRecoveryCheckpointPersistence _checkpointPersistence;
+  final E2eeAccountRecoveryClock _now;
+
+  Future<E2eeAccountRecoveryCommitReceipt> commitPrepared() async {
+    final snapshot = await _checkpointPersistence.read();
+    if (snapshot == null) {
+      throw StateError('账户恢复 checkpoint 不存在');
+    }
+    final checkpoint = snapshot.checkpoint;
+    if (checkpoint.stage != E2eeAccountRecoveryStage.authorized) {
+      throw StateError('账户恢复 checkpoint 尚未授权');
+    }
+    final persistedReceipt = checkpoint.commitReceipt;
+    if (persistedReceipt != null) return persistedReceipt;
+    final prepared = checkpoint.preparedCommit;
+    if (prepared == null) {
+      throw StateError('账户恢复 checkpoint 尚未准备成员提交');
+    }
+    final expiresAt = checkpoint.recoveryTokenExpiresAt;
+    if (expiresAt == null || !_now().toUtc().isBefore(expiresAt)) {
+      throw const E2eeAccountRecoveryExpired();
+    }
+
+    final E2eeAccountRecoveryCommitReceipt receipt;
+    switch (prepared) {
+      case E2eeAccountRecoveryResumeCommit():
+        receipt = await _transport.commitRecoveryResume(
+          recoveryToken: checkpoint.recoveryToken,
+          request: prepared,
+        );
+      case E2eeAccountRecoveryReplacementCommit():
+        receipt = await _transport.commitRecoveryReplacement(
+          recoveryToken: checkpoint.recoveryToken,
+          request: prepared,
+        );
+    }
+    final committed = checkpoint.withCommitReceipt(receipt);
+    try {
+      final advanced = await _checkpointPersistence.advance(
+        expectedEnvelopeDigest: snapshot.envelopeDigest,
+        checkpoint: committed,
+      );
+      return advanced.checkpoint.commitReceipt!;
+    } on StateError {
+      final raced = await _checkpointPersistence.read();
+      final racedReceipt = raced?.checkpoint.commitReceipt;
+      if (racedReceipt != null &&
+          _sameAccountRecoveryCommitEffect(racedReceipt, receipt)) {
+        return racedReceipt;
+      }
+      rethrow;
+    }
+  }
+}
+
 final class E2eeAccountRecoveryAuthorizer {
   factory E2eeAccountRecoveryAuthorizer({
     required E2eeAccountRecoveryTransport transport,
@@ -1321,6 +1396,19 @@ final class E2eeAccountRecoveryAuthorizer {
     }
     throw const FormatException('账户恢复历史缺少数据源代 capsule');
   }
+}
+
+bool _sameAccountRecoveryCommitEffect(
+  E2eeAccountRecoveryCommitReceipt left,
+  E2eeAccountRecoveryCommitReceipt right,
+) {
+  return left.kind == right.kind &&
+      left.attemptId == right.attemptId &&
+      left.membershipOperationId == right.membershipOperationId &&
+      left.rekeyOperationId == right.rekeyOperationId &&
+      left.generation == right.generation &&
+      left.keyEpoch == right.keyEpoch &&
+      left.nextAction == right.nextAction;
 }
 
 bool _remoteStatusAllowsAction(

@@ -2,40 +2,28 @@
 
 ## 目标
 
-- 完成移动端账户恢复客户端闭环，桌面端不开放注册或初始化。
-- 以恢复介质中的 genesis 为唯一信任锚，完整验证冻结历史后才允许 Native 解封 capsule 并签署 proof。
-- 恢复私钥、ARK 和明文 nonce 不进入 Dart；所有失败关闭。
+- 完成移动端账户恢复客户端闭环；桌面端只允许登录。
+- 以恢复介质中的 genesis 为唯一信任锚；恢复私钥、ARK 和明文 nonce 不进入 Dart。
 
-## 当前进度
+## 已完成
 
-- 已从 `d697d4c0` 建立独立分支与 worktree。
-- 已完成授权前半程私有协调器：创建冻结 challenge、连续分页读取绑定历史、选择源代 capsule、调用 Native proof 边界、提交公开证明并接管恢复 key lease。
-- challenge、数据状态、恢复 token、授权回执均采用严格强类型；冻结投影或链头不一致、过期 challenge、错误 key epoch 均失败关闭。
-- 恢复口令在所有退出路径清零；Native 边界明确禁止恢复私钥、ARK 和明文 nonce 进入 Dart。
-- 服务端确认 challenge 请求将移除客户端不可知的三个 expected 字段，并由服务端原子冻结 current head；客户端未固化旧 wire。
-- 已在 API Issue #32 补充 challenge 启动循环依赖，并与服务端修复进程确认硬切方向。
-- 设备状态存储已增加独立 8192 字节上限的账户恢复 checkpoint 密文槽，支持原样重放、旧摘要到新密文的原子替换、摘要 CAS 删除，并随设备状态 tombstone 一并清理；替换回执丢失后重放同一新密文可确认成功。
-- checkpoint 使用固定二进制 v1 帧并由安装级本地槽认证密封，覆盖 `challenged -> proofReady -> authorized`；恢复 token 在磁盘上仅存在于密文载荷，编码临时字节主动清零，错误槽无法解开。
-- 首次创建和阶段推进的语义重放均在重新密封前比较规范明文状态，避免随机 nonce 导致相同 checkpoint 被误判为并发冲突；并发同值赢家也可由失败方复读确认。
-- authorized checkpoint 保留公开且已绑定 challenge/token 的 proof，进程重启后可与 Native 重新生成结果逐字比较并安全重放授权请求。
-- 授权协调器已接入加密 checkpoint：challenge 返回后先持久化 `challenged`，Native proof 生成后先持久化 `proofReady`，服务端授权回执校验后再持久化 `authorized`。
-- `proofReady` 重启会复用原 attempt/token，对 Native 重算 proof 做常数时间比较后重放授权；不一致时在发请求前失败关闭并释放 key lease。
-- 服务端稳定硬切 wire 已固定在 `60d6f93b5ec296293c1f7071ba9ccf5da9d67c00`；客户端不再接旧 challenge 预期链头字段。
-- 已由稳定 OpenAPI 通过生成命令引入账户恢复 API client，并完成 challenge、冻结历史与授权 transport；请求 bearer 由强类型 onboarding/recovery 联合显式选择，响应保持精确字段集校验。
-- `proofReady` 重启会先用密文 checkpoint 中的恢复 token 读取 `state/get`：只有服务端精确返回 token 尚不可用才继续 onboarding；已授权则校验安全 head/data state 与冻结 challenge 一致，先持久化 `authorized` 再改用 recovery bearer。网络或其他错误不回退。
-- 已接入 `recover-resume` / `recover-replace` 原子提交 transport：请求严格验证成员清单摘要、信封代次与 capsule/session 边界；回执绑定原 attempt、membership operation、rekey operation、代次与下一动作，重放不得宽松接收。
-- `state/get` 已覆盖 `authorized`、`resume-committed`、`replacement-committed` 和四种下一动作，并强制安全 head、数据代次、data-rekey phase 与动作组合一致；授权器只接管初始 `authorized`。
-- checkpoint 已硬切固定二进制 v3：`authorized -> prepared -> committed` 原子保存完整 resume/replacement 请求与严格绑定回执，支持最大成员清单与 replacement capsule 跨实例逐字恢复；恢复密文槽固定扩为 64 KiB，旧版本不迁移。
-- 验证：`flutter analyze lib test` 无问题；授权 5 项、恢复状态/提交协议 3 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 116 项 Flutter 测试通过。全仓 `flutter analyze` 仍被未安装开发依赖的 `mcp_client` 测试与 Workmanager Pigeon 输入阻断，与本次改动无关。
+- 稳定 OpenAPI wire 已接入 challenge、冻结历史、授权、状态查询和 resume/replacement 成员提交。
+- 授权协调器严格验证冻结历史与链头，持久化 `challenged -> proofReady -> authorized`，并支持授权回执丢失后安全接管。
+- checkpoint 已硬切固定二进制 v3，密文槽上限 64 KiB，可原子保存完整 prepared 请求和严格绑定的 committed 回执；旧版本不迁移。
+- 成员提交协调器只发送 checkpoint 中的 prepared 请求；成功回执先 CAS 持久化再返回，已 committed 本地短路，token 到期或响应失败时不改写 prepared，并可收敛同效并发回执。
+- 工作跟踪使用 Issue #49；服务端 challenge 修复记录在 API Issue #32。
+
+## 剩余依赖
+
+- 实现 Native ABI19 单次 proof 事务和 resume/replacement 准备；不得增加 Dart 降级路径。
+- 将成员提交后的 data-rekey 执行器与同一耐久 checkpoint 串联，完成中断续传和最终清理。
+- 最后接入 Android/iOS 二维码与恢复文件入口；Native 生产适配器未就绪前，UI 不得宣称恢复可用。
 
 ## 协作边界
 
-- 不部署，不触碰默认安全槽。
-- 不修改原生 ABI18 擦除实现；Native 账户恢复 proof ABI 未就绪时只保留明确依赖，不加 Dart fallback。
-- 测试缝：账户恢复协调器公开命令/状态流、移动端恢复入口公开交互。
+- 不部署，不触碰默认安全槽，不修改 ABI18 擦除实现。
 
-## 后续依赖
+## 验证
 
-- 继续接入 resume/replacement 的 Native 准备与后续 data-rekey；成员 commit 的网络协调器及 data-rekey 回执还需继续推进同一耐久 checkpoint。
-- ABI18 集成后以 ABI19 实现单次 Native 恢复 proof 事务；当前没有生产适配器，因此 UI 不得宣称恢复可用。
-- 继续实现加密 checkpoint、重启/过期接管、op4/op5 与工作区耐久提交，再接 Android/iOS 二维码和恢复文件入口。
+- `flutter analyze lib test`：通过。
+- 安全核心测试包装器运行 `e2ee_account_recovery_authorizer_test.dart`：11 项全部通过。

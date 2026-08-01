@@ -389,6 +389,351 @@ void main() {
       E2eeAccountRecoveryStage.authorized,
     );
   });
+
+  test('成员提交协调器只发送已持久化 replacement 并先落回执', () async {
+    final callOrder = <String>[];
+    final prepared = _preparedReplacementCheckpoint();
+    final request =
+        prepared.preparedCommit as E2eeAccountRecoveryReplacementCommit;
+    final receipt = _replacementReceipt(
+      request,
+      E2eeAccountRecoveryCommitResult.committed,
+    );
+    final persistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: prepared,
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: prepared.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[],
+      callOrder: callOrder,
+      replacementReceipt: receipt,
+    );
+    final coordinator = E2eeAccountRecoveryCommitCoordinator(
+      transport: transport,
+      checkpointPersistence: persistence,
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+
+    final committed = await coordinator.commitPrepared();
+
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'commit:replacement',
+      'checkpoint:authorized',
+    ]);
+    expect(transport.receivedReplacementRequest, same(request));
+    expect(committed.membershipOperationId, request.membership.operationId);
+    expect(
+      persistence.current?.nextAction,
+      E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+    );
+    expect(persistence.current?.commitReceipt?.result, committed.result);
+  });
+
+  test('成员提交协调器使用持久化 rekeyOperationId 提交 resume', () async {
+    final callOrder = <String>[];
+    final prepared = _preparedResumeCheckpoint();
+    final request = prepared.preparedCommit as E2eeAccountRecoveryResumeCommit;
+    final receipt = _resumeReceipt(request);
+    final persistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: prepared,
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: prepared.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[],
+      callOrder: callOrder,
+      resumeReceipt: receipt,
+    );
+    final coordinator = E2eeAccountRecoveryCommitCoordinator(
+      transport: transport,
+      checkpointPersistence: persistence,
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+
+    final committed = await coordinator.commitPrepared();
+
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'commit:resume',
+      'checkpoint:authorized',
+    ]);
+    expect(transport.receivedResumeRequest, same(request));
+    expect(committed.rekeyOperationId, request.rekeyOperationId);
+    expect(
+      persistence.current?.nextAction,
+      E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    );
+  });
+
+  test('成员提交协调器发现已持久化回执时不重复触网', () async {
+    final callOrder = <String>[];
+    final prepared = _preparedReplacementCheckpoint();
+    final request =
+        prepared.preparedCommit as E2eeAccountRecoveryReplacementCommit;
+    final receipt = _replacementReceipt(
+      request,
+      E2eeAccountRecoveryCommitResult.replayed,
+    );
+    final persistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: prepared.withCommitReceipt(receipt),
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: prepared.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[],
+      callOrder: callOrder,
+    );
+    final coordinator = E2eeAccountRecoveryCommitCoordinator(
+      transport: transport,
+      checkpointPersistence: persistence,
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+
+    final committed = await coordinator.commitPrepared();
+
+    expect(callOrder, <String>['checkpoint:read']);
+    expect(committed.result, E2eeAccountRecoveryCommitResult.replayed);
+    expect(transport.receivedReplacementRequest, isNull);
+  });
+
+  test('成员提交协调器在恢复 token 到期时保留 prepared 且不触网', () async {
+    final callOrder = <String>[];
+    final prepared = _preparedReplacementCheckpoint();
+    final persistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: prepared,
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: prepared.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[],
+      callOrder: callOrder,
+    );
+    final coordinator = E2eeAccountRecoveryCommitCoordinator(
+      transport: transport,
+      checkpointPersistence: persistence,
+      now: () => DateTime.utc(2026, 8, 1, 2),
+    );
+
+    await expectLater(
+      coordinator.commitPrepared(),
+      throwsA(isA<E2eeAccountRecoveryExpired>()),
+    );
+
+    expect(callOrder, <String>['checkpoint:read']);
+    expect(persistence.current?.preparedCommit, same(prepared.preparedCommit));
+    expect(persistence.current?.commitReceipt, isNull);
+    expect(transport.receivedReplacementRequest, isNull);
+  });
+
+  test('成员提交响应失败时保留 prepared 供原样重放', () async {
+    final callOrder = <String>[];
+    final prepared = _preparedReplacementCheckpoint();
+    final failure = StateError('模拟成员提交响应丢失');
+    final persistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: prepared,
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: prepared.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[],
+      callOrder: callOrder,
+      replacementError: failure,
+    );
+    final coordinator = E2eeAccountRecoveryCommitCoordinator(
+      transport: transport,
+      checkpointPersistence: persistence,
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+
+    await expectLater(coordinator.commitPrepared(), throwsA(same(failure)));
+
+    expect(callOrder, <String>['checkpoint:read', 'commit:replacement']);
+    expect(persistence.current?.preparedCommit, same(prepared.preparedCommit));
+    expect(persistence.current?.commitReceipt, isNull);
+  });
+
+  test('成员提交 CAS 竞争时接受同效 replayed 回执', () async {
+    final callOrder = <String>[];
+    final prepared = _preparedReplacementCheckpoint();
+    final request =
+        prepared.preparedCommit as E2eeAccountRecoveryReplacementCommit;
+    final committedReceipt = _replacementReceipt(
+      request,
+      E2eeAccountRecoveryCommitResult.committed,
+    );
+    final replayedReceipt = _replacementReceipt(
+      request,
+      E2eeAccountRecoveryCommitResult.replayed,
+    );
+    final persistence = _MemoryCheckpointPersistence(
+      callOrder,
+      initialCheckpoint: prepared,
+      concurrentAdvanceCheckpoint: prepared.withCommitReceipt(replayedReceipt),
+    );
+    final transport = _FakeRecoveryTransport(
+      challenge: prepared.challenge,
+      historyPages: <CloudSyncAccountSecurityHistoryPage>[],
+      callOrder: callOrder,
+      replacementReceipt: committedReceipt,
+    );
+    final coordinator = E2eeAccountRecoveryCommitCoordinator(
+      transport: transport,
+      checkpointPersistence: persistence,
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+
+    final committed = await coordinator.commitPrepared();
+
+    expect(callOrder, <String>[
+      'checkpoint:read',
+      'commit:replacement',
+      'checkpoint:authorized',
+      'checkpoint:read',
+    ]);
+    expect(committed.result, E2eeAccountRecoveryCommitResult.replayed);
+    expect(persistence.current?.commitReceipt?.result, committed.result);
+  });
+}
+
+E2eeAccountRecoveryCheckpoint _preparedResumeCheckpoint() {
+  final ready = _readyRecoveryFixture().challenge;
+  final challenge = E2eeAccountRecoveryChallenge(
+    attemptId: ready.attemptId,
+    requestDigest: ready.requestDigest,
+    challengeFrame: ready.challengeFrame,
+    sealedNonce: ready.sealedNonce,
+    securityGeneration: ready.securityGeneration,
+    keyEpoch: ready.keyEpoch + 1,
+    membershipManifestDigest: ready.membershipManifestDigest,
+    recoveryPublicKeyVersion: ready.recoveryPublicKeyVersion,
+    recoveryPublicKey: ready.recoveryPublicKey,
+    recoveryCapsuleVersion: ready.recoveryCapsuleVersion,
+    recoveryCapsule: ready.recoveryCapsule,
+    recoveryCapsuleDigest: ready.recoveryCapsuleDigest,
+    dataState: E2eeAccountRecoveryDataState.rekeyPending(
+      dataGeneration: ready.dataState.dataGeneration,
+      dataKeyEpoch: ready.dataState.dataKeyEpoch,
+      operationId: _uuid(8),
+      targetKeyEpoch: ready.dataState.dataKeyEpoch + 1,
+    ),
+    expiresAt: ready.expiresAt,
+  );
+  final authorized =
+      E2eeAccountRecoveryCheckpoint.challenged(
+            expectedDeviceId: _uuid(5),
+            recoveryToken: CloudSyncAccountRecoveryToken.generate(),
+            challenge: challenge,
+          )
+          .withProof(
+            nonceProof: _bytes(32, 0x71),
+            trustSignature: _bytes(64, 0x72),
+          )
+          .authorized(
+            recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
+            nextAction: E2eeAccountRecoveryNextAction.recoverResume,
+          );
+  final nextManifest = _bytes(444, 0x73);
+  return authorized.withPreparedCommit(
+    E2eeAccountRecoveryResumeCommit(
+      attemptId: challenge.attemptId,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: challenge.securityGeneration,
+        expectedKeyEpoch: challenge.keyEpoch,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              challenge.membershipManifestDigest,
+            ),
+        operationId: _uuid(9),
+        nextMembershipManifest: nextManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(_digest(nextManifest)),
+        envelope: E2eeAccountRecoveryEnvelope(
+          envelopeVersion: 1,
+          keyEpoch: challenge.keyEpoch,
+          accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0x74),
+        ),
+      ),
+      rekeyOperationId: challenge.dataState.operationId!,
+    ),
+  );
+}
+
+E2eeAccountRecoveryCheckpoint _preparedReplacementCheckpoint() {
+  final fixture = _readyRecoveryFixture();
+  final authorized =
+      E2eeAccountRecoveryCheckpoint.challenged(
+            expectedDeviceId: _uuid(5),
+            recoveryToken: CloudSyncAccountRecoveryToken.generate(),
+            challenge: fixture.challenge,
+          )
+          .withProof(
+            nonceProof: _bytes(32, 0x81),
+            trustSignature: _bytes(64, 0x82),
+          )
+          .authorized(
+            recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
+            nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
+          );
+  final nextManifest = _bytes(444, 0x91);
+  return authorized.withPreparedCommit(
+    E2eeAccountRecoveryReplacementCommit(
+      attemptId: fixture.challenge.attemptId,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: fixture.challenge.securityGeneration,
+        expectedKeyEpoch: fixture.challenge.keyEpoch,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              fixture.challenge.membershipManifestDigest,
+            ),
+        operationId: _uuid(6),
+        nextMembershipManifest: nextManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(_digest(nextManifest)),
+        envelope: E2eeAccountRecoveryEnvelope(
+          envelopeVersion: 1,
+          keyEpoch: fixture.challenge.keyEpoch + 1,
+          accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0x92),
+        ),
+      ),
+      nextRecoveryCapsuleVersion: fixture.challenge.recoveryCapsuleVersion + 1,
+      nextRecoveryCapsule: _bytes(156, 0x93),
+      completionSessionId: _uuid(7),
+      completionSessionToken: CloudSyncFullSessionToken.generate(),
+    ),
+  );
+}
+
+E2eeAccountRecoveryCommitReceipt _replacementReceipt(
+  E2eeAccountRecoveryReplacementCommit request,
+  E2eeAccountRecoveryCommitResult result,
+) {
+  return E2eeAccountRecoveryCommitReceipt(
+    result: result,
+    kind: E2eeAccountRecoveryCommitKind.replacement,
+    attemptId: request.attemptId,
+    membershipOperationId: request.membership.operationId,
+    rekeyOperationId: request.membership.operationId,
+    generation: request.membership.expectedGeneration + 1,
+    keyEpoch: request.membership.expectedKeyEpoch + 1,
+    nextAction: E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+  );
+}
+
+E2eeAccountRecoveryCommitReceipt _resumeReceipt(
+  E2eeAccountRecoveryResumeCommit request,
+) {
+  return E2eeAccountRecoveryCommitReceipt(
+    result: E2eeAccountRecoveryCommitResult.committed,
+    kind: E2eeAccountRecoveryCommitKind.resume,
+    attemptId: request.attemptId,
+    membershipOperationId: request.membership.operationId,
+    rekeyOperationId: request.rekeyOperationId,
+    generation: request.membership.expectedGeneration + 1,
+    keyEpoch: request.membership.expectedKeyEpoch,
+    nextAction: E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+  );
 }
 
 ({
@@ -521,16 +866,24 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
     required this.historyPages,
     required this.callOrder,
     this.authorizedState,
+    this.resumeReceipt,
+    this.replacementReceipt,
+    this.replacementError,
   });
 
   final E2eeAccountRecoveryChallenge challenge;
   final List<CloudSyncAccountSecurityHistoryPage> historyPages;
   final List<String> callOrder;
   final E2eeAccountRecoveryAuthorizedState? authorizedState;
+  final E2eeAccountRecoveryCommitReceipt? resumeReceipt;
+  final E2eeAccountRecoveryCommitReceipt? replacementReceipt;
+  final Object? replacementError;
   Uint8List? receivedNonceProof;
   Uint8List? receivedTrustSignature;
   CloudSyncAccountRecoveryToken? receivedRecoveryToken;
   String? receivedHistoryBearer;
+  E2eeAccountRecoveryResumeCommit? receivedResumeRequest;
+  E2eeAccountRecoveryReplacementCommit? receivedReplacementRequest;
 
   @override
   Future<E2eeAccountRecoveryAuthorizedState> getAuthorizedState({
@@ -594,16 +947,26 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
   Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryResume({
     required CloudSyncAccountRecoveryToken recoveryToken,
     required E2eeAccountRecoveryResumeCommit request,
-  }) {
-    throw StateError('授权测试不应提交恢复接续');
+  }) async {
+    callOrder.add('commit:resume');
+    receivedResumeRequest = request;
+    final receipt = resumeReceipt;
+    if (receipt == null) throw StateError('授权测试不应提交恢复接续');
+    return receipt;
   }
 
   @override
   Future<E2eeAccountRecoveryCommitReceipt> commitRecoveryReplacement({
     required CloudSyncAccountRecoveryToken recoveryToken,
     required E2eeAccountRecoveryReplacementCommit request,
-  }) {
-    throw StateError('授权测试不应提交恢复替换');
+  }) async {
+    callOrder.add('commit:replacement');
+    receivedReplacementRequest = request;
+    final error = replacementError;
+    if (error != null) throw error;
+    final receipt = replacementReceipt;
+    if (receipt == null) throw StateError('授权测试不应提交恢复替换');
+    return receipt;
   }
 }
 
@@ -670,6 +1033,7 @@ final class _MemoryCheckpointPersistence
   _MemoryCheckpointPersistence(
     this.callOrder, {
     E2eeAccountRecoveryCheckpoint? initialCheckpoint,
+    this.concurrentAdvanceCheckpoint,
   }) : _snapshot = initialCheckpoint == null
            ? null
            : E2eeAccountRecoveryCheckpointSnapshot(
@@ -678,6 +1042,7 @@ final class _MemoryCheckpointPersistence
              );
 
   final List<String> callOrder;
+  final E2eeAccountRecoveryCheckpoint? concurrentAdvanceCheckpoint;
   E2eeAccountRecoveryCheckpointSnapshot? _snapshot;
 
   E2eeAccountRecoveryCheckpoint? get current => _snapshot?.checkpoint;
@@ -707,6 +1072,14 @@ final class _MemoryCheckpointPersistence
     required E2eeAccountRecoveryCheckpoint checkpoint,
   }) async {
     callOrder.add('checkpoint:${checkpoint.stage.name}');
+    final concurrent = concurrentAdvanceCheckpoint;
+    if (concurrent != null) {
+      _snapshot = E2eeAccountRecoveryCheckpointSnapshot(
+        checkpoint: concurrent,
+        envelopeDigest: _bytes(32, 0x94),
+      );
+      throw StateError('模拟 checkpoint CAS 竞争');
+    }
     final snapshot = E2eeAccountRecoveryCheckpointSnapshot(
       checkpoint: checkpoint,
       envelopeDigest: _bytes(
