@@ -124,6 +124,208 @@ void main() {
     expect(passphrase, everyElement(0));
   });
 
+  test('已轮换且数据就绪时仍向 Native 提供最近轮换前驱 capsule', () async {
+    final sourceCapsule = _bytes(156, 0x41);
+    final currentCapsule = _bytes(156, 0x51);
+    final sourceManifest = _bytes(444, 0x11);
+    final currentManifest = _bytes(444, 0x21);
+    final challenge = E2eeAccountRecoveryChallenge(
+      attemptId: _uuid(1),
+      requestDigest: _bytes(32, 0x31),
+      challengeFrame: _bytes(316, 0x32),
+      sealedNonce: _bytes(100, 0x33),
+      securityGeneration: 2,
+      keyEpoch: 2,
+      membershipManifestDigest: _digest(currentManifest),
+      recoveryPublicKeyVersion: 1,
+      recoveryPublicKey: _bytes(32, 0x34),
+      recoveryCapsuleVersion: 2,
+      recoveryCapsule: currentCapsule,
+      recoveryCapsuleDigest: _digest(currentCapsule),
+      dataState: E2eeAccountRecoveryDataState.ready(
+        dataGeneration: 8,
+        dataKeyEpoch: 2,
+      ),
+      expiresAt: DateTime.utc(2026, 8, 1, 1),
+    );
+    final projection = CloudSyncAccountSecurityCurrentProjection(
+      generation: 2,
+      keyEpoch: 2,
+      dataRekeyPhase: CloudSyncDataRekeyPhase.ready,
+      membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+        _digest(currentManifest),
+      ),
+      recoveryPublicKeyVersion: 1,
+      recoveryPublicKey: challenge.recoveryPublicKey,
+      recoveryCapsuleVersion: 2,
+      updatedAt: DateTime.utc(2026, 8, 1),
+    );
+    final callOrder = <String>[];
+    final proofCore = _FakeRecoveryProofCore(callOrder);
+    final authorizer = E2eeAccountRecoveryAuthorizer(
+      transport: _FakeRecoveryTransport(
+        challenge: challenge,
+        historyPages: <CloudSyncAccountSecurityHistoryPage>[
+          _historyPage(
+            afterGeneration: 0,
+            item: _historyItem(
+              generation: 1,
+              keyEpoch: 1,
+              manifest: sourceManifest,
+              capsule: sourceCapsule,
+              operationId: _uuid(2),
+            ),
+            currentProjection: projection,
+          ),
+          _historyPage(
+            afterGeneration: 1,
+            item: _historyItem(
+              generation: 2,
+              keyEpoch: 2,
+              manifest: currentManifest,
+              capsule: currentCapsule,
+              operationId: _uuid(3),
+            ),
+            currentProjection: projection,
+          ),
+        ],
+        callOrder: callOrder,
+      ),
+      proofCore: proofCore,
+      checkpointPersistence: _MemoryCheckpointPersistence(callOrder),
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => _uuid(1),
+      recoveryTokenFactory: CloudSyncAccountRecoveryToken.generate,
+      now: () => DateTime.utc(2026, 8, 1),
+    );
+
+    final authorized = await authorizer.authorize(
+      onboardingToken: CloudSyncOnboardingToken.parse(
+        'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+      ),
+      expectedDeviceId: _uuid(5),
+      recoveryMedia: _bytes(644, 0x73),
+      recoveryPassphrase: Uint8List.fromList(
+        utf8.encode('correct horse battery'),
+      ),
+    );
+
+    expect(proofCore.receivedCurrentCapsule, currentCapsule);
+    expect(proofCore.receivedSourceCapsule, sourceCapsule);
+    expect(authorized.nextAction, E2eeAccountRecoveryNextAction.recoverReplace);
+    await authorized.keyLease.close();
+  });
+
+  test('已轮换历史缺少相邻前驱时不进入 Native', () async {
+    final fixture = _rotatedReadyFixture(<CloudSyncAccountSecurityHistoryItem>[
+      _historyItem(
+        generation: 1,
+        keyEpoch: 2,
+        manifest: _bytes(444, 0x21),
+        capsule: _bytes(156, 0x51),
+        capsuleVersion: 2,
+        operationId: _uuid(2),
+      ),
+    ]);
+
+    await expectLater(
+      fixture.authorize(),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          '账户恢复历史缺少轮换前驱 capsule',
+        ),
+      ),
+    );
+
+    expect(fixture.callOrder, isNot(contains('native')));
+  });
+
+  test('已轮换历史存在多个相邻前驱时不进入 Native', () async {
+    final fixture = _rotatedReadyFixture(<CloudSyncAccountSecurityHistoryItem>[
+      _historyItem(
+        generation: 1,
+        keyEpoch: 1,
+        manifest: _bytes(444, 0x11),
+        capsule: _bytes(156, 0x41),
+        capsuleVersion: 1,
+        operationId: _uuid(2),
+      ),
+      _historyItem(
+        generation: 2,
+        keyEpoch: 2,
+        manifest: _bytes(444, 0x21),
+        capsule: _bytes(156, 0x51),
+        capsuleVersion: 2,
+        operationId: _uuid(3),
+      ),
+      _historyItem(
+        generation: 3,
+        keyEpoch: 1,
+        manifest: _bytes(444, 0x31),
+        capsule: _bytes(156, 0x41),
+        capsuleVersion: 1,
+        operationId: _uuid(4),
+      ),
+      _historyItem(
+        generation: 4,
+        keyEpoch: 2,
+        manifest: _bytes(444, 0x41),
+        capsule: _bytes(156, 0x51),
+        capsuleVersion: 2,
+        operationId: _uuid(5),
+      ),
+    ]);
+
+    await expectLater(
+      fixture.authorize(),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          '账户恢复历史存在多个轮换前驱',
+        ),
+      ),
+    );
+
+    expect(fixture.callOrder, isNot(contains('native')));
+  });
+
+  test('已轮换历史的前驱 capsule 绑定错误时不进入 Native', () async {
+    final fixture = _rotatedReadyFixture(<CloudSyncAccountSecurityHistoryItem>[
+      _historyItem(
+        generation: 1,
+        keyEpoch: 1,
+        manifest: _bytes(444, 0x11),
+        capsule: _bytes(156, 0x41),
+        capsuleVersion: 7,
+        operationId: _uuid(2),
+      ),
+      _historyItem(
+        generation: 2,
+        keyEpoch: 2,
+        manifest: _bytes(444, 0x21),
+        capsule: _bytes(156, 0x51),
+        capsuleVersion: 2,
+        operationId: _uuid(3),
+      ),
+    ]);
+
+    await expectLater(
+      fixture.authorize(),
+      throwsA(
+        isA<FormatException>().having(
+          (error) => error.message,
+          'message',
+          '账户恢复轮换前驱 capsule 绑定无效',
+        ),
+      ),
+    );
+
+    expect(fixture.callOrder, isNot(contains('native')));
+  });
+
   test('冻结历史投影与 challenge 不一致时不进入 Native', () async {
     final challengeManifest = _bytes(444, 0x11);
     final serverManifest = _bytes(444, 0x12);
@@ -741,21 +943,23 @@ E2eeAccountRecoveryCommitReceipt _resumeReceipt(
   CloudSyncAccountSecurityHistoryPage historyPage,
 })
 _readyRecoveryFixture() {
-  final manifest = _bytes(444, 0x21);
-  final capsule = _bytes(156, 0x51);
+  final sourceManifest = _bytes(444, 0x11);
+  final sourceCapsule = _bytes(156, 0x41);
+  final currentManifest = _bytes(444, 0x21);
+  final currentCapsule = _bytes(156, 0x51);
   final challenge = E2eeAccountRecoveryChallenge(
     attemptId: _uuid(1),
     requestDigest: _bytes(32, 0x31),
     challengeFrame: _bytes(316, 0x32),
     sealedNonce: _bytes(100, 0x33),
-    securityGeneration: 1,
+    securityGeneration: 2,
     keyEpoch: 2,
-    membershipManifestDigest: _digest(manifest),
+    membershipManifestDigest: _digest(currentManifest),
     recoveryPublicKeyVersion: 1,
     recoveryPublicKey: _bytes(32, 0x34),
-    recoveryCapsuleVersion: 1,
-    recoveryCapsule: capsule,
-    recoveryCapsuleDigest: _digest(capsule),
+    recoveryCapsuleVersion: 2,
+    recoveryCapsule: currentCapsule,
+    recoveryCapsuleDigest: _digest(currentCapsule),
     dataState: E2eeAccountRecoveryDataState.ready(
       dataGeneration: 7,
       dataKeyEpoch: 2,
@@ -763,29 +967,41 @@ _readyRecoveryFixture() {
     expiresAt: DateTime.utc(2026, 8, 1, 1),
   );
   final projection = CloudSyncAccountSecurityCurrentProjection(
-    generation: 1,
+    generation: 2,
     keyEpoch: 2,
     dataRekeyPhase: CloudSyncDataRekeyPhase.ready,
     membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
-      _digest(manifest),
+      _digest(currentManifest),
     ),
     recoveryPublicKeyVersion: 1,
     recoveryPublicKey: challenge.recoveryPublicKey,
-    recoveryCapsuleVersion: 1,
+    recoveryCapsuleVersion: 2,
     updatedAt: DateTime.utc(2026, 8, 1),
   );
   return (
     challenge: challenge,
-    historyPage: _historyPage(
+    historyPage: CloudSyncAccountSecurityHistoryPage(
+      items: <CloudSyncAccountSecurityHistoryItem>[
+        _historyItem(
+          generation: 1,
+          keyEpoch: 1,
+          manifest: sourceManifest,
+          capsule: sourceCapsule,
+          operationId: _uuid(2),
+        ),
+        _historyItem(
+          generation: 2,
+          keyEpoch: 2,
+          manifest: currentManifest,
+          capsule: currentCapsule,
+          operationId: _uuid(3),
+        ),
+      ],
       afterGeneration: 0,
-      item: _historyItem(
-        generation: 1,
-        keyEpoch: 2,
-        manifest: manifest,
-        capsule: capsule,
-        operationId: _uuid(2),
-      ),
-      currentProjection: projection,
+      nextAfterGeneration: 2,
+      pageSize: 2,
+      hasMore: false,
+      currentState: projection,
     ),
   );
 }
@@ -797,7 +1013,7 @@ CloudSyncAccountSecurityState _securityStateForFixture(
   })
   fixture,
 ) {
-  final head = fixture.historyPage.items.single;
+  final head = fixture.historyPage.items.last;
   return CloudSyncAccountSecurityState(
     generation: head.generation,
     keyEpoch: head.keyEpoch,
@@ -842,6 +1058,7 @@ CloudSyncAccountSecurityHistoryItem _historyItem({
   required int keyEpoch,
   required Uint8List manifest,
   required Uint8List capsule,
+  int? capsuleVersion,
   required String operationId,
 }) {
   return CloudSyncAccountSecurityHistoryItem(
@@ -853,11 +1070,95 @@ CloudSyncAccountSecurityHistoryItem _historyItem({
     ),
     recoveryPublicKeyVersion: 1,
     recoveryPublicKey: _bytes(32, 0x34),
-    recoveryCapsuleVersion: generation,
+    recoveryCapsuleVersion: capsuleVersion ?? generation,
     recoveryCapsule: capsule,
     operationId: operationId,
     committedAt: DateTime.utc(2026, 8, 1),
   );
+}
+
+_RotatedReadyFixture _rotatedReadyFixture(
+  List<CloudSyncAccountSecurityHistoryItem> history,
+) {
+  final head = history.last;
+  final projection = CloudSyncAccountSecurityCurrentProjection(
+    generation: head.generation,
+    keyEpoch: head.keyEpoch,
+    dataRekeyPhase: CloudSyncDataRekeyPhase.ready,
+    membershipManifestDigest: head.membershipManifestDigest,
+    recoveryPublicKeyVersion: head.recoveryPublicKeyVersion,
+    recoveryPublicKey: head.recoveryPublicKey,
+    recoveryCapsuleVersion: head.recoveryCapsuleVersion,
+    updatedAt: DateTime.utc(2026, 8, 1),
+  );
+  final challenge = E2eeAccountRecoveryChallenge(
+    attemptId: _uuid(1),
+    requestDigest: _bytes(32, 0x31),
+    challengeFrame: _bytes(316, 0x32),
+    sealedNonce: _bytes(100, 0x33),
+    securityGeneration: head.generation,
+    keyEpoch: head.keyEpoch,
+    membershipManifestDigest: head.membershipManifestDigest.bytes,
+    recoveryPublicKeyVersion: head.recoveryPublicKeyVersion,
+    recoveryPublicKey: head.recoveryPublicKey,
+    recoveryCapsuleVersion: head.recoveryCapsuleVersion,
+    recoveryCapsule: head.recoveryCapsule,
+    recoveryCapsuleDigest: _digest(head.recoveryCapsule),
+    dataState: E2eeAccountRecoveryDataState.ready(
+      dataGeneration: 8,
+      dataKeyEpoch: head.keyEpoch,
+    ),
+    expiresAt: DateTime.utc(2026, 8, 1, 1),
+  );
+  final callOrder = <String>[];
+  final transport = _FakeRecoveryTransport(
+    challenge: challenge,
+    historyPages: <CloudSyncAccountSecurityHistoryPage>[
+      for (final item in history)
+        _historyPage(
+          afterGeneration: item.generation - 1,
+          item: item,
+          currentProjection: projection,
+        ),
+    ],
+    callOrder: callOrder,
+  );
+  final proofCore = _FakeRecoveryProofCore(callOrder);
+  return _RotatedReadyFixture(
+    authorizer: E2eeAccountRecoveryAuthorizer(
+      transport: transport,
+      proofCore: proofCore,
+      checkpointPersistence: _MemoryCheckpointPersistence(callOrder),
+      serviceOriginSha256: _bytes(32, 0x61),
+      attemptIdFactory: () => _uuid(1),
+      recoveryTokenFactory: CloudSyncAccountRecoveryToken.generate,
+      now: () => DateTime.utc(2026, 8, 1),
+    ),
+    callOrder: callOrder,
+  );
+}
+
+final class _RotatedReadyFixture {
+  const _RotatedReadyFixture({
+    required this.authorizer,
+    required this.callOrder,
+  });
+
+  final E2eeAccountRecoveryAuthorizer authorizer;
+  final List<String> callOrder;
+
+  Future<E2eeAuthorizedAccountRecovery> authorize() {
+    return authorizer.authorize(
+      onboardingToken: CloudSyncOnboardingToken.parse(
+        'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
+      ),
+      expectedDeviceId: _uuid(5),
+      recoveryMedia: _bytes(644, 0x73),
+      recoveryPassphrase: Uint8List.fromList(
+        utf8.encode('correct horse battery'),
+      ),
+    );
+  }
 }
 
 final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {

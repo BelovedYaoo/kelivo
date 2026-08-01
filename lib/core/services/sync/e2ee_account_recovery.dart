@@ -1385,16 +1385,35 @@ final class E2eeAccountRecoveryAuthorizer {
     E2eeAccountRecoveryChallenge challenge,
     List<CloudSyncAccountSecurityHistoryItem> history,
   ) {
-    if (challenge.dataState.phase == E2eeAccountRecoveryDataPhase.ready) {
+    if (challenge.keyEpoch == 1) {
       return null;
     }
-    for (var index = history.length - 1; index >= 0; index--) {
-      final item = history[index];
-      if (item.keyEpoch == challenge.dataState.dataKeyEpoch) {
-        return Uint8List.fromList(item.recoveryCapsule);
+
+    final sourceKeyEpoch = challenge.keyEpoch - 1;
+    CloudSyncAccountSecurityHistoryItem? source;
+    for (var index = 0; index < history.length - 1; index++) {
+      final candidate = history[index];
+      final successor = history[index + 1];
+      if (candidate.keyEpoch == sourceKeyEpoch &&
+          successor.keyEpoch == challenge.keyEpoch) {
+        if (source != null) {
+          throw const FormatException('账户恢复历史存在多个轮换前驱');
+        }
+        source = candidate;
       }
     }
-    throw const FormatException('账户恢复历史缺少数据源代 capsule');
+    if (source == null) {
+      throw const FormatException('账户恢复历史缺少轮换前驱 capsule');
+    }
+    if (source.recoveryPublicKeyVersion != challenge.recoveryPublicKeyVersion ||
+        !_sameBytes(source.recoveryPublicKey, challenge.recoveryPublicKey) ||
+        source.recoveryCapsuleVersion == 0x7fffffff ||
+        source.recoveryCapsuleVersion + 1 != challenge.recoveryCapsuleVersion) {
+      throw const FormatException('账户恢复轮换前驱 capsule 绑定无效');
+    }
+
+    // 外层字段只能用于无歧义选路，capsule 摘要必须由 Native 对签名历史验证。
+    return Uint8List.fromList(source.recoveryCapsule);
   }
 }
 

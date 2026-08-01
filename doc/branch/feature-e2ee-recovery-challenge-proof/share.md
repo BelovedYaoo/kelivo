@@ -6,5 +6,6 @@
 - 已验证：protocol 完整测试（66 个单测、1 个 doctest、4 个 compile-fail）通过；Native 全量测试在显式本地临时目录下连续两次 84/84 通过；protocol/native host 严格 Clippy 通过；Android 3 个、Linux 2 个、iOS 3 个已安装目标均以 `--all-targets --all-features -- -D warnings` 通过。
 - Flutter 验证：`kelivo_secure_core` analyze 通过且 gated 测试 31/31 通过；根应用 `flutter analyze lib test` 通过；Native 账户恢复适配与授权器定向测试 13/13 通过。release DLL 的 59 个导出与 C header 59 个声明完全一致，且不含 `kelivo_test_*` 导出。
 - 环境结论：默认 `R:\Temp` 会使既有 Windows installation-root wipe 临时根 `canonicalize` 返回 OS error 1，并在 `panic=abort` 下表现为 `STATUS_STACK_BUFFER_OVERRUN`；改用普通本地临时目录后基线与本分支均通过，结论已记录到 App Issue #37。
-- 待完成：本分支仅剩提交与上层恢复 runner 组装；完整根测试仍受既有 App #53 挂起边界影响，因此本次使用需求相关定向测试闭环。
+- 审查修复：ABI19 接入审查发现上层在 `ready` 时固定省略 source capsule，导致任何已完成过 ARK 轮换的账户无法再次恢复。现已按公开授权器 seam 完成红绿闭环：`keyEpoch > 1` 只从完整历史中唯一的相邻代次跃迁选择最近轮换前驱，缺失、多义或恢复公钥/capsule 版本绑定错误均在进入 Native 前失败；签名清单中的 capsule 摘要仍由 Native 最终验证。授权器 15/15 测试及相关 analyze 已通过。
+- 待完成：继续完成余下安全审查并提交；上层恢复 runner 仍待组装。完整根测试受既有 App #53 挂起边界影响，因此本次使用需求相关定向测试闭环。
 - 边界：不访问默认安全槽、不部署；Windows/Linux/macOS 恢复执行能力保持 Unsupported。
