@@ -46,6 +46,9 @@ import 'package:Kelivo/core/services/sync/sync_write_executor.dart';
 import 'package:Kelivo/core/services/workspace/account_session_token_store.dart';
 import 'package:Kelivo/core/services/workspace/account_workspace_runtime.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
+import 'package:Kelivo/core/services/workspace/installation_operation_lease.dart';
+import 'package:Kelivo/core/services/workspace/local_cryptographic_wipe.dart';
+import 'package:Kelivo/core/services/workspace/local_wipe_marker_topology.dart';
 import 'package:Kelivo/features/settings/pages/cloud_sync_page.dart'
     hide CloudSyncPage;
 import 'package:Kelivo/l10n/app_localizations.dart';
@@ -59,6 +62,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:path/path.dart' as p;
 import 'package:pretty_qr_code/pretty_qr_code.dart';
 import 'package:provider/provider.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -2609,23 +2613,264 @@ void main() {
     expect(fixture.authentication.requestNames, isEmpty);
   });
 
-  test('撤销当前设备后退出本机会话', () async {
+  test('撤销当前设备后只发布标记并请求冷重启', () async {
+    final wipe = _FakeLocalCryptographicWipe();
+    final events = <String>[];
+    var stopBackgroundCalls = 0;
+    var restartCalls = 0;
     final client = _FakeCloudSyncAccountClient(
       listedDevices: <CloudSyncDeviceSession>[_currentDevice()],
-      revokedDevice: _currentDevice(),
     );
-    final fixture = await _createSignedInFixture(client: client);
+    final fixture = await _createSignedInFixture(
+      client: client,
+      localCryptographicWipe: wipe,
+      configureLocalDeviceWipeInfrastructure: true,
+      currentDeviceRevocationCommitter:
+          ({required client, required session, required mutationId}) async {
+            final persisted = await wipe.readPendingIntent();
+            expect(
+              persisted?.phase,
+              LocalCryptographicWipePhase.revocationRequested,
+            );
+            expect(persisted?.deviceId, session.deviceId);
+            expect(persisted?.mutationId, mutationId);
+            events.add('http');
+            return _deviceRotationReceipt(mutationId: mutationId);
+          },
+      stopBackgroundSync: () async {
+        stopBackgroundCalls++;
+        events.add('stop');
+      },
+      restartForLocalDeviceWipe: () async {
+        restartCalls++;
+        expect(
+          (await wipe.readPendingIntent())?.phase,
+          LocalCryptographicWipePhase.revocationConfirmed,
+        );
+        events.add('restart');
+      },
+    );
     addTearDown(fixture.close);
     await fixture.provider.initialize();
 
     expect(await fixture.provider.revokeDevice(_deviceId), isTrue);
 
+    expect(wipe.requestedMarkCalls, 1);
+    expect(wipe.confirmedMarkCalls, 1);
+    expect(wipe.coldStartResumeCalls, 0);
+    expect(stopBackgroundCalls, 1);
+    expect(restartCalls, 1);
     expect(fixture.provider.signedIn, isFalse);
-    expect(fixture.provider.workspaceRestartRequired, isTrue);
-    expect(
-      fixture.provider.status,
-      CloudSyncProviderStatus.workspaceChangePending,
+    expect(fixture.provider.localDeviceWipePending, isTrue);
+    expect(fixture.provider.workspaceRestartRequired, isFalse);
+    expect(fixture.provider.status, CloudSyncProviderStatus.signingOut);
+    expect(events, <String>['stop', 'http', 'restart']);
+  });
+
+  test('远端撤销回执与当前会话不一致时不得触发本机擦除', () async {
+    final wipe = _FakeLocalCryptographicWipe();
+    var commitCalls = 0;
+    final client = _FakeCloudSyncAccountClient();
+    final fixture = await _createSignedInFixture(
+      client: client,
+      localCryptographicWipe: wipe,
+      configureLocalDeviceWipeInfrastructure: true,
+      currentDeviceRevocationCommitter:
+          ({required client, required session, required mutationId}) async {
+            commitCalls++;
+            return _deviceRotationReceipt(
+              mutationId: mutationId,
+              revokedDeviceId: commitCalls == 1 ? _otherDeviceId : _deviceId,
+            );
+          },
+      stopBackgroundSync: () async {},
+      restartForLocalDeviceWipe: () async {},
     );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    expect(await fixture.provider.revokeDevice(_deviceId), isFalse);
+
+    expect(wipe.requestedMarkCalls, 1);
+    expect(wipe.confirmedMarkCalls, 0);
+    expect(wipe.coldStartResumeCalls, 0);
+    expect(fixture.provider.signedIn, isTrue);
+    expect(fixture.provider.localDeviceWipePending, isTrue);
+    expect(
+      fixture.provider.deviceError?.kind,
+      CloudSyncFailureKind.invalidResponse,
+    );
+
+    expect(await fixture.provider.retryLocalDeviceWipe(), isTrue);
+    expect(commitCalls, 2);
+    expect(wipe.confirmedMarkCalls, 1);
+  });
+
+  test('幂等自撤销回执未接入时在 requested 和网络请求前拒绝', () async {
+    final wipe = _FakeLocalCryptographicWipe();
+    var restartCalls = 0;
+    final client = _FakeCloudSyncAccountClient();
+    final fixture = await _createSignedInFixture(
+      client: client,
+      localCryptographicWipe: wipe,
+      configureLocalDeviceWipeInfrastructure: true,
+      stopBackgroundSync: () async {},
+      restartForLocalDeviceWipe: () async => restartCalls++,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    expect(await fixture.provider.revokeDevice(_deviceId), isFalse);
+
+    expect(
+      fixture.provider.deviceError?.serverCode,
+      'SYNC_LOCAL_DEVICE_WIPE_UNSUPPORTED',
+    );
+    expect(
+      client.requestNames.where((name) => name.startsWith('revoke-device:')),
+      isEmpty,
+    );
+    expect(fixture.provider.localDeviceWipeSupported, isFalse);
+    expect(wipe.markCalls, 0);
+    expect(await wipe.readPendingIntent(), isNull);
+    expect(restartCalls, 0);
+  });
+
+  test('远端撤销成功后的冷重启失败保持门禁且重试不再次撤销', () async {
+    final wipe = _FakeLocalCryptographicWipe();
+    var restartFailures = 1;
+    var restartCalls = 0;
+    final mutationIds = <String>[];
+    final client = _FakeCloudSyncAccountClient();
+    final fixture = await _createSignedInFixture(
+      client: client,
+      localCryptographicWipe: wipe,
+      configureLocalDeviceWipeInfrastructure: true,
+      currentDeviceRevocationCommitter:
+          ({required client, required session, required mutationId}) async {
+            mutationIds.add(mutationId);
+            return _deviceRotationReceipt(mutationId: mutationId);
+          },
+      stopBackgroundSync: () async {},
+      restartForLocalDeviceWipe: () async {
+        restartCalls++;
+        if (restartFailures > 0) {
+          restartFailures--;
+          throw StateError('fake_local_wipe_restart_failure');
+        }
+      },
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    expect(await fixture.provider.revokeDevice(_deviceId), isFalse);
+    expect(fixture.provider.signedIn, isFalse);
+    expect(fixture.provider.localDeviceWipePending, isTrue);
+    expect(fixture.provider.workspaceRestartRequired, isFalse);
+    expect(mutationIds, hasLength(1));
+
+    expect(await fixture.provider.retryLocalDeviceWipe(), isTrue);
+    expect(wipe.requestedMarkCalls, 1);
+    expect(wipe.confirmedMarkCalls, 1);
+    expect(wipe.coldStartResumeCalls, 0);
+    expect(restartCalls, 2);
+    expect(fixture.provider.localDeviceWipePending, isTrue);
+    expect(fixture.provider.workspaceRestartRequired, isFalse);
+    expect(mutationIds, hasLength(1));
+  });
+
+  test('自撤销响应未知后重试复用同一持久 mutationId', () async {
+    final wipe = _FakeLocalCryptographicWipe();
+    final mutationIds = <String>[];
+    var commitCalls = 0;
+    final fixture = await _createSignedInFixture(
+      localCryptographicWipe: wipe,
+      configureLocalDeviceWipeInfrastructure: true,
+      currentDeviceRevocationCommitter:
+          ({required client, required session, required mutationId}) async {
+            mutationIds.add(mutationId);
+            commitCalls++;
+            if (commitCalls == 1) {
+              throw const CloudSyncException(
+                kind: CloudSyncFailureKind.network,
+                retryable: true,
+              );
+            }
+            return _deviceRotationReceipt(mutationId: mutationId);
+          },
+      stopBackgroundSync: () async {},
+      restartForLocalDeviceWipe: () async {},
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    expect(await fixture.provider.revokeDevice(_deviceId), isFalse);
+    expect(wipe.requestedMarkCalls, 1);
+    expect(wipe.confirmedMarkCalls, 0);
+
+    expect(await fixture.provider.retryLocalDeviceWipe(), isTrue);
+    expect(mutationIds, hasLength(2));
+    expect(mutationIds.toSet(), hasLength(1));
+    expect(wipe.requestedMarkCalls, 1);
+    expect(wipe.confirmedMarkCalls, 1);
+  });
+
+  test('自撤销 HTTP 在途时普通登出不能穿透会话 mutation', () async {
+    final wipe = _FakeLocalCryptographicWipe();
+    final requestEntered = Completer<String>();
+    final releaseResponse = Completer<void>();
+    final fixture = await _createSignedInFixture(
+      localCryptographicWipe: wipe,
+      configureLocalDeviceWipeInfrastructure: true,
+      currentDeviceRevocationCommitter:
+          ({required client, required session, required mutationId}) async {
+            requestEntered.complete(mutationId);
+            await releaseResponse.future;
+            return _deviceRotationReceipt(mutationId: mutationId);
+          },
+      stopBackgroundSync: () async {},
+      restartForLocalDeviceWipe: () async {},
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    final revocation = fixture.provider.revokeDevice(_deviceId);
+    await requestEntered.future;
+    expect(await fixture.provider.logout(), isFalse);
+
+    releaseResponse.complete();
+    expect(await revocation, isTrue);
+    expect(wipe.confirmedMarkCalls, 1);
+  });
+
+  test('Provider dispose 不得丢弃已经返回的自撤销回执', () async {
+    final wipe = _FakeLocalCryptographicWipe();
+    final requestEntered = Completer<String>();
+    final releaseResponse = Completer<void>();
+    var restartCalls = 0;
+    final fixture = await _createSignedInFixture(
+      localCryptographicWipe: wipe,
+      configureLocalDeviceWipeInfrastructure: true,
+      currentDeviceRevocationCommitter:
+          ({required client, required session, required mutationId}) async {
+            requestEntered.complete(mutationId);
+            await releaseResponse.future;
+            return _deviceRotationReceipt(mutationId: mutationId);
+          },
+      stopBackgroundSync: () async {},
+      restartForLocalDeviceWipe: () async => restartCalls++,
+    );
+    addTearDown(() => fixture.close(disposeProvider: false));
+    await fixture.provider.initialize();
+
+    final revocation = fixture.provider.revokeDevice(_deviceId);
+    await requestEntered.future;
+    fixture.provider.dispose();
+    releaseResponse.complete();
+
+    expect(await revocation, isTrue);
+    expect(wipe.confirmedMarkCalls, 1);
+    expect(restartCalls, 1);
   });
 
   test('设备控制面失败时返回可诊断错误且不影响内容门禁', () async {
@@ -2678,6 +2923,157 @@ void main() {
     expect(find.text('同步冲突'), findsNothing);
     expect(find.text('设备'), findsOneWidget);
     expect(find.text('退出登录'), findsOneWidget);
+  });
+
+  testWidgets('撤销当前设备前明确提示安装级永久清除', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final fixture = await tester.runAsync(
+      () => _createSignedInFixture(
+        client: _FakeCloudSyncAccountClient(
+          listedDevices: <CloudSyncDeviceSession>[_currentDevice()],
+        ),
+        localCryptographicWipe: _FakeLocalCryptographicWipe(),
+        configureLocalDeviceWipeInfrastructure: true,
+        currentDeviceRevocationCommitter:
+            ({required client, required session, required mutationId}) async {
+              return _deviceRotationReceipt(mutationId: mutationId);
+            },
+        stopBackgroundSync: () async {},
+        restartForLocalDeviceWipe: () async {},
+      ),
+    );
+    if (fixture == null) {
+      throw StateError('current_device_revoke_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await fixture.provider.initialize();
+    await fixture.provider.refreshDevices();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<CloudSyncProvider>.value(
+        value: fixture.provider,
+        child: MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: const Scaffold(body: CloudSyncSettingsContent()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('撤销').last);
+    await tester.pumpAndSettle();
+
+    expect(find.text('撤销并清除'), findsOneWidget);
+    expect(
+      find.text(
+        '这是当前设备。撤销后将永久删除本次安装中的所有 Kelivo '
+        '账号、本地工作区、聊天、配置、缓存文件和加密密钥。',
+      ),
+      findsOneWidget,
+    );
+  });
+
+  testWidgets('不支持本机擦除的平台禁用当前设备自撤销', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final client = _FakeCloudSyncAccountClient(
+      listedDevices: <CloudSyncDeviceSession>[_currentDevice()],
+      revokedDevice: _currentDevice(),
+    );
+    final fixture = await tester.runAsync(
+      () => _createSignedInFixture(
+        client: client,
+        localCryptographicWipe: _FakeLocalCryptographicWipe(isSupported: false),
+        stopBackgroundSync: () async {},
+        restartForLocalDeviceWipe: () async {},
+      ),
+    );
+    if (fixture == null) {
+      throw StateError('unsupported_local_wipe_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await fixture.provider.initialize();
+    await fixture.provider.refreshDevices();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<CloudSyncProvider>.value(
+        value: fixture.provider,
+        child: MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: const Scaffold(body: CloudSyncSettingsContent()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('当前版本尚未具备可验证的安全自撤销能力，因此不能从此设备发起移除。'), findsOneWidget);
+    await tester.tap(find.text('撤销').last);
+    await tester.pumpAndSettle();
+    expect(find.text('撤销并清除'), findsNothing);
+    expect(
+      client.requestNames.where((name) => name.startsWith('revoke-device:')),
+      isEmpty,
+    );
+  });
+
+  testWidgets('当前设备进入本机擦除门禁后不弹出业务错误', (tester) async {
+    tester.view.physicalSize = const Size(1400, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    final wipe = _FakeLocalCryptographicWipe();
+    final fixture = await tester.runAsync(
+      () => _createSignedInFixture(
+        client: _FakeCloudSyncAccountClient(
+          listedDevices: <CloudSyncDeviceSession>[_currentDevice()],
+          revokedDevice: _currentDevice(),
+        ),
+        localCryptographicWipe: wipe,
+        configureLocalDeviceWipeInfrastructure: true,
+        currentDeviceRevocationCommitter:
+            ({required client, required session, required mutationId}) async {
+              return _deviceRotationReceipt(mutationId: mutationId);
+            },
+        stopBackgroundSync: () async {},
+        restartForLocalDeviceWipe: () async {
+          throw StateError('fake_local_wipe_restart_failure');
+        },
+      ),
+    );
+    if (fixture == null) {
+      throw StateError('current_device_wipe_gate_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await fixture.provider.initialize();
+    await fixture.provider.refreshDevices();
+
+    await tester.pumpWidget(
+      ChangeNotifierProvider<CloudSyncProvider>.value(
+        value: fixture.provider,
+        child: MaterialApp(
+          locale: const Locale('zh'),
+          localizationsDelegates: AppLocalizations.localizationsDelegates,
+          supportedLocales: AppLocalizations.supportedLocales,
+          home: const Scaffold(body: CloudSyncSettingsContent()),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('撤销').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('撤销并清除'));
+    await tester.pumpAndSettle();
+
+    expect(fixture.provider.localDeviceWipePending, isTrue);
+    expect(find.byType(SnackBar), findsNothing);
   });
 
   testWidgets('移动平台展示注册模式且桌面平台仅保留登录', (tester) async {
@@ -4190,6 +4586,12 @@ Future<_Fixture> _createSignedInFixture({
   CloudSyncAccountSession? session,
   CloudSyncContentRuntime? contentRuntime,
   E2eeFirstDeviceRecoveryBootstrapFactory? firstDeviceRecoveryBootstrapFactory,
+  LocalCryptographicWipe? localCryptographicWipe,
+  bool configureLocalDeviceWipeInfrastructure = false,
+  CloudSyncCurrentDeviceRevocationCommitter? currentDeviceRevocationCommitter,
+  CloudSyncRevocationMutationIdFactory? revocationMutationIdFactory,
+  LocalCryptographicWipeStep? stopBackgroundSync,
+  LocalCryptographicWipeStep? restartForLocalDeviceWipe,
 }) async {
   final testRoot = Directory(
     '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -4214,6 +4616,21 @@ Future<_Fixture> _createSignedInFixture({
   if (session != null) {
     await runtime.bindAccount(session);
   }
+  if (localCryptographicWipe case final _FakeLocalCryptographicWipe wipe) {
+    wipe.bindInstallationRoot(installationRoot);
+  }
+  final InstallationOperationLease? installationOperationLease;
+  final InstallationBusinessLease? installationBusinessLease;
+  if (configureLocalDeviceWipeInfrastructure) {
+    installationOperationLease = InstallationOperationLease(
+      installationRoot: installationRoot,
+    );
+    installationBusinessLease = await installationOperationLease
+        .acquireBusiness();
+  } else {
+    installationOperationLease = null;
+    installationBusinessLease = null;
+  }
 
   final accountClient = client ?? _FakeCloudSyncAccountClient();
   final accountAuthentication =
@@ -4233,6 +4650,13 @@ Future<_Fixture> _createSignedInFixture({
           firstDeviceRecoveryBootstrapFactory:
               firstDeviceRecoveryBootstrapFactory ??
               _createTrackingRecoveryBootstrap,
+          localCryptographicWipe: localCryptographicWipe,
+          installationOperationLease: installationOperationLease,
+          installationBusinessLease: installationBusinessLease,
+          currentDeviceRevocationCommitter: currentDeviceRevocationCommitter,
+          revocationMutationIdFactory: revocationMutationIdFactory,
+          stopBackgroundSync: stopBackgroundSync,
+          restartForLocalDeviceWipe: restartForLocalDeviceWipe,
         )
       : CloudSyncProvider.withContentRuntime(
           runtime,
@@ -4249,6 +4673,13 @@ Future<_Fixture> _createSignedInFixture({
           firstDeviceRecoveryBootstrapFactory:
               firstDeviceRecoveryBootstrapFactory ??
               _createTrackingRecoveryBootstrap,
+          localCryptographicWipe: localCryptographicWipe,
+          installationOperationLease: installationOperationLease,
+          installationBusinessLease: installationBusinessLease,
+          currentDeviceRevocationCommitter: currentDeviceRevocationCommitter,
+          revocationMutationIdFactory: revocationMutationIdFactory,
+          stopBackgroundSync: stopBackgroundSync,
+          restartForLocalDeviceWipe: restartForLocalDeviceWipe,
         );
   return _Fixture(
     root: root,
@@ -4256,6 +4687,8 @@ Future<_Fixture> _createSignedInFixture({
     provider: provider,
     client: accountClient,
     authentication: accountAuthentication,
+    installationOperationLease: installationOperationLease,
+    installationBusinessLease: installationBusinessLease,
   );
 }
 
@@ -4427,7 +4860,7 @@ CloudSyncDeviceSession _currentDevice() {
   );
 }
 
-CloudSyncDeviceSession _otherDevice() {
+CloudSyncDeviceSession _otherDevice({bool isCurrent = false}) {
   return CloudSyncDeviceSession(
     id: _otherDeviceId,
     name: '测试电脑',
@@ -4437,7 +4870,26 @@ CloudSyncDeviceSession _otherDevice() {
     createdAt: DateTime.utc(2026, 7, 22),
     lastSeenAt: DateTime.utc(2026, 7, 22),
     revokedAt: null,
-    isCurrent: false,
+    isCurrent: isCurrent,
+  );
+}
+
+CloudSyncDeviceRotationResult _deviceRotationReceipt({
+  required String mutationId,
+  String revokedDeviceId = _deviceId,
+}) {
+  return CloudSyncDeviceRotationResult(
+    operationId: mutationId,
+    revokedDeviceId: revokedDeviceId,
+    fromGeneration: 1,
+    generation: 2,
+    keyEpoch: 2,
+    dataRekeyPhase: CloudSyncDataRekeyPhase.rekeyPending,
+    membershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List(cloudSyncMembershipManifestDigestBytes)
+        ..fillRange(0, cloudSyncMembershipManifestDigestBytes, 0x5a),
+    ),
+    committedAt: DateTime.utc(2026, 8),
   );
 }
 
@@ -5371,6 +5823,8 @@ final class _Fixture {
     required this.provider,
     required this.client,
     required this.authentication,
+    this.installationOperationLease,
+    this.installationBusinessLease,
   });
 
   final Directory root;
@@ -5378,13 +5832,143 @@ final class _Fixture {
   final CloudSyncProvider provider;
   final _FakeCloudSyncAccountClient client;
   final _FakeE2eeAccountAuthentication authentication;
+  final InstallationOperationLease? installationOperationLease;
+  final InstallationBusinessLease? installationBusinessLease;
 
-  Future<void> close() async {
-    provider.dispose();
+  Future<void> close({bool disposeProvider = true}) async {
+    if (disposeProvider) provider.dispose();
+    await installationBusinessLease?.close();
+    final coordinator = installationOperationLease;
+    if (coordinator != null) {
+      final pending = await coordinator.acquirePendingWipe();
+      if (pending != null) {
+        await for (final entity in runtime.installationRoot.list(
+          followLinks: false,
+        )) {
+          if (entity is File &&
+              p
+                  .basename(entity.path)
+                  .startsWith(LocalWipeMarkerTopology.reservedPrefix)) {
+            await entity.delete();
+          }
+        }
+        await pending.complete();
+      }
+    }
     await runtime.close();
     if (await root.exists()) {
       await root.delete(recursive: true);
     }
+  }
+}
+
+final class _FakeLocalCryptographicWipe implements LocalCryptographicWipe {
+  _FakeLocalCryptographicWipe({this.isSupported = true});
+
+  @override
+  final bool isSupported;
+
+  int markCalls = 0;
+  int requestedMarkCalls = 0;
+  int confirmedMarkCalls = 0;
+  int coldStartResumeCalls = 0;
+  Directory? _installationRoot;
+  LocalCryptographicWipeIntent? _intent;
+
+  void bindInstallationRoot(Directory installationRoot) {
+    final existing = _installationRoot;
+    if (existing != null && existing.path != installationRoot.path) {
+      throw StateError('fake_local_wipe_installation_root_collision');
+    }
+    _installationRoot = installationRoot;
+  }
+
+  @override
+  Future<bool> hasPendingWipe() async => _intent != null;
+
+  @override
+  Future<void> markRevocationRequested({
+    required String deviceId,
+    required String mutationId,
+  }) async {
+    markCalls++;
+    requestedMarkCalls++;
+    final existing = _intent;
+    if (existing != null &&
+        (existing.deviceId != deviceId || existing.mutationId != mutationId)) {
+      throw StateError('fake_local_wipe_marker_collision');
+    }
+    _intent ??= LocalCryptographicWipeIntent(
+      phase: LocalCryptographicWipePhase.revocationRequested,
+      deviceId: deviceId,
+      mutationId: mutationId,
+      createdAtUtc: DateTime.utc(2026, 8),
+    );
+    await _marker(
+      LocalWipeMarkerTopology.revocationRequestedMarkerFileName,
+    ).writeAsString('{}', flush: true);
+  }
+
+  @override
+  Future<void> markRevocationConfirmed({
+    required String deviceId,
+    required String mutationId,
+  }) async {
+    markCalls++;
+    confirmedMarkCalls++;
+    final existing = _intent;
+    if (existing == null ||
+        existing.deviceId != deviceId ||
+        existing.mutationId != mutationId) {
+      throw StateError('fake_local_wipe_marker_collision');
+    }
+    _intent = LocalCryptographicWipeIntent(
+      phase: LocalCryptographicWipePhase.revocationConfirmed,
+      deviceId: deviceId,
+      mutationId: mutationId,
+      createdAtUtc: existing.createdAtUtc,
+    );
+    await _marker(
+      LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+    ).writeAsString('{}', flush: true);
+    final requested = _marker(
+      LocalWipeMarkerTopology.revocationRequestedMarkerFileName,
+    );
+    if (await requested.exists()) await requested.delete();
+  }
+
+  @override
+  Future<LocalCryptographicWipeIntent?> readPendingIntent() async => _intent;
+
+  File _marker(String name) {
+    final root = _installationRoot;
+    if (root == null) {
+      throw StateError('fake_local_wipe_installation_root_missing');
+    }
+    return File(p.join(root.path, name));
+  }
+
+  @override
+  Future<bool> resumePendingAtColdStart({
+    required LocalCryptographicWipeStep stopBackgroundSync,
+  }) async {
+    final intent = _intent;
+    if (intent == null) return false;
+    if (intent.phase == LocalCryptographicWipePhase.revocationRequested) {
+      throw LocalDeviceRevocationConfirmationRequired(intent);
+    }
+    coldStartResumeCalls++;
+    await stopBackgroundSync();
+    for (final name in <String>[
+      LocalWipeMarkerTopology.revocationRequestedMarkerFileName,
+      LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+      LocalWipeMarkerTopology.completionMarkerFileName,
+    ]) {
+      final marker = _marker(name);
+      if (await marker.exists()) await marker.delete();
+    }
+    _intent = null;
+    return true;
   }
 }
 

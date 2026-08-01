@@ -4,6 +4,7 @@ import 'dart:developer' as developer;
 import 'package:flutter/foundation.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:package_info_plus/package_info_plus.dart';
+import 'package:uuid/uuid.dart';
 
 import '../services/sync/cloud_sync_client.dart';
 import '../services/sync/cloud_sync_content_runtime.dart';
@@ -17,6 +18,8 @@ import '../services/sync/e2ee_mobile_background_sync.dart';
 import '../services/sync/sensitive_utf8.dart';
 import '../services/workspace/account_workspace_runtime.dart';
 import '../services/workspace/device_state_blob_store.dart';
+import '../services/workspace/installation_operation_lease.dart';
+import '../services/workspace/local_cryptographic_wipe.dart';
 
 typedef CloudSyncAccountClientFactory =
     CloudSyncAccountClient Function({CloudSyncFullSessionToken? token});
@@ -30,6 +33,13 @@ typedef E2eeFirstDeviceRecoveryBootstrapFactory =
       required Uint8List recoveryPassphrase,
       required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
     });
+typedef CloudSyncCurrentDeviceRevocationCommitter =
+    Future<CloudSyncDeviceRotationResult> Function({
+      required CloudSyncAccountClient client,
+      required CloudSyncAccountSession session,
+      required String mutationId,
+    });
+typedef CloudSyncRevocationMutationIdFactory = String Function();
 
 CloudSyncAccountClient _createCloudSyncAccountClient({
   CloudSyncFullSessionToken? token,
@@ -68,6 +78,13 @@ final class CloudSyncProvider extends ChangeNotifier
     E2eeFirstDeviceRecoveryBootstrapFactory
         firstDeviceRecoveryBootstrapFactory =
         _createFirstDeviceRecoveryBootstrap,
+    LocalCryptographicWipe? localCryptographicWipe,
+    InstallationOperationLease? installationOperationLease,
+    InstallationBusinessLease? installationBusinessLease,
+    CloudSyncCurrentDeviceRevocationCommitter? currentDeviceRevocationCommitter,
+    CloudSyncRevocationMutationIdFactory? revocationMutationIdFactory,
+    LocalCryptographicWipeStep? stopBackgroundSync,
+    LocalCryptographicWipeStep? restartForLocalDeviceWipe,
   }) {
     return CloudSyncProvider._(
       workspaceRuntime,
@@ -76,6 +93,13 @@ final class CloudSyncProvider extends ChangeNotifier
       authenticationFactory: authenticationFactory,
       firstDeviceRecoveryBootstrapFactory: firstDeviceRecoveryBootstrapFactory,
       devicePairingMembershipCommitPreparer: null,
+      localCryptographicWipe: localCryptographicWipe,
+      installationOperationLease: installationOperationLease,
+      installationBusinessLease: installationBusinessLease,
+      currentDeviceRevocationCommitter: currentDeviceRevocationCommitter,
+      revocationMutationIdFactory: revocationMutationIdFactory,
+      stopBackgroundSync: stopBackgroundSync,
+      restartForLocalDeviceWipe: restartForLocalDeviceWipe,
     );
   }
 
@@ -89,6 +113,13 @@ final class CloudSyncProvider extends ChangeNotifier
         _createFirstDeviceRecoveryBootstrap,
     E2eeDevicePairingMembershipCommitPreparer?
     devicePairingMembershipCommitPreparer,
+    LocalCryptographicWipe? localCryptographicWipe,
+    InstallationOperationLease? installationOperationLease,
+    InstallationBusinessLease? installationBusinessLease,
+    CloudSyncCurrentDeviceRevocationCommitter? currentDeviceRevocationCommitter,
+    CloudSyncRevocationMutationIdFactory? revocationMutationIdFactory,
+    LocalCryptographicWipeStep? stopBackgroundSync,
+    LocalCryptographicWipeStep? restartForLocalDeviceWipe,
   }) {
     return CloudSyncProvider._(
       workspaceRuntime,
@@ -98,6 +129,13 @@ final class CloudSyncProvider extends ChangeNotifier
       firstDeviceRecoveryBootstrapFactory: firstDeviceRecoveryBootstrapFactory,
       devicePairingMembershipCommitPreparer:
           devicePairingMembershipCommitPreparer,
+      localCryptographicWipe: localCryptographicWipe,
+      installationOperationLease: installationOperationLease,
+      installationBusinessLease: installationBusinessLease,
+      currentDeviceRevocationCommitter: currentDeviceRevocationCommitter,
+      revocationMutationIdFactory: revocationMutationIdFactory,
+      stopBackgroundSync: stopBackgroundSync,
+      restartForLocalDeviceWipe: restartForLocalDeviceWipe,
     );
   }
 
@@ -110,7 +148,23 @@ final class CloudSyncProvider extends ChangeNotifier
     firstDeviceRecoveryBootstrapFactory,
     required E2eeDevicePairingMembershipCommitPreparer?
     devicePairingMembershipCommitPreparer,
+    required LocalCryptographicWipe? localCryptographicWipe,
+    required InstallationOperationLease? installationOperationLease,
+    required InstallationBusinessLease? installationBusinessLease,
+    required CloudSyncCurrentDeviceRevocationCommitter?
+    currentDeviceRevocationCommitter,
+    required CloudSyncRevocationMutationIdFactory? revocationMutationIdFactory,
+    required LocalCryptographicWipeStep? stopBackgroundSync,
+    required LocalCryptographicWipeStep? restartForLocalDeviceWipe,
   }) {
+    _localCryptographicWipe = localCryptographicWipe;
+    _installationOperationLease = installationOperationLease;
+    _installationBusinessLease = installationBusinessLease;
+    _currentDeviceRevocationCommitter = currentDeviceRevocationCommitter;
+    _revocationMutationIdFactory =
+        revocationMutationIdFactory ?? const Uuid().v4;
+    _stopBackgroundSync = stopBackgroundSync;
+    _restartForLocalDeviceWipe = restartForLocalDeviceWipe;
     _configureFactories(
       clientFactory,
       authenticationFactory,
@@ -146,6 +200,14 @@ final class CloudSyncProvider extends ChangeNotifier
 
   final AccountWorkspaceRuntime _workspaceRuntime;
   final CloudSyncContentRuntime? _contentRuntime;
+  late final LocalCryptographicWipe? _localCryptographicWipe;
+  late final InstallationOperationLease? _installationOperationLease;
+  late final InstallationBusinessLease? _installationBusinessLease;
+  late final CloudSyncCurrentDeviceRevocationCommitter?
+  _currentDeviceRevocationCommitter;
+  late final CloudSyncRevocationMutationIdFactory _revocationMutationIdFactory;
+  late final LocalCryptographicWipeStep? _stopBackgroundSync;
+  late final LocalCryptographicWipeStep? _restartForLocalDeviceWipe;
   late final CloudSyncAccountClientFactory _clientFactory;
   late final E2eeAccountAuthenticationFactory _authenticationFactory;
   late final E2eeFirstDeviceRecoveryBootstrapFactory
@@ -170,6 +232,10 @@ final class CloudSyncProvider extends ChangeNotifier
   bool _devicesLoading = false;
   bool _disposed = false;
   bool _workspaceRestartRequired = false;
+  bool _localDeviceWipePending = false;
+  bool _workspaceClosedForLocalWipe = false;
+  _CurrentDeviceRevocationAttempt? _currentDeviceRevocationAttempt;
+  Future<bool>? _localDeviceRevocationContinuation;
   bool _pendingPairingCancellationRequested = false;
   bool _devicePairingApprovalInProgress = false;
   Completer<void>? _sessionMutation;
@@ -195,6 +261,14 @@ final class CloudSyncProvider extends ChangeNotifier
   @override
   bool get signedIn => _session != null;
   bool get workspaceRestartRequired => _workspaceRestartRequired;
+  bool get localDeviceWipePending => _localDeviceWipePending;
+  bool get localDeviceWipeSupported =>
+      (_localCryptographicWipe?.isSupported ?? false) &&
+      _installationOperationLease != null &&
+      (_installationBusinessLease?.isClosed == false) &&
+      _currentDeviceRevocationCommitter != null &&
+      _stopBackgroundSync != null &&
+      _restartForLocalDeviceWipe != null;
   bool get devicesLoading => _devicesLoading;
   bool get _sessionMutationInProgress => _sessionMutation != null;
 
@@ -291,7 +365,7 @@ final class CloudSyncProvider extends ChangeNotifier
     required String deviceName,
   }) async {
     await initialize();
-    if (!_ready || _disposed) return false;
+    if (!_ready || _disposed || _localDeviceWipePending) return false;
     if (_session != null ||
         _sessionMutationInProgress ||
         _pendingPairingSession != null) {
@@ -394,7 +468,7 @@ final class CloudSyncProvider extends ChangeNotifier
     required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
   }) async {
     await initialize();
-    if (!_ready || _disposed) return false;
+    if (!_ready || _disposed || _localDeviceWipePending) return false;
     if (sensitiveUtf8Equals(password, recoveryPassphrase)) {
       _lastError = const CloudSyncException(
         kind: CloudSyncFailureKind.validation,
@@ -479,7 +553,7 @@ final class CloudSyncProvider extends ChangeNotifier
     required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
   }) async {
     await initialize();
-    if (!_ready || _disposed) return false;
+    if (!_ready || _disposed || _localDeviceWipePending) return false;
     if (_session != null ||
         _sessionMutationInProgress ||
         _pendingPairingSession != null) {
@@ -531,7 +605,7 @@ final class CloudSyncProvider extends ChangeNotifier
     required String loginName,
   }) async {
     await initialize();
-    if (!_ready || _disposed) return false;
+    if (!_ready || _disposed || _localDeviceWipePending) return false;
     if (_session != null ||
         _sessionMutationInProgress ||
         _pendingPairingSession != null) {
@@ -572,7 +646,9 @@ final class CloudSyncProvider extends ChangeNotifier
 
   Future<bool> logout() async {
     await initialize();
-    if (_disposed || _sessionMutationInProgress) return false;
+    if (_disposed || _sessionMutationInProgress || _localDeviceWipePending) {
+      return false;
+    }
     if (_pendingPairingSession != null) {
       return cancelPendingDevicePairing();
     }
@@ -696,6 +772,7 @@ final class CloudSyncProvider extends ChangeNotifier
 
   Future<bool> refreshDevices() async {
     await initialize();
+    if (_localDeviceWipePending) return false;
     final client = _client;
     if (client == null || _session == null) return false;
     final epoch = _sessionEpoch;
@@ -721,16 +798,30 @@ final class CloudSyncProvider extends ChangeNotifier
 
   Future<bool> revokeDevice(String deviceId) async {
     await initialize();
+    if (_localDeviceWipePending || _sessionMutationInProgress) return false;
     final client = _client;
     final session = _session;
     if (client == null || session == null) return false;
+    final revokesCurrentSession = deviceId == session.deviceId;
+    if (revokesCurrentSession && !localDeviceWipeSupported) {
+      _deviceError = const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_LOCAL_DEVICE_WIPE_UNSUPPORTED',
+      );
+      _notify();
+      return false;
+    }
+    if (revokesCurrentSession) {
+      return _beginCurrentDeviceRevocation(client: client, session: session);
+    }
     final epoch = _sessionEpoch;
 
     try {
       final revoked = await client.revokeDevice(deviceId);
       if (epoch != _sessionEpoch || _disposed) return false;
-      if (revoked.isCurrent) {
-        return logout();
+      if (revoked.id != deviceId || revoked.isCurrent) {
+        throw const FormatException('cloud_sync_revoke_receipt');
       }
       await refreshDevices();
       return true;
@@ -738,6 +829,222 @@ final class CloudSyncProvider extends ChangeNotifier
       if (epoch != _sessionEpoch || _disposed) return false;
       _recordDeviceFailure(error, stackTrace, operation: '撤销账户设备');
       return false;
+    }
+  }
+
+  Future<bool> retryLocalDeviceWipe() async {
+    final attempt = _currentDeviceRevocationAttempt;
+    if (!_localDeviceWipePending || attempt == null || _disposed) {
+      return false;
+    }
+    return _continueCurrentDeviceRevocation(attempt);
+  }
+
+  Future<bool> _beginCurrentDeviceRevocation({
+    required CloudSyncAccountClient client,
+    required CloudSyncAccountSession session,
+  }) {
+    final wipe = _localCryptographicWipe;
+    final installationOperationLease = _installationOperationLease;
+    final installationBusinessLease = _installationBusinessLease;
+    final committer = _currentDeviceRevocationCommitter;
+    if (wipe == null ||
+        installationOperationLease == null ||
+        installationBusinessLease == null ||
+        committer == null ||
+        _stopBackgroundSync == null ||
+        _restartForLocalDeviceWipe == null) {
+      throw StateError('local_device_wipe_capability_mismatch');
+    }
+    _beginSessionMutation();
+    final attempt = _CurrentDeviceRevocationAttempt(
+      client: client,
+      session: session,
+      mutationId: _revocationMutationIdFactory(),
+      wipe: wipe,
+      installationOperationLease: installationOperationLease,
+      installationBusinessLease: installationBusinessLease,
+      committer: committer,
+    );
+    _currentDeviceRevocationAttempt = attempt;
+    _localDeviceWipePending = true;
+    _workspaceRestartRequired = false;
+    _pendingDeviceApproval = null;
+    _devicesLoading = false;
+    _setStatus(CloudSyncProviderStatus.signingOut);
+    return _continueCurrentDeviceRevocation(attempt);
+  }
+
+  Future<bool> _continueCurrentDeviceRevocation(
+    _CurrentDeviceRevocationAttempt attempt,
+  ) {
+    final existing = _localDeviceRevocationContinuation;
+    if (existing != null) return existing;
+    late final Future<bool> continuation;
+    continuation = _performCurrentDeviceRevocation(attempt).whenComplete(() {
+      if (identical(_localDeviceRevocationContinuation, continuation)) {
+        _localDeviceRevocationContinuation = null;
+      }
+    });
+    _localDeviceRevocationContinuation = continuation;
+    return continuation;
+  }
+
+  Future<bool> _performCurrentDeviceRevocation(
+    _CurrentDeviceRevocationAttempt attempt,
+  ) async {
+    final stopBackgroundSync = _stopBackgroundSync;
+    final restartForLocalDeviceWipe = _restartForLocalDeviceWipe;
+    try {
+      if (stopBackgroundSync == null || restartForLocalDeviceWipe == null) {
+        throw StateError('local_device_wipe_unavailable');
+      }
+      final intent =
+          attempt.installationIntent ??
+          await attempt.installationOperationLease.beginRevocationRequest();
+      attempt.installationIntent = intent;
+      if (!attempt.requestedPublished) {
+        await attempt.wipe.markRevocationRequested(
+          deviceId: attempt.session.deviceId,
+          mutationId: attempt.mutationId,
+        );
+        await _requirePersistedRevocationIntent(
+          wipe: attempt.wipe,
+          attempt: attempt,
+          phase: LocalCryptographicWipePhase.revocationRequested,
+        );
+        attempt.requestedPublished = true;
+      }
+      if (!attempt.businessDrained) {
+        await stopBackgroundSync();
+        await _closeContentRuntime();
+        await _closeWorkspaceForLocalWipe();
+        await attempt.installationBusinessLease.close();
+        await intent.drainBusinessAfterRequestedPublished();
+        attempt.businessDrained = true;
+      }
+      if (!attempt.receiptValidated) {
+        final receipt = await attempt.committer(
+          client: attempt.client,
+          session: attempt.session,
+          mutationId: attempt.mutationId,
+        );
+        await _requirePersistedRevocationIntent(
+          wipe: attempt.wipe,
+          attempt: attempt,
+          phase: LocalCryptographicWipePhase.revocationRequested,
+        );
+        if (receipt.operationId != attempt.mutationId ||
+            receipt.revokedDeviceId != attempt.session.deviceId) {
+          throw const FormatException('cloud_sync_revoke_receipt');
+        }
+        attempt.receiptValidated = true;
+      }
+      if (!attempt.confirmedPublished) {
+        await attempt.wipe.markRevocationConfirmed(
+          deviceId: attempt.session.deviceId,
+          mutationId: attempt.mutationId,
+        );
+        await _requirePersistedRevocationIntent(
+          wipe: attempt.wipe,
+          attempt: attempt,
+          phase: LocalCryptographicWipePhase.revocationConfirmed,
+        );
+        attempt.confirmedPublished = true;
+      }
+      _retireConfirmedLocalSession(attempt);
+      await restartForLocalDeviceWipe();
+      // 成功的进程重启不会回到业务界面。若平台实现意外返回，仍保留
+      // 本机擦除门禁，等待进程真正退出后由冷启动恢复路径完成删除。
+      return true;
+    } catch (error, stackTrace) {
+      await _quiesceAfterLocalWipeFailure();
+      developer.log(
+        '当前设备远端撤销后，本机密码学擦除尚未完成',
+        name: 'Kelivo.CloudSyncProvider',
+        level: 1000,
+        error: error,
+        stackTrace: stackTrace,
+      );
+      _deviceError = error is FormatException
+          ? _normalizeFailure(error)
+          : const CloudSyncException(
+              kind: CloudSyncFailureKind.unknown,
+              retryable: true,
+              serverCode: 'SYNC_LOCAL_DEVICE_WIPE_INCOMPLETE',
+            );
+      _localDeviceWipePending = true;
+      _workspaceRestartRequired = false;
+      _setStatus(CloudSyncProviderStatus.error);
+      return false;
+    }
+  }
+
+  Future<void> _requirePersistedRevocationIntent({
+    required LocalCryptographicWipe wipe,
+    required _CurrentDeviceRevocationAttempt attempt,
+    required LocalCryptographicWipePhase phase,
+  }) async {
+    final persisted = await wipe.readPendingIntent();
+    if (persisted == null ||
+        persisted.phase != phase ||
+        persisted.deviceId != attempt.session.deviceId ||
+        persisted.mutationId != attempt.mutationId) {
+      throw const FormatException('local_wipe_persisted_intent');
+    }
+  }
+
+  void _retireConfirmedLocalSession(_CurrentDeviceRevocationAttempt attempt) {
+    if (attempt.sessionRetired) return;
+    attempt.sessionRetired = true;
+    _session = null;
+    _contentRuntimeReady = false;
+    _devices = const <CloudSyncDeviceSession>[];
+    _sessionEpoch++;
+    attempt.client.close(force: true);
+    if (identical(_client, attempt.client)) _client = null;
+    _setStatus(CloudSyncProviderStatus.signingOut);
+  }
+
+  Future<void> _closeWorkspaceForLocalWipe() async {
+    if (_workspaceClosedForLocalWipe) return;
+    await _workspaceRuntime.close();
+    _workspaceClosedForLocalWipe = true;
+  }
+
+  Future<void> _quiesceAfterLocalWipeFailure() async {
+    final stopBackgroundSync = _stopBackgroundSync;
+    if (stopBackgroundSync != null) {
+      await _attemptLocalWipeQuiescence('取消本机擦除后的后台同步', stopBackgroundSync);
+    }
+    await _attemptLocalWipeQuiescence('关闭本机擦除后的内容运行时', _closeContentRuntime);
+    await _attemptLocalWipeQuiescence(
+      '释放本机擦除后的工作区',
+      _closeWorkspaceForLocalWipe,
+    );
+    final installationBusinessLease = _installationBusinessLease;
+    if (installationBusinessLease != null) {
+      await _attemptLocalWipeQuiescence(
+        '释放本机擦除后的安装业务租约',
+        installationBusinessLease.close,
+      );
+    }
+  }
+
+  Future<void> _attemptLocalWipeQuiescence(
+    String operation,
+    Future<void> Function() action,
+  ) async {
+    try {
+      await action();
+    } catch (error, stackTrace) {
+      developer.log(
+        '$operation失败',
+        name: 'Kelivo.CloudSyncProvider',
+        level: 1000,
+        error: error,
+        stackTrace: stackTrace,
+      );
     }
   }
 
@@ -1196,4 +1503,31 @@ final class CloudSyncProvider extends ChangeNotifier
     );
     super.dispose();
   }
+}
+
+final class _CurrentDeviceRevocationAttempt {
+  _CurrentDeviceRevocationAttempt({
+    required this.client,
+    required this.session,
+    required this.mutationId,
+    required this.wipe,
+    required this.installationOperationLease,
+    required this.installationBusinessLease,
+    required this.committer,
+  });
+
+  final CloudSyncAccountClient client;
+  final CloudSyncAccountSession session;
+  final String mutationId;
+  final LocalCryptographicWipe wipe;
+  final InstallationOperationLease installationOperationLease;
+  final InstallationBusinessLease installationBusinessLease;
+  final CloudSyncCurrentDeviceRevocationCommitter committer;
+
+  InstallationWipeIntent? installationIntent;
+  bool requestedPublished = false;
+  bool businessDrained = false;
+  bool receiptValidated = false;
+  bool confirmedPublished = false;
+  bool sessionRetired = false;
 }

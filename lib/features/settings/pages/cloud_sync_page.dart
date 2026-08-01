@@ -563,6 +563,14 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
               for (int index = 0; index < provider.devices.length; index++) ...[
                 _DeviceRow(
                   device: provider.devices[index],
+                  revokeEnabled:
+                      !provider.devices[index].isCurrent ||
+                      provider.localDeviceWipeSupported,
+                  disabledReason:
+                      provider.devices[index].isCurrent &&
+                          !provider.localDeviceWipeSupported
+                      ? l10n.cloudSyncCurrentDeviceRemovalUnavailable
+                      : null,
                   onRevoke: () =>
                       unawaited(_revokeDevice(provider.devices[index])),
                 ),
@@ -1007,12 +1015,13 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
   }
 
   Future<void> _revokeDevice(CloudSyncDeviceSession device) async {
+    final provider = context.read<CloudSyncProvider>();
+    if (device.isCurrent && !provider.localDeviceWipeSupported) return;
     final confirmed = await _showRevokeDialog(device);
     if (confirmed != true || !mounted) return;
-    final provider = context.read<CloudSyncProvider>();
     final success = await provider.revokeDevice(device.id);
     if (!mounted) return;
-    if (success) {
+    if (success || provider.localDeviceWipePending) {
       return;
     }
     showAppSnackBar(
@@ -1040,7 +1049,9 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
             : l10n.cloudSyncRevokeMessage,
         actions: [
           IosTileButton(
-            label: l10n.cloudSyncRevoke,
+            label: device.isCurrent
+                ? l10n.cloudSyncRevokeAndErase
+                : l10n.cloudSyncRevoke,
             icon: Lucide.X,
             backgroundColor: Theme.of(dialogContext).colorScheme.error,
             foregroundColor: Theme.of(dialogContext).colorScheme.error,
@@ -1286,10 +1297,17 @@ class _InfoRow extends StatelessWidget {
 }
 
 class _DeviceRow extends StatelessWidget {
-  const _DeviceRow({required this.device, required this.onRevoke});
+  const _DeviceRow({
+    required this.device,
+    required this.revokeEnabled,
+    required this.onRevoke,
+    this.disabledReason,
+  });
 
   final CloudSyncDeviceSession device;
+  final bool revokeEnabled;
   final VoidCallback onRevoke;
+  final String? disabledReason;
 
   @override
   Widget build(BuildContext context) {
@@ -1350,6 +1368,17 @@ class _DeviceRow extends StatelessWidget {
                     color: cs.onSurface.withValues(alpha: 0.52),
                   ),
                 ),
+                if (disabledReason case final reason?) ...[
+                  const SizedBox(height: 4),
+                  Text(
+                    reason,
+                    style: TextStyle(
+                      fontSize: 12,
+                      height: 1.3,
+                      color: cs.error,
+                    ),
+                  ),
+                ],
               ],
             ),
           ),
@@ -1358,6 +1387,7 @@ class _DeviceRow extends StatelessWidget {
             IosTileButton(
               label: l10n.cloudSyncRevoke,
               icon: Lucide.X,
+              enabled: revokeEnabled,
               padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
               foregroundColor: cs.error,
               borderColor: cs.error.withValues(alpha: 0.35),
@@ -1476,6 +1506,8 @@ class _CloudSyncDialog extends StatelessWidget {
 
 String cloudSyncFailureText(AppLocalizations l10n, CloudSyncException error) {
   final protocolMessage = switch (error.serverCode) {
+    'SYNC_LOCAL_DEVICE_WIPE_UNSUPPORTED' =>
+      l10n.cloudSyncCurrentDeviceRemovalUnavailable,
     e2eeRecoveryPassphraseMatchesPasswordCode =>
       l10n.cloudSyncRecoveryPassphraseMatchesPassword,
     e2eePendingRegistrationExportRequiredCode =>

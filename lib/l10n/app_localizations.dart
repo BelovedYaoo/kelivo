@@ -610,6 +610,12 @@ abstract class AppLocalizations {
   /// **'Revoke'**
   String get cloudSyncRevoke;
 
+  /// No description provided for @cloudSyncRevokeAndErase.
+  ///
+  /// In en, this message translates to:
+  /// **'Revoke and Erase'**
+  String get cloudSyncRevokeAndErase;
+
   /// No description provided for @cloudSyncRevokeTitle.
   ///
   /// In en, this message translates to:
@@ -625,8 +631,38 @@ abstract class AppLocalizations {
   /// No description provided for @cloudSyncRevokeCurrentMessage.
   ///
   /// In en, this message translates to:
-  /// **'This is the current device. Revoking it will sign you out.'**
+  /// **'This is the current device. Revoking it permanently deletes every Kelivo account, the local workspace, chats, settings, cached files, and encryption keys from this installation.'**
   String get cloudSyncRevokeCurrentMessage;
+
+  /// No description provided for @cloudSyncCurrentDeviceRemovalUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'This version does not yet support verifiable secure self-removal, so this device cannot remove itself.'**
+  String get cloudSyncCurrentDeviceRemovalUnavailable;
+
+  /// No description provided for @localDeviceWipeTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Finishing Local Data Removal'**
+  String get localDeviceWipeTitle;
+
+  /// No description provided for @localDeviceWipeMessage.
+  ///
+  /// In en, this message translates to:
+  /// **'This device has been revoked, but its local data and encryption keys are not fully removed yet. Kelivo remains locked until cleanup succeeds.'**
+  String get localDeviceWipeMessage;
+
+  /// No description provided for @localDeviceWipeRetry.
+  ///
+  /// In en, this message translates to:
+  /// **'Retry Removal'**
+  String get localDeviceWipeRetry;
+
+  /// No description provided for @localDeviceWipeRetryFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Local data and encryption keys are still not fully removed. Retry the cleanup before using Kelivo.'**
+  String get localDeviceWipeRetryFailed;
 
   /// No description provided for @cloudSyncCancel.
   ///

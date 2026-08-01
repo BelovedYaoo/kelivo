@@ -276,13 +276,34 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncRevoke => '撤销';
 
   @override
+  String get cloudSyncRevokeAndErase => '撤销并清除';
+
+  @override
   String get cloudSyncRevokeTitle => '撤销此设备？';
 
   @override
   String get cloudSyncRevokeMessage => '此设备需要重新登录后才能继续同步。';
 
   @override
-  String get cloudSyncRevokeCurrentMessage => '这是当前设备，撤销后将退出登录。';
+  String get cloudSyncRevokeCurrentMessage =>
+      '这是当前设备。撤销后将永久删除本次安装中的所有 Kelivo 账号、本地工作区、聊天、配置、缓存文件和加密密钥。';
+
+  @override
+  String get cloudSyncCurrentDeviceRemovalUnavailable =>
+      '当前版本尚未具备可验证的安全自撤销能力，因此不能从此设备发起移除。';
+
+  @override
+  String get localDeviceWipeTitle => '正在完成本机数据清除';
+
+  @override
+  String get localDeviceWipeMessage =>
+      '此设备已经撤销，但本机数据和加密密钥尚未完全删除。清理成功前，Kelivo 将保持锁定。';
+
+  @override
+  String get localDeviceWipeRetry => '重试清除';
+
+  @override
+  String get localDeviceWipeRetryFailed => '本机数据和加密密钥仍未完全删除。请重试清理后再使用 Kelivo。';
 
   @override
   String get cloudSyncCancel => '取消';
@@ -5992,13 +6013,34 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get cloudSyncRevoke => '撤销';
 
   @override
+  String get cloudSyncRevokeAndErase => '撤销并清除';
+
+  @override
   String get cloudSyncRevokeTitle => '撤销此设备？';
 
   @override
   String get cloudSyncRevokeMessage => '此设备需要重新登录后才能继续同步。';
 
   @override
-  String get cloudSyncRevokeCurrentMessage => '这是当前设备，撤销后将退出登录。';
+  String get cloudSyncRevokeCurrentMessage =>
+      '这是当前设备。撤销后将永久删除本次安装中的所有 Kelivo 账号、本地工作区、聊天、配置、缓存文件和加密密钥。';
+
+  @override
+  String get cloudSyncCurrentDeviceRemovalUnavailable =>
+      '当前版本尚未具备可验证的安全自撤销能力，因此不能从此设备发起移除。';
+
+  @override
+  String get localDeviceWipeTitle => '正在完成本机数据清除';
+
+  @override
+  String get localDeviceWipeMessage =>
+      '此设备已经撤销，但本机数据和加密密钥尚未完全删除。清理成功前，Kelivo 将保持锁定。';
+
+  @override
+  String get localDeviceWipeRetry => '重试清除';
+
+  @override
+  String get localDeviceWipeRetryFailed => '本机数据和加密密钥仍未完全删除。请重试清理后再使用 Kelivo。';
 
   @override
   String get cloudSyncCancel => '取消';
@@ -11709,13 +11751,34 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get cloudSyncRevoke => '撤銷';
 
   @override
+  String get cloudSyncRevokeAndErase => '撤銷並清除';
+
+  @override
   String get cloudSyncRevokeTitle => '撤銷此裝置？';
 
   @override
   String get cloudSyncRevokeMessage => '此裝置需要重新登入後才能繼續同步。';
 
   @override
-  String get cloudSyncRevokeCurrentMessage => '這是目前裝置，撤銷後將退出登入。';
+  String get cloudSyncRevokeCurrentMessage =>
+      '這是目前裝置。撤銷後將永久刪除本次安裝中的所有 Kelivo 帳號、本機工作區、聊天、設定、快取檔案和加密金鑰。';
+
+  @override
+  String get cloudSyncCurrentDeviceRemovalUnavailable =>
+      '目前版本尚未具備可驗證的安全自我撤銷能力，因此無法從此裝置發起移除。';
+
+  @override
+  String get localDeviceWipeTitle => '正在完成本機資料清除';
+
+  @override
+  String get localDeviceWipeMessage =>
+      '此裝置已經撤銷，但本機資料和加密金鑰尚未完全刪除。清理成功前，Kelivo 將保持鎖定。';
+
+  @override
+  String get localDeviceWipeRetry => '重試清除';
+
+  @override
+  String get localDeviceWipeRetryFailed => '本機資料和加密金鑰仍未完全刪除。請重試清理後再使用 Kelivo。';
 
   @override
   String get cloudSyncCancel => '取消';

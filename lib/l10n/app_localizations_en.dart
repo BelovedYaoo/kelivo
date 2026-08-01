@@ -291,6 +291,9 @@ class AppLocalizationsEn extends AppLocalizations {
   String get cloudSyncRevoke => 'Revoke';
 
   @override
+  String get cloudSyncRevokeAndErase => 'Revoke and Erase';
+
+  @override
   String get cloudSyncRevokeTitle => 'Revoke this device?';
 
   @override
@@ -299,7 +302,25 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cloudSyncRevokeCurrentMessage =>
-      'This is the current device. Revoking it will sign you out.';
+      'This is the current device. Revoking it permanently deletes every Kelivo account, the local workspace, chats, settings, cached files, and encryption keys from this installation.';
+
+  @override
+  String get cloudSyncCurrentDeviceRemovalUnavailable =>
+      'This version does not yet support verifiable secure self-removal, so this device cannot remove itself.';
+
+  @override
+  String get localDeviceWipeTitle => 'Finishing Local Data Removal';
+
+  @override
+  String get localDeviceWipeMessage =>
+      'This device has been revoked, but its local data and encryption keys are not fully removed yet. Kelivo remains locked until cleanup succeeds.';
+
+  @override
+  String get localDeviceWipeRetry => 'Retry Removal';
+
+  @override
+  String get localDeviceWipeRetryFailed =>
+      'Local data and encryption keys are still not fully removed. Retry the cleanup before using Kelivo.';
 
   @override
   String get cloudSyncCancel => 'Cancel';
