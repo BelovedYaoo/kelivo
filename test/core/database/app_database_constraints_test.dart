@@ -4,11 +4,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:Kelivo/core/database/app_database.dart';
+import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/e2ee_sync_record_ledger.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_key_transition.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
@@ -23,12 +25,15 @@ import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/e2ee_data_rekey_executor.dart';
 import 'package:Kelivo/core/services/sync/e2ee_data_rekey_wire.dart';
+import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
+import 'package:Kelivo/core/services/sync/e2ee_device_state_key_transition.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
 import 'package:Kelivo/core/services/workspace/e2ee_data_rekey_stage_store.dart';
+import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
 import 'package:crypto/crypto.dart';
@@ -2402,6 +2407,324 @@ void main() {
       expect(request.sourceManifestRevision, 2);
       expect(request.manifestRevision, 3);
       expect(request.manifestKeyEpoch, 8);
+    });
+  });
+
+  group('E2EE 账户密钥变更编排', () {
+    test('本地提交后 checkpoint 清理失败可在无换代日志时恢复', () async {
+      final operationId = _syncUuid(331);
+      final transport = _ZeroSourceDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+      );
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/account-key-transition',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.deviceRevocation,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: operationId,
+        rekeyOperationId: operationId,
+        securityGeneration: 12,
+        targetKeyEpoch: 8,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      final remote = _FakeAccountKeyTransitionRemote(binding);
+      final local = _FakeAccountKeyTransitionLocalCommitter();
+      final coordinator = E2eeAccountKeyTransitionCoordinator(
+        dataRekeyExecutor: E2eeDataRekeyExecutor(
+          transport: transport,
+          journal: dataRekeyCommands,
+          stageStore: stageStore,
+          cryptography: _ZeroSourceDataRekeyCryptography(),
+          clock: () => DateTime.utc(2026, 7, 30, 5),
+        ),
+        remoteCommit: remote,
+        localCommitter: local,
+      );
+
+      await expectLater(
+        coordinator.execute(context: context, binding: binding),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated_checkpoint_cleanup_loss',
+          ),
+        ),
+      );
+      expect(local.commitCalls, 1);
+      expect(remote.commitCalls, 1);
+      expect(remote.completeCalls, 1);
+      expect(await dataRekeyCommands.readActive(), equals(null));
+
+      final receipt = await coordinator.execute(
+        context: context,
+        binding: binding,
+      );
+
+      expect(receipt.rekeyOperationId, operationId);
+      expect(local.commitCalls, 1);
+      expect(local.requireCommittedCalls, 1);
+      expect(remote.commitCalls, 2);
+      expect(remote.completeCalls, 2);
+    });
+
+    test('ready 后推进成员锚并只发布已裁剪设备状态', () async {
+      const secureCore = KelivoSecureCore();
+      const manifestModule = E2eeAccountTrustManifestModule();
+      const baseUrl = 'https://kelivo.bemylover.top';
+      final testIdentity = sha256
+          .convert(utf8.encode(directory.path))
+          .toString()
+          .substring(0, 12);
+      final loginName = 'transition-$testIdentity';
+      final deviceStateRoot = await Directory(
+        '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+        '${Platform.pathSeparator}device_state_key_transition_$testIdentity',
+      ).create(recursive: true);
+      final slotId = E2eeDeviceStateAccess.deriveSlotId(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      );
+      KelivoKeyHandle? key;
+      KelivoDeviceIdentityHandle? identity;
+      KelivoAccountRootKeyHandle? ark;
+      E2eeOpenedDeviceStateHandles? opened;
+      addTearDown(() async {
+        final openedToClose = opened;
+        if (openedToClose != null) {
+          await secureCore.closeAccountRootKey(openedToClose.ark!);
+          await secureCore.closeDeviceIdentity(openedToClose.identity);
+          await secureCore.close(openedToClose.key);
+        }
+        final arkToClose = ark;
+        if (arkToClose != null) {
+          await secureCore.closeAccountRootKey(arkToClose);
+        }
+        final identityToClose = identity;
+        if (identityToClose != null) {
+          await secureCore.closeDeviceIdentity(identityToClose);
+        }
+        final keyToClose = key;
+        if (keyToClose != null) await secureCore.close(keyToClose);
+        await secureCore.deleteSlot(slotId);
+        if (await deviceStateRoot.exists()) {
+          await deviceStateRoot.delete(recursive: true);
+        }
+      });
+
+      key = await secureCore.createSlot(slotId);
+      identity = await secureCore.generateDeviceIdentity();
+      ark = await secureCore.generateAccountRootKey(
+        userId: Uuid.parseAsByteList(_syncAccountUserId),
+        keyEpoch: 1,
+      );
+      final publicKeys = await secureCore.readDevicePublicKeys(identity);
+      final recoveryDevice = E2eeMembershipDeviceInput(
+        deviceId: _syncActorDeviceId,
+        keyVersion: 1,
+        authGeneration: 1,
+        signingPublicKey: publicKeys.signingPublicKey,
+        keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+      );
+      final originalDevice = await _newDatabaseMembershipDevice(
+        secureCore,
+        deviceId: _syncUuid(332),
+        authGeneration: 0,
+      );
+      final initialized = await manifestModule.create(
+        ark: ark,
+        change: E2eeInitializeMembershipChange(
+          userId: _syncAccountUserId,
+          operationId: _syncUuid(333),
+          member: originalDevice,
+          recoveryPublicKeyVersion: 1,
+          recoveryPublicKey: await _newDatabaseRecoveryPublicKey(secureCore),
+          recoveryCapsuleVersion: 1,
+          recoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x51),
+        ),
+      );
+      final resumed = await manifestModule.create(
+        ark: ark,
+        change: E2eeRecoverResumeMembershipChange(
+          previous: initialized,
+          operationId: _syncUuid(334),
+          subject: recoveryDevice,
+        ),
+      );
+      await repository.e2eeVerifiedMembershipAnchorCommands.install(
+        membership: resumed,
+        now: DateTime.utc(2026, 7, 30, 5),
+      );
+      final sourceStateBlob = await secureCore.sealDeviceState(
+        key,
+        identity,
+        deviceId: Uuid.parseAsByteList(_syncActorDeviceId),
+        keyVersion: 1,
+        ark: ark,
+        account: KelivoDeviceStateAccountBinding(
+          userId: Uuid.parseAsByteList(_syncAccountUserId),
+          keyEpoch: 1,
+        ),
+      );
+      final nextEpoch = await secureCore.generateAccountRootKey(
+        userId: Uuid.parseAsByteList(_syncAccountUserId),
+        keyEpoch: 2,
+      );
+      try {
+        await secureCore.addAccountRootKeyEpoch(ark, source: nextEpoch);
+      } finally {
+        await secureCore.closeAccountRootKey(nextEpoch);
+      }
+      final operationId = _syncUuid(335);
+      final replaced = await manifestModule.create(
+        ark: ark,
+        change: E2eeRecoverReplaceMembershipChange(
+          previous: resumed,
+          operationId: operationId,
+          subject: recoveryDevice,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x52),
+        ),
+      );
+      final unprunedStateBlob = await secureCore.sealDeviceState(
+        key,
+        identity,
+        deviceId: Uuid.parseAsByteList(_syncActorDeviceId),
+        keyVersion: 1,
+        ark: ark,
+        account: KelivoDeviceStateAccountBinding(
+          userId: Uuid.parseAsByteList(_syncAccountUserId),
+          keyEpoch: 2,
+        ),
+      );
+      await secureCore.pruneAccountRootKeyEpoch(ark, keyEpoch: 1);
+      final prunedStateBlob = await secureCore.sealDeviceState(
+        key,
+        identity,
+        deviceId: Uuid.parseAsByteList(_syncActorDeviceId),
+        keyVersion: 1,
+        ark: ark,
+        account: KelivoDeviceStateAccountBinding(
+          userId: Uuid.parseAsByteList(_syncAccountUserId),
+          keyEpoch: 2,
+        ),
+      );
+      final deviceStateStore = DeviceStateBlobStore(
+        installationRoot: deviceStateRoot,
+      );
+      await deviceStateStore.compareAndSwap(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedVersion: null,
+        blob: sourceStateBlob,
+      );
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryReplacement,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: operationId,
+        rekeyOperationId: operationId,
+        securityGeneration: replaced.securityGeneration,
+        targetKeyEpoch: replaced.keyEpoch,
+        membershipManifestDigest: replaced.digest,
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: baseUrl,
+        loginName: loginName,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: replaced.securityGeneration,
+        membershipManifestDigest: replaced.digest,
+      );
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/device-state-key-transition-stage',
+        ).create(),
+      );
+      final remote = _FakeAccountKeyTransitionRemote(
+        binding,
+        failFirstComplete: false,
+      );
+      final coordinator = E2eeAccountKeyTransitionCoordinator(
+        dataRekeyExecutor: E2eeDataRekeyExecutor(
+          transport: _ZeroSourceDataRekeyTransport(
+            userId: _syncAccountUserId,
+            issuerDeviceId: _syncActorDeviceId,
+            operationId: operationId,
+            sourceKeyEpoch: 1,
+            targetKeyEpoch: 2,
+          ),
+          journal: dataRekeyCommands,
+          stageStore: stageStore,
+          cryptography: _ZeroSourceDataRekeyCryptography(
+            issuerDeviceId: _syncActorDeviceId,
+            targetKeyEpoch: 2,
+          ),
+          clock: () => DateTime.utc(2026, 7, 30, 5),
+        ),
+        remoteCommit: remote,
+        localCommitter: E2eeDeviceStateKeyTransitionCommitter(
+          baseUrl: baseUrl,
+          normalizedLoginName: loginName,
+          plan: E2eeDeviceStateKeyTransitionPlan(
+            binding: binding,
+            previousMembership: resumed,
+            nextMembership: replaced,
+            sourceStateBlob: sourceStateBlob,
+            unprunedStateBlob: unprunedStateBlob,
+            prunedStateBlob: prunedStateBlob,
+          ),
+          deviceStateStore: deviceStateStore,
+          secureCore: secureCore,
+          databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+          databaseFile: File('${directory.path}/constraints.sqlite'),
+          clock: () => DateTime.utc(2026, 7, 30, 5, 1),
+        ),
+      );
+
+      await coordinator.execute(context: context, binding: binding);
+      await coordinator.execute(context: context, binding: binding);
+
+      final current = await deviceStateStore.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      );
+      expect(current, orderedEquals(prunedStateBlob));
+      opened = await E2eeDeviceStateAccess(
+        baseUrl: baseUrl,
+        deviceStateStore: deviceStateStore,
+        secureCore: secureCore,
+      ).openExisting(loginName);
+      final committed = opened!;
+      final anchor = await repository.e2eeVerifiedMembershipAnchorCommands
+          .readVerified(accountUserId: _syncAccountUserId, ark: committed.ark!);
+      expect(anchor, isNot(equals(null)));
+      expect(anchor!.membership.digest, orderedEquals(replaced.digest));
+      await expectLater(
+        secureCore.deriveAccountTrustPublicKey(
+          committed.ark!,
+          userId: Uuid.parseAsByteList(_syncAccountUserId),
+          keyEpoch: 1,
+        ),
+        throwsA(isA<KelivoSecureCoreException>()),
+      );
+      expect(await dataRekeyCommands.readActive(), equals(null));
+      expect(remote.commitCalls, 2);
+      expect(remote.completeCalls, 2);
     });
   });
 
@@ -9016,13 +9339,18 @@ Future<Uint8List> _newDatabaseRecoveryPublicKey(
 
 final class _ZeroSourceDataRekeyCryptography
     implements E2eeDataRekeyCryptography {
+  _ZeroSourceDataRekeyCryptography({
+    this.issuerDeviceId = _syncActorDeviceId,
+    this.targetKeyEpoch = 8,
+  });
+
   int signatureCount = 0;
 
   @override
-  final String issuerDeviceId = _syncActorDeviceId;
+  final String issuerDeviceId;
 
   @override
-  final int targetKeyEpoch = 8;
+  final int targetKeyEpoch;
 
   @override
   Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
@@ -9049,11 +9377,15 @@ final class _ZeroSourceDataRekeyTransport
     required this.userId,
     required this.issuerDeviceId,
     required this.operationId,
+    this.sourceKeyEpoch = 7,
+    this.targetKeyEpoch = 8,
   });
 
   final String userId;
   final String issuerDeviceId;
   final String operationId;
+  final int sourceKeyEpoch;
+  final int targetKeyEpoch;
   final List<CloudSyncDataRekeyFinalizeRequest> finalizeRequests =
       <CloudSyncDataRekeyFinalizeRequest>[];
   CloudSyncDataRekeyFinalizeRequest? _finalizedRequest;
@@ -9077,10 +9409,10 @@ final class _ZeroSourceDataRekeyTransport
     return CloudSyncDataRekeyState.fromJson(<String, Object?>{
       'phase': 'rekey-pending',
       'dataGeneration': 4,
-      'dataKeyEpoch': 7,
+      'dataKeyEpoch': sourceKeyEpoch,
       'changeWatermark': 0,
       'operationId': operationId,
-      'targetKeyEpoch': 8,
+      'targetKeyEpoch': targetKeyEpoch,
       'sourceRecordCount': 0,
       'sourceAttachmentCount': 0,
       'sourceMaximumChangeSeq': 0,
@@ -9100,8 +9432,8 @@ final class _ZeroSourceDataRekeyTransport
       'phase': 'rekey-pending',
       'operationId': operationId,
       'sourceDataGeneration': 4,
-      'sourceKeyEpoch': 7,
-      'targetKeyEpoch': 8,
+      'sourceKeyEpoch': sourceKeyEpoch,
+      'targetKeyEpoch': targetKeyEpoch,
       'leaseVersion': 1,
       'leaseExpiresAt': '2026-07-30T05:10:00.000Z',
       'sourceRecordCount': 0,
@@ -9598,6 +9930,66 @@ final class _AttachmentDataRekeyTransport
     CloudSyncDataRekeyFinalizeRequest request,
   ) async {
     return _finalizedDataRekeyOutcome(userId: userId, request: request);
+  }
+}
+
+final class _FakeAccountKeyTransitionRemote
+    implements E2eeAccountKeyTransitionRemoteCommit {
+  _FakeAccountKeyTransitionRemote(
+    this.binding, {
+    this.failFirstComplete = true,
+  });
+
+  final E2eeAccountKeyTransitionBinding binding;
+  final bool failFirstComplete;
+  int commitCalls = 0;
+  int completeCalls = 0;
+
+  @override
+  Future<E2eeAccountKeyTransitionRemoteReceipt> commit() async {
+    commitCalls += 1;
+    return E2eeAccountKeyTransitionRemoteReceipt(
+      kind: binding.kind,
+      userId: binding.userId,
+      membershipOperationId: binding.membershipOperationId,
+      rekeyOperationId: binding.rekeyOperationId,
+      securityGeneration: binding.securityGeneration,
+      targetKeyEpoch: binding.targetKeyEpoch,
+      membershipManifestDigest: binding.membershipManifestDigest,
+    );
+  }
+
+  @override
+  Future<void> complete(E2eeAccountKeyTransitionRemoteReceipt receipt) async {
+    completeCalls += 1;
+    if (failFirstComplete && completeCalls == 1) {
+      throw StateError('simulated_checkpoint_cleanup_loss');
+    }
+  }
+}
+
+final class _FakeAccountKeyTransitionLocalCommitter
+    implements E2eeAccountKeyTransitionLocalCommitter {
+  int commitCalls = 0;
+  int requireCommittedCalls = 0;
+  bool _committed = false;
+
+  @override
+  Future<void> commit({
+    required E2eeAccountKeyTransitionBinding binding,
+    required E2eeDataRekeyReadyConfirmation confirmation,
+  }) async {
+    commitCalls += 1;
+    expect(confirmation.execution.operationId, binding.rekeyOperationId);
+    _committed = true;
+  }
+
+  @override
+  Future<void> requireCommitted({
+    required E2eeAccountKeyTransitionBinding binding,
+  }) async {
+    requireCommittedCalls += 1;
+    if (!_committed) throw StateError('local_transition_not_committed');
   }
 }
 
