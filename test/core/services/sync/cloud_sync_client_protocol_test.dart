@@ -69,6 +69,9 @@ const _onboardingTokenValue =
 final _fullToken = CloudSyncFullSessionToken.parse(_fullTokenValue);
 final _otherFullToken = CloudSyncFullSessionToken.parse(_otherFullTokenValue);
 final _onboardingToken = CloudSyncOnboardingToken.parse(_onboardingTokenValue);
+final _dataRekeyRecoveryToken = CloudSyncAccountRecoveryToken.parse(
+  'kelivo_recovery_${_encodedBytes(32, 110)}',
+);
 
 Map<String, Object?> _validConversationPayload() => <String, Object?>{
   'title': '会话',
@@ -3113,18 +3116,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final claimFuture = client.claimDataRekeyLease(claimRequest);
+    final claimFuture = transport.claimDataRekeyLease(claimRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/lease/claim');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3261,18 +3271,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final pageFuture = client.listDataRekeySourceRecords(listRequest);
+    final pageFuture = transport.listDataRekeySourceRecords(listRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/source/record-list');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3344,18 +3361,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final pageFuture = client.listDataRekeySourceAttachments(listRequest);
+    final pageFuture = transport.listDataRekeySourceAttachments(listRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/source/attachment-list');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3443,18 +3467,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final resultFuture = client.stageDataRekeyRecord(stageRequest);
+    final resultFuture = transport.stageDataRekeyRecord(stageRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/record/stage');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3516,18 +3547,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final resultFuture = client.stageDataRekeyAttachment(stageRequest);
+    final resultFuture = transport.stageDataRekeyAttachment(stageRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/attachment/stage');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3607,18 +3645,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final resultFuture = client.finalizeDataRekey(finalizeRequest);
+    final resultFuture = transport.finalizeDataRekey(finalizeRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/operation/finalize');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,

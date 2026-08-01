@@ -26,5 +26,7 @@
 - 已完成：恢复 checkpoint 硬切 v4，在任何远端成员 commit 前强制持久化 source/unpruned/target-only candidate 三份精确随机密文；candidate 显式按 `candidatePrepared -> proofVerified -> activated` 单向推进，回执前不可验证、proof 前不可激活，重启后保持逐字 CAS，不允许后填或重封。
 - 已完成：账户密钥变更 ready confirmation 补齐 user/issuer/operation/generation/epoch/digest 全绑定，独立调用本地 committer 也拒绝跨账户或跨签发设备复用确认。
 - 已完成：CloudSync data-rekey 增加账户恢复令牌专用传输。七个换代接口共享不可变 bearer 作用域，不修改完整会话令牌；允许仅持恢复令牌执行换代，同时普通请求继续失败关闭。
+- 已完成：七个 data-rekey 端点均由协议测试逐请求断言恢复 bearer，防止后续单个端点退回完整会话令牌。
 - 验证：恢复 checkpoint 安全测试 1/1、恢复授权/提交协调 11/11、账户密钥变更编排 8/8 通过；测试使用显式 Native 测试存储和独立 C: TEMP，未访问默认安全槽。
-- 验证：恢复 data-rekey 令牌隔离协议测试 2/2 通过；定向分析无问题。
+- 验证：恢复 data-rekey 令牌隔离 GET 测试 2/2、六类 POST 端点测试 6/6 通过；定向分析无问题。
+- 已知阻断：data-rekey 协议子集 16 条通过、1 条失败；当前生成 Dart typed adapter 只接受 `finalized`，会在 raw 严格解析前拒绝 API 已支持的 `verification-pending`。已回注 Issue #51，待最终 OpenAPI 冻结后统一重生成，禁止手改生成文件。
