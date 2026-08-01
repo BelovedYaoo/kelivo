@@ -380,7 +380,9 @@ fn register_identity(identity: crypto::DeviceIdentity) -> Result<u64, KelivoStat
     )
 }
 
-fn identity_for_handle(handle: u64) -> Result<Arc<crypto::DeviceIdentity>, KelivoStatus> {
+pub(super) fn identity_for_handle(
+    handle: u64,
+) -> Result<Arc<crypto::DeviceIdentity>, KelivoStatus> {
     secret_for_handle(
         identity_registry(),
         handle,
@@ -562,6 +564,22 @@ fn merge_ark_epoch(target_handle: u64, source_handle: u64) -> Result<(), KelivoS
         (epoch, crypto::AccountRootKey::from_bytes(*key.as_bytes()))
     };
     target
+        .keyring
+        .lock()
+        .map_err(|_| KelivoStatus::InternalState)?
+        .add_current(epoch, key)
+        .map_err(|_| KelivoStatus::InvalidArgument)
+}
+
+pub(super) fn add_ark_epoch(
+    handle: u64,
+    expected_user_id: crypto::UserId,
+    epoch: u32,
+    key: crypto::AccountRootKey,
+) -> Result<(), KelivoStatus> {
+    let bound = bound_keyring_for_handle(handle)?;
+    require_ark_account(&bound, expected_user_id)?;
+    bound
         .keyring
         .lock()
         .map_err(|_| KelivoStatus::InternalState)?

@@ -26,7 +26,7 @@ const MAX_ACTIVE_RECOVERY_HANDLES: usize = 64;
 const RECOVERY_USER_FLOW_AVAILABLE: bool =
     cfg!(any(target_os = "android", target_os = "ios", test));
 
-fn require_recovery_user_flow() -> Result<(), KelivoStatus> {
+pub(super) fn require_recovery_user_flow() -> Result<(), KelivoStatus> {
     if RECOVERY_USER_FLOW_AVAILABLE {
         Ok(())
     } else {
@@ -176,7 +176,7 @@ fn read_origin_digest(
     Ok(copy_array(bytes))
 }
 
-fn recovery_error_status(error: recovery::RecoveryCryptoError) -> KelivoStatus {
+pub(super) fn recovery_error_status(error: recovery::RecoveryCryptoError) -> KelivoStatus {
     use recovery::RecoveryCryptoError as Error;
     match error {
         Error::InvalidUserId | Error::InvalidPositiveVersion => KelivoStatus::InvalidArgument,

@@ -288,7 +288,7 @@ impl RecoveryIdentity {
         RecoveryPublicKey::from_bytes(public_key.to_bytes().into())
     }
 
-    fn hpke_private_key(
+    pub(crate) fn hpke_private_key(
         &self,
     ) -> Result<<HpkeKem as HpkeKemTrait>::PrivateKey, RecoveryCryptoError> {
         <<HpkeKem as HpkeKemTrait>::PrivateKey as Deserializable>::from_bytes(&self.private_key)
@@ -444,6 +444,36 @@ pub struct OpenedRecoveryCapsule {
 pub struct OpenedRecoveryKeyring {
     pub current: OpenedRecoveryCapsule,
     pub source: Option<OpenedRecoveryCapsule>,
+    pub history_head: VerifiedRecoveryHistoryHead,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub struct RecoveryHistoryMember {
+    pub device_id: DeviceId,
+    pub key_version: u32,
+    pub auth_generation: u32,
+    pub signing_public_key: DeviceSigningPublicKey,
+    pub key_agreement_public_key: DeviceKeyAgreementPublicKey,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct VerifiedRecoveryHistoryHead {
+    pub user_id: UserId,
+    pub security_generation: u32,
+    pub key_epoch: u32,
+    pub digest: [u8; 32],
+    pub current_trust_public_key: AccountTrustPublicKey,
+    pub recovery_public_key_version: u32,
+    pub recovery_public_key: RecoveryPublicKey,
+    pub recovery_capsule_version: u32,
+    pub recovery_capsule_digest: [u8; RECOVERY_CAPSULE_SHA256_LENGTH],
+    pub operation_kind: u32,
+    pub operation_id: [u8; 16],
+    pub issuer_device_id: DeviceId,
+    pub subject_device_id: DeviceId,
+    pub members: Vec<RecoveryHistoryMember>,
+    pub operation_ids: Vec<[u8; 16]>,
+    pub manifest: Vec<u8>,
 }
 
 pub fn seal_recovery_capsule<R>(
@@ -572,7 +602,11 @@ pub fn verify_recovery_history_and_open_capsules(
         (None, None) => None,
         _ => return Err(RecoveryCryptoError::MembershipHistoryHeadMismatch),
     };
-    Ok(OpenedRecoveryKeyring { current, source })
+    Ok(OpenedRecoveryKeyring {
+        current,
+        source,
+        history_head: expectations.history_head,
+    })
 }
 
 #[cfg(test)]

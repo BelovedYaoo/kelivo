@@ -10,7 +10,7 @@ use crate::{
     recovery_crypto::{
         RECOVERY_CAPSULE_SHA256_LENGTH, RECOVERY_HISTORY_MAX_BYTES, RecoveryCapsule,
         RecoveryCapsuleExpectation, RecoveryCryptoError, RecoveryGenesisCapability,
-        RecoveryPublicKey,
+        RecoveryHistoryMember, RecoveryPublicKey, VerifiedRecoveryHistoryHead,
     },
 };
 
@@ -110,6 +110,7 @@ impl CapsuleManifestBinding {
 pub(crate) struct RecoveryCapsuleExpectations {
     pub current: RecoveryCapsuleExpectation,
     pub source: Option<RecoveryCapsuleExpectation>,
+    pub history_head: VerifiedRecoveryHistoryHead,
 }
 
 pub(crate) fn verify_history_head(
@@ -219,9 +220,50 @@ pub(crate) fn verify_history_head(
             source_digest,
         )?)
     };
+    let history_head = VerifiedRecoveryHistoryHead {
+        user_id: current.user_id,
+        security_generation: current.security_generation,
+        key_epoch: current.key_epoch,
+        digest: current.digest,
+        current_trust_public_key: current.current_trust_public_key,
+        recovery_public_key_version: current.recovery_public_key_version,
+        recovery_public_key: current.recovery_public_key,
+        recovery_capsule_version: current.recovery_capsule_version,
+        recovery_capsule_digest: current.recovery_capsule_digest,
+        operation_kind: match current.operation {
+            MembershipOperation::Initialize => 1,
+            MembershipOperation::AddDevice => 2,
+            MembershipOperation::RevokeRotate => 3,
+            MembershipOperation::RecoverResume => 4,
+            MembershipOperation::RecoverReplace => 5,
+        },
+        operation_id: current.operation_id,
+        issuer_device_id: current.issuer_device_id,
+        subject_device_id: current.subject_device_id,
+        members: current
+            .members
+            .iter()
+            .map(|member| RecoveryHistoryMember {
+                device_id: member.device_id,
+                key_version: member.key_version,
+                auth_generation: member.auth_generation,
+                signing_public_key: member.signing_public_key,
+                key_agreement_public_key: member.key_agreement_public_key,
+            })
+            .collect(),
+        operation_ids: operation_ids.into_iter().collect(),
+        manifest: current.payload.iter().copied().chain(
+            current
+                .transition_signature
+                .iter()
+                .chain(current.current_signature.iter())
+                .copied(),
+        ).collect(),
+    };
     Ok(RecoveryCapsuleExpectations {
         current: current_expectation,
         source: source_expectation,
+        history_head,
     })
 }
 

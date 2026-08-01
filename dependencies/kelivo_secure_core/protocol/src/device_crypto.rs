@@ -1324,6 +1324,36 @@ pub fn sign_account_trust_payload(
     })
 }
 
+/// 为账户恢复协议签署已经过固定域分离与 SHA-256 的 32 字节消息。
+/// 该入口不接受任意长度载荷，避免绕过成员清单签名 transcript。
+pub fn sign_account_recovery_trust_message(
+    ark: &AccountRootKey,
+    binding: AccountTrustBinding,
+    message: &[u8; SHA256_DIGEST_LENGTH],
+) -> Result<AccountTrustSignature, DeviceCryptoError> {
+    with_account_trust_signing_key(ark, binding, |key| {
+        Ok(AccountTrustSignature(
+            key.signing_key().sign(message).to_bytes(),
+        ))
+    })
+}
+
+pub fn verify_account_recovery_trust_message(
+    public_key: &AccountTrustPublicKey,
+    message: &[u8; SHA256_DIGEST_LENGTH],
+    signature: &AccountTrustSignature,
+) -> Result<(), DeviceCryptoError> {
+    let verifying_key = public_key.verifying_key()?;
+    if !verify_strict_device_signature(
+        &verifying_key,
+        message,
+        &Signature::from_bytes(&signature.0),
+    ) {
+        return Err(DeviceCryptoError::AccountTrustSignatureInvalid);
+    }
+    Ok(())
+}
+
 pub fn verify_account_trust_payload(
     public_key: &AccountTrustPublicKey,
     binding: AccountTrustBinding,
@@ -1985,13 +2015,13 @@ pub fn open_device_state(
 const HPKE_RNG_SEED_LENGTH: usize = 32;
 const HPKE_RNG_EXPANSION_DOMAIN: &[u8] = b"kelivo.hpke-rng-adapter.expand.v1";
 
-pub(super) struct HpkeRngAdapter {
+pub(crate) struct HpkeRngAdapter {
     seed: Zeroizing<[u8; HPKE_RNG_SEED_LENGTH]>,
     position: usize,
 }
 
 impl HpkeRngAdapter {
-    pub(super) fn from_rng<R>(rng: &mut R) -> Result<Self, rand::Error>
+    pub(crate) fn from_rng<R>(rng: &mut R) -> Result<Self, rand::Error>
     where
         R: RngCore,
     {
