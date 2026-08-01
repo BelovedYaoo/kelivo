@@ -146,6 +146,8 @@ public final class KelivoDurablePreferencesPlugin: NSObject, FlutterPlugin {
     guard standardizedApplicationSupport.deletingLastPathComponent() == standardizedLibrary else {
       throw DurablePreferencesError.applicationSupportUnavailable
     }
+    // iOS 与沙箱 macOS 的 Library 父目录是应用容器根；非沙箱 macOS
+    // 则是用户 home。应用能改名 Library，但无权通过更上级命名空间替换该父目录。
     return try DurablePreferencesFileStore(
       rootDirectory: standardizedLibrary,
       relativeDirectoryComponents: [

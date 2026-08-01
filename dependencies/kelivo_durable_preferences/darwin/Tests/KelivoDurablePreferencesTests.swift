@@ -243,6 +243,116 @@ final class KelivoDurablePreferencesTests: XCTestCase {
     )
   }
 
+  func testReplacingLibraryRootRejectsEveryOperationAndPreservesCanonicalSnapshot() throws {
+    let container = root.appendingPathComponent("container", isDirectory: true)
+    let library = container.appendingPathComponent("Library", isDirectory: true)
+    let detachedLibrary = container.appendingPathComponent(
+      "DetachedLibrary",
+      isDirectory: true
+    )
+    try FileManager.default.createDirectory(at: container, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: library, withIntermediateDirectories: false)
+    let legacy = StubLegacyPreferences()
+    let primary = try makeNestedStore(rootDirectory: library, legacy: legacy)
+    try primary.initialize()
+    try primary.set(valueType: "String", key: "flutter.secret", value: "original")
+    let operationStores = try (0..<5).map { _ in
+      try makeNestedStore(rootDirectory: library, legacy: legacy)
+    }
+
+    try FileManager.default.moveItem(at: library, to: detachedLibrary)
+    try FileManager.default.createDirectory(at: library, withIntermediateDirectories: false)
+    let replacement = try makeNestedStore(rootDirectory: library, legacy: legacy)
+    try replacement.initialize()
+    try replacement.set(valueType: "String", key: "flutter.owner", value: "replacement")
+    try replacement.set(
+      valueType: "String",
+      key: "flutter.secret",
+      value: "replacement-secret"
+    )
+
+    assertDirectoryUnsafe { try operationStores[0].initialize() }
+    assertDirectoryUnsafe {
+      _ = try operationStores[1].getAll(prefix: "flutter.", allowList: nil)
+    }
+    assertDirectoryUnsafe {
+      try operationStores[2].set(
+        valueType: "String",
+        key: "flutter.secret",
+        value: "escaped"
+      )
+    }
+    assertDirectoryUnsafe { try operationStores[3].remove(key: "flutter.secret") }
+    assertDirectoryUnsafe {
+      try operationStores[4].clear(prefix: "flutter.", allowList: nil)
+    }
+
+    let replacementValues = try replacement.getAll(prefix: "flutter.", allowList: nil)
+    XCTAssertEqual(replacementValues["flutter.owner"] as? String, "replacement")
+    XCTAssertEqual(
+      replacementValues["flutter.secret"] as? String,
+      "replacement-secret"
+    )
+  }
+
+  func testReplacementDuringMutationPoisonsStoreAfterOriginalRootReturns() throws {
+    let container = root.appendingPathComponent("container", isDirectory: true)
+    let library = container.appendingPathComponent("Library", isDirectory: true)
+    let detachedLibrary = container.appendingPathComponent(
+      "DetachedLibrary",
+      isDirectory: true
+    )
+    let replacementLibrary = container.appendingPathComponent(
+      "ReplacementLibrary",
+      isDirectory: true
+    )
+    try FileManager.default.createDirectory(at: container, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(at: library, withIntermediateDirectories: false)
+    try FileManager.default.createDirectory(
+      at: replacementLibrary,
+      withIntermediateDirectories: false
+    )
+    let legacy = StubLegacyPreferences()
+    let initial = try makeNestedStore(rootDirectory: library, legacy: legacy)
+    try initial.initialize()
+    try initial.set(valueType: "String", key: "flutter.secret", value: "original")
+    let preparedReplacement = try makeNestedStore(
+      rootDirectory: replacementLibrary,
+      legacy: legacy
+    )
+    try preparedReplacement.initialize()
+    try preparedReplacement.set(
+      valueType: "String",
+      key: "flutter.secret",
+      value: "replacement-secret"
+    )
+
+    let durability = FileSyncHookDurability {
+      try FileManager.default.moveItem(at: library, to: detachedLibrary)
+      try FileManager.default.moveItem(at: replacementLibrary, to: library)
+    }
+    let oldStore = try makeNestedStore(
+      rootDirectory: library,
+      durability: durability,
+      legacy: legacy
+    )
+
+    assertDirectoryUnsafe { try oldStore.remove(key: "flutter.secret") }
+    XCTAssertTrue(durability.didRun)
+    let canonical = try makeNestedStore(rootDirectory: library, legacy: legacy)
+    try canonical.initialize()
+    XCTAssertEqual(
+      try canonical.getAll(prefix: "flutter.", allowList: nil)["flutter.secret"] as? String,
+      "replacement-secret"
+    )
+
+    try FileManager.default.moveItem(at: library, to: replacementLibrary)
+    try FileManager.default.moveItem(at: detachedLibrary, to: library)
+    assertDirectoryUnsafe {
+      _ = try oldStore.getAll(prefix: "flutter.", allowList: nil)
+    }
+  }
+
   func testSymbolicLinkDirectoryIsRejectedBeforeCreatingLockState() throws {
     let directory = root.appendingPathComponent("preferences", isDirectory: true)
     let target = root.appendingPathComponent("target", isDirectory: true)
@@ -461,6 +571,37 @@ final class KelivoDurablePreferencesTests: XCTestCase {
       "before"
     )
   }
+
+  private func makeNestedStore(
+    rootDirectory: URL,
+    durability: PreferencesDurability = DarwinPreferencesDurability(),
+    legacy: LegacyPreferencesAccess
+  ) throws -> DurablePreferencesFileStore {
+    try DurablePreferencesFileStore(
+      rootDirectory: rootDirectory,
+      relativeDirectoryComponents: ["Application Support", "preferences"],
+      durability: durability,
+      legacyPreferences: legacy
+    )
+  }
+
+  private func assertDirectoryUnsafe(
+    _ operation: () throws -> Void,
+    file: StaticString = #filePath,
+    line: UInt = #line
+  ) {
+    do {
+      try operation()
+      XCTFail("操作未在目录身份失配时失败关闭", file: file, line: line)
+    } catch let error as DurablePreferencesError {
+      guard case .directoryUnsafe = error else {
+        XCTFail("收到非目录身份错误：\(error)", file: file, line: line)
+        return
+      }
+    } catch {
+      XCTFail("收到非耐久偏好错误：\(error)", file: file, line: line)
+    }
+  }
 }
 
 private final class StubLegacyPreferences: LegacyPreferencesAccess {
@@ -548,5 +689,31 @@ private final class RecordingDurability: PreferencesDurability {
     if let failBarrierAtCall, barrierCalls == failBarrierAtCall {
       throw DurablePreferencesError.barrierSyncFailed(errno: EIO)
     }
+  }
+}
+
+private final class FileSyncHookDurability: PreferencesDurability {
+  init(onFirstFileSync: @escaping () throws -> Void) {
+    self.onFirstFileSync = onFirstFileSync
+  }
+
+  private let base = DarwinPreferencesDurability()
+  private let onFirstFileSync: () throws -> Void
+  private(set) var didRun = false
+
+  func syncFileDescriptor(_ descriptor: Int32) throws {
+    try base.syncFileDescriptor(descriptor)
+    if !didRun {
+      didRun = true
+      try onFirstFileSync()
+    }
+  }
+
+  func syncDirectoryDescriptor(_ descriptor: Int32) throws {
+    try base.syncDirectoryDescriptor(descriptor)
+  }
+
+  func syncBarrierFileDescriptor(_ descriptor: Int32) throws {
+    try base.syncBarrierFileDescriptor(descriptor)
   }
 }

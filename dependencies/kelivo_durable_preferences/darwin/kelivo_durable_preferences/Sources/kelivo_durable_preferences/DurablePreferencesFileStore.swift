@@ -152,17 +152,26 @@ final class DurablePreferencesFileStore {
     durability: PreferencesDurability,
     legacyPreferences: LegacyPreferencesAccess
   ) throws {
+    let standardizedRootDirectory = rootDirectory.standardizedFileURL
+    let anchorDirectory = standardizedRootDirectory.deletingLastPathComponent()
+    let rootDirectoryName = standardizedRootDirectory.lastPathComponent
     guard rootDirectory.isFileURL,
+      Self.isSafeEntryName(rootDirectoryName),
+      anchorDirectory.appendingPathComponent(
+        rootDirectoryName,
+        isDirectory: true
+      ).standardizedFileURL == standardizedRootDirectory,
       !relativeDirectoryComponents.isEmpty,
       relativeDirectoryComponents.allSatisfy(Self.isSafeEntryName)
     else {
       throw DurablePreferencesError.directoryUnsafe
     }
 
-    let rootDescriptor = try Self.openAbsoluteDirectory(
-      at: rootDirectory.standardizedFileURL
+    let anchorDescriptor = try Self.openAbsoluteDirectory(
+      at: anchorDirectory
     )
-    var directoryDescriptors = [rootDescriptor]
+    var directoryDescriptors = [anchorDescriptor]
+    var directoryNames = [rootDirectoryName]
     var barrierDescriptor: Int32 = -1
     var descriptorsTransferred = false
     defer {
@@ -176,8 +185,25 @@ final class DurablePreferencesFileStore {
       }
     }
 
+    var anchorInfo = stat()
+    guard Darwin.fstat(anchorDescriptor, &anchorInfo) == 0,
+      Self.isDirectoryMode(anchorInfo.st_mode)
+    else {
+      throw DurablePreferencesError.directoryUnsafe
+    }
+    let rootDescriptor = try Self.openRelativeDirectory(
+      parentDescriptor: anchorDescriptor,
+      name: rootDirectoryName
+    )
+    directoryDescriptors.append(rootDescriptor)
+    try Self.requireSameDirectory(
+      parentDescriptor: anchorDescriptor,
+      directoryName: rootDirectoryName,
+      directoryDescriptor: rootDescriptor
+    )
     var rootInfo = stat()
     guard Darwin.fstat(rootDescriptor, &rootInfo) == 0,
+      anchorInfo.st_dev == rootInfo.st_dev,
       Self.isDirectoryMode(rootInfo.st_mode)
     else {
       throw DurablePreferencesError.directoryUnsafe
@@ -256,11 +282,17 @@ final class DurablePreferencesFileStore {
         barrierDescriptor = currentBarrierDescriptor
         barrierTransferred = true
       }
+      directoryNames.append(directoryName)
     }
+
+    try Self.requireAnchoredDirectoryIdentity(
+      directoryDescriptors: directoryDescriptors,
+      directoryNames: directoryNames
+    )
 
     self.directoryDescriptors = directoryDescriptors
     self.barrierDescriptor = barrierDescriptor
-    self.directoryNames = relativeDirectoryComponents
+    self.directoryNames = directoryNames
     self.durability = durability
     self.legacyPreferences = legacyPreferences
     descriptorsTransferred = true
@@ -287,6 +319,7 @@ final class DurablePreferencesFileStore {
   private let directoryNames: [String]
   private let durability: PreferencesDurability
   private let legacyPreferences: LegacyPreferencesAccess
+  private var anchorInvalidated = false
 
   private var directoryDescriptor: Int32 {
     directoryDescriptors[directoryDescriptors.index(before: directoryDescriptors.endIndex)]
@@ -684,6 +717,28 @@ final class DurablePreferencesFileStore {
   }
 
   private func requireAnchoredDirectoryIdentity() throws {
+    guard !anchorInvalidated else {
+      throw DurablePreferencesError.directoryUnsafe
+    }
+    do {
+      try Self.requireAnchoredDirectoryIdentity(
+        directoryDescriptors: directoryDescriptors,
+        directoryNames: directoryNames
+      )
+    } catch {
+      // 一旦观察到规范路径脱离已钉住的 inode，就不能因攻击者换回旧目录而恢复信任。
+      anchorInvalidated = true
+      throw error
+    }
+  }
+
+  private static func requireAnchoredDirectoryIdentity(
+    directoryDescriptors: [Int32],
+    directoryNames: [String]
+  ) throws {
+    guard directoryDescriptors.count == directoryNames.count + 1 else {
+      throw DurablePreferencesError.directoryUnsafe
+    }
     for index in directoryNames.indices {
       try Self.requireSameDirectory(
         parentDescriptor: directoryDescriptors[index],
