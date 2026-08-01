@@ -457,6 +457,67 @@ final class DeviceStateBlobStore {
     kind: _PendingEnvelopeKind.accountRecovery,
   );
 
+  Future<void> replacePendingAccountRecoveryEnvelope({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+    required Uint8List expectedDigest,
+    required Uint8List envelope,
+  }) {
+    if (expectedDigest.length != 32) {
+      throw const FormatException(
+        'device_state_store_account_recovery_digest_length',
+      );
+    }
+    if (envelope.isEmpty ||
+        envelope.length > pendingAccountRecoveryEnvelopeMaxLength) {
+      throw const FormatException(
+        'device_state_store_account_recovery_envelope_length',
+      );
+    }
+    final copiedDigest = Uint8List.fromList(expectedDigest);
+    final copiedEnvelope = Uint8List.fromList(envelope);
+    final locator = _deriveLocator(
+      normalizedBaseUrl: normalizedBaseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    return _withLocatorLock(locator, (directory) async {
+      if (await _readTombstone(directory) != null) {
+        throw StateError('device_state_store_account_recovery_deleted');
+      }
+      final manifest = await _readCurrentManifest(directory);
+      if (manifest == null) {
+        throw StateError('device_state_store_account_recovery_state_missing');
+      }
+      await _readPublishedState(directory, manifest);
+      await _cleanupTemporaryFiles(directory);
+      final current = await _readPendingEnvelope(
+        directory,
+        _PendingEnvelopeKind.accountRecovery,
+      );
+      if (current == null) {
+        throw StateError('device_state_store_account_recovery_missing');
+      }
+      // 回执丢失后的同值重放必须先于旧摘要校验，才能确认上次提交已落盘。
+      if (_sameBytes(current, copiedEnvelope)) return;
+      final currentDigest = Uint8List.fromList(sha256.convert(current).bytes);
+      if (!_sameBytes(currentDigest, copiedDigest)) {
+        throw StateError('device_state_store_account_recovery_changed');
+      }
+      await _publishFile(
+        directory: directory,
+        target: _pendingEnvelopeFile(
+          directory,
+          _PendingEnvelopeKind.accountRecovery,
+        ),
+        bytes: _encodePendingEnvelopeFrame(
+          copiedEnvelope,
+          _PendingEnvelopeKind.accountRecovery,
+        ),
+        replaceExisting: true,
+      );
+    });
+  }
+
   Future<Uint8List?> _readPendingEnvelopeForLocator({
     required String normalizedBaseUrl,
     required String normalizedLoginName,

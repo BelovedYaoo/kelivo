@@ -14,7 +14,7 @@
 - 恢复口令在所有退出路径清零；Native 边界明确禁止恢复私钥、ARK 和明文 nonce 进入 Dart。
 - 服务端确认 challenge 请求将移除客户端不可知的三个 expected 字段，并由服务端原子冻结 current head；客户端未固化旧 wire。
 - 已在 API Issue #32 补充 challenge 启动循环依赖，并与服务端修复进程确认硬切方向。
-- 设备状态存储已增加独立 8192 字节上限的账户恢复 checkpoint 密文槽，支持原样重放、摘要 CAS 删除，并随设备状态 tombstone 一并清理。
+- 设备状态存储已增加独立 8192 字节上限的账户恢复 checkpoint 密文槽，支持原样重放、旧摘要到新密文的原子替换、摘要 CAS 删除，并随设备状态 tombstone 一并清理；替换回执丢失后重放同一新密文可确认成功。
 - 验证：定向 `dart analyze` 无问题；授权 2 项、checkpoint 2 项及工作区存储完整 115 项 Flutter 测试通过。
 
 ## 协作边界

@@ -23,6 +23,7 @@ void main() {
       blob: Uint8List(DeviceStateBlobStore.blobLength),
     );
     final envelope = Uint8List.fromList(<int>[1, 2, 3, 4]);
+    final replacement = Uint8List.fromList(<int>[5, 6, 7, 8]);
 
     await store.writePendingAccountRecoveryEnvelope(
       normalizedBaseUrl: baseUrl,
@@ -43,11 +44,33 @@ void main() {
       envelope,
     );
     final digest = Uint8List.fromList(sha256.convert(envelope).bytes);
+    await store.replacePendingAccountRecoveryEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      expectedDigest: digest,
+      envelope: replacement,
+    );
+    await store.replacePendingAccountRecoveryEnvelope(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      expectedDigest: digest,
+      envelope: replacement,
+    );
+    expect(
+      await store.readPendingAccountRecoveryEnvelope(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      replacement,
+    );
+    final replacementDigest = Uint8List.fromList(
+      sha256.convert(replacement).bytes,
+    );
     expect(
       await store.deletePendingAccountRecoveryEnvelope(
         normalizedBaseUrl: baseUrl,
         normalizedLoginName: loginName,
-        expectedDigest: digest,
+        expectedDigest: replacementDigest,
       ),
       isTrue,
     );
