@@ -2337,6 +2337,100 @@ void main() {
     );
   });
 
+  test('账户恢复 state/get 保留成员提交后的数据换钥动作', () async {
+    final manifest = _filledBytes(cloudSyncMembershipManifestMinimumBytes, 114);
+    final capsule = _filledBytes(cloudSyncRecoveryCapsuleBytes, 115);
+    final responses = <Map<String, Object?>>[
+      <String, Object?>{
+        'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+        'attemptId': _attemptId1,
+        'status': 'resume-committed',
+        'nextAction': 'finish-first-data-rekey',
+        'authorizedAt': '2026-08-01T01:00:00.000Z',
+        'recoveryTokenExpiresAt': '2026-08-01T03:00:00.000Z',
+        'securityState': _securityStateDataForTest(
+          generation: 5,
+          keyEpoch: 5,
+          dataRekeyPhase: 'rekey-pending',
+          membershipManifest: manifest,
+          recoveryCapsuleVersion: 1,
+          recoveryCapsule: capsule,
+          operationId: _mutationId4,
+        ),
+        'dataState': <String, Object?>{
+          'phase': 'rekey-pending',
+          'dataGeneration': 7,
+          'dataKeyEpoch': 4,
+          'operationId': _mutationId5,
+          'targetKeyEpoch': 5,
+        },
+      },
+      <String, Object?>{
+        'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+        'attemptId': _attemptId1,
+        'status': 'replacement-committed',
+        'nextAction': 'finish-second-data-rekey',
+        'authorizedAt': '2026-08-01T01:00:00.000Z',
+        'recoveryTokenExpiresAt': '2026-08-01T03:00:00.000Z',
+        'securityState': _securityStateDataForTest(
+          generation: 6,
+          keyEpoch: 6,
+          dataRekeyPhase: 'rekey-pending',
+          membershipManifest: manifest,
+          recoveryCapsuleVersion: 2,
+          recoveryCapsule: capsule,
+          operationId: _mutationId6,
+        ),
+        'dataState': <String, Object?>{
+          'phase': 'rekey-pending',
+          'dataGeneration': 8,
+          'dataKeyEpoch': 5,
+          'operationId': _mutationId6,
+          'targetKeyEpoch': 6,
+        },
+      },
+    ];
+    var responseIndex = 0;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      expect(request.method, 'GET');
+      expect(request.uri.path, '/api/auth/account-recovery/state/get');
+      await _writeJsonResponse(request, <String, Object?>{
+        'data': responses[responseIndex++],
+      });
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final recoveryToken = CloudSyncAccountRecoveryToken.generate();
+
+    final resume = await client.getAuthorizedState(
+      recoveryToken: recoveryToken,
+    );
+    final replacement = await client.getAuthorizedState(
+      recoveryToken: recoveryToken,
+    );
+
+    expect(resume.status, E2eeAccountRecoveryRemoteStatus.resumeCommitted);
+    expect(
+      resume.nextAction,
+      E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    );
+    expect(
+      replacement.status,
+      E2eeAccountRecoveryRemoteStatus.replacementCommitted,
+    );
+    expect(
+      replacement.nextAction,
+      E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+    );
+  });
+
   test('账户恢复 resume 与 replacement 提交使用稳定协议并严格绑定回执', () async {
     final expectedManifest = _filledBytes(
       cloudSyncMembershipManifestMinimumBytes,
@@ -2467,13 +2561,13 @@ void main() {
     expect(resumeReceipt.kind, E2eeAccountRecoveryCommitKind.resume);
     expect(
       resumeReceipt.nextAction,
-      E2eeAccountRecoveryCommitNextAction.finishFirstDataRekey,
+      E2eeAccountRecoveryNextAction.finishFirstDataRekey,
     );
     expect(replacementReceipt.result, E2eeAccountRecoveryCommitResult.replayed);
     expect(replacementReceipt.kind, E2eeAccountRecoveryCommitKind.replacement);
     expect(
       replacementReceipt.nextAction,
-      E2eeAccountRecoveryCommitNextAction.finishSecondDataRekey,
+      E2eeAccountRecoveryNextAction.finishSecondDataRekey,
     );
     expect(
       requests.map((request) => (request.$1, request.$2)),

@@ -509,11 +509,15 @@ int _nextActionCode(E2eeAccountRecoveryNextAction? action) => switch (action) {
   null => 0,
   E2eeAccountRecoveryNextAction.recoverResume => 1,
   E2eeAccountRecoveryNextAction.recoverReplace => 2,
+  E2eeAccountRecoveryNextAction.finishFirstDataRekey => 3,
+  E2eeAccountRecoveryNextAction.finishSecondDataRekey => 4,
 };
 
 E2eeAccountRecoveryNextAction _parseNextAction(int value) => switch (value) {
   1 => E2eeAccountRecoveryNextAction.recoverResume,
   2 => E2eeAccountRecoveryNextAction.recoverReplace,
+  3 => E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+  4 => E2eeAccountRecoveryNextAction.finishSecondDataRekey,
   _ => throw const FormatException('账户恢复 checkpoint 下一步无效'),
 };
 

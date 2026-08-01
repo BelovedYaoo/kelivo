@@ -346,6 +346,7 @@ void main() {
         attemptId: fixture.challenge.attemptId,
         authorizedAt: DateTime.utc(2026, 8, 1),
         recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
+        status: E2eeAccountRecoveryRemoteStatus.authorized,
         nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
         securityState: _securityStateForFixture(fixture),
         dataState: fixture.challenge.dataState,

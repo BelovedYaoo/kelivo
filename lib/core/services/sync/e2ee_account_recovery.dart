@@ -23,16 +23,22 @@ enum E2eeAccountRecoveryDataPhase { ready, rekeyPending }
 
 enum E2eeAccountRecoveryAuthorizationResult { authorized, replayed }
 
-enum E2eeAccountRecoveryNextAction { recoverResume, recoverReplace }
+enum E2eeAccountRecoveryRemoteStatus {
+  authorized,
+  resumeCommitted,
+  replacementCommitted,
+}
+
+enum E2eeAccountRecoveryNextAction {
+  recoverResume,
+  finishFirstDataRekey,
+  recoverReplace,
+  finishSecondDataRekey,
+}
 
 enum E2eeAccountRecoveryCommitResult { committed, replayed }
 
 enum E2eeAccountRecoveryCommitKind { resume, replacement }
-
-enum E2eeAccountRecoveryCommitNextAction {
-  finishFirstDataRekey,
-  finishSecondDataRekey,
-}
 
 final class CloudSyncAccountRecoveryToken {
   CloudSyncAccountRecoveryToken._(this.value);
@@ -238,7 +244,12 @@ final class E2eeAccountRecoveryAuthorizationReceipt {
     required this.nextAction,
     required DateTime recoveryTokenExpiresAt,
   }) : attemptId = _canonicalUuid(attemptId, 'attemptId'),
-       recoveryTokenExpiresAt = recoveryTokenExpiresAt.toUtc();
+       recoveryTokenExpiresAt = recoveryTokenExpiresAt.toUtc() {
+    if (nextAction != E2eeAccountRecoveryNextAction.recoverResume &&
+        nextAction != E2eeAccountRecoveryNextAction.recoverReplace) {
+      throw const FormatException('账户恢复授权回执下一步无效');
+    }
+  }
 
   final String attemptId;
   final E2eeAccountRecoveryAuthorizationResult result;
@@ -251,6 +262,7 @@ final class E2eeAccountRecoveryAuthorizedState {
     required String attemptId,
     required DateTime authorizedAt,
     required DateTime recoveryTokenExpiresAt,
+    required this.status,
     required this.nextAction,
     required this.securityState,
     required this.dataState,
@@ -261,11 +273,24 @@ final class E2eeAccountRecoveryAuthorizedState {
         !this.authorizedAt.isBefore(this.recoveryTokenExpiresAt)) {
       throw const FormatException('账户恢复远程授权时间无效');
     }
+    final expectedDataRekeyPhase =
+        dataState.phase == E2eeAccountRecoveryDataPhase.ready
+        ? CloudSyncDataRekeyPhase.ready
+        : CloudSyncDataRekeyPhase.rekeyPending;
+    final stateEpoch = dataState.phase == E2eeAccountRecoveryDataPhase.ready
+        ? dataState.dataKeyEpoch
+        : dataState.targetKeyEpoch;
+    if (securityState.dataRekeyPhase != expectedDataRekeyPhase ||
+        securityState.keyEpoch != stateEpoch ||
+        !_remoteStatusAllowsAction(status, dataState.phase, nextAction)) {
+      throw const FormatException('账户恢复远程状态与数据换钥阶段不一致');
+    }
   }
 
   final String attemptId;
   final DateTime authorizedAt;
   final DateTime recoveryTokenExpiresAt;
+  final E2eeAccountRecoveryRemoteStatus status;
   final E2eeAccountRecoveryNextAction nextAction;
   final CloudSyncAccountSecurityState securityState;
   final E2eeAccountRecoveryDataState dataState;
@@ -461,7 +486,7 @@ final class E2eeAccountRecoveryCommitReceipt {
   final String rekeyOperationId;
   final int generation;
   final int keyEpoch;
-  final E2eeAccountRecoveryCommitNextAction nextAction;
+  final E2eeAccountRecoveryNextAction nextAction;
 }
 
 sealed class E2eeAccountRecoveryBearer {
@@ -721,6 +746,10 @@ final class E2eeAccountRecoveryCheckpoint {
   }) {
     if (stage != E2eeAccountRecoveryStage.proofReady) {
       throw StateError('账户恢复 checkpoint 尚未生成 proof');
+    }
+    if (nextAction != E2eeAccountRecoveryNextAction.recoverResume &&
+        nextAction != E2eeAccountRecoveryNextAction.recoverReplace) {
+      throw const FormatException('账户恢复 checkpoint 授权下一步无效');
     }
     final expiresAt = recoveryTokenExpiresAt.toUtc();
     if (expiresAt.millisecondsSinceEpoch <= 0) {
@@ -1126,7 +1155,8 @@ final class E2eeAccountRecoveryAuthorizer {
         challenge.dataState.phase == E2eeAccountRecoveryDataPhase.ready
         ? E2eeAccountRecoveryNextAction.recoverReplace
         : E2eeAccountRecoveryNextAction.recoverResume;
-    if (authorized.attemptId != challenge.attemptId ||
+    if (authorized.status != E2eeAccountRecoveryRemoteStatus.authorized ||
+        authorized.attemptId != challenge.attemptId ||
         authorized.nextAction != expectedNextAction ||
         security.generation != challenge.securityGeneration ||
         security.keyEpoch != challenge.keyEpoch ||
@@ -1171,6 +1201,45 @@ final class E2eeAccountRecoveryAuthorizer {
     }
     throw const FormatException('账户恢复历史缺少数据源代 capsule');
   }
+}
+
+bool _remoteStatusAllowsAction(
+  E2eeAccountRecoveryRemoteStatus status,
+  E2eeAccountRecoveryDataPhase phase,
+  E2eeAccountRecoveryNextAction action,
+) {
+  return switch ((status, phase)) {
+    (
+      E2eeAccountRecoveryRemoteStatus.authorized,
+      E2eeAccountRecoveryDataPhase.ready,
+    ) =>
+      action == E2eeAccountRecoveryNextAction.recoverReplace,
+    (
+      E2eeAccountRecoveryRemoteStatus.authorized,
+      E2eeAccountRecoveryDataPhase.rekeyPending,
+    ) =>
+      action == E2eeAccountRecoveryNextAction.recoverResume,
+    (
+      E2eeAccountRecoveryRemoteStatus.resumeCommitted,
+      E2eeAccountRecoveryDataPhase.ready,
+    ) =>
+      action == E2eeAccountRecoveryNextAction.recoverReplace,
+    (
+      E2eeAccountRecoveryRemoteStatus.resumeCommitted,
+      E2eeAccountRecoveryDataPhase.rekeyPending,
+    ) =>
+      action == E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    (
+      E2eeAccountRecoveryRemoteStatus.replacementCommitted,
+      E2eeAccountRecoveryDataPhase.ready,
+    ) =>
+      false,
+    (
+      E2eeAccountRecoveryRemoteStatus.replacementCommitted,
+      E2eeAccountRecoveryDataPhase.rekeyPending,
+    ) =>
+      action == E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+  };
 }
 
 final class E2eeAccountRecoveryExpired implements Exception {

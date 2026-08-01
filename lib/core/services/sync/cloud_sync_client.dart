@@ -717,8 +717,7 @@ final class CloudSyncClient
         expectedRekeyOperationId: request.rekeyOperationId,
         expectedGeneration: membership.expectedGeneration + 1,
         expectedKeyEpoch: membership.expectedKeyEpoch,
-        expectedNextAction:
-            E2eeAccountRecoveryCommitNextAction.finishFirstDataRekey,
+        expectedNextAction: E2eeAccountRecoveryNextAction.finishFirstDataRekey,
       );
     });
   }
@@ -774,8 +773,7 @@ final class CloudSyncClient
         expectedRekeyOperationId: membership.operationId,
         expectedGeneration: membership.expectedGeneration + 1,
         expectedKeyEpoch: membership.expectedKeyEpoch + 1,
-        expectedNextAction:
-            E2eeAccountRecoveryCommitNextAction.finishSecondDataRekey,
+        expectedNextAction: E2eeAccountRecoveryNextAction.finishSecondDataRekey,
       );
     });
   }
@@ -2413,19 +2411,30 @@ E2eeAccountRecoveryAuthorizedState _parseAccountRecoveryAuthorizedState(
     _accountRecoveryStateDataKeys,
     '账户恢复远程状态响应',
   );
-  if (_rawInt(data, 'protocolVersion') != e2eeAccountRecoveryProtocolVersion ||
-      _rawString(data, 'status') != 'authorized') {
+  if (_rawInt(data, 'protocolVersion') != e2eeAccountRecoveryProtocolVersion) {
     throw const FormatException('账户恢复远程状态尚不可接管');
   }
+  final status = switch (_rawString(data, 'status')) {
+    'authorized' => E2eeAccountRecoveryRemoteStatus.authorized,
+    'resume-committed' => E2eeAccountRecoveryRemoteStatus.resumeCommitted,
+    'replacement-committed' =>
+      E2eeAccountRecoveryRemoteStatus.replacementCommitted,
+    _ => throw const FormatException('账户恢复远程状态无效'),
+  };
   final nextAction = switch (_rawString(data, 'nextAction')) {
     'recover-resume' => E2eeAccountRecoveryNextAction.recoverResume,
+    'finish-first-data-rekey' =>
+      E2eeAccountRecoveryNextAction.finishFirstDataRekey,
     'recover-replace' => E2eeAccountRecoveryNextAction.recoverReplace,
+    'finish-second-data-rekey' =>
+      E2eeAccountRecoveryNextAction.finishSecondDataRekey,
     _ => throw const FormatException('账户恢复远程状态下一步无效'),
   };
   return E2eeAccountRecoveryAuthorizedState(
     attemptId: _rawString(data, 'attemptId'),
     authorizedAt: _rawUtcDateTime(data, 'authorizedAt'),
     recoveryTokenExpiresAt: _rawUtcDateTime(data, 'recoveryTokenExpiresAt'),
+    status: status,
     nextAction: nextAction,
     securityState: CloudSyncAccountSecurityState.fromJson(
       copyCloudSyncJsonMap(data['securityState']),
@@ -2499,7 +2508,7 @@ E2eeAccountRecoveryCommitReceipt _parseAccountRecoveryCommitReceipt(
   required String expectedRekeyOperationId,
   required int expectedGeneration,
   required int expectedKeyEpoch,
-  required E2eeAccountRecoveryCommitNextAction expectedNextAction,
+  required E2eeAccountRecoveryNextAction expectedNextAction,
 }) {
   final data = _strictResponseData(
     rawResponse,
@@ -2518,9 +2527,9 @@ E2eeAccountRecoveryCommitReceipt _parseAccountRecoveryCommitReceipt(
   };
   final nextAction = switch (_rawString(data, 'nextAction')) {
     'finish-first-data-rekey' =>
-      E2eeAccountRecoveryCommitNextAction.finishFirstDataRekey,
+      E2eeAccountRecoveryNextAction.finishFirstDataRekey,
     'finish-second-data-rekey' =>
-      E2eeAccountRecoveryCommitNextAction.finishSecondDataRekey,
+      E2eeAccountRecoveryNextAction.finishSecondDataRekey,
     _ => throw const FormatException('账户恢复成员提交下一步无效'),
   };
   final receipt = E2eeAccountRecoveryCommitReceipt(

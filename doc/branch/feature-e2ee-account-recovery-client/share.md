@@ -24,7 +24,8 @@
 - 已由稳定 OpenAPI 通过生成命令引入账户恢复 API client，并完成 challenge、冻结历史与授权 transport；请求 bearer 由强类型 onboarding/recovery 联合显式选择，响应保持精确字段集校验。
 - `proofReady` 重启会先用密文 checkpoint 中的恢复 token 读取 `state/get`：只有服务端精确返回 token 尚不可用才继续 onboarding；已授权则校验安全 head/data state 与冻结 challenge 一致，先持久化 `authorized` 再改用 recovery bearer。网络或其他错误不回退。
 - 已接入 `recover-resume` / `recover-replace` 原子提交 transport：请求严格验证成员清单摘要、信封代次与 capsule/session 边界；回执绑定原 attempt、membership operation、rekey operation、代次与下一动作，重放不得宽松接收。
-- 验证：`flutter analyze lib test` 无问题；授权 5 项、恢复提交协议 2 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 116 项 Flutter 测试通过。全仓 `flutter analyze` 仍被未安装开发依赖的 `mcp_client` 测试与 Workmanager Pigeon 输入阻断，与本次改动无关。
+- `state/get` 已覆盖 `authorized`、`resume-committed`、`replacement-committed` 和四种下一动作，并强制安全 head、数据代次、data-rekey phase 与动作组合一致；授权器只接管初始 `authorized`。
+- 验证：`flutter analyze lib test` 无问题；授权 5 项、恢复状态/提交协议 3 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 116 项 Flutter 测试通过。全仓 `flutter analyze` 仍被未安装开发依赖的 `mcp_client` 测试与 Workmanager Pigeon 输入阻断，与本次改动无关。
 
 ## 协作边界
 
