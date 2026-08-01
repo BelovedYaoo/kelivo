@@ -7,3 +7,4 @@
 - 协议阻断：服务端禁止轮换 issuer 自撤销，且 op3 会立即吊销目标设备会话；现有协议无法由当前设备本机完成后续 data-rekey，也缺少 requested-only 的同 mutation 受限查询。已登记 `kelivo-api#40` 并回注 App `#51`。
 - 当前进度：先实现可独立完成的流式 data-rekey 执行器、其他设备撤销与固定 mutation 重放；当前设备 confirmed marker 在 `kelivo-api#40` 完成前保持失败关闭。
 - 已完成：源记录/附件与暂存记录/附件可按有界分页流式累计 SHA-256；严格校验顺序、数量、阶段和最大 changeSeq，结果与既有 TypeScript 固定向量一致。
+- 已完成：data-rekey 单例日志支持严格读取、租约回执耐久记录、单调续租、幂等阶段推进和 finalizing 身份校验后清理；网络延迟后的过期回执仍可落盘，但不得覆盖更新的租约事实。

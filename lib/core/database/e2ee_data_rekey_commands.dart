@@ -217,6 +217,13 @@ final class E2eeDataRekeyCommands {
 
   final AppDatabase _database;
 
+  Future<E2eeDataRekeyJournalState?> readActive() async {
+    final row = await _database
+        .select(_database.e2eeDataRekeyOperationRows)
+        .getSingleOrNull();
+    return row == null ? null : _dataRekeyJournalStateFromRow(row);
+  }
+
   Future<E2eeDataRekeyJournalState> ensureClaimIntent({
     required E2eeDataRekeyOperationBinding binding,
     required DateTime now,
@@ -271,6 +278,167 @@ final class E2eeDataRekeyCommands {
       return _dataRekeyJournalStateFromRow(
         await _database.select(table).getSingle(),
       );
+    });
+  }
+
+  Future<E2eeDataRekeyJournalState> recordLeaseClaim({
+    required String operationId,
+    required String leaseToken,
+    required int leaseVersion,
+    required DateTime leaseExpiresAt,
+    required DateTime now,
+  }) {
+    final operation = _requireCanonicalUuidV4(operationId, 'operationId');
+    final token = _requireCanonicalUuidV4(leaseToken, 'leaseToken');
+    final version = _requireDataRekeyInt(
+      leaseVersion,
+      'leaseVersion',
+      minimum: 1,
+      maximum: _dataRekeyMaximumInt32,
+    );
+    final expiry = _requireStorageTime(leaseExpiresAt, 'leaseExpiresAt');
+    final timestamp = _requireStorageTime(now, 'now');
+
+    return _database.transaction(() async {
+      final table = _database.e2eeDataRekeyOperationRows;
+      final row = await _database.select(table).getSingleOrNull();
+      if (row == null) {
+        throw StateError('data_rekey_operation_missing');
+      }
+      final current = _dataRekeyJournalStateFromRow(row);
+      if (current.binding.operationId != operation) {
+        throw StateError('data_rekey_operation_mismatch');
+      }
+      if (current.leaseToken != token) {
+        throw StateError('data_rekey_lease_token_mismatch');
+      }
+      final currentVersion = current.leaseVersion;
+      final currentExpiry = current.leaseExpiresAt;
+      if (currentVersion != null && version < currentVersion) {
+        throw StateError('data_rekey_lease_version_regressed');
+      }
+      if (currentExpiry != null && expiry.isBefore(currentExpiry)) {
+        throw StateError('data_rekey_lease_expiry_regressed');
+      }
+
+      final nextPhase = current.phase == E2eeDataRekeyJournalPhase.claimPending
+          ? E2eeDataRekeyJournalPhase.leased
+          : current.phase;
+      final updatedAt = timestamp.isBefore(current.updatedAt)
+          ? current.updatedAt
+          : timestamp;
+      await (_database.update(
+        table,
+      )..where((item) => item.singleton.equals(1))).write(
+        E2eeDataRekeyOperationRowsCompanion(
+          phase: Value(nextPhase.wireValue),
+          leaseVersion: Value(version),
+          leaseExpiresAt: Value(expiry),
+          updatedAt: Value(updatedAt),
+        ),
+      );
+      return _dataRekeyJournalStateFromRow(
+        await _database.select(table).getSingle(),
+      );
+    });
+  }
+
+  Future<E2eeDataRekeyJournalState> advancePhase({
+    required String operationId,
+    required String leaseToken,
+    required int leaseVersion,
+    required E2eeDataRekeyJournalPhase phase,
+    required DateTime now,
+  }) {
+    final operation = _requireCanonicalUuidV4(operationId, 'operationId');
+    final token = _requireCanonicalUuidV4(leaseToken, 'leaseToken');
+    final version = _requireDataRekeyInt(
+      leaseVersion,
+      'leaseVersion',
+      minimum: 1,
+      maximum: _dataRekeyMaximumInt32,
+    );
+    final timestamp = _requireStorageTime(now, 'now');
+    if (phase == E2eeDataRekeyJournalPhase.claimPending) {
+      throw const FormatException('执行阶段不能回到 claim-pending');
+    }
+
+    return _database.transaction(() async {
+      final table = _database.e2eeDataRekeyOperationRows;
+      final row = await _database.select(table).getSingleOrNull();
+      if (row == null) {
+        throw StateError('data_rekey_operation_missing');
+      }
+      final current = _dataRekeyJournalStateFromRow(row);
+      if (current.binding.operationId != operation) {
+        throw StateError('data_rekey_operation_mismatch');
+      }
+      if (current.leaseToken != token) {
+        throw StateError('data_rekey_lease_token_mismatch');
+      }
+      if (current.leaseVersion != version) {
+        throw StateError('data_rekey_lease_version_mismatch');
+      }
+      if (phase.index <= current.phase.index) {
+        return current;
+      }
+
+      final updatedAt = timestamp.isBefore(current.updatedAt)
+          ? current.updatedAt
+          : timestamp;
+      await (_database.update(
+        table,
+      )..where((item) => item.singleton.equals(1))).write(
+        E2eeDataRekeyOperationRowsCompanion(
+          phase: Value(phase.wireValue),
+          updatedAt: Value(updatedAt),
+        ),
+      );
+      return _dataRekeyJournalStateFromRow(
+        await _database.select(table).getSingle(),
+      );
+    });
+  }
+
+  Future<void> complete({
+    required String operationId,
+    required String leaseToken,
+    required int leaseVersion,
+  }) {
+    final operation = _requireCanonicalUuidV4(operationId, 'operationId');
+    final token = _requireCanonicalUuidV4(leaseToken, 'leaseToken');
+    final version = _requireDataRekeyInt(
+      leaseVersion,
+      'leaseVersion',
+      minimum: 1,
+      maximum: _dataRekeyMaximumInt32,
+    );
+
+    return _database.transaction(() async {
+      final table = _database.e2eeDataRekeyOperationRows;
+      final row = await _database.select(table).getSingleOrNull();
+      if (row == null) {
+        throw StateError('data_rekey_operation_missing');
+      }
+      final current = _dataRekeyJournalStateFromRow(row);
+      if (current.binding.operationId != operation) {
+        throw StateError('data_rekey_operation_mismatch');
+      }
+      if (current.leaseToken != token) {
+        throw StateError('data_rekey_lease_token_mismatch');
+      }
+      if (current.leaseVersion != version) {
+        throw StateError('data_rekey_lease_version_mismatch');
+      }
+      if (current.phase != E2eeDataRekeyJournalPhase.finalizing) {
+        throw StateError('data_rekey_operation_not_finalizing');
+      }
+      final deleted = await (_database.delete(
+        table,
+      )..where((item) => item.singleton.equals(1))).go();
+      if (deleted != 1) {
+        throw StateError('data_rekey_operation_delete_failed');
+      }
     });
   }
 }

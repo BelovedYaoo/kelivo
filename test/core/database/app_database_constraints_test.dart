@@ -1658,6 +1658,157 @@ void main() {
       expect(reopened.binding, operationBinding);
     });
 
+    test('租约回执和执行阶段耐久推进且重复回执不回退', () async {
+      final operationBinding = binding();
+      final intent = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+      final expiresAt = DateTime.utc(2026, 7, 30, 4, 10);
+      final leased = await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 3,
+        leaseExpiresAt: expiresAt,
+        now: DateTime.utc(2026, 7, 30, 4, 1),
+      );
+      expect(leased.phase, E2eeDataRekeyJournalPhase.leased);
+      expect(leased.leaseVersion, 3);
+      expect(leased.leaseExpiresAt, expiresAt);
+
+      await dataRekeyCommands.advancePhase(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 3,
+        phase: E2eeDataRekeyJournalPhase.staging,
+        now: DateTime.utc(2026, 7, 30, 4, 2),
+      );
+      final replayed = await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 3,
+        leaseExpiresAt: expiresAt,
+        now: DateTime.utc(2026, 7, 30, 4, 3),
+      );
+      expect(replayed.phase, E2eeDataRekeyJournalPhase.staging);
+
+      await repository.close();
+      database = AppDatabase.open(
+        file: File('${directory.path}/constraints.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      await database.customSelect('SELECT 1;').getSingle();
+      repository = ChatDatabaseRepository(
+        database,
+        databaseCipher: testDatabaseCipher,
+      );
+      dataRekeyCommands = repository.e2eeDataRekeyCommands;
+
+      final reopened = await dataRekeyCommands.readActive();
+      expect(reopened?.phase, E2eeDataRekeyJournalPhase.staging);
+      expect(reopened?.leaseToken, intent.leaseToken);
+      expect(reopened?.leaseVersion, 3);
+      expect(reopened?.leaseExpiresAt, expiresAt);
+    });
+
+    test('续租只接受同一令牌的单调版本和到期时间', () async {
+      final operationBinding = binding();
+      final intent = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+      final firstExpiry = DateTime.utc(2026, 7, 30, 4, 10);
+      await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 3,
+        leaseExpiresAt: firstExpiry,
+        now: DateTime.utc(2026, 7, 30, 4, 1),
+      );
+
+      final renewed = await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 4,
+        leaseExpiresAt: DateTime.utc(2026, 7, 30, 4, 20),
+        now: DateTime.utc(2026, 7, 30, 4, 11),
+      );
+      expect(renewed.leaseVersion, 4);
+      expect(renewed.leaseExpiresAt, DateTime.utc(2026, 7, 30, 4, 20));
+
+      final invalidReceipts = <Future<E2eeDataRekeyJournalState> Function()>[
+        () => dataRekeyCommands.recordLeaseClaim(
+          operationId: operationBinding.operationId,
+          leaseToken: _syncUuid(399),
+          leaseVersion: 5,
+          leaseExpiresAt: DateTime.utc(2026, 7, 30, 4, 30),
+          now: DateTime.utc(2026, 7, 30, 4, 21),
+        ),
+        () => dataRekeyCommands.recordLeaseClaim(
+          operationId: operationBinding.operationId,
+          leaseToken: intent.leaseToken,
+          leaseVersion: 3,
+          leaseExpiresAt: DateTime.utc(2026, 7, 30, 4, 30),
+          now: DateTime.utc(2026, 7, 30, 4, 21),
+        ),
+        () => dataRekeyCommands.recordLeaseClaim(
+          operationId: operationBinding.operationId,
+          leaseToken: intent.leaseToken,
+          leaseVersion: 4,
+          leaseExpiresAt: firstExpiry,
+          now: DateTime.utc(2026, 7, 30, 4, 21),
+        ),
+      ];
+      for (final invalidReceipt in invalidReceipts) {
+        await expectLater(invalidReceipt(), throwsStateError);
+      }
+    });
+
+    test('完成清理只接受 finalizing 阶段的完整租约身份', () async {
+      final operationBinding = binding();
+      final intent = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+      await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 1,
+        leaseExpiresAt: DateTime.utc(2026, 7, 30, 4, 10),
+        now: DateTime.utc(2026, 7, 30, 4, 1),
+      );
+      await expectLater(
+        dataRekeyCommands.complete(
+          operationId: operationBinding.operationId,
+          leaseToken: intent.leaseToken,
+          leaseVersion: 1,
+        ),
+        throwsStateError,
+      );
+      await dataRekeyCommands.advancePhase(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 1,
+        phase: E2eeDataRekeyJournalPhase.finalizing,
+        now: DateTime.utc(2026, 7, 30, 4, 2),
+      );
+      await expectLater(
+        dataRekeyCommands.complete(
+          operationId: operationBinding.operationId,
+          leaseToken: intent.leaseToken,
+          leaseVersion: 2,
+        ),
+        throwsStateError,
+      );
+
+      await dataRekeyCommands.complete(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 1,
+      );
+      expect(await dataRekeyCommands.readActive(), equals(null));
+    });
+
     test('零记录边界有效且成员摘要不暴露可变底层字节', () {
       final sourceDigest = _syncDigest(19);
       final operationBinding = binding(
