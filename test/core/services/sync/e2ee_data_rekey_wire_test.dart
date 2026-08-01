@@ -168,6 +168,85 @@ void main() {
       expect(snapshot.attachmentCursorEnd, isNull);
     });
 
+    test('流式分页累计与批量固定向量一致', () {
+      final accumulator = E2eeDataRekeySourceSnapshotAccumulator(
+        _sourceHeader(),
+      );
+      accumulator.addRecord(
+        _sourceRecord(
+          recordId: '44444444-4444-4444-8444-444444444441',
+          revision: 1,
+          ciphertextBytes: 3,
+          ciphertextDigest: _hexBytes(_firstCiphertextDigestHex),
+          lastChangeSeq: 8,
+        ),
+      );
+      accumulator.addRecord(
+        _sourceRecord(
+          recordId: '44444444-4444-4444-8444-444444444442',
+          revision: 2,
+          ciphertextBytes: 4,
+          ciphertextDigest: _hexBytes(_secondCiphertextDigestHex),
+          lastChangeSeq: 9,
+        ),
+      );
+      accumulator.addAttachment(_sourceAttachment());
+
+      final snapshot = accumulator.finish();
+
+      expect(snapshot.root, orderedEquals(_hexBytes(_sourceSnapshotRootHex)));
+      expect(snapshot.recordCount, 2);
+      expect(snapshot.attachmentCount, 1);
+      expect(snapshot.maximumChangeSeq, 9);
+      expect(snapshot.recordCursorEnd, '44444444-4444-4444-8444-444444444442');
+      expect(
+        snapshot.attachmentCursorEnd?.attachmentId,
+        '66666666-6666-4666-8666-666666666666',
+      );
+      expect(accumulator.finish, throwsStateError);
+    });
+
+    test('流式分页累计拒绝乱序、跨阶段和不完整输入', () {
+      final firstRecord = _sourceRecord(
+        recordId: '44444444-4444-4444-8444-444444444441',
+        revision: 1,
+        ciphertextBytes: 3,
+        ciphertextDigest: _hexBytes(_firstCiphertextDigestHex),
+        lastChangeSeq: 8,
+      );
+      final secondRecord = _sourceRecord(
+        recordId: '44444444-4444-4444-8444-444444444442',
+        revision: 2,
+        ciphertextBytes: 4,
+        ciphertextDigest: _hexBytes(_secondCiphertextDigestHex),
+        lastChangeSeq: 9,
+      );
+      final incomplete = E2eeDataRekeySourceSnapshotAccumulator(_sourceHeader())
+        ..addRecord(firstRecord);
+      expect(incomplete.finish, throwsFormatException);
+      expect(
+        () => incomplete.addAttachment(_sourceAttachment()),
+        throwsFormatException,
+      );
+
+      final outOfOrder = E2eeDataRekeySourceSnapshotAccumulator(_sourceHeader())
+        ..addRecord(secondRecord);
+      expect(() => outOfOrder.addRecord(firstRecord), throwsFormatException);
+
+      final overflow = E2eeDataRekeySourceSnapshotAccumulator(
+        E2eeDataRekeySourceHeaderFields(
+          userId: '22222222-2222-4222-8222-222222222222',
+          operationId: '11111111-1111-4111-8111-111111111111',
+          sourceDataGeneration: 7,
+          sourceKeyEpoch: 11,
+          expectedRecordCount: 0,
+          expectedAttachmentCount: 0,
+          expectedMaximumChangeSeq: 0,
+        ),
+      );
+      expect(() => overflow.addRecord(firstRecord), throwsFormatException);
+    });
+
     test('重复记录游标、数量或最大 changeSeq 不一致时失败关闭', () {
       final record = _sourceRecord(
         recordId: '44444444-4444-4444-8444-444444444441',
@@ -313,6 +392,57 @@ void main() {
         ),
         orderedEquals(_hexBytes(_emptyStagedCiphertextSetDigestHex)),
       );
+    });
+
+    test('流式暂存累计与批量固定向量一致并拒绝不完整输入', () {
+      final firstRecord = E2eeDataRekeyStagedRecordDigestItem(
+        sourceRecordId: '44444444-4444-4444-8444-444444444441',
+        targetRecordId: '55555555-5555-4555-8555-555555555541',
+        sourceRevision: 1,
+        targetKeyEpoch: 12,
+        envelopeVersion: 1,
+        ciphertextBytes: 5,
+        ciphertextDigest: _hexBytes(_firstStagedRecordDigestHex),
+      );
+      final secondRecord = E2eeDataRekeyStagedRecordDigestItem(
+        sourceRecordId: '44444444-4444-4444-8444-444444444442',
+        targetRecordId: '55555555-5555-4555-8555-555555555542',
+        sourceRevision: 2,
+        targetKeyEpoch: 12,
+        envelopeVersion: 1,
+        ciphertextBytes: 3,
+        ciphertextDigest: _hexBytes(_secondStagedRecordDigestHex),
+      );
+      final attachment = E2eeDataRekeyStagedAttachmentDigestItem(
+        attachmentId: '66666666-6666-4666-8666-666666666666',
+        uploadId: '77777777-7777-4777-8777-777777777777',
+        sourceManifestRevision: 1,
+        manifestRevision: 2,
+        manifestKeyEpoch: 12,
+        manifestCiphertextBytes: 3,
+        manifestCiphertextDigest: _hexBytes(_stagedManifestDigestHex),
+      );
+      final accumulator =
+          E2eeDataRekeyStagedCiphertextSetAccumulator(
+              expectedRecordCount: 2,
+              expectedAttachmentCount: 1,
+            )
+            ..addRecord(firstRecord)
+            ..addRecord(secondRecord)
+            ..addAttachment(attachment);
+
+      expect(
+        accumulator.finish(),
+        orderedEquals(_hexBytes(_stagedCiphertextSetDigestHex)),
+      );
+      expect(accumulator.finish, throwsStateError);
+
+      final incomplete = E2eeDataRekeyStagedCiphertextSetAccumulator(
+        expectedRecordCount: 2,
+        expectedAttachmentCount: 0,
+      )..addRecord(firstRecord);
+      expect(incomplete.finish, throwsFormatException);
+      expect(() => incomplete.addAttachment(attachment), throwsFormatException);
     });
 
     test('重复记录和附件游标失败关闭', () {
