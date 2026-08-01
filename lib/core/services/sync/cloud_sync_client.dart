@@ -5,10 +5,12 @@ import 'dart:typed_data';
 import 'package:dio/dio.dart';
 import 'package:flutter/foundation.dart' show visibleForTesting;
 import 'package:kelivo_sync_api_client/kelivo_sync_api_client.dart' as api;
+import 'package:one_of/one_of.dart';
 
 import 'cloud_sync_attachment_types.dart';
 import 'cloud_sync_record_types.dart';
 import 'cloud_sync_types.dart';
+import 'e2ee_account_recovery.dart';
 import 'e2ee_account_record_cipher.dart';
 
 abstract interface class CloudSyncRecordTransport {
@@ -173,6 +175,7 @@ final class CloudSyncClient
         CloudSyncAccountClient,
         CloudSyncAttachmentTransport,
         CloudSyncDataRekeyTransport,
+        E2eeAccountRecoveryTransport,
         CloudSyncRecordTransport {
   CloudSyncClient._({
     required this.baseUrl,
@@ -505,6 +508,141 @@ final class CloudSyncClient
         );
       }
       throw const FormatException('服务端返回了歧义的登录结果');
+    });
+  }
+
+  @override
+  Future<E2eeAccountRecoveryChallenge> createChallenge({
+    required CloudSyncOnboardingToken onboardingToken,
+    required String attemptId,
+  }) {
+    _requireClientIdentifier(attemptId);
+    return _guard(() async {
+      final challengeRequest = api.AccountRecoveryAttemptStartRequestOneOf(
+        (builder) => builder
+          ..action =
+              api.AccountRecoveryAttemptStartRequestOneOfActionEnum.challenge
+          ..protocolVersion = e2eeAccountRecoveryProtocolVersion
+          ..attemptId = attemptId,
+      );
+      final request = api.AccountRecoveryAttemptStartRequest(
+        (builder) => builder.oneOf =
+            OneOf.fromValue2<
+              api.AccountRecoveryAttemptStartRequestOneOf,
+              api.AccountRecoveryAttemptStartRequestOneOf1
+            >(value: challengeRequest),
+      );
+      final response = await _client
+          .getAccountRecoveryApi()
+          .startAccountRecoveryAttempt(
+            accountRecoveryAttemptStartRequest: request,
+            headers: _authorizationHeaders(onboardingToken.value),
+            extra: _strictResponseExtra,
+          );
+      return _parseAccountRecoveryChallenge(
+        response.extra[_rawResponseKey],
+        expectedAttemptId: attemptId,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncAccountSecurityHistoryPage> listFrozenHistory({
+    required E2eeAccountRecoveryBearer authorization,
+    required String attemptId,
+    required Uint8List challengeRequestDigest,
+    required int afterGeneration,
+    required int pageSize,
+  }) {
+    _requireClientIdentifier(attemptId);
+    if (afterGeneration < 0 ||
+        afterGeneration > 0x7fffffff ||
+        pageSize < 1 ||
+        pageSize > e2eeAccountRecoveryHistoryPageSize) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+      );
+    }
+    final encodedRequestDigest = _encodeFixedBinaryForRequest(
+      challengeRequestDigest,
+      32,
+    );
+    return _guard(() async {
+      final request = api.AccountRecoveryHistoryListRequest(
+        (builder) => builder
+          ..afterGeneration = afterGeneration
+          ..pageSize = pageSize
+          ..attemptId = attemptId
+          ..challengeRequestDigest = encodedRequestDigest,
+      );
+      final response = await _client
+          .getAccountRecoveryApi()
+          .listAccountRecoveryHistory(
+            accountRecoveryHistoryListRequest: request,
+            headers: _authorizationHeaders(authorization.value),
+            extra: _strictResponseExtra,
+          );
+      return _parseAccountSecurityStateHistory(
+        response.extra[_rawResponseKey],
+        expectedAfterGeneration: afterGeneration,
+        expectedPageSize: pageSize,
+      );
+    });
+  }
+
+  @override
+  Future<E2eeAccountRecoveryAuthorizationReceipt> authorize({
+    required E2eeAccountRecoveryBearer authorization,
+    required String attemptId,
+    required Uint8List challengeRequestDigest,
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required Uint8List nonceProof,
+    required Uint8List trustSignature,
+  }) {
+    _requireClientIdentifier(attemptId);
+    final encodedRequestDigest = _encodeFixedBinaryForRequest(
+      challengeRequestDigest,
+      32,
+    );
+    final encodedNonceProof = _encodeFixedBinaryForRequest(
+      nonceProof,
+      e2eeAccountRecoveryNonceProofBytes,
+    );
+    final encodedTrustSignature = _encodeFixedBinaryForRequest(
+      trustSignature,
+      e2eeAccountRecoveryTrustSignatureBytes,
+    );
+    return _guard(() async {
+      final authorizeRequest = api.AccountRecoveryAttemptStartRequestOneOf1(
+        (builder) => builder
+          ..action =
+              api.AccountRecoveryAttemptStartRequestOneOf1ActionEnum.authorize
+          ..protocolVersion = e2eeAccountRecoveryProtocolVersion
+          ..attemptId = attemptId
+          ..challengeRequestDigest = encodedRequestDigest
+          ..recoveryToken = recoveryToken.value
+          ..nonceProof = encodedNonceProof
+          ..trustSignature = encodedTrustSignature,
+      );
+      final request = api.AccountRecoveryAttemptStartRequest(
+        (builder) => builder.oneOf =
+            OneOf.fromValue2<
+              api.AccountRecoveryAttemptStartRequestOneOf,
+              api.AccountRecoveryAttemptStartRequestOneOf1
+            >(value: authorizeRequest),
+      );
+      final response = await _client
+          .getAccountRecoveryApi()
+          .startAccountRecoveryAttempt(
+            accountRecoveryAttemptStartRequest: request,
+            headers: _authorizationHeaders(authorization.value),
+            extra: _strictResponseExtra,
+          );
+      return _parseAccountRecoveryAuthorizationReceipt(
+        response.extra[_rawResponseKey],
+        expectedAttemptId: attemptId,
+      );
     });
   }
 
@@ -2075,6 +2213,121 @@ CloudSyncJsonMap _strictResponseData(
   return data;
 }
 
+E2eeAccountRecoveryChallenge _parseAccountRecoveryChallenge(
+  Object? rawResponse, {
+  required String expectedAttemptId,
+}) {
+  final data = _strictResponseData(
+    rawResponse,
+    _accountRecoveryChallengeDataKeys,
+    '账户恢复 challenge 响应',
+  );
+  if (_rawString(data, 'action') != 'challenge' ||
+      !const <String>{
+        'created',
+        'replayed',
+      }.contains(_rawString(data, 'result')) ||
+      _rawInt(data, 'protocolVersion') != e2eeAccountRecoveryProtocolVersion ||
+      _rawString(data, 'attemptId') != expectedAttemptId) {
+    throw const FormatException('账户恢复 challenge 未绑定原请求');
+  }
+  return E2eeAccountRecoveryChallenge(
+    attemptId: expectedAttemptId,
+    requestDigest: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'requestDigest'),
+      32,
+    ),
+    challengeFrame: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'challengeFrame'),
+      e2eeAccountRecoveryChallengeFrameBytes,
+    ),
+    sealedNonce: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'sealedNonce'),
+      e2eeAccountRecoverySealedNonceBytes,
+    ),
+    securityGeneration: _rawInt(data, 'securityGeneration'),
+    keyEpoch: _rawInt(data, 'keyEpoch'),
+    membershipManifestDigest: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'membershipManifestDigest'),
+      32,
+    ),
+    recoveryPublicKeyVersion: _rawInt(data, 'recoveryPublicKeyVersion'),
+    recoveryPublicKey: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'recoveryPublicKey'),
+      cloudSyncRecoveryPublicKeyBytes,
+    ),
+    recoveryCapsuleVersion: _rawInt(data, 'recoveryCapsuleVersion'),
+    recoveryCapsule: _decodeRangedBinaryFromResponse(
+      _rawString(data, 'recoveryCapsule'),
+      minimumBytes: 1,
+      maximumBytes: cloudSyncRecoveryCapsuleMaximumBytes,
+    ),
+    recoveryCapsuleDigest: _decodeFixedBinaryFromResponse(
+      _rawString(data, 'recoveryCapsuleDigest'),
+      32,
+    ),
+    dataState: _parseAccountRecoveryDataState(data['dataState']),
+    expiresAt: _rawUtcDateTime(data, 'expiresAt'),
+  );
+}
+
+E2eeAccountRecoveryDataState _parseAccountRecoveryDataState(Object? raw) {
+  final data = copyCloudSyncJsonMap(raw);
+  _requireRawExactKeys(data, _accountRecoveryDataStateKeys, '账户恢复数据状态');
+  final phase = _rawString(data, 'phase');
+  final operationId = data['operationId'];
+  final targetKeyEpoch = data['targetKeyEpoch'];
+  return switch (phase) {
+    'ready' when operationId == null && targetKeyEpoch == null =>
+      E2eeAccountRecoveryDataState.ready(
+        dataGeneration: _rawInt(data, 'dataGeneration'),
+        dataKeyEpoch: _rawInt(data, 'dataKeyEpoch'),
+      ),
+    'rekey-pending' when operationId is String && targetKeyEpoch is int =>
+      E2eeAccountRecoveryDataState.rekeyPending(
+        dataGeneration: _rawInt(data, 'dataGeneration'),
+        dataKeyEpoch: _rawInt(data, 'dataKeyEpoch'),
+        operationId: operationId,
+        targetKeyEpoch: targetKeyEpoch,
+      ),
+    _ => throw const FormatException('账户恢复数据状态字段组合无效'),
+  };
+}
+
+E2eeAccountRecoveryAuthorizationReceipt
+_parseAccountRecoveryAuthorizationReceipt(
+  Object? rawResponse, {
+  required String expectedAttemptId,
+}) {
+  final data = _strictResponseData(
+    rawResponse,
+    _accountRecoveryAuthorizationDataKeys,
+    '账户恢复授权响应',
+  );
+  final result = switch (_rawString(data, 'result')) {
+    'authorized' => E2eeAccountRecoveryAuthorizationResult.authorized,
+    'replayed' => E2eeAccountRecoveryAuthorizationResult.replayed,
+    _ => throw const FormatException('账户恢复授权结果无效'),
+  };
+  final nextAction = switch (_rawString(data, 'nextAction')) {
+    'recover-resume' => E2eeAccountRecoveryNextAction.recoverResume,
+    'recover-replace' => E2eeAccountRecoveryNextAction.recoverReplace,
+    _ => throw const FormatException('账户恢复授权下一步无效'),
+  };
+  if (_rawString(data, 'action') != 'authorized' ||
+      _rawString(data, 'status') != 'authorized' ||
+      _rawInt(data, 'protocolVersion') != e2eeAccountRecoveryProtocolVersion ||
+      _rawString(data, 'attemptId') != expectedAttemptId) {
+    throw const FormatException('账户恢复授权响应未绑定原请求');
+  }
+  return E2eeAccountRecoveryAuthorizationReceipt(
+    attemptId: expectedAttemptId,
+    result: result,
+    nextAction: nextAction,
+    recoveryTokenExpiresAt: _rawUtcDateTime(data, 'recoveryTokenExpiresAt'),
+  );
+}
+
 CloudSyncAccountSecurityState _parseAccountSecurityState(Object? rawResponse) {
   return CloudSyncAccountSecurityState.fromJson(
     _strictResponseData(rawResponse, _accountSecurityStateDataKeys, '账户安全状态响应'),
@@ -2715,6 +2968,33 @@ Uint8List _decodeFixedBinaryFromResponse(String value, int expectedBytes) {
   }
 }
 
+Uint8List _decodeRangedBinaryFromResponse(
+  String value, {
+  required int minimumBytes,
+  required int maximumBytes,
+}) {
+  if (minimumBytes < 0 ||
+      maximumBytes < minimumBytes ||
+      value.isEmpty ||
+      value.length > (maximumBytes * 8 + 5) ~/ 6 ||
+      !_base64UrlPattern.hasMatch(value)) {
+    throw const FormatException('服务端返回了无效的变长二进制字段');
+  }
+  try {
+    final padding = '=' * ((4 - value.length % 4) % 4);
+    final decoded = base64Url.decode('$value$padding');
+    final canonical = base64Url.encode(decoded).replaceAll('=', '');
+    if (decoded.length < minimumBytes ||
+        decoded.length > maximumBytes ||
+        canonical != value) {
+      throw const FormatException('服务端返回了非规范变长二进制字段');
+    }
+    return Uint8List.fromList(decoded).asUnmodifiableView();
+  } on FormatException {
+    throw const FormatException('服务端返回了无效的变长二进制字段');
+  }
+}
+
 T _requireResponseData<T>(T? data) {
   if (data == null) {
     throw const CloudSyncException(
@@ -2976,6 +3256,41 @@ const _attachmentDeletedResponseKeys = <String>{
   'deletedAt',
 };
 const _attachmentManifestChunkKeys = <String>{'chunkIndex', 'ciphertextBytes'};
+const _accountRecoveryChallengeDataKeys = <String>{
+  'action',
+  'result',
+  'protocolVersion',
+  'attemptId',
+  'requestDigest',
+  'challengeFrame',
+  'sealedNonce',
+  'securityGeneration',
+  'keyEpoch',
+  'membershipManifestDigest',
+  'recoveryPublicKeyVersion',
+  'recoveryPublicKey',
+  'recoveryCapsuleVersion',
+  'recoveryCapsule',
+  'recoveryCapsuleDigest',
+  'dataState',
+  'expiresAt',
+};
+const _accountRecoveryDataStateKeys = <String>{
+  'phase',
+  'dataGeneration',
+  'dataKeyEpoch',
+  'operationId',
+  'targetKeyEpoch',
+};
+const _accountRecoveryAuthorizationDataKeys = <String>{
+  'action',
+  'result',
+  'protocolVersion',
+  'attemptId',
+  'status',
+  'nextAction',
+  'recoveryTokenExpiresAt',
+};
 
 final _syncIdentifierPattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',

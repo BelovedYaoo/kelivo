@@ -237,6 +237,41 @@ final class E2eeAccountRecoveryAuthorizationReceipt {
   final DateTime recoveryTokenExpiresAt;
 }
 
+sealed class E2eeAccountRecoveryBearer {
+  const E2eeAccountRecoveryBearer();
+
+  factory E2eeAccountRecoveryBearer.onboarding(CloudSyncOnboardingToken token) =
+      _E2eeAccountRecoveryOnboardingBearer;
+
+  factory E2eeAccountRecoveryBearer.recovery(
+    CloudSyncAccountRecoveryToken token,
+  ) = _E2eeAccountRecoveryTokenBearer;
+
+  String get value;
+
+  @override
+  String toString() => 'E2eeAccountRecoveryBearer(<已隐藏>)';
+}
+
+final class _E2eeAccountRecoveryOnboardingBearer
+    extends E2eeAccountRecoveryBearer {
+  const _E2eeAccountRecoveryOnboardingBearer(this._token);
+
+  final CloudSyncOnboardingToken _token;
+
+  @override
+  String get value => _token.value;
+}
+
+final class _E2eeAccountRecoveryTokenBearer extends E2eeAccountRecoveryBearer {
+  const _E2eeAccountRecoveryTokenBearer(this._token);
+
+  final CloudSyncAccountRecoveryToken _token;
+
+  @override
+  String get value => _token.value;
+}
+
 abstract interface class E2eeAccountRecoveryTransport {
   Future<E2eeAccountRecoveryChallenge> createChallenge({
     required CloudSyncOnboardingToken onboardingToken,
@@ -244,7 +279,7 @@ abstract interface class E2eeAccountRecoveryTransport {
   });
 
   Future<CloudSyncAccountSecurityHistoryPage> listFrozenHistory({
-    required CloudSyncOnboardingToken onboardingToken,
+    required E2eeAccountRecoveryBearer authorization,
     required String attemptId,
     required Uint8List challengeRequestDigest,
     required int afterGeneration,
@@ -252,6 +287,7 @@ abstract interface class E2eeAccountRecoveryTransport {
   });
 
   Future<E2eeAccountRecoveryAuthorizationReceipt> authorize({
+    required E2eeAccountRecoveryBearer authorization,
     required String attemptId,
     required Uint8List challengeRequestDigest,
     required CloudSyncAccountRecoveryToken recoveryToken,
@@ -608,8 +644,12 @@ final class E2eeAccountRecoveryAuthorizer {
 
       final challenge = checkpoint.challenge;
       final attemptId = checkpoint.attemptId;
+      final authorization =
+          checkpoint.stage == E2eeAccountRecoveryStage.authorized
+          ? E2eeAccountRecoveryBearer.recovery(checkpoint.recoveryToken)
+          : E2eeAccountRecoveryBearer.onboarding(onboardingToken);
       final history = await _readFrozenHistory(
-        onboardingToken: onboardingToken,
+        authorization: authorization,
         challenge: challenge,
       );
       final sourceCapsule = _sourceCapsule(challenge, history);
@@ -687,6 +727,7 @@ final class E2eeAccountRecoveryAuthorizer {
       nonceProof = checkpoint.copyNonceProof();
       trustSignature = checkpoint.copyTrustSignature();
       final receipt = await _transport.authorize(
+        authorization: authorization,
         attemptId: attemptId,
         challengeRequestDigest: challenge.requestDigest,
         recoveryToken: recoveryToken,
@@ -732,14 +773,14 @@ final class E2eeAccountRecoveryAuthorizer {
   }
 
   Future<List<CloudSyncAccountSecurityHistoryItem>> _readFrozenHistory({
-    required CloudSyncOnboardingToken onboardingToken,
+    required E2eeAccountRecoveryBearer authorization,
     required E2eeAccountRecoveryChallenge challenge,
   }) async {
     final history = <CloudSyncAccountSecurityHistoryItem>[];
     var cursor = 0;
     while (true) {
       final page = await _transport.listFrozenHistory(
-        onboardingToken: onboardingToken,
+        authorization: authorization,
         attemptId: challenge.attemptId,
         challengeRequestDigest: challenge.requestDigest,
         afterGeneration: cursor,

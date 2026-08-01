@@ -437,7 +437,7 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
 
   @override
   Future<CloudSyncAccountSecurityHistoryPage> listFrozenHistory({
-    required CloudSyncOnboardingToken onboardingToken,
+    required E2eeAccountRecoveryBearer authorization,
     required String attemptId,
     required Uint8List challengeRequestDigest,
     required int afterGeneration,
@@ -449,6 +449,7 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
 
   @override
   Future<E2eeAccountRecoveryAuthorizationReceipt> authorize({
+    required E2eeAccountRecoveryBearer authorization,
     required String attemptId,
     required Uint8List challengeRequestDigest,
     required CloudSyncAccountRecoveryToken recoveryToken,

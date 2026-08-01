@@ -14,6 +14,7 @@ import 'package:path/path.dart' as p;
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_recovery.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_pairing_qr_codec.dart';
@@ -2076,6 +2077,179 @@ void main() {
           ),
         },
       ],
+    });
+  });
+
+  test('账户恢复 challenge、冻结历史与授权使用稳定协议字段', () async {
+    final manifest = _filledBytes(cloudSyncMembershipManifestMinimumBytes, 91);
+    final capsule = _filledBytes(161, 92);
+    final requestDigest = _filledBytes(32, 93);
+    final challengeFrame = _filledBytes(
+      e2eeAccountRecoveryChallengeFrameBytes,
+      94,
+    );
+    final sealedNonce = _filledBytes(e2eeAccountRecoverySealedNonceBytes, 95);
+    final recoveryToken = CloudSyncAccountRecoveryToken.parse(
+      'kelivo_recovery_${_encodedBytes(32, 96)}',
+    );
+    final nonceProof = _filledBytes(e2eeAccountRecoveryNonceProofBytes, 97);
+    final trustSignature = _filledBytes(
+      e2eeAccountRecoveryTrustSignatureBytes,
+      98,
+    );
+    final historyItem = <String, Object?>{
+      'generation': 1,
+      'keyEpoch': 1,
+      'membershipManifest': _encodedData(manifest),
+      'membershipManifestDigest': _encodedData(
+        Uint8List.fromList(sha256.convert(manifest).bytes),
+      ),
+      'recoveryPublicKeyVersion': 1,
+      'recoveryPublicKey': _encodedBytes(cloudSyncRecoveryPublicKeyBytes, 99),
+      'recoveryCapsuleVersion': 1,
+      'recoveryCapsule': _encodedData(capsule),
+      'operationId': _mutationId1,
+      'committedAt': '2026-08-01T01:00:00.000Z',
+    };
+    final requests = <(String, String, String?, CloudSyncJsonMap)>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      final rawBody = await utf8.decoder.bind(request).join();
+      final body = copyCloudSyncJsonMap(jsonDecode(rawBody));
+      requests.add((
+        request.method,
+        request.uri.path,
+        request.headers.value(HttpHeaders.authorizationHeader),
+        body,
+      ));
+      final Object data = switch ((request.uri.path, body['action'])) {
+        ('/api/auth/account-recovery/attempt/start', 'challenge') =>
+          <String, Object?>{
+            'action': 'challenge',
+            'result': 'created',
+            'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+            'attemptId': _attemptId1,
+            'requestDigest': _encodedData(requestDigest),
+            'challengeFrame': _encodedData(challengeFrame),
+            'sealedNonce': _encodedData(sealedNonce),
+            'securityGeneration': 1,
+            'keyEpoch': 1,
+            'membershipManifestDigest': historyItem['membershipManifestDigest'],
+            'recoveryPublicKeyVersion': 1,
+            'recoveryPublicKey': historyItem['recoveryPublicKey'],
+            'recoveryCapsuleVersion': 1,
+            'recoveryCapsule': _encodedData(capsule),
+            'recoveryCapsuleDigest': _encodedData(
+              Uint8List.fromList(sha256.convert(capsule).bytes),
+            ),
+            'dataState': <String, Object?>{
+              'phase': 'ready',
+              'dataGeneration': 1,
+              'dataKeyEpoch': 1,
+              'operationId': null,
+              'targetKeyEpoch': null,
+            },
+            'expiresAt': '2026-08-01T02:00:00.000Z',
+          },
+        ('/api/auth/account-recovery/history/list', null) => <String, Object?>{
+          'items': <Object?>[historyItem],
+          'afterGeneration': 0,
+          'nextAfterGeneration': 1,
+          'pageSize': 100,
+          'hasMore': false,
+          'currentState': <String, Object?>{
+            'generation': 1,
+            'keyEpoch': 1,
+            'dataRekeyPhase': 'ready',
+            'membershipManifestDigest': historyItem['membershipManifestDigest'],
+            'recoveryPublicKeyVersion': 1,
+            'recoveryPublicKey': historyItem['recoveryPublicKey'],
+            'recoveryCapsuleVersion': 1,
+            'updatedAt': '2026-08-01T01:00:00.000Z',
+          },
+        },
+        ('/api/auth/account-recovery/attempt/start', 'authorize') =>
+          <String, Object?>{
+            'action': 'authorized',
+            'result': 'authorized',
+            'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+            'attemptId': _attemptId1,
+            'status': 'authorized',
+            'nextAction': 'recover-replace',
+            'recoveryTokenExpiresAt': '2026-08-01T03:00:00.000Z',
+          },
+        _ => throw StateError('未预期的账户恢复请求'),
+      };
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(jsonEncode(<String, Object?>{'data': data}));
+      await request.response.close();
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+    final authorization = E2eeAccountRecoveryBearer.onboarding(
+      _onboardingToken,
+    );
+
+    final challenge = await client.createChallenge(
+      onboardingToken: _onboardingToken,
+      attemptId: _attemptId1,
+    );
+    final history = await client.listFrozenHistory(
+      authorization: authorization,
+      attemptId: _attemptId1,
+      challengeRequestDigest: requestDigest,
+      afterGeneration: 0,
+      pageSize: 100,
+    );
+    final receipt = await client.authorize(
+      authorization: authorization,
+      attemptId: _attemptId1,
+      challengeRequestDigest: requestDigest,
+      recoveryToken: recoveryToken,
+      nonceProof: nonceProof,
+      trustSignature: trustSignature,
+    );
+
+    expect(challenge.recoveryCapsule, capsule);
+    expect(history.items.single.recoveryCapsule, capsule);
+    expect(receipt.nextAction, E2eeAccountRecoveryNextAction.recoverReplace);
+    expect(
+      requests.map((request) => (request.$1, request.$2)),
+      <(String, String)>[
+        ('POST', '/api/auth/account-recovery/attempt/start'),
+        ('POST', '/api/auth/account-recovery/history/list'),
+        ('POST', '/api/auth/account-recovery/attempt/start'),
+      ],
+    );
+    expect(
+      requests.map((request) => request.$3),
+      everyElement('Bearer $_onboardingTokenValue'),
+    );
+    expect(requests[0].$4, <String, Object?>{
+      'action': 'challenge',
+      'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+      'attemptId': _attemptId1,
+    });
+    expect(requests[1].$4, <String, Object?>{
+      'afterGeneration': 0,
+      'pageSize': 100,
+      'attemptId': _attemptId1,
+      'challengeRequestDigest': _encodedData(requestDigest),
+    });
+    expect(requests[2].$4, <String, Object?>{
+      'action': 'authorize',
+      'protocolVersion': e2eeAccountRecoveryProtocolVersion,
+      'attemptId': _attemptId1,
+      'challengeRequestDigest': _encodedData(requestDigest),
+      'recoveryToken': recoveryToken.value,
+      'nonceProof': _encodedData(nonceProof),
+      'trustSignature': _encodedData(trustSignature),
     });
   });
 
