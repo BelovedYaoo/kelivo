@@ -4,6 +4,7 @@ import 'package:Kelivo/core/services/workspace/account_workspace_runtime.dart';
 import 'package:Kelivo/utils/app_directories.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:integration_test/integration_test.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path/path.dart' as p;
 
 void main() {
@@ -85,6 +86,58 @@ void main() {
       if (await caseRoot.exists()) await caseRoot.delete(recursive: true);
       if (await externalRoot.exists()) {
         await externalRoot.delete(recursive: true);
+      }
+    }
+  });
+
+  testWidgets('Android 系统沙箱 bind 别名可执行受管根固定操作', (tester) async {
+    expect(Platform.isAndroid, isTrue);
+    final currentInstallationRoot =
+        await AppDirectories.getInstallationRootDirectory();
+    final canonicalInstallationRoot = p.normalize(
+      await currentInstallationRoot.resolveSymbolicLinks(),
+    );
+    expect(canonicalInstallationRoot.startsWith('/data/data/'), isTrue);
+    final installationRoot = Directory(
+      '/data/user/0/${canonicalInstallationRoot.substring('/data/data/'.length)}',
+    );
+    expect(
+      p.normalize(installationRoot.path).startsWith('/data/user/0/'),
+      isTrue,
+    );
+    expect(
+      p.normalize(await installationRoot.resolveSymbolicLinks()),
+      canonicalInstallationRoot,
+    );
+    final caseRoot = Directory(
+      p.join(installationRoot.path, 'managed-root-alias-test'),
+    );
+    if (await caseRoot.exists()) {
+      await caseRoot.delete(recursive: true);
+    }
+    await caseRoot.create();
+
+    KelivoInstallationRootSession? session;
+    try {
+      final staging = Directory(
+        p.join(caseRoot.path, 'upload', 'e2ee', 'staging'),
+      );
+      await staging.create(recursive: true);
+      await File(
+        p.join(staging.path, 'plaintext.part'),
+      ).writeAsString('secret', flush: true);
+      session = await const KelivoSecureCore().openInstallationRoot(
+        caseRoot.path,
+      );
+
+      await session.retireAttachmentStaging();
+
+      expect(await staging.exists(), isFalse);
+      expect(await caseRoot.exists(), isTrue);
+    } finally {
+      await session?.close();
+      if (await caseRoot.exists()) {
+        await caseRoot.delete(recursive: true);
       }
     }
   });

@@ -7,10 +7,11 @@
 
 ## 进度
 
+- 已兼容 Android `/data/user/0` 的现代 bind mount 与旧 symlink：bind 形态必须与 `/data/data` 为同一对象且 `mnt_id` 不同，symlink 形态必须精确指向规范目标。
 - 原生托管根目录会话核心已完成：仅暴露旧备份、附件 staging、持久日志和安装目录擦除四个固定操作。
-- Windows 使用相对目录句柄并固定整条祖先链；Android/Linux 使用目录 FD、`openat2`/`unlinkat` 并复核对象身份；Apple 失败关闭。
-- Windows 原生测试 89/89、Linux 容器测试 64/64 通过；非 root 权限边界另行实跑 1/1。
-- Windows/Linux/Android 严格 Clippy 与 Linux/Android 交叉编译通过。
+- Windows 使用相对目录句柄并固定整条祖先链；Linux 保留 `openat2`；Android 仅使用 `openat(O_NOFOLLOW)` 与 fdinfo `mnt_id`，拒绝同设备的后代 bind mount；Apple 失败关闭。
+- API 36 AVD 实测 `/data` 与 `/data/user/0` 分别为 `mnt_id` 113/230，且同为设备 `254:55`。修复前能力探测触发 syscall 437，被 seccomp 以 `SIGSYS` 杀死；修复版 APK 可安装并运行 30 秒无该崩溃。
+- Linux 受管根测试 21/21、Android x86_64 严格 Clippy 通过；显式 `/data/user/0/...` 公开 ABI 集成用例已加入，但 Flutter/Gradle 完成 APK 后宿主交接卡住，未取得该用例的最终断言回传。
 - 正在拆分 C ABI、Dart 封装和四个生产调用点；当前分支 ABI 暂定 19，最终集成需与恢复介质分支顺延合并。
 - 应用层已接入同一安装根会话：本地擦除不再传根路径，数据库门禁每次准入都调用固定附件退役操作，后台生命周期显式关闭会话。
 - 旧备份退役已移除 Dart 目录遍历，改由系统临时根会话执行固定白名单操作；持久日志调用点由 #84 在同一会话上接入。

@@ -1,4 +1,6 @@
 use crate::KelivoStatus;
+#[cfg(target_os = "android")]
+use std::io::Read;
 use std::{
     ffi::{CStr, CString},
     fs::File,
@@ -7,12 +9,16 @@ use std::{
 
 const MAX_COMPONENT_BYTES: usize = 255;
 const MAX_DIRECTORY_DEPTH: usize = 128;
-// 当前 libc 版本未在所有 Android 架构导出该常量；437 是这些 Linux UAPI 架构的稳定编号。
+#[cfg(target_os = "linux")]
 const SYS_OPENAT2: libc::c_long = 437;
+#[cfg(target_os = "linux")]
 const RESOLVE_NO_XDEV: u64 = 0x01;
+#[cfg(target_os = "linux")]
 const RESOLVE_NO_SYMLINKS: u64 = 0x04;
+#[cfg(target_os = "linux")]
 const RESOLVE_BENEATH: u64 = 0x08;
 
+#[cfg(target_os = "linux")]
 #[repr(C)]
 struct OpenHow {
     flags: u64,
@@ -31,6 +37,80 @@ struct FileIdentity {
 struct FileMetadata {
     identity: FileIdentity,
     links: u64,
+}
+
+#[cfg(any(target_os = "android", test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AndroidUserZeroAliasKind {
+    Symlink,
+    BindMount,
+}
+
+#[cfg(any(target_os = "android", test))]
+fn validate_android_user_zero_alias_evidence(
+    alias_entry: FileMetadata,
+    alias_target: FileMetadata,
+    canonical_target: FileMetadata,
+    alias_mount_id: u64,
+    canonical_mount_id: u64,
+) -> Result<AndroidUserZeroAliasKind, KelivoStatus> {
+    if canonical_target.identity.kind != normalized_u32(libc::S_IFDIR)
+        || alias_target.identity != canonical_target.identity
+    {
+        return Err(KelivoStatus::IoFailure);
+    }
+    if alias_entry.identity.kind == normalized_u32(libc::S_IFLNK) && alias_entry.links == 1 {
+        return if alias_mount_id == canonical_mount_id {
+            Ok(AndroidUserZeroAliasKind::Symlink)
+        } else {
+            Err(KelivoStatus::IoFailure)
+        };
+    }
+    if alias_entry.identity == canonical_target.identity && alias_mount_id != canonical_mount_id {
+        return Ok(AndroidUserZeroAliasKind::BindMount);
+    }
+    Err(KelivoStatus::IoFailure)
+}
+
+#[cfg(any(target_os = "android", test))]
+fn parse_android_fd_mount_id(bytes: &[u8]) -> Result<u64, KelivoStatus> {
+    let mut mount_id = None;
+    for line in bytes.split(|byte| *byte == b'\n') {
+        let Some(raw_value) = line.strip_prefix(b"mnt_id:") else {
+            continue;
+        };
+        if mount_id.is_some() {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let digits = raw_value.trim_ascii();
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let mut parsed = 0_u64;
+        for digit in digits {
+            parsed = parsed
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(u64::from(*digit - b'0')))
+                .ok_or(KelivoStatus::IoFailure)?;
+        }
+        if parsed == 0 {
+            return Err(KelivoStatus::IoFailure);
+        }
+        mount_id = Some(parsed);
+    }
+    mount_id.ok_or(KelivoStatus::IoFailure)
+}
+
+#[cfg(any(target_os = "android", test))]
+fn validate_android_descendant_mount(
+    parent_mount_id: u64,
+    opened_mount_id: u64,
+) -> Result<(), KelivoStatus> {
+    if parent_mount_id == opened_mount_id {
+        Ok(())
+    } else {
+        Err(KelivoStatus::IoFailure)
+    }
 }
 
 struct PinnedMarker {
@@ -56,8 +136,12 @@ struct AndroidUserZeroAlias {
     user_identity: FileIdentity,
     alias_identity: FileIdentity,
     canonical_target_identity: FileIdentity,
+    kind: AndroidUserZeroAliasKind,
+    alias_mount_id: u64,
+    canonical_mount_id: u64,
 }
 
+#[cfg(target_os = "linux")]
 pub(super) fn is_supported() -> bool {
     open_beneath_no_mount(
         libc::AT_FDCWD,
@@ -66,6 +150,23 @@ pub(super) fn is_supported() -> bool {
     )
     .map(drop)
     .is_ok()
+}
+
+#[cfg(target_os = "android")]
+pub(super) fn is_supported() -> bool {
+    // Android 应用 seccomp 会直接以 SIGSYS 拒绝 openat2，能力探测不得触发它。
+    let fd = unsafe {
+        libc::openat(
+            libc::AT_FDCWD,
+            c".".as_ptr(),
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return false;
+    }
+    let directory = unsafe { File::from_raw_fd(fd) };
+    android_fd_mount_id(&directory).is_ok()
 }
 
 #[cfg(test)]
@@ -154,13 +255,27 @@ impl PinnedRoot {
             return Err(KelivoStatus::IoFailure);
         }
         let alias_metadata = metadata_at(&alias.user_directory, c"0")?;
-        if alias_metadata.identity != alias.alias_identity
-            || alias_metadata.identity.kind != normalized_u32(libc::S_IFLNK)
-        {
+        if alias_metadata.identity != alias.alias_identity {
             return Err(KelivoStatus::IoFailure);
         }
+        let canonical_data = self.chain.get(2).ok_or(KelivoStatus::InternalState)?;
+        let canonical_metadata = metadata_for(&canonical_data.file)?;
+        let canonical_mount_id = android_fd_mount_id(&canonical_data.file)?;
         let target = open_android_system_alias(&alias.user_directory, c"0")?;
-        if metadata_for(&target)?.identity != alias.canonical_target_identity {
+        let target_metadata = metadata_for(&target)?;
+        let alias_mount_id = android_fd_mount_id(&target)?;
+        let kind = validate_android_user_zero_alias_evidence(
+            alias_metadata,
+            target_metadata,
+            canonical_metadata,
+            alias_mount_id,
+            canonical_mount_id,
+        )?;
+        if target_metadata.identity != alias.canonical_target_identity
+            || kind != alias.kind
+            || alias_mount_id != alias.alias_mount_id
+            || canonical_mount_id != alias.canonical_mount_id
+        {
             return Err(KelivoStatus::IoFailure);
         }
         Ok(())
@@ -318,19 +433,26 @@ fn open_absolute_directory(path: &str) -> Result<PinnedRoot, KelivoStatus> {
         let user_directory = open_root_component_relative(&data_directory.file, c"user", false)?;
         let user_identity = metadata_for(&user_directory)?.identity;
         let alias_metadata = metadata_at(&user_directory, c"0")?;
-        if alias_metadata.identity.kind != normalized_u32(libc::S_IFLNK) {
-            return Err(KelivoStatus::IoFailure);
-        }
         let target = open_android_system_alias(&user_directory, c"0")?;
-        let target_identity = metadata_for(&target)?.identity;
-        if target_identity != canonical_data.identity {
-            return Err(KelivoStatus::IoFailure);
-        }
+        let target_metadata = metadata_for(&target)?;
+        let canonical_metadata = metadata_for(&canonical_data.file)?;
+        let alias_mount_id = android_fd_mount_id(&target)?;
+        let canonical_mount_id = android_fd_mount_id(&canonical_data.file)?;
+        let kind = validate_android_user_zero_alias_evidence(
+            alias_metadata,
+            target_metadata,
+            canonical_metadata,
+            alias_mount_id,
+            canonical_mount_id,
+        )?;
         Some(AndroidUserZeroAlias {
             user_directory,
             user_identity,
             alias_identity: alias_metadata.identity,
-            canonical_target_identity: target_identity,
+            canonical_target_identity: target_metadata.identity,
+            kind,
+            alias_mount_id,
+            canonical_mount_id,
         })
     } else {
         None
@@ -393,6 +515,7 @@ fn open_regular_relative(parent: &File, name: &CStr) -> Result<File, KelivoStatu
     Ok(file)
 }
 
+#[cfg(target_os = "linux")]
 fn open_beneath_no_mount(
     parent_fd: libc::c_int,
     name: &CStr,
@@ -418,6 +541,29 @@ fn open_beneath_no_mount(
     }
     let fd = libc::c_int::try_from(raw_fd).map_err(|_| KelivoStatus::InternalState)?;
     Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+#[cfg(target_os = "android")]
+fn open_beneath_no_mount(
+    parent_fd: libc::c_int,
+    name: &CStr,
+    flags: libc::c_int,
+) -> Result<File, KelivoStatus> {
+    // 每级必须与父 FD 同挂载，连续成立即把整条后代链约束在已钉住的根挂载内。
+    let parent_mount_id = android_raw_fd_mount_id(parent_fd)?;
+    let fd = unsafe {
+        libc::openat(
+            parent_fd,
+            name.as_ptr(),
+            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    let opened = unsafe { File::from_raw_fd(fd) };
+    validate_android_descendant_mount(parent_mount_id, android_fd_mount_id(&opened)?)?;
+    Ok(opened)
 }
 
 fn pin_marker(root: &File, name: &CStr, root_device: u64) -> Result<PinnedMarker, KelivoStatus> {
@@ -499,6 +645,27 @@ fn open_android_system_alias(parent: &File, name: &CStr) -> Result<File, KelivoS
     let directory = unsafe { File::from_raw_fd(fd) };
     require_directory(metadata_for(&directory)?)?;
     Ok(directory)
+}
+
+#[cfg(target_os = "android")]
+fn android_fd_mount_id(file: &File) -> Result<u64, KelivoStatus> {
+    android_raw_fd_mount_id(file.as_raw_fd())
+}
+
+#[cfg(target_os = "android")]
+fn android_raw_fd_mount_id(fd: libc::c_int) -> Result<u64, KelivoStatus> {
+    const MAX_FDINFO_SIZE: u64 = 4096;
+    let path = format!("/proc/self/fdinfo/{fd}");
+    let mut bytes = Vec::with_capacity(512);
+    File::open(path)
+        .map_err(|_| KelivoStatus::IoFailure)?
+        .take(MAX_FDINFO_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| KelivoStatus::IoFailure)?;
+    if u64::try_from(bytes.len()).map_err(|_| KelivoStatus::IoFailure)? > MAX_FDINFO_SIZE {
+        return Err(KelivoStatus::IoFailure);
+    }
+    parse_android_fd_mount_id(&bytes)
 }
 
 fn retire_plaintext_backups(root: &File) -> Result<(), KelivoStatus> {
@@ -860,9 +1027,11 @@ fn current_errno() -> libc::c_int {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use std::os::unix::fs::PermissionsExt;
     use std::{
         fs,
-        os::unix::{ffi::OsStrExt, fs::PermissionsExt, fs::symlink},
+        os::unix::{ffi::OsStrExt, fs::symlink},
         path::PathBuf,
         sync::atomic::{AtomicUsize, Ordering},
     };
@@ -1065,7 +1234,7 @@ mod tests {
         fs::create_dir(&blocked).unwrap();
         fs::write(blocked.join("secret"), b"secret").unwrap();
         let session = PinnedRoot::open(root.path_text()).unwrap();
-        fs::set_permissions(&blocked, fs::Permissions::from_mode(0)).unwrap();
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
 
         let result = session.retire_plaintext_backups();
 
@@ -1213,6 +1382,132 @@ mod tests {
         assert_eq!(
             unsafe { libc::umount2(target.as_ptr(), libc::MNT_DETACH) },
             0
+        );
+    }
+
+    #[test]
+    fn android_user_zero_bind_mount_requires_same_object_on_distinct_mount() {
+        let canonical = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 42,
+                kind: normalized_u32(libc::S_IFDIR),
+            },
+            links: 3,
+        };
+
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(canonical, canonical, canonical, 101, 202,),
+            Ok(AndroidUserZeroAliasKind::BindMount),
+        );
+    }
+
+    #[test]
+    fn android_user_zero_legacy_symlink_requires_exact_canonical_target() {
+        let alias = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 99,
+                kind: normalized_u32(libc::S_IFLNK),
+            },
+            links: 1,
+        };
+        let canonical = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 42,
+                kind: normalized_u32(libc::S_IFDIR),
+            },
+            links: 3,
+        };
+
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(alias, canonical, canonical, 101, 101,),
+            Ok(AndroidUserZeroAliasKind::Symlink),
+        );
+    }
+
+    #[test]
+    fn android_user_zero_alias_rejects_replaceable_or_wrong_mount_evidence() {
+        let canonical = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 42,
+                kind: normalized_u32(libc::S_IFDIR),
+            },
+            links: 3,
+        };
+        let ordinary_directory = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 43,
+                kind: normalized_u32(libc::S_IFDIR),
+            },
+            links: 2,
+        };
+        let linked_symlink = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 99,
+                kind: normalized_u32(libc::S_IFLNK),
+            },
+            links: 2,
+        };
+
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(
+                ordinary_directory,
+                ordinary_directory,
+                canonical,
+                101,
+                101,
+            ),
+            Err(KelivoStatus::IoFailure),
+        );
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(
+                ordinary_directory,
+                ordinary_directory,
+                canonical,
+                202,
+                101,
+            ),
+            Err(KelivoStatus::IoFailure),
+        );
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(
+                linked_symlink,
+                canonical,
+                canonical,
+                101,
+                101,
+            ),
+            Err(KelivoStatus::IoFailure),
+        );
+    }
+
+    #[test]
+    fn android_mount_identity_parser_accepts_one_kernel_mount_id_only() {
+        assert_eq!(
+            parse_android_fd_mount_id(b"pos:\t0\nflags:\t0100000\nmnt_id:\t202\n"),
+            Ok(202),
+        );
+        assert_eq!(
+            parse_android_fd_mount_id(b"mnt_id:\t202\nmnt_id:\t203\n"),
+            Err(KelivoStatus::IoFailure),
+        );
+        assert_eq!(
+            parse_android_fd_mount_id(b"pos:\t0\nflags:\t0100000\n"),
+            Err(KelivoStatus::IoFailure),
+        );
+    }
+
+    #[test]
+    fn android_descendant_mount_guard_rejects_same_device_bind_mount() {
+        assert_eq!(validate_android_descendant_mount(202, 202), Ok(()));
+        assert_eq!(
+            validate_android_descendant_mount(202, 303),
+            Err(KelivoStatus::IoFailure),
         );
     }
 
