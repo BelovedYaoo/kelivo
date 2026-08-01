@@ -148,6 +148,12 @@ final class E2eeDataRekeyFinalizedExecution {
   final String issuerDeviceId;
 }
 
+final class E2eeDataRekeyReadyConfirmation {
+  const E2eeDataRekeyReadyConfirmation._(this.execution);
+
+  final E2eeDataRekeyFinalizedExecution execution;
+}
+
 final class E2eeDataRekeyExecutor {
   factory E2eeDataRekeyExecutor({
     required CloudSyncDataRekeyTransport transport,
@@ -208,14 +214,57 @@ final class E2eeDataRekeyExecutor {
     }
   }
 
-  Future<void> acknowledgeLocalCommit({
+  Future<E2eeDataRekeyReadyConfirmation> confirmReady({
     required E2eeDataRekeyExecutionContext context,
     required E2eeDataRekeyFinalizedExecution execution,
   }) async {
-    if (execution.userId != context.userId ||
-        execution.issuerDeviceId != context.issuerDeviceId) {
-      throw const FormatException('data-rekey 本地确认账户不匹配');
+    if (_running) throw StateError('data_rekey_executor_busy');
+    _requireExecutionMatchesContext(execution, context);
+    _running = true;
+    try {
+      final journalState = await _journal.readActive();
+      if (journalState == null ||
+          journalState.phase != E2eeDataRekeyJournalPhase.finalizing ||
+          journalState.leaseToken != execution.leaseToken ||
+          journalState.leaseVersion != execution.leaseVersion ||
+          journalState.binding.operationId != execution.operationId) {
+        throw StateError('data_rekey_ready_confirmation_identity_mismatch');
+      }
+      _requireContextMatchesJournal(context, journalState.binding);
+      final state = await _transport.getDataRekeyState();
+      if (state is! CloudSyncDataRekeyReadyState) {
+        throw StateError('data_rekey_ready_confirmation_pending');
+      }
+      _requireReadyStateMatchesJournal(state, journalState.binding);
+      final completion = state.lastCompletion;
+      if (completion == null) {
+        throw const FormatException('data-rekey ready 状态缺少完成证明');
+      }
+      final artifact = await _readFinalizeArtifact(
+        context: context,
+        binding: _artifactBinding(journalState.binding),
+        journalState: journalState,
+      );
+      if (artifact == null) {
+        throw StateError('data_rekey_finalize_artifact_missing');
+      }
+      _verifyFinalizedCompletion(
+        userId: context.userId,
+        request: artifact.request,
+        completion: completion,
+      );
+      return E2eeDataRekeyReadyConfirmation._(execution);
+    } finally {
+      _running = false;
     }
+  }
+
+  Future<void> acknowledgeLocalCommit({
+    required E2eeDataRekeyExecutionContext context,
+    required E2eeDataRekeyReadyConfirmation confirmation,
+  }) async {
+    final execution = confirmation.execution;
+    _requireExecutionMatchesContext(execution, context);
     final current = await _journal.readActive();
     if (current != null) {
       if (current.binding.operationId != execution.operationId ||
@@ -1276,14 +1325,39 @@ void _verifyFinalizedResult({
   required CloudSyncDataRekeyFinalizeRequest request,
   required CloudSyncDataRekeyFinalizeResult result,
 }) {
+  _verifyFinalizedCompletion(
+    userId: userId,
+    request: request,
+    completion: result.completion,
+  );
+}
+
+void _verifyFinalizedCompletion({
+  required String userId,
+  required CloudSyncDataRekeyFinalizeRequest request,
+  required CloudSyncDataRekeyCompletion completion,
+}) {
   final proofFrame = _proofFrameFromRequest(userId: userId, request: request);
   final proofDigest = digestE2eeDataRekeyCompletionProof(
     proofFrame: proofFrame,
     signature: request.proof.signature,
   );
-  if (!_sameDataRekeyBytes(result.completion.proofFrame, proofFrame) ||
-      !_sameDataRekeyBytes(result.completion.proofDigest, proofDigest)) {
+  if (completion.operationId != request.activeLease.operation.operationId ||
+      completion.issuerDeviceId != request.proof.issuerDeviceId ||
+      !_sameDataRekeyBytes(completion.proofFrame, proofFrame) ||
+      !_sameDataRekeyBytes(completion.proofDigest, proofDigest) ||
+      !_sameDataRekeyBytes(completion.signature, request.proof.signature)) {
     throw const FormatException('data-rekey 最终回执证明帧或摘要无效');
+  }
+}
+
+void _requireExecutionMatchesContext(
+  E2eeDataRekeyFinalizedExecution execution,
+  E2eeDataRekeyExecutionContext context,
+) {
+  if (execution.userId != context.userId ||
+      execution.issuerDeviceId != context.issuerDeviceId) {
+    throw const FormatException('data-rekey 本地确认账户不匹配');
   }
 }
 

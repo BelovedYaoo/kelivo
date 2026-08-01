@@ -2142,9 +2142,13 @@ void main() {
         hasLength(1),
       );
 
-      await executor.acknowledgeLocalCommit(
+      final confirmation = await executor.confirmReady(
         context: context,
         execution: execution,
+      );
+      await executor.acknowledgeLocalCommit(
+        context: context,
+        confirmation: confirmation,
       );
 
       expect(await dataRekeyCommands.readActive(), equals(null));
@@ -2219,6 +2223,20 @@ void main() {
         orderedEquals(transport.stageRequests[0].ciphertext),
       );
       expect(cryptography.recordRewrapCount, 1);
+      await expectLater(
+        executor().confirmReady(context: context, execution: execution!),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'data_rekey_ready_confirmation_pending',
+          ),
+        ),
+      );
+      expect(
+        (await dataRekeyCommands.readActive())?.phase,
+        E2eeDataRekeyJournalPhase.finalizing,
+      );
     });
 
     test('租约被其他设备接管后丢弃旧工件并以新幂等键重新重包', () async {
@@ -9038,9 +9056,24 @@ final class _ZeroSourceDataRekeyTransport
   final String operationId;
   final List<CloudSyncDataRekeyFinalizeRequest> finalizeRequests =
       <CloudSyncDataRekeyFinalizeRequest>[];
+  CloudSyncDataRekeyFinalizeRequest? _finalizedRequest;
 
   @override
   Future<CloudSyncDataRekeyState> getDataRekeyState() async {
+    final finalizedRequest = _finalizedRequest;
+    if (finalizedRequest != null) {
+      return CloudSyncDataRekeyState.fromJson(<String, Object?>{
+        'phase': 'ready',
+        'dataGeneration': finalizedRequest.targetDataGeneration,
+        'dataKeyEpoch': finalizedRequest.activeLease.operation.targetKeyEpoch,
+        'changeWatermark': finalizedRequest.proof.sourceMaximumChangeSeq,
+        'lastCompletion': _dataRekeyCompletionJson(
+          userId: userId,
+          request: finalizedRequest,
+        ),
+        'updatedAt': '2026-07-30T05:01:00.000Z',
+      });
+    }
     return CloudSyncDataRekeyState.fromJson(<String, Object?>{
       'phase': 'rekey-pending',
       'dataGeneration': 4,
@@ -9130,7 +9163,12 @@ final class _ZeroSourceDataRekeyTransport
         'stagedAttachmentCount': 0,
       }, request: request);
     }
-    return _finalizedDataRekeyOutcome(userId: userId, request: request);
+    final outcome = _finalizedDataRekeyOutcome(
+      userId: userId,
+      request: request,
+    );
+    _finalizedRequest = request;
+    return outcome;
   }
 }
 
@@ -9168,7 +9206,12 @@ final class _FinalizeResponseLossDataRekeyTransport
       _ready = true;
       throw StateError('simulated_finalize_response_loss');
     }
-    return _finalizedDataRekeyOutcome(userId: userId, request: request);
+    final outcome = _finalizedDataRekeyOutcome(
+      userId: userId,
+      request: request,
+    );
+    _finalizedRequest = request;
+    return outcome;
   }
 }
 
@@ -9564,51 +9607,60 @@ CloudSyncDataRekeyFinalizeOutcome _finalizedDataRekeyOutcome({
 }) {
   final operation = request.activeLease.operation;
   final proof = request.proof;
+  return CloudSyncDataRekeyFinalizeOutcome.fromJson(<String, Object?>{
+    'result': 'finalized',
+    'dataGeneration': request.targetDataGeneration,
+    'dataKeyEpoch': operation.targetKeyEpoch,
+    'changeWatermark': proof.sourceMaximumChangeSeq,
+    'completion': _dataRekeyCompletionJson(userId: userId, request: request),
+  }, request: request);
+}
+
+Map<String, Object?> _dataRekeyCompletionJson({
+  required String userId,
+  required CloudSyncDataRekeyFinalizeRequest request,
+}) {
+  final operation = request.activeLease.operation;
+  final proof = request.proof;
   final attachmentCursor = proof.sourceAttachmentCursorEnd;
   final proofFrame = _dataRekeyProofFrame(userId: userId, request: request);
   final proofDigest = digestE2eeDataRekeyCompletionProof(
     proofFrame: proofFrame,
     signature: proof.signature,
   );
-  return CloudSyncDataRekeyFinalizeOutcome.fromJson(<String, Object?>{
-    'result': 'finalized',
-    'dataGeneration': request.targetDataGeneration,
-    'dataKeyEpoch': operation.targetKeyEpoch,
-    'changeWatermark': proof.sourceMaximumChangeSeq,
-    'completion': <String, Object?>{
-      'proofVersion': 2,
-      'operationId': operation.operationId,
-      'issuerDeviceId': proof.issuerDeviceId,
-      'sourceDataGeneration': operation.sourceDataGeneration,
-      'targetDataGeneration': request.targetDataGeneration,
-      'sourceKeyEpoch': operation.sourceKeyEpoch,
-      'targetKeyEpoch': operation.targetKeyEpoch,
-      'sourceSnapshotRoot': _dataRekeyBinary(proof.sourceSnapshotRoot),
-      'sourceRecordCount': proof.sourceRecordCount,
-      'sourceAttachmentCount': proof.sourceAttachmentCount,
-      'sourceMaximumChangeSeq': proof.sourceMaximumChangeSeq,
-      'sourceRecordCursorEnd': proof.sourceRecordCursorEnd,
-      'sourceAttachmentCursorEnd': attachmentCursor == null
-          ? null
-          : <String, Object?>{
-              'attachmentId': attachmentCursor.attachmentId,
-              'uploadId': attachmentCursor.uploadId,
-            },
-      'membershipGeneration': proof.membershipGeneration,
-      'membershipManifestDigest': _dataRekeyBinary(
-        proof.membershipManifestDigest,
-      ),
-      'stagedRecordCount': proof.stagedRecordCount,
-      'stagedAttachmentCount': proof.stagedAttachmentCount,
-      'stagedCiphertextSetDigest': _dataRekeyBinary(
-        proof.stagedCiphertextSetDigest,
-      ),
-      'proofFrame': _dataRekeyBinary(proofFrame),
-      'proofDigest': _dataRekeyBinary(proofDigest),
-      'signature': _dataRekeyBinary(proof.signature),
-      'finalizedAt': '2026-07-30T05:01:00.000Z',
-    },
-  }, request: request);
+  return <String, Object?>{
+    'proofVersion': 2,
+    'operationId': operation.operationId,
+    'issuerDeviceId': proof.issuerDeviceId,
+    'sourceDataGeneration': operation.sourceDataGeneration,
+    'targetDataGeneration': request.targetDataGeneration,
+    'sourceKeyEpoch': operation.sourceKeyEpoch,
+    'targetKeyEpoch': operation.targetKeyEpoch,
+    'sourceSnapshotRoot': _dataRekeyBinary(proof.sourceSnapshotRoot),
+    'sourceRecordCount': proof.sourceRecordCount,
+    'sourceAttachmentCount': proof.sourceAttachmentCount,
+    'sourceMaximumChangeSeq': proof.sourceMaximumChangeSeq,
+    'sourceRecordCursorEnd': proof.sourceRecordCursorEnd,
+    'sourceAttachmentCursorEnd': attachmentCursor == null
+        ? null
+        : <String, Object?>{
+            'attachmentId': attachmentCursor.attachmentId,
+            'uploadId': attachmentCursor.uploadId,
+          },
+    'membershipGeneration': proof.membershipGeneration,
+    'membershipManifestDigest': _dataRekeyBinary(
+      proof.membershipManifestDigest,
+    ),
+    'stagedRecordCount': proof.stagedRecordCount,
+    'stagedAttachmentCount': proof.stagedAttachmentCount,
+    'stagedCiphertextSetDigest': _dataRekeyBinary(
+      proof.stagedCiphertextSetDigest,
+    ),
+    'proofFrame': _dataRekeyBinary(proofFrame),
+    'proofDigest': _dataRekeyBinary(proofDigest),
+    'signature': _dataRekeyBinary(proof.signature),
+    'finalizedAt': '2026-07-30T05:01:00.000Z',
+  };
 }
 
 Uint8List _dataRekeyProofFrame({

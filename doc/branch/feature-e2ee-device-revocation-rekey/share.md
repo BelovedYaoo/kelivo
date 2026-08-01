@@ -14,3 +14,4 @@
 - 已完成：finalize 请求耐久 artifact；签名证明、固定 mutation 与租约可在响应丢失或进程重启后逐字段原样恢复，并严格拒绝跨账户、issuer 或 operation 重放。
 - 已完成：流式 data-rekey 执行器与生产密码适配层；固定 10 条分页完成源快照和暂存摘要，stage/finalize 响应丢失可原样重放，ready 状态可恢复最终回执，客户端复核 270 字节 proof frame/digest。日志与缓存仅在调用方确认本地成员锚和旧 ARK 已提交后清理；密码会话强制绑定 issuer 设备与目标 key epoch。
 - 已完成：租约接管会清除旧本地工件并重新重包；record、attachment 与 finalize mutation 均绑定 leaseVersion，避免服务端保留的旧 mutation 回执与新租约载荷发生指纹冲突。同一租约内仍保持逐字重放。附件换代只更新 manifest，分块身份、chunkKeyEpoch 与分块摘要保持不变。
+- 已完成：本地提交清理由不可伪造的 ready confirmation 门禁；executor 在 finalize 后必须再次 GET ready，并将服务端 completion 与耐久 finalize 请求的 operation、issuer、270 字节 proof frame、proofDigest 和 signature 逐项绑定。pending 或缺失 completion 时保留 finalizing 日志，调用方无法提前 acknowledge。
