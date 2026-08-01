@@ -5,17 +5,19 @@ import 'package:crypto/crypto.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 import '../workspace/device_state_blob_store.dart';
+import 'cloud_sync_types.dart';
 import 'e2ee_account_recovery.dart';
 
-const _checkpointVersion = 1;
+const _checkpointVersion = 2;
 const _checkpointRecordEpoch = 1;
 const _checkpointFixedLength = 819;
 const _checkpointTokenLength = 59;
+const _checkpointFullSessionTokenLength = 50;
 const _checkpointCapsuleMaximumLength = 4096;
-const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v1';
+const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v2';
 const _checkpointAssociatedDataDomain =
-    'kelivo.account-recovery.checkpoint.aad.v1';
-final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC1'));
+    'kelivo.account-recovery.checkpoint.aad.v2';
+final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC2'));
 final _canonicalUuidV4Pattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
@@ -241,7 +243,11 @@ Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
       nonceProof = checkpoint.copyNonceProof();
       trustSignature = checkpoint.copyTrustSignature();
     }
-    final frame = Uint8List(_checkpointFixedLength + capsule.length);
+    final frame = Uint8List(
+      _checkpointFixedLength +
+          capsule.length +
+          _preparedCommitFrameLength(checkpoint.preparedCommit),
+    );
     final view = ByteData.sublistView(frame);
     var offset = 0;
     offset = _writeBytes(frame, offset, _checkpointMagic);
@@ -306,6 +312,12 @@ Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
       checkpoint.recoveryTokenExpiresAt?.millisecondsSinceEpoch ?? 0,
     );
     offset = _writeUint32(view, offset, _nextActionCode(checkpoint.nextAction));
+    offset = _writePreparedCommit(
+      frame,
+      view,
+      offset,
+      checkpoint.preparedCommit,
+    );
     if (offset != frame.length) {
       frame.fillRange(0, frame.length, 0);
       throw StateError('账户恢复 checkpoint 编码长度不一致');
@@ -318,8 +330,85 @@ Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
   }
 }
 
+int _preparedCommitFrameLength(E2eeAccountRecoveryPreparedCommit? commit) {
+  if (commit == null) return 4;
+  const commonFixedLength =
+      4 + 4 + 32 + 16 + 4 + 32 + 4 + 4 + cloudSyncAccountKeyEnvelopeBytes;
+  final variantLength = switch (commit) {
+    E2eeAccountRecoveryResumeCommit() => 16,
+    E2eeAccountRecoveryReplacementCommit(:final nextRecoveryCapsule) =>
+      4 +
+          4 +
+          nextRecoveryCapsule.length +
+          16 +
+          _checkpointFullSessionTokenLength,
+  };
+  return 4 +
+      commonFixedLength +
+      commit.membership.nextMembershipManifest.length +
+      variantLength;
+}
+
+int _writePreparedCommit(
+  Uint8List frame,
+  ByteData view,
+  int offset,
+  E2eeAccountRecoveryPreparedCommit? commit,
+) {
+  if (commit == null) return _writeUint32(view, offset, 0);
+  offset = _writeUint32(
+    view,
+    offset,
+    commit.kind == E2eeAccountRecoveryCommitKind.resume ? 1 : 2,
+  );
+  final membership = commit.membership;
+  offset = _writeUint32(view, offset, membership.expectedGeneration);
+  offset = _writeUint32(view, offset, membership.expectedKeyEpoch);
+  offset = _writeBytes(
+    frame,
+    offset,
+    membership.expectedMembershipManifestDigest.bytes,
+  );
+  offset = _writeBytes(frame, offset, _uuidBytes(membership.operationId));
+  offset = _writeUint32(view, offset, membership.nextMembershipManifest.length);
+  offset = _writeBytes(frame, offset, membership.nextMembershipManifest);
+  offset = _writeBytes(
+    frame,
+    offset,
+    membership.nextMembershipManifestDigest.bytes,
+  );
+  offset = _writeUint32(view, offset, membership.envelope.envelopeVersion);
+  offset = _writeUint32(view, offset, membership.envelope.keyEpoch);
+  offset = _writeBytes(frame, offset, membership.envelope.accountKeyEnvelope);
+  switch (commit) {
+    case E2eeAccountRecoveryResumeCommit(:final rekeyOperationId):
+      return _writeBytes(frame, offset, _uuidBytes(rekeyOperationId));
+    case E2eeAccountRecoveryReplacementCommit(
+      :final nextRecoveryCapsuleVersion,
+      :final nextRecoveryCapsule,
+      :final completionSessionId,
+      :final completionSessionToken,
+    ):
+      offset = _writeUint32(view, offset, nextRecoveryCapsuleVersion);
+      offset = _writeUint32(view, offset, nextRecoveryCapsule.length);
+      offset = _writeBytes(frame, offset, nextRecoveryCapsule);
+      offset = _writeBytes(frame, offset, _uuidBytes(completionSessionId));
+      final tokenBytes = Uint8List.fromList(
+        ascii.encode(completionSessionToken.value),
+      );
+      try {
+        if (tokenBytes.length != _checkpointFullSessionTokenLength) {
+          throw const FormatException('账户恢复完整会话 token 长度无效');
+        }
+        return _writeBytes(frame, offset, tokenBytes);
+      } finally {
+        _clear(tokenBytes);
+      }
+  }
+}
+
 E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
-  if (frame.length < _checkpointFixedLength ||
+  if (frame.length < _checkpointFixedLength + 4 ||
       !_startsWith(frame, _checkpointMagic)) {
     throw const FormatException('账户恢复 checkpoint 帧无效');
   }
@@ -365,7 +454,7 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
   offset += 4;
   if (capsuleLength <= 0 ||
       capsuleLength > _checkpointCapsuleMaximumLength ||
-      frame.length != _checkpointFixedLength + capsuleLength) {
+      frame.length < _checkpointFixedLength + capsuleLength + 4) {
     throw const FormatException('账户恢复 checkpoint capsule 边界无效');
   }
   final recoveryCapsule = _readBytes(frame, offset, capsuleLength);
@@ -402,6 +491,13 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
   offset += 8;
   final nextActionCode = _readUint32(view, offset);
   offset += 4;
+  final prepared = _readPreparedCommit(
+    frame,
+    view,
+    offset,
+    attemptId: attemptId,
+  );
+  offset = prepared.offset;
   if (offset != frame.length || expiresAtMs <= 0) {
     throw const FormatException('账户恢复 checkpoint 尾部状态无效');
   }
@@ -449,7 +545,8 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
       if (!_allZero(nonceProof) ||
           !_allZero(trustSignature) ||
           recoveryTokenExpiresAtMs != 0 ||
-          nextActionCode != 0) {
+          nextActionCode != 0 ||
+          prepared.commit != null) {
         throw const FormatException('账户恢复 challenge checkpoint 状态无效');
       }
       return E2eeAccountRecoveryCheckpoint.challenged(
@@ -461,7 +558,8 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
       if (_allZero(nonceProof) ||
           _allZero(trustSignature) ||
           recoveryTokenExpiresAtMs != 0 ||
-          nextActionCode != 0) {
+          nextActionCode != 0 ||
+          prepared.commit != null) {
         throw const FormatException('账户恢复 proof checkpoint 状态无效');
       }
       return E2eeAccountRecoveryCheckpoint.challenged(
@@ -476,19 +574,157 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
           nextActionCode == 0) {
         throw const FormatException('账户恢复授权 checkpoint 状态无效');
       }
-      return E2eeAccountRecoveryCheckpoint.challenged(
-            expectedDeviceId: expectedDeviceId,
-            recoveryToken: recoveryToken,
-            challenge: challenge,
-          )
-          .withProof(nonceProof: nonceProof, trustSignature: trustSignature)
-          .authorized(
-            recoveryTokenExpiresAt: DateTime.fromMillisecondsSinceEpoch(
-              recoveryTokenExpiresAtMs,
-              isUtc: true,
-            ),
-            nextAction: _parseNextAction(nextActionCode),
-          );
+      final authorized =
+          E2eeAccountRecoveryCheckpoint.challenged(
+                expectedDeviceId: expectedDeviceId,
+                recoveryToken: recoveryToken,
+                challenge: challenge,
+              )
+              .withProof(nonceProof: nonceProof, trustSignature: trustSignature)
+              .authorized(
+                recoveryTokenExpiresAt: DateTime.fromMillisecondsSinceEpoch(
+                  recoveryTokenExpiresAtMs,
+                  isUtc: true,
+                ),
+                nextAction: _parseNextAction(nextActionCode),
+              );
+      final preparedCommit = prepared.commit;
+      return preparedCommit == null
+          ? authorized
+          : authorized.withPreparedCommit(preparedCommit);
+  }
+}
+
+({E2eeAccountRecoveryPreparedCommit? commit, int offset}) _readPreparedCommit(
+  Uint8List frame,
+  ByteData view,
+  int offset, {
+  required String attemptId,
+}) {
+  _requireRemaining(frame, offset, 4);
+  final kind = _readUint32(view, offset);
+  offset += 4;
+  if (kind == 0) return (commit: null, offset: offset);
+  if (kind != 1 && kind != 2) {
+    throw const FormatException('账户恢复 checkpoint 待提交类型无效');
+  }
+
+  _requireRemaining(frame, offset, 60);
+  final expectedGeneration = _readUint32(view, offset);
+  offset += 4;
+  final expectedKeyEpoch = _readUint32(view, offset);
+  offset += 4;
+  final expectedMembershipManifestDigest = _readBytes(frame, offset, 32);
+  offset += 32;
+  final operationId = _uuidString(frame, offset);
+  offset += 16;
+  final manifestLength = _readUint32(view, offset);
+  offset += 4;
+  if (manifestLength < cloudSyncMembershipManifestMinimumBytes ||
+      manifestLength > cloudSyncMembershipManifestMaximumBytes) {
+    throw const FormatException('账户恢复 checkpoint 成员清单长度无效');
+  }
+  _requireRemaining(
+    frame,
+    offset,
+    manifestLength + 32 + 4 + 4 + cloudSyncAccountKeyEnvelopeBytes,
+  );
+  final nextMembershipManifest = _readBytes(frame, offset, manifestLength);
+  offset += manifestLength;
+  final nextMembershipManifestDigest = _readBytes(frame, offset, 32);
+  offset += 32;
+  final envelopeVersion = _readUint32(view, offset);
+  offset += 4;
+  final envelopeKeyEpoch = _readUint32(view, offset);
+  offset += 4;
+  final accountKeyEnvelope = _readBytes(
+    frame,
+    offset,
+    cloudSyncAccountKeyEnvelopeBytes,
+  );
+  offset += cloudSyncAccountKeyEnvelopeBytes;
+  final membership = E2eeAccountRecoveryMembershipCommit(
+    expectedGeneration: expectedGeneration,
+    expectedKeyEpoch: expectedKeyEpoch,
+    expectedMembershipManifestDigest:
+        CloudSyncMembershipManifestDigest.fromBytes(
+          expectedMembershipManifestDigest,
+        ),
+    operationId: operationId,
+    nextMembershipManifest: nextMembershipManifest,
+    nextMembershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
+      nextMembershipManifestDigest,
+    ),
+    envelope: E2eeAccountRecoveryEnvelope(
+      envelopeVersion: envelopeVersion,
+      keyEpoch: envelopeKeyEpoch,
+      accountKeyEnvelope: accountKeyEnvelope,
+    ),
+  );
+  if (kind == 1) {
+    _requireRemaining(frame, offset, 16);
+    final rekeyOperationId = _uuidString(frame, offset);
+    offset += 16;
+    return (
+      commit: E2eeAccountRecoveryResumeCommit(
+        attemptId: attemptId,
+        membership: membership,
+        rekeyOperationId: rekeyOperationId,
+      ),
+      offset: offset,
+    );
+  }
+
+  _requireRemaining(frame, offset, 8);
+  final nextRecoveryCapsuleVersion = _readUint32(view, offset);
+  offset += 4;
+  final nextRecoveryCapsuleLength = _readUint32(view, offset);
+  offset += 4;
+  if (nextRecoveryCapsuleLength <= 0 ||
+      nextRecoveryCapsuleLength > cloudSyncRecoveryCapsuleMaximumBytes) {
+    throw const FormatException('账户恢复 checkpoint 新 capsule 长度无效');
+  }
+  _requireRemaining(
+    frame,
+    offset,
+    nextRecoveryCapsuleLength + 16 + _checkpointFullSessionTokenLength,
+  );
+  final nextRecoveryCapsule = _readBytes(
+    frame,
+    offset,
+    nextRecoveryCapsuleLength,
+  );
+  offset += nextRecoveryCapsuleLength;
+  final completionSessionId = _uuidString(frame, offset);
+  offset += 16;
+  final completionSessionTokenBytes = _readBytes(
+    frame,
+    offset,
+    _checkpointFullSessionTokenLength,
+  );
+  offset += _checkpointFullSessionTokenLength;
+  try {
+    return (
+      commit: E2eeAccountRecoveryReplacementCommit(
+        attemptId: attemptId,
+        membership: membership,
+        nextRecoveryCapsuleVersion: nextRecoveryCapsuleVersion,
+        nextRecoveryCapsule: nextRecoveryCapsule,
+        completionSessionId: completionSessionId,
+        completionSessionToken: CloudSyncFullSessionToken.parse(
+          ascii.decode(completionSessionTokenBytes),
+        ),
+      ),
+      offset: offset,
+    );
+  } finally {
+    _clear(completionSessionTokenBytes);
+  }
+}
+
+void _requireRemaining(Uint8List frame, int offset, int length) {
+  if (offset < 0 || length < 0 || offset + length > frame.length) {
+    throw const FormatException('账户恢复 checkpoint 变长字段越界');
   }
 }
 

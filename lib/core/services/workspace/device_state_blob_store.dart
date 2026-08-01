@@ -74,8 +74,8 @@ final class DeviceStateBlobStore {
   static const pendingRegistrationEnvelopeMaxLength = 4096;
   // 配对恢复事务包含两个设备状态和一次性能力；保留升级空间但拒绝无界读取。
   static const pendingPairingEnvelopeMaxLength = 4096;
-  // 恢复 checkpoint 需要容纳最大 capsule、challenge 与一次性授权材料。
-  static const pendingAccountRecoveryEnvelopeMaxLength = 8192;
+  // 完整恢复事务需原样重放最大成员清单、双 capsule、信封与一次性会话能力。
+  static const pendingAccountRecoveryEnvelopeMaxLength = 64 * 1024;
   static const _maximumGeneration = 0x7fffffffffffffff;
   static const _storeDirectoryName = '.kelivo-device-state-v1';
   static const _locatorDomain = 'kelivo.device-state.locator.v1';

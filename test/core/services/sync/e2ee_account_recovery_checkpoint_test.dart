@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery_checkpoint.dart';
+import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -160,10 +161,142 @@ void main() {
       authorizedSnapshot.checkpoint.copyTrustSignature(),
       _bytes(64, 0x82),
     );
+
+    final resumeManifest = _bytes(
+      cloudSyncMembershipManifestMaximumBytes,
+      0x91,
+    );
+    final resumeRequest = E2eeAccountRecoveryResumeCommit(
+      attemptId: checkpoint.attemptId,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: checkpoint.challenge.securityGeneration,
+        expectedKeyEpoch: checkpoint.challenge.keyEpoch,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              checkpoint.challenge.membershipManifestDigest,
+            ),
+        operationId: _uuid(2),
+        nextMembershipManifest: resumeManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              _digest(resumeManifest),
+            ),
+        envelope: E2eeAccountRecoveryEnvelope(
+          envelopeVersion: 1,
+          keyEpoch: checkpoint.challenge.keyEpoch,
+          accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0x92),
+        ),
+      ),
+      rekeyOperationId: checkpoint.challenge.dataState.operationId!,
+    );
+    final preparedResume = authorized.withPreparedCommit(resumeRequest);
+    expect(
+      () => preparedResume.withPreparedCommit(resumeRequest),
+      throwsA(isA<StateError>()),
+    );
+    final preparedResumeSnapshot = await reopened.advance(
+      expectedEnvelopeDigest: authorizedSnapshot.envelopeDigest,
+      checkpoint: preparedResume,
+    );
+    final restoredResumeSnapshot = await reopened.read();
+    final restoredResume =
+        restoredResumeSnapshot!.checkpoint.preparedCommit
+            as E2eeAccountRecoveryResumeCommit;
+    expect(restoredResume.rekeyOperationId, resumeRequest.rekeyOperationId);
+    expect(
+      restoredResume.membership.nextMembershipManifest,
+      resumeRequest.membership.nextMembershipManifest,
+    );
+    expect(await reopened.delete(preparedResumeSnapshot), isTrue);
+
+    final replacementChallenge = _challenge(rekeyPending: false);
+    final replacementBase =
+        E2eeAccountRecoveryCheckpoint.challenged(
+              expectedDeviceId: _uuid(5),
+              recoveryToken: recoveryToken,
+              challenge: replacementChallenge,
+            )
+            .withProof(
+              nonceProof: _bytes(32, 0xa1),
+              trustSignature: _bytes(64, 0xa2),
+            )
+            .authorized(
+              recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
+              nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
+            );
+    final replacementManifest = _bytes(
+      cloudSyncMembershipManifestMaximumBytes,
+      0xa3,
+    );
+    final completionSessionToken = CloudSyncFullSessionToken.generate();
+    final replacementRequest = E2eeAccountRecoveryReplacementCommit(
+      attemptId: replacementChallenge.attemptId,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: replacementChallenge.securityGeneration,
+        expectedKeyEpoch: replacementChallenge.keyEpoch,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              replacementChallenge.membershipManifestDigest,
+            ),
+        operationId: _uuid(6),
+        nextMembershipManifest: replacementManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              _digest(replacementManifest),
+            ),
+        envelope: E2eeAccountRecoveryEnvelope(
+          envelopeVersion: 1,
+          keyEpoch: replacementChallenge.keyEpoch + 1,
+          accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0xa4),
+        ),
+      ),
+      nextRecoveryCapsuleVersion:
+          replacementChallenge.recoveryCapsuleVersion + 1,
+      nextRecoveryCapsule: _bytes(cloudSyncRecoveryCapsuleMaximumBytes, 0xa5),
+      completionSessionId: _uuid(7),
+      completionSessionToken: completionSessionToken,
+    );
+    final preparedReplacement = replacementBase.withPreparedCommit(
+      replacementRequest,
+    );
+    await reopened.create(preparedReplacement);
+    final restoredReplacementSnapshot = await reopened.read();
+    final restoredReplacement =
+        restoredReplacementSnapshot!.checkpoint.preparedCommit
+            as E2eeAccountRecoveryReplacementCommit;
+    expect(
+      restoredReplacement.nextRecoveryCapsule,
+      replacementRequest.nextRecoveryCapsule,
+    );
+    expect(
+      restoredReplacement.completionSessionToken.value,
+      completionSessionToken.value,
+    );
+    final preparedDiskEnvelope = await deviceStateStore
+        .readPendingAccountRecoveryEnvelope(
+          normalizedBaseUrl: baseUrl,
+          normalizedLoginName: loginName,
+        );
+    expect(preparedDiskEnvelope!.length, greaterThan(8192));
+    expect(
+      preparedDiskEnvelope.length,
+      lessThanOrEqualTo(
+        DeviceStateBlobStore.pendingAccountRecoveryEnvelopeMaxLength,
+      ),
+    );
+    final preparedDiskText = utf8.decode(
+      preparedDiskEnvelope,
+      allowMalformed: true,
+    );
+    expect(preparedDiskText, isNot(contains(completionSessionToken.value)));
+    expect(
+      preparedDiskText,
+      isNot(contains(replacementRequest.membership.operationId)),
+    );
   });
 }
 
-E2eeAccountRecoveryChallenge _challenge() {
+E2eeAccountRecoveryChallenge _challenge({bool rekeyPending = true}) {
   final manifest = _bytes(444, 0x11);
   final capsule = _bytes(156, 0x41);
   return E2eeAccountRecoveryChallenge(
@@ -172,17 +305,24 @@ E2eeAccountRecoveryChallenge _challenge() {
     challengeFrame: _bytes(316, 0x32),
     sealedNonce: _bytes(100, 0x33),
     securityGeneration: 1,
-    keyEpoch: 1,
+    keyEpoch: rekeyPending ? 2 : 1,
     membershipManifestDigest: _digest(manifest),
     recoveryPublicKeyVersion: 1,
     recoveryPublicKey: _bytes(32, 0x34),
     recoveryCapsuleVersion: 1,
     recoveryCapsule: capsule,
     recoveryCapsuleDigest: _digest(capsule),
-    dataState: E2eeAccountRecoveryDataState.ready(
-      dataGeneration: 1,
-      dataKeyEpoch: 1,
-    ),
+    dataState: rekeyPending
+        ? E2eeAccountRecoveryDataState.rekeyPending(
+            dataGeneration: 1,
+            dataKeyEpoch: 1,
+            operationId: _uuid(4),
+            targetKeyEpoch: 2,
+          )
+        : E2eeAccountRecoveryDataState.ready(
+            dataGeneration: 1,
+            dataKeyEpoch: 1,
+          ),
     expiresAt: DateTime.utc(2026, 8, 1, 1),
   );
 }

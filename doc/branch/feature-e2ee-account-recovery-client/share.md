@@ -25,6 +25,7 @@
 - `proofReady` 重启会先用密文 checkpoint 中的恢复 token 读取 `state/get`：只有服务端精确返回 token 尚不可用才继续 onboarding；已授权则校验安全 head/data state 与冻结 challenge 一致，先持久化 `authorized` 再改用 recovery bearer。网络或其他错误不回退。
 - 已接入 `recover-resume` / `recover-replace` 原子提交 transport：请求严格验证成员清单摘要、信封代次与 capsule/session 边界；回执绑定原 attempt、membership operation、rekey operation、代次与下一动作，重放不得宽松接收。
 - `state/get` 已覆盖 `authorized`、`resume-committed`、`replacement-committed` 和四种下一动作，并强制安全 head、数据代次、data-rekey phase 与动作组合一致；授权器只接管初始 `authorized`。
+- checkpoint 已硬切固定二进制 v2：`authorized -> prepared` 原子保存完整 resume/replacement 请求，支持最大成员清单与 replacement capsule 跨实例逐字恢复；恢复密文槽固定扩为 64 KiB，旧 v1 不迁移。
 - 验证：`flutter analyze lib test` 无问题；授权 5 项、恢复状态/提交协议 3 项、真实隔离安全槽 checkpoint 1 项及工作区存储完整 116 项 Flutter 测试通过。全仓 `flutter analyze` 仍被未安装开发依赖的 `mcp_client` 测试与 Workmanager Pigeon 输入阻断，与本次改动无关。
 
 ## 协作边界
@@ -35,6 +36,6 @@
 
 ## 后续依赖
 
-- 继续接入 resume/replacement 的 Native 准备与后续 data-rekey，并为完整恢复业务状态增加独立耐久 checkpoint。
+- 继续接入 resume/replacement 的 Native 准备与后续 data-rekey；prepared 之后的 commit/data-rekey 回执还需继续推进同一耐久 checkpoint。
 - ABI18 集成后以 ABI19 实现单次 Native 恢复 proof 事务；当前没有生产适配器，因此 UI 不得宣称恢复可用。
 - 继续实现加密 checkpoint、重启/过期接管、op4/op5 与工作区耐久提交，再接 Android/iOS 二维码和恢复文件入口。

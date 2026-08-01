@@ -582,7 +582,10 @@ final class _FakeRecoveryTransport implements E2eeAccountRecoveryTransport {
     return E2eeAccountRecoveryAuthorizationReceipt(
       attemptId: attemptId,
       result: E2eeAccountRecoveryAuthorizationResult.authorized,
-      nextAction: E2eeAccountRecoveryNextAction.recoverResume,
+      nextAction:
+          challenge.dataState.phase == E2eeAccountRecoveryDataPhase.ready
+          ? E2eeAccountRecoveryNextAction.recoverReplace
+          : E2eeAccountRecoveryNextAction.recoverResume,
       recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
     );
   }

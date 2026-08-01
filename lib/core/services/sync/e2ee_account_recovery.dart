@@ -389,7 +389,18 @@ final class E2eeAccountRecoveryMembershipCommit {
   final E2eeAccountRecoveryEnvelope envelope;
 }
 
-final class E2eeAccountRecoveryResumeCommit {
+sealed class E2eeAccountRecoveryPreparedCommit {
+  const E2eeAccountRecoveryPreparedCommit();
+
+  E2eeAccountRecoveryCommitKind get kind;
+
+  String get attemptId;
+
+  E2eeAccountRecoveryMembershipCommit get membership;
+}
+
+final class E2eeAccountRecoveryResumeCommit
+    extends E2eeAccountRecoveryPreparedCommit {
   factory E2eeAccountRecoveryResumeCommit({
     required String attemptId,
     required E2eeAccountRecoveryMembershipCommit membership,
@@ -411,12 +422,19 @@ final class E2eeAccountRecoveryResumeCommit {
     this.rekeyOperationId,
   );
 
+  @override
+  E2eeAccountRecoveryCommitKind get kind =>
+      E2eeAccountRecoveryCommitKind.resume;
+
+  @override
   final String attemptId;
+  @override
   final E2eeAccountRecoveryMembershipCommit membership;
   final String rekeyOperationId;
 }
 
-final class E2eeAccountRecoveryReplacementCommit {
+final class E2eeAccountRecoveryReplacementCommit
+    extends E2eeAccountRecoveryPreparedCommit {
   factory E2eeAccountRecoveryReplacementCommit({
     required String attemptId,
     required E2eeAccountRecoveryMembershipCommit membership,
@@ -452,7 +470,13 @@ final class E2eeAccountRecoveryReplacementCommit {
     this.completionSessionToken,
   );
 
+  @override
+  E2eeAccountRecoveryCommitKind get kind =>
+      E2eeAccountRecoveryCommitKind.replacement;
+
+  @override
   final String attemptId;
+  @override
   final E2eeAccountRecoveryMembershipCommit membership;
   final int nextRecoveryCapsuleVersion;
   final Uint8List nextRecoveryCapsule;
@@ -676,6 +700,7 @@ final class E2eeAccountRecoveryCheckpoint {
       null,
       null,
       null,
+      null,
     );
   }
 
@@ -688,6 +713,7 @@ final class E2eeAccountRecoveryCheckpoint {
     this._trustSignature,
     this.recoveryTokenExpiresAt,
     this.nextAction,
+    this.preparedCommit,
   );
 
   final E2eeAccountRecoveryStage stage;
@@ -698,6 +724,7 @@ final class E2eeAccountRecoveryCheckpoint {
   final Uint8List? _trustSignature;
   final DateTime? recoveryTokenExpiresAt;
   final E2eeAccountRecoveryNextAction? nextAction;
+  final E2eeAccountRecoveryPreparedCommit? preparedCommit;
 
   String get attemptId => challenge.attemptId;
 
@@ -732,6 +759,7 @@ final class E2eeAccountRecoveryCheckpoint {
         ownedTrustSignature.asUnmodifiableView(),
         null,
         null,
+        null,
       );
     } catch (_) {
       _clear(ownedNonceProof);
@@ -751,6 +779,13 @@ final class E2eeAccountRecoveryCheckpoint {
         nextAction != E2eeAccountRecoveryNextAction.recoverReplace) {
       throw const FormatException('账户恢复 checkpoint 授权下一步无效');
     }
+    final expectedNextAction =
+        challenge.dataState.phase == E2eeAccountRecoveryDataPhase.ready
+        ? E2eeAccountRecoveryNextAction.recoverReplace
+        : E2eeAccountRecoveryNextAction.recoverResume;
+    if (nextAction != expectedNextAction) {
+      throw const FormatException('账户恢复 checkpoint 授权动作与 challenge 不一致');
+    }
     final expiresAt = recoveryTokenExpiresAt.toUtc();
     if (expiresAt.millisecondsSinceEpoch <= 0) {
       throw const FormatException('账户恢复 token 过期时间无效');
@@ -764,6 +799,37 @@ final class E2eeAccountRecoveryCheckpoint {
       _trustSignature,
       expiresAt,
       nextAction,
+      null,
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint withPreparedCommit(
+    E2eeAccountRecoveryPreparedCommit commit,
+  ) {
+    if (stage != E2eeAccountRecoveryStage.authorized ||
+        preparedCommit != null) {
+      throw StateError('账户恢复 checkpoint 不可写入待提交请求');
+    }
+    final expectedKind = switch (nextAction) {
+      E2eeAccountRecoveryNextAction.recoverResume =>
+        E2eeAccountRecoveryCommitKind.resume,
+      E2eeAccountRecoveryNextAction.recoverReplace =>
+        E2eeAccountRecoveryCommitKind.replacement,
+      _ => throw StateError('账户恢复 checkpoint 当前不应准备成员提交'),
+    };
+    if (commit.attemptId != attemptId || commit.kind != expectedKind) {
+      throw const FormatException('账户恢复待提交请求未绑定当前 checkpoint');
+    }
+    return E2eeAccountRecoveryCheckpoint._(
+      stage,
+      expectedDeviceId,
+      recoveryToken,
+      challenge,
+      _nonceProof,
+      _trustSignature,
+      recoveryTokenExpiresAt,
+      nextAction,
+      commit,
     );
   }
 
