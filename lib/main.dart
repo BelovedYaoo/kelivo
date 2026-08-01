@@ -147,11 +147,14 @@ Future<void> main() async {
       WidgetsFlutterBinding.ensureInitialized();
       final mobileBackgroundSyncScheduler =
           E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
+      const secureCore = KelivoSecureCore();
       late final Directory installationRoot;
+      late final KelivoCoreCapabilities secureCoreCapabilities;
       try {
         installationRoot = await AppDirectories.getInstallationRootDirectory();
+        secureCoreCapabilities = await secureCore.getCapabilities();
       } catch (error, stackTrace) {
-        stderr.writeln('[InstallationRoot] $error\n$stackTrace');
+        stderr.writeln('[InstallationBootstrap] $error\n$stackTrace');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -162,8 +165,10 @@ Future<void> main() async {
       }
       final localCryptographicWipe = InstallationLocalCryptographicWipe(
         installationRoot: installationRoot,
+        isSupported: secureCoreCapabilities.supportsInstallationRootWipe,
         applicationCacheDirectory: getApplicationCacheDirectory,
-        deleteAllSecureSlots: const KelivoSecureCore().deleteAllSlots,
+        deleteAllSecureSlots: secureCore.deleteAllSlots,
+        wipeInstallationRoot: secureCore.wipeInstallationRoot,
         clearAllPreferences: _clearAllPreferencesForLocalWipe,
         shutdownLogging: FlutterLogger.shutdownForLocalCryptographicWipe,
       );

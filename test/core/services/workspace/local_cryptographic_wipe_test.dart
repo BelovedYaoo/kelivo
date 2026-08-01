@@ -33,18 +33,39 @@ void main() {
     if (await root.exists()) await root.delete(recursive: true);
   });
 
+  Future<void> wipeInstallationRootForTest({
+    required String rootPath,
+    required String preservedEntryName,
+  }) async {
+    expect(rootPath, installationRoot.path);
+    final entities = await Directory(
+      rootPath,
+    ).list(followLinks: false).toList();
+    for (final entity in entities) {
+      final name = entity.uri.pathSegments
+          .where((segment) => segment.isNotEmpty)
+          .last;
+      if (name == preservedEntryName) continue;
+      await entity.delete(recursive: true);
+    }
+  }
+
   InstallationLocalCryptographicWipe createWipe({
+    bool isSupported = true,
     Future<Directory> Function()? applicationCacheDirectory,
     Future<void> Function()? deleteAllSecureSlots,
+    LocalInstallationRootWipe? wipeInstallationRoot,
     Future<void> Function()? clearAllPreferences,
     Future<void> Function()? shutdownLogging,
     RestoreDurability? durability,
   }) {
     return InstallationLocalCryptographicWipe(
       installationRoot: installationRoot,
+      isSupported: isSupported,
       applicationCacheDirectory:
           applicationCacheDirectory ?? () async => cacheRoot,
       deleteAllSecureSlots: deleteAllSecureSlots ?? () async {},
+      wipeInstallationRoot: wipeInstallationRoot ?? wipeInstallationRootForTest,
       clearAllPreferences: clearAllPreferences ?? () async {},
       shutdownLogging: shutdownLogging ?? () async {},
       durability: durability,
@@ -134,6 +155,22 @@ void main() {
         return cacheRoot;
       },
       deleteAllSecureSlots: () async => events.add('secure-slots'),
+      wipeInstallationRoot:
+          ({
+            required String rootPath,
+            required String preservedEntryName,
+          }) async {
+            expect(rootPath, installationRoot.path);
+            expect(
+              preservedEntryName,
+              LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+            );
+            events.add('installation-root');
+            await wipeInstallationRootForTest(
+              rootPath: rootPath,
+              preservedEntryName: preservedEntryName,
+            );
+          },
       clearAllPreferences: () async {
         expect(await installationRoot.exists(), isTrue);
         expect(
@@ -161,7 +198,9 @@ void main() {
       'background',
       'logging',
       'secure-slots',
+      'installation-root',
       'preferences',
+      'installation-root',
     ]);
     expect(await wipe.hasPendingWipe(), isFalse);
     expect(await installationRoot.list().toList(), isEmpty);
@@ -191,6 +230,119 @@ void main() {
     expect(events, isEmpty);
     expect(await installationEntities(), isNotEmpty);
     expect(await cacheRoot.list().toList(), isNotEmpty);
+  });
+
+  test('原生 capability 不可用时在业务入口前拒绝且不写 marker', () async {
+    final wipe = createWipe(isSupported: false);
+    expect(wipe.isSupported, isFalse);
+
+    await expectLater(
+      wipe.markRevocationRequested(deviceId: deviceId, mutationId: mutationId),
+      throwsA(isA<UnsupportedError>()),
+    );
+    expect(await installationEntities(), isEmpty);
+  });
+
+  test('confirmed marker 恢复时 capability 丢失则在清理密钥前失败关闭', () async {
+    await markConfirmed(createWipe());
+    final events = <String>[];
+    final unsupportedWipe = createWipe(
+      isSupported: false,
+      deleteAllSecureSlots: () async => events.add('secure-slots'),
+      wipeInstallationRoot:
+          ({
+            required String rootPath,
+            required String preservedEntryName,
+          }) async => events.add('installation-root'),
+      clearAllPreferences: () async => events.add('preferences'),
+      shutdownLogging: () async => events.add('logging'),
+    );
+
+    await expectLater(
+      unsupportedWipe.resumePendingAtColdStart(
+        stopBackgroundSync: () async => events.add('background'),
+      ),
+      throwsA(isA<UnsupportedError>()),
+    );
+    expect(events, isEmpty);
+    expect(await unsupportedWipe.hasPendingWipe(), isTrue);
+  });
+
+  test('原生安装根擦除失败时保留标记与数据并可从同一阶段重试', () async {
+    await writeInstallationFixture();
+    var failNextWipe = true;
+    var wipeCalls = 0;
+    final wipe = createWipe(
+      wipeInstallationRoot:
+          ({
+            required String rootPath,
+            required String preservedEntryName,
+          }) async {
+            wipeCalls += 1;
+            if (failNextWipe) {
+              failNextWipe = false;
+              throw StateError('injected_installation_root_wipe');
+            }
+            await wipeInstallationRootForTest(
+              rootPath: rootPath,
+              preservedEntryName: preservedEntryName,
+            );
+          },
+    );
+    await markConfirmed(wipe);
+
+    await expectLater(
+      wipe.resumePendingAtColdStart(stopBackgroundSync: () async {}),
+      throwsStateError,
+    );
+    expect(wipeCalls, 1);
+    expect(await wipe.hasPendingWipe(), isTrue);
+    expect(
+      await File(
+        '${installationRoot.path}${Platform.pathSeparator}account-a.db',
+      ).exists(),
+      isTrue,
+    );
+
+    expect(
+      await wipe.resumePendingAtColdStart(stopBackgroundSync: () async {}),
+      isTrue,
+    );
+    expect(wipeCalls, 3);
+    expect(await wipe.hasPendingWipe(), isFalse);
+  });
+
+  test('原生谎报成功但留下数据时不得回退 Dart 删除或提交完成', () async {
+    await writeInstallationFixture();
+    var wipeCalls = 0;
+    final wipe = createWipe(
+      wipeInstallationRoot:
+          ({
+            required String rootPath,
+            required String preservedEntryName,
+          }) async {
+            expect(rootPath, installationRoot.path);
+            expect(
+              preservedEntryName,
+              LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+            );
+            wipeCalls += 1;
+          },
+    );
+    await markConfirmed(wipe);
+
+    await expectLater(
+      wipe.resumePendingAtColdStart(stopBackgroundSync: () async {}),
+      throwsStateError,
+    );
+    expect(wipeCalls, 2);
+    expect(await wipe.hasPendingWipe(), isTrue);
+    expect(
+      await File(
+        '${installationRoot.path}${Platform.pathSeparator}account-a.db',
+      ).exists(),
+      isTrue,
+    );
   });
 
   test('requested-only 冷启动只要求确认且不执行任何擦除步骤', () async {

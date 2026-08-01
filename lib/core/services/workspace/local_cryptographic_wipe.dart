@@ -8,9 +8,16 @@ import '../backup/restore_durability.dart';
 import 'local_wipe_marker_topology.dart';
 
 typedef LocalCryptographicWipeStep = Future<void> Function();
+typedef LocalInstallationRootWipe =
+    Future<void> Function({
+      required String rootPath,
+      required String preservedEntryName,
+    });
 typedef _LocalCryptographicWipeRuntime = ({
+  bool isSupported,
   Future<Directory> Function() applicationCacheDirectory,
   LocalCryptographicWipeStep deleteAllSecureSlots,
+  LocalInstallationRootWipe wipeInstallationRoot,
   LocalCryptographicWipeStep clearAllPreferences,
   LocalCryptographicWipeStep shutdownLogging,
 });
@@ -67,8 +74,10 @@ final class InstallationLocalCryptographicWipe
     implements LocalCryptographicWipe {
   InstallationLocalCryptographicWipe({
     required Directory installationRoot,
+    required bool isSupported,
     required Future<Directory> Function() applicationCacheDirectory,
     required LocalCryptographicWipeStep deleteAllSecureSlots,
+    required LocalInstallationRootWipe wipeInstallationRoot,
     required LocalCryptographicWipeStep clearAllPreferences,
     required LocalCryptographicWipeStep shutdownLogging,
     RestoreDurability? durability,
@@ -77,8 +86,10 @@ final class InstallationLocalCryptographicWipe
          p.normalize(p.absolute(installationRoot.path)),
        ),
        _runtime = (
+         isSupported: isSupported,
          applicationCacheDirectory: applicationCacheDirectory,
          deleteAllSecureSlots: deleteAllSecureSlots,
+         wipeInstallationRoot: wipeInstallationRoot,
          clearAllPreferences: clearAllPreferences,
          shutdownLogging: shutdownLogging,
        ),
@@ -98,8 +109,7 @@ final class InstallationLocalCryptographicWipe
   final DateTime Function() _utcNow;
 
   @override
-  bool get isSupported =>
-      Platform.isWindows || Platform.isAndroid || Platform.isLinux;
+  bool get isSupported => _runtime.isSupported;
 
   File get _revocationRequestedMarkerFile => File(
     p.join(
@@ -125,6 +135,9 @@ final class InstallationLocalCryptographicWipe
     required String deviceId,
     required String mutationId,
   }) async {
+    if (!isSupported) {
+      throw UnsupportedError('local_wipe_unsupported');
+    }
     _validateIdentity(deviceId: deviceId, mutationId: mutationId);
     await _requireInstallationRoot();
     final existing = await _readPendingState();
@@ -228,13 +241,16 @@ final class InstallationLocalCryptographicWipe
       await _commitCompletion();
       return true;
     }
+    if (!isSupported) {
+      throw UnsupportedError('local_wipe_unsupported');
+    }
 
     await stopBackgroundSync();
     await _runtime.shutdownLogging();
     await _runtime.deleteAllSecureSlots();
-    await _deleteInstallationContents();
+    await _wipeInstallationContents();
     await _runtime.clearAllPreferences();
-    await _deleteInstallationContents();
+    await _wipeInstallationContents();
     await _deleteApplicationCacheContents();
     await _commitCompletion();
     return true;
@@ -494,32 +510,11 @@ final class InstallationLocalCryptographicWipe
     throw StateError('local_wipe_marker_temp_collision');
   }
 
-  Future<void> _deleteInstallationContents() async {
-    await _requireInstallationRoot();
-    final entities = await _installationRoot.list(followLinks: false).toList();
-    for (final entity in entities) {
-      final name = _requireDirectChild(
-        parent: _installationRoot,
-        childPath: entity.path,
-      );
-      if (name == LocalWipeMarkerTopology.revocationConfirmedMarkerFileName) {
-        if (await FileSystemEntity.type(entity.path, followLinks: false) !=
-            FileSystemEntityType.file) {
-          throw StateError('local_wipe_marker_file');
-        }
-        continue;
-      }
-      await _deleteEntityWithoutFollowingLinks(
-        parent: _installationRoot,
-        entity: entity,
-      );
-      await _requireInstallationRoot();
-    }
-    await _requireOnlyMarkersRetained({
-      LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
-    });
-    await _durability.syncDirectory(_installationRoot, fullBarrier: true);
-  }
+  Future<void> _wipeInstallationContents() => _runtime.wipeInstallationRoot(
+    rootPath: _installationRoot.path,
+    preservedEntryName:
+        LocalWipeMarkerTopology.revocationConfirmedMarkerFileName,
+  );
 
   Future<void> _requireOnlyMarkersRetained(Set<String> expectedNames) async {
     await _requireInstallationRoot();

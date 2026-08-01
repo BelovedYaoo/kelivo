@@ -8,16 +8,13 @@
 
 ## 进度
 
-- 已从 `feature/e2ee-chat-runtime@77b10f62` 建立独立 worktree，并完成安装级擦除协调器草稿。
-- Provider 已按 requested→排空业务 lease→幂等回执→confirmed→冷重启接线；响应未知复用同一 mutationId，在途登出或 dispose 不会丢弃回执。生产未注入 #51 committer，getter 与 action 双层禁用且四份本地化明确说明原因。
-- 擦除标记已覆盖 requested-only 门禁、临时文件恢复、冲突组合失败关闭和两阶段完成提交；完成标记发布后的重启只收敛提交，不重复执行密钥或偏好擦除。状态机与耐久偏好定向验证 25/25 通过。
-- 偏好擦除使用统一原始键存储：Android 校验同步 commit 回执，Windows/Linux 复读物理 JSON 并执行文件及父目录屏障，Apple 在 #86 完成前显式失败关闭。
-- 明文备份退役按 #83 语义覆盖本地和全部已注册账号前缀，并在删除前拒绝未知账号命名空间；定向验证 4/4 通过，Android 全新安装实机验证仍由 #83 跟踪。
-- 定向验证：本机擦除 22/22、明文退役 4/4 通过；未运行生产默认安全槽 FFI。
-- 安装级共享/独占 lease 已完成：自撤销先持 turnstile，requested 落盘并关闭前台 business 后才能排空到 EX；冷启动和后台同步均在 workspace 前受同一门禁保护。定向验证 18 通过、1 个 Windows 符号链接权限跳过。
-- main 已在任何 workspace bootstrap 前完成冷启动 EX/正常业务 lease 准入；marker 擦除完成但 lease completion 失败时只重试 completion，成功后必须冷重启。准入与状态机定向验证 29/29 通过。
-- 安全审查仍阻塞合并：当前 Dart 路径递归仅为状态机占位，必须由 handle-relative、no-follow 原生整根擦除 ABI 替换后才可合并。
-- #82 的 SharedPreferences 启动顺序回归已由主线 `90ee530c` 修复。
+- Provider 已按 requested→排空业务 lease→幂等回执→confirmed→冷重启接线；响应未知复用同一 mutationId，在途登出或 dispose 不会丢弃回执。生产未注入 #51 committer，入口在写 marker 前禁用。
+- 安装级共享/独占 lease、冷启动准入和两阶段 completion 已闭环；requested-only、临时 marker、冲突组合及崩溃重试均失败关闭，workspace bootstrap 只能在业务 lease 下发生。
+- 偏好擦除、全部已注册账号及匿名工作区的明文备份凭据退役已接通；未知账号命名空间在删除前拒绝，Android 实机偏好耐久验证仍由 #83 跟踪。
+- 安装根 Dart 递归已由 ABI18 句柄相对擦除替换：固定并复核 confirmed marker 身份，偏好清理前后各执行一次；原生失败或谎报成功但留有残余时不回退、不提交完成。
+- 擦除入口以安全核心实际 capability 为准，深层服务在 unsupported 时禁止写 requested；Windows 与 Android 开放，Linux 和 Apple 在 #85 完成跨进程根身份保护前失败关闭。
+- 验证：Windows native 83/83、显式隔离 Dart secure-core 28/28、本机擦除 33/33、Provider/UI 自撤销 10/10、lease 18 通过及 1 个权限跳过、明文退役 4/4；根 `lib test` 与 secure-core 包 analyze 均为零问题。
+- 未运行任何默认生产安全槽或生产安装根测试；全仓 analyze 的 755 个既有依赖诊断由 #80 跟踪。
 
 ## 协作边界
 
