@@ -159,7 +159,7 @@ void main() {
         media: Uint8List(643),
         passphrase: passphrase,
         serviceOriginSha256: Uint8List(32),
-        membershipHistory: <Uint8List>[Uint8List(444)],
+        membershipHistory: <Uint8List>[Uint8List(476)],
         currentCapsule: Uint8List(156),
       ),
       throwsArgumentError,
@@ -181,7 +181,7 @@ void main() {
           media: Uint8List(643),
           passphrase: passphrase,
           serviceOriginSha256: Uint8List(32),
-          membershipHistory: <Uint8List>[Uint8List(444)],
+          membershipHistory: <Uint8List>[Uint8List(476)],
           currentCapsule: Uint8List(156),
           challengeFrame: Uint8List(316),
           sealedNonce: Uint8List(100),
@@ -211,10 +211,10 @@ void main() {
           identity,
           expectedDeviceKeyVersion: 1,
           expectedDeviceAuthGeneration: 1,
-          media: Uint8List(644),
+          media: Uint8List(676),
           passphrase: passphrase,
           serviceOriginSha256: Uint8List(32),
-          membershipHistory: <Uint8List>[Uint8List(444)],
+          membershipHistory: <Uint8List>[Uint8List(476)],
           currentCapsule: Uint8List(156),
           challengeFrame: Uint8List(316),
           sealedNonce: Uint8List(100),
@@ -249,10 +249,10 @@ void main() {
 
     await expectLater(
       core.recoverAccountRootKey(
-        media: Uint8List(644),
+        media: Uint8List(676),
         passphrase: malformedPassphrase,
         serviceOriginSha256: Uint8List(32),
-        membershipHistory: <Uint8List>[Uint8List(444)],
+        membershipHistory: <Uint8List>[Uint8List(476)],
         currentCapsule: Uint8List(156),
       ),
       throwsArgumentError,
@@ -264,12 +264,12 @@ void main() {
     final passphrase = Uint8List.fromList(
       utf8.encode('recovery-passphrase-v1'),
     );
-    final maximumManifest = Uint8List(228 + 256 * 88 + 128);
+    final maximumManifest = Uint8List(260 + 256 * 88 + 128);
     final oversizedHistory = List<Uint8List>.filled(734, maximumManifest);
 
     await expectLater(
       core.recoverAccountRootKey(
-        media: Uint8List(644),
+        media: Uint8List(676),
         passphrase: passphrase,
         serviceOriginSha256: Uint8List(32),
         membershipHistory: oversizedHistory,

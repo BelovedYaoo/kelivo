@@ -156,8 +156,8 @@ typedef int32_t KelivoStatus;
 #define KELIVO_RECOVERY_INVALID_HANDLE UINT64_C(0)
 #define KELIVO_RECOVERY_PUBLIC_KEY_SIZE ((size_t)32)
 #define KELIVO_RECOVERY_CAPSULE_SIZE ((size_t)156)
-#define KELIVO_RECOVERY_MEDIA_SIZE ((size_t)644)
-#define KELIVO_RECOVERY_GENESIS_SIZE ((size_t)444)
+#define KELIVO_RECOVERY_MEDIA_SIZE ((size_t)676)
+#define KELIVO_RECOVERY_GENESIS_SIZE ((size_t)476)
 #define KELIVO_RECOVERY_HISTORY_MAX_BYTES ((size_t)(16 * 1024 * 1024))
 #define KELIVO_RECOVERY_SERVICE_ORIGIN_SHA256_SIZE ((size_t)32)
 #define KELIVO_RECOVERY_CAPSULE_BINDING_STRUCT_SIZE UINT32_C(28)
@@ -173,7 +173,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_RESUME UINT32_C(1)
 #define KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_REPLACEMENT UINT32_C(2)
 #define KELIVO_ACCOUNT_RECOVERY_PREPARED_MANIFEST_MAX_SIZE \
-    ((size_t)(228 + 256 * 88 + 128))
+    ((size_t)(260 + 256 * 88 + 128))
 
 typedef struct KelivoDeviceStateBinding {
     uint32_t struct_size;
@@ -1026,8 +1026,8 @@ KELIVO_CORE_API KelivoStatus kelivo_recovery_capsule_seal(
     size_t *out_capsule_length);
 
 /*
- * 仅接受本地 epoch-1 ARK、对应初始 capsule、严格有效的 444 字节 genesis
- * 清单和独立恢复口令，输出固定 644 字节二进制帧。三者的账户信任根、
+ * 仅接受本地 epoch-1 ARK、对应初始 capsule、严格有效的 476 字节 genesis
+ * 清单和独立恢复口令，输出固定 676 字节二进制帧。三者的账户信任根、
  * capsule 摘要与 capsule 内 ARK 必须一致；不会导出任何明文秘密。
  */
 KELIVO_CORE_API KelivoStatus kelivo_recovery_media_export(

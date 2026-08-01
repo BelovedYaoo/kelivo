@@ -10,8 +10,8 @@ void main() {
   test('完整拉取冻结历史后才由 Native 生成恢复授权证明', () async {
     final currentCapsule = _bytes(156, 0x51);
     final sourceCapsule = _bytes(156, 0x41);
-    final firstManifest = _bytes(444, 0x11);
-    final currentManifest = _bytes(444, 0x21);
+    final firstManifest = _bytes(476, 0x11);
+    final currentManifest = _bytes(476, 0x21);
     final challenge = E2eeAccountRecoveryChallenge(
       attemptId: _uuid(1),
       requestDigest: _bytes(32, 0x31),
@@ -95,7 +95,7 @@ void main() {
         'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
       ),
       expectedDeviceId: _uuid(5),
-      recoveryMedia: _bytes(644, 0x73),
+      recoveryMedia: _bytes(676, 0x73),
       recoveryPassphrase: passphrase,
     );
 
@@ -127,8 +127,8 @@ void main() {
   test('已轮换且数据就绪时仍向 Native 提供最近轮换前驱 capsule', () async {
     final sourceCapsule = _bytes(156, 0x41);
     final currentCapsule = _bytes(156, 0x51);
-    final sourceManifest = _bytes(444, 0x11);
-    final currentManifest = _bytes(444, 0x21);
+    final sourceManifest = _bytes(476, 0x11);
+    final currentManifest = _bytes(476, 0x21);
     final challenge = E2eeAccountRecoveryChallenge(
       attemptId: _uuid(1),
       requestDigest: _bytes(32, 0x31),
@@ -204,7 +204,7 @@ void main() {
         'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
       ),
       expectedDeviceId: _uuid(5),
-      recoveryMedia: _bytes(644, 0x73),
+      recoveryMedia: _bytes(676, 0x73),
       recoveryPassphrase: Uint8List.fromList(
         utf8.encode('correct horse battery'),
       ),
@@ -221,7 +221,7 @@ void main() {
       _historyItem(
         generation: 1,
         keyEpoch: 2,
-        manifest: _bytes(444, 0x21),
+        manifest: _bytes(476, 0x21),
         capsule: _bytes(156, 0x51),
         capsuleVersion: 2,
         operationId: _uuid(2),
@@ -247,7 +247,7 @@ void main() {
       _historyItem(
         generation: 1,
         keyEpoch: 1,
-        manifest: _bytes(444, 0x11),
+        manifest: _bytes(476, 0x11),
         capsule: _bytes(156, 0x41),
         capsuleVersion: 1,
         operationId: _uuid(2),
@@ -255,7 +255,7 @@ void main() {
       _historyItem(
         generation: 2,
         keyEpoch: 2,
-        manifest: _bytes(444, 0x21),
+        manifest: _bytes(476, 0x21),
         capsule: _bytes(156, 0x51),
         capsuleVersion: 2,
         operationId: _uuid(3),
@@ -263,7 +263,7 @@ void main() {
       _historyItem(
         generation: 3,
         keyEpoch: 1,
-        manifest: _bytes(444, 0x31),
+        manifest: _bytes(476, 0x31),
         capsule: _bytes(156, 0x41),
         capsuleVersion: 1,
         operationId: _uuid(4),
@@ -271,7 +271,7 @@ void main() {
       _historyItem(
         generation: 4,
         keyEpoch: 2,
-        manifest: _bytes(444, 0x41),
+        manifest: _bytes(476, 0x41),
         capsule: _bytes(156, 0x51),
         capsuleVersion: 2,
         operationId: _uuid(5),
@@ -297,7 +297,7 @@ void main() {
       _historyItem(
         generation: 1,
         keyEpoch: 1,
-        manifest: _bytes(444, 0x11),
+        manifest: _bytes(476, 0x11),
         capsule: _bytes(156, 0x41),
         capsuleVersion: 7,
         operationId: _uuid(2),
@@ -305,7 +305,7 @@ void main() {
       _historyItem(
         generation: 2,
         keyEpoch: 2,
-        manifest: _bytes(444, 0x21),
+        manifest: _bytes(476, 0x21),
         capsule: _bytes(156, 0x51),
         capsuleVersion: 2,
         operationId: _uuid(3),
@@ -327,8 +327,8 @@ void main() {
   });
 
   test('冻结历史投影与 challenge 不一致时不进入 Native', () async {
-    final challengeManifest = _bytes(444, 0x11);
-    final serverManifest = _bytes(444, 0x12);
+    final challengeManifest = _bytes(476, 0x11);
+    final serverManifest = _bytes(476, 0x12);
     final capsule = _bytes(156, 0x41);
     final challenge = E2eeAccountRecoveryChallenge(
       attemptId: _uuid(1),
@@ -398,7 +398,7 @@ void main() {
           'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
         ),
         expectedDeviceId: _uuid(5),
-        recoveryMedia: _bytes(644, 0x73),
+        recoveryMedia: _bytes(676, 0x73),
         recoveryPassphrase: passphrase,
       ),
       throwsA(isA<FormatException>()),
@@ -451,7 +451,7 @@ void main() {
         'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
       ),
       expectedDeviceId: _uuid(5),
-      recoveryMedia: _bytes(644, 0x73),
+      recoveryMedia: _bytes(676, 0x73),
       recoveryPassphrase: passphrase,
     );
 
@@ -507,7 +507,7 @@ void main() {
           'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
         ),
         expectedDeviceId: _uuid(5),
-        recoveryMedia: _bytes(644, 0x73),
+        recoveryMedia: _bytes(676, 0x73),
         recoveryPassphrase: passphrase,
       ),
       throwsA(isA<FormatException>()),
@@ -570,7 +570,7 @@ void main() {
         'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
       ),
       expectedDeviceId: _uuid(5),
-      recoveryMedia: _bytes(644, 0x73),
+      recoveryMedia: _bytes(676, 0x73),
       recoveryPassphrase: Uint8List.fromList(
         utf8.encode('correct horse battery'),
       ),
@@ -836,7 +836,7 @@ E2eeAccountRecoveryCheckpoint _preparedResumeCheckpoint() {
             recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
             nextAction: E2eeAccountRecoveryNextAction.recoverResume,
           );
-  final nextManifest = _bytes(444, 0x73);
+  final nextManifest = _bytes(476, 0x73);
   return authorized.withPreparedCommit(
     E2eeAccountRecoveryResumeCommit(
       attemptId: challenge.attemptId,
@@ -878,7 +878,7 @@ E2eeAccountRecoveryCheckpoint _preparedReplacementCheckpoint() {
             recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
             nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
           );
-  final nextManifest = _bytes(444, 0x91);
+  final nextManifest = _bytes(476, 0x91);
   return authorized.withPreparedCommit(
     E2eeAccountRecoveryReplacementCommit(
       attemptId: fixture.challenge.attemptId,
@@ -943,9 +943,9 @@ E2eeAccountRecoveryCommitReceipt _resumeReceipt(
   CloudSyncAccountSecurityHistoryPage historyPage,
 })
 _readyRecoveryFixture() {
-  final sourceManifest = _bytes(444, 0x11);
+  final sourceManifest = _bytes(476, 0x11);
   final sourceCapsule = _bytes(156, 0x41);
-  final currentManifest = _bytes(444, 0x21);
+  final currentManifest = _bytes(476, 0x21);
   final currentCapsule = _bytes(156, 0x51);
   final challenge = E2eeAccountRecoveryChallenge(
     attemptId: _uuid(1),
@@ -1153,7 +1153,7 @@ final class _RotatedReadyFixture {
         'kelivo_onboarding_${base64Url.encode(_bytes(32, 0x72)).replaceAll('=', '')}',
       ),
       expectedDeviceId: _uuid(5),
-      recoveryMedia: _bytes(644, 0x73),
+      recoveryMedia: _bytes(676, 0x73),
       recoveryPassphrase: Uint8List.fromList(
         utf8.encode('correct horse battery'),
       ),

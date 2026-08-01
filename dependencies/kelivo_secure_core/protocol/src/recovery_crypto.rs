@@ -1,4 +1,4 @@
-//! 账户恢复 capsule 与独立口令恢复介质的唯一 v1 线格式。
+//! 账户恢复 capsule 与独立口令恢复介质的唯一线格式；恢复介质当前为 v2。
 
 use std::{fmt, str};
 
@@ -43,23 +43,23 @@ pub const RECOVERY_CAPSULE_LENGTH: usize = 156;
 pub const RECOVERY_CAPSULE_SHA256_LENGTH: usize = 32;
 const RECOVERY_CAPSULE_INFO_DOMAIN: &[u8] = b"kelivo.recovery-capsule.hpke-info.v1";
 
-const RECOVERY_MEDIA_MAGIC: [u8; 8] = *b"KELVRM01";
-pub const RECOVERY_MEDIA_VERSION: u16 = 1;
+const RECOVERY_MEDIA_MAGIC: [u8; 8] = *b"KELVRM02";
+pub const RECOVERY_MEDIA_VERSION: u16 = 2;
 pub const RECOVERY_MEDIA_SUITE_ID: u16 = 1;
 pub const RECOVERY_MEDIA_KDF_PROFILE_ID: u16 = 1;
 const RECOVERY_MEDIA_FLAGS: u16 = 0;
 pub const RECOVERY_MEDIA_HEADER_LENGTH: usize = 96;
-pub const RECOVERY_MEDIA_PLAINTEXT_LENGTH: usize = 532;
+pub const RECOVERY_MEDIA_PLAINTEXT_LENGTH: usize = 564;
 pub const RECOVERY_MEDIA_SALT_LENGTH: usize = 16;
 pub const RECOVERY_MEDIA_NONCE_LENGTH: usize = 24;
 pub const RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH: usize = 32;
-pub const RECOVERY_GENESIS_LENGTH: usize = 444;
+pub const RECOVERY_GENESIS_LENGTH: usize = 476;
 pub const RECOVERY_MEDIA_TAG_LENGTH: usize = 16;
-pub const RECOVERY_MEDIA_LENGTH: usize = 644;
+pub const RECOVERY_MEDIA_LENGTH: usize = 676;
 pub const RECOVERY_HISTORY_MAX_BYTES: usize = 16 * 1024 * 1024;
 pub const RECOVERY_PASSPHRASE_MIN_SCALARS: usize = 12;
 pub const RECOVERY_PASSPHRASE_MAX_UTF8_LENGTH: usize = 128;
-const RECOVERY_MEDIA_WRAP_KEY_INFO: &[u8] = b"kelivo.recovery-media.wrap-key.v1";
+const RECOVERY_MEDIA_WRAP_KEY_INFO: &[u8] = b"kelivo.recovery-media.wrap-key.v2";
 const RECOVERY_MEDIA_KEY_LENGTH: usize = 32;
 
 const CAPSULE_USER_ID_OFFSET: usize = 16;
@@ -84,7 +84,7 @@ const MEDIA_PLAINTEXT_GENESIS_LENGTH_OFFSET: usize = 52;
 const MEDIA_PLAINTEXT_GENESIS_DIGEST_OFFSET: usize = 56;
 const MEDIA_PLAINTEXT_GENESIS_OFFSET: usize = 88;
 
-const GENESIS_PAYLOAD_LENGTH: usize = 316;
+const GENESIS_PAYLOAD_LENGTH: usize = 348;
 const GENESIS_TRANSITION_SIGNATURE_OFFSET: usize = GENESIS_PAYLOAD_LENGTH;
 const GENESIS_CURRENT_SIGNATURE_OFFSET: usize = GENESIS_TRANSITION_SIGNATURE_OFFSET + 64;
 
@@ -985,7 +985,7 @@ fn validate_genesis(
 ) -> Result<RecoveryGenesisCapability, RecoveryCryptoError> {
     if genesis.len() != RECOVERY_GENESIS_LENGTH
         || genesis[..8] != *b"KELIVOMM"
-        || read_u32(genesis, 8) != 1
+        || read_u32(genesis, 8) != 2
         || genesis[12..28] != *expected_user_id.as_bytes()
         || read_u32(genesis, 28) != 1
         || read_u32(genesis, 32) != 1
@@ -994,12 +994,13 @@ fn validate_genesis(
         || genesis[104..136] != *expected_recovery_public_key.as_bytes()
         || read_u32(genesis, 136) != 1
         || read_u32(genesis, 172) != 1
-        || read_u32(genesis, 224) != 1
+        || genesis[224..256].iter().any(|byte| *byte != 0)
+        || read_u32(genesis, 256) != 1
         || genesis[192..208] != genesis[208..224]
-        || genesis[208..224] != genesis[228..244]
-        || read_u32(genesis, 244) == 0
-        || read_u32(genesis, 244) > 0x7fff_ffff
-        || read_u32(genesis, 248) != 0
+        || genesis[208..224] != genesis[260..276]
+        || read_u32(genesis, 276) == 0
+        || read_u32(genesis, 276) > 0x7fff_ffff
+        || read_u32(genesis, 280) != 0
         || genesis[GENESIS_TRANSITION_SIGNATURE_OFFSET..GENESIS_CURRENT_SIGNATURE_OFFSET]
             .iter()
             .any(|byte| *byte != 0)
@@ -1011,10 +1012,10 @@ fn validate_genesis(
         .map_err(|_| RecoveryCryptoError::InvalidGenesis)?;
     DeviceId::new(copy_array(&genesis[192..208]))
         .map_err(|_| RecoveryCryptoError::InvalidGenesis)?;
-    DeviceSigningPublicKey::from_bytes(copy_array(&genesis[252..284]))
+    DeviceSigningPublicKey::from_bytes(copy_array(&genesis[284..316]))
         .map_err(|_| RecoveryCryptoError::InvalidGenesis)?;
     let member_key_agreement =
-        DeviceKeyAgreementPublicKey::from_bytes(copy_array(&genesis[284..316]))
+        DeviceKeyAgreementPublicKey::from_bytes(copy_array(&genesis[316..348]))
             .map_err(|_| RecoveryCryptoError::InvalidGenesis)?;
     if same_bytes(
         member_key_agreement.as_bytes(),
@@ -1138,7 +1139,7 @@ mod tests {
     impl CryptoRng for FailingRng {}
 
     #[test]
-    fn recovery_media_kdf_v1_vector_remains_stable() {
+    fn recovery_media_kdf_v2_vector_remains_stable() {
         let key = derive_media_key(
             b"recovery-passphrase-v1",
             &[0x5a; RECOVERY_MEDIA_SALT_LENGTH],
@@ -1147,9 +1148,9 @@ mod tests {
         assert_eq!(
             key.as_slice(),
             &[
-                0xd4, 0xcf, 0x3c, 0xc0, 0x35, 0x5a, 0x7a, 0xf7, 0x88, 0x99, 0xaa, 0x7c, 0xa8, 0xb2,
-                0x52, 0x12, 0xff, 0x47, 0xe8, 0x18, 0xf4, 0x8a, 0x1d, 0xa6, 0xa6, 0xf9, 0xad, 0xd4,
-                0xbc, 0xda, 0xbe, 0x38,
+                0x4e, 0xa8, 0xaa, 0x5c, 0xe4, 0xf7, 0xb5, 0x61, 0x26, 0xe1, 0x69, 0x51, 0x15, 0xaa,
+                0x16, 0xa1, 0xcd, 0xa3, 0xa5, 0xbb, 0xe7, 0x49, 0x87, 0x15, 0x9f, 0xdb, 0xe1, 0xd7,
+                0xc1, 0xe6, 0x95, 0x54,
             ]
         );
     }
@@ -1178,7 +1179,7 @@ mod tests {
         let device_id = uuid(0x53);
         let mut bytes = [0_u8; RECOVERY_GENESIS_LENGTH];
         bytes[..8].copy_from_slice(b"KELIVOMM");
-        bytes[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        bytes[8..12].copy_from_slice(&2_u32.to_be_bytes());
         bytes[12..28].copy_from_slice(user_id.as_bytes());
         bytes[28..32].copy_from_slice(&1_u32.to_be_bytes());
         bytes[32..36].copy_from_slice(&1_u32.to_be_bytes());
@@ -1191,11 +1192,11 @@ mod tests {
         bytes[176..192].copy_from_slice(&operation_id);
         bytes[192..208].copy_from_slice(&device_id);
         bytes[208..224].copy_from_slice(&device_id);
-        bytes[224..228].copy_from_slice(&1_u32.to_be_bytes());
-        bytes[228..244].copy_from_slice(&device_id);
-        bytes[244..248].copy_from_slice(&1_u32.to_be_bytes());
-        bytes[252..284].copy_from_slice(member_public.signing.as_bytes());
-        bytes[284..316].copy_from_slice(member_public.key_agreement.as_bytes());
+        bytes[256..260].copy_from_slice(&1_u32.to_be_bytes());
+        bytes[260..276].copy_from_slice(&device_id);
+        bytes[276..280].copy_from_slice(&1_u32.to_be_bytes());
+        bytes[284..316].copy_from_slice(member_public.signing.as_bytes());
+        bytes[316..348].copy_from_slice(member_public.key_agreement.as_bytes());
         let signature = sign_account_trust_payload(ark, binding, &bytes[..GENESIS_PAYLOAD_LENGTH])
             .expect("genesis 应签名");
         bytes[GENESIS_CURRENT_SIGNATURE_OFFSET..].copy_from_slice(signature.as_bytes());
@@ -1307,7 +1308,7 @@ mod tests {
         ark: &AccountRootKey,
         user_id: UserId,
     ) -> Vec<u8> {
-        const HEADER_LENGTH: usize = 228;
+        const HEADER_LENGTH: usize = 260;
         const MEMBER_LENGTH: usize = 88;
         const SIGNATURE_SECTION_LENGTH: usize = 128;
         let payload_length = HEADER_LENGTH + 2 * MEMBER_LENGTH;
@@ -1317,19 +1318,20 @@ mod tests {
         manifest[36..68].copy_from_slice(&Sha256::digest(previous));
         manifest[172..176].copy_from_slice(&2_u32.to_be_bytes());
         manifest[176..192].copy_from_slice(&uuid(0x61));
-        manifest[192..208].copy_from_slice(&previous[228..244]);
+        manifest[192..208].copy_from_slice(&previous[260..276]);
         let subject_id = uuid(0x63);
         manifest[208..224].copy_from_slice(&subject_id);
-        manifest[224..228].copy_from_slice(&2_u32.to_be_bytes());
-        manifest[228..316].copy_from_slice(&previous[228..316]);
+        manifest[224..256].fill(0);
+        manifest[256..260].copy_from_slice(&2_u32.to_be_bytes());
+        manifest[260..348].copy_from_slice(&previous[260..348]);
 
         let subject = DeviceIdentity::generate(&mut TestRng(0x64)).expect("新增设备身份应生成");
         let subject_public = subject.public_keys();
-        manifest[316..332].copy_from_slice(&subject_id);
-        manifest[332..336].copy_from_slice(&1_u32.to_be_bytes());
-        manifest[336..340].copy_from_slice(&1_u32.to_be_bytes());
-        manifest[340..372].copy_from_slice(subject_public.signing.as_bytes());
-        manifest[372..404].copy_from_slice(subject_public.key_agreement.as_bytes());
+        manifest[348..364].copy_from_slice(&subject_id);
+        manifest[364..368].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[368..372].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[372..404].copy_from_slice(subject_public.signing.as_bytes());
+        manifest[404..436].copy_from_slice(subject_public.key_agreement.as_bytes());
         sign_history_manifest(&mut manifest, user_id, None, (ark, 1));
         manifest
     }
@@ -1341,7 +1343,7 @@ mod tests {
         user_id: UserId,
         capsule: &RecoveryCapsule,
     ) -> Vec<u8> {
-        const HEADER_LENGTH: usize = 228;
+        const HEADER_LENGTH: usize = 260;
         const MEMBER_LENGTH: usize = 88;
         const SIGNATURE_SECTION_LENGTH: usize = 128;
         let payload_length = HEADER_LENGTH + MEMBER_LENGTH;
@@ -1363,10 +1365,11 @@ mod tests {
         manifest[140..172].copy_from_slice(&Sha256::digest(capsule.as_bytes()));
         manifest[172..176].copy_from_slice(&3_u32.to_be_bytes());
         manifest[176..192].copy_from_slice(&uuid(0x65));
-        manifest[192..208].copy_from_slice(&previous[228..244]);
-        manifest[208..224].copy_from_slice(&previous[316..332]);
-        manifest[224..228].copy_from_slice(&1_u32.to_be_bytes());
-        manifest[228..316].copy_from_slice(&previous[228..316]);
+        manifest[192..208].copy_from_slice(&previous[260..276]);
+        manifest[208..224].copy_from_slice(&previous[348..364]);
+        manifest[224..256].fill(0);
+        manifest[256..260].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[260..348].copy_from_slice(&previous[260..348]);
         sign_history_manifest(
             &mut manifest,
             user_id,
@@ -1383,10 +1386,10 @@ mod tests {
         subject_id_seed: u8,
         subject_key_seed: u8,
     ) -> Vec<u8> {
-        const HEADER_LENGTH: usize = 228;
+        const HEADER_LENGTH: usize = 260;
         const MEMBER_LENGTH: usize = 88;
         const SIGNATURE_SECTION_LENGTH: usize = 128;
-        let previous_member_count = u32::from_be_bytes(copy_array(&previous[224..228])) as usize;
+        let previous_member_count = u32::from_be_bytes(copy_array(&previous[256..260])) as usize;
         let previous_payload_length = previous.len() - SIGNATURE_SECTION_LENGTH;
         let payload_length = HEADER_LENGTH + (previous_member_count + 1) * MEMBER_LENGTH;
         let mut manifest = vec![0_u8; payload_length + SIGNATURE_SECTION_LENGTH];
@@ -1400,7 +1403,8 @@ mod tests {
         let subject_id = uuid(subject_id_seed);
         manifest[192..208].copy_from_slice(&subject_id);
         manifest[208..224].copy_from_slice(&subject_id);
-        manifest[224..228].copy_from_slice(&((previous_member_count + 1) as u32).to_be_bytes());
+        manifest[224..256].fill(0);
+        manifest[256..260].copy_from_slice(&((previous_member_count + 1) as u32).to_be_bytes());
         manifest[HEADER_LENGTH..previous_payload_length]
             .copy_from_slice(&previous[HEADER_LENGTH..previous_payload_length]);
 
@@ -1427,7 +1431,7 @@ mod tests {
         capsule: &RecoveryCapsule,
         direct_subject: Option<(u8, u8)>,
     ) -> Vec<u8> {
-        const HEADER_LENGTH: usize = 228;
+        const HEADER_LENGTH: usize = 260;
         const MEMBER_LENGTH: usize = 88;
         const SIGNATURE_SECTION_LENGTH: usize = 128;
         let payload_length = HEADER_LENGTH + MEMBER_LENGTH;
@@ -1453,7 +1457,8 @@ mod tests {
         manifest[140..172].copy_from_slice(&Sha256::digest(capsule.as_bytes()));
         manifest[172..176].copy_from_slice(&5_u32.to_be_bytes());
         manifest[176..192].copy_from_slice(&uuid(0x76));
-        manifest[224..228].copy_from_slice(&1_u32.to_be_bytes());
+        manifest[224..256].fill(0);
+        manifest[256..260].copy_from_slice(&1_u32.to_be_bytes());
 
         let member = match direct_subject {
             Some((subject_id_seed, subject_key_seed)) => {
@@ -1973,7 +1978,7 @@ mod tests {
             0x78,
         );
         ordinary_add[172..176].copy_from_slice(&2_u32.to_be_bytes());
-        ordinary_add[192..208].copy_from_slice(&fixture.revoke_rotate[228..244]);
+        ordinary_add[192..208].copy_from_slice(&fixture.revoke_rotate[260..276]);
         sign_history_manifest(
             &mut ordinary_add,
             fixture.user_id,
@@ -1992,6 +1997,126 @@ mod tests {
             &fixture.capsule_two,
         )
         .expect("不依赖未签名 phase 时，合法轮换后 addDevice 仍应可恢复");
+    }
+
+    #[test]
+    fn recovery_history_enforces_operation_authorization_digest_by_operation() {
+        let fixture = RecoveryHistoryFixture::new();
+
+        let mut invalid_genesis = fixture.genesis;
+        invalid_genesis[224] = 1;
+        sign_history_manifest(
+            &mut invalid_genesis,
+            fixture.user_id,
+            None,
+            (&fixture.epoch_one, 1),
+        );
+        assert_eq!(
+            validate_genesis(
+                &invalid_genesis,
+                fixture.user_id,
+                1,
+                fixture.identity.public_key().expect("恢复公钥应派生"),
+            ),
+            Err(RecoveryCryptoError::InvalidGenesis)
+        );
+
+        let mut invalid_add = fixture.add_device.clone();
+        invalid_add[224] = 1;
+        sign_history_manifest(
+            &mut invalid_add,
+            fixture.user_id,
+            None,
+            (&fixture.epoch_one, 1),
+        );
+        let invalid_add_history = fixture.history(&[&invalid_add]);
+        assert_eq!(
+            verify_recovery_history_and_open_current_capsule(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &invalid_add_history,
+                &fixture.capsule_one,
+            )
+            .err()
+            .expect("新增设备不得携带操作授权摘要"),
+            RecoveryCryptoError::MembershipHistoryTransitionInvalid
+        );
+
+        let mut authorized_rotate = fixture.revoke_rotate.clone();
+        authorized_rotate[224..256].fill(0xa5);
+        sign_history_manifest(
+            &mut authorized_rotate,
+            fixture.user_id,
+            Some((&fixture.epoch_one, 1)),
+            (&fixture.epoch_two, 2),
+        );
+        let authorized_rotate_history = fixture.history(&[&fixture.add_device, &authorized_rotate]);
+        verify_recovery_history_and_open_capsules(
+            &fixture.identity,
+            fixture.user_id,
+            1,
+            &fixture.genesis_capability,
+            &authorized_rotate_history,
+            Some(&fixture.capsule_one),
+            &fixture.capsule_two,
+        )
+        .expect("撤销轮换应允许签名覆盖的自撤销 intent 摘要");
+
+        let mut invalid_resume = fixture.recover_resume.clone();
+        invalid_resume[224] = 1;
+        sign_history_manifest(
+            &mut invalid_resume,
+            fixture.user_id,
+            None,
+            (&fixture.epoch_two, 2),
+        );
+        let invalid_resume_history =
+            fixture.history(&[&fixture.add_device, &fixture.revoke_rotate, &invalid_resume]);
+        assert_eq!(
+            verify_recovery_history_and_open_capsules(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &invalid_resume_history,
+                Some(&fixture.capsule_one),
+                &fixture.capsule_two,
+            )
+            .err()
+            .expect("恢复接续不得携带操作授权摘要"),
+            RecoveryCryptoError::MembershipHistoryTransitionInvalid
+        );
+
+        let mut invalid_replace = fixture.recover_replace.clone();
+        invalid_replace[224] = 1;
+        sign_history_manifest(
+            &mut invalid_replace,
+            fixture.user_id,
+            Some((&fixture.epoch_two, 2)),
+            (&fixture.epoch_three, 3),
+        );
+        let invalid_replace_history = fixture.history(&[
+            &fixture.add_device,
+            &fixture.revoke_rotate,
+            &fixture.recover_resume,
+            &invalid_replace,
+        ]);
+        assert_eq!(
+            verify_recovery_history_and_open_capsules(
+                &fixture.identity,
+                fixture.user_id,
+                1,
+                &fixture.genesis_capability,
+                &invalid_replace_history,
+                Some(&fixture.capsule_two),
+                &fixture.capsule_three,
+            )
+            .err()
+            .expect("恢复替换不得携带操作授权摘要"),
+            RecoveryCryptoError::MembershipHistoryTransitionInvalid
+        );
     }
 
     #[test]
@@ -2051,10 +2176,10 @@ mod tests {
         );
 
         let mut unordered = fixture.add_device.clone();
-        let first_member: [u8; 88] = copy_array(&unordered[228..316]);
-        let second_member: [u8; 88] = copy_array(&unordered[316..404]);
-        unordered[228..316].copy_from_slice(&second_member);
-        unordered[316..404].copy_from_slice(&first_member);
+        let first_member: [u8; 88] = copy_array(&unordered[260..348]);
+        let second_member: [u8; 88] = copy_array(&unordered[348..436]);
+        unordered[260..348].copy_from_slice(&second_member);
+        unordered[348..436].copy_from_slice(&first_member);
         sign_history_manifest(
             &mut unordered,
             fixture.user_id,
@@ -2204,6 +2329,27 @@ mod tests {
             RecoveryMedia::from_bytes(&[0_u8; RECOVERY_MEDIA_LENGTH - 1]),
             Err(RecoveryCryptoError::InvalidMediaLength { .. })
         ));
+        assert_eq!(
+            RecoveryMedia::from_bytes(&[0_u8; 644]),
+            Err(RecoveryCryptoError::InvalidMediaLength {
+                expected: 676,
+                actual: 644,
+            })
+        );
+        let mut legacy_magic = [0_u8; RECOVERY_MEDIA_LENGTH];
+        encode_media_header(&mut legacy_magic[..RECOVERY_MEDIA_HEADER_LENGTH]);
+        legacy_magic[..8].copy_from_slice(b"KELVRM01");
+        assert_eq!(
+            RecoveryMedia::from_bytes(&legacy_magic),
+            Err(RecoveryCryptoError::InvalidMediaMagic)
+        );
+        let mut legacy_version = [0_u8; RECOVERY_MEDIA_LENGTH];
+        encode_media_header(&mut legacy_version[..RECOVERY_MEDIA_HEADER_LENGTH]);
+        legacy_version[8..10].copy_from_slice(&1_u16.to_be_bytes());
+        assert_eq!(
+            RecoveryMedia::from_bytes(&legacy_version),
+            Err(RecoveryCryptoError::UnsupportedMediaVersion(1))
+        );
         assert_eq!(
             validate_passphrase("甲乙丙丁戊己庚辛壬癸子".as_bytes()),
             Err(RecoveryCryptoError::PassphraseTooShort)

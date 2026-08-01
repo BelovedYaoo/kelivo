@@ -75,8 +75,8 @@ const CHALLENGE_EXPIRES_AT_OFFSET: usize = 276;
 const CHALLENGE_REQUEST_DIGEST_OFFSET: usize = 284;
 
 const MEMBERSHIP_MAGIC: [u8; 8] = *b"KELIVOMM";
-const MEMBERSHIP_FORMAT_VERSION: u32 = 1;
-const MEMBERSHIP_HEADER_LENGTH: usize = 228;
+const MEMBERSHIP_FORMAT_VERSION: u32 = 2;
+const MEMBERSHIP_HEADER_LENGTH: usize = 260;
 const MEMBERSHIP_MEMBER_LENGTH: usize = 88;
 const MEMBERSHIP_SIGNATURE_SECTION_LENGTH: usize = ACCOUNT_TRUST_SIGNATURE_LENGTH * 2;
 const MEMBERSHIP_MAX_MEMBERS: usize = 256;
@@ -675,7 +675,8 @@ fn build_membership_manifest(
     manifest[176..192].copy_from_slice(&operation_id);
     manifest[192..208].copy_from_slice(subject_device_id.as_bytes());
     manifest[208..224].copy_from_slice(subject_device_id.as_bytes());
-    manifest[224..228].copy_from_slice(&(members.len() as u32).to_be_bytes());
+    manifest[224..256].fill(0);
+    manifest[256..260].copy_from_slice(&(members.len() as u32).to_be_bytes());
     for (index, member) in members.iter().enumerate() {
         let offset = MEMBERSHIP_HEADER_LENGTH + index * MEMBERSHIP_MEMBER_LENGTH;
         manifest[offset..offset + 16].copy_from_slice(member.device_id.as_bytes());
@@ -1088,7 +1089,16 @@ mod tests {
             },
         )
         .expect("rekey-pending challenge 应准备恢复接续");
+        assert_eq!(read_u32(&resume.manifest, 8), MEMBERSHIP_FORMAT_VERSION);
         assert_eq!(read_u32(&resume.manifest, 172), 4);
+        assert!(resume.manifest[224..256].iter().all(|byte| *byte == 0));
+        assert_eq!(read_u32(&resume.manifest, 256), 2);
+        assert_eq!(
+            resume.manifest.len(),
+            MEMBERSHIP_HEADER_LENGTH
+                + 2 * MEMBERSHIP_MEMBER_LENGTH
+                + MEMBERSHIP_SIGNATURE_SECTION_LENGTH,
+        );
         assert_eq!(resume.next_key_epoch, head.key_epoch);
         assert!(resume.next_recovery_capsule.is_none());
         verify_manifest_signature(&resume.manifest, &current_ark, head.user_id, head.key_epoch, false);
@@ -1117,7 +1127,19 @@ mod tests {
             },
         )
         .expect("ready challenge 应准备恢复替换");
+        assert_eq!(
+            read_u32(&replacement.manifest, 8),
+            MEMBERSHIP_FORMAT_VERSION
+        );
         assert_eq!(read_u32(&replacement.manifest, 172), 5);
+        assert!(replacement.manifest[224..256].iter().all(|byte| *byte == 0));
+        assert_eq!(read_u32(&replacement.manifest, 256), 1);
+        assert_eq!(
+            replacement.manifest.len(),
+            MEMBERSHIP_HEADER_LENGTH
+                + MEMBERSHIP_MEMBER_LENGTH
+                + MEMBERSHIP_SIGNATURE_SECTION_LENGTH,
+        );
         assert_eq!(replacement.next_key_epoch, head.key_epoch + 1);
         assert!(replacement.next_recovery_capsule.is_some());
         verify_manifest_signature(
@@ -1331,7 +1353,7 @@ mod tests {
                 key_agreement_public_key: existing_public.key_agreement,
             }],
             operation_ids: vec![uuid(0x74)],
-            manifest: vec![0_u8; 444],
+            manifest: vec![0_u8; 476],
         };
         (device, challenge, head, current_ark)
     }

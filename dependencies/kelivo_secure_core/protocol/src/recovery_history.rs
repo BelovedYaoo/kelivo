@@ -15,8 +15,8 @@ use crate::{
 };
 
 const MEMBERSHIP_MAGIC: [u8; 8] = *b"KELIVOMM";
-const MEMBERSHIP_FORMAT_VERSION: u32 = 1;
-const MEMBERSHIP_HEADER_LENGTH: usize = 228;
+const MEMBERSHIP_FORMAT_VERSION: u32 = 2;
+const MEMBERSHIP_HEADER_LENGTH: usize = 260;
 const MEMBERSHIP_MEMBER_LENGTH: usize = 88;
 const MEMBERSHIP_SIGNATURE_LENGTH: usize = 64;
 const MEMBERSHIP_SIGNATURE_SECTION_LENGTH: usize = MEMBERSHIP_SIGNATURE_LENGTH * 2;
@@ -38,7 +38,8 @@ const OPERATION_KIND_OFFSET: usize = 172;
 const OPERATION_ID_OFFSET: usize = 176;
 const ISSUER_DEVICE_ID_OFFSET: usize = 192;
 const SUBJECT_DEVICE_ID_OFFSET: usize = 208;
-const MEMBER_COUNT_OFFSET: usize = 224;
+const OPERATION_AUTHORIZATION_DIGEST_OFFSET: usize = 224;
+const MEMBER_COUNT_OFFSET: usize = 256;
 
 const MEMBER_KEY_VERSION_OFFSET: usize = 16;
 const MEMBER_AUTH_GENERATION_OFFSET: usize = 20;
@@ -77,6 +78,7 @@ struct MembershipManifest {
     operation_id: [u8; 16],
     issuer_device_id: DeviceId,
     subject_device_id: DeviceId,
+    operation_authorization_digest: [u8; 32],
     members: Vec<MembershipMember>,
     payload: Vec<u8>,
     transition_signature: [u8; MEMBERSHIP_SIGNATURE_LENGTH],
@@ -344,7 +346,7 @@ fn parse_manifest(bytes: &[u8]) -> Result<MembershipManifest, RecoveryCryptoErro
     ))
     .map_err(|_| RecoveryCryptoError::InvalidMembershipHistory)?;
     let subject_device_id = DeviceId::new(copy_array(
-        &bytes[SUBJECT_DEVICE_ID_OFFSET..MEMBER_COUNT_OFFSET],
+        &bytes[SUBJECT_DEVICE_ID_OFFSET..OPERATION_AUTHORIZATION_DIGEST_OFFSET],
     ))
     .map_err(|_| RecoveryCryptoError::InvalidMembershipHistory)?;
     let current_trust_public_key = AccountTrustPublicKey::from_bytes(copy_array(
@@ -415,6 +417,9 @@ fn parse_manifest(bytes: &[u8]) -> Result<MembershipManifest, RecoveryCryptoErro
         operation_id,
         issuer_device_id,
         subject_device_id,
+        operation_authorization_digest: copy_array(
+            &bytes[OPERATION_AUTHORIZATION_DIGEST_OFFSET..MEMBER_COUNT_OFFSET],
+        ),
         members,
         payload: bytes[..payload_length].to_vec(),
         transition_signature: copy_array(
@@ -444,6 +449,10 @@ fn validate_genesis(
         || genesis.members.len() != 1
         || genesis.members[0].device_id != genesis.subject_device_id
         || genesis.members[0].auth_generation != 0
+        || genesis
+            .operation_authorization_digest
+            .iter()
+            .any(|byte| *byte != 0)
         || genesis.transition_signature.iter().any(|byte| *byte != 0)
     {
         return Err(RecoveryCryptoError::MembershipHistoryAnchorMismatch);
@@ -492,6 +501,10 @@ fn validate_add_device(
         || find_member(previous, current.subject_device_id).is_some()
         || current.members.len() != expected_member_count
         || subject.is_none_or(|member| member.auth_generation == 0)
+        || current
+            .operation_authorization_digest
+            .iter()
+            .any(|byte| *byte != 0)
         || current.transition_signature.iter().any(|byte| *byte != 0)
         || !unchanged_members(previous, current, None)
     {
@@ -559,6 +572,10 @@ fn validate_recover_resume(
         || find_member(previous, current.subject_device_id).is_some()
         || current.members.len() != expected_member_count
         || subject.is_none_or(|member| member.auth_generation == 0)
+        || current
+            .operation_authorization_digest
+            .iter()
+            .any(|byte| *byte != 0)
         || current.transition_signature.iter().any(|byte| *byte != 0)
         || !unchanged_members(previous, current, None)
     {
@@ -590,6 +607,10 @@ fn validate_recover_replace(
         || current.members.len() != 1
         || subject.is_none_or(|member| member.auth_generation == 0)
         || !(subject_matches_resume || subject_is_direct_replacement)
+        || current
+            .operation_authorization_digest
+            .iter()
+            .any(|byte| *byte != 0)
         || current.recovery_public_key_version != previous.recovery_public_key_version
         || current.recovery_public_key != previous.recovery_public_key
         || previous.recovery_capsule_version == u32::MAX
@@ -695,20 +716,23 @@ mod tests {
 
     use super::*;
 
-    const DART_INIT: &str = "S0VMSVZPTU0AAAABQAAAAAAAQACAAAAAAAAAAQAAAAEAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADGHSkFajyxbwsbKWkNdkklTTVS__6Bs0ejGBN-MHvDAgAAAAHfVNqwWv7RqwRrc0szZMev_O7jhY2I_HRKSBIvmg_YMQAAAAHCD5VhgzzZ7ZbOr7lhZc375fUE-ufPWvn7Zr9m2kUNiwAAAAEAAAAAAABAAIAAAAAAAAABcAAAAAAAQACAAAAAAAAAAXAAAAAAAEAAgAAAAAAAAAEAAAABcAAAAAAAQACAAAAAAAAAAQAAAAEAAAAAtWvvDeAws9sX9cb6Im9F-3plAylR9XYVLOUNPRpbs20GxMGf803Qvr2uzr0Th7Gw2SR_3oCJZfy4O21PiED4SAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADuigVvwhjBNJMy1-1z1wyeAljP98DqITrDWL9wEXbAI7ErKb2gaFlqUf5oKhK_V64TIakoYp3-a46xwjUeqAAN";
-    const DART_INIT_DIGEST: &str = "KykHjnWRVeTpi2XXnHnV6ChtvluFcGGH7YADubeAwo0=";
-    const DART_RESUME_ONE: &str = "S0VMSVZPTU0AAAABQAAAAAAAQACAAAAAAAAAAQAAAAIAAAABKykHjnWRVeTpi2XXnHnV6ChtvluFcGGH7YADubeAwo3GHSkFajyxbwsbKWkNdkklTTVS__6Bs0ejGBN-MHvDAgAAAAHfVNqwWv7RqwRrc0szZMev_O7jhY2I_HRKSBIvmg_YMQAAAAHCD5VhgzzZ7ZbOr7lhZc375fUE-ufPWvn7Zr9m2kUNiwAAAAQAAAAAAABAAIAAAAAAAAAEIAAAAAAAQACAAAAAAAAAAyAAAAAAAEAAgAAAAAAAAAMAAAACIAAAAAAAQACAAAAAAAAAAwAAAAEAAAAB1zhxXjFE26drDkMiH0u5D-l2f7tr04E2N1U_slt6mknOf8WHi0B3idHxCx3kuiul45WaAJm3wehIWoGNsyL7QHAAAAAAAEAAgAAAAAAAAAEAAAABAAAAALVr7w3gMLPbF_XG-iJvRft6ZQMpUfV2FSzlDT0aW7NtBsTBn_NN0L69rs69E4exsNkkf96AiWX8uDttT4hA-EgAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA0kxKlOnWb0K7xfNEej4tu9cDZA9tr6GYn59Ksuv9ckpiOQXlZH9WZlmndomA-ZA8LpeObMlj3ZmxW6DfsUSpDw==";
-    const DART_RESUME_ONE_DIGEST: &str = "GG9f-w5Wj9JlxkXQFiIqCs-ADhUcY48yxS6zON8zUyY=";
-    const DART_RESUME_TWO: &str = "S0VMSVZPTU0AAAABQAAAAAAAQACAAAAAAAAAAQAAAAMAAAABGG9f-w5Wj9JlxkXQFiIqCs-ADhUcY48yxS6zON8zUybGHSkFajyxbwsbKWkNdkklTTVS__6Bs0ejGBN-MHvDAgAAAAHfVNqwWv7RqwRrc0szZMev_O7jhY2I_HRKSBIvmg_YMQAAAAHCD5VhgzzZ7ZbOr7lhZc375fUE-ufPWvn7Zr9m2kUNiwAAAAQAAAAAAABAAIAAAAAAAAAFIAAAAAAAQACAAAAAAAAABCAAAAAAAEAAgAAAAAAAAAQAAAADIAAAAAAAQACAAAAAAAAAAwAAAAEAAAAB1zhxXjFE26drDkMiH0u5D-l2f7tr04E2N1U_slt6mknOf8WHi0B3idHxCx3kuiul45WaAJm3wehIWoGNsyL7QCAAAAAAAEAAgAAAAAAAAAQAAAABAAAAAdBCVBWhfiBic9ttTMttnZyJV-PgljWLbv9M5QCiHmaVYjfQ8GcjdSX2uhC_JK1aEtPMxy8bFEdA0D3xxUwb3FBwAAAAAABAAIAAAAAAAAABAAAAAQAAAAC1a-8N4DCz2xf1xvoib0X7emUDKVH1dhUs5Q09GluzbQbEwZ_zTdC-va7OvROHsbDZJH_egIll_Lg7bU-IQPhIAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABKLNlTnp1HfoN-RBCxrGLk5om2rZDH8FVU5GqPC1MXCGV0fHotsPg4H6foBRyzWrn-MgFVGW_-IgkdfnxRX6wk=";
-    const DART_RESUME_TWO_DIGEST: &str = "IQcZI1hwAnrJtBp6UO61k189npXhY_jfK0ccl45aEOw=";
-    const DART_REPLACE: &str = "S0VMSVZPTU0AAAABQAAAAAAAQACAAAAAAAAAAQAAAAQAAAACIQcZI1hwAnrJtBp6UO61k189npXhY_jfK0ccl45aEOyd4lvUUTM2C-OYqOUMiGcDxZnLkrwTTa0oYjK_6ev1CQAAAAHfVNqwWv7RqwRrc0szZMev_O7jhY2I_HRKSBIvmg_YMQAAAAIRMY7psxnoZO_lT_ybZhlbZhQSuBwPGGAS5ZMH2uDeygAAAAUAAAAAAABAAIAAAAAAAAAGIAAAAAAAQACAAAAAAAAABCAAAAAAAEAAgAAAAAAAAAQAAAABIAAAAAAAQACAAAAAAAAABAAAAAEAAAAB0EJUFaF-IGJz221My22dnIlX4-CWNYtu_0zlAKIeZpViN9DwZyN1Jfa6EL8krVoS08zHLxsUR0DQPfHFTBvcUFLCzbkR2hYZ4yYy2qK6i9jsg9lJsTKQiMc5NdVq2fFDPcqPIorjc_puBVnY-BnquqHwk-UOLeq37E8yZSCtDAuld1zWW25-EO_mXJNbDMXJEU0bxNrZHUg4tjQTImW494Y5UIGrb4moMFcVG11LJ5hrPPVSIFFgbyF1cBEZS88J";
-    const DART_REPLACE_DIGEST: &str = "q2Q8Cw5LZLiVrf3KTLXdcBATHEEay4Ur2w67R1DI8EU=";
+    const DART_INIT: &str = "S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAEAAAABAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAADGukVpqxpKKb7327NSIZoQDnypuTvOcwZRu6WPOJ7N9AAAAAHdcNizmGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAHZsfPixtUoZopz8iV1xE7Z-Y2caElkdhtiFBfv2A16YAAAAAFQAAAAAABAAIAAAAAAAAABgAAAAAAAQACAAAAAAAAAAYAAAAAAAEAAgAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAABAAIAAAAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbiNX4vOAUtEjBjPRRAAdoofmUKAhY9FngVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABRchNtfNvxE9RFzJGH3Dy8lFu437rKxS8XQYcWPoBGwP8dWlf80C2rKqN4xiL-cqN7s-twIEpPX1zb7GD0ulw8=";
+    const DART_INIT_DIGEST: &str = "05HPAtPXROeSH0q-hR9L3XRc1aQPMF8n05DghrDFUi8=";
+    const DART_ADD: &str = "S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAIAAAAB05HPAtPXROeSH0q-hR9L3XRc1aQPMF8n05DghrDFUi_GukVpqxpKKb7327NSIZoQDnypuTvOcwZRu6WPOJ7N9AAAAAHdcNizmGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAHZsfPixtUoZopz8iV1xE7Z-Y2caElkdhtiFBfv2A16YAAAAAKQAAAAAABAAIAAAAAAAAECgAAAAAAAQACAAAAAAAAAAZAAAAAAAEAAgAAAAAAAAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAABAAIAAAAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbiNX4vOAUtEjBjPRRAAdoofmUKAhY9FngVkAAAAAAAQACAAAAAAAABAQAAAAEAAAABJN6Lhjzf3JAmNndeTSZas-gkRy_PHT13A3F21JfYcNVx_bKKmvgFLu2jtfVT3SDGmmtPr7kPaIRNDlpgaJPONAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA8Jp5SY8OMWGQlUuX8P9uByzKZkfZ_BAABAgIMEDbGkcdpkkL8jKHrxWfXXMudiusorxqxnFcq6U1RutmjiskC";
+    const DART_ADD_DIGEST: &str = "YK_d1CAY4CnUQukssxT6jZCY6sSDyZ3cq3TZTszE0iE=";
+    const DART_REVOKE: &str = "S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAMAAAACYK_d1CAY4CnUQukssxT6jZCY6sSDyZ3cq3TZTszE0iFBKYAXQdhCsoXJ8NK_2xAp7hO3Mi2BBjbO49mscH2EeAAAAAHdcNizmGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAKMvCPqXupQkBoOv3kpgEJqpju6Xq637q5HKomKPuN09wAAAAOQAAAAAABAAIAAAAAAAAEFgAAAAAAAQACAAAAAAAAAAZAAAAAAAEAAgAAAAAAAAQFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUQAAAAGAAAAAAABAAIAAAAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbiNX4vOAUtEjBjPRRAAdoofmUKAhY9FngV6P5mgbJusLnAH-4iYHZSzcQe6fAYc27aYm3gdQyOXW-MZsfXqL_HQUOPsKEDlj9n8Sh-LOeGddlc2ay7O0ZPDFM00n9-1kLDBZlw-zHyUowk3dARCRnOU8K_klM_Yun_pvWdp3F8RVinPhTH78kF8P2g3psJGoQ72_k5O-xjkQc=";
+    const DART_REVOKE_DIGEST: &str = "G7pb1XYcWVtnnG1lZzHl5UivRPBpekjvxp6qUamvEqo=";
+    const DART_RESUME: &str = "S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAQAAAACG7pb1XYcWVtnnG1lZzHl5UivRPBpekjvxp6qUamvEqpBKYAXQdhCsoXJ8NK_2xAp7hO3Mi2BBjbO49mscH2EeAAAAAHdcNizmGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAKMvCPqXupQkBoOv3kpgEJqpju6Xq637q5HKomKPuN09wAAAASQAAAAAABAAIAAAAAAAAEHkAAAAAAAQACAAAAAAAABBpAAAAAAAEAAgAAAAAAAAQYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAABAAIAAAAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbiNX4vOAUtEjBjPRRAAdoofmUKAhY9FngVkAAAAAAAQACAAAAAAAABBgAAAAEAAAABgdIlodNdqTKZrV-1klAXdgXZkX--B30hzXsjLBMkKk3Gd8znvWfqfRtKVxTbElc6PyPTRh1foRX3Y6VY1-kwewAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAywzUx0Vy0qXRMsNYCBwMvpfduygnmZfR1iAkPMTsIb411KqH0Ru3YB-l8QbUc1WZQyMIyPI5kDIPimcijKCEL";
+    const DART_RESUME_DIGEST: &str = "KUa5iTtfhjRhHm6HgnOqLdKrcMUeq2D9Y90RygxrnKo=";
+    const DART_REPLACE: &str = "S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAUAAAADKUa5iTtfhjRhHm6HgnOqLdKrcMUeq2D9Y90RygxrnKqiI_8VH8y31X2yfFQY-X5kcA9Rn_BnnARxRCt-qLc9MAAAAAHdcNizmGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAMj5alo_Jncfvde8oXxu6mtnu0hJJ-hJJVGKZMV_7x4iQAAAAWQAAAAAABAAIAAAAAAAAEIkAAAAAAAQACAAAAAAAABBpAAAAAAAEAAgAAAAAAAAQYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGQAAAAAABAAIAAAAAAAAEGAAAAAQAAAAGB0iWh012pMpmtX7WSUBd2BdmRf74HfSHNeyMsEyQqTcZ3zOe9Z-p9G0pXFNsSVzo_I9NGHV-hFfdjpVjX6TB7T6V_HIXj7StNhx5Ry0MvFZzvHdtsw5wKWp-vUl2q2aSCe9hG1AZ9ex_vHEjKhnNDgSb9YEDUdgzAwV6u3W9lAoWRoPC9qV8tBZ47iKrMKN2MwLWSoFE9h4oTfa-zpZrOrqpq5CjsjXW4k_cT7zl40-J66eRal6O_lt4TvKd61wQ=";
+    const DART_REPLACE_DIGEST: &str = "UTGRh5hTkjhzE9CnK0w8AhTQ2hwbbmPuDN919DL48-4=";
 
     #[test]
     fn dart_recovery_operations_match_rust_wire_and_signatures() {
         let init = parse_dart_manifest(DART_INIT, DART_INIT_DIGEST);
-        let resume_one = parse_dart_manifest(DART_RESUME_ONE, DART_RESUME_ONE_DIGEST);
-        let resume_two = parse_dart_manifest(DART_RESUME_TWO, DART_RESUME_TWO_DIGEST);
+        let add = parse_dart_manifest(DART_ADD, DART_ADD_DIGEST);
+        let revoke = parse_dart_manifest(DART_REVOKE, DART_REVOKE_DIGEST);
+        let resume = parse_dart_manifest(DART_RESUME, DART_RESUME_DIGEST);
         let replace = parse_dart_manifest(DART_REPLACE, DART_REPLACE_DIGEST);
 
         validate_genesis(
@@ -718,12 +742,55 @@ mod tests {
             init.recovery_public_key,
         )
         .expect("Dart 初始化清单应通过 Rust 验证");
-        validate_successor(&init, &resume_one).expect("第一次恢复接续应通过 Rust 验证");
-        validate_successor(&resume_one, &resume_two).expect("第二次恢复接续应通过 Rust 验证");
-        validate_successor(&resume_two, &replace).expect("恢复替换应通过 Rust 验证");
-        assert_eq!(resume_one.operation, MembershipOperation::RecoverResume);
-        assert_eq!(resume_two.operation, MembershipOperation::RecoverResume);
+        validate_successor(&init, &add).expect("Dart 新增设备应通过 Rust 验证");
+        validate_successor(&add, &revoke).expect("Dart 撤销轮换应通过 Rust 验证");
+        validate_successor(&revoke, &resume).expect("Dart 恢复接续应通过 Rust 验证");
+        validate_successor(&resume, &replace).expect("Dart 恢复替换应通过 Rust 验证");
+        for manifest in [&init, &add, &resume, &replace] {
+            assert!(
+                manifest
+                    .operation_authorization_digest
+                    .iter()
+                    .all(|byte| *byte == 0)
+            );
+        }
+        assert_eq!(revoke.operation_authorization_digest, [0x51; 32]);
+        assert_eq!(add.operation, MembershipOperation::AddDevice);
+        assert_eq!(revoke.operation, MembershipOperation::RevokeRotate);
+        assert_eq!(resume.operation, MembershipOperation::RecoverResume);
         assert_eq!(replace.operation, MembershipOperation::RecoverReplace);
+        assert_eq!(
+            [
+                init.security_generation,
+                add.security_generation,
+                revoke.security_generation,
+                resume.security_generation,
+                replace.security_generation,
+            ],
+            [1, 2, 3, 4, 5]
+        );
+        assert_eq!(
+            [
+                init.key_epoch,
+                add.key_epoch,
+                revoke.key_epoch,
+                resume.key_epoch,
+                replace.key_epoch,
+            ],
+            [1, 1, 2, 2, 3]
+        );
+        assert!(init.transition_signature.iter().all(|byte| *byte == 0));
+        assert!(add.transition_signature.iter().all(|byte| *byte == 0));
+        assert!(revoke.transition_signature.iter().any(|byte| *byte != 0));
+        assert!(resume.transition_signature.iter().all(|byte| *byte == 0));
+        assert!(replace.transition_signature.iter().any(|byte| *byte != 0));
+
+        let mut legacy_init = Base64Url::decode_vec(DART_INIT).expect("Dart 清单应可解码");
+        legacy_init[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        assert!(matches!(
+            parse_manifest(&legacy_init),
+            Err(RecoveryCryptoError::InvalidMembershipHistory)
+        ));
     }
 
     fn parse_dart_manifest(encoded: &str, encoded_digest: &str) -> MembershipManifest {

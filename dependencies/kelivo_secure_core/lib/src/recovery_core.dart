@@ -12,8 +12,8 @@ const _recoveryHistoryMaximumEntries = 4096;
 // 历史在恢复期间最多同时存在调用方、可转移缓冲区与 FFI 三份，以此将总工作集控制在约 112 MiB。
 const _recoveryHistoryMaximumTotalLength =
     native.KELIVO_RECOVERY_HISTORY_MAX_BYTES;
-const _recoveryManifestMinimumLength = 444;
-const _recoveryManifestMaximumLength = 228 + 256 * 88 + 128;
+const _recoveryManifestMinimumLength = 476;
+const _recoveryManifestMaximumLength = 260 + 256 * 88 + 128;
 
 final class KelivoRecoveryHandle {
   KelivoRecoveryHandle._(

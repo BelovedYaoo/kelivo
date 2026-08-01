@@ -26,7 +26,7 @@ const PREPARE_INPUT_STRUCT_SIZE: u32 = 92;
 const PREPARE_BINDING_STRUCT_SIZE: u32 = 96;
 const PREPARE_KIND_RESUME: u32 = 1;
 const PREPARE_KIND_REPLACEMENT: u32 = 2;
-const PREPARE_MANIFEST_MAX_LENGTH: usize = 228 + 256 * 88 + 128;
+const PREPARE_MANIFEST_MAX_LENGTH: usize = 260 + 256 * 88 + 128;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]

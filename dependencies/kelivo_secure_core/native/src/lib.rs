@@ -1434,7 +1434,7 @@ mod tests {
         let device_id = account_id(0x66);
         let mut genesis = [0_u8; recovery_protocol::RECOVERY_GENESIS_LENGTH];
         genesis[..8].copy_from_slice(b"KELIVOMM");
-        genesis[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        genesis[8..12].copy_from_slice(&2_u32.to_be_bytes());
         genesis[12..28].copy_from_slice(user_id.as_bytes());
         genesis[28..32].copy_from_slice(&1_u32.to_be_bytes());
         genesis[32..36].copy_from_slice(&1_u32.to_be_bytes());
@@ -1447,14 +1447,14 @@ mod tests {
         genesis[176..192].copy_from_slice(&operation_id);
         genesis[192..208].copy_from_slice(&device_id);
         genesis[208..224].copy_from_slice(&device_id);
-        genesis[224..228].copy_from_slice(&1_u32.to_be_bytes());
-        genesis[228..244].copy_from_slice(&device_id);
-        genesis[244..248].copy_from_slice(&1_u32.to_be_bytes());
-        genesis[252..284].copy_from_slice(member_public.signing.as_bytes());
-        genesis[284..316].copy_from_slice(member_public.key_agreement.as_bytes());
-        let signature = crypto::sign_account_trust_payload(&ark, binding, &genesis[..316])
+        genesis[256..260].copy_from_slice(&1_u32.to_be_bytes());
+        genesis[260..276].copy_from_slice(&device_id);
+        genesis[276..280].copy_from_slice(&1_u32.to_be_bytes());
+        genesis[284..316].copy_from_slice(member_public.signing.as_bytes());
+        genesis[316..348].copy_from_slice(member_public.key_agreement.as_bytes());
+        let signature = crypto::sign_account_trust_payload(&ark, binding, &genesis[..348])
             .expect("genesis 应签名");
-        genesis[380..].copy_from_slice(signature.as_bytes());
+        genesis[412..].copy_from_slice(signature.as_bytes());
         genesis
     }
 
@@ -5896,7 +5896,7 @@ mod tests {
             completion_session_id: [0; 16],
             completion_session_token_digest: [0; 32],
         };
-        let manifest_capacity = 228 + 256 * 88 + 128;
+        let manifest_capacity = 260 + 256 * 88 + 128;
         let mut prepare_binding = sentinel_account_recovery_prepare_binding();
         let mut manifest = vec![0xa5; manifest_capacity];
         let mut manifest_length = usize::MAX;
