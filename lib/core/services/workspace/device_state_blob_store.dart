@@ -74,6 +74,8 @@ final class DeviceStateBlobStore {
   static const pendingRegistrationEnvelopeMaxLength = 4096;
   // 配对恢复事务包含两个设备状态和一次性能力；保留升级空间但拒绝无界读取。
   static const pendingPairingEnvelopeMaxLength = 4096;
+  // 恢复 checkpoint 需要容纳最大 capsule、challenge 与一次性授权材料。
+  static const pendingAccountRecoveryEnvelopeMaxLength = 8192;
   static const _maximumGeneration = 0x7fffffffffffffff;
   static const _storeDirectoryName = '.kelivo-device-state-v1';
   static const _locatorDomain = 'kelivo.device-state.locator.v1';
@@ -84,6 +86,7 @@ final class DeviceStateBlobStore {
   static const _registrationMediaConfirmationFileName =
       'registration-media-confirmed.bin';
   static const _pendingPairingFileName = 'pairing-pending.bin';
+  static const _pendingAccountRecoveryFileName = 'recovery-pending.bin';
   static const _lockFileName = '.lock';
   static const _stateFrameHeaderLength = 20;
   static const _stateFrameLength = _stateFrameHeaderLength + blobLength;
@@ -96,7 +99,7 @@ final class DeviceStateBlobStore {
   static const _registrationMediaConfirmationFrameLength = 44;
   static const _registrationMediaConfirmationDigestOffset = 12;
   static final RegExp _temporaryFilePattern = RegExp(
-    r'^\.(?:state-[ab]|manifest-[ab]|tombstone|registration-pending|registration-media-confirmed|pairing-pending)-[0-9a-f]{32}\.next$',
+    r'^\.(?:state-[ab]|manifest-[ab]|tombstone|registration-pending|registration-media-confirmed|pairing-pending|recovery-pending)-[0-9a-f]{32}\.next$',
   );
   static final Random _secureRandom = Random.secure();
   static final Uint8List _stateFrameMagic = Uint8List.fromList(
@@ -113,6 +116,9 @@ final class DeviceStateBlobStore {
   );
   static final Uint8List _pendingPairingFrameMagic = Uint8List.fromList(
     ascii.encode('KELVPP01'),
+  );
+  static final Uint8List _pendingAccountRecoveryFrameMagic = Uint8List.fromList(
+    ascii.encode('KELVAP01'),
   );
   static final Uint8List _registrationMediaConfirmationFrameMagic =
       Uint8List.fromList(ascii.encode('KELVRC01'));
@@ -418,6 +424,37 @@ final class DeviceStateBlobStore {
     normalizedLoginName: normalizedLoginName,
     expectedDigest: expectedDigest,
     kind: _PendingEnvelopeKind.pairing,
+  );
+
+  Future<Uint8List?> readPendingAccountRecoveryEnvelope({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+  }) => _readPendingEnvelopeForLocator(
+    normalizedBaseUrl: normalizedBaseUrl,
+    normalizedLoginName: normalizedLoginName,
+    kind: _PendingEnvelopeKind.accountRecovery,
+  );
+
+  Future<void> writePendingAccountRecoveryEnvelope({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+    required Uint8List envelope,
+  }) => _writePendingEnvelopeForLocator(
+    normalizedBaseUrl: normalizedBaseUrl,
+    normalizedLoginName: normalizedLoginName,
+    envelope: envelope,
+    kind: _PendingEnvelopeKind.accountRecovery,
+  );
+
+  Future<bool> deletePendingAccountRecoveryEnvelope({
+    required String normalizedBaseUrl,
+    required String normalizedLoginName,
+    required Uint8List expectedDigest,
+  }) => _deletePendingEnvelopeForLocator(
+    normalizedBaseUrl: normalizedBaseUrl,
+    normalizedLoginName: normalizedLoginName,
+    expectedDigest: expectedDigest,
+    kind: _PendingEnvelopeKind.accountRecovery,
   );
 
   Future<Uint8List?> _readPendingEnvelopeForLocator({
@@ -1174,6 +1211,7 @@ final class DeviceStateBlobStore {
     final fileName = switch (kind) {
       _PendingEnvelopeKind.registration => _pendingRegistrationFileName,
       _PendingEnvelopeKind.pairing => _pendingPairingFileName,
+      _PendingEnvelopeKind.accountRecovery => _pendingAccountRecoveryFileName,
     };
     return File(p.join(directory.path, fileName));
   }
@@ -1186,6 +1224,8 @@ final class DeviceStateBlobStore {
     return switch (kind) {
       _PendingEnvelopeKind.registration => pendingRegistrationEnvelopeMaxLength,
       _PendingEnvelopeKind.pairing => pendingPairingEnvelopeMaxLength,
+      _PendingEnvelopeKind.accountRecovery =>
+        pendingAccountRecoveryEnvelopeMaxLength,
     };
   }
 
@@ -1193,6 +1233,8 @@ final class DeviceStateBlobStore {
     return switch (kind) {
       _PendingEnvelopeKind.registration => 'device_state_store_registration',
       _PendingEnvelopeKind.pairing => 'device_state_store_pairing',
+      _PendingEnvelopeKind.accountRecovery =>
+        'device_state_store_account_recovery',
     };
   }
 
@@ -1200,11 +1242,12 @@ final class DeviceStateBlobStore {
     return switch (kind) {
       _PendingEnvelopeKind.registration => _pendingRegistrationFrameMagic,
       _PendingEnvelopeKind.pairing => _pendingPairingFrameMagic,
+      _PendingEnvelopeKind.accountRecovery => _pendingAccountRecoveryFrameMagic,
     };
   }
 }
 
-enum _PendingEnvelopeKind { registration, pairing }
+enum _PendingEnvelopeKind { registration, pairing, accountRecovery }
 
 final class _DeviceStateManifest {
   const _DeviceStateManifest({
