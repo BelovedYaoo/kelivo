@@ -146,13 +146,15 @@ Future<void> main() async {
   await runZoned(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
-      final mobileBackgroundSyncScheduler =
-          E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
+      late final E2eeMobileBackgroundSyncScheduler
+      mobileBackgroundSyncScheduler;
       const secureCore = KelivoSecureCore();
       late final Directory installationRoot;
       late final KelivoCoreCapabilities secureCoreCapabilities;
       try {
         await KelivoDurablePreferences.registerForCurrentPlatform();
+        mobileBackgroundSyncScheduler =
+            E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
         installationRoot = await AppDirectories.getInstallationRootDirectory();
         secureCoreCapabilities = await secureCore.getCapabilities();
       } catch (error, stackTrace) {
