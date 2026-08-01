@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(18)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(19)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -80,6 +80,10 @@ typedef int32_t KelivoStatus;
 #define KELIVO_STATUS_RECOVERY_PASSPHRASE_INVALID INT32_C(47)
 #define KELIVO_STATUS_RECOVERY_HISTORY_INVALID INT32_C(48)
 #define KELIVO_STATUS_RECOVERY_HISTORY_AUTHENTICATION_FAILED INT32_C(49)
+#define KELIVO_STATUS_RECOVERY_CHALLENGE_INVALID INT32_C(50)
+#define KELIVO_STATUS_RECOVERY_CHALLENGE_AUTHENTICATION_FAILED INT32_C(51)
+#define KELIVO_STATUS_INVALID_RECOVERY_EXECUTION_HANDLE INT32_C(52)
+#define KELIVO_STATUS_RECOVERY_PREPARE_INVALID INT32_C(53)
 #define KELIVO_STATUS_UNSUPPORTED_PLATFORM INT32_C(100)
 
 #define KELIVO_SECURE_STORAGE_BACKEND_NONE UINT32_C(0)
@@ -99,6 +103,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING (UINT64_C(1) << 8)
 #define KELIVO_CAPABILITY_RECOVERY_MEDIA (UINT64_C(1) << 9)
 #define KELIVO_CAPABILITY_INSTALLATION_ROOT_WIPE (UINT64_C(1) << 10)
+#define KELIVO_CAPABILITY_ACCOUNT_RECOVERY_EXECUTION (UINT64_C(1) << 11)
 
 #define KELIVO_RECORD_ID_SIZE ((size_t)16)
 #define KELIVO_RECORD_ENTITY_KEY_MAX_SIZE ((size_t)2048)
@@ -157,6 +162,18 @@ typedef int32_t KelivoStatus;
 #define KELIVO_RECOVERY_SERVICE_ORIGIN_SHA256_SIZE ((size_t)32)
 #define KELIVO_RECOVERY_CAPSULE_BINDING_STRUCT_SIZE UINT32_C(28)
 #define KELIVO_RECOVERY_MEDIA_EXPORT_AUTHORITY_STRUCT_SIZE UINT32_C(168)
+#define KELIVO_ACCOUNT_RECOVERY_INVALID_EXECUTION_HANDLE UINT64_C(0)
+#define KELIVO_ACCOUNT_RECOVERY_CHALLENGE_SIZE ((size_t)316)
+#define KELIVO_ACCOUNT_RECOVERY_SEALED_NONCE_SIZE ((size_t)100)
+#define KELIVO_ACCOUNT_RECOVERY_TOKEN_DIGEST_SIZE ((size_t)32)
+#define KELIVO_ACCOUNT_RECOVERY_NONCE_PROOF_SIZE ((size_t)32)
+#define KELIVO_ACCOUNT_RECOVERY_PROOF_BINDING_STRUCT_SIZE UINT32_C(72)
+#define KELIVO_ACCOUNT_RECOVERY_PREPARE_INPUT_STRUCT_SIZE UINT32_C(92)
+#define KELIVO_ACCOUNT_RECOVERY_PREPARE_BINDING_STRUCT_SIZE UINT32_C(96)
+#define KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_RESUME UINT32_C(1)
+#define KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_REPLACEMENT UINT32_C(2)
+#define KELIVO_ACCOUNT_RECOVERY_PREPARED_MANIFEST_MAX_SIZE \
+    ((size_t)(228 + 256 * 88 + 128))
 
 typedef struct KelivoDeviceStateBinding {
     uint32_t struct_size;
@@ -179,6 +196,42 @@ typedef struct KelivoRecoveryMediaExportAuthority {
     uint8_t initial_capsule[KELIVO_RECOVERY_CAPSULE_SIZE];
     uint64_t local_epoch_one_ark_handle;
 } KelivoRecoveryMediaExportAuthority;
+
+typedef struct KelivoAccountRecoveryProofBinding {
+    uint32_t struct_size;
+    uint32_t data_phase;
+    uint64_t execution_handle;
+    uint64_t ark_handle;
+    uint8_t user_id[KELIVO_DEVICE_UUID_SIZE];
+    uint8_t device_id[KELIVO_DEVICE_UUID_SIZE];
+    uint32_t security_generation;
+    uint32_t key_epoch;
+    uint32_t device_key_version;
+    uint32_t recovery_capsule_version;
+} KelivoAccountRecoveryProofBinding;
+
+typedef struct KelivoAccountRecoveryPrepareInput {
+    uint32_t struct_size;
+    uint32_t kind;
+    uint8_t operation_id[KELIVO_DEVICE_UUID_SIZE];
+    uint32_t target_auth_generation;
+    uint8_t rekey_operation_id[KELIVO_DEVICE_UUID_SIZE];
+    uint8_t completion_session_id[KELIVO_DEVICE_UUID_SIZE];
+    uint8_t completion_session_token_digest[KELIVO_ACCOUNT_RECOVERY_TOKEN_DIGEST_SIZE];
+} KelivoAccountRecoveryPrepareInput;
+
+typedef struct KelivoAccountRecoveryPrepareBinding {
+    uint32_t struct_size;
+    uint32_t kind;
+    uint32_t expected_generation;
+    uint32_t expected_key_epoch;
+    uint32_t next_generation;
+    uint32_t next_key_epoch;
+    uint32_t next_recovery_capsule_version;
+    uint32_t reserved;
+    uint8_t manifest_digest[KELIVO_ACCOUNT_RECOVERY_TOKEN_DIGEST_SIZE];
+    uint8_t request_digest[KELIVO_ACCOUNT_RECOVERY_TOKEN_DIGEST_SIZE];
+} KelivoAccountRecoveryPrepareBinding;
 
 typedef int32_t (*KelivoSqlCipherKeyCallback)(
     void *database,
@@ -1012,6 +1065,81 @@ KELIVO_CORE_API KelivoStatus kelivo_recovery_media_import_history_verify_and_cap
     size_t current_capsule_length,
     KelivoRecoveryCapsuleBinding *out_binding,
     uint64_t *out_ark_handle);
+
+/*
+ * Android/iOS 用户发起的原子账户恢复入口。函数先用独立恢复口令开启介质，
+ * 验证完整成员历史和当前 capsule，再把服务端 challenge 逐字段绑定到目标设备
+ * 身份、请求摘要与过期时间；只有全部验证及 sealed nonce 认证成功后才发布
+ * execution、ARK 句柄、32 字节 nonce proof 和 64 字节账户信任签名。
+ *
+ * execution 拥有恢复出的 ARK；调用方不得单独关闭 out_binding.ark_handle，
+ * 必须通过 kelivo_account_recovery_execution_close 统一释放。恢复口令不会进入
+ * 任一输出。失败时 binding、长度及可写输出范围清零且不发布秘密句柄。
+ * Windows/Linux/macOS 保留相同 ABI，但返回 UNSUPPORTED_PLATFORM。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_recovery_verify_and_prove(
+    uint64_t device_identity_handle,
+    uint32_t expected_device_key_version,
+    uint32_t expected_device_auth_generation,
+    const uint8_t *media,
+    size_t media_length,
+    const uint8_t *passphrase,
+    size_t passphrase_length,
+    const uint8_t *service_origin_sha256,
+    size_t service_origin_sha256_length,
+    const uint8_t *membership_history,
+    size_t membership_history_length,
+    const uint8_t *source_capsule,
+    size_t source_capsule_length,
+    const uint8_t *current_capsule,
+    size_t current_capsule_length,
+    const uint8_t *challenge_frame,
+    size_t challenge_frame_length,
+    const uint8_t *sealed_nonce,
+    size_t sealed_nonce_length,
+    const uint8_t *recovery_token_digest,
+    size_t recovery_token_digest_length,
+    const uint8_t *expected_attempt_id,
+    size_t expected_attempt_id_length,
+    const uint8_t *expected_device_id,
+    size_t expected_device_id_length,
+    const uint8_t *expected_request_digest,
+    size_t expected_request_digest_length,
+    uint64_t expected_expires_at_ms,
+    KelivoAccountRecoveryProofBinding *out_binding,
+    uint8_t *out_nonce_proof,
+    size_t out_nonce_proof_capacity,
+    size_t *out_nonce_proof_length,
+    uint8_t *out_trust_signature,
+    size_t out_trust_signature_capacity,
+    size_t *out_trust_signature_length);
+
+/*
+ * 关闭账户恢复 execution 及其拥有的 ARK。存在并发借用时返回 SLOT_IN_USE；
+ * 成功后 execution_handle 与 ark_handle 均永久失效。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_recovery_execution_close(
+    uint64_t execution_handle);
+
+/*
+ * 基于已验证 execution 准备一次 resume 或 replacement 提交。相同完整输入重试
+ * 返回逐字节相同结果；任一输入或验证期认证代数错配都会使 execution 与 ARK
+ * 立即失效。resume 的 capsule 长度为零；replacement 输出新 capsule。所有
+ * manifest、KAEK envelope、capsule 和摘要均为公开提交材料，不包含 ARK 明文。
+ */
+KELIVO_CORE_API KelivoStatus kelivo_account_recovery_prepare_commit(
+    uint64_t execution_handle,
+    const KelivoAccountRecoveryPrepareInput *input,
+    KelivoAccountRecoveryPrepareBinding *out_binding,
+    uint8_t *out_manifest,
+    size_t out_manifest_capacity,
+    size_t *out_manifest_length,
+    uint8_t *out_envelope,
+    size_t out_envelope_capacity,
+    size_t *out_envelope_length,
+    uint8_t *out_capsule,
+    size_t out_capsule_capacity,
+    size_t *out_capsule_length);
 
 #ifdef __cplusplus
 }

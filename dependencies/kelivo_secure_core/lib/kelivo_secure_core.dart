@@ -12,6 +12,7 @@ import 'kelivo_secure_core_bindings_generated.dart' as native;
 part 'src/device_core.dart';
 part 'src/attachment_crypto.dart';
 part 'src/recovery_core.dart';
+part 'src/account_recovery_core.dart';
 
 const _expectedAbiVersion = native.KELIVO_CORE_ABI_VERSION;
 const _keySlotIdLength = native.KELIVO_KEY_SLOT_ID_SIZE;
@@ -27,6 +28,7 @@ const _attachmentCryptoCapability = 1 << 7;
 const _accountTrustSigningCapability = 1 << 8;
 const _recoveryMediaCapability = 1 << 9;
 const _installationRootWipeCapability = 1 << 10;
+const _accountRecoveryExecutionCapability = 1 << 11;
 const _secureStorageCapabilityFlags =
     _keySlotsCapability |
     _backgroundAccessCapability |
@@ -40,7 +42,8 @@ const _knownCapabilityFlags =
     _attachmentCryptoCapability |
     _accountTrustSigningCapability |
     _recoveryMediaCapability |
-    _installationRootWipeCapability;
+    _installationRootWipeCapability |
+    _accountRecoveryExecutionCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
     native.KELIVO_RECORD_MAX_ASSOCIATED_DATA_SIZE;
@@ -139,6 +142,10 @@ enum KelivoSecureCoreStatus {
   recoveryPassphraseInvalid(47),
   recoveryHistoryInvalid(48),
   recoveryHistoryAuthenticationFailed(49),
+  recoveryChallengeInvalid(50),
+  recoveryChallengeAuthenticationFailed(51),
+  invalidRecoveryExecutionHandle(52),
+  recoveryPrepareInvalid(53),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);
@@ -168,6 +175,7 @@ final class KelivoCoreCapabilities {
     required this.supportsAccountTrustSigning,
     required this.supportsRecoveryMedia,
     required this.supportsInstallationRootWipe,
+    required this.supportsAccountRecoveryExecution,
   });
 
   final int abiVersion;
@@ -183,6 +191,7 @@ final class KelivoCoreCapabilities {
   final bool supportsAccountTrustSigning;
   final bool supportsRecoveryMedia;
   final bool supportsInstallationRootWipe;
+  final bool supportsAccountRecoveryExecution;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -1117,6 +1126,10 @@ KelivoCoreCapabilities _readCapabilities() {
         capabilities.flags & _accountTrustSigningCapability == 0) {
       throw StateError('安全核心在缺少账户信任签名时声明了恢复介质能力');
     }
+    if (capabilities.flags & _accountRecoveryExecutionCapability != 0 &&
+        capabilities.flags & _recoveryMediaCapability == 0) {
+      throw StateError('安全核心在缺少恢复介质能力时声明了账户恢复执行能力');
+    }
 
     return KelivoCoreCapabilities(
       abiVersion: capabilities.abi_version,
@@ -1140,6 +1153,8 @@ KelivoCoreCapabilities _readCapabilities() {
       supportsRecoveryMedia: capabilities.flags & _recoveryMediaCapability != 0,
       supportsInstallationRootWipe:
           capabilities.flags & _installationRootWipeCapability != 0,
+      supportsAccountRecoveryExecution:
+          capabilities.flags & _accountRecoveryExecutionCapability != 0,
     );
   } finally {
     calloc.free(output);

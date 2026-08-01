@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core_bindings_generated.dart'
+    as native;
 
 import 'support/secure_core_test_store.dart';
 
@@ -53,10 +56,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v18、恢复介质及受支持平台安装根擦除', () async {
+  test('能力门禁声明 ABI v19、账户恢复执行及受支持平台安装根擦除', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 18);
+    expect(capabilities.abiVersion, 19);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -74,11 +77,21 @@ void main() {
       capabilities.supportsRecoveryMedia,
       Platform.isAndroid || Platform.isIOS,
     );
+    expect(
+      capabilities.supportsAccountRecoveryExecution,
+      Platform.isAndroid || Platform.isIOS,
+    );
     if (Platform.isWindows) {
       expect(capabilities.supportsInstallationRootWipe, isTrue);
     } else if (!Platform.isAndroid) {
       expect(capabilities.supportsInstallationRootWipe, isFalse);
     }
+  });
+
+  test('ABI v19 账户恢复结构体布局与 C header 固定尺寸一致', () {
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryProofBinding>(), 72);
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryPrepareInput>(), 92);
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryPrepareBinding>(), 96);
   });
 
   test('安装根擦除仅使用显式隔离根并精准保留完成标记', () async {
@@ -152,6 +165,77 @@ void main() {
       throwsArgumentError,
     );
     expect(passphrase, everyElement(0));
+  });
+
+  test('账户恢复 challenge 前置校验失败仍消费并清零独立恢复口令', () async {
+    final identity = await core.generateDeviceIdentity();
+    final passphrase = Uint8List.fromList(
+      utf8.encode('account-recovery-passphrase'),
+    );
+    try {
+      await expectLater(
+        core.verifyAccountRecoveryAndCreateProof(
+          identity,
+          expectedDeviceKeyVersion: 1,
+          expectedDeviceAuthGeneration: 1,
+          media: Uint8List(643),
+          passphrase: passphrase,
+          serviceOriginSha256: Uint8List(32),
+          membershipHistory: <Uint8List>[Uint8List(444)],
+          currentCapsule: Uint8List(156),
+          challengeFrame: Uint8List(316),
+          sealedNonce: Uint8List(100),
+          recoveryTokenDigest: Uint8List(32),
+          expectedAttemptId: accountId(0xa1),
+          expectedDeviceId: accountId(0xa2),
+          expectedRequestDigest: Uint8List(32),
+          expectedExpiresAt: DateTime.utc(2026, 8, 1, 2),
+        ),
+        throwsArgumentError,
+      );
+      expect(passphrase, everyElement(0));
+    } finally {
+      await core.closeDeviceIdentity(identity);
+    }
+  });
+
+  test('Windows 账户恢复执行 ABI 明确失败关闭且清零独立恢复口令', () async {
+    if (!Platform.isWindows) return;
+    final identity = await core.generateDeviceIdentity();
+    final passphrase = Uint8List.fromList(
+      utf8.encode('account-recovery-passphrase'),
+    );
+    try {
+      await expectLater(
+        core.verifyAccountRecoveryAndCreateProof(
+          identity,
+          expectedDeviceKeyVersion: 1,
+          expectedDeviceAuthGeneration: 1,
+          media: Uint8List(644),
+          passphrase: passphrase,
+          serviceOriginSha256: Uint8List(32),
+          membershipHistory: <Uint8List>[Uint8List(444)],
+          currentCapsule: Uint8List(156),
+          challengeFrame: Uint8List(316),
+          sealedNonce: Uint8List(100),
+          recoveryTokenDigest: Uint8List(32),
+          expectedAttemptId: accountId(0xa3),
+          expectedDeviceId: accountId(0xa4),
+          expectedRequestDigest: Uint8List(32),
+          expectedExpiresAt: DateTime.utc(2026, 8, 1, 2),
+        ),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.unsupportedPlatform,
+          ),
+        ),
+      );
+      expect(passphrase, everyElement(0));
+    } finally {
+      await core.closeDeviceIdentity(identity);
+    }
   });
 
   test('恢复口令按原始 UTF-8 标量校验且拒绝畸形编码', () async {
