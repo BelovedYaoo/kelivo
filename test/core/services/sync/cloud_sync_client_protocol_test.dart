@@ -5678,6 +5678,22 @@ void main() {
       targetCipher.rewrap(_untrustedRecord(target)),
       throwsFormatException,
     );
+
+    final nonCanonicalSource = await _sealRawAccountRecord(
+      core: core,
+      ark: sourceArk,
+      recordIdKey: entityKey,
+      frameKey: const SyncEntityKey(
+        entityType: 'conversation',
+        entityId: '\ufeffdata-rekey-record',
+      ),
+      userId: _userId,
+      keyEpoch: 1,
+    );
+    await expectLater(
+      targetCipher.rewrap(nonCanonicalSource),
+      throwsFormatException,
+    );
   });
 
   test('账户记录加密器按记录代次派生标识并在裁剪后失败关闭', () async {

@@ -233,7 +233,7 @@ final class E2eeAccountRecordCipher {
     Uint8List? associatedData;
     Uint8List? plaintext;
     Uint8List? ciphertext;
-    _EncodedEntityKey? encodedKey;
+    Uint8List? canonicalEntityKey;
     try {
       final associatedDataValue = _buildAssociatedData(_userId);
       associatedData = associatedDataValue;
@@ -245,17 +245,19 @@ final class E2eeAccountRecordCipher {
         envelope: source.ciphertext,
       );
       plaintext = plaintextValue;
-      final decodedFrame = _decodeRecordFrame(plaintextValue);
-      encodedKey = _encodeEntityKey(decodedFrame.entityKey);
+      final canonicalEntityKeyValue = _canonicalEntityKeyFromRecordFrame(
+        plaintextValue,
+      );
+      canonicalEntityKey = canonicalEntityKeyValue;
       final expectedSourceRecordId = await _deriveRecordId(
-        encodedKey.canonicalBytes,
+        canonicalEntityKeyValue,
         keyEpoch: source.keyEpoch,
       );
       if (!_sameBytes(expectedSourceRecordId._bytes, source.recordId._bytes)) {
         throw const FormatException('账户记录标识与密文实体键不匹配');
       }
       final targetRecordId = await _deriveRecordId(
-        encodedKey.canonicalBytes,
+        canonicalEntityKeyValue,
         keyEpoch: currentKeyEpoch,
       );
       // 直接重密封已认证帧，避免 data-rekey 将业务明文复制到执行器状态。
@@ -276,7 +278,7 @@ final class E2eeAccountRecordCipher {
         ciphertext: ciphertextValue,
       );
     } finally {
-      encodedKey?.clear();
+      _clearBytes(canonicalEntityKey);
       _clearBytes(ciphertext);
       _clearBytes(plaintext);
       _clearBytes(associatedData);
@@ -477,6 +479,8 @@ final class _DecodedRecordFrame {
   final Uint8List payload;
 }
 
+typedef _RecordFrameLayout = ({int typeStart, int typeEnd, int idEnd});
+
 _EncodedEntityKey _encodeEntityKey(SyncEntityKey key) {
   validateSyncEntityKey(key);
 
@@ -546,6 +550,24 @@ Uint8List _encodeRecordFrame(_EncodedEntityKey key, Uint8List payload) {
 }
 
 _DecodedRecordFrame _decodeRecordFrame(Uint8List frame) {
+  final layout = _readRecordFrameLayout(frame);
+  final entityType = _decodeUtf8(
+    Uint8List.sublistView(frame, layout.typeStart, layout.typeEnd),
+    'entityType',
+  );
+  final entityId = _decodeUtf8(
+    Uint8List.sublistView(frame, layout.typeEnd, layout.idEnd),
+    'entityId',
+  );
+  final entityKey = SyncEntityKey(entityType: entityType, entityId: entityId);
+  _validateDecodedEntityKey(entityKey);
+  return _DecodedRecordFrame(
+    entityKey: entityKey,
+    payload: Uint8List.sublistView(frame, layout.idEnd),
+  );
+}
+
+_RecordFrameLayout _readRecordFrameLayout(Uint8List frame) {
   if (frame.length < _recordFrameHeaderBytes ||
       !_rangeEquals(frame, 0, _recordFrameMagic)) {
     throw const FormatException('账户记录明文帧头无效');
@@ -570,25 +592,125 @@ _DecodedRecordFrame _decodeRecordFrame(Uint8List frame) {
     throw const FormatException('账户记录明文帧长度无效');
   }
 
-  var offset = _recordFrameHeaderBytes;
-  final typeEnd = offset + typeLength;
-  final entityType = _decodeUtf8(
-    Uint8List.sublistView(frame, offset, typeEnd),
-    'entityType',
-  );
-  offset = typeEnd;
-  final idEnd = offset + idLength;
-  final entityId = _decodeUtf8(
-    Uint8List.sublistView(frame, offset, idEnd),
-    'entityId',
-  );
-  final entityKey = SyncEntityKey(entityType: entityType, entityId: entityId);
-  _validateDecodedEntityKey(entityKey);
-  return _DecodedRecordFrame(
-    entityKey: entityKey,
-    payload: Uint8List.sublistView(frame, idEnd),
+  final typeEnd = _recordFrameHeaderBytes + typeLength;
+  return (
+    typeStart: _recordFrameHeaderBytes,
+    typeEnd: typeEnd,
+    idEnd: typeEnd + idLength,
   );
 }
+
+Uint8List _canonicalEntityKeyFromRecordFrame(Uint8List frame) {
+  final layout = _readRecordFrameLayout(frame);
+  final typeBytes = Uint8List.sublistView(
+    frame,
+    layout.typeStart,
+    layout.typeEnd,
+  );
+  final idBytes = Uint8List.sublistView(frame, layout.typeEnd, layout.idEnd);
+  _validateCanonicalEntityTypeBytes(typeBytes);
+  _validateCanonicalEntityIdBytes(idBytes);
+
+  final result = Uint8List(
+    _recordKeyHeaderBytes + typeBytes.length + idBytes.length,
+  );
+  result.setRange(0, _recordKeyMagic.length, _recordKeyMagic);
+  final fields = ByteData.sublistView(result);
+  fields.setUint16(8, _recordKeyFormatVersion, Endian.big);
+  fields.setUint16(10, 0, Endian.big);
+  fields.setUint32(12, typeBytes.length, Endian.big);
+  fields.setUint32(16, idBytes.length, Endian.big);
+  result.setRange(
+    _recordKeyHeaderBytes,
+    _recordKeyHeaderBytes + typeBytes.length,
+    typeBytes,
+  );
+  result.setRange(
+    _recordKeyHeaderBytes + typeBytes.length,
+    result.length,
+    idBytes,
+  );
+  return result;
+}
+
+void _validateCanonicalEntityTypeBytes(Uint8List value) {
+  var previousWasHyphen = false;
+  for (var index = 0; index < value.length; index++) {
+    final byte = value[index];
+    final isLowercaseLetter = byte >= 0x61 && byte <= 0x7a;
+    final isDigit = byte >= 0x30 && byte <= 0x39;
+    if ((index == 0 && !isLowercaseLetter) ||
+        (!isLowercaseLetter && !isDigit && byte != 0x2d) ||
+        (byte == 0x2d && (previousWasHyphen || index == value.length - 1))) {
+      throw const FormatException('同步实体类型必须为小写 kebab-case');
+    }
+    previousWasHyphen = byte == 0x2d;
+  }
+}
+
+void _validateCanonicalEntityIdBytes(Uint8List value) {
+  if (value.length >= 3 &&
+      value[0] == 0xef &&
+      value[1] == 0xbb &&
+      value[2] == 0xbf) {
+    throw const FormatException('同步实体 ID 必须使用无 BOM 的规范 UTF-8');
+  }
+
+  var index = 0;
+  while (index < value.length) {
+    final first = value[index];
+    if (first == 0) {
+      throw const FormatException('同步实体 ID 不能为空或包含 NUL');
+    }
+    if (first <= 0x7f) {
+      index++;
+      continue;
+    }
+
+    final remaining = value.length - index;
+    if (first >= 0xc2 && first <= 0xdf) {
+      if (remaining < 2 || !_isUtf8Continuation(value[index + 1])) {
+        throw const FormatException('entityId 包含无效 UTF-8');
+      }
+      index += 2;
+      continue;
+    }
+
+    if (first >= 0xe0 && first <= 0xef) {
+      if (remaining < 3 ||
+          !_isUtf8Continuation(value[index + 2]) ||
+          !_isValidUtf8SecondByte(first, value[index + 1])) {
+        throw const FormatException('entityId 包含无效 UTF-8');
+      }
+      index += 3;
+      continue;
+    }
+
+    if (first >= 0xf0 && first <= 0xf4) {
+      if (remaining < 4 ||
+          !_isUtf8Continuation(value[index + 2]) ||
+          !_isUtf8Continuation(value[index + 3]) ||
+          !_isValidUtf8SecondByte(first, value[index + 1])) {
+        throw const FormatException('entityId 包含无效 UTF-8');
+      }
+      index += 4;
+      continue;
+    }
+
+    throw const FormatException('entityId 包含无效 UTF-8');
+  }
+}
+
+bool _isValidUtf8SecondByte(int first, int second) {
+  if (!_isUtf8Continuation(second)) return false;
+  if (first == 0xe0) return second >= 0xa0;
+  if (first == 0xed) return second <= 0x9f;
+  if (first == 0xf0) return second >= 0x90;
+  if (first == 0xf4) return second <= 0x8f;
+  return true;
+}
+
+bool _isUtf8Continuation(int value) => value >= 0x80 && value <= 0xbf;
 
 void _validateDecodedEntityKey(SyncEntityKey key) {
   final encoded = _encodeEntityKey(key);

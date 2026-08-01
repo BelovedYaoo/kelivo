@@ -1425,8 +1425,9 @@ class E2eeDataRekeyOperationRows extends Table {
         "AND substr(lease_mutation_id, 15, 4) NOT GLOB '*-*' "
         "AND substr(lease_mutation_id, 20, 4) NOT GLOB '*-*' "
         "AND substr(lease_mutation_id, 25, 12) NOT GLOB '*-*')",
+    'CHECK (lease_token <> lease_mutation_id)',
     "CHECK (typeof(source_data_generation) = 'integer' "
-        'AND source_data_generation BETWEEN 1 AND 2147483647)',
+        'AND source_data_generation BETWEEN 1 AND 2147483646)',
     "CHECK (typeof(source_key_epoch) = 'integer' "
         'AND source_key_epoch BETWEEN 1 AND 4294967294)',
     "CHECK (typeof(target_key_epoch) = 'integer' "
@@ -1437,7 +1438,7 @@ class E2eeDataRekeyOperationRows extends Table {
     "CHECK (typeof(source_attachment_count) = 'integer' "
         'AND source_attachment_count BETWEEN 0 AND 2147483647)',
     "CHECK (typeof(source_maximum_change_seq) = 'integer' "
-        'AND source_maximum_change_seq BETWEEN 0 AND 9223372036854775807)',
+        'AND source_maximum_change_seq BETWEEN 0 AND 9007199254740991)',
     'CHECK ((source_record_count = 0 AND source_record_cursor_end IS NULL) '
         'OR (source_record_count > 0 AND source_record_cursor_end IS NOT NULL))',
     'CHECK ((source_attachment_count = 0 '

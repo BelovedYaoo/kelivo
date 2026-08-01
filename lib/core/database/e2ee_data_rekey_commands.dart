@@ -1,6 +1,8 @@
 part of 'chat_database_repository.dart';
 
 const _dataRekeyMaximumInt32 = 2147483647;
+const _dataRekeyMaximumSourceDataGeneration = 2147483646;
+const _dataRekeyMaximumSafeInteger = 9007199254740991;
 const _dataRekeyMaximumUint32 = 4294967295;
 
 enum E2eeDataRekeyJournalPhase {
@@ -94,7 +96,7 @@ final class E2eeDataRekeyOperationBinding {
         sourceDataGeneration,
         'sourceDataGeneration',
         minimum: 1,
-        maximum: _dataRekeyMaximumInt32,
+        maximum: _dataRekeyMaximumSourceDataGeneration,
       ),
       sourceKeyEpoch: checkedSourceKeyEpoch,
       targetKeyEpoch: checkedTargetKeyEpoch,
@@ -104,7 +106,7 @@ final class E2eeDataRekeyOperationBinding {
         sourceMaximumChangeSeq,
         'sourceMaximumChangeSeq',
         minimum: 0,
-        maximum: _maxPositiveInt63,
+        maximum: _dataRekeyMaximumSafeInteger,
       ),
       sourceRecordCursorEnd: checkedRecordCursor,
       sourceAttachmentIdEnd: checkedAttachmentId,
@@ -281,6 +283,14 @@ E2eeDataRekeyJournalState _dataRekeyJournalStateFromRow(
       (row.leaseVersion == null && row.leaseExpiresAt == null)) {
     throw StateError('data_rekey_lease_state_invalid');
   }
+  final leaseToken = _requireCanonicalUuidV4(row.leaseToken, 'leaseToken');
+  final leaseMutationId = _requireCanonicalUuidV4(
+    row.leaseMutationId,
+    'leaseMutationId',
+  );
+  if (leaseToken == leaseMutationId) {
+    throw StateError('data_rekey_lease_identity_reused');
+  }
   return E2eeDataRekeyJournalState._(
     binding: E2eeDataRekeyOperationBinding(
       userId: row.userId,
@@ -299,11 +309,8 @@ E2eeDataRekeyJournalState _dataRekeyJournalStateFromRow(
       membershipManifestDigest: row.membershipManifestDigest,
     ),
     phase: phase,
-    leaseToken: _requireCanonicalUuidV4(row.leaseToken, 'leaseToken'),
-    leaseMutationId: _requireCanonicalUuidV4(
-      row.leaseMutationId,
-      'leaseMutationId',
-    ),
+    leaseToken: leaseToken,
+    leaseMutationId: leaseMutationId,
     leaseVersion: row.leaseVersion,
     leaseExpiresAt: row.leaseExpiresAt?.toUtc(),
     createdAt: row.createdAt.toUtc(),

@@ -1591,22 +1591,24 @@ void main() {
   group('E2EE data-rekey 持久日志', () {
     E2eeDataRekeyOperationBinding binding({
       String? operationId,
+      int sourceDataGeneration = 4,
       int sourceKeyEpoch = 7,
       int targetKeyEpoch = 8,
       int sourceRecordCount = 2,
       int sourceAttachmentCount = 1,
+      int sourceMaximumChangeSeq = 33,
       int membershipGeneration = 12,
       Uint8List? membershipManifestDigest,
     }) => E2eeDataRekeyOperationBinding(
       userId: _syncAccountUserId,
       issuerDeviceId: _syncActorDeviceId,
       operationId: operationId ?? _syncUuid(301),
-      sourceDataGeneration: 4,
+      sourceDataGeneration: sourceDataGeneration,
       sourceKeyEpoch: sourceKeyEpoch,
       targetKeyEpoch: targetKeyEpoch,
       sourceRecordCount: sourceRecordCount,
       sourceAttachmentCount: sourceAttachmentCount,
-      sourceMaximumChangeSeq: 33,
+      sourceMaximumChangeSeq: sourceMaximumChangeSeq,
       sourceRecordCursorEnd: sourceRecordCount == 0 ? null : _syncUuid(302),
       sourceAttachmentIdEnd: sourceAttachmentCount == 0 ? null : _syncUuid(303),
       sourceAttachmentUploadIdEnd: sourceAttachmentCount == 0
@@ -1683,6 +1685,104 @@ void main() {
       );
     });
 
+    test('拒绝无法完成的数据代次与超出同步协议的水位', () {
+      expect(
+        () => binding(sourceDataGeneration: 2147483647),
+        throwsA(isA<FormatException>()),
+      );
+      expect(
+        () => binding(sourceMaximumChangeSeq: 9007199254740992),
+        throwsA(isA<FormatException>()),
+      );
+
+      final maximum = binding(
+        sourceDataGeneration: 2147483646,
+        sourceMaximumChangeSeq: 9007199254740991,
+      );
+      expect(maximum.sourceDataGeneration, 2147483646);
+      expect(maximum.sourceMaximumChangeSeq, 9007199254740991);
+    });
+
+    test('数据库拒绝无法生成下一代的数据代次', () async {
+      final operationBinding = binding(sourceDataGeneration: 2147483646);
+      await expectLater(
+        database
+            .into(database.e2eeDataRekeyOperationRows)
+            .insert(
+              E2eeDataRekeyOperationRowsCompanion.insert(
+                userId: operationBinding.userId,
+                issuerDeviceId: operationBinding.issuerDeviceId,
+                operationId: operationBinding.operationId,
+                sourceDataGeneration: 2147483647,
+                sourceKeyEpoch: operationBinding.sourceKeyEpoch,
+                targetKeyEpoch: operationBinding.targetKeyEpoch,
+                sourceRecordCount: operationBinding.sourceRecordCount,
+                sourceAttachmentCount: operationBinding.sourceAttachmentCount,
+                sourceMaximumChangeSeq: operationBinding.sourceMaximumChangeSeq,
+                sourceRecordCursorEnd: Value(
+                  operationBinding.sourceRecordCursorEnd,
+                ),
+                sourceAttachmentIdEnd: Value(
+                  operationBinding.sourceAttachmentIdEnd,
+                ),
+                sourceAttachmentUploadIdEnd: Value(
+                  operationBinding.sourceAttachmentUploadIdEnd,
+                ),
+                membershipGeneration: operationBinding.membershipGeneration,
+                membershipManifestDigest:
+                    operationBinding.membershipManifestDigest,
+                phase: E2eeDataRekeyJournalPhase.claimPending.wireValue,
+                leaseToken: _syncUuid(306),
+                leaseMutationId: _syncUuid(307),
+                createdAt: DateTime.utc(2026, 7, 30, 4),
+                updatedAt: DateTime.utc(2026, 7, 30, 4),
+              ),
+            ),
+        throwsRemoteSqliteException(),
+      );
+    });
+
+    test('数据库拒绝超出同步协议的变更水位', () async {
+      final operationBinding = binding(
+        sourceMaximumChangeSeq: 9007199254740991,
+      );
+      await expectLater(
+        database
+            .into(database.e2eeDataRekeyOperationRows)
+            .insert(
+              E2eeDataRekeyOperationRowsCompanion.insert(
+                userId: operationBinding.userId,
+                issuerDeviceId: operationBinding.issuerDeviceId,
+                operationId: operationBinding.operationId,
+                sourceDataGeneration: operationBinding.sourceDataGeneration,
+                sourceKeyEpoch: operationBinding.sourceKeyEpoch,
+                targetKeyEpoch: operationBinding.targetKeyEpoch,
+                sourceRecordCount: operationBinding.sourceRecordCount,
+                sourceAttachmentCount: operationBinding.sourceAttachmentCount,
+                sourceMaximumChangeSeq: 9007199254740992,
+                sourceRecordCursorEnd: Value(
+                  operationBinding.sourceRecordCursorEnd,
+                ),
+                sourceAttachmentIdEnd: Value(
+                  operationBinding.sourceAttachmentIdEnd,
+                ),
+                sourceAttachmentUploadIdEnd: Value(
+                  operationBinding.sourceAttachmentUploadIdEnd,
+                ),
+                membershipGeneration: operationBinding.membershipGeneration,
+                membershipManifestDigest:
+                    operationBinding.membershipManifestDigest,
+                phase: E2eeDataRekeyJournalPhase.claimPending.wireValue,
+                leaseToken: _syncUuid(306),
+                leaseMutationId: _syncUuid(307),
+                createdAt: DateTime.utc(2026, 7, 30, 4),
+                updatedAt: DateTime.utc(2026, 7, 30, 4),
+              ),
+            ),
+        throwsRemoteSqliteException(),
+      );
+    });
+
     test('同一 operation 绑定漂移时失败关闭并保留原重试身份', () async {
       final original = binding();
       final first = await dataRekeyCommands.ensureClaimIntent(
@@ -1739,6 +1839,55 @@ void main() {
       );
       expect(retained.leaseToken, first.leaseToken);
       expect(retained.leaseMutationId, first.leaseMutationId);
+    });
+
+    test('数据库拒绝租约令牌与声明变更标识复用', () async {
+      final operationBinding = binding();
+      await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+
+      await expectLater(
+        database.customStatement(
+          'UPDATE e2ee_data_rekey_operation_rows '
+          'SET lease_mutation_id = lease_token;',
+        ),
+        throwsRemoteSqliteException(),
+      );
+    });
+
+    test('恢复读取拒绝租约令牌与声明变更标识复用', () async {
+      final operationBinding = binding();
+      await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+      await database.customStatement('PRAGMA ignore_check_constraints = ON;');
+      try {
+        await database.customStatement(
+          'UPDATE e2ee_data_rekey_operation_rows '
+          'SET lease_mutation_id = lease_token;',
+        );
+      } finally {
+        await database.customStatement(
+          'PRAGMA ignore_check_constraints = OFF;',
+        );
+      }
+
+      await expectLater(
+        dataRekeyCommands.ensureClaimIntent(
+          binding: operationBinding,
+          now: DateTime.utc(2026, 7, 30, 4, 1),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'data_rekey_lease_identity_reused',
+          ),
+        ),
+      );
     });
 
     test('数据库拒绝未持租约却进入执行阶段的日志', () async {
