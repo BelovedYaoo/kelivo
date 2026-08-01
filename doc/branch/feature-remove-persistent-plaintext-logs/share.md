@@ -14,3 +14,7 @@
 - 恢复介质页两处动态 `developer.log` 本轮直接静态化；根分支集成时必须保留该结果，并统一其他 E2EE 分支的 ABI20。
 - Flutter、PlatformDispatcher 与 Zone 未处理异常改为固定事件且不调用旧动态 handler；三者都会设置非零 `exitCode`，但这只是标记进程最终退出结果，不会立即终止移动端进程。
 - Android 构建按变体在 `compileFlutterBuild<Variant>` 完成后、Java 编译前硬化生成 registrant；每个 catch 必须抛固定 `IllegalStateException`，残留 `Log.e` 或数量不一致会阻断构建。
+- SharedPreferences 删除证明已实现最终 ABI20：Windows/Linux 在平台删除前固定 application-support 根，删除后由原生层独占打开固定 `shared_preferences.json`，执行 16 MiB 有界读取、结构化 JSON 键复核、单链接/身份/根链检查与文件及目录持久屏障；缺失文件仍同步固定根。
+- Dart 删除事务统一为 `begin -> remove -> native confirm -> platform reread -> close`；任何步骤失败都关闭会话，主操作与关闭同时失败时只暴露固定聚合错误。空键、NUL 和超过 1024 UTF-8 字节的键在平台删除前失败关闭。
+- 最终验证：应用层相关 Flutter 回归 41/41、安全核心 Dart 30/30、Windows Rust 92/92、根定向分析与安全核心独立分析、Windows 全 targets 及 Android x86_64 Unix 目标严格 clippy、Cargo locked check 均通过。
+- Linux 原生运行测试未执行：本机 WSL Debian 缺少 Rust；共享 Unix 实现已由 Android x86_64 目标编译和严格 clippy 覆盖。根仓库全目录 analyze 会扫描未单独安装 dev dependencies 的嵌套 mcp/workmanager 包并产生 755 个既有缺包错误，本次文件定向 analyze 无问题。

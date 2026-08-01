@@ -245,7 +245,20 @@ final class _TestSharedPreferencesRemovalProof
   const _TestSharedPreferencesRemovalProof();
 
   @override
-  Future<void> confirmRemoval(String rawKey) async {}
+  Future<DurableSharedPreferencesRemovalSession> beginRemoval(
+    String rawKey,
+  ) async => const _TestSharedPreferencesRemovalSession();
+}
+
+final class _TestSharedPreferencesRemovalSession
+    implements DurableSharedPreferencesRemovalSession {
+  const _TestSharedPreferencesRemovalSession();
+
+  @override
+  Future<void> confirmRemoval() async {}
+
+  @override
+  Future<void> close() async {}
 }
 
 final class _MemoryPlaintextRemoteBackupPreferenceStore

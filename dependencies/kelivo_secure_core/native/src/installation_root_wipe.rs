@@ -44,15 +44,26 @@ mod platform {
         pub(super) fn retire_persistent_logs(&self) -> Result<(), KelivoStatus> {
             Err(KelivoStatus::UnsupportedPlatform)
         }
+
+        pub(super) fn verify_shared_preferences_removal(
+            &self,
+            _raw_key: &str,
+        ) -> Result<(), KelivoStatus> {
+            Err(KelivoStatus::UnsupportedPlatform)
+        }
     }
 }
 
 pub(super) const SCOPE_INSTALLATION: u32 = 1;
 pub(super) const SCOPE_TEMPORARY: u32 = 2;
+pub(super) const SCOPE_SHARED_PREFERENCES: u32 = 3;
 pub(super) const OPERATION_RETIRE_PLAINTEXT_BACKUPS: u32 = 1;
 pub(super) const OPERATION_RETIRE_ATTACHMENT_STAGING: u32 = 2;
 pub(super) const OPERATION_RETIRE_PERSISTENT_LOGS: u32 = 3;
 pub(super) const OPERATION_WIPE_INSTALLATION_ROOT: u32 = 4;
+pub(super) const OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL: u32 = 5;
+
+pub(super) const SHARED_PREFERENCES_FILE_MAX_SIZE: usize = 16 * 1024 * 1024;
 
 const MAX_ACTIVE_MANAGED_ROOTS: usize = 16;
 const MAX_MANAGED_ROOT_HANDLE: u64 = (1_u64 << 60) - 1;
@@ -61,6 +72,7 @@ const MAX_MANAGED_ROOT_HANDLE: u64 = (1_u64 << 60) - 1;
 enum ManagedRootScope {
     Installation,
     Temporary,
+    SharedPreferences,
 }
 
 impl ManagedRootScope {
@@ -68,6 +80,7 @@ impl ManagedRootScope {
         match value {
             SCOPE_INSTALLATION => Ok(Self::Installation),
             SCOPE_TEMPORARY => Ok(Self::Temporary),
+            SCOPE_SHARED_PREFERENCES => Ok(Self::SharedPreferences),
             _ => Err(KelivoStatus::InvalidArgument),
         }
     }
@@ -155,7 +168,25 @@ pub(super) fn execute(handle: u64, operation: u32, argument: &str) -> Result<(),
         {
             root.root.retire_plaintext_backups()
         }
+        (ManagedRootScope::SharedPreferences, OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL)
+            if !argument.is_empty() =>
+        {
+            root.root.verify_shared_preferences_removal(argument)
+        }
         _ => Err(KelivoStatus::InvalidArgument),
+    }
+}
+
+pub(super) fn verify_shared_preferences_document(
+    contents: &[u8],
+    raw_key: &str,
+) -> Result<(), KelivoStatus> {
+    let values = serde_json::from_slice::<serde_json::Map<String, serde_json::Value>>(contents)
+        .map_err(|_| KelivoStatus::IoFailure)?;
+    if values.contains_key(raw_key) {
+        Err(KelivoStatus::IoFailure)
+    } else {
+        Ok(())
     }
 }
 
@@ -194,4 +225,36 @@ fn root_for_handle(handle: u64) -> Result<Arc<ManagedRoot>, KelivoStatus> {
 fn registry() -> &'static Mutex<ManagedRootRegistry> {
     static REGISTRY: OnceLock<Mutex<ManagedRootRegistry>> = OnceLock::new();
     REGISTRY.get_or_init(|| Mutex::new(ManagedRootRegistry::default()))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn shared_preferences_document_requires_object_without_target_key() {
+        assert_eq!(
+            verify_shared_preferences_document(br#"{"flutter.other":"kept"}"#, "flutter.removed"),
+            Ok(())
+        );
+        assert_eq!(
+            verify_shared_preferences_document(
+                br#"{"flutter.removed":"secret"}"#,
+                "flutter.removed"
+            ),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(
+            verify_shared_preferences_document(br#"[]"#, "flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(
+            verify_shared_preferences_document(br#"{"#, "flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(
+            verify_shared_preferences_document(&[0xff], "flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+    }
 }

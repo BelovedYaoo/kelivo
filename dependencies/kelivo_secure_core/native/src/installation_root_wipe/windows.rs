@@ -1,8 +1,10 @@
+use super::{SHARED_PREFERENCES_FILE_MAX_SIZE, verify_shared_preferences_document};
 use crate::KelivoStatus;
 use core::mem::size_of;
 use std::{
     ffi::{OsStr, OsString},
     fs::{File, OpenOptions},
+    io::Read,
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
         fs::OpenOptionsExt,
@@ -29,8 +31,9 @@ use windows_sys::{
             BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ATTRIBUTE_DIRECTORY,
             FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA, FileDispositionInfo,
-            GetFileInformationByHandle, SYNCHRONIZE, SetFileInformationByHandle,
+            FILE_READ_DATA, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA,
+            FileDispositionInfo, GetFileInformationByHandle, SYNCHRONIZE,
+            SetFileInformationByHandle,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -98,6 +101,13 @@ impl PinnedRoot {
         self.guarded(|root| retire_workspace_tree(root, &["logs"]))
     }
 
+    pub(super) fn verify_shared_preferences_removal(
+        &self,
+        raw_key: &str,
+    ) -> Result<(), KelivoStatus> {
+        self.guarded(|root| verify_shared_preferences_removal(root, raw_key))
+    }
+
     fn guarded(
         &self,
         operation: impl FnOnce(&File) -> Result<(), KelivoStatus>,
@@ -138,6 +148,63 @@ impl PinnedRoot {
         }
         Ok(())
     }
+}
+
+fn verify_shared_preferences_removal(root: &File, raw_key: &str) -> Result<(), KelivoStatus> {
+    let name = OsStr::new("shared_preferences.json");
+    let Some(entry) = find_exact_entry(root, name)? else {
+        return flush(root);
+    };
+    require_regular_attributes(entry.attributes)?;
+
+    let mut file = match open_relative_with_share(
+        root,
+        name,
+        FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_WRITE_DATA | SYNCHRONIZE,
+        FILE_NON_DIRECTORY_FILE,
+        0,
+    )? {
+        RelativeOpenResult::Opened(value) => value,
+        RelativeOpenResult::Missing => return Err(KelivoStatus::IoFailure),
+    };
+    let root_metadata = metadata_for(root)?;
+    let opened = metadata_for(&file)?;
+    require_regular(opened)?;
+    if opened.identity.volume_serial != root_metadata.identity.volume_serial || opened.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    flush(&file)?;
+    flush(root)?;
+
+    if file.metadata().map_err(|_| KelivoStatus::IoFailure)?.len()
+        > u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE)
+            .map_err(|_| KelivoStatus::InternalState)?
+    {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    let mut contents = Vec::new();
+    (&mut file)
+        .take(
+            u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE + 1)
+                .map_err(|_| KelivoStatus::InternalState)?,
+        )
+        .read_to_end(&mut contents)
+        .map_err(|_| KelivoStatus::IoFailure)?;
+    if contents.len() > SHARED_PREFERENCES_FILE_MAX_SIZE {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    verify_shared_preferences_document(&contents, raw_key)?;
+
+    let after = metadata_for(&file)?;
+    require_regular(after)?;
+    if after.identity != opened.identity || after.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    let Some(entry) = find_exact_entry(root, name)? else {
+        return Err(KelivoStatus::IoFailure);
+    };
+    require_regular_attributes(entry.attributes)?;
+    flush(root)
 }
 
 #[cfg(test)]
@@ -317,6 +384,22 @@ fn open_relative(
     desired_access: u32,
     required_type: u32,
 ) -> Result<RelativeOpenResult, KelivoStatus> {
+    open_relative_with_share(
+        parent,
+        name,
+        desired_access,
+        required_type,
+        SHARE_READ_WRITE,
+    )
+}
+
+fn open_relative_with_share(
+    parent: &File,
+    name: &OsStr,
+    desired_access: u32,
+    required_type: u32,
+    share_mode: u32,
+) -> Result<RelativeOpenResult, KelivoStatus> {
     let mut encoded_name = encode_relative_name(name)?;
     let name_length = u16::try_from(encoded_name.len() * size_of::<u16>())
         .map_err(|_| KelivoStatus::InvalidArgument)?;
@@ -344,7 +427,7 @@ fn open_relative(
             &mut io_status,
             ptr::null(),
             0,
-            SHARE_READ_WRITE,
+            share_mode,
             FILE_OPEN,
             required_type | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
             ptr::null(),
@@ -1054,6 +1137,78 @@ mod tests {
             .wipe_preserving("wipe-complete")
             .expect("固定根未变化时必须完成擦除");
         assert_eq!(fs::read(root.join("wipe-complete")).unwrap(), b"done");
+    }
+
+    #[test]
+    fn shared_preferences_removal_proof_is_bounded_and_structural() {
+        let root = TestRoot::new("preferences-proof");
+        let preferences = root.0.join("shared_preferences.json");
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("偏好文件不存在时固定根持久屏障必须成功");
+        fs::write(
+            root.0.join("other.json"),
+            br#"{"flutter.removed":"unrelated"}"#,
+        )
+        .unwrap();
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("证明只能读取固定偏好文件名");
+        fs::write(&preferences, br#"{"flutter.other":"kept"}"#).unwrap();
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("结构化对象不含目标键时必须成功");
+
+        fs::write(&preferences, br#"{"flutter.removed":"secret"}"#).unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::write(&preferences, b"[]").unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&preferences)
+            .unwrap()
+            .set_len(u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE + 1).unwrap())
+            .unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::InputTooLarge)
+        );
+    }
+
+    #[test]
+    fn shared_preferences_removal_proof_rejects_links_and_case_aliases() {
+        let root = TestRoot::new("preferences-links");
+        let external = TestRoot::new("preferences-links-external");
+        let sentinel = external.0.join("sentinel");
+        let preferences = root.0.join("shared_preferences.json");
+        fs::write(&sentinel, br#"{"flutter.other":"kept"}"#).unwrap();
+        fs::hard_link(&sentinel, &preferences).unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::remove_file(&preferences).unwrap();
+        fs::write(
+            root.0.join("SHARED_PREFERENCES.JSON"),
+            br#"{"flutter.other":"kept"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), br#"{"flutter.other":"kept"}"#);
     }
 
     #[test]

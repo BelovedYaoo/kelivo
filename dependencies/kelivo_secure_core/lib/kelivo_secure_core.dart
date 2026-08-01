@@ -360,6 +360,25 @@ final class KelivoTemporaryRootSession {
   String toString() => 'KelivoTemporaryRootSession(opaque)';
 }
 
+final class KelivoSharedPreferencesRootSession {
+  KelivoSharedPreferencesRootSession._(int value)
+    : _handle = _KelivoManagedRootHandle(value);
+
+  final _KelivoManagedRootHandle _handle;
+
+  Future<void> confirmRemoval({required String rawKey}) =>
+      _executeManagedRootSessionOperation(
+        _handle,
+        native.KELIVO_MANAGED_ROOT_OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL,
+        argument: rawKey,
+      );
+
+  Future<void> close() => _closeManagedRootSession(_handle);
+
+  @override
+  String toString() => 'KelivoSharedPreferencesRootSession(opaque)';
+}
+
 final class _KelivoOpaqueStateHandle {
   _KelivoOpaqueStateHandle(this.value);
 
@@ -577,6 +596,25 @@ final class KelivoSecureCore {
       ),
     );
     return KelivoTemporaryRootSession._(handle);
+  }
+
+  Future<KelivoSharedPreferencesRootSession> openSharedPreferencesRoot(
+    String rootPath,
+  ) async {
+    final capabilities = await getCapabilities();
+    if (!capabilities.supportsManagedRootRetirement) {
+      throw const KelivoSecureCoreException(
+        operation: 'managed_root_open',
+        status: KelivoSecureCoreStatus.unsupportedPlatform,
+      );
+    }
+    final handle = await Isolate.run(
+      () => _openManagedRoot(
+        native.KELIVO_MANAGED_ROOT_SCOPE_SHARED_PREFERENCES,
+        rootPath,
+      ),
+    );
+    return KelivoSharedPreferencesRootSession._(handle);
   }
 
   Future<Uint8List> sealRecord(

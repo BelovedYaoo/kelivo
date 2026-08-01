@@ -62,7 +62,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 19;
+const ABI_VERSION: u32 = 20;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -1636,6 +1636,18 @@ mod tests {
             },
             KelivoStatus::NullPointer.code()
         );
+        let oversized_argument = vec![b'a'; MANAGED_ROOT_ARGUMENT_MAX_SIZE + 1];
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    0,
+                    installation_root_wipe::OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL,
+                    oversized_argument.as_ptr(),
+                    oversized_argument.len(),
+                )
+            },
+            KelivoStatus::InputTooLarge.code()
+        );
         assert_eq!(
             kelivo_managed_root_close(0),
             KelivoStatus::InvalidManagedRootHandle.code()
@@ -1706,6 +1718,38 @@ mod tests {
             },
             KelivoStatus::InvalidManagedRootHandle.code()
         );
+
+        let preferences = root.join("shared_preferences.json");
+        std::fs::write(&preferences, br#"{"flutter.other":"kept"}"#).unwrap();
+        let mut preferences_handle = 0_u64;
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_open(
+                    installation_root_wipe::SCOPE_SHARED_PREFERENCES,
+                    path.as_ptr(),
+                    path.len(),
+                    &mut preferences_handle,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        let removed_key = b"flutter.removed";
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    preferences_handle,
+                    installation_root_wipe::OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL,
+                    removed_key.as_ptr(),
+                    removed_key.len(),
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_managed_root_close(preferences_handle),
+            KelivoStatus::Ok.code()
+        );
+        std::fs::remove_file(preferences).unwrap();
         std::fs::remove_dir(&root).unwrap();
     }
 

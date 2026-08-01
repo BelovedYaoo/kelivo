@@ -53,10 +53,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v19、恢复介质及受支持平台受管根退役', () async {
+  test('能力门禁声明 ABI v20、恢复介质及受支持平台受管根退役', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 19);
+    expect(capabilities.abiVersion, 20);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -146,6 +146,44 @@ void main() {
 
       expect(await retired.exists(), isFalse);
       expect(await retained.readAsString(), 'keep');
+    } finally {
+      await session?.close();
+      if (await root.exists()) {
+        await root.delete(recursive: true);
+      }
+    }
+  });
+
+  test('偏好根会话只确认固定 JSON 中目标原始键已移除', () async {
+    final capabilities = await core.getCapabilities();
+    if (!capabilities.supportsManagedRootRetirement) return;
+    final root = await Directory.systemTemp.createTemp(
+      'kelivo-secure-core-preferences-proof-',
+    );
+    KelivoSharedPreferencesRootSession? session;
+    try {
+      final preferences = File(
+        '${root.path}${Platform.pathSeparator}shared_preferences.json',
+      );
+      await preferences.writeAsString('{"flutter.other":"kept"}', flush: true);
+      session = await core.openSharedPreferencesRoot(root.path);
+
+      await session.confirmRemoval(rawKey: 'flutter.removed');
+      await preferences.writeAsString(
+        '{"flutter.removed":"secret"}',
+        flush: true,
+      );
+
+      await expectLater(
+        session.confirmRemoval(rawKey: 'flutter.removed'),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.ioFailure,
+          ),
+        ),
+      );
     } finally {
       await session?.close();
       if (await root.exists()) {

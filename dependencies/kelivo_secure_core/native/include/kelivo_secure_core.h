@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(19)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(20)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -32,10 +32,12 @@ typedef int32_t KelivoStatus;
 #define KELIVO_MANAGED_ROOT_INVALID_HANDLE UINT64_C(0)
 #define KELIVO_MANAGED_ROOT_SCOPE_INSTALLATION UINT32_C(1)
 #define KELIVO_MANAGED_ROOT_SCOPE_TEMPORARY UINT32_C(2)
+#define KELIVO_MANAGED_ROOT_SCOPE_SHARED_PREFERENCES UINT32_C(3)
 #define KELIVO_MANAGED_ROOT_OPERATION_RETIRE_PLAINTEXT_BACKUPS UINT32_C(1)
 #define KELIVO_MANAGED_ROOT_OPERATION_RETIRE_ATTACHMENT_STAGING UINT32_C(2)
 #define KELIVO_MANAGED_ROOT_OPERATION_RETIRE_PERSISTENT_LOGS UINT32_C(3)
 #define KELIVO_MANAGED_ROOT_OPERATION_WIPE_INSTALLATION_ROOT UINT32_C(4)
+#define KELIVO_MANAGED_ROOT_OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL UINT32_C(5)
 
 #define KELIVO_STATUS_OK INT32_C(0)
 #define KELIVO_STATUS_NULL_POINTER INT32_C(1)
@@ -278,10 +280,10 @@ KELIVO_CORE_API KelivoStatus kelivo_key_slot_delete(
 KELIVO_CORE_API KelivoStatus kelivo_key_slots_delete_all(void);
 
 /*
- * 固定一个受管根及其祖先身份并返回进程内不透明会话。scope 只允许安装根或
- * 系统临时根；路径必须是 UTF-8 绝对非根路径。Windows 持有禁止删除共享的逐级
- * 目录句柄；Android/Linux 持有逐级 dirfd 并在每次操作前后复核身份。Apple
- * 在具备等价实现前返回 UNSUPPORTED_PLATFORM。成功句柄必须最终 close。
+ * 固定一个受管根及其祖先身份并返回进程内不透明会话。scope 只允许安装根、
+ * 系统临时根或应用偏好根；路径必须是 UTF-8 绝对非根路径。Windows 持有禁止
+ * 删除共享的逐级目录句柄；Android/Linux 持有逐级 dirfd 并在每次操作前后复核
+ * 身份。Apple 在具备等价实现前返回 UNSUPPORTED_PLATFORM。成功句柄必须最终 close。
  */
 KELIVO_CORE_API KelivoStatus kelivo_managed_root_open(
     uint32_t scope,
@@ -292,8 +294,9 @@ KELIVO_CORE_API KelivoStatus kelivo_managed_root_open(
 /*
  * 在已固定根内执行枚举操作。调用方不能传入任意相对路径：明文备份、附件
  * staging 与持久日志操作要求 argument 为空；安装根擦除仅接受直属保留 marker
- * 名称。实现拒绝链接、重解析点、跨挂载、硬链接、类型或身份替换，并在成功前
- * 刷新文件和父目录。中途失败可用同一会话幂等重试，绝不回退到字符串递归。
+ * 名称；偏好删除证明仅接受待移除原始键。实现拒绝链接、重解析点、跨挂载、
+ * 硬链接、类型或身份替换，并在成功前刷新文件和父目录。中途失败可用同一会话
+ * 幂等重试，绝不回退到字符串递归。
  */
 KELIVO_CORE_API KelivoStatus kelivo_managed_root_execute(
     uint64_t handle,

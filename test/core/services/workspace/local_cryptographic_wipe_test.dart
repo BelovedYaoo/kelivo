@@ -831,54 +831,103 @@ void main() {
       expect(await _readAllRawPreferences(store), isNotEmpty);
     });
 
-    test('Windows Linux 物理偏好文件完成双重持久屏障后才确认删除', () async {
-      final preferencesRoot = Directory(
-        '${root.path}${Platform.pathSeparator}preferences',
-      );
-      await preferencesRoot.create();
-      final preferencesFile = File(
-        '${preferencesRoot.path}${Platform.pathSeparator}'
-        'shared_preferences.json',
-      );
-      await preferencesFile.writeAsString(
-        '{"flutter.remaining":"kept"}',
-        flush: true,
-      );
-      final durability = _RecordingPreferencesDurability();
-      final proof = JsonFileSharedPreferencesRemovalProof(
-        applicationSupportDirectory: () async => preferencesRoot,
-        durability: durability,
-      );
+    test('删除前固定证明会话并在复核后关闭', () async {
+      final events = <String>[];
+      final store = _RecordingPreferencesStore(<String, Object>{
+        'flutter.account': 'alice',
+      }, events);
+      final proof = _RecordingSharedPreferencesRemovalProof(events);
 
-      await proof.confirmRemoval('flutter.removed');
+      await PlatformDurableSharedPreferencesStore(
+        store,
+        removalProof: proof,
+      ).remove('flutter.account');
 
-      expect(durability.events, <String>['file', 'directory']);
+      expect(events, <String>[
+        'begin:flutter.account',
+        'remove:flutter.account',
+        'confirm',
+        'read',
+        'close',
+      ]);
     });
 
-    test('Windows Linux 物理偏好文件仍含目标键时失败关闭', () async {
-      final preferencesRoot = Directory(
-        '${root.path}${Platform.pathSeparator}preferences-residual',
+    test('平台拒绝删除时仍关闭已固定的证明会话', () async {
+      final events = <String>[];
+      final store = _RecordingPreferencesStore(
+        <String, Object>{'flutter.account': 'alice'},
+        events,
+        removeSucceeds: false,
       );
-      await preferencesRoot.create();
-      final preferencesFile = File(
-        '${preferencesRoot.path}${Platform.pathSeparator}'
-        'shared_preferences.json',
+      final proof = _RecordingSharedPreferencesRemovalProof(events);
+
+      await expectLater(
+        PlatformDurableSharedPreferencesStore(
+          store,
+          removalProof: proof,
+        ).remove('flutter.account'),
+        throwsStateError,
       );
-      await preferencesFile.writeAsString(
-        '{"flutter.removed":"secret"}',
-        flush: true,
-      );
-      final durability = _RecordingPreferencesDurability();
-      final proof = JsonFileSharedPreferencesRemovalProof(
-        applicationSupportDirectory: () async => preferencesRoot,
-        durability: durability,
+
+      expect(events, <String>[
+        'begin:flutter.account',
+        'remove:flutter.account',
+        'close',
+      ]);
+    });
+
+    test('复核与关闭同时失败时仍关闭且只暴露固定错误', () async {
+      final events = <String>[];
+      final store = _RecordingPreferencesStore(<String, Object>{
+        'flutter.account': 'alice',
+      }, events);
+      final proof = _RecordingSharedPreferencesRemovalProof(
+        events,
+        confirmFails: true,
+        closeFails: true,
       );
 
       await expectLater(
-        proof.confirmRemoval('flutter.removed'),
+        PlatformDurableSharedPreferencesStore(
+          store,
+          removalProof: proof,
+        ).remove('flutter.account'),
+        throwsA(
+          isA<Exception>().having(
+            (error) => error.toString(),
+            '固定错误',
+            'durable_shared_preferences_operation_and_close_failed',
+          ),
+        ),
+      );
+
+      expect(events, <String>[
+        'begin:flutter.account',
+        'remove:flutter.account',
+        'confirm',
+        'close',
+      ]);
+    });
+
+    test('非法或超限原始键不解析应用支持目录', () async {
+      var directoryRequested = false;
+      final proof = ManagedRootSharedPreferencesRemovalProof(
+        applicationSupportDirectory: () async {
+          directoryRequested = true;
+          return root;
+        },
+      );
+
+      await expectLater(
+        proof.beginRemoval(List<String>.filled(342, '界').join()),
         throwsStateError,
       );
-      expect(durability.events, <String>['file', 'directory']);
+      await expectLater(
+        proof.beginRemoval('flutter.\u0000unsafe'),
+        throwsStateError,
+      );
+
+      expect(directoryRequested, isFalse);
     });
   });
 }
@@ -973,34 +1022,79 @@ final class _ResidualPreferencesStore extends InMemorySharedPreferencesStore {
   Future<bool> remove(String key) async => true;
 }
 
-final class _RecordingPreferencesDurability implements RestoreDurability {
-  final List<String> events = <String>[];
+final class _RecordingPreferencesStore extends InMemorySharedPreferencesStore {
+  _RecordingPreferencesStore(
+    super.data,
+    this.events, {
+    this.removeSucceeds = true,
+  }) : super.withData();
+
+  final List<String> events;
+  final bool removeSucceeds;
 
   @override
-  Future<void> renameAndSync({
-    required FileSystemEntity source,
-    required String targetPath,
-  }) async {}
-
-  @override
-  Future<void> restrictDirectory(Directory directory) async {}
-
-  @override
-  Future<void> restrictFile(File file) async {}
-
-  @override
-  Future<void> syncDirectory(
-    Directory directory, {
-    bool fullBarrier = false,
-  }) async {
-    expect(fullBarrier, isTrue);
-    events.add('directory');
+  Future<Map<String, Object>> getAllWithParameters(
+    GetAllParameters parameters,
+  ) async {
+    events.add('read');
+    return super.getAllWithParameters(parameters);
   }
 
   @override
-  Future<void> syncFile(File file, {bool fullBarrier = false}) async {
-    expect(fullBarrier, isTrue);
-    events.add('file');
+  Future<bool> remove(String key) async {
+    events.add('remove:$key');
+    if (!removeSucceeds) return false;
+    return super.remove(key);
+  }
+}
+
+final class _RecordingSharedPreferencesRemovalProof
+    implements DurableSharedPreferencesRemovalProof {
+  _RecordingSharedPreferencesRemovalProof(
+    this.events, {
+    this.confirmFails = false,
+    this.closeFails = false,
+  });
+
+  final List<String> events;
+  final bool confirmFails;
+  final bool closeFails;
+
+  @override
+  Future<DurableSharedPreferencesRemovalSession> beginRemoval(
+    String rawKey,
+  ) async {
+    events.add('begin:$rawKey');
+    return _RecordingSharedPreferencesRemovalSession(
+      events,
+      confirmFails: confirmFails,
+      closeFails: closeFails,
+    );
+  }
+}
+
+final class _RecordingSharedPreferencesRemovalSession
+    implements DurableSharedPreferencesRemovalSession {
+  _RecordingSharedPreferencesRemovalSession(
+    this.events, {
+    required this.confirmFails,
+    required this.closeFails,
+  });
+
+  final List<String> events;
+  final bool confirmFails;
+  final bool closeFails;
+
+  @override
+  Future<void> confirmRemoval() async {
+    events.add('confirm');
+    if (confirmFails) throw StateError('injected_confirm_failure');
+  }
+
+  @override
+  Future<void> close() async {
+    events.add('close');
+    if (closeFails) throw StateError('injected_close_failure');
   }
 }
 
@@ -1009,7 +1103,20 @@ final class _TestSharedPreferencesRemovalProof
   const _TestSharedPreferencesRemovalProof();
 
   @override
-  Future<void> confirmRemoval(String rawKey) async {}
+  Future<DurableSharedPreferencesRemovalSession> beginRemoval(
+    String rawKey,
+  ) async => const _TestSharedPreferencesRemovalSession();
+}
+
+final class _TestSharedPreferencesRemovalSession
+    implements DurableSharedPreferencesRemovalSession {
+  const _TestSharedPreferencesRemovalSession();
+
+  @override
+  Future<void> confirmRemoval() async {}
+
+  @override
+  Future<void> close() async {}
 }
 
 class _MemoryWipeDurability implements RestoreDurability {
