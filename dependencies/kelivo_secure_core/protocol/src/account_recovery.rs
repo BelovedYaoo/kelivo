@@ -12,7 +12,7 @@ use hpke::{
 };
 use rand::{CryptoRng, RngCore};
 use sha2_device::{Digest, Sha256};
-use zeroize::Zeroizing;
+use zeroize::{Zeroize, Zeroizing};
 
 use crate::{
     device_crypto::{
@@ -336,6 +336,20 @@ pub struct AccountRecoveryProofMaterial {
     pub transcript: [u8; ACCOUNT_RECOVERY_PROOF_TRANSCRIPT_LENGTH],
     pub nonce_proof: [u8; ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH],
     pub trust_signature_message: [u8; 32],
+}
+
+impl Zeroize for AccountRecoveryProofMaterial {
+    fn zeroize(&mut self) {
+        self.transcript.zeroize();
+        self.nonce_proof.zeroize();
+        self.trust_signature_message.zeroize();
+    }
+}
+
+impl Drop for AccountRecoveryProofMaterial {
+    fn drop(&mut self) {
+        self.zeroize();
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -780,24 +794,25 @@ pub fn create_account_recovery_proof_material(
         return Err(AccountRecoveryProtocolError::InvalidProofInput);
     }
     let challenge_digest: [u8; 32] = Sha256::digest(challenge).into();
-    let mut transcript = [0_u8; ACCOUNT_RECOVERY_PROOF_TRANSCRIPT_LENGTH];
-    transcript[..8].copy_from_slice(&PROOF_MAGIC);
-    transcript[8..12].copy_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
-    transcript[12..44].copy_from_slice(&challenge_digest);
-    transcript[44..76].copy_from_slice(nonce);
-    transcript[76..].copy_from_slice(recovery_token_digest);
-    let nonce_proof = Sha256::digest(transcript).into();
+    let mut proof = AccountRecoveryProofMaterial {
+        transcript: [0_u8; ACCOUNT_RECOVERY_PROOF_TRANSCRIPT_LENGTH],
+        nonce_proof: [0_u8; ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH],
+        trust_signature_message: [0_u8; 32],
+    };
+    proof.transcript[..8].copy_from_slice(&PROOF_MAGIC);
+    proof.transcript[8..12]
+        .copy_from_slice(&ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes());
+    proof.transcript[12..44].copy_from_slice(&challenge_digest);
+    proof.transcript[44..76].copy_from_slice(nonce);
+    proof.transcript[76..].copy_from_slice(recovery_token_digest);
+    proof.nonce_proof = Sha256::digest(&proof.transcript).into();
     let mut trust_input = Zeroizing::new(Vec::with_capacity(
         TRUST_SIGNATURE_DOMAIN.len() + ACCOUNT_RECOVERY_PROOF_TRANSCRIPT_LENGTH,
     ));
     trust_input.extend_from_slice(TRUST_SIGNATURE_DOMAIN);
-    trust_input.extend_from_slice(&transcript);
-    let trust_signature_message = Sha256::digest(trust_input.as_slice()).into();
-    Ok(AccountRecoveryProofMaterial {
-        transcript,
-        nonce_proof,
-        trust_signature_message,
-    })
+    trust_input.extend_from_slice(&proof.transcript);
+    proof.trust_signature_message = Sha256::digest(trust_input.as_slice()).into();
+    Ok(proof)
 }
 
 pub fn open_account_recovery_nonce(
@@ -983,7 +998,7 @@ mod tests {
         let challenge = server_vector_challenge();
         let nonce = [0x31; ACCOUNT_RECOVERY_NONCE_LENGTH];
         let token_digest = [0x61; ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH];
-        let proof = create_account_recovery_proof_material(
+        let mut proof = create_account_recovery_proof_material(
             &challenge,
             &nonce,
             &token_digest,
@@ -1001,6 +1016,16 @@ mod tests {
             decode_hex(
                 "99f8454d1e5250d257767863db8b14e9c35767bbce767b1d57916eaea3d7c11c",
             ),
+        );
+        assert!(std::mem::needs_drop::<AccountRecoveryProofMaterial>());
+        zeroize::Zeroize::zeroize(&mut proof);
+        assert!(proof.transcript.iter().all(|byte| *byte == 0));
+        assert!(proof.nonce_proof.iter().all(|byte| *byte == 0));
+        assert!(
+            proof
+                .trust_signature_message
+                .iter()
+                .all(|byte| *byte == 0)
         );
     }
 
