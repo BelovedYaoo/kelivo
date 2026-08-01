@@ -33,6 +33,22 @@ class FlutterLogger {
     }
   }
 
+  static Future<void> shutdownForLocalCryptographicWipe() async {
+    // 擦除完成的真实性依赖日志句柄已释放；这里不能沿用普通设置切换的
+    // 吞错语义，否则 Windows 上仍被占用的日志文件会造成伪成功。
+    _enabled = false;
+    await _writeQueue;
+    final sink = _sink;
+    if (sink == null) {
+      _sinkDate = null;
+      return;
+    }
+    await sink.flush();
+    await sink.close();
+    _sink = null;
+    _sinkDate = null;
+  }
+
   static bool _installed = false;
   static FlutterExceptionHandler? _originalFlutterOnError;
   static bool Function(Object, StackTrace)? _originalPlatformOnError;

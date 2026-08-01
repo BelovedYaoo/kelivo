@@ -4,7 +4,9 @@ import 'dart:io';
 import 'package:Kelivo/core/services/backup/restore_durability.dart';
 import 'package:Kelivo/core/services/storage/durable_shared_preferences_eraser.dart';
 import 'package:Kelivo/core/services/storage/durable_shared_preferences_store.dart';
+import 'package:Kelivo/core/services/workspace/installation_operation_lease.dart';
 import 'package:Kelivo/core/services/workspace/local_cryptographic_wipe.dart';
+import 'package:Kelivo/core/services/workspace/local_cryptographic_wipe_startup.dart';
 import 'package:Kelivo/core/services/workspace/local_wipe_marker_topology.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -544,6 +546,122 @@ void main() {
     expect(await outside.readAsString(), 'user-export');
   });
 
+  group('冷启动安装级准入', () {
+    test('无 marker 时返回并持续持有 business lease', () async {
+      final installationLease = InstallationOperationLease(
+        installationRoot: installationRoot,
+      );
+      final startup = LocalCryptographicWipeStartupCoordinator(
+        installationOperationLease: installationLease,
+        localCryptographicWipe: createWipe(),
+        stopBackgroundSync: () async {},
+      );
+
+      final admission = await startup.admit();
+
+      expect(admission, isA<LocalCryptographicWipeBusinessReady>());
+      final business =
+          (admission as LocalCryptographicWipeBusinessReady).businessLease;
+      expect(business.isClosed, isFalse);
+      await business.close();
+    });
+
+    test('confirmed marker 在 EX 下完成后只允许冷重启', () async {
+      final wipe = createWipe();
+      await markConfirmed(wipe);
+      final installationLease = InstallationOperationLease(
+        installationRoot: installationRoot,
+      );
+      final startup = LocalCryptographicWipeStartupCoordinator(
+        installationOperationLease: installationLease,
+        localCryptographicWipe: wipe,
+        stopBackgroundSync: () async {},
+      );
+
+      final admission = await startup.admit();
+
+      expect(admission, isA<LocalCryptographicWipeRestartRequired>());
+      expect(await wipe.hasPendingWipe(), isFalse);
+      final business = await installationLease.acquireBusiness();
+      await business.close();
+    });
+
+    test('marker 已删但 lease complete 失败时重试不重复擦除', () async {
+      final marker = File(
+        '${installationRoot.path}${Platform.pathSeparator}'
+        '${LocalWipeMarkerTopology.revocationConfirmedMarkerFileName}',
+      );
+      await marker.writeAsString('{}', flush: true);
+      final installationLease = InstallationOperationLease(
+        installationRoot: installationRoot,
+      );
+      late final Directory blockingOwner;
+      final wipe = _StartupTestWipe(
+        installationRoot: installationRoot,
+        afterResume: () async {
+          final owner = File(
+            '${installationLease.sidecarDirectory.path}'
+            '${Platform.pathSeparator}.kelivo_business_lease'
+            '${Platform.pathSeparator}owner_$pid',
+          );
+          await owner.delete();
+          blockingOwner = Directory(owner.path);
+          await blockingOwner.create();
+        },
+      );
+      final startup = LocalCryptographicWipeStartupCoordinator(
+        installationOperationLease: installationLease,
+        localCryptographicWipe: wipe,
+        stopBackgroundSync: () async {},
+      );
+
+      await expectLater(startup.admit(), throwsStateError);
+      expect(wipe.resumeCalls, 1);
+      expect(await marker.exists(), isFalse);
+
+      await blockingOwner.delete();
+      await startup.retryPendingWipe();
+      expect(wipe.resumeCalls, 1);
+      final business = await installationLease.acquireBusiness();
+      await business.close();
+    });
+
+    test('requested-only 保持 EX 门禁直至同 mutation 得到确认', () async {
+      final wipe = createWipe();
+      await wipe.markRevocationRequested(
+        deviceId: deviceId,
+        mutationId: mutationId,
+      );
+      final installationLease = InstallationOperationLease(
+        installationRoot: installationRoot,
+      );
+      final startup = LocalCryptographicWipeStartupCoordinator(
+        installationOperationLease: installationLease,
+        localCryptographicWipe: wipe,
+        stopBackgroundSync: () async {},
+      );
+
+      await expectLater(
+        startup.admit(),
+        throwsA(isA<LocalDeviceRevocationConfirmationRequired>()),
+      );
+      await expectLater(
+        InstallationOperationLease(
+          installationRoot: installationRoot,
+        ).acquireBusiness(),
+        throwsA(isA<InstallationBusinessLeaseUnavailable>()),
+      );
+
+      await wipe.markRevocationConfirmed(
+        deviceId: deviceId,
+        mutationId: mutationId,
+      );
+      await startup.retryPendingWipe();
+      final business = await installationLease.acquireBusiness();
+      await business.close();
+    });
+  });
+
   group('持久删除全部偏好', () {
     test('逐键删除全部原始键并复核为空', () async {
       final store = InMemorySharedPreferencesStore.withData(<String, Object>{
@@ -663,6 +781,64 @@ Future<Map<String, Object>> _readAllRawPreferences(
   return store.getAllWithParameters(
     GetAllParameters(filter: PreferencesFilter(prefix: '')),
   );
+}
+
+final class _StartupTestWipe implements LocalCryptographicWipe {
+  _StartupTestWipe({required this.installationRoot, required this.afterResume});
+
+  final Directory installationRoot;
+  final Future<void> Function() afterResume;
+  int resumeCalls = 0;
+
+  File get _marker => File(
+    '${installationRoot.path}${Platform.pathSeparator}'
+    '${LocalWipeMarkerTopology.revocationConfirmedMarkerFileName}',
+  );
+
+  @override
+  bool get isSupported => true;
+
+  @override
+  Future<bool> hasPendingWipe() => _marker.exists();
+
+  @override
+  Future<void> markRevocationConfirmed({
+    required String deviceId,
+    required String mutationId,
+  }) {
+    throw UnsupportedError('startup_test_wipe_mark_confirmed');
+  }
+
+  @override
+  Future<void> markRevocationRequested({
+    required String deviceId,
+    required String mutationId,
+  }) {
+    throw UnsupportedError('startup_test_wipe_mark_requested');
+  }
+
+  @override
+  Future<LocalCryptographicWipeIntent?> readPendingIntent() async {
+    if (!await _marker.exists()) return null;
+    return LocalCryptographicWipeIntent(
+      phase: LocalCryptographicWipePhase.revocationConfirmed,
+      deviceId: '00000000-0000-4000-8000-000000000001',
+      mutationId: '00000000-0000-4000-8000-000000000003',
+      createdAtUtc: DateTime.utc(2026, 8),
+    );
+  }
+
+  @override
+  Future<bool> resumePendingAtColdStart({
+    required LocalCryptographicWipeStep stopBackgroundSync,
+  }) async {
+    if (!await _marker.exists()) return false;
+    resumeCalls++;
+    await stopBackgroundSync();
+    await _marker.delete();
+    await afterResume();
+    return true;
+  }
 }
 
 final class _RemoveRejectedPreferencesStore

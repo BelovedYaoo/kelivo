@@ -15,7 +15,8 @@
 - 明文备份退役按 #83 语义覆盖本地和全部已注册账号前缀，并在删除前拒绝未知账号命名空间；定向验证 4/4 通过，Android 全新安装实机验证仍由 #83 跟踪。
 - 定向验证：本机擦除 22/22、明文退役 4/4 通过；未运行生产默认安全槽 FFI。
 - 安装级共享/独占 lease 已完成：自撤销先持 turnstile，requested 落盘并关闭前台 business 后才能排空到 EX；冷启动和后台同步均在 workspace 前受同一门禁保护。定向验证 18 通过、1 个 Windows 符号链接权限跳过。
-- 安全审查仍阻塞合并：main 尚未按冷启动 EX/正常业务 lease 顺序接线；当前 Dart 路径递归仅为状态机占位，必须由 handle-relative、no-follow 原生整根擦除 ABI 替换后才可合并。
+- main 已在任何 workspace bootstrap 前完成冷启动 EX/正常业务 lease 准入；marker 擦除完成但 lease completion 失败时只重试 completion，成功后必须冷重启。准入与状态机定向验证 29/29 通过。
+- 安全审查仍阻塞合并：当前 Dart 路径递归仅为状态机占位，必须由 handle-relative、no-follow 原生整根擦除 ABI 替换后才可合并。
 - #82 的 SharedPreferences 启动顺序回归已由主线 `90ee530c` 修复。
 
 ## 协作边界

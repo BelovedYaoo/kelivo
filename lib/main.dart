@@ -42,8 +42,12 @@ import 'core/services/sync/e2ee_config_provider_binding.dart';
 import 'core/services/sync/e2ee_device_pairing_membership_commit.dart';
 import 'core/services/sync/e2ee_mobile_background_sync.dart';
 import 'core/services/sync/sync_write_executor.dart';
+import 'core/services/storage/durable_shared_preferences_eraser.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
 import 'core/services/workspace/device_state_blob_store.dart';
+import 'core/services/workspace/installation_operation_lease.dart';
+import 'core/services/workspace/local_cryptographic_wipe.dart';
+import 'core/services/workspace/local_cryptographic_wipe_startup.dart';
 import 'core/services/database_v2_rollout_ledger.dart';
 import 'core/services/backup/restore_business_lease.dart';
 import 'core/services/backup/restore_startup_gate.dart';
@@ -54,8 +58,10 @@ import 'core/services/logging/flutter_logger.dart';
 import 'features/home/services/ask_user_interaction_service.dart';
 import 'features/home/services/tool_approval_service.dart';
 import 'utils/platform_utils.dart';
+import 'utils/app_directories.dart';
 import 'utils/sandbox_path_resolver.dart';
 import 'shared/widgets/app_overlays.dart';
+import 'shared/widgets/local_cryptographic_wipe_gate.dart';
 import 'shared/widgets/restore_failure_screen.dart';
 import 'shared/widgets/restore_cold_restart_screen.dart';
 import 'shared/widgets/restore_outcome_notice.dart';
@@ -64,6 +70,7 @@ import 'package:google_fonts/google_fonts.dart';
 import 'package:system_fonts/system_fonts.dart';
 import 'dart:io'
     show
+        Directory,
         File,
         Platform,
         pid,
@@ -71,6 +78,7 @@ import 'dart:io'
 import 'core/services/android_background.dart';
 import 'core/services/notification_service.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:path_provider/path_provider.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
 final RouteObserver<ModalRoute<dynamic>> routeObserver =
@@ -139,9 +147,66 @@ Future<void> main() async {
       WidgetsFlutterBinding.ensureInitialized();
       final mobileBackgroundSyncScheduler =
           E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
+      late final Directory installationRoot;
+      try {
+        installationRoot = await AppDirectories.getInstallationRootDirectory();
+      } catch (error, stackTrace) {
+        stderr.writeln('[InstallationRoot] $error\n$stackTrace');
+        await _initRestoreFailureWindow();
+        runApp(
+          _RestoreFailureApp(
+            diagnosticCode: restoreFailureDiagnosticCode(error),
+          ),
+        );
+        return;
+      }
+      final localCryptographicWipe = InstallationLocalCryptographicWipe(
+        installationRoot: installationRoot,
+        applicationCacheDirectory: getApplicationCacheDirectory,
+        deleteAllSecureSlots: const KelivoSecureCore().deleteAllSlots,
+        clearAllPreferences: _clearAllPreferencesForLocalWipe,
+        shutdownLogging: FlutterLogger.shutdownForLocalCryptographicWipe,
+      );
+      final installationOperationLease = InstallationOperationLease(
+        installationRoot: installationRoot,
+      );
+      final localWipeStartup = LocalCryptographicWipeStartupCoordinator(
+        installationOperationLease: installationOperationLease,
+        localCryptographicWipe: localCryptographicWipe,
+        stopBackgroundSync: () =>
+            mobileBackgroundSyncScheduler.setEnabled(false),
+      );
+      late final InstallationBusinessLease installationBusinessLease;
+      try {
+        final admission = await localWipeStartup.admit();
+        switch (admission) {
+          case LocalCryptographicWipeBusinessReady(:final businessLease):
+            installationBusinessLease = businessLease;
+            break;
+          case LocalCryptographicWipeRestartRequired():
+            await PlatformUtils.restartApp();
+            await _initRestoreFailureWindow();
+            runApp(const _RestoreColdRestartApp());
+            return;
+        }
+      } catch (error, stackTrace) {
+        stderr.writeln('[LocalCryptographicWipe] $error\n$stackTrace');
+        await _initRestoreFailureWindow();
+        runApp(
+          _LocalCryptographicWipeFailureApp(
+            retry: () async {
+              await localWipeStartup.retryPendingWipe();
+              await PlatformUtils.restartApp();
+            },
+          ),
+        );
+        return;
+      }
       final AccountWorkspaceRuntime workspaceRuntime;
       try {
-        workspaceRuntime = await AccountWorkspaceRuntime.bootstrap();
+        workspaceRuntime = await AccountWorkspaceRuntime.bootstrap(
+          installationRoot: installationRoot,
+        );
       } catch (error, stackTrace) {
         stderr.writeln('[AccountWorkspace] $error\n$stackTrace');
         await _initRestoreFailureWindow();
@@ -283,6 +348,9 @@ Future<void> main() async {
           workspaceRuntime: workspaceRuntime,
           databaseGateway: databaseGateway,
           mobileBackgroundSyncScheduler: mobileBackgroundSyncScheduler,
+          localCryptographicWipe: localCryptographicWipe,
+          installationOperationLease: installationOperationLease,
+          installationBusinessLease: installationBusinessLease,
           chatContentRuntime: chatContentRuntime,
           restoreOutcome: restoreOutcome?.state,
         ),
@@ -296,6 +364,9 @@ Future<void> main() async {
     ),
   );
 }
+
+Future<void> _clearAllPreferencesForLocalWipe() =>
+    const DurableSharedPreferencesEraser().eraseAll();
 
 E2eeChatContentRuntime? _createE2eeChatContentRuntime({
   required AccountWorkspaceRuntime workspaceRuntime,
@@ -375,6 +446,26 @@ class _RestoreFailureApp extends StatelessWidget {
   }
 }
 
+class _LocalCryptographicWipeFailureApp extends StatelessWidget {
+  const _LocalCryptographicWipeFailureApp({required this.retry});
+
+  final Future<void> Function() retry;
+
+  @override
+  Widget build(BuildContext context) {
+    final palette = ThemePalettes.defaultPalette;
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Kelivo',
+      supportedLocales: AppLocalizations.supportedLocales,
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      theme: buildLightThemeForScheme(palette.light),
+      darkTheme: buildDarkThemeForScheme(palette.dark),
+      home: LocalCryptographicWipeGate(retry: retry),
+    );
+  }
+}
+
 class _RestoreColdRestartApp extends StatelessWidget {
   const _RestoreColdRestartApp();
 
@@ -414,6 +505,9 @@ class MyApp extends StatelessWidget {
     required this.workspaceRuntime,
     required this.databaseGateway,
     required this.mobileBackgroundSyncScheduler,
+    required this.localCryptographicWipe,
+    required this.installationOperationLease,
+    required this.installationBusinessLease,
     super.key,
     this.chatContentRuntime,
     this.restoreOutcome,
@@ -422,6 +516,9 @@ class MyApp extends StatelessWidget {
   final AccountWorkspaceRuntime workspaceRuntime;
   final ChatDatabaseGateway databaseGateway;
   final E2eeMobileBackgroundSyncScheduler mobileBackgroundSyncScheduler;
+  final LocalCryptographicWipe localCryptographicWipe;
+  final InstallationOperationLease installationOperationLease;
+  final InstallationBusinessLease installationBusinessLease;
   final E2eeChatContentRuntime? chatContentRuntime;
   final RestoreReceiptState? restoreOutcome;
 
@@ -529,7 +626,15 @@ class MyApp extends StatelessWidget {
             ctx.read<E2eeConfigProviderBinding>();
             final runtime = chatContentRuntime;
             final provider = runtime == null
-                ? CloudSyncProvider.controlPlaneOnly(workspaceRuntime)
+                ? CloudSyncProvider.controlPlaneOnly(
+                    workspaceRuntime,
+                    localCryptographicWipe: localCryptographicWipe,
+                    installationOperationLease: installationOperationLease,
+                    installationBusinessLease: installationBusinessLease,
+                    stopBackgroundSync: () =>
+                        mobileBackgroundSyncScheduler.setEnabled(false),
+                    restartForLocalDeviceWipe: PlatformUtils.restartApp,
+                  )
                 : CloudSyncProvider.withContentRuntime(
                     workspaceRuntime,
                     contentRuntime: runtime,
@@ -540,6 +645,12 @@ class MyApp extends StatelessWidget {
                             workspaceRuntime,
                           ),
                         ),
+                    localCryptographicWipe: localCryptographicWipe,
+                    installationOperationLease: installationOperationLease,
+                    installationBusinessLease: installationBusinessLease,
+                    stopBackgroundSync: () =>
+                        mobileBackgroundSyncScheduler.setEnabled(false),
+                    restartForLocalDeviceWipe: PlatformUtils.restartApp,
                   );
             unawaited(provider.initialize());
             return provider;
@@ -560,6 +671,10 @@ class MyApp extends StatelessWidget {
           final workspaceRestartRequired = context
               .select<CloudSyncProvider, bool>(
                 (provider) => provider.workspaceRestartRequired,
+              );
+          final localDeviceWipePending = context
+              .select<CloudSyncProvider, bool>(
+                (provider) => provider.localDeviceWipePending,
               );
           // Apply global proxy overrides when settings change
           settings.applyGlobalProxyOverridesIfNeeded();
@@ -834,16 +949,29 @@ class MyApp extends StatelessWidget {
                   }
 
                   // Enforce app font as a default across the tree for Texts without explicit family
-                  final appWithOverlays = WorkspaceRestartGate(
-                    restartRequired: workspaceRestartRequired,
-                    restart: () async {
-                      await ctx
-                          .read<CloudSyncProvider>()
-                          .prepareWorkspaceRestart();
-                      await PlatformUtils.restartApp();
-                    },
-                    child: AppOverlays(child: child ?? const SizedBox.shrink()),
-                  );
+                  final appWithOverlays = localDeviceWipePending
+                      ? LocalCryptographicWipeGate(
+                          retry: () async {
+                            final completed = await ctx
+                                .read<CloudSyncProvider>()
+                                .retryLocalDeviceWipe();
+                            if (!completed) {
+                              throw StateError('local_device_wipe_incomplete');
+                            }
+                          },
+                        )
+                      : WorkspaceRestartGate(
+                          restartRequired: workspaceRestartRequired,
+                          restart: () async {
+                            await ctx
+                                .read<CloudSyncProvider>()
+                                .prepareWorkspaceRestart();
+                            await PlatformUtils.restartApp();
+                          },
+                          child: AppOverlays(
+                            child: child ?? const SizedBox.shrink(),
+                          ),
+                        );
                   return AnnotatedRegion<SystemUiOverlayStyle>(
                     value: overlay,
                     child: effectiveAppFont == null
