@@ -862,7 +862,7 @@ mod tests {
     use super::*;
     use std::{
         fs,
-        os::unix::{ffi::OsStrExt, fs::symlink},
+        os::unix::{ffi::OsStrExt, fs::PermissionsExt, fs::symlink},
         path::PathBuf,
         sync::atomic::{AtomicUsize, Ordering},
     };
@@ -989,6 +989,28 @@ mod tests {
     }
 
     #[test]
+    fn managed_root_session_rejects_ancestor_replacement_without_external_touch() {
+        let parent = TestRoot::new("session-ancestor");
+        let ancestor = parent.0.join("ancestor");
+        let root = ancestor.join("managed");
+        let moved = parent.0.join("original-ancestor");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("wipe-complete"), b"done").unwrap();
+        fs::write(root.join("secret"), b"secret").unwrap();
+        let session = PinnedRoot::open(root.to_str().unwrap()).unwrap();
+        fs::rename(&ancestor, &moved).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("sentinel"), b"outside").unwrap();
+
+        assert_eq!(
+            session.wipe_preserving("wipe-complete"),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(root.join("sentinel")).unwrap(), b"outside");
+        assert_eq!(fs::read(moved.join("managed/secret")).unwrap(), b"secret");
+    }
+
+    #[test]
     fn temporary_backup_retirement_deletes_only_owned_artifacts_and_unicode_contents() {
         let root = TestRoot::new("backup-retirement");
         fs::write(root.0.join("_bk_settings.json"), b"secret").unwrap();
@@ -1029,6 +1051,27 @@ mod tests {
             Err(KelivoStatus::IoFailure)
         );
         assert_eq!(fs::read(&sentinel).unwrap(), b"outside");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn temporary_backup_retirement_reports_permission_boundary() {
+        // root 可绕过目录权限；实际边界由非特权容器用例覆盖。
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let root = TestRoot::new("backup-permission");
+        let blocked = root.0.join("kelivo_backup_blocked");
+        fs::create_dir(&blocked).unwrap();
+        fs::write(blocked.join("secret"), b"secret").unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0)).unwrap();
+
+        let result = session.retire_plaintext_backups();
+
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(result, Err(KelivoStatus::IoFailure));
+        assert_eq!(fs::read(blocked.join("secret")).unwrap(), b"secret");
     }
 
     #[test]
