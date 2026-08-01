@@ -9,3 +9,4 @@
 - 已完成：源记录/附件与暂存记录/附件可按有界分页流式累计 SHA-256；严格校验顺序、数量、阶段和最大 changeSeq，结果与既有 TypeScript 固定向量一致。
 - 已完成：data-rekey 单例日志支持严格读取、租约回执耐久记录、单调续租、幂等阶段推进和 finalizing 身份校验后清理；网络延迟后的过期回执仍可落盘，但不得覆盖更新的租约事实。
 - 已完成：CloudSync v4 finalize 公开返回封闭 outcome，严格解析并校验 `verification-pending` 的跨请求分页检查点；执行器可在同一 finalize mutation 的多次请求之间续租，最终仅接收完整 `finalized` 回执。
+- 已完成：按账户 locator 与 operation 隔离的耐久 stage cache；pending 随机密文先原子落盘再发送，确认后先原子发布 compact canonical frame 再清除大密文，支持崩溃窗口精确恢复、数量/大小上限、进程锁、摘要校验和 finalize/abort 清理。清理只遍历白名单文件且不递归；统一句柄级防换链删除仍由 `#85` 收口。
