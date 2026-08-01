@@ -9,7 +9,6 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'desktop/desktop_window_controller.dart';
 import 'desktop/desktop_tray_controller.dart';
-// import 'package:logging/logging.dart' as logging;
 // Theme is now managed in SettingsProvider
 import 'theme/theme_factory.dart';
 import 'theme/palettes.dart';
@@ -54,7 +53,6 @@ import 'core/services/backup/restore_startup_gate.dart';
 import 'core/services/backup/restore_receipt.dart';
 import 'core/services/backup/plaintext_remote_backup_retirement.dart';
 import 'core/services/mcp/mcp_tool_service.dart';
-import 'core/services/logging/flutter_logger.dart';
 import 'features/home/services/ask_user_interaction_service.dart';
 import 'features/home/services/tool_approval_service.dart';
 import 'utils/platform_utils.dart';
@@ -77,7 +75,6 @@ import 'dart:io'
         stderr; // kept for global override usage inside provider
 import 'core/services/android_background.dart';
 import 'core/services/notification_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 
@@ -170,7 +167,6 @@ Future<void> main() async {
         deleteAllSecureSlots: secureCore.deleteAllSlots,
         wipeInstallationRoot: secureCore.wipeInstallationRoot,
         clearAllPreferences: _clearAllPreferencesForLocalWipe,
-        shutdownLogging: FlutterLogger.shutdownForLocalCryptographicWipe,
       );
       final installationOperationLease = InstallationOperationLease(
         installationRoot: installationRoot,
@@ -243,7 +239,6 @@ Future<void> main() async {
         );
         return;
       }
-      FlutterLogger.installGlobalHandlers();
       final appDataDirectory = workspaceRuntime.current.dataDirectory;
       final databaseCipher = SqlCipherDatabaseKey.forWorkspace(
         workspaceRuntime.current.workspaceKey,
@@ -277,11 +272,6 @@ Future<void> main() async {
         );
         return;
       }
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final enabled = prefs.getBool('flutter_log_enabled_v1') ?? false;
-        await FlutterLogger.setEnabled(enabled);
-      } catch (_) {}
       // Trim Flutter global image cache to reduce memory pressure from large images
       try {
         PaintingBinding.instance.imageCache.maximumSize = 200;
@@ -291,12 +281,6 @@ Future<void> main() async {
       // Desktop (Windows) window setup: hide native title bar for custom Flutter bar
       await _initDesktopWindow();
       // Avoid preloading all system fonts at launch (huge memory on desktop)
-      // Debug logging and global error handlers were enabled previously for diagnosis.
-      // They are commented out now per request to reduce log noise.
-      // FlutterError.onError = (FlutterErrorDetails details) { ... };
-      // WidgetsBinding.instance.platformDispatcher.onError = (Object error, StackTrace stack) { ... };
-      // logging.Logger.root.level = logging.Level.ALL;
-      // logging.Logger.root.onRecord.listen((rec) { ... });
       // Cache current Documents directory to fix sandboxed absolute paths on iOS
       await SandboxPathResolver.init();
       try {
@@ -347,7 +331,6 @@ Future<void> main() async {
         workspaceRuntime: workspaceRuntime,
         databaseGateway: databaseGateway,
       );
-      // Start app (Flutter log capture is toggleable and off by default)
       runApp(
         MyApp(
           workspaceRuntime: workspaceRuntime,
@@ -363,7 +346,6 @@ Future<void> main() async {
     },
     zoneSpecification: ZoneSpecification(
       print: (self, parent, zone, line) {
-        FlutterLogger.logPrint(line);
         parent.print(zone, line);
       },
     ),

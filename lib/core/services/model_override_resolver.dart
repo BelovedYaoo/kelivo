@@ -3,18 +3,12 @@ import 'dart:collection';
 import 'package:flutter/foundation.dart';
 
 import '../models/model_types.dart';
-import '../services/logging/flutter_logger.dart';
 
 /// Shared utilities for parsing and applying per-model override maps.
 class ModelOverrideResolver {
   static const Set<String> _embeddingTypeStrings = {'embedding', 'embeddings'};
   static const Set<String> _chatTypeStrings = {'chat'};
-  static bool _platformLogEnabled = true;
   static bool _unknownValueLoggingEnabled = kDebugMode;
-
-  static void setPlatformLoggingEnabled(bool enabled) {
-    _platformLogEnabled = enabled;
-  }
 
   static void setUnknownValueLoggingEnabled(bool enabled) {
     _unknownValueLoggingEnabled = enabled;
@@ -42,7 +36,7 @@ class ModelOverrideResolver {
       } else if (s == 'image') {
         out.add(Modality.image);
       } else if (s.isNotEmpty) {
-        _logUnknown('modality', s);
+        _logUnknown('modality');
       }
     }
     if (out.isEmpty) return null;
@@ -60,23 +54,17 @@ class ModelOverrideResolver {
       } else if (s == 'reasoning') {
         out.add(ModelAbility.reasoning);
       } else if (s.isNotEmpty) {
-        _logUnknown('ability', s);
+        _logUnknown('ability');
       }
     }
     if (out.isEmpty) return null;
     return LinkedHashSet<ModelAbility>.from(out).toList(growable: false);
   }
 
-  static void _logUnknown(String kind, String value) {
+  static void _logUnknown(String kind) {
     if (!_unknownValueLoggingEnabled) return;
     if (kDebugMode) {
-      debugPrint('[ModelOverride] Unknown $kind value: $value');
-    }
-    if (_platformLogEnabled) {
-      FlutterLogger.log(
-        '[ModelOverride] Unknown $kind value: $value',
-        tag: 'ModelOverride',
-      );
+      debugPrint('[ModelOverride] Unknown $kind value');
     }
   }
 

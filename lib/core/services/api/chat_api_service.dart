@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import '../../providers/settings_provider.dart';
@@ -18,7 +19,6 @@ import '../../../utils/markdown_media_sanitizer.dart';
 import '../../../utils/unicode_sanitizer.dart';
 import 'builtin_tools.dart';
 import 'gemini_tool_config.dart';
-import '../logging/flutter_logger.dart';
 import '../model_override_resolver.dart';
 import '../model_override_payload_parser.dart';
 import 'provider_request_headers.dart';
@@ -176,11 +176,11 @@ class ChatApiService {
     if (ov.isEmpty) return base;
     try {
       return ModelOverrideResolver.applyModelOverride(base, ov);
-    } catch (e, st) {
-      FlutterLogger.log(
-        '[ModelOverride] applyModelOverride failed: $e\n$st',
-        tag: 'ModelOverride',
-      );
+    } catch (_) {
+      assert(() {
+        debugPrint('[ChatApiService] model override application failed');
+        return true;
+      }());
       return base;
     }
   }
@@ -1367,10 +1367,6 @@ class ChatApiService {
       return topP;
     }
     if (topP < 0.95 || topP > 1.0) {
-      FlutterLogger.log(
-        '[ClaudeCompat] Omit top_p=$topP because thinking requires 0.95 <= top_p <= 1.0.',
-        tag: 'ChatApiService',
-      );
       return null;
     }
     return topP;

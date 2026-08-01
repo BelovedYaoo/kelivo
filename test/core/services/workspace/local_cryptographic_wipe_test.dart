@@ -56,7 +56,6 @@ void main() {
     Future<void> Function()? deleteAllSecureSlots,
     LocalInstallationRootWipe? wipeInstallationRoot,
     Future<void> Function()? clearAllPreferences,
-    Future<void> Function()? shutdownLogging,
     RestoreDurability? durability,
   }) {
     return InstallationLocalCryptographicWipe(
@@ -67,7 +66,6 @@ void main() {
       deleteAllSecureSlots: deleteAllSecureSlots ?? () async {},
       wipeInstallationRoot: wipeInstallationRoot ?? wipeInstallationRootForTest,
       clearAllPreferences: clearAllPreferences ?? () async {},
-      shutdownLogging: shutdownLogging ?? () async {},
       durability: durability,
     );
   }
@@ -183,7 +181,6 @@ void main() {
         ).writeAsString('{}', flush: true);
         events.add('preferences');
       },
-      shutdownLogging: () async => events.add('logging'),
     );
 
     await markConfirmed(wipe);
@@ -196,7 +193,6 @@ void main() {
     expect(resumed, isTrue);
     expect(events, <String>[
       'background',
-      'logging',
       'secure-slots',
       'installation-root',
       'preferences',
@@ -217,7 +213,6 @@ void main() {
       },
       deleteAllSecureSlots: () async => events.add('secure-slots'),
       clearAllPreferences: () async => events.add('preferences'),
-      shutdownLogging: () async => events.add('logging'),
     );
 
     expect(
@@ -255,7 +250,6 @@ void main() {
             required String preservedEntryName,
           }) async => events.add('installation-root'),
       clearAllPreferences: () async => events.add('preferences'),
-      shutdownLogging: () async => events.add('logging'),
     );
 
     await expectLater(
@@ -355,7 +349,6 @@ void main() {
       },
       deleteAllSecureSlots: () async => events.add('secure-slots'),
       clearAllPreferences: () async => events.add('preferences'),
-      shutdownLogging: () async => events.add('logging'),
     );
     await wipe.markRevocationRequested(
       deviceId: deviceId,
@@ -395,7 +388,6 @@ void main() {
     final wipe = createWipe(
       deleteAllSecureSlots: () async => events.add('secure-slots'),
       clearAllPreferences: () async => events.add('preferences'),
-      shutdownLogging: () async => events.add('logging'),
     );
 
     await expectLater(
@@ -597,7 +589,6 @@ void main() {
       },
       deleteAllSecureSlots: () async => events.add('secure-slots'),
       clearAllPreferences: () async => events.add('preferences'),
-      shutdownLogging: () async => events.add('logging'),
       durability: _CompletionCommitFailingDurability(installationRoot),
     );
     await markConfirmed(interrupted);
@@ -614,7 +605,6 @@ void main() {
     );
     expect(events, <String>[
       'background',
-      'logging',
       'secure-slots',
       'preferences',
       'cache',
@@ -633,7 +623,6 @@ void main() {
 
   for (final failingStep in <String>[
     'background',
-    'logging',
     'secure-slots',
     'preferences',
     'cache',
@@ -655,7 +644,6 @@ void main() {
         },
         deleteAllSecureSlots: () => step('secure-slots'),
         clearAllPreferences: () => step('preferences'),
-        shutdownLogging: () => step('logging'),
       );
       await markConfirmed(wipe);
 

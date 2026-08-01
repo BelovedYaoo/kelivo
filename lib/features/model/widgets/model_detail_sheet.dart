@@ -5,7 +5,6 @@ import '../../../core/providers/settings_provider.dart';
 import '../../../core/providers/model_provider.dart';
 import '../../../core/services/api/builtin_tools.dart';
 import '../../../core/services/model_override_resolver.dart';
-import '../../../core/services/logging/flutter_logger.dart';
 import '../../../icons/lucide_adapter.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../../shared/widgets/snackbar.dart';
@@ -929,11 +928,7 @@ class _ModelDetailSheetState extends State<_ModelDetailSheet>
           old.copyWith(modelOverrides: ov),
         );
       }
-    } catch (e, st) {
-      FlutterLogger.log(
-        '[ModelDetailSheet] save failed: $e\n$st',
-        tag: 'Model',
-      );
+    } catch (_) {
       if (!mounted) return;
       final l10n = AppLocalizations.of(context)!;
       showAppSnackBar(

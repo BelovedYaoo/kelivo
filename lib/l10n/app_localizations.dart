@@ -952,12 +952,6 @@ abstract class AppLocalizations {
   /// **'Cache'**
   String get storageSpaceCategoryCache;
 
-  /// No description provided for @storageSpaceCategoryLogs.
-  ///
-  /// In en, this message translates to:
-  /// **'Logs'**
-  String get storageSpaceCategoryLogs;
-
   /// No description provided for @storageSpaceCategoryOther.
   ///
   /// In en, this message translates to:
@@ -1060,24 +1054,6 @@ abstract class AppLocalizations {
   /// **'System cache'**
   String get storageSpaceSubCacheSystem;
 
-  /// No description provided for @storageSpaceSubLogsFlutter.
-  ///
-  /// In en, this message translates to:
-  /// **'Flutter logs'**
-  String get storageSpaceSubLogsFlutter;
-
-  /// No description provided for @storageSpaceSubLogsRequests.
-  ///
-  /// In en, this message translates to:
-  /// **'Network logs'**
-  String get storageSpaceSubLogsRequests;
-
-  /// No description provided for @storageSpaceSubLogsOther.
-  ///
-  /// In en, this message translates to:
-  /// **'Other logs'**
-  String get storageSpaceSubLogsOther;
-
   /// No description provided for @storageSpaceClearConfirmTitle.
   ///
   /// In en, this message translates to:
@@ -1120,12 +1096,6 @@ abstract class AppLocalizations {
   /// **'Clear Cache'**
   String get storageSpaceClearCacheButton;
 
-  /// No description provided for @storageSpaceClearLogsButton.
-  ///
-  /// In en, this message translates to:
-  /// **'Clear Logs'**
-  String get storageSpaceClearLogsButton;
-
   /// No description provided for @storageSpaceClearLegacyChatDataButton.
   ///
   /// In en, this message translates to:
@@ -1137,12 +1107,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Clear the retained old chat files? Your current SQLite chat records will remain available.'**
   String get storageSpaceClearLegacyChatDataConfirmMessage;
-
-  /// No description provided for @storageSpaceViewLogsButton.
-  ///
-  /// In en, this message translates to:
-  /// **'View Logs'**
-  String get storageSpaceViewLogsButton;
 
   /// No description provided for @storageSpaceDeleteConfirmTitle.
   ///
@@ -1215,12 +1179,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'Docs'**
   String get settingsPageDocs;
-
-  /// No description provided for @settingsPageLogs.
-  ///
-  /// In en, this message translates to:
-  /// **'Logs'**
-  String get settingsPageLogs;
 
   /// No description provided for @settingsPageSponsor.
   ///
@@ -7730,12 +7688,6 @@ abstract class AppLocalizations {
   /// **'Thanks for exploring! \n (No egg yet)'**
   String get aboutPageEasterEggMessage;
 
-  /// No description provided for @aboutPageEasterEggButton.
-  ///
-  /// In en, this message translates to:
-  /// **'Nice!'**
-  String get aboutPageEasterEggButton;
-
   /// No description provided for @aboutPageAppName.
   ///
   /// In en, this message translates to:
@@ -10135,216 +10087,6 @@ abstract class AppLocalizations {
   /// In en, this message translates to:
   /// **'This action cannot be undone.'**
   String get providerDetailPageDeleteAllModelsWarning;
-
-  /// No description provided for @requestLogSettingTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Request Logging'**
-  String get requestLogSettingTitle;
-
-  /// No description provided for @requestLogSettingSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'When enabled, request/response details are written to logs/logs.txt (rotated daily).'**
-  String get requestLogSettingSubtitle;
-
-  /// No description provided for @flutterLogSettingTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Flutter Logging'**
-  String get flutterLogSettingTitle;
-
-  /// No description provided for @flutterLogSettingSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'When enabled, Flutter errors and print output are written to logs/flutter_logs.txt (rotated daily).'**
-  String get flutterLogSettingSubtitle;
-
-  /// No description provided for @logViewerTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Request Logs'**
-  String get logViewerTitle;
-
-  /// No description provided for @logViewerEmpty.
-  ///
-  /// In en, this message translates to:
-  /// **'No logs yet'**
-  String get logViewerEmpty;
-
-  /// No description provided for @logViewerCurrentLog.
-  ///
-  /// In en, this message translates to:
-  /// **'Current Log'**
-  String get logViewerCurrentLog;
-
-  /// No description provided for @logViewerExport.
-  ///
-  /// In en, this message translates to:
-  /// **'Export'**
-  String get logViewerExport;
-
-  /// No description provided for @logViewerOpenFolder.
-  ///
-  /// In en, this message translates to:
-  /// **'Open Logs Folder'**
-  String get logViewerOpenFolder;
-
-  /// No description provided for @logViewerRequestsCount.
-  ///
-  /// In en, this message translates to:
-  /// **'{count} requests'**
-  String logViewerRequestsCount(int count);
-
-  /// No description provided for @logViewerFieldId.
-  ///
-  /// In en, this message translates to:
-  /// **'ID'**
-  String get logViewerFieldId;
-
-  /// No description provided for @logViewerFieldMethod.
-  ///
-  /// In en, this message translates to:
-  /// **'Method'**
-  String get logViewerFieldMethod;
-
-  /// No description provided for @logViewerFieldStatus.
-  ///
-  /// In en, this message translates to:
-  /// **'Status'**
-  String get logViewerFieldStatus;
-
-  /// No description provided for @logViewerFieldStarted.
-  ///
-  /// In en, this message translates to:
-  /// **'Started'**
-  String get logViewerFieldStarted;
-
-  /// No description provided for @logViewerFieldEnded.
-  ///
-  /// In en, this message translates to:
-  /// **'Ended'**
-  String get logViewerFieldEnded;
-
-  /// No description provided for @logViewerFieldDuration.
-  ///
-  /// In en, this message translates to:
-  /// **'Duration'**
-  String get logViewerFieldDuration;
-
-  /// No description provided for @logViewerSectionSummary.
-  ///
-  /// In en, this message translates to:
-  /// **'Summary'**
-  String get logViewerSectionSummary;
-
-  /// No description provided for @logViewerSectionParameters.
-  ///
-  /// In en, this message translates to:
-  /// **'Parameters'**
-  String get logViewerSectionParameters;
-
-  /// No description provided for @logViewerSectionRequestHeaders.
-  ///
-  /// In en, this message translates to:
-  /// **'Request Headers'**
-  String get logViewerSectionRequestHeaders;
-
-  /// No description provided for @logViewerSectionRequestBody.
-  ///
-  /// In en, this message translates to:
-  /// **'Request Body'**
-  String get logViewerSectionRequestBody;
-
-  /// No description provided for @logViewerSectionResponseHeaders.
-  ///
-  /// In en, this message translates to:
-  /// **'Response Headers'**
-  String get logViewerSectionResponseHeaders;
-
-  /// No description provided for @logViewerSectionResponseBody.
-  ///
-  /// In en, this message translates to:
-  /// **'Response Body'**
-  String get logViewerSectionResponseBody;
-
-  /// No description provided for @logViewerSectionWarnings.
-  ///
-  /// In en, this message translates to:
-  /// **'Warnings'**
-  String get logViewerSectionWarnings;
-
-  /// No description provided for @logViewerErrorTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Error'**
-  String get logViewerErrorTitle;
-
-  /// No description provided for @logViewerMoreCount.
-  ///
-  /// In en, this message translates to:
-  /// **'+{count} more'**
-  String logViewerMoreCount(int count);
-
-  /// No description provided for @logSettingsTitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Log Settings'**
-  String get logSettingsTitle;
-
-  /// No description provided for @logSettingsSaveOutput.
-  ///
-  /// In en, this message translates to:
-  /// **'Save Response Output'**
-  String get logSettingsSaveOutput;
-
-  /// No description provided for @logSettingsSaveOutputSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Log response body content (may use significant storage)'**
-  String get logSettingsSaveOutputSubtitle;
-
-  /// No description provided for @logSettingsAutoDelete.
-  ///
-  /// In en, this message translates to:
-  /// **'Auto-delete'**
-  String get logSettingsAutoDelete;
-
-  /// No description provided for @logSettingsAutoDeleteSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Delete logs older than specified days'**
-  String get logSettingsAutoDeleteSubtitle;
-
-  /// No description provided for @logSettingsAutoDeleteDisabled.
-  ///
-  /// In en, this message translates to:
-  /// **'Disabled'**
-  String get logSettingsAutoDeleteDisabled;
-
-  /// No description provided for @logSettingsAutoDeleteDays.
-  ///
-  /// In en, this message translates to:
-  /// **'{count} days'**
-  String logSettingsAutoDeleteDays(int count);
-
-  /// No description provided for @logSettingsMaxSize.
-  ///
-  /// In en, this message translates to:
-  /// **'Max Log Size'**
-  String get logSettingsMaxSize;
-
-  /// No description provided for @logSettingsMaxSizeSubtitle.
-  ///
-  /// In en, this message translates to:
-  /// **'Oldest logs deleted when exceeded'**
-  String get logSettingsMaxSizeSubtitle;
-
-  /// No description provided for @logSettingsMaxSizeUnlimited.
-  ///
-  /// In en, this message translates to:
-  /// **'Unlimited'**
-  String get logSettingsMaxSizeUnlimited;
 
   /// No description provided for @assistantEditManageSummariesTitle.
   ///

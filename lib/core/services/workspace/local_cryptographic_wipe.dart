@@ -19,7 +19,6 @@ typedef _LocalCryptographicWipeRuntime = ({
   LocalCryptographicWipeStep deleteAllSecureSlots,
   LocalInstallationRootWipe wipeInstallationRoot,
   LocalCryptographicWipeStep clearAllPreferences,
-  LocalCryptographicWipeStep shutdownLogging,
 });
 
 enum LocalCryptographicWipePhase {
@@ -79,7 +78,6 @@ final class InstallationLocalCryptographicWipe
     required LocalCryptographicWipeStep deleteAllSecureSlots,
     required LocalInstallationRootWipe wipeInstallationRoot,
     required LocalCryptographicWipeStep clearAllPreferences,
-    required LocalCryptographicWipeStep shutdownLogging,
     RestoreDurability? durability,
     DateTime Function()? utcNow,
   }) : _installationRoot = Directory(
@@ -91,7 +89,6 @@ final class InstallationLocalCryptographicWipe
          deleteAllSecureSlots: deleteAllSecureSlots,
          wipeInstallationRoot: wipeInstallationRoot,
          clearAllPreferences: clearAllPreferences,
-         shutdownLogging: shutdownLogging,
        ),
        _durability = durability ?? RestorePlatformDurability(),
        _utcNow = utcNow ?? DateTime.now;
@@ -246,7 +243,6 @@ final class InstallationLocalCryptographicWipe
     }
 
     await stopBackgroundSync();
-    await _runtime.shutdownLogging();
     await _runtime.deleteAllSecureSlots();
     await _wipeInstallationContents();
     await _runtime.clearAllPreferences();
