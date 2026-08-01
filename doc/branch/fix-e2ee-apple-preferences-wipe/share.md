@@ -25,3 +25,4 @@
 - Darwin store 已实现原生串行队列、跨进程文件锁、同目录临时写入、`F_FULLFSYNC`、原子 rename、父目录 `fsync`、独立新文件描述符复读和崩溃临时文件清理；未知类型、畸形快照及任一系统调用失败均关闭。
 - Swift 合同覆盖跨实例写删、重复删除、目录 barrier 失败重试、旧 UserDefaults 污染永久阻断和崩溃临时文件清理。当前 Windows 没有 Swift/Xcode/CocoaPods，无法执行 Apple 原生测试或编译。
 - 启动失败界面已识别原生污染诊断码，四语言明确要求清空应用容器，且隐藏无效的重启操作；定向 widget 测试 4/4 与 analyze 通过。Windows 原生 hook 同时提示构建期间文件变化，未影响本切片断言，最终全量验证需在所有安全核心并行工作合并后重跑。
+- 根应用已声明本地 Apple 插件依赖；`DurableSharedPreferencesStore` 只在实际平台实例为 `KelivoDurablePreferences` 时接受原生耐久回执，未注册的 Foundation 实现仍失败关闭。偏好擦除测试组 7/7 与定向 analyze 通过。
