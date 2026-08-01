@@ -223,6 +223,73 @@ class AppLocalizationsEn extends AppLocalizations {
       'The recovery file was not saved. Registration was cancelled.';
 
   @override
+  String get cloudSyncAccountRecovery => 'Recover Account';
+
+  @override
+  String get cloudSyncAccountRecoveryTitle => 'Recover Account';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaSection => 'Recovery Media';
+
+  @override
+  String get cloudSyncAccountRecoveryScanQr => 'Scan Recovery QR';
+
+  @override
+  String get cloudSyncAccountRecoveryPickFile => 'Choose Recovery File';
+
+  @override
+  String get cloudSyncAccountRecoveryQrReady => 'Recovery QR code loaded';
+
+  @override
+  String get cloudSyncAccountRecoveryFileReady => 'Recovery file loaded';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaRequired =>
+      'Scan the recovery QR code or choose a recovery file.';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaInvalid =>
+      'The recovery QR code or file is invalid.';
+
+  @override
+  String get cloudSyncAccountRecoveryFileReadFailed =>
+      'The recovery file could not be read.';
+
+  @override
+  String get cloudSyncAccountRecoveryRequiredFields =>
+      'Complete the account, password, recovery passphrase, and device name.';
+
+  @override
+  String get cloudSyncAccountRecoveryStart => 'Start Recovery';
+
+  @override
+  String get cloudSyncAccountRecoveryAuthenticating => 'Signing in…';
+
+  @override
+  String get cloudSyncAccountRecoveryVerifying => 'Verifying recovery media…';
+
+  @override
+  String get cloudSyncAccountRecoveryRebuilding =>
+      'Rebuilding this trusted device…';
+
+  @override
+  String get cloudSyncAccountRecoveryRestoring => 'Restoring encrypted data…';
+
+  @override
+  String get cloudSyncAccountRecoveryCompleting =>
+      'Finishing account recovery…';
+
+  @override
+  String get cloudSyncAccountRecoveryCompleted => 'Account recovery completed';
+
+  @override
+  String get cloudSyncAccountRecoveryFailed => 'Account recovery stopped';
+
+  @override
+  String get cloudSyncAccountRecoveryUnavailable =>
+      'Account recovery is not available on this device.';
+
+  @override
   String get cloudSyncPendingRegistrationTitle => 'Unfinished Registration';
 
   @override

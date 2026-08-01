@@ -1,29 +1,9 @@
 # 移动端账户恢复入口
 
-## 目标
-
-- 仅 Android/iOS 提供账户恢复入口。
-- 仅接受固定 644 字节二维码或恢复文件，并要求独立恢复口令。
-- 页面只编排公开协议材料与不透明句柄，私钥、ARK、nonce 明文始终留在 Native。
-- 恢复流程可在失败、退出或进程重启后显式继续或清理，不提供假成功与降级路径。
-
-## 当前状态
-
-- 基线：`feature/e2ee-chat-runtime@07660680`。
-- 工作分支：`feature/e2ee-mobile-account-recovery-ui`。
-- 已完成移动恢复 Provider 深模块 seam：`E2eeAccountRecoveryCommand` 接管并清零调用方字节，`CloudSyncProvider.startAccountRecovery` 只在 Android/iOS 且真实 runner 已注入时开放。
-- Provider 统一发布认证、介质验证、可信设备重建、加密数据恢复、完成/失败进度；runner 不得直接发布终态或回退进度。
-- 成功、协议失败、Windows 强制拒绝三条测试通过；成功或失败后 runner 所见密码、恢复口令与 644 字节介质均已清零。
-- 正在实现移动端二维码/恢复文件选择、口令输入与可恢复进度页面。
-
-## 并行接口依赖
-
-- ABI19：生产 adapter 为 `E2eeNativeAccountRecoveryProofCore`，现有 `E2eeAccountRecoveryProofCore.verifyHistoryAndCreateProof` 保持不变；返回 lease 的 `close()` 必须幂等。
-- 数据换钥：#51 将提供“已提交 membership checkpoint + recovery actor/keyring -> 幂等完成本轮 data-rekey”的执行入口；最终完整会话由恢复完成 checkpoint/finalize 返回。
-- 两者合入前 production runner 保持未注入，移动入口不得提交，不提供假成功或降级。
-
-## 验证 seam
-
-- 移动端页面：入口可见性、二维码/文件选择、口令校验、加载/失败/继续/完成状态及生命周期清理。
-- `CloudSyncProvider` 公开恢复命令：合法流程、边界输入、协议失败与可恢复状态转换。
-- 不直接测试 Native 私有实现，不访问默认安全槽。
+- Android/iOS 登录页已增加账户恢复入口；桌面端不展示。真实 runner 未注入时入口保持禁用，不提供假成功或降级。
+- 恢复页支持扫描二维码或流式读取 `.kelivo-recovery` 文件，只接受固定 644 字节密文；调用方缓冲、页面持有介质和提交命令材料均按生命周期清零。
+- 页面校验账户、账户密码、独立恢复口令和设备名称，并统一展示认证、介质验证、可信设备重建、加密数据恢复与完成/失败进度。
+- 损坏的新介质会清除旧介质和提交资格，避免错误提示后误提交旧数据；选择按钮采用纵向布局以覆盖窄屏。
+- Provider 提交边界已由 `E2eeAccountRecoveryCommand` 和 `CloudSyncProvider.startAccountRecovery` 承担；后续 ABI19 与数据换钥 runner 合入后仅需注入生产 factory。
+- `flutter gen-l10n` 已运行，四份 ARB 同步且 `desiredFileName.txt` 为 `{}`。
+- 17 项恢复相关测试、变更文件静态分析、`flutter analyze lib test` 均通过。根 `flutter analyze` 仍受既有 Issue #80 阻断；完整测试在数据库约束第 231 项后命中既有 #53 挂起，确认无日志与 CPU 进展后停止。

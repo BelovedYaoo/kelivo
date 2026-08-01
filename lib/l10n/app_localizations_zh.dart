@@ -209,6 +209,66 @@ class AppLocalizationsZh extends AppLocalizations {
   String get cloudSyncRecoveryMediaSaveFailed => '恢复文件未保存，注册已取消。';
 
   @override
+  String get cloudSyncAccountRecovery => '恢复账户';
+
+  @override
+  String get cloudSyncAccountRecoveryTitle => '恢复账户';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaSection => '恢复介质';
+
+  @override
+  String get cloudSyncAccountRecoveryScanQr => '扫描恢复二维码';
+
+  @override
+  String get cloudSyncAccountRecoveryPickFile => '选择恢复文件';
+
+  @override
+  String get cloudSyncAccountRecoveryQrReady => '恢复二维码已读取';
+
+  @override
+  String get cloudSyncAccountRecoveryFileReady => '恢复文件已读取';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaRequired => '请扫描恢复二维码或选择恢复文件。';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaInvalid => '恢复二维码或文件格式无效。';
+
+  @override
+  String get cloudSyncAccountRecoveryFileReadFailed => '无法读取恢复文件。';
+
+  @override
+  String get cloudSyncAccountRecoveryRequiredFields => '请填写账户、账户密码、恢复口令和设备名称。';
+
+  @override
+  String get cloudSyncAccountRecoveryStart => '开始恢复';
+
+  @override
+  String get cloudSyncAccountRecoveryAuthenticating => '正在登录…';
+
+  @override
+  String get cloudSyncAccountRecoveryVerifying => '正在验证恢复介质…';
+
+  @override
+  String get cloudSyncAccountRecoveryRebuilding => '正在重建此可信设备…';
+
+  @override
+  String get cloudSyncAccountRecoveryRestoring => '正在恢复加密数据…';
+
+  @override
+  String get cloudSyncAccountRecoveryCompleting => '正在完成账户恢复…';
+
+  @override
+  String get cloudSyncAccountRecoveryCompleted => '账户恢复已完成';
+
+  @override
+  String get cloudSyncAccountRecoveryFailed => '账户恢复已停止';
+
+  @override
+  String get cloudSyncAccountRecoveryUnavailable => '当前设备暂不支持账户恢复。';
+
+  @override
   String get cloudSyncPendingRegistrationTitle => '注册尚未完成';
 
   @override
@@ -5944,6 +6004,66 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get cloudSyncRecoveryMediaSaveFailed => '恢复文件未保存，注册已取消。';
+
+  @override
+  String get cloudSyncAccountRecovery => '恢复账户';
+
+  @override
+  String get cloudSyncAccountRecoveryTitle => '恢复账户';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaSection => '恢复介质';
+
+  @override
+  String get cloudSyncAccountRecoveryScanQr => '扫描恢复二维码';
+
+  @override
+  String get cloudSyncAccountRecoveryPickFile => '选择恢复文件';
+
+  @override
+  String get cloudSyncAccountRecoveryQrReady => '恢复二维码已读取';
+
+  @override
+  String get cloudSyncAccountRecoveryFileReady => '恢复文件已读取';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaRequired => '请扫描恢复二维码或选择恢复文件。';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaInvalid => '恢复二维码或文件格式无效。';
+
+  @override
+  String get cloudSyncAccountRecoveryFileReadFailed => '无法读取恢复文件。';
+
+  @override
+  String get cloudSyncAccountRecoveryRequiredFields => '请填写账户、账户密码、恢复口令和设备名称。';
+
+  @override
+  String get cloudSyncAccountRecoveryStart => '开始恢复';
+
+  @override
+  String get cloudSyncAccountRecoveryAuthenticating => '正在登录…';
+
+  @override
+  String get cloudSyncAccountRecoveryVerifying => '正在验证恢复介质…';
+
+  @override
+  String get cloudSyncAccountRecoveryRebuilding => '正在重建此可信设备…';
+
+  @override
+  String get cloudSyncAccountRecoveryRestoring => '正在恢复加密数据…';
+
+  @override
+  String get cloudSyncAccountRecoveryCompleting => '正在完成账户恢复…';
+
+  @override
+  String get cloudSyncAccountRecoveryCompleted => '账户恢复已完成';
+
+  @override
+  String get cloudSyncAccountRecoveryFailed => '账户恢复已停止';
+
+  @override
+  String get cloudSyncAccountRecoveryUnavailable => '当前设备暂不支持账户恢复。';
 
   @override
   String get cloudSyncPendingRegistrationTitle => '注册尚未完成';
@@ -11682,6 +11802,66 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get cloudSyncRecoveryMediaSaveFailed => '復原檔案未儲存，註冊已取消。';
+
+  @override
+  String get cloudSyncAccountRecovery => '復原帳戶';
+
+  @override
+  String get cloudSyncAccountRecoveryTitle => '復原帳戶';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaSection => '復原媒介';
+
+  @override
+  String get cloudSyncAccountRecoveryScanQr => '掃描復原 QR Code';
+
+  @override
+  String get cloudSyncAccountRecoveryPickFile => '選擇復原檔案';
+
+  @override
+  String get cloudSyncAccountRecoveryQrReady => '復原 QR Code 已讀取';
+
+  @override
+  String get cloudSyncAccountRecoveryFileReady => '復原檔案已讀取';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaRequired => '請掃描復原 QR Code 或選擇復原檔案。';
+
+  @override
+  String get cloudSyncAccountRecoveryMediaInvalid => '復原 QR Code 或檔案格式無效。';
+
+  @override
+  String get cloudSyncAccountRecoveryFileReadFailed => '無法讀取復原檔案。';
+
+  @override
+  String get cloudSyncAccountRecoveryRequiredFields => '請填寫帳戶、帳戶密碼、復原口令和裝置名稱。';
+
+  @override
+  String get cloudSyncAccountRecoveryStart => '開始復原';
+
+  @override
+  String get cloudSyncAccountRecoveryAuthenticating => '正在登入…';
+
+  @override
+  String get cloudSyncAccountRecoveryVerifying => '正在驗證復原媒介…';
+
+  @override
+  String get cloudSyncAccountRecoveryRebuilding => '正在重建此受信任裝置…';
+
+  @override
+  String get cloudSyncAccountRecoveryRestoring => '正在復原加密資料…';
+
+  @override
+  String get cloudSyncAccountRecoveryCompleting => '正在完成帳戶復原…';
+
+  @override
+  String get cloudSyncAccountRecoveryCompleted => '帳戶復原已完成';
+
+  @override
+  String get cloudSyncAccountRecoveryFailed => '帳戶復原已停止';
+
+  @override
+  String get cloudSyncAccountRecoveryUnavailable => '目前裝置暫不支援帳戶復原。';
 
   @override
   String get cloudSyncPendingRegistrationTitle => '註冊尚未完成';

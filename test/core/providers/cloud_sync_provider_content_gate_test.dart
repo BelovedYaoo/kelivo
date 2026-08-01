@@ -52,6 +52,7 @@ import 'package:Kelivo/core/services/workspace/local_cryptographic_wipe.dart';
 import 'package:Kelivo/core/services/workspace/local_wipe_marker_topology.dart';
 import 'package:Kelivo/features/settings/pages/cloud_sync_page.dart'
     hide CloudSyncPage;
+import 'package:Kelivo/features/settings/pages/mobile_account_recovery_page.dart';
 import 'package:Kelivo/l10n/app_localizations.dart';
 import 'package:Kelivo/shared/widgets/ios_tile_button.dart';
 import 'package:Kelivo/shared/widgets/snackbar.dart';
@@ -3211,6 +3212,197 @@ void main() {
     );
   });
 
+  testWidgets('移动登录显示账户恢复入口且真实 runner 缺失时禁止提交', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final fixture = await tester.runAsync(_createSignedOutFixture);
+    if (fixture == null) throw StateError('mobile_recovery_entry_fixture');
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    final entry = tester.widget<IosTileButton>(
+      find.byKey(const ValueKey<String>('cloud-sync-account-recovery-entry')),
+    );
+    expect(entry.enabled, isFalse);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('桌面登录完全不显示账户恢复入口', (tester) async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.windows;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(
+        accountRecoveryRunnerFactory:
+            ({required accountClient, required authentication}) =>
+                _FakeE2eeAccountRecoveryRunner(),
+      ),
+    );
+    if (fixture == null) throw StateError('desktop_recovery_entry_fixture');
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    expect(
+      find.byKey(const ValueKey<String>('cloud-sync-account-recovery-entry')),
+      findsNothing,
+    );
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('恢复页拒绝错误长度二维码并清零结果及旧介质', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1600);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    Haptics.setEnabled(false);
+    addTearDown(() => Haptics.setEnabled(true));
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    final runner = _FakeE2eeAccountRecoveryRunner();
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(
+        accountRecoveryRunnerFactory:
+            ({required accountClient, required authentication}) => runner,
+      ),
+    );
+    if (fixture == null) throw StateError('invalid_recovery_qr_fixture');
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    final validMedia = Uint8List(644)..[0] = 7;
+    final invalidMedia = Uint8List(643)..fillRange(0, 643, 9);
+    var scanCount = 0;
+
+    await tester.pumpWidget(
+      _mobileAccountRecoveryTestApp(
+        fixture.provider,
+        qrScanner: (_) async => scanCount++ == 0 ? validMedia : invalidMedia,
+      ),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('mobile-account-recovery-scan-qr')),
+    );
+    await tester.pumpAndSettle();
+    expect(validMedia, everyElement(0));
+    expect(find.text('恢复二维码已读取'), findsOneWidget);
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('mobile-account-recovery-scan-qr')),
+    );
+    await tester.pumpAndSettle();
+
+    expect(invalidMedia, everyElement(0));
+    expect(runner.recoverCalls, 0);
+    expect(find.text('恢复二维码已读取'), findsNothing);
+    final submit = tester.widget<IosTileButton>(
+      find.byKey(const ValueKey<String>('mobile-account-recovery-submit')),
+    );
+    expect(submit.enabled, isFalse);
+    await _expectAndDismissCloudSyncToast(tester, '恢复二维码或文件格式无效。');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
+  testWidgets('恢复文件提交立即清理口令输入并展示可恢复进度', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    Haptics.setEnabled(false);
+    addTearDown(() => Haptics.setEnabled(true));
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final barrier = Completer<void>();
+    final runner = _FakeE2eeAccountRecoveryRunner(barrier: barrier.future);
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(
+        accountRecoveryRunnerFactory:
+            ({required accountClient, required authentication}) => runner,
+      ),
+    );
+    if (fixture == null) throw StateError('recovery_file_submit_fixture');
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    final pickedMedia = Uint8List(644)..[0] = 13;
+
+    await tester.pumpWidget(
+      _mobileAccountRecoveryTestApp(
+        fixture.provider,
+        filePicker: () async => pickedMedia,
+      ),
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('mobile-account-recovery-pick-file')),
+    );
+    await tester.pumpAndSettle();
+    expect(pickedMedia, everyElement(0));
+    expect(find.text('恢复文件已读取'), findsOneWidget);
+
+    await _enterCloudSyncField(
+      tester,
+      'mobile-account-recovery-login-name',
+      'ovo',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'mobile-account-recovery-password',
+      'account-password',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'mobile-account-recovery-passphrase',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'mobile-account-recovery-device-name',
+      'iPhone',
+    );
+    await tester.tap(
+      find.byKey(const ValueKey<String>('mobile-account-recovery-submit')),
+    );
+    await _pumpCloudSyncUntil(
+      tester,
+      () =>
+          fixture.provider.accountRecoveryProgress ==
+          E2eeAccountRecoveryProgress.verifyingRecoveryMedia,
+    );
+    await tester.pump();
+
+    expect(find.text('正在验证恢复介质…'), findsOneWidget);
+    final passwordField = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(
+          const ValueKey<String>('mobile-account-recovery-password'),
+        ),
+        matching: find.byType(EditableText),
+      ),
+    );
+    final passphraseField = tester.widget<EditableText>(
+      find.descendant(
+        of: find.byKey(
+          const ValueKey<String>('mobile-account-recovery-passphrase'),
+        ),
+        matching: find.byType(EditableText),
+      ),
+    );
+    expect(passwordField.controller.text, isEmpty);
+    expect(passphraseField.controller.text, isEmpty);
+
+    barrier.complete();
+    await _pumpCloudSyncUntil(
+      tester,
+      () => fixture.provider.workspaceRestartRequired,
+    );
+    expect(runner.recoverCalls, 1);
+    expect(runner.recoveryMediaFirstByte, 13);
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('移动平台展示注册模式且桌面平台仅保留登录', (tester) async {
     tester.view.physicalSize = const Size(1000, 1600);
     tester.view.devicePixelRatio = 1;
@@ -4660,6 +4852,26 @@ Widget _cloudSyncTestApp(CloudSyncProvider provider, {Key? contentKey}) {
       localizationsDelegates: AppLocalizations.localizationsDelegates,
       supportedLocales: AppLocalizations.supportedLocales,
       home: Scaffold(body: CloudSyncSettingsContent(key: contentKey)),
+    ),
+  );
+}
+
+Widget _mobileAccountRecoveryTestApp(
+  CloudSyncProvider provider, {
+  MobileAccountRecoveryQrScanner qrScanner = scanMobileAccountRecoveryQr,
+  MobileAccountRecoveryFilePicker filePicker = pickMobileAccountRecoveryFile,
+}) {
+  return ChangeNotifierProvider<CloudSyncProvider>.value(
+    value: provider,
+    child: MaterialApp(
+      locale: const Locale('zh'),
+      localizationsDelegates: AppLocalizations.localizationsDelegates,
+      supportedLocales: AppLocalizations.supportedLocales,
+      home: MobileAccountRecoveryPage(
+        initialDeviceName: '测试手机',
+        qrScanner: qrScanner,
+        filePicker: filePicker,
+      ),
     ),
   );
 }
@@ -6514,10 +6726,12 @@ final class _FakeE2eeAccountAuthentication
 
 final class _FakeE2eeAccountRecoveryRunner
     implements E2eeAccountRecoveryRunner {
-  _FakeE2eeAccountRecoveryRunner({this.failure});
+  _FakeE2eeAccountRecoveryRunner({this.failure, this.barrier});
 
   final Object? failure;
+  final Future<void>? barrier;
   bool closed = false;
+  int recoverCalls = 0;
   String? loginName;
   String? deviceName;
   String? passwordText;
@@ -6534,6 +6748,7 @@ final class _FakeE2eeAccountRecoveryRunner
     required String clientVersion,
     required E2eeAccountRecoveryProgressCallback onProgress,
   }) async {
+    recoverCalls++;
     loginName = input.loginName;
     deviceName = input.deviceName;
     retainedPassword = input.accountPassword;
@@ -6543,6 +6758,8 @@ final class _FakeE2eeAccountRecoveryRunner
     recoveryPassphraseText = utf8.decode(input.recoveryPassphrase);
     recoveryMediaFirstByte = input.encryptedRecoveryMedia.first;
     onProgress(E2eeAccountRecoveryProgress.verifyingRecoveryMedia);
+    final currentBarrier = barrier;
+    if (currentBarrier != null) await currentBarrier;
     final currentFailure = failure;
     if (currentFailure != null) throw currentFailure;
     onProgress(E2eeAccountRecoveryProgress.rebuildingTrustedDevice);

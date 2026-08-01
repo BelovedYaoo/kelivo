@@ -18,6 +18,8 @@ import '../../../shared/widgets/ios_tile_button.dart';
 import '../../../shared/widgets/snackbar.dart';
 import '../../../theme/app_font_weights.dart';
 import '../../scan/pages/qr_scan_page.dart';
+import 'cloud_sync_failure_text.dart';
+import 'mobile_account_recovery_page.dart';
 import 'mobile_recovery_media_export_page.dart';
 
 class CloudSyncPage extends StatelessWidget {
@@ -300,6 +302,7 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
         _submitting ||
         provider.status == CloudSyncProviderStatus.initializing ||
         provider.status == CloudSyncProviderStatus.signingIn ||
+        provider.status == CloudSyncProviderStatus.recoveringAccount ||
         provider.status == CloudSyncProviderStatus.awaitingDeviceApproval ||
         provider.status == CloudSyncProviderStatus.signingOut ||
         provider.status == CloudSyncProviderStatus.workspaceChangePending;
@@ -456,6 +459,24 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
             ),
           ),
         ),
+        if (!registering && _supportsRegistration) ...[
+          const _SectionDivider(),
+          Padding(
+            padding: const EdgeInsets.all(12),
+            child: SizedBox(
+              width: double.infinity,
+              child: IosTileButton(
+                key: const ValueKey<String>(
+                  'cloud-sync-account-recovery-entry',
+                ),
+                label: l10n.cloudSyncAccountRecovery,
+                icon: Lucide.Shield,
+                enabled: !busy && provider.accountRecoverySupported,
+                onTap: _openAccountRecovery,
+              ),
+            ),
+          ),
+        ],
       ],
     );
   }
@@ -633,6 +654,18 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
             ),
       ),
       type: NotificationType.error,
+    );
+  }
+
+  void _openAccountRecovery() {
+    _passwordController.clear();
+    Navigator.of(context).push<void>(
+      MaterialPageRoute<void>(
+        builder: (_) => MobileAccountRecoveryPage(
+          initialLoginName: _loginNameController.text.trim(),
+          initialDeviceName: _deviceNameController.text.trim(),
+        ),
+      ),
     );
   }
 
@@ -1502,40 +1535,6 @@ class _CloudSyncDialog extends StatelessWidget {
       ),
     );
   }
-}
-
-String cloudSyncFailureText(AppLocalizations l10n, CloudSyncException error) {
-  final protocolMessage = switch (error.serverCode) {
-    'SYNC_LOCAL_DEVICE_WIPE_UNSUPPORTED' =>
-      l10n.cloudSyncCurrentDeviceRemovalUnavailable,
-    e2eeRecoveryPassphraseMatchesPasswordCode =>
-      l10n.cloudSyncRecoveryPassphraseMatchesPassword,
-    e2eePendingRegistrationExportRequiredCode =>
-      l10n.cloudSyncPendingRegistrationExportMessage,
-    e2eePendingRegistrationSubmitRequiredCode =>
-      l10n.cloudSyncPendingRegistrationSubmitMessage,
-    e2eePendingRegistrationUnsupportedCode =>
-      l10n.cloudSyncPendingRegistrationUnsupportedMessage,
-    _ => null,
-  };
-  if (protocolMessage != null) return protocolMessage;
-  return switch (error.kind) {
-    CloudSyncFailureKind.invalidBaseUrl => l10n.cloudSyncFailureInvalidBaseUrl,
-    CloudSyncFailureKind.unauthenticated =>
-      l10n.cloudSyncFailureUnauthenticated,
-    CloudSyncFailureKind.forbidden => l10n.cloudSyncFailureForbidden,
-    CloudSyncFailureKind.notFound => l10n.cloudSyncFailureNotFound,
-    CloudSyncFailureKind.conflict => l10n.cloudSyncFailureConflict,
-    CloudSyncFailureKind.validation => l10n.cloudSyncFailureValidation,
-    CloudSyncFailureKind.rateLimited => l10n.cloudSyncFailureRateLimited,
-    CloudSyncFailureKind.server => l10n.cloudSyncFailureServer,
-    CloudSyncFailureKind.network => l10n.cloudSyncFailureNetwork,
-    CloudSyncFailureKind.timeout => l10n.cloudSyncFailureTimeout,
-    CloudSyncFailureKind.cancelled => l10n.cloudSyncFailureCancelled,
-    CloudSyncFailureKind.invalidResponse =>
-      l10n.cloudSyncFailureInvalidResponse,
-    CloudSyncFailureKind.unknown => l10n.cloudSyncFailureUnknown,
-  };
 }
 
 String cloudSyncPlatformText(

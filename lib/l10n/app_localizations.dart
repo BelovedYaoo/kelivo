@@ -484,6 +484,126 @@ abstract class AppLocalizations {
   /// **'The recovery file was not saved. Registration was cancelled.'**
   String get cloudSyncRecoveryMediaSaveFailed;
 
+  /// No description provided for @cloudSyncAccountRecovery.
+  ///
+  /// In en, this message translates to:
+  /// **'Recover Account'**
+  String get cloudSyncAccountRecovery;
+
+  /// No description provided for @cloudSyncAccountRecoveryTitle.
+  ///
+  /// In en, this message translates to:
+  /// **'Recover Account'**
+  String get cloudSyncAccountRecoveryTitle;
+
+  /// No description provided for @cloudSyncAccountRecoveryMediaSection.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery Media'**
+  String get cloudSyncAccountRecoveryMediaSection;
+
+  /// No description provided for @cloudSyncAccountRecoveryScanQr.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan Recovery QR'**
+  String get cloudSyncAccountRecoveryScanQr;
+
+  /// No description provided for @cloudSyncAccountRecoveryPickFile.
+  ///
+  /// In en, this message translates to:
+  /// **'Choose Recovery File'**
+  String get cloudSyncAccountRecoveryPickFile;
+
+  /// No description provided for @cloudSyncAccountRecoveryQrReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery QR code loaded'**
+  String get cloudSyncAccountRecoveryQrReady;
+
+  /// No description provided for @cloudSyncAccountRecoveryFileReady.
+  ///
+  /// In en, this message translates to:
+  /// **'Recovery file loaded'**
+  String get cloudSyncAccountRecoveryFileReady;
+
+  /// No description provided for @cloudSyncAccountRecoveryMediaRequired.
+  ///
+  /// In en, this message translates to:
+  /// **'Scan the recovery QR code or choose a recovery file.'**
+  String get cloudSyncAccountRecoveryMediaRequired;
+
+  /// No description provided for @cloudSyncAccountRecoveryMediaInvalid.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery QR code or file is invalid.'**
+  String get cloudSyncAccountRecoveryMediaInvalid;
+
+  /// No description provided for @cloudSyncAccountRecoveryFileReadFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'The recovery file could not be read.'**
+  String get cloudSyncAccountRecoveryFileReadFailed;
+
+  /// No description provided for @cloudSyncAccountRecoveryRequiredFields.
+  ///
+  /// In en, this message translates to:
+  /// **'Complete the account, password, recovery passphrase, and device name.'**
+  String get cloudSyncAccountRecoveryRequiredFields;
+
+  /// No description provided for @cloudSyncAccountRecoveryStart.
+  ///
+  /// In en, this message translates to:
+  /// **'Start Recovery'**
+  String get cloudSyncAccountRecoveryStart;
+
+  /// No description provided for @cloudSyncAccountRecoveryAuthenticating.
+  ///
+  /// In en, this message translates to:
+  /// **'Signing in…'**
+  String get cloudSyncAccountRecoveryAuthenticating;
+
+  /// No description provided for @cloudSyncAccountRecoveryVerifying.
+  ///
+  /// In en, this message translates to:
+  /// **'Verifying recovery media…'**
+  String get cloudSyncAccountRecoveryVerifying;
+
+  /// No description provided for @cloudSyncAccountRecoveryRebuilding.
+  ///
+  /// In en, this message translates to:
+  /// **'Rebuilding this trusted device…'**
+  String get cloudSyncAccountRecoveryRebuilding;
+
+  /// No description provided for @cloudSyncAccountRecoveryRestoring.
+  ///
+  /// In en, this message translates to:
+  /// **'Restoring encrypted data…'**
+  String get cloudSyncAccountRecoveryRestoring;
+
+  /// No description provided for @cloudSyncAccountRecoveryCompleting.
+  ///
+  /// In en, this message translates to:
+  /// **'Finishing account recovery…'**
+  String get cloudSyncAccountRecoveryCompleting;
+
+  /// No description provided for @cloudSyncAccountRecoveryCompleted.
+  ///
+  /// In en, this message translates to:
+  /// **'Account recovery completed'**
+  String get cloudSyncAccountRecoveryCompleted;
+
+  /// No description provided for @cloudSyncAccountRecoveryFailed.
+  ///
+  /// In en, this message translates to:
+  /// **'Account recovery stopped'**
+  String get cloudSyncAccountRecoveryFailed;
+
+  /// No description provided for @cloudSyncAccountRecoveryUnavailable.
+  ///
+  /// In en, this message translates to:
+  /// **'Account recovery is not available on this device.'**
+  String get cloudSyncAccountRecoveryUnavailable;
+
   /// No description provided for @cloudSyncPendingRegistrationTitle.
   ///
   /// In en, this message translates to:
