@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:kelivo_durable_preferences/kelivo_durable_preferences.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
@@ -27,9 +28,10 @@ final class PlatformDurableSharedPreferencesStore
   );
 
   factory PlatformDurableSharedPreferencesStore.forCurrentPlatform() {
+    final platform = SharedPreferencesStorePlatform.instance;
     final DurableSharedPreferencesRemovalProof removalProof;
-    if (Platform.isAndroid) {
-      removalProof = const _AndroidCommitReceiptRemovalProof();
+    if (platform is KelivoDurablePreferences || Platform.isAndroid) {
+      removalProof = const _NativeDurableMutationReceiptRemovalProof();
     } else if (Platform.isWindows || Platform.isLinux) {
       removalProof = JsonFileSharedPreferencesRemovalProof(
         applicationSupportDirectory: getApplicationSupportDirectory,
@@ -39,7 +41,7 @@ final class PlatformDurableSharedPreferencesStore
       removalProof = const _UnsupportedSharedPreferencesRemovalProof();
     }
     return PlatformDurableSharedPreferencesStore(
-      SharedPreferencesStorePlatform.instance,
+      platform,
       removalProof: removalProof,
     );
   }
@@ -71,9 +73,9 @@ abstract interface class DurableSharedPreferencesRemovalProof {
   Future<void> confirmRemoval(String rawKey);
 }
 
-final class _AndroidCommitReceiptRemovalProof
+final class _NativeDurableMutationReceiptRemovalProof
     implements DurableSharedPreferencesRemovalProof {
-  const _AndroidCommitReceiptRemovalProof();
+  const _NativeDurableMutationReceiptRemovalProof();
 
   @override
   Future<void> confirmRemoval(String rawKey) async {}

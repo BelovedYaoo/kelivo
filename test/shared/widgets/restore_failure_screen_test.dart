@@ -1,6 +1,7 @@
 import 'dart:io';
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:Kelivo/l10n/app_localizations.dart';
@@ -25,6 +26,14 @@ void main() {
         ),
       ),
       'filesystem_13',
+    );
+    expect(
+      restoreFailureDiagnosticCode(
+        PlatformException(
+          code: 'kelivo_durable_preferences_legacy_container_reset_required',
+        ),
+      ),
+      'kelivo_durable_preferences_legacy_container_reset_required',
     );
   });
 
@@ -78,5 +87,32 @@ void main() {
     expect(find.text('Kelivo is already running'), findsOneWidget);
     expect(find.textContaining('another app process'), findsOneWidget);
     expect(find.text('Restart Kelivo'), findsOneWidget);
+  });
+
+  testWidgets('旧 Apple 偏好污染时明确要求清空应用容器', (tester) async {
+    var restartCalls = 0;
+    await tester.pumpWidget(
+      MaterialApp(
+        locale: const Locale('en'),
+        supportedLocales: AppLocalizations.supportedLocales,
+        localizationsDelegates: AppLocalizations.localizationsDelegates,
+        home: RestoreFailureScreen(
+          diagnosticCode:
+              'kelivo_durable_preferences_legacy_container_reset_required',
+          restart: () async => restartCalls++,
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('App data reset required'), findsOneWidget);
+    expect(find.textContaining("Clear Kelivo's app data"), findsOneWidget);
+    expect(
+      find.textContaining('uninstall and reinstall Kelivo'),
+      findsOneWidget,
+    );
+    expect(find.text('Restart Kelivo'), findsNothing);
+    expect(find.text('Copy diagnostic code'), findsOneWidget);
+    expect(restartCalls, 0);
   });
 }

@@ -9,7 +9,9 @@ import 'package:Kelivo/core/services/workspace/local_cryptographic_wipe.dart';
 import 'package:Kelivo/core/services/workspace/local_cryptographic_wipe_startup.dart';
 import 'package:Kelivo/core/services/workspace/local_wipe_marker_topology.dart';
 import 'package:crypto/crypto.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:kelivo_durable_preferences/kelivo_durable_preferences.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/types.dart';
 
@@ -815,6 +817,44 @@ void main() {
   });
 
   group('持久删除全部偏好', () {
+    test('Apple 自有平台的原生耐久回执可直接完成擦除', () async {
+      TestWidgetsFlutterBinding.ensureInitialized();
+      const channel = MethodChannel('kelivo.durable_preferences.test');
+      final messenger =
+          TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+      final values = <String, Object>{
+        'flutter.account': 'alice',
+        'kelivo.account.alpha.secret': 'secret',
+      };
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        switch (call.method) {
+          case 'initialize':
+            return null;
+          case 'get-all':
+            return Map<String, Object>.from(values);
+          case 'remove':
+            final arguments = call.arguments as Map<Object?, Object?>;
+            values.remove(arguments['key']);
+            return null;
+          default:
+            fail('unexpected_method_${call.method}');
+        }
+      });
+      final previousPlatform = SharedPreferencesStorePlatform.instance;
+      try {
+        final platform = KelivoDurablePreferences(channel: channel);
+        await platform.initialize();
+        SharedPreferencesStorePlatform.instance = platform;
+
+        await const DurableSharedPreferencesEraser().eraseAll();
+
+        expect(values, isEmpty);
+      } finally {
+        SharedPreferencesStorePlatform.instance = previousPlatform;
+        messenger.setMockMethodCallHandler(channel, null);
+      }
+    });
+
     test('逐键删除全部原始键并复核为空', () async {
       final store = InMemorySharedPreferencesStore.withData(<String, Object>{
         'flutter.account': 'alice',

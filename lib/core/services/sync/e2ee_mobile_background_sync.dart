@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:developer' as developer;
 
 import 'package:flutter/foundation.dart';
+import 'package:kelivo_durable_preferences/kelivo_durable_preferences.dart';
 import 'package:workmanager/workmanager.dart';
 
 import 'e2ee_background_sync_runner.dart';
@@ -19,11 +20,13 @@ typedef E2eeBackgroundSyncRunnerFactory = E2eeBackgroundSyncRunner Function();
 
 final class E2eeMobileBackgroundTaskExecutor {
   factory E2eeMobileBackgroundTaskExecutor({
+    required Future<void> Function() initializePreferences,
     required E2eeBackgroundSyncRunnerFactory runnerFactory,
     required Future<void> Function() cancelScheduledTask,
     E2eeBackgroundSyncLimits limits = _mobileBackgroundSyncLimits,
   }) {
     return E2eeMobileBackgroundTaskExecutor._(
+      initializePreferences,
       runnerFactory,
       cancelScheduledTask,
       limits,
@@ -31,11 +34,13 @@ final class E2eeMobileBackgroundTaskExecutor {
   }
 
   E2eeMobileBackgroundTaskExecutor._(
+    this._initializePreferences,
     this._runnerFactory,
     this._cancelScheduledTask,
     this._limits,
   );
 
+  final Future<void> Function() _initializePreferences;
   final E2eeBackgroundSyncRunnerFactory _runnerFactory;
   final Future<void> Function() _cancelScheduledTask;
   final E2eeBackgroundSyncLimits _limits;
@@ -77,6 +82,7 @@ final class E2eeMobileBackgroundTaskExecutor {
   }
 
   Future<bool> _executeOnce(E2eeSyncCancellationSignal cancellation) async {
+    await _initializePreferences();
     final outcome = await _runnerFactory().run(
       limits: _limits,
       cancellationSignal: cancellation,
@@ -109,6 +115,7 @@ Future<bool> _executeProductionBackgroundTask(
   BackgroundTaskContext context,
 ) async {
   final executor = _productionTaskExecutor ??= E2eeMobileBackgroundTaskExecutor(
+    initializePreferences: KelivoDurablePreferences.registerForCurrentPlatform,
     runnerFactory: E2eeBackgroundSyncRunner.new,
     cancelScheduledTask: () =>
         Workmanager().cancelByUniqueName(e2eeMobileBackgroundTaskUniqueName),

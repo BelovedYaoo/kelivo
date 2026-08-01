@@ -1597,8 +1597,10 @@ void main() {
   });
 
   test('移动后台同步拒绝未知系统任务且不创建 Runner', () async {
+    var preferenceInitializations = 0;
     var runnerCreations = 0;
     final executor = E2eeMobileBackgroundTaskExecutor(
+      initializePreferences: () async => preferenceInitializations++,
       runnerFactory: () {
         runnerCreations++;
         return E2eeBackgroundSyncRunner.forTesting(
@@ -1612,13 +1614,62 @@ void main() {
       () => executor.execute('other-background-task'),
       throwsA(isA<UnsupportedError>()),
     );
+    expect(preferenceInitializations, 0);
     expect(runnerCreations, 0);
+  });
+
+  test('移动后台同步仅在耐久偏好门禁通过后创建 Runner', () async {
+    final events = <String>[];
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      initializePreferences: () async => events.add('preferences'),
+      runnerFactory: () {
+        events.add('runner');
+        return E2eeBackgroundSyncRunner.forTesting(
+          const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+        );
+      },
+      cancelScheduledTask: () async {},
+    );
+
+    expect(await executor.execute(e2eeMobileBackgroundTaskName), isTrue);
+    expect(events, <String>['preferences', 'runner']);
+  });
+
+  test('移动后台同步耐久偏好门禁失败时不进入业务', () async {
+    var runnerCreations = 0;
+    var cancellationCalls = 0;
+    final executor = E2eeMobileBackgroundTaskExecutor(
+      initializePreferences: () async {
+        throw StateError('preferences_unavailable');
+      },
+      runnerFactory: () {
+        runnerCreations++;
+        return E2eeBackgroundSyncRunner.forTesting(
+          const _FixedBackgroundHost(E2eeBackgroundWorkspaceBusy()),
+        );
+      },
+      cancelScheduledTask: () async => cancellationCalls++,
+    );
+
+    await expectLater(
+      executor.execute(e2eeMobileBackgroundTaskName),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'preferences_unavailable',
+        ),
+      ),
+    );
+    expect(runnerCreations, 0);
+    expect(cancellationCalls, 0);
   });
 
   test('移动后台同步并发系统回调共享一个 Runner', () async {
     final pending = Completer<E2eeBackgroundWorkspaceAcquisition>();
     var runnerCreations = 0;
     final executor = E2eeMobileBackgroundTaskExecutor(
+      initializePreferences: () async {},
       runnerFactory: () {
         runnerCreations++;
         return E2eeBackgroundSyncRunner.forTesting(
@@ -1630,6 +1681,7 @@ void main() {
 
     final first = executor.execute(e2eeMobileBackgroundTaskName);
     final second = executor.execute(e2eeMobileBackgroundTaskName);
+    await _waitUntil(() => runnerCreations == 1);
     expect(runnerCreations, 1);
 
     pending.complete(const E2eeBackgroundWorkspaceBusy());
@@ -1654,6 +1706,7 @@ void main() {
     );
     var cancellationCalls = 0;
     final executor = E2eeMobileBackgroundTaskExecutor(
+      initializePreferences: () async {},
       runnerFactory: () => E2eeBackgroundSyncRunner.forTesting(
         _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
       ),
@@ -1671,6 +1724,7 @@ void main() {
       Duration.zero,
     );
     final executor = E2eeMobileBackgroundTaskExecutor(
+      initializePreferences: () async {},
       runnerFactory: () => E2eeBackgroundSyncRunner.forTesting(host),
       cancelScheduledTask: () async {},
     );
@@ -1695,6 +1749,7 @@ void main() {
     );
     var cancellationCalls = 0;
     final executor = E2eeMobileBackgroundTaskExecutor(
+      initializePreferences: () async {},
       runnerFactory: () => E2eeBackgroundSyncRunner.forTesting(
         _FixedBackgroundHost(E2eeBackgroundWorkspaceAcquired(workspace)),
       ),
