@@ -152,14 +152,14 @@ impl DirectoryGuard {
 }
 
 fn open_directory_chain(path: &Path, create: bool) -> Result<Option<DirectoryGuard>, KelivoStatus> {
-    let mut components = path.components();
+    let mut components = path.components().peekable();
     if !matches!(components.next(), Some(Component::RootDir)) {
         return Err(KelivoStatus::IoFailure);
     }
     let root_fd = unsafe {
         libc::open(
             c"/".as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         )
     };
     if root_fd < 0 {
@@ -167,7 +167,7 @@ fn open_directory_chain(path: &Path, create: bool) -> Result<Option<DirectoryGua
     }
     let mut directory = unsafe { File::from_raw_fd(root_fd) };
     let mut opened_component = false;
-    for component in components {
+    while let Some(component) = components.next() {
         let Component::Normal(name) = component else {
             return Err(KelivoStatus::IoFailure);
         };
@@ -179,11 +179,17 @@ fn open_directory_chain(path: &Path, create: bool) -> Result<Option<DirectoryGua
                 return Err(KelivoStatus::IoFailure);
             }
         }
+        // Android 沙箱祖先通常只有穿越权限；只在最终槽根请求可读句柄供锁与耐久化使用。
+        let access_mode = if components.peek().is_none() {
+            libc::O_RDONLY
+        } else {
+            libc::O_PATH
+        };
         let next_fd = unsafe {
             libc::openat(
                 directory.as_raw_fd(),
                 name.as_ptr(),
-                libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+                access_mode | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
             )
         };
         if next_fd < 0 {

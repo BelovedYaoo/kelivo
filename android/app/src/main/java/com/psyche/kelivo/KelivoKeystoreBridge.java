@@ -7,6 +7,7 @@ import android.security.keystore.KeyProperties;
 import androidx.annotation.Keep;
 
 import java.io.File;
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.security.GeneralSecurityException;
 import java.security.Key;
@@ -38,14 +39,23 @@ public final class KelivoKeystoreBridge {
     }
 
     @Keep
-    public static String getSlotRootPath() {
+    public static String getSlotRootPath() throws IOException {
         final Context context = applicationContext;
         if (context == null) {
             throw new IllegalStateException("安全核心尚未完成进程初始化");
         }
+        final File dataDirectory = context.getDataDir().getAbsoluteFile();
+        final File noBackupDirectory = context.getNoBackupFilesDir().getAbsoluteFile();
+        if (!dataDirectory.equals(noBackupDirectory.getParentFile())) {
+            throw new IOException("Android no-backup 目录不属于当前应用数据根");
+        }
+        final File canonicalDataDirectory = dataDirectory.getCanonicalFile();
+        if (!canonicalDataDirectory.isDirectory()) {
+            throw new IOException("Android 应用数据根不可用");
+        }
         // 本地包装密文没有跨设备恢复价值，恢复后缺少 Keystore 根密钥只会形成死数据。
         return new File(
-                context.getNoBackupFilesDir(),
+                new File(canonicalDataDirectory, noBackupDirectory.getName()),
                 "Kelivo/secure-core/v1/slots"
         ).getAbsolutePath();
     }
