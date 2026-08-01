@@ -1857,6 +1857,13 @@ class AppLocalizationsZh extends AppLocalizations {
       'Kelivo 无法验证完整的原有或新数据，因此未打开聊天数据。请关闭 Kelivo 后重试；若问题反复出现，请保留诊断码以便支持人员排查。';
 
   @override
+  String get backupRestoreLegacyApplePreferencesTitle => '需要重置应用数据';
+
+  @override
+  String get backupRestoreLegacyApplePreferencesContent =>
+      'Kelivo 检测到旧版 Apple 存储实现写入的偏好。由于无法证明这些字节已被安全擦除，Kelivo 将保持锁定。请清除 Kelivo 的应用数据后重新打开；在 iPhone 或 iPad 上，请卸载并重新安装 Kelivo。';
+
+  @override
   String get backupRestoreBusinessLeaseUnavailableTitle => 'Kelivo 已在运行';
 
   @override
@@ -7592,6 +7599,13 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   @override
   String get backupRestoreFailureContent =>
       'Kelivo 无法验证完整的原有或新数据，因此未打开聊天数据。请关闭 Kelivo 后重试；若问题反复出现，请保留诊断码以便支持人员排查。';
+
+  @override
+  String get backupRestoreLegacyApplePreferencesTitle => '需要重置应用数据';
+
+  @override
+  String get backupRestoreLegacyApplePreferencesContent =>
+      'Kelivo 检测到旧版 Apple 存储实现写入的偏好。由于无法证明这些字节已被安全擦除，Kelivo 将保持锁定。请清除 Kelivo 的应用数据后重新打开；在 iPhone 或 iPad 上，请卸载并重新安装 Kelivo。';
 
   @override
   String get backupRestoreBusinessLeaseUnavailableTitle => 'Kelivo 已在运行';
@@ -13330,6 +13344,13 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   @override
   String get backupRestoreFailureContent =>
       'Kelivo 無法驗證完整的原有或新資料，因此未開啟聊天資料。請關閉 Kelivo 後重試；若問題持續發生，請保留診斷碼以供支援人員排查。';
+
+  @override
+  String get backupRestoreLegacyApplePreferencesTitle => '需要重設應用程式資料';
+
+  @override
+  String get backupRestoreLegacyApplePreferencesContent =>
+      'Kelivo 偵測到舊版 Apple 儲存實作寫入的偏好。由於無法證明這些位元組已被安全清除，Kelivo 將保持鎖定。請清除 Kelivo 的應用程式資料後重新開啟；在 iPhone 或 iPad 上，請解除安裝並重新安裝 Kelivo。';
 
   @override
   String get backupRestoreBusinessLeaseUnavailableTitle => 'Kelivo 已在執行';

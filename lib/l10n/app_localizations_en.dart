@@ -1938,6 +1938,14 @@ class AppLocalizationsEn extends AppLocalizations {
       'Kelivo could not verify a complete old or new data set, so chat data was not opened. Close Kelivo and try again. If this repeats, keep the diagnostic code for support.';
 
   @override
+  String get backupRestoreLegacyApplePreferencesTitle =>
+      'App data reset required';
+
+  @override
+  String get backupRestoreLegacyApplePreferencesContent =>
+      'Kelivo found preferences written by an older Apple storage implementation. To avoid claiming those bytes were securely erased, Kelivo remains locked. Clear Kelivo\'s app data, then reopen it. On iPhone or iPad, uninstall and reinstall Kelivo.';
+
+  @override
   String get backupRestoreBusinessLeaseUnavailableTitle =>
       'Kelivo is already running';
 

@@ -762,6 +762,8 @@
   "backupRestoreRolledBackContent": "The restore could not be completed. Kelivo verified and kept your previous data.",
   "backupRestoreFailureTitle": "Restore requires attention",
   "backupRestoreFailureContent": "Kelivo could not verify a complete old or new data set, so chat data was not opened. Close Kelivo and try again. If this repeats, keep the diagnostic code for support.",
+  "backupRestoreLegacyApplePreferencesTitle": "App data reset required",
+  "backupRestoreLegacyApplePreferencesContent": "Kelivo found preferences written by an older Apple storage implementation. To avoid claiming those bytes were securely erased, Kelivo remains locked. Clear Kelivo's app data, then reopen it. On iPhone or iPad, uninstall and reinstall Kelivo.",
   "backupRestoreBusinessLeaseUnavailableTitle": "Kelivo is already running",
   "backupRestoreBusinessLeaseUnavailableContent": "Kelivo's data is still in use by another app process. Close any other Kelivo window, then restart. Your chat data has not been opened by this process.",
   "backupRestoreFailureRestartButton": "Restart Kelivo",

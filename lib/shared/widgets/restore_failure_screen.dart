@@ -13,6 +13,7 @@ String restoreFailureDiagnosticCode(Object error) {
   final Object? message = switch (error) {
     StateError() => error.message,
     FormatException() => error.message,
+    PlatformException() => error.code,
     _ => null,
   };
   final raw = message?.toString();
@@ -80,6 +81,9 @@ class _RestoreFailureScreenState extends State<RestoreFailureScreen> {
     final textTheme = Theme.of(context).textTheme;
     final isLeaseUnavailable =
         widget.diagnosticCode == 'RestoreBusinessLeaseUnavailable';
+    final requiresContainerReset =
+        widget.diagnosticCode ==
+        'kelivo_durable_preferences_legacy_container_reset_required';
     return Scaffold(
       body: SafeArea(
         child: Center(
@@ -111,7 +115,9 @@ class _RestoreFailureScreenState extends State<RestoreFailureScreen> {
                       ),
                       const SizedBox(height: 20),
                       Text(
-                        isLeaseUnavailable
+                        requiresContainerReset
+                            ? l10n.backupRestoreLegacyApplePreferencesTitle
+                            : isLeaseUnavailable
                             ? l10n.backupRestoreBusinessLeaseUnavailableTitle
                             : l10n.backupRestoreFailureTitle,
                         style: textTheme.headlineSmall?.copyWith(
@@ -120,7 +126,9 @@ class _RestoreFailureScreenState extends State<RestoreFailureScreen> {
                       ),
                       const SizedBox(height: 10),
                       Text(
-                        isLeaseUnavailable
+                        requiresContainerReset
+                            ? l10n.backupRestoreLegacyApplePreferencesContent
+                            : isLeaseUnavailable
                             ? l10n.backupRestoreBusinessLeaseUnavailableContent
                             : l10n.backupRestoreFailureContent,
                         style: textTheme.bodyLarge?.copyWith(
@@ -165,22 +173,23 @@ class _RestoreFailureScreenState extends State<RestoreFailureScreen> {
                         ),
                       ],
                       const SizedBox(height: 24),
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: _restarting ? null : _restart,
-                          icon: _restarting
-                              ? SizedBox.square(
-                                  dimension: 18,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: colors.onPrimary,
-                                  ),
-                                )
-                              : const Icon(Icons.restart_alt_rounded),
-                          label: Text(l10n.backupRestoreFailureRestartButton),
+                      if (!requiresContainerReset)
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _restarting ? null : _restart,
+                            icon: _restarting
+                                ? SizedBox.square(
+                                    dimension: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: colors.onPrimary,
+                                    ),
+                                  )
+                                : const Icon(Icons.restart_alt_rounded),
+                            label: Text(l10n.backupRestoreFailureRestartButton),
+                          ),
                         ),
-                      ),
                       Align(
                         alignment: Alignment.center,
                         child: TextButton.icon(
