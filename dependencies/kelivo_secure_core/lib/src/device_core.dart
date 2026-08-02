@@ -9,6 +9,10 @@ const _dataRekeyCompletionProofFrameLength =
     native.KELIVO_DATA_REKEY_COMPLETION_PROOF_FRAME_SIZE;
 const _dataRekeyCompletionProofSignatureLength =
     native.KELIVO_DATA_REKEY_COMPLETION_PROOF_SIGNATURE_SIZE;
+const _selfRevocationIntentDigestLength =
+    native.KELIVO_SELF_REVOCATION_INTENT_DIGEST_SIZE;
+const _selfRevocationIntentSignatureLength =
+    native.KELIVO_SELF_REVOCATION_INTENT_SIGNATURE_SIZE;
 const _accountKeyEnvelopeLength = native.KELIVO_ACCOUNT_KEY_ENVELOPE_SIZE;
 const _pairingSecretLength = native.KELIVO_PAIRING_SECRET_SIZE;
 const _pairingAuthenticatorLength = native.KELIVO_PAIRING_AUTHENTICATOR_SIZE;
@@ -262,6 +266,33 @@ final class KelivoDataRekeyCompletionProofSignature {
   const KelivoDataRekeyCompletionProofSignature._(this.bytes);
 
   final Uint8List bytes;
+}
+
+final class KelivoSelfRevocationIntent {
+  factory KelivoSelfRevocationIntent({
+    required Uint8List intentDigest,
+    required Uint8List intentSignature,
+  }) {
+    _requireLength(
+      intentDigest,
+      _selfRevocationIntentDigestLength,
+      'intentDigest',
+    );
+    _requireLength(
+      intentSignature,
+      _selfRevocationIntentSignatureLength,
+      'intentSignature',
+    );
+    return KelivoSelfRevocationIntent._(
+      _immutableDeviceBytes(intentDigest),
+      _immutableDeviceBytes(intentSignature),
+    );
+  }
+
+  const KelivoSelfRevocationIntent._(this.intentDigest, this.intentSignature);
+
+  final Uint8List intentDigest;
+  final Uint8List intentSignature;
 }
 
 final class KelivoDeviceStateAccountBinding {
@@ -866,6 +897,96 @@ extension KelivoDeviceCore on KelivoSecureCore {
     );
   }
 
+  Future<KelivoSelfRevocationIntent> createSelfRevocationIntent(
+    KelivoDeviceIdentityHandle identity, {
+    required Uint8List userId,
+    required Uint8List deviceId,
+    required Uint8List mutationId,
+    required Uint8List operationId,
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required Uint8List expectedMembershipManifestDigest,
+    required int expiresAtMs,
+  }) async {
+    // 这里只固定密码学编码；设备归属和时效窗口必须由已认证本地状态与服务端共同约束。
+    _validateSelfRevocationIntentFields(
+      userId: userId,
+      deviceId: deviceId,
+      mutationId: mutationId,
+      operationId: operationId,
+      expectedGeneration: expectedGeneration,
+      expectedKeyEpoch: expectedKeyEpoch,
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      expiresAtMs: expiresAtMs,
+    );
+    final value = identity._state.beginUse();
+    try {
+      final output = await Isolate.run(
+        () => _createSelfRevocationIntent(
+          value,
+          Uint8List.fromList(userId),
+          Uint8List.fromList(deviceId),
+          Uint8List.fromList(mutationId),
+          Uint8List.fromList(operationId),
+          expectedGeneration,
+          expectedKeyEpoch,
+          Uint8List.fromList(expectedMembershipManifestDigest),
+          expiresAtMs,
+        ),
+      );
+      return KelivoSelfRevocationIntent(
+        intentDigest: output.$1,
+        intentSignature: output.$2,
+      );
+    } finally {
+      identity._state.completeUse();
+    }
+  }
+
+  Future<void> verifySelfRevocationIntent({
+    required Uint8List signingPublicKey,
+    required Uint8List userId,
+    required Uint8List deviceId,
+    required Uint8List mutationId,
+    required Uint8List operationId,
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required Uint8List expectedMembershipManifestDigest,
+    required int expiresAtMs,
+    required KelivoSelfRevocationIntent intent,
+  }) {
+    _requireLength(
+      signingPublicKey,
+      _devicePublicKeyLength,
+      'signingPublicKey',
+    );
+    _validateSelfRevocationIntentFields(
+      userId: userId,
+      deviceId: deviceId,
+      mutationId: mutationId,
+      operationId: operationId,
+      expectedGeneration: expectedGeneration,
+      expectedKeyEpoch: expectedKeyEpoch,
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      expiresAtMs: expiresAtMs,
+    );
+    return Isolate.run(
+      () => _verifySelfRevocationIntent(
+        Uint8List.fromList(signingPublicKey),
+        Uint8List.fromList(userId),
+        Uint8List.fromList(deviceId),
+        Uint8List.fromList(mutationId),
+        Uint8List.fromList(operationId),
+        expectedGeneration,
+        expectedKeyEpoch,
+        Uint8List.fromList(expectedMembershipManifestDigest),
+        expiresAtMs,
+        Uint8List.fromList(intent.intentDigest),
+        Uint8List.fromList(intent.intentSignature),
+      ),
+    );
+  }
+
   Future<KelivoDeviceRegistrationBundle> createDeviceRegistrationFinish(
     KelivoDeviceIdentityHandle identity,
     KelivoAccountRootKeyHandle ark, {
@@ -1344,6 +1465,46 @@ void _validateAccountTrustPayload(Uint8List canonicalPayload) {
 void _validateTimestamp(int value, String name) {
   if (value <= 0 || value > _recordMaxEpoch) {
     throw ArgumentError.value(value, name, '必须位于正 63 位整数范围');
+  }
+}
+
+void _validateSelfRevocationIntentFields({
+  required Uint8List userId,
+  required Uint8List deviceId,
+  required Uint8List mutationId,
+  required Uint8List operationId,
+  required int expectedGeneration,
+  required int expectedKeyEpoch,
+  required Uint8List expectedMembershipManifestDigest,
+  required int expiresAtMs,
+}) {
+  _validateUuidV4(userId, 'userId');
+  _validateUuidV4(deviceId, 'deviceId');
+  _validateUuidV4(mutationId, 'mutationId');
+  _validateUuidV4(operationId, 'operationId');
+  _validatePositiveBoundedInteger(
+    expectedGeneration,
+    'expectedGeneration',
+    0x7ffffffe,
+  );
+  _validatePositiveBoundedInteger(
+    expectedKeyEpoch,
+    'expectedKeyEpoch',
+    0xfffffffe,
+  );
+  _requireLength(
+    expectedMembershipManifestDigest,
+    _selfRevocationIntentDigestLength,
+    'expectedMembershipManifestDigest',
+  );
+  if (expiresAtMs < 0 || expiresAtMs > _recordMaxEpoch) {
+    throw ArgumentError.value(expiresAtMs, 'expiresAtMs', '必须位于非负 63 位整数范围');
+  }
+}
+
+void _validatePositiveBoundedInteger(int value, String name, int maximum) {
+  if (value <= 0 || value > maximum) {
+    throw ArgumentError.value(value, name, '必须位于 1 至 $maximum 范围');
   }
 }
 
@@ -1911,6 +2072,170 @@ void _verifyDataRekeyCompletionProof(
     signingPublicKey.fillRange(0, signingPublicKey.length, 0);
     proofFrame.fillRange(0, proofFrame.length, 0);
     signature.fillRange(0, signature.length, 0);
+  }
+}
+
+(Uint8List, Uint8List) _createSelfRevocationIntent(
+  int identityHandle,
+  Uint8List userId,
+  Uint8List deviceId,
+  Uint8List mutationId,
+  Uint8List operationId,
+  int expectedGeneration,
+  int expectedKeyEpoch,
+  Uint8List expectedMembershipManifestDigest,
+  int expiresAtMs,
+) {
+  final userIdPointer = _copyToNative(userId);
+  final deviceIdPointer = _copyToNative(deviceId);
+  final mutationIdPointer = _copyToNative(mutationId);
+  final operationIdPointer = _copyToNative(operationId);
+  final manifestDigestPointer = _copyToNative(expectedMembershipManifestDigest);
+  final intentDigest = calloc<ffi.Uint8>(_selfRevocationIntentDigestLength);
+  final intentDigestLength = calloc<ffi.Size>();
+  final intentSignature = calloc<ffi.Uint8>(
+    _selfRevocationIntentSignatureLength,
+  );
+  final intentSignatureLength = calloc<ffi.Size>();
+  try {
+    _throwOnError(
+      operation: 'self_revocation_intent_create',
+      statusCode: native.kelivo_self_revocation_intent_create(
+        identityHandle,
+        userIdPointer,
+        userId.length,
+        deviceIdPointer,
+        deviceId.length,
+        mutationIdPointer,
+        mutationId.length,
+        operationIdPointer,
+        operationId.length,
+        expectedGeneration,
+        expectedKeyEpoch,
+        manifestDigestPointer,
+        expectedMembershipManifestDigest.length,
+        expiresAtMs,
+        intentDigest,
+        _selfRevocationIntentDigestLength,
+        intentDigestLength,
+        intentSignature,
+        _selfRevocationIntentSignatureLength,
+        intentSignatureLength,
+      ),
+    );
+    _requireExactOutputLength(
+      operation: 'self_revocation_intent_create.digest',
+      expected: _selfRevocationIntentDigestLength,
+      actual: intentDigestLength.value,
+    );
+    _requireExactOutputLength(
+      operation: 'self_revocation_intent_create.signature',
+      expected: _selfRevocationIntentSignatureLength,
+      actual: intentSignatureLength.value,
+    );
+    return (
+      Uint8List.fromList(
+        intentDigest.asTypedList(_selfRevocationIntentDigestLength),
+      ),
+      Uint8List.fromList(
+        intentSignature.asTypedList(_selfRevocationIntentSignatureLength),
+      ),
+    );
+  } finally {
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(deviceIdPointer, deviceId.length);
+    _clearAndFree(mutationIdPointer, mutationId.length);
+    _clearAndFree(operationIdPointer, operationId.length);
+    _clearAndFree(
+      manifestDigestPointer,
+      expectedMembershipManifestDigest.length,
+    );
+    _clearAndFree(intentDigest, _selfRevocationIntentDigestLength);
+    calloc.free(intentDigestLength);
+    _clearAndFree(intentSignature, _selfRevocationIntentSignatureLength);
+    calloc.free(intentSignatureLength);
+    userId.fillRange(0, userId.length, 0);
+    deviceId.fillRange(0, deviceId.length, 0);
+    mutationId.fillRange(0, mutationId.length, 0);
+    operationId.fillRange(0, operationId.length, 0);
+    expectedMembershipManifestDigest.fillRange(
+      0,
+      expectedMembershipManifestDigest.length,
+      0,
+    );
+  }
+}
+
+void _verifySelfRevocationIntent(
+  Uint8List signingPublicKey,
+  Uint8List userId,
+  Uint8List deviceId,
+  Uint8List mutationId,
+  Uint8List operationId,
+  int expectedGeneration,
+  int expectedKeyEpoch,
+  Uint8List expectedMembershipManifestDigest,
+  int expiresAtMs,
+  Uint8List intentDigest,
+  Uint8List intentSignature,
+) {
+  final signingPublicKeyPointer = _copyToNative(signingPublicKey);
+  final userIdPointer = _copyToNative(userId);
+  final deviceIdPointer = _copyToNative(deviceId);
+  final mutationIdPointer = _copyToNative(mutationId);
+  final operationIdPointer = _copyToNative(operationId);
+  final manifestDigestPointer = _copyToNative(expectedMembershipManifestDigest);
+  final intentDigestPointer = _copyToNative(intentDigest);
+  final intentSignaturePointer = _copyToNative(intentSignature);
+  try {
+    _throwOnError(
+      operation: 'self_revocation_intent_verify',
+      statusCode: native.kelivo_self_revocation_intent_verify(
+        signingPublicKeyPointer,
+        signingPublicKey.length,
+        userIdPointer,
+        userId.length,
+        deviceIdPointer,
+        deviceId.length,
+        mutationIdPointer,
+        mutationId.length,
+        operationIdPointer,
+        operationId.length,
+        expectedGeneration,
+        expectedKeyEpoch,
+        manifestDigestPointer,
+        expectedMembershipManifestDigest.length,
+        expiresAtMs,
+        intentDigestPointer,
+        intentDigest.length,
+        intentSignaturePointer,
+        intentSignature.length,
+      ),
+    );
+  } finally {
+    _clearAndFree(signingPublicKeyPointer, signingPublicKey.length);
+    _clearAndFree(userIdPointer, userId.length);
+    _clearAndFree(deviceIdPointer, deviceId.length);
+    _clearAndFree(mutationIdPointer, mutationId.length);
+    _clearAndFree(operationIdPointer, operationId.length);
+    _clearAndFree(
+      manifestDigestPointer,
+      expectedMembershipManifestDigest.length,
+    );
+    _clearAndFree(intentDigestPointer, intentDigest.length);
+    _clearAndFree(intentSignaturePointer, intentSignature.length);
+    signingPublicKey.fillRange(0, signingPublicKey.length, 0);
+    userId.fillRange(0, userId.length, 0);
+    deviceId.fillRange(0, deviceId.length, 0);
+    mutationId.fillRange(0, mutationId.length, 0);
+    operationId.fillRange(0, operationId.length, 0);
+    expectedMembershipManifestDigest.fillRange(
+      0,
+      expectedMembershipManifestDigest.length,
+      0,
+    );
+    intentDigest.fillRange(0, intentDigest.length, 0);
+    intentSignature.fillRange(0, intentSignature.length, 0);
   }
 }
 
