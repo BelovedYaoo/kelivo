@@ -5,7 +5,10 @@ import 'e2ee_sync_pull_types.dart';
 import 'sync_codec.dart';
 
 abstract interface class E2eeConfigSyncBinding {
-  Future<void> initialize(E2eeConfigVaultCommands commands);
+  Future<void> initialize(
+    E2eeConfigVaultCommands commands,
+    E2eeConfigAssetCommands assetCommands,
+  );
 
   Future<E2eeSyncEntitySnapshot> readSnapshot(SyncEntityKey entityKey);
 
@@ -26,7 +29,10 @@ final class E2eeHeadlessConfigSyncBinding implements E2eeConfigSyncBinding {
   bool _remotePullActive = false;
 
   @override
-  Future<void> initialize(E2eeConfigVaultCommands commands) async {
+  Future<void> initialize(
+    E2eeConfigVaultCommands commands,
+    E2eeConfigAssetCommands assetCommands,
+  ) async {
     if (_adapter != null) {
       throw StateError('E2EE 后台配置桥接不能重复初始化');
     }

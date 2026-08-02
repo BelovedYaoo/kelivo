@@ -1,18 +1,9 @@
 import 'config_sync_keys.dart';
+import 'e2ee_attachment_manifest.dart';
+import 'e2ee_config_asset_types.dart';
 import 'sync_codec.dart';
 
 const _maximumPositiveInt63 = 0x7fffffffffffffff;
-final _canonicalUuidV4Pattern = RegExp(
-  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
-);
-const _managedAssetReferenceKeys = <String>{
-  'attachmentId',
-  'uploadId',
-  'chunkKeyEpoch',
-  'manifestKeyEpoch',
-  'manifestRevision',
-  'kind',
-};
 
 abstract final class E2eeConfigSyncPayloadSchema {
   static void validate(SyncEntityKey entityKey, Map<String, Object?> payload) {
@@ -278,7 +269,7 @@ void _validateAssistant(SyncEntityKey entityKey, Map<String, Object?> payload) {
   final avatarAsset = _nullableManagedAssetReference(
     payload,
     'avatarAsset',
-    expectedKind: 'image',
+    expectedKind: E2eeAttachmentKind.image,
   );
   if (avatar != null && avatarAsset != null) {
     throw const FormatException('assistant.avatar 与 avatarAsset 不能同时存在');
@@ -307,7 +298,7 @@ void _validateAssistant(SyncEntityKey entityKey, Map<String, Object?> payload) {
   final backgroundAsset = _nullableManagedAssetReference(
     payload,
     'backgroundAsset',
-    expectedKind: 'image',
+    expectedKind: E2eeAttachmentKind.image,
   );
   if (background != null && backgroundAsset != null) {
     throw const FormatException(
@@ -1139,38 +1130,14 @@ void _requiredPosition(Map<String, Object?> payload) {
 Map<String, Object?>? _nullableManagedAssetReference(
   Map<String, Object?> payload,
   String key, {
-  required String expectedKind,
+  required E2eeAttachmentKind expectedKind,
 }) {
   final value = _requiredValue(payload, key);
   if (value == null) return null;
-  final reference = _expectObject(value, key);
-  _expectExactKeys(reference, _managedAssetReferenceKeys, key);
-  final attachmentId = _requiredString(reference, 'attachmentId');
-  final uploadId = _requiredString(reference, 'uploadId');
-  if (!_canonicalUuidV4Pattern.hasMatch(attachmentId) ||
-      !_canonicalUuidV4Pattern.hasMatch(uploadId) ||
-      attachmentId == uploadId) {
-    throw FormatException('$key 远端身份无效');
-  }
-  final chunkKeyEpoch = _requiredPositiveInteger(reference, 'chunkKeyEpoch');
-  final manifestKeyEpoch = _requiredPositiveInteger(
-    reference,
-    'manifestKeyEpoch',
-  );
-  final manifestRevision = _requiredPositiveInteger(
-    reference,
-    'manifestRevision',
-  );
-  if (chunkKeyEpoch > 0xffffffff ||
-      manifestKeyEpoch > 0xffffffff ||
-      manifestRevision > 0xffffffff ||
-      manifestKeyEpoch - chunkKeyEpoch != manifestRevision - 1) {
-    throw FormatException('$key 代次与修订关系无效');
-  }
-  if (_requiredString(reference, 'kind') != expectedKind) {
-    throw FormatException('$key kind 无效');
-  }
-  return reference;
+  return E2eeConfigAssetRemoteIdentity.fromPayload(
+    value,
+    expectedKind: expectedKind,
+  ).toPayload();
 }
 
 void _rejectLocalPath(String? value, String context) {

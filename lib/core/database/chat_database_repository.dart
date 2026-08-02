@@ -28,6 +28,7 @@ part 'e2ee_sync_outbox_commands.dart';
 part 'e2ee_sync_pull_commands.dart';
 part 'e2ee_sync_pull_checkpoint_commands.dart';
 part 'e2ee_config_vault_commands.dart';
+part 'e2ee_config_asset_commands.dart';
 part 'e2ee_attachment_upload_commands.dart';
 part 'e2ee_attachment_download_commands.dart';
 part 'e2ee_data_rekey_commands.dart';
@@ -169,6 +170,9 @@ class ChatDatabaseRepository {
 
   E2eeConfigVaultCommands get e2eeConfigVaultCommands =>
       E2eeConfigVaultCommands._(_db);
+
+  E2eeConfigAssetCommands get e2eeConfigAssetCommands =>
+      E2eeConfigAssetCommands._(_db);
 
   E2eeAttachmentUploadCommands get e2eeAttachmentUploadCommands =>
       E2eeAttachmentUploadCommands._(_db);
@@ -3855,6 +3859,9 @@ LIMIT 1;
         SELECT 1 FROM message_asset_rows r WHERE r.asset_id = a.id
       )
       AND NOT EXISTS (
+        SELECT 1 FROM config_asset_rows r WHERE r.asset_id = a.id
+      )
+      AND NOT EXISTS (
         SELECT 1 FROM e2ee_attachment_download_rows d
         WHERE d.local_asset_id = a.id
           AND d.phase IN ('manifest-pending', 'downloading', 'verifying')
@@ -3884,6 +3891,10 @@ LIMIT 1;
             WHERE g.not_before <= ?
               AND NOT EXISTS (
                 SELECT 1 FROM message_asset_rows r
+                WHERE r.asset_id = g.asset_id
+              )
+              AND NOT EXISTS (
+                SELECT 1 FROM config_asset_rows r
                 WHERE r.asset_id = g.asset_id
               )
               AND NOT EXISTS (
@@ -3922,9 +3933,17 @@ LIMIT 1;
               AND NOT EXISTS (
                 SELECT 1
                 FROM asset_rows other
-                JOIN message_asset_rows other_ref
-                  ON other_ref.asset_id = other.id
                 WHERE other.id <> a.id
+                  AND (
+                    EXISTS (
+                      SELECT 1 FROM message_asset_rows other_ref
+                      WHERE other_ref.asset_id = other.id
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM config_asset_rows other_ref
+                      WHERE other_ref.asset_id = other.id
+                    )
+                  )
                   AND (
                     other.path = a.path COLLATE NOCASE
                     OR (
@@ -4027,6 +4046,10 @@ LIMIT 1;
               WHERE r.asset_id = g.asset_id
             )
             AND NOT EXISTS (
+              SELECT 1 FROM config_asset_rows r
+              WHERE r.asset_id = g.asset_id
+            )
+            AND NOT EXISTS (
               SELECT 1 FROM e2ee_attachment_download_rows d
               WHERE d.local_asset_id = g.asset_id
                 AND d.phase IN (
@@ -4062,9 +4085,17 @@ LIMIT 1;
             AND NOT EXISTS (
               SELECT 1
               FROM asset_rows other
-              JOIN message_asset_rows other_ref
-                ON other_ref.asset_id = other.id
               WHERE other.id <> a.id
+                AND (
+                  EXISTS (
+                    SELECT 1 FROM message_asset_rows other_ref
+                    WHERE other_ref.asset_id = other.id
+                  )
+                  OR EXISTS (
+                    SELECT 1 FROM config_asset_rows other_ref
+                    WHERE other_ref.asset_id = other.id
+                  )
+                )
                 AND (
                   other.path = a.path COLLATE NOCASE
                   OR (
@@ -4451,6 +4482,10 @@ LIMIT 1;
                 WHERE r.asset_id = g.asset_id
               )
               AND NOT EXISTS (
+                SELECT 1 FROM config_asset_rows r
+                WHERE r.asset_id = g.asset_id
+              )
+              AND NOT EXISTS (
                 SELECT 1 FROM e2ee_attachment_download_rows d
                 WHERE d.local_asset_id = g.asset_id
                   AND d.phase IN (
@@ -4486,9 +4521,17 @@ LIMIT 1;
               AND NOT EXISTS (
                 SELECT 1
                 FROM asset_rows other
-                JOIN message_asset_rows other_ref
-                  ON other_ref.asset_id = other.id
                 WHERE other.id <> a.id
+                  AND (
+                    EXISTS (
+                      SELECT 1 FROM message_asset_rows other_ref
+                      WHERE other_ref.asset_id = other.id
+                    )
+                    OR EXISTS (
+                      SELECT 1 FROM config_asset_rows other_ref
+                      WHERE other_ref.asset_id = other.id
+                    )
+                  )
                   AND (
                     other.path = a.path COLLATE NOCASE
                     OR (

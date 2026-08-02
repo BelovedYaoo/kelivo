@@ -5,6 +5,7 @@ import 'dart:io';
 import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
+import 'package:Kelivo/core/models/assistant.dart';
 import 'package:Kelivo/core/models/chat_message.dart';
 import 'package:Kelivo/core/providers/assistant_provider.dart';
 import 'package:Kelivo/core/providers/cloud_sync_provider.dart';
@@ -30,8 +31,10 @@ import 'package:Kelivo/core/services/sync/e2ee_account_recovery_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
+import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_background_sync_runner.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_content_runtime.dart';
+import 'package:Kelivo/core/services/sync/e2ee_config_asset_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_provider_binding.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_first_device_registration_commit_coordinator.dart';
@@ -5119,6 +5122,34 @@ void main() {
     expect(await outbox.listDirtyIntents(limit: 10), isEmpty);
   });
 
+  test('E2EE 配置桥接从受管资产引用水合助手头像', () async {
+    const assistantId = 'assistant-managed-avatar';
+    final harness = await _E2eeConfigBindingHarness.create(
+      initialProfileName: 'Vault 用户',
+      initialAssistant: const Assistant(id: assistantId, name: '助手'),
+      assistantAvatarAsset: const MessageAssetRegistration(
+        assetId:
+            'asset_aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        contentHash:
+            'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+        path: r'D:\managed\assistant-avatar.png',
+        byteSize: 8,
+        kind: 'image',
+        attachmentId: '10000000-0000-4000-8000-000000000001',
+        uploadId: '10000000-0000-4000-8000-000000000002',
+        chunkKeyEpoch: 1,
+        manifestKeyEpoch: 1,
+        manifestRevision: 1,
+      ),
+    );
+    addTearDown(harness.close);
+
+    expect(
+      harness.providers.assistants.getById(assistantId)?.avatar,
+      r'D:\managed\assistant-avatar.png',
+    );
+  });
+
   test('E2EE 生产运行时配置写入与 outbox 原子提交并触发发送', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -5549,6 +5580,8 @@ final class _E2eeConfigBindingHarness {
 
   static Future<_E2eeConfigBindingHarness> create({
     required String initialProfileName,
+    Assistant? initialAssistant,
+    MessageAssetRegistration? assistantAvatarAsset,
   }) async {
     SharedPreferences.setMockInitialValues(<String, Object>{});
     final directory = await Directory.systemTemp.createTemp(
@@ -5583,7 +5616,51 @@ final class _E2eeConfigBindingHarness {
       } finally {
         encoded.fillRange(0, encoded.length, 0);
       }
-      await binding.initialize(repository.e2eeConfigVaultCommands);
+      if (initialAssistant != null) {
+        final key = ConfigSyncKeys.assistant(initialAssistant.id);
+        final avatarAsset = assistantAvatarAsset;
+        final assistantPayload =
+            Map<String, Object?>.from(initialAssistant.toJson())
+              ..['_position'] = 0
+              ..['avatarAsset'] = avatarAsset == null
+                  ? null
+                  : E2eeConfigAssetRemoteIdentity(
+                      attachmentId: avatarAsset.attachmentId!,
+                      uploadId: avatarAsset.uploadId!,
+                      chunkKeyEpoch: avatarAsset.chunkKeyEpoch!,
+                      manifestKeyEpoch: avatarAsset.manifestKeyEpoch!,
+                      manifestRevision: avatarAsset.manifestRevision!,
+                      kind: E2eeAttachmentKind.image,
+                    ).toPayload()
+              ..['backgroundAsset'] = null;
+        final encodedAssistant = E2eeSyncPayloadCodec.encode(
+          entityKey: key,
+          payload: assistantPayload,
+        );
+        try {
+          await repository.e2eeConfigVaultCommands.put(
+            key: key,
+            payload: encodedAssistant,
+            updatedAt: DateTime.utc(2026, 7, 29),
+          );
+          if (avatarAsset != null) {
+            await repository.e2eeConfigAssetCommands.replace(
+              key: E2eeConfigAssetKey(
+                entityKey: key,
+                slot: E2eeConfigAssetSlot.avatar,
+              ),
+              asset: avatarAsset,
+              now: DateTime.utc(2026, 7, 29),
+            );
+          }
+        } finally {
+          encodedAssistant.fillRange(0, encodedAssistant.length, 0);
+        }
+      }
+      await binding.initialize(
+        repository.e2eeConfigVaultCommands,
+        repository.e2eeConfigAssetCommands,
+      );
       return _E2eeConfigBindingHarness._(
         directory: directory,
         repository: repository,

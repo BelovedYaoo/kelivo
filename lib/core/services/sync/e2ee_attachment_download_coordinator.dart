@@ -10,9 +10,11 @@ import '../../database/chat_database_repository.dart';
 import 'cloud_sync_attachment_types.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_types.dart';
+import 'config_sync_keys.dart';
 import 'e2ee_attachment_crypto_session.dart';
 import 'e2ee_attachment_file_store.dart';
 import 'e2ee_attachment_manifest.dart';
+import 'e2ee_config_asset_types.dart';
 import 'e2ee_message_attachment_readiness.dart';
 import 'e2ee_sync_execution_budget.dart';
 import 'e2ee_sync_payload_codec.dart';
@@ -23,6 +25,16 @@ const _initialDownloadRetryDelay = Duration(seconds: 1);
 const _maximumDownloadRetryDelay = Duration(minutes: 5);
 
 typedef E2eeAttachmentLeaseTokenFactory = String Function();
+
+final class E2eeConfigAssetDownloadRegistration {
+  const E2eeConfigAssetDownloadRegistration({
+    required this.key,
+    required this.asset,
+  });
+
+  final E2eeConfigAssetKey key;
+  final MessageAssetRegistration asset;
+}
 
 final class E2eeAttachmentDownloadCoordinator
     implements E2eeSyncPullPagePreparer, E2eeMessageAttachmentReadiness {
@@ -126,6 +138,29 @@ final class E2eeAttachmentDownloadCoordinator
       registrations.add(_registrationFromReadyState(state));
     }
     return List<MessageAssetRegistration>.unmodifiable(registrations);
+  }
+
+  Future<List<E2eeConfigAssetDownloadRegistration>> requireReadyForConfigApply(
+    E2eeSyncPulledValueChange configChange,
+  ) async {
+    _requireAcceptingOperations();
+    final references = _configAssetReferences(configChange);
+    final registrations = <E2eeConfigAssetDownloadRegistration>[];
+    for (final entry in references) {
+      final state = await _commands.readReady(entry.reference);
+      if (state == null) {
+        throw StateError('sync_config_asset_not_ready');
+      }
+      registrations.add(
+        E2eeConfigAssetDownloadRegistration(
+          key: entry.key,
+          asset: _registrationFromReadyState(state),
+        ),
+      );
+    }
+    return List<E2eeConfigAssetDownloadRegistration>.unmodifiable(
+      registrations,
+    );
   }
 
   Future<void> close() {
@@ -575,14 +610,18 @@ List<E2eeAttachmentDownloadReference> _uniqueAttachmentReferences(
   final uploadOwners = <String, String>{};
   for (final change in changes) {
     if (change is! E2eeSyncPulledValueChange) continue;
-    for (final reference in _messageAttachmentReferences(change)) {
+    final references = <E2eeAttachmentDownloadReference>[
+      ..._messageAttachmentReferences(change),
+      ..._configAssetReferences(change).map((entry) => entry.reference),
+    ];
+    for (final reference in references) {
       final existing = byAttachmentId[reference.attachmentId];
       if (existing != null && !_sameReference(existing, reference)) {
-        throw const FormatException('message_attachment_identity_conflict');
+        throw const FormatException('attachment_identity_conflict');
       }
       final uploadOwner = uploadOwners[reference.uploadId];
       if (uploadOwner != null && uploadOwner != reference.attachmentId) {
-        throw const FormatException('message_attachment_upload_conflict');
+        throw const FormatException('attachment_upload_conflict');
       }
       byAttachmentId[reference.attachmentId] = reference;
       uploadOwners[reference.uploadId] = reference.attachmentId;
@@ -644,6 +683,57 @@ List<E2eeAttachmentDownloadReference> _messageAttachmentReferences(
     );
   }
   return List<E2eeAttachmentDownloadReference>.unmodifiable(references);
+}
+
+List<_ConfigAssetDownloadReference> _configAssetReferences(
+  E2eeSyncPulledValueChange change,
+) {
+  final entityKey = change.state.entityKey;
+  if (entityKey.entityType != ConfigSyncKeys.assistantType) {
+    return const <_ConfigAssetDownloadReference>[];
+  }
+  final references = <_ConfigAssetDownloadReference>[];
+  final attachmentIds = <String>{};
+  final uploadIds = <String>{};
+  for (final entry in const <(String, E2eeConfigAssetSlot)>[
+    ('avatarAsset', E2eeConfigAssetSlot.avatar),
+    ('backgroundAsset', E2eeConfigAssetSlot.background),
+  ]) {
+    final raw = change.payload[entry.$1];
+    if (raw == null) continue;
+    final identity = E2eeConfigAssetRemoteIdentity.fromPayload(
+      raw,
+      expectedKind: E2eeAttachmentKind.image,
+    );
+    if (!attachmentIds.add(identity.attachmentId) ||
+        !uploadIds.add(identity.uploadId)) {
+      throw const FormatException('配置资产远端身份不得在同一实体内复用');
+    }
+    references.add(
+      _ConfigAssetDownloadReference(
+        key: E2eeConfigAssetKey(entityKey: entityKey, slot: entry.$2),
+        reference: E2eeAttachmentDownloadReference(
+          attachmentId: identity.attachmentId,
+          uploadId: identity.uploadId,
+          chunkKeyEpoch: identity.chunkKeyEpoch,
+          manifestKeyEpoch: identity.manifestKeyEpoch,
+          manifestRevision: identity.manifestRevision,
+          kind: identity.kind,
+        ),
+      ),
+    );
+  }
+  return List<_ConfigAssetDownloadReference>.unmodifiable(references);
+}
+
+final class _ConfigAssetDownloadReference {
+  const _ConfigAssetDownloadReference({
+    required this.key,
+    required this.reference,
+  });
+
+  final E2eeConfigAssetKey key;
+  final E2eeAttachmentDownloadReference reference;
 }
 
 MessageAssetRegistration _registrationFromReadyState(

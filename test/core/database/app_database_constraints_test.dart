@@ -477,6 +477,7 @@ void main() {
   late E2eeAccountRecordStateCodec stateCodec;
   late E2eeSyncRecordLedger ledger;
   late E2eeConfigVaultCommands configVault;
+  late E2eeConfigAssetCommands configAssets;
   late E2eeAttachmentUploadCommands attachmentUploads;
   late E2eeAttachmentDownloadCommands attachmentDownloads;
   late E2eeDataRekeyCommands dataRekeyCommands;
@@ -510,6 +511,7 @@ void main() {
     );
     ledger = E2eeSyncRecordLedger(database);
     configVault = repository.e2eeConfigVaultCommands;
+    configAssets = repository.e2eeConfigAssetCommands;
     attachmentUploads = repository.e2eeAttachmentUploadCommands;
     attachmentDownloads = repository.e2eeAttachmentDownloadCommands;
     dataRekeyCommands = repository.e2eeDataRekeyCommands;
@@ -7929,31 +7931,19 @@ void main() {
     ) async {
       final target = draft.target as E2eeConfigAssetUploadTarget;
       final now = DateTime.utc(2026, 7, 29);
-      await database
-          .into(database.assetRows)
-          .insert(
-            AssetRowsCompanion.insert(
-              id: draft.localAssetId,
-              contentHash: _digestHex(draft.descriptor.contentSha256),
-              path: draft.sourcePath,
-              byteSize: draft.descriptor.totalPlaintextBytes,
-              createdAt: now,
-              lastReferencedAt: now,
-            ),
-          );
-      await database
-          .into(database.configAssetRows)
-          .insert(
-            ConfigAssetRowsCompanion.insert(
-              entityType: target.key.entityKey.entityType,
-              entityId: target.key.entityKey.entityId,
-              slot: target.key.slot.wireValue,
-              assetId: draft.localAssetId,
-              kind: draft.descriptor.kind.name,
-              displayName: Value(draft.descriptor.displayName),
-              mediaType: Value(draft.descriptor.mediaType),
-            ),
-          );
+      await configAssets.replace(
+        key: target.key,
+        asset: MessageAssetRegistration(
+          assetId: draft.localAssetId,
+          contentHash: _digestHex(draft.descriptor.contentSha256),
+          path: draft.sourcePath,
+          byteSize: draft.descriptor.totalPlaintextBytes,
+          kind: draft.descriptor.kind.name,
+          displayName: draft.descriptor.displayName,
+          mediaType: draft.descriptor.mediaType,
+        ),
+        now: now,
+      );
     }
 
     test('创建提交后响应丢失按消息附件自然键恢复原状态', () async {
@@ -8268,6 +8258,37 @@ void main() {
         ),
         equals(null),
       );
+    });
+
+    test('配置资产引用阻止回收且移除后释放本地资产', () async {
+      final now = DateTime.utc(2026, 7, 29, 0, 57);
+      final key = E2eeConfigAssetKey(
+        entityKey: ConfigSyncKeys.assistant('assistant-config-gc'),
+        slot: E2eeConfigAssetSlot.avatar,
+      );
+      const contentHash =
+          'abababababababababababababababababababababababababababababababab';
+      final asset = MessageAssetRegistration(
+        assetId: 'asset_$contentHash',
+        contentHash: contentHash,
+        path: 'D:\\workspace\\upload\\e2ee\\content\\$contentHash',
+        byteSize: 12,
+        kind: E2eeAttachmentKind.image.name,
+      );
+      expect(
+        await configAssets.replace(key: key, asset: asset, now: now),
+        isFalse,
+      );
+      final stored = await configAssets.read(key);
+      expect(stored!.asset.path, asset.path);
+      expect(stored.remoteIdentity, equals(null));
+      expect(await repository.scheduleUnreferencedAssetGc(notBefore: now), 0);
+
+      expect(await configAssets.remove(key), isTrue);
+      expect(await configAssets.read(key), equals(null));
+      expect(await repository.scheduleUnreferencedAssetGc(notBefore: now), 1);
+      final candidates = await repository.claimAssetGc(now: now);
+      expect(candidates.single.assetId, asset.assetId);
     });
 
     test('失败重试保留同一分块密文并最终提交', () async {
@@ -9293,6 +9314,7 @@ void main() {
       int chunkKeyEpoch = 7,
       int manifestKeyEpoch = 7,
       int manifestRevision = 1,
+      E2eeAttachmentKind kind = E2eeAttachmentKind.file,
       List<Uint8List>? plaintextChunks,
     }) {
       final chunks =
@@ -9324,7 +9346,7 @@ void main() {
         chunkKeyEpoch: chunkKeyEpoch,
         manifestKeyEpoch: manifestKeyEpoch,
         manifestRevision: manifestRevision,
-        kind: E2eeAttachmentKind.file,
+        kind: kind,
         totalPlaintextBytes: totalPlaintextBytes,
         contentSha256: digest,
         wrappedDataKey: Uint8List.fromList(
@@ -9337,8 +9359,8 @@ void main() {
               KelivoAttachmentLimits.chunkEnvelopeOverheadBytes,
           growable: false,
         ),
-        displayName: 'download.txt',
-        mediaType: 'text/plain',
+        displayName: kind == E2eeAttachmentKind.file ? 'download.txt' : null,
+        mediaType: kind == E2eeAttachmentKind.file ? 'text/plain' : null,
       );
     }
 
@@ -9505,6 +9527,63 @@ void main() {
         '${_digestHex(manifest.contentSha256)}',
       );
       await secondCoordinator.close();
+    });
+
+    test('配置头像复用密文下载并返回精确配置资产键', () async {
+      final manifest = createManifest(kind: E2eeAttachmentKind.image);
+      final transport = _FakeAttachmentTransport(manifest);
+      final coordinator = createCoordinator(
+        transport: transport,
+        crypto: _FakeAttachmentCrypto(
+          currentKeyEpoch: 7,
+          manifest: manifest,
+          plaintextChunks: <Uint8List>[
+            Uint8List.fromList(<int>[1, 2, 3]),
+          ],
+        ),
+        fileStore: E2eeAttachmentMemoryFileStore(),
+        utcNow: () => DateTime.utc(2026, 7, 29, 8, 5),
+      );
+      final assistantCase = _configPayloadCases().firstWhere(
+        (entry) => entry.key.entityType == ConfigSyncKeys.assistantType,
+      );
+      final payload = Map<String, Object?>.from(assistantCase.payload)
+        ..['avatar'] = null
+        ..['avatarAsset'] = <String, Object?>{
+          'attachmentId': attachmentId,
+          'uploadId': uploadId,
+          'chunkKeyEpoch': 7,
+          'manifestKeyEpoch': 7,
+          'manifestRevision': 1,
+          'kind': 'image',
+        };
+      final change = await authenticatePulledValueChange(
+        await createPullValueChange(
+          changeSeq: 203,
+          revision: 1,
+          operation: 203,
+          entityKey: assistantCase.key,
+          payload: payload,
+        ),
+      );
+
+      expect(
+        await coordinator.preparePage(<E2eeSyncPulledChange>[
+          change,
+        ], maximumRemoteSteps: 2),
+        E2eeSyncPullPagePreparationDisposition.ready,
+      );
+      final registration = (await coordinator.requireReadyForConfigApply(
+        change,
+      )).single;
+      expect(registration.key.entityKey, assistantCase.key);
+      expect(registration.key.slot, E2eeConfigAssetSlot.avatar);
+      expect(registration.asset.kind, E2eeAttachmentKind.image.name);
+      expect(registration.asset.displayName, equals(null));
+      expect(registration.asset.mediaType, equals(null));
+      expect(registration.asset.attachmentId, attachmentId);
+      expect(registration.asset.uploadId, uploadId);
+      await coordinator.close();
     });
 
     test('离线跨代仅认证新清单并复用已校验完成文件', () async {

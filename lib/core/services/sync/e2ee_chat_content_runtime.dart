@@ -29,6 +29,7 @@ import 'e2ee_attachment_manifest.dart';
 import 'e2ee_attachment_upload_coordinator.dart';
 import 'e2ee_chat_sync_adapter.dart';
 import 'config_sync_keys.dart';
+import 'e2ee_config_asset_types.dart';
 import 'e2ee_config_sync_binding.dart';
 import 'e2ee_sync_outbox.dart';
 import 'e2ee_sync_execution_budget.dart';
@@ -345,7 +346,10 @@ final class E2eeChatContentRuntime
 
       final configBinding = _configBinding;
       if (configBinding != null) {
-        await configBinding.initialize(repository.e2eeConfigVaultCommands);
+        await configBinding.initialize(
+          repository.e2eeConfigVaultCommands,
+          repository.e2eeConfigAssetCommands,
+        );
         _requireStillInitializing();
       }
 
@@ -440,7 +444,15 @@ final class E2eeChatContentRuntime
             if (binding == null) {
               throw StateError('E2EE 配置变更缺少 Provider 桥接');
             }
+            final mayHaveOrphanedAssets = await _applyConfigAssetChanges(
+              changes: configChanges,
+              downloads: attachmentDownloads,
+              commands: repository.e2eeConfigAssetCommands,
+            );
             await binding.applyTransactional(configChanges);
+            adapter.recordExternalTransactionalApply(
+              mayHaveOrphanedAssets: mayHaveOrphanedAssets,
+            );
           }
           await adapter.applyTransactional(chatChanges);
         },
@@ -967,6 +979,60 @@ final class E2eeChatContentRuntime
             ),
             write: write,
           );
+  }
+
+  Future<bool> _applyConfigAssetChanges({
+    required List<E2eeSyncPulledChange> changes,
+    required E2eeAttachmentDownloadCoordinator downloads,
+    required E2eeConfigAssetCommands commands,
+  }) async {
+    var mayHaveOrphanedAssets = false;
+    final now = _utcNow().toUtc();
+    for (final change in changes) {
+      final entityKey = change.state.entityKey;
+      if (entityKey.entityType != ConfigSyncKeys.assistantType) continue;
+      final keys = <E2eeConfigAssetSlot, E2eeConfigAssetKey>{
+        for (final slot in const <E2eeConfigAssetSlot>[
+          E2eeConfigAssetSlot.avatar,
+          E2eeConfigAssetSlot.background,
+        ])
+          slot: E2eeConfigAssetKey(entityKey: entityKey, slot: slot),
+      };
+      switch (change) {
+        case E2eeSyncPulledTombstoneChange():
+          for (final key in keys.values) {
+            mayHaveOrphanedAssets |= await commands.remove(key);
+          }
+        case E2eeSyncPulledValueChange(:final payload):
+          final registrations = await downloads.requireReadyForConfigApply(
+            change,
+          );
+          final bySlot = <E2eeConfigAssetSlot, MessageAssetRegistration>{
+            for (final registration in registrations)
+              registration.key.slot: registration.asset,
+          };
+          for (final entry in const <(String, E2eeConfigAssetSlot)>[
+            ('avatarAsset', E2eeConfigAssetSlot.avatar),
+            ('backgroundAsset', E2eeConfigAssetSlot.background),
+          ]) {
+            final key = keys[entry.$2]!;
+            if (payload[entry.$1] == null) {
+              mayHaveOrphanedAssets |= await commands.remove(key);
+              continue;
+            }
+            final asset = bySlot[entry.$2];
+            if (asset == null) {
+              throw StateError('E2EE 配置资产下载登记缺失');
+            }
+            mayHaveOrphanedAssets |= await commands.replace(
+              key: key,
+              asset: asset,
+              now: now,
+            );
+          }
+      }
+    }
+    return mayHaveOrphanedAssets;
   }
 
   void _markAttachmentUploadWork() {

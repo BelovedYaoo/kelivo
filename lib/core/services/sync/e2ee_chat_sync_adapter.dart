@@ -132,6 +132,17 @@ final class E2eeChatSyncAdapter {
       ..mayHaveOrphanedAssets |= mayHaveOrphanedAssets;
   }
 
+  /// 配置资产与聊天拉取共用同一提交边界，因此也必须参与提交后的刷新和回收。
+  void recordExternalTransactionalApply({required bool mayHaveOrphanedAssets}) {
+    final context = _activePull;
+    if (context == null) {
+      throw StateError('sync_external_apply_requires_pull_batch');
+    }
+    context
+      ..appliedChanges = true
+      ..mayHaveOrphanedAssets |= mayHaveOrphanedAssets;
+  }
+
   Future<E2eeSyncEntitySnapshot> _readConversation(
     SyncEntityKey entityKey,
   ) async {

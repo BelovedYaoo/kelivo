@@ -1,5 +1,7 @@
 import 'dart:async';
 
+import 'package:path/path.dart' as p;
+
 import '../../database/chat_database_repository.dart';
 import '../../models/assistant.dart';
 import '../../models/assistant_memory.dart';
@@ -19,6 +21,8 @@ import '../search/search_service.dart';
 import '../tts/network_tts.dart';
 import '../tts/tts_text_selection.dart';
 import 'config_sync_keys.dart';
+import 'e2ee_attachment_manifest.dart';
+import 'e2ee_config_asset_types.dart';
 import 'e2ee_config_sync_binding.dart';
 import 'e2ee_config_sync_payload_schema.dart';
 import 'e2ee_config_sync_adapter.dart';
@@ -64,6 +68,7 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       _ConfigProviderOperationLock();
 
   E2eeConfigVaultCommands? _commands;
+  E2eeConfigAssetCommands? _assetCommands;
   E2eeConfigSyncAdapter? _adapter;
   Set<SyncEntityKey>? _activeRemoteKeys;
   bool _initialized = false;
@@ -72,11 +77,15 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
   bool get initialized => _initialized && !_failed;
 
   @override
-  Future<void> initialize(E2eeConfigVaultCommands commands) {
+  Future<void> initialize(
+    E2eeConfigVaultCommands commands,
+    E2eeConfigAssetCommands assetCommands,
+  ) {
     return _operationLock.run(() async {
       if (_failed) throw StateError('E2EE 配置 Provider 桥接已经失败');
       if (_initialized) throw StateError('E2EE 配置 Provider 桥接不能重复初始化');
       _commands = commands;
+      _assetCommands = assetCommands;
       _adapter = E2eeConfigSyncAdapter(commands: commands, now: _utcNow);
       try {
         await Future.wait<void>(<Future<void>>[
@@ -191,7 +200,7 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     final commands = _commands!;
     final updatedAt = _utcNow().toUtc();
     for (final key in keys) {
-      final payload = _exportPayload(key);
+      final payload = await _exportPayload(key);
       if (payload == null) {
         await commands.delete(key);
         continue;
@@ -257,11 +266,11 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     );
   }
 
-  Map<String, Object?>? _exportPayload(SyncEntityKey key) {
+  Future<Map<String, Object?>?> _exportPayload(SyncEntityKey key) async {
     ConfigSyncKeys.validate(key);
     return switch (key.entityType) {
       ConfigSyncKeys.providerType => _exportProvider(key.entityId),
-      ConfigSyncKeys.assistantType => _exportAssistant(key.entityId),
+      ConfigSyncKeys.assistantType => await _exportAssistant(key.entityId),
       ConfigSyncKeys.memoryType => _exportMemory(key.entityId),
       ConfigSyncKeys.worldBookType => _exportWorldBook(key.entityId),
       ConfigSyncKeys.quickPhraseType => _exportQuickPhrase(key.entityId),
@@ -289,18 +298,52 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     return payload;
   }
 
-  Map<String, Object?>? _exportAssistant(String id) {
+  Future<Map<String, Object?>?> _exportAssistant(String id) async {
     final assistant = _assistants.getById(id);
     if (assistant == null) return null;
+    final entityKey = ConfigSyncKeys.assistant(id);
+    final avatarIdentity = await _exportAssistantAsset(
+      E2eeConfigAssetKey(
+        entityKey: entityKey,
+        slot: E2eeConfigAssetSlot.avatar,
+      ),
+      assistant.avatar,
+    );
+    final backgroundIdentity = await _exportAssistantAsset(
+      E2eeConfigAssetKey(
+        entityKey: entityKey,
+        slot: E2eeConfigAssetSlot.background,
+      ),
+      assistant.background,
+    );
     final payload = _jsonObject(assistant.toJson());
     payload['_position'] = _assistants.assistants.indexWhere(
       (candidate) => candidate.id == id,
     );
-    payload['avatarAsset'] = null;
-    payload['backgroundAsset'] = null;
-    if (_isLocalPath(assistant.avatar)) payload['avatar'] = null;
-    if (_isLocalPath(assistant.background)) payload['background'] = null;
+    payload['avatarAsset'] = avatarIdentity?.toPayload();
+    payload['backgroundAsset'] = backgroundIdentity?.toPayload();
+    if (avatarIdentity != null) payload['avatar'] = null;
+    if (backgroundIdentity != null) payload['background'] = null;
     return payload;
+  }
+
+  Future<E2eeConfigAssetRemoteIdentity?> _exportAssistantAsset(
+    E2eeConfigAssetKey key,
+    String? value,
+  ) async {
+    if (!_isLocalPath(value)) return null;
+    final record = await _assetCommands!.read(key);
+    if (record == null ||
+        !p.equals(p.normalize(value!.trim()), record.asset.path)) {
+      throw StateError('E2EE 助手本地资产缺少匹配的受管引用');
+    }
+    final identity = record.remoteIdentity;
+    if (identity == null) {
+      throw const E2eeSyncOutboxBlocked(
+        E2eeSyncOutboxBlockReason.attachmentPending,
+      );
+    }
+    return identity;
   }
 
   Map<String, Object?>? _exportMemory(String id) {
@@ -480,20 +523,57 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
   }
 
   Future<void> _applyAssistant(String id, Map<String, Object?> payload) async {
-    final decoded = Assistant.fromJson(_dynamicObject(payload));
-    final current = _assistants.getById(id);
+    final entityKey = ConfigSyncKeys.assistant(id);
+    final decodedPayload = Map<String, Object?>.from(payload)
+      ..remove('avatarAsset')
+      ..remove('backgroundAsset');
+    final decoded = Assistant.fromJson(_dynamicObject(decodedPayload));
+    final avatar = await _resolveAssistantAsset(
+      E2eeConfigAssetKey(
+        entityKey: entityKey,
+        slot: E2eeConfigAssetSlot.avatar,
+      ),
+      payload['avatarAsset'],
+      decoded.avatar,
+    );
+    final background = await _resolveAssistantAsset(
+      E2eeConfigAssetKey(
+        entityKey: entityKey,
+        slot: E2eeConfigAssetSlot.background,
+      ),
+      payload['backgroundAsset'],
+      decoded.background,
+    );
     final assistant = decoded.copyWith(
-      avatar:
-          decoded.avatar ??
-          (_isLocalPath(current?.avatar) ? current?.avatar : null),
-      background:
-          decoded.background ??
-          (_isLocalPath(current?.background) ? current?.background : null),
+      avatar: avatar,
+      background: background,
+      clearAvatar: avatar == null,
+      clearBackground: background == null,
     );
     await _assistants.syncUpsertAssistant(
       assistant,
       position: payload['_position']! as int,
     );
+  }
+
+  Future<String?> _resolveAssistantAsset(
+    E2eeConfigAssetKey key,
+    Object? payloadIdentity,
+    String? portableValue,
+  ) async {
+    if (payloadIdentity == null) return portableValue;
+    final expected = E2eeConfigAssetRemoteIdentity.fromPayload(
+      payloadIdentity,
+      expectedKind: E2eeAttachmentKind.image,
+    );
+    final record = await _assetCommands!.read(key);
+    final actual = record?.remoteIdentity;
+    if (record == null ||
+        actual == null ||
+        !_sameAssetIdentity(actual, expected)) {
+      throw StateError('E2EE 助手配置资产与本地受管引用不一致');
+    }
+    return record.asset.path;
   }
 
   Future<void> _applyPreference(
@@ -631,11 +711,26 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
   }
 
   void _requireReady() {
-    if (!_initialized || _failed || _commands == null || _adapter == null) {
+    if (!_initialized ||
+        _failed ||
+        _commands == null ||
+        _assetCommands == null ||
+        _adapter == null) {
       throw StateError('E2EE 配置 Provider 桥接尚未就绪');
     }
   }
 }
+
+bool _sameAssetIdentity(
+  E2eeConfigAssetRemoteIdentity left,
+  E2eeConfigAssetRemoteIdentity right,
+) =>
+    left.attachmentId == right.attachmentId &&
+    left.uploadId == right.uploadId &&
+    left.chunkKeyEpoch == right.chunkKeyEpoch &&
+    left.manifestKeyEpoch == right.manifestKeyEpoch &&
+    left.manifestRevision == right.manifestRevision &&
+    left.kind == right.kind;
 
 final class _ConfigProviderOperationLock {
   Future<void> _tail = Future<void>.value();
