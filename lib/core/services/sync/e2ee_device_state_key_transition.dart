@@ -12,6 +12,7 @@ import 'e2ee_account_key_transition.dart';
 import 'e2ee_account_trust_manifest.dart';
 import 'e2ee_data_rekey_executor.dart';
 import 'e2ee_device_state_access.dart';
+import 'e2ee_self_revocation_rotation_binding.dart';
 
 final class E2eeDeviceStateKeyTransitionConflict implements Exception {
   const E2eeDeviceStateKeyTransitionConflict();
@@ -341,6 +342,7 @@ void _requireMembershipTransitionMatches(
       !_sameStateBytes(next.digest, binding.membershipManifestDigest)) {
     throw const FormatException('账户密钥变更成员清单与计划不匹配');
   }
+  _requireSelfRevocationBindingMatchesMembership(binding, previous, next);
   final issuerCount = next.members
       .where((member) => member.deviceId == binding.issuerDeviceId)
       .length;
@@ -401,12 +403,53 @@ void _requireSameBinding(
       actual.rekeyOperationId != expected.rekeyOperationId ||
       actual.securityGeneration != expected.securityGeneration ||
       actual.targetKeyEpoch != expected.targetKeyEpoch ||
+      !_sameSelfRevocationBinding(
+        actual.selfRevocationAuthorization,
+        expected.selfRevocationAuthorization,
+      ) ||
       !_sameStateBytes(
         actual.membershipManifestDigest,
         expected.membershipManifestDigest,
       )) {
     throw const FormatException('账户密钥变更本地提交绑定不匹配');
   }
+}
+
+void _requireSelfRevocationBindingMatchesMembership(
+  E2eeAccountKeyTransitionBinding binding,
+  E2eeVerifiedMembership previous,
+  E2eeVerifiedMembership next,
+) {
+  final authorization = binding.selfRevocationAuthorization;
+  if (authorization == null) {
+    if (!_allZeroStateBytes(next.operationAuthorizationDigest)) {
+      throw const FormatException('非自撤销成员操作不得携带授权摘要');
+    }
+    return;
+  }
+  if (binding.kind != E2eeAccountKeyTransitionKind.deviceRevocation ||
+      authorization.operationId != next.operationId ||
+      authorization.deviceId != next.subjectDeviceId ||
+      authorization.expectedGeneration != previous.securityGeneration ||
+      authorization.expectedKeyEpoch != previous.keyEpoch ||
+      !_sameStateBytes(
+        authorization.expectedMembershipManifestDigest,
+        previous.digest,
+      ) ||
+      !_sameStateBytes(
+        authorization.intentDigest,
+        next.operationAuthorizationDigest,
+      )) {
+    throw const FormatException('自撤销成员操作未绑定原始意图');
+  }
+}
+
+bool _sameSelfRevocationBinding(
+  E2eeSelfRevocationRotationBinding? left,
+  E2eeSelfRevocationRotationBinding? right,
+) {
+  if (left == null || right == null) return left == null && right == null;
+  return left.hasSameSecurityBinding(right);
 }
 
 void _requireConfirmationMatchesPlan(
@@ -505,6 +548,14 @@ bool _sameStateBytes(List<int> left, List<int> right) {
     difference |= left[index] ^ right[index];
   }
   return difference == 0;
+}
+
+bool _allZeroStateBytes(List<int> value) {
+  var accumulator = 0;
+  for (final byte in value) {
+    accumulator |= byte;
+  }
+  return accumulator == 0;
 }
 
 void _clearStateBytes(Uint8List value) {

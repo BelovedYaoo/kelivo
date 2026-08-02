@@ -5430,7 +5430,7 @@ CloudSyncDeviceRotationResult _deviceRotationReceipt({
   required String mutationId,
   String revokedDeviceId = _deviceId,
 }) {
-  return CloudSyncDeviceRotationResult(
+  return CloudSyncDeviceRotationResult.direct(
     operationId: mutationId,
     revokedDeviceId: revokedDeviceId,
     fromGeneration: 1,

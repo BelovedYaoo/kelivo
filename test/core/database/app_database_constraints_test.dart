@@ -20,6 +20,7 @@ import 'package:Kelivo/core/services/sync/e2ee_attachment_download_coordinator.d
 import 'package:Kelivo/core/services/sync/e2ee_attachment_file_store.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_chat_sync_adapter.dart';
+import 'package:Kelivo/core/services/sync/e2ee_cloud_sync_device_rotation_remote_commit.dart';
 import 'package:Kelivo/core/services/sync/e2ee_message_attachment_readiness.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
@@ -28,6 +29,7 @@ import 'package:Kelivo/core/services/sync/e2ee_data_rekey_executor.dart';
 import 'package:Kelivo/core/services/sync/e2ee_data_rekey_wire.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_key_transition.dart';
+import 'package:Kelivo/core/services/sync/e2ee_self_revocation_rotation_binding.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
@@ -2809,6 +2811,91 @@ void main() {
       expect(receipt.membershipManifestDigest, orderedEquals(expectedDigest));
     });
 
+    test('账户换钥编排拒绝自撤销回执替换 mutation 或 intent', () async {
+      final authorization = E2eeSelfRevocationRotationBinding(
+        deviceId: _syncUuid(341),
+        mutationId: _syncUuid(342),
+        operationId: _syncUuid(343),
+        expectedGeneration: 11,
+        expectedKeyEpoch: 7,
+        expectedMembershipManifestDigest: _syncDigest(8),
+        intentDigest: _syncDigest(0x71),
+      );
+      final binding = E2eeAccountKeyTransitionBinding.selfRevocation(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: authorization.operationId,
+        rekeyOperationId: authorization.operationId,
+        securityGeneration: 12,
+        targetKeyEpoch: 8,
+        membershipManifestDigest: _syncDigest(9),
+        authorization: authorization,
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: binding.userId,
+        issuerDeviceId: binding.issuerDeviceId,
+        membershipGeneration: binding.securityGeneration,
+        membershipManifestDigest: binding.membershipManifestDigest,
+      );
+      final forgedAuthorizations = <E2eeSelfRevocationRotationBinding>[
+        E2eeSelfRevocationRotationBinding(
+          deviceId: authorization.deviceId,
+          mutationId: _syncUuid(344),
+          operationId: authorization.operationId,
+          expectedGeneration: authorization.expectedGeneration,
+          expectedKeyEpoch: authorization.expectedKeyEpoch,
+          expectedMembershipManifestDigest:
+              authorization.expectedMembershipManifestDigest,
+          intentDigest: authorization.intentDigest,
+        ),
+        E2eeSelfRevocationRotationBinding(
+          deviceId: authorization.deviceId,
+          mutationId: authorization.mutationId,
+          operationId: authorization.operationId,
+          expectedGeneration: authorization.expectedGeneration,
+          expectedKeyEpoch: authorization.expectedKeyEpoch,
+          expectedMembershipManifestDigest:
+              authorization.expectedMembershipManifestDigest,
+          intentDigest: _syncDigest(0x72),
+        ),
+      ];
+      for (var index = 0; index < forgedAuthorizations.length; index++) {
+        final remote = _FakeAccountKeyTransitionRemote(
+          binding,
+          receiptAuthorization: forgedAuthorizations[index],
+        );
+        final local = _FakeAccountKeyTransitionLocalCommitter();
+        final coordinator = E2eeAccountKeyTransitionCoordinator(
+          dataRekeyExecutor: E2eeDataRekeyExecutor(
+            transport: _ZeroSourceDataRekeyTransport(
+              userId: binding.userId,
+              issuerDeviceId: binding.issuerDeviceId,
+              operationId: binding.rekeyOperationId,
+            ),
+            journal: dataRekeyCommands,
+            stageStore: E2eeDataRekeyStageStore(
+              installationRoot: await Directory(
+                '${directory.path}/self-revocation-receipt-$index',
+              ).create(),
+            ),
+            cryptography: _ZeroSourceDataRekeyCryptography(),
+            clock: () => DateTime.utc(2026, 8, 2, 6),
+          ),
+          remoteCommit: remote,
+          localCommitter: local,
+        );
+
+        await expectLater(
+          coordinator.execute(context: context, binding: binding),
+          throwsFormatException,
+        );
+        expect(remote.commitCalls, 1);
+        expect(local.commitCalls, 0);
+      }
+    });
+
     test('恢复接续计划允许连续接管并严格追溯最初数据换代', () async {
       final chain = await createMembershipChain();
       addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
@@ -2886,8 +2973,16 @@ void main() {
     test('设备状态换代计划不暴露内部快照', () async {
       final chain = await createMembershipChain();
       addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
-      final binding = E2eeAccountKeyTransitionBinding(
-        kind: E2eeAccountKeyTransitionKind.deviceRevocation,
+      final authorization = E2eeSelfRevocationRotationBinding(
+        deviceId: chain.revoked.subjectDeviceId,
+        mutationId: _syncUuid(340),
+        operationId: chain.revoked.operationId,
+        expectedGeneration: chain.paired.securityGeneration,
+        expectedKeyEpoch: chain.paired.keyEpoch,
+        expectedMembershipManifestDigest: chain.paired.digest,
+        intentDigest: chain.revoked.operationAuthorizationDigest,
+      );
+      final binding = E2eeAccountKeyTransitionBinding.selfRevocation(
         userId: _syncAccountUserId,
         issuerDeviceId: _syncActorDeviceId,
         membershipOperationId: chain.revoked.operationId,
@@ -2895,6 +2990,28 @@ void main() {
         securityGeneration: chain.revoked.securityGeneration,
         targetKeyEpoch: chain.revoked.keyEpoch,
         membershipManifestDigest: chain.revoked.digest,
+        authorization: authorization,
+      );
+      expect(
+        () => E2eeDeviceStateKeyTransitionPlan(
+          binding: E2eeAccountKeyTransitionBinding(
+            kind: E2eeAccountKeyTransitionKind.deviceRevocation,
+            userId: binding.userId,
+            issuerDeviceId: binding.issuerDeviceId,
+            membershipOperationId: binding.membershipOperationId,
+            rekeyOperationId: binding.rekeyOperationId,
+            securityGeneration: binding.securityGeneration,
+            targetKeyEpoch: binding.targetKeyEpoch,
+            membershipManifestDigest: binding.membershipManifestDigest,
+          ),
+          previousMembership: chain.paired,
+          nextMembership: chain.revoked,
+          sourceStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1,
+          unprunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)
+            ..[0] = 2,
+          prunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3,
+        ),
+        throwsFormatException,
       );
       final sourceInput = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1;
       final unprunedInput = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 2;
@@ -2923,6 +3040,160 @@ void main() {
       expect(plan.sourceStateBlob[1], 0);
       expect(plan.unprunedStateBlob[1], 0);
       expect(plan.prunedStateBlob[1], 0);
+    });
+
+    test('生产轮换适配器只提交已验证 plan 并确认同一 ready 完成证明', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      final authorization = E2eeSelfRevocationRotationBinding(
+        deviceId: chain.revoked.subjectDeviceId,
+        mutationId: _syncUuid(346),
+        operationId: chain.revoked.operationId,
+        expectedGeneration: chain.paired.securityGeneration,
+        expectedKeyEpoch: chain.paired.keyEpoch,
+        expectedMembershipManifestDigest: chain.paired.digest,
+        intentDigest: chain.revoked.operationAuthorizationDigest,
+      );
+      final binding = E2eeAccountKeyTransitionBinding.selfRevocation(
+        userId: chain.revoked.userId,
+        issuerDeviceId: chain.revoked.issuerDeviceId,
+        membershipOperationId: chain.revoked.operationId,
+        rekeyOperationId: chain.revoked.operationId,
+        securityGeneration: chain.revoked.securityGeneration,
+        targetKeyEpoch: chain.revoked.keyEpoch,
+        membershipManifestDigest: chain.revoked.digest,
+        authorization: authorization,
+      );
+      final plan = E2eeDeviceStateKeyTransitionPlan(
+        binding: binding,
+        previousMembership: chain.paired,
+        nextMembership: chain.revoked,
+        sourceStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1,
+        unprunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 2,
+        prunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3,
+      );
+      final request = CloudSyncDeviceRotationRequest.selfRevocation(
+        authorization: authorization,
+        expectedGeneration: chain.paired.securityGeneration,
+        expectedKeyEpoch: chain.paired.keyEpoch,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(chain.paired.digest),
+        operationId: chain.revoked.operationId,
+        revokeDeviceId: chain.revoked.subjectDeviceId,
+        nextMembershipManifest: chain.revoked.manifest,
+        nextRecoveryCapsuleVersion: chain.revoked.recoveryCapsuleVersion,
+        nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x42),
+        envelopes: <CloudSyncDeviceRotationEnvelope>[
+          CloudSyncDeviceRotationEnvelope(
+            targetDeviceId: chain.revoked.members.single.deviceId,
+            envelopeVersion: 1,
+            keyEpoch: chain.revoked.keyEpoch,
+            accountKeyEnvelope: _syncDigest(
+              0x73,
+              length: cloudSyncAccountKeyEnvelopeBytes,
+            ),
+          ),
+        ],
+      );
+      final result = CloudSyncDeviceRotationResult.selfRevocation(
+        authorization: authorization,
+        operationId: binding.membershipOperationId,
+        revokedDeviceId: request.revokeDeviceId,
+        fromGeneration: request.expectedGeneration,
+        generation: binding.securityGeneration,
+        keyEpoch: binding.targetKeyEpoch,
+        dataRekeyPhase: CloudSyncDataRekeyPhase.rekeyPending,
+        membershipManifestDigest: request.nextMembershipManifestDigest,
+        committedAt: DateTime.utc(2026, 8, 2, 6),
+      );
+      final rotationTransport = _FakeDeviceRotationTransport(result);
+      final stateTransport = _FakeDataRekeyStateTransport(
+        _readyStateForTransition(binding),
+      );
+      final adapter = E2eeCloudSyncDeviceRotationRemoteCommit(
+        rotationTransport: rotationTransport,
+        dataRekeyStateTransport: stateTransport,
+        plan: plan,
+        request: request,
+      );
+
+      final receipt = await adapter.commit();
+      await adapter.complete(receipt);
+
+      expect(rotationTransport.requests, <CloudSyncDeviceRotationRequest>[
+        request,
+      ]);
+      expect(stateTransport.readCalls, 1);
+      expect(
+        receipt.selfRevocationAuthorization?.hasSameSecurityBinding(
+          authorization,
+        ),
+        isTrue,
+      );
+
+      final directRequest = CloudSyncDeviceRotationRequest.direct(
+        expectedGeneration: request.expectedGeneration,
+        expectedKeyEpoch: request.expectedKeyEpoch,
+        expectedMembershipManifestDigest:
+            request.expectedMembershipManifestDigest,
+        operationId: request.operationId,
+        revokeDeviceId: request.revokeDeviceId,
+        nextMembershipManifest: request.nextMembershipManifest,
+        nextRecoveryCapsuleVersion: request.nextRecoveryCapsuleVersion,
+        nextRecoveryCapsule: request.nextRecoveryCapsule,
+        envelopes: request.envelopes,
+      );
+      expect(
+        () => E2eeCloudSyncDeviceRotationRemoteCommit(
+          rotationTransport: rotationTransport,
+          dataRekeyStateTransport: stateTransport,
+          plan: plan,
+          request: directRequest,
+        ),
+        throwsFormatException,
+      );
+
+      final forgedAuthorization = E2eeSelfRevocationRotationBinding(
+        deviceId: authorization.deviceId,
+        mutationId: _syncUuid(347),
+        operationId: authorization.operationId,
+        expectedGeneration: authorization.expectedGeneration,
+        expectedKeyEpoch: authorization.expectedKeyEpoch,
+        expectedMembershipManifestDigest:
+            authorization.expectedMembershipManifestDigest,
+        intentDigest: authorization.intentDigest,
+      );
+      final forgedResult = CloudSyncDeviceRotationResult.selfRevocation(
+        authorization: forgedAuthorization,
+        operationId: result.operationId,
+        revokedDeviceId: result.revokedDeviceId,
+        fromGeneration: result.fromGeneration,
+        generation: result.generation,
+        keyEpoch: result.keyEpoch,
+        dataRekeyPhase: result.dataRekeyPhase,
+        membershipManifestDigest: result.membershipManifestDigest,
+        committedAt: result.committedAt,
+      );
+      final forgedAdapter = E2eeCloudSyncDeviceRotationRemoteCommit(
+        rotationTransport: _FakeDeviceRotationTransport(forgedResult),
+        dataRekeyStateTransport: stateTransport,
+        plan: plan,
+        request: request,
+      );
+      await expectLater(forgedAdapter.commit(), throwsFormatException);
+
+      final wrongReadyAdapter = E2eeCloudSyncDeviceRotationRemoteCommit(
+        rotationTransport: rotationTransport,
+        dataRekeyStateTransport: _FakeDataRekeyStateTransport(
+          _readyStateForTransition(binding, operationId: _syncUuid(348)),
+        ),
+        plan: plan,
+        request: request,
+      );
+      await expectLater(
+        wrongReadyAdapter.complete(receipt),
+        throwsFormatException,
+      );
     });
 
     test('数据已就绪时恢复替换允许从当前成员头直达', () async {
@@ -10587,31 +10858,120 @@ final class _AttachmentDataRekeyTransport
   }
 }
 
+final class _FakeDeviceRotationTransport
+    implements CloudSyncDeviceRotationTransport {
+  _FakeDeviceRotationTransport(this.result);
+
+  final CloudSyncDeviceRotationResult result;
+  final List<CloudSyncDeviceRotationRequest> requests =
+      <CloudSyncDeviceRotationRequest>[];
+
+  @override
+  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
+    CloudSyncDeviceRotationRequest request,
+  ) async {
+    requests.add(request);
+    return result;
+  }
+}
+
+final class _FakeDataRekeyStateTransport
+    implements CloudSyncDataRekeyStateTransport {
+  _FakeDataRekeyStateTransport(this.state);
+
+  final CloudSyncDataRekeyState state;
+  int readCalls = 0;
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() async {
+    readCalls += 1;
+    return state;
+  }
+}
+
+CloudSyncDataRekeyReadyState _readyStateForTransition(
+  E2eeAccountKeyTransitionBinding binding, {
+  String? operationId,
+}) {
+  return CloudSyncDataRekeyReadyState.fromJson(<String, Object?>{
+    'phase': 'ready',
+    'dataGeneration': 2,
+    'dataKeyEpoch': binding.targetKeyEpoch,
+    'changeWatermark': 0,
+    'lastCompletion': <String, Object?>{
+      'proofVersion': 2,
+      'operationId': operationId ?? binding.rekeyOperationId,
+      'issuerDeviceId': binding.issuerDeviceId,
+      'sourceDataGeneration': 1,
+      'targetDataGeneration': 2,
+      'sourceKeyEpoch': binding.targetKeyEpoch - 1,
+      'targetKeyEpoch': binding.targetKeyEpoch,
+      'sourceSnapshotRoot': _dataRekeyBinary(_syncDigest(0x74)),
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': null,
+      'membershipGeneration': binding.securityGeneration,
+      'membershipManifestDigest': _dataRekeyBinary(
+        binding.membershipManifestDigest,
+      ),
+      'stagedRecordCount': 0,
+      'stagedAttachmentCount': 0,
+      'stagedCiphertextSetDigest': _dataRekeyBinary(_syncDigest(0x75)),
+      'proofFrame': _dataRekeyBinary(
+        _syncDigest(0x76, length: cloudSyncDataRekeyProofFrameBytes),
+      ),
+      'proofDigest': _dataRekeyBinary(_syncDigest(0x77)),
+      'signature': _dataRekeyBinary(
+        _syncDigest(0x78, length: cloudSyncDeviceProofBytes),
+      ),
+      'finalizedAt': '2026-08-02T06:01:00.000Z',
+    },
+    'updatedAt': '2026-08-02T06:01:00.000Z',
+  });
+}
+
 final class _FakeAccountKeyTransitionRemote
     implements E2eeAccountKeyTransitionRemoteCommit {
   _FakeAccountKeyTransitionRemote(
     this.binding, {
     this.failFirstComplete = true,
+    this.receiptAuthorization,
   });
 
   final E2eeAccountKeyTransitionBinding binding;
   final bool failFirstComplete;
+  final E2eeSelfRevocationRotationBinding? receiptAuthorization;
   int commitCalls = 0;
   int completeCalls = 0;
 
   @override
   Future<E2eeAccountKeyTransitionRemoteReceipt> commit() async {
     commitCalls += 1;
-    final receipt = E2eeAccountKeyTransitionRemoteReceipt(
-      kind: binding.kind,
-      userId: binding.userId,
-      issuerDeviceId: binding.issuerDeviceId,
-      membershipOperationId: binding.membershipOperationId,
-      rekeyOperationId: binding.rekeyOperationId,
-      securityGeneration: binding.securityGeneration,
-      targetKeyEpoch: binding.targetKeyEpoch,
-      membershipManifestDigest: binding.membershipManifestDigest,
-    );
+    final authorization =
+        receiptAuthorization ?? binding.selfRevocationAuthorization;
+    final receipt = authorization == null
+        ? E2eeAccountKeyTransitionRemoteReceipt(
+            kind: binding.kind,
+            userId: binding.userId,
+            issuerDeviceId: binding.issuerDeviceId,
+            membershipOperationId: binding.membershipOperationId,
+            rekeyOperationId: binding.rekeyOperationId,
+            securityGeneration: binding.securityGeneration,
+            targetKeyEpoch: binding.targetKeyEpoch,
+            membershipManifestDigest: binding.membershipManifestDigest,
+          )
+        : E2eeAccountKeyTransitionRemoteReceipt.selfRevocation(
+            userId: binding.userId,
+            issuerDeviceId: binding.issuerDeviceId,
+            membershipOperationId: binding.membershipOperationId,
+            rekeyOperationId: binding.rekeyOperationId,
+            securityGeneration: binding.securityGeneration,
+            targetKeyEpoch: binding.targetKeyEpoch,
+            membershipManifestDigest: binding.membershipManifestDigest,
+            authorization: authorization,
+          );
     receipt.membershipManifestDigest[0] ^= 0xff;
     return receipt;
   }

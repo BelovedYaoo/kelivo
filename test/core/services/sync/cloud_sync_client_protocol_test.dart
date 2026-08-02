@@ -29,6 +29,7 @@ import 'package:Kelivo/core/services/sync/e2ee_attachment_file_store.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_upload_coordinator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
+import 'package:Kelivo/core/services/sync/e2ee_self_revocation_rotation_binding.dart';
 import 'package:Kelivo/core/services/sync/e2ee_first_device_registration_commit_coordinator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
@@ -2092,7 +2093,7 @@ void main() {
     final currentDigest = CloudSyncMembershipManifestDigest.fromBytes(
       Uint8List.fromList(sha256.convert(currentManifest).bytes),
     );
-    final request = CloudSyncDeviceRotationRequest(
+    final request = CloudSyncDeviceRotationRequest.direct(
       expectedGeneration: 2,
       expectedKeyEpoch: 2,
       expectedMembershipManifestDigest: currentDigest,
@@ -2121,7 +2122,7 @@ void main() {
       request.nextMembershipManifestDigest.bytes,
       sha256.convert(request.nextMembershipManifest).bytes,
     );
-    final maximumCapsuleRequest = CloudSyncDeviceRotationRequest(
+    final maximumCapsuleRequest = CloudSyncDeviceRotationRequest.direct(
       expectedGeneration: 2,
       expectedKeyEpoch: 2,
       expectedMembershipManifestDigest: currentDigest,
@@ -2141,7 +2142,7 @@ void main() {
     );
 
     for (final invalidFactory in <Object? Function()>[
-      () => CloudSyncDeviceRotationRequest(
+      () => CloudSyncDeviceRotationRequest.direct(
         expectedGeneration: 2,
         expectedKeyEpoch: 2,
         expectedMembershipManifestDigest: request.nextMembershipManifestDigest,
@@ -2152,7 +2153,7 @@ void main() {
         nextRecoveryCapsule: request.nextRecoveryCapsule,
         envelopes: request.envelopes,
       ),
-      () => CloudSyncDeviceRotationRequest(
+      () => CloudSyncDeviceRotationRequest.direct(
         expectedGeneration: 2,
         expectedKeyEpoch: 2,
         expectedMembershipManifestDigest: currentDigest,
@@ -2170,7 +2171,7 @@ void main() {
           ),
         ],
       ),
-      () => CloudSyncDeviceRotationRequest(
+      () => CloudSyncDeviceRotationRequest.direct(
         expectedGeneration: 2,
         expectedKeyEpoch: 2,
         expectedMembershipManifestDigest: currentDigest,
@@ -2189,7 +2190,7 @@ void main() {
           request.envelopes.single,
         ],
       ),
-      () => CloudSyncDeviceRotationRequest(
+      () => CloudSyncDeviceRotationRequest.direct(
         expectedGeneration: 2,
         expectedKeyEpoch: 2,
         expectedMembershipManifestDigest: currentDigest,
@@ -2207,7 +2208,7 @@ void main() {
           ),
         ],
       ),
-      () => CloudSyncDeviceRotationRequest(
+      () => CloudSyncDeviceRotationRequest.direct(
         expectedGeneration: 2,
         expectedKeyEpoch: 0xffffffff,
         expectedMembershipManifestDigest: currentDigest,
@@ -2218,7 +2219,7 @@ void main() {
         nextRecoveryCapsule: request.nextRecoveryCapsule,
         envelopes: const <CloudSyncDeviceRotationEnvelope>[],
       ),
-      () => CloudSyncDeviceRotationRequest(
+      () => CloudSyncDeviceRotationRequest.direct(
         expectedGeneration: 2,
         expectedKeyEpoch: 2,
         expectedMembershipManifestDigest: currentDigest,
@@ -2229,7 +2230,7 @@ void main() {
         nextRecoveryCapsule: Uint8List(0),
         envelopes: request.envelopes,
       ),
-      () => CloudSyncDeviceRotationRequest(
+      () => CloudSyncDeviceRotationRequest.direct(
         expectedGeneration: 2,
         expectedKeyEpoch: 2,
         expectedMembershipManifestDigest: currentDigest,
@@ -2245,6 +2246,145 @@ void main() {
     ]) {
       expect(invalidFactory, throwsFormatException);
     }
+  });
+
+  test('自撤销轮换请求与响应严格绑定同一 mutation 和 intent', () async {
+    final currentManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      51,
+    );
+    final nextManifest = _filledBytes(
+      cloudSyncMembershipManifestMinimumBytes,
+      52,
+    );
+    final currentDigest = CloudSyncMembershipManifestDigest.fromBytes(
+      Uint8List.fromList(sha256.convert(currentManifest).bytes),
+    );
+    final intentDigestInput = _filledBytes(
+      cloudSyncSelfRevocationIntentDigestBytes,
+      53,
+    );
+    final authorization = E2eeSelfRevocationRotationBinding(
+      deviceId: _deviceId2,
+      mutationId: _mutationId2,
+      operationId: _mutationId3,
+      expectedGeneration: 2,
+      expectedKeyEpoch: 2,
+      expectedMembershipManifestDigest: currentDigest.bytes,
+      intentDigest: intentDigestInput,
+    );
+    final request = CloudSyncDeviceRotationRequest.selfRevocation(
+      authorization: authorization,
+      expectedGeneration: 2,
+      expectedKeyEpoch: 2,
+      expectedMembershipManifestDigest: currentDigest,
+      operationId: _mutationId3,
+      revokeDeviceId: _deviceId2,
+      nextMembershipManifest: nextManifest,
+      nextRecoveryCapsuleVersion: 3,
+      nextRecoveryCapsule: _filledBytes(208, 54),
+      envelopes: <CloudSyncDeviceRotationEnvelope>[
+        CloudSyncDeviceRotationEnvelope(
+          targetDeviceId: _deviceId1,
+          envelopeVersion: 1,
+          keyEpoch: 3,
+          accountKeyEnvelope: _filledBytes(
+            cloudSyncAccountKeyEnvelopeBytes,
+            55,
+          ),
+        ),
+      ],
+    );
+    intentDigestInput[0] ^= 0xff;
+    expect(request.authorization, same(authorization));
+    expect(authorization.intentDigest, everyElement(53));
+
+    final response = <String, Object?>{
+      'result': 'committed',
+      'operationId': request.operationId,
+      'revokedDeviceId': request.revokeDeviceId,
+      'selfRevocationMutationId': authorization.mutationId,
+      'selfRevocationIntentDigest': _encodedData(authorization.intentDigest),
+      'fromGeneration': request.expectedGeneration,
+      'generation': request.expectedGeneration + 1,
+      'keyEpoch': request.expectedKeyEpoch + 1,
+      'dataRekeyPhase': 'rekey-pending',
+      'membershipManifestDigest': request.nextMembershipManifestDigest.encoded,
+      'committedAt': '2026-08-02T06:00:00.000Z',
+    };
+    expect(
+      () => CloudSyncDeviceRotationResult.fromJson(
+        response,
+        authorization: request.authorization,
+      ),
+      returnsNormally,
+    );
+
+    final invalidResponses = <CloudSyncJsonMap>[
+      Map<String, Object?>.of(response)
+        ..remove('selfRevocationMutationId')
+        ..remove('selfRevocationIntentDigest'),
+      Map<String, Object?>.of(response)..remove('selfRevocationIntentDigest'),
+      Map<String, Object?>.of(response)
+        ..['selfRevocationMutationId'] = _mutationId1,
+      Map<String, Object?>.of(response)
+        ..['selfRevocationIntentDigest'] = _encodedBytes(32, 56),
+    ];
+    for (final invalidResponse in invalidResponses) {
+      expect(
+        () => CloudSyncDeviceRotationResult.fromJson(
+          invalidResponse,
+          authorization: request.authorization,
+        ),
+        throwsFormatException,
+      );
+    }
+    expect(
+      () =>
+          CloudSyncDeviceRotationResult.fromJson(response, authorization: null),
+      throwsFormatException,
+    );
+    expect(
+      () => CloudSyncDeviceRotationRequest.selfRevocation(
+        authorization: authorization,
+        expectedGeneration: 2,
+        expectedKeyEpoch: 2,
+        expectedMembershipManifestDigest: currentDigest,
+        operationId: _mutationId1,
+        revokeDeviceId: _deviceId2,
+        nextMembershipManifest: nextManifest,
+        nextRecoveryCapsuleVersion: 3,
+        nextRecoveryCapsule: _filledBytes(208, 54),
+        envelopes: request.envelopes,
+      ),
+      throwsFormatException,
+    );
+
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+    final resultFuture = client.commitDeviceRotation(request);
+    final wireRequest = await requestFuture;
+    final wireBody = copyCloudSyncJsonMap(
+      jsonDecode(await utf8.decoder.bind(wireRequest).join()),
+    );
+    expect(wireBody['selfRevocationMutationId'], authorization.mutationId);
+    expect(
+      wireBody['selfRevocationIntentDigest'],
+      _encodedData(authorization.intentDigest),
+    );
+    wireRequest.response.headers.contentType = ContentType.json;
+    wireRequest.response.write(jsonEncode(<String, Object?>{'data': response}));
+    await wireRequest.response.close();
+    final result = await resultFuture;
+    expect(result.authorization, same(authorization));
   });
 
   test('安全状态历史与设备轮换使用稳定端点并保持恢复密文不透明', () async {
@@ -2265,7 +2405,7 @@ void main() {
       cloudSyncMembershipManifestMinimumBytes,
       83,
     );
-    final rotation = CloudSyncDeviceRotationRequest(
+    final rotation = CloudSyncDeviceRotationRequest.direct(
       expectedGeneration: 3,
       expectedKeyEpoch: 2,
       expectedMembershipManifestDigest: CloudSyncMembershipManifestDigest.parse(
@@ -3359,7 +3499,7 @@ void main() {
       cloudSyncMembershipManifestMinimumBytes,
       93,
     );
-    final rotation = CloudSyncDeviceRotationRequest(
+    final rotation = CloudSyncDeviceRotationRequest.direct(
       expectedGeneration: 2,
       expectedKeyEpoch: 1,
       expectedMembershipManifestDigest: CloudSyncMembershipManifestDigest.parse(

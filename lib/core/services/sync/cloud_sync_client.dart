@@ -58,7 +58,14 @@ abstract interface class CloudSyncAttachmentTransport {
   });
 }
 
-abstract interface class CloudSyncAccountClient {
+abstract interface class CloudSyncDeviceRotationTransport {
+  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
+    CloudSyncDeviceRotationRequest request,
+  );
+}
+
+abstract interface class CloudSyncAccountClient
+    implements CloudSyncDeviceRotationTransport {
   void setToken(CloudSyncFullSessionToken? token);
 
   void close({bool force = false});
@@ -129,10 +136,6 @@ abstract interface class CloudSyncAccountClient {
     int pageSize = 20,
   });
 
-  Future<CloudSyncDeviceRotationResult> commitDeviceRotation(
-    CloudSyncDeviceRotationRequest request,
-  );
-
   Future<CloudSyncPage<CloudSyncDeviceSession>> listDevices({
     CloudSyncDeviceStatus? status,
     int pageIndex = 1,
@@ -165,9 +168,12 @@ abstract interface class CloudSyncSelfRevocationTransport {
   listSelfRevocationRequests();
 }
 
-abstract interface class CloudSyncDataRekeyTransport {
+abstract interface class CloudSyncDataRekeyStateTransport {
   Future<CloudSyncDataRekeyState> getDataRekeyState();
+}
 
+abstract interface class CloudSyncDataRekeyTransport
+    implements CloudSyncDataRekeyStateTransport {
   Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
     CloudSyncDataRekeyLeaseClaimRequest request,
   );
@@ -1984,8 +1990,8 @@ final class CloudSyncClient
     CloudSyncDeviceRotationRequest request,
   ) {
     return _guard(() async {
-      final generatedRequest = api.CommitDeviceRotationRequest(
-        (builder) => builder
+      final generatedRequest = api.CommitDeviceRotationRequest((builder) {
+        builder
           ..expectedGeneration = request.expectedGeneration
           ..expectedKeyEpoch = request.expectedKeyEpoch
           ..expectedMembershipManifestDigest =
@@ -2003,8 +2009,16 @@ final class CloudSyncClient
           )
           ..envelopes.replace(
             request.envelopes.map(_toGeneratedRotationEnvelope),
-          ),
-      );
+          );
+        final authorization = request.authorization;
+        if (authorization != null) {
+          builder
+            ..selfRevocationMutationId = authorization.mutationId
+            ..selfRevocationIntentDigest = _encodeBinaryForRequest(
+              authorization.intentDigest,
+            );
+        }
+      });
       final response = await _client.getDeviceApi().commitDeviceRotation(
         commitDeviceRotationRequest: generatedRequest,
         headers: _requireFullSessionHeaders(),
@@ -3163,7 +3177,14 @@ CloudSyncDeviceRotationResult _parseDeviceRotationResult(
   required CloudSyncDeviceRotationRequest request,
 }) {
   final result = CloudSyncDeviceRotationResult.fromJson(
-    _strictResponseData(rawResponse, _deviceRotationResultDataKeys, '设备轮换响应'),
+    _strictResponseData(
+      rawResponse,
+      request.authorization == null
+          ? _directDeviceRotationResultDataKeys
+          : _selfRevocationDeviceRotationResultDataKeys,
+      '设备轮换响应',
+    ),
+    authorization: request.authorization,
   );
   if (result.operationId != request.operationId ||
       result.revokedDeviceId != request.revokeDeviceId ||
@@ -3842,7 +3863,7 @@ const _accountSecurityStateHistoryDataKeys = <String>{
   'hasMore',
   'currentState',
 };
-const _deviceRotationResultDataKeys = <String>{
+const _directDeviceRotationResultDataKeys = <String>{
   'result',
   'operationId',
   'revokedDeviceId',
@@ -3852,6 +3873,11 @@ const _deviceRotationResultDataKeys = <String>{
   'dataRekeyPhase',
   'membershipManifestDigest',
   'committedAt',
+};
+const _selfRevocationDeviceRotationResultDataKeys = <String>{
+  ..._directDeviceRotationResultDataKeys,
+  'selfRevocationMutationId',
+  'selfRevocationIntentDigest',
 };
 const _selfRevocationRequestResultDataKeys = <String>{
   'result',

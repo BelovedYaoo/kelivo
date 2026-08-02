@@ -4,6 +4,8 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+import 'e2ee_self_revocation_rotation_binding.dart';
+
 part 'cloud_sync_data_rekey_types.dart';
 part 'cloud_sync_data_rekey_transport_types.dart';
 
@@ -1498,7 +1500,59 @@ final class CloudSyncDeviceRotationEnvelope {
 
 // 恢复口令只保护离线恢复介质，服务端轮换协议仅承载不透明恢复胶囊。
 final class CloudSyncDeviceRotationRequest {
-  factory CloudSyncDeviceRotationRequest({
+  factory CloudSyncDeviceRotationRequest.direct({
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required CloudSyncMembershipManifestDigest expectedMembershipManifestDigest,
+    required String operationId,
+    required String revokeDeviceId,
+    required Uint8List nextMembershipManifest,
+    required int nextRecoveryCapsuleVersion,
+    required Uint8List nextRecoveryCapsule,
+    required List<CloudSyncDeviceRotationEnvelope> envelopes,
+  }) {
+    return CloudSyncDeviceRotationRequest._validated(
+      authorization: null,
+      expectedGeneration: expectedGeneration,
+      expectedKeyEpoch: expectedKeyEpoch,
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      operationId: operationId,
+      revokeDeviceId: revokeDeviceId,
+      nextMembershipManifest: nextMembershipManifest,
+      nextRecoveryCapsuleVersion: nextRecoveryCapsuleVersion,
+      nextRecoveryCapsule: nextRecoveryCapsule,
+      envelopes: envelopes,
+    );
+  }
+
+  factory CloudSyncDeviceRotationRequest.selfRevocation({
+    required E2eeSelfRevocationRotationBinding authorization,
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required CloudSyncMembershipManifestDigest expectedMembershipManifestDigest,
+    required String operationId,
+    required String revokeDeviceId,
+    required Uint8List nextMembershipManifest,
+    required int nextRecoveryCapsuleVersion,
+    required Uint8List nextRecoveryCapsule,
+    required List<CloudSyncDeviceRotationEnvelope> envelopes,
+  }) {
+    return CloudSyncDeviceRotationRequest._validated(
+      authorization: authorization,
+      expectedGeneration: expectedGeneration,
+      expectedKeyEpoch: expectedKeyEpoch,
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      operationId: operationId,
+      revokeDeviceId: revokeDeviceId,
+      nextMembershipManifest: nextMembershipManifest,
+      nextRecoveryCapsuleVersion: nextRecoveryCapsuleVersion,
+      nextRecoveryCapsule: nextRecoveryCapsule,
+      envelopes: envelopes,
+    );
+  }
+
+  factory CloudSyncDeviceRotationRequest._validated({
+    required E2eeSelfRevocationRotationBinding? authorization,
     required int expectedGeneration,
     required int expectedKeyEpoch,
     required CloudSyncMembershipManifestDigest expectedMembershipManifestDigest,
@@ -1518,6 +1572,10 @@ final class CloudSyncDeviceRotationRequest {
       expectedKeyEpoch,
       'expectedKeyEpoch',
       maximum: 0xfffffffe,
+    );
+    final checkedOperationId = _requireCanonicalUuid(
+      operationId,
+      'operationId',
     );
     final checkedRevokeDeviceId = _requireCanonicalUuid(
       revokeDeviceId,
@@ -1555,11 +1613,23 @@ final class CloudSyncDeviceRotationRequest {
       }
       previousTargetDeviceId = envelope.targetDeviceId;
     }
+    if (authorization != null &&
+        (authorization.operationId != checkedOperationId ||
+            authorization.deviceId != checkedRevokeDeviceId ||
+            authorization.expectedGeneration != checkedGeneration ||
+            authorization.expectedKeyEpoch != checkedKeyEpoch ||
+            !_sameBytes(
+              authorization.expectedMembershipManifestDigest,
+              expectedMembershipManifestDigest.bytes,
+            ))) {
+      throw const FormatException('自撤销轮换授权与安全头不匹配');
+    }
     return CloudSyncDeviceRotationRequest._(
+      authorization: authorization,
       expectedGeneration: checkedGeneration,
       expectedKeyEpoch: checkedKeyEpoch,
       expectedMembershipManifestDigest: expectedMembershipManifestDigest,
-      operationId: _requireCanonicalUuid(operationId, 'operationId'),
+      operationId: checkedOperationId,
       revokeDeviceId: checkedRevokeDeviceId,
       nextMembershipManifest: manifest,
       nextMembershipManifestDigest: nextDigest,
@@ -1580,6 +1650,7 @@ final class CloudSyncDeviceRotationRequest {
   }
 
   const CloudSyncDeviceRotationRequest._({
+    required this.authorization,
     required this.expectedGeneration,
     required this.expectedKeyEpoch,
     required this.expectedMembershipManifestDigest,
@@ -1592,6 +1663,7 @@ final class CloudSyncDeviceRotationRequest {
     required this.envelopes,
   });
 
+  final E2eeSelfRevocationRotationBinding? authorization;
   final int expectedGeneration;
   final int expectedKeyEpoch;
   final CloudSyncMembershipManifestDigest expectedMembershipManifestDigest;
@@ -1605,7 +1677,55 @@ final class CloudSyncDeviceRotationRequest {
 }
 
 final class CloudSyncDeviceRotationResult {
-  factory CloudSyncDeviceRotationResult({
+  factory CloudSyncDeviceRotationResult.direct({
+    required String operationId,
+    required String revokedDeviceId,
+    required int fromGeneration,
+    required int generation,
+    required int keyEpoch,
+    required CloudSyncDataRekeyPhase dataRekeyPhase,
+    required CloudSyncMembershipManifestDigest membershipManifestDigest,
+    required DateTime committedAt,
+  }) {
+    return CloudSyncDeviceRotationResult._validated(
+      authorization: null,
+      operationId: operationId,
+      revokedDeviceId: revokedDeviceId,
+      fromGeneration: fromGeneration,
+      generation: generation,
+      keyEpoch: keyEpoch,
+      dataRekeyPhase: dataRekeyPhase,
+      membershipManifestDigest: membershipManifestDigest,
+      committedAt: committedAt,
+    );
+  }
+
+  factory CloudSyncDeviceRotationResult.selfRevocation({
+    required E2eeSelfRevocationRotationBinding authorization,
+    required String operationId,
+    required String revokedDeviceId,
+    required int fromGeneration,
+    required int generation,
+    required int keyEpoch,
+    required CloudSyncDataRekeyPhase dataRekeyPhase,
+    required CloudSyncMembershipManifestDigest membershipManifestDigest,
+    required DateTime committedAt,
+  }) {
+    return CloudSyncDeviceRotationResult._validated(
+      authorization: authorization,
+      operationId: operationId,
+      revokedDeviceId: revokedDeviceId,
+      fromGeneration: fromGeneration,
+      generation: generation,
+      keyEpoch: keyEpoch,
+      dataRekeyPhase: dataRekeyPhase,
+      membershipManifestDigest: membershipManifestDigest,
+      committedAt: committedAt,
+    );
+  }
+
+  factory CloudSyncDeviceRotationResult._validated({
+    required E2eeSelfRevocationRotationBinding? authorization,
     required String operationId,
     required String revokedDeviceId,
     required int fromGeneration,
@@ -1620,19 +1740,33 @@ final class CloudSyncDeviceRotationResult {
       'fromGeneration',
     );
     final checkedGeneration = _requirePositiveInt32(generation, 'generation');
+    final checkedOperationId = _requireCanonicalUuid(
+      operationId,
+      'operationId',
+    );
+    final checkedRevokedDeviceId = _requireCanonicalUuid(
+      revokedDeviceId,
+      'revokedDeviceId',
+    );
+    final checkedKeyEpoch = _requirePositiveUint32(keyEpoch, 'keyEpoch');
     if (checkedGeneration != checkedFromGeneration + 1 ||
         dataRekeyPhase != CloudSyncDataRekeyPhase.rekeyPending) {
       throw const FormatException('设备轮换结果代次或重加密状态无效');
     }
+    if (authorization != null &&
+        (authorization.operationId != checkedOperationId ||
+            authorization.deviceId != checkedRevokedDeviceId ||
+            authorization.expectedGeneration != checkedFromGeneration ||
+            authorization.expectedKeyEpoch + 1 != checkedKeyEpoch)) {
+      throw const FormatException('设备轮换结果安全头未绑定自撤销意图');
+    }
     return CloudSyncDeviceRotationResult._(
-      operationId: _requireCanonicalUuid(operationId, 'operationId'),
-      revokedDeviceId: _requireCanonicalUuid(
-        revokedDeviceId,
-        'revokedDeviceId',
-      ),
+      authorization: authorization,
+      operationId: checkedOperationId,
+      revokedDeviceId: checkedRevokedDeviceId,
       fromGeneration: checkedFromGeneration,
       generation: checkedGeneration,
-      keyEpoch: _requirePositiveUint32(keyEpoch, 'keyEpoch'),
+      keyEpoch: checkedKeyEpoch,
       dataRekeyPhase: dataRekeyPhase,
       membershipManifestDigest: membershipManifestDigest,
       committedAt: committedAt.toUtc(),
@@ -1640,6 +1774,7 @@ final class CloudSyncDeviceRotationResult {
   }
 
   const CloudSyncDeviceRotationResult._({
+    required this.authorization,
     required this.operationId,
     required this.revokedDeviceId,
     required this.fromGeneration,
@@ -1650,12 +1785,36 @@ final class CloudSyncDeviceRotationResult {
     required this.committedAt,
   });
 
-  factory CloudSyncDeviceRotationResult.fromJson(CloudSyncJsonMap json) {
-    _requireExactKeys(json, _jsonKeys, '设备轮换结果');
+  factory CloudSyncDeviceRotationResult.fromJson(
+    CloudSyncJsonMap json, {
+    required E2eeSelfRevocationRotationBinding? authorization,
+  }) {
+    _requireExactKeys(
+      json,
+      authorization == null ? _directJsonKeys : _selfRevocationJsonKeys,
+      '设备轮换结果',
+    );
     if (_requireString(json, 'result') != 'committed') {
       throw const FormatException('设备轮换结果枚举值无效');
     }
-    return CloudSyncDeviceRotationResult(
+    if (authorization != null &&
+        (_requireCanonicalUuid(
+                  _requireString(json, 'selfRevocationMutationId'),
+                  'selfRevocationMutationId',
+                ) !=
+                authorization.mutationId ||
+            !_sameBytes(
+              _decodeCanonicalBinary(
+                _requireString(json, 'selfRevocationIntentDigest'),
+                field: 'selfRevocationIntentDigest',
+                exactLength: cloudSyncSelfRevocationIntentDigestBytes,
+              ),
+              authorization.intentDigest,
+            ))) {
+      throw const FormatException('设备轮换结果未绑定自撤销意图');
+    }
+    return CloudSyncDeviceRotationResult._validated(
+      authorization: authorization,
       operationId: _requireString(json, 'operationId'),
       revokedDeviceId: _requireString(json, 'revokedDeviceId'),
       fromGeneration: _requireInt(json, 'fromGeneration'),
@@ -1671,7 +1830,7 @@ final class CloudSyncDeviceRotationResult {
     );
   }
 
-  static const _jsonKeys = <String>{
+  static const _directJsonKeys = <String>{
     'result',
     'operationId',
     'revokedDeviceId',
@@ -1682,7 +1841,13 @@ final class CloudSyncDeviceRotationResult {
     'membershipManifestDigest',
     'committedAt',
   };
+  static const _selfRevocationJsonKeys = <String>{
+    ..._directJsonKeys,
+    'selfRevocationMutationId',
+    'selfRevocationIntentDigest',
+  };
 
+  final E2eeSelfRevocationRotationBinding? authorization;
   final String operationId;
   final String revokedDeviceId;
   final int fromGeneration;

@@ -1,6 +1,7 @@
 import 'dart:typed_data';
 
 import 'e2ee_data_rekey_executor.dart';
+import 'e2ee_self_revocation_rotation_binding.dart';
 
 const _accountKeyTransitionMaximumInt32 = 0x7fffffff;
 const _accountKeyTransitionMaximumUint32 = 0xffffffff;
@@ -16,8 +17,8 @@ enum E2eeAccountKeyTransitionKind {
 }
 
 final class E2eeAccountKeyTransitionBinding {
-  E2eeAccountKeyTransitionBinding({
-    required this.kind,
+  factory E2eeAccountKeyTransitionBinding({
+    required E2eeAccountKeyTransitionKind kind,
     required String userId,
     required String issuerDeviceId,
     required String membershipOperationId,
@@ -25,39 +26,112 @@ final class E2eeAccountKeyTransitionBinding {
     required int securityGeneration,
     required int targetKeyEpoch,
     required Uint8List membershipManifestDigest,
-  }) : userId = _requireTransitionUuid(userId, 'userId'),
-       issuerDeviceId = _requireTransitionUuid(
-         issuerDeviceId,
-         'issuerDeviceId',
-       ),
-       membershipOperationId = _requireTransitionUuid(
-         membershipOperationId,
-         'membershipOperationId',
-       ),
-       rekeyOperationId = _requireTransitionUuid(
-         rekeyOperationId,
-         'rekeyOperationId',
-       ),
-       securityGeneration = _requireTransitionPositiveInt(
-         securityGeneration,
-         _accountKeyTransitionMaximumInt32,
-         'securityGeneration',
-       ),
-       targetKeyEpoch = _requireTransitionPositiveInt(
-         targetKeyEpoch,
-         _accountKeyTransitionMaximumUint32,
-         'targetKeyEpoch',
-       ),
-       _membershipManifestDigest = _copyTransitionDigest(
-         membershipManifestDigest,
-         'membershipManifestDigest',
-       ) {
-    _requireTransitionOperationRelationship(
-      kind,
-      membershipOperationId,
-      rekeyOperationId,
+  }) {
+    return E2eeAccountKeyTransitionBinding._validated(
+      kind: kind,
+      userId: userId,
+      issuerDeviceId: issuerDeviceId,
+      membershipOperationId: membershipOperationId,
+      rekeyOperationId: rekeyOperationId,
+      securityGeneration: securityGeneration,
+      targetKeyEpoch: targetKeyEpoch,
+      membershipManifestDigest: membershipManifestDigest,
+      selfRevocationAuthorization: null,
     );
   }
+
+  factory E2eeAccountKeyTransitionBinding.selfRevocation({
+    required String userId,
+    required String issuerDeviceId,
+    required String membershipOperationId,
+    required String rekeyOperationId,
+    required int securityGeneration,
+    required int targetKeyEpoch,
+    required Uint8List membershipManifestDigest,
+    required E2eeSelfRevocationRotationBinding authorization,
+  }) {
+    return E2eeAccountKeyTransitionBinding._validated(
+      kind: E2eeAccountKeyTransitionKind.deviceRevocation,
+      userId: userId,
+      issuerDeviceId: issuerDeviceId,
+      membershipOperationId: membershipOperationId,
+      rekeyOperationId: rekeyOperationId,
+      securityGeneration: securityGeneration,
+      targetKeyEpoch: targetKeyEpoch,
+      membershipManifestDigest: membershipManifestDigest,
+      selfRevocationAuthorization: authorization,
+    );
+  }
+
+  factory E2eeAccountKeyTransitionBinding._validated({
+    required E2eeAccountKeyTransitionKind kind,
+    required String userId,
+    required String issuerDeviceId,
+    required String membershipOperationId,
+    required String rekeyOperationId,
+    required int securityGeneration,
+    required int targetKeyEpoch,
+    required Uint8List membershipManifestDigest,
+    required E2eeSelfRevocationRotationBinding? selfRevocationAuthorization,
+  }) {
+    final checkedMembershipOperationId = _requireTransitionUuid(
+      membershipOperationId,
+      'membershipOperationId',
+    );
+    final checkedRekeyOperationId = _requireTransitionUuid(
+      rekeyOperationId,
+      'rekeyOperationId',
+    );
+    final checkedSecurityGeneration = _requireTransitionPositiveInt(
+      securityGeneration,
+      _accountKeyTransitionMaximumInt32,
+      'securityGeneration',
+    );
+    final checkedTargetKeyEpoch = _requireTransitionPositiveInt(
+      targetKeyEpoch,
+      _accountKeyTransitionMaximumUint32,
+      'targetKeyEpoch',
+    );
+    _requireTransitionOperationRelationship(
+      kind,
+      checkedMembershipOperationId,
+      checkedRekeyOperationId,
+    );
+    _requireSelfRevocationAuthorizationMatchesTransition(
+      kind: kind,
+      authorization: selfRevocationAuthorization,
+      membershipOperationId: checkedMembershipOperationId,
+      rekeyOperationId: checkedRekeyOperationId,
+      securityGeneration: checkedSecurityGeneration,
+      targetKeyEpoch: checkedTargetKeyEpoch,
+    );
+    return E2eeAccountKeyTransitionBinding._(
+      kind: kind,
+      userId: _requireTransitionUuid(userId, 'userId'),
+      issuerDeviceId: _requireTransitionUuid(issuerDeviceId, 'issuerDeviceId'),
+      membershipOperationId: checkedMembershipOperationId,
+      rekeyOperationId: checkedRekeyOperationId,
+      securityGeneration: checkedSecurityGeneration,
+      targetKeyEpoch: checkedTargetKeyEpoch,
+      membershipManifestDigest: _copyTransitionDigest(
+        membershipManifestDigest,
+        'membershipManifestDigest',
+      ),
+      selfRevocationAuthorization: selfRevocationAuthorization,
+    );
+  }
+
+  const E2eeAccountKeyTransitionBinding._({
+    required this.kind,
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.membershipOperationId,
+    required this.rekeyOperationId,
+    required this.securityGeneration,
+    required this.targetKeyEpoch,
+    required this._membershipManifestDigest,
+    required this.selfRevocationAuthorization,
+  });
 
   final E2eeAccountKeyTransitionKind kind;
   final String userId;
@@ -67,14 +141,15 @@ final class E2eeAccountKeyTransitionBinding {
   final int securityGeneration;
   final int targetKeyEpoch;
   final Uint8List _membershipManifestDigest;
+  final E2eeSelfRevocationRotationBinding? selfRevocationAuthorization;
 
   Uint8List get membershipManifestDigest =>
       Uint8List.fromList(_membershipManifestDigest);
 }
 
 final class E2eeAccountKeyTransitionRemoteReceipt {
-  E2eeAccountKeyTransitionRemoteReceipt({
-    required this.kind,
+  factory E2eeAccountKeyTransitionRemoteReceipt({
+    required E2eeAccountKeyTransitionKind kind,
     required String userId,
     required String issuerDeviceId,
     required String membershipOperationId,
@@ -82,39 +157,112 @@ final class E2eeAccountKeyTransitionRemoteReceipt {
     required int securityGeneration,
     required int targetKeyEpoch,
     required Uint8List membershipManifestDigest,
-  }) : userId = _requireTransitionUuid(userId, 'userId'),
-       issuerDeviceId = _requireTransitionUuid(
-         issuerDeviceId,
-         'issuerDeviceId',
-       ),
-       membershipOperationId = _requireTransitionUuid(
-         membershipOperationId,
-         'membershipOperationId',
-       ),
-       rekeyOperationId = _requireTransitionUuid(
-         rekeyOperationId,
-         'rekeyOperationId',
-       ),
-       securityGeneration = _requireTransitionPositiveInt(
-         securityGeneration,
-         _accountKeyTransitionMaximumInt32,
-         'securityGeneration',
-       ),
-       targetKeyEpoch = _requireTransitionPositiveInt(
-         targetKeyEpoch,
-         _accountKeyTransitionMaximumUint32,
-         'targetKeyEpoch',
-       ),
-       _membershipManifestDigest = _copyTransitionDigest(
-         membershipManifestDigest,
-         'membershipManifestDigest',
-       ) {
-    _requireTransitionOperationRelationship(
-      kind,
-      membershipOperationId,
-      rekeyOperationId,
+  }) {
+    return E2eeAccountKeyTransitionRemoteReceipt._validated(
+      kind: kind,
+      userId: userId,
+      issuerDeviceId: issuerDeviceId,
+      membershipOperationId: membershipOperationId,
+      rekeyOperationId: rekeyOperationId,
+      securityGeneration: securityGeneration,
+      targetKeyEpoch: targetKeyEpoch,
+      membershipManifestDigest: membershipManifestDigest,
+      selfRevocationAuthorization: null,
     );
   }
+
+  factory E2eeAccountKeyTransitionRemoteReceipt.selfRevocation({
+    required String userId,
+    required String issuerDeviceId,
+    required String membershipOperationId,
+    required String rekeyOperationId,
+    required int securityGeneration,
+    required int targetKeyEpoch,
+    required Uint8List membershipManifestDigest,
+    required E2eeSelfRevocationRotationBinding authorization,
+  }) {
+    return E2eeAccountKeyTransitionRemoteReceipt._validated(
+      kind: E2eeAccountKeyTransitionKind.deviceRevocation,
+      userId: userId,
+      issuerDeviceId: issuerDeviceId,
+      membershipOperationId: membershipOperationId,
+      rekeyOperationId: rekeyOperationId,
+      securityGeneration: securityGeneration,
+      targetKeyEpoch: targetKeyEpoch,
+      membershipManifestDigest: membershipManifestDigest,
+      selfRevocationAuthorization: authorization,
+    );
+  }
+
+  factory E2eeAccountKeyTransitionRemoteReceipt._validated({
+    required E2eeAccountKeyTransitionKind kind,
+    required String userId,
+    required String issuerDeviceId,
+    required String membershipOperationId,
+    required String rekeyOperationId,
+    required int securityGeneration,
+    required int targetKeyEpoch,
+    required Uint8List membershipManifestDigest,
+    required E2eeSelfRevocationRotationBinding? selfRevocationAuthorization,
+  }) {
+    final checkedMembershipOperationId = _requireTransitionUuid(
+      membershipOperationId,
+      'membershipOperationId',
+    );
+    final checkedRekeyOperationId = _requireTransitionUuid(
+      rekeyOperationId,
+      'rekeyOperationId',
+    );
+    final checkedSecurityGeneration = _requireTransitionPositiveInt(
+      securityGeneration,
+      _accountKeyTransitionMaximumInt32,
+      'securityGeneration',
+    );
+    final checkedTargetKeyEpoch = _requireTransitionPositiveInt(
+      targetKeyEpoch,
+      _accountKeyTransitionMaximumUint32,
+      'targetKeyEpoch',
+    );
+    _requireTransitionOperationRelationship(
+      kind,
+      checkedMembershipOperationId,
+      checkedRekeyOperationId,
+    );
+    _requireSelfRevocationAuthorizationMatchesTransition(
+      kind: kind,
+      authorization: selfRevocationAuthorization,
+      membershipOperationId: checkedMembershipOperationId,
+      rekeyOperationId: checkedRekeyOperationId,
+      securityGeneration: checkedSecurityGeneration,
+      targetKeyEpoch: checkedTargetKeyEpoch,
+    );
+    return E2eeAccountKeyTransitionRemoteReceipt._(
+      kind: kind,
+      userId: _requireTransitionUuid(userId, 'userId'),
+      issuerDeviceId: _requireTransitionUuid(issuerDeviceId, 'issuerDeviceId'),
+      membershipOperationId: checkedMembershipOperationId,
+      rekeyOperationId: checkedRekeyOperationId,
+      securityGeneration: checkedSecurityGeneration,
+      targetKeyEpoch: checkedTargetKeyEpoch,
+      membershipManifestDigest: _copyTransitionDigest(
+        membershipManifestDigest,
+        'membershipManifestDigest',
+      ),
+      selfRevocationAuthorization: selfRevocationAuthorization,
+    );
+  }
+
+  const E2eeAccountKeyTransitionRemoteReceipt._({
+    required this.kind,
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.membershipOperationId,
+    required this.rekeyOperationId,
+    required this.securityGeneration,
+    required this.targetKeyEpoch,
+    required this._membershipManifestDigest,
+    required this.selfRevocationAuthorization,
+  });
 
   final E2eeAccountKeyTransitionKind kind;
   final String userId;
@@ -124,6 +272,7 @@ final class E2eeAccountKeyTransitionRemoteReceipt {
   final int securityGeneration;
   final int targetKeyEpoch;
   final Uint8List _membershipManifestDigest;
+  final E2eeSelfRevocationRotationBinding? selfRevocationAuthorization;
 
   Uint8List get membershipManifestDigest =>
       Uint8List.fromList(_membershipManifestDigest);
@@ -232,6 +381,10 @@ void _requireReceiptMatchesTransition(
       receipt.rekeyOperationId != binding.rekeyOperationId ||
       receipt.securityGeneration != binding.securityGeneration ||
       receipt.targetKeyEpoch != binding.targetKeyEpoch ||
+      !_sameSelfRevocationAuthorization(
+        receipt.selfRevocationAuthorization,
+        binding.selfRevocationAuthorization,
+      ) ||
       !_sameTransitionBytes(
         receipt._membershipManifestDigest,
         binding._membershipManifestDigest,
@@ -282,6 +435,32 @@ void _requireTransitionOperationRelationship(
         throw const FormatException('恢复替换成员操作与第二轮数据换代操作必须相同');
       }
   }
+}
+
+void _requireSelfRevocationAuthorizationMatchesTransition({
+  required E2eeAccountKeyTransitionKind kind,
+  required E2eeSelfRevocationRotationBinding? authorization,
+  required String membershipOperationId,
+  required String rekeyOperationId,
+  required int securityGeneration,
+  required int targetKeyEpoch,
+}) {
+  if (authorization == null) return;
+  if (kind != E2eeAccountKeyTransitionKind.deviceRevocation ||
+      authorization.operationId != membershipOperationId ||
+      authorization.operationId != rekeyOperationId ||
+      authorization.expectedGeneration + 1 != securityGeneration ||
+      authorization.expectedKeyEpoch + 1 != targetKeyEpoch) {
+    throw const FormatException('自撤销授权与账户密钥变更不匹配');
+  }
+}
+
+bool _sameSelfRevocationAuthorization(
+  E2eeSelfRevocationRotationBinding? left,
+  E2eeSelfRevocationRotationBinding? right,
+) {
+  if (left == null || right == null) return left == null && right == null;
+  return left.hasSameSecurityBinding(right);
 }
 
 String _requireTransitionUuid(String value, String field) {
