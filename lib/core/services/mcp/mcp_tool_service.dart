@@ -111,8 +111,8 @@ class McpToolService extends ChangeNotifier {
           continue;
         }
         if (c is mcp.ImageContent) {
-          final data = c.data.toString();
-          final mime = c.mimeType.toString();
+          final data = c.data ?? '';
+          final mime = c.mimeType;
           if (data.isNotEmpty) {
             final savedPath = await AppDirectories.saveBase64Image(
               mime,
@@ -121,6 +121,8 @@ class McpToolService extends ChangeNotifier {
             );
             if (savedPath != null) {
               buf.writeln('[image:$savedPath]');
+            } else {
+              throw StateError('mcp_image_persist_failed');
             }
           } else {
             final url = (c.url ?? '').toString();
@@ -154,7 +156,8 @@ class McpToolService extends ChangeNotifier {
         final s = c.toString();
         if (!s.startsWith('Instance of')) buf.writeln(s);
       } catch (_) {
-        // ignore single content parse errors and continue
+        if (c is mcp.ImageContent) rethrow;
+        // 未知扩展内容失败不应阻断其他标准内容。
       }
     }
     return buf.toString().trim();
@@ -208,8 +211,8 @@ class McpToolService extends ChangeNotifier {
               continue;
             }
             if (c is mcp.ImageContent) {
-              final data = c.data.toString();
-              final mime = c.mimeType.toString();
+              final data = c.data ?? '';
+              final mime = c.mimeType;
               if (data.isNotEmpty) {
                 final savedPath = await AppDirectories.saveBase64Image(
                   mime,
@@ -218,6 +221,8 @@ class McpToolService extends ChangeNotifier {
                 );
                 if (savedPath != null) {
                   buf.writeln('[image:$savedPath]');
+                } else {
+                  throw StateError('mcp_image_persist_failed');
                 }
               } else {
                 final url = (c.url ?? '').toString();
@@ -248,7 +253,8 @@ class McpToolService extends ChangeNotifier {
             final s = c.toString();
             if (!s.startsWith('Instance of')) buf.writeln(s);
           } catch (_) {
-            // ignore single content parse errors and continue
+            if (c is mcp.ImageContent) rethrow;
+            // 未知扩展内容失败不应阻断其他标准内容。
           }
         }
         return buf.toString().trim();

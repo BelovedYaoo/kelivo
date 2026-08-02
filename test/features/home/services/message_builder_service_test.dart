@@ -186,6 +186,53 @@ void main() {
   });
 
   group('MessageBuilderService.buildApiMessages', () {
+    test('工具附件序号在模型上下文中解析为当前设备图片路径', () {
+      final service = MessageBuilderService(
+        chatService: _FakeChatService({
+          'a1': [
+            {
+              'id': 'call_1',
+              'name': 'render_image',
+              'arguments': <String, dynamic>{},
+              'content': '图片生成完成',
+              'attachmentOrdinals': <int>[0],
+            },
+          ],
+        }),
+        contextProvider: _FakeBuildContext(),
+      );
+
+      final apiMessages = service.buildApiMessages(
+        messages: [
+          _message(id: 'u1', role: 'user', content: '生成图片'),
+          _message(
+            id: 'a1',
+            role: 'assistant',
+            content: '已完成',
+            attachments: [
+              _attachment(
+                assetId: 'tool-image',
+                path: 'C:/device/current-tool.png',
+                kind: 'image',
+              ),
+            ],
+          ),
+        ],
+        versionSelections: const {},
+        currentConversation: Conversation(title: 'test'),
+        includeToolMessages: true,
+      );
+
+      final toolMessage = apiMessages.singleWhere(
+        (message) => message['role'] == 'tool',
+      );
+      expect(toolMessage['content'], contains('图片生成完成'));
+      expect(
+        toolMessage['content'],
+        contains('[image:C:/device/current-tool.png]'),
+      );
+    });
+
     test('结构化附件保持顺序且仅附件消息不会被丢弃', () {
       final service = MessageBuilderService(
         chatService: _FakeChatService(const {}),

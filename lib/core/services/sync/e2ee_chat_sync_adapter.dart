@@ -246,11 +246,15 @@ final class E2eeChatSyncAdapter {
     if (!await _repository.hasToolEvents(entityKey.entityId)) {
       return const E2eeSyncTombstoneSnapshot();
     }
+    final message = await _repository.getMessage(entityKey.entityId);
+    if (message == null) {
+      throw StateError('sync_tool_event_message_missing');
+    }
     final events = await _repository.getToolEvents(entityKey.entityId);
     return _encodeValue(entityKey, <String, Object?>{
       'messageId': entityKey.entityId,
       'events': <Object?>[
-        for (final event in events) Map<String, Object?>.from(event),
+        for (final event in events) _normalizeToolEventForSync(event, message),
       ],
     });
   }
@@ -441,13 +445,16 @@ final class E2eeChatSyncAdapter {
     SyncEntityKey key,
     Map<String, Object?> payload,
   ) async {
-    if (await _repository.getMessage(key.entityId) == null) {
+    final message = await _repository.getMessage(key.entityId);
+    if (message == null) {
       throw StateError('sync_tool_event_message_missing');
     }
     final events = payload['events'] as List<Object?>;
     await _repository.setToolEvents(key.entityId, <Map<String, dynamic>>[
       for (final event in events)
-        Map<String, dynamic>.from(event as Map<String, Object?>),
+        Map<String, dynamic>.from(
+          _normalizeToolEventForSync(event as Map<String, Object?>, message),
+        ),
     ]);
   }
 
@@ -589,9 +596,34 @@ String? _nullableCanonicalUtc(DateTime? value) =>
 DateTime? _parseNullableDateTime(Object? value) =>
     value == null ? null : DateTime.parse(value as String);
 
-String _normalizeInlineMediaForSync(String raw) {
+Map<String, Object?> _normalizeToolEventForSync(
+  Map<String, Object?> event,
+  ChatMessage message,
+) {
+  final normalized = Map<String, Object?>.from(event);
+  final content = normalized['content'];
+  if (content != null && content is! String) {
+    throw StateError('sync_tool_event_content_invalid');
+  }
+  if (content is String) {
+    normalized['content'] = _normalizeInlineMediaForSync(
+      content,
+      localMarkerError: 'sync_tool_event_local_attachment_marker_rejected',
+    );
+  }
+  resolveToolEventImageAttachments(
+    event: normalized,
+    messageAttachments: message.attachments,
+  );
+  return normalized;
+}
+
+String _normalizeInlineMediaForSync(
+  String raw, {
+  String localMarkerError = 'sync_message_local_attachment_marker_rejected',
+}) {
   if (parseLocalMarkdownImages(raw).imagePaths.isNotEmpty) {
-    _rejectLocalAttachmentMarker();
+    _rejectLocalAttachmentMarker(localMarkerError);
   }
   if (!raw.contains('[image:') && !raw.contains('[file:')) return raw;
 
@@ -613,11 +645,13 @@ String _normalizeInlineMediaForSync(String raw) {
     normalized.write(raw.substring(cursor, markerIndex));
 
     final closingBracket = raw.indexOf(']', markerIndex);
-    if (closingBracket < 0) _rejectLocalAttachmentMarker();
+    if (closingBracket < 0) _rejectLocalAttachmentMarker(localMarkerError);
     if (markerIndex == imageIndex) {
       final source = raw.substring(markerIndex + 7, closingBracket).trim();
       final canonicalSource = _canonicalRemoteImageSource(source);
-      if (canonicalSource == null) _rejectLocalAttachmentMarker();
+      if (canonicalSource == null) {
+        _rejectLocalAttachmentMarker(localMarkerError);
+      }
       normalized.write('[image:$canonicalSource]');
     } else {
       final fields = raw
@@ -627,10 +661,12 @@ String _normalizeInlineMediaForSync(String raw) {
           .toList(growable: false);
       if (fields.length != 3 ||
           !_validRemoteFileMetadata(fields[1], fields[2])) {
-        _rejectLocalAttachmentMarker();
+        _rejectLocalAttachmentMarker(localMarkerError);
       }
       final canonicalUrl = _canonicalRemoteHttpUrl(fields[0]);
-      if (canonicalUrl == null) _rejectLocalAttachmentMarker();
+      if (canonicalUrl == null) {
+        _rejectLocalAttachmentMarker(localMarkerError);
+      }
       normalized.write('${fields[1]}: $canonicalUrl');
     }
     cursor = closingBracket + 1;
@@ -667,5 +703,4 @@ bool _validRemoteFileMetadata(String displayName, String mediaType) =>
     mediaType.indexOf('/') > 0 &&
     !mediaType.endsWith('/');
 
-Never _rejectLocalAttachmentMarker() =>
-    throw StateError('sync_message_local_attachment_marker_rejected');
+Never _rejectLocalAttachmentMarker(String error) => throw StateError(error);

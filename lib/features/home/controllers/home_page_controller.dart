@@ -2080,7 +2080,7 @@ class HomePageController extends ChangeNotifier {
       if (m.role == 'assistant') {
         _streamController.restoreMessageUiState(
           m,
-          getToolEventsFromDb: (id) => _chatService.getToolEvents(id),
+          getToolEventsFromDb: (_) => _chatService.getToolEventsForMessage(m),
           getGeminiThoughtSigFromDb: (id) =>
               _chatService.getGeminiThoughtSignature(id),
         );

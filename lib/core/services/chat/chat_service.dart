@@ -106,6 +106,11 @@ final class GenerationFinalizationResult {
   final GenerationRun? run;
 }
 
+typedef _PreparedTerminalAssistantMedia = ({
+  ChatMessage message,
+  List<Map<String, dynamic>> toolEvents,
+});
+
 typedef _AssetGcQuarantine = ({
   AssetGcQuarantineRecord record,
   File original,
@@ -418,6 +423,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     final prepared = List<ChatMessageAttachment>.unmodifiable(attachments);
     final executor = _syncWriteExecutor;
     if (prepared.isEmpty ||
+        prepared.every((attachment) => attachment.hasRemoteIdentity) ||
         executor is! StructuredAttachmentSyncWriteExecutor) {
       return executor.runLocalBatch<T>(keys: keys, write: write);
     }
@@ -2087,19 +2093,48 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return executor.materializeLocalAttachments(result);
   }
 
-  Future<ChatMessage> _prepareTerminalAssistantMedia(
+  Future<_PreparedTerminalAssistantMedia> _prepareTerminalAssistantMedia(
     ChatMessage message,
+    List<Map<String, dynamic>> toolEvents,
   ) async {
     if (_syncWriteExecutor is! StructuredAttachmentSyncWriteExecutor ||
         isTemporaryConversation(message.conversationId) ||
         message.role != 'assistant' ||
         !_isTerminalMessage(message)) {
-      return message;
+      return (message: message, toolEvents: toolEvents);
     }
-    final parsed = parseLocalMarkdownImages(message.content);
-    if (parsed.imagePaths.isEmpty) return message;
-    final attachmentCount =
-        message.attachments.length + parsed.imagePaths.length;
+    final parsedMessage = parseLocalMarkdownImages(message.content);
+    final localInputs = <LocalMessageAttachmentInput>[
+      for (final path in parsedMessage.imagePaths)
+        LocalMessageAttachmentInput.image(path: path),
+    ];
+    var nextOrdinal = message.attachments.length + localInputs.length;
+    final portableToolEvents = <Map<String, dynamic>>[];
+    for (final event in toolEvents) {
+      final portable = Map<String, dynamic>.from(event);
+      final ordinals = <int>[...readToolEventAttachmentOrdinals(portable)];
+      final rawContent = portable['content'];
+      if (rawContent != null && rawContent is! String) {
+        throw const FormatException('tool_event.content 必须为字符串或 null');
+      }
+      if (rawContent is String) {
+        final parsedToolContent = parseLocalInlineImages(rawContent);
+        portable['content'] = parsedToolContent.content;
+        for (final path in parsedToolContent.imagePaths) {
+          ordinals.add(nextOrdinal++);
+          localInputs.add(LocalMessageAttachmentInput.image(path: path));
+        }
+      }
+      if (ordinals.isEmpty) {
+        portable.remove(toolEventAttachmentOrdinalsKey);
+      } else {
+        portable[toolEventAttachmentOrdinalsKey] = List<int>.unmodifiable(
+          ordinals,
+        );
+      }
+      portableToolEvents.add(portable);
+    }
+    final attachmentCount = message.attachments.length + localInputs.length;
     if (attachmentCount > ChatMessage.maximumAttachmentCount) {
       throw RangeError.range(
         attachmentCount,
@@ -2108,17 +2143,25 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         'attachments.length',
       );
     }
-    final generatedImages = await _prepareLocalAttachments(
-      parsed.imagePaths.map(
-        (path) => LocalMessageAttachmentInput.image(path: path),
-      ),
-    );
-    return message.copyWith(
-      content: parsed.content,
+    final localImages = localInputs.isEmpty
+        ? const <ChatMessageAttachment>[]
+        : await _prepareLocalAttachments(localInputs);
+    final preparedMessage = message.copyWith(
+      content: parsedMessage.content,
       attachments: <ChatMessageAttachment>[
         ...message.attachments,
-        ...generatedImages,
+        ...localImages,
       ],
+    );
+    for (final event in portableToolEvents) {
+      resolveToolEventImageAttachments(
+        event: event,
+        messageAttachments: preparedMessage.attachments,
+      );
+    }
+    return (
+      message: preparedMessage,
+      toolEvents: List<Map<String, dynamic>>.unmodifiable(portableToolEvents),
     );
   }
 
@@ -2946,10 +2989,15 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       backup.messages,
       attachmentDirectories: attachmentDirectories,
     );
+    final prepared = await _prepareImportedBackupToolMedia(
+      messages,
+      backup.toolEventsByMessageId,
+      attachmentDirectories: attachmentDirectories,
+    );
     await _replaceAllDataFromBackup(
       conversations: backup.conversations,
-      messages: messages,
-      toolEventsByMessageId: backup.toolEventsByMessageId,
+      messages: prepared.messages,
+      toolEventsByMessageId: prepared.toolEventsByMessageId,
       geminiSignaturesByMessageId: backup.geminiSignaturesByMessageId,
     );
   }
@@ -3059,6 +3107,103 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       );
     }
     return List<ChatMessage>.unmodifiable(prepared);
+  }
+
+  Future<
+    ({
+      List<ChatMessage> messages,
+      Map<String, List<Map<String, dynamic>>> toolEventsByMessageId,
+    })
+  >
+  _prepareImportedBackupToolMedia(
+    List<ChatMessage> messages,
+    Map<String, List<Map<String, dynamic>>> toolEventsByMessageId, {
+    required BackupAttachmentDirectoryMapping? attachmentDirectories,
+  }) async {
+    final preparedEvents = <String, List<Map<String, dynamic>>>{
+      for (final entry in toolEventsByMessageId.entries)
+        entry.key: <Map<String, dynamic>>[
+          for (final event in entry.value) Map<String, dynamic>.from(event),
+        ],
+    };
+    final preparedMessages = <ChatMessage>[];
+    for (final message in messages) {
+      final sourceEvents = preparedEvents[message.id];
+      if (sourceEvents == null || sourceEvents.isEmpty) {
+        preparedMessages.add(message);
+        continue;
+      }
+      final attachments = <ChatMessageAttachment>[...message.attachments];
+      final portableEvents = <Map<String, dynamic>>[];
+      for (final sourceEvent in sourceEvents) {
+        final event = Map<String, dynamic>.from(sourceEvent);
+        final ordinals = <int>[...readToolEventAttachmentOrdinals(event)];
+        final rawContent = event['content'];
+        if (rawContent != null && rawContent is! String) {
+          throw const FormatException('tool_event.content 必须为字符串或 null');
+        }
+        if (rawContent is String) {
+          final parsed = parseLocalInlineImages(rawContent);
+          event['content'] = parsed.content;
+          for (final sourcePath in parsed.imagePaths) {
+            final target = attachmentDirectories == null
+                ? File(sourcePath)
+                : _resolveImportedAttachmentPath(
+                    sourcePath,
+                    attachmentDirectories,
+                  );
+            var ordinal = attachments.indexWhere(
+              (attachment) => p.equals(attachment.path, target.path),
+            );
+            if (ordinal >= 0) {
+              if (attachments[ordinal].kind != 'image') {
+                throw StateError('backup_attachment_marker_kind');
+              }
+            } else {
+              final fileInfo = await _inspectImportedAttachmentFile(target);
+              attachments.add(
+                ChatMessageAttachment(
+                  assetId: 'asset_${fileInfo.contentHash}',
+                  path: target.path,
+                  contentHash: fileInfo.contentHash,
+                  byteSize: fileInfo.byteSize,
+                  kind: 'image',
+                ),
+              );
+              ordinal = attachments.length - 1;
+            }
+            if (!ordinals.contains(ordinal)) ordinals.add(ordinal);
+          }
+        }
+        if (ordinals.isEmpty) {
+          event.remove(toolEventAttachmentOrdinalsKey);
+        } else {
+          event[toolEventAttachmentOrdinalsKey] = List<int>.unmodifiable(
+            ordinals,
+          );
+        }
+        portableEvents.add(event);
+      }
+      if (attachments.length > ChatMessage.maximumAttachmentCount) {
+        throw StateError('backup_attachment_count');
+      }
+      final preparedMessage = message.copyWith(attachments: attachments);
+      for (final event in portableEvents) {
+        resolveToolEventImageAttachments(
+          event: event,
+          messageAttachments: preparedMessage.attachments,
+        );
+      }
+      preparedMessages.add(preparedMessage);
+      preparedEvents[message.id] = List<Map<String, dynamic>>.unmodifiable(
+        portableEvents,
+      );
+    }
+    return (
+      messages: List<ChatMessage>.unmodifiable(preparedMessages),
+      toolEventsByMessageId:
+          Map<String, List<Map<String, dynamic>>>.unmodifiable(preparedEvents),
+    );
   }
 
   static ({String content, List<_LegacyBackupAttachmentMarker> markers})
@@ -4025,10 +4170,15 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       await updateStreamingCheckpointSilent(message, toolEvents);
       return GenerationFinalizationResult(message: message);
     }
-    final finalizedMessage = await _prepareTerminalAssistantMedia(message);
+    final prepared = await _prepareTerminalAssistantMedia(message, toolEvents);
+    final finalizedMessage = prepared.message;
+    final finalizedToolEvents = prepared.toolEvents;
     Future<GenerationRun?> write() async {
       if (generationRunId == null) {
-        await updateStreamingCheckpointSilent(finalizedMessage, toolEvents);
+        await updateStreamingCheckpointSilent(
+          finalizedMessage,
+          finalizedToolEvents,
+        );
         _statisticsRevision++;
         notifyListeners();
         return null;
@@ -4038,7 +4188,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       }
       final run = await _repo.finalizeGenerationRun(
         message: finalizedMessage,
-        toolEvents: toolEvents,
+        toolEvents: finalizedToolEvents,
         generationRunId: generationRunId,
         expectedState: expectedState,
         expectedStateRevision: expectedStateRevision,
@@ -4049,7 +4199,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
       );
       _replaceCachedMessage(finalizedMessage);
       _toolEventsCache[finalizedMessage.id] = List<Map<String, dynamic>>.of(
-        toolEvents,
+        finalizedToolEvents,
       );
       _statisticsRevision++;
       notifyListeners();
@@ -4075,6 +4225,35 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return List<Map<String, dynamic>>.of(
       _toolEventsCache[assistantMessageId] ?? const [],
     );
+  }
+
+  List<Map<String, dynamic>> getToolEventsForMessage(ChatMessage message) {
+    return <Map<String, dynamic>>[
+      for (final event in getToolEvents(message.id))
+        _hydrateToolEventAttachments(event, message.attachments),
+    ];
+  }
+
+  Map<String, dynamic> _hydrateToolEventAttachments(
+    Map<String, dynamic> event,
+    List<ChatMessageAttachment> messageAttachments,
+  ) {
+    final hydrated = Map<String, dynamic>.from(event);
+    final attachments = resolveToolEventImageAttachments(
+      event: hydrated,
+      messageAttachments: messageAttachments,
+    );
+    hydrated.remove(toolEventAttachmentOrdinalsKey);
+    if (attachments.isEmpty) return hydrated;
+    final rawContent = hydrated['content'];
+    if (rawContent != null && rawContent is! String) {
+      throw const FormatException('tool_event.content 必须为字符串或 null');
+    }
+    hydrated['content'] = <String>[
+      if (rawContent is String && rawContent.isNotEmpty) rawContent,
+      for (final attachment in attachments) '[image:${attachment.path}]',
+    ].join('\n');
+    return hydrated;
   }
 
   bool hasToolEvents(String assistantMessageId) {

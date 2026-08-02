@@ -130,6 +130,37 @@ void main() {
     expect(restoredSplits.toolCounts, const [2]);
   });
 
+  test('终态工具事件会用持久化后的附件路径替换流式工具卡片', () {
+    final controller = buildController();
+    controller.setToolParts('assistant-message', <ToolUIPart>[
+      const ToolUIPart(
+        id: 'call-1',
+        toolName: 'render-image',
+        arguments: <String, dynamic>{},
+        content: '[image:C:/temporary/tool.png]',
+        loading: false,
+      ),
+    ]);
+
+    controller.replaceToolPartsFromEvents(
+      'assistant-message',
+      <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'call-1',
+          'name': 'render-image',
+          'arguments': const <String, dynamic>{},
+          'content': '[image:C:/managed/tool.png]',
+        },
+      ],
+    );
+
+    expect(
+      controller.getToolParts('assistant-message')?.single.content,
+      '[image:C:/managed/tool.png]',
+    );
+    controller.dispose();
+  });
+
   test('v1 reasoning payload remains compatible without content splits', () {
     final controller = buildController();
     final segment = ReasoningSegmentData()

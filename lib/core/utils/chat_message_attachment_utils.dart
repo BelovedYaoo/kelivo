@@ -20,6 +20,59 @@ final class ParsedLocalMarkdownImages {
   final List<String> imagePaths;
 }
 
+final class ParsedLocalInlineImages {
+  const ParsedLocalInlineImages({
+    required this.content,
+    required this.imagePaths,
+  });
+
+  final String content;
+  final List<String> imagePaths;
+}
+
+const toolEventAttachmentOrdinalsKey = 'attachmentOrdinals';
+
+List<int> readToolEventAttachmentOrdinals(Map<Object?, Object?> event) {
+  final raw = event[toolEventAttachmentOrdinalsKey];
+  if (raw == null) return const <int>[];
+  if (raw is! List) {
+    throw const FormatException('tool_event.attachmentOrdinals 必须为数组');
+  }
+  final ordinals = <int>[];
+  final seen = <int>{};
+  for (var index = 0; index < raw.length; index++) {
+    final ordinal = raw[index];
+    if (ordinal is! int ||
+        ordinal < 0 ||
+        ordinal >= ChatMessage.maximumAttachmentCount) {
+      throw FormatException('tool_event.attachmentOrdinals[$index] 必须为有效附件序号');
+    }
+    if (!seen.add(ordinal)) {
+      throw FormatException('tool_event.attachmentOrdinals[$index] 不得重复');
+    }
+    ordinals.add(ordinal);
+  }
+  return List<int>.unmodifiable(ordinals);
+}
+
+List<ChatMessageAttachment> resolveToolEventImageAttachments({
+  required Map<Object?, Object?> event,
+  required List<ChatMessageAttachment> messageAttachments,
+}) {
+  final resolved = <ChatMessageAttachment>[];
+  for (final ordinal in readToolEventAttachmentOrdinals(event)) {
+    if (ordinal >= messageAttachments.length) {
+      throw StateError('sync_tool_event_attachment_missing');
+    }
+    final attachment = messageAttachments[ordinal];
+    if (attachment.kind != 'image') {
+      throw StateError('sync_tool_event_attachment_not_image');
+    }
+    resolved.add(attachment);
+  }
+  return List<ChatMessageAttachment>.unmodifiable(resolved);
+}
+
 ParsedLocalMarkdownImages parseLocalMarkdownImages(String raw) {
   final imagePattern = RegExp(
     r'!\[[^\]\r\n]*\]\(([^)\r\n]+)\)',
@@ -44,6 +97,29 @@ ParsedLocalMarkdownImages parseLocalMarkdownImages(String raw) {
   }
   content.write(raw.substring(cursor));
   return ParsedLocalMarkdownImages(
+    content: content.toString().trim(),
+    imagePaths: List<String>.unmodifiable(imagePaths),
+  );
+}
+
+ParsedLocalInlineImages parseLocalInlineImages(String raw) {
+  final imagePattern = RegExp(r'\[image:([^\]\r\n]+)\]');
+  final imagePaths = <String>[];
+  final content = StringBuffer();
+  var cursor = 0;
+
+  for (final match in imagePattern.allMatches(raw)) {
+    final source = match.group(1)?.trim() ?? '';
+    if (!_isAbsoluteLocalImageSource(source)) continue;
+    content.write(raw.substring(cursor, match.start));
+    imagePaths.add(source);
+    cursor = match.end;
+  }
+  if (imagePaths.isEmpty) {
+    return ParsedLocalInlineImages(content: raw, imagePaths: const <String>[]);
+  }
+  content.write(raw.substring(cursor));
+  return ParsedLocalInlineImages(
     content: content.toString().trim(),
     imagePaths: List<String>.unmodifiable(imagePaths),
   );

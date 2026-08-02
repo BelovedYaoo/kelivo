@@ -5685,6 +5685,153 @@ void main() {
           ),
         ),
       );
+
+      await repository.setToolEvents(localMessageId, <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'local-tool-image',
+          'name': 'render-image',
+          'content': r'[image:C:\private\tool.png]',
+        },
+      ]);
+      await expectLater(
+        adapter.readSnapshot(
+          const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.toolEvent,
+            entityId: localMessageId,
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'sync_tool_event_local_attachment_marker_rejected',
+          ),
+        ),
+      );
+
+      await repository.setToolEvents(localMessageId, <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'missing-tool-image',
+          'name': 'render-image',
+          'content': '工具图片',
+          'attachmentOrdinals': <int>[0],
+        },
+      ]);
+      await expectLater(
+        adapter.readSnapshot(
+          const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.toolEvent,
+            entityId: localMessageId,
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'sync_tool_event_attachment_missing',
+          ),
+        ),
+      );
+
+      final localMessage = await repository.getMessage(localMessageId);
+      expect(localMessage, isNot(equals(null)));
+      final remoteToolImage = MessageAssetRegistration(
+        assetId:
+            'asset_cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd',
+        contentHash:
+            'cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd',
+        path: '${directory.path}${Platform.pathSeparator}tool-image.png',
+        byteSize: 12,
+        kind: 'image',
+        attachmentId: '31000000-0000-4000-8000-000000000001',
+        uploadId: '32000000-0000-4000-8000-000000000001',
+        chunkKeyEpoch: 3,
+        manifestKeyEpoch: 3,
+        manifestRevision: 1,
+      );
+      expect(
+        await repository.replaceMessageAssetReferences(
+          conversationId: localConversationId,
+          revisionId: localMessageId,
+          expectedContent: localMessage!.content,
+          assets: <MessageAssetRegistration>[remoteToolImage],
+        ),
+        isTrue,
+      );
+      await repository.setToolEvents(localMessageId, <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'portable-tool-image',
+          'name': 'render-image',
+          'content': '[image: https://example.com/preview.png ]',
+          'attachmentOrdinals': <int>[0],
+        },
+      ]);
+
+      final toolSnapshot = await adapter.readSnapshot(
+        const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.toolEvent,
+          entityId: localMessageId,
+        ),
+      );
+      final encodedToolEvent = (toolSnapshot as E2eeSyncValueSnapshot).payload;
+      final decodedToolEvent = E2eeSyncPayloadCodec.decode(
+        entityKey: const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.toolEvent,
+          entityId: localMessageId,
+        ),
+        bytes: encodedToolEvent,
+      );
+      expect(decodedToolEvent['events'], <Object?>[
+        <String, Object?>{
+          'id': 'portable-tool-image',
+          'name': 'render-image',
+          'content': '[image:https://example.com/preview.png]',
+          'attachmentOrdinals': <Object?>[0],
+        },
+      ]);
+      expect(
+        utf8.decode(encodedToolEvent),
+        isNot(contains(remoteToolImage.path)),
+      );
+
+      final pulledToolWire = await createPullValueChange(
+        changeSeq: 1,
+        revision: 2,
+        operation: 899,
+        entityKey: const SyncEntityKey(
+          entityType: E2eeSyncChatRecordTypes.toolEvent,
+          entityId: localMessageId,
+        ),
+        payload: <String, Object?>{
+          'messageId': localMessageId,
+          'events': <Object?>[
+            <String, Object?>{
+              'id': 'portable-tool-image',
+              'name': 'render-image',
+              'content': '[image: https://example.com/pulled-preview.png ]',
+              'attachmentOrdinals': <Object?>[0],
+            },
+          ],
+        },
+      );
+      final pulledToolChange = await authenticatePulledValueChange(
+        pulledToolWire,
+      );
+      await adapter.runPullAndPublish(
+        () => repository.runInTransaction<void>(
+          () => adapter.applyTransactional(<E2eeSyncPulledChange>[
+            pulledToolChange,
+          ]),
+        ),
+      );
+      expect(await repository.getToolEvents(localMessageId), <Object?>[
+        <String, Object?>{
+          'id': 'portable-tool-image',
+          'name': 'render-image',
+          'content': '[image:https://example.com/pulled-preview.png]',
+          'attachmentOrdinals': <Object?>[0],
+        },
+      ]);
     });
 
     test('逆序六实体按依赖提交且只在 checkpoint 提交后发布', () async {

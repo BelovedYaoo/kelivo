@@ -2001,6 +2001,81 @@ void main() {
     expect(executor.attachmentBatches.single.revisionId, completed.id);
   });
 
+  test('E2EE 助手终态把 MCP 本地图片转换为可移植工具附件引用', () async {
+    final executor = _RecordingAttachmentWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    final conversation = await service.createConversation(title: 'MCP Image');
+    final generation = await service.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '调用绘图工具',
+      userAttachments: const <LocalMessageAttachmentInput>[],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    var run = await service.transitionGenerationRun(
+      id: generation.run.id,
+      expectedState: generation.run.state,
+      expectedStateRevision: generation.run.stateRevision,
+      nextState: GenerationRunState.requesting,
+    );
+    run = await service.transitionGenerationRun(
+      id: run.id,
+      expectedState: run.state,
+      expectedStateRevision: run.stateRevision,
+      nextState: GenerationRunState.streaming,
+    );
+    final generatedImage = File('${tempDir.path}/images/generated.png');
+    final toolImage = File('${tempDir.path}/images/tool.png');
+    await generatedImage.parent.create(recursive: true);
+    await generatedImage.writeAsBytes(const <int>[1, 2, 3]);
+    await toolImage.writeAsBytes(const <int>[4, 5, 6]);
+    final completed = generation.assistantMessage.copyWith(
+      content: '回答\n![image](${generatedImage.path})',
+      isStreaming: false,
+      generationStatus: ChatMessage.generationStatusCompleted,
+    );
+
+    final result = await service.finalizeGenerationRunSilent(
+      message: completed,
+      toolEvents: <Map<String, dynamic>>[
+        <String, dynamic>{
+          'id': 'call-1',
+          'name': 'render-image',
+          'arguments': const <String, dynamic>{},
+          'content':
+              '工具结果\n[image:${toolImage.path}]\n'
+              '[image:https://example.com/remote.png]',
+        },
+      ],
+      generationRunId: run.id,
+      expectedState: run.state,
+      expectedStateRevision: run.stateRevision,
+      terminalState: GenerationRunState.completed,
+    );
+
+    expect(result.message.attachments, hasLength(2));
+    final rawEvent = service.getToolEvents(completed.id).single;
+    expect(rawEvent['content'], isNot(contains(toolImage.path)));
+    expect(rawEvent['content'], contains('https://example.com/remote.png'));
+    expect(rawEvent['attachmentOrdinals'], <int>[1]);
+
+    final hydratedEvent = service
+        .getToolEventsForMessage(result.message)
+        .single;
+    expect(hydratedEvent, isNot(contains('attachmentOrdinals')));
+    expect(
+      hydratedEvent['content'],
+      contains('[image:${result.message.attachments[1].path}]'),
+    );
+    expect(
+      hydratedEvent['content'],
+      isNot(contains('[image:${result.message.attachments[0].path}]')),
+    );
+    expect(executor.materialized.single, hasLength(2));
+    expect(executor.attachmentBatches.single.attachments, hasLength(2));
+  });
+
   test('E2EE 助手终态的本地 Markdown 图片失效时不落库', () async {
     final executor = _RecordingAttachmentWriteExecutor();
     final service = createService(syncWriteExecutor: executor);
@@ -2353,12 +2428,16 @@ void main() {
         'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
     const fileContentHash =
         'cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc';
+    const toolImageContentHash =
+        'dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd';
     final uploadDirectory = await AppDirectories.getUploadDirectory();
     final imagesDirectory = await AppDirectories.getImagesDirectory();
     final imageTarget = File(p.join(uploadDirectory.path, 'portable.png'));
     final fileTarget = File(p.join(uploadDirectory.path, 'legacy.txt'));
+    final toolImageTarget = File(p.join(imagesDirectory.path, 'tool.png'));
     await imageTarget.writeAsBytes(const <int>[1, 2, 3], flush: true);
     await fileTarget.writeAsBytes(const <int>[4, 5], flush: true);
+    await toolImageTarget.writeAsBytes(const <int>[6, 7, 8, 9], flush: true);
 
     final backupFile = File(p.join(tempDir.path, 'portable-backup.db'));
     final backupRepository = ChatDatabaseRepository.open(
@@ -2399,7 +2478,19 @@ void main() {
             messageOrder: 0,
           ),
         ],
-        toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{},
+        toolEventsByMessageId: const <String, List<Map<String, dynamic>>>{
+          'portable-message': <Map<String, dynamic>>[
+            <String, dynamic>{
+              'id': 'portable-tool',
+              'name': 'render-image',
+              'arguments': <String, dynamic>{},
+              'content':
+                  '工具图片\n'
+                  r'[image:C:\old-device\workspace\images\tool.png]'
+                  '\n[image:https://images.example/remote.png]',
+            },
+          ],
+        },
         geminiSignaturesByMessageId: const <String, String>{},
       );
       await backupRepository.checkpoint();
@@ -2413,9 +2504,11 @@ void main() {
     );
 
     final service = createService(
-      assetContentHash: (file) async => file.path.endsWith('portable.png')
-          ? imageContentHash
-          : fileContentHash,
+      assetContentHash: (file) async {
+        if (file.path.endsWith('portable.png')) return imageContentHash;
+        if (file.path.endsWith('tool.png')) return toolImageContentHash;
+        return fileContentHash;
+      },
     );
     await service.init();
     await service.replaceDatabaseSnapshotFromBackup(
@@ -2435,10 +2528,19 @@ void main() {
       restored.content,
       contains('remote.pdf: https://files.example/remote.pdf'),
     );
-    expect(restored.attachments, hasLength(2));
+    expect(restored.attachments, hasLength(3));
     expect(restored.attachments[0].path, imageTarget.path);
     expect(restored.attachments[1].path, fileTarget.path);
     expect(restored.attachments[1].displayName, 'original.txt');
+    expect(restored.attachments[2].path, toolImageTarget.path);
+    final rawToolEvent = service.getToolEvents(restored.id).single;
+    expect(rawToolEvent['content'], isNot(contains('C:\\old-device')));
+    expect(rawToolEvent['content'], contains('https://images.example'));
+    expect(rawToolEvent['attachmentOrdinals'], <int>[2]);
+    expect(
+      service.getToolEventsForMessage(restored).single['content'],
+      contains('[image:${toolImageTarget.path}]'),
+    );
     expect(restored.attachments[1].mediaType, 'text/plain');
   });
 

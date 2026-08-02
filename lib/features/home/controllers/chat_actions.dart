@@ -400,6 +400,10 @@ class ChatActions {
         errorCode: errorCode,
       );
       finalizedMessage = result.message;
+      streamController.replaceToolPartsFromEvents(
+        finalizedMessage.id,
+        chatService.getToolEventsForMessage(finalizedMessage),
+      );
     }
 
     var committed = false;

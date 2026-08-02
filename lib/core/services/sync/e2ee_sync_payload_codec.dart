@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
+import '../../utils/chat_message_attachment_utils.dart';
 import 'config_sync_keys.dart';
 import 'e2ee_config_sync_payload_schema.dart';
 import 'sync_codec.dart';
@@ -370,8 +371,18 @@ void _validateToolEvent(String entityId, Map<String, Object?> payload) {
   }
   final events = _requiredList(payload, 'events');
   for (var index = 0; index < events.length; index++) {
-    if (events[index] is! Map<String, Object?>) {
+    final event = events[index];
+    if (event is! Map<String, Object?>) {
       throw FormatException('tool-event.events[$index] 必须为对象');
+    }
+    final content = event['content'];
+    if (content != null && content is! String) {
+      throw FormatException('tool-event.events[$index].content 必须为字符串或 null');
+    }
+    try {
+      readToolEventAttachmentOrdinals(event);
+    } on FormatException catch (error) {
+      throw FormatException('tool-event.events[$index]: ${error.message}');
     }
   }
 }

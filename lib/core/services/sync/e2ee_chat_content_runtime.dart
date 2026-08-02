@@ -941,9 +941,7 @@ final class E2eeChatContentRuntime
       for (final input in inputs) {
         for (var index = 0; index < input.attachments.length; index++) {
           final attachment = input.attachments[index];
-          if (attachment.hasRemoteIdentity) {
-            throw StateError('本地附件上传草稿不得携带远端身份');
-          }
+          if (attachment.hasRemoteIdentity) continue;
           drafts.add(
             await uploads.prepareDraft(
               localAssetId: attachment.assetId,

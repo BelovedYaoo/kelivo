@@ -204,6 +204,32 @@ class StreamController {
     _toolParts[messageId] = parts;
   }
 
+  void replaceToolPartsFromEvents(
+    String messageId,
+    List<Map<String, dynamic>> events,
+  ) {
+    final deduped = dedupeToolEvents(events);
+    if (deduped.isEmpty) {
+      _toolParts.remove(messageId);
+      return;
+    }
+    _toolParts[messageId] = deduped
+        .map(
+          (event) => ToolUIPart(
+            id: (event['id'] ?? '').toString(),
+            toolName: (event['name'] ?? '').toString(),
+            arguments:
+                (event['arguments'] as Map?)?.cast<String, dynamic>() ??
+                const <String, dynamic>{},
+            content: (event['content']?.toString().isNotEmpty == true)
+                ? event['content'].toString()
+                : null,
+            loading: !(event['content']?.toString().isNotEmpty == true),
+          ),
+        )
+        .toList();
+  }
+
   /// Remove tool parts for a message.
   void removeToolParts(String messageId) {
     _toolParts.remove(messageId);
@@ -1261,24 +1287,7 @@ class StreamController {
 
     // Restore tool events
     try {
-      final events = dedupeToolEvents(getToolEventsFromDb(messageId));
-      if (events.isNotEmpty) {
-        _toolParts[messageId] = events
-            .map(
-              (e) => ToolUIPart(
-                id: (e['id'] ?? '').toString(),
-                toolName: (e['name'] ?? '').toString(),
-                arguments:
-                    (e['arguments'] as Map?)?.cast<String, dynamic>() ??
-                    const <String, dynamic>{},
-                content: (e['content']?.toString().isNotEmpty == true)
-                    ? e['content'].toString()
-                    : null,
-                loading: !(e['content']?.toString().isNotEmpty == true),
-              ),
-            )
-            .toList();
-      }
+      replaceToolPartsFromEvents(messageId, getToolEventsFromDb(messageId));
     } catch (_) {}
 
     // Restore reasoning segments

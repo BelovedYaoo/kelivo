@@ -131,7 +131,7 @@ class MessageBuilderService {
     for (final m in source) {
       String? toolContinuationReasoningContent;
       if (includeToolMessages && m.role == 'assistant') {
-        final events = chatService.getToolEvents(m.id);
+        final events = chatService.getToolEventsForMessage(m);
         if (events.isNotEmpty) {
           // Tool-call history is only valid once every call has a result.
           final hasPendingToolEvent = events.any((e) => e['content'] == null);

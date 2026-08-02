@@ -4790,6 +4790,73 @@ void main() {
     expect(await File(materializedPath).exists(), isFalse);
   });
 
+  test('E2EE 附件批次允许已有远端附件后追加本地附件', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance();
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+
+    final uploadDirectory = await AppDirectories.getUploadDirectory();
+    final source = File(
+      '${uploadDirectory.path}${Platform.pathSeparator}mixed-source.png',
+    );
+    final bytes = utf8.encode('mixed attachment payload');
+    await source.writeAsBytes(bytes, flush: true);
+    final contentHash = sha256.convert(bytes).toString();
+    final local = (await instance.runtime.materializeLocalAttachments(
+      <ChatMessageAttachment>[
+        ChatMessageAttachment(
+          assetId: 'mixed-local-asset',
+          path: source.path,
+          contentHash: contentHash,
+          byteSize: bytes.length,
+          kind: 'image',
+        ),
+      ],
+    )).single;
+    final remote = ChatMessageAttachment(
+      assetId: 'mixed-remote-asset',
+      path: 'memory://already-downloaded/image.png',
+      contentHash:
+          'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+      byteSize: 1,
+      kind: 'image',
+      attachmentId: '10000000-0000-4000-8000-000000000001',
+      uploadId: '20000000-0000-4000-8000-000000000001',
+      chunkKeyEpoch: 1,
+      manifestKeyEpoch: 1,
+      manifestRevision: 1,
+    );
+    var writeCalled = false;
+
+    await expectLater(
+      instance.runtime.runLocalBatchWithMessageAttachments<void>(
+        keys: const <SyncEntityKey>[
+          SyncEntityKey(entityType: 'message', entityId: 'mixed-message'),
+        ],
+        targets: <StructuredMessageAttachmentSyncTarget>[
+          StructuredMessageAttachmentSyncTarget(
+            targetRevisionId: 'mixed-message',
+            attachments: <ChatMessageAttachment>[remote, local],
+          ),
+        ],
+        targetWasPersisted: (_) => true,
+        write: () {
+          writeCalled = true;
+          throw StateError('mixed-write-reached');
+        },
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'mixed-write-reached',
+        ),
+      ),
+    );
+    expect(writeCalled, isTrue);
+  });
+
   test('E2EE 附件受管源路径仍被其他资产引用时不得淘汰', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
