@@ -529,6 +529,7 @@ final class CloudSyncClient
             value.onboardingToken,
           ),
           onboardingTokenExpiresAt: value.onboardingTokenExpiresAt,
+          authGeneration: value.device.authGeneration,
           device: _authenticatedDevice(
             id: value.device.id,
             name: value.device.name,

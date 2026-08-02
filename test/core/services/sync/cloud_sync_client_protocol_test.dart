@@ -15,6 +15,7 @@ import 'package:Kelivo/core/database/app_database.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_recovery_runner.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_pairing_qr_codec.dart';
@@ -913,6 +914,74 @@ void main() {
     expect(secondBlob, orderedEquals(firstBlob!));
   });
 
+  test('恢复认证网络失败后清零密码并释放独占预约', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-recovery-auth-');
+    const baseUrl = 'http://127.0.0.1:1';
+    const loginName = 'recovery-network-user';
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final recoveryPassword = Uint8List.fromList(
+      utf8.encode('recovery-password'),
+    );
+    await expectLater(
+      (authenticator as E2eeAccountRecoveryAuthentication).begin(
+        loginName: loginName,
+        password: recoveryPassword,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+      throwsA(isA<CloudSyncException>()),
+    );
+    expect(recoveryPassword, everyElement(0));
+
+    final ordinaryPassword = Uint8List.fromList(
+      utf8.encode('ordinary-password'),
+    );
+    await expectLater(
+      authenticator.loginDevice(
+        loginName: loginName,
+        password: ordinaryPassword,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.serverCode,
+          'serverCode',
+          isNot('SYNC_AUTHENTICATION_IN_PROGRESS'),
+        ),
+      ),
+    );
+    expect(ordinaryPassword, everyElement(0));
+    expect(
+      await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      ),
+      hasLength(DeviceStateBlobStore.blobLength),
+    );
+  });
+
   test('同一认证器并发登录时第二个操作失败关闭', () async {
     const core = KelivoSecureCore();
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
@@ -1028,6 +1097,132 @@ void main() {
       await store.read(
         normalizedBaseUrl: baseUrl,
         normalizedLoginName: 'second-user',
+      ),
+      isNull,
+    );
+  });
+
+  test('同一认证器并发恢复时第二个操作失败且首个失败后释放预约', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-recovery-concurrent-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    final firstRequestArrived = Completer<void>();
+    final releaseFirstRequest = Completer<void>();
+    var requestCount = 0;
+    final subscription = server.listen((request) async {
+      requestCount++;
+      if (requestCount == 1) {
+        firstRequestArrived.complete();
+        await releaseFirstRequest.future;
+      }
+      request.response.headers.contentType = ContentType.json;
+      request.response.write(
+        jsonEncode(<String, Object?>{
+          'data': <String, Object?>{
+            'protocolVersion': cloudSyncOpaqueProtocolVersion,
+            'attemptId': _attemptId1,
+            'accountBinding': _accountContextId,
+            'deviceChallenge': _encodedBytes(cloudSyncDeviceChallengeBytes, 1),
+            'credentialResponse': _encodedBytes(
+              cloudSyncOpaqueCredentialResponseBytes,
+              2,
+            ),
+            'expiresAt': DateTime.now()
+                .toUtc()
+                .add(const Duration(minutes: 5))
+                .toIso8601String(),
+          },
+        }),
+      );
+      await request.response.close();
+    });
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    Future<Object?> capture(Future<Object?> operation) async {
+      try {
+        await operation;
+        return null;
+      } catch (error) {
+        return error;
+      }
+    }
+
+    final firstPassword = Uint8List.fromList(utf8.encode('first-password'));
+    final firstOutcome = capture(
+      authenticator.begin(
+        loginName: 'first-recovery-user',
+        password: firstPassword,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+    );
+    await firstRequestArrived.future;
+
+    final secondPassword = Uint8List.fromList(utf8.encode('second-password'));
+    final secondOutcome = await capture(
+      authenticator.begin(
+        loginName: 'second-recovery-user',
+        password: secondPassword,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+    );
+    releaseFirstRequest.complete();
+    final completedFirstOutcome = await firstOutcome;
+
+    expect(
+      secondOutcome,
+      isA<CloudSyncException>()
+          .having((error) => error.kind, 'kind', CloudSyncFailureKind.conflict)
+          .having(
+            (error) => error.serverCode,
+            'serverCode',
+            'SYNC_AUTHENTICATION_IN_PROGRESS',
+          ),
+    );
+    expect(completedFirstOutcome, isA<KelivoSecureCoreException>());
+    expect(firstPassword, everyElement(0));
+    expect(secondPassword, everyElement(0));
+
+    final retryPassword = Uint8List.fromList(utf8.encode('retry-password'));
+    final retryOutcome = await capture(
+      authenticator.begin(
+        loginName: 'first-recovery-user',
+        password: retryPassword,
+        deviceName: 'Windows 主机',
+        platform: CloudSyncPlatform.windows,
+        clientVersion: '1.2.3',
+      ),
+    );
+    expect(retryOutcome, isA<KelivoSecureCoreException>());
+    expect(retryPassword, everyElement(0));
+    expect(requestCount, 2);
+    expect(
+      await store.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: 'second-recovery-user',
       ),
       isNull,
     );
@@ -4810,7 +5005,7 @@ void main() {
             'name': 'Windows 主机',
             'platform': 'windows',
             'clientVersion': '1.2.3',
-            'authGeneration': 0,
+            'authGeneration': 4,
             'status': 'pending',
             'createdAt': '2026-07-26T05:00:00.000Z',
           },
@@ -4875,7 +5070,8 @@ void main() {
             (result) => result.device.status,
             'device.status',
             CloudSyncAuthenticatedDeviceStatus.pending,
-          ),
+          )
+          .having((result) => result.authGeneration, 'authGeneration', 4),
     );
     expect(requests, hasLength(3));
     expect(requests.map((request) => request.$2), everyElement(isNull));
@@ -4883,6 +5079,63 @@ void main() {
     expect(
       requests.first.$3['credentialRequest'],
       _encodedBytes(cloudSyncOpaqueCredentialRequestBytes, 13),
+    );
+  });
+
+  test('OPAQUE 待批准结果拒绝越界认证代次', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final finishFuture = client.finishOpaqueLogin(
+      attemptId: _attemptId2,
+      credentialFinalization: _filledBytes(
+        cloudSyncOpaqueCredentialFinalizationBytes,
+        16,
+      ),
+      deviceProof: _filledBytes(cloudSyncDeviceProofBytes, 17),
+    );
+    final request = await requestFuture;
+    await request.drain<void>();
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'protocolVersion': cloudSyncOpaqueProtocolVersion,
+          'result': 'device-approval-required',
+          'onboardingToken': _onboardingTokenValue,
+          'onboardingTokenExpiresAt': '2026-07-26T05:05:00.000Z',
+          'device': <String, Object?>{
+            'id': _deviceId2,
+            'name': 'Windows 主机',
+            'platform': 'windows',
+            'clientVersion': '1.2.3',
+            'authGeneration': 0x80000000,
+            'status': 'pending',
+            'createdAt': '2026-07-26T05:00:00.000Z',
+          },
+        },
+      }),
+    );
+    await request.response.close();
+
+    await expectLater(
+      finishFuture,
+      throwsA(
+        isA<CloudSyncException>()
+            .having(
+              (error) => error.kind,
+              'kind',
+              CloudSyncFailureKind.invalidResponse,
+            )
+            .having((error) => error.retryable, 'retryable', isFalse),
+      ),
     );
   });
 

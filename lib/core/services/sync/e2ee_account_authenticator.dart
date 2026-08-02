@@ -11,10 +11,13 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_client.dart';
 import 'cloud_sync_pairing_qr_codec.dart';
 import 'cloud_sync_types.dart';
+import 'e2ee_account_recovery.dart';
+import 'e2ee_account_recovery_runner.dart';
 import 'e2ee_account_trust_manifest.dart';
 import 'e2ee_device_pairing_membership_commit.dart';
 import 'e2ee_device_state_access.dart';
 import 'e2ee_first_device_registration_commit_coordinator.dart';
+import 'e2ee_native_account_recovery.dart';
 
 part 'e2ee_device_pairing.dart';
 
@@ -211,7 +214,8 @@ abstract interface class E2eeAccountAuthentication {
   });
 }
 
-final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
+final class E2eeAccountAuthenticator
+    implements E2eeAccountAuthentication, E2eeAccountRecoveryAuthentication {
   factory E2eeAccountAuthenticator({
     required String baseUrl,
     required CloudSyncAccountClient accountClient,
@@ -290,6 +294,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     secureCore: _secureCore,
   );
   bool _authenticationInProgress = false;
+  bool _accountRecoveryOnboardingReserved = false;
 
   @override
   Future<CloudSyncAuthenticatedSession> registerFirstDevice({
@@ -738,7 +743,29 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     required CloudSyncPlatform platform,
     required String clientVersion,
   }) async {
-    final passwordCopy = _beginAuthentication(password);
+    final outcome = await _loginDeviceTransaction(
+      loginName: loginName,
+      password: password,
+      deviceName: deviceName,
+      platform: platform,
+      clientVersion: clientVersion,
+      allowAccountRecoveryReservation: false,
+    );
+    return outcome.result;
+  }
+
+  Future<_AccountLoginTransactionOutcome> _loginDeviceTransaction({
+    required String loginName,
+    required Uint8List password,
+    required String deviceName,
+    required CloudSyncPlatform platform,
+    required String clientVersion,
+    required bool allowAccountRecoveryReservation,
+  }) async {
+    final passwordCopy = _beginAuthentication(
+      password,
+      allowAccountRecoveryReservation: allowAccountRecoveryReservation,
+    );
     _DeviceContext? context;
     KelivoOpaqueLoginStart? opaqueStart;
     var opaqueStateActive = false;
@@ -787,7 +814,11 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
                   transaction: pendingPairing.transaction,
                   session: recoveredSession,
                 );
-            return _authenticatedLoginResult(context, verifiedSession);
+            return _AccountLoginTransactionOutcome(
+              result: _authenticatedLoginResult(context, verifiedSession),
+              submittedDevice: null,
+              approvalAuthGeneration: null,
+            );
           } on CloudSyncException catch (error) {
             if (!E2eeDevicePairingAuthentication(
               this,
@@ -836,6 +867,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
         deviceProof: deviceProof,
       );
       late final E2eeAccountLoginResult loginResult;
+      int? approvalAuthGeneration;
       switch (result) {
         case CloudSyncOpaqueLoginAuthenticated(:final session):
           loginResult = _authenticatedLoginResult(context, session);
@@ -843,7 +875,9 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
           :final onboardingToken,
           :final onboardingTokenExpiresAt,
           :final device,
+          :final authGeneration,
         ):
+          approvalAuthGeneration = authGeneration;
           final pending = pendingPairing;
           loginResult = pending == null
               ? _approvalRequiredLoginResult(
@@ -869,7 +903,11 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
           normalizedLoginName,
         );
       }
-      return loginResult;
+      return _AccountLoginTransactionOutcome(
+        result: loginResult,
+        submittedDevice: device,
+        approvalAuthGeneration: approvalAuthGeneration,
+      );
     } catch (error) {
       primaryError = error;
       _clearAccountClientToken();
@@ -895,6 +933,165 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
       } finally {
         pendingPairing?.dispose();
       }
+    }
+  }
+
+  @override
+  Future<E2eeAccountRecoveryOnboardingLease> begin({
+    required String loginName,
+    required Uint8List password,
+    required String deviceName,
+    required CloudSyncPlatform platform,
+    required String clientVersion,
+  }) async {
+    _reserveAccountRecoveryOnboarding(password);
+    var leaseCreated = false;
+    try {
+      final outcome = await _loginDeviceTransaction(
+        loginName: loginName,
+        password: password,
+        deviceName: deviceName,
+        platform: platform,
+        clientVersion: clientVersion,
+        allowAccountRecoveryReservation: true,
+      );
+      final result = outcome.result;
+      if (result is E2eeAccountLoginAuthenticated) {
+        throw const CloudSyncException(
+          kind: CloudSyncFailureKind.conflict,
+          retryable: false,
+          serverCode: e2eeAccountRecoveryDeviceAlreadyAuthenticatedCode,
+        );
+      }
+      if (result is! E2eeAccountLoginApprovalRequired) {
+        throw StateError('账户恢复登录返回了未知结果');
+      }
+      final submittedDevice = outcome.submittedDevice;
+      final sourceAuthGeneration = outcome.approvalAuthGeneration;
+      if (submittedDevice == null || sourceAuthGeneration == null) {
+        throw StateError('账户恢复待批准结果缺少认证事务绑定');
+      }
+      if (sourceAuthGeneration == 0x7fffffff) {
+        throw const CloudSyncException(
+          kind: CloudSyncFailureKind.invalidResponse,
+          retryable: false,
+          serverCode: e2eeAccountRecoveryAuthGenerationInvalidCode,
+        );
+      }
+      final lease = await _openAccountRecoveryOnboardingLease(
+        approval: result,
+        submittedDevice: submittedDevice,
+        sourceAuthGeneration: sourceAuthGeneration,
+        targetAuthGeneration: sourceAuthGeneration + 1,
+      );
+      leaseCreated = true;
+      return lease;
+    } catch (_) {
+      _clearAccountClientToken();
+      rethrow;
+    } finally {
+      _clearBytesPreservingFailure(password);
+      if (!leaseCreated) {
+        _accountRecoveryOnboardingReserved = false;
+      }
+    }
+  }
+
+  void _reserveAccountRecoveryOnboarding(Uint8List password) {
+    if (_authenticationInProgress || _accountRecoveryOnboardingReserved) {
+      _clearBytesPreservingFailure(password);
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_AUTHENTICATION_IN_PROGRESS',
+      );
+    }
+    _accountRecoveryOnboardingReserved = true;
+  }
+
+  Future<E2eeAccountRecoveryOnboardingLease>
+  _openAccountRecoveryOnboardingLease({
+    required E2eeAccountLoginApprovalRequired approval,
+    required CloudSyncOpaqueDeviceIdentity submittedDevice,
+    required int sourceAuthGeneration,
+    required int targetAuthGeneration,
+  }) async {
+    if (approval.device.id != submittedDevice.deviceId ||
+        approval.device.name != submittedDevice.deviceName ||
+        approval.device.platform != submittedDevice.platform ||
+        approval.device.clientVersion != submittedDevice.clientVersion) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.invalidResponse,
+        retryable: false,
+      );
+    }
+    final snapshot = await _deviceStateStore.readVersioned(
+      normalizedBaseUrl: _baseUrl,
+      normalizedLoginName: approval.loginName,
+    );
+    if (snapshot == null) {
+      throw StateError('账户恢复待批准设备缺少本地状态');
+    }
+    final sourceStateBlob = snapshot.blob;
+    final slotId = E2eeDeviceStateAccess.deriveSlotId(
+      normalizedBaseUrl: _baseUrl,
+      normalizedLoginName: approval.loginName,
+    );
+    KelivoKeyHandle? key;
+    KelivoOpenedDeviceState? opened;
+    try {
+      key = await _secureCore.openSlot(slotId);
+      opened = await _secureCore.openDeviceState(
+        key,
+        stateBlob: sourceStateBlob,
+      );
+      final expectedDeviceId = _uuidBytes(approval.device.id);
+      try {
+        if (opened.ark != null ||
+            opened.binding.account != null ||
+            opened.binding.keyVersion != submittedDevice.deviceKeyVersion ||
+            !_sameSecurityBytes(opened.binding.deviceId, expectedDeviceId)) {
+          throw StateError('账户恢复待批准结果与本地身份状态不匹配');
+        }
+      } finally {
+        _clearBytes(expectedDeviceId);
+      }
+      return _E2eeAccountRecoveryOnboardingLease(
+        secureCore: _secureCore,
+        key: key,
+        identity: opened.identity,
+        sourceStateBlob: sourceStateBlob,
+        sourceStateVersion: snapshot.version,
+        onboardingToken: approval.onboardingToken,
+        onboardingTokenExpiresAt: approval.onboardingTokenExpiresAt,
+        loginName: approval.loginName,
+        deviceId: approval.device.id,
+        deviceName: approval.device.name,
+        platform: approval.device.platform,
+        clientVersion: approval.device.clientVersion,
+        deviceKeyVersion: opened.binding.keyVersion,
+        sourceAuthGeneration: sourceAuthGeneration,
+        targetAuthGeneration: targetAuthGeneration,
+        proofCoreDelegate: E2eeNativeAccountRecoveryProofCore(
+          secureCore: _secureCore,
+          deviceIdentity: opened.identity,
+          deviceKeyVersion: opened.binding.keyVersion,
+          targetAuthGeneration: targetAuthGeneration,
+        ),
+        onClosed: () => _accountRecoveryOnboardingReserved = false,
+      );
+    } catch (error, stackTrace) {
+      _clearBytes(sourceStateBlob);
+      await _runCleanupPreservingPrimary(<Future<void> Function()>[
+        if (opened?.ark != null)
+          () => _secureCore.closeAccountRootKey(opened!.ark!),
+        if (opened != null)
+          () => _secureCore.closeDeviceIdentity(opened!.identity),
+        if (key != null) () => _secureCore.close(key!),
+      ]);
+      Error.throwWithStackTrace(error, stackTrace);
+    } finally {
+      _clearBytes(slotId);
     }
   }
 
@@ -1748,7 +1945,7 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
   }
 
   void _beginExclusiveOperation() {
-    if (_authenticationInProgress) {
+    if (_authenticationInProgress || _accountRecoveryOnboardingReserved) {
       throw const CloudSyncException(
         kind: CloudSyncFailureKind.conflict,
         retryable: false,
@@ -1758,9 +1955,14 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     _authenticationInProgress = true;
   }
 
-  Uint8List _beginAuthentication(Uint8List password) {
+  Uint8List _beginAuthentication(
+    Uint8List password, {
+    bool allowAccountRecoveryReservation = false,
+  }) {
     // 设备状态槽和账户客户端由实例共享，交错认证会破坏令牌与句柄归属。
-    if (_authenticationInProgress) {
+    if (_authenticationInProgress ||
+        (_accountRecoveryOnboardingReserved &&
+            !allowAccountRecoveryReservation)) {
       _clearBytesPreservingFailure(password);
       throw const CloudSyncException(
         kind: CloudSyncFailureKind.conflict,
@@ -1891,6 +2093,285 @@ final class E2eeAccountAuthenticator implements E2eeAccountAuthentication {
     }
     if (firstError != null && firstStackTrace != null) {
       Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
+  }
+}
+
+final class _AccountLoginTransactionOutcome {
+  const _AccountLoginTransactionOutcome({
+    required this.result,
+    required this.submittedDevice,
+    required this.approvalAuthGeneration,
+  });
+
+  final E2eeAccountLoginResult result;
+  final CloudSyncOpaqueDeviceIdentity? submittedDevice;
+  final int? approvalAuthGeneration;
+}
+
+final class _E2eeAccountRecoveryOnboardingLease
+    implements E2eeAccountRecoveryOnboardingLease {
+  _E2eeAccountRecoveryOnboardingLease({
+    required this._secureCore,
+    required this._key,
+    required this._identity,
+    required this._sourceStateBlob,
+    required this._sourceStateVersion,
+    required this._onboardingToken,
+    required DateTime onboardingTokenExpiresAt,
+    required this._loginName,
+    required this._deviceId,
+    required this._deviceName,
+    required this._platform,
+    required this._clientVersion,
+    required this._deviceKeyVersion,
+    required this._sourceAuthGeneration,
+    required this._targetAuthGeneration,
+    required this._proofCoreDelegate,
+    required this._onClosed,
+  }) : _onboardingTokenExpiresAt = onboardingTokenExpiresAt.toUtc() {
+    if (_sourceStateBlob?.length != DeviceStateBlobStore.blobLength) {
+      throw const FormatException('账户恢复源设备状态长度无效');
+    }
+    _proofCoreView = _LeaseBoundAccountRecoveryProofCore(this);
+  }
+
+  KelivoSecureCore? _secureCore;
+  KelivoKeyHandle? _key;
+  KelivoDeviceIdentityHandle? _identity;
+  Uint8List? _sourceStateBlob;
+  DeviceStateBlobVersion? _sourceStateVersion;
+  CloudSyncOnboardingToken? _onboardingToken;
+  DateTime? _onboardingTokenExpiresAt;
+  String? _loginName;
+  String? _deviceId;
+  String? _deviceName;
+  CloudSyncPlatform? _platform;
+  String? _clientVersion;
+  int? _deviceKeyVersion;
+  int? _sourceAuthGeneration;
+  int? _targetAuthGeneration;
+  E2eeAccountRecoveryProofCore? _proofCoreDelegate;
+  void Function()? _onClosed;
+  late final _LeaseBoundAccountRecoveryProofCore _proofCoreView;
+  Future<void>? _closeFuture;
+  Completer<void>? _proofOperationsIdle;
+  int _activeProofOperations = 0;
+  bool _closed = false;
+
+  T _openValue<T extends Object>(T? value) {
+    if (_closed || value == null) {
+      throw StateError('账户恢复 onboarding lease 已关闭');
+    }
+    return value;
+  }
+
+  @override
+  CloudSyncOnboardingToken get onboardingToken => _openValue(_onboardingToken);
+
+  @override
+  DateTime get onboardingTokenExpiresAt =>
+      _openValue(_onboardingTokenExpiresAt);
+
+  @override
+  String get loginName => _openValue(_loginName);
+
+  @override
+  String get deviceId => _openValue(_deviceId);
+
+  @override
+  String get deviceName => _openValue(_deviceName);
+
+  @override
+  CloudSyncPlatform get platform => _openValue(_platform);
+
+  @override
+  String get clientVersion => _openValue(_clientVersion);
+
+  @override
+  int get deviceKeyVersion => _openValue(_deviceKeyVersion);
+
+  @override
+  int get sourceAuthGeneration => _openValue(_sourceAuthGeneration);
+
+  @override
+  int get targetAuthGeneration => _openValue(_targetAuthGeneration);
+
+  @override
+  DeviceStateBlobVersion get sourceStateVersion =>
+      _openValue(_sourceStateVersion);
+
+  @override
+  Uint8List copySourceStateBlob() {
+    return Uint8List.fromList(_openValue(_sourceStateBlob));
+  }
+
+  @override
+  E2eeAccountRecoveryProofCore get proofCore {
+    _openValue(_proofCoreDelegate);
+    return _proofCoreView;
+  }
+
+  @override
+  bool get isClosed => _closed;
+
+  Future<T> _runProofOperation<T>(
+    Future<T> Function(E2eeAccountRecoveryProofCore proofCore) operation,
+  ) async {
+    final proofCore = _openValue(_proofCoreDelegate);
+    _activeProofOperations++;
+    try {
+      return await operation(proofCore);
+    } finally {
+      _activeProofOperations--;
+      if (_activeProofOperations == 0) {
+        final idle = _proofOperationsIdle;
+        _proofOperationsIdle = null;
+        idle?.complete();
+      }
+    }
+  }
+
+  @override
+  Future<void> close() {
+    return _closeFuture ??= _close();
+  }
+
+  Future<void> _close() async {
+    _closed = true;
+    final sourceStateBlob = _sourceStateBlob;
+    _sourceStateBlob = null;
+    _sourceStateVersion = null;
+    _onboardingToken = null;
+    _onboardingTokenExpiresAt = null;
+    _loginName = null;
+    _deviceId = null;
+    _deviceName = null;
+    _platform = null;
+    _clientVersion = null;
+    _deviceKeyVersion = null;
+    _sourceAuthGeneration = null;
+    _targetAuthGeneration = null;
+    sourceStateBlob?.fillRange(0, sourceStateBlob.length, 0);
+
+    if (_activeProofOperations > 0) {
+      await (_proofOperationsIdle ??= Completer<void>()).future;
+    }
+    _proofCoreDelegate = null;
+
+    final secureCore = _secureCore;
+    final identity = _identity;
+    final key = _key;
+    final onClosed = _onClosed;
+    _secureCore = null;
+    _identity = null;
+    _key = null;
+    _onClosed = null;
+
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> capture(Future<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    try {
+      if (secureCore != null && identity != null) {
+        await capture(() => secureCore.closeDeviceIdentity(identity));
+      }
+      if (secureCore != null && key != null) {
+        await capture(() => secureCore.close(key));
+      }
+    } finally {
+      try {
+        onClosed?.call();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+    if (firstError != null && firstStackTrace != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
+  }
+}
+
+final class _LeaseBoundAccountRecoveryProofCore
+    implements E2eeAccountRecoveryProofCore {
+  const _LeaseBoundAccountRecoveryProofCore(this._lease);
+
+  final _E2eeAccountRecoveryOnboardingLease _lease;
+
+  @override
+  Future<E2eeAccountRecoveryProof> verifyHistoryAndCreateProof({
+    required Uint8List recoveryMedia,
+    required Uint8List recoveryPassphrase,
+    required Uint8List serviceOriginSha256,
+    required List<Uint8List> membershipHistory,
+    required Uint8List currentCapsule,
+    required Uint8List? sourceCapsule,
+    required Uint8List challengeFrame,
+    required Uint8List sealedNonce,
+    required Uint8List recoveryTokenDigest,
+    required String expectedAttemptId,
+    required String expectedDeviceId,
+    required Uint8List expectedRequestDigest,
+    required DateTime expectedExpiresAt,
+  }) async {
+    try {
+      return await _lease._runProofOperation(
+        (proofCore) => proofCore.verifyHistoryAndCreateProof(
+          recoveryMedia: recoveryMedia,
+          recoveryPassphrase: recoveryPassphrase,
+          serviceOriginSha256: serviceOriginSha256,
+          membershipHistory: membershipHistory,
+          currentCapsule: currentCapsule,
+          sourceCapsule: sourceCapsule,
+          challengeFrame: challengeFrame,
+          sealedNonce: sealedNonce,
+          recoveryTokenDigest: recoveryTokenDigest,
+          expectedAttemptId: expectedAttemptId,
+          expectedDeviceId: expectedDeviceId,
+          expectedRequestDigest: expectedRequestDigest,
+          expectedExpiresAt: expectedExpiresAt,
+        ),
+      );
+    } finally {
+      E2eeAccountAuthenticator._clearBytesPreservingFailure(recoveryPassphrase);
+    }
+  }
+
+  @override
+  Future<E2eeAccountRecoveryProof> verifyReplacementChallengeAndCreateProof({
+    required Uint8List recoveryMedia,
+    required Uint8List recoveryPassphrase,
+    required Uint8List serviceOriginSha256,
+    required List<Uint8List> membershipHistory,
+    required Uint8List sourceCapsule,
+    required E2eeAccountRecoveryReplacementChallenge challenge,
+    required Uint8List recoveryTokenDigest,
+    required String expectedDeviceId,
+  }) async {
+    try {
+      return await _lease._runProofOperation(
+        (proofCore) => proofCore.verifyReplacementChallengeAndCreateProof(
+          recoveryMedia: recoveryMedia,
+          recoveryPassphrase: recoveryPassphrase,
+          serviceOriginSha256: serviceOriginSha256,
+          membershipHistory: membershipHistory,
+          sourceCapsule: sourceCapsule,
+          challenge: challenge,
+          recoveryTokenDigest: recoveryTokenDigest,
+          expectedDeviceId: expectedDeviceId,
+        ),
+      );
+    } finally {
+      E2eeAccountAuthenticator._clearBytesPreservingFailure(recoveryPassphrase);
     }
   }
 }

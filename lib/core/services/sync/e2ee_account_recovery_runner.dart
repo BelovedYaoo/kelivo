@@ -1,12 +1,62 @@
 import 'dart:typed_data';
 
+import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_types.dart';
+import 'e2ee_account_recovery.dart';
 import 'e2ee_first_device_registration_commit_coordinator.dart';
 import 'sensitive_utf8.dart';
 
 const e2eeAccountRecoveryUnsupportedCode = 'SYNC_ACCOUNT_RECOVERY_UNSUPPORTED';
 const e2eeAccountRecoveryMediaInvalidCode =
     'AUTH_ACCOUNT_RECOVERY_MEDIA_INVALID';
+const e2eeAccountRecoveryDeviceAlreadyAuthenticatedCode =
+    'SYNC_ACCOUNT_RECOVERY_DEVICE_ALREADY_AUTHENTICATED';
+const e2eeAccountRecoveryAuthGenerationInvalidCode =
+    'SYNC_ACCOUNT_RECOVERY_AUTH_GENERATION_INVALID';
+
+abstract interface class E2eeAccountRecoveryAuthentication {
+  /// 为避免密码在调用方继续驻留，所有退出路径都会清零传入缓冲区。
+  Future<E2eeAccountRecoveryOnboardingLease> begin({
+    required String loginName,
+    required Uint8List password,
+    required String deviceName,
+    required CloudSyncPlatform platform,
+    required String clientVersion,
+  });
+}
+
+abstract interface class E2eeAccountRecoveryOnboardingLease {
+  CloudSyncOnboardingToken get onboardingToken;
+
+  DateTime get onboardingTokenExpiresAt;
+
+  String get loginName;
+
+  String get deviceId;
+
+  String get deviceName;
+
+  CloudSyncPlatform get platform;
+
+  String get clientVersion;
+
+  int get deviceKeyVersion;
+
+  int get sourceAuthGeneration;
+
+  int get targetAuthGeneration;
+
+  DeviceStateBlobVersion get sourceStateVersion;
+
+  /// 返回由调用方拥有的独立副本；调用方用毕后必须主动清零。
+  Uint8List copySourceStateBlob();
+
+  E2eeAccountRecoveryProofCore get proofCore;
+
+  bool get isClosed;
+
+  Future<void> close();
+}
 
 enum E2eeAccountRecoveryProgress {
   authenticating,

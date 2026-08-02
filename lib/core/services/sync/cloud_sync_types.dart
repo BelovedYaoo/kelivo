@@ -1601,7 +1601,12 @@ final class CloudSyncOpaqueLoginApprovalRequired
     required this.onboardingToken,
     required DateTime onboardingTokenExpiresAt,
     required this.device,
-  }) : onboardingTokenExpiresAt = onboardingTokenExpiresAt.toUtc() {
+    required int authGeneration,
+  }) : onboardingTokenExpiresAt = onboardingTokenExpiresAt.toUtc(),
+       authGeneration = _requireNonNegativeInt32(
+         authGeneration,
+         'device.authGeneration',
+       ) {
     if (device.status != CloudSyncAuthenticatedDeviceStatus.pending) {
       throw const FormatException('待批准设备的状态必须为 pending');
     }
@@ -1610,6 +1615,7 @@ final class CloudSyncOpaqueLoginApprovalRequired
   final CloudSyncOnboardingToken onboardingToken;
   final DateTime onboardingTokenExpiresAt;
   final CloudSyncAuthenticatedDevice device;
+  final int authGeneration;
 }
 
 final class CloudSyncDevicePairingTarget {
