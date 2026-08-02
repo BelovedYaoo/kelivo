@@ -98,3 +98,4 @@
 - 已完成：从 `kelivo-api@b025cb0` 的 OpenAPI SHA-256 `907F0B…E2385F7B` 重建 Dart 客户端；App replacement 提交以强类型联合支持首次 challenge 与独立第二 challenge 授权，checkpoint 硬切 v5 持久化对应材料。注册恢复夹具同步记录域 v2/帧 v3/676 字节恢复介质，聊天 payload 夹具同步 v3 双代次附件字段；CloudSync 211 项、授权与固定向量 39 项、checkpoint 1 项及根分析通过。
 - 已完成：App 接入 `/api/auth/account-recovery/replacement-challenge/create`，响应必须同时绑定创建请求、目标设备、成员 head 与首轮 data-rekey 完成证明；Native 适配器接入 ABI20 第二挑战 proof，并逐项核对 challenge、attempt、成员操作、完成证明与 replacement-only execution。相关 CloudSync/恢复/native 190 项联合回归通过。
 - 已完成：客户端严格接入服务端 `create-replacement-challenge` 恢复动作，首轮换钥完成后只能创建独立第二挑战，不再误判为可直接提交 replacement；协议定向分析与回归通过。
+- 已完成：从 `kelivo-api@fe8e6ab`、OpenAPI SHA-256 `D5693FFD…6BDD0` 重建 typed client，并接入无参数 `GET /api/auth/session/get`；完整 token 逐请求注入，响应必须原样绑定本地 token 后才生成正式会话。生成包与根定向分析、相关 8 项协议测试通过，服务端未部署。

@@ -142,6 +142,12 @@ abstract interface class CloudSyncAccountClient {
   Future<CloudSyncDeviceSession> revokeDevice(String deviceId);
 }
 
+abstract interface class CloudSyncSessionTransport {
+  Future<CloudSyncAuthenticatedSession> getAuthenticatedSession({
+    required CloudSyncFullSessionToken token,
+  });
+}
+
 abstract interface class CloudSyncDataRekeyTransport {
   Future<CloudSyncDataRekeyState> getDataRekeyState();
 
@@ -175,6 +181,7 @@ final class CloudSyncClient
         CloudSyncAccountClient,
         CloudSyncAttachmentTransport,
         CloudSyncDataRekeyTransport,
+        CloudSyncSessionTransport,
         E2eeAccountRecoveryTransport,
         CloudSyncRecordTransport {
   CloudSyncClient._({
@@ -268,6 +275,22 @@ final class CloudSyncClient
   ) {
     // 恢复令牌只绑定不可见代理，避免并发恢复期间污染完整会话令牌。
     return _CloudSyncAccountRecoveryDataRekeyTransport(this, recoveryToken);
+  }
+
+  @override
+  Future<CloudSyncAuthenticatedSession> getAuthenticatedSession({
+    required CloudSyncFullSessionToken token,
+  }) {
+    return _guard(() async {
+      final response = await _client.getAuthApi().getAuthenticatedSession(
+        headers: _authorizationHeaders(token.value),
+        extra: _strictResponseExtra,
+      );
+      return _parseCurrentAuthenticatedSession(
+        response.extra[_rawResponseKey],
+        expectedToken: token,
+      );
+    });
   }
 
   Future<CloudSyncHealth> health() {
@@ -3098,6 +3121,30 @@ CloudSyncAuthenticatedSession _parseRegistrationSession(Object? rawResponse) {
   _requireRawProtocolVersion(data);
   if (_rawString(data, 'result') != 'authenticated') {
     throw const FormatException('服务端返回了未知的注册结果');
+  }
+  final securityState = CloudSyncAccountSecurityState.fromJson(
+    copyCloudSyncJsonMap(data['securityState']),
+  );
+  return _authenticatedSessionFromRawMaps(
+    data: data,
+    keyEpoch: securityState.keyEpoch,
+    securityState: securityState,
+  );
+}
+
+CloudSyncAuthenticatedSession _parseCurrentAuthenticatedSession(
+  Object? rawResponse, {
+  required CloudSyncFullSessionToken expectedToken,
+}) {
+  final data = _strictResponseData(
+    rawResponse,
+    _registrationSessionDataKeys,
+    '会话读取响应',
+  );
+  _requireRawProtocolVersion(data);
+  if (_rawString(data, 'result') != 'authenticated' ||
+      _rawString(data, 'token') != expectedToken.value) {
+    throw const FormatException('服务端返回的完整会话未绑定本地令牌');
   }
   final securityState = CloudSyncAccountSecurityState.fromJson(
     copyCloudSyncJsonMap(data['securityState']),

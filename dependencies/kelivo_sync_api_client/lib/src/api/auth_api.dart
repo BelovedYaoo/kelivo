@@ -13,6 +13,7 @@ import 'package:kelivo_sync_api_client/src/model/account_recovery_history_list_r
 import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_challenge_request.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_commit_request.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_resume_commit_request.dart';
+import 'package:kelivo_sync_api_client/src/model/authenticated_session_response.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_account_recovery_replacement_response.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_account_recovery_resume_response.dart';
 import 'package:kelivo_sync_api_client/src/model/create_account_recovery_replacement_challenge_response.dart';
@@ -980,6 +981,76 @@ class AuthApi {
     }
 
     return Response<GetAccountRecoveryStateResponse>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
+  /// getAuthenticatedSession
+  ///
+  ///
+  /// Parameters:
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [AuthenticatedSessionResponse] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<AuthenticatedSessionResponse>> getAuthenticatedSession({
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/api/auth/session/get';
+    final _options = Options(
+      method: r'GET',
+      headers: <String, dynamic>{...?headers},
+      extra: <String, dynamic>{'secure': <Map<String, String>>[], ...?extra},
+      validateStatus: validateStatus,
+    );
+
+    final _response = await _dio.request<Object>(
+      _path,
+      options: _options,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    AuthenticatedSessionResponse? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null
+          ? null
+          : _serializers.deserialize(
+                  rawResponse,
+                  specifiedType: const FullType(AuthenticatedSessionResponse),
+                )
+                as AuthenticatedSessionResponse;
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<AuthenticatedSessionResponse>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

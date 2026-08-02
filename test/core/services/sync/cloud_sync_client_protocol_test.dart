@@ -4700,6 +4700,78 @@ void main() {
     expect(session.deviceKeyVersion, isNull);
   });
 
+  test('完整会话令牌通过无参数 GET 读取当前安全会话', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+    final token = CloudSyncFullSessionToken.parse(_fullTokenValue);
+
+    final sessionFuture = client.getAuthenticatedSession(token: token);
+
+    final request = await requestFuture;
+    expect(request.method, 'GET');
+    expect(request.uri.path, '/api/auth/session/get');
+    expect(request.uri.query, isEmpty);
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
+    expect(await utf8.decoder.bind(request).join(), isEmpty);
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{'data': _registrationAuthenticatedData()}),
+    );
+    await request.response.close();
+
+    final session = await sessionFuture;
+    expect(session.token.value, _fullTokenValue);
+    expect(session.user.id, _userId);
+    expect(session.device.id, _deviceId1);
+    expect(session.securityState?.keyEpoch, 1);
+  });
+
+  test('完整会话读取拒绝服务端替换本地令牌', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+    final token = CloudSyncFullSessionToken.parse(_fullTokenValue);
+
+    final sessionFuture = client.getAuthenticatedSession(token: token);
+
+    final request = await requestFuture;
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': _registrationAuthenticatedData()
+          ..['token'] = 'kelivo_${'B' * 43}',
+      }),
+    );
+    await request.response.close();
+
+    await expectLater(
+      sessionFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
   test('OPAQUE 登录保持匿名并区分已认证与待设备批准结果', () async {
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
     final requests = <(String, String?, CloudSyncJsonMap)>[];

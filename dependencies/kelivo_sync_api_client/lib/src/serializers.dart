@@ -56,6 +56,8 @@ import 'package:kelivo_sync_api_client/src/model/attachment_manifest_data.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_put_chunk_request.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_stored_chunk_data.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_upload_data.dart';
+import 'package:kelivo_sync_api_client/src/model/authenticated_session_data.dart';
+import 'package:kelivo_sync_api_client/src/model/authenticated_session_response.dart';
 import 'package:kelivo_sync_api_client/src/model/cancel_self_revocation_request.dart';
 import 'package:kelivo_sync_api_client/src/model/cancel_self_revocation_response.dart';
 import 'package:kelivo_sync_api_client/src/model/claim_data_rekey_lease_response.dart';
@@ -245,6 +247,8 @@ part 'serializers.g.dart';
   AttachmentPutChunkRequest,
   AttachmentStoredChunkData,
   AttachmentUploadData,
+  AuthenticatedSessionData,
+  AuthenticatedSessionResponse,
   CancelSelfRevocationRequest,
   CancelSelfRevocationResponse,
   ClaimDataRekeyLeaseResponse,
