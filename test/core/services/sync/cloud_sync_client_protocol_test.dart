@@ -185,6 +185,132 @@ String _encodedSha256(Uint8List value) {
   return _encodedData(_sha256Bytes(value));
 }
 
+CloudSyncSelfRevocationRequest _selfRevocationRequest({
+  String deviceId = _deviceId1,
+  String mutationId = _mutationId1,
+  String operationId = _mutationId2,
+  int expectedGeneration = 2,
+  int expectedKeyEpoch = 3,
+  int digestSeed = 20,
+  int intentDigestSeed = 21,
+  int intentSignatureSeed = 22,
+  String continuationSeed = 'C',
+  DateTime? expiresAt,
+}) {
+  return CloudSyncSelfRevocationRequest(
+    deviceId: deviceId,
+    mutationId: mutationId,
+    operationId: operationId,
+    expectedGeneration: expectedGeneration,
+    expectedKeyEpoch: expectedKeyEpoch,
+    expectedMembershipManifestDigest:
+        CloudSyncMembershipManifestDigest.fromBytes(
+          _filledBytes(32, digestSeed),
+        ),
+    expiresAt: expiresAt ?? DateTime.utc(2026, 8, 2, 10, 5),
+    continuationToken: CloudSyncSelfRevocationContinuationToken.parse(
+      'kelivo_revocation_${continuationSeed * 43}',
+    ),
+    intentDigest: _filledBytes(32, intentDigestSeed),
+    intentSignature: _filledBytes(64, intentSignatureSeed),
+  );
+}
+
+Map<String, Object?> _selfRevocationCreateData(
+  CloudSyncSelfRevocationRequest request,
+) {
+  return <String, Object?>{
+    'result': 'requested',
+    'status': 'pending',
+    'deviceId': request.deviceId,
+    'mutationId': request.mutationId,
+    'operationId': request.operationId,
+    'expectedGeneration': request.expectedGeneration,
+    'expectedKeyEpoch': request.expectedKeyEpoch,
+    'expectedMembershipManifestDigest':
+        request.expectedMembershipManifestDigest.encoded,
+    'intentDigest': _encodedData(request.intentDigest),
+    'intentSignature': _encodedData(request.intentSignature),
+    'requestedAt': '2026-08-02T10:00:00.000Z',
+    'expiresAt': request.expiresAt.toIso8601String(),
+    'receiptExpiresAt': '2026-09-01T10:00:00.000Z',
+  };
+}
+
+Map<String, Object?> _selfRevocationStatusData(
+  CloudSyncSelfRevocationRequest request, {
+  String status = 'pending',
+}) {
+  return <String, Object?>{
+    'status': status,
+    'deviceId': request.deviceId,
+    'mutationId': request.mutationId,
+    'operationId': request.operationId,
+    'expectedGeneration': request.expectedGeneration,
+    'expectedKeyEpoch': request.expectedKeyEpoch,
+    'expectedMembershipManifestDigest':
+        request.expectedMembershipManifestDigest.encoded,
+    'intentDigest': _encodedData(request.intentDigest),
+    'intentSignature': _encodedData(request.intentSignature),
+    'requestedAt': '2026-08-02T10:00:00.000Z',
+    'expiresAt': request.expiresAt.toIso8601String(),
+    'receiptExpiresAt': '2026-09-01T10:00:00.000Z',
+  };
+}
+
+Map<String, Object?> _pendingSelfRevocationData(int index) {
+  final suffix = (index + 1).toRadixString(16).padLeft(12, '0');
+  final requestedAt = DateTime.utc(
+    2026,
+    8,
+    2,
+    10,
+  ).add(Duration(seconds: index));
+  return <String, Object?>{
+    'deviceId': '21000000-0000-4000-8000-$suffix',
+    'deviceName': '设备 ${index + 1}',
+    'mutationId': '22000000-0000-4000-8000-$suffix',
+    'operationId': '23000000-0000-4000-8000-$suffix',
+    'expectedGeneration': 2,
+    'expectedKeyEpoch': 3,
+    'expectedMembershipManifestDigest': _encodedBytes(32, 20),
+    'intentDigest': _encodedBytes(32, 21),
+    'intentSignature': _encodedBytes(64, 22),
+    'requestedAt': requestedAt.toIso8601String(),
+    'expiresAt': requestedAt.add(const Duration(minutes: 5)).toIso8601String(),
+  };
+}
+
+Map<String, Object?> _selfRevocationCompletionData({
+  required String membershipManifestDigest,
+  int membershipGeneration = 3,
+}) {
+  return <String, Object?>{
+    'proofVersion': 2,
+    'operationId': _mutationId2,
+    'issuerDeviceId': _deviceId2,
+    'sourceDataGeneration': 4,
+    'targetDataGeneration': 5,
+    'sourceKeyEpoch': 3,
+    'targetKeyEpoch': 4,
+    'sourceSnapshotRoot': _encodedBytes(32, 31),
+    'sourceRecordCount': 0,
+    'sourceAttachmentCount': 0,
+    'sourceMaximumChangeSeq': 0,
+    'sourceRecordCursorEnd': null,
+    'sourceAttachmentCursorEnd': null,
+    'membershipGeneration': membershipGeneration,
+    'membershipManifestDigest': membershipManifestDigest,
+    'stagedRecordCount': 0,
+    'stagedAttachmentCount': 0,
+    'stagedCiphertextSetDigest': _encodedBytes(32, 32),
+    'proofFrame': _encodedBytes(270, 33),
+    'proofDigest': _encodedBytes(32, 34),
+    'signature': _encodedBytes(64, 35),
+    'finalizedAt': '2026-08-02T10:03:00.000Z',
+  };
+}
+
 String _encodedRecordCiphertext(E2eeSealedAccountRecordEnvelope record) {
   return base64Url.encode(record.ciphertext).replaceAll('=', '');
 }
@@ -433,6 +559,7 @@ Map<String, Object?> _securityHistoryItemForTest({
   required int manifestSeed,
   required int recoveryCapsuleVersion,
   required String operationId,
+  String? committedAt,
 }) {
   final manifest = _filledBytes(
     cloudSyncMembershipManifestMinimumBytes,
@@ -451,6 +578,7 @@ Map<String, Object?> _securityHistoryItemForTest({
     'recoveryCapsule': _encodedBytes(160 + generation, 73 + generation),
     'operationId': operationId,
     'committedAt':
+        committedAt ??
         '2026-07-29T${generation.toString().padLeft(2, '0')}:00:00.000Z',
   };
 }
@@ -4957,6 +5085,639 @@ void main() {
 
     await expectLater(
       sessionFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
+  test('当前设备发布自撤销请求并取得严格绑定的续查结果', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+    final expiresAt = DateTime.utc(2026, 8, 2, 10, 5);
+    final intentDigest = _filledBytes(32, 21);
+    final intentSignature = _filledBytes(64, 22);
+    final continuationToken = CloudSyncSelfRevocationContinuationToken.parse(
+      'kelivo_revocation_${'C' * 43}',
+    );
+    final createRequest = CloudSyncSelfRevocationRequest(
+      deviceId: _deviceId1,
+      mutationId: _mutationId1,
+      operationId: _mutationId2,
+      expectedGeneration: 2,
+      expectedKeyEpoch: 3,
+      expectedMembershipManifestDigest:
+          CloudSyncMembershipManifestDigest.fromBytes(_filledBytes(32, 20)),
+      expiresAt: expiresAt,
+      continuationToken: continuationToken,
+      intentDigest: intentDigest,
+      intentSignature: intentSignature,
+    );
+    final CloudSyncSelfRevocationTransport transport = client;
+
+    final resultFuture = transport.createSelfRevocationRequest(createRequest);
+
+    final request = await requestFuture;
+    expect(request.method, 'POST');
+    expect(request.uri.path, '/api/device/self-revocation/request/create');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
+    expect(
+      copyCloudSyncJsonMap(jsonDecode(await utf8.decoder.bind(request).join())),
+      <String, Object?>{
+        'mutationId': _mutationId1,
+        'operationId': _mutationId2,
+        'expectedGeneration': 2,
+        'expectedKeyEpoch': 3,
+        'expectedMembershipManifestDigest': _encodedBytes(32, 20),
+        'expiresAt': expiresAt.toIso8601String(),
+        'continuationToken': continuationToken.value,
+        'intentSignature': _encodedBytes(64, 22),
+      },
+    );
+    request.response.headers.contentType = ContentType.json;
+    request.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'result': 'requested',
+          'status': 'pending',
+          'deviceId': _deviceId1,
+          'mutationId': _mutationId1,
+          'operationId': _mutationId2,
+          'expectedGeneration': 2,
+          'expectedKeyEpoch': 3,
+          'expectedMembershipManifestDigest': _encodedBytes(32, 20),
+          'intentDigest': _encodedBytes(32, 21),
+          'intentSignature': _encodedBytes(64, 22),
+          'requestedAt': '2026-08-02T10:00:00.000Z',
+          'expiresAt': expiresAt.toIso8601String(),
+          'receiptExpiresAt': '2026-09-01T10:00:00.000Z',
+        },
+      }),
+    );
+    await request.response.close();
+
+    final result = await resultFuture;
+    expect(result.deviceId, _deviceId1);
+    expect(result.mutationId, _mutationId1);
+    expect(result.operationId, _mutationId2);
+    expect(result.expectedGeneration, 2);
+    expect(result.expectedKeyEpoch, 3);
+    expect(result.intentDigest, orderedEquals(intentDigest));
+    expect(result.intentSignature, orderedEquals(intentSignature));
+    expect(result.expiresAt, expiresAt);
+    expect(result.continuationToken, same(continuationToken));
+  });
+
+  test('自撤销请求冻结签名绑定并拒绝纪元前到期时间', () {
+    final intentDigest = _filledBytes(32, 21);
+    final intentSignature = _filledBytes(64, 22);
+    final request = CloudSyncSelfRevocationRequest(
+      deviceId: _deviceId1,
+      mutationId: _mutationId1,
+      operationId: _mutationId2,
+      expectedGeneration: 2,
+      expectedKeyEpoch: 3,
+      expectedMembershipManifestDigest:
+          CloudSyncMembershipManifestDigest.fromBytes(_filledBytes(32, 20)),
+      expiresAt: DateTime.utc(2026, 8, 2, 10, 5),
+      continuationToken: CloudSyncSelfRevocationContinuationToken.parse(
+        'kelivo_revocation_${'C' * 43}',
+      ),
+      intentDigest: intentDigest,
+      intentSignature: intentSignature,
+    );
+    intentDigest[0] = 99;
+    intentSignature[0] = 99;
+    final exposedDigest = request.intentDigest;
+    final exposedSignature = request.intentSignature;
+
+    expect(request.intentDigest, everyElement(21));
+    expect(request.intentSignature, everyElement(22));
+    expect(() => exposedDigest[0] = 98, throwsUnsupportedError);
+    expect(() => exposedSignature[0] = 98, throwsUnsupportedError);
+    expect(
+      () => _selfRevocationRequest(
+        expiresAt: DateTime.fromMillisecondsSinceEpoch(-1, isUtc: true),
+      ),
+      throwsFormatException,
+    );
+  });
+
+  test('自撤销请求丢失响应后以完全相同的请求重放', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+    });
+    final createRequest = _selfRevocationRequest();
+    final CloudSyncSelfRevocationTransport transport = client;
+
+    final lostResponseFuture = transport.createSelfRevocationRequest(
+      createRequest,
+    );
+    expect(await requests.moveNext(), isTrue);
+    final firstRequest = requests.current;
+    final firstBody = await utf8.decoder.bind(firstRequest).join();
+    final socket = await firstRequest.response.detachSocket();
+    socket.destroy();
+    await expectLater(lostResponseFuture, throwsA(isA<CloudSyncException>()));
+
+    final replayFuture = transport.createSelfRevocationRequest(createRequest);
+    expect(await requests.moveNext(), isTrue);
+    final replayRequest = requests.current;
+    final replayBody = await utf8.decoder.bind(replayRequest).join();
+    expect(replayBody, firstBody);
+    expect(
+      replayRequest.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_fullTokenValue',
+    );
+    await _writeJsonResponse(replayRequest, <String, Object?>{
+      'data': _selfRevocationCreateData(createRequest),
+    });
+
+    expect((await replayFuture).mutationId, createRequest.mutationId);
+  });
+
+  test('自撤销状态仅使用续查凭据且不污染完整会话', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _otherFullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+    });
+    final createRequest = _selfRevocationRequest();
+    final CloudSyncSelfRevocationTransport transport = client;
+
+    final createFuture = transport.createSelfRevocationRequest(createRequest);
+    expect(await requests.moveNext(), isTrue);
+    final createHttpRequest = requests.current;
+    expect(
+      createHttpRequest.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_otherFullTokenValue',
+    );
+    await _writeJsonResponse(createHttpRequest, <String, Object?>{
+      'data': _selfRevocationCreateData(createRequest),
+    });
+    final created = await createFuture;
+
+    final statusFuture = transport.getSelfRevocationStatus(created);
+    expect(await requests.moveNext(), isTrue);
+    final statusHttpRequest = requests.current;
+    expect(statusHttpRequest.method, 'GET');
+    expect(
+      statusHttpRequest.uri.path,
+      '/api/device/self-revocation/status/get',
+    );
+    expect(
+      statusHttpRequest.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${createRequest.continuationToken.value}',
+    );
+    await _writeJsonResponse(statusHttpRequest, <String, Object?>{
+      'data': _selfRevocationStatusData(createRequest),
+    });
+
+    final status = await statusFuture;
+    expect(status, isA<CloudSyncSelfRevocationPending>());
+    expect(status.request, same(created));
+
+    final deniedFuture = transport.getSelfRevocationStatus(created);
+    expect(await requests.moveNext(), isTrue);
+    final deniedHttpRequest = requests.current;
+    expect(
+      deniedHttpRequest.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${createRequest.continuationToken.value}',
+    );
+    await _writeJsonResponse(deniedHttpRequest, <String, Object?>{
+      'error': <String, Object?>{
+        'code': 'AUTH_SELF_REVOCATION_TOKEN_INVALID',
+        'message': 'invalid continuation token',
+        'retryable': false,
+      },
+      'requestId': 'self-revocation-status-1',
+    }, statusCode: HttpStatus.unauthorized);
+    await expectLater(
+      deniedFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.unauthenticated,
+        ),
+      ),
+    );
+
+    final listFuture = transport.listSelfRevocationRequests();
+    expect(await requests.moveNext(), isTrue);
+    final listHttpRequest = requests.current;
+    expect(
+      listHttpRequest.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_otherFullTokenValue',
+    );
+    await _writeJsonResponse(listHttpRequest, <String, Object?>{
+      'data': <String, Object?>{'requests': <Object?>[]},
+    });
+    expect((await listFuture).requests, isEmpty);
+  });
+
+  test('自撤销状态拒绝篡改绑定、未知分支与额外字段', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+    });
+    final createRequest = _selfRevocationRequest();
+    final CloudSyncSelfRevocationTransport transport = client;
+    final createFuture = transport.createSelfRevocationRequest(createRequest);
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': _selfRevocationCreateData(createRequest),
+    });
+    final created = await createFuture;
+
+    final expiredFuture = transport.getSelfRevocationStatus(created);
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': _selfRevocationStatusData(createRequest, status: 'expired'),
+    });
+    expect(await expiredFuture, isA<CloudSyncSelfRevocationExpired>());
+
+    final supersededFuture = transport.getSelfRevocationStatus(created);
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': _selfRevocationStatusData(createRequest, status: 'superseded'),
+    });
+    expect(await supersededFuture, isA<CloudSyncSelfRevocationSuperseded>());
+
+    final invalidResponses = <Map<String, Object?>>[
+      _selfRevocationStatusData(createRequest)..['deviceId'] = _deviceId2,
+      _selfRevocationStatusData(createRequest)..['mutationId'] = _mutationId3,
+      _selfRevocationStatusData(createRequest)..['operationId'] = _mutationId3,
+      _selfRevocationStatusData(createRequest)..['expectedGeneration'] = 3,
+      _selfRevocationStatusData(createRequest)
+        ..['intentDigest'] = _encodedBytes(32, 99),
+      _selfRevocationStatusData(createRequest)
+        ..['expiresAt'] = '2026-08-02T10:04:00.000Z',
+      _selfRevocationStatusData(createRequest)..['unexpected'] = true,
+      _selfRevocationStatusData(createRequest)..['status'] = 'unknown',
+    ];
+    for (final invalidData in invalidResponses) {
+      final statusFuture = transport.getSelfRevocationStatus(created);
+      expect(await requests.moveNext(), isTrue);
+      await _writeJsonResponse(requests.current, <String, Object?>{
+        'data': invalidData,
+      });
+      await expectLater(
+        statusFuture,
+        throwsA(
+          isA<CloudSyncException>().having(
+            (error) => error.kind,
+            'kind',
+            CloudSyncFailureKind.invalidResponse,
+          ),
+        ),
+      );
+    }
+  });
+
+  test('取消自撤销请求恢复使用完整会话并严格绑定取消时间', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _otherFullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+    });
+    final createRequest = _selfRevocationRequest();
+    final CloudSyncSelfRevocationTransport transport = client;
+
+    final createFuture = transport.createSelfRevocationRequest(createRequest);
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': _selfRevocationCreateData(createRequest),
+    });
+    final created = await createFuture;
+
+    final cancelFuture = transport.cancelSelfRevocationRequest(created);
+    expect(await requests.moveNext(), isTrue);
+    final cancelHttpRequest = requests.current;
+    expect(cancelHttpRequest.method, 'POST');
+    expect(
+      cancelHttpRequest.uri.path,
+      '/api/device/self-revocation/request/cancel',
+    );
+    expect(
+      cancelHttpRequest.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_otherFullTokenValue',
+    );
+    expect(
+      copyCloudSyncJsonMap(
+        jsonDecode(await utf8.decoder.bind(cancelHttpRequest).join()),
+      ),
+      <String, Object?>{'mutationId': createRequest.mutationId},
+    );
+    final cancelledData = _selfRevocationStatusData(
+      createRequest,
+      status: 'cancelled',
+    )..['cancelledAt'] = '2026-08-02T10:01:00.000Z';
+    await _writeJsonResponse(cancelHttpRequest, <String, Object?>{
+      'data': cancelledData,
+    });
+
+    final cancelled = await cancelFuture;
+    expect(cancelled.request, same(created));
+    expect(cancelled.cancelledAt, DateTime.utc(2026, 8, 2, 10, 1));
+
+    final invalidCancelFuture = transport.cancelSelfRevocationRequest(created);
+    expect(await requests.moveNext(), isTrue);
+    await utf8.decoder.bind(requests.current).join();
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': _selfRevocationStatusData(createRequest),
+    });
+    await expectLater(
+      invalidCancelFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
+  test('可信设备列表接受零至六十四项并拒绝越界响应', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _otherFullToken,
+      now: () => DateTime.utc(2026, 8, 2, 10),
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+    });
+    final CloudSyncSelfRevocationTransport transport = client;
+
+    final emptyFuture = transport.listSelfRevocationRequests();
+    expect(await requests.moveNext(), isTrue);
+    expect(requests.current.method, 'GET');
+    expect(
+      requests.current.uri.path,
+      '/api/device/self-revocation/request/list',
+    );
+    expect(
+      requests.current.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer $_otherFullTokenValue',
+    );
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': <String, Object?>{'requests': <Object?>[]},
+    });
+    expect((await emptyFuture).requests, isEmpty);
+
+    final maximumFuture = transport.listSelfRevocationRequests();
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': <String, Object?>{
+        'requests': List<Object?>.generate(
+          64,
+          _pendingSelfRevocationData,
+          growable: false,
+        ),
+      },
+    });
+    final maximum = await maximumFuture;
+    expect(maximum.requests, hasLength(64));
+    expect(maximum.requests.first.deviceName, '设备 1');
+    expect(maximum.requests.last.deviceName, '设备 64');
+    expect(
+      () => maximum.requests.first.intentDigest[0] = 1,
+      throwsUnsupportedError,
+    );
+    expect(
+      () => maximum.requests.first.intentSignature[0] = 1,
+      throwsUnsupportedError,
+    );
+
+    final overflowFuture = transport.listSelfRevocationRequests();
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': <String, Object?>{
+        'requests': List<Object?>.generate(
+          65,
+          _pendingSelfRevocationData,
+          growable: false,
+        ),
+      },
+    });
+    await expectLater(
+      overflowFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+
+    final unorderedFuture = transport.listSelfRevocationRequests();
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': <String, Object?>{
+        'requests': <Object?>[
+          _pendingSelfRevocationData(1),
+          _pendingSelfRevocationData(0),
+        ],
+      },
+    });
+    await expectLater(
+      unorderedFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+
+    final mixedHeadFuture = transport.listSelfRevocationRequests();
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': <String, Object?>{
+        'requests': <Object?>[
+          _pendingSelfRevocationData(0),
+          _pendingSelfRevocationData(1)..['expectedGeneration'] = 3,
+        ],
+      },
+    });
+    await expectLater(
+      mixedHeadFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+
+    final expiredFuture = transport.listSelfRevocationRequests();
+    expect(await requests.moveNext(), isTrue);
+    final expiredRequest = _pendingSelfRevocationData(0)
+      ..['requestedAt'] = '2026-08-02T09:55:00.000Z'
+      ..['expiresAt'] = '2026-08-02T10:00:00.000Z';
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': <String, Object?>{
+        'requests': <Object?>[expiredRequest],
+      },
+    });
+    await expectLater(
+      expiredFuture,
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.invalidResponse,
+        ),
+      ),
+    );
+  });
+
+  test('自撤销终态回执绑定轮换安全状态与完成证明', () async {
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requests = StreamIterator<HttpRequest>(server);
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await requests.cancel();
+      await server.close(force: true);
+    });
+    final createRequest = _selfRevocationRequest();
+    final CloudSyncSelfRevocationTransport transport = client;
+    final createFuture = transport.createSelfRevocationRequest(createRequest);
+    expect(await requests.moveNext(), isTrue);
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': _selfRevocationCreateData(createRequest),
+    });
+    final created = await createFuture;
+    final securityState = _securityHistoryItemForTest(
+      generation: 3,
+      keyEpoch: 4,
+      manifestSeed: 36,
+      recoveryCapsuleVersion: 1,
+      operationId: _mutationId2,
+      committedAt: '2026-08-02T10:02:00.000Z',
+    );
+
+    final statusFuture = transport.getSelfRevocationStatus(created);
+    expect(await requests.moveNext(), isTrue);
+    final confirmedData =
+        _selfRevocationStatusData(createRequest, status: 'confirmed')
+          ..['receipt'] = <String, Object?>{
+            'securityStates': <Object?>[securityState],
+            'completion': _selfRevocationCompletionData(
+              membershipManifestDigest:
+                  securityState['membershipManifestDigest']! as String,
+            ),
+          };
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': confirmedData,
+    });
+
+    final status = await statusFuture;
+    expect(status, isA<CloudSyncUntrustedSelfRevocationConfirmed>());
+    final confirmed = status as CloudSyncUntrustedSelfRevocationConfirmed;
+    expect(confirmed.untrustedReceipt.securityStates, hasLength(1));
+    expect(confirmed.untrustedReceipt.securityStates.single.generation, 3);
+    expect(confirmed.untrustedReceipt.completion.operationId, _mutationId2);
+    expect(confirmed.untrustedReceipt.completion.issuerDeviceId, _deviceId2);
+
+    final resumedSecurityState = _securityHistoryItemForTest(
+      generation: 4,
+      keyEpoch: 4,
+      manifestSeed: 37,
+      recoveryCapsuleVersion: 1,
+      operationId: _mutationId3,
+      committedAt: '2026-08-02T10:02:00.000Z',
+    );
+    final resumedFuture = transport.getSelfRevocationStatus(created);
+    expect(await requests.moveNext(), isTrue);
+    final resumedData =
+        _selfRevocationStatusData(createRequest, status: 'confirmed')
+          ..['receipt'] = <String, Object?>{
+            'securityStates': <Object?>[securityState, resumedSecurityState],
+            'completion': _selfRevocationCompletionData(
+              membershipManifestDigest:
+                  resumedSecurityState['membershipManifestDigest']! as String,
+              membershipGeneration: 4,
+            ),
+          };
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': resumedData,
+    });
+    final resumed =
+        await resumedFuture as CloudSyncUntrustedSelfRevocationConfirmed;
+    expect(resumed.untrustedReceipt.securityStates, hasLength(2));
+
+    final tamperedFuture = transport.getSelfRevocationStatus(created);
+    expect(await requests.moveNext(), isTrue);
+    final tamperedCompletion = _selfRevocationCompletionData(
+      membershipManifestDigest:
+          securityState['membershipManifestDigest']! as String,
+    )..['operationId'] = _mutationId3;
+    final tamperedData =
+        _selfRevocationStatusData(createRequest, status: 'confirmed')
+          ..['receipt'] = <String, Object?>{
+            'securityStates': <Object?>[securityState],
+            'completion': tamperedCompletion,
+          };
+    await _writeJsonResponse(requests.current, <String, Object?>{
+      'data': tamperedData,
+    });
+    await expectLater(
+      tamperedFuture,
       throwsA(
         isA<CloudSyncException>().having(
           (error) => error.kind,

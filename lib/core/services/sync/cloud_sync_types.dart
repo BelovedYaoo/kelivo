@@ -31,6 +31,8 @@ const cloudSyncRecoveryPublicKeyBytes = 32;
 const cloudSyncRecoveryCapsuleBytes = 156;
 const cloudSyncRecoveryCapsuleMaximumBytes = 4096;
 const cloudSyncAccountSecurityEnvelopeMaximumCount = 256;
+const cloudSyncSelfRevocationIntentDigestBytes = 32;
+const cloudSyncSelfRevocationIntentSignatureBytes = 64;
 
 bool isAllowedCloudSyncTransportUri(Uri uri) {
   if (uri.scheme == 'https') return uri.host.isNotEmpty;
@@ -184,6 +186,38 @@ final class CloudSyncOnboardingToken {
   String toString() => 'CloudSyncOnboardingToken(<已隐藏>)';
 }
 
+final class CloudSyncSelfRevocationContinuationToken {
+  CloudSyncSelfRevocationContinuationToken._(this.value);
+
+  factory CloudSyncSelfRevocationContinuationToken.generate() {
+    final random = Random.secure();
+    final tokenBytes = Uint8List(32);
+    try {
+      for (var index = 0; index < tokenBytes.length; index++) {
+        tokenBytes[index] = random.nextInt(256);
+      }
+      final encoded = base64Url.encode(tokenBytes).replaceAll('=', '');
+      return CloudSyncSelfRevocationContinuationToken.parse(
+        'kelivo_revocation_$encoded',
+      );
+    } finally {
+      tokenBytes.fillRange(0, tokenBytes.length, 0);
+    }
+  }
+
+  factory CloudSyncSelfRevocationContinuationToken.parse(String value) {
+    if (!_selfRevocationContinuationTokenPattern.hasMatch(value)) {
+      throw const FormatException('自撤销续查令牌格式无效');
+    }
+    return CloudSyncSelfRevocationContinuationToken._(value);
+  }
+
+  final String value;
+
+  @override
+  String toString() => 'CloudSyncSelfRevocationContinuationToken(<已隐藏>)';
+}
+
 final class CloudSyncMembershipManifestDigest {
   CloudSyncMembershipManifestDigest._(this.bytes, this.encoded);
 
@@ -220,6 +254,603 @@ final class CloudSyncMembershipManifestDigest {
 
   final Uint8List bytes;
   final String encoded;
+}
+
+final class CloudSyncSelfRevocationRequest {
+  factory CloudSyncSelfRevocationRequest({
+    required String deviceId,
+    required String mutationId,
+    required String operationId,
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required CloudSyncMembershipManifestDigest expectedMembershipManifestDigest,
+    required DateTime expiresAt,
+    required CloudSyncSelfRevocationContinuationToken continuationToken,
+    required Uint8List intentDigest,
+    required Uint8List intentSignature,
+  }) {
+    if (!expiresAt.isUtc ||
+        expiresAt.microsecond != 0 ||
+        expiresAt.millisecondsSinceEpoch < 0) {
+      throw const FormatException('自撤销意图到期时间必须为毫秒精度 UTC 时间');
+    }
+    return CloudSyncSelfRevocationRequest._(
+      deviceId: _requireCanonicalUuid(deviceId, 'deviceId'),
+      mutationId: _requireCanonicalUuid(mutationId, 'mutationId'),
+      operationId: _requireCanonicalUuid(operationId, 'operationId'),
+      expectedGeneration: _requireBoundedInt(
+        expectedGeneration,
+        'expectedGeneration',
+        maximum: 0x7ffffffe,
+      ),
+      expectedKeyEpoch: _requireBoundedInt(
+        expectedKeyEpoch,
+        'expectedKeyEpoch',
+        maximum: 0xfffffffe,
+      ),
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      expiresAt: expiresAt,
+      continuationToken: continuationToken,
+      intentDigest: _copyFixedBytes(
+        intentDigest,
+        cloudSyncSelfRevocationIntentDigestBytes,
+        'intentDigest',
+      ),
+      intentSignature: _copyFixedBytes(
+        intentSignature,
+        cloudSyncSelfRevocationIntentSignatureBytes,
+        'intentSignature',
+      ),
+    );
+  }
+
+  const CloudSyncSelfRevocationRequest._({
+    required this.deviceId,
+    required this.mutationId,
+    required this.operationId,
+    required this.expectedGeneration,
+    required this.expectedKeyEpoch,
+    required this.expectedMembershipManifestDigest,
+    required this.expiresAt,
+    required this.continuationToken,
+    required this.intentDigest,
+    required this.intentSignature,
+  });
+
+  final String deviceId;
+  final String mutationId;
+  final String operationId;
+  final int expectedGeneration;
+  final int expectedKeyEpoch;
+  final CloudSyncMembershipManifestDigest expectedMembershipManifestDigest;
+  final DateTime expiresAt;
+  final CloudSyncSelfRevocationContinuationToken continuationToken;
+  final Uint8List intentDigest;
+  final Uint8List intentSignature;
+}
+
+final class CloudSyncSelfRevocationRequestResult {
+  factory CloudSyncSelfRevocationRequestResult.fromJson(
+    CloudSyncJsonMap json, {
+    required CloudSyncSelfRevocationRequest request,
+  }) {
+    _requireExactKeys(json, _jsonKeys, '自撤销请求结果');
+    if (_requireString(json, 'result') != 'requested' ||
+        _requireString(json, 'status') != 'pending') {
+      throw const FormatException('自撤销请求结果状态无效');
+    }
+    final deviceId = _requireCanonicalUuid(
+      _requireString(json, 'deviceId'),
+      'deviceId',
+    );
+    final mutationId = _requireCanonicalUuid(
+      _requireString(json, 'mutationId'),
+      'mutationId',
+    );
+    final operationId = _requireCanonicalUuid(
+      _requireString(json, 'operationId'),
+      'operationId',
+    );
+    final expectedGeneration = _requireBoundedInt(
+      _requireInt(json, 'expectedGeneration'),
+      'expectedGeneration',
+      maximum: 0x7ffffffe,
+    );
+    final expectedKeyEpoch = _requireBoundedInt(
+      _requireInt(json, 'expectedKeyEpoch'),
+      'expectedKeyEpoch',
+      maximum: 0xfffffffe,
+    );
+    final expectedMembershipManifestDigest =
+        CloudSyncMembershipManifestDigest.parse(
+          _requireString(json, 'expectedMembershipManifestDigest'),
+        );
+    final intentDigest = _decodeCanonicalBinary(
+      _requireString(json, 'intentDigest'),
+      field: 'intentDigest',
+      exactLength: cloudSyncSelfRevocationIntentDigestBytes,
+    );
+    final intentSignature = _decodeCanonicalBinary(
+      _requireString(json, 'intentSignature'),
+      field: 'intentSignature',
+      exactLength: cloudSyncSelfRevocationIntentSignatureBytes,
+    );
+    final requestedAt = _requireCanonicalUtcDateTime(json, 'requestedAt');
+    final expiresAt = _requireCanonicalUtcDateTime(json, 'expiresAt');
+    final receiptExpiresAt = _requireCanonicalUtcDateTime(
+      json,
+      'receiptExpiresAt',
+    );
+    if (deviceId != request.deviceId ||
+        mutationId != request.mutationId ||
+        operationId != request.operationId ||
+        expectedGeneration != request.expectedGeneration ||
+        expectedKeyEpoch != request.expectedKeyEpoch ||
+        expectedMembershipManifestDigest.encoded !=
+            request.expectedMembershipManifestDigest.encoded ||
+        !_sameBytes(intentDigest, request.intentDigest) ||
+        !_sameBytes(intentSignature, request.intentSignature) ||
+        expiresAt != request.expiresAt ||
+        !requestedAt.isBefore(expiresAt) ||
+        expiresAt.difference(requestedAt) >
+            const Duration(hours: 24, minutes: 5) ||
+        receiptExpiresAt.difference(requestedAt) != const Duration(days: 30)) {
+      throw const FormatException('自撤销请求结果未绑定原始意图');
+    }
+    return CloudSyncSelfRevocationRequestResult._(
+      request: request,
+      requestedAt: requestedAt,
+      receiptExpiresAt: receiptExpiresAt,
+    );
+  }
+
+  const CloudSyncSelfRevocationRequestResult._({
+    required this.request,
+    required this.requestedAt,
+    required this.receiptExpiresAt,
+  });
+
+  static const _jsonKeys = <String>{
+    'result',
+    'status',
+    'deviceId',
+    'mutationId',
+    'operationId',
+    'expectedGeneration',
+    'expectedKeyEpoch',
+    'expectedMembershipManifestDigest',
+    'intentDigest',
+    'intentSignature',
+    'requestedAt',
+    'expiresAt',
+    'receiptExpiresAt',
+  };
+
+  final CloudSyncSelfRevocationRequest request;
+  final DateTime requestedAt;
+  final DateTime receiptExpiresAt;
+
+  String get deviceId => request.deviceId;
+  String get mutationId => request.mutationId;
+  String get operationId => request.operationId;
+  int get expectedGeneration => request.expectedGeneration;
+  int get expectedKeyEpoch => request.expectedKeyEpoch;
+  CloudSyncMembershipManifestDigest get expectedMembershipManifestDigest =>
+      request.expectedMembershipManifestDigest;
+  DateTime get expiresAt => request.expiresAt;
+  CloudSyncSelfRevocationContinuationToken get continuationToken =>
+      request.continuationToken;
+  Uint8List get intentDigest => request.intentDigest;
+  Uint8List get intentSignature => request.intentSignature;
+}
+
+sealed class CloudSyncSelfRevocationStatus {
+  const CloudSyncSelfRevocationStatus(this.request);
+
+  factory CloudSyncSelfRevocationStatus.fromJson(
+    CloudSyncJsonMap json, {
+    required CloudSyncSelfRevocationRequestResult request,
+  }) {
+    final status = _requireString(json, 'status');
+    return switch (status) {
+      'pending' => () {
+        _requireExactKeys(json, _pendingJsonKeys, '自撤销待处理状态');
+        _validateSelfRevocationStatusBinding(json, request);
+        return CloudSyncSelfRevocationPending._(request);
+      }(),
+      'cancelled' => () {
+        _requireExactKeys(json, _cancelledJsonKeys, '自撤销已取消状态');
+        _validateSelfRevocationStatusBinding(json, request);
+        final cancelledAt = _requireCanonicalUtcDateTime(json, 'cancelledAt');
+        if (cancelledAt.isBefore(request.requestedAt) ||
+            !cancelledAt.isBefore(request.expiresAt)) {
+          throw const FormatException('自撤销取消时间越界');
+        }
+        return CloudSyncSelfRevocationCancelled._(
+          request,
+          cancelledAt: cancelledAt,
+        );
+      }(),
+      'confirmed' => () {
+        _requireExactKeys(json, _confirmedJsonKeys, '自撤销已确认状态');
+        _validateSelfRevocationStatusBinding(json, request);
+        return CloudSyncUntrustedSelfRevocationConfirmed._(
+          request,
+          untrustedReceipt: CloudSyncUntrustedSelfRevocationReceipt.fromJson(
+            copyCloudSyncJsonMap(json['receipt']),
+            request: request,
+          ),
+        );
+      }(),
+      'expired' => () {
+        _requireExactKeys(json, _terminalJsonKeys, '自撤销已过期状态');
+        _validateSelfRevocationStatusBinding(json, request);
+        return CloudSyncSelfRevocationExpired._(request);
+      }(),
+      'superseded' => () {
+        _requireExactKeys(json, _terminalJsonKeys, '自撤销已取代状态');
+        _validateSelfRevocationStatusBinding(json, request);
+        return CloudSyncSelfRevocationSuperseded._(request);
+      }(),
+      _ => throw const FormatException('自撤销状态分支无效'),
+    };
+  }
+
+  static const _pendingJsonKeys = <String>{
+    'status',
+    ..._selfRevocationStatusBindingJsonKeys,
+  };
+  static const _cancelledJsonKeys = <String>{
+    'status',
+    ..._selfRevocationStatusBindingJsonKeys,
+    'cancelledAt',
+  };
+  static const _confirmedJsonKeys = <String>{
+    'status',
+    ..._selfRevocationStatusBindingJsonKeys,
+    'receipt',
+  };
+  static const _terminalJsonKeys = <String>{
+    'status',
+    ..._selfRevocationStatusBindingJsonKeys,
+  };
+
+  final CloudSyncSelfRevocationRequestResult request;
+}
+
+final class CloudSyncSelfRevocationPending
+    extends CloudSyncSelfRevocationStatus {
+  const CloudSyncSelfRevocationPending._(super.request);
+}
+
+final class CloudSyncSelfRevocationCancelled
+    extends CloudSyncSelfRevocationStatus {
+  const CloudSyncSelfRevocationCancelled._(
+    super.request, {
+    required this.cancelledAt,
+  });
+
+  final DateTime cancelledAt;
+}
+
+final class CloudSyncUntrustedSelfRevocationConfirmed
+    extends CloudSyncSelfRevocationStatus {
+  const CloudSyncUntrustedSelfRevocationConfirmed._(
+    super.request, {
+    required this.untrustedReceipt,
+  });
+
+  final CloudSyncUntrustedSelfRevocationReceipt untrustedReceipt;
+}
+
+final class CloudSyncSelfRevocationExpired
+    extends CloudSyncSelfRevocationStatus {
+  const CloudSyncSelfRevocationExpired._(super.request);
+}
+
+final class CloudSyncSelfRevocationSuperseded
+    extends CloudSyncSelfRevocationStatus {
+  const CloudSyncSelfRevocationSuperseded._(super.request);
+}
+
+final class CloudSyncUntrustedSelfRevocationReceipt {
+  factory CloudSyncUntrustedSelfRevocationReceipt.fromJson(
+    CloudSyncJsonMap json, {
+    required CloudSyncSelfRevocationRequestResult request,
+  }) {
+    _requireExactKeys(json, _jsonKeys, '自撤销终态回执');
+    final rawSecurityStates = json['securityStates'];
+    if (rawSecurityStates is! List<Object?> ||
+        rawSecurityStates.isEmpty ||
+        rawSecurityStates.length > 31) {
+      throw const FormatException('自撤销终态回执安全状态数量无效');
+    }
+    final securityStates = rawSecurityStates
+        .map(
+          (value) => CloudSyncAccountSecurityHistoryItem.fromJson(
+            copyCloudSyncJsonMap(value),
+          ),
+        )
+        .toList(growable: false);
+    final first = securityStates.first;
+    if (first.generation != request.expectedGeneration + 1 ||
+        first.keyEpoch != request.expectedKeyEpoch + 1 ||
+        first.operationId != request.operationId) {
+      throw const FormatException('自撤销轮换安全状态未绑定原始意图');
+    }
+    final operationIds = <String>{first.operationId};
+    var previous = first;
+    for (final state in securityStates.skip(1)) {
+      if (state.generation != previous.generation + 1 ||
+          state.keyEpoch != previous.keyEpoch ||
+          !operationIds.add(state.operationId)) {
+        throw const FormatException('自撤销恢复接续安全状态不连续');
+      }
+      previous = state;
+    }
+    final completion = CloudSyncDataRekeyCompletion.fromJson(
+      copyCloudSyncJsonMap(json['completion']),
+    );
+    if (completion.operationId != request.operationId ||
+        completion.issuerDeviceId == request.deviceId ||
+        completion.sourceKeyEpoch != request.expectedKeyEpoch ||
+        completion.targetKeyEpoch != previous.keyEpoch ||
+        completion.membershipGeneration != previous.generation ||
+        !_sameBytes(
+          completion.membershipManifestDigest,
+          previous.membershipManifestDigest.bytes,
+        )) {
+      throw const FormatException('自撤销完成证明未绑定最终安全状态');
+    }
+    // 这些时间戳不是成员清单签名链的一部分，传输层不能据此宣称回执可信。
+    return CloudSyncUntrustedSelfRevocationReceipt._(
+      securityStates: List<CloudSyncAccountSecurityHistoryItem>.unmodifiable(
+        securityStates,
+      ),
+      completion: completion,
+    );
+  }
+
+  const CloudSyncUntrustedSelfRevocationReceipt._({
+    required this.securityStates,
+    required this.completion,
+  });
+
+  static const _jsonKeys = <String>{'securityStates', 'completion'};
+
+  final List<CloudSyncAccountSecurityHistoryItem> securityStates;
+  final CloudSyncDataRekeyCompletion completion;
+}
+
+const _selfRevocationStatusBindingJsonKeys = <String>{
+  'deviceId',
+  'mutationId',
+  'operationId',
+  'expectedGeneration',
+  'expectedKeyEpoch',
+  'expectedMembershipManifestDigest',
+  'intentDigest',
+  'intentSignature',
+  'requestedAt',
+  'expiresAt',
+  'receiptExpiresAt',
+};
+
+void _validateSelfRevocationStatusBinding(
+  CloudSyncJsonMap json,
+  CloudSyncSelfRevocationRequestResult request,
+) {
+  final expectedMembershipManifestDigest =
+      CloudSyncMembershipManifestDigest.parse(
+        _requireString(json, 'expectedMembershipManifestDigest'),
+      );
+  final intentDigest = _decodeCanonicalBinary(
+    _requireString(json, 'intentDigest'),
+    field: 'intentDigest',
+    exactLength: cloudSyncSelfRevocationIntentDigestBytes,
+  );
+  final intentSignature = _decodeCanonicalBinary(
+    _requireString(json, 'intentSignature'),
+    field: 'intentSignature',
+    exactLength: cloudSyncSelfRevocationIntentSignatureBytes,
+  );
+  if (_requireCanonicalUuid(_requireString(json, 'deviceId'), 'deviceId') !=
+          request.deviceId ||
+      _requireCanonicalUuid(_requireString(json, 'mutationId'), 'mutationId') !=
+          request.mutationId ||
+      _requireCanonicalUuid(
+            _requireString(json, 'operationId'),
+            'operationId',
+          ) !=
+          request.operationId ||
+      _requireBoundedInt(
+            _requireInt(json, 'expectedGeneration'),
+            'expectedGeneration',
+            maximum: 0x7ffffffe,
+          ) !=
+          request.expectedGeneration ||
+      _requireBoundedInt(
+            _requireInt(json, 'expectedKeyEpoch'),
+            'expectedKeyEpoch',
+            maximum: 0xfffffffe,
+          ) !=
+          request.expectedKeyEpoch ||
+      expectedMembershipManifestDigest.encoded !=
+          request.expectedMembershipManifestDigest.encoded ||
+      !_sameBytes(intentDigest, request.intentDigest) ||
+      !_sameBytes(intentSignature, request.intentSignature) ||
+      _requireCanonicalUtcDateTime(json, 'requestedAt') !=
+          request.requestedAt ||
+      _requireCanonicalUtcDateTime(json, 'expiresAt') != request.expiresAt ||
+      _requireCanonicalUtcDateTime(json, 'receiptExpiresAt') !=
+          request.receiptExpiresAt) {
+    throw const FormatException('自撤销状态未绑定原始请求');
+  }
+}
+
+final class CloudSyncUntrustedPendingSelfRevocationRequest {
+  factory CloudSyncUntrustedPendingSelfRevocationRequest.fromJson(
+    CloudSyncJsonMap json,
+  ) {
+    _requireExactKeys(json, _jsonKeys, '待协调自撤销请求');
+    final deviceName = _requireString(json, 'deviceName');
+    if (deviceName.isEmpty || deviceName.length > 128) {
+      throw const FormatException('自撤销设备名称长度无效');
+    }
+    final requestedAt = _requireCanonicalUtcDateTime(json, 'requestedAt');
+    final expiresAt = _requireCanonicalUtcDateTime(json, 'expiresAt');
+    if (!requestedAt.isBefore(expiresAt) ||
+        expiresAt.difference(requestedAt) >
+            const Duration(hours: 24, minutes: 5)) {
+      throw const FormatException('待协调自撤销请求时间范围无效');
+    }
+    return CloudSyncUntrustedPendingSelfRevocationRequest._(
+      deviceId: _requireCanonicalUuid(
+        _requireString(json, 'deviceId'),
+        'deviceId',
+      ),
+      deviceName: deviceName,
+      mutationId: _requireCanonicalUuid(
+        _requireString(json, 'mutationId'),
+        'mutationId',
+      ),
+      operationId: _requireCanonicalUuid(
+        _requireString(json, 'operationId'),
+        'operationId',
+      ),
+      expectedGeneration: _requireBoundedInt(
+        _requireInt(json, 'expectedGeneration'),
+        'expectedGeneration',
+        maximum: 0x7ffffffe,
+      ),
+      expectedKeyEpoch: _requireBoundedInt(
+        _requireInt(json, 'expectedKeyEpoch'),
+        'expectedKeyEpoch',
+        maximum: 0xfffffffe,
+      ),
+      expectedMembershipManifestDigest: CloudSyncMembershipManifestDigest.parse(
+        _requireString(json, 'expectedMembershipManifestDigest'),
+      ),
+      intentDigest: _copyFixedBytes(
+        _decodeCanonicalBinary(
+          _requireString(json, 'intentDigest'),
+          field: 'intentDigest',
+          exactLength: cloudSyncSelfRevocationIntentDigestBytes,
+        ),
+        cloudSyncSelfRevocationIntentDigestBytes,
+        'intentDigest',
+      ),
+      intentSignature: _copyFixedBytes(
+        _decodeCanonicalBinary(
+          _requireString(json, 'intentSignature'),
+          field: 'intentSignature',
+          exactLength: cloudSyncSelfRevocationIntentSignatureBytes,
+        ),
+        cloudSyncSelfRevocationIntentSignatureBytes,
+        'intentSignature',
+      ),
+      requestedAt: requestedAt,
+      expiresAt: expiresAt,
+    );
+  }
+
+  const CloudSyncUntrustedPendingSelfRevocationRequest._({
+    required this.deviceId,
+    required this.deviceName,
+    required this.mutationId,
+    required this.operationId,
+    required this.expectedGeneration,
+    required this.expectedKeyEpoch,
+    required this.expectedMembershipManifestDigest,
+    required this.intentDigest,
+    required this.intentSignature,
+    required this.requestedAt,
+    required this.expiresAt,
+  });
+
+  static const _jsonKeys = <String>{
+    'deviceId',
+    'deviceName',
+    'mutationId',
+    'operationId',
+    'expectedGeneration',
+    'expectedKeyEpoch',
+    'expectedMembershipManifestDigest',
+    'intentDigest',
+    'intentSignature',
+    'requestedAt',
+    'expiresAt',
+  };
+
+  final String deviceId;
+  final String deviceName;
+  final String mutationId;
+  final String operationId;
+  final int expectedGeneration;
+  final int expectedKeyEpoch;
+  final CloudSyncMembershipManifestDigest expectedMembershipManifestDigest;
+  final Uint8List intentDigest;
+  final Uint8List intentSignature;
+  final DateTime requestedAt;
+  final DateTime expiresAt;
+}
+
+final class CloudSyncUntrustedSelfRevocationRequestList {
+  factory CloudSyncUntrustedSelfRevocationRequestList.fromJson(
+    CloudSyncJsonMap json, {
+    required DateTime now,
+  }) {
+    _requireExactKeys(json, _jsonKeys, '待协调自撤销请求列表');
+    final rawRequests = json['requests'];
+    if (rawRequests is! List<Object?> || rawRequests.length > 64) {
+      throw const FormatException('待协调自撤销请求列表数量无效');
+    }
+    final requests = rawRequests
+        .map(
+          (value) => CloudSyncUntrustedPendingSelfRevocationRequest.fromJson(
+            copyCloudSyncJsonMap(value),
+          ),
+        )
+        .toList(growable: false);
+    final deviceIds = <String>{};
+    final mutationIds = <String>{};
+    final operationIds = <String>{};
+    final expectedHead = requests.firstOrNull;
+    final currentTime = now.toUtc();
+    CloudSyncUntrustedPendingSelfRevocationRequest? previous;
+    for (final request in requests) {
+      final prior = previous;
+      if (!deviceIds.add(request.deviceId) ||
+          !mutationIds.add(request.mutationId) ||
+          !operationIds.add(request.operationId) ||
+          !currentTime.isBefore(request.expiresAt) ||
+          (prior != null &&
+              (request.requestedAt.isBefore(prior.requestedAt) ||
+                  (request.requestedAt == prior.requestedAt &&
+                      request.deviceId.compareTo(prior.deviceId) <= 0))) ||
+          (expectedHead != null &&
+              (request.expectedGeneration != expectedHead.expectedGeneration ||
+                  request.expectedKeyEpoch != expectedHead.expectedKeyEpoch ||
+                  !_sameBytes(
+                    request.expectedMembershipManifestDigest.bytes,
+                    expectedHead.expectedMembershipManifestDigest.bytes,
+                  )))) {
+        throw const FormatException('待协调自撤销请求列表重复、顺序或安全头无效');
+      }
+      previous = request;
+    }
+    return CloudSyncUntrustedSelfRevocationRequestList._(
+      List<CloudSyncUntrustedPendingSelfRevocationRequest>.unmodifiable(
+        requests,
+      ),
+    );
+  }
+
+  const CloudSyncUntrustedSelfRevocationRequestList._(this.requests);
+
+  static const _jsonKeys = <String>{'requests'};
+
+  final List<CloudSyncUntrustedPendingSelfRevocationRequest> requests;
 }
 
 final class CloudSyncMembershipDeviceMaterial {
@@ -2130,6 +2761,9 @@ final _canonicalBase64UrlPattern = RegExp(r'^[A-Za-z0-9_-]+$');
 final _fullSessionTokenPattern = RegExp(r'^kelivo_[A-Za-z0-9_-]{43}$');
 final _onboardingTokenPattern = RegExp(
   r'^kelivo_onboarding_[A-Za-z0-9_-]{43}$',
+);
+final _selfRevocationContinuationTokenPattern = RegExp(
+  r'^kelivo_revocation_[A-Za-z0-9_-]{43}$',
 );
 
 String _requireCanonicalUuid(String value, String field) {

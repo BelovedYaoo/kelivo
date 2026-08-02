@@ -148,6 +148,23 @@ abstract interface class CloudSyncSessionTransport {
   });
 }
 
+abstract interface class CloudSyncSelfRevocationTransport {
+  Future<CloudSyncSelfRevocationRequestResult> createSelfRevocationRequest(
+    CloudSyncSelfRevocationRequest request,
+  );
+
+  Future<CloudSyncSelfRevocationStatus> getSelfRevocationStatus(
+    CloudSyncSelfRevocationRequestResult request,
+  );
+
+  Future<CloudSyncSelfRevocationCancelled> cancelSelfRevocationRequest(
+    CloudSyncSelfRevocationRequestResult request,
+  );
+
+  Future<CloudSyncUntrustedSelfRevocationRequestList>
+  listSelfRevocationRequests();
+}
+
 abstract interface class CloudSyncDataRekeyTransport {
   Future<CloudSyncDataRekeyState> getDataRekeyState();
 
@@ -181,6 +198,7 @@ final class CloudSyncClient
         CloudSyncAccountClient,
         CloudSyncAttachmentTransport,
         CloudSyncDataRekeyTransport,
+        CloudSyncSelfRevocationTransport,
         CloudSyncSessionTransport,
         E2eeAccountRecoveryTransport,
         CloudSyncRecordTransport {
@@ -188,6 +206,7 @@ final class CloudSyncClient
     required this.baseUrl,
     required this._dio,
     required this._client,
+    required this._now,
     this._dataRekeyBearerOverride,
   });
 
@@ -202,13 +221,19 @@ final class CloudSyncClient
   factory CloudSyncClient.forTesting({
     required String baseUrl,
     CloudSyncFullSessionToken? token,
+    DateTime Function()? now,
   }) {
-    return CloudSyncClient._forBaseUrl(baseUrl: baseUrl, token: token);
+    return CloudSyncClient._forBaseUrl(
+      baseUrl: baseUrl,
+      token: token,
+      now: now,
+    );
   }
 
   factory CloudSyncClient._forBaseUrl({
     required String baseUrl,
     CloudSyncFullSessionToken? token,
+    DateTime Function()? now,
   }) {
     final String normalized;
     try {
@@ -233,6 +258,7 @@ final class CloudSyncClient
     final client = CloudSyncClient._(
       baseUrl: normalized,
       dio: dio,
+      now: now ?? DateTime.now,
       // 鉴权逐请求显式注入，避免并发请求共享可变拦截器令牌。
       client: api.KelivoSyncApiClient(
         dio: dio,
@@ -259,6 +285,7 @@ final class CloudSyncClient
   final String baseUrl;
   final Dio _dio;
   final api.KelivoSyncApiClient _client;
+  final DateTime Function() _now;
   final String? _dataRekeyBearerOverride;
   CloudSyncFullSessionToken? _sessionToken;
 
@@ -289,6 +316,104 @@ final class CloudSyncClient
       return _parseCurrentAuthenticatedSession(
         response.extra[_rawResponseKey],
         expectedToken: token,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncSelfRevocationRequestResult> createSelfRevocationRequest(
+    CloudSyncSelfRevocationRequest request,
+  ) {
+    return _guard(() async {
+      final generatedRequest = api.CreateSelfRevocationRequest(
+        (builder) => builder
+          ..mutationId = request.mutationId
+          ..operationId = request.operationId
+          ..expectedGeneration = request.expectedGeneration
+          ..expectedKeyEpoch = request.expectedKeyEpoch
+          ..expectedMembershipManifestDigest =
+              request.expectedMembershipManifestDigest.encoded
+          ..expiresAt = request.expiresAt
+          ..continuationToken = request.continuationToken.value
+          ..intentSignature = _encodeFixedBinaryForRequest(
+            request.intentSignature,
+            cloudSyncSelfRevocationIntentSignatureBytes,
+          ),
+      );
+      final response = await _client.getDeviceApi().createSelfRevocationRequest(
+        createSelfRevocationRequest: generatedRequest,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return CloudSyncSelfRevocationRequestResult.fromJson(
+        _strictResponseData(
+          response.extra[_rawResponseKey],
+          _selfRevocationRequestResultDataKeys,
+          '自撤销请求响应',
+        ),
+        request: request,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncSelfRevocationStatus> getSelfRevocationStatus(
+    CloudSyncSelfRevocationRequestResult request,
+  ) {
+    return _guard(() async {
+      final response = await _client.getDeviceApi().getSelfRevocationStatus(
+        headers: _authorizationHeaders(request.continuationToken.value),
+        extra: _strictResponseExtra,
+      );
+      return CloudSyncSelfRevocationStatus.fromJson(
+        _strictVariantResponseData(response.extra[_rawResponseKey], '自撤销状态响应'),
+        request: request,
+      );
+    });
+  }
+
+  @override
+  Future<CloudSyncSelfRevocationCancelled> cancelSelfRevocationRequest(
+    CloudSyncSelfRevocationRequestResult request,
+  ) {
+    return _guard(() async {
+      final generatedRequest = api.CancelSelfRevocationRequest(
+        (builder) => builder..mutationId = request.mutationId,
+      );
+      final response = await _client.getDeviceApi().cancelSelfRevocationRequest(
+        cancelSelfRevocationRequest: generatedRequest,
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      final status = CloudSyncSelfRevocationStatus.fromJson(
+        _strictVariantResponseData(
+          response.extra[_rawResponseKey],
+          '取消自撤销请求响应',
+        ),
+        request: request,
+      );
+      if (status is! CloudSyncSelfRevocationCancelled) {
+        throw const FormatException('取消自撤销请求未返回取消终态');
+      }
+      return status;
+    });
+  }
+
+  @override
+  Future<CloudSyncUntrustedSelfRevocationRequestList>
+  listSelfRevocationRequests() {
+    return _guard(() async {
+      final response = await _client.getDeviceApi().listSelfRevocationRequests(
+        headers: _requireFullSessionHeaders(),
+        extra: _strictResponseExtra,
+      );
+      return CloudSyncUntrustedSelfRevocationRequestList.fromJson(
+        _strictResponseData(
+          response.extra[_rawResponseKey],
+          _selfRevocationRequestListDataKeys,
+          '待协调自撤销请求列表响应',
+        ),
+        now: _now(),
       );
     });
   }
@@ -1986,6 +2111,7 @@ final class _CloudSyncAccountRecoveryDataRekeyTransport
         baseUrl: owner.baseUrl,
         dio: owner._dio,
         client: owner._client,
+        now: owner._now,
         dataRekeyBearerOverride: recoveryToken.value,
       );
 
@@ -2549,6 +2675,15 @@ CloudSyncJsonMap _strictResponseData(
   final data = copyCloudSyncJsonMap(envelope['data']);
   _requireRawExactKeys(data, expectedDataKeys, '$context data');
   return data;
+}
+
+CloudSyncJsonMap _strictVariantResponseData(
+  Object? rawResponse,
+  String context,
+) {
+  final envelope = copyCloudSyncJsonMap(rawResponse);
+  _requireRawExactKeys(envelope, _strictResponseEnvelopeKeys, context);
+  return copyCloudSyncJsonMap(envelope['data']);
 }
 
 E2eeAccountRecoveryChallenge _parseAccountRecoveryChallenge(
@@ -3718,6 +3853,22 @@ const _deviceRotationResultDataKeys = <String>{
   'membershipManifestDigest',
   'committedAt',
 };
+const _selfRevocationRequestResultDataKeys = <String>{
+  'result',
+  'status',
+  'deviceId',
+  'mutationId',
+  'operationId',
+  'expectedGeneration',
+  'expectedKeyEpoch',
+  'expectedMembershipManifestDigest',
+  'intentDigest',
+  'intentSignature',
+  'requestedAt',
+  'expiresAt',
+  'receiptExpiresAt',
+};
+const _selfRevocationRequestListDataKeys = <String>{'requests'};
 const _registrationSessionDataKeys = <String>{
   'protocolVersion',
   'result',
