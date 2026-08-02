@@ -5522,6 +5522,140 @@ void main() {
   });
 
   group('E2EE chat sync adapter', () {
+    test('远程内联媒体规范化后可封装且本地路径仍失败关闭', () async {
+      const conversationId = 'remote-inline-media-conversation';
+      const messageId = 'remote-inline-media-message';
+      const messageKey = SyncEntityKey(
+        entityType: E2eeSyncChatRecordTypes.message,
+        entityId: messageId,
+      );
+      await insertConversation(id: conversationId);
+      await insertMessage(
+        id: messageId,
+        conversationId: conversationId,
+        groupId: 'remote-inline-media-group',
+        content:
+            '远程图片\n'
+            '[image: https://images.example/photo.png ]\n'
+            '[image:data:image/png;base64,QUJD]\n'
+            '[file: https://files.example/guide.pdf | guide.pdf | application/pdf ]',
+      );
+      final adapter = E2eeChatSyncAdapter(
+        repository: repository,
+        runPullBatch:
+            <T>({
+              required Future<T> Function() pull,
+              required bool Function() shouldRefresh,
+              required bool Function() mayHaveOrphanedAssets,
+            }) => pull(),
+        attachmentReadiness: const E2eeNoAttachmentMessageReadiness(),
+      );
+
+      final snapshot = await adapter.readSnapshot(messageKey);
+      expect(snapshot, isA<E2eeSyncValueSnapshot>());
+      final decoded = E2eeSyncPayloadCodec.decode(
+        entityKey: messageKey,
+        bytes: (snapshot as E2eeSyncValueSnapshot).payload,
+      );
+      expect(
+        decoded['content'],
+        '远程图片\n'
+        '[image:https://images.example/photo.png]\n'
+        '[image:data:image/png;base64,QUJD]\n'
+        'guide.pdf: https://files.example/guide.pdf',
+      );
+
+      const pulledConversationId = 'pulled-inline-media-conversation';
+      const pulledTurnId = 'pulled-inline-media-turn';
+      const pulledMessageId = 'pulled-inline-media-message';
+      final pulledChanges = <E2eeSyncPulledChange>[];
+      final pulledPayloads = <({SyncEntityKey key, Map<String, Object?> payload})>[
+        (
+          key: const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.conversation,
+            entityId: pulledConversationId,
+          ),
+          payload: _conversationPayload('Pulled inline media'),
+        ),
+        (
+          key: const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.turn,
+            entityId: pulledTurnId,
+          ),
+          payload: _turnPayload(pulledConversationId),
+        ),
+        (
+          key: const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.message,
+            entityId: pulledMessageId,
+          ),
+          payload: _messagePayload(
+            conversationId: pulledConversationId,
+            turnId: pulledTurnId,
+            groupId: 'pulled-inline-media-group',
+            content:
+                '[image: https://images.example/pulled.png ]\n'
+                '[file:https://files.example/pulled.pdf|pulled.pdf|application/pdf]',
+          ),
+        ),
+      ];
+      for (var index = 0; index < pulledPayloads.length; index++) {
+        final entry = pulledPayloads[index];
+        final wire = await createPullValueChange(
+          changeSeq: index + 1,
+          revision: 1,
+          operation: 800 + index,
+          entityKey: entry.key,
+          payload: entry.payload,
+        );
+        pulledChanges.add(await authenticatePulledValueChange(wire));
+      }
+      final checkpoint = await pullCommands.readOrCreate(
+        accountUserId: _syncAccountUserId,
+        now: DateTime.utc(2026, 8, 2),
+      );
+      await adapter.runPullAndPublish(
+        () => pullCommands.applyIncrementalPage(
+          expected: checkpoint,
+          nextCursor: 'pulled-inline-media-cursor',
+          lastChangeSeq: pulledChanges.length,
+          changes: pulledChanges,
+          applyBusiness: adapter.applyTransactional,
+          now: DateTime.utc(2026, 8, 2, 0, 1),
+        ),
+      );
+      expect(
+        (await repository.getMessage(pulledMessageId))?.content,
+        '[image:https://images.example/pulled.png]\n'
+        'pulled.pdf: https://files.example/pulled.pdf',
+      );
+
+      const localMessageId = 'local-inline-media-message';
+      const localConversationId = 'local-inline-media-conversation';
+      await insertConversation(id: localConversationId);
+      await insertMessage(
+        id: localMessageId,
+        conversationId: localConversationId,
+        groupId: 'local-inline-media-group',
+        content: '[image:C:\\private\\photo.png]',
+      );
+      await expectLater(
+        adapter.readSnapshot(
+          const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.message,
+            entityId: localMessageId,
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'sync_message_local_attachment_marker_rejected',
+          ),
+        ),
+      );
+    });
+
     test('逆序六实体按依赖提交且只在 checkpoint 提交后发布', () async {
       const conversationId = 'adapter-conversation';
       const turnId = 'adapter-turn';

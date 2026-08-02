@@ -3,6 +3,7 @@ import 'dart:async';
 import '../../database/chat_database_repository.dart';
 import '../../models/chat_message.dart';
 import '../../models/conversation.dart';
+import '../../utils/chat_message_attachment_utils.dart';
 import 'e2ee_account_record_state.dart';
 import 'e2ee_message_attachment_readiness.dart';
 import 'e2ee_sync_outbox.dart';
@@ -166,9 +167,7 @@ final class E2eeChatSyncAdapter {
     final message = await _repository.getMessage(entityKey.entityId);
     if (message == null) return const E2eeSyncTombstoneSnapshot();
     _requireTerminalMessage(message);
-    if (_containsLocalAttachmentMarker(message.content)) {
-      throw StateError('sync_message_local_attachment_marker_rejected');
-    }
+    final content = _normalizeInlineMediaForSync(message.content);
     if (message.attachments.any(
       (attachment) => !attachment.hasRemoteIdentity,
     )) {
@@ -180,7 +179,7 @@ final class E2eeChatSyncAdapter {
       'conversationId': message.conversationId,
       'turnId': message.turnId,
       'role': message.role,
-      'content': message.content,
+      'content': content,
       'attachments': <Object?>[
         for (var index = 0; index < message.attachments.length; index++)
           <String, Object?>{
@@ -343,10 +342,7 @@ final class E2eeChatSyncAdapter {
   Future<String> _applyMessageValue(E2eeSyncPulledValueChange change) async {
     final key = change.state.entityKey;
     final payload = change.payload;
-    final content = payload['content'] as String;
-    if (_containsLocalAttachmentMarker(content)) {
-      throw StateError('sync_message_local_attachment_marker_rejected');
-    }
+    final content = _normalizeInlineMediaForSync(payload['content'] as String);
     final attachments = await _attachmentReadiness.requireReadyForApply(change);
     final conversationId = payload['conversationId'] as String;
     final turnId = payload['turnId'] as String;
@@ -582,5 +578,80 @@ String? _nullableCanonicalUtc(DateTime? value) =>
 DateTime? _parseNullableDateTime(Object? value) =>
     value == null ? null : DateTime.parse(value as String);
 
-bool _containsLocalAttachmentMarker(String content) =>
-    content.contains('[image:') || content.contains('[file:');
+String _normalizeInlineMediaForSync(String raw) {
+  if (!raw.contains('[image:') && !raw.contains('[file:')) return raw;
+
+  final normalized = StringBuffer();
+  var cursor = 0;
+  while (cursor < raw.length) {
+    final imageIndex = raw.indexOf('[image:', cursor);
+    final fileIndex = raw.indexOf('[file:', cursor);
+    final markerIndex = switch ((imageIndex, fileIndex)) {
+      (-1, -1) => -1,
+      (-1, _) => fileIndex,
+      (_, -1) => imageIndex,
+      _ => imageIndex < fileIndex ? imageIndex : fileIndex,
+    };
+    if (markerIndex < 0) {
+      normalized.write(raw.substring(cursor));
+      break;
+    }
+    normalized.write(raw.substring(cursor, markerIndex));
+
+    final closingBracket = raw.indexOf(']', markerIndex);
+    if (closingBracket < 0) _rejectLocalAttachmentMarker();
+    if (markerIndex == imageIndex) {
+      final source = raw.substring(markerIndex + 7, closingBracket).trim();
+      final canonicalSource = _canonicalRemoteImageSource(source);
+      if (canonicalSource == null) _rejectLocalAttachmentMarker();
+      normalized.write('[image:$canonicalSource]');
+    } else {
+      final fields = raw
+          .substring(markerIndex + 6, closingBracket)
+          .split('|')
+          .map((value) => value.trim())
+          .toList(growable: false);
+      if (fields.length != 3 ||
+          !_validRemoteFileMetadata(fields[1], fields[2])) {
+        _rejectLocalAttachmentMarker();
+      }
+      final canonicalUrl = _canonicalRemoteHttpUrl(fields[0]);
+      if (canonicalUrl == null) _rejectLocalAttachmentMarker();
+      normalized.write('${fields[1]}: $canonicalUrl');
+    }
+    cursor = closingBracket + 1;
+  }
+  return normalized.toString();
+}
+
+String? _canonicalRemoteImageSource(String source) {
+  if (!isRemoteInlineImageSource(source) || source.contains('\u0000')) {
+    return null;
+  }
+  if (source.startsWith('data:image/')) return source;
+  return _canonicalRemoteHttpUrl(source);
+}
+
+String? _canonicalRemoteHttpUrl(String raw) {
+  final value = raw.trim();
+  if (value.contains('\u0000')) return null;
+  final uri = Uri.tryParse(value);
+  if (uri == null ||
+      (uri.scheme != 'http' && uri.scheme != 'https') ||
+      uri.host.isEmpty) {
+    return null;
+  }
+  return uri.toString();
+}
+
+bool _validRemoteFileMetadata(String displayName, String mediaType) =>
+    displayName.isNotEmpty &&
+    !displayName.contains('\u0000') &&
+    !displayName.contains('/') &&
+    !displayName.contains('\\') &&
+    !mediaType.contains('\u0000') &&
+    mediaType.indexOf('/') > 0 &&
+    !mediaType.endsWith('/');
+
+Never _rejectLocalAttachmentMarker() =>
+    throw StateError('sync_message_local_attachment_marker_rejected');
