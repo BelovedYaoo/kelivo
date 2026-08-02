@@ -14,6 +14,7 @@ import '../services/sync/e2ee_account_record_cipher.dart';
 import '../services/sync/e2ee_account_record_state.dart';
 import '../services/sync/e2ee_account_trust_manifest.dart';
 import '../services/sync/e2ee_attachment_manifest.dart';
+import '../services/sync/e2ee_config_asset_types.dart';
 import '../services/sync/e2ee_sync_pull_types.dart';
 import '../services/sync/sync_codec.dart';
 import 'app_database.dart';
@@ -1118,6 +1119,7 @@ class ChatDatabaseRepository {
       'message_rows',
       'asset_rows',
       'message_asset_rows',
+      'config_asset_rows',
       'asset_gc_rows',
       'gc_audit_rows',
       'asset_gc_quarantine_rows',
@@ -1222,6 +1224,20 @@ class ChatDatabaseRepository {
       'message_asset_rows': [
         'revision_id',
         'ordinal',
+        'asset_id',
+        'kind',
+        'display_name',
+        'media_type',
+        'attachment_id',
+        'upload_id',
+        'chunk_key_epoch',
+        'manifest_key_epoch',
+        'manifest_revision',
+      ],
+      'config_asset_rows': [
+        'entity_type',
+        'entity_id',
+        'slot',
         'asset_id',
         'kind',
         'display_name',
@@ -1380,6 +1396,9 @@ class ChatDatabaseRepository {
         'local_asset_id',
         'target_revision_id',
         'target_ordinal',
+        'target_config_entity_type',
+        'target_config_entity_id',
+        'target_config_slot',
         'source_path',
         'chunk_key_epoch',
         'manifest_key_epoch',
@@ -1471,6 +1490,7 @@ class ChatDatabaseRepository {
         'revision_id->message_rows.id:CASCADE',
         'asset_id->asset_rows.id:CASCADE',
       },
+      'config_asset_rows': {'asset_id->asset_rows.id:CASCADE'},
       'asset_gc_rows': {'asset_id->asset_rows.id:CASCADE'},
       'asset_reference_dirty_rows': {'revision_id->message_rows.id:CASCADE'},
       'turn_rows': {'conversation_id->conversation_rows.id:CASCADE'},
@@ -1499,6 +1519,9 @@ class ChatDatabaseRepository {
       'e2ee_attachment_upload_rows': {
         'target_revision_id->message_asset_rows.revision_id:CASCADE',
         'target_ordinal->message_asset_rows.ordinal:CASCADE',
+        'target_config_entity_type->config_asset_rows.entity_type:CASCADE',
+        'target_config_entity_id->config_asset_rows.entity_id:CASCADE',
+        'target_config_slot->config_asset_rows.slot:CASCADE',
       },
     };
     for (final entry in expectedForeignKeys.entries) {
@@ -1547,30 +1570,47 @@ class ChatDatabaseRepository {
     final uploadTargetForeignKeys = database.select(
       'PRAGMA foreign_key_list(e2ee_attachment_upload_rows);',
     );
-    final uploadTargetForeignKeyIds = uploadTargetForeignKeys
-        .map((row) => row['id'])
-        .whereType<int>()
-        .toSet();
-    final uploadTargetForeignKeySequences = uploadTargetForeignKeys
-        .map((row) => row['seq'])
-        .whereType<int>()
-        .toSet();
-    final uploadTargetForeignKeyOrder = <int, String>{
-      for (final row in uploadTargetForeignKeys)
-        if (row['seq'] case final int sequence)
-          sequence:
-              '${row['from']}->${row['table']}.${row['to']}:'
-              '${row['on_delete']}',
+    final uploadTargetForeignKeyGroups =
+        <int, List<({int sequence, String relation})>>{};
+    for (final row in uploadTargetForeignKeys) {
+      final id = row['id'];
+      final sequence = row['seq'];
+      if (id is! int || sequence is! int) {
+        throw StateError('foreign_key_shape:e2ee_attachment_upload_rows');
+      }
+      (uploadTargetForeignKeyGroups[id] ??=
+              <({int sequence, String relation})>[])
+          .add((
+            sequence: sequence,
+            relation:
+                '${row['from']}->${row['table']}.${row['to']}:'
+                '${row['on_delete']}',
+          ));
+    }
+    final uploadTargetForeignKeyShapes = <String>{};
+    for (final group in uploadTargetForeignKeyGroups.values) {
+      group.sort((left, right) => left.sequence.compareTo(right.sequence));
+      if (group.indexed.any((entry) => entry.$1 != entry.$2.sequence)) {
+        throw StateError('foreign_key_shape:e2ee_attachment_upload_rows');
+      }
+      uploadTargetForeignKeyShapes.add(
+        group.map((entry) => entry.relation).join('\u0000'),
+      );
+    }
+    // 两种目标各自使用一个复合外键，上传恢复无需猜测写回位置。
+    const expectedUploadTargetForeignKeyShapes = <String>{
+      'target_revision_id->message_asset_rows.revision_id:CASCADE\u0000'
+          'target_ordinal->message_asset_rows.ordinal:CASCADE',
+      'target_config_entity_type->config_asset_rows.entity_type:CASCADE\u0000'
+          'target_config_entity_id->config_asset_rows.entity_id:CASCADE\u0000'
+          'target_config_slot->config_asset_rows.slot:CASCADE',
     };
-    // 两列必须共同绑定唯一消息附件引用，避免上传恢复时猜测写回目标。
-    if (uploadTargetForeignKeys.length != 2 ||
-        uploadTargetForeignKeyIds.length != 1 ||
-        uploadTargetForeignKeySequences.length != 2 ||
-        !uploadTargetForeignKeySequences.containsAll(const {0, 1}) ||
-        uploadTargetForeignKeyOrder[0] !=
-            'target_revision_id->message_asset_rows.revision_id:CASCADE' ||
-        uploadTargetForeignKeyOrder[1] !=
-            'target_ordinal->message_asset_rows.ordinal:CASCADE') {
+    if (uploadTargetForeignKeys.length != 5 ||
+        uploadTargetForeignKeyGroups.length != 2 ||
+        uploadTargetForeignKeyShapes.length != 2 ||
+        !uploadTargetForeignKeyShapes.containsAll(
+          expectedUploadTargetForeignKeyShapes,
+        )) {
       throw StateError('foreign_key_shape:e2ee_attachment_upload_rows');
     }
   }
@@ -1671,6 +1711,20 @@ class ChatDatabaseRepository {
             'manifest_key_epoch': (type: 'INTEGER', notNull: 0, primaryKey: 0),
             'manifest_revision': (type: 'INTEGER', notNull: 0, primaryKey: 0),
           },
+          'config_asset_rows': {
+            'entity_type': (type: 'TEXT', notNull: 1, primaryKey: 1),
+            'entity_id': (type: 'TEXT', notNull: 1, primaryKey: 2),
+            'slot': (type: 'TEXT', notNull: 1, primaryKey: 3),
+            'asset_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'kind': (type: 'TEXT', notNull: 1, primaryKey: 0),
+            'display_name': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'media_type': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'attachment_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'upload_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'chunk_key_epoch': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'manifest_key_epoch': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'manifest_revision': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+          },
           'asset_gc_rows': {
             'asset_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
             'not_before': (type: 'INTEGER', notNull: 1, primaryKey: 0),
@@ -1702,8 +1756,19 @@ class ChatDatabaseRepository {
           'e2ee_attachment_upload_rows': {
             'attachment_id': (type: 'TEXT', notNull: 1, primaryKey: 1),
             'local_asset_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
-            'target_revision_id': (type: 'TEXT', notNull: 1, primaryKey: 0),
-            'target_ordinal': (type: 'INTEGER', notNull: 1, primaryKey: 0),
+            'target_revision_id': (type: 'TEXT', notNull: 0, primaryKey: 0),
+            'target_ordinal': (type: 'INTEGER', notNull: 0, primaryKey: 0),
+            'target_config_entity_type': (
+              type: 'TEXT',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'target_config_entity_id': (
+              type: 'TEXT',
+              notNull: 0,
+              primaryKey: 0,
+            ),
+            'target_config_slot': (type: 'TEXT', notNull: 0, primaryKey: 0),
             'source_path': (type: 'TEXT', notNull: 1, primaryKey: 0),
             'chunk_key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
             'manifest_key_epoch': (type: 'INTEGER', notNull: 1, primaryKey: 0),
@@ -1848,6 +1913,7 @@ class ChatDatabaseRepository {
         'revision_id\u0000attachment_id',
         'revision_id\u0000upload_id',
       },
+      'config_asset_rows': {'attachment_id', 'upload_id'},
       'asset_gc_rows': {},
       'gc_audit_rows': {},
       'asset_gc_quarantine_rows': {
@@ -1858,6 +1924,8 @@ class ChatDatabaseRepository {
       'e2ee_attachment_upload_rows': {
         'upload_id',
         'target_revision_id\u0000target_ordinal',
+        'target_config_entity_type\u0000target_config_entity_id\u0000'
+            'target_config_slot',
       },
       'e2ee_attachment_download_rows': {'upload_id'},
     };
@@ -1924,6 +1992,23 @@ class ChatDatabaseRepository {
           'manifest_revision',
           'revision_id',
           'ordinal',
+        ],
+      ),
+      'idx_config_assets_asset': (
+        table: 'config_asset_rows',
+        columns: ['asset_id', 'entity_type', 'entity_id', 'slot'],
+      ),
+      'idx_config_assets_remote_identity': (
+        table: 'config_asset_rows',
+        columns: [
+          'attachment_id',
+          'upload_id',
+          'chunk_key_epoch',
+          'manifest_key_epoch',
+          'manifest_revision',
+          'entity_type',
+          'entity_id',
+          'slot',
         ],
       ),
       'idx_asset_gc_quarantine_claim': (
@@ -2029,6 +2114,24 @@ class ChatDatabaseRepository {
             'AND manifest_key_epoch IS NOT NULL '
             'AND manifest_revision IS NOT NULL))',
       ],
+      'config_asset_rows': [
+        "CHECK (typeof(entity_type) = 'text' "
+            "AND entity_type IN ('provider', 'assistant', 'user-preference'))",
+        "CHECK ((entity_type = 'assistant' "
+            "AND slot IN ('avatar', 'background')) OR "
+            "(entity_type = 'provider' AND slot = 'avatar') OR "
+            "(entity_type = 'user-preference' "
+            "AND slot IN ('avatar', 'app-font', 'code-font')))",
+        "CHECK ((slot IN ('avatar', 'background') AND kind = 'image') OR "
+            "(slot IN ('app-font', 'code-font') AND kind = 'file'))",
+        'CHECK ((attachment_id IS NULL AND upload_id IS NULL '
+            'AND chunk_key_epoch IS NULL AND manifest_key_epoch IS NULL '
+            'AND manifest_revision IS NULL) OR '
+            '(attachment_id IS NOT NULL AND upload_id IS NOT NULL '
+            'AND chunk_key_epoch IS NOT NULL '
+            'AND manifest_key_epoch IS NOT NULL '
+            'AND manifest_revision IS NOT NULL))',
+      ],
       'asset_gc_rows': [
         "CHECK (typeof(attempts) = 'integer' "
             'AND attempts BETWEEN 0 AND 9223372036854775807)',
@@ -2045,8 +2148,19 @@ class ChatDatabaseRepository {
         "CHECK (typeof(expires_at) = 'integer' AND expires_at >= 0)",
       ],
       'e2ee_attachment_upload_rows': [
-        "CHECK (typeof(target_ordinal) = 'integer' "
-            'AND target_ordinal BETWEEN 0 AND 31)',
+        'CHECK (target_ordinal IS NULL OR '
+            "(typeof(target_ordinal) = 'integer' "
+            'AND target_ordinal BETWEEN 0 AND 31))',
+        'CHECK ((target_revision_id IS NOT NULL '
+            'AND target_ordinal IS NOT NULL '
+            'AND target_config_entity_type IS NULL '
+            'AND target_config_entity_id IS NULL '
+            'AND target_config_slot IS NULL) OR '
+            '(target_revision_id IS NULL '
+            'AND target_ordinal IS NULL '
+            'AND target_config_entity_type IS NOT NULL '
+            'AND target_config_entity_id IS NOT NULL '
+            'AND target_config_slot IS NOT NULL))',
         "CHECK (typeof(manifest_key_epoch) = 'integer' "
             'AND manifest_key_epoch = chunk_key_epoch)',
         "CHECK (typeof(manifest_revision) = 'integer' "

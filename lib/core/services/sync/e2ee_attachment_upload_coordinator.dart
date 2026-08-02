@@ -69,8 +69,7 @@ final class E2eeAttachmentUploadCoordinator {
 
   Future<E2eeAttachmentUploadDraft> prepareDraft({
     required String localAssetId,
-    required String targetRevisionId,
-    required int targetOrdinal,
+    required E2eeAttachmentUploadTarget target,
     required String sourcePath,
     required E2eeAttachmentKind kind,
     required int totalPlaintextBytes,
@@ -89,8 +88,7 @@ final class E2eeAttachmentUploadCoordinator {
       return E2eeAttachmentUploadDraft(
         descriptor: descriptor,
         localAssetId: localAssetId,
-        targetRevisionId: targetRevisionId,
-        targetOrdinal: targetOrdinal,
+        target: target,
         sourcePath: sourcePath,
         createMutationId: _nextUuid('createMutationId'),
         commitMutationId: _nextUuid('commitMutationId'),

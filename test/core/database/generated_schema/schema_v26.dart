@@ -629,6 +629,155 @@ class MessageAssetRows extends Table with TableInfo {
   ];
 }
 
+class ConfigAssetRows extends Table with TableInfo {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  ConfigAssetRows(this.attachedDatabase, [this._alias]);
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> slot = GeneratedColumn<String>(
+    'slot',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> assetId = GeneratedColumn<String>(
+    'asset_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES asset_rows (id) ON DELETE CASCADE',
+    ),
+  );
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> mediaType = GeneratedColumn<String>(
+    'media_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> attachmentId = GeneratedColumn<String>(
+    'attachment_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> uploadId = GeneratedColumn<String>(
+    'upload_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> chunkKeyEpoch = GeneratedColumn<int>(
+    'chunk_key_epoch',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> manifestKeyEpoch = GeneratedColumn<int>(
+    'manifest_key_epoch',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<int> manifestRevision = GeneratedColumn<int>(
+    'manifest_revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    entityType,
+    entityId,
+    slot,
+    assetId,
+    kind,
+    displayName,
+    mediaType,
+    attachmentId,
+    uploadId,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'config_asset_rows';
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entityType, entityId, slot};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {attachmentId},
+    {uploadId},
+  ];
+  @override
+  Never map(Map<String, dynamic> data, {String? tablePrefix}) {
+    throw UnsupportedError('TableInfo.map in schema verification code');
+  }
+
+  @override
+  ConfigAssetRows createAlias(String alias) {
+    return ConfigAssetRows(attachedDatabase, alias);
+  }
+
+  @override
+  List<String> get customConstraints => const [
+    'CHECK (typeof(entity_type) = \'text\' AND entity_type IN (\'provider\', \'assistant\', \'user-preference\'))',
+    'CHECK (typeof(entity_id) = \'text\' AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(entity_id, char(0)) = 0)',
+    'CHECK (typeof(slot) = \'text\' AND slot IN (\'avatar\', \'background\', \'app-font\', \'code-font\'))',
+    'CHECK ((entity_type = \'assistant\' AND slot IN (\'avatar\', \'background\')) OR (entity_type = \'provider\' AND slot = \'avatar\') OR (entity_type = \'user-preference\' AND slot IN (\'avatar\', \'app-font\', \'code-font\')))',
+    'CHECK (typeof(kind) = \'text\' AND kind IN (\'image\', \'file\'))',
+    'CHECK ((slot IN (\'avatar\', \'background\') AND kind = \'image\') OR (slot IN (\'app-font\', \'code-font\') AND kind = \'file\'))',
+    'CHECK (display_name IS NULL OR (typeof(display_name) = \'text\' AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024 AND instr(display_name, char(0)) = 0 AND instr(display_name, \'/\') = 0 AND instr(display_name, char(92)) = 0))',
+    'CHECK (media_type IS NULL OR (typeof(media_type) = \'text\' AND length(CAST(media_type AS BLOB)) BETWEEN 3 AND 255 AND instr(media_type, \'/\') BETWEEN 2 AND length(media_type) - 1))',
+    'CHECK (kind != \'file\' OR (display_name IS NOT NULL AND media_type IS NOT NULL))',
+    'CHECK (attachment_id IS NULL OR (typeof(attachment_id) = \'text\' AND length(attachment_id) = 36 AND attachment_id = lower(attachment_id) AND attachment_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(attachment_id, 9, 1) = \'-\' AND substr(attachment_id, 14, 1) = \'-\' AND substr(attachment_id, 15, 1) = \'4\' AND substr(attachment_id, 19, 1) = \'-\' AND substr(attachment_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(attachment_id, 24, 1) = \'-\'))',
+    'CHECK (upload_id IS NULL OR (typeof(upload_id) = \'text\' AND length(upload_id) = 36 AND upload_id = lower(upload_id) AND upload_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(upload_id, 9, 1) = \'-\' AND substr(upload_id, 14, 1) = \'-\' AND substr(upload_id, 15, 1) = \'4\' AND substr(upload_id, 19, 1) = \'-\' AND substr(upload_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(upload_id, 24, 1) = \'-\'))',
+    'CHECK (chunk_key_epoch IS NULL OR (typeof(chunk_key_epoch) = \'integer\' AND chunk_key_epoch BETWEEN 1 AND 4294967295))',
+    'CHECK (manifest_key_epoch IS NULL OR (typeof(manifest_key_epoch) = \'integer\' AND manifest_key_epoch BETWEEN chunk_key_epoch AND 4294967295))',
+    'CHECK (manifest_revision IS NULL OR (typeof(manifest_revision) = \'integer\' AND manifest_revision BETWEEN 1 AND 4294967295 AND manifest_key_epoch - chunk_key_epoch = manifest_revision - 1))',
+    'CHECK ((attachment_id IS NULL AND upload_id IS NULL AND chunk_key_epoch IS NULL AND manifest_key_epoch IS NULL AND manifest_revision IS NULL) OR (attachment_id IS NOT NULL AND upload_id IS NOT NULL AND chunk_key_epoch IS NOT NULL AND manifest_key_epoch IS NOT NULL AND manifest_revision IS NOT NULL))',
+  ];
+}
+
 class AssetGcRows extends Table with TableInfo {
   @override
   final GeneratedDatabase attachedDatabase;
@@ -3077,16 +3226,39 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
   late final GeneratedColumn<String> targetRevisionId = GeneratedColumn<String>(
     'target_revision_id',
     aliasedName,
-    false,
+    true,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
   );
   late final GeneratedColumn<int> targetOrdinal = GeneratedColumn<int>(
     'target_ordinal',
     aliasedName,
-    false,
+    true,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+  );
+  late final GeneratedColumn<String> targetConfigEntityType =
+      GeneratedColumn<String>(
+        'target_config_entity_type',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  late final GeneratedColumn<String> targetConfigEntityId =
+      GeneratedColumn<String>(
+        'target_config_entity_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  late final GeneratedColumn<String> targetConfigSlot = GeneratedColumn<String>(
+    'target_config_slot',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
   );
   late final GeneratedColumn<String> sourcePath = GeneratedColumn<String>(
     'source_path',
@@ -3342,6 +3514,9 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
     localAssetId,
     targetRevisionId,
     targetOrdinal,
+    targetConfigEntityType,
+    targetConfigEntityId,
+    targetConfigSlot,
     sourcePath,
     chunkKeyEpoch,
     manifestKeyEpoch,
@@ -3388,6 +3563,7 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
   List<Set<GeneratedColumn>> get uniqueKeys => [
     {uploadId},
     {targetRevisionId, targetOrdinal},
+    {targetConfigEntityType, targetConfigEntityId, targetConfigSlot},
   ];
   @override
   Never map(Map<String, dynamic> data, {String? tablePrefix}) {
@@ -3402,10 +3578,15 @@ class E2eeAttachmentUploadRows extends Table with TableInfo {
   @override
   List<String> get customConstraints => const [
     'FOREIGN KEY (target_revision_id, target_ordinal) REFERENCES message_asset_rows (revision_id, ordinal) ON DELETE CASCADE',
+    'FOREIGN KEY (target_config_entity_type, target_config_entity_id, target_config_slot) REFERENCES config_asset_rows (entity_type, entity_id, slot) ON DELETE CASCADE',
     'CHECK (typeof(attachment_id) = \'text\' AND length(attachment_id) = 36 AND attachment_id = lower(attachment_id) AND attachment_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(attachment_id, 9, 1) = \'-\' AND substr(attachment_id, 14, 1) = \'-\' AND substr(attachment_id, 15, 1) = \'4\' AND substr(attachment_id, 19, 1) = \'-\' AND substr(attachment_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(attachment_id, 24, 1) = \'-\' AND substr(attachment_id, 1, 8) NOT GLOB \'*-*\' AND substr(attachment_id, 10, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 15, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 20, 4) NOT GLOB \'*-*\' AND substr(attachment_id, 25, 12) NOT GLOB \'*-*\')',
     'CHECK (typeof(local_asset_id) = \'text\' AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(local_asset_id, char(0)) = 0)',
-    'CHECK (typeof(target_revision_id) = \'text\' AND length(CAST(target_revision_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(target_revision_id, char(0)) = 0)',
-    'CHECK (typeof(target_ordinal) = \'integer\' AND target_ordinal BETWEEN 0 AND 31)',
+    'CHECK (target_revision_id IS NULL OR (typeof(target_revision_id) = \'text\' AND length(CAST(target_revision_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(target_revision_id, char(0)) = 0))',
+    'CHECK (target_ordinal IS NULL OR (typeof(target_ordinal) = \'integer\' AND target_ordinal BETWEEN 0 AND 31))',
+    'CHECK (target_config_entity_type IS NULL OR (typeof(target_config_entity_type) = \'text\' AND target_config_entity_type IN (\'provider\', \'assistant\', \'user-preference\')))',
+    'CHECK (target_config_entity_id IS NULL OR (typeof(target_config_entity_id) = \'text\' AND length(CAST(target_config_entity_id AS BLOB)) BETWEEN 1 AND 1024 AND instr(target_config_entity_id, char(0)) = 0))',
+    'CHECK (target_config_slot IS NULL OR (typeof(target_config_slot) = \'text\' AND target_config_slot IN (\'avatar\', \'background\', \'app-font\', \'code-font\')))',
+    'CHECK ((target_revision_id IS NOT NULL AND target_ordinal IS NOT NULL AND target_config_entity_type IS NULL AND target_config_entity_id IS NULL AND target_config_slot IS NULL) OR (target_revision_id IS NULL AND target_ordinal IS NULL AND target_config_entity_type IS NOT NULL AND target_config_entity_id IS NOT NULL AND target_config_slot IS NOT NULL))',
     'CHECK (typeof(source_path) = \'text\' AND length(CAST(source_path AS BLOB)) BETWEEN 1 AND 32768 AND instr(source_path, char(0)) = 0)',
     'CHECK (typeof(chunk_key_epoch) = \'integer\' AND chunk_key_epoch BETWEEN 1 AND 4294967295)',
     'CHECK (typeof(manifest_key_epoch) = \'integer\' AND manifest_key_epoch = chunk_key_epoch)',
@@ -3788,12 +3969,13 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
   ];
 }
 
-class DatabaseAtV25 extends GeneratedDatabase {
-  DatabaseAtV25(QueryExecutor e) : super(e);
+class DatabaseAtV26 extends GeneratedDatabase {
+  DatabaseAtV26(QueryExecutor e) : super(e);
   late final ConversationRows conversationRows = ConversationRows(this);
   late final MessageRows messageRows = MessageRows(this);
   late final AssetRows assetRows = AssetRows(this);
   late final MessageAssetRows messageAssetRows = MessageAssetRows(this);
+  late final ConfigAssetRows configAssetRows = ConfigAssetRows(this);
   late final AssetGcRows assetGcRows = AssetGcRows(this);
   late final GcAuditRows gcAuditRows = GcAuditRows(this);
   late final AssetGcQuarantineRows assetGcQuarantineRows =
@@ -3874,6 +4056,14 @@ class DatabaseAtV25 extends GeneratedDatabase {
     'idx_message_assets_remote_identity',
     'CREATE INDEX idx_message_assets_remote_identity ON message_asset_rows (attachment_id, upload_id, chunk_key_epoch, manifest_key_epoch, manifest_revision, revision_id, ordinal)',
   );
+  late final Index idxConfigAssetsAsset = Index(
+    'idx_config_assets_asset',
+    'CREATE INDEX idx_config_assets_asset ON config_asset_rows (asset_id, entity_type, entity_id, slot)',
+  );
+  late final Index idxConfigAssetsRemoteIdentity = Index(
+    'idx_config_assets_remote_identity',
+    'CREATE INDEX idx_config_assets_remote_identity ON config_asset_rows (attachment_id, upload_id, chunk_key_epoch, manifest_key_epoch, manifest_revision, entity_type, entity_id, slot)',
+  );
   late final Index idxAssetGcQuarantineClaim = Index(
     'idx_asset_gc_quarantine_claim',
     'CREATE INDEX idx_asset_gc_quarantine_claim ON asset_gc_quarantine_rows (asset_id, generation, state)',
@@ -3947,6 +4137,7 @@ class DatabaseAtV25 extends GeneratedDatabase {
     messageRows,
     assetRows,
     messageAssetRows,
+    configAssetRows,
     assetGcRows,
     gcAuditRows,
     assetGcQuarantineRows,
@@ -3983,6 +4174,8 @@ class DatabaseAtV25 extends GeneratedDatabase {
     idxMessagesTurn,
     idxMessageAssetsAsset,
     idxMessageAssetsRemoteIdentity,
+    idxConfigAssetsAsset,
+    idxConfigAssetsRemoteIdentity,
     idxAssetGcQuarantineClaim,
     idxTurnsConversationCreated,
     idxMessagePartsRevisionOrdinal,
@@ -4001,5 +4194,5 @@ class DatabaseAtV25 extends GeneratedDatabase {
     idxE2eeAttachmentDownloadLocalAsset,
   ];
   @override
-  int get schemaVersion => 25;
+  int get schemaVersion => 26;
 }

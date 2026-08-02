@@ -293,6 +293,115 @@ class MessageAssetRows extends Table {
   ];
 }
 
+@TableIndex(
+  name: 'idx_config_assets_asset',
+  columns: {#assetId, #entityType, #entityId, #slot},
+)
+@TableIndex(
+  name: 'idx_config_assets_remote_identity',
+  columns: {
+    #attachmentId,
+    #uploadId,
+    #chunkKeyEpoch,
+    #manifestKeyEpoch,
+    #manifestRevision,
+    #entityType,
+    #entityId,
+    #slot,
+  },
+)
+class ConfigAssetRows extends Table {
+  TextColumn get entityType => text()();
+  TextColumn get entityId => text()();
+  TextColumn get slot => text()();
+  TextColumn get assetId =>
+      text().references(AssetRows, #id, onDelete: KeyAction.cascade)();
+  TextColumn get kind => text()();
+  TextColumn get displayName => text().nullable()();
+  TextColumn get mediaType => text().nullable()();
+  TextColumn get attachmentId => text().nullable()();
+  TextColumn get uploadId => text().nullable()();
+  IntColumn get chunkKeyEpoch => integer().nullable()();
+  IntColumn get manifestKeyEpoch => integer().nullable()();
+  IntColumn get manifestRevision => integer().nullable()();
+
+  @override
+  Set<Column<Object>> get primaryKey => {entityType, entityId, slot};
+
+  @override
+  List<Set<Column<Object>>> get uniqueKeys => [
+    {attachmentId},
+    {uploadId},
+  ];
+
+  @override
+  List<String> get customConstraints => [
+    "CHECK (typeof(entity_type) = 'text' "
+        "AND entity_type IN ('provider', 'assistant', 'user-preference'))",
+    "CHECK (typeof(entity_id) = 'text' "
+        'AND length(CAST(entity_id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(entity_id, char(0)) = 0)',
+    "CHECK (typeof(slot) = 'text' "
+        "AND slot IN ('avatar', 'background', 'app-font', 'code-font'))",
+    "CHECK ((entity_type = 'assistant' "
+        "AND slot IN ('avatar', 'background')) OR "
+        "(entity_type = 'provider' AND slot = 'avatar') OR "
+        "(entity_type = 'user-preference' "
+        "AND slot IN ('avatar', 'app-font', 'code-font')))",
+    "CHECK (typeof(kind) = 'text' AND kind IN ('image', 'file'))",
+    "CHECK ((slot IN ('avatar', 'background') AND kind = 'image') OR "
+        "(slot IN ('app-font', 'code-font') AND kind = 'file'))",
+    'CHECK (display_name IS NULL OR '
+        "(typeof(display_name) = 'text' "
+        'AND length(CAST(display_name AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(display_name, char(0)) = 0 '
+        "AND instr(display_name, '/') = 0 "
+        'AND instr(display_name, char(92)) = 0))',
+    'CHECK (media_type IS NULL OR '
+        "(typeof(media_type) = 'text' "
+        'AND length(CAST(media_type AS BLOB)) BETWEEN 3 AND 255 '
+        "AND instr(media_type, '/') BETWEEN 2 AND length(media_type) - 1))",
+    "CHECK (kind != 'file' OR "
+        '(display_name IS NOT NULL AND media_type IS NOT NULL))',
+    'CHECK (attachment_id IS NULL OR '
+        "(typeof(attachment_id) = 'text' AND length(attachment_id) = 36 "
+        'AND attachment_id = lower(attachment_id) '
+        "AND attachment_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(attachment_id, 9, 1) = '-' "
+        "AND substr(attachment_id, 14, 1) = '-' "
+        "AND substr(attachment_id, 15, 1) = '4' "
+        "AND substr(attachment_id, 19, 1) = '-' "
+        "AND substr(attachment_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(attachment_id, 24, 1) = '-'))",
+    'CHECK (upload_id IS NULL OR '
+        "(typeof(upload_id) = 'text' AND length(upload_id) = 36 "
+        'AND upload_id = lower(upload_id) '
+        "AND upload_id NOT GLOB '*[^0-9a-f-]*' "
+        "AND substr(upload_id, 9, 1) = '-' "
+        "AND substr(upload_id, 14, 1) = '-' "
+        "AND substr(upload_id, 15, 1) = '4' "
+        "AND substr(upload_id, 19, 1) = '-' "
+        "AND substr(upload_id, 20, 1) IN ('8', '9', 'a', 'b') "
+        "AND substr(upload_id, 24, 1) = '-'))",
+    'CHECK (chunk_key_epoch IS NULL OR '
+        "(typeof(chunk_key_epoch) = 'integer' "
+        'AND chunk_key_epoch BETWEEN 1 AND 4294967295))',
+    'CHECK (manifest_key_epoch IS NULL OR '
+        "(typeof(manifest_key_epoch) = 'integer' "
+        'AND manifest_key_epoch BETWEEN chunk_key_epoch AND 4294967295))',
+    'CHECK (manifest_revision IS NULL OR '
+        "(typeof(manifest_revision) = 'integer' "
+        'AND manifest_revision BETWEEN 1 AND 4294967295 '
+        'AND manifest_key_epoch - chunk_key_epoch = manifest_revision - 1))',
+    'CHECK ((attachment_id IS NULL AND upload_id IS NULL '
+        'AND chunk_key_epoch IS NULL AND manifest_key_epoch IS NULL '
+        'AND manifest_revision IS NULL) OR '
+        '(attachment_id IS NOT NULL AND upload_id IS NOT NULL '
+        'AND chunk_key_epoch IS NOT NULL AND manifest_key_epoch IS NOT NULL '
+        'AND manifest_revision IS NOT NULL))',
+  ];
+}
+
 class AssetGcRows extends Table {
   TextColumn get assetId =>
       text().references(AssetRows, #id, onDelete: KeyAction.cascade)();
@@ -1552,8 +1661,11 @@ class E2eeConfigEntryRows extends Table {
 class E2eeAttachmentUploadRows extends Table {
   TextColumn get attachmentId => text()();
   TextColumn get localAssetId => text()();
-  TextColumn get targetRevisionId => text()();
-  IntColumn get targetOrdinal => integer()();
+  TextColumn get targetRevisionId => text().nullable()();
+  IntColumn get targetOrdinal => integer().nullable()();
+  TextColumn get targetConfigEntityType => text().nullable()();
+  TextColumn get targetConfigEntityId => text().nullable()();
+  TextColumn get targetConfigSlot => text().nullable()();
   TextColumn get sourcePath => text()();
   IntColumn get chunkKeyEpoch => integer()();
   IntColumn get manifestKeyEpoch => integer()();
@@ -1600,12 +1712,17 @@ class E2eeAttachmentUploadRows extends Table {
   List<Set<Column<Object>>> get uniqueKeys => [
     {uploadId},
     {targetRevisionId, targetOrdinal},
+    {targetConfigEntityType, targetConfigEntityId, targetConfigSlot},
   ];
 
   @override
   List<String> get customConstraints => [
     'FOREIGN KEY (target_revision_id, target_ordinal) '
         'REFERENCES message_asset_rows (revision_id, ordinal) '
+        'ON DELETE CASCADE',
+    'FOREIGN KEY ('
+        'target_config_entity_type, target_config_entity_id, target_config_slot'
+        ') REFERENCES config_asset_rows (entity_type, entity_id, slot) '
         'ON DELETE CASCADE',
     // Drift 只验证字面 SQL；以下尺寸上限必须与安全核心 ABI v8 附件常量同步。
     "CHECK (typeof(attachment_id) = 'text' AND length(attachment_id) = 36 "
@@ -1625,11 +1742,35 @@ class E2eeAttachmentUploadRows extends Table {
     "CHECK (typeof(local_asset_id) = 'text' "
         'AND length(CAST(local_asset_id AS BLOB)) BETWEEN 1 AND 1024 '
         'AND instr(local_asset_id, char(0)) = 0)',
-    "CHECK (typeof(target_revision_id) = 'text' "
+    'CHECK (target_revision_id IS NULL OR '
+        "(typeof(target_revision_id) = 'text' "
         'AND length(CAST(target_revision_id AS BLOB)) BETWEEN 1 AND 1024 '
-        'AND instr(target_revision_id, char(0)) = 0)',
-    "CHECK (typeof(target_ordinal) = 'integer' "
-        'AND target_ordinal BETWEEN 0 AND 31)',
+        'AND instr(target_revision_id, char(0)) = 0))',
+    'CHECK (target_ordinal IS NULL OR '
+        "(typeof(target_ordinal) = 'integer' "
+        'AND target_ordinal BETWEEN 0 AND 31))',
+    'CHECK (target_config_entity_type IS NULL OR '
+        "(typeof(target_config_entity_type) = 'text' "
+        "AND target_config_entity_type IN "
+        "('provider', 'assistant', 'user-preference')))",
+    'CHECK (target_config_entity_id IS NULL OR '
+        "(typeof(target_config_entity_id) = 'text' "
+        'AND length(CAST(target_config_entity_id AS BLOB)) BETWEEN 1 AND 1024 '
+        'AND instr(target_config_entity_id, char(0)) = 0))',
+    'CHECK (target_config_slot IS NULL OR '
+        "(typeof(target_config_slot) = 'text' "
+        "AND target_config_slot IN "
+        "('avatar', 'background', 'app-font', 'code-font')))",
+    'CHECK ((target_revision_id IS NOT NULL '
+        'AND target_ordinal IS NOT NULL '
+        'AND target_config_entity_type IS NULL '
+        'AND target_config_entity_id IS NULL '
+        'AND target_config_slot IS NULL) OR '
+        '(target_revision_id IS NULL '
+        'AND target_ordinal IS NULL '
+        'AND target_config_entity_type IS NOT NULL '
+        'AND target_config_entity_id IS NOT NULL '
+        'AND target_config_slot IS NOT NULL))',
     "CHECK (typeof(source_path) = 'text' "
         'AND length(CAST(source_path AS BLOB)) BETWEEN 1 AND 32768 '
         'AND instr(source_path, char(0)) = 0)',
@@ -2074,6 +2215,7 @@ class E2eeAttachmentDownloadRows extends Table {
     MessageRows,
     AssetRows,
     MessageAssetRows,
+    ConfigAssetRows,
     AssetGcRows,
     GcAuditRows,
     AssetGcQuarantineRows,
@@ -2110,7 +2252,7 @@ class AppDatabase extends _$AppDatabase {
   static const databaseFileName = 'kelivo.db';
 
   // 已验证成员清单锚点必须与内容数据库同受 SQLCipher 和硬切安装门保护。
-  static const currentSchemaVersion = 25;
+  static const currentSchemaVersion = 26;
   // 明确保留 SQLite 既有的 1000 页检查点节奏。按常见的 4 KiB 页大小计算，
   // 会在约 4 MiB 时开始检查点，但真实边界仍以页大小为准。
   static const walAutoCheckpointPages = 1000;

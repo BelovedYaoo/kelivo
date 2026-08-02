@@ -296,6 +296,8 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     payload['_position'] = _assistants.assistants.indexWhere(
       (candidate) => candidate.id == id,
     );
+    payload['avatarAsset'] = null;
+    payload['backgroundAsset'] = null;
     if (_isLocalPath(assistant.avatar)) payload['avatar'] = null;
     if (_isLocalPath(assistant.background)) payload['background'] = null;
     return payload;

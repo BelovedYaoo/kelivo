@@ -3352,6 +3352,759 @@ class MessageAssetRowsCompanion extends UpdateCompanion<MessageAssetRow> {
   }
 }
 
+class $ConfigAssetRowsTable extends ConfigAssetRows
+    with TableInfo<$ConfigAssetRowsTable, ConfigAssetRow> {
+  @override
+  final GeneratedDatabase attachedDatabase;
+  final String? _alias;
+  $ConfigAssetRowsTable(this.attachedDatabase, [this._alias]);
+  static const VerificationMeta _entityTypeMeta = const VerificationMeta(
+    'entityType',
+  );
+  @override
+  late final GeneratedColumn<String> entityType = GeneratedColumn<String>(
+    'entity_type',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _entityIdMeta = const VerificationMeta(
+    'entityId',
+  );
+  @override
+  late final GeneratedColumn<String> entityId = GeneratedColumn<String>(
+    'entity_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _slotMeta = const VerificationMeta('slot');
+  @override
+  late final GeneratedColumn<String> slot = GeneratedColumn<String>(
+    'slot',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _assetIdMeta = const VerificationMeta(
+    'assetId',
+  );
+  @override
+  late final GeneratedColumn<String> assetId = GeneratedColumn<String>(
+    'asset_id',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+    defaultConstraints: GeneratedColumn.constraintIsAlways(
+      'REFERENCES asset_rows (id) ON DELETE CASCADE',
+    ),
+  );
+  static const VerificationMeta _kindMeta = const VerificationMeta('kind');
+  @override
+  late final GeneratedColumn<String> kind = GeneratedColumn<String>(
+    'kind',
+    aliasedName,
+    false,
+    type: DriftSqlType.string,
+    requiredDuringInsert: true,
+  );
+  static const VerificationMeta _displayNameMeta = const VerificationMeta(
+    'displayName',
+  );
+  @override
+  late final GeneratedColumn<String> displayName = GeneratedColumn<String>(
+    'display_name',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _mediaTypeMeta = const VerificationMeta(
+    'mediaType',
+  );
+  @override
+  late final GeneratedColumn<String> mediaType = GeneratedColumn<String>(
+    'media_type',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _attachmentIdMeta = const VerificationMeta(
+    'attachmentId',
+  );
+  @override
+  late final GeneratedColumn<String> attachmentId = GeneratedColumn<String>(
+    'attachment_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _uploadIdMeta = const VerificationMeta(
+    'uploadId',
+  );
+  @override
+  late final GeneratedColumn<String> uploadId = GeneratedColumn<String>(
+    'upload_id',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _chunkKeyEpochMeta = const VerificationMeta(
+    'chunkKeyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> chunkKeyEpoch = GeneratedColumn<int>(
+    'chunk_key_epoch',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _manifestKeyEpochMeta = const VerificationMeta(
+    'manifestKeyEpoch',
+  );
+  @override
+  late final GeneratedColumn<int> manifestKeyEpoch = GeneratedColumn<int>(
+    'manifest_key_epoch',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _manifestRevisionMeta = const VerificationMeta(
+    'manifestRevision',
+  );
+  @override
+  late final GeneratedColumn<int> manifestRevision = GeneratedColumn<int>(
+    'manifest_revision',
+    aliasedName,
+    true,
+    type: DriftSqlType.int,
+    requiredDuringInsert: false,
+  );
+  @override
+  List<GeneratedColumn> get $columns => [
+    entityType,
+    entityId,
+    slot,
+    assetId,
+    kind,
+    displayName,
+    mediaType,
+    attachmentId,
+    uploadId,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
+  ];
+  @override
+  String get aliasedName => _alias ?? actualTableName;
+  @override
+  String get actualTableName => $name;
+  static const String $name = 'config_asset_rows';
+  @override
+  VerificationContext validateIntegrity(
+    Insertable<ConfigAssetRow> instance, {
+    bool isInserting = false,
+  }) {
+    final context = VerificationContext();
+    final data = instance.toColumns(true);
+    if (data.containsKey('entity_type')) {
+      context.handle(
+        _entityTypeMeta,
+        entityType.isAcceptableOrUnknown(data['entity_type']!, _entityTypeMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityTypeMeta);
+    }
+    if (data.containsKey('entity_id')) {
+      context.handle(
+        _entityIdMeta,
+        entityId.isAcceptableOrUnknown(data['entity_id']!, _entityIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_entityIdMeta);
+    }
+    if (data.containsKey('slot')) {
+      context.handle(
+        _slotMeta,
+        slot.isAcceptableOrUnknown(data['slot']!, _slotMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_slotMeta);
+    }
+    if (data.containsKey('asset_id')) {
+      context.handle(
+        _assetIdMeta,
+        assetId.isAcceptableOrUnknown(data['asset_id']!, _assetIdMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_assetIdMeta);
+    }
+    if (data.containsKey('kind')) {
+      context.handle(
+        _kindMeta,
+        kind.isAcceptableOrUnknown(data['kind']!, _kindMeta),
+      );
+    } else if (isInserting) {
+      context.missing(_kindMeta);
+    }
+    if (data.containsKey('display_name')) {
+      context.handle(
+        _displayNameMeta,
+        displayName.isAcceptableOrUnknown(
+          data['display_name']!,
+          _displayNameMeta,
+        ),
+      );
+    }
+    if (data.containsKey('media_type')) {
+      context.handle(
+        _mediaTypeMeta,
+        mediaType.isAcceptableOrUnknown(data['media_type']!, _mediaTypeMeta),
+      );
+    }
+    if (data.containsKey('attachment_id')) {
+      context.handle(
+        _attachmentIdMeta,
+        attachmentId.isAcceptableOrUnknown(
+          data['attachment_id']!,
+          _attachmentIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('upload_id')) {
+      context.handle(
+        _uploadIdMeta,
+        uploadId.isAcceptableOrUnknown(data['upload_id']!, _uploadIdMeta),
+      );
+    }
+    if (data.containsKey('chunk_key_epoch')) {
+      context.handle(
+        _chunkKeyEpochMeta,
+        chunkKeyEpoch.isAcceptableOrUnknown(
+          data['chunk_key_epoch']!,
+          _chunkKeyEpochMeta,
+        ),
+      );
+    }
+    if (data.containsKey('manifest_key_epoch')) {
+      context.handle(
+        _manifestKeyEpochMeta,
+        manifestKeyEpoch.isAcceptableOrUnknown(
+          data['manifest_key_epoch']!,
+          _manifestKeyEpochMeta,
+        ),
+      );
+    }
+    if (data.containsKey('manifest_revision')) {
+      context.handle(
+        _manifestRevisionMeta,
+        manifestRevision.isAcceptableOrUnknown(
+          data['manifest_revision']!,
+          _manifestRevisionMeta,
+        ),
+      );
+    }
+    return context;
+  }
+
+  @override
+  Set<GeneratedColumn> get $primaryKey => {entityType, entityId, slot};
+  @override
+  List<Set<GeneratedColumn>> get uniqueKeys => [
+    {attachmentId},
+    {uploadId},
+  ];
+  @override
+  ConfigAssetRow map(Map<String, dynamic> data, {String? tablePrefix}) {
+    final effectivePrefix = tablePrefix != null ? '$tablePrefix.' : '';
+    return ConfigAssetRow(
+      entityType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_type'],
+      )!,
+      entityId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}entity_id'],
+      )!,
+      slot: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}slot'],
+      )!,
+      assetId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}asset_id'],
+      )!,
+      kind: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}kind'],
+      )!,
+      displayName: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}display_name'],
+      ),
+      mediaType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}media_type'],
+      ),
+      attachmentId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}attachment_id'],
+      ),
+      uploadId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}upload_id'],
+      ),
+      chunkKeyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}chunk_key_epoch'],
+      ),
+      manifestKeyEpoch: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}manifest_key_epoch'],
+      ),
+      manifestRevision: attachedDatabase.typeMapping.read(
+        DriftSqlType.int,
+        data['${effectivePrefix}manifest_revision'],
+      ),
+    );
+  }
+
+  @override
+  $ConfigAssetRowsTable createAlias(String alias) {
+    return $ConfigAssetRowsTable(attachedDatabase, alias);
+  }
+}
+
+class ConfigAssetRow extends DataClass implements Insertable<ConfigAssetRow> {
+  final String entityType;
+  final String entityId;
+  final String slot;
+  final String assetId;
+  final String kind;
+  final String? displayName;
+  final String? mediaType;
+  final String? attachmentId;
+  final String? uploadId;
+  final int? chunkKeyEpoch;
+  final int? manifestKeyEpoch;
+  final int? manifestRevision;
+  const ConfigAssetRow({
+    required this.entityType,
+    required this.entityId,
+    required this.slot,
+    required this.assetId,
+    required this.kind,
+    this.displayName,
+    this.mediaType,
+    this.attachmentId,
+    this.uploadId,
+    this.chunkKeyEpoch,
+    this.manifestKeyEpoch,
+    this.manifestRevision,
+  });
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    map['entity_type'] = Variable<String>(entityType);
+    map['entity_id'] = Variable<String>(entityId);
+    map['slot'] = Variable<String>(slot);
+    map['asset_id'] = Variable<String>(assetId);
+    map['kind'] = Variable<String>(kind);
+    if (!nullToAbsent || displayName != null) {
+      map['display_name'] = Variable<String>(displayName);
+    }
+    if (!nullToAbsent || mediaType != null) {
+      map['media_type'] = Variable<String>(mediaType);
+    }
+    if (!nullToAbsent || attachmentId != null) {
+      map['attachment_id'] = Variable<String>(attachmentId);
+    }
+    if (!nullToAbsent || uploadId != null) {
+      map['upload_id'] = Variable<String>(uploadId);
+    }
+    if (!nullToAbsent || chunkKeyEpoch != null) {
+      map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch);
+    }
+    if (!nullToAbsent || manifestKeyEpoch != null) {
+      map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch);
+    }
+    if (!nullToAbsent || manifestRevision != null) {
+      map['manifest_revision'] = Variable<int>(manifestRevision);
+    }
+    return map;
+  }
+
+  ConfigAssetRowsCompanion toCompanion(bool nullToAbsent) {
+    return ConfigAssetRowsCompanion(
+      entityType: Value(entityType),
+      entityId: Value(entityId),
+      slot: Value(slot),
+      assetId: Value(assetId),
+      kind: Value(kind),
+      displayName: displayName == null && nullToAbsent
+          ? const Value.absent()
+          : Value(displayName),
+      mediaType: mediaType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(mediaType),
+      attachmentId: attachmentId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(attachmentId),
+      uploadId: uploadId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(uploadId),
+      chunkKeyEpoch: chunkKeyEpoch == null && nullToAbsent
+          ? const Value.absent()
+          : Value(chunkKeyEpoch),
+      manifestKeyEpoch: manifestKeyEpoch == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manifestKeyEpoch),
+      manifestRevision: manifestRevision == null && nullToAbsent
+          ? const Value.absent()
+          : Value(manifestRevision),
+    );
+  }
+
+  factory ConfigAssetRow.fromJson(
+    Map<String, dynamic> json, {
+    ValueSerializer? serializer,
+  }) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return ConfigAssetRow(
+      entityType: serializer.fromJson<String>(json['entityType']),
+      entityId: serializer.fromJson<String>(json['entityId']),
+      slot: serializer.fromJson<String>(json['slot']),
+      assetId: serializer.fromJson<String>(json['assetId']),
+      kind: serializer.fromJson<String>(json['kind']),
+      displayName: serializer.fromJson<String?>(json['displayName']),
+      mediaType: serializer.fromJson<String?>(json['mediaType']),
+      attachmentId: serializer.fromJson<String?>(json['attachmentId']),
+      uploadId: serializer.fromJson<String?>(json['uploadId']),
+      chunkKeyEpoch: serializer.fromJson<int?>(json['chunkKeyEpoch']),
+      manifestKeyEpoch: serializer.fromJson<int?>(json['manifestKeyEpoch']),
+      manifestRevision: serializer.fromJson<int?>(json['manifestRevision']),
+    );
+  }
+  @override
+  Map<String, dynamic> toJson({ValueSerializer? serializer}) {
+    serializer ??= driftRuntimeOptions.defaultSerializer;
+    return <String, dynamic>{
+      'entityType': serializer.toJson<String>(entityType),
+      'entityId': serializer.toJson<String>(entityId),
+      'slot': serializer.toJson<String>(slot),
+      'assetId': serializer.toJson<String>(assetId),
+      'kind': serializer.toJson<String>(kind),
+      'displayName': serializer.toJson<String?>(displayName),
+      'mediaType': serializer.toJson<String?>(mediaType),
+      'attachmentId': serializer.toJson<String?>(attachmentId),
+      'uploadId': serializer.toJson<String?>(uploadId),
+      'chunkKeyEpoch': serializer.toJson<int?>(chunkKeyEpoch),
+      'manifestKeyEpoch': serializer.toJson<int?>(manifestKeyEpoch),
+      'manifestRevision': serializer.toJson<int?>(manifestRevision),
+    };
+  }
+
+  ConfigAssetRow copyWith({
+    String? entityType,
+    String? entityId,
+    String? slot,
+    String? assetId,
+    String? kind,
+    Value<String?> displayName = const Value.absent(),
+    Value<String?> mediaType = const Value.absent(),
+    Value<String?> attachmentId = const Value.absent(),
+    Value<String?> uploadId = const Value.absent(),
+    Value<int?> chunkKeyEpoch = const Value.absent(),
+    Value<int?> manifestKeyEpoch = const Value.absent(),
+    Value<int?> manifestRevision = const Value.absent(),
+  }) => ConfigAssetRow(
+    entityType: entityType ?? this.entityType,
+    entityId: entityId ?? this.entityId,
+    slot: slot ?? this.slot,
+    assetId: assetId ?? this.assetId,
+    kind: kind ?? this.kind,
+    displayName: displayName.present ? displayName.value : this.displayName,
+    mediaType: mediaType.present ? mediaType.value : this.mediaType,
+    attachmentId: attachmentId.present ? attachmentId.value : this.attachmentId,
+    uploadId: uploadId.present ? uploadId.value : this.uploadId,
+    chunkKeyEpoch: chunkKeyEpoch.present
+        ? chunkKeyEpoch.value
+        : this.chunkKeyEpoch,
+    manifestKeyEpoch: manifestKeyEpoch.present
+        ? manifestKeyEpoch.value
+        : this.manifestKeyEpoch,
+    manifestRevision: manifestRevision.present
+        ? manifestRevision.value
+        : this.manifestRevision,
+  );
+  ConfigAssetRow copyWithCompanion(ConfigAssetRowsCompanion data) {
+    return ConfigAssetRow(
+      entityType: data.entityType.present
+          ? data.entityType.value
+          : this.entityType,
+      entityId: data.entityId.present ? data.entityId.value : this.entityId,
+      slot: data.slot.present ? data.slot.value : this.slot,
+      assetId: data.assetId.present ? data.assetId.value : this.assetId,
+      kind: data.kind.present ? data.kind.value : this.kind,
+      displayName: data.displayName.present
+          ? data.displayName.value
+          : this.displayName,
+      mediaType: data.mediaType.present ? data.mediaType.value : this.mediaType,
+      attachmentId: data.attachmentId.present
+          ? data.attachmentId.value
+          : this.attachmentId,
+      uploadId: data.uploadId.present ? data.uploadId.value : this.uploadId,
+      chunkKeyEpoch: data.chunkKeyEpoch.present
+          ? data.chunkKeyEpoch.value
+          : this.chunkKeyEpoch,
+      manifestKeyEpoch: data.manifestKeyEpoch.present
+          ? data.manifestKeyEpoch.value
+          : this.manifestKeyEpoch,
+      manifestRevision: data.manifestRevision.present
+          ? data.manifestRevision.value
+          : this.manifestRevision,
+    );
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ConfigAssetRow(')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('slot: $slot, ')
+          ..write('assetId: $assetId, ')
+          ..write('kind: $kind, ')
+          ..write('displayName: $displayName, ')
+          ..write('mediaType: $mediaType, ')
+          ..write('attachmentId: $attachmentId, ')
+          ..write('uploadId: $uploadId, ')
+          ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
+          ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
+          ..write('manifestRevision: $manifestRevision')
+          ..write(')'))
+        .toString();
+  }
+
+  @override
+  int get hashCode => Object.hash(
+    entityType,
+    entityId,
+    slot,
+    assetId,
+    kind,
+    displayName,
+    mediaType,
+    attachmentId,
+    uploadId,
+    chunkKeyEpoch,
+    manifestKeyEpoch,
+    manifestRevision,
+  );
+  @override
+  bool operator ==(Object other) =>
+      identical(this, other) ||
+      (other is ConfigAssetRow &&
+          other.entityType == this.entityType &&
+          other.entityId == this.entityId &&
+          other.slot == this.slot &&
+          other.assetId == this.assetId &&
+          other.kind == this.kind &&
+          other.displayName == this.displayName &&
+          other.mediaType == this.mediaType &&
+          other.attachmentId == this.attachmentId &&
+          other.uploadId == this.uploadId &&
+          other.chunkKeyEpoch == this.chunkKeyEpoch &&
+          other.manifestKeyEpoch == this.manifestKeyEpoch &&
+          other.manifestRevision == this.manifestRevision);
+}
+
+class ConfigAssetRowsCompanion extends UpdateCompanion<ConfigAssetRow> {
+  final Value<String> entityType;
+  final Value<String> entityId;
+  final Value<String> slot;
+  final Value<String> assetId;
+  final Value<String> kind;
+  final Value<String?> displayName;
+  final Value<String?> mediaType;
+  final Value<String?> attachmentId;
+  final Value<String?> uploadId;
+  final Value<int?> chunkKeyEpoch;
+  final Value<int?> manifestKeyEpoch;
+  final Value<int?> manifestRevision;
+  final Value<int> rowid;
+  const ConfigAssetRowsCompanion({
+    this.entityType = const Value.absent(),
+    this.entityId = const Value.absent(),
+    this.slot = const Value.absent(),
+    this.assetId = const Value.absent(),
+    this.kind = const Value.absent(),
+    this.displayName = const Value.absent(),
+    this.mediaType = const Value.absent(),
+    this.attachmentId = const Value.absent(),
+    this.uploadId = const Value.absent(),
+    this.chunkKeyEpoch = const Value.absent(),
+    this.manifestKeyEpoch = const Value.absent(),
+    this.manifestRevision = const Value.absent(),
+    this.rowid = const Value.absent(),
+  });
+  ConfigAssetRowsCompanion.insert({
+    required String entityType,
+    required String entityId,
+    required String slot,
+    required String assetId,
+    required String kind,
+    this.displayName = const Value.absent(),
+    this.mediaType = const Value.absent(),
+    this.attachmentId = const Value.absent(),
+    this.uploadId = const Value.absent(),
+    this.chunkKeyEpoch = const Value.absent(),
+    this.manifestKeyEpoch = const Value.absent(),
+    this.manifestRevision = const Value.absent(),
+    this.rowid = const Value.absent(),
+  }) : entityType = Value(entityType),
+       entityId = Value(entityId),
+       slot = Value(slot),
+       assetId = Value(assetId),
+       kind = Value(kind);
+  static Insertable<ConfigAssetRow> custom({
+    Expression<String>? entityType,
+    Expression<String>? entityId,
+    Expression<String>? slot,
+    Expression<String>? assetId,
+    Expression<String>? kind,
+    Expression<String>? displayName,
+    Expression<String>? mediaType,
+    Expression<String>? attachmentId,
+    Expression<String>? uploadId,
+    Expression<int>? chunkKeyEpoch,
+    Expression<int>? manifestKeyEpoch,
+    Expression<int>? manifestRevision,
+    Expression<int>? rowid,
+  }) {
+    return RawValuesInsertable({
+      if (entityType != null) 'entity_type': entityType,
+      if (entityId != null) 'entity_id': entityId,
+      if (slot != null) 'slot': slot,
+      if (assetId != null) 'asset_id': assetId,
+      if (kind != null) 'kind': kind,
+      if (displayName != null) 'display_name': displayName,
+      if (mediaType != null) 'media_type': mediaType,
+      if (attachmentId != null) 'attachment_id': attachmentId,
+      if (uploadId != null) 'upload_id': uploadId,
+      if (chunkKeyEpoch != null) 'chunk_key_epoch': chunkKeyEpoch,
+      if (manifestKeyEpoch != null) 'manifest_key_epoch': manifestKeyEpoch,
+      if (manifestRevision != null) 'manifest_revision': manifestRevision,
+      if (rowid != null) 'rowid': rowid,
+    });
+  }
+
+  ConfigAssetRowsCompanion copyWith({
+    Value<String>? entityType,
+    Value<String>? entityId,
+    Value<String>? slot,
+    Value<String>? assetId,
+    Value<String>? kind,
+    Value<String?>? displayName,
+    Value<String?>? mediaType,
+    Value<String?>? attachmentId,
+    Value<String?>? uploadId,
+    Value<int?>? chunkKeyEpoch,
+    Value<int?>? manifestKeyEpoch,
+    Value<int?>? manifestRevision,
+    Value<int>? rowid,
+  }) {
+    return ConfigAssetRowsCompanion(
+      entityType: entityType ?? this.entityType,
+      entityId: entityId ?? this.entityId,
+      slot: slot ?? this.slot,
+      assetId: assetId ?? this.assetId,
+      kind: kind ?? this.kind,
+      displayName: displayName ?? this.displayName,
+      mediaType: mediaType ?? this.mediaType,
+      attachmentId: attachmentId ?? this.attachmentId,
+      uploadId: uploadId ?? this.uploadId,
+      chunkKeyEpoch: chunkKeyEpoch ?? this.chunkKeyEpoch,
+      manifestKeyEpoch: manifestKeyEpoch ?? this.manifestKeyEpoch,
+      manifestRevision: manifestRevision ?? this.manifestRevision,
+      rowid: rowid ?? this.rowid,
+    );
+  }
+
+  @override
+  Map<String, Expression> toColumns(bool nullToAbsent) {
+    final map = <String, Expression>{};
+    if (entityType.present) {
+      map['entity_type'] = Variable<String>(entityType.value);
+    }
+    if (entityId.present) {
+      map['entity_id'] = Variable<String>(entityId.value);
+    }
+    if (slot.present) {
+      map['slot'] = Variable<String>(slot.value);
+    }
+    if (assetId.present) {
+      map['asset_id'] = Variable<String>(assetId.value);
+    }
+    if (kind.present) {
+      map['kind'] = Variable<String>(kind.value);
+    }
+    if (displayName.present) {
+      map['display_name'] = Variable<String>(displayName.value);
+    }
+    if (mediaType.present) {
+      map['media_type'] = Variable<String>(mediaType.value);
+    }
+    if (attachmentId.present) {
+      map['attachment_id'] = Variable<String>(attachmentId.value);
+    }
+    if (uploadId.present) {
+      map['upload_id'] = Variable<String>(uploadId.value);
+    }
+    if (chunkKeyEpoch.present) {
+      map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch.value);
+    }
+    if (manifestKeyEpoch.present) {
+      map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch.value);
+    }
+    if (manifestRevision.present) {
+      map['manifest_revision'] = Variable<int>(manifestRevision.value);
+    }
+    if (rowid.present) {
+      map['rowid'] = Variable<int>(rowid.value);
+    }
+    return map;
+  }
+
+  @override
+  String toString() {
+    return (StringBuffer('ConfigAssetRowsCompanion(')
+          ..write('entityType: $entityType, ')
+          ..write('entityId: $entityId, ')
+          ..write('slot: $slot, ')
+          ..write('assetId: $assetId, ')
+          ..write('kind: $kind, ')
+          ..write('displayName: $displayName, ')
+          ..write('mediaType: $mediaType, ')
+          ..write('attachmentId: $attachmentId, ')
+          ..write('uploadId: $uploadId, ')
+          ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
+          ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
+          ..write('manifestRevision: $manifestRevision, ')
+          ..write('rowid: $rowid')
+          ..write(')'))
+        .toString();
+  }
+}
+
 class $AssetGcRowsTable extends AssetGcRows
     with TableInfo<$AssetGcRowsTable, AssetGcRow> {
   @override
@@ -16155,9 +16908,9 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
   late final GeneratedColumn<String> targetRevisionId = GeneratedColumn<String>(
     'target_revision_id',
     aliasedName,
-    false,
+    true,
     type: DriftSqlType.string,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
   );
   static const VerificationMeta _targetOrdinalMeta = const VerificationMeta(
     'targetOrdinal',
@@ -16166,9 +16919,42 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
   late final GeneratedColumn<int> targetOrdinal = GeneratedColumn<int>(
     'target_ordinal',
     aliasedName,
-    false,
+    true,
     type: DriftSqlType.int,
-    requiredDuringInsert: true,
+    requiredDuringInsert: false,
+  );
+  static const VerificationMeta _targetConfigEntityTypeMeta =
+      const VerificationMeta('targetConfigEntityType');
+  @override
+  late final GeneratedColumn<String> targetConfigEntityType =
+      GeneratedColumn<String>(
+        'target_config_entity_type',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _targetConfigEntityIdMeta =
+      const VerificationMeta('targetConfigEntityId');
+  @override
+  late final GeneratedColumn<String> targetConfigEntityId =
+      GeneratedColumn<String>(
+        'target_config_entity_id',
+        aliasedName,
+        true,
+        type: DriftSqlType.string,
+        requiredDuringInsert: false,
+      );
+  static const VerificationMeta _targetConfigSlotMeta = const VerificationMeta(
+    'targetConfigSlot',
+  );
+  @override
+  late final GeneratedColumn<String> targetConfigSlot = GeneratedColumn<String>(
+    'target_config_slot',
+    aliasedName,
+    true,
+    type: DriftSqlType.string,
+    requiredDuringInsert: false,
   );
   static const VerificationMeta _sourcePathMeta = const VerificationMeta(
     'sourcePath',
@@ -16546,6 +17332,9 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
     localAssetId,
     targetRevisionId,
     targetOrdinal,
+    targetConfigEntityType,
+    targetConfigEntityId,
+    targetConfigSlot,
     sourcePath,
     chunkKeyEpoch,
     manifestKeyEpoch,
@@ -16623,8 +17412,6 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
           _targetRevisionIdMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_targetRevisionIdMeta);
     }
     if (data.containsKey('target_ordinal')) {
       context.handle(
@@ -16634,8 +17421,33 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
           _targetOrdinalMeta,
         ),
       );
-    } else if (isInserting) {
-      context.missing(_targetOrdinalMeta);
+    }
+    if (data.containsKey('target_config_entity_type')) {
+      context.handle(
+        _targetConfigEntityTypeMeta,
+        targetConfigEntityType.isAcceptableOrUnknown(
+          data['target_config_entity_type']!,
+          _targetConfigEntityTypeMeta,
+        ),
+      );
+    }
+    if (data.containsKey('target_config_entity_id')) {
+      context.handle(
+        _targetConfigEntityIdMeta,
+        targetConfigEntityId.isAcceptableOrUnknown(
+          data['target_config_entity_id']!,
+          _targetConfigEntityIdMeta,
+        ),
+      );
+    }
+    if (data.containsKey('target_config_slot')) {
+      context.handle(
+        _targetConfigSlotMeta,
+        targetConfigSlot.isAcceptableOrUnknown(
+          data['target_config_slot']!,
+          _targetConfigSlotMeta,
+        ),
+      );
     }
     if (data.containsKey('source_path')) {
       context.handle(
@@ -16929,6 +17741,7 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
   List<Set<GeneratedColumn>> get uniqueKeys => [
     {uploadId},
     {targetRevisionId, targetOrdinal},
+    {targetConfigEntityType, targetConfigEntityId, targetConfigSlot},
   ];
   @override
   E2eeAttachmentUploadRow map(
@@ -16948,11 +17761,23 @@ class $E2eeAttachmentUploadRowsTable extends E2eeAttachmentUploadRows
       targetRevisionId: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}target_revision_id'],
-      )!,
+      ),
       targetOrdinal: attachedDatabase.typeMapping.read(
         DriftSqlType.int,
         data['${effectivePrefix}target_ordinal'],
-      )!,
+      ),
+      targetConfigEntityType: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_config_entity_type'],
+      ),
+      targetConfigEntityId: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_config_entity_id'],
+      ),
+      targetConfigSlot: attachedDatabase.typeMapping.read(
+        DriftSqlType.string,
+        data['${effectivePrefix}target_config_slot'],
+      ),
       sourcePath: attachedDatabase.typeMapping.read(
         DriftSqlType.string,
         data['${effectivePrefix}source_path'],
@@ -17123,8 +17948,11 @@ class E2eeAttachmentUploadRow extends DataClass
     implements Insertable<E2eeAttachmentUploadRow> {
   final String attachmentId;
   final String localAssetId;
-  final String targetRevisionId;
-  final int targetOrdinal;
+  final String? targetRevisionId;
+  final int? targetOrdinal;
+  final String? targetConfigEntityType;
+  final String? targetConfigEntityId;
+  final String? targetConfigSlot;
   final String sourcePath;
   final int chunkKeyEpoch;
   final int manifestKeyEpoch;
@@ -17162,8 +17990,11 @@ class E2eeAttachmentUploadRow extends DataClass
   const E2eeAttachmentUploadRow({
     required this.attachmentId,
     required this.localAssetId,
-    required this.targetRevisionId,
-    required this.targetOrdinal,
+    this.targetRevisionId,
+    this.targetOrdinal,
+    this.targetConfigEntityType,
+    this.targetConfigEntityId,
+    this.targetConfigSlot,
     required this.sourcePath,
     required this.chunkKeyEpoch,
     required this.manifestKeyEpoch,
@@ -17204,8 +18035,23 @@ class E2eeAttachmentUploadRow extends DataClass
     final map = <String, Expression>{};
     map['attachment_id'] = Variable<String>(attachmentId);
     map['local_asset_id'] = Variable<String>(localAssetId);
-    map['target_revision_id'] = Variable<String>(targetRevisionId);
-    map['target_ordinal'] = Variable<int>(targetOrdinal);
+    if (!nullToAbsent || targetRevisionId != null) {
+      map['target_revision_id'] = Variable<String>(targetRevisionId);
+    }
+    if (!nullToAbsent || targetOrdinal != null) {
+      map['target_ordinal'] = Variable<int>(targetOrdinal);
+    }
+    if (!nullToAbsent || targetConfigEntityType != null) {
+      map['target_config_entity_type'] = Variable<String>(
+        targetConfigEntityType,
+      );
+    }
+    if (!nullToAbsent || targetConfigEntityId != null) {
+      map['target_config_entity_id'] = Variable<String>(targetConfigEntityId);
+    }
+    if (!nullToAbsent || targetConfigSlot != null) {
+      map['target_config_slot'] = Variable<String>(targetConfigSlot);
+    }
     map['source_path'] = Variable<String>(sourcePath);
     map['chunk_key_epoch'] = Variable<int>(chunkKeyEpoch);
     map['manifest_key_epoch'] = Variable<int>(manifestKeyEpoch);
@@ -17301,8 +18147,21 @@ class E2eeAttachmentUploadRow extends DataClass
     return E2eeAttachmentUploadRowsCompanion(
       attachmentId: Value(attachmentId),
       localAssetId: Value(localAssetId),
-      targetRevisionId: Value(targetRevisionId),
-      targetOrdinal: Value(targetOrdinal),
+      targetRevisionId: targetRevisionId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetRevisionId),
+      targetOrdinal: targetOrdinal == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetOrdinal),
+      targetConfigEntityType: targetConfigEntityType == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetConfigEntityType),
+      targetConfigEntityId: targetConfigEntityId == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetConfigEntityId),
+      targetConfigSlot: targetConfigSlot == null && nullToAbsent
+          ? const Value.absent()
+          : Value(targetConfigSlot),
       sourcePath: Value(sourcePath),
       chunkKeyEpoch: Value(chunkKeyEpoch),
       manifestKeyEpoch: Value(manifestKeyEpoch),
@@ -17379,8 +18238,15 @@ class E2eeAttachmentUploadRow extends DataClass
     return E2eeAttachmentUploadRow(
       attachmentId: serializer.fromJson<String>(json['attachmentId']),
       localAssetId: serializer.fromJson<String>(json['localAssetId']),
-      targetRevisionId: serializer.fromJson<String>(json['targetRevisionId']),
-      targetOrdinal: serializer.fromJson<int>(json['targetOrdinal']),
+      targetRevisionId: serializer.fromJson<String?>(json['targetRevisionId']),
+      targetOrdinal: serializer.fromJson<int?>(json['targetOrdinal']),
+      targetConfigEntityType: serializer.fromJson<String?>(
+        json['targetConfigEntityType'],
+      ),
+      targetConfigEntityId: serializer.fromJson<String?>(
+        json['targetConfigEntityId'],
+      ),
+      targetConfigSlot: serializer.fromJson<String?>(json['targetConfigSlot']),
       sourcePath: serializer.fromJson<String>(json['sourcePath']),
       chunkKeyEpoch: serializer.fromJson<int>(json['chunkKeyEpoch']),
       manifestKeyEpoch: serializer.fromJson<int>(json['manifestKeyEpoch']),
@@ -17443,8 +18309,13 @@ class E2eeAttachmentUploadRow extends DataClass
     return <String, dynamic>{
       'attachmentId': serializer.toJson<String>(attachmentId),
       'localAssetId': serializer.toJson<String>(localAssetId),
-      'targetRevisionId': serializer.toJson<String>(targetRevisionId),
-      'targetOrdinal': serializer.toJson<int>(targetOrdinal),
+      'targetRevisionId': serializer.toJson<String?>(targetRevisionId),
+      'targetOrdinal': serializer.toJson<int?>(targetOrdinal),
+      'targetConfigEntityType': serializer.toJson<String?>(
+        targetConfigEntityType,
+      ),
+      'targetConfigEntityId': serializer.toJson<String?>(targetConfigEntityId),
+      'targetConfigSlot': serializer.toJson<String?>(targetConfigSlot),
       'sourcePath': serializer.toJson<String>(sourcePath),
       'chunkKeyEpoch': serializer.toJson<int>(chunkKeyEpoch),
       'manifestKeyEpoch': serializer.toJson<int>(manifestKeyEpoch),
@@ -17495,8 +18366,11 @@ class E2eeAttachmentUploadRow extends DataClass
   E2eeAttachmentUploadRow copyWith({
     String? attachmentId,
     String? localAssetId,
-    String? targetRevisionId,
-    int? targetOrdinal,
+    Value<String?> targetRevisionId = const Value.absent(),
+    Value<int?> targetOrdinal = const Value.absent(),
+    Value<String?> targetConfigEntityType = const Value.absent(),
+    Value<String?> targetConfigEntityId = const Value.absent(),
+    Value<String?> targetConfigSlot = const Value.absent(),
     String? sourcePath,
     int? chunkKeyEpoch,
     int? manifestKeyEpoch,
@@ -17534,8 +18408,21 @@ class E2eeAttachmentUploadRow extends DataClass
   }) => E2eeAttachmentUploadRow(
     attachmentId: attachmentId ?? this.attachmentId,
     localAssetId: localAssetId ?? this.localAssetId,
-    targetRevisionId: targetRevisionId ?? this.targetRevisionId,
-    targetOrdinal: targetOrdinal ?? this.targetOrdinal,
+    targetRevisionId: targetRevisionId.present
+        ? targetRevisionId.value
+        : this.targetRevisionId,
+    targetOrdinal: targetOrdinal.present
+        ? targetOrdinal.value
+        : this.targetOrdinal,
+    targetConfigEntityType: targetConfigEntityType.present
+        ? targetConfigEntityType.value
+        : this.targetConfigEntityType,
+    targetConfigEntityId: targetConfigEntityId.present
+        ? targetConfigEntityId.value
+        : this.targetConfigEntityId,
+    targetConfigSlot: targetConfigSlot.present
+        ? targetConfigSlot.value
+        : this.targetConfigSlot,
     sourcePath: sourcePath ?? this.sourcePath,
     chunkKeyEpoch: chunkKeyEpoch ?? this.chunkKeyEpoch,
     manifestKeyEpoch: manifestKeyEpoch ?? this.manifestKeyEpoch,
@@ -17608,6 +18495,15 @@ class E2eeAttachmentUploadRow extends DataClass
       targetOrdinal: data.targetOrdinal.present
           ? data.targetOrdinal.value
           : this.targetOrdinal,
+      targetConfigEntityType: data.targetConfigEntityType.present
+          ? data.targetConfigEntityType.value
+          : this.targetConfigEntityType,
+      targetConfigEntityId: data.targetConfigEntityId.present
+          ? data.targetConfigEntityId.value
+          : this.targetConfigEntityId,
+      targetConfigSlot: data.targetConfigSlot.present
+          ? data.targetConfigSlot.value
+          : this.targetConfigSlot,
       sourcePath: data.sourcePath.present
           ? data.sourcePath.value
           : this.sourcePath,
@@ -17708,6 +18604,9 @@ class E2eeAttachmentUploadRow extends DataClass
           ..write('localAssetId: $localAssetId, ')
           ..write('targetRevisionId: $targetRevisionId, ')
           ..write('targetOrdinal: $targetOrdinal, ')
+          ..write('targetConfigEntityType: $targetConfigEntityType, ')
+          ..write('targetConfigEntityId: $targetConfigEntityId, ')
+          ..write('targetConfigSlot: $targetConfigSlot, ')
           ..write('sourcePath: $sourcePath, ')
           ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
           ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
@@ -17754,6 +18653,9 @@ class E2eeAttachmentUploadRow extends DataClass
     localAssetId,
     targetRevisionId,
     targetOrdinal,
+    targetConfigEntityType,
+    targetConfigEntityId,
+    targetConfigSlot,
     sourcePath,
     chunkKeyEpoch,
     manifestKeyEpoch,
@@ -17797,6 +18699,9 @@ class E2eeAttachmentUploadRow extends DataClass
           other.localAssetId == this.localAssetId &&
           other.targetRevisionId == this.targetRevisionId &&
           other.targetOrdinal == this.targetOrdinal &&
+          other.targetConfigEntityType == this.targetConfigEntityType &&
+          other.targetConfigEntityId == this.targetConfigEntityId &&
+          other.targetConfigSlot == this.targetConfigSlot &&
           other.sourcePath == this.sourcePath &&
           other.chunkKeyEpoch == this.chunkKeyEpoch &&
           other.manifestKeyEpoch == this.manifestKeyEpoch &&
@@ -17847,8 +18752,11 @@ class E2eeAttachmentUploadRowsCompanion
     extends UpdateCompanion<E2eeAttachmentUploadRow> {
   final Value<String> attachmentId;
   final Value<String> localAssetId;
-  final Value<String> targetRevisionId;
-  final Value<int> targetOrdinal;
+  final Value<String?> targetRevisionId;
+  final Value<int?> targetOrdinal;
+  final Value<String?> targetConfigEntityType;
+  final Value<String?> targetConfigEntityId;
+  final Value<String?> targetConfigSlot;
   final Value<String> sourcePath;
   final Value<int> chunkKeyEpoch;
   final Value<int> manifestKeyEpoch;
@@ -17889,6 +18797,9 @@ class E2eeAttachmentUploadRowsCompanion
     this.localAssetId = const Value.absent(),
     this.targetRevisionId = const Value.absent(),
     this.targetOrdinal = const Value.absent(),
+    this.targetConfigEntityType = const Value.absent(),
+    this.targetConfigEntityId = const Value.absent(),
+    this.targetConfigSlot = const Value.absent(),
     this.sourcePath = const Value.absent(),
     this.chunkKeyEpoch = const Value.absent(),
     this.manifestKeyEpoch = const Value.absent(),
@@ -17928,8 +18839,11 @@ class E2eeAttachmentUploadRowsCompanion
   E2eeAttachmentUploadRowsCompanion.insert({
     required String attachmentId,
     required String localAssetId,
-    required String targetRevisionId,
-    required int targetOrdinal,
+    this.targetRevisionId = const Value.absent(),
+    this.targetOrdinal = const Value.absent(),
+    this.targetConfigEntityType = const Value.absent(),
+    this.targetConfigEntityId = const Value.absent(),
+    this.targetConfigSlot = const Value.absent(),
     required String sourcePath,
     required int chunkKeyEpoch,
     required int manifestKeyEpoch,
@@ -17967,8 +18881,6 @@ class E2eeAttachmentUploadRowsCompanion
     this.rowid = const Value.absent(),
   }) : attachmentId = Value(attachmentId),
        localAssetId = Value(localAssetId),
-       targetRevisionId = Value(targetRevisionId),
-       targetOrdinal = Value(targetOrdinal),
        sourcePath = Value(sourcePath),
        chunkKeyEpoch = Value(chunkKeyEpoch),
        manifestKeyEpoch = Value(manifestKeyEpoch),
@@ -17994,6 +18906,9 @@ class E2eeAttachmentUploadRowsCompanion
     Expression<String>? localAssetId,
     Expression<String>? targetRevisionId,
     Expression<int>? targetOrdinal,
+    Expression<String>? targetConfigEntityType,
+    Expression<String>? targetConfigEntityId,
+    Expression<String>? targetConfigSlot,
     Expression<String>? sourcePath,
     Expression<int>? chunkKeyEpoch,
     Expression<int>? manifestKeyEpoch,
@@ -18035,6 +18950,11 @@ class E2eeAttachmentUploadRowsCompanion
       if (localAssetId != null) 'local_asset_id': localAssetId,
       if (targetRevisionId != null) 'target_revision_id': targetRevisionId,
       if (targetOrdinal != null) 'target_ordinal': targetOrdinal,
+      if (targetConfigEntityType != null)
+        'target_config_entity_type': targetConfigEntityType,
+      if (targetConfigEntityId != null)
+        'target_config_entity_id': targetConfigEntityId,
+      if (targetConfigSlot != null) 'target_config_slot': targetConfigSlot,
       if (sourcePath != null) 'source_path': sourcePath,
       if (chunkKeyEpoch != null) 'chunk_key_epoch': chunkKeyEpoch,
       if (manifestKeyEpoch != null) 'manifest_key_epoch': manifestKeyEpoch,
@@ -18085,8 +19005,11 @@ class E2eeAttachmentUploadRowsCompanion
   E2eeAttachmentUploadRowsCompanion copyWith({
     Value<String>? attachmentId,
     Value<String>? localAssetId,
-    Value<String>? targetRevisionId,
-    Value<int>? targetOrdinal,
+    Value<String?>? targetRevisionId,
+    Value<int?>? targetOrdinal,
+    Value<String?>? targetConfigEntityType,
+    Value<String?>? targetConfigEntityId,
+    Value<String?>? targetConfigSlot,
     Value<String>? sourcePath,
     Value<int>? chunkKeyEpoch,
     Value<int>? manifestKeyEpoch,
@@ -18128,6 +19051,10 @@ class E2eeAttachmentUploadRowsCompanion
       localAssetId: localAssetId ?? this.localAssetId,
       targetRevisionId: targetRevisionId ?? this.targetRevisionId,
       targetOrdinal: targetOrdinal ?? this.targetOrdinal,
+      targetConfigEntityType:
+          targetConfigEntityType ?? this.targetConfigEntityType,
+      targetConfigEntityId: targetConfigEntityId ?? this.targetConfigEntityId,
+      targetConfigSlot: targetConfigSlot ?? this.targetConfigSlot,
       sourcePath: sourcePath ?? this.sourcePath,
       chunkKeyEpoch: chunkKeyEpoch ?? this.chunkKeyEpoch,
       manifestKeyEpoch: manifestKeyEpoch ?? this.manifestKeyEpoch,
@@ -18185,6 +19112,19 @@ class E2eeAttachmentUploadRowsCompanion
     }
     if (targetOrdinal.present) {
       map['target_ordinal'] = Variable<int>(targetOrdinal.value);
+    }
+    if (targetConfigEntityType.present) {
+      map['target_config_entity_type'] = Variable<String>(
+        targetConfigEntityType.value,
+      );
+    }
+    if (targetConfigEntityId.present) {
+      map['target_config_entity_id'] = Variable<String>(
+        targetConfigEntityId.value,
+      );
+    }
+    if (targetConfigSlot.present) {
+      map['target_config_slot'] = Variable<String>(targetConfigSlot.value);
     }
     if (sourcePath.present) {
       map['source_path'] = Variable<String>(sourcePath.value);
@@ -18333,6 +19273,9 @@ class E2eeAttachmentUploadRowsCompanion
           ..write('localAssetId: $localAssetId, ')
           ..write('targetRevisionId: $targetRevisionId, ')
           ..write('targetOrdinal: $targetOrdinal, ')
+          ..write('targetConfigEntityType: $targetConfigEntityType, ')
+          ..write('targetConfigEntityId: $targetConfigEntityId, ')
+          ..write('targetConfigSlot: $targetConfigSlot, ')
           ..write('sourcePath: $sourcePath, ')
           ..write('chunkKeyEpoch: $chunkKeyEpoch, ')
           ..write('manifestKeyEpoch: $manifestKeyEpoch, ')
@@ -20285,6 +21228,9 @@ abstract class _$AppDatabase extends GeneratedDatabase {
   late final $MessageAssetRowsTable messageAssetRows = $MessageAssetRowsTable(
     this,
   );
+  late final $ConfigAssetRowsTable configAssetRows = $ConfigAssetRowsTable(
+    this,
+  );
   late final $AssetGcRowsTable assetGcRows = $AssetGcRowsTable(this);
   late final $GcAuditRowsTable gcAuditRows = $GcAuditRowsTable(this);
   late final $AssetGcQuarantineRowsTable assetGcQuarantineRows =
@@ -20374,6 +21320,14 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     'idx_message_assets_remote_identity',
     'CREATE INDEX idx_message_assets_remote_identity ON message_asset_rows (attachment_id, upload_id, chunk_key_epoch, manifest_key_epoch, manifest_revision, revision_id, ordinal)',
   );
+  late final Index idxConfigAssetsAsset = Index(
+    'idx_config_assets_asset',
+    'CREATE INDEX idx_config_assets_asset ON config_asset_rows (asset_id, entity_type, entity_id, slot)',
+  );
+  late final Index idxConfigAssetsRemoteIdentity = Index(
+    'idx_config_assets_remote_identity',
+    'CREATE INDEX idx_config_assets_remote_identity ON config_asset_rows (attachment_id, upload_id, chunk_key_epoch, manifest_key_epoch, manifest_revision, entity_type, entity_id, slot)',
+  );
   late final Index idxAssetGcQuarantineClaim = Index(
     'idx_asset_gc_quarantine_claim',
     'CREATE INDEX idx_asset_gc_quarantine_claim ON asset_gc_quarantine_rows (asset_id, generation, state)',
@@ -20447,6 +21401,7 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     messageRows,
     assetRows,
     messageAssetRows,
+    configAssetRows,
     assetGcRows,
     gcAuditRows,
     assetGcQuarantineRows,
@@ -20483,6 +21438,8 @@ abstract class _$AppDatabase extends GeneratedDatabase {
     idxMessagesTurn,
     idxMessageAssetsAsset,
     idxMessageAssetsRemoteIdentity,
+    idxConfigAssetsAsset,
+    idxConfigAssetsRemoteIdentity,
     idxAssetGcQuarantineClaim,
     idxTurnsConversationCreated,
     idxMessagePartsRevisionOrdinal,
@@ -20522,6 +21479,13 @@ abstract class _$AppDatabase extends GeneratedDatabase {
         limitUpdateKind: UpdateKind.delete,
       ),
       result: [TableUpdate('message_asset_rows', kind: UpdateKind.delete)],
+    ),
+    WritePropagation(
+      on: TableUpdateQuery.onTableName(
+        'asset_rows',
+        limitUpdateKind: UpdateKind.delete,
+      ),
+      result: [TableUpdate('config_asset_rows', kind: UpdateKind.delete)],
     ),
     WritePropagation(
       on: TableUpdateQuery.onTableName(
@@ -22504,6 +23468,26 @@ final class $$AssetRowsTableReferences
     );
   }
 
+  static MultiTypedResultKey<$ConfigAssetRowsTable, List<ConfigAssetRow>>
+  _configAssetRowsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
+    db.configAssetRows,
+    aliasName: 'asset_rows__id__config_asset_rows__asset_id',
+  );
+
+  $$ConfigAssetRowsTableProcessedTableManager get configAssetRowsRefs {
+    final manager = $$ConfigAssetRowsTableTableManager(
+      $_db,
+      $_db.configAssetRows,
+    ).filter((f) => f.assetId.id.sqlEquals($_itemColumn<String>('id')!));
+
+    final cache = $_typedResult.readTableOrNull(
+      _configAssetRowsRefsTable($_db),
+    );
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: cache),
+    );
+  }
+
   static MultiTypedResultKey<$AssetGcRowsTable, List<AssetGcRow>>
   _assetGcRowsRefsTable(_$AppDatabase db) => MultiTypedResultKey.fromTable(
     db.assetGcRows,
@@ -22595,6 +23579,31 @@ class $$AssetRowsTableFilterComposer
           }) => $$MessageAssetRowsTableFilterComposer(
             $db: $db,
             $table: $db.messageAssetRows,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
+  Expression<bool> configAssetRowsRefs(
+    Expression<bool> Function($$ConfigAssetRowsTableFilterComposer f) f,
+  ) {
+    final $$ConfigAssetRowsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.configAssetRows,
+      getReferencedColumn: (t) => t.assetId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ConfigAssetRowsTableFilterComposer(
+            $db: $db,
+            $table: $db.configAssetRows,
             $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
             joinBuilder: joinBuilder,
             $removeJoinBuilderFromRootComposer:
@@ -22753,6 +23762,31 @@ class $$AssetRowsTableAnnotationComposer
     return f(composer);
   }
 
+  Expression<T> configAssetRowsRefs<T extends Object>(
+    Expression<T> Function($$ConfigAssetRowsTableAnnotationComposer a) f,
+  ) {
+    final $$ConfigAssetRowsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.id,
+      referencedTable: $db.configAssetRows,
+      getReferencedColumn: (t) => t.assetId,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$ConfigAssetRowsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.configAssetRows,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return f(composer);
+  }
+
   Expression<T> assetGcRowsRefs<T extends Object>(
     Expression<T> Function($$AssetGcRowsTableAnnotationComposer a) f,
   ) {
@@ -22794,6 +23828,7 @@ class $$AssetRowsTableTableManager
           AssetRow,
           PrefetchHooks Function({
             bool messageAssetRowsRefs,
+            bool configAssetRowsRefs,
             bool assetGcRowsRefs,
           })
         > {
@@ -22865,11 +23900,16 @@ class $$AssetRowsTableTableManager
               )
               .toList(),
           prefetchHooksCallback:
-              ({messageAssetRowsRefs = false, assetGcRowsRefs = false}) {
+              ({
+                messageAssetRowsRefs = false,
+                configAssetRowsRefs = false,
+                assetGcRowsRefs = false,
+              }) {
                 return PrefetchHooks(
                   db: db,
                   explicitlyWatchedTables: [
                     if (messageAssetRowsRefs) db.messageAssetRows,
+                    if (configAssetRowsRefs) db.configAssetRows,
                     if (assetGcRowsRefs) db.assetGcRows,
                   ],
                   addJoins: null,
@@ -22890,6 +23930,27 @@ class $$AssetRowsTableTableManager
                                 table,
                                 p0,
                               ).messageAssetRowsRefs,
+                          referencedItemsForCurrentItem:
+                              (item, referencedItems) => referencedItems.where(
+                                (e) => e.assetId == item.id,
+                              ),
+                          typedResults: items,
+                        ),
+                      if (configAssetRowsRefs)
+                        await $_getPrefetchedData<
+                          AssetRow,
+                          $AssetRowsTable,
+                          ConfigAssetRow
+                        >(
+                          currentTable: table,
+                          referencedTable: $$AssetRowsTableReferences
+                              ._configAssetRowsRefsTable(db),
+                          managerFromTypedResult: (p0) =>
+                              $$AssetRowsTableReferences(
+                                db,
+                                table,
+                                p0,
+                              ).configAssetRowsRefs,
                           referencedItemsForCurrentItem:
                               (item, referencedItems) => referencedItems.where(
                                 (e) => e.assetId == item.id,
@@ -22937,7 +23998,11 @@ typedef $$AssetRowsTableProcessedTableManager =
       $$AssetRowsTableUpdateCompanionBuilder,
       (AssetRow, $$AssetRowsTableReferences),
       AssetRow,
-      PrefetchHooks Function({bool messageAssetRowsRefs, bool assetGcRowsRefs})
+      PrefetchHooks Function({
+        bool messageAssetRowsRefs,
+        bool configAssetRowsRefs,
+        bool assetGcRowsRefs,
+      })
     >;
 typedef $$MessageAssetRowsTableCreateCompanionBuilder =
     MessageAssetRowsCompanion Function({
@@ -23476,6 +24541,477 @@ typedef $$MessageAssetRowsTableProcessedTableManager =
       (MessageAssetRow, $$MessageAssetRowsTableReferences),
       MessageAssetRow,
       PrefetchHooks Function({bool revisionId, bool assetId})
+    >;
+typedef $$ConfigAssetRowsTableCreateCompanionBuilder =
+    ConfigAssetRowsCompanion Function({
+      required String entityType,
+      required String entityId,
+      required String slot,
+      required String assetId,
+      required String kind,
+      Value<String?> displayName,
+      Value<String?> mediaType,
+      Value<String?> attachmentId,
+      Value<String?> uploadId,
+      Value<int?> chunkKeyEpoch,
+      Value<int?> manifestKeyEpoch,
+      Value<int?> manifestRevision,
+      Value<int> rowid,
+    });
+typedef $$ConfigAssetRowsTableUpdateCompanionBuilder =
+    ConfigAssetRowsCompanion Function({
+      Value<String> entityType,
+      Value<String> entityId,
+      Value<String> slot,
+      Value<String> assetId,
+      Value<String> kind,
+      Value<String?> displayName,
+      Value<String?> mediaType,
+      Value<String?> attachmentId,
+      Value<String?> uploadId,
+      Value<int?> chunkKeyEpoch,
+      Value<int?> manifestKeyEpoch,
+      Value<int?> manifestRevision,
+      Value<int> rowid,
+    });
+
+final class $$ConfigAssetRowsTableReferences
+    extends
+        BaseReferences<_$AppDatabase, $ConfigAssetRowsTable, ConfigAssetRow> {
+  $$ConfigAssetRowsTableReferences(
+    super.$_db,
+    super.$_table,
+    super.$_typedResult,
+  );
+
+  static $AssetRowsTable _assetIdTable(_$AppDatabase db) =>
+      db.assetRows.createAlias('config_asset_rows__asset_id__asset_rows__id');
+
+  $$AssetRowsTableProcessedTableManager get assetId {
+    final $_column = $_itemColumn<String>('asset_id')!;
+
+    final manager = $$AssetRowsTableTableManager(
+      $_db,
+      $_db.assetRows,
+    ).filter((f) => f.id.sqlEquals($_column));
+    final item = $_typedResult.readTableOrNull(_assetIdTable($_db));
+    if (item == null) return manager;
+    return ProcessedTableManager(
+      manager.$state.copyWith(prefetchedData: [item]),
+    );
+  }
+}
+
+class $$ConfigAssetRowsTableFilterComposer
+    extends Composer<_$AppDatabase, $ConfigAssetRowsTable> {
+  $$ConfigAssetRowsTableFilterComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnFilters<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get slot => $composableBuilder(
+    column: $table.slot,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get mediaType => $composableBuilder(
+    column: $table.mediaType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get attachmentId => $composableBuilder(
+    column: $table.attachmentId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get uploadId => $composableBuilder(
+    column: $table.uploadId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  $$AssetRowsTableFilterComposer get assetId {
+    final $$AssetRowsTableFilterComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.assetId,
+      referencedTable: $db.assetRows,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$AssetRowsTableFilterComposer(
+            $db: $db,
+            $table: $db.assetRows,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ConfigAssetRowsTableOrderingComposer
+    extends Composer<_$AppDatabase, $ConfigAssetRowsTable> {
+  $$ConfigAssetRowsTableOrderingComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  ColumnOrderings<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get entityId => $composableBuilder(
+    column: $table.entityId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get slot => $composableBuilder(
+    column: $table.slot,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get kind => $composableBuilder(
+    column: $table.kind,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get mediaType => $composableBuilder(
+    column: $table.mediaType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get attachmentId => $composableBuilder(
+    column: $table.attachmentId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get uploadId => $composableBuilder(
+    column: $table.uploadId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  $$AssetRowsTableOrderingComposer get assetId {
+    final $$AssetRowsTableOrderingComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.assetId,
+      referencedTable: $db.assetRows,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$AssetRowsTableOrderingComposer(
+            $db: $db,
+            $table: $db.assetRows,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ConfigAssetRowsTableAnnotationComposer
+    extends Composer<_$AppDatabase, $ConfigAssetRowsTable> {
+  $$ConfigAssetRowsTableAnnotationComposer({
+    required super.$db,
+    required super.$table,
+    super.joinBuilder,
+    super.$addJoinBuilderToRootComposer,
+    super.$removeJoinBuilderFromRootComposer,
+  });
+  GeneratedColumn<String> get entityType => $composableBuilder(
+    column: $table.entityType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get entityId =>
+      $composableBuilder(column: $table.entityId, builder: (column) => column);
+
+  GeneratedColumn<String> get slot =>
+      $composableBuilder(column: $table.slot, builder: (column) => column);
+
+  GeneratedColumn<String> get kind =>
+      $composableBuilder(column: $table.kind, builder: (column) => column);
+
+  GeneratedColumn<String> get displayName => $composableBuilder(
+    column: $table.displayName,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get mediaType =>
+      $composableBuilder(column: $table.mediaType, builder: (column) => column);
+
+  GeneratedColumn<String> get attachmentId => $composableBuilder(
+    column: $table.attachmentId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get uploadId =>
+      $composableBuilder(column: $table.uploadId, builder: (column) => column);
+
+  GeneratedColumn<int> get chunkKeyEpoch => $composableBuilder(
+    column: $table.chunkKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get manifestKeyEpoch => $composableBuilder(
+    column: $table.manifestKeyEpoch,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<int> get manifestRevision => $composableBuilder(
+    column: $table.manifestRevision,
+    builder: (column) => column,
+  );
+
+  $$AssetRowsTableAnnotationComposer get assetId {
+    final $$AssetRowsTableAnnotationComposer composer = $composerBuilder(
+      composer: this,
+      getCurrentColumn: (t) => t.assetId,
+      referencedTable: $db.assetRows,
+      getReferencedColumn: (t) => t.id,
+      builder:
+          (
+            joinBuilder, {
+            $addJoinBuilderToRootComposer,
+            $removeJoinBuilderFromRootComposer,
+          }) => $$AssetRowsTableAnnotationComposer(
+            $db: $db,
+            $table: $db.assetRows,
+            $addJoinBuilderToRootComposer: $addJoinBuilderToRootComposer,
+            joinBuilder: joinBuilder,
+            $removeJoinBuilderFromRootComposer:
+                $removeJoinBuilderFromRootComposer,
+          ),
+    );
+    return composer;
+  }
+}
+
+class $$ConfigAssetRowsTableTableManager
+    extends
+        RootTableManager<
+          _$AppDatabase,
+          $ConfigAssetRowsTable,
+          ConfigAssetRow,
+          $$ConfigAssetRowsTableFilterComposer,
+          $$ConfigAssetRowsTableOrderingComposer,
+          $$ConfigAssetRowsTableAnnotationComposer,
+          $$ConfigAssetRowsTableCreateCompanionBuilder,
+          $$ConfigAssetRowsTableUpdateCompanionBuilder,
+          (ConfigAssetRow, $$ConfigAssetRowsTableReferences),
+          ConfigAssetRow,
+          PrefetchHooks Function({bool assetId})
+        > {
+  $$ConfigAssetRowsTableTableManager(
+    _$AppDatabase db,
+    $ConfigAssetRowsTable table,
+  ) : super(
+        TableManagerState(
+          db: db,
+          table: table,
+          createFilteringComposer: () =>
+              $$ConfigAssetRowsTableFilterComposer($db: db, $table: table),
+          createOrderingComposer: () =>
+              $$ConfigAssetRowsTableOrderingComposer($db: db, $table: table),
+          createComputedFieldComposer: () =>
+              $$ConfigAssetRowsTableAnnotationComposer($db: db, $table: table),
+          updateCompanionCallback:
+              ({
+                Value<String> entityType = const Value.absent(),
+                Value<String> entityId = const Value.absent(),
+                Value<String> slot = const Value.absent(),
+                Value<String> assetId = const Value.absent(),
+                Value<String> kind = const Value.absent(),
+                Value<String?> displayName = const Value.absent(),
+                Value<String?> mediaType = const Value.absent(),
+                Value<String?> attachmentId = const Value.absent(),
+                Value<String?> uploadId = const Value.absent(),
+                Value<int?> chunkKeyEpoch = const Value.absent(),
+                Value<int?> manifestKeyEpoch = const Value.absent(),
+                Value<int?> manifestRevision = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ConfigAssetRowsCompanion(
+                entityType: entityType,
+                entityId: entityId,
+                slot: slot,
+                assetId: assetId,
+                kind: kind,
+                displayName: displayName,
+                mediaType: mediaType,
+                attachmentId: attachmentId,
+                uploadId: uploadId,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
+                rowid: rowid,
+              ),
+          createCompanionCallback:
+              ({
+                required String entityType,
+                required String entityId,
+                required String slot,
+                required String assetId,
+                required String kind,
+                Value<String?> displayName = const Value.absent(),
+                Value<String?> mediaType = const Value.absent(),
+                Value<String?> attachmentId = const Value.absent(),
+                Value<String?> uploadId = const Value.absent(),
+                Value<int?> chunkKeyEpoch = const Value.absent(),
+                Value<int?> manifestKeyEpoch = const Value.absent(),
+                Value<int?> manifestRevision = const Value.absent(),
+                Value<int> rowid = const Value.absent(),
+              }) => ConfigAssetRowsCompanion.insert(
+                entityType: entityType,
+                entityId: entityId,
+                slot: slot,
+                assetId: assetId,
+                kind: kind,
+                displayName: displayName,
+                mediaType: mediaType,
+                attachmentId: attachmentId,
+                uploadId: uploadId,
+                chunkKeyEpoch: chunkKeyEpoch,
+                manifestKeyEpoch: manifestKeyEpoch,
+                manifestRevision: manifestRevision,
+                rowid: rowid,
+              ),
+          withReferenceMapper: (p0) => p0
+              .map(
+                (e) => (
+                  e.readTable(table),
+                  $$ConfigAssetRowsTableReferences(db, table, e),
+                ),
+              )
+              .toList(),
+          prefetchHooksCallback: ({assetId = false}) {
+            return PrefetchHooks(
+              db: db,
+              explicitlyWatchedTables: [],
+              addJoins:
+                  <
+                    T extends TableManagerState<
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic,
+                      dynamic
+                    >
+                  >(state) {
+                    if (assetId) {
+                      state =
+                          state.withJoin(
+                                currentTable: table,
+                                currentColumn: table.assetId,
+                                referencedTable:
+                                    $$ConfigAssetRowsTableReferences
+                                        ._assetIdTable(db),
+                                referencedColumn:
+                                    $$ConfigAssetRowsTableReferences
+                                        ._assetIdTable(db)
+                                        .id,
+                              )
+                              as T;
+                    }
+
+                    return state;
+                  },
+              getPrefetchedDataCallback: (items) async {
+                return [];
+              },
+            );
+          },
+        ),
+      );
+}
+
+typedef $$ConfigAssetRowsTableProcessedTableManager =
+    ProcessedTableManager<
+      _$AppDatabase,
+      $ConfigAssetRowsTable,
+      ConfigAssetRow,
+      $$ConfigAssetRowsTableFilterComposer,
+      $$ConfigAssetRowsTableOrderingComposer,
+      $$ConfigAssetRowsTableAnnotationComposer,
+      $$ConfigAssetRowsTableCreateCompanionBuilder,
+      $$ConfigAssetRowsTableUpdateCompanionBuilder,
+      (ConfigAssetRow, $$ConfigAssetRowsTableReferences),
+      ConfigAssetRow,
+      PrefetchHooks Function({bool assetId})
     >;
 typedef $$AssetGcRowsTableCreateCompanionBuilder =
     AssetGcRowsCompanion Function({
@@ -31957,8 +33493,11 @@ typedef $$E2eeAttachmentUploadRowsTableCreateCompanionBuilder =
     E2eeAttachmentUploadRowsCompanion Function({
       required String attachmentId,
       required String localAssetId,
-      required String targetRevisionId,
-      required int targetOrdinal,
+      Value<String?> targetRevisionId,
+      Value<int?> targetOrdinal,
+      Value<String?> targetConfigEntityType,
+      Value<String?> targetConfigEntityId,
+      Value<String?> targetConfigSlot,
       required String sourcePath,
       required int chunkKeyEpoch,
       required int manifestKeyEpoch,
@@ -31999,8 +33538,11 @@ typedef $$E2eeAttachmentUploadRowsTableUpdateCompanionBuilder =
     E2eeAttachmentUploadRowsCompanion Function({
       Value<String> attachmentId,
       Value<String> localAssetId,
-      Value<String> targetRevisionId,
-      Value<int> targetOrdinal,
+      Value<String?> targetRevisionId,
+      Value<int?> targetOrdinal,
+      Value<String?> targetConfigEntityType,
+      Value<String?> targetConfigEntityId,
+      Value<String?> targetConfigSlot,
       Value<String> sourcePath,
       Value<int> chunkKeyEpoch,
       Value<int> manifestKeyEpoch,
@@ -32064,6 +33606,21 @@ class $$E2eeAttachmentUploadRowsTableFilterComposer
 
   ColumnFilters<int> get targetOrdinal => $composableBuilder(
     column: $table.targetOrdinal,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get targetConfigEntityType => $composableBuilder(
+    column: $table.targetConfigEntityType,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get targetConfigEntityId => $composableBuilder(
+    column: $table.targetConfigEntityId,
+    builder: (column) => ColumnFilters(column),
+  );
+
+  ColumnFilters<String> get targetConfigSlot => $composableBuilder(
+    column: $table.targetConfigSlot,
     builder: (column) => ColumnFilters(column),
   );
 
@@ -32272,6 +33829,21 @@ class $$E2eeAttachmentUploadRowsTableOrderingComposer
     builder: (column) => ColumnOrderings(column),
   );
 
+  ColumnOrderings<String> get targetConfigEntityType => $composableBuilder(
+    column: $table.targetConfigEntityType,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get targetConfigEntityId => $composableBuilder(
+    column: $table.targetConfigEntityId,
+    builder: (column) => ColumnOrderings(column),
+  );
+
+  ColumnOrderings<String> get targetConfigSlot => $composableBuilder(
+    column: $table.targetConfigSlot,
+    builder: (column) => ColumnOrderings(column),
+  );
+
   ColumnOrderings<String> get sourcePath => $composableBuilder(
     column: $table.sourcePath,
     builder: (column) => ColumnOrderings(column),
@@ -32470,6 +34042,21 @@ class $$E2eeAttachmentUploadRowsTableAnnotationComposer
 
   GeneratedColumn<int> get targetOrdinal => $composableBuilder(
     column: $table.targetOrdinal,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get targetConfigEntityType => $composableBuilder(
+    column: $table.targetConfigEntityType,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get targetConfigEntityId => $composableBuilder(
+    column: $table.targetConfigEntityId,
+    builder: (column) => column,
+  );
+
+  GeneratedColumn<String> get targetConfigSlot => $composableBuilder(
+    column: $table.targetConfigSlot,
     builder: (column) => column,
   );
 
@@ -32683,8 +34270,11 @@ class $$E2eeAttachmentUploadRowsTableTableManager
               ({
                 Value<String> attachmentId = const Value.absent(),
                 Value<String> localAssetId = const Value.absent(),
-                Value<String> targetRevisionId = const Value.absent(),
-                Value<int> targetOrdinal = const Value.absent(),
+                Value<String?> targetRevisionId = const Value.absent(),
+                Value<int?> targetOrdinal = const Value.absent(),
+                Value<String?> targetConfigEntityType = const Value.absent(),
+                Value<String?> targetConfigEntityId = const Value.absent(),
+                Value<String?> targetConfigSlot = const Value.absent(),
                 Value<String> sourcePath = const Value.absent(),
                 Value<int> chunkKeyEpoch = const Value.absent(),
                 Value<int> manifestKeyEpoch = const Value.absent(),
@@ -32727,6 +34317,9 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 localAssetId: localAssetId,
                 targetRevisionId: targetRevisionId,
                 targetOrdinal: targetOrdinal,
+                targetConfigEntityType: targetConfigEntityType,
+                targetConfigEntityId: targetConfigEntityId,
+                targetConfigSlot: targetConfigSlot,
                 sourcePath: sourcePath,
                 chunkKeyEpoch: chunkKeyEpoch,
                 manifestKeyEpoch: manifestKeyEpoch,
@@ -32767,8 +34360,11 @@ class $$E2eeAttachmentUploadRowsTableTableManager
               ({
                 required String attachmentId,
                 required String localAssetId,
-                required String targetRevisionId,
-                required int targetOrdinal,
+                Value<String?> targetRevisionId = const Value.absent(),
+                Value<int?> targetOrdinal = const Value.absent(),
+                Value<String?> targetConfigEntityType = const Value.absent(),
+                Value<String?> targetConfigEntityId = const Value.absent(),
+                Value<String?> targetConfigSlot = const Value.absent(),
                 required String sourcePath,
                 required int chunkKeyEpoch,
                 required int manifestKeyEpoch,
@@ -32811,6 +34407,9 @@ class $$E2eeAttachmentUploadRowsTableTableManager
                 localAssetId: localAssetId,
                 targetRevisionId: targetRevisionId,
                 targetOrdinal: targetOrdinal,
+                targetConfigEntityType: targetConfigEntityType,
+                targetConfigEntityId: targetConfigEntityId,
+                targetConfigSlot: targetConfigSlot,
                 sourcePath: sourcePath,
                 chunkKeyEpoch: chunkKeyEpoch,
                 manifestKeyEpoch: manifestKeyEpoch,
@@ -33676,6 +35275,8 @@ class $AppDatabaseManager {
       $$AssetRowsTableTableManager(_db, _db.assetRows);
   $$MessageAssetRowsTableTableManager get messageAssetRows =>
       $$MessageAssetRowsTableTableManager(_db, _db.messageAssetRows);
+  $$ConfigAssetRowsTableTableManager get configAssetRows =>
+      $$ConfigAssetRowsTableTableManager(_db, _db.configAssetRows);
   $$AssetGcRowsTableTableManager get assetGcRows =>
       $$AssetGcRowsTableTableManager(_db, _db.assetGcRows);
   $$GcAuditRowsTableTableManager get gcAuditRows =>

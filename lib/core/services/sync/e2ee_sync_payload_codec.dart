@@ -5,7 +5,7 @@ import 'config_sync_keys.dart';
 import 'e2ee_config_sync_payload_schema.dart';
 import 'sync_codec.dart';
 
-const e2eeSyncPayloadFormatVersion = 3;
+const e2eeSyncPayloadFormatVersion = 4;
 const e2eeSyncMaximumMessageAttachmentCount = 32;
 const _maximumPositiveInt63 = 0x7fffffffffffffff;
 const _minimumSignedInt64 = -0x8000000000000000;

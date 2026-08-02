@@ -112,3 +112,5 @@
 - Android 首次启动门禁 #103/#106：应用目录完全使用平台 SDK 并规范化，工作区层删除 `/data/user/0` 等 Android 路径特判；ARM/ARM64 按 NDK UAPI 选择 `O_DIRECTORY`、`O_NOFOLLOW`。临时探针已全部移除，125 项定向测试通过，ARM64 Release APK 已完成真机安装和首次启动复验；Cargokit 固定使用预编译原生库。
 - 首设备注册 #109：genesis `operationId` 绑定 registration start 的 `attemptId`，恢复 pending 时在导出与发网前复核同一不变量；本次恢复介质确认后的 finish 错误直接展示，仅明确的历史 pending 错误码才弹恢复对话框。协议与页面红绿回归已通过；OPAQUE 凭据错误映射另记 #108。
 - 已完成 #114：聊天适配器出站与入站统一规范远程内联媒体，HTTP/HTTPS 与 data 图片保留规范 marker，远程文件转为可读 URL，本地或畸形 marker 继续失败关闭；适配器 6 项、Chatbox/Cherry 8 项与定向分析通过。
+- 进行中 #111：第一条纵向链路先接助手头像/背景；seam 放在内容运行时，配置 Provider 只提交配置键、资产槽和本地文件，复用附件 R2 密文通道。
+- 已完成 #111 基础：配置 payload v4 新增严格受管资产身份并禁止本机路径；SQLCipher schema 26 新增配置资产引用，附件上传状态机以互斥目标联合同时支持消息附件与配置资产，冻结 schema 仅保留 v26。下一步接本地物化、Provider 快照、远端下载恢复和资产 GC。

@@ -24,6 +24,7 @@ import 'package:Kelivo/core/services/sync/e2ee_cloud_sync_device_rotation_remote
 import 'package:Kelivo/core/services/sync/e2ee_message_attachment_readiness.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
+import 'package:Kelivo/core/services/sync/e2ee_config_asset_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_sync_adapter.dart';
 import 'package:Kelivo/core/services/sync/e2ee_data_rekey_executor.dart';
 import 'package:Kelivo/core/services/sync/e2ee_data_rekey_wire.dart';
@@ -234,6 +235,7 @@ _configPayloadCases() {
         'id': assistantId,
         'name': '助手',
         'avatar': null,
+        'avatarAsset': null,
         'useAssistantAvatar': false,
         'useAssistantName': true,
         'chatModelProvider': providerId,
@@ -251,6 +253,7 @@ _configPayloadCases() {
         'mcpServerIds': <Object?>[mcpServerId],
         'localToolIds': <Object?>['calculator'],
         'background': 'https://example.com/background.png',
+        'backgroundAsset': null,
         'customHeaders': <Object?>[
           <String, Object?>{'name': 'X-Assistant', 'value': 'header-value'},
         ],
@@ -6160,7 +6163,7 @@ void main() {
         E2eeSyncPayloadCodec.decode(entityKey: key, bytes: encoded),
         valid,
       );
-      expect(e2eeSyncPayloadFormatVersion, 3);
+      expect(e2eeSyncPayloadFormatVersion, 4);
 
       final legacyEnvelope = Map<String, Object?>.from(
         jsonDecode(utf8.decode(encoded)) as Map<String, Object?>,
@@ -6746,6 +6749,70 @@ void main() {
       expect(
         E2eeSyncPayloadCodec.decode(entityKey: chatKey, bytes: chatEncoded),
         _conversationPayload('聊天回归'),
+      );
+    });
+
+    test('助手受管资产仅接受完整远端身份且不携带本机路径', () {
+      final assistantCase = _configPayloadCases().firstWhere(
+        (testCase) => testCase.key.entityType == ConfigSyncKeys.assistantType,
+      );
+      final payload = <String, Object?>{
+        ...assistantCase.payload,
+        'avatar': null,
+        'avatarAsset': <String, Object?>{
+          'attachmentId': '51000000-0000-4000-8000-000000000001',
+          'uploadId': '52000000-0000-4000-8000-000000000001',
+          'chunkKeyEpoch': 7,
+          'manifestKeyEpoch': 8,
+          'manifestRevision': 2,
+          'kind': 'image',
+        },
+        'background': null,
+        'backgroundAsset': <String, Object?>{
+          'attachmentId': '53000000-0000-4000-8000-000000000001',
+          'uploadId': '54000000-0000-4000-8000-000000000001',
+          'chunkKeyEpoch': 7,
+          'manifestKeyEpoch': 7,
+          'manifestRevision': 1,
+          'kind': 'image',
+        },
+      };
+
+      final encoded = E2eeSyncPayloadCodec.encode(
+        entityKey: assistantCase.key,
+        payload: payload,
+      );
+      expect(
+        E2eeSyncPayloadCodec.decode(
+          entityKey: assistantCase.key,
+          bytes: encoded,
+        ),
+        payload,
+      );
+      expect(utf8.decode(encoded), isNot(contains(r'C:\private')));
+
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: assistantCase.key,
+          payload: <String, Object?>{
+            ...payload,
+            'avatar': r'C:\private\avatar.png',
+          },
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeSyncPayloadCodec.encode(
+          entityKey: assistantCase.key,
+          payload: <String, Object?>{
+            ...payload,
+            'avatarAsset': <String, Object?>{
+              ...(payload['avatarAsset']! as Map<String, Object?>),
+              'uploadId': null,
+            },
+          },
+        ),
+        throwsFormatException,
       );
     });
 
@@ -7769,6 +7836,9 @@ void main() {
       String localAssetId = 'asset-upload-1',
       String targetRevisionId = 'message-upload-1',
       int targetOrdinal = 0,
+      E2eeAttachmentKind kind = E2eeAttachmentKind.file,
+      String? displayName = 'upload.txt',
+      String? mediaType = 'text/plain',
       int contentByte = 0x5a,
       String createMutationId = 'd1000000-0000-4000-8000-000000000001',
       String commitMutationId = 'd2000000-0000-4000-8000-000000000001',
@@ -7777,7 +7847,7 @@ void main() {
         descriptor: E2eeAttachmentDescriptor(
           attachmentId: attachmentId,
           chunkKeyEpoch: 0xffffffff,
-          kind: E2eeAttachmentKind.file,
+          kind: kind,
           totalPlaintextBytes: KelivoAttachmentLimits.chunkPlaintextBytes + 1,
           contentSha256: Uint8List.fromList(List<int>.filled(32, contentByte)),
           wrappedDataKey: Uint8List.fromList(
@@ -7787,17 +7857,31 @@ void main() {
             KelivoAttachmentLimits.maxChunkEnvelopeBytes,
             KelivoAttachmentLimits.chunkEnvelopeOverheadBytes + 1,
           ],
-          displayName: 'upload.txt',
-          mediaType: 'text/plain',
+          displayName: displayName,
+          mediaType: mediaType,
         ),
         localAssetId: localAssetId,
-        targetRevisionId: targetRevisionId,
-        targetOrdinal: targetOrdinal,
+        target: E2eeMessageAttachmentUploadTarget(
+          revisionId: targetRevisionId,
+          ordinal: targetOrdinal,
+        ),
         sourcePath: 'D:\\workspace\\upload\\asset.bin',
         createMutationId: createMutationId,
         commitMutationId: commitMutationId,
       );
     }
+
+    E2eeMessageAttachmentUploadTarget messageTarget(
+      E2eeAttachmentUploadDraft draft,
+    ) => draft.target as E2eeMessageAttachmentUploadTarget;
+
+    E2eeMessageAttachmentUploadTarget messageStateTarget(
+      E2eeAttachmentUploadState state,
+    ) => state.target as E2eeMessageAttachmentUploadTarget;
+
+    E2eeConfigAssetUploadTarget configStateTarget(
+      E2eeAttachmentUploadState state,
+    ) => state.target as E2eeConfigAssetUploadTarget;
 
     Future<void> prepareUploadTarget(
       E2eeAttachmentUploadDraft draft, {
@@ -7807,7 +7891,7 @@ void main() {
       if (insertGraph) {
         await insertConversation(id: 'conversation-upload-1');
         await insertMessage(
-          id: draft.targetRevisionId,
+          id: messageTarget(draft).revisionId,
           conversationId: 'conversation-upload-1',
           groupId: 'group-upload-1',
         );
@@ -7830,8 +7914,40 @@ void main() {
           .into(database.messageAssetRows)
           .insert(
             MessageAssetRowsCompanion.insert(
-              revisionId: draft.targetRevisionId,
-              ordinal: draft.targetOrdinal,
+              revisionId: messageTarget(draft).revisionId,
+              ordinal: messageTarget(draft).ordinal,
+              assetId: draft.localAssetId,
+              kind: draft.descriptor.kind.name,
+              displayName: Value(draft.descriptor.displayName),
+              mediaType: Value(draft.descriptor.mediaType),
+            ),
+          );
+    }
+
+    Future<void> prepareConfigUploadTarget(
+      E2eeAttachmentUploadDraft draft,
+    ) async {
+      final target = draft.target as E2eeConfigAssetUploadTarget;
+      final now = DateTime.utc(2026, 7, 29);
+      await database
+          .into(database.assetRows)
+          .insert(
+            AssetRowsCompanion.insert(
+              id: draft.localAssetId,
+              contentHash: _digestHex(draft.descriptor.contentSha256),
+              path: draft.sourcePath,
+              byteSize: draft.descriptor.totalPlaintextBytes,
+              createdAt: now,
+              lastReferencedAt: now,
+            ),
+          );
+      await database
+          .into(database.configAssetRows)
+          .insert(
+            ConfigAssetRowsCompanion.insert(
+              entityType: target.key.entityKey.entityType,
+              entityId: target.key.entityKey.entityId,
+              slot: target.key.slot.wireValue,
               assetId: draft.localAssetId,
               kind: draft.descriptor.kind.name,
               displayName: Value(draft.descriptor.displayName),
@@ -7920,8 +8036,8 @@ void main() {
       );
 
       expect(first.localAssetId, second.localAssetId);
-      expect(first.targetOrdinal, 0);
-      expect(second.targetOrdinal, 31);
+      expect(messageStateTarget(first).ordinal, 0);
+      expect(messageStateTarget(second).ordinal, 31);
       expect(
         first.descriptor.attachmentId,
         isNot(second.descriptor.attachmentId),
@@ -7945,8 +8061,8 @@ void main() {
       await prepareUploadTarget(draft);
       await (database.update(database.messageAssetRows)..where(
             (row) =>
-                row.revisionId.equals(draft.targetRevisionId) &
-                row.ordinal.equals(draft.targetOrdinal),
+                row.revisionId.equals(messageTarget(draft).revisionId) &
+                row.ordinal.equals(messageTarget(draft).ordinal),
           ))
           .write(
             const MessageAssetRowsCompanion(
@@ -7990,8 +8106,159 @@ void main() {
 
       await (database.delete(database.messageAssetRows)..where(
             (row) =>
-                row.revisionId.equals(draft.targetRevisionId) &
-                row.ordinal.equals(draft.targetOrdinal),
+                row.revisionId.equals(messageTarget(draft).revisionId) &
+                row.ordinal.equals(messageTarget(draft).ordinal),
+          ))
+          .go();
+
+      expect(
+        await attachmentUploads.readByAttachmentId(
+          draft.descriptor.attachmentId,
+        ),
+        equals(null),
+      );
+    });
+
+    test('配置资产复用上传状态机并在提交时回填远端身份', () async {
+      final now = DateTime.utc(2026, 7, 29, 0, 50);
+      final key = E2eeConfigAssetKey(
+        entityKey: ConfigSyncKeys.assistant('assistant-config-upload'),
+        slot: E2eeConfigAssetSlot.avatar,
+      );
+      final messageDraft = uploadDraft(
+        attachmentId: 'd0000000-0000-4000-8000-000000000021',
+        localAssetId: 'asset-config-avatar',
+        kind: E2eeAttachmentKind.image,
+        displayName: null,
+        mediaType: null,
+        createMutationId: 'd1000000-0000-4000-8000-000000000021',
+        commitMutationId: 'd2000000-0000-4000-8000-000000000021',
+      );
+      final draft = E2eeAttachmentUploadDraft(
+        descriptor: messageDraft.descriptor,
+        localAssetId: messageDraft.localAssetId,
+        target: E2eeConfigAssetUploadTarget(key),
+        sourcePath: messageDraft.sourcePath,
+        createMutationId: messageDraft.createMutationId,
+        commitMutationId: messageDraft.commitMutationId,
+      );
+      await prepareConfigUploadTarget(draft);
+      final created = await attachmentUploads.create(draft: draft, now: now);
+      expect(configStateTarget(created).key, key);
+
+      var lease = (await attachmentUploads.claimDue(
+        leaseToken: 'config-upload-lease',
+        leaseOwner: 'foreground-runtime',
+        leaseExpiresAt: now.add(const Duration(minutes: 5)),
+        now: now,
+      ))!;
+      const uploadId = 'e0000000-0000-4000-8000-000000000021';
+      lease = await attachmentUploads.acceptCreated(
+        lease: lease,
+        uploadId: uploadId,
+        now: now.add(const Duration(seconds: 1)),
+      );
+      const secureCore = KelivoSecureCore();
+      final manifestCipher = E2eeAttachmentManifestCipher.takeOwnership(
+        E2eeAccountRecordCipher.takeOwnership(
+          secureCore: secureCore,
+          accountRootKey: await secureCore.generateAccountRootKey(
+            userId: Uuid.parseAsByteList(_ledgerUserId),
+            keyEpoch: 0xffffffff,
+          ),
+          userId: _ledgerUserId,
+          currentKeyEpoch: 0xffffffff,
+        ),
+      );
+      try {
+        lease = await attachmentUploads.attachManifest(
+          lease: lease,
+          sealedManifest: await manifestCipher.seal(
+            E2eeAttachmentManifest.fromDescriptor(
+              descriptor: draft.descriptor,
+              uploadId: uploadId,
+              manifestKeyEpoch: 0xffffffff,
+              manifestRevision: 1,
+            ),
+          ),
+          now: now.add(const Duration(seconds: 2)),
+        );
+      } finally {
+        await manifestCipher.close();
+      }
+      for (
+        var index = 0;
+        index < draft.descriptor.chunkCiphertextBytes.length;
+        index++
+      ) {
+        lease = await attachmentUploads.stageChunk(
+          lease: lease,
+          chunkIndex: index,
+          mutationId:
+              'd3000000-0000-4000-8000-${(index + 21).toString().padLeft(12, '0')}',
+          ciphertextPath: 'D:\\workspace\\cache\\config-$index.part',
+          ciphertextBytes: draft.descriptor.chunkCiphertextBytes[index],
+          ciphertextSha256: Uint8List.fromList(
+            List<int>.filled(32, index + 0x41),
+          ),
+          now: now.add(Duration(seconds: index * 2 + 3)),
+        );
+        lease = await attachmentUploads.acknowledgeChunk(
+          lease: lease,
+          now: now.add(Duration(seconds: index * 2 + 4)),
+        );
+      }
+      final committed = await attachmentUploads.markCommitted(
+        lease: lease,
+        now: now.add(const Duration(seconds: 8)),
+      );
+      expect(committed.phase, E2eeAttachmentUploadPhase.committed);
+      final target =
+          await (database.select(database.configAssetRows)..where(
+                (row) =>
+                    row.entityType.equals(key.entityKey.entityType) &
+                    row.entityId.equals(key.entityKey.entityId) &
+                    row.slot.equals(key.slot.wireValue),
+              ))
+              .getSingle();
+      expect(target.attachmentId, draft.descriptor.attachmentId);
+      expect(target.uploadId, uploadId);
+      expect(target.chunkKeyEpoch, draft.descriptor.chunkKeyEpoch);
+      expect(target.manifestKeyEpoch, 0xffffffff);
+      expect(target.manifestRevision, 1);
+    });
+
+    test('删除配置资产引用会级联清除未完成上传', () async {
+      final now = DateTime.utc(2026, 7, 29, 0, 55);
+      final key = E2eeConfigAssetKey(
+        entityKey: ConfigSyncKeys.assistant('assistant-config-cascade'),
+        slot: E2eeConfigAssetSlot.background,
+      );
+      final messageDraft = uploadDraft(
+        attachmentId: 'd0000000-0000-4000-8000-000000000022',
+        localAssetId: 'asset-config-background',
+        kind: E2eeAttachmentKind.image,
+        displayName: null,
+        mediaType: null,
+        createMutationId: 'd1000000-0000-4000-8000-000000000022',
+        commitMutationId: 'd2000000-0000-4000-8000-000000000022',
+      );
+      final draft = E2eeAttachmentUploadDraft(
+        descriptor: messageDraft.descriptor,
+        localAssetId: messageDraft.localAssetId,
+        target: E2eeConfigAssetUploadTarget(key),
+        sourcePath: messageDraft.sourcePath,
+        createMutationId: messageDraft.createMutationId,
+        commitMutationId: messageDraft.commitMutationId,
+      );
+      await prepareConfigUploadTarget(draft);
+      await attachmentUploads.create(draft: draft, now: now);
+
+      await (database.delete(database.configAssetRows)..where(
+            (row) =>
+                row.entityType.equals(key.entityKey.entityType) &
+                row.entityId.equals(key.entityKey.entityId) &
+                row.slot.equals(key.slot.wireValue),
           ))
           .go();
 
@@ -8184,8 +8451,8 @@ void main() {
       final targetAfterStaleLease =
           await (database.select(database.messageAssetRows)..where(
                 (row) =>
-                    row.revisionId.equals(draft.targetRevisionId) &
-                    row.ordinal.equals(draft.targetOrdinal),
+                    row.revisionId.equals(messageTarget(draft).revisionId) &
+                    row.ordinal.equals(messageTarget(draft).ordinal),
               ))
               .getSingle();
       expect(targetAfterStaleLease.attachmentId, equals(null));
@@ -8220,8 +8487,8 @@ void main() {
       final committedTarget =
           await (database.select(database.messageAssetRows)..where(
                 (row) =>
-                    row.revisionId.equals(draft.targetRevisionId) &
-                    row.ordinal.equals(draft.targetOrdinal),
+                    row.revisionId.equals(messageTarget(draft).revisionId) &
+                    row.ordinal.equals(messageTarget(draft).ordinal),
               ))
               .getSingle();
       expect(committedTarget.attachmentId, draft.descriptor.attachmentId);
@@ -8303,8 +8570,7 @@ void main() {
         () => E2eeAttachmentUploadDraft(
           descriptor: draft.descriptor,
           localAssetId: 'asset-invalid',
-          targetRevisionId: draft.targetRevisionId,
-          targetOrdinal: draft.targetOrdinal,
+          target: draft.target,
           sourcePath: 'bad\u0000path',
           createMutationId: 'd1000000-0000-4000-8000-000000000010',
           commitMutationId: 'd2000000-0000-4000-8000-000000000010',

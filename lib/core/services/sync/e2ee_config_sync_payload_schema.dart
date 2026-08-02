@@ -2,6 +2,17 @@ import 'config_sync_keys.dart';
 import 'sync_codec.dart';
 
 const _maximumPositiveInt63 = 0x7fffffffffffffff;
+final _canonicalUuidV4Pattern = RegExp(
+  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
+);
+const _managedAssetReferenceKeys = <String>{
+  'attachmentId',
+  'uploadId',
+  'chunkKeyEpoch',
+  'manifestKeyEpoch',
+  'manifestRevision',
+  'kind',
+};
 
 abstract final class E2eeConfigSyncPayloadSchema {
   static void validate(SyncEntityKey entityKey, Map<String, Object?> payload) {
@@ -219,6 +230,7 @@ const _assistantKeys = <String>{
   'id',
   'name',
   'avatar',
+  'avatarAsset',
   'useAssistantAvatar',
   'useAssistantName',
   'chatModelProvider',
@@ -236,6 +248,7 @@ const _assistantKeys = <String>{
   'mcpServerIds',
   'localToolIds',
   'background',
+  'backgroundAsset',
   'customHeaders',
   'customBody',
   'enableMemory',
@@ -261,7 +274,16 @@ void _validateAssistant(SyncEntityKey entityKey, Map<String, Object?> payload) {
   _expectExactKeys(payload, _assistantKeys, 'assistant');
   _requireMatchingIdentity(payload, 'id', entityKey);
   _requiredString(payload, 'name', allowEmpty: true);
-  _nullableString(payload, 'avatar');
+  final avatar = _nullableString(payload, 'avatar');
+  final avatarAsset = _nullableManagedAssetReference(
+    payload,
+    'avatarAsset',
+    expectedKind: 'image',
+  );
+  if (avatar != null && avatarAsset != null) {
+    throw const FormatException('assistant.avatar 与 avatarAsset 不能同时存在');
+  }
+  _rejectLocalPath(avatar, 'assistant.avatar');
   _requiredBoolean(payload, 'useAssistantAvatar');
   _requiredBoolean(payload, 'useAssistantName');
   _nullableIdentifier(payload, 'chatModelProvider');
@@ -281,7 +303,18 @@ void _validateAssistant(SyncEntityKey entityKey, Map<String, Object?> payload) {
   _requiredBoolean(payload, 'searchEnabled');
   _requiredIdentifierList(payload, 'mcpServerIds');
   _requiredIdentifierList(payload, 'localToolIds');
-  _nullableString(payload, 'background');
+  final background = _nullableString(payload, 'background');
+  final backgroundAsset = _nullableManagedAssetReference(
+    payload,
+    'backgroundAsset',
+    expectedKind: 'image',
+  );
+  if (background != null && backgroundAsset != null) {
+    throw const FormatException(
+      'assistant.background 与 backgroundAsset 不能同时存在',
+    );
+  }
+  _rejectLocalPath(background, 'assistant.background');
   _validateStringPairList(
     _requiredList(payload, 'customHeaders'),
     firstKey: 'name',
@@ -1101,4 +1134,51 @@ void _requiredEnumStringList(
 
 void _requiredPosition(Map<String, Object?> payload) {
   _requiredNonNegativeInteger(payload, '_position');
+}
+
+Map<String, Object?>? _nullableManagedAssetReference(
+  Map<String, Object?> payload,
+  String key, {
+  required String expectedKind,
+}) {
+  final value = _requiredValue(payload, key);
+  if (value == null) return null;
+  final reference = _expectObject(value, key);
+  _expectExactKeys(reference, _managedAssetReferenceKeys, key);
+  final attachmentId = _requiredString(reference, 'attachmentId');
+  final uploadId = _requiredString(reference, 'uploadId');
+  if (!_canonicalUuidV4Pattern.hasMatch(attachmentId) ||
+      !_canonicalUuidV4Pattern.hasMatch(uploadId) ||
+      attachmentId == uploadId) {
+    throw FormatException('$key 远端身份无效');
+  }
+  final chunkKeyEpoch = _requiredPositiveInteger(reference, 'chunkKeyEpoch');
+  final manifestKeyEpoch = _requiredPositiveInteger(
+    reference,
+    'manifestKeyEpoch',
+  );
+  final manifestRevision = _requiredPositiveInteger(
+    reference,
+    'manifestRevision',
+  );
+  if (chunkKeyEpoch > 0xffffffff ||
+      manifestKeyEpoch > 0xffffffff ||
+      manifestRevision > 0xffffffff ||
+      manifestKeyEpoch - chunkKeyEpoch != manifestRevision - 1) {
+    throw FormatException('$key 代次与修订关系无效');
+  }
+  if (_requiredString(reference, 'kind') != expectedKind) {
+    throw FormatException('$key kind 无效');
+  }
+  return reference;
+}
+
+void _rejectLocalPath(String? value, String context) {
+  final normalized = value?.trim() ?? '';
+  if (normalized.startsWith('/') ||
+      normalized.startsWith(r'\\') ||
+      normalized.startsWith('file:') ||
+      RegExp(r'^[A-Za-z]:[\\/]').hasMatch(normalized)) {
+    throw FormatException('$context 不得携带本机路径');
+  }
 }

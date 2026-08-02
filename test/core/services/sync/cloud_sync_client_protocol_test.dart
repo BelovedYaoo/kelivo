@@ -8516,7 +8516,7 @@ void main() {
     expect(firstBytes, orderedEquals(secondBytes));
     expect(
       utf8.decode(firstBytes),
-      '{"payload":{"events":[{"a":"value","z":[3,null,true,1.5,{"a":"一","b":"二"}]}],"messageId":"message-1"},"recordType":"tool-event","version":3}',
+      '{"payload":{"events":[{"a":"value","z":[3,null,true,1.5,{"a":"一","b":"二"}]}],"messageId":"message-1"},"recordType":"tool-event","version":4}',
     );
     final decoded = E2eeSyncPayloadCodec.decode(
       entityKey: entityKey,
@@ -14111,8 +14111,10 @@ final class _AttachmentUploadFixture {
         draft: E2eeAttachmentUploadDraft(
           descriptor: descriptor,
           localAssetId: localAssetId,
-          targetRevisionId: targetRevisionId,
-          targetOrdinal: 0,
+          target: E2eeMessageAttachmentUploadTarget(
+            revisionId: targetRevisionId,
+            ordinal: 0,
+          ),
           sourcePath: source.storagePath,
           createMutationId: _mutationId1,
           commitMutationId: _mutationId2,

@@ -857,8 +857,10 @@ final class E2eeChatContentRuntime
           drafts.add(
             await uploads.prepareDraft(
               localAssetId: attachment.assetId,
-              targetRevisionId: input.targetRevisionId,
-              targetOrdinal: index,
+              target: E2eeMessageAttachmentUploadTarget(
+                revisionId: input.targetRevisionId,
+                ordinal: index,
+              ),
               sourcePath: attachment.path,
               kind: E2eeAttachmentKind.values.byName(attachment.kind),
               totalPlaintextBytes: attachment.byteSize,
