@@ -1005,7 +1005,129 @@ final class CloudSyncDataRekeyFinalizeRequest {
       activeLease.operation.sourceDataGeneration + 1;
 }
 
-final class CloudSyncDataRekeyFinalizeResult {
+sealed class CloudSyncDataRekeyFinalizeOutcome {
+  const CloudSyncDataRekeyFinalizeOutcome();
+
+  factory CloudSyncDataRekeyFinalizeOutcome.fromJson(
+    CloudSyncJsonMap json, {
+    required CloudSyncDataRekeyFinalizeRequest request,
+  }) {
+    return switch (_requireString(json, 'result')) {
+      'verification-pending' => CloudSyncDataRekeyFinalizePending.fromJson(
+        json,
+        request: request,
+      ),
+      'finalized' => CloudSyncDataRekeyFinalizeResult.fromJson(
+        json,
+        request: request,
+      ),
+      _ => throw const FormatException('data-rekey 最终提交结果无效'),
+    };
+  }
+}
+
+enum CloudSyncDataRekeyFinalizeVerificationPhase {
+  sourceRecords('source-records'),
+  sourceAttachments('source-attachments'),
+  stagedRecords('staged-records'),
+  stagedAttachments('staged-attachments'),
+  verified('verified');
+
+  const CloudSyncDataRekeyFinalizeVerificationPhase(this.wireValue);
+
+  final String wireValue;
+
+  static CloudSyncDataRekeyFinalizeVerificationPhase fromWire(String value) {
+    return switch (value) {
+      'source-records' => sourceRecords,
+      'source-attachments' => sourceAttachments,
+      'staged-records' => stagedRecords,
+      'staged-attachments' => stagedAttachments,
+      'verified' => verified,
+      _ => throw const FormatException('data-rekey 最终校验阶段无效'),
+    };
+  }
+}
+
+final class CloudSyncDataRekeyFinalizePending
+    extends CloudSyncDataRekeyFinalizeOutcome {
+  factory CloudSyncDataRekeyFinalizePending.fromJson(
+    CloudSyncJsonMap json, {
+    required CloudSyncDataRekeyFinalizeRequest request,
+  }) {
+    _requireExactKeys(json, _jsonKeys, 'data-rekey 最终校验进度');
+    if (_requireString(json, 'result') != 'verification-pending' ||
+        _requireString(json, 'operationId') !=
+            request.activeLease.operation.operationId) {
+      throw const FormatException('data-rekey 最终校验进度未绑定请求');
+    }
+    final phase = CloudSyncDataRekeyFinalizeVerificationPhase.fromWire(
+      _requireString(json, 'phase'),
+    );
+    final sourceRecordCount = _requireNonNegativeInt32(
+      _requireInt(json, 'sourceRecordCount'),
+      'sourceRecordCount',
+    );
+    final sourceAttachmentCount = _requireNonNegativeInt32(
+      _requireInt(json, 'sourceAttachmentCount'),
+      'sourceAttachmentCount',
+    );
+    final stagedRecordCount = _requireNonNegativeInt32(
+      _requireInt(json, 'stagedRecordCount'),
+      'stagedRecordCount',
+    );
+    final stagedAttachmentCount = _requireNonNegativeInt32(
+      _requireInt(json, 'stagedAttachmentCount'),
+      'stagedAttachmentCount',
+    );
+    _requireDataRekeyFinalizeProgress(
+      phase: phase,
+      sourceRecordCount: sourceRecordCount,
+      sourceAttachmentCount: sourceAttachmentCount,
+      stagedRecordCount: stagedRecordCount,
+      stagedAttachmentCount: stagedAttachmentCount,
+      expectedSourceRecordCount: request.proof.sourceRecordCount,
+      expectedSourceAttachmentCount: request.proof.sourceAttachmentCount,
+    );
+    return CloudSyncDataRekeyFinalizePending._(
+      operationId: request.activeLease.operation.operationId,
+      phase: phase,
+      sourceRecordCount: sourceRecordCount,
+      sourceAttachmentCount: sourceAttachmentCount,
+      stagedRecordCount: stagedRecordCount,
+      stagedAttachmentCount: stagedAttachmentCount,
+    );
+  }
+
+  const CloudSyncDataRekeyFinalizePending._({
+    required this.operationId,
+    required this.phase,
+    required this.sourceRecordCount,
+    required this.sourceAttachmentCount,
+    required this.stagedRecordCount,
+    required this.stagedAttachmentCount,
+  });
+
+  static const _jsonKeys = <String>{
+    'result',
+    'operationId',
+    'phase',
+    'sourceRecordCount',
+    'sourceAttachmentCount',
+    'stagedRecordCount',
+    'stagedAttachmentCount',
+  };
+
+  final String operationId;
+  final CloudSyncDataRekeyFinalizeVerificationPhase phase;
+  final int sourceRecordCount;
+  final int sourceAttachmentCount;
+  final int stagedRecordCount;
+  final int stagedAttachmentCount;
+}
+
+final class CloudSyncDataRekeyFinalizeResult
+    extends CloudSyncDataRekeyFinalizeOutcome {
   factory CloudSyncDataRekeyFinalizeResult.fromJson(
     CloudSyncJsonMap json, {
     required CloudSyncDataRekeyFinalizeRequest request,
@@ -1064,6 +1186,54 @@ final class CloudSyncDataRekeyFinalizeResult {
   final int dataKeyEpoch;
   final int changeWatermark;
   final CloudSyncDataRekeyCompletion completion;
+}
+
+void _requireDataRekeyFinalizeProgress({
+  required CloudSyncDataRekeyFinalizeVerificationPhase phase,
+  required int sourceRecordCount,
+  required int sourceAttachmentCount,
+  required int stagedRecordCount,
+  required int stagedAttachmentCount,
+  required int expectedSourceRecordCount,
+  required int expectedSourceAttachmentCount,
+}) {
+  final sourceRecordsComplete = sourceRecordCount == expectedSourceRecordCount;
+  final sourceAttachmentsComplete =
+      sourceAttachmentCount == expectedSourceAttachmentCount;
+  final stagedRecordsComplete = stagedRecordCount == expectedSourceRecordCount;
+  final stagedAttachmentsComplete =
+      stagedAttachmentCount == expectedSourceAttachmentCount;
+  final countsInRange =
+      sourceRecordCount <= expectedSourceRecordCount &&
+      sourceAttachmentCount <= expectedSourceAttachmentCount &&
+      stagedRecordCount <= expectedSourceRecordCount &&
+      stagedAttachmentCount <= expectedSourceAttachmentCount;
+  final phaseConsistent = switch (phase) {
+    CloudSyncDataRekeyFinalizeVerificationPhase.sourceRecords =>
+      sourceAttachmentCount == 0 &&
+          stagedRecordCount == 0 &&
+          stagedAttachmentCount == 0,
+    CloudSyncDataRekeyFinalizeVerificationPhase.sourceAttachments =>
+      sourceRecordsComplete &&
+          stagedRecordCount == 0 &&
+          stagedAttachmentCount == 0,
+    CloudSyncDataRekeyFinalizeVerificationPhase.stagedRecords =>
+      sourceRecordsComplete &&
+          sourceAttachmentsComplete &&
+          stagedAttachmentCount == 0,
+    CloudSyncDataRekeyFinalizeVerificationPhase.stagedAttachments =>
+      sourceRecordsComplete &&
+          sourceAttachmentsComplete &&
+          stagedRecordsComplete,
+    CloudSyncDataRekeyFinalizeVerificationPhase.verified =>
+      sourceRecordsComplete &&
+          sourceAttachmentsComplete &&
+          stagedRecordsComplete &&
+          stagedAttachmentsComplete,
+  };
+  if (!countsInRange || !phaseConsistent) {
+    throw const FormatException('data-rekey 最终校验进度不一致');
+  }
 }
 
 bool _completionMatchesRequest(

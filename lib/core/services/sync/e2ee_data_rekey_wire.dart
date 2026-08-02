@@ -272,6 +272,77 @@ final class E2eeDataRekeySourceSnapshot {
   final E2eeDataRekeyAttachmentCursor? attachmentCursorEnd;
 }
 
+final class E2eeDataRekeySourceSnapshotAccumulator {
+  E2eeDataRekeySourceSnapshotAccumulator(this._header) {
+    _digest.add(buildE2eeDataRekeySourceHeader(_header));
+  }
+
+  final E2eeDataRekeySourceHeaderFields _header;
+  final _DigestAccumulator _digest = _DigestAccumulator();
+
+  int _recordCount = 0;
+  int _attachmentCount = 0;
+  int _maximumChangeSeq = 0;
+  String? _recordCursorEnd;
+  E2eeDataRekeyAttachmentCursor? _attachmentCursorEnd;
+  bool _attachmentPhaseStarted = false;
+
+  void addRecord(E2eeDataRekeySourceRecordDigestItem record) {
+    if (_attachmentPhaseStarted) {
+      throw const FormatException('冻结源附件阶段开始后不得追加记录');
+    }
+    if (_recordCount >= _header.expectedRecordCount) {
+      throw const FormatException('冻结源记录数量超过声明');
+    }
+    final previous = _recordCursorEnd;
+    if (previous != null && previous.compareTo(record.recordId) >= 0) {
+      throw const FormatException('冻结源记录游标必须严格递增');
+    }
+    _digest.add(buildE2eeDataRekeySourceRecordFrame(record));
+    _recordCount += 1;
+    _recordCursorEnd = record.recordId;
+    if (record.lastChangeSeq > _maximumChangeSeq) {
+      _maximumChangeSeq = record.lastChangeSeq;
+    }
+  }
+
+  void addAttachment(E2eeDataRekeySourceAttachmentDigestItem attachment) {
+    if (_recordCount != _header.expectedRecordCount) {
+      throw const FormatException('冻结源记录尚未完整，不能进入附件阶段');
+    }
+    _attachmentPhaseStarted = true;
+    if (_attachmentCount >= _header.expectedAttachmentCount) {
+      throw const FormatException('冻结源附件数量超过声明');
+    }
+    final previous = _attachmentCursorEnd;
+    final cursor = attachment.cursor;
+    if (previous != null && _compareAttachmentCursor(previous, cursor) >= 0) {
+      throw const FormatException('冻结源附件游标必须严格递增');
+    }
+    _digest.add(buildE2eeDataRekeySourceAttachmentFrame(attachment));
+    _attachmentCount += 1;
+    _attachmentCursorEnd = cursor;
+  }
+
+  E2eeDataRekeySourceSnapshot finish() {
+    if (_recordCount != _header.expectedRecordCount ||
+        _attachmentCount != _header.expectedAttachmentCount) {
+      throw const FormatException('冻结源快照数量与声明不一致');
+    }
+    if (_maximumChangeSeq != _header.expectedMaximumChangeSeq) {
+      throw const FormatException('冻结源快照最大 changeSeq 与声明不一致');
+    }
+    return E2eeDataRekeySourceSnapshot._(
+      root: _digest.finish(),
+      recordCount: _recordCount,
+      attachmentCount: _attachmentCount,
+      maximumChangeSeq: _maximumChangeSeq,
+      recordCursorEnd: _recordCursorEnd,
+      attachmentCursorEnd: _attachmentCursorEnd,
+    );
+  }
+}
+
 final class E2eeDataRekeyStagedRecordDigestItem {
   factory E2eeDataRekeyStagedRecordDigestItem({
     required String sourceRecordId,
@@ -361,6 +432,84 @@ final class E2eeDataRekeyStagedAttachmentDigestItem {
   final Uint8List manifestCiphertextDigest;
 }
 
+final class E2eeDataRekeyStagedCiphertextSetAccumulator {
+  E2eeDataRekeyStagedCiphertextSetAccumulator({
+    required int expectedRecordCount,
+    required int expectedAttachmentCount,
+  }) : _expectedRecordCount = _requireUint32(
+         expectedRecordCount,
+         'expectedRecordCount',
+       ),
+       _expectedAttachmentCount = _requireUint32(
+         expectedAttachmentCount,
+         'expectedAttachmentCount',
+       ) {
+    _digest.add(_stagedSetDomain);
+    _digest.add(_uint32Frame(_expectedRecordCount));
+  }
+
+  final int _expectedRecordCount;
+  final int _expectedAttachmentCount;
+  final _DigestAccumulator _digest = _DigestAccumulator();
+
+  int _recordCount = 0;
+  int _attachmentCount = 0;
+  String? _recordCursorEnd;
+  E2eeDataRekeyAttachmentCursor? _attachmentCursorEnd;
+  bool _attachmentPhaseStarted = false;
+
+  void addRecord(E2eeDataRekeyStagedRecordDigestItem record) {
+    if (_attachmentPhaseStarted) {
+      throw const FormatException('暂存附件阶段开始后不得追加记录');
+    }
+    if (_recordCount >= _expectedRecordCount) {
+      throw const FormatException('暂存记录数量超过声明');
+    }
+    final previous = _recordCursorEnd;
+    if (previous != null && previous.compareTo(record.sourceRecordId) >= 0) {
+      throw const FormatException('暂存记录游标必须严格递增');
+    }
+    _digest.add(buildE2eeDataRekeyStagedRecordFrame(record));
+    _recordCount += 1;
+    _recordCursorEnd = record.sourceRecordId;
+  }
+
+  void addAttachment(E2eeDataRekeyStagedAttachmentDigestItem attachment) {
+    _beginAttachmentPhase();
+    if (_attachmentCount >= _expectedAttachmentCount) {
+      throw const FormatException('暂存附件数量超过声明');
+    }
+    final previous = _attachmentCursorEnd;
+    final cursor = E2eeDataRekeyAttachmentCursor(
+      attachmentId: attachment.attachmentId,
+      uploadId: attachment.uploadId,
+    );
+    if (previous != null && _compareAttachmentCursor(previous, cursor) >= 0) {
+      throw const FormatException('暂存附件游标必须严格递增');
+    }
+    _digest.add(buildE2eeDataRekeyStagedAttachmentFrame(attachment));
+    _attachmentCount += 1;
+    _attachmentCursorEnd = cursor;
+  }
+
+  Uint8List finish() {
+    _beginAttachmentPhase();
+    if (_attachmentCount != _expectedAttachmentCount) {
+      throw const FormatException('暂存附件数量与声明不一致');
+    }
+    return _digest.finish();
+  }
+
+  void _beginAttachmentPhase() {
+    if (_attachmentPhaseStarted) return;
+    if (_recordCount != _expectedRecordCount) {
+      throw const FormatException('暂存记录尚未完整，不能进入附件阶段');
+    }
+    _attachmentPhaseStarted = true;
+    _digest.add(_uint32Frame(_expectedAttachmentCount));
+  }
+}
+
 Uint8List buildE2eeDataRekeySourceHeader(
   E2eeDataRekeySourceHeaderFields fields,
 ) {
@@ -440,41 +589,14 @@ E2eeDataRekeySourceSnapshot computeE2eeDataRekeySourceSnapshot({
   final sortedAttachments = List<E2eeDataRekeySourceAttachmentDigestItem>.of(
     attachments,
   )..sort(_compareSourceAttachment);
-  if (sortedRecords.length != header.expectedRecordCount ||
-      sortedAttachments.length != header.expectedAttachmentCount) {
-    throw const FormatException('冻结源快照数量与声明不一致');
-  }
-  _requireStrictRecordOrder(sortedRecords);
-  _requireStrictAttachmentOrder(sortedAttachments);
-
-  var maximumChangeSeq = 0;
+  final accumulator = E2eeDataRekeySourceSnapshotAccumulator(header);
   for (final record in sortedRecords) {
-    if (record.lastChangeSeq > maximumChangeSeq) {
-      maximumChangeSeq = record.lastChangeSeq;
-    }
-  }
-  if (maximumChangeSeq != header.expectedMaximumChangeSeq) {
-    throw const FormatException('冻结源快照最大 changeSeq 与声明不一致');
-  }
-
-  final digest = _DigestAccumulator();
-  digest.add(buildE2eeDataRekeySourceHeader(header));
-  for (final record in sortedRecords) {
-    digest.add(buildE2eeDataRekeySourceRecordFrame(record));
+    accumulator.addRecord(record);
   }
   for (final attachment in sortedAttachments) {
-    digest.add(buildE2eeDataRekeySourceAttachmentFrame(attachment));
+    accumulator.addAttachment(attachment);
   }
-  return E2eeDataRekeySourceSnapshot._(
-    root: digest.finish(),
-    recordCount: sortedRecords.length,
-    attachmentCount: sortedAttachments.length,
-    maximumChangeSeq: maximumChangeSeq,
-    recordCursorEnd: sortedRecords.isEmpty ? null : sortedRecords.last.recordId,
-    attachmentCursorEnd: sortedAttachments.isEmpty
-        ? null
-        : sortedAttachments.last.cursor,
-  );
+  return accumulator.finish();
 }
 
 Uint8List buildE2eeDataRekeyStagedRecordFrame(
@@ -525,22 +647,17 @@ Uint8List computeE2eeDataRekeyStagedCiphertextSetDigest({
   final sortedAttachments = List<E2eeDataRekeyStagedAttachmentDigestItem>.of(
     attachments,
   )..sort(_compareStagedAttachment);
-  _requireUint32(sortedRecords.length, 'recordCount');
-  _requireUint32(sortedAttachments.length, 'attachmentCount');
-  _requireStrictStagedRecordOrder(sortedRecords);
-  _requireStrictStagedAttachmentOrder(sortedAttachments);
-
-  final digest = _DigestAccumulator();
-  digest.add(_stagedSetDomain);
-  digest.add(_uint32Frame(sortedRecords.length));
+  final accumulator = E2eeDataRekeyStagedCiphertextSetAccumulator(
+    expectedRecordCount: sortedRecords.length,
+    expectedAttachmentCount: sortedAttachments.length,
+  );
   for (final record in sortedRecords) {
-    digest.add(buildE2eeDataRekeyStagedRecordFrame(record));
+    accumulator.addRecord(record);
   }
-  digest.add(_uint32Frame(sortedAttachments.length));
   for (final attachment in sortedAttachments) {
-    digest.add(buildE2eeDataRekeyStagedAttachmentFrame(attachment));
+    accumulator.addAttachment(attachment);
   }
-  return digest.finish();
+  return accumulator.finish();
 }
 
 final class E2eeDataRekeyCompletionFields {
@@ -852,33 +969,22 @@ int _compareSourceAttachment(
       : attachmentOrder;
 }
 
+int _compareAttachmentCursor(
+  E2eeDataRekeyAttachmentCursor left,
+  E2eeDataRekeyAttachmentCursor right,
+) {
+  final attachmentOrder = left.attachmentId.compareTo(right.attachmentId);
+  return attachmentOrder == 0
+      ? left.uploadId.compareTo(right.uploadId)
+      : attachmentOrder;
+}
+
 bool _hasPrefix(Uint8List value, Uint8List prefix) {
   if (value.length < prefix.length) return false;
   for (var index = 0; index < prefix.length; index++) {
     if (value[index] != prefix[index]) return false;
   }
   return true;
-}
-
-void _requireStrictRecordOrder(
-  List<E2eeDataRekeySourceRecordDigestItem> records,
-) {
-  for (var index = 1; index < records.length; index++) {
-    if (records[index - 1].recordId.compareTo(records[index].recordId) >= 0) {
-      throw const FormatException('冻结源记录 ID 必须唯一');
-    }
-  }
-}
-
-void _requireStrictAttachmentOrder(
-  List<E2eeDataRekeySourceAttachmentDigestItem> attachments,
-) {
-  for (var index = 1; index < attachments.length; index++) {
-    if (_compareSourceAttachment(attachments[index - 1], attachments[index]) >=
-        0) {
-      throw const FormatException('冻结源附件游标必须唯一');
-    }
-  }
 }
 
 int _compareStagedAttachment(
@@ -889,30 +995,6 @@ int _compareStagedAttachment(
   return attachmentOrder == 0
       ? left.uploadId.compareTo(right.uploadId)
       : attachmentOrder;
-}
-
-void _requireStrictStagedRecordOrder(
-  List<E2eeDataRekeyStagedRecordDigestItem> records,
-) {
-  for (var index = 1; index < records.length; index++) {
-    if (records[index - 1].sourceRecordId.compareTo(
-          records[index].sourceRecordId,
-        ) >=
-        0) {
-      throw const FormatException('暂存记录 sourceRecordId 必须唯一');
-    }
-  }
-}
-
-void _requireStrictStagedAttachmentOrder(
-  List<E2eeDataRekeyStagedAttachmentDigestItem> attachments,
-) {
-  for (var index = 1; index < attachments.length; index++) {
-    if (_compareStagedAttachment(attachments[index - 1], attachments[index]) >=
-        0) {
-      throw const FormatException('暂存附件游标必须唯一');
-    }
-  }
 }
 
 final class _DigestAccumulator {

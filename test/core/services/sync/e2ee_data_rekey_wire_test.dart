@@ -1,5 +1,7 @@
 import 'dart:typed_data';
 
+import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/e2ee_data_rekey_artifact_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_data_rekey_wire.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -168,6 +170,85 @@ void main() {
       expect(snapshot.attachmentCursorEnd, isNull);
     });
 
+    test('流式分页累计与批量固定向量一致', () {
+      final accumulator = E2eeDataRekeySourceSnapshotAccumulator(
+        _sourceHeader(),
+      );
+      accumulator.addRecord(
+        _sourceRecord(
+          recordId: '44444444-4444-4444-8444-444444444441',
+          revision: 1,
+          ciphertextBytes: 3,
+          ciphertextDigest: _hexBytes(_firstCiphertextDigestHex),
+          lastChangeSeq: 8,
+        ),
+      );
+      accumulator.addRecord(
+        _sourceRecord(
+          recordId: '44444444-4444-4444-8444-444444444442',
+          revision: 2,
+          ciphertextBytes: 4,
+          ciphertextDigest: _hexBytes(_secondCiphertextDigestHex),
+          lastChangeSeq: 9,
+        ),
+      );
+      accumulator.addAttachment(_sourceAttachment());
+
+      final snapshot = accumulator.finish();
+
+      expect(snapshot.root, orderedEquals(_hexBytes(_sourceSnapshotRootHex)));
+      expect(snapshot.recordCount, 2);
+      expect(snapshot.attachmentCount, 1);
+      expect(snapshot.maximumChangeSeq, 9);
+      expect(snapshot.recordCursorEnd, '44444444-4444-4444-8444-444444444442');
+      expect(
+        snapshot.attachmentCursorEnd?.attachmentId,
+        '66666666-6666-4666-8666-666666666666',
+      );
+      expect(accumulator.finish, throwsStateError);
+    });
+
+    test('流式分页累计拒绝乱序、跨阶段和不完整输入', () {
+      final firstRecord = _sourceRecord(
+        recordId: '44444444-4444-4444-8444-444444444441',
+        revision: 1,
+        ciphertextBytes: 3,
+        ciphertextDigest: _hexBytes(_firstCiphertextDigestHex),
+        lastChangeSeq: 8,
+      );
+      final secondRecord = _sourceRecord(
+        recordId: '44444444-4444-4444-8444-444444444442',
+        revision: 2,
+        ciphertextBytes: 4,
+        ciphertextDigest: _hexBytes(_secondCiphertextDigestHex),
+        lastChangeSeq: 9,
+      );
+      final incomplete = E2eeDataRekeySourceSnapshotAccumulator(_sourceHeader())
+        ..addRecord(firstRecord);
+      expect(incomplete.finish, throwsFormatException);
+      expect(
+        () => incomplete.addAttachment(_sourceAttachment()),
+        throwsFormatException,
+      );
+
+      final outOfOrder = E2eeDataRekeySourceSnapshotAccumulator(_sourceHeader())
+        ..addRecord(secondRecord);
+      expect(() => outOfOrder.addRecord(firstRecord), throwsFormatException);
+
+      final overflow = E2eeDataRekeySourceSnapshotAccumulator(
+        E2eeDataRekeySourceHeaderFields(
+          userId: '22222222-2222-4222-8222-222222222222',
+          operationId: '11111111-1111-4111-8111-111111111111',
+          sourceDataGeneration: 7,
+          sourceKeyEpoch: 11,
+          expectedRecordCount: 0,
+          expectedAttachmentCount: 0,
+          expectedMaximumChangeSeq: 0,
+        ),
+      );
+      expect(() => overflow.addRecord(firstRecord), throwsFormatException);
+    });
+
     test('重复记录游标、数量或最大 changeSeq 不一致时失败关闭', () {
       final record = _sourceRecord(
         recordId: '44444444-4444-4444-8444-444444444441',
@@ -313,6 +394,57 @@ void main() {
         ),
         orderedEquals(_hexBytes(_emptyStagedCiphertextSetDigestHex)),
       );
+    });
+
+    test('流式暂存累计与批量固定向量一致并拒绝不完整输入', () {
+      final firstRecord = E2eeDataRekeyStagedRecordDigestItem(
+        sourceRecordId: '44444444-4444-4444-8444-444444444441',
+        targetRecordId: '55555555-5555-4555-8555-555555555541',
+        sourceRevision: 1,
+        targetKeyEpoch: 12,
+        envelopeVersion: 1,
+        ciphertextBytes: 5,
+        ciphertextDigest: _hexBytes(_firstStagedRecordDigestHex),
+      );
+      final secondRecord = E2eeDataRekeyStagedRecordDigestItem(
+        sourceRecordId: '44444444-4444-4444-8444-444444444442',
+        targetRecordId: '55555555-5555-4555-8555-555555555542',
+        sourceRevision: 2,
+        targetKeyEpoch: 12,
+        envelopeVersion: 1,
+        ciphertextBytes: 3,
+        ciphertextDigest: _hexBytes(_secondStagedRecordDigestHex),
+      );
+      final attachment = E2eeDataRekeyStagedAttachmentDigestItem(
+        attachmentId: '66666666-6666-4666-8666-666666666666',
+        uploadId: '77777777-7777-4777-8777-777777777777',
+        sourceManifestRevision: 1,
+        manifestRevision: 2,
+        manifestKeyEpoch: 12,
+        manifestCiphertextBytes: 3,
+        manifestCiphertextDigest: _hexBytes(_stagedManifestDigestHex),
+      );
+      final accumulator =
+          E2eeDataRekeyStagedCiphertextSetAccumulator(
+              expectedRecordCount: 2,
+              expectedAttachmentCount: 1,
+            )
+            ..addRecord(firstRecord)
+            ..addRecord(secondRecord)
+            ..addAttachment(attachment);
+
+      expect(
+        accumulator.finish(),
+        orderedEquals(_hexBytes(_stagedCiphertextSetDigestHex)),
+      );
+      expect(accumulator.finish, throwsStateError);
+
+      final incomplete = E2eeDataRekeyStagedCiphertextSetAccumulator(
+        expectedRecordCount: 2,
+        expectedAttachmentCount: 0,
+      )..addRecord(firstRecord);
+      expect(incomplete.finish, throwsFormatException);
+      expect(() => incomplete.addAttachment(attachment), throwsFormatException);
     });
 
     test('重复记录和附件游标失败关闭', () {
@@ -481,6 +613,303 @@ void main() {
       );
     });
   });
+
+  group('data-rekey 最终校验进度', () {
+    test('接受与 finalize 请求绑定的跨请求检查点', () {
+      final request = _finalizeRequest();
+
+      final outcome =
+          CloudSyncDataRekeyFinalizeOutcome.fromJson(<String, Object?>{
+            'result': 'verification-pending',
+            'operationId': request.activeLease.operation.operationId,
+            'phase': 'staged-records',
+            'sourceRecordCount': 2,
+            'sourceAttachmentCount': 1,
+            'stagedRecordCount': 1,
+            'stagedAttachmentCount': 0,
+          }, request: request);
+
+      expect(outcome, isA<CloudSyncDataRekeyFinalizePending>());
+      final pending = outcome as CloudSyncDataRekeyFinalizePending;
+      expect(
+        pending.phase,
+        CloudSyncDataRekeyFinalizeVerificationPhase.stagedRecords,
+      );
+      expect(pending.stagedRecordCount, 1);
+    });
+
+    test('拒绝越过前置阶段或超出证明数量的检查点', () {
+      final request = _finalizeRequest();
+      for (final progress in <CloudSyncJsonMap>[
+        <String, Object?>{
+          'result': 'verification-pending',
+          'operationId': request.activeLease.operation.operationId,
+          'phase': 'staged-records',
+          'sourceRecordCount': 1,
+          'sourceAttachmentCount': 1,
+          'stagedRecordCount': 1,
+          'stagedAttachmentCount': 0,
+        },
+        <String, Object?>{
+          'result': 'verification-pending',
+          'operationId': request.activeLease.operation.operationId,
+          'phase': 'verified',
+          'sourceRecordCount': 2,
+          'sourceAttachmentCount': 1,
+          'stagedRecordCount': 3,
+          'stagedAttachmentCount': 1,
+        },
+      ]) {
+        expect(
+          () => CloudSyncDataRekeyFinalizeOutcome.fromJson(
+            progress,
+            request: request,
+          ),
+          throwsFormatException,
+        );
+      }
+    });
+  });
+
+  group('data-rekey 耐久 stage artifact', () {
+    test('记录 pending 可精确重建请求且 confirmed 仅保留规范摘要字段', () {
+      final binding = _artifactBinding();
+      final pending = E2eeDataRekeyPendingRecordArtifact(
+        binding: binding,
+        activeLease: _artifactLease(binding),
+        mutationId: '44444444-4444-4444-8444-444444444444',
+        sourceRecordId: '55555555-5555-4555-8555-555555555555',
+        targetRecordId: '66666666-6666-4666-8666-666666666666',
+        sourceRevision: 9,
+        ciphertext: Uint8List.fromList(<int>[1, 2, 3, 4]),
+      );
+
+      final decoded = E2eeDataRekeyStageArtifact.decode(
+        pending.encode(),
+        expectedBinding: binding,
+      );
+      expect(decoded, isA<E2eeDataRekeyPendingRecordArtifact>());
+      final replay = decoded as E2eeDataRekeyPendingRecordArtifact;
+      expect(replay.request.mutationId, pending.request.mutationId);
+      expect(
+        replay.request.activeLease.leaseToken,
+        '33333333-3333-4333-8333-333333333333',
+      );
+      expect(replay.request.targetRecordId, pending.request.targetRecordId);
+      expect(replay.request.ciphertext, pending.request.ciphertext);
+
+      final confirmed = pending.confirm(
+        CloudSyncDataRekeyRecordStageResult.fromJson(<String, Object?>{
+          'result': 'staged',
+          'operationId': binding.operation.operationId,
+          'mutationId': pending.request.mutationId,
+          'sourceRecordId': pending.request.sourceRecordId,
+          'targetRecordId': pending.request.targetRecordId,
+          'leaseVersion': pending.activeLease.leaseVersion,
+        }, request: pending.request),
+      );
+      final confirmedBytes = confirmed.encode();
+      expect(confirmedBytes.length, lessThan(1024));
+      final restored = E2eeDataRekeyStageArtifact.decode(
+        confirmedBytes,
+        expectedBinding: binding,
+      );
+      expect(restored, isA<E2eeDataRekeyConfirmedRecordArtifact>());
+      final restoredRecord = restored as E2eeDataRekeyConfirmedRecordArtifact;
+      expect(
+        buildE2eeDataRekeyStagedRecordFrame(restoredRecord.digestItem),
+        buildE2eeDataRekeyStagedRecordFrame(confirmed.digestItem),
+      );
+    });
+
+    test('附件 confirmed 只提升 manifest 代次并保留原附件身份', () {
+      final binding = _artifactBinding();
+      final pending = E2eeDataRekeyPendingAttachmentArtifact(
+        binding: binding,
+        activeLease: _artifactLease(binding),
+        mutationId: '77777777-7777-4777-8777-777777777777',
+        attachmentId: '88888888-8888-4888-8888-888888888888',
+        uploadId: '99999999-9999-4999-8999-999999999999',
+        sourceManifestRevision: 4,
+        manifestCiphertext: Uint8List.fromList(<int>[8, 9, 10]),
+      );
+
+      final confirmed = pending.confirm(
+        CloudSyncDataRekeyAttachmentStageResult.fromJson(<String, Object?>{
+          'result': 'staged',
+          'operationId': binding.operation.operationId,
+          'mutationId': pending.request.mutationId,
+          'attachmentId': pending.request.attachmentId,
+          'uploadId': pending.request.uploadId,
+          'manifestRevision': pending.request.manifestRevision,
+          'leaseVersion': pending.activeLease.leaseVersion,
+        }, request: pending.request),
+      );
+      final restored = E2eeDataRekeyStageArtifact.decode(
+        confirmed.encode(),
+        expectedBinding: binding,
+      );
+      expect(restored, isA<E2eeDataRekeyConfirmedAttachmentArtifact>());
+      final attachment = restored as E2eeDataRekeyConfirmedAttachmentArtifact;
+      expect(attachment.digestItem.attachmentId, pending.request.attachmentId);
+      expect(attachment.digestItem.uploadId, pending.request.uploadId);
+      expect(attachment.digestItem.sourceManifestRevision, 4);
+      expect(attachment.digestItem.manifestRevision, 5);
+      expect(attachment.digestItem.manifestKeyEpoch, 12);
+    });
+
+    test('解码拒绝跨账户、issuer 或 operation 使用缓存', () {
+      final binding = _artifactBinding();
+      final pending = E2eeDataRekeyPendingRecordArtifact(
+        binding: binding,
+        activeLease: _artifactLease(binding),
+        mutationId: '44444444-4444-4444-8444-444444444444',
+        sourceRecordId: '55555555-5555-4555-8555-555555555555',
+        targetRecordId: '66666666-6666-4666-8666-666666666666',
+        sourceRevision: 9,
+        ciphertext: Uint8List.fromList(<int>[1]),
+      );
+      final foreignBinding = E2eeDataRekeyArtifactBinding(
+        userId: binding.userId,
+        issuerDeviceId: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa',
+        operation: binding.operation,
+      );
+
+      expect(
+        () => E2eeDataRekeyStageArtifact.decode(
+          pending.encode(),
+          expectedBinding: foreignBinding,
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeDataRekeyStageArtifact.decode(
+          Uint8List.fromList(<int>[0x20, ...pending.encode()]),
+          expectedBinding: binding,
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('finalize 请求可跨重启逐字段重放且拒绝跨账户使用', () {
+      final binding = _artifactBinding();
+      final request = CloudSyncDataRekeyFinalizeRequest(
+        activeLease: _artifactLease(binding),
+        mutationId: 'bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb',
+        proof: CloudSyncDataRekeyFinalizeProof(
+          issuerDeviceId: binding.issuerDeviceId,
+          sourceSnapshotRoot: Uint8List(32)..fillRange(0, 32, 0x11),
+          sourceRecordCount: 1,
+          sourceAttachmentCount: 0,
+          sourceMaximumChangeSeq: 17,
+          sourceRecordCursorEnd: 'cccccccc-cccc-4ccc-8ccc-cccccccccccc',
+          sourceAttachmentCursorEnd: null,
+          membershipGeneration: 8,
+          membershipManifestDigest: Uint8List(32)..fillRange(0, 32, 0x22),
+          stagedRecordCount: 1,
+          stagedAttachmentCount: 0,
+          stagedCiphertextSetDigest: Uint8List(32)..fillRange(0, 32, 0x33),
+          signature: Uint8List(64)..fillRange(0, 64, 0x44),
+        ),
+      );
+      final artifact = E2eeDataRekeyFinalizeArtifact(
+        binding: binding,
+        request: request,
+      );
+
+      final restored = E2eeDataRekeyFinalizeArtifact.decode(
+        artifact.encode(),
+        expectedBinding: binding,
+      );
+
+      expect(restored.artifactId, request.mutationId);
+      expect(
+        restored.request.activeLease.leaseToken,
+        request.activeLease.leaseToken,
+      );
+      expect(restored.request.activeLease.leaseVersion, 5);
+      expect(
+        restored.request.proof.sourceSnapshotRoot,
+        request.proof.sourceSnapshotRoot,
+      );
+      expect(
+        restored.request.proof.sourceRecordCursorEnd,
+        request.proof.sourceRecordCursorEnd,
+      );
+      expect(restored.request.proof.sourceAttachmentCursorEnd, isNull);
+      expect(restored.request.proof.signature, request.proof.signature);
+      expect(restored.encode(), orderedEquals(artifact.encode()));
+
+      expect(
+        () => E2eeDataRekeyFinalizeArtifact.decode(
+          artifact.encode(),
+          expectedBinding: E2eeDataRekeyArtifactBinding(
+            userId: 'dddddddd-dddd-4ddd-8ddd-dddddddddddd',
+            issuerDeviceId: binding.issuerDeviceId,
+            operation: binding.operation,
+          ),
+        ),
+        throwsFormatException,
+      );
+    });
+  });
+}
+
+E2eeDataRekeyArtifactBinding _artifactBinding() {
+  return E2eeDataRekeyArtifactBinding(
+    userId: '11111111-1111-4111-8111-111111111111',
+    issuerDeviceId: '22222222-2222-4222-8222-222222222222',
+    operation: CloudSyncDataRekeyOperationScope(
+      operationId: 'aaaaaaaa-1111-4111-8111-111111111111',
+      sourceDataGeneration: 7,
+      sourceKeyEpoch: 11,
+      targetKeyEpoch: 12,
+    ),
+  );
+}
+
+CloudSyncDataRekeyActiveLease _artifactLease(
+  E2eeDataRekeyArtifactBinding binding,
+) {
+  return CloudSyncDataRekeyActiveLease(
+    operation: binding.operation,
+    leaseToken: '33333333-3333-4333-8333-333333333333',
+    leaseVersion: 5,
+  );
+}
+
+CloudSyncDataRekeyFinalizeRequest _finalizeRequest() {
+  return CloudSyncDataRekeyFinalizeRequest(
+    activeLease: CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: '11111111-1111-4111-8111-111111111111',
+        sourceDataGeneration: 7,
+        sourceKeyEpoch: 11,
+        targetKeyEpoch: 12,
+      ),
+      leaseToken: '22222222-2222-4222-8222-222222222222',
+      leaseVersion: 3,
+    ),
+    mutationId: '33333333-3333-4333-8333-333333333333',
+    proof: CloudSyncDataRekeyFinalizeProof(
+      issuerDeviceId: '44444444-4444-4444-8444-444444444444',
+      sourceSnapshotRoot: Uint8List(32),
+      sourceRecordCount: 2,
+      sourceAttachmentCount: 1,
+      sourceMaximumChangeSeq: 9,
+      sourceRecordCursorEnd: '55555555-5555-4555-8555-555555555555',
+      sourceAttachmentCursorEnd: CloudSyncDataRekeyAttachmentCursor(
+        attachmentId: '66666666-6666-4666-8666-666666666666',
+        uploadId: '77777777-7777-4777-8777-777777777777',
+      ),
+      membershipGeneration: 3,
+      membershipManifestDigest: Uint8List(32),
+      stagedRecordCount: 2,
+      stagedAttachmentCount: 1,
+      stagedCiphertextSetDigest: Uint8List(32),
+      signature: Uint8List(64),
+    ),
+  );
 }
 
 E2eeDataRekeyCompletionFields _completionFields({

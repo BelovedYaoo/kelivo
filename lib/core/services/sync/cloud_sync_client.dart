@@ -165,7 +165,7 @@ abstract interface class CloudSyncDataRekeyTransport {
     CloudSyncDataRekeyAttachmentStageRequest request,
   );
 
-  Future<CloudSyncDataRekeyFinalizeResult> finalizeDataRekey(
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
     CloudSyncDataRekeyFinalizeRequest request,
   );
 }
@@ -181,6 +181,7 @@ final class CloudSyncClient
     required this.baseUrl,
     required this._dio,
     required this._client,
+    this._dataRekeyBearerOverride,
   });
 
   factory CloudSyncClient({CloudSyncFullSessionToken? token}) {
@@ -251,6 +252,7 @@ final class CloudSyncClient
   final String baseUrl;
   final Dio _dio;
   final api.KelivoSyncApiClient _client;
+  final String? _dataRekeyBearerOverride;
   CloudSyncFullSessionToken? _sessionToken;
 
   @override
@@ -259,6 +261,13 @@ final class CloudSyncClient
   @override
   void close({bool force = false}) {
     _dio.close(force: force);
+  }
+
+  CloudSyncDataRekeyTransport accountRecoveryDataRekeyTransport(
+    CloudSyncAccountRecoveryToken recoveryToken,
+  ) {
+    // 恢复令牌只绑定不可见代理，避免并发恢复期间污染完整会话令牌。
+    return _CloudSyncAccountRecoveryDataRekeyTransport(this, recoveryToken);
   }
 
   Future<CloudSyncHealth> health() {
@@ -1446,7 +1455,7 @@ final class CloudSyncClient
     return _guard(() async {
       final response = await _client.getDataRekeyApi().getDataRekeyState(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
-        headers: _requireFullSessionHeaders(),
+        headers: _requireDataRekeyHeaders(),
         extra: _strictResponseExtra,
       );
       return _parseDataRekeyState(response.extra[_rawResponseKey]);
@@ -1471,7 +1480,7 @@ final class CloudSyncClient
       final response = await _client.getDataRekeyApi().claimDataRekeyLease(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         dataRekeyLeaseClaimRequest: generatedRequest,
-        headers: _requireFullSessionHeaders(),
+        headers: _requireDataRekeyHeaders(),
         extra: _strictResponseExtra,
       );
       return _parseDataRekeyLeaseClaim(
@@ -1504,7 +1513,7 @@ final class CloudSyncClient
           .listDataRekeySourceRecords(
             xKelivoSyncProtocolVersion: _syncProtocolVersion,
             dataRekeySourceRecordListRequest: generatedRequest,
-            headers: _requireFullSessionHeaders(),
+            headers: _requireDataRekeyHeaders(),
             extra: _strictResponseExtra,
           );
       return _parseDataRekeySourceRecordPage(
@@ -1538,7 +1547,7 @@ final class CloudSyncClient
           .listDataRekeySourceAttachments(
             xKelivoSyncProtocolVersion: _syncProtocolVersion,
             dataRekeySourceAttachmentListRequest: generatedRequest,
-            headers: _requireFullSessionHeaders(),
+            headers: _requireDataRekeyHeaders(),
             extra: _strictResponseExtra,
           );
       return _parseDataRekeySourceAttachmentPage(
@@ -1573,7 +1582,7 @@ final class CloudSyncClient
       final response = await _client.getDataRekeyApi().stageDataRekeyRecord(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         dataRekeyRecordStageRequest: generatedRequest,
-        headers: _requireFullSessionHeaders(),
+        headers: _requireDataRekeyHeaders(),
         extra: _strictResponseExtra,
       );
       return _parseDataRekeyRecordStageResult(
@@ -1611,7 +1620,7 @@ final class CloudSyncClient
       final response = await _client.getDataRekeyApi().stageDataRekeyAttachment(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         dataRekeyAttachmentStageRequest: generatedRequest,
-        headers: _requireFullSessionHeaders(),
+        headers: _requireDataRekeyHeaders(),
         extra: _strictResponseExtra,
       );
       return _parseDataRekeyAttachmentStageResult(
@@ -1622,7 +1631,7 @@ final class CloudSyncClient
   }
 
   @override
-  Future<CloudSyncDataRekeyFinalizeResult> finalizeDataRekey(
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
     CloudSyncDataRekeyFinalizeRequest request,
   ) {
     return _guard(() async {
@@ -1672,10 +1681,10 @@ final class CloudSyncClient
       final response = await _client.getDataRekeyApi().finalizeDataRekey(
         xKelivoSyncProtocolVersion: _syncProtocolVersion,
         dataRekeyFinalizeRequest: generatedRequest,
-        headers: _requireFullSessionHeaders(),
+        headers: _requireDataRekeyHeaders(),
         extra: _strictResponseExtra,
       );
-      return _parseDataRekeyFinalizeResult(
+      return _parseDataRekeyFinalizeOutcome(
         response.extra[_rawResponseKey],
         request: request,
       );
@@ -1806,6 +1815,13 @@ final class CloudSyncClient
     return _authorizationHeaders(_requireFullSessionToken().value);
   }
 
+  Map<String, String> _requireDataRekeyHeaders() {
+    final bearerOverride = _dataRekeyBearerOverride;
+    return bearerOverride == null
+        ? _requireFullSessionHeaders()
+        : _authorizationHeaders(bearerOverride);
+  }
+
   CloudSyncFullSessionToken _requireFullSessionToken() {
     final token = _sessionToken;
     if (token == null) {
@@ -1830,6 +1846,68 @@ final class CloudSyncClient
         retryable: false,
       );
     }
+  }
+}
+
+final class _CloudSyncAccountRecoveryDataRekeyTransport
+    implements CloudSyncDataRekeyTransport {
+  _CloudSyncAccountRecoveryDataRekeyTransport(
+    CloudSyncClient owner,
+    CloudSyncAccountRecoveryToken recoveryToken,
+  ) : _delegate = CloudSyncClient._(
+        baseUrl: owner.baseUrl,
+        dio: owner._dio,
+        client: owner._client,
+        dataRekeyBearerOverride: recoveryToken.value,
+      );
+
+  final CloudSyncClient _delegate;
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() {
+    return _delegate.getDataRekeyState();
+  }
+
+  @override
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  ) {
+    return _delegate.claimDataRekeyLease(request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  ) {
+    return _delegate.listDataRekeySourceRecords(request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  ) {
+    return _delegate.listDataRekeySourceAttachments(request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  ) {
+    return _delegate.stageDataRekeyRecord(request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  ) {
+    return _delegate.stageDataRekeyAttachment(request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) {
+    return _delegate.finalizeDataRekey(request);
   }
 }
 
@@ -2652,18 +2730,18 @@ CloudSyncDataRekeyAttachmentStageResult _parseDataRekeyAttachmentStageResult(
   );
 }
 
-CloudSyncDataRekeyFinalizeResult _parseDataRekeyFinalizeResult(
+CloudSyncDataRekeyFinalizeOutcome _parseDataRekeyFinalizeOutcome(
   Object? rawResponse, {
   required CloudSyncDataRekeyFinalizeRequest request,
 }) {
-  return CloudSyncDataRekeyFinalizeResult.fromJson(
-    _strictResponseData(rawResponse, const <String>{
-      'result',
-      'dataGeneration',
-      'dataKeyEpoch',
-      'changeWatermark',
-      'completion',
-    }, 'data-rekey 最终提交响应'),
+  final envelope = copyCloudSyncJsonMap(rawResponse);
+  _requireRawExactKeys(
+    envelope,
+    _strictResponseEnvelopeKeys,
+    'data-rekey 最终提交响应',
+  );
+  return CloudSyncDataRekeyFinalizeOutcome.fromJson(
+    copyCloudSyncJsonMap(envelope['data']),
     request: request,
   );
 }

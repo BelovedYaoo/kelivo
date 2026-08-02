@@ -10,13 +10,13 @@ import '../../database/app_database.dart';
 
 part '../../database/e2ee_verified_membership_anchor_commands.dart';
 
-const e2eeAccountTrustManifestFormatVersion = 1;
+const e2eeAccountTrustManifestFormatVersion = 2;
 const e2eeAccountTrustManifestMaximumMembers = 256;
 const e2eeAccountTrustManifestMaximumHistoryBatchEntries = 256;
 const e2eeAccountTrustManifestMaximumHistoryEntries = 4096;
 const e2eeAccountTrustManifestMaximumRecoveryCapsuleLength = 4096;
 
-const _manifestHeaderLength = 228;
+const _manifestHeaderLength = 260;
 const _manifestMemberLength = 88;
 const _manifestSignatureLength = 64;
 const _manifestSignatureSectionLength = _manifestSignatureLength * 2;
@@ -27,6 +27,9 @@ const _maximumDeviceCounter = 0x7fffffff;
 const _maximumUint32 = 0xffffffff;
 final _manifestMagic = Uint8List.fromList(ascii.encode('KELIVOMM'));
 final _zeroDigest = Uint8List(_manifestDigestLength).asUnmodifiableView();
+final _zeroOperationAuthorizationDigest = Uint8List(
+  _manifestDigestLength,
+).asUnmodifiableView();
 final _zeroSignature = Uint8List(_manifestSignatureLength).asUnmodifiableView();
 
 const e2eeAccountTrustManifestMaximumLength =
@@ -302,6 +305,7 @@ final class E2eeRevokeRotateMembershipChange
     required String revokedDeviceId,
     required int nextRecoveryCapsuleVersion,
     required Uint8List nextRecoveryCapsule,
+    Uint8List? operationAuthorizationDigest,
   }) {
     _requirePositiveUint32(
       nextRecoveryCapsuleVersion,
@@ -314,6 +318,7 @@ final class E2eeRevokeRotateMembershipChange
       _canonicalUuidV4(revokedDeviceId, 'revokedDeviceId'),
       nextRecoveryCapsuleVersion,
       _copyRecoveryCapsule(nextRecoveryCapsule),
+      _copyOperationAuthorizationDigest(operationAuthorizationDigest),
     );
   }
 
@@ -324,6 +329,7 @@ final class E2eeRevokeRotateMembershipChange
     this.revokedDeviceId,
     this.nextRecoveryCapsuleVersion,
     this.nextRecoveryCapsule,
+    this._operationAuthorizationDigest,
   ) : super._();
 
   final E2eeVerifiedMembership previous;
@@ -332,6 +338,10 @@ final class E2eeRevokeRotateMembershipChange
   final String revokedDeviceId;
   final int nextRecoveryCapsuleVersion;
   final Uint8List nextRecoveryCapsule;
+  final Uint8List _operationAuthorizationDigest;
+
+  Uint8List get operationAuthorizationDigest =>
+      Uint8List.fromList(_operationAuthorizationDigest);
 }
 
 final class E2eeRecoverResumeMembershipChange
@@ -470,6 +480,7 @@ final class E2eeRevokeRotateMembershipExpectation
     required String operationId,
     required String issuerDeviceId,
     required String revokedDeviceId,
+    Uint8List? operationAuthorizationDigest,
   }) {
     return E2eeRevokeRotateMembershipExpectation._(
       projection,
@@ -477,6 +488,7 @@ final class E2eeRevokeRotateMembershipExpectation
       _canonicalUuidV4(operationId, 'operationId'),
       _canonicalUuidV4(issuerDeviceId, 'issuerDeviceId'),
       _canonicalUuidV4(revokedDeviceId, 'revokedDeviceId'),
+      _copyOperationAuthorizationDigest(operationAuthorizationDigest),
     );
   }
 
@@ -486,6 +498,7 @@ final class E2eeRevokeRotateMembershipExpectation
     this.operationId,
     this.issuerDeviceId,
     this.revokedDeviceId,
+    this._operationAuthorizationDigest,
   ) : super._();
 
   @override
@@ -494,6 +507,10 @@ final class E2eeRevokeRotateMembershipExpectation
   final String operationId;
   final String issuerDeviceId;
   final String revokedDeviceId;
+  final Uint8List _operationAuthorizationDigest;
+
+  Uint8List get operationAuthorizationDigest =>
+      Uint8List.fromList(_operationAuthorizationDigest);
 }
 
 final class E2eeRecoverResumeMembershipExpectation
@@ -613,9 +630,13 @@ final class E2eeVerifiedMembership {
     required Uint8List manifest,
     required Uint8List digest,
     required Set<String> operationIds,
+    required List<_MembershipOperationLineageEntry> operationLineage,
     required this._hasCompleteOperationHistory,
   }) : _data = data,
        _operationIds = Set<String>.unmodifiable(operationIds),
+       _operationLineage = List<_MembershipOperationLineageEntry>.unmodifiable(
+         operationLineage,
+       ),
        manifest = _immutableBytes(manifest),
        digest = _immutableBytes(digest),
        userId = data.userId,
@@ -633,12 +654,16 @@ final class E2eeVerifiedMembership {
        operationId = data.operationId,
        issuerDeviceId = data.issuerDeviceId,
        subjectDeviceId = data.subjectDeviceId,
+       _operationAuthorizationDigest = _immutableBytes(
+         data.operationAuthorizationDigest,
+       ),
        members = List<E2eeVerifiedMembershipDevice>.unmodifiable(
          data.members.map(E2eeVerifiedMembershipDevice._),
        );
 
   final _ManifestData _data;
   final Set<String> _operationIds;
+  final List<_MembershipOperationLineageEntry> _operationLineage;
   final bool _hasCompleteOperationHistory;
   final Uint8List manifest;
   final Uint8List digest;
@@ -655,7 +680,46 @@ final class E2eeVerifiedMembership {
   final String operationId;
   final String issuerDeviceId;
   final String subjectDeviceId;
+  final Uint8List _operationAuthorizationDigest;
   final List<E2eeVerifiedMembershipDevice> members;
+
+  Uint8List get operationAuthorizationDigest =>
+      Uint8List.fromList(_operationAuthorizationDigest);
+
+  void requireDataRekeyLineage({required String rekeyOperationId}) {
+    final operationId = _canonicalUuidV4(rekeyOperationId, 'rekeyOperationId');
+    if (!_hasCompleteOperationHistory ||
+        operationKind != E2eeMembershipOperationKind.recoverResume ||
+        _operationLineage.length != securityGeneration) {
+      throw const FormatException('恢复接续缺少完整已验证的数据换代历史');
+    }
+    final sourceIndex = _operationLineage.indexWhere(
+      (entry) => entry.operationId == operationId,
+    );
+    if (sourceIndex < 0) {
+      throw const FormatException('恢复接续未找到对应的数据换代起点');
+    }
+    final source = _operationLineage[sourceIndex];
+    if (source.operationKind != E2eeMembershipOperationKind.revokeRotate &&
+        source.operationKind != E2eeMembershipOperationKind.recoverReplace) {
+      throw const FormatException('恢复接续的数据换代起点类型无效');
+    }
+    final resumeEntries = _operationLineage
+        .skip(sourceIndex + 1)
+        .toList(growable: false);
+    if (resumeEntries.isEmpty ||
+        resumeEntries.last.operationId != this.operationId) {
+      throw const FormatException('恢复接续未位于数据换代历史链头');
+    }
+    for (var index = 0; index < resumeEntries.length; index++) {
+      final entry = resumeEntries[index];
+      if (entry.operationKind != E2eeMembershipOperationKind.recoverResume ||
+          entry.keyEpoch != source.keyEpoch ||
+          entry.securityGeneration != source.securityGeneration + index + 1) {
+        throw const FormatException('恢复接续的数据换代历史不连续');
+      }
+    }
+  }
 }
 
 final class E2eeCurrentSecurityStateVerification {
@@ -681,7 +745,6 @@ final class E2eeAccountTrustManifestModule {
     required KelivoAccountRootKeyHandle ark,
     required E2eeAccountTrustManifestChange change,
   }) async {
-    final operationHistory = _operationHistoryForChange(change);
     final signingContext = _changeSigningContext(change);
     final currentTrustPublicKey = await _secureCore.deriveAccountTrustPublicKey(
       ark,
@@ -710,6 +773,7 @@ final class E2eeAccountTrustManifestModule {
         currentTrustPublicKey.bytes,
       ),
     };
+    final operationHistory = _operationHistoryForChange(change, data);
     _validateRecoveryKeySeparation(data.recoveryPublicKey, data.members);
     await _validatePublicMaterial(data);
     final payload = _encodePayload(data);
@@ -759,7 +823,7 @@ final class E2eeAccountTrustManifestModule {
     final parsed = _parseManifest(manifest);
     final operationHistory = _operationHistoryForExpectation(
       expectation,
-      parsed.data.operationId,
+      parsed.data,
     );
     _validateProjection(parsed.data, projection);
     await _verifyWithAccountRootKey(ark, parsed);
@@ -771,6 +835,7 @@ final class E2eeAccountTrustManifestModule {
       manifest: manifest,
       digest: digest,
       operationIds: operationHistory.ids,
+      operationLineage: operationHistory.lineage,
       hasCompleteOperationHistory: operationHistory.isComplete,
     );
   }
@@ -819,6 +884,9 @@ final class E2eeAccountTrustManifestModule {
       manifest: manifest,
       digest: digest,
       operationIds: <String>{parsed.data.operationId},
+      operationLineage: <_MembershipOperationLineageEntry>[
+        _MembershipOperationLineageEntry.fromData(parsed.data),
+      ],
       hasCompleteOperationHistory: false,
     );
   }
@@ -937,7 +1005,7 @@ final class E2eeAccountTrustManifestModule {
     final parsed = _parseManifest(manifest);
     final operationHistory = _nextOperationHistory(
       previous: previous,
-      operationId: parsed.data.operationId,
+      current: parsed.data,
       requireComplete: _isRecoveryOperation(parsed.data.operationKind),
     );
     _validateHistorySuccessor(parsed.data, previous);
@@ -959,6 +1027,7 @@ final class E2eeAccountTrustManifestModule {
       manifest: manifest,
       digest: digest,
       operationIds: operationHistory.ids,
+      operationLineage: operationHistory.lineage,
       hasCompleteOperationHistory: operationHistory.isComplete,
     );
   }
@@ -1004,31 +1073,57 @@ final class E2eeAccountTrustManifestModule {
   }
 }
 
-typedef _OperationHistory = ({Set<String> ids, bool isComplete});
+final class _MembershipOperationLineageEntry {
+  const _MembershipOperationLineageEntry({
+    required this.operationKind,
+    required this.operationId,
+    required this.securityGeneration,
+    required this.keyEpoch,
+  });
+
+  factory _MembershipOperationLineageEntry.fromData(_ManifestData data) {
+    return _MembershipOperationLineageEntry(
+      operationKind: data.operationKind,
+      operationId: data.operationId,
+      securityGeneration: data.securityGeneration,
+      keyEpoch: data.keyEpoch,
+    );
+  }
+
+  final E2eeMembershipOperationKind operationKind;
+  final String operationId;
+  final int securityGeneration;
+  final int keyEpoch;
+}
+
+typedef _OperationHistory = ({
+  Set<String> ids,
+  bool isComplete,
+  List<_MembershipOperationLineageEntry> lineage,
+});
 
 _OperationHistory _operationHistoryForChange(
   E2eeAccountTrustManifestChange change,
+  _ManifestData current,
 ) {
   return switch (change) {
-    E2eeInitializeMembershipChange value => _initialOperationHistory(
-      value.operationId,
-    ),
+    E2eeInitializeMembershipChange() => _initialOperationHistory(current),
     E2eeAddDeviceMembershipChange value => _nextOperationHistory(
       previous: value.previous,
-      operationId: value.pairingId,
+      current: current,
     ),
     E2eeRevokeRotateMembershipChange value => _nextOperationHistory(
       previous: value.previous,
-      operationId: value.operationId,
+      current: current,
     ),
     E2eeRecoverResumeMembershipChange value => _nextOperationHistory(
       previous: value.previous,
-      operationId: value.operationId,
+      current: current,
       requireComplete: true,
     ),
     E2eeRecoverReplaceMembershipChange value => _nextOperationHistory(
       previous: value.previous,
-      operationId: value.operationId,
+      current: current,
       requireComplete: true,
     ),
   };
@@ -1036,50 +1131,57 @@ _OperationHistory _operationHistoryForChange(
 
 _OperationHistory _operationHistoryForExpectation(
   E2eeAccountTrustManifestExpectation expectation,
-  String operationId,
+  _ManifestData current,
 ) {
   return switch (expectation) {
-    E2eeInitializeMembershipExpectation() => _initialOperationHistory(
-      operationId,
-    ),
+    E2eeInitializeMembershipExpectation() => _initialOperationHistory(current),
     E2eeAddDeviceMembershipExpectation value => _nextOperationHistory(
       previous: value.previous,
-      operationId: operationId,
+      current: current,
     ),
     E2eeRevokeRotateMembershipExpectation value => _nextOperationHistory(
       previous: value.previous,
-      operationId: operationId,
+      current: current,
     ),
     E2eePairingBootstrapMembershipExpectation() => (
-      ids: <String>{operationId},
+      ids: <String>{current.operationId},
       isComplete: false,
+      lineage: <_MembershipOperationLineageEntry>[
+        _MembershipOperationLineageEntry.fromData(current),
+      ],
     ),
     E2eeRecoverResumeMembershipExpectation value => _nextOperationHistory(
       previous: value.previous,
-      operationId: operationId,
+      current: current,
       requireComplete: true,
     ),
     E2eeRecoverReplaceMembershipExpectation value => _nextOperationHistory(
       previous: value.previous,
-      operationId: operationId,
+      current: current,
       requireComplete: true,
     ),
   };
 }
 
-_OperationHistory _initialOperationHistory(String operationId) {
-  return (ids: <String>{operationId}, isComplete: true);
+_OperationHistory _initialOperationHistory(_ManifestData current) {
+  return (
+    ids: <String>{current.operationId},
+    isComplete: true,
+    lineage: <_MembershipOperationLineageEntry>[
+      _MembershipOperationLineageEntry.fromData(current),
+    ],
+  );
 }
 
 _OperationHistory _nextOperationHistory({
   required E2eeVerifiedMembership previous,
-  required String operationId,
+  required _ManifestData current,
   bool requireComplete = false,
 }) {
   if (requireComplete && !previous._hasCompleteOperationHistory) {
     throw StateError('恢复操作必须基于从 genesis 完整验证的成员历史');
   }
-  if (previous._operationIds.contains(operationId)) {
+  if (previous._operationIds.contains(current.operationId)) {
     throw StateError('成员清单 operationId 在完整历史中重复');
   }
   if (previous._operationIds.length >=
@@ -1087,8 +1189,12 @@ _OperationHistory _nextOperationHistory({
     throw StateError('成员清单完整历史已达到 4096 份上限');
   }
   return (
-    ids: <String>{...previous._operationIds, operationId},
+    ids: <String>{...previous._operationIds, current.operationId},
     isComplete: previous._hasCompleteOperationHistory,
+    lineage: <_MembershipOperationLineageEntry>[
+      ...previous._operationLineage,
+      _MembershipOperationLineageEntry.fromData(current),
+    ],
   );
 }
 
@@ -1155,6 +1261,7 @@ _ManifestData _buildInitialize(
     issuerDeviceIdBytes: change.member._deviceIdBytes,
     subjectDeviceId: change.member.deviceId,
     subjectDeviceIdBytes: change.member._deviceIdBytes,
+    operationAuthorizationDigest: _zeroOperationAuthorizationDigest,
     members: <_MembershipMember>[_memberFromInput(change.member)],
   );
 }
@@ -1208,6 +1315,7 @@ _ManifestData _buildAddDevice(
     issuerDeviceIdBytes: _uuidBytes(change.issuerDeviceId),
     subjectDeviceId: change.subject.deviceId,
     subjectDeviceIdBytes: change.subject._deviceIdBytes,
+    operationAuthorizationDigest: _zeroOperationAuthorizationDigest,
     members: members,
   );
 }
@@ -1271,6 +1379,7 @@ _ManifestData _buildRevokeRotate(
     issuerDeviceIdBytes: _uuidBytes(change.issuerDeviceId),
     subjectDeviceId: change.revokedDeviceId,
     subjectDeviceIdBytes: _uuidBytes(change.revokedDeviceId),
+    operationAuthorizationDigest: change._operationAuthorizationDigest,
     members: members,
   );
 }
@@ -1321,6 +1430,7 @@ _ManifestData _buildRecoverResume(
     issuerDeviceIdBytes: change.subject._deviceIdBytes,
     subjectDeviceId: change.subject.deviceId,
     subjectDeviceIdBytes: change.subject._deviceIdBytes,
+    operationAuthorizationDigest: _zeroOperationAuthorizationDigest,
     members: members,
   );
 }
@@ -1376,6 +1486,7 @@ _ManifestData _buildRecoverReplace(
     issuerDeviceIdBytes: change.subject._deviceIdBytes,
     subjectDeviceId: change.subject.deviceId,
     subjectDeviceIdBytes: change.subject._deviceIdBytes,
+    operationAuthorizationDigest: _zeroOperationAuthorizationDigest,
     members: <_MembershipMember>[member],
   );
 }
@@ -1413,6 +1524,7 @@ void _validateInitializeExpectation(
       data.members.length != 1 ||
       data.members.single.deviceId != data.subjectDeviceId ||
       data.members.single.authGeneration != 0 ||
+      !_allZero(data.operationAuthorizationDigest) ||
       data.recoveryPublicKeyVersion != 1 ||
       data.recoveryCapsuleVersion != 1 ||
       !_memberMatches(data.members.single, expectation.member) ||
@@ -1438,6 +1550,7 @@ void _validateAddExpectation(
       data.issuerDeviceId != expectation.issuerDeviceId ||
       data.subjectDeviceId != expectation.subject.deviceId ||
       expectation.projection.lastOperationId != expectation.pairingId ||
+      !_allZero(data.operationAuthorizationDigest) ||
       !_sameRecoveryState(data, previous) ||
       _findMember(previous, expectation.issuerDeviceId) == null ||
       _findMember(previous, expectation.subject.deviceId) != null ||
@@ -1478,6 +1591,10 @@ void _validateRevokeExpectation(
       data.subjectDeviceId != expectation.revokedDeviceId ||
       data.issuerDeviceId == data.subjectDeviceId ||
       expectation.projection.lastOperationId != expectation.operationId ||
+      !_sameBytes(
+        data.operationAuthorizationDigest,
+        expectation._operationAuthorizationDigest,
+      ) ||
       _findMember(previous, expectation.issuerDeviceId) == null ||
       _findMember(previous, expectation.revokedDeviceId) == null ||
       _findMember(data, expectation.issuerDeviceId) == null ||
@@ -1519,6 +1636,7 @@ void _validateRecoverResumeExpectation(
       data.subjectDeviceId != expectation.subject.deviceId ||
       _findMember(previous, expectation.subject.deviceId) != null ||
       data.members.length != previous.members.length + 1 ||
+      !_allZero(data.operationAuthorizationDigest) ||
       expectation.projection.lastOperationId != expectation.operationId ||
       expectation.projection.dataRekeyPhase != E2eeDataRekeyPhase.ready) {
     throw StateError('恢复接续成员清单不符合本地预期');
@@ -1558,6 +1676,7 @@ void _validateRecoverReplaceExpectation(
       data.issuerDeviceId != expectation.subject.deviceId ||
       data.subjectDeviceId != expectation.subject.deviceId ||
       data.members.length != 1 ||
+      !_allZero(data.operationAuthorizationDigest) ||
       expectation.projection.lastOperationId != expectation.operationId ||
       expectation.projection.dataRekeyPhase !=
           E2eeDataRekeyPhase.rekeyPending) {
@@ -1590,6 +1709,7 @@ void _validateBootstrapExpectation(
       data.issuerDeviceId != expectation.issuerDeviceId ||
       data.subjectDeviceId != expectation.localMember.deviceId ||
       data.issuerDeviceId == data.subjectDeviceId ||
+      !_allZero(data.operationAuthorizationDigest) ||
       expectation.projection.lastOperationId != expectation.pairingId ||
       _findMember(data, expectation.issuerDeviceId) == null ||
       localMember == null ||
@@ -1794,7 +1914,7 @@ _ParsedManifest _parseManifest(Uint8List manifest) {
       e2eeAccountTrustManifestFormatVersion) {
     throw const FormatException('成员清单格式版本无效');
   }
-  final memberCount = fields.getUint32(224, Endian.big);
+  final memberCount = fields.getUint32(256, Endian.big);
   if (memberCount == 0 ||
       memberCount > e2eeAccountTrustManifestMaximumMembers) {
     throw const FormatException('成员数量必须为 1 至 256');
@@ -1882,8 +2002,10 @@ _ParsedManifest _parseManifest(Uint8List manifest) {
     issuerDeviceIdBytes: issuerDeviceIdBytes,
     subjectDeviceId: Uuid.unparse(subjectDeviceIdBytes),
     subjectDeviceIdBytes: subjectDeviceIdBytes,
+    operationAuthorizationDigest: Uint8List.sublistView(manifest, 224, 256),
     members: members,
   );
+  _validateOperationAuthorizationDigest(data, untrusted: true);
   return _ParsedManifest(
     data,
     Uint8List.fromList(manifest.sublist(0, payloadLength)),
@@ -1916,7 +2038,8 @@ Uint8List _encodePayload(_ManifestData data) {
   payload.setRange(176, 192, data.operationIdBytes);
   payload.setRange(192, 208, data.issuerDeviceIdBytes);
   payload.setRange(208, 224, data.subjectDeviceIdBytes);
-  fields.setUint32(224, data.members.length, Endian.big);
+  payload.setRange(224, 256, data.operationAuthorizationDigest);
+  fields.setUint32(256, data.members.length, Endian.big);
   var offset = _manifestHeaderLength;
   for (final member in data.members) {
     payload.setRange(offset, offset + 16, member.deviceIdBytes);
@@ -1939,6 +2062,7 @@ E2eeVerifiedMembership _verified(
     manifest: manifest,
     digest: _sha256(manifest),
     operationIds: operationHistory.ids,
+    operationLineage: operationHistory.lineage,
     hasCompleteOperationHistory: operationHistory.isComplete,
   );
 }
@@ -1976,6 +2100,7 @@ final class _ManifestData {
     required Uint8List issuerDeviceIdBytes,
     required this.subjectDeviceId,
     required Uint8List subjectDeviceIdBytes,
+    required Uint8List operationAuthorizationDigest,
     required List<_MembershipMember> members,
   }) : userIdBytes = _immutableBytes(userIdBytes),
        previousDigest = _immutableBytes(previousDigest),
@@ -1987,6 +2112,9 @@ final class _ManifestData {
        operationIdBytes = _immutableBytes(operationIdBytes),
        issuerDeviceIdBytes = _immutableBytes(issuerDeviceIdBytes),
        subjectDeviceIdBytes = _immutableBytes(subjectDeviceIdBytes),
+       operationAuthorizationDigest = _immutableBytes(
+         operationAuthorizationDigest,
+       ),
        members = List<_MembershipMember>.unmodifiable(members);
 
   final String userId;
@@ -2006,6 +2134,7 @@ final class _ManifestData {
   final Uint8List issuerDeviceIdBytes;
   final String subjectDeviceId;
   final Uint8List subjectDeviceIdBytes;
+  final Uint8List operationAuthorizationDigest;
   final List<_MembershipMember> members;
 }
 
@@ -2228,6 +2357,33 @@ Uint8List _copyRecoveryCapsule(Uint8List value) {
     );
   }
   return _immutableBytes(value);
+}
+
+void _validateOperationAuthorizationDigest(
+  _ManifestData data, {
+  required bool untrusted,
+}) {
+  if (data.operationKind == E2eeMembershipOperationKind.revokeRotate ||
+      _allZero(data.operationAuthorizationDigest)) {
+    return;
+  }
+  if (untrusted) {
+    throw const FormatException('非撤销轮换成员清单不得携带操作授权摘要');
+  }
+  throw ArgumentError('非撤销轮换成员清单不得携带操作授权摘要');
+}
+
+Uint8List _copyOperationAuthorizationDigest(Uint8List? value) {
+  if (value == null) return _zeroOperationAuthorizationDigest;
+  final digest = _copyFixed(
+    value,
+    _manifestDigestLength,
+    'operationAuthorizationDigest',
+  );
+  if (_allZero(digest)) {
+    throw ArgumentError('显式操作授权摘要不得全零');
+  }
+  return digest;
 }
 
 Uint8List _immutableBytes(Uint8List value) {

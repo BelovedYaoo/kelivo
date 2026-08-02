@@ -4,6 +4,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 
+import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_types.dart';
 
 const e2eeAccountRecoveryProtocolVersion = 1;
@@ -39,6 +40,89 @@ enum E2eeAccountRecoveryNextAction {
 enum E2eeAccountRecoveryCommitResult { committed, replayed }
 
 enum E2eeAccountRecoveryCommitKind { resume, replacement }
+
+enum E2eeAccountRecoveryLocalTransitionPhase {
+  candidatePrepared,
+  proofVerified,
+  activated,
+}
+
+final class E2eeAccountRecoveryLocalTransitionPlan {
+  factory E2eeAccountRecoveryLocalTransitionPlan({
+    required Uint8List sourceStateBlob,
+    required Uint8List unprunedStateBlob,
+    required Uint8List prunedStateBlob,
+  }) {
+    final source = _fixedBytes(
+      sourceStateBlob,
+      DeviceStateBlobStore.blobLength,
+      'sourceStateBlob',
+    );
+    final unpruned = _fixedBytes(
+      unprunedStateBlob,
+      DeviceStateBlobStore.blobLength,
+      'unprunedStateBlob',
+    );
+    final pruned = _fixedBytes(
+      prunedStateBlob,
+      DeviceStateBlobStore.blobLength,
+      'prunedStateBlob',
+    );
+    if (_sameBytes(source, unpruned) ||
+        _sameBytes(source, pruned) ||
+        _sameBytes(unpruned, pruned)) {
+      throw const FormatException('账户恢复本地提交必须持有三个不同设备状态');
+    }
+    return E2eeAccountRecoveryLocalTransitionPlan._(
+      source,
+      unpruned,
+      pruned,
+      E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared,
+    );
+  }
+
+  const E2eeAccountRecoveryLocalTransitionPlan._(
+    this._sourceStateBlob,
+    this._unprunedStateBlob,
+    this._prunedStateBlob,
+    this.phase,
+  );
+
+  final Uint8List _sourceStateBlob;
+  final Uint8List _unprunedStateBlob;
+  final Uint8List _prunedStateBlob;
+  final E2eeAccountRecoveryLocalTransitionPhase phase;
+
+  Uint8List get sourceStateBlob => Uint8List.fromList(_sourceStateBlob);
+
+  Uint8List get unprunedStateBlob => Uint8List.fromList(_unprunedStateBlob);
+
+  Uint8List get prunedStateBlob => Uint8List.fromList(_prunedStateBlob);
+
+  E2eeAccountRecoveryLocalTransitionPlan _markProofVerified() {
+    if (phase != E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared) {
+      throw StateError('账户恢复本地候选不处于待验证阶段');
+    }
+    return E2eeAccountRecoveryLocalTransitionPlan._(
+      _sourceStateBlob,
+      _unprunedStateBlob,
+      _prunedStateBlob,
+      E2eeAccountRecoveryLocalTransitionPhase.proofVerified,
+    );
+  }
+
+  E2eeAccountRecoveryLocalTransitionPlan _markActivated() {
+    if (phase != E2eeAccountRecoveryLocalTransitionPhase.proofVerified) {
+      throw StateError('账户恢复本地候选尚未通过完成证明验证');
+    }
+    return E2eeAccountRecoveryLocalTransitionPlan._(
+      _sourceStateBlob,
+      _unprunedStateBlob,
+      _prunedStateBlob,
+      E2eeAccountRecoveryLocalTransitionPhase.activated,
+    );
+  }
+}
 
 final class CloudSyncAccountRecoveryToken {
   CloudSyncAccountRecoveryToken._(this.value);
@@ -702,6 +786,7 @@ final class E2eeAccountRecoveryCheckpoint {
       null,
       null,
       null,
+      null,
     );
   }
 
@@ -715,6 +800,7 @@ final class E2eeAccountRecoveryCheckpoint {
     this.recoveryTokenExpiresAt,
     this.nextAction,
     this.preparedCommit,
+    this.localTransitionPlan,
     this.commitReceipt,
   );
 
@@ -727,6 +813,7 @@ final class E2eeAccountRecoveryCheckpoint {
   final DateTime? recoveryTokenExpiresAt;
   final E2eeAccountRecoveryNextAction? nextAction;
   final E2eeAccountRecoveryPreparedCommit? preparedCommit;
+  final E2eeAccountRecoveryLocalTransitionPlan? localTransitionPlan;
   final E2eeAccountRecoveryCommitReceipt? commitReceipt;
 
   String get attemptId => challenge.attemptId;
@@ -760,6 +847,7 @@ final class E2eeAccountRecoveryCheckpoint {
         challenge,
         ownedNonceProof.asUnmodifiableView(),
         ownedTrustSignature.asUnmodifiableView(),
+        null,
         null,
         null,
         null,
@@ -805,6 +893,7 @@ final class E2eeAccountRecoveryCheckpoint {
       nextAction,
       null,
       null,
+      null,
     );
   }
 
@@ -836,6 +925,33 @@ final class E2eeAccountRecoveryCheckpoint {
       nextAction,
       commit,
       null,
+      null,
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint withLocalTransitionPlan(
+    E2eeAccountRecoveryLocalTransitionPlan plan,
+  ) {
+    if (stage != E2eeAccountRecoveryStage.authorized ||
+        preparedCommit == null ||
+        plan.phase !=
+            E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared ||
+        localTransitionPlan != null ||
+        commitReceipt != null) {
+      throw StateError('账户恢复 checkpoint 不可写入本地提交计划');
+    }
+    return E2eeAccountRecoveryCheckpoint._(
+      stage,
+      expectedDeviceId,
+      recoveryToken,
+      challenge,
+      _nonceProof,
+      _trustSignature,
+      recoveryTokenExpiresAt,
+      nextAction,
+      preparedCommit,
+      plan,
+      null,
     );
   }
 
@@ -843,8 +959,12 @@ final class E2eeAccountRecoveryCheckpoint {
     E2eeAccountRecoveryCommitReceipt receipt,
   ) {
     final prepared = preparedCommit;
+    final localPlan = localTransitionPlan;
     if (stage != E2eeAccountRecoveryStage.authorized ||
         prepared == null ||
+        localPlan == null ||
+        localPlan.phase !=
+            E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared ||
         commitReceipt != null) {
       throw StateError('账户恢复 checkpoint 不可写入成员提交回执');
     }
@@ -883,7 +1003,54 @@ final class E2eeAccountRecoveryCheckpoint {
       recoveryTokenExpiresAt,
       receipt.nextAction,
       prepared,
+      localPlan,
       receipt,
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint markLocalTransitionProofVerified() {
+    final plan = localTransitionPlan;
+    if (stage != E2eeAccountRecoveryStage.authorized ||
+        preparedCommit == null ||
+        commitReceipt == null ||
+        plan == null) {
+      throw StateError('账户恢复 checkpoint 不可确认本地候选证明');
+    }
+    return E2eeAccountRecoveryCheckpoint._(
+      stage,
+      expectedDeviceId,
+      recoveryToken,
+      challenge,
+      _nonceProof,
+      _trustSignature,
+      recoveryTokenExpiresAt,
+      nextAction,
+      preparedCommit,
+      plan._markProofVerified(),
+      commitReceipt,
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint markLocalTransitionActivated() {
+    final plan = localTransitionPlan;
+    if (stage != E2eeAccountRecoveryStage.authorized ||
+        preparedCommit == null ||
+        commitReceipt == null ||
+        plan == null) {
+      throw StateError('账户恢复 checkpoint 不可激活本地候选');
+    }
+    return E2eeAccountRecoveryCheckpoint._(
+      stage,
+      expectedDeviceId,
+      recoveryToken,
+      challenge,
+      _nonceProof,
+      _trustSignature,
+      recoveryTokenExpiresAt,
+      nextAction,
+      preparedCommit,
+      plan._markActivated(),
+      commitReceipt,
     );
   }
 
@@ -981,6 +1148,9 @@ final class E2eeAccountRecoveryCommitCoordinator {
     final prepared = checkpoint.preparedCommit;
     if (prepared == null) {
       throw StateError('账户恢复 checkpoint 尚未准备成员提交');
+    }
+    if (checkpoint.localTransitionPlan == null) {
+      throw StateError('账户恢复 checkpoint 尚未准备本地提交计划');
     }
     final expiresAt = checkpoint.recoveryTokenExpiresAt;
     if (expiresAt == null || !_now().toUtc().isBefore(expiresAt)) {

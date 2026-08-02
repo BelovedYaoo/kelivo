@@ -1,0 +1,32 @@
+# 设备撤销与数据换代
+
+- 基线：`2e97a9a8`，独立 worktree `D:\Projects\Private\kelivo-device-revocation-rekey`。
+- 目标：完成 Issue #51，将成员撤销、耐久 data-rekey、成员锚推进、旧 ARK 裁剪与当前设备确认擦除串成可恢复状态机。
+- 测试接缝：`E2eeDataRekeyCommands`、`CloudSyncClient` v4 data-rekey 协议、`CloudSyncProvider` 撤销与冷启动恢复入口。
+- 约束：固定 operation/lease/mutation 身份；requested-only 不生成新 mutation；远端确认前不推进本地成员锚或裁剪旧 ARK；Native ABI20 由独立分支实现，不部署、不访问默认安全槽。
+- 协议阻断：服务端禁止轮换 issuer 自撤销，且 op3 会立即吊销目标设备会话；现有协议无法由当前设备本机完成后续 data-rekey，也缺少 requested-only 的同 mutation 受限查询。已登记 `kelivo-api#40` 并回注 App `#51`。
+- 当前进度：先实现可独立完成的流式 data-rekey 执行器、其他设备撤销与固定 mutation 重放；当前设备 confirmed marker 在 `kelivo-api#40` 完成前保持失败关闭。
+- 已完成：源记录/附件与暂存记录/附件可按有界分页流式累计 SHA-256；严格校验顺序、数量、阶段和最大 changeSeq，结果与既有 TypeScript 固定向量一致。
+- 已完成：data-rekey 单例日志支持严格读取、租约回执耐久记录、单调续租、幂等阶段推进和 finalizing 身份校验后清理；网络延迟后的过期回执仍可落盘，但不得覆盖更新的租约事实。
+- 已完成：CloudSync v4 finalize 公开返回封闭 outcome，严格解析并校验 `verification-pending` 的跨请求分页检查点；执行器可在同一 finalize mutation 的多次请求之间续租，最终仅接收完整 `finalized` 回执。
+- 已完成：按账户 locator 与 operation 隔离的耐久 stage cache；pending 随机密文先原子落盘再发送，确认后先原子发布 compact canonical frame 再清除大密文，支持崩溃窗口精确恢复、数量/大小上限、进程锁、摘要校验和 finalize/abort 清理。清理只遍历白名单文件且不递归；统一句柄级防换链删除仍由 `#85` 收口。
+- 已完成：pending/confirmed artifact 严格 codec；规范 JSON、canonical base64url、账户/issuer/operation/lease/mutation 全绑定。pending 可重建逐字相同 stage 请求；confirmed 仅保留生成 84 字节 staged frame 所需字段，并要求已绑定传输回执后才能产生。
+- 已完成：finalize 请求耐久 artifact；签名证明、固定 mutation 与租约可在响应丢失或进程重启后逐字段原样恢复，并严格拒绝跨账户、issuer 或 operation 重放。
+- 已完成：流式 data-rekey 执行器与生产密码适配层；固定 10 条分页完成源快照和暂存摘要，stage/finalize 响应丢失可原样重放，ready 状态可恢复最终回执，客户端复核 270 字节 proof frame/digest。日志与缓存仅在调用方确认本地成员锚和旧 ARK 已提交后清理；密码会话强制绑定 issuer 设备与目标 key epoch。
+- 已完成：租约接管会清除旧本地工件并重新重包；record、attachment 与 finalize mutation 均绑定 leaseVersion，避免服务端保留的旧 mutation 回执与新租约载荷发生指纹冲突。同一租约内仍保持逐字重放。附件换代只更新 manifest，分块身份、chunkKeyEpoch 与分块摘要保持不变。
+- 已完成：本地提交清理由不可伪造的 ready confirmation 门禁；executor 在 finalize 后必须再次 GET ready，并将服务端 completion 与耐久 finalize 请求的 operation、issuer、270 字节 proof frame、proofDigest 和 signature 逐项绑定。pending 或缺失 completion 时保留 finalizing 日志，调用方无法提前 acknowledge。
+- 已完成：统一账户密钥变更编排器与设备状态三阶段提交。服务端 durable commit、data-rekey、独立 ready 确认、本地成员锚推进、旧 ARK 裁剪和远端 checkpoint 清理可跨崩溃幂等恢复；source/unpruned/pruned 状态逐字 CAS，恢复替换真实用例确认最终仅保留新 epoch，且未访问默认安全槽。
+- 已完成：账户密钥变更公开对象的安全复审。op4 强制成员 operation 与遗留 op3 rekey operation 不同；Binding、Receipt 与 Plan 的 digest/blob 私有冻结，对外只返回副本，构造输入与读取结果被改写后真实执行仍保持原绑定。
+- 已解除：Dart/Rust 已对齐成员清单 v2 的 32 字节 operationAuthorizationDigest、头布局、签名/历史校验与固定向量；API 最终回执与 typed adapter 仍等待最终 OpenAPI SHA。
+- 已完成：Dart 成员清单硬切 v2。固定头扩展为 260 字节，`operationAuthorizationDigest` 纳入双签名载荷；op3 可精确绑定自撤销授权摘要，其他操作严格要求零摘要，构造输入和读取结果均返回隔离副本。
+- 已完成：本地数据库硬切 schema v25，成员清单约束同步为 v2 长度与步长；冻结 schema 仅发布版本 25，旧 v24 数据库不迁移且必须重建。这是主动的破坏性兼容边界。
+- 已完成：根应用恢复介质协议硬切 v2 长度 676 字节，导出页面在进入前拒绝旧 644 字节介质；Native 魔数、版本和解析边界由 ABI19 分支统一实现。
+- 已完成：真实恢复固定向量永久写入现有 Dart 测试，完整链为 init -> addDevice(op2) -> revokeRotate(op3) -> recoverResume(op4) -> recoverReplace(op5)。逐段冻结完整 manifest/digest、operation、generation/epoch、issuer/subject/authDigest 与 previousDigest 链，并验证全部当前代签名及 op3/op5 上一代过渡签名；ABI20 分支已收到同组向量。
+- 已完成：成员清单保留完整有序最小 operation lineage。恢复接续可从当前 head 严格追溯触发 data-rekey 的 op3/op5，允许同一 R 在 pending 期间发生 1..N 次连续 recovery-resume takeover；最终绑定取最新 op4 的 issuer/generation/digest，错误 R 或不连续历史失败关闭。data 已 ready 的首次恢复仍允许直接 recoverReplace。
+- 已完成：恢复 checkpoint 硬切 v4，在任何远端成员 commit 前强制持久化 source/unpruned/target-only candidate 三份精确随机密文；candidate 显式按 `candidatePrepared -> proofVerified -> activated` 单向推进，回执前不可验证、proof 前不可激活，重启后保持逐字 CAS，不允许后填或重封。
+- 已完成：账户密钥变更 ready confirmation 补齐 user/issuer/operation/generation/epoch/digest 全绑定，独立调用本地 committer 也拒绝跨账户或跨签发设备复用确认。
+- 已完成：CloudSync data-rekey 增加账户恢复令牌专用传输。七个换代接口共享不可变 bearer 作用域，不修改完整会话令牌；允许仅持恢复令牌执行换代，同时普通请求继续失败关闭。
+- 已完成：七个 data-rekey 端点均由协议测试逐请求断言恢复 bearer，防止后续单个端点退回完整会话令牌。
+- 验证：恢复 checkpoint 安全测试 1/1、恢复授权/提交协调 11/11、账户密钥变更编排 8/8 通过；测试使用显式 Native 测试存储和独立 C: TEMP，未访问默认安全槽。
+- 验证：恢复 data-rekey 令牌隔离 GET 测试 2/2、六类 POST 端点测试 6/6 通过；定向分析无问题。
+- 已知阻断：data-rekey 协议子集 16 条通过、1 条失败；当前生成 Dart typed adapter 只接受 `finalized`，会在 raw 严格解析前拒绝 API 已支持的 `verification-pending`。已回注 Issue #51，待最终 OpenAPI 冻结后统一重生成，禁止手改生成文件。

@@ -3,6 +3,7 @@ import 'dart:typed_data';
 
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery.dart';
+import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 
@@ -10,8 +11,8 @@ void main() {
   test('完整拉取冻结历史后才由 Native 生成恢复授权证明', () async {
     final currentCapsule = _bytes(156, 0x51);
     final sourceCapsule = _bytes(156, 0x41);
-    final firstManifest = _bytes(444, 0x11);
-    final currentManifest = _bytes(444, 0x21);
+    final firstManifest = _bytes(476, 0x11);
+    final currentManifest = _bytes(476, 0x21);
     final challenge = E2eeAccountRecoveryChallenge(
       attemptId: _uuid(1),
       requestDigest: _bytes(32, 0x31),
@@ -125,8 +126,8 @@ void main() {
   });
 
   test('冻结历史投影与 challenge 不一致时不进入 Native', () async {
-    final challengeManifest = _bytes(444, 0x11);
-    final serverManifest = _bytes(444, 0x12);
+    final challengeManifest = _bytes(476, 0x11);
+    final serverManifest = _bytes(476, 0x12);
     final capsule = _bytes(156, 0x41);
     final challenge = E2eeAccountRecoveryChallenge(
       attemptId: _uuid(1),
@@ -634,30 +635,37 @@ E2eeAccountRecoveryCheckpoint _preparedResumeCheckpoint() {
             recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
             nextAction: E2eeAccountRecoveryNextAction.recoverResume,
           );
-  final nextManifest = _bytes(444, 0x73);
-  return authorized.withPreparedCommit(
-    E2eeAccountRecoveryResumeCommit(
-      attemptId: challenge.attemptId,
-      membership: E2eeAccountRecoveryMembershipCommit(
-        expectedGeneration: challenge.securityGeneration,
-        expectedKeyEpoch: challenge.keyEpoch,
-        expectedMembershipManifestDigest:
-            CloudSyncMembershipManifestDigest.fromBytes(
-              challenge.membershipManifestDigest,
+  final nextManifest = _bytes(476, 0x73);
+  return authorized
+      .withPreparedCommit(
+        E2eeAccountRecoveryResumeCommit(
+          attemptId: challenge.attemptId,
+          membership: E2eeAccountRecoveryMembershipCommit(
+            expectedGeneration: challenge.securityGeneration,
+            expectedKeyEpoch: challenge.keyEpoch,
+            expectedMembershipManifestDigest:
+                CloudSyncMembershipManifestDigest.fromBytes(
+                  challenge.membershipManifestDigest,
+                ),
+            operationId: _uuid(9),
+            nextMembershipManifest: nextManifest,
+            nextMembershipManifestDigest:
+                CloudSyncMembershipManifestDigest.fromBytes(
+                  _digest(nextManifest),
+                ),
+            envelope: E2eeAccountRecoveryEnvelope(
+              envelopeVersion: 1,
+              keyEpoch: challenge.keyEpoch,
+              accountKeyEnvelope: _bytes(
+                cloudSyncAccountKeyEnvelopeBytes,
+                0x74,
+              ),
             ),
-        operationId: _uuid(9),
-        nextMembershipManifest: nextManifest,
-        nextMembershipManifestDigest:
-            CloudSyncMembershipManifestDigest.fromBytes(_digest(nextManifest)),
-        envelope: E2eeAccountRecoveryEnvelope(
-          envelopeVersion: 1,
-          keyEpoch: challenge.keyEpoch,
-          accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0x74),
+          ),
+          rekeyOperationId: challenge.dataState.operationId!,
         ),
-      ),
-      rekeyOperationId: challenge.dataState.operationId!,
-    ),
-  );
+      )
+      .withLocalTransitionPlan(_localTransitionPlan(0x75));
 }
 
 E2eeAccountRecoveryCheckpoint _preparedReplacementCheckpoint() {
@@ -676,33 +684,41 @@ E2eeAccountRecoveryCheckpoint _preparedReplacementCheckpoint() {
             recoveryTokenExpiresAt: DateTime.utc(2026, 8, 1, 2),
             nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
           );
-  final nextManifest = _bytes(444, 0x91);
-  return authorized.withPreparedCommit(
-    E2eeAccountRecoveryReplacementCommit(
-      attemptId: fixture.challenge.attemptId,
-      membership: E2eeAccountRecoveryMembershipCommit(
-        expectedGeneration: fixture.challenge.securityGeneration,
-        expectedKeyEpoch: fixture.challenge.keyEpoch,
-        expectedMembershipManifestDigest:
-            CloudSyncMembershipManifestDigest.fromBytes(
-              fixture.challenge.membershipManifestDigest,
+  final nextManifest = _bytes(476, 0x91);
+  return authorized
+      .withPreparedCommit(
+        E2eeAccountRecoveryReplacementCommit(
+          attemptId: fixture.challenge.attemptId,
+          membership: E2eeAccountRecoveryMembershipCommit(
+            expectedGeneration: fixture.challenge.securityGeneration,
+            expectedKeyEpoch: fixture.challenge.keyEpoch,
+            expectedMembershipManifestDigest:
+                CloudSyncMembershipManifestDigest.fromBytes(
+                  fixture.challenge.membershipManifestDigest,
+                ),
+            operationId: _uuid(6),
+            nextMembershipManifest: nextManifest,
+            nextMembershipManifestDigest:
+                CloudSyncMembershipManifestDigest.fromBytes(
+                  _digest(nextManifest),
+                ),
+            envelope: E2eeAccountRecoveryEnvelope(
+              envelopeVersion: 1,
+              keyEpoch: fixture.challenge.keyEpoch + 1,
+              accountKeyEnvelope: _bytes(
+                cloudSyncAccountKeyEnvelopeBytes,
+                0x92,
+              ),
             ),
-        operationId: _uuid(6),
-        nextMembershipManifest: nextManifest,
-        nextMembershipManifestDigest:
-            CloudSyncMembershipManifestDigest.fromBytes(_digest(nextManifest)),
-        envelope: E2eeAccountRecoveryEnvelope(
-          envelopeVersion: 1,
-          keyEpoch: fixture.challenge.keyEpoch + 1,
-          accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0x92),
+          ),
+          nextRecoveryCapsuleVersion:
+              fixture.challenge.recoveryCapsuleVersion + 1,
+          nextRecoveryCapsule: _bytes(156, 0x93),
+          completionSessionId: _uuid(7),
+          completionSessionToken: CloudSyncFullSessionToken.generate(),
         ),
-      ),
-      nextRecoveryCapsuleVersion: fixture.challenge.recoveryCapsuleVersion + 1,
-      nextRecoveryCapsule: _bytes(156, 0x93),
-      completionSessionId: _uuid(7),
-      completionSessionToken: CloudSyncFullSessionToken.generate(),
-    ),
-  );
+      )
+      .withLocalTransitionPlan(_localTransitionPlan(0x95));
 }
 
 E2eeAccountRecoveryCommitReceipt _replacementReceipt(
@@ -741,7 +757,7 @@ E2eeAccountRecoveryCommitReceipt _resumeReceipt(
   CloudSyncAccountSecurityHistoryPage historyPage,
 })
 _readyRecoveryFixture() {
-  final manifest = _bytes(444, 0x21);
+  final manifest = _bytes(476, 0x21);
   final capsule = _bytes(156, 0x51);
   final challenge = E2eeAccountRecoveryChallenge(
     attemptId: _uuid(1),
@@ -1096,6 +1112,14 @@ final class _MemoryCheckpointPersistence
     _snapshot = null;
     return true;
   }
+}
+
+E2eeAccountRecoveryLocalTransitionPlan _localTransitionPlan(int seed) {
+  return E2eeAccountRecoveryLocalTransitionPlan(
+    sourceStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed),
+    unprunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed + 1),
+    prunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed + 2),
+  );
 }
 
 Uint8List _digest(Uint8List value) =>

@@ -2736,7 +2736,7 @@ class E2eeVerifiedMembershipAnchorRows extends Table with TableInfo {
   @override
   List<String> get customConstraints => const [
     'CHECK (typeof(account_user_id) = \'text\' AND length(account_user_id) = 36 AND account_user_id = lower(account_user_id) AND account_user_id NOT GLOB \'*[^0-9a-f-]*\' AND substr(account_user_id, 9, 1) = \'-\' AND substr(account_user_id, 14, 1) = \'-\' AND substr(account_user_id, 15, 1) = \'4\' AND substr(account_user_id, 19, 1) = \'-\' AND substr(account_user_id, 20, 1) IN (\'8\', \'9\', \'a\', \'b\') AND substr(account_user_id, 24, 1) = \'-\' AND substr(account_user_id, 1, 8) NOT GLOB \'*-*\' AND substr(account_user_id, 10, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 15, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 20, 4) NOT GLOB \'*-*\' AND substr(account_user_id, 25, 12) NOT GLOB \'*-*\')',
-    'CHECK (typeof(membership_manifest) = \'blob\' AND length(membership_manifest) BETWEEN 444 AND 22884 AND (length(membership_manifest) - 356) % 88 = 0)',
+    'CHECK (typeof(membership_manifest) = \'blob\' AND length(membership_manifest) BETWEEN 476 AND 22916 AND (length(membership_manifest) - 388) % 88 = 0)',
     'CHECK (typeof(membership_manifest_digest) = \'blob\' AND length(membership_manifest_digest) = 32)',
     'CHECK (typeof(security_generation) = \'integer\' AND security_generation BETWEEN 1 AND 2147483647)',
     'CHECK (typeof(key_epoch) = \'integer\' AND key_epoch BETWEEN 1 AND 4294967295)',
@@ -3788,8 +3788,8 @@ class E2eeAttachmentDownloadRows extends Table with TableInfo {
   ];
 }
 
-class DatabaseAtV24 extends GeneratedDatabase {
-  DatabaseAtV24(QueryExecutor e) : super(e);
+class DatabaseAtV25 extends GeneratedDatabase {
+  DatabaseAtV25(QueryExecutor e) : super(e);
   late final ConversationRows conversationRows = ConversationRows(this);
   late final MessageRows messageRows = MessageRows(this);
   late final AssetRows assetRows = AssetRows(this);
@@ -4001,5 +4001,5 @@ class DatabaseAtV24 extends GeneratedDatabase {
     idxE2eeAttachmentDownloadLocalAsset,
   ];
   @override
-  int get schemaVersion => 24;
+  int get schemaVersion => 25;
 }

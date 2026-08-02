@@ -189,14 +189,28 @@ void main() {
       ),
       rekeyOperationId: checkpoint.challenge.dataState.operationId!,
     );
+    final resumePlan = _localTransitionPlan(0x93);
     final preparedResume = authorized.withPreparedCommit(resumeRequest);
     expect(
       () => preparedResume.withPreparedCommit(resumeRequest),
       throwsA(isA<StateError>()),
     );
+    final plannedResume = preparedResume.withLocalTransitionPlan(resumePlan);
+    expect(
+      plannedResume.localTransitionPlan!.phase,
+      E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared,
+    );
+    expect(
+      () => plannedResume.withLocalTransitionPlan(resumePlan),
+      throwsA(isA<StateError>()),
+    );
+    expect(
+      plannedResume.markLocalTransitionProofVerified,
+      throwsA(isA<StateError>()),
+    );
     await reopened.advance(
       expectedEnvelopeDigest: authorizedSnapshot.envelopeDigest,
-      checkpoint: preparedResume,
+      checkpoint: plannedResume,
     );
     final restoredResumeSnapshot = await reopened.read();
     final restoredResume =
@@ -207,6 +221,13 @@ void main() {
       restoredResume.membership.nextMembershipManifest,
       resumeRequest.membership.nextMembershipManifest,
     );
+    final restoredResumePlan =
+        restoredResumeSnapshot.checkpoint.localTransitionPlan!;
+    expect(restoredResumePlan.sourceStateBlob, resumePlan.sourceStateBlob);
+    expect(restoredResumePlan.unprunedStateBlob, resumePlan.unprunedStateBlob);
+    expect(restoredResumePlan.prunedStateBlob, resumePlan.prunedStateBlob);
+    restoredResumePlan.sourceStateBlob[0] ^= 0xff;
+    expect(restoredResumePlan.sourceStateBlob, resumePlan.sourceStateBlob);
     final resumeReceipt = E2eeAccountRecoveryCommitReceipt(
       result: E2eeAccountRecoveryCommitResult.committed,
       kind: E2eeAccountRecoveryCommitKind.resume,
@@ -216,6 +237,10 @@ void main() {
       generation: resumeRequest.membership.expectedGeneration + 1,
       keyEpoch: resumeRequest.membership.expectedKeyEpoch,
       nextAction: E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    );
+    expect(
+      () => preparedResume.withCommitReceipt(resumeReceipt),
+      throwsA(isA<StateError>()),
     );
     final committedResume = restoredResumeSnapshot.checkpoint.withCommitReceipt(
       resumeReceipt,
@@ -237,7 +262,30 @@ void main() {
       restoredCommittedResume.checkpoint.commitReceipt?.membershipOperationId,
       resumeRequest.membership.operationId,
     );
-    expect(await reopened.delete(committedResumeSnapshot), isTrue);
+    expect(
+      restoredCommittedResume.checkpoint.markLocalTransitionActivated,
+      throwsA(isA<StateError>()),
+    );
+    final proofVerifiedResume = restoredCommittedResume.checkpoint
+        .markLocalTransitionProofVerified();
+    final proofVerifiedResumeSnapshot = await reopened.advance(
+      expectedEnvelopeDigest: committedResumeSnapshot.envelopeDigest,
+      checkpoint: proofVerifiedResume,
+    );
+    expect(
+      (await reopened.read())!.checkpoint.localTransitionPlan!.phase,
+      E2eeAccountRecoveryLocalTransitionPhase.proofVerified,
+    );
+    final activatedResume = proofVerifiedResume.markLocalTransitionActivated();
+    final activatedResumeSnapshot = await reopened.advance(
+      expectedEnvelopeDigest: proofVerifiedResumeSnapshot.envelopeDigest,
+      checkpoint: activatedResume,
+    );
+    expect(
+      (await reopened.read())!.checkpoint.localTransitionPlan!.phase,
+      E2eeAccountRecoveryLocalTransitionPhase.activated,
+    );
+    expect(await reopened.delete(activatedResumeSnapshot), isTrue);
 
     final replacementChallenge = _challenge(rekeyPending: false);
     final replacementBase =
@@ -286,9 +334,10 @@ void main() {
       completionSessionId: _uuid(7),
       completionSessionToken: completionSessionToken,
     );
-    final preparedReplacement = replacementBase.withPreparedCommit(
-      replacementRequest,
-    );
+    final replacementPlan = _localTransitionPlan(0xa6);
+    final preparedReplacement = replacementBase
+        .withPreparedCommit(replacementRequest)
+        .withLocalTransitionPlan(replacementPlan);
     await reopened.create(preparedReplacement);
     final restoredReplacementSnapshot = await reopened.read();
     final restoredReplacement =
@@ -301,6 +350,13 @@ void main() {
     expect(
       restoredReplacement.completionSessionToken.value,
       completionSessionToken.value,
+    );
+    expect(
+      restoredReplacementSnapshot
+          .checkpoint
+          .localTransitionPlan!
+          .prunedStateBlob,
+      replacementPlan.prunedStateBlob,
     );
     final replacementReceipt = E2eeAccountRecoveryCommitReceipt(
       result: E2eeAccountRecoveryCommitResult.replayed,
@@ -352,7 +408,7 @@ void main() {
 }
 
 E2eeAccountRecoveryChallenge _challenge({bool rekeyPending = true}) {
-  final manifest = _bytes(444, 0x11);
+  final manifest = _bytes(476, 0x11);
   final capsule = _bytes(156, 0x41);
   return E2eeAccountRecoveryChallenge(
     attemptId: _uuid(1),
@@ -387,6 +443,14 @@ Uint8List _digest(Uint8List value) =>
 
 Uint8List _bytes(int length, int value) =>
     Uint8List(length)..fillRange(0, length, value);
+
+E2eeAccountRecoveryLocalTransitionPlan _localTransitionPlan(int seed) {
+  return E2eeAccountRecoveryLocalTransitionPlan(
+    sourceStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed),
+    unprunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed + 1),
+    prunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed + 2),
+  );
+}
 
 String _uuid(int value) {
   final digit = value.toRadixString(16);

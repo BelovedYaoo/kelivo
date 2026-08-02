@@ -4,11 +4,13 @@ import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:Kelivo/core/database/app_database.dart';
+import 'package:Kelivo/core/database/chat_database_gateway.dart';
 import 'package:Kelivo/core/database/chat_database_repository.dart';
 import 'package:Kelivo/core/database/e2ee_sync_record_ledger.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_key_transition.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
@@ -21,11 +23,17 @@ import 'package:Kelivo/core/services/sync/e2ee_message_attachment_readiness.dart
 import 'package:Kelivo/core/services/sync/cloud_sync_record_types.dart';
 import 'package:Kelivo/core/services/sync/config_sync_keys.dart';
 import 'package:Kelivo/core/services/sync/e2ee_config_sync_adapter.dart';
+import 'package:Kelivo/core/services/sync/e2ee_data_rekey_executor.dart';
+import 'package:Kelivo/core/services/sync/e2ee_data_rekey_wire.dart';
+import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
+import 'package:Kelivo/core/services/sync/e2ee_device_state_key_transition.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_outbox.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_pull.dart';
 import 'package:Kelivo/core/services/sync/sync_codec.dart';
+import 'package:Kelivo/core/services/workspace/e2ee_data_rekey_stage_store.dart';
+import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:drift/drift.dart';
 import 'package:drift/isolate.dart' show DriftRemoteException;
 import 'package:crypto/crypto.dart';
@@ -578,6 +586,7 @@ void main() {
           revokedDeviceId: subject.deviceId,
           nextRecoveryCapsuleVersion: 2,
           nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x42),
+          operationAuthorizationDigest: _syncDigest(0x51),
         ),
       );
       final recoveryDevice = await _newDatabaseMembershipDevice(
@@ -1169,7 +1178,7 @@ void main() {
   group('E2EE verified membership anchor schema', () {
     Future<void> insertAnchor({
       String accountUserId = _syncAccountUserId,
-      int manifestLength = 444,
+      int manifestLength = 476,
       int digestLength = 32,
       int securityGeneration = 1,
       int keyEpoch = 1,
@@ -1198,7 +1207,7 @@ void main() {
       await insertAnchor();
       await insertAnchor(
         accountUserId: _syncUuid(250),
-        manifestLength: 22884,
+        manifestLength: 22916,
         securityGeneration: 2147483647,
         keyEpoch: 4294967295,
         transitionVersion: 9223372036854775807,
@@ -1217,9 +1226,9 @@ void main() {
           accountUserId: _syncAccountUserId.replaceFirst('-4000-', '-5000-'),
         ),
         () => insertAnchor(manifestLength: 356),
-        () => insertAnchor(manifestLength: 443),
-        () => insertAnchor(manifestLength: 445),
-        () => insertAnchor(manifestLength: 22885),
+        () => insertAnchor(manifestLength: 475),
+        () => insertAnchor(manifestLength: 477),
+        () => insertAnchor(manifestLength: 22917),
         () => insertAnchor(digestLength: 31),
         () => insertAnchor(digestLength: 33),
         () => insertAnchor(securityGeneration: 0),
@@ -1244,6 +1253,335 @@ void main() {
   });
 
   group('E2EE verified membership anchor commands', () {
+    test('成员清单 v2 固定授权摘要与成员区偏移', () async {
+      const secureCore = KelivoSecureCore();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+
+      expect(e2eeAccountTrustManifestFormatVersion, 2);
+      expect(e2eeAccountTrustManifestMinimumLength, 476);
+      expect(e2eeAccountTrustManifestMaximumLength, 22916);
+      for (final membership in <E2eeVerifiedMembership>[
+        chain.initialized,
+        chain.paired,
+        chain.resumed,
+        chain.replaced,
+      ]) {
+        final fields = ByteData.sublistView(membership.manifest);
+        expect(fields.getUint32(8, Endian.big), 2);
+        expect(membership.manifest.sublist(224, 256), everyElement(0));
+        expect(fields.getUint32(256, Endian.big), membership.members.length);
+        expect(
+          membership.manifest.length,
+          260 + membership.members.length * 88 + 128,
+        );
+      }
+    });
+
+    test('真实恢复五段成员清单 v2 固定向量保持完整签名链', () async {
+      const secureCore = KelivoSecureCore();
+      const vectors =
+          <
+            ({
+              String manifestBase64,
+              String digestBase64,
+              int operationCode,
+              String operationId,
+              int securityGeneration,
+              int keyEpoch,
+              String issuerDeviceId,
+              String subjectDeviceId,
+              String authorizationDigestBase64,
+            })
+          >[
+            (
+              manifestBase64: _frozenInitializedManifestV2,
+              digestBase64: '05HPAtPXROeSH0q-hR9L3XRc1aQPMF8n05DghrDFUi8=',
+              operationCode: 1,
+              operationId: _syncOperationId,
+              securityGeneration: 1,
+              keyEpoch: 1,
+              issuerDeviceId: _syncActorDeviceId,
+              subjectDeviceId: _syncActorDeviceId,
+              authorizationDigestBase64:
+                  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            ),
+            (
+              manifestBase64: _frozenPairedManifestV2,
+              digestBase64: 'YK_d1CAY4CnUQukssxT6jZCY6sSDyZ3cq3TZTszE0iE=',
+              operationCode: 2,
+              operationId: '90000000-0000-4000-8000-000000000102',
+              securityGeneration: 2,
+              keyEpoch: 1,
+              issuerDeviceId: _syncActorDeviceId,
+              subjectDeviceId: '90000000-0000-4000-8000-000000000101',
+              authorizationDigestBase64:
+                  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            ),
+            (
+              manifestBase64: _frozenRevokedManifestV2,
+              digestBase64: 'G7pb1XYcWVtnnG1lZzHl5UivRPBpekjvxp6qUamvEqo=',
+              operationCode: 3,
+              operationId: '90000000-0000-4000-8000-000000000105',
+              securityGeneration: 3,
+              keyEpoch: 2,
+              issuerDeviceId: _syncActorDeviceId,
+              subjectDeviceId: '90000000-0000-4000-8000-000000000101',
+              authorizationDigestBase64:
+                  'UVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVE=',
+            ),
+            (
+              manifestBase64: _frozenResumedManifestV2,
+              digestBase64: 'KUa5iTtfhjRhHm6HgnOqLdKrcMUeq2D9Y90RygxrnKo=',
+              operationCode: 4,
+              operationId: '90000000-0000-4000-8000-000000000107',
+              securityGeneration: 4,
+              keyEpoch: 2,
+              issuerDeviceId: '90000000-0000-4000-8000-000000000106',
+              subjectDeviceId: '90000000-0000-4000-8000-000000000106',
+              authorizationDigestBase64:
+                  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            ),
+            (
+              manifestBase64: _frozenReplacedManifestV2,
+              digestBase64: 'UTGRh5hTkjhzE9CnK0w8AhTQ2hwbbmPuDN919DL48-4=',
+              operationCode: 5,
+              operationId: '90000000-0000-4000-8000-000000000108',
+              securityGeneration: 5,
+              keyEpoch: 3,
+              issuerDeviceId: '90000000-0000-4000-8000-000000000106',
+              subjectDeviceId: '90000000-0000-4000-8000-000000000106',
+              authorizationDigestBase64:
+                  'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=',
+            ),
+          ];
+      Uint8List? previousManifest;
+      Uint8List? previousDigest;
+
+      for (final vector in vectors) {
+        final manifest = Uint8List.fromList(
+          base64Url.decode(vector.manifestBase64),
+        );
+        final expectedDigest = Uint8List.fromList(
+          base64Url.decode(vector.digestBase64),
+        );
+        final fields = ByteData.sublistView(manifest);
+        final memberCount = fields.getUint32(256, Endian.big);
+        final payloadLength = 260 + memberCount * 88;
+        final payload = Uint8List.sublistView(manifest, 0, payloadLength);
+        final transitionSignature = Uint8List.sublistView(
+          manifest,
+          payloadLength,
+          payloadLength + 64,
+        );
+        final currentSignature = Uint8List.sublistView(
+          manifest,
+          payloadLength + 64,
+        );
+        final userId = Uint8List.sublistView(manifest, 12, 28);
+
+        expect(fields.getUint32(8, Endian.big), 2);
+        expect(manifest, hasLength(payloadLength + 128));
+        expect(
+          Uint8List.fromList(sha256.convert(manifest).bytes),
+          orderedEquals(expectedDigest),
+        );
+        expect(
+          manifest.sublist(36, 68),
+          orderedEquals(previousDigest ?? Uint8List(32)),
+        );
+        expect(fields.getUint32(172, Endian.big), vector.operationCode);
+        expect(fields.getUint32(28, Endian.big), vector.securityGeneration);
+        expect(fields.getUint32(32, Endian.big), vector.keyEpoch);
+        expect(Uuid.unparse(manifest.sublist(176, 192)), vector.operationId);
+        expect(Uuid.unparse(manifest.sublist(192, 208)), vector.issuerDeviceId);
+        expect(
+          Uuid.unparse(manifest.sublist(208, 224)),
+          vector.subjectDeviceId,
+        );
+        expect(
+          manifest.sublist(224, 256),
+          orderedEquals(base64Url.decode(vector.authorizationDigestBase64)),
+        );
+        expect(currentSignature, isNot(everyElement(0)));
+        await secureCore.verifyUntrustedAccountTrustPayload(
+          KelivoUntrustedAccountTrustPublicKey.fromTransport(
+            Uint8List.sublistView(manifest, 68, 100),
+          ),
+          userId: userId,
+          keyEpoch: vector.keyEpoch,
+          canonicalPayload: payload,
+          signature: KelivoAccountTrustSignature(currentSignature),
+        );
+
+        if (vector.operationCode == 3 || vector.operationCode == 5) {
+          final trustedPrevious = previousManifest;
+          if (trustedPrevious == null) {
+            fail('轮换固定向量缺少上一版清单');
+          }
+          final previousFields = ByteData.sublistView(trustedPrevious);
+          expect(transitionSignature, isNot(everyElement(0)));
+          await secureCore.verifyUntrustedAccountTrustPayload(
+            KelivoUntrustedAccountTrustPublicKey.fromTransport(
+              Uint8List.sublistView(trustedPrevious, 68, 100),
+            ),
+            userId: userId,
+            keyEpoch: previousFields.getUint32(32, Endian.big),
+            canonicalPayload: payload,
+            signature: KelivoAccountTrustSignature(transitionSignature),
+          );
+        } else {
+          expect(transitionSignature, everyElement(0));
+        }
+
+        previousManifest = manifest;
+        previousDigest = expectedDigest;
+      }
+    });
+
+    test('协调自撤销摘要进入 op3 双签名载荷且其他操作严格为零', () async {
+      const secureCore = KelivoSecureCore();
+      const manifestModule = E2eeAccountTrustManifestModule();
+      final chain = await createMembershipChain();
+      addTearDown(() => secureCore.closeAccountRootKey(chain.ark));
+      final expectedAuthorizationDigest = _syncDigest(0x71);
+      final authorizationInput = Uint8List.fromList(
+        expectedAuthorizationDigest,
+      );
+      final nextRecoveryCapsule = Uint8List(80)..fillRange(0, 80, 0x72);
+      final change = E2eeRevokeRotateMembershipChange(
+        previous: chain.paired,
+        operationId: _syncUuid(338),
+        issuerDeviceId: _syncUuid(101),
+        revokedDeviceId: _syncActorDeviceId,
+        nextRecoveryCapsuleVersion: 2,
+        nextRecoveryCapsule: nextRecoveryCapsule,
+        operationAuthorizationDigest: authorizationInput,
+      );
+      authorizationInput[0] ^= 0xff;
+      change.operationAuthorizationDigest[1] ^= 0xff;
+
+      final coordinated = await manifestModule.create(
+        ark: chain.ark,
+        change: change,
+      );
+
+      expect(
+        coordinated.operationAuthorizationDigest,
+        orderedEquals(expectedAuthorizationDigest),
+      );
+      coordinated.operationAuthorizationDigest[2] ^= 0xff;
+      expect(
+        coordinated.operationAuthorizationDigest,
+        orderedEquals(expectedAuthorizationDigest),
+      );
+      expect(
+        coordinated.manifest.sublist(224, 256),
+        orderedEquals(expectedAuthorizationDigest),
+      );
+      final verified = await manifestModule.verifyHistoryBatch(
+        previous: chain.paired,
+        entries: <E2eeMembershipHistoryEntry>[
+          E2eeMembershipHistoryEntry(
+            manifest: coordinated.manifest,
+            manifestDigest: coordinated.digest,
+          ),
+        ],
+      );
+      expect(
+        verified.operationAuthorizationDigest,
+        orderedEquals(expectedAuthorizationDigest),
+      );
+      final projection = E2eeMembershipServerProjection(
+        userId: coordinated.userId,
+        securityGeneration: coordinated.securityGeneration,
+        keyEpoch: coordinated.keyEpoch,
+        membershipManifestVersion: e2eeAccountTrustManifestFormatVersion,
+        membershipManifest: coordinated.manifest,
+        membershipManifestDigest: coordinated.digest,
+        recoveryPublicKeyVersion: coordinated.recoveryPublicKeyVersion,
+        recoveryPublicKey: coordinated.recoveryPublicKey,
+        recoveryCapsuleVersion: coordinated.recoveryCapsuleVersion,
+        recoveryCapsule: nextRecoveryCapsule,
+        lastOperationId: coordinated.operationId,
+        dataRekeyPhase: E2eeDataRekeyPhase.rekeyPending,
+      );
+      final expected = E2eeRevokeRotateMembershipExpectation(
+        projection: projection,
+        previous: chain.paired,
+        operationId: coordinated.operationId,
+        issuerDeviceId: coordinated.issuerDeviceId,
+        revokedDeviceId: coordinated.subjectDeviceId,
+        operationAuthorizationDigest: expectedAuthorizationDigest,
+      );
+      expect(
+        (await manifestModule.verify(
+          ark: chain.ark,
+          expectation: expected,
+        )).digest,
+        orderedEquals(coordinated.digest),
+      );
+      await expectLater(
+        manifestModule.verify(
+          ark: chain.ark,
+          expectation: E2eeRevokeRotateMembershipExpectation(
+            projection: projection,
+            previous: chain.paired,
+            operationId: coordinated.operationId,
+            issuerDeviceId: coordinated.issuerDeviceId,
+            revokedDeviceId: coordinated.subjectDeviceId,
+            operationAuthorizationDigest: _syncDigest(0x72),
+          ),
+        ),
+        throwsStateError,
+      );
+
+      final tamperedAuthorization = Uint8List.fromList(coordinated.manifest)
+        ..[224] ^= 0xff;
+      await expectLater(
+        manifestModule.verifyHistoryBatch(
+          previous: chain.paired,
+          entries: <E2eeMembershipHistoryEntry>[
+            E2eeMembershipHistoryEntry(
+              manifest: tamperedAuthorization,
+              manifestDigest: Uint8List.fromList(
+                sha256.convert(tamperedAuthorization).bytes,
+              ),
+            ),
+          ],
+        ),
+        throwsA(isA<KelivoSecureCoreException>()),
+      );
+      final nonRevokeAuthorization = Uint8List.fromList(chain.paired.manifest)
+        ..[224] = 1;
+      await expectLater(
+        manifestModule.verifyHistoryBatch(
+          previous: chain.initialized,
+          entries: <E2eeMembershipHistoryEntry>[
+            E2eeMembershipHistoryEntry(
+              manifest: nonRevokeAuthorization,
+              manifestDigest: Uint8List.fromList(
+                sha256.convert(nonRevokeAuthorization).bytes,
+              ),
+            ),
+          ],
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeRevokeRotateMembershipChange(
+          previous: chain.paired,
+          operationId: _syncUuid(339),
+          issuerDeviceId: _syncUuid(101),
+          revokedDeviceId: _syncActorDeviceId,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x73),
+          operationAuthorizationDigest: Uint8List(32),
+        ),
+        throwsArgumentError,
+      );
+    });
+
     test('已验证清单安装、重启验签、推进与响应丢失重放闭环', () async {
       const secureCore = KelivoSecureCore();
       const manifestModule = E2eeAccountTrustManifestModule();
@@ -1658,6 +1996,157 @@ void main() {
       expect(reopened.binding, operationBinding);
     });
 
+    test('租约回执和执行阶段耐久推进且重复回执不回退', () async {
+      final operationBinding = binding();
+      final intent = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+      final expiresAt = DateTime.utc(2026, 7, 30, 4, 10);
+      final leased = await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 3,
+        leaseExpiresAt: expiresAt,
+        now: DateTime.utc(2026, 7, 30, 4, 1),
+      );
+      expect(leased.phase, E2eeDataRekeyJournalPhase.leased);
+      expect(leased.leaseVersion, 3);
+      expect(leased.leaseExpiresAt, expiresAt);
+
+      await dataRekeyCommands.advancePhase(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 3,
+        phase: E2eeDataRekeyJournalPhase.staging,
+        now: DateTime.utc(2026, 7, 30, 4, 2),
+      );
+      final replayed = await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 3,
+        leaseExpiresAt: expiresAt,
+        now: DateTime.utc(2026, 7, 30, 4, 3),
+      );
+      expect(replayed.phase, E2eeDataRekeyJournalPhase.staging);
+
+      await repository.close();
+      database = AppDatabase.open(
+        file: File('${directory.path}/constraints.sqlite'),
+        cipher: testDatabaseCipher,
+      );
+      await database.customSelect('SELECT 1;').getSingle();
+      repository = ChatDatabaseRepository(
+        database,
+        databaseCipher: testDatabaseCipher,
+      );
+      dataRekeyCommands = repository.e2eeDataRekeyCommands;
+
+      final reopened = await dataRekeyCommands.readActive();
+      expect(reopened?.phase, E2eeDataRekeyJournalPhase.staging);
+      expect(reopened?.leaseToken, intent.leaseToken);
+      expect(reopened?.leaseVersion, 3);
+      expect(reopened?.leaseExpiresAt, expiresAt);
+    });
+
+    test('续租只接受同一令牌的单调版本和到期时间', () async {
+      final operationBinding = binding();
+      final intent = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+      final firstExpiry = DateTime.utc(2026, 7, 30, 4, 10);
+      await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 3,
+        leaseExpiresAt: firstExpiry,
+        now: DateTime.utc(2026, 7, 30, 4, 1),
+      );
+
+      final renewed = await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 4,
+        leaseExpiresAt: DateTime.utc(2026, 7, 30, 4, 20),
+        now: DateTime.utc(2026, 7, 30, 4, 11),
+      );
+      expect(renewed.leaseVersion, 4);
+      expect(renewed.leaseExpiresAt, DateTime.utc(2026, 7, 30, 4, 20));
+
+      final invalidReceipts = <Future<E2eeDataRekeyJournalState> Function()>[
+        () => dataRekeyCommands.recordLeaseClaim(
+          operationId: operationBinding.operationId,
+          leaseToken: _syncUuid(399),
+          leaseVersion: 5,
+          leaseExpiresAt: DateTime.utc(2026, 7, 30, 4, 30),
+          now: DateTime.utc(2026, 7, 30, 4, 21),
+        ),
+        () => dataRekeyCommands.recordLeaseClaim(
+          operationId: operationBinding.operationId,
+          leaseToken: intent.leaseToken,
+          leaseVersion: 3,
+          leaseExpiresAt: DateTime.utc(2026, 7, 30, 4, 30),
+          now: DateTime.utc(2026, 7, 30, 4, 21),
+        ),
+        () => dataRekeyCommands.recordLeaseClaim(
+          operationId: operationBinding.operationId,
+          leaseToken: intent.leaseToken,
+          leaseVersion: 4,
+          leaseExpiresAt: firstExpiry,
+          now: DateTime.utc(2026, 7, 30, 4, 21),
+        ),
+      ];
+      for (final invalidReceipt in invalidReceipts) {
+        await expectLater(invalidReceipt(), throwsStateError);
+      }
+    });
+
+    test('完成清理只接受 finalizing 阶段的完整租约身份', () async {
+      final operationBinding = binding();
+      final intent = await dataRekeyCommands.ensureClaimIntent(
+        binding: operationBinding,
+        now: DateTime.utc(2026, 7, 30, 4),
+      );
+      await dataRekeyCommands.recordLeaseClaim(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 1,
+        leaseExpiresAt: DateTime.utc(2026, 7, 30, 4, 10),
+        now: DateTime.utc(2026, 7, 30, 4, 1),
+      );
+      await expectLater(
+        dataRekeyCommands.complete(
+          operationId: operationBinding.operationId,
+          leaseToken: intent.leaseToken,
+          leaseVersion: 1,
+        ),
+        throwsStateError,
+      );
+      await dataRekeyCommands.advancePhase(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 1,
+        phase: E2eeDataRekeyJournalPhase.finalizing,
+        now: DateTime.utc(2026, 7, 30, 4, 2),
+      );
+      await expectLater(
+        dataRekeyCommands.complete(
+          operationId: operationBinding.operationId,
+          leaseToken: intent.leaseToken,
+          leaseVersion: 2,
+        ),
+        throwsStateError,
+      );
+
+      await dataRekeyCommands.complete(
+        operationId: operationBinding.operationId,
+        leaseToken: intent.leaseToken,
+        leaseVersion: 1,
+      );
+      expect(await dataRekeyCommands.readActive(), equals(null));
+    });
+
     test('零记录边界有效且成员摘要不暴露可变底层字节', () {
       final sourceDigest = _syncDigest(19);
       final operationBinding = binding(
@@ -1927,6 +2416,965 @@ void main() {
             ),
         throwsRemoteSqliteException(),
       );
+    });
+  });
+
+  group('E2EE data-rekey 执行器', () {
+    test('跨请求完成空源换代且仅在本地确认后清理耐久状态', () async {
+      final operationId = _syncUuid(320);
+      final transport = _ZeroSourceDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+      );
+      final cryptography = _ZeroSourceDataRekeyCryptography();
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      final executor = E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      final execution = await executor.execute(context);
+
+      expect(execution, isNot(equals(null)));
+      expect(execution!.result.dataGeneration, 5);
+      expect(transport.finalizeRequests, hasLength(2));
+      expect(
+        transport.finalizeRequests[1].mutationId,
+        transport.finalizeRequests[0].mutationId,
+      );
+      expect(
+        transport.finalizeRequests[1].proof.signature,
+        transport.finalizeRequests[0].proof.signature,
+      );
+      expect(cryptography.signatureCount, 1);
+      expect(
+        (await dataRekeyCommands.readActive())?.phase,
+        E2eeDataRekeyJournalPhase.finalizing,
+      );
+      expect(
+        await stageStore.listArtifactIds(
+          normalizedBaseUrl: context.normalizedBaseUrl,
+          normalizedLoginName: context.normalizedLoginName,
+          operationId: operationId,
+          maximumCount: 1,
+        ),
+        hasLength(1),
+      );
+
+      final confirmation = await executor.confirmReady(
+        context: context,
+        execution: execution,
+      );
+      await executor.acknowledgeLocalCommit(
+        context: context,
+        confirmation: confirmation,
+      );
+
+      expect(await dataRekeyCommands.readActive(), equals(null));
+      expect(
+        await stageStore.listArtifactIds(
+          normalizedBaseUrl: context.normalizedBaseUrl,
+          normalizedLoginName: context.normalizedLoginName,
+          operationId: operationId,
+          maximumCount: 1,
+        ),
+        isEmpty,
+      );
+    });
+
+    test('stage 回执丢失后原样重放已落盘密文且不重复重包', () async {
+      final operationId = _syncUuid(321);
+      final sourceRecordId = _syncUuid(322);
+      final transport = _RecordResponseLossDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+        sourceRecordId: sourceRecordId,
+      );
+      final cryptography = _RecordDataRekeyCryptography(
+        targetRecordId: _syncUuid(323),
+      );
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey-response-loss',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      E2eeDataRekeyExecutor executor() => E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      await expectLater(
+        executor().execute(context),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated_stage_response_loss',
+          ),
+        ),
+      );
+      final execution = await executor().execute(context);
+
+      expect(execution, isNot(equals(null)));
+      expect(transport.stageRequests, hasLength(2));
+      expect(
+        transport.stageRequests[1].mutationId,
+        transport.stageRequests[0].mutationId,
+      );
+      expect(
+        transport.stageRequests[1].targetRecordId,
+        transport.stageRequests[0].targetRecordId,
+      );
+      expect(
+        transport.stageRequests[1].ciphertext,
+        orderedEquals(transport.stageRequests[0].ciphertext),
+      );
+      expect(cryptography.recordRewrapCount, 1);
+      await expectLater(
+        executor().confirmReady(context: context, execution: execution!),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'data_rekey_ready_confirmation_pending',
+          ),
+        ),
+      );
+      expect(
+        (await dataRekeyCommands.readActive())?.phase,
+        E2eeDataRekeyJournalPhase.finalizing,
+      );
+    });
+
+    test('租约被其他设备接管后丢弃旧工件并以新幂等键重新重包', () async {
+      final operationId = _syncUuid(328);
+      final sourceRecordId = _syncUuid(329);
+      final transport = _RecordResponseLossDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+        sourceRecordId: sourceRecordId,
+      );
+      final cryptography = _RecordDataRekeyCryptography(
+        targetRecordId: _syncUuid(330),
+      );
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey-lease-takeover',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      E2eeDataRekeyExecutor executor() => E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      await expectLater(
+        executor().execute(context),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated_stage_response_loss',
+          ),
+        ),
+      );
+      transport.simulateLeaseTakeover();
+      final execution = await executor().execute(context);
+
+      expect(execution, isNot(equals(null)));
+      expect(transport.stageRequests, hasLength(2));
+      expect(transport.stageRequests[0].activeLease.leaseVersion, 1);
+      expect(transport.stageRequests[1].activeLease.leaseVersion, 3);
+      expect(
+        transport.stageRequests[1].mutationId,
+        isNot(transport.stageRequests[0].mutationId),
+      );
+      expect(
+        transport.stageRequests[1].ciphertext,
+        isNot(orderedEquals(transport.stageRequests[0].ciphertext)),
+      );
+      expect(cryptography.recordRewrapCount, 2);
+    });
+
+    test('finalize 响应丢失且服务端已 ready 时从耐久请求恢复', () async {
+      final operationId = _syncUuid(324);
+      final transport = _FinalizeResponseLossDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+      );
+      final cryptography = _ZeroSourceDataRekeyCryptography();
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey-finalize-loss',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      E2eeDataRekeyExecutor executor() => E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      await expectLater(
+        executor().execute(context),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated_finalize_response_loss',
+          ),
+        ),
+      );
+      final execution = await executor().execute(context);
+
+      expect(execution, isNot(equals(null)));
+      expect(transport.finalizeRequests, hasLength(2));
+      expect(
+        transport.finalizeRequests[1].mutationId,
+        transport.finalizeRequests[0].mutationId,
+      );
+      expect(
+        transport.finalizeRequests[1].proof.signature,
+        orderedEquals(transport.finalizeRequests[0].proof.signature),
+      );
+      expect(cryptography.signatureCount, 1);
+    });
+
+    test('附件换代仅暂存新 manifest 并保持分块身份与摘要', () async {
+      final operationId = _syncUuid(325);
+      final attachmentId = _syncUuid(326);
+      final uploadId = _syncUuid(327);
+      final transport = _AttachmentDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+        attachmentId: attachmentId,
+        uploadId: uploadId,
+      );
+      final cryptography = _AttachmentDataRekeyCryptography();
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/data-rekey-attachment',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      final executor = E2eeDataRekeyExecutor(
+        transport: transport,
+        journal: dataRekeyCommands,
+        stageStore: stageStore,
+        cryptography: cryptography,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
+      );
+
+      await executor.execute(context);
+
+      expect(cryptography.attachmentRewrapCount, 1);
+      expect(cryptography.sourceChunkKeyEpoch, 6);
+      expect(cryptography.sourceChunkDigests, <List<int>>[
+        _syncDigest(41),
+        _syncDigest(42),
+      ]);
+      expect(transport.stageRequests, hasLength(1));
+      final request = transport.stageRequests.single;
+      expect(request.attachmentId, attachmentId);
+      expect(request.uploadId, uploadId);
+      expect(request.sourceManifestRevision, 2);
+      expect(request.manifestRevision, 3);
+      expect(request.manifestKeyEpoch, 8);
+    });
+  });
+
+  group('E2EE 账户密钥变更编排', () {
+    test('恢复接续拒绝复用遗留数据换代 operationId', () {
+      final operationId = _syncUuid(330);
+
+      expect(
+        () => E2eeAccountKeyTransitionBinding(
+          kind: E2eeAccountKeyTransitionKind.recoveryResume,
+          userId: _syncAccountUserId,
+          issuerDeviceId: _syncActorDeviceId,
+          membershipOperationId: operationId,
+          rekeyOperationId: operationId,
+          securityGeneration: 12,
+          targetKeyEpoch: 8,
+          membershipManifestDigest: _syncDigest(9),
+        ),
+        throwsFormatException,
+      );
+      expect(
+        () => E2eeAccountKeyTransitionRemoteReceipt(
+          kind: E2eeAccountKeyTransitionKind.recoveryResume,
+          userId: _syncAccountUserId,
+          issuerDeviceId: _syncActorDeviceId,
+          membershipOperationId: operationId,
+          rekeyOperationId: operationId,
+          securityGeneration: 12,
+          targetKeyEpoch: 8,
+          membershipManifestDigest: _syncDigest(9),
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('绑定与回执的安全关键字节不暴露内部存储', () {
+      final expectedDigest = _syncDigest(0x61);
+      final bindingInput = Uint8List.fromList(expectedDigest);
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: _syncUuid(336),
+        rekeyOperationId: _syncUuid(337),
+        securityGeneration: 12,
+        targetKeyEpoch: 8,
+        membershipManifestDigest: bindingInput,
+      );
+      bindingInput[0] ^= 0xff;
+      final exposedBindingDigest = binding.membershipManifestDigest;
+      exposedBindingDigest[1] ^= 0xff;
+      expect(binding.membershipManifestDigest, orderedEquals(expectedDigest));
+
+      final receiptInput = Uint8List.fromList(expectedDigest);
+      final receipt = E2eeAccountKeyTransitionRemoteReceipt(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: _syncUuid(336),
+        rekeyOperationId: _syncUuid(337),
+        securityGeneration: 12,
+        targetKeyEpoch: 8,
+        membershipManifestDigest: receiptInput,
+      );
+      receiptInput[0] ^= 0xff;
+      final exposedReceiptDigest = receipt.membershipManifestDigest;
+      exposedReceiptDigest[1] ^= 0xff;
+      expect(receipt.membershipManifestDigest, orderedEquals(expectedDigest));
+    });
+
+    test('恢复接续计划允许连续接管并严格追溯最初数据换代', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      const manifestModule = E2eeAccountTrustManifestModule();
+      final takeoverDevice = await _newDatabaseMembershipDevice(
+        const KelivoSecureCore(),
+        deviceId: _syncUuid(109),
+        authGeneration: 1,
+      );
+      final takeover = await manifestModule.create(
+        ark: chain.ark,
+        change: E2eeRecoverResumeMembershipChange(
+          previous: chain.resumed,
+          operationId: _syncUuid(110),
+          subject: takeoverDevice,
+        ),
+      );
+      final sourceState = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1;
+      final unprunedState = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 2;
+      final prunedState = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3;
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: _syncAccountUserId,
+        issuerDeviceId: takeover.issuerDeviceId,
+        membershipOperationId: takeover.operationId,
+        rekeyOperationId: chain.revoked.operationId,
+        securityGeneration: takeover.securityGeneration,
+        targetKeyEpoch: takeover.keyEpoch,
+        membershipManifestDigest: takeover.digest,
+      );
+
+      expect(chain.revoked.issuerDeviceId, isNot(binding.issuerDeviceId));
+      expect(takeover.securityGeneration, chain.paired.securityGeneration + 3);
+      expect(
+        () => takeover.requireDataRekeyLineage(
+          rekeyOperationId: chain.revoked.operationId,
+        ),
+        returnsNormally,
+      );
+      expect(
+        () => E2eeDeviceStateKeyTransitionPlan(
+          binding: binding,
+          previousMembership: chain.resumed,
+          nextMembership: takeover,
+          sourceStateBlob: sourceState,
+          unprunedStateBlob: unprunedState,
+          prunedStateBlob: prunedState,
+        ),
+        returnsNormally,
+      );
+
+      final unrelatedRekeyBinding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: binding.userId,
+        issuerDeviceId: binding.issuerDeviceId,
+        membershipOperationId: binding.membershipOperationId,
+        rekeyOperationId: _syncUuid(339),
+        securityGeneration: binding.securityGeneration,
+        targetKeyEpoch: binding.targetKeyEpoch,
+        membershipManifestDigest: binding.membershipManifestDigest,
+      );
+      expect(
+        () => E2eeDeviceStateKeyTransitionPlan(
+          binding: unrelatedRekeyBinding,
+          previousMembership: chain.resumed,
+          nextMembership: takeover,
+          sourceStateBlob: sourceState,
+          unprunedStateBlob: unprunedState,
+          prunedStateBlob: prunedState,
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('设备状态换代计划不暴露内部快照', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.deviceRevocation,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: chain.revoked.operationId,
+        rekeyOperationId: chain.revoked.operationId,
+        securityGeneration: chain.revoked.securityGeneration,
+        targetKeyEpoch: chain.revoked.keyEpoch,
+        membershipManifestDigest: chain.revoked.digest,
+      );
+      final sourceInput = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1;
+      final unprunedInput = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 2;
+      final prunedInput = Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3;
+      final plan = E2eeDeviceStateKeyTransitionPlan(
+        binding: binding,
+        previousMembership: chain.paired,
+        nextMembership: chain.revoked,
+        sourceStateBlob: sourceInput,
+        unprunedStateBlob: unprunedInput,
+        prunedStateBlob: prunedInput,
+      );
+      sourceInput[0] = 4;
+      unprunedInput[0] = 5;
+      prunedInput[0] = 6;
+      final exposedSource = plan.sourceStateBlob;
+      final exposedUnpruned = plan.unprunedStateBlob;
+      final exposedPruned = plan.prunedStateBlob;
+      exposedSource[1] = 4;
+      exposedUnpruned[1] = 5;
+      exposedPruned[1] = 6;
+
+      expect(plan.sourceStateBlob[0], 1);
+      expect(plan.unprunedStateBlob[0], 2);
+      expect(plan.prunedStateBlob[0], 3);
+      expect(plan.sourceStateBlob[1], 0);
+      expect(plan.unprunedStateBlob[1], 0);
+      expect(plan.prunedStateBlob[1], 0);
+    });
+
+    test('数据已就绪时恢复替换允许从当前成员头直达', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      final recoveryDevice = await _newDatabaseMembershipDevice(
+        const KelivoSecureCore(),
+        deviceId: _syncUuid(111),
+        authGeneration: 1,
+      );
+      final replaced = await const E2eeAccountTrustManifestModule().create(
+        ark: chain.ark,
+        change: E2eeRecoverReplaceMembershipChange(
+          previous: chain.paired,
+          operationId: _syncUuid(112),
+          subject: recoveryDevice,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x66),
+        ),
+      );
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryReplacement,
+        userId: replaced.userId,
+        issuerDeviceId: replaced.issuerDeviceId,
+        membershipOperationId: replaced.operationId,
+        rekeyOperationId: replaced.operationId,
+        securityGeneration: replaced.securityGeneration,
+        targetKeyEpoch: replaced.keyEpoch,
+        membershipManifestDigest: replaced.digest,
+      );
+
+      expect(
+        () => E2eeDeviceStateKeyTransitionPlan(
+          binding: binding,
+          previousMembership: chain.paired,
+          nextMembership: replaced,
+          sourceStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1,
+          unprunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)
+            ..[0] = 2,
+          prunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3,
+        ),
+        returnsNormally,
+      );
+    });
+
+    test('本地提交拒绝跨签发设备复用 ready 确认', () async {
+      final chain = await createMembershipChain();
+      addTearDown(() => KelivoSecureCore().closeAccountRootKey(chain.ark));
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryResume,
+        userId: chain.resumed.userId,
+        issuerDeviceId: chain.resumed.issuerDeviceId,
+        membershipOperationId: chain.resumed.operationId,
+        rekeyOperationId: chain.revoked.operationId,
+        securityGeneration: chain.resumed.securityGeneration,
+        targetKeyEpoch: chain.resumed.keyEpoch,
+        membershipManifestDigest: chain.resumed.digest,
+      );
+      final forgedIssuerBinding = E2eeAccountKeyTransitionBinding(
+        kind: binding.kind,
+        userId: binding.userId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: binding.membershipOperationId,
+        rekeyOperationId: binding.rekeyOperationId,
+        securityGeneration: binding.securityGeneration,
+        targetKeyEpoch: binding.targetKeyEpoch,
+        membershipManifestDigest: binding.membershipManifestDigest,
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: binding.userId,
+        issuerDeviceId: forgedIssuerBinding.issuerDeviceId,
+        membershipGeneration: binding.securityGeneration,
+        membershipManifestDigest: binding.membershipManifestDigest,
+      );
+      final capturingLocal = _CapturingAccountKeyTransitionLocalCommitter();
+      await E2eeAccountKeyTransitionCoordinator(
+        dataRekeyExecutor: E2eeDataRekeyExecutor(
+          transport: _ZeroSourceDataRekeyTransport(
+            userId: binding.userId,
+            issuerDeviceId: forgedIssuerBinding.issuerDeviceId,
+            operationId: binding.rekeyOperationId,
+            sourceKeyEpoch: binding.targetKeyEpoch - 1,
+            targetKeyEpoch: binding.targetKeyEpoch,
+          ),
+          journal: dataRekeyCommands,
+          stageStore: E2eeDataRekeyStageStore(
+            installationRoot: await Directory(
+              '${directory.path}/cross-issuer-ready',
+            ).create(),
+          ),
+          cryptography: _ZeroSourceDataRekeyCryptography(
+            issuerDeviceId: forgedIssuerBinding.issuerDeviceId,
+            targetKeyEpoch: binding.targetKeyEpoch,
+          ),
+          clock: () => DateTime.utc(2026, 7, 30, 5),
+        ),
+        remoteCommit: _FakeAccountKeyTransitionRemote(
+          forgedIssuerBinding,
+          failFirstComplete: false,
+        ),
+        localCommitter: capturingLocal,
+      ).execute(context: context, binding: forgedIssuerBinding);
+      final plan = E2eeDeviceStateKeyTransitionPlan(
+        binding: binding,
+        previousMembership: chain.revoked,
+        nextMembership: chain.resumed,
+        sourceStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 1,
+        unprunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 2,
+        prunedStateBlob: Uint8List(DeviceStateBlobStore.blobLength)..[0] = 3,
+      );
+      final committer = E2eeDeviceStateKeyTransitionCommitter(
+        baseUrl: context.normalizedBaseUrl,
+        normalizedLoginName: context.normalizedLoginName,
+        plan: plan,
+        deviceStateStore: DeviceStateBlobStore(
+          installationRoot: await Directory(
+            '${directory.path}/cross-issuer-state',
+          ).create(),
+        ),
+        secureCore: const KelivoSecureCore(),
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+        databaseFile: File('${directory.path}/constraints.sqlite'),
+      );
+
+      await expectLater(
+        committer.commit(
+          binding: binding,
+          confirmation: capturingLocal.confirmation!,
+        ),
+        throwsFormatException,
+      );
+    });
+
+    test('本地提交后 checkpoint 清理失败可在无换代日志时恢复', () async {
+      final operationId = _syncUuid(331);
+      final transport = _ZeroSourceDataRekeyTransport(
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        operationId: operationId,
+      );
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/account-key-transition',
+        ).create(),
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: 'https://kelivo.bemylover.top',
+        loginName: 'owner',
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: 12,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.deviceRevocation,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: operationId,
+        rekeyOperationId: operationId,
+        securityGeneration: 12,
+        targetKeyEpoch: 8,
+        membershipManifestDigest: _syncDigest(9),
+      );
+      final remote = _FakeAccountKeyTransitionRemote(binding);
+      final local = _FakeAccountKeyTransitionLocalCommitter();
+      final coordinator = E2eeAccountKeyTransitionCoordinator(
+        dataRekeyExecutor: E2eeDataRekeyExecutor(
+          transport: transport,
+          journal: dataRekeyCommands,
+          stageStore: stageStore,
+          cryptography: _ZeroSourceDataRekeyCryptography(),
+          clock: () => DateTime.utc(2026, 7, 30, 5),
+        ),
+        remoteCommit: remote,
+        localCommitter: local,
+      );
+
+      await expectLater(
+        coordinator.execute(context: context, binding: binding),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'simulated_checkpoint_cleanup_loss',
+          ),
+        ),
+      );
+      expect(local.commitCalls, 1);
+      expect(remote.commitCalls, 1);
+      expect(remote.completeCalls, 1);
+      expect(await dataRekeyCommands.readActive(), equals(null));
+
+      final receipt = await coordinator.execute(
+        context: context,
+        binding: binding,
+      );
+
+      expect(receipt.rekeyOperationId, operationId);
+      expect(local.commitCalls, 1);
+      expect(local.requireCommittedCalls, 1);
+      expect(remote.commitCalls, 2);
+      expect(remote.completeCalls, 2);
+    });
+
+    test('ready 后推进成员锚并只发布已裁剪设备状态', () async {
+      const secureCore = KelivoSecureCore();
+      const manifestModule = E2eeAccountTrustManifestModule();
+      const baseUrl = 'https://kelivo.bemylover.top';
+      final testIdentity = sha256
+          .convert(utf8.encode(directory.path))
+          .toString()
+          .substring(0, 12);
+      final loginName = 'transition-$testIdentity';
+      final deviceStateRoot = await Directory(
+        '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+        '${Platform.pathSeparator}device_state_key_transition_$testIdentity',
+      ).create(recursive: true);
+      final slotId = E2eeDeviceStateAccess.deriveSlotId(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      );
+      KelivoKeyHandle? key;
+      KelivoDeviceIdentityHandle? identity;
+      KelivoAccountRootKeyHandle? ark;
+      E2eeOpenedDeviceStateHandles? opened;
+      addTearDown(() async {
+        final openedToClose = opened;
+        if (openedToClose != null) {
+          await secureCore.closeAccountRootKey(openedToClose.ark!);
+          await secureCore.closeDeviceIdentity(openedToClose.identity);
+          await secureCore.close(openedToClose.key);
+        }
+        final arkToClose = ark;
+        if (arkToClose != null) {
+          await secureCore.closeAccountRootKey(arkToClose);
+        }
+        final identityToClose = identity;
+        if (identityToClose != null) {
+          await secureCore.closeDeviceIdentity(identityToClose);
+        }
+        final keyToClose = key;
+        if (keyToClose != null) await secureCore.close(keyToClose);
+        await secureCore.deleteSlot(slotId);
+        if (await deviceStateRoot.exists()) {
+          await deviceStateRoot.delete(recursive: true);
+        }
+      });
+
+      key = await secureCore.createSlot(slotId);
+      identity = await secureCore.generateDeviceIdentity();
+      ark = await secureCore.generateAccountRootKey(
+        userId: Uuid.parseAsByteList(_syncAccountUserId),
+        keyEpoch: 1,
+      );
+      final publicKeys = await secureCore.readDevicePublicKeys(identity);
+      final recoveryDevice = E2eeMembershipDeviceInput(
+        deviceId: _syncActorDeviceId,
+        keyVersion: 1,
+        authGeneration: 1,
+        signingPublicKey: publicKeys.signingPublicKey,
+        keyAgreementPublicKey: publicKeys.keyAgreementPublicKey,
+      );
+      final originalDevice = await _newDatabaseMembershipDevice(
+        secureCore,
+        deviceId: _syncUuid(332),
+        authGeneration: 0,
+      );
+      final initialized = await manifestModule.create(
+        ark: ark,
+        change: E2eeInitializeMembershipChange(
+          userId: _syncAccountUserId,
+          operationId: _syncUuid(333),
+          member: originalDevice,
+          recoveryPublicKeyVersion: 1,
+          recoveryPublicKey: await _newDatabaseRecoveryPublicKey(secureCore),
+          recoveryCapsuleVersion: 1,
+          recoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x51),
+        ),
+      );
+      final resumed = await manifestModule.create(
+        ark: ark,
+        change: E2eeRecoverResumeMembershipChange(
+          previous: initialized,
+          operationId: _syncUuid(334),
+          subject: recoveryDevice,
+        ),
+      );
+      await repository.e2eeVerifiedMembershipAnchorCommands.install(
+        membership: resumed,
+        now: DateTime.utc(2026, 7, 30, 5),
+      );
+      final sourceStateBlob = await secureCore.sealDeviceState(
+        key,
+        identity,
+        deviceId: Uuid.parseAsByteList(_syncActorDeviceId),
+        keyVersion: 1,
+        ark: ark,
+        account: KelivoDeviceStateAccountBinding(
+          userId: Uuid.parseAsByteList(_syncAccountUserId),
+          keyEpoch: 1,
+        ),
+      );
+      final nextEpoch = await secureCore.generateAccountRootKey(
+        userId: Uuid.parseAsByteList(_syncAccountUserId),
+        keyEpoch: 2,
+      );
+      try {
+        await secureCore.addAccountRootKeyEpoch(ark, source: nextEpoch);
+      } finally {
+        await secureCore.closeAccountRootKey(nextEpoch);
+      }
+      final operationId = _syncUuid(335);
+      final replaced = await manifestModule.create(
+        ark: ark,
+        change: E2eeRecoverReplaceMembershipChange(
+          previous: resumed,
+          operationId: operationId,
+          subject: recoveryDevice,
+          nextRecoveryCapsuleVersion: 2,
+          nextRecoveryCapsule: Uint8List(80)..fillRange(0, 80, 0x52),
+        ),
+      );
+      final unprunedStateBlob = await secureCore.sealDeviceState(
+        key,
+        identity,
+        deviceId: Uuid.parseAsByteList(_syncActorDeviceId),
+        keyVersion: 1,
+        ark: ark,
+        account: KelivoDeviceStateAccountBinding(
+          userId: Uuid.parseAsByteList(_syncAccountUserId),
+          keyEpoch: 2,
+        ),
+      );
+      await secureCore.pruneAccountRootKeyEpoch(ark, keyEpoch: 1);
+      final prunedStateBlob = await secureCore.sealDeviceState(
+        key,
+        identity,
+        deviceId: Uuid.parseAsByteList(_syncActorDeviceId),
+        keyVersion: 1,
+        ark: ark,
+        account: KelivoDeviceStateAccountBinding(
+          userId: Uuid.parseAsByteList(_syncAccountUserId),
+          keyEpoch: 2,
+        ),
+      );
+      final deviceStateStore = DeviceStateBlobStore(
+        installationRoot: deviceStateRoot,
+      );
+      await deviceStateStore.compareAndSwap(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        expectedVersion: null,
+        blob: sourceStateBlob,
+      );
+      final binding = E2eeAccountKeyTransitionBinding(
+        kind: E2eeAccountKeyTransitionKind.recoveryReplacement,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipOperationId: operationId,
+        rekeyOperationId: operationId,
+        securityGeneration: replaced.securityGeneration,
+        targetKeyEpoch: replaced.keyEpoch,
+        membershipManifestDigest: replaced.digest,
+      );
+      final context = E2eeDataRekeyExecutionContext(
+        baseUrl: baseUrl,
+        loginName: loginName,
+        userId: _syncAccountUserId,
+        issuerDeviceId: _syncActorDeviceId,
+        membershipGeneration: replaced.securityGeneration,
+        membershipManifestDigest: replaced.digest,
+      );
+      final stageStore = E2eeDataRekeyStageStore(
+        installationRoot: await Directory(
+          '${directory.path}/device-state-key-transition-stage',
+        ).create(),
+      );
+      final remote = _FakeAccountKeyTransitionRemote(
+        binding,
+        failFirstComplete: false,
+      );
+      final transitionPlan = E2eeDeviceStateKeyTransitionPlan(
+        binding: binding,
+        previousMembership: resumed,
+        nextMembership: replaced,
+        sourceStateBlob: sourceStateBlob,
+        unprunedStateBlob: unprunedStateBlob,
+        prunedStateBlob: prunedStateBlob,
+      );
+      binding.membershipManifestDigest[0] ^= 0xff;
+      transitionPlan.sourceStateBlob[0] ^= 0xff;
+      transitionPlan.unprunedStateBlob[0] ^= 0xff;
+      transitionPlan.prunedStateBlob[0] ^= 0xff;
+      final coordinator = E2eeAccountKeyTransitionCoordinator(
+        dataRekeyExecutor: E2eeDataRekeyExecutor(
+          transport: _ZeroSourceDataRekeyTransport(
+            userId: _syncAccountUserId,
+            issuerDeviceId: _syncActorDeviceId,
+            operationId: operationId,
+            sourceKeyEpoch: 1,
+            targetKeyEpoch: 2,
+          ),
+          journal: dataRekeyCommands,
+          stageStore: stageStore,
+          cryptography: _ZeroSourceDataRekeyCryptography(
+            issuerDeviceId: _syncActorDeviceId,
+            targetKeyEpoch: 2,
+          ),
+          clock: () => DateTime.utc(2026, 7, 30, 5),
+        ),
+        remoteCommit: remote,
+        localCommitter: E2eeDeviceStateKeyTransitionCommitter(
+          baseUrl: baseUrl,
+          normalizedLoginName: loginName,
+          plan: transitionPlan,
+          deviceStateStore: deviceStateStore,
+          secureCore: secureCore,
+          databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+          databaseFile: File('${directory.path}/constraints.sqlite'),
+          clock: () => DateTime.utc(2026, 7, 30, 5, 1),
+        ),
+      );
+
+      await coordinator.execute(context: context, binding: binding);
+      await coordinator.execute(context: context, binding: binding);
+
+      final current = await deviceStateStore.read(
+        normalizedBaseUrl: baseUrl,
+        normalizedLoginName: loginName,
+      );
+      expect(current, orderedEquals(prunedStateBlob));
+      opened = await E2eeDeviceStateAccess(
+        baseUrl: baseUrl,
+        deviceStateStore: deviceStateStore,
+        secureCore: secureCore,
+      ).openExisting(loginName);
+      final committed = opened!;
+      final anchor = await repository.e2eeVerifiedMembershipAnchorCommands
+          .readVerified(accountUserId: _syncAccountUserId, ark: committed.ark!);
+      expect(anchor, isNot(equals(null)));
+      expect(anchor!.membership.digest, orderedEquals(replaced.digest));
+      await expectLater(
+        secureCore.deriveAccountTrustPublicKey(
+          committed.ark!,
+          userId: Uuid.parseAsByteList(_syncAccountUserId),
+          keyEpoch: 1,
+        ),
+        throwsA(isA<KelivoSecureCoreException>()),
+      );
+      expect(await dataRekeyCommands.readActive(), equals(null));
+      expect(remote.commitCalls, 2);
+      expect(remote.completeCalls, 2);
     });
   });
 
@@ -8538,3 +9986,842 @@ Future<Uint8List> _newDatabaseRecoveryPublicKey(
     await secureCore.closeDeviceIdentity(identity);
   }
 }
+
+final class _ZeroSourceDataRekeyCryptography
+    implements E2eeDataRekeyCryptography {
+  _ZeroSourceDataRekeyCryptography({
+    this.issuerDeviceId = _syncActorDeviceId,
+    this.targetKeyEpoch = 8,
+  });
+
+  int signatureCount = 0;
+
+  @override
+  final String issuerDeviceId;
+
+  @override
+  final int targetKeyEpoch;
+
+  @override
+  Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
+    CloudSyncDataRekeySourceRecord source,
+  ) => throw StateError('空源测试不得重包记录');
+
+  @override
+  Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(
+    CloudSyncDataRekeySourceAttachment source,
+  ) => throw StateError('空源测试不得重包附件');
+
+  @override
+  Future<Uint8List> signCompletionProof(Uint8List proofFrame) async {
+    expect(proofFrame, hasLength(e2eeDataRekeyCompletionFrameBytes));
+    signatureCount += 1;
+    return Uint8List(e2eeDataRekeyCompletionSignatureBytes)
+      ..fillRange(0, e2eeDataRekeyCompletionSignatureBytes, 0x5a);
+  }
+}
+
+final class _ZeroSourceDataRekeyTransport
+    implements CloudSyncDataRekeyTransport {
+  _ZeroSourceDataRekeyTransport({
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.operationId,
+    this.sourceKeyEpoch = 7,
+    this.targetKeyEpoch = 8,
+  });
+
+  final String userId;
+  final String issuerDeviceId;
+  final String operationId;
+  final int sourceKeyEpoch;
+  final int targetKeyEpoch;
+  final List<CloudSyncDataRekeyFinalizeRequest> finalizeRequests =
+      <CloudSyncDataRekeyFinalizeRequest>[];
+  CloudSyncDataRekeyFinalizeRequest? _finalizedRequest;
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() async {
+    final finalizedRequest = _finalizedRequest;
+    if (finalizedRequest != null) {
+      return CloudSyncDataRekeyState.fromJson(<String, Object?>{
+        'phase': 'ready',
+        'dataGeneration': finalizedRequest.targetDataGeneration,
+        'dataKeyEpoch': finalizedRequest.activeLease.operation.targetKeyEpoch,
+        'changeWatermark': finalizedRequest.proof.sourceMaximumChangeSeq,
+        'lastCompletion': _dataRekeyCompletionJson(
+          userId: userId,
+          request: finalizedRequest,
+        ),
+        'updatedAt': '2026-07-30T05:01:00.000Z',
+      });
+    }
+    return CloudSyncDataRekeyState.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'dataGeneration': 4,
+      'dataKeyEpoch': sourceKeyEpoch,
+      'changeWatermark': 0,
+      'operationId': operationId,
+      'targetKeyEpoch': targetKeyEpoch,
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': null,
+      'lease': null,
+      'lastCompletion': null,
+      'updatedAt': '2026-07-30T05:00:00.000Z',
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  ) async {
+    return CloudSyncDataRekeyLeaseClaim.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'operationId': operationId,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': sourceKeyEpoch,
+      'targetKeyEpoch': targetKeyEpoch,
+      'leaseVersion': 1,
+      'leaseExpiresAt': '2026-07-30T05:10:00.000Z',
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': null,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  ) async {
+    expect(request.limit, 10);
+    return CloudSyncDataRekeySourceRecordPage.fromJson(<String, Object?>{
+      'records': <Object?>[],
+      'nextAfterRecordId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  ) async {
+    expect(request.limit, 10);
+    return CloudSyncDataRekeySourceAttachmentPage.fromJson(<String, Object?>{
+      'attachments': <Object?>[],
+      'nextAfterAttachmentId': null,
+      'nextAfterUploadId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  ) => throw StateError('空源测试不得暂存记录');
+
+  @override
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  ) => throw StateError('空源测试不得暂存附件');
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) async {
+    finalizeRequests.add(request);
+    if (finalizeRequests.length == 1) {
+      return CloudSyncDataRekeyFinalizeOutcome.fromJson(<String, Object?>{
+        'result': 'verification-pending',
+        'operationId': operationId,
+        'phase': 'verified',
+        'sourceRecordCount': 0,
+        'sourceAttachmentCount': 0,
+        'stagedRecordCount': 0,
+        'stagedAttachmentCount': 0,
+      }, request: request);
+    }
+    final outcome = _finalizedDataRekeyOutcome(
+      userId: userId,
+      request: request,
+    );
+    _finalizedRequest = request;
+    return outcome;
+  }
+}
+
+final class _FinalizeResponseLossDataRekeyTransport
+    extends _ZeroSourceDataRekeyTransport {
+  _FinalizeResponseLossDataRekeyTransport({
+    required super.userId,
+    required super.issuerDeviceId,
+    required super.operationId,
+  });
+
+  bool _ready = false;
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() {
+    if (!_ready) return super.getDataRekeyState();
+    return Future<CloudSyncDataRekeyState>.value(
+      CloudSyncDataRekeyState.fromJson(<String, Object?>{
+        'phase': 'ready',
+        'dataGeneration': 5,
+        'dataKeyEpoch': 8,
+        'changeWatermark': 0,
+        'lastCompletion': null,
+        'updatedAt': '2026-07-30T05:01:00.000Z',
+      }),
+    );
+  }
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) async {
+    finalizeRequests.add(request);
+    if (finalizeRequests.length == 1) {
+      _ready = true;
+      throw StateError('simulated_finalize_response_loss');
+    }
+    final outcome = _finalizedDataRekeyOutcome(
+      userId: userId,
+      request: request,
+    );
+    _finalizedRequest = request;
+    return outcome;
+  }
+}
+
+final class _RecordDataRekeyCryptography implements E2eeDataRekeyCryptography {
+  _RecordDataRekeyCryptography({required this.targetRecordId});
+
+  final String targetRecordId;
+  int recordRewrapCount = 0;
+
+  @override
+  final String issuerDeviceId = _syncActorDeviceId;
+
+  @override
+  final int targetKeyEpoch = 8;
+
+  @override
+  Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
+    CloudSyncDataRekeySourceRecord source,
+  ) async {
+    recordRewrapCount += 1;
+    return E2eeDataRekeyRewrappedRecord(
+      sourceRecordId: source.recordId,
+      sourceRevision: source.revision,
+      targetRecordId: targetRecordId,
+      targetKeyEpoch: 8,
+      ciphertext: Uint8List.fromList(<int>[9, 8, 7, recordRewrapCount]),
+    );
+  }
+
+  @override
+  Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(
+    CloudSyncDataRekeySourceAttachment source,
+  ) => throw StateError('记录重放测试不得重包附件');
+
+  @override
+  Future<Uint8List> signCompletionProof(Uint8List proofFrame) async {
+    return Uint8List(e2eeDataRekeyCompletionSignatureBytes)
+      ..fillRange(0, e2eeDataRekeyCompletionSignatureBytes, 0x6a);
+  }
+}
+
+final class _RecordResponseLossDataRekeyTransport
+    implements CloudSyncDataRekeyTransport {
+  _RecordResponseLossDataRekeyTransport({
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.operationId,
+    required this.sourceRecordId,
+  });
+
+  final String userId;
+  final String issuerDeviceId;
+  final String operationId;
+  final String sourceRecordId;
+  final List<CloudSyncDataRekeyRecordStageRequest> stageRequests =
+      <CloudSyncDataRekeyRecordStageRequest>[];
+  bool _leaseClaimed = false;
+  bool _leaseOwned = true;
+  int _leaseVersion = 1;
+
+  void simulateLeaseTakeover() {
+    _leaseClaimed = true;
+    _leaseOwned = false;
+    _leaseVersion = 2;
+  }
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() async {
+    return CloudSyncDataRekeyState.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'dataGeneration': 4,
+      'dataKeyEpoch': 7,
+      'changeWatermark': 9,
+      'operationId': operationId,
+      'targetKeyEpoch': 8,
+      'sourceRecordCount': 1,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 9,
+      'sourceRecordCursorEnd': sourceRecordId,
+      'sourceAttachmentCursorEnd': null,
+      'lease': _leaseClaimed
+          ? <String, Object?>{
+              'leaseVersion': _leaseVersion,
+              'ownedByCurrentDevice': _leaseOwned,
+              'expiresAt': _leaseVersion == 1
+                  ? '2026-07-30T05:10:00.000Z'
+                  : '2026-07-30T05:15:00.000Z',
+            }
+          : null,
+      'lastCompletion': null,
+      'updatedAt': '2026-07-30T05:00:00.000Z',
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  ) async {
+    _leaseClaimed = true;
+    if (!_leaseOwned) {
+      _leaseOwned = true;
+      _leaseVersion += 1;
+    }
+    return CloudSyncDataRekeyLeaseClaim.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'operationId': operationId,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 7,
+      'targetKeyEpoch': 8,
+      'leaseVersion': _leaseVersion,
+      'leaseExpiresAt': _leaseVersion == 1
+          ? '2026-07-30T05:10:00.000Z'
+          : '2026-07-30T05:20:00.000Z',
+      'sourceRecordCount': 1,
+      'sourceAttachmentCount': 0,
+      'sourceMaximumChangeSeq': 9,
+      'sourceRecordCursorEnd': sourceRecordId,
+      'sourceAttachmentCursorEnd': null,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  ) async {
+    final ciphertext = Uint8List.fromList(<int>[1, 2, 3]);
+    return CloudSyncDataRekeySourceRecordPage.fromJson(<String, Object?>{
+      'records': <Object?>[
+        <String, Object?>{
+          'recordId': sourceRecordId,
+          'revision': 3,
+          'envelopeVersion': 1,
+          'keyEpoch': 7,
+          'ciphertext': _dataRekeyBinary(ciphertext),
+          'ciphertextBytes': ciphertext.length,
+          'updatedAt': '2026-07-30T04:59:00.000Z',
+          'updatedByDeviceId': issuerDeviceId,
+          'lastChangeSeq': 9,
+          'kind': 'put',
+          'ciphertextDigest': _dataRekeyBinary(
+            Uint8List.fromList(sha256.convert(ciphertext).bytes),
+          ),
+        },
+      ],
+      'nextAfterRecordId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  ) async {
+    return CloudSyncDataRekeySourceAttachmentPage.fromJson(<String, Object?>{
+      'attachments': <Object?>[],
+      'nextAfterAttachmentId': null,
+      'nextAfterUploadId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  ) async {
+    stageRequests.add(request);
+    if (stageRequests.length == 1) {
+      throw StateError('simulated_stage_response_loss');
+    }
+    return CloudSyncDataRekeyRecordStageResult.fromJson(<String, Object?>{
+      'result': 'staged',
+      'operationId': operationId,
+      'mutationId': request.mutationId,
+      'sourceRecordId': request.sourceRecordId,
+      'targetRecordId': request.targetRecordId,
+      'leaseVersion': request.activeLease.leaseVersion,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  ) => throw StateError('记录重放测试不得暂存附件');
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) async {
+    return _finalizedDataRekeyOutcome(userId: userId, request: request);
+  }
+}
+
+final class _AttachmentDataRekeyCryptography
+    implements E2eeDataRekeyCryptography {
+  @override
+  final String issuerDeviceId = _syncActorDeviceId;
+
+  @override
+  final int targetKeyEpoch = 8;
+
+  int attachmentRewrapCount = 0;
+  int? sourceChunkKeyEpoch;
+  List<List<int>> sourceChunkDigests = const <List<int>>[];
+
+  @override
+  Future<E2eeDataRekeyRewrappedRecord> rewrapRecord(
+    CloudSyncDataRekeySourceRecord source,
+  ) => throw StateError('附件换代测试不得重包记录');
+
+  @override
+  Future<E2eeDataRekeyRewrappedAttachmentManifest> rewrapAttachmentManifest(
+    CloudSyncDataRekeySourceAttachment source,
+  ) async {
+    attachmentRewrapCount += 1;
+    sourceChunkKeyEpoch = source.chunkKeyEpoch;
+    sourceChunkDigests = <List<int>>[
+      for (final chunk in source.chunks)
+        List<int>.unmodifiable(chunk.ciphertextDigest),
+    ];
+    return E2eeDataRekeyRewrappedAttachmentManifest(
+      attachmentId: source.attachmentId,
+      uploadId: source.uploadId,
+      chunkKeyEpoch: source.chunkKeyEpoch,
+      manifestKeyEpoch: 8,
+      manifestRevision: source.manifestRevision + 1,
+      manifestCiphertext: Uint8List.fromList(<int>[8, 7, 6, 5]),
+    );
+  }
+
+  @override
+  Future<Uint8List> signCompletionProof(Uint8List proofFrame) async {
+    return Uint8List(e2eeDataRekeyCompletionSignatureBytes)
+      ..fillRange(0, e2eeDataRekeyCompletionSignatureBytes, 0x7a);
+  }
+}
+
+final class _AttachmentDataRekeyTransport
+    implements CloudSyncDataRekeyTransport {
+  _AttachmentDataRekeyTransport({
+    required this.userId,
+    required this.issuerDeviceId,
+    required this.operationId,
+    required this.attachmentId,
+    required this.uploadId,
+  });
+
+  final String userId;
+  final String issuerDeviceId;
+  final String operationId;
+  final String attachmentId;
+  final String uploadId;
+  final List<CloudSyncDataRekeyAttachmentStageRequest> stageRequests =
+      <CloudSyncDataRekeyAttachmentStageRequest>[];
+  bool _leaseClaimed = false;
+
+  @override
+  Future<CloudSyncDataRekeyState> getDataRekeyState() async {
+    return CloudSyncDataRekeyState.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'dataGeneration': 4,
+      'dataKeyEpoch': 7,
+      'changeWatermark': 0,
+      'operationId': operationId,
+      'targetKeyEpoch': 8,
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 1,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': <String, Object?>{
+        'attachmentId': attachmentId,
+        'uploadId': uploadId,
+      },
+      'lease': _leaseClaimed
+          ? <String, Object?>{
+              'leaseVersion': 1,
+              'ownedByCurrentDevice': true,
+              'expiresAt': '2026-07-30T05:10:00.000Z',
+            }
+          : null,
+      'lastCompletion': null,
+      'updatedAt': '2026-07-30T05:00:00.000Z',
+    });
+  }
+
+  @override
+  Future<CloudSyncDataRekeyLeaseClaim> claimDataRekeyLease(
+    CloudSyncDataRekeyLeaseClaimRequest request,
+  ) async {
+    _leaseClaimed = true;
+    return CloudSyncDataRekeyLeaseClaim.fromJson(<String, Object?>{
+      'phase': 'rekey-pending',
+      'operationId': operationId,
+      'sourceDataGeneration': 4,
+      'sourceKeyEpoch': 7,
+      'targetKeyEpoch': 8,
+      'leaseVersion': 1,
+      'leaseExpiresAt': '2026-07-30T05:10:00.000Z',
+      'sourceRecordCount': 0,
+      'sourceAttachmentCount': 1,
+      'sourceMaximumChangeSeq': 0,
+      'sourceRecordCursorEnd': null,
+      'sourceAttachmentCursorEnd': <String, Object?>{
+        'attachmentId': attachmentId,
+        'uploadId': uploadId,
+      },
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceRecordPage> listDataRekeySourceRecords(
+    CloudSyncDataRekeySourceRecordListRequest request,
+  ) async {
+    return CloudSyncDataRekeySourceRecordPage.fromJson(<String, Object?>{
+      'records': <Object?>[],
+      'nextAfterRecordId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeySourceAttachmentPage> listDataRekeySourceAttachments(
+    CloudSyncDataRekeySourceAttachmentListRequest request,
+  ) async {
+    final manifestCiphertext = Uint8List.fromList(<int>[1, 3, 5, 7]);
+    return CloudSyncDataRekeySourceAttachmentPage.fromJson(<String, Object?>{
+      'attachments': <Object?>[
+        <String, Object?>{
+          'attachmentId': attachmentId,
+          'uploadId': uploadId,
+          'chunkKeyEpoch': 6,
+          'manifestKeyEpoch': 7,
+          'manifestRevision': 2,
+          'chunkCount': 2,
+          'totalCiphertextBytes': 11,
+          'manifestCiphertext': _dataRekeyBinary(manifestCiphertext),
+          'manifestCiphertextBytes': manifestCiphertext.length,
+          'manifestCiphertextDigest': _dataRekeyBinary(
+            Uint8List.fromList(sha256.convert(manifestCiphertext).bytes),
+          ),
+          'chunks': <Object?>[
+            <String, Object?>{
+              'chunkIndex': 0,
+              'ciphertextBytes': 5,
+              'ciphertextDigest': _dataRekeyBinary(_syncDigest(41)),
+            },
+            <String, Object?>{
+              'chunkIndex': 1,
+              'ciphertextBytes': 6,
+              'ciphertextDigest': _dataRekeyBinary(_syncDigest(42)),
+            },
+          ],
+          'committedAt': '2026-07-30T04:59:00.000Z',
+        },
+      ],
+      'nextAfterAttachmentId': null,
+      'nextAfterUploadId': null,
+      'hasMore': false,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyRecordStageResult> stageDataRekeyRecord(
+    CloudSyncDataRekeyRecordStageRequest request,
+  ) => throw StateError('附件换代测试不得暂存记录');
+
+  @override
+  Future<CloudSyncDataRekeyAttachmentStageResult> stageDataRekeyAttachment(
+    CloudSyncDataRekeyAttachmentStageRequest request,
+  ) async {
+    stageRequests.add(request);
+    return CloudSyncDataRekeyAttachmentStageResult.fromJson(<String, Object?>{
+      'result': 'staged',
+      'operationId': operationId,
+      'mutationId': request.mutationId,
+      'attachmentId': request.attachmentId,
+      'uploadId': request.uploadId,
+      'manifestRevision': request.manifestRevision,
+      'leaseVersion': request.activeLease.leaseVersion,
+    }, request: request);
+  }
+
+  @override
+  Future<CloudSyncDataRekeyFinalizeOutcome> finalizeDataRekey(
+    CloudSyncDataRekeyFinalizeRequest request,
+  ) async {
+    return _finalizedDataRekeyOutcome(userId: userId, request: request);
+  }
+}
+
+final class _FakeAccountKeyTransitionRemote
+    implements E2eeAccountKeyTransitionRemoteCommit {
+  _FakeAccountKeyTransitionRemote(
+    this.binding, {
+    this.failFirstComplete = true,
+  });
+
+  final E2eeAccountKeyTransitionBinding binding;
+  final bool failFirstComplete;
+  int commitCalls = 0;
+  int completeCalls = 0;
+
+  @override
+  Future<E2eeAccountKeyTransitionRemoteReceipt> commit() async {
+    commitCalls += 1;
+    final receipt = E2eeAccountKeyTransitionRemoteReceipt(
+      kind: binding.kind,
+      userId: binding.userId,
+      issuerDeviceId: binding.issuerDeviceId,
+      membershipOperationId: binding.membershipOperationId,
+      rekeyOperationId: binding.rekeyOperationId,
+      securityGeneration: binding.securityGeneration,
+      targetKeyEpoch: binding.targetKeyEpoch,
+      membershipManifestDigest: binding.membershipManifestDigest,
+    );
+    receipt.membershipManifestDigest[0] ^= 0xff;
+    return receipt;
+  }
+
+  @override
+  Future<void> complete(E2eeAccountKeyTransitionRemoteReceipt receipt) async {
+    completeCalls += 1;
+    if (failFirstComplete && completeCalls == 1) {
+      throw StateError('simulated_checkpoint_cleanup_loss');
+    }
+  }
+}
+
+final class _FakeAccountKeyTransitionLocalCommitter
+    implements E2eeAccountKeyTransitionLocalCommitter {
+  int commitCalls = 0;
+  int requireCommittedCalls = 0;
+  bool _committed = false;
+
+  @override
+  Future<void> commit({
+    required E2eeAccountKeyTransitionBinding binding,
+    required E2eeDataRekeyReadyConfirmation confirmation,
+  }) async {
+    commitCalls += 1;
+    expect(confirmation.execution.operationId, binding.rekeyOperationId);
+    _committed = true;
+  }
+
+  @override
+  Future<void> requireCommitted({
+    required E2eeAccountKeyTransitionBinding binding,
+  }) async {
+    requireCommittedCalls += 1;
+    if (!_committed) throw StateError('local_transition_not_committed');
+  }
+}
+
+final class _CapturingAccountKeyTransitionLocalCommitter
+    implements E2eeAccountKeyTransitionLocalCommitter {
+  E2eeDataRekeyReadyConfirmation? confirmation;
+
+  @override
+  Future<void> commit({
+    required E2eeAccountKeyTransitionBinding binding,
+    required E2eeDataRekeyReadyConfirmation confirmation,
+  }) async {
+    this.confirmation = confirmation;
+  }
+
+  @override
+  Future<void> requireCommitted({
+    required E2eeAccountKeyTransitionBinding binding,
+  }) async {
+    throw StateError('捕获 ready 确认测试不得进入恢复提交分支');
+  }
+}
+
+CloudSyncDataRekeyFinalizeOutcome _finalizedDataRekeyOutcome({
+  required String userId,
+  required CloudSyncDataRekeyFinalizeRequest request,
+}) {
+  final operation = request.activeLease.operation;
+  final proof = request.proof;
+  return CloudSyncDataRekeyFinalizeOutcome.fromJson(<String, Object?>{
+    'result': 'finalized',
+    'dataGeneration': request.targetDataGeneration,
+    'dataKeyEpoch': operation.targetKeyEpoch,
+    'changeWatermark': proof.sourceMaximumChangeSeq,
+    'completion': _dataRekeyCompletionJson(userId: userId, request: request),
+  }, request: request);
+}
+
+Map<String, Object?> _dataRekeyCompletionJson({
+  required String userId,
+  required CloudSyncDataRekeyFinalizeRequest request,
+}) {
+  final operation = request.activeLease.operation;
+  final proof = request.proof;
+  final attachmentCursor = proof.sourceAttachmentCursorEnd;
+  final proofFrame = _dataRekeyProofFrame(userId: userId, request: request);
+  final proofDigest = digestE2eeDataRekeyCompletionProof(
+    proofFrame: proofFrame,
+    signature: proof.signature,
+  );
+  return <String, Object?>{
+    'proofVersion': 2,
+    'operationId': operation.operationId,
+    'issuerDeviceId': proof.issuerDeviceId,
+    'sourceDataGeneration': operation.sourceDataGeneration,
+    'targetDataGeneration': request.targetDataGeneration,
+    'sourceKeyEpoch': operation.sourceKeyEpoch,
+    'targetKeyEpoch': operation.targetKeyEpoch,
+    'sourceSnapshotRoot': _dataRekeyBinary(proof.sourceSnapshotRoot),
+    'sourceRecordCount': proof.sourceRecordCount,
+    'sourceAttachmentCount': proof.sourceAttachmentCount,
+    'sourceMaximumChangeSeq': proof.sourceMaximumChangeSeq,
+    'sourceRecordCursorEnd': proof.sourceRecordCursorEnd,
+    'sourceAttachmentCursorEnd': attachmentCursor == null
+        ? null
+        : <String, Object?>{
+            'attachmentId': attachmentCursor.attachmentId,
+            'uploadId': attachmentCursor.uploadId,
+          },
+    'membershipGeneration': proof.membershipGeneration,
+    'membershipManifestDigest': _dataRekeyBinary(
+      proof.membershipManifestDigest,
+    ),
+    'stagedRecordCount': proof.stagedRecordCount,
+    'stagedAttachmentCount': proof.stagedAttachmentCount,
+    'stagedCiphertextSetDigest': _dataRekeyBinary(
+      proof.stagedCiphertextSetDigest,
+    ),
+    'proofFrame': _dataRekeyBinary(proofFrame),
+    'proofDigest': _dataRekeyBinary(proofDigest),
+    'signature': _dataRekeyBinary(proof.signature),
+    'finalizedAt': '2026-07-30T05:01:00.000Z',
+  };
+}
+
+Uint8List _dataRekeyProofFrame({
+  required String userId,
+  required CloudSyncDataRekeyFinalizeRequest request,
+}) {
+  final operation = request.activeLease.operation;
+  final proof = request.proof;
+  final attachmentCursor = proof.sourceAttachmentCursorEnd;
+  return buildE2eeDataRekeyCompletionFrame(
+    E2eeDataRekeyCompletionFields(
+      operationId: operation.operationId,
+      userId: userId,
+      issuerDeviceId: proof.issuerDeviceId,
+      sourceDataGeneration: operation.sourceDataGeneration,
+      targetDataGeneration: request.targetDataGeneration,
+      sourceKeyEpoch: operation.sourceKeyEpoch,
+      targetKeyEpoch: operation.targetKeyEpoch,
+      sourceSnapshotRoot: proof.sourceSnapshotRoot,
+      sourceRecordCount: proof.sourceRecordCount,
+      sourceAttachmentCount: proof.sourceAttachmentCount,
+      sourceMaximumChangeSeq: proof.sourceMaximumChangeSeq,
+      sourceRecordCursorEnd: proof.sourceRecordCursorEnd,
+      sourceAttachmentCursorEnd: attachmentCursor == null
+          ? null
+          : E2eeDataRekeyAttachmentCursor(
+              attachmentId: attachmentCursor.attachmentId,
+              uploadId: attachmentCursor.uploadId,
+            ),
+      membershipGeneration: proof.membershipGeneration,
+      membershipManifestDigest: proof.membershipManifestDigest,
+      stagedRecordCount: proof.stagedRecordCount,
+      stagedAttachmentCount: proof.stagedAttachmentCount,
+      stagedCiphertextSetDigest: proof.stagedCiphertextSetDigest,
+    ),
+  );
+}
+
+String _dataRekeyBinary(Uint8List value) =>
+    base64Url.encode(value).replaceAll('=', '');
+
+const _frozenInitializedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAEAAAABAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAADGukVpqxpKKb7327NSIZoQDnypuTvOcwZRu6WPOJ7N9AAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAHZsfPixtUoZopz8iV1xE7Z-Y2caElk'
+    'dhtiFBfv2A16YAAAAAFQAAAAAABAAIAAAAAAAAABgAAAAAAAQACAAAAAAAAAAYAAAAAAAEAA'
+    'gAAAAAAAAAEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGAAAAAAABAAIAA'
+    'AAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbi'
+    'NX4vOAUtEjBjPRRAAdoofmUKAhY9FngVAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAABRchNtfNvxE9RFzJGH3Dy8lFu43'
+    '7rKxS8XQYcWPoBGwP8dWlf80C2rKqN4xiL-cqN7s-twIEpPX1zb7GD0ulw8=';
+
+const _frozenPairedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAIAAAAB05HPAtPXROeSH0q-hR9L3XRc'
+    '1aQPMF8n05DghrDFUi_GukVpqxpKKb7327NSIZoQDnypuTvOcwZRu6WPOJ7N9AAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAHZsfPixtUoZopz8iV1xE7Z-Y2caElk'
+    'dhtiFBfv2A16YAAAAAKQAAAAAABAAIAAAAAAAAECgAAAAAAAQACAAAAAAAAAAZAAAAAAAEAA'
+    'gAAAAAAAAQEAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAABAAIAA'
+    'AAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbi'
+    'NX4vOAUtEjBjPRRAAdoofmUKAhY9FngVkAAAAAAAQACAAAAAAAABAQAAAAEAAAABJN6Lhjzf'
+    '3JAmNndeTSZas-gkRy_PHT13A3F21JfYcNVx_bKKmvgFLu2jtfVT3SDGmmtPr7kPaIRNDlpg'
+    'aJPONAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAAA8Jp5SY8OMWGQlUuX8P9uByzKZkfZ_BAABAgIMEDbGkcdpkkL8jKHr'
+    'xWfXXMudiusorxqxnFcq6U1RutmjiskC';
+
+const _frozenRevokedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAMAAAACYK_d1CAY4CnUQukssxT6jZCY'
+    '6sSDyZ3cq3TZTszE0iFBKYAXQdhCsoXJ8NK_2xAp7hO3Mi2BBjbO49mscH2EeAAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAKMvCPqXupQkBoOv3kpgEJqpju6Xq63'
+    '7q5HKomKPuN09wAAAAOQAAAAAABAAIAAAAAAAAEFgAAAAAAAQACAAAAAAAAAAZAAAAAAAEAA'
+    'gAAAAAAAAQFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUVFRUQAAAAGAAAAAAABAAIAA'
+    'AAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbi'
+    'NX4vOAUtEjBjPRRAAdoofmUKAhY9FngV6P5mgbJusLnAH-4iYHZSzcQe6fAYc27aYm3gdQyO'
+    'XW-MZsfXqL_HQUOPsKEDlj9n8Sh-LOeGddlc2ay7O0ZPDFM00n9-1kLDBZlw-zHyUowk3dAR'
+    'CRnOU8K_klM_Yun_pvWdp3F8RVinPhTH78kF8P2g3psJGoQ72_k5O-xjkQc=';
+
+const _frozenResumedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAQAAAACG7pb1XYcWVtnnG1lZzHl5Uiv'
+    'RPBpekjvxp6qUamvEqpBKYAXQdhCsoXJ8NK_2xAp7hO3Mi2BBjbO49mscH2EeAAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAKMvCPqXupQkBoOv3kpgEJqpju6Xq63'
+    '7q5HKomKPuN09wAAAASQAAAAAABAAIAAAAAAAAEHkAAAAAAAQACAAAAAAAABBpAAAAAAAEAA'
+    'gAAAAAAAAQYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAKAAAAAAABAAIAA'
+    'AAAAAAABAAAAAQAAAABkCWCQOAtJwkHe2y6WyXI2zvEKUkuD0VIaOlQNR-P5sNO8ZAdbShbi'
+    'NX4vOAUtEjBjPRRAAdoofmUKAhY9FngVkAAAAAAAQACAAAAAAAABBgAAAAEAAAABgdIlodNd'
+    'qTKZrV-1klAXdgXZkX--B30hzXsjLBMkKk3Gd8znvWfqfRtKVxTbElc6PyPTRh1foRX3Y6VY'
+    '1-kwewAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'
+    'AAAAAAAAAAAAAAAAAAAywzUx0Vy0qXRMsNYCBwMvpfduygnmZfR1iAkPMTsIb411KqH0Ru3Y'
+    'B-l8QbUc1WZQyMIyPI5kDIPimcijKCEL';
+
+const _frozenReplacedManifestV2 =
+    'S0VMSVZPTU0AAAACcAAAAAAAQACAAAAAAAAAAQAAAAUAAAADKUa5iTtfhjRhHm6HgnOqLdKr'
+    'cMUeq2D9Y90RygxrnKqiI_8VH8y31X2yfFQY-X5kcA9Rn_BnnARxRCt-qLc9MAAAAAHdcNiz'
+    'mGV7lSarTk0dOJ3AcGcuNv_hdOgcSyttHlb1YQAAAAMj5alo_Jncfvde8oXxu6mtnu0hJJ-h'
+    'JJVGKZMV_7x4iQAAAAWQAAAAAABAAIAAAAAAAAEIkAAAAAAAQACAAAAAAAABBpAAAAAAAEAA'
+    'gAAAAAAAAQYAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAGQAAAAAABAAIAA'
+    'AAAAAAEGAAAAAQAAAAGB0iWh012pMpmtX7WSUBd2BdmRf74HfSHNeyMsEyQqTcZ3zOe9Z-p9'
+    'G0pXFNsSVzo_I9NGHV-hFfdjpVjX6TB7T6V_HIXj7StNhx5Ry0MvFZzvHdtsw5wKWp-vUl2q'
+    '2aSCe9hG1AZ9ex_vHEjKhnNDgSb9YEDUdgzAwV6u3W9lAoWRoPC9qV8tBZ47iKrMKN2MwLWS'
+    'oFE9h4oTfa-zpZrOrqpq5CjsjXW4k_cT7zl40-J66eRal6O_lt4TvKd61wQ=';

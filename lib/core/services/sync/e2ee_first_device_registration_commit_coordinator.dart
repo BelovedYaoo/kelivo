@@ -1,6 +1,6 @@
 import 'dart:typed_data';
 
-const e2eeEncryptedRecoveryMediaBytes = 644;
+const e2eeEncryptedRecoveryMediaBytes = 676;
 
 typedef E2eeEncryptedRecoveryMediaExporter =
     Future<bool> Function(Uint8List encryptedMedia);

@@ -8,16 +8,16 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_recovery.dart';
 
-const _checkpointVersion = 3;
+const _checkpointVersion = 4;
 const _checkpointRecordEpoch = 1;
 const _checkpointFixedLength = 819;
 const _checkpointTokenLength = 59;
 const _checkpointFullSessionTokenLength = 50;
 const _checkpointCapsuleMaximumLength = 4096;
-const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v3';
+const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v4';
 const _checkpointAssociatedDataDomain =
-    'kelivo.account-recovery.checkpoint.aad.v3';
-final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC3'));
+    'kelivo.account-recovery.checkpoint.aad.v4';
+final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC4'));
 final _canonicalUuidV4Pattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
@@ -247,6 +247,7 @@ Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
       _checkpointFixedLength +
           capsule.length +
           _preparedCommitFrameLength(checkpoint.preparedCommit) +
+          _localTransitionPlanFrameLength(checkpoint.localTransitionPlan) +
           _commitReceiptFrameLength(checkpoint.commitReceipt),
     );
     final view = ByteData.sublistView(frame);
@@ -318,6 +319,12 @@ Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
       view,
       offset,
       checkpoint.preparedCommit,
+    );
+    offset = _writeLocalTransitionPlan(
+      frame,
+      view,
+      offset,
+      checkpoint.localTransitionPlan,
     );
     offset = _writeCommitReceipt(frame, view, offset, checkpoint.commitReceipt);
     if (offset != frame.length) {
@@ -409,6 +416,36 @@ int _writePreparedCommit(
   }
 }
 
+int _localTransitionPlanFrameLength(
+  E2eeAccountRecoveryLocalTransitionPlan? plan,
+) => plan == null ? 4 : 4 + DeviceStateBlobStore.blobLength * 3;
+
+int _writeLocalTransitionPlan(
+  Uint8List frame,
+  ByteData view,
+  int offset,
+  E2eeAccountRecoveryLocalTransitionPlan? plan,
+) {
+  if (plan == null) return _writeUint32(view, offset, 0);
+  offset = _writeUint32(view, offset, switch (plan.phase) {
+    E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared => 1,
+    E2eeAccountRecoveryLocalTransitionPhase.proofVerified => 2,
+    E2eeAccountRecoveryLocalTransitionPhase.activated => 3,
+  });
+  final source = plan.sourceStateBlob;
+  final unpruned = plan.unprunedStateBlob;
+  final pruned = plan.prunedStateBlob;
+  try {
+    offset = _writeBytes(frame, offset, source);
+    offset = _writeBytes(frame, offset, unpruned);
+    return _writeBytes(frame, offset, pruned);
+  } finally {
+    _clear(source);
+    _clear(unpruned);
+    _clear(pruned);
+  }
+}
+
 int _commitReceiptFrameLength(E2eeAccountRecoveryCommitReceipt? receipt) =>
     receipt == null ? 4 : 72;
 
@@ -443,7 +480,7 @@ int _writeCommitReceipt(
 }
 
 E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
-  if (frame.length < _checkpointFixedLength + 8 ||
+  if (frame.length < _checkpointFixedLength + 12 ||
       !_startsWith(frame, _checkpointMagic)) {
     throw const FormatException('账户恢复 checkpoint 帧无效');
   }
@@ -489,7 +526,7 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
   offset += 4;
   if (capsuleLength <= 0 ||
       capsuleLength > _checkpointCapsuleMaximumLength ||
-      frame.length < _checkpointFixedLength + capsuleLength + 8) {
+      frame.length < _checkpointFixedLength + capsuleLength + 12) {
     throw const FormatException('账户恢复 checkpoint capsule 边界无效');
   }
   final recoveryCapsule = _readBytes(frame, offset, capsuleLength);
@@ -533,6 +570,8 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
     attemptId: attemptId,
   );
   offset = prepared.offset;
+  final localTransition = _readLocalTransitionPlan(frame, view, offset);
+  offset = localTransition.offset;
   final receipt = _readCommitReceipt(frame, view, offset);
   offset = receipt.offset;
   if (offset != frame.length || expiresAtMs <= 0) {
@@ -584,6 +623,7 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
           recoveryTokenExpiresAtMs != 0 ||
           nextActionCode != 0 ||
           prepared.commit != null ||
+          localTransition.plan != null ||
           receipt.receipt != null) {
         throw const FormatException('账户恢复 challenge checkpoint 状态无效');
       }
@@ -598,6 +638,7 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
           recoveryTokenExpiresAtMs != 0 ||
           nextActionCode != 0 ||
           prepared.commit != null ||
+          localTransition.plan != null ||
           receipt.receipt != null) {
         throw const FormatException('账户恢复 proof checkpoint 状态无效');
       }
@@ -615,10 +656,17 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
       }
       final persistedNextAction = _parseNextAction(nextActionCode);
       final preparedCommit = prepared.commit;
+      final localTransitionPlan = localTransition.plan;
       final commitReceipt = receipt.receipt;
-      if (commitReceipt != null &&
-          (preparedCommit == null ||
-              commitReceipt.nextAction != persistedNextAction)) {
+      if ((localTransitionPlan != null && preparedCommit == null) ||
+          (localTransition.phase != null &&
+              localTransition.phase !=
+                  E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared &&
+              commitReceipt == null) ||
+          (commitReceipt != null &&
+              (preparedCommit == null ||
+                  localTransitionPlan == null ||
+                  commitReceipt.nextAction != persistedNextAction))) {
         throw const FormatException('账户恢复 checkpoint 回执状态不一致');
       }
       final initialNextAction = commitReceipt == null
@@ -644,10 +692,29 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
                 nextAction: initialNextAction,
               );
       if (preparedCommit == null) return authorized;
-      final preparedCheckpoint = authorized.withPreparedCommit(preparedCommit);
-      return commitReceipt == null
-          ? preparedCheckpoint
-          : preparedCheckpoint.withCommitReceipt(commitReceipt);
+      var preparedCheckpoint = authorized.withPreparedCommit(preparedCommit);
+      if (localTransitionPlan != null) {
+        preparedCheckpoint = preparedCheckpoint.withLocalTransitionPlan(
+          localTransitionPlan,
+        );
+      }
+      if (commitReceipt == null) return preparedCheckpoint;
+      var committedCheckpoint = preparedCheckpoint.withCommitReceipt(
+        commitReceipt,
+      );
+      if (localTransition.phase ==
+              E2eeAccountRecoveryLocalTransitionPhase.proofVerified ||
+          localTransition.phase ==
+              E2eeAccountRecoveryLocalTransitionPhase.activated) {
+        committedCheckpoint = committedCheckpoint
+            .markLocalTransitionProofVerified();
+      }
+      if (localTransition.phase ==
+          E2eeAccountRecoveryLocalTransitionPhase.activated) {
+        committedCheckpoint = committedCheckpoint
+            .markLocalTransitionActivated();
+      }
+      return committedCheckpoint;
   }
 }
 
@@ -775,6 +842,49 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
     );
   } finally {
     _clear(completionSessionTokenBytes);
+  }
+}
+
+({
+  E2eeAccountRecoveryLocalTransitionPlan? plan,
+  E2eeAccountRecoveryLocalTransitionPhase? phase,
+  int offset,
+})
+_readLocalTransitionPlan(Uint8List frame, ByteData view, int offset) {
+  _requireRemaining(frame, offset, 4);
+  final marker = _readUint32(view, offset);
+  offset += 4;
+  if (marker == 0) return (plan: null, phase: null, offset: offset);
+  final phase = switch (marker) {
+    1 => E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared,
+    2 => E2eeAccountRecoveryLocalTransitionPhase.proofVerified,
+    3 => E2eeAccountRecoveryLocalTransitionPhase.activated,
+    _ => null,
+  };
+  if (phase == null) {
+    throw const FormatException('账户恢复 checkpoint 本地提交计划标记无效');
+  }
+  _requireRemaining(frame, offset, DeviceStateBlobStore.blobLength * 3);
+  final source = _readBytes(frame, offset, DeviceStateBlobStore.blobLength);
+  offset += DeviceStateBlobStore.blobLength;
+  final unpruned = _readBytes(frame, offset, DeviceStateBlobStore.blobLength);
+  offset += DeviceStateBlobStore.blobLength;
+  final pruned = _readBytes(frame, offset, DeviceStateBlobStore.blobLength);
+  offset += DeviceStateBlobStore.blobLength;
+  try {
+    return (
+      plan: E2eeAccountRecoveryLocalTransitionPlan(
+        sourceStateBlob: source,
+        unprunedStateBlob: unpruned,
+        prunedStateBlob: pruned,
+      ),
+      phase: phase,
+      offset: offset,
+    );
+  } finally {
+    _clear(source);
+    _clear(unpruned);
+    _clear(pruned);
   }
 }
 

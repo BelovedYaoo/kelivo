@@ -69,6 +69,9 @@ const _onboardingTokenValue =
 final _fullToken = CloudSyncFullSessionToken.parse(_fullTokenValue);
 final _otherFullToken = CloudSyncFullSessionToken.parse(_otherFullTokenValue);
 final _onboardingToken = CloudSyncOnboardingToken.parse(_onboardingTokenValue);
+final _dataRekeyRecoveryToken = CloudSyncAccountRecoveryToken.parse(
+  'kelivo_recovery_${_encodedBytes(32, 110)}',
+);
 
 Map<String, Object?> _validConversationPayload() => <String, Object?>{
   'title': '会话',
@@ -2943,6 +2946,99 @@ void main() {
     expect(pending.lease?.ownedByCurrentDevice, isTrue);
   });
 
+  test('账户恢复 data-rekey 传输固定使用恢复令牌且不污染完整会话', () async {
+    final recoveryToken = CloudSyncAccountRecoveryToken.parse(
+      'kelivo_recovery_${_encodedBytes(32, 108)}',
+    );
+    final authorizations = <String?>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      expect(request.method, 'GET');
+      expect(request.uri.path, '/api/data-rekey/state/get');
+      authorizations.add(
+        request.headers.value(HttpHeaders.authorizationHeader),
+      );
+      await _writeJsonResponse(request, <String, Object?>{
+        'data': <String, Object?>{
+          'phase': 'ready',
+          'dataGeneration': 4,
+          'dataKeyEpoch': 3,
+          'changeWatermark': 16,
+          'lastCompletion': null,
+          'updatedAt': '2026-08-01T06:00:00.000Z',
+        },
+      });
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    await client.getDataRekeyState();
+    await client
+        .accountRecoveryDataRekeyTransport(recoveryToken)
+        .getDataRekeyState();
+    await client.getDataRekeyState();
+
+    expect(authorizations, <String?>[
+      'Bearer $_fullTokenValue',
+      'Bearer ${recoveryToken.value}',
+      'Bearer $_fullTokenValue',
+    ]);
+  });
+
+  test('账户恢复 data-rekey 传输不依赖完整会话', () async {
+    final recoveryToken = CloudSyncAccountRecoveryToken.parse(
+      'kelivo_recovery_${_encodedBytes(32, 109)}',
+    );
+    final authorizations = <String?>[];
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final subscription = server.listen((request) async {
+      authorizations.add(
+        request.headers.value(HttpHeaders.authorizationHeader),
+      );
+      await _writeJsonResponse(request, <String, Object?>{
+        'data': <String, Object?>{
+          'phase': 'ready',
+          'dataGeneration': 4,
+          'dataKeyEpoch': 3,
+          'changeWatermark': 16,
+          'lastCompletion': null,
+          'updatedAt': '2026-08-01T06:00:00.000Z',
+        },
+      });
+    });
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+    });
+
+    await client
+        .accountRecoveryDataRekeyTransport(recoveryToken)
+        .getDataRekeyState();
+    await expectLater(
+      client.getDataRekeyState(),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.kind,
+          'kind',
+          CloudSyncFailureKind.unauthenticated,
+        ),
+      ),
+    );
+
+    expect(authorizations, <String?>['Bearer ${recoveryToken.value}']);
+  });
+
   test('data-rekey 状态拒绝未知字段与冻结游标错配', () async {
     CloudSyncJsonMap pendingState({required int sourceRecordCount}) =>
         <String, Object?>{
@@ -3020,18 +3116,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final claimFuture = client.claimDataRekeyLease(claimRequest);
+    final claimFuture = transport.claimDataRekeyLease(claimRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/lease/claim');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3168,18 +3271,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final pageFuture = client.listDataRekeySourceRecords(listRequest);
+    final pageFuture = transport.listDataRekeySourceRecords(listRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/source/record-list');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3251,18 +3361,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final pageFuture = client.listDataRekeySourceAttachments(listRequest);
+    final pageFuture = transport.listDataRekeySourceAttachments(listRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/source/attachment-list');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3350,18 +3467,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final resultFuture = client.stageDataRekeyRecord(stageRequest);
+    final resultFuture = transport.stageDataRekeyRecord(stageRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/record/stage');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3423,18 +3547,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final resultFuture = client.stageDataRekeyAttachment(stageRequest);
+    final resultFuture = transport.stageDataRekeyAttachment(stageRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/attachment/stage');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3514,18 +3645,25 @@ void main() {
       baseUrl: 'http://${server.address.address}:${server.port}',
       token: _fullToken,
     );
+    final transport = client.accountRecoveryDataRekeyTransport(
+      _dataRekeyRecoveryToken,
+    );
     addTearDown(() async {
       client.close(force: true);
       await server.close(force: true);
     });
 
-    final resultFuture = client.finalizeDataRekey(finalizeRequest);
+    final resultFuture = transport.finalizeDataRekey(finalizeRequest);
     final request = await requestFuture;
     final body = copyCloudSyncJsonMap(
       jsonDecode(await utf8.decoder.bind(request).join()),
     );
     expect(request.method, 'POST');
     expect(request.uri.path, '/api/data-rekey/operation/finalize');
+    expect(
+      request.headers.value(HttpHeaders.authorizationHeader),
+      'Bearer ${_dataRekeyRecoveryToken.value}',
+    );
     expect(body, <String, Object?>{
       'operationId': _mutationId3,
       'sourceDataGeneration': 4,
@@ -3595,12 +3733,88 @@ void main() {
     );
     await request.response.close();
 
-    final result = await resultFuture;
+    final outcome = await resultFuture;
+    expect(outcome, isA<CloudSyncDataRekeyFinalizeResult>());
+    final result = outcome as CloudSyncDataRekeyFinalizeResult;
     expect(result.dataGeneration, 5);
     expect(result.dataKeyEpoch, 3);
     expect(result.changeWatermark, 18);
     expect(result.completion.operationId, _mutationId3);
     expect(result.completion.signature, _filledBytes(64, 15));
+  });
+
+  test('data-rekey 最终提交严格解析跨请求校验进度', () async {
+    final activeLease = CloudSyncDataRekeyActiveLease(
+      operation: CloudSyncDataRekeyOperationScope(
+        operationId: _mutationId3,
+        sourceDataGeneration: 4,
+        sourceKeyEpoch: 2,
+        targetKeyEpoch: 3,
+      ),
+      leaseToken: _mutationId4,
+      leaseVersion: 7,
+    );
+    final request = CloudSyncDataRekeyFinalizeRequest(
+      activeLease: activeLease,
+      mutationId: _mutationId6,
+      proof: CloudSyncDataRekeyFinalizeProof(
+        issuerDeviceId: _deviceId1,
+        sourceSnapshotRoot: _filledBytes(32, 12),
+        sourceRecordCount: 2,
+        sourceAttachmentCount: 1,
+        sourceMaximumChangeSeq: 16,
+        sourceRecordCursorEnd: _recordId1,
+        sourceAttachmentCursorEnd: CloudSyncDataRekeyAttachmentCursor(
+          attachmentId: _attachmentId,
+          uploadId: _uploadId,
+        ),
+        membershipGeneration: 8,
+        membershipManifestDigest: _filledBytes(32, 13),
+        stagedRecordCount: 2,
+        stagedAttachmentCount: 1,
+        stagedCiphertextSetDigest: _filledBytes(32, 14),
+        signature: _filledBytes(64, 15),
+      ),
+    );
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    final requestFuture = server.first;
+    final client = CloudSyncClient.forTesting(
+      baseUrl: 'http://${server.address.address}:${server.port}',
+      token: _fullToken,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await server.close(force: true);
+    });
+
+    final outcomeFuture = client.finalizeDataRekey(request);
+    final httpRequest = await requestFuture;
+    await httpRequest.drain<void>();
+    httpRequest.response.headers.contentType = ContentType.json;
+    httpRequest.response.write(
+      jsonEncode(<String, Object?>{
+        'data': <String, Object?>{
+          'result': 'verification-pending',
+          'operationId': _mutationId3,
+          'phase': 'staged-records',
+          'sourceRecordCount': 2,
+          'sourceAttachmentCount': 1,
+          'stagedRecordCount': 1,
+          'stagedAttachmentCount': 0,
+        },
+      }),
+    );
+    await httpRequest.response.close();
+
+    final outcome = await outcomeFuture;
+    expect(outcome, isA<CloudSyncDataRekeyFinalizePending>());
+    final pending = outcome as CloudSyncDataRekeyFinalizePending;
+    expect(
+      pending.phase,
+      CloudSyncDataRekeyFinalizeVerificationPhase.stagedRecords,
+    );
+    expect(pending.stagedRecordCount, 1);
+    expect(pending.stagedAttachmentCount, 0);
   });
 
   test('data-rekey 传输 DTO 在发网前拒绝非法边界', () {
@@ -11073,7 +11287,7 @@ void main() {
         recoveryCapsule: recoveryCapsule1,
       ),
     );
-    expect(initialized.manifest, hasLength(444));
+    expect(initialized.manifest, hasLength(476));
     expect(
       initialized.manifest.sublist(
         initialized.manifest.length - 128,
@@ -11081,7 +11295,7 @@ void main() {
       ),
       everyElement(0),
     );
-    expect(e2eeAccountTrustManifestMaximumLength, 22884);
+    expect(e2eeAccountTrustManifestMaximumLength, 22916);
     final initializedProjection = _membershipProjection(
       initialized,
       recoveryCapsule: recoveryCapsule1,
@@ -11105,7 +11319,7 @@ void main() {
         subject: subject,
       ),
     );
-    expect(paired.manifest, hasLength(532));
+    expect(paired.manifest, hasLength(564));
     expect(paired.previousDigest, orderedEquals(initialized.digest));
     expect(
       paired.members.map((member) => member.deviceId),
@@ -11370,7 +11584,7 @@ void main() {
       ),
       throwsArgumentError,
     );
-    expect(e2eeAccountTrustManifestMinimumLength, 444);
+    expect(e2eeAccountTrustManifestMinimumLength, 476);
     expect(
       () => E2eeMembershipHistoryEntry(
         manifest: Uint8List(356),
