@@ -57,6 +57,17 @@ String normalizeCloudSyncBaseUrl(String value) {
   return uri.origin;
 }
 
+String cloudSyncAccountScope({
+  required String canonicalBaseUrl,
+  required String userId,
+}) {
+  if (normalizeCloudSyncBaseUrl(canonicalBaseUrl) != canonicalBaseUrl) {
+    throw const FormatException('同步服务地址必须为规范形式');
+  }
+  final canonicalUserId = _requireCanonicalUuid(userId, 'userId');
+  return Uri.encodeComponent('$canonicalBaseUrl\n$canonicalUserId');
+}
+
 Object? copyCloudSyncJsonValue(Object? value) {
   if (value == null || value is String || value is bool || value is int) {
     return value;
@@ -2763,7 +2774,8 @@ final class CloudSyncAccountSession {
   final DateTime deviceCreatedAt;
   final CloudSyncSecurityBootstrap? securityBootstrap;
 
-  String get accountScope => Uri.encodeComponent('$baseUrl\n$userId');
+  String get accountScope =>
+      cloudSyncAccountScope(canonicalBaseUrl: baseUrl, userId: userId);
 
   bool isExpiredAt(DateTime now) => !now.toUtc().isBefore(tokenExpiresAt);
 
