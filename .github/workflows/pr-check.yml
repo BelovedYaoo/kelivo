@@ -119,6 +119,20 @@ jobs:
           channel: stable
           cache: true
 
+      - name: Setup secure core Rust toolchain
+        shell: pwsh
+        run: |
+          $toolchainLine = Select-String -LiteralPath 'dependencies/kelivo_secure_core/native/rust-toolchain.toml' -Pattern '^channel = "([^"]+)"$'
+          if ($toolchainLine.Matches.Count -ne 1) {
+            throw '无法解析安全核心 Rust 工具链版本。'
+          }
+          $toolchain = $toolchainLine.Matches[0].Groups[1].Value
+          rustup toolchain install $toolchain --profile minimal
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          "RUSTUP_TOOLCHAIN=$toolchain" >> $env:GITHUB_ENV
+
       - name: Prepare isolated temporary directory
         shell: pwsh
         run: New-Item -ItemType Directory -Path 'C:\Temp' -Force | Out-Null

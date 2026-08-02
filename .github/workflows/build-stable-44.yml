@@ -1,4 +1,4 @@
-name: Flutter Multi-Platform Build Stable 3.44
+name: Kelivo E2EE 构建与 Windows/Android 发布
 
 env:
   FLUTTER_VERSION: '3.44.1'  # 当前 stable 3.44.1 / Dart 3.12.1
@@ -15,15 +15,15 @@ on:
         type: boolean
 
       build_ios:
-        description: '构建 iOS'
+        description: '构建 iOS（仅验证，不发布）'
         required: false
-        default: true
+        default: false
         type: boolean
 
       build_mac:
-        description: '构建 macOS'
+        description: '构建 macOS（仅验证，不发布）'
         required: false
-        default: true
+        default: false
         type: boolean
 
       build_windows:
@@ -33,9 +33,9 @@ on:
         type: boolean
 
       build_linux:
-        description: '构建 Linux'
+        description: '构建 Linux（仅验证，不发布）'
         required: false
-        default: true
+        default: false
         type: boolean
 
       # 是否发布到 Release（默认不发布）
@@ -59,13 +59,35 @@ on:
         default: false
         type: boolean
 
+permissions:
+  contents: read
+
 jobs:
+  ffi-contract:
+    name: 校验安全核心 FFI 绑定
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 检出代码
+        uses: actions/checkout@v4
+
+      - name: 安装 Flutter
+        uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+
+      - name: 校验 FFI 绑定无漂移
+        shell: pwsh
+        run: pwsh -NoLogo -NoProfile -NonInteractive -File tool/verify_secure_core_bindings.ps1
+
   # Android 构建
   android:
     if: ${{ github.event.inputs.build_android == 'true' }}
+    needs: ffi-contract
     name: 构建 Android
     runs-on: ubuntu-latest
-    permissions: write-all
 
     steps:
       - name: 📦 检出代码
@@ -86,6 +108,28 @@ jobs:
           flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
+
+      - name: 🦀 安装 Android Rust 工具链
+        shell: bash
+        run: |
+          set -euo pipefail
+          RUST_TOOLCHAIN=$(awk -F '"' '/^channel = / { print $2; exit }' dependencies/kelivo_secure_core/native/rust-toolchain.toml)
+          rustup toolchain install "$RUST_TOOLCHAIN" --profile minimal
+          rustup target add --toolchain "$RUST_TOOLCHAIN" \
+            armv7-linux-androideabi \
+            aarch64-linux-android \
+            x86_64-linux-android
+          echo "RUSTUP_TOOLCHAIN=$RUST_TOOLCHAIN" >> "$GITHUB_ENV"
+
+      - name: 🔧 获取依赖
+        run: flutter pub get
+
+      - name: 🔧 生成 Android 构建文件
+        run: flutter build apk --config-only
+
+      - name: 🧪 运行 Workmanager Android JVM 测试
+        working-directory: android
+        run: ./gradlew :workmanager_android:testDebugUnitTest --no-daemon
 
       - name: 📝 Inject fallback
         shell: bash
@@ -126,15 +170,6 @@ jobs:
             abi=$(echo "$file" | sed -E 's/app-(.*)-release\.apk/\1/')
             mv "$file" "Kelivo_android_${VERSION}_${abi}.apk"
           done
-      - name: 🚀 发布到 Release
-        if: ${{ github.event.inputs.publish_release == 'true' && github.event.inputs.release_tag != '' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          name: ${{ github.event.inputs.release_tag }}
-          prerelease: ${{ github.event.inputs.prerelease }}
-          files: build/app/outputs/flutter-apk/Kelivo_android_*.apk
-
       - name: 📤 上传构建产物 (arm64-v8a)
         uses: actions/upload-artifact@v4
         with:
@@ -155,10 +190,9 @@ jobs:
 
   # iOS 构建
   ios:
-    if: ${{ github.event.inputs.build_ios == 'true' }}
+    if: ${{ github.event.inputs.build_ios == 'true' && github.event.inputs.publish_release != 'true' }}
     name: 构建 iOS
     runs-on: macos-latest
-    permissions: write-all
 
     steps:
       - name: 📦 检出代码
@@ -209,15 +243,6 @@ jobs:
           mkdir Payload
           cp -r Runner.app Payload/
           zip -r ../../../Kelivo_ios_${VERSION}.ipa Payload
-      - name: 🚀 发布到 Release
-        if: ${{ github.event.inputs.publish_release == 'true' && github.event.inputs.release_tag != '' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          name: ${{ github.event.inputs.release_tag }}
-          prerelease: ${{ github.event.inputs.prerelease }}
-          files: Kelivo_ios_*.ipa
-
       - name: 📤 上传构建产物
         uses: actions/upload-artifact@v4
         with:
@@ -226,10 +251,9 @@ jobs:
 
   # macOS 构建
   macos:
-    if: ${{ github.event.inputs.build_mac == 'true' }}
+    if: ${{ github.event.inputs.build_mac == 'true' && github.event.inputs.publish_release != 'true' }}
     name: 构建 macOS
     runs-on: macos-latest
-    permissions: write-all
 
     steps:
       - name: 📦 检出代码
@@ -280,15 +304,6 @@ jobs:
           if [ ! -f "Kelivo_macos_${VERSION}.dmg" ]; then
             hdiutil create -volname Kelivo -srcfolder build/macos/Build/Products/Release/kelivo.app -ov -format UDZO Kelivo_macos_${VERSION}.dmg
           fi
-      - name: 🚀 发布到 Release
-        if: ${{ github.event.inputs.publish_release == 'true' && github.event.inputs.release_tag != '' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          name: ${{ github.event.inputs.release_tag }}
-          prerelease: ${{ github.event.inputs.prerelease }}
-          files: Kelivo_macos_*.dmg
-
       - name: 📤 上传构建产物
         uses: actions/upload-artifact@v4
         with:
@@ -298,9 +313,12 @@ jobs:
   # Windows 构建
   windows:
     if: ${{ github.event.inputs.build_windows == 'true' }}
+    needs: ffi-contract
     name: 构建 Windows
     runs-on: windows-latest
-    permissions: write-all
+    env:
+      TEMP: C:\Temp
+      TMP: C:\Temp
 
     steps:
       - name: 📦 检出代码
@@ -318,6 +336,24 @@ jobs:
           channel: stable
           cache: true
 
+      - name: 🗂️ 准备隔离临时目录
+        shell: pwsh
+        run: New-Item -ItemType Directory -Path 'C:\Temp' -Force | Out-Null
+
+      - name: 🦀 安装 Windows Rust 工具链
+        shell: pwsh
+        run: |
+          $toolchainLine = Select-String -LiteralPath 'dependencies/kelivo_secure_core/native/rust-toolchain.toml' -Pattern '^channel = "([^"]+)"$'
+          if ($toolchainLine.Matches.Count -ne 1) {
+            throw '无法解析安全核心 Rust 工具链版本。'
+          }
+          $toolchain = $toolchainLine.Matches[0].Groups[1].Value
+          rustup toolchain install $toolchain --profile minimal
+          if ($LASTEXITCODE -ne 0) {
+            exit $LASTEXITCODE
+          }
+          "RUSTUP_TOOLCHAIN=$toolchain" >> $env:GITHUB_ENV
+
       - name: 📝 Inject fallback
         shell: bash
         run: |
@@ -327,6 +363,22 @@ jobs:
           EOF
       - name: 🔧 获取依赖
         run: flutter pub get
+
+      - name: 🧪 测试应用安全核心集成
+        shell: pwsh
+        run: >-
+          pwsh -NoLogo -NoProfile -NonInteractive
+          -File tool/run_secure_core_test.ps1
+          -PackageRoot .
+          test/core/services/sync/cloud_sync_client_protocol_test.dart
+          test/core/services/sync/e2ee_account_recovery_checkpoint_test.dart
+
+      - name: 🧪 测试安全核心包
+        shell: pwsh
+        run: >-
+          pwsh -NoLogo -NoProfile -NonInteractive
+          -File tool/run_secure_core_test.ps1
+          -PackageRoot dependencies/kelivo_secure_core
 
       - name: 🔍 验证 CMake 版本
         shell: pwsh
@@ -434,16 +486,6 @@ jobs:
           
           # 编译安装程序
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "installer.iss"
-      - name: 🚀 发布到 Release
-        if: ${{ github.event.inputs.publish_release == 'true' && github.event.inputs.release_tag != '' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          name: ${{ github.event.inputs.release_tag }}
-          prerelease: ${{ github.event.inputs.prerelease }}
-          files: |
-            Kelivo_windows_*.zip
-            Kelivo_windows_*_setup.exe
       - name: 📤 上传构建产物 (ZIP)
         uses: actions/upload-artifact@v4
         with:
@@ -458,10 +500,9 @@ jobs:
 
   # Linux 构建
   linux:
-    if: ${{ github.event.inputs.build_linux == 'true' }}
+    if: ${{ github.event.inputs.build_linux == 'true' && github.event.inputs.publish_release != 'true' }}
     name: 构建 Linux
     runs-on: ubuntu-22.04
-    permissions: write-all
 
     steps:
       - name: 📦 检出代码
@@ -708,18 +749,6 @@ jobs:
           set -euxo pipefail
           RPM_FILE="Kelivo_linux_${VERSION}.rpm"
           docker run --rm -v "${PWD}:/work" -w /work fedora:43 bash -lc "dnf -y install ./${RPM_FILE}"
-      - name: 🚀 发布到 Release
-        if: ${{ github.event.inputs.publish_release == 'true' && github.event.inputs.release_tag != '' }}
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ github.event.inputs.release_tag }}
-          name: ${{ github.event.inputs.release_tag }}
-          prerelease: ${{ github.event.inputs.prerelease }}
-          files: |
-            Kelivo_linux_*.tar.gz
-            Kelivo_linux_*.AppImage
-            Kelivo_linux_*_amd64.deb
-            Kelivo_linux_*.rpm
       - name: 📤 上传构建产物 (tar.gz)
         uses: actions/upload-artifact@v4
         with:
@@ -743,3 +772,46 @@ jobs:
         with:
           name: Linux-RPM
           path: Kelivo_linux_*.rpm
+
+  release:
+    name: 发布 Windows/Android 产物
+    needs:
+      - ffi-contract
+      - android
+      - windows
+    if: >-
+      always() &&
+      github.event.inputs.publish_release == 'true' &&
+      github.event.inputs.release_tag != '' &&
+      needs.ffi-contract.result == 'success' &&
+      (github.event.inputs.build_android == 'true' || github.event.inputs.build_windows == 'true') &&
+      (github.event.inputs.build_android != 'true' || needs.android.result == 'success') &&
+      (github.event.inputs.build_windows != 'true' || needs.windows.result == 'success')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: 下载 Android 产物
+        if: ${{ github.event.inputs.build_android == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Android-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: 下载 Windows 产物
+        if: ${{ github.event.inputs.build_windows == 'true' }}
+        uses: actions/download-artifact@v4
+        with:
+          pattern: Windows-*
+          path: release-assets
+          merge-multiple: true
+
+      - name: 发布 Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.release_tag }}
+          name: ${{ github.event.inputs.release_tag }}
+          prerelease: ${{ github.event.inputs.prerelease }}
+          files: release-assets/**/*
