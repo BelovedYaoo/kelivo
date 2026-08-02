@@ -3,15 +3,20 @@ use std::{
     sync::{Arc, Mutex, OnceLock},
 };
 
+use hkdf::Hkdf;
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 use kelivo_secure_core_protocol::{
     account_recovery as protocol,
     device_crypto::{self as crypto, AccountTrustBinding},
     recovery_crypto as recovery,
 };
 use sha2::{Digest, Sha256};
+use subtle::ConstantTimeEq;
+use zeroize::Zeroizing;
 
 use crate::{
-    HANDLE_RESERVED_MASK, HANDLE_TAG_MASK, KelivoStatus, read_input, write_bytes, write_output,
+    HANDLE_RESERVED_MASK, HANDLE_TAG_MASK, KelivoStatus, key_for_handle, master_key, read_input,
+    write_bytes, write_output,
 };
 
 const UUID_LENGTH: usize = 16;
@@ -29,6 +34,19 @@ const STATE_BINDING_STRUCT_SIZE: u32 = 152;
 const PREPARE_KIND_RESUME: u32 = 1;
 const PREPARE_KIND_REPLACEMENT: u32 = 2;
 const PREPARE_MANIFEST_MAX_LENGTH: usize = 260 + 256 * 88 + 128;
+const ACCOUNT_RECOVERY_CONTINUATION_MAGIC: &[u8; 8] = b"KELVACT1";
+const ACCOUNT_RECOVERY_CONTINUATION_VERSION: u32 = 1;
+const ACCOUNT_RECOVERY_CONTINUATION_KEY_INFO: &[u8] =
+    b"kelivo.account-recovery.continuation.mac.v1\0";
+const ACCOUNT_RECOVERY_CONTINUATION_BINDING_OFFSET: usize = 12;
+const ACCOUNT_RECOVERY_CONTINUATION_CANDIDATE_DIGEST_OFFSET: usize =
+    ACCOUNT_RECOVERY_CONTINUATION_BINDING_OFFSET + STATE_BINDING_STRUCT_SIZE as usize;
+const ACCOUNT_RECOVERY_CONTINUATION_SIGNING_KEY_OFFSET: usize =
+    ACCOUNT_RECOVERY_CONTINUATION_CANDIDATE_DIGEST_OFFSET + SHA256_LENGTH;
+const ACCOUNT_RECOVERY_CONTINUATION_TAG_OFFSET: usize =
+    ACCOUNT_RECOVERY_CONTINUATION_SIGNING_KEY_OFFSET + crypto::DEVICE_PUBLIC_KEY_LENGTH;
+pub(super) const ACCOUNT_RECOVERY_CONTINUATION_LENGTH: usize =
+    ACCOUNT_RECOVERY_CONTINUATION_TAG_OFFSET + SHA256_LENGTH;
 
 #[repr(C)]
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -203,16 +221,9 @@ struct CachedPreparedCommit {
     capsule: Option<[u8; recovery::RECOVERY_CAPSULE_LENGTH]>,
 }
 
-struct FinalizedActivation {
-    binding: KelivoAccountRecoveryStateBinding,
-    proof_digest: [u8; SHA256_LENGTH],
-    candidate: [u8; crate::device_core::DEVICE_STATE_BLOB_LENGTH],
-}
-
 enum ExecutionState {
     Ready,
     Prepared(Box<CachedPreparedCommit>),
-    Finalized(Box<FinalizedActivation>),
     Invalidated,
 }
 
@@ -229,7 +240,6 @@ struct RecoveryExecutionChallenge {
     user_id: crypto::UserId,
     device_id: crypto::DeviceId,
     device_key_version: u32,
-    device_public_keys: crypto::DevicePublicKeys,
     key_epoch: u32,
     recovery_capsule_version: u32,
     data_phase: protocol::AccountRecoveryDataPhase,
@@ -244,7 +254,6 @@ impl RecoveryExecutionChallenge {
             user_id: challenge.user_id,
             device_id: challenge.device_id,
             device_key_version: challenge.device_key_version,
-            device_public_keys: challenge.device_public_keys,
             key_epoch: challenge.key_epoch,
             recovery_capsule_version: challenge.recovery_capsule_version,
             data_phase: challenge.data_phase,
@@ -261,7 +270,6 @@ impl RecoveryExecutionChallenge {
             user_id: challenge.user_id,
             device_id: challenge.device_id,
             device_key_version: challenge.device_key_version,
-            device_public_keys: challenge.device_public_keys,
             key_epoch: challenge.key_epoch,
             recovery_capsule_version: challenge.recovery_capsule_version,
             data_phase: protocol::AccountRecoveryDataPhase::Ready,
@@ -1128,9 +1136,7 @@ pub unsafe extern "C" fn kelivo_account_recovery_prepare_commit(
             ExecutionState::Prepared(cached) if cached.input_digest == input_digest => {
                 cached.as_ref().clone()
             }
-            ExecutionState::Prepared(_)
-            | ExecutionState::Finalized(_)
-            | ExecutionState::Invalidated => {
+            ExecutionState::Prepared(_) | ExecutionState::Invalidated => {
                 *state = ExecutionState::Invalidated;
                 drop(state);
                 invalidate_execution(execution_handle, &execution);
@@ -1254,7 +1260,7 @@ pub unsafe extern "C" fn kelivo_account_recovery_prepare_commit(
 
 /// # Safety
 ///
-/// `expected` 必须指向完整结构；两个输出缓冲区与长度指针必须可写且互不重叠。
+/// `expected` 必须指向完整结构；三个输出缓冲区与长度指针必须可写且互不重叠。
 #[allow(clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelivo_account_recovery_device_states_prepare(
@@ -1267,15 +1273,21 @@ pub unsafe extern "C" fn kelivo_account_recovery_device_states_prepare(
     out_pruned_candidate: *mut u8,
     out_pruned_candidate_capacity: usize,
     out_pruned_candidate_length: *mut usize,
+    out_continuation: *mut u8,
+    out_continuation_capacity: usize,
+    out_continuation_length: *mut usize,
 ) -> i32 {
     if let Err(status) = unsafe {
-        reset_state_pair_outputs(
+        reset_state_prepare_outputs(
             out_unpruned_blob,
             out_unpruned_blob_capacity,
             out_unpruned_blob_length,
             out_pruned_candidate,
             out_pruned_candidate_capacity,
             out_pruned_candidate_length,
+            out_continuation,
+            out_continuation_capacity,
+            out_continuation_length,
         )
     } {
         return status.code();
@@ -1297,18 +1309,31 @@ pub unsafe extern "C" fn kelivo_account_recovery_device_states_prepare(
     };
     let cached = match &*state {
         ExecutionState::Prepared(value) => value.as_ref(),
-        ExecutionState::Ready | ExecutionState::Finalized(_) | ExecutionState::Invalidated => {
+        ExecutionState::Ready | ExecutionState::Invalidated => {
             return KelivoStatus::RecoveryPrepareInvalid.code();
         }
     };
     if validate_prepared_state_binding(&execution, cached, expected).is_err() {
         return KelivoStatus::RecoveryPrepareInvalid.code();
     }
+    let context = match recovery_device_state_context(expected) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
     let (unpruned, pruned) = match crate::device_core::prepare_recovery_device_states(
         key_handle,
         &execution.device_identity,
         execution.ark_handle,
-        recovery_device_state_context(&execution, cached.state_binding),
+        context,
+    ) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let continuation = match create_account_recovery_continuation(
+        key_handle,
+        expected,
+        pruned.as_bytes(),
+        &execution.device_identity.public_keys().signing,
     ) {
         Ok(value) => value,
         Err(status) => return status.code(),
@@ -1328,6 +1353,14 @@ pub unsafe extern "C" fn kelivo_account_recovery_device_states_prepare(
                 out_pruned_candidate_length,
             )
         })
+        .and_then(|()| {
+            write_bytes(
+                out_continuation,
+                out_continuation_capacity,
+                &continuation,
+                out_continuation_length,
+            )
+        })
         .expect("已清零且验证的恢复设备状态候选输出必须可写")
     };
     KelivoStatus::Ok.code()
@@ -1339,8 +1372,9 @@ pub unsafe extern "C" fn kelivo_account_recovery_device_states_prepare(
 #[allow(clippy::too_many_arguments)]
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn kelivo_account_recovery_device_state_prune_and_activate(
-    execution_handle: u64,
     key_handle: u64,
+    continuation: *const u8,
+    continuation_length: usize,
     expected: *const KelivoAccountRecoveryStateBinding,
     pruned_candidate: *const u8,
     pruned_candidate_length: usize,
@@ -1369,6 +1403,11 @@ pub unsafe extern "C" fn kelivo_account_recovery_device_state_prune_and_activate
     }
     let expected = match unsafe { read_state_binding(expected) } {
         Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    let continuation = match unsafe { read_input(continuation, continuation_length) } {
+        Ok(value) if value.len() == ACCOUNT_RECOVERY_CONTINUATION_LENGTH => value,
+        Ok(_) => return KelivoStatus::RecoveryPrepareInvalid.code(),
         Err(status) => return status.code(),
     };
     let pruned_candidate = match unsafe { read_input(pruned_candidate, pruned_candidate_length) } {
@@ -1400,88 +1439,40 @@ pub unsafe extern "C" fn kelivo_account_recovery_device_state_prune_and_activate
         Ok(_) => return KelivoStatus::RecoveryPrepareInvalid.code(),
         Err(status) => return status.code(),
     };
-    let execution = match execution_for_handle(execution_handle) {
+    let context = match recovery_device_state_context(expected) {
         Ok(value) => value,
-        Err(status) => return status.code(),
+        Err(_) => return KelivoStatus::RecoveryPrepareInvalid.code(),
     };
-    let mut state = match execution.state.lock() {
-        Ok(value) => value,
-        Err(_) => return KelivoStatus::InternalState.code(),
-    };
-    if let ExecutionState::Finalized(finalized) = &*state {
-        if expected != finalized.binding
-            || !same_bytes(proof_digest, &finalized.proof_digest)
-            || !same_bytes(pruned_candidate, &finalized.candidate)
-            || validate_completion_proof(
-                &execution,
-                expected,
-                proof_frame,
-                proof_signature,
-                proof_digest,
-            )
-            .is_err()
-        {
-            return KelivoStatus::RecoveryPrepareInvalid.code();
-        }
-        let replay = match crate::device_core::validate_activated_recovery_device_state(
-            key_handle,
-            &execution.device_identity,
-            execution.ark_handle,
-            recovery_device_state_context(&execution, expected),
-            pruned_candidate,
-        ) {
-            Ok(value) => value,
-            Err(status) => return status.code(),
-        };
-        unsafe {
-            write_bytes(
-                out_blob,
-                out_blob_capacity,
-                replay.as_bytes(),
-                out_blob_length,
-            )
-            .expect("已验证的恢复设备状态激活重放输出必须可写")
-        };
-        return KelivoStatus::Ok.code();
-    }
-    let binding_valid = match &*state {
-        ExecutionState::Prepared(cached) => {
-            validate_prepared_state_binding(&execution, cached, expected)
-        }
-        ExecutionState::Ready => validate_committed_state_binding(&execution, expected),
-        ExecutionState::Finalized(_) => unreachable!("finalized 已在前置分支处理"),
-        ExecutionState::Invalidated => Err(KelivoStatus::RecoveryPrepareInvalid),
-    };
-    if binding_valid.is_err()
-        || validate_completion_proof(
-            &execution,
-            expected,
-            proof_frame,
-            proof_signature,
-            proof_digest,
-        )
-        .is_err()
-    {
-        return KelivoStatus::RecoveryPrepareInvalid.code();
-    }
-    let blob = match crate::device_core::activate_recovery_device_state(
+    let signing_public_key = match validate_account_recovery_continuation(
         key_handle,
-        &execution.device_identity,
-        execution.ark_handle,
-        recovery_device_state_context(&execution, expected),
+        continuation,
+        expected,
         pruned_candidate,
     ) {
         Ok(value) => value,
         Err(status) => return status.code(),
     };
-    let candidate = *blob.as_bytes();
-    let mut stored_proof_digest = [0_u8; SHA256_LENGTH];
-    stored_proof_digest.copy_from_slice(proof_digest);
-    *state = ExecutionState::Finalized(Box::new(FinalizedActivation {
-        binding: expected,
-        proof_digest: stored_proof_digest,
-        candidate,
-    }));
+    if validate_completion_proof(
+        &signing_public_key,
+        context,
+        expected,
+        proof_frame,
+        proof_signature,
+        proof_digest,
+    )
+    .is_err()
+    {
+        return KelivoStatus::RecoveryPrepareInvalid.code();
+    }
+    let blob = match crate::device_core::validate_prepared_recovery_device_state(
+        key_handle,
+        &signing_public_key,
+        context,
+        pruned_candidate,
+    ) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
     unsafe {
         write_bytes(
             out_blob,
@@ -1495,16 +1486,18 @@ pub unsafe extern "C" fn kelivo_account_recovery_device_state_prune_and_activate
 }
 
 fn recovery_device_state_context(
-    execution: &RecoveryExecution,
     binding: KelivoAccountRecoveryStateBinding,
-) -> crate::device_core::RecoveryDeviceStateContext {
-    crate::device_core::RecoveryDeviceStateContext {
-        user_id: execution.challenge.user_id,
-        device_id: execution.challenge.device_id,
-        device_key_version: execution.challenge.device_key_version,
+) -> Result<crate::device_core::RecoveryDeviceStateContext, KelivoStatus> {
+    validate_persisted_state_binding(binding)?;
+    Ok(crate::device_core::RecoveryDeviceStateContext {
+        user_id: crypto::UserId::new(binding.user_id)
+            .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?,
+        device_id: crypto::DeviceId::new(binding.device_id)
+            .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?,
+        device_key_version: binding.device_key_version,
         source_key_epoch: binding.source_key_epoch,
         target_key_epoch: binding.target_key_epoch,
-    }
+    })
 }
 
 fn validate_prepared_state_binding(
@@ -1541,65 +1534,6 @@ fn validate_prepared_state_binding(
     }
 }
 
-fn validate_committed_state_binding(
-    execution: &RecoveryExecution,
-    expected: KelivoAccountRecoveryStateBinding,
-) -> Result<(), KelivoStatus> {
-    validate_common_state_binding(execution, expected)?;
-    let history = &execution.history_head;
-    let expected_history_kind = match expected.kind {
-        PREPARE_KIND_RESUME if expected.data_phase == 2 => 4,
-        PREPARE_KIND_REPLACEMENT if expected.data_phase == 1 => 5,
-        _ => return Err(KelivoStatus::RecoveryPrepareInvalid),
-    };
-    if history.operation_kind != expected_history_kind
-        || history.security_generation != expected.membership_generation
-        || history.digest != expected.membership_manifest_digest
-        || history.key_epoch != expected.target_key_epoch
-        || history.issuer_device_id != execution.challenge.device_id
-        || history.subject_device_id != execution.challenge.device_id
-    {
-        return Err(KelivoStatus::RecoveryPrepareInvalid);
-    }
-    let member = history
-        .members
-        .iter()
-        .find(|member| member.device_id == execution.challenge.device_id)
-        .ok_or(KelivoStatus::RecoveryPrepareInvalid)?;
-    if member.key_version != execution.challenge.device_key_version
-        || member.auth_generation != execution.target_auth_generation
-        || member.signing_public_key != execution.challenge.device_public_keys.signing
-        || member.key_agreement_public_key != execution.challenge.device_public_keys.key_agreement
-    {
-        return Err(KelivoStatus::RecoveryPrepareInvalid);
-    }
-    let source_operation = source_rekey_operation(
-        &history.operations,
-        expected.rekey_operation_id,
-        expected.target_key_epoch,
-    )
-    .ok_or(KelivoStatus::RecoveryPrepareInvalid)?;
-    if source_operation.authorization_digest != expected.operation_authorization_digest {
-        return Err(KelivoStatus::RecoveryPrepareInvalid);
-    }
-    let data_binding_valid = match execution.challenge.data_phase {
-        protocol::AccountRecoveryDataPhase::RekeyPending => {
-            execution.challenge.source_data_rekey_operation_id == Some(expected.rekey_operation_id)
-                && execution.challenge.source_data_generation == expected.source_data_generation
-                && execution.challenge.source_data_key_epoch == expected.source_key_epoch
-        }
-        protocol::AccountRecoveryDataPhase::Ready => {
-            execution.challenge.source_data_rekey_operation_id.is_none()
-                && execution.challenge.source_data_generation == expected.target_data_generation
-                && execution.challenge.source_data_key_epoch == expected.target_key_epoch
-        }
-    };
-    if !data_binding_valid {
-        return Err(KelivoStatus::RecoveryPrepareInvalid);
-    }
-    Ok(())
-}
-
 fn validate_common_state_binding(
     execution: &RecoveryExecution,
     expected: KelivoAccountRecoveryStateBinding,
@@ -1622,22 +1556,169 @@ fn validate_common_state_binding(
     Ok(())
 }
 
+fn validate_persisted_state_binding(
+    expected: KelivoAccountRecoveryStateBinding,
+) -> Result<(), KelivoStatus> {
+    let kind_and_phase_valid = match expected.kind {
+        PREPARE_KIND_RESUME => expected.data_phase == 2,
+        PREPARE_KIND_REPLACEMENT => {
+            expected.data_phase == 1
+                && expected.operation_authorization_digest == [0; SHA256_LENGTH]
+        }
+        _ => false,
+    };
+    if !kind_and_phase_valid
+        || expected.struct_size != STATE_BINDING_STRUCT_SIZE
+        || expected.reserved != 0
+        || expected.device_key_version == 0
+        || expected.source_key_epoch == 0
+        || expected.source_key_epoch.checked_add(1) != Some(expected.target_key_epoch)
+        || expected.source_data_generation == 0
+        || expected.source_data_generation.checked_add(1) != Some(expected.target_data_generation)
+        || expected.target_data_generation > 0x7fff_ffff
+        || expected.membership_generation == 0
+        || expected.membership_generation > 0x7fff_ffff
+    {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    Ok(())
+}
+
+fn create_account_recovery_continuation(
+    key_handle: u64,
+    binding: KelivoAccountRecoveryStateBinding,
+    pruned_candidate: &[u8],
+    signing_public_key: &crypto::DeviceSigningPublicKey,
+) -> Result<[u8; ACCOUNT_RECOVERY_CONTINUATION_LENGTH], KelivoStatus> {
+    let mut continuation = [0_u8; ACCOUNT_RECOVERY_CONTINUATION_LENGTH];
+    continuation[..ACCOUNT_RECOVERY_CONTINUATION_MAGIC.len()]
+        .copy_from_slice(ACCOUNT_RECOVERY_CONTINUATION_MAGIC);
+    continuation[8..12].copy_from_slice(&ACCOUNT_RECOVERY_CONTINUATION_VERSION.to_be_bytes());
+    continuation[ACCOUNT_RECOVERY_CONTINUATION_BINDING_OFFSET
+        ..ACCOUNT_RECOVERY_CONTINUATION_CANDIDATE_DIGEST_OFFSET]
+        .copy_from_slice(&canonical_state_binding(binding));
+    let candidate_digest = Sha256::digest(pruned_candidate);
+    continuation[ACCOUNT_RECOVERY_CONTINUATION_CANDIDATE_DIGEST_OFFSET
+        ..ACCOUNT_RECOVERY_CONTINUATION_SIGNING_KEY_OFFSET]
+        .copy_from_slice(&candidate_digest);
+    continuation[ACCOUNT_RECOVERY_CONTINUATION_SIGNING_KEY_OFFSET
+        ..ACCOUNT_RECOVERY_CONTINUATION_TAG_OFFSET]
+        .copy_from_slice(signing_public_key.as_bytes());
+    let tag = account_recovery_continuation_tag(
+        key_handle,
+        &continuation[..ACCOUNT_RECOVERY_CONTINUATION_TAG_OFFSET],
+    )?;
+    continuation[ACCOUNT_RECOVERY_CONTINUATION_TAG_OFFSET..].copy_from_slice(&tag);
+    Ok(continuation)
+}
+
+fn validate_account_recovery_continuation(
+    key_handle: u64,
+    continuation: &[u8],
+    expected: KelivoAccountRecoveryStateBinding,
+    pruned_candidate: &[u8],
+) -> Result<crypto::DeviceSigningPublicKey, KelivoStatus> {
+    if continuation.len() != ACCOUNT_RECOVERY_CONTINUATION_LENGTH {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let actual_tag = account_recovery_continuation_tag(
+        key_handle,
+        &continuation[..ACCOUNT_RECOVERY_CONTINUATION_TAG_OFFSET],
+    )?;
+    if !bool::from(
+        actual_tag
+            .as_slice()
+            .ct_eq(&continuation[ACCOUNT_RECOVERY_CONTINUATION_TAG_OFFSET..]),
+    ) || continuation[..ACCOUNT_RECOVERY_CONTINUATION_MAGIC.len()]
+        != ACCOUNT_RECOVERY_CONTINUATION_MAGIC[..]
+        || continuation[8..12] != ACCOUNT_RECOVERY_CONTINUATION_VERSION.to_be_bytes()
+    {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let binding = canonical_state_binding(expected);
+    if !bool::from(binding.as_slice().ct_eq(
+        &continuation[ACCOUNT_RECOVERY_CONTINUATION_BINDING_OFFSET
+            ..ACCOUNT_RECOVERY_CONTINUATION_CANDIDATE_DIGEST_OFFSET],
+    )) {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let candidate_digest = Sha256::digest(pruned_candidate);
+    if !bool::from(candidate_digest.as_slice().ct_eq(
+        &continuation[ACCOUNT_RECOVERY_CONTINUATION_CANDIDATE_DIGEST_OFFSET
+            ..ACCOUNT_RECOVERY_CONTINUATION_SIGNING_KEY_OFFSET],
+    )) {
+        return Err(KelivoStatus::RecoveryPrepareInvalid);
+    }
+    let signing_key_bytes = continuation[ACCOUNT_RECOVERY_CONTINUATION_SIGNING_KEY_OFFSET
+        ..ACCOUNT_RECOVERY_CONTINUATION_TAG_OFFSET]
+        .try_into()
+        .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?;
+    crypto::DeviceSigningPublicKey::from_bytes(signing_key_bytes)
+        .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)
+}
+
+fn account_recovery_continuation_tag(
+    key_handle: u64,
+    payload: &[u8],
+) -> Result<[u8; SHA256_LENGTH], KelivoStatus> {
+    let key = key_for_handle(key_handle)?;
+    let mut mac_key = Zeroizing::new([0_u8; SHA256_LENGTH]);
+    Hkdf::<Sha256>::new(None, master_key(&key)?)
+        .expand(
+            ACCOUNT_RECOVERY_CONTINUATION_KEY_INFO,
+            mac_key.as_mut_slice(),
+        )
+        .map_err(|_| KelivoStatus::InternalState)?;
+    let mut mac = <Hmac<Sha256> as HmacKeyInit>::new_from_slice(mac_key.as_slice())
+        .map_err(|_| KelivoStatus::InternalState)?;
+    mac.update(payload);
+    let digest = mac.finalize().into_bytes();
+    Ok(digest.into())
+}
+
+fn canonical_state_binding(
+    binding: KelivoAccountRecoveryStateBinding,
+) -> [u8; STATE_BINDING_STRUCT_SIZE as usize] {
+    let mut output = [0_u8; STATE_BINDING_STRUCT_SIZE as usize];
+    write_u32_be(&mut output, 0, binding.struct_size);
+    write_u32_be(&mut output, 4, binding.kind);
+    write_u32_be(&mut output, 8, binding.data_phase);
+    write_u32_be(&mut output, 12, binding.device_key_version);
+    output[16..32].copy_from_slice(&binding.user_id);
+    output[32..48].copy_from_slice(&binding.device_id);
+    write_u32_be(&mut output, 48, binding.source_key_epoch);
+    write_u32_be(&mut output, 52, binding.target_key_epoch);
+    write_u32_be(&mut output, 56, binding.source_data_generation);
+    write_u32_be(&mut output, 60, binding.target_data_generation);
+    write_u32_be(&mut output, 64, binding.membership_generation);
+    write_u32_be(&mut output, 68, binding.reserved);
+    output[72..104].copy_from_slice(&binding.membership_manifest_digest);
+    output[104..120].copy_from_slice(&binding.rekey_operation_id);
+    output[120..152].copy_from_slice(&binding.operation_authorization_digest);
+    output
+}
+
+fn write_u32_be(output: &mut [u8], offset: usize, value: u32) {
+    output[offset..offset + 4].copy_from_slice(&value.to_be_bytes());
+}
+
 fn validate_completion_proof(
-    execution: &RecoveryExecution,
+    signing_public_key: &crypto::DeviceSigningPublicKey,
+    context: crate::device_core::RecoveryDeviceStateContext,
     expected: KelivoAccountRecoveryStateBinding,
     proof_frame: &[u8],
     proof_signature: &[u8],
     expected_proof_digest: &[u8],
 ) -> Result<(), KelivoStatus> {
     let binding = crypto::verify_and_bind_data_rekey_completion_proof(
-        &execution.device_identity.public_keys().signing,
+        signing_public_key,
         proof_frame,
         proof_signature,
     )
     .map_err(|_| KelivoStatus::RecoveryPrepareInvalid)?;
     if binding.operation_id != expected.rekey_operation_id
-        || binding.user_id != execution.challenge.user_id
-        || binding.issuer_device_id != execution.challenge.device_id
+        || binding.user_id != context.user_id
+        || binding.issuer_device_id != context.device_id
         || binding.source_data_generation != expected.source_data_generation
         || binding.target_data_generation != expected.target_data_generation
         || binding.source_key_epoch != expected.source_key_epoch
@@ -1726,37 +1807,53 @@ unsafe fn reset_fixed_blob_output(
 }
 
 #[allow(clippy::too_many_arguments)]
-unsafe fn reset_state_pair_outputs(
+unsafe fn reset_state_prepare_outputs(
     out_unpruned_blob: *mut u8,
     out_unpruned_blob_capacity: usize,
     out_unpruned_blob_length: *mut usize,
     out_pruned_candidate: *mut u8,
     out_pruned_candidate_capacity: usize,
     out_pruned_candidate_length: *mut usize,
+    out_continuation: *mut u8,
+    out_continuation_capacity: usize,
+    out_continuation_length: *mut usize,
 ) -> Result<(), KelivoStatus> {
-    let expected = crate::device_core::DEVICE_STATE_BLOB_LENGTH;
+    let state_length = crate::device_core::DEVICE_STATE_BLOB_LENGTH;
     unsafe {
         reset_bytes(
             out_unpruned_blob,
             out_unpruned_blob_capacity,
-            expected,
+            state_length,
             out_unpruned_blob_length,
         )?;
         reset_bytes(
             out_pruned_candidate,
             out_pruned_candidate_capacity,
-            expected,
+            state_length,
             out_pruned_candidate_length,
         )?;
+        reset_bytes(
+            out_continuation,
+            out_continuation_capacity,
+            ACCOUNT_RECOVERY_CONTINUATION_LENGTH,
+            out_continuation_length,
+        )?;
     }
-    if out_unpruned_blob_capacity < expected || out_pruned_candidate_capacity < expected {
+    if out_unpruned_blob_capacity < state_length
+        || out_pruned_candidate_capacity < state_length
+        || out_continuation_capacity < ACCOUNT_RECOVERY_CONTINUATION_LENGTH
+    {
         unsafe {
-            write_output(out_unpruned_blob_length, expected)?;
-            write_output(out_pruned_candidate_length, expected)?;
+            write_output(out_unpruned_blob_length, state_length)?;
+            write_output(out_pruned_candidate_length, state_length)?;
+            write_output(
+                out_continuation_length,
+                ACCOUNT_RECOVERY_CONTINUATION_LENGTH,
+            )?;
         }
         return Err(KelivoStatus::OutputBufferTooSmall);
     }
-    if out_unpruned_blob.is_null() || out_pruned_candidate.is_null() {
+    if out_unpruned_blob.is_null() || out_pruned_candidate.is_null() || out_continuation.is_null() {
         return Err(KelivoStatus::NullPointer);
     }
     Ok(())

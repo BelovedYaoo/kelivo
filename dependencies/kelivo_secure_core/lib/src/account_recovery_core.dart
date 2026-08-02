@@ -12,6 +12,8 @@ const _accountRecoveryNonceProofLength =
     native.KELIVO_ACCOUNT_RECOVERY_NONCE_PROOF_SIZE;
 const _accountRecoveryPreparedManifestMaximumLength =
     native.KELIVO_ACCOUNT_RECOVERY_PREPARED_MANIFEST_MAX_SIZE;
+const kelivoAccountRecoveryContinuationLength =
+    native.KELIVO_ACCOUNT_RECOVERY_CONTINUATION_SIZE;
 const _maximumPositiveInt31 = 0x7fffffff;
 
 enum KelivoAccountRecoveryDataPhase {
@@ -253,11 +255,14 @@ final class KelivoPreparedAccountRecoveryDeviceStates {
   KelivoPreparedAccountRecoveryDeviceStates._({
     required Uint8List unprunedStateBlob,
     required Uint8List prunedCandidate,
+    required Uint8List continuation,
   }) : unprunedStateBlob = _immutableDeviceBytes(unprunedStateBlob),
-       prunedCandidate = _immutableDeviceBytes(prunedCandidate);
+       prunedCandidate = _immutableDeviceBytes(prunedCandidate),
+       continuation = _immutableDeviceBytes(continuation);
 
   final Uint8List unprunedStateBlob;
   final Uint8List prunedCandidate;
+  final Uint8List continuation;
 }
 
 final class KelivoAccountRecoveryProof {
@@ -733,15 +738,19 @@ extension KelivoAccountRecoveryCore on KelivoSecureCore {
   }
 
   Future<Uint8List> activatePreparedAccountRecoveryDeviceState(
-    KelivoAccountRecoveryExecution execution,
     KelivoKeyHandle key, {
+    required Uint8List continuation,
     required KelivoPreparedAccountRecoveryStateBinding stateBinding,
     required Uint8List prunedCandidate,
     required Uint8List completionProofFrame,
     required KelivoDataRekeyCompletionProofSignature completionProofSignature,
     required Uint8List completionProofDigest,
   }) async {
-    _requireExecutionStateBinding(execution, stateBinding);
+    _requireLength(
+      continuation,
+      kelivoAccountRecoveryContinuationLength,
+      'continuation',
+    );
     _requireLength(prunedCandidate, _deviceStateBlobLength, 'prunedCandidate');
     _requireLength(
       completionProofFrame,
@@ -753,23 +762,19 @@ extension KelivoAccountRecoveryCore on KelivoSecureCore {
       _accountRecoveryTokenDigestLength,
       'completionProofDigest',
     );
+    final continuationBytes = Uint8List.fromList(continuation);
     final candidate = Uint8List.fromList(prunedCandidate);
     final frame = Uint8List.fromList(completionProofFrame);
     final signature = Uint8List.fromList(completionProofSignature.bytes);
     final proofDigest = Uint8List.fromList(completionProofDigest);
-    final executionHandle = execution._state.beginUse();
-    int keyHandle;
+    var keyBorrowed = false;
     try {
-      keyHandle = key._beginUse();
-    } catch (_) {
-      execution._state.completeUse();
-      rethrow;
-    }
-    try {
+      final keyHandle = key._beginUse();
+      keyBorrowed = true;
       final activated = await Isolate.run(
         () => _activatePreparedAccountRecoveryDeviceState(
-          executionHandle,
           keyHandle,
+          continuationBytes,
           stateBinding,
           candidate,
           frame,
@@ -780,21 +785,10 @@ extension KelivoAccountRecoveryCore on KelivoSecureCore {
       if (!_sameAccountRecoveryBytes(activated, prunedCandidate)) {
         throw StateError('账户恢复激活未返回 checkpoint 中的精确候选状态');
       }
-      execution._state.completeUse();
       return _immutableDeviceBytes(activated);
-    } on KelivoSecureCoreException catch (error) {
-      if (error.status ==
-          KelivoSecureCoreStatus.invalidRecoveryExecutionHandle) {
-        execution._state.invalidateUse();
-      } else {
-        execution._state.completeUse();
-      }
-      rethrow;
-    } catch (_) {
-      execution._state.completeUse();
-      rethrow;
     } finally {
-      key._completeUse();
+      if (keyBorrowed) key._completeUse();
+      continuationBytes.fillRange(0, continuationBytes.length, 0);
       candidate.fillRange(0, candidate.length, 0);
       frame.fillRange(0, frame.length, 0);
       signature.fillRange(0, signature.length, 0);
@@ -1581,6 +1575,10 @@ KelivoPreparedAccountRecoveryDeviceStates _prepareAccountRecoveryDeviceStates(
   final unprunedLength = calloc<ffi.Size>();
   final pruned = calloc<ffi.Uint8>(_deviceStateBlobLength);
   final prunedLength = calloc<ffi.Size>();
+  final continuation = calloc<ffi.Uint8>(
+    kelivoAccountRecoveryContinuationLength,
+  );
+  final continuationLength = calloc<ffi.Size>();
   try {
     _writeAccountRecoveryStateBinding(expected.ref, stateBinding);
     _throwOnError(
@@ -1595,6 +1593,9 @@ KelivoPreparedAccountRecoveryDeviceStates _prepareAccountRecoveryDeviceStates(
         pruned,
         _deviceStateBlobLength,
         prunedLength,
+        continuation,
+        kelivoAccountRecoveryContinuationLength,
+        continuationLength,
       ),
     );
     _requireExactOutputLength(
@@ -1607,11 +1608,19 @@ KelivoPreparedAccountRecoveryDeviceStates _prepareAccountRecoveryDeviceStates(
       expected: _deviceStateBlobLength,
       actual: prunedLength.value,
     );
+    _requireExactOutputLength(
+      operation: 'account_recovery_device_states_prepare_continuation',
+      expected: kelivoAccountRecoveryContinuationLength,
+      actual: continuationLength.value,
+    );
     final unprunedBytes = Uint8List.fromList(
       unpruned.asTypedList(_deviceStateBlobLength),
     );
     final prunedBytes = Uint8List.fromList(
       pruned.asTypedList(_deviceStateBlobLength),
+    );
+    final continuationBytes = Uint8List.fromList(
+      continuation.asTypedList(kelivoAccountRecoveryContinuationLength),
     );
     if (_sameAccountRecoveryBytes(unprunedBytes, prunedBytes)) {
       throw StateError('账户恢复设备状态候选必须彼此不同');
@@ -1619,6 +1628,7 @@ KelivoPreparedAccountRecoveryDeviceStates _prepareAccountRecoveryDeviceStates(
     return KelivoPreparedAccountRecoveryDeviceStates._(
       unprunedStateBlob: unprunedBytes,
       prunedCandidate: prunedBytes,
+      continuation: continuationBytes,
     );
   } finally {
     _clearAndFree(
@@ -1629,12 +1639,14 @@ KelivoPreparedAccountRecoveryDeviceStates _prepareAccountRecoveryDeviceStates(
     calloc.free(unprunedLength);
     _clearAndFree(pruned, _deviceStateBlobLength);
     calloc.free(prunedLength);
+    _clearAndFree(continuation, kelivoAccountRecoveryContinuationLength);
+    calloc.free(continuationLength);
   }
 }
 
 Uint8List _activatePreparedAccountRecoveryDeviceState(
-  int executionHandle,
   int keyHandle,
+  Uint8List continuation,
   KelivoPreparedAccountRecoveryStateBinding stateBinding,
   Uint8List prunedCandidate,
   Uint8List completionProofFrame,
@@ -1642,6 +1654,7 @@ Uint8List _activatePreparedAccountRecoveryDeviceState(
   Uint8List completionProofDigest,
 ) {
   final expected = calloc<native.KelivoAccountRecoveryStateBinding>();
+  final nativeContinuation = _copyToNative(continuation);
   final candidate = _copyToNative(prunedCandidate);
   final frame = _copyToNative(completionProofFrame);
   final signature = _copyToNative(completionProofSignature);
@@ -1654,8 +1667,9 @@ Uint8List _activatePreparedAccountRecoveryDeviceState(
       operation: 'account_recovery_device_state_prune_and_activate',
       statusCode: native
           .kelivo_account_recovery_device_state_prune_and_activate(
-            executionHandle,
             keyHandle,
+            nativeContinuation,
+            continuation.length,
             expected,
             candidate,
             prunedCandidate.length,
@@ -1687,12 +1701,14 @@ Uint8List _activatePreparedAccountRecoveryDeviceState(
       expected.cast<ffi.Uint8>(),
       ffi.sizeOf<native.KelivoAccountRecoveryStateBinding>(),
     );
+    _clearAndFree(nativeContinuation, continuation.length);
     _clearAndFree(candidate, prunedCandidate.length);
     _clearAndFree(frame, completionProofFrame.length);
     _clearAndFree(signature, completionProofSignature.length);
     _clearAndFree(digest, completionProofDigest.length);
     _clearAndFree(output, _deviceStateBlobLength);
     calloc.free(outputLength);
+    continuation.fillRange(0, continuation.length, 0);
     prunedCandidate.fillRange(0, prunedCandidate.length, 0);
     completionProofFrame.fillRange(0, completionProofFrame.length, 0);
     completionProofSignature.fillRange(0, completionProofSignature.length, 0);

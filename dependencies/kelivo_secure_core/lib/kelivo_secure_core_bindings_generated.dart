@@ -1412,6 +1412,9 @@ external int kelivo_account_recovery_prepare_commit(
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
     ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
   )
 >()
 external int kelivo_account_recovery_device_states_prepare(
@@ -1424,12 +1427,16 @@ external int kelivo_account_recovery_device_states_prepare(
   ffi.Pointer<ffi.Uint8> out_pruned_candidate,
   int out_pruned_candidate_capacity,
   ffi.Pointer<ffi.Size> out_pruned_candidate_length,
+  ffi.Pointer<ffi.Uint8> out_continuation,
+  int out_continuation_capacity,
+  ffi.Pointer<ffi.Size> out_continuation_length,
 );
 
 @ffi.Native<
   KelivoStatus Function(
     ffi.Uint64,
-    ffi.Uint64,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
     ffi.Pointer<KelivoAccountRecoveryStateBinding>,
     ffi.Pointer<ffi.Uint8>,
     ffi.Size,
@@ -1445,8 +1452,9 @@ external int kelivo_account_recovery_device_states_prepare(
   )
 >()
 external int kelivo_account_recovery_device_state_prune_and_activate(
-  int execution_handle,
   int key_handle,
+  ffi.Pointer<ffi.Uint8> continuation,
+  int continuation_length,
   ffi.Pointer<KelivoAccountRecoveryStateBinding> expected,
   ffi.Pointer<ffi.Uint8> pruned_candidate,
   int pruned_candidate_length,
@@ -1812,7 +1820,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 20;
+const int KELIVO_CORE_ABI_VERSION = 21;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -2123,6 +2131,8 @@ const int KELIVO_ACCOUNT_RECOVERY_PREPARE_INPUT_STRUCT_SIZE = 92;
 const int KELIVO_ACCOUNT_RECOVERY_PREPARE_BINDING_STRUCT_SIZE = 96;
 
 const int KELIVO_ACCOUNT_RECOVERY_STATE_BINDING_STRUCT_SIZE = 152;
+
+const int KELIVO_ACCOUNT_RECOVERY_CONTINUATION_SIZE = 260;
 
 const int KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_RESUME = 1;
 

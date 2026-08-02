@@ -22,7 +22,7 @@ extern "C" {
 
 typedef int32_t KelivoStatus;
 
-#define KELIVO_CORE_ABI_VERSION UINT32_C(20)
+#define KELIVO_CORE_ABI_VERSION UINT32_C(21)
 #define KELIVO_CORE_CAPABILITIES_STRUCT_SIZE UINT32_C(32)
 #define KELIVO_KEY_SLOT_ID_SIZE ((size_t)16)
 #define KELIVO_KEY_POLICY_VERSION UINT32_C(1)
@@ -183,6 +183,7 @@ typedef int32_t KelivoStatus;
 #define KELIVO_ACCOUNT_RECOVERY_PREPARE_INPUT_STRUCT_SIZE UINT32_C(92)
 #define KELIVO_ACCOUNT_RECOVERY_PREPARE_BINDING_STRUCT_SIZE UINT32_C(96)
 #define KELIVO_ACCOUNT_RECOVERY_STATE_BINDING_STRUCT_SIZE UINT32_C(152)
+#define KELIVO_ACCOUNT_RECOVERY_CONTINUATION_SIZE UINT32_C(260)
 #define KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_RESUME UINT32_C(1)
 #define KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_REPLACEMENT UINT32_C(2)
 #define KELIVO_ACCOUNT_RECOVERY_PREPARED_MANIFEST_MAX_SIZE \
@@ -1263,7 +1264,8 @@ KELIVO_CORE_API KelivoStatus kelivo_account_recovery_prepare_commit(
  * 仅在 execution 已准备提交且 expected 逐字段匹配时，同时生成两份固定长度
  * 密文设备状态：unpruned 含 source/target 两代 ARK，pruned candidate 仅含 target
  * ARK。更旧代次不会进入输出，内部 keyring 不发生变化；ABI 不发布任何 ARK
- * 句柄。两份输出必须在远端 membership commit 前共同持久化。
+ * 句柄。continuation 由 slot key 认证并绑定 expected、精确 pruned candidate 与恢复
+ * 设备签名公钥。三个输出必须在远端 membership commit 前共同持久化。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_recovery_device_states_prepare(
     uint64_t execution_handle,
@@ -1274,17 +1276,21 @@ KELIVO_CORE_API KelivoStatus kelivo_account_recovery_device_states_prepare(
     size_t *out_unpruned_blob_length,
     uint8_t *out_pruned_candidate,
     size_t out_pruned_candidate_capacity,
-    size_t *out_pruned_candidate_length);
+    size_t *out_pruned_candidate_length,
+    uint8_t *out_continuation,
+    size_t out_continuation_capacity,
+    size_t *out_continuation_length);
 
 /*
- * 严格验证恢复设备签署的 data-rekey v2 completion frame、签名、proof digest
- * 及 expected 全部绑定后，解密并核对预先持久化的 pruned candidate 与 execution
- * 中的 target ARK，再原子提交仅含 target epoch 的内部 keyring，并逐字节返回同一
- * candidate。失败不裁剪且输出保持清零。
+ * 在原 account recovery execution 已关闭后，使用 slot key 严格认证 continuation，
+ * 并验证 expected、精确 pruned candidate 及恢复设备签署的 data-rekey v2 completion
+ * frame、签名、proof digest。成功后逐字节返回已验证的 pruned candidate；失败时
+ * 输出保持清零。
  */
 KELIVO_CORE_API KelivoStatus kelivo_account_recovery_device_state_prune_and_activate(
-    uint64_t execution_handle,
     uint64_t key_handle,
+    const uint8_t *continuation,
+    size_t continuation_length,
     const KelivoAccountRecoveryStateBinding *expected,
     const uint8_t *pruned_candidate,
     size_t pruned_candidate_length,

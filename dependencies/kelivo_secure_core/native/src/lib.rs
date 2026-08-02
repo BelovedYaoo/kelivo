@@ -72,7 +72,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 20;
+const ABI_VERSION: u32 = 21;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -6421,6 +6421,8 @@ mod tests {
         let mut unpruned_state_length = usize::MAX;
         let mut pruned_candidate = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
         let mut pruned_candidate_length = usize::MAX;
+        let mut continuation = [0xa5; account_recovery::ACCOUNT_RECOVERY_CONTINUATION_LENGTH];
+        let mut continuation_length = usize::MAX;
         assert_eq!(
             unsafe {
                 kelivo_account_recovery_device_states_prepare(
@@ -6433,13 +6435,55 @@ mod tests {
                     pruned_candidate.as_mut_ptr(),
                     pruned_candidate.len(),
                     &mut pruned_candidate_length,
+                    continuation.as_mut_ptr(),
+                    continuation.len(),
+                    &mut continuation_length,
                 )
             },
             KelivoStatus::Ok.code()
         );
         assert_eq!(unpruned_state_length, unpruned_state.len());
         assert_eq!(pruned_candidate_length, pruned_candidate.len());
+        assert_eq!(continuation_length, continuation.len());
         assert_ne!(unpruned_state, pruned_candidate);
+        assert!(continuation.iter().any(|byte| *byte != 0));
+
+        let mismatched_state_binding = KelivoAccountRecoveryStateBinding {
+            membership_generation: state_binding.membership_generation + 1,
+            ..state_binding
+        };
+        let mut rejected_unpruned = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut rejected_unpruned_length = usize::MAX;
+        let mut rejected_pruned = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut rejected_pruned_length = usize::MAX;
+        let mut rejected_continuation =
+            [0xa5; account_recovery::ACCOUNT_RECOVERY_CONTINUATION_LENGTH];
+        let mut rejected_continuation_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_states_prepare(
+                    proof_binding.execution_handle,
+                    state_key_handle,
+                    &mismatched_state_binding,
+                    rejected_unpruned.as_mut_ptr(),
+                    rejected_unpruned.len(),
+                    &mut rejected_unpruned_length,
+                    rejected_pruned.as_mut_ptr(),
+                    rejected_pruned.len(),
+                    &mut rejected_pruned_length,
+                    rejected_continuation.as_mut_ptr(),
+                    rejected_continuation.len(),
+                    &mut rejected_continuation_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(rejected_unpruned_length, 0);
+        assert!(rejected_unpruned.iter().all(|byte| *byte == 0));
+        assert_eq!(rejected_pruned_length, 0);
+        assert!(rejected_pruned.iter().all(|byte| *byte == 0));
+        assert_eq!(rejected_continuation_length, 0);
+        assert!(rejected_continuation.iter().all(|byte| *byte == 0));
 
         let mut completion_proof_frame = data_rekey_completion_proof_frame();
         completion_proof_frame[32..48].copy_from_slice(&prepare_input.operation_id);
@@ -6461,28 +6505,67 @@ mod tests {
             completion_proof_signature.as_bytes(),
         )
         .expect("测试完成证明摘要应派生");
-        let rebuilt_pending_execution_handle =
-            account_recovery::rebuild_test_execution_for_committed(
-                proof_binding.execution_handle,
-                state_binding,
-                false,
-            )
-            .expect("提交后 pending 状态应能重建独立 execution");
-        let rebuilt_ready_execution_handle =
-            account_recovery::rebuild_test_execution_for_committed(
-                proof_binding.execution_handle,
-                state_binding,
-                true,
-            )
-            .expect("数据 ready 后应能重建独立 execution");
+
+        let mismatched_execution_handle = account_recovery::rebuild_test_execution_for_committed(
+            proof_binding.execution_handle,
+            state_binding,
+            false,
+        )
+        .expect("提交后应能重建独立的待恢复执行");
+        let mismatched_input = KelivoAccountRecoveryPrepareInput {
+            target_auth_generation: 2,
+            ..prepare_input
+        };
+        let mut failed_prepare_binding = sentinel_account_recovery_prepare_binding();
+        let mut failed_manifest = vec![0xa5; manifest_capacity];
+        let mut failed_manifest_length = usize::MAX;
+        let mut failed_envelope = [0xa5; crypto::ARK_ENVELOPE_LENGTH];
+        let mut failed_envelope_length = usize::MAX;
+        let mut failed_capsule = [0xa5; recovery_protocol::RECOVERY_CAPSULE_LENGTH];
+        let mut failed_capsule_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_prepare_commit(
+                    mismatched_execution_handle,
+                    &mismatched_input,
+                    &mut failed_prepare_binding,
+                    failed_manifest.as_mut_ptr(),
+                    failed_manifest.len(),
+                    &mut failed_manifest_length,
+                    failed_envelope.as_mut_ptr(),
+                    failed_envelope.len(),
+                    &mut failed_envelope_length,
+                    failed_capsule.as_mut_ptr(),
+                    failed_capsule.len(),
+                    &mut failed_capsule_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(
+            failed_prepare_binding,
+            KelivoAccountRecoveryPrepareBinding::default()
+        );
+        assert_eq!(failed_manifest_length, 0);
+        assert!(failed_manifest.iter().all(|byte| *byte == 0));
+        assert_eq!(failed_envelope_length, 0);
+        assert!(failed_envelope.iter().all(|byte| *byte == 0));
+        assert_eq!(failed_capsule_length, 0);
+        assert!(failed_capsule.iter().all(|byte| *byte == 0));
+        assert_eq!(account_recovery::active_execution_handles(), 1);
+        assert_eq!(
+            kelivo_account_recovery_execution_close(mismatched_execution_handle),
+            KelivoStatus::InvalidRecoveryExecutionHandle.code()
+        );
 
         let mut rejected_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
         let mut rejected_state_length = usize::MAX;
         assert_eq!(
             unsafe {
                 kelivo_account_recovery_device_state_prune_and_activate(
-                    proof_binding.execution_handle,
                     state_key_handle,
+                    continuation.as_ptr(),
+                    continuation.len(),
                     &state_binding,
                     unpruned_state.as_ptr(),
                     unpruned_state.len(),
@@ -6509,8 +6592,9 @@ mod tests {
         assert_ne!(
             unsafe {
                 kelivo_account_recovery_device_state_prune_and_activate(
-                    proof_binding.execution_handle,
                     state_key_handle,
+                    continuation.as_ptr(),
+                    continuation.len(),
                     &state_binding,
                     swapped_candidate.as_ptr(),
                     swapped_candidate.len(),
@@ -6537,8 +6621,9 @@ mod tests {
         assert_eq!(
             unsafe {
                 kelivo_account_recovery_device_state_prune_and_activate(
-                    proof_binding.execution_handle,
                     state_key_handle,
+                    continuation.as_ptr(),
+                    continuation.len(),
                     &state_binding,
                     pruned_candidate.as_ptr(),
                     pruned_candidate.len(),
@@ -6558,13 +6643,120 @@ mod tests {
         assert_eq!(rejected_state_length, 0);
         assert!(rejected_state.iter().all(|byte| *byte == 0));
 
-        let mut activated_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
-        let mut activated_state_length = usize::MAX;
+        let mut tampered_continuation = continuation;
+        tampered_continuation[tampered_continuation.len() - 1] ^= 1;
+        rejected_state.fill(0xa5);
+        rejected_state_length = usize::MAX;
         assert_eq!(
             unsafe {
                 kelivo_account_recovery_device_state_prune_and_activate(
-                    proof_binding.execution_handle,
                     state_key_handle,
+                    tampered_continuation.as_ptr(),
+                    tampered_continuation.len(),
+                    &state_binding,
+                    pruned_candidate.as_ptr(),
+                    pruned_candidate.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    completion_proof_signature.as_bytes().as_ptr(),
+                    completion_proof_signature.as_bytes().len(),
+                    completion_proof_digest.as_ptr(),
+                    completion_proof_digest.len(),
+                    rejected_state.as_mut_ptr(),
+                    rejected_state.len(),
+                    &mut rejected_state_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(rejected_state_length, 0);
+        assert!(rejected_state.iter().all(|byte| *byte == 0));
+
+        let tampered_binding = KelivoAccountRecoveryStateBinding {
+            membership_generation: state_binding.membership_generation + 1,
+            ..state_binding
+        };
+        rejected_state.fill(0xa5);
+        rejected_state_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    state_key_handle,
+                    continuation.as_ptr(),
+                    continuation.len(),
+                    &tampered_binding,
+                    pruned_candidate.as_ptr(),
+                    pruned_candidate.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    completion_proof_signature.as_bytes().as_ptr(),
+                    completion_proof_signature.as_bytes().len(),
+                    completion_proof_digest.as_ptr(),
+                    completion_proof_digest.len(),
+                    rejected_state.as_mut_ptr(),
+                    rejected_state.len(),
+                    &mut rejected_state_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(rejected_state_length, 0);
+        assert!(rejected_state.iter().all(|byte| *byte == 0));
+
+        let mut tampered_proof_signature = *completion_proof_signature.as_bytes();
+        tampered_proof_signature[0] ^= 1;
+        rejected_state.fill(0xa5);
+        rejected_state_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    state_key_handle,
+                    continuation.as_ptr(),
+                    continuation.len(),
+                    &state_binding,
+                    pruned_candidate.as_ptr(),
+                    pruned_candidate.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    tampered_proof_signature.as_ptr(),
+                    tampered_proof_signature.len(),
+                    completion_proof_digest.as_ptr(),
+                    completion_proof_digest.len(),
+                    rejected_state.as_mut_ptr(),
+                    rejected_state.len(),
+                    &mut rejected_state_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(rejected_state_length, 0);
+        assert!(rejected_state.iter().all(|byte| *byte == 0));
+
+        let borrowed = account_recovery::borrow_test_execution(proof_binding.execution_handle)
+            .expect("测试执行借用应成功");
+        assert_eq!(
+            kelivo_account_recovery_execution_close(proof_binding.execution_handle),
+            KelivoStatus::SlotInUse.code()
+        );
+        drop(borrowed);
+        assert_eq!(close_key_handle(state_key_handle), Ok(()));
+        let state_key_handle = register_key(Zeroizing::new(
+            vec![0xad; LOCAL_KEY_SIZE].into_boxed_slice(),
+        ))
+        .expect("重开后的测试设备状态密钥应注册");
+
+        let mut activated_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut activated_state_length = usize::MAX;
+        assert_eq!(
+            kelivo_account_recovery_execution_close(proof_binding.execution_handle),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    state_key_handle,
+                    continuation.as_ptr(),
+                    continuation.len(),
                     &state_binding,
                     pruned_candidate.as_ptr(),
                     pruned_candidate.len(),
@@ -6593,8 +6785,9 @@ mod tests {
         assert_ne!(
             unsafe {
                 kelivo_account_recovery_device_state_prune_and_activate(
-                    proof_binding.execution_handle,
                     wrong_state_key_handle,
+                    continuation.as_ptr(),
+                    continuation.len(),
                     &state_binding,
                     pruned_candidate.as_ptr(),
                     pruned_candidate.len(),
@@ -6620,8 +6813,9 @@ mod tests {
         assert_eq!(
             unsafe {
                 kelivo_account_recovery_device_state_prune_and_activate(
-                    proof_binding.execution_handle,
                     state_key_handle,
+                    continuation.as_ptr(),
+                    continuation.len(),
                     &state_binding,
                     pruned_candidate.as_ptr(),
                     pruned_candidate.len(),
@@ -6641,89 +6835,6 @@ mod tests {
         assert_eq!(replay_state_length, replay_state.len());
         assert_eq!(replay_state, pruned_candidate);
 
-        for rebuilt_execution_handle in [
-            rebuilt_pending_execution_handle,
-            rebuilt_ready_execution_handle,
-        ] {
-            let mut rebuilt_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
-            let mut rebuilt_state_length = usize::MAX;
-            assert_eq!(
-                unsafe {
-                    kelivo_account_recovery_device_state_prune_and_activate(
-                        rebuilt_execution_handle,
-                        state_key_handle,
-                        &state_binding,
-                        pruned_candidate.as_ptr(),
-                        pruned_candidate.len(),
-                        completion_proof_frame.as_ptr(),
-                        completion_proof_frame.len(),
-                        completion_proof_signature.as_bytes().as_ptr(),
-                        completion_proof_signature.as_bytes().len(),
-                        completion_proof_digest.as_ptr(),
-                        completion_proof_digest.len(),
-                        rebuilt_state.as_mut_ptr(),
-                        rebuilt_state.len(),
-                        &mut rebuilt_state_length,
-                    )
-                },
-                KelivoStatus::Ok.code()
-            );
-            assert_eq!(rebuilt_state_length, rebuilt_state.len());
-            assert_eq!(rebuilt_state, pruned_candidate);
-            assert_eq!(
-                kelivo_account_recovery_execution_close(rebuilt_execution_handle),
-                KelivoStatus::Ok.code()
-            );
-        }
-
-        let borrowed = account_recovery::borrow_test_execution(proof_binding.execution_handle)
-            .expect("测试执行借用应成功");
-        assert_eq!(
-            kelivo_account_recovery_execution_close(proof_binding.execution_handle),
-            KelivoStatus::SlotInUse.code()
-        );
-        drop(borrowed);
-
-        let mismatched_input = KelivoAccountRecoveryPrepareInput {
-            target_auth_generation: 2,
-            ..prepare_input
-        };
-        let mut failed_prepare_binding = sentinel_account_recovery_prepare_binding();
-        let mut failed_manifest = vec![0xa5; manifest_capacity];
-        let mut failed_manifest_length = usize::MAX;
-        let mut failed_envelope = [0xa5; crypto::ARK_ENVELOPE_LENGTH];
-        let mut failed_envelope_length = usize::MAX;
-        let mut failed_capsule = [0xa5; recovery_protocol::RECOVERY_CAPSULE_LENGTH];
-        let mut failed_capsule_length = usize::MAX;
-        assert_eq!(
-            unsafe {
-                kelivo_account_recovery_prepare_commit(
-                    proof_binding.execution_handle,
-                    &mismatched_input,
-                    &mut failed_prepare_binding,
-                    failed_manifest.as_mut_ptr(),
-                    failed_manifest.len(),
-                    &mut failed_manifest_length,
-                    failed_envelope.as_mut_ptr(),
-                    failed_envelope.len(),
-                    &mut failed_envelope_length,
-                    failed_capsule.as_mut_ptr(),
-                    failed_capsule.len(),
-                    &mut failed_capsule_length,
-                )
-            },
-            KelivoStatus::RecoveryPrepareInvalid.code()
-        );
-        assert_eq!(
-            failed_prepare_binding,
-            KelivoAccountRecoveryPrepareBinding::default()
-        );
-        assert_eq!(failed_manifest_length, 0);
-        assert!(failed_manifest.iter().all(|byte| *byte == 0));
-        assert_eq!(failed_envelope_length, 0);
-        assert!(failed_envelope.iter().all(|byte| *byte == 0));
-        assert_eq!(failed_capsule_length, 0);
-        assert!(failed_capsule.iter().all(|byte| *byte == 0));
         assert_eq!(account_recovery::active_execution_handles(), 0);
         assert_eq!(
             kelivo_account_recovery_execution_close(proof_binding.execution_handle),
@@ -7048,7 +7159,8 @@ mod tests {
         assert_eq!(
             unsafe {
                 kelivo_account_recovery_device_state_prune_and_activate(
-                    proof_binding.execution_handle,
+                    0,
+                    ptr::null(),
                     0,
                     &resume_binding,
                     invalid_candidate.as_ptr(),

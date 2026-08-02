@@ -56,10 +56,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v20、账户恢复执行及受支持平台受管根退役', () async {
+  test('能力门禁声明 ABI v21、账户恢复执行及受支持平台受管根退役', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 20);
+    expect(capabilities.abiVersion, 21);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -87,7 +87,7 @@ void main() {
     );
   });
 
-  test('ABI v20 账户恢复结构体布局与 C header 固定尺寸一致', () {
+  test('ABI v21 账户恢复结构体布局与 C header 固定尺寸一致', () {
     expect(ffi.sizeOf<native.KelivoAccountRecoveryProofBinding>(), 120);
     expect(
       ffi.sizeOf<native.KelivoAccountRecoveryReplacementProofBinding>(),
@@ -96,6 +96,7 @@ void main() {
     expect(ffi.sizeOf<native.KelivoAccountRecoveryPrepareInput>(), 92);
     expect(ffi.sizeOf<native.KelivoAccountRecoveryPrepareBinding>(), 96);
     expect(ffi.sizeOf<native.KelivoAccountRecoveryStateBinding>(), 152);
+    expect(kelivoAccountRecoveryContinuationLength, 260);
   });
 
   test('账户恢复状态绑定防御性复制并拒绝非相邻代次', () {
@@ -153,6 +154,46 @@ void main() {
       ),
       throwsArgumentError,
     );
+  });
+
+  test('账户恢复激活使用固定长度持久 continuation 且不要求 execution', () async {
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final key = await openOrCreateTestSlot();
+    final continuation = Uint8List(259)..fillRange(0, 259, 0xa5);
+    final stateBinding = KelivoPreparedAccountRecoveryStateBinding(
+      kind: KelivoAccountRecoveryCommitKind.replacement,
+      dataPhase: KelivoAccountRecoveryDataPhase.ready,
+      deviceKeyVersion: 1,
+      userId: accountId(0xc1),
+      deviceId: accountId(0xc2),
+      sourceKeyEpoch: 1,
+      targetKeyEpoch: 2,
+      sourceDataGeneration: 1,
+      targetDataGeneration: 2,
+      membershipGeneration: 2,
+      membershipManifestDigest: Uint8List(32),
+      rekeyOperationId: accountId(0xc3),
+      operationAuthorizationDigest: Uint8List(32),
+    );
+    try {
+      await expectLater(
+        core.activatePreparedAccountRecoveryDeviceState(
+          key,
+          continuation: continuation,
+          stateBinding: stateBinding,
+          prunedCandidate: Uint8List(native.KELIVO_DEVICE_STATE_BLOB_SIZE),
+          completionProofFrame: dataRekeyCompletionProofFrame(),
+          completionProofSignature: KelivoDataRekeyCompletionProofSignature(
+            Uint8List(native.KELIVO_DATA_REKEY_COMPLETION_PROOF_SIGNATURE_SIZE),
+          ),
+          completionProofDigest: Uint8List(32),
+        ),
+        throwsArgumentError,
+      );
+      expect(continuation, everyElement(0xa5));
+    } finally {
+      await core.close(key);
+    }
   });
 
   test('安装根擦除仅使用显式隔离根并精准保留完成标记', () async {
