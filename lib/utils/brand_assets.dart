@@ -62,7 +62,7 @@ class BrandAssets {
         MapEntry(RegExp(r'step|阶跃'), 'stepfun-color.svg'),
         MapEntry(RegExp(r'internlm|书生'), 'internlm-color.svg'),
         MapEntry(RegExp(r'cohere|command-.+'), 'cohere-color.svg'),
-        MapEntry(RegExp(r'kelivo'), 'kelivo.png'),
+        MapEntry(RegExp(r'olivia'), 'olivia.png'),
         MapEntry(RegExp(r'tensdaq'), 'tensdaq-color.svg'),
         MapEntry(RegExp(r'longcat'), 'longcat.png'),
         MapEntry(RegExp(r'iflow|心流'), 'iflow-color.svg'),
@@ -243,9 +243,9 @@ class BrandAssets {
       asset: 'assets/icons/cohere-color.svg',
     ),
     BrandIconOption(
-      id: 'kelivo',
-      label: 'Kelivo',
-      asset: 'assets/icons/kelivo.png',
+      id: 'olivia',
+      label: 'Olivia',
+      asset: 'assets/icons/olivia.png',
     ),
     BrandIconOption(
       id: 'tensdaq',

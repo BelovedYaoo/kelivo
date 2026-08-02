@@ -131,7 +131,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String cloudSyncDefaultDeviceName(String platform) {
-    return 'Kelivo · $platform';
+    return 'Olivia · $platform';
   }
 
   @override
@@ -346,7 +346,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get cloudSyncRevokeCurrentMessage =>
-      '这是当前设备。撤销后将永久删除本次安装中的所有 Kelivo 账号、本地工作区、聊天、配置、缓存文件和加密密钥。';
+      '这是当前设备。撤销后将永久删除本次安装中的所有 Olivia 账号、本地工作区、聊天、配置、缓存文件和加密密钥。';
 
   @override
   String get cloudSyncCurrentDeviceRemovalUnavailable =>
@@ -357,13 +357,13 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get localDeviceWipeMessage =>
-      '此设备已经撤销，但本机数据和加密密钥尚未完全删除。清理成功前，Kelivo 将保持锁定。';
+      '此设备已经撤销，但本机数据和加密密钥尚未完全删除。清理成功前，Olivia 将保持锁定。';
 
   @override
   String get localDeviceWipeRetry => '重试清除';
 
   @override
-  String get localDeviceWipeRetryFailed => '本机数据和加密密钥仍未完全删除。请重试清理后再使用 Kelivo。';
+  String get localDeviceWipeRetryFailed => '本机数据和加密密钥仍未完全删除。请重试清理后再使用 Olivia。';
 
   @override
   String get cloudSyncCancel => '取消';
@@ -385,10 +385,10 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get cloudSyncWorkspaceRestartMessage =>
-      '工作区选择已安全保存。重启前，Kelivo 不会连接新的工作区。';
+      '工作区选择已安全保存。重启前，Olivia 不会连接新的工作区。';
 
   @override
-  String get cloudSyncWorkspaceRestartButton => '重启 Kelivo';
+  String get cloudSyncWorkspaceRestartButton => '重启 Olivia';
 
   @override
   String get cloudSyncErrorTitle => '云同步错误';
@@ -1359,7 +1359,7 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get iosBackgroundLimitNoticeBody =>
-      '这些选项使用 Apple 支持的后台时间、BackgroundTasks、通知和实时活动。它们能提升连续性，但不能强制 iOS 永久保持 Kelivo 运行。';
+      '这些选项使用 Apple 支持的后台时间、BackgroundTasks、通知和实时活动。它们能提升连续性，但不能强制 iOS 永久保持 Olivia 运行。';
 
   @override
   String get iosBackgroundUnsupportedLiveActivity =>
@@ -1384,7 +1384,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get iosBackgroundNotificationsNotAuthorized => '通知未允许';
 
   @override
-  String get iosBackgroundGenerationActiveTitle => 'Kelivo 正在生成';
+  String get iosBackgroundGenerationActiveTitle => 'Olivia 正在生成';
 
   @override
   String get iosBackgroundGenerationActiveDetail => '助手正在后台回复';
@@ -1437,7 +1437,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get notificationChatCompletedBody => '助手回复已生成';
 
   @override
-  String get androidBackgroundNotificationTitle => 'Kelivo 正在运行';
+  String get androidBackgroundNotificationTitle => 'Olivia 正在运行';
 
   @override
   String get androidBackgroundNotificationText => '后台保持聊天生成';
@@ -1867,50 +1867,50 @@ class AppLocalizationsZh extends AppLocalizations {
   String get backupPageRestartRequired => '需要重启应用';
 
   @override
-  String get backupPageRestartContent => '导入成功。重启 Kelivo 后将安全应用。';
+  String get backupPageRestartContent => '导入成功。重启 Olivia 后将安全应用。';
 
   @override
-  String get restartAppFailedMessage => 'Kelivo 无法自动重启，请完全关闭后重新打开。';
+  String get restartAppFailedMessage => 'Olivia 无法自动重启，请完全关闭后重新打开。';
 
   @override
   String get backupRestoreColdRestartTitle => '还需要再重启一次';
 
   @override
   String get backupRestoreColdRestartContent =>
-      '恢复已进入可恢复终态。请再重启一次 Kelivo，以便从新进程复验设置；确认前不会打开聊天数据。';
+      '恢复已进入可恢复终态。请再重启一次 Olivia，以便从新进程复验设置；确认前不会打开聊天数据。';
 
   @override
-  String get backupRestoreColdRestartButton => '重启 Kelivo';
+  String get backupRestoreColdRestartButton => '重启 Olivia';
 
   @override
   String get backupRestoreRolledBackTitle => '恢复已回滚';
 
   @override
-  String get backupRestoreRolledBackContent => '恢复未能完成。Kelivo 已验证并保留原有数据。';
+  String get backupRestoreRolledBackContent => '恢复未能完成。Olivia 已验证并保留原有数据。';
 
   @override
   String get backupRestoreFailureTitle => '恢复需要处理';
 
   @override
   String get backupRestoreFailureContent =>
-      'Kelivo 无法验证完整的原有或新数据，因此未打开聊天数据。请关闭 Kelivo 后重试；若问题反复出现，请保留诊断码以便支持人员排查。';
+      'Olivia 无法验证完整的原有或新数据，因此未打开聊天数据。请关闭 Olivia 后重试；若问题反复出现，请保留诊断码以便支持人员排查。';
 
   @override
   String get backupRestoreLegacyApplePreferencesTitle => '需要重置应用数据';
 
   @override
   String get backupRestoreLegacyApplePreferencesContent =>
-      'Kelivo 检测到旧版 Apple 存储实现写入的偏好。由于无法证明这些字节已被安全擦除，Kelivo 将保持锁定。请清除 Kelivo 的应用数据后重新打开；在 iPhone 或 iPad 上，请卸载并重新安装 Kelivo。';
+      'Olivia 检测到旧版 Apple 存储实现写入的偏好。由于无法证明这些字节已被安全擦除，Olivia 将保持锁定。请清除 Olivia 的应用数据后重新打开；在 iPhone 或 iPad 上，请卸载并重新安装 Olivia。';
 
   @override
-  String get backupRestoreBusinessLeaseUnavailableTitle => 'Kelivo 已在运行';
+  String get backupRestoreBusinessLeaseUnavailableTitle => 'Olivia 已在运行';
 
   @override
   String get backupRestoreBusinessLeaseUnavailableContent =>
-      'Kelivo 的数据仍被另一个应用进程占用。请关闭其他 Kelivo 窗口后重新启动；当前进程尚未打开聊天数据。';
+      'Olivia 的数据仍被另一个应用进程占用。请关闭其他 Olivia 窗口后重新启动；当前进程尚未打开聊天数据。';
 
   @override
-  String get backupRestoreFailureRestartButton => '重启 Kelivo';
+  String get backupRestoreFailureRestartButton => '重启 Olivia';
 
   @override
   String get backupRestoreFailureCopyButton => '复制诊断码';
@@ -4047,7 +4047,7 @@ class AppLocalizationsZh extends AppLocalizations {
   String get aboutPageEasterEggMessage => '\n（好吧现在还没彩蛋）';
 
   @override
-  String get aboutPageAppName => 'Kelivo';
+  String get aboutPageAppName => 'Olivia';
 
   @override
   String get aboutPageAppDescription => '开源AI 助手';
@@ -4105,10 +4105,10 @@ class AppLocalizationsZh extends AppLocalizations {
   String get aboutPageJoinQQGroup => '加入QQ群';
 
   @override
-  String get aboutPageQQGroupOne => 'Kelivo 一群';
+  String get aboutPageQQGroupOne => 'Olivia 一群';
 
   @override
-  String get aboutPageQQGroupTwo => 'Kelivo 二群';
+  String get aboutPageQQGroupTwo => 'Olivia 二群';
 
   @override
   String get aboutPageJoinDiscord => '在 Discord 中加入我们';
@@ -4715,7 +4715,7 @@ class AppLocalizationsZh extends AppLocalizations {
   }
 
   @override
-  String get settingsShare => 'Kelivo - 开源AI助手';
+  String get settingsShare => 'Olivia - 开源AI助手';
 
   @override
   String get searchProviderBingLocalDescription =>
@@ -5799,7 +5799,7 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String cloudSyncDefaultDeviceName(String platform) {
-    return 'Kelivo · $platform';
+    return 'Olivia · $platform';
   }
 
   @override
@@ -6014,7 +6014,7 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get cloudSyncRevokeCurrentMessage =>
-      '这是当前设备。撤销后将永久删除本次安装中的所有 Kelivo 账号、本地工作区、聊天、配置、缓存文件和加密密钥。';
+      '这是当前设备。撤销后将永久删除本次安装中的所有 Olivia 账号、本地工作区、聊天、配置、缓存文件和加密密钥。';
 
   @override
   String get cloudSyncCurrentDeviceRemovalUnavailable =>
@@ -6025,13 +6025,13 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get localDeviceWipeMessage =>
-      '此设备已经撤销，但本机数据和加密密钥尚未完全删除。清理成功前，Kelivo 将保持锁定。';
+      '此设备已经撤销，但本机数据和加密密钥尚未完全删除。清理成功前，Olivia 将保持锁定。';
 
   @override
   String get localDeviceWipeRetry => '重试清除';
 
   @override
-  String get localDeviceWipeRetryFailed => '本机数据和加密密钥仍未完全删除。请重试清理后再使用 Kelivo。';
+  String get localDeviceWipeRetryFailed => '本机数据和加密密钥仍未完全删除。请重试清理后再使用 Olivia。';
 
   @override
   String get cloudSyncCancel => '取消';
@@ -6053,10 +6053,10 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get cloudSyncWorkspaceRestartMessage =>
-      '工作区选择已安全保存。重启前，Kelivo 不会连接新的工作区。';
+      '工作区选择已安全保存。重启前，Olivia 不会连接新的工作区。';
 
   @override
-  String get cloudSyncWorkspaceRestartButton => '重启 Kelivo';
+  String get cloudSyncWorkspaceRestartButton => '重启 Olivia';
 
   @override
   String get cloudSyncErrorTitle => '云同步错误';
@@ -7027,7 +7027,7 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get iosBackgroundLimitNoticeBody =>
-      '这些选项使用 Apple 支持的后台时间、BackgroundTasks、通知和实时活动。它们能提升连续性，但不能强制 iOS 永久保持 Kelivo 运行。';
+      '这些选项使用 Apple 支持的后台时间、BackgroundTasks、通知和实时活动。它们能提升连续性，但不能强制 iOS 永久保持 Olivia 运行。';
 
   @override
   String get iosBackgroundUnsupportedLiveActivity =>
@@ -7052,7 +7052,7 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get iosBackgroundNotificationsNotAuthorized => '通知未允许';
 
   @override
-  String get iosBackgroundGenerationActiveTitle => 'Kelivo 正在生成';
+  String get iosBackgroundGenerationActiveTitle => 'Olivia 正在生成';
 
   @override
   String get iosBackgroundGenerationActiveDetail => '助手正在后台回复';
@@ -7105,7 +7105,7 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get notificationChatCompletedBody => '助手回复已生成';
 
   @override
-  String get androidBackgroundNotificationTitle => 'Kelivo 正在运行';
+  String get androidBackgroundNotificationTitle => 'Olivia 正在运行';
 
   @override
   String get androidBackgroundNotificationText => '后台保持聊天生成';
@@ -7535,50 +7535,50 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get backupPageRestartRequired => '需要重启应用';
 
   @override
-  String get backupPageRestartContent => '导入成功。重启 Kelivo 后将安全应用。';
+  String get backupPageRestartContent => '导入成功。重启 Olivia 后将安全应用。';
 
   @override
-  String get restartAppFailedMessage => 'Kelivo 无法自动重启，请完全关闭后重新打开。';
+  String get restartAppFailedMessage => 'Olivia 无法自动重启，请完全关闭后重新打开。';
 
   @override
   String get backupRestoreColdRestartTitle => '还需要再重启一次';
 
   @override
   String get backupRestoreColdRestartContent =>
-      '恢复已进入可恢复终态。请再重启一次 Kelivo，以便从新进程复验设置；确认前不会打开聊天数据。';
+      '恢复已进入可恢复终态。请再重启一次 Olivia，以便从新进程复验设置；确认前不会打开聊天数据。';
 
   @override
-  String get backupRestoreColdRestartButton => '重启 Kelivo';
+  String get backupRestoreColdRestartButton => '重启 Olivia';
 
   @override
   String get backupRestoreRolledBackTitle => '恢复已回滚';
 
   @override
-  String get backupRestoreRolledBackContent => '恢复未能完成。Kelivo 已验证并保留原有数据。';
+  String get backupRestoreRolledBackContent => '恢复未能完成。Olivia 已验证并保留原有数据。';
 
   @override
   String get backupRestoreFailureTitle => '恢复需要处理';
 
   @override
   String get backupRestoreFailureContent =>
-      'Kelivo 无法验证完整的原有或新数据，因此未打开聊天数据。请关闭 Kelivo 后重试；若问题反复出现，请保留诊断码以便支持人员排查。';
+      'Olivia 无法验证完整的原有或新数据，因此未打开聊天数据。请关闭 Olivia 后重试；若问题反复出现，请保留诊断码以便支持人员排查。';
 
   @override
   String get backupRestoreLegacyApplePreferencesTitle => '需要重置应用数据';
 
   @override
   String get backupRestoreLegacyApplePreferencesContent =>
-      'Kelivo 检测到旧版 Apple 存储实现写入的偏好。由于无法证明这些字节已被安全擦除，Kelivo 将保持锁定。请清除 Kelivo 的应用数据后重新打开；在 iPhone 或 iPad 上，请卸载并重新安装 Kelivo。';
+      'Olivia 检测到旧版 Apple 存储实现写入的偏好。由于无法证明这些字节已被安全擦除，Olivia 将保持锁定。请清除 Olivia 的应用数据后重新打开；在 iPhone 或 iPad 上，请卸载并重新安装 Olivia。';
 
   @override
-  String get backupRestoreBusinessLeaseUnavailableTitle => 'Kelivo 已在运行';
+  String get backupRestoreBusinessLeaseUnavailableTitle => 'Olivia 已在运行';
 
   @override
   String get backupRestoreBusinessLeaseUnavailableContent =>
-      'Kelivo 的数据仍被另一个应用进程占用。请关闭其他 Kelivo 窗口后重新启动；当前进程尚未打开聊天数据。';
+      'Olivia 的数据仍被另一个应用进程占用。请关闭其他 Olivia 窗口后重新启动；当前进程尚未打开聊天数据。';
 
   @override
-  String get backupRestoreFailureRestartButton => '重启 Kelivo';
+  String get backupRestoreFailureRestartButton => '重启 Olivia';
 
   @override
   String get backupRestoreFailureCopyButton => '复制诊断码';
@@ -9715,7 +9715,7 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get aboutPageEasterEggMessage => '\n（好吧现在还没彩蛋）';
 
   @override
-  String get aboutPageAppName => 'Kelivo';
+  String get aboutPageAppName => 'Olivia';
 
   @override
   String get aboutPageAppDescription => '开源 AI 助手';
@@ -9773,10 +9773,10 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get aboutPageJoinQQGroup => '加入QQ群';
 
   @override
-  String get aboutPageQQGroupOne => 'Kelivo 一群';
+  String get aboutPageQQGroupOne => 'Olivia 一群';
 
   @override
-  String get aboutPageQQGroupTwo => 'Kelivo 二群';
+  String get aboutPageQQGroupTwo => 'Olivia 二群';
 
   @override
   String get aboutPageJoinDiscord => '在 Discord 中加入我们';
@@ -10383,7 +10383,7 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   }
 
   @override
-  String get settingsShare => 'Kelivo - 开源AI助手';
+  String get settingsShare => 'Olivia - 开源AI助手';
 
   @override
   String get searchProviderBingLocalDescription =>
@@ -11467,7 +11467,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String cloudSyncDefaultDeviceName(String platform) {
-    return 'Kelivo · $platform';
+    return 'Olivia · $platform';
   }
 
   @override
@@ -11683,7 +11683,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get cloudSyncRevokeCurrentMessage =>
-      '這是目前裝置。撤銷後將永久刪除本次安裝中的所有 Kelivo 帳號、本機工作區、聊天、設定、快取檔案和加密金鑰。';
+      '這是目前裝置。撤銷後將永久刪除本次安裝中的所有 Olivia 帳號、本機工作區、聊天、設定、快取檔案和加密金鑰。';
 
   @override
   String get cloudSyncCurrentDeviceRemovalUnavailable =>
@@ -11694,13 +11694,13 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get localDeviceWipeMessage =>
-      '此裝置已經撤銷，但本機資料和加密金鑰尚未完全刪除。清理成功前，Kelivo 將保持鎖定。';
+      '此裝置已經撤銷，但本機資料和加密金鑰尚未完全刪除。清理成功前，Olivia 將保持鎖定。';
 
   @override
   String get localDeviceWipeRetry => '重試清除';
 
   @override
-  String get localDeviceWipeRetryFailed => '本機資料和加密金鑰仍未完全刪除。請重試清理後再使用 Kelivo。';
+  String get localDeviceWipeRetryFailed => '本機資料和加密金鑰仍未完全刪除。請重試清理後再使用 Olivia。';
 
   @override
   String get cloudSyncCancel => '取消';
@@ -11722,10 +11722,10 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get cloudSyncWorkspaceRestartMessage =>
-      '工作區選擇已安全儲存。重新啟動前，Kelivo 不會連線新的工作區。';
+      '工作區選擇已安全儲存。重新啟動前，Olivia 不會連線新的工作區。';
 
   @override
-  String get cloudSyncWorkspaceRestartButton => '重新啟動 Kelivo';
+  String get cloudSyncWorkspaceRestartButton => '重新啟動 Olivia';
 
   @override
   String get cloudSyncErrorTitle => '雲端同步錯誤';
@@ -12696,7 +12696,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get iosBackgroundLimitNoticeBody =>
-      '這些選項使用 Apple 支援的後台時間、BackgroundTasks、通知和即時活動。它們能提升連續性，但不能強制 iOS 永久保持 Kelivo 運行。';
+      '這些選項使用 Apple 支援的後台時間、BackgroundTasks、通知和即時活動。它們能提升連續性，但不能強制 iOS 永久保持 Olivia 運行。';
 
   @override
   String get iosBackgroundUnsupportedLiveActivity =>
@@ -12721,7 +12721,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get iosBackgroundNotificationsNotAuthorized => '通知未允許';
 
   @override
-  String get iosBackgroundGenerationActiveTitle => 'Kelivo 正在生成';
+  String get iosBackgroundGenerationActiveTitle => 'Olivia 正在生成';
 
   @override
   String get iosBackgroundGenerationActiveDetail => '助理正在後台回覆';
@@ -12774,7 +12774,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get notificationChatCompletedBody => '助手回覆已生成';
 
   @override
-  String get androidBackgroundNotificationTitle => 'Kelivo 正在運行';
+  String get androidBackgroundNotificationTitle => 'Olivia 正在運行';
 
   @override
   String get androidBackgroundNotificationText => '後台保持聊天生成';
@@ -13204,50 +13204,50 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get backupPageRestartRequired => '需要重啟應用程式';
 
   @override
-  String get backupPageRestartContent => '匯入成功。重新啟動 Kelivo 後將安全套用。';
+  String get backupPageRestartContent => '匯入成功。重新啟動 Olivia 後將安全套用。';
 
   @override
-  String get restartAppFailedMessage => 'Kelivo 無法自動重新啟動，請完全關閉後再重新開啟。';
+  String get restartAppFailedMessage => 'Olivia 無法自動重新啟動，請完全關閉後再重新開啟。';
 
   @override
   String get backupRestoreColdRestartTitle => '還需要再重新啟動一次';
 
   @override
   String get backupRestoreColdRestartContent =>
-      '還原已進入可恢復終態。請再重新啟動一次 Kelivo，以便從新程序重新驗證設定；確認前不會開啟聊天資料。';
+      '還原已進入可恢復終態。請再重新啟動一次 Olivia，以便從新程序重新驗證設定；確認前不會開啟聊天資料。';
 
   @override
-  String get backupRestoreColdRestartButton => '重新啟動 Kelivo';
+  String get backupRestoreColdRestartButton => '重新啟動 Olivia';
 
   @override
   String get backupRestoreRolledBackTitle => '已保留原有資料';
 
   @override
-  String get backupRestoreRolledBackContent => '還原未能完成。Kelivo 已驗證並保留先前的資料。';
+  String get backupRestoreRolledBackContent => '還原未能完成。Olivia 已驗證並保留先前的資料。';
 
   @override
   String get backupRestoreFailureTitle => '還原需要處理';
 
   @override
   String get backupRestoreFailureContent =>
-      'Kelivo 無法驗證完整的原有或新資料，因此未開啟聊天資料。請關閉 Kelivo 後重試；若問題持續發生，請保留診斷碼以供支援人員排查。';
+      'Olivia 無法驗證完整的原有或新資料，因此未開啟聊天資料。請關閉 Olivia 後重試；若問題持續發生，請保留診斷碼以供支援人員排查。';
 
   @override
   String get backupRestoreLegacyApplePreferencesTitle => '需要重設應用程式資料';
 
   @override
   String get backupRestoreLegacyApplePreferencesContent =>
-      'Kelivo 偵測到舊版 Apple 儲存實作寫入的偏好。由於無法證明這些位元組已被安全清除，Kelivo 將保持鎖定。請清除 Kelivo 的應用程式資料後重新開啟；在 iPhone 或 iPad 上，請解除安裝並重新安裝 Kelivo。';
+      'Olivia 偵測到舊版 Apple 儲存實作寫入的偏好。由於無法證明這些位元組已被安全清除，Olivia 將保持鎖定。請清除 Olivia 的應用程式資料後重新開啟；在 iPhone 或 iPad 上，請解除安裝並重新安裝 Olivia。';
 
   @override
-  String get backupRestoreBusinessLeaseUnavailableTitle => 'Kelivo 已在執行';
+  String get backupRestoreBusinessLeaseUnavailableTitle => 'Olivia 已在執行';
 
   @override
   String get backupRestoreBusinessLeaseUnavailableContent =>
-      'Kelivo 的資料仍由另一個應用程式程序使用。請關閉其他 Kelivo 視窗後重新啟動；目前程序尚未開啟聊天資料。';
+      'Olivia 的資料仍由另一個應用程式程序使用。請關閉其他 Olivia 視窗後重新啟動；目前程序尚未開啟聊天資料。';
 
   @override
-  String get backupRestoreFailureRestartButton => '重新啟動 Kelivo';
+  String get backupRestoreFailureRestartButton => '重新啟動 Olivia';
 
   @override
   String get backupRestoreFailureCopyButton => '複製診斷碼';
@@ -15382,7 +15382,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get aboutPageEasterEggMessage => '\n（好吧現在還沒彩蛋）';
 
   @override
-  String get aboutPageAppName => 'Kelivo';
+  String get aboutPageAppName => 'Olivia';
 
   @override
   String get aboutPageAppDescription => '開源 AI 助理';
@@ -15440,10 +15440,10 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get aboutPageJoinQQGroup => '加入 QQ 群';
 
   @override
-  String get aboutPageQQGroupOne => 'Kelivo 一群';
+  String get aboutPageQQGroupOne => 'Olivia 一群';
 
   @override
-  String get aboutPageQQGroupTwo => 'Kelivo 二群';
+  String get aboutPageQQGroupTwo => 'Olivia 二群';
 
   @override
   String get aboutPageJoinDiscord => '加入我們的 Discord';
@@ -16050,7 +16050,7 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   }
 
   @override
-  String get settingsShare => 'Kelivo - 開源AI助理';
+  String get settingsShare => 'Olivia - 開源AI助理';
 
   @override
   String get searchProviderBingLocalDescription =>

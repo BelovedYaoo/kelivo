@@ -56,7 +56,7 @@ class _RestoreFailureScreenState extends State<RestoreFailureScreen> {
         FlutterErrorDetails(
           exception: error,
           stack: stackTrace,
-          library: 'Kelivo restore',
+          library: 'Olivia restore',
           context: ErrorDescription('while restarting after restore failure'),
         ),
       );

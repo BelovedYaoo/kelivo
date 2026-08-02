@@ -36,7 +36,7 @@ const SLOT_HEADER_SIZE: usize = SLOT_MAGIC.len() + size_of::<u32>();
 const PROTECTED_KEY_SIZE: usize = 61;
 const MAX_SLOT_FILE_SIZE: usize = SLOT_HEADER_SIZE + PROTECTED_KEY_SIZE;
 const TEMP_FILE_ATTEMPTS: usize = 16;
-const ANDROID_SLOT_AAD_PREFIX: [u8; 16] = *b"kelivo.secure.v1";
+const ANDROID_SLOT_AAD_PREFIX: [u8; 16] = *b"olivia.secure.v1";
 
 pub(super) fn create_slot(slot_id: &[u8; 16]) -> Result<LocalKey, KelivoStatus> {
     default_store()?.create_slot(slot_id)
@@ -715,7 +715,7 @@ fn load_bridge_class<'local>(
     class_loader: &GlobalRef,
 ) -> Result<JClass<'local>, KelivoStatus> {
     let class_name = env
-        .new_string("com.psyche.kelivo.KelivoKeystoreBridge")
+        .new_string("top.bemylover.olivia.OliviaKeystoreBridge")
         .map_err(|_| KelivoStatus::SecureStorageUnavailable)?;
     let value = match env.call_method(
         class_loader.as_obj(),

@@ -40,7 +40,7 @@ fun Properties.requireReleaseSigningValue(name: String): String =
         ?: throw GradleException("Android Release signing configuration is missing field: $name")
 
 android {
-    namespace = "com.psyche.kelivo"
+    namespace = "top.bemylover.olivia"
     compileSdk = flutter.compileSdkVersion
     ndkVersion = "28.2.13676358"
     compileOptions {
@@ -51,7 +51,7 @@ android {
 
     defaultConfig {
         // TODO: Specify your own unique Application ID (https://developer.android.com/studio/build/application-id.html).
-        applicationId = "com.psyche.kelivo"
+        applicationId = "top.bemylover.olivia"
         // You can update the following values to match your application needs.
         // For more information, see: https://flutter.dev/to/review-gradle-config.
         minSdk = flutter.minSdkVersion
@@ -78,8 +78,8 @@ android {
     }
 }
 
-val validateKelivoReleaseSigning =
-    tasks.register("validateKelivoReleaseSigning") {
+val validateOliviaReleaseSigning =
+    tasks.register("validateOliviaReleaseSigning") {
         group = "verification"
         description = "校验 Android Release 本地签名配置"
 
@@ -129,7 +129,7 @@ tasks
     .matching {
         it.name == "preReleaseBuild" || it.name == "validateSigningRelease"
     }.configureEach {
-        dependsOn(validateKelivoReleaseSigning)
+        dependsOn(validateOliviaReleaseSigning)
     }
 
 kotlin {
@@ -188,7 +188,7 @@ fun hardenGeneratedPluginRegistrant() {
     }
 }
 
-tasks.register("hardenKelivoGeneratedPluginRegistrant") {
+tasks.register("hardenOliviaGeneratedPluginRegistrant") {
     group = "verification"
     description = "校验当前 Flutter Android 插件注册器的静态失败分支"
     doLast {
@@ -204,7 +204,7 @@ androidComponents {
                 if (character.isLowerCase()) character.titlecase() else character.toString()
             }
         val hardenVariantRegistrant =
-            tasks.register("hardenKelivo${variantName}GeneratedPluginRegistrant") {
+            tasks.register("hardenOlivia${variantName}GeneratedPluginRegistrant") {
                 group = "verification"
                 description = "将 $variantName 插件注册失败收敛为静态失败事件"
                 dependsOn("compileFlutterBuild$variantName")

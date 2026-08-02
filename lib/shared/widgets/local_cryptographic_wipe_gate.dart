@@ -34,7 +34,7 @@ final class _LocalCryptographicWipeGateState
         FlutterErrorDetails(
           exception: error,
           stack: stackTrace,
-          library: 'Kelivo local cryptographic wipe',
+          library: 'Olivia local cryptographic wipe',
           context: ErrorDescription('while retrying local cryptographic wipe'),
         ),
       );

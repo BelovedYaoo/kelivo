@@ -139,7 +139,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String cloudSyncDefaultDeviceName(String platform) {
-    return 'Kelivo · $platform';
+    return 'Olivia · $platform';
   }
 
   @override
@@ -369,7 +369,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cloudSyncRevokeCurrentMessage =>
-      'This is the current device. Revoking it permanently deletes every Kelivo account, the local workspace, chats, settings, cached files, and encryption keys from this installation.';
+      'This is the current device. Revoking it permanently deletes every Olivia account, the local workspace, chats, settings, cached files, and encryption keys from this installation.';
 
   @override
   String get cloudSyncCurrentDeviceRemovalUnavailable =>
@@ -380,14 +380,14 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get localDeviceWipeMessage =>
-      'This device has been revoked, but its local data and encryption keys are not fully removed yet. Kelivo remains locked until cleanup succeeds.';
+      'This device has been revoked, but its local data and encryption keys are not fully removed yet. Olivia remains locked until cleanup succeeds.';
 
   @override
   String get localDeviceWipeRetry => 'Retry Removal';
 
   @override
   String get localDeviceWipeRetryFailed =>
-      'Local data and encryption keys are still not fully removed. Retry the cleanup before using Kelivo.';
+      'Local data and encryption keys are still not fully removed. Retry the cleanup before using Olivia.';
 
   @override
   String get cloudSyncCancel => 'Cancel';
@@ -400,7 +400,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cloudSyncLogoutMessage =>
-      'Signing out switches Kelivo back to the local workspace. This account\'s chats, settings, attachments, and sync state will stay on this device.';
+      'Signing out switches Olivia back to the local workspace. This account\'s chats, settings, attachments, and sync state will stay on this device.';
 
   @override
   String get cloudSyncLogoutKeepState => 'Sign Out and Restart';
@@ -410,10 +410,10 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get cloudSyncWorkspaceRestartMessage =>
-      'The workspace selection is saved. Kelivo will not connect the new workspace until it restarts.';
+      'The workspace selection is saved. Olivia will not connect the new workspace until it restarts.';
 
   @override
-  String get cloudSyncWorkspaceRestartButton => 'Restart Kelivo';
+  String get cloudSyncWorkspaceRestartButton => 'Restart Olivia';
 
   @override
   String get cloudSyncErrorTitle => 'Cloud Sync Error';
@@ -1425,7 +1425,7 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get iosBackgroundLimitNoticeBody =>
-      'These options use Apple-supported background time, BackgroundTasks, notifications, and Live Activities. They improve continuity but cannot force iOS to keep Kelivo running forever.';
+      'These options use Apple-supported background time, BackgroundTasks, notifications, and Live Activities. They improve continuity but cannot force iOS to keep Olivia running forever.';
 
   @override
   String get iosBackgroundUnsupportedLiveActivity =>
@@ -1453,7 +1453,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Notifications not allowed';
 
   @override
-  String get iosBackgroundGenerationActiveTitle => 'Kelivo is generating';
+  String get iosBackgroundGenerationActiveTitle => 'Olivia is generating';
 
   @override
   String get iosBackgroundGenerationActiveDetail =>
@@ -1512,7 +1512,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Assistant reply has been generated';
 
   @override
-  String get androidBackgroundNotificationTitle => 'Kelivo is running';
+  String get androidBackgroundNotificationTitle => 'Olivia is running';
 
   @override
   String get androidBackgroundNotificationText =>
@@ -1953,35 +1953,35 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get backupPageRestartContent =>
-      'Import successful. Restart Kelivo to apply it safely.';
+      'Import successful. Restart Olivia to apply it safely.';
 
   @override
   String get restartAppFailedMessage =>
-      'Kelivo could not restart automatically. Fully close it, then open it again.';
+      'Olivia could not restart automatically. Fully close it, then open it again.';
 
   @override
   String get backupRestoreColdRestartTitle => 'One more restart is required';
 
   @override
   String get backupRestoreColdRestartContent =>
-      'Kelivo reached a recoverable restore state. Restart once more so settings can be verified from a fresh process before your data is opened.';
+      'Olivia reached a recoverable restore state. Restart once more so settings can be verified from a fresh process before your data is opened.';
 
   @override
-  String get backupRestoreColdRestartButton => 'Restart Kelivo';
+  String get backupRestoreColdRestartButton => 'Restart Olivia';
 
   @override
   String get backupRestoreRolledBackTitle => 'Restore was rolled back';
 
   @override
   String get backupRestoreRolledBackContent =>
-      'The restore could not be completed. Kelivo verified and kept your previous data.';
+      'The restore could not be completed. Olivia verified and kept your previous data.';
 
   @override
   String get backupRestoreFailureTitle => 'Restore requires attention';
 
   @override
   String get backupRestoreFailureContent =>
-      'Kelivo could not verify a complete old or new data set, so chat data was not opened. Close Kelivo and try again. If this repeats, keep the diagnostic code for support.';
+      'Olivia could not verify a complete old or new data set, so chat data was not opened. Close Olivia and try again. If this repeats, keep the diagnostic code for support.';
 
   @override
   String get backupRestoreLegacyApplePreferencesTitle =>
@@ -1989,18 +1989,18 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get backupRestoreLegacyApplePreferencesContent =>
-      'Kelivo found preferences written by an older Apple storage implementation. To avoid claiming those bytes were securely erased, Kelivo remains locked. Clear Kelivo\'s app data, then reopen it. On iPhone or iPad, uninstall and reinstall Kelivo.';
+      'Olivia found preferences written by an older Apple storage implementation. To avoid claiming those bytes were securely erased, Olivia remains locked. Clear Olivia\'s app data, then reopen it. On iPhone or iPad, uninstall and reinstall Olivia.';
 
   @override
   String get backupRestoreBusinessLeaseUnavailableTitle =>
-      'Kelivo is already running';
+      'Olivia is already running';
 
   @override
   String get backupRestoreBusinessLeaseUnavailableContent =>
-      'Kelivo\'s data is still in use by another app process. Close any other Kelivo window, then restart. Your chat data has not been opened by this process.';
+      'Olivia\'s data is still in use by another app process. Close any other Olivia window, then restart. Your chat data has not been opened by this process.';
 
   @override
-  String get backupRestoreFailureRestartButton => 'Restart Kelivo';
+  String get backupRestoreFailureRestartButton => 'Restart Olivia';
 
   @override
   String get backupRestoreFailureCopyButton => 'Copy diagnostic code';
@@ -4219,7 +4219,7 @@ class AppLocalizationsEn extends AppLocalizations {
       'Thanks for exploring! \n (No egg yet)';
 
   @override
-  String get aboutPageAppName => 'Kelivo';
+  String get aboutPageAppName => 'Olivia';
 
   @override
   String get aboutPageAppDescription => 'Open-source AI Assistant';
@@ -4277,10 +4277,10 @@ class AppLocalizationsEn extends AppLocalizations {
   String get aboutPageJoinQQGroup => 'Join our QQ Group';
 
   @override
-  String get aboutPageQQGroupOne => 'Kelivo Group 1';
+  String get aboutPageQQGroupOne => 'Olivia Group 1';
 
   @override
-  String get aboutPageQQGroupTwo => 'Kelivo Group 2';
+  String get aboutPageQQGroupTwo => 'Olivia Group 2';
 
   @override
   String get aboutPageJoinDiscord => 'Join us on Discord';
@@ -4931,7 +4931,7 @@ class AppLocalizationsEn extends AppLocalizations {
   }
 
   @override
-  String get settingsShare => 'Kelivo - Open Source AI Assistant';
+  String get settingsShare => 'Olivia - Open Source AI Assistant';
 
   @override
   String get searchProviderBingLocalDescription =>

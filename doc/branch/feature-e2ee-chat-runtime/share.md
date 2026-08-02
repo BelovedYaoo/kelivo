@@ -102,3 +102,6 @@
 - 2026-08-02 发布门禁复核：`fix/e2ee-release-gates` 已完成 FFI 漂移、Windows 安全核心测试、Android Workmanager 测试及仅 Windows/Android 发布约束；主代理正在复核并合入，iOS/Linux/macOS 暂仅允许手动验证。
 - 2026-08-02 范围确认：用户决定当前不隐藏业务与流量元数据；公开门槛限定为聊天、配置、供应商密钥、附件和恢复材料的内容 E2EE，#98 仅保留边界说明，不作为本轮阻断。
 - 已合入：恢复专用 OPAQUE onboarding lease 独占本地密钥槽、设备身份与源状态，严格绑定服务端认证代次；关闭时等待在途证明、清零状态副本并释放全部句柄。当前分支定向分析与 CloudSync 协议 177 项回归通过。
+- 已合入：账户恢复 continuation、checkpoint v6、生产 data-rekey runner 与当前设备自撤销强类型传输；下一步合入专用 intent 签名 ABI、可信协调器和 op3 强绑定。
+- 生产硬切：`kelivo.bemylover.top` 已只绑定全新 APAC D1/R2 与五项新 E2EE secrets；旧 D1、旧 R2、备份桶、本地 v2 备份和旧部署凭据均已永久删除。
+- 品牌硬切：Android 标识改为 `top.bemylover.olivia`，iOS/macOS 标识及 Windows/Linux/Web 产品名统一为 Olivia；内部 Dart 包名与 E2EE 协议域保持不变。品牌相关定向分析通过，最终 Android/Windows 构建待并行 Native 编译结束后统一执行。

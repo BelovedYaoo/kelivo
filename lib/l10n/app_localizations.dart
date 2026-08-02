@@ -343,7 +343,7 @@ abstract class AppLocalizations {
   /// No description provided for @cloudSyncDefaultDeviceName.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo · {platform}'**
+  /// **'Olivia · {platform}'**
   String cloudSyncDefaultDeviceName(String platform);
 
   /// No description provided for @cloudSyncSignIn.
@@ -751,7 +751,7 @@ abstract class AppLocalizations {
   /// No description provided for @cloudSyncRevokeCurrentMessage.
   ///
   /// In en, this message translates to:
-  /// **'This is the current device. Revoking it permanently deletes every Kelivo account, the local workspace, chats, settings, cached files, and encryption keys from this installation.'**
+  /// **'This is the current device. Revoking it permanently deletes every Olivia account, the local workspace, chats, settings, cached files, and encryption keys from this installation.'**
   String get cloudSyncRevokeCurrentMessage;
 
   /// No description provided for @cloudSyncCurrentDeviceRemovalUnavailable.
@@ -769,7 +769,7 @@ abstract class AppLocalizations {
   /// No description provided for @localDeviceWipeMessage.
   ///
   /// In en, this message translates to:
-  /// **'This device has been revoked, but its local data and encryption keys are not fully removed yet. Kelivo remains locked until cleanup succeeds.'**
+  /// **'This device has been revoked, but its local data and encryption keys are not fully removed yet. Olivia remains locked until cleanup succeeds.'**
   String get localDeviceWipeMessage;
 
   /// No description provided for @localDeviceWipeRetry.
@@ -781,7 +781,7 @@ abstract class AppLocalizations {
   /// No description provided for @localDeviceWipeRetryFailed.
   ///
   /// In en, this message translates to:
-  /// **'Local data and encryption keys are still not fully removed. Retry the cleanup before using Kelivo.'**
+  /// **'Local data and encryption keys are still not fully removed. Retry the cleanup before using Olivia.'**
   String get localDeviceWipeRetryFailed;
 
   /// No description provided for @cloudSyncCancel.
@@ -805,7 +805,7 @@ abstract class AppLocalizations {
   /// No description provided for @cloudSyncLogoutMessage.
   ///
   /// In en, this message translates to:
-  /// **'Signing out switches Kelivo back to the local workspace. This account\'s chats, settings, attachments, and sync state will stay on this device.'**
+  /// **'Signing out switches Olivia back to the local workspace. This account\'s chats, settings, attachments, and sync state will stay on this device.'**
   String get cloudSyncLogoutMessage;
 
   /// No description provided for @cloudSyncLogoutKeepState.
@@ -823,13 +823,13 @@ abstract class AppLocalizations {
   /// No description provided for @cloudSyncWorkspaceRestartMessage.
   ///
   /// In en, this message translates to:
-  /// **'The workspace selection is saved. Kelivo will not connect the new workspace until it restarts.'**
+  /// **'The workspace selection is saved. Olivia will not connect the new workspace until it restarts.'**
   String get cloudSyncWorkspaceRestartMessage;
 
   /// No description provided for @cloudSyncWorkspaceRestartButton.
   ///
   /// In en, this message translates to:
-  /// **'Restart Kelivo'**
+  /// **'Restart Olivia'**
   String get cloudSyncWorkspaceRestartButton;
 
   /// No description provided for @cloudSyncErrorTitle.
@@ -2690,7 +2690,7 @@ abstract class AppLocalizations {
   /// No description provided for @iosBackgroundLimitNoticeBody.
   ///
   /// In en, this message translates to:
-  /// **'These options use Apple-supported background time, BackgroundTasks, notifications, and Live Activities. They improve continuity but cannot force iOS to keep Kelivo running forever.'**
+  /// **'These options use Apple-supported background time, BackgroundTasks, notifications, and Live Activities. They improve continuity but cannot force iOS to keep Olivia running forever.'**
   String get iosBackgroundLimitNoticeBody;
 
   /// No description provided for @iosBackgroundUnsupportedLiveActivity.
@@ -2738,7 +2738,7 @@ abstract class AppLocalizations {
   /// No description provided for @iosBackgroundGenerationActiveTitle.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo is generating'**
+  /// **'Olivia is generating'**
   String get iosBackgroundGenerationActiveTitle;
 
   /// No description provided for @iosBackgroundGenerationActiveDetail.
@@ -2840,7 +2840,7 @@ abstract class AppLocalizations {
   /// No description provided for @androidBackgroundNotificationTitle.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo is running'**
+  /// **'Olivia is running'**
   String get androidBackgroundNotificationTitle;
 
   /// No description provided for @androidBackgroundNotificationText.
@@ -3686,13 +3686,13 @@ abstract class AppLocalizations {
   /// No description provided for @backupPageRestartContent.
   ///
   /// In en, this message translates to:
-  /// **'Import successful. Restart Kelivo to apply it safely.'**
+  /// **'Import successful. Restart Olivia to apply it safely.'**
   String get backupPageRestartContent;
 
   /// No description provided for @restartAppFailedMessage.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo could not restart automatically. Fully close it, then open it again.'**
+  /// **'Olivia could not restart automatically. Fully close it, then open it again.'**
   String get restartAppFailedMessage;
 
   /// No description provided for @backupRestoreColdRestartTitle.
@@ -3704,13 +3704,13 @@ abstract class AppLocalizations {
   /// No description provided for @backupRestoreColdRestartContent.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo reached a recoverable restore state. Restart once more so settings can be verified from a fresh process before your data is opened.'**
+  /// **'Olivia reached a recoverable restore state. Restart once more so settings can be verified from a fresh process before your data is opened.'**
   String get backupRestoreColdRestartContent;
 
   /// No description provided for @backupRestoreColdRestartButton.
   ///
   /// In en, this message translates to:
-  /// **'Restart Kelivo'**
+  /// **'Restart Olivia'**
   String get backupRestoreColdRestartButton;
 
   /// No description provided for @backupRestoreRolledBackTitle.
@@ -3722,7 +3722,7 @@ abstract class AppLocalizations {
   /// No description provided for @backupRestoreRolledBackContent.
   ///
   /// In en, this message translates to:
-  /// **'The restore could not be completed. Kelivo verified and kept your previous data.'**
+  /// **'The restore could not be completed. Olivia verified and kept your previous data.'**
   String get backupRestoreRolledBackContent;
 
   /// No description provided for @backupRestoreFailureTitle.
@@ -3734,7 +3734,7 @@ abstract class AppLocalizations {
   /// No description provided for @backupRestoreFailureContent.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo could not verify a complete old or new data set, so chat data was not opened. Close Kelivo and try again. If this repeats, keep the diagnostic code for support.'**
+  /// **'Olivia could not verify a complete old or new data set, so chat data was not opened. Close Olivia and try again. If this repeats, keep the diagnostic code for support.'**
   String get backupRestoreFailureContent;
 
   /// No description provided for @backupRestoreLegacyApplePreferencesTitle.
@@ -3746,25 +3746,25 @@ abstract class AppLocalizations {
   /// No description provided for @backupRestoreLegacyApplePreferencesContent.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo found preferences written by an older Apple storage implementation. To avoid claiming those bytes were securely erased, Kelivo remains locked. Clear Kelivo\'s app data, then reopen it. On iPhone or iPad, uninstall and reinstall Kelivo.'**
+  /// **'Olivia found preferences written by an older Apple storage implementation. To avoid claiming those bytes were securely erased, Olivia remains locked. Clear Olivia\'s app data, then reopen it. On iPhone or iPad, uninstall and reinstall Olivia.'**
   String get backupRestoreLegacyApplePreferencesContent;
 
   /// No description provided for @backupRestoreBusinessLeaseUnavailableTitle.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo is already running'**
+  /// **'Olivia is already running'**
   String get backupRestoreBusinessLeaseUnavailableTitle;
 
   /// No description provided for @backupRestoreBusinessLeaseUnavailableContent.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo\'s data is still in use by another app process. Close any other Kelivo window, then restart. Your chat data has not been opened by this process.'**
+  /// **'Olivia\'s data is still in use by another app process. Close any other Olivia window, then restart. Your chat data has not been opened by this process.'**
   String get backupRestoreBusinessLeaseUnavailableContent;
 
   /// No description provided for @backupRestoreFailureRestartButton.
   ///
   /// In en, this message translates to:
-  /// **'Restart Kelivo'**
+  /// **'Restart Olivia'**
   String get backupRestoreFailureRestartButton;
 
   /// No description provided for @backupRestoreFailureCopyButton.
@@ -7823,7 +7823,7 @@ abstract class AppLocalizations {
   /// No description provided for @aboutPageAppName.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo'**
+  /// **'Olivia'**
   String get aboutPageAppName;
 
   /// No description provided for @aboutPageAppDescription.
@@ -7931,13 +7931,13 @@ abstract class AppLocalizations {
   /// No description provided for @aboutPageQQGroupOne.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo Group 1'**
+  /// **'Olivia Group 1'**
   String get aboutPageQQGroupOne;
 
   /// No description provided for @aboutPageQQGroupTwo.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo Group 2'**
+  /// **'Olivia Group 2'**
   String get aboutPageQQGroupTwo;
 
   /// No description provided for @aboutPageJoinDiscord.
@@ -9089,7 +9089,7 @@ abstract class AppLocalizations {
   /// No description provided for @settingsShare.
   ///
   /// In en, this message translates to:
-  /// **'Kelivo - Open Source AI Assistant'**
+  /// **'Olivia - Open Source AI Assistant'**
   String get settingsShare;
 
   /// No description provided for @searchProviderBingLocalDescription.

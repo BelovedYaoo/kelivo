@@ -35,7 +35,7 @@ pub(super) const CAPABILITY_FLAGS: u64 = KEY_SLOTS_CAPABILITY
     | SQLCIPHER_KEY_APPLICATION_CAPABILITY
     | SQLCIPHER_DATABASE_ATTACH_CAPABILITY;
 
-const SLOT_SERVICE: &str = "psyche.kelivo.secure-core.slot.v1";
+const SLOT_SERVICE: &str = "top.bemylover.olivia.secure-core.slot.v1";
 
 pub(super) fn create_slot(slot_id: &[u8; KEY_SLOT_ID_SIZE]) -> Result<LocalKey, KelivoStatus> {
     let mut options = slot_options(slot_id);

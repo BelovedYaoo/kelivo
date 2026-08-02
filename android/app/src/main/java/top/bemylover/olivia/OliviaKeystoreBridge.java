@@ -1,4 +1,4 @@
-package com.psyche.kelivo;
+package top.bemylover.olivia;
 
 import android.content.Context;
 import android.security.keystore.KeyGenParameterSpec;
@@ -19,9 +19,9 @@ import javax.crypto.SecretKey;
 import javax.crypto.spec.GCMParameterSpec;
 
 @Keep
-public final class KelivoKeystoreBridge {
+public final class OliviaKeystoreBridge {
     private static final String KEYSTORE_PROVIDER = "AndroidKeyStore";
-    private static final String WRAPPING_KEY_ALIAS = "kelivo.secure-core.v1.wrap";
+    private static final String WRAPPING_KEY_ALIAS = "olivia.secure-core.v1.wrap";
     private static final String CIPHER_TRANSFORMATION = "AES/GCM/NoPadding";
     private static final int LOCAL_KEY_SIZE = 32;
     private static final int GCM_IV_SIZE = 12;
@@ -31,7 +31,7 @@ public final class KelivoKeystoreBridge {
     private static final Object KEY_LOCK = new Object();
     private static volatile Context applicationContext;
 
-    private KelivoKeystoreBridge() {
+    private OliviaKeystoreBridge() {
     }
 
     static void initialize(Context context) {
@@ -56,7 +56,7 @@ public final class KelivoKeystoreBridge {
         // 本地包装密文没有跨设备恢复价值，恢复后缺少 Keystore 根密钥只会形成死数据。
         return new File(
                 new File(canonicalDataDirectory, noBackupDirectory.getName()),
-                "Kelivo/secure-core/v1/slots"
+                "Olivia/secure-core/v1/slots"
         ).getAbsolutePath();
     }
 

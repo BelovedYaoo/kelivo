@@ -8,7 +8,8 @@ import 'package:workmanager/workmanager.dart';
 import 'e2ee_background_sync_runner.dart';
 import 'e2ee_sync_execution_budget.dart';
 
-const e2eeMobileBackgroundTaskUniqueName = 'psyche.kelivo.e2ee-sync.periodic';
+const e2eeMobileBackgroundTaskUniqueName =
+    'top.bemylover.olivia.e2ee-sync.periodic';
 const e2eeMobileBackgroundTaskName = 'e2ee-background-sync';
 
 const _mobileBackgroundSyncFrequency = Duration(minutes: 15);

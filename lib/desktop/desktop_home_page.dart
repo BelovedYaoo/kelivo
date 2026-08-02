@@ -310,7 +310,7 @@ class _TitleBarLeading extends StatelessWidget {
       children: [
         // App icon
         Image.asset(
-          'assets/icons/kelivo.png',
+          'assets/icons/olivia.png',
           width: 16,
           height: 16,
           filterQuality: FilterQuality.medium,

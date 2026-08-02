@@ -7,7 +7,7 @@ import 'package:path/path.dart' as p;
 
 import '../integration_test/support/restore_process_control.dart';
 
-const _bundleIdentifier = 'com.psyche.kelivo.restoreharness';
+const _bundleIdentifier = 'top.bemylover.olivia.restoreharness';
 const _integrationTestPath =
     'integration_test/restore_process_harness_test.dart';
 const _hostLockFileName = '.kelivo_restore_process_harness.lock';
@@ -677,10 +677,10 @@ final class _RestoreProcessHarnessHost {
             'Build',
             'Products',
             'Debug-RestoreHarness',
-            'kelivo.app',
+            'Olivia.app',
             'Contents',
             'MacOS',
-            'kelivo',
+            'Olivia',
           ),
         ),
       );

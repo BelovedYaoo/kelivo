@@ -1,4 +1,4 @@
-package com.psyche.kelivo
+package top.bemylover.olivia
 
 import android.app.Activity
 import android.content.ActivityNotFoundException

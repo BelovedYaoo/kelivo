@@ -180,7 +180,7 @@ void _reportRestartFailure(Object error, StackTrace stackTrace) {
     FlutterErrorDetails(
       exception: error,
       stack: stackTrace,
-      library: 'Kelivo restart',
+      library: 'Olivia restart',
       context: ErrorDescription('while requesting a process restart'),
     ),
   );

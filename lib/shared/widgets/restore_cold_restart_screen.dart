@@ -32,7 +32,7 @@ class _RestoreColdRestartScreenState extends State<RestoreColdRestartScreen> {
         FlutterErrorDetails(
           exception: error,
           stack: stackTrace,
-          library: 'Kelivo restore',
+          library: 'Olivia restore',
           context: ErrorDescription('while restarting for restore readback'),
         ),
       );
