@@ -15,6 +15,8 @@ part 'commit_device_rotation_data.g.dart';
 /// * [result]
 /// * [operationId]
 /// * [revokedDeviceId]
+/// * [selfRevocationMutationId]
+/// * [selfRevocationIntentDigest]
 /// * [fromGeneration]
 /// * [generation]
 /// * [keyEpoch]
@@ -34,6 +36,12 @@ abstract class CommitDeviceRotationData
 
   @BuiltValueField(wireName: r'revokedDeviceId')
   String get revokedDeviceId;
+
+  @BuiltValueField(wireName: r'selfRevocationMutationId')
+  String? get selfRevocationMutationId;
+
+  @BuiltValueField(wireName: r'selfRevocationIntentDigest')
+  String? get selfRevocationIntentDigest;
 
   @BuiltValueField(wireName: r'fromGeneration')
   int get fromGeneration;
@@ -99,6 +107,20 @@ class _$CommitDeviceRotationDataSerializer
       object.revokedDeviceId,
       specifiedType: const FullType(String),
     );
+    if (object.selfRevocationMutationId != null) {
+      yield r'selfRevocationMutationId';
+      yield serializers.serialize(
+        object.selfRevocationMutationId,
+        specifiedType: const FullType(String),
+      );
+    }
+    if (object.selfRevocationIntentDigest != null) {
+      yield r'selfRevocationIntentDigest';
+      yield serializers.serialize(
+        object.selfRevocationIntentDigest,
+        specifiedType: const FullType(String),
+      );
+    }
     yield r'fromGeneration';
     yield serializers.serialize(
       object.fromGeneration,
@@ -184,6 +206,24 @@ class _$CommitDeviceRotationDataSerializer
                   )
                   as String;
           result.revokedDeviceId = valueDes;
+          break;
+        case r'selfRevocationMutationId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.selfRevocationMutationId = valueDes;
+          break;
+        case r'selfRevocationIntentDigest':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.selfRevocationIntentDigest = valueDes;
           break;
         case r'fromGeneration':
           final valueDes =

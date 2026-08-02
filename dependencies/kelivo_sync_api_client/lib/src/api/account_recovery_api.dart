@@ -10,10 +10,12 @@ import 'package:dio/dio.dart';
 
 import 'package:kelivo_sync_api_client/src/model/account_recovery_attempt_start_request.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_history_list_request.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_challenge_request.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_commit_request.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_resume_commit_request.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_account_recovery_replacement_response.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_account_recovery_resume_response.dart';
+import 'package:kelivo_sync_api_client/src/model/create_account_recovery_replacement_challenge_response.dart';
 import 'package:kelivo_sync_api_client/src/model/error_response.dart';
 import 'package:kelivo_sync_api_client/src/model/get_account_recovery_state_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_account_recovery_history_response.dart';
@@ -215,6 +217,106 @@ class AccountRecoveryApi {
     }
 
     return Response<CommitAccountRecoveryResumeResponse>(
+      data: _responseData,
+      headers: _response.headers,
+      isRedirect: _response.isRedirect,
+      requestOptions: _response.requestOptions,
+      redirects: _response.redirects,
+      statusCode: _response.statusCode,
+      statusMessage: _response.statusMessage,
+      extra: _response.extra,
+    );
+  }
+
+  /// 创建独立的 recover-replace 一次性挑战
+  ///
+  ///
+  /// Parameters:
+  /// * [accountRecoveryReplacementChallengeRequest]
+  /// * [cancelToken] - A [CancelToken] that can be used to cancel the operation
+  /// * [headers] - Can be used to add additional headers to the request
+  /// * [extras] - Can be used to add flags to the request
+  /// * [validateStatus] - A [ValidateStatus] callback that can be used to determine request success based on the HTTP status of the response
+  /// * [onSendProgress] - A [ProgressCallback] that can be used to get the send progress
+  /// * [onReceiveProgress] - A [ProgressCallback] that can be used to get the receive progress
+  ///
+  /// Returns a [Future] containing a [Response] with a [CreateAccountRecoveryReplacementChallengeResponse] as data
+  /// Throws [DioException] if API call or serialization fails
+  Future<Response<CreateAccountRecoveryReplacementChallengeResponse>>
+  createAccountRecoveryReplacementChallenge({
+    required AccountRecoveryReplacementChallengeRequest
+    accountRecoveryReplacementChallengeRequest,
+    CancelToken? cancelToken,
+    Map<String, dynamic>? headers,
+    Map<String, dynamic>? extra,
+    ValidateStatus? validateStatus,
+    ProgressCallback? onSendProgress,
+    ProgressCallback? onReceiveProgress,
+  }) async {
+    final _path = r'/api/auth/account-recovery/replacement-challenge/create';
+    final _options = Options(
+      method: r'POST',
+      headers: <String, dynamic>{...?headers},
+      extra: <String, dynamic>{
+        'secure': <Map<String, String>>[
+          {'type': 'http', 'scheme': 'bearer', 'name': 'BearerAuth'},
+        ],
+        ...?extra,
+      },
+      contentType: 'application/json',
+      validateStatus: validateStatus,
+    );
+
+    dynamic _bodyData;
+
+    try {
+      const _type = FullType(AccountRecoveryReplacementChallengeRequest);
+      _bodyData = _serializers.serialize(
+        accountRecoveryReplacementChallengeRequest,
+        specifiedType: _type,
+      );
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _options.compose(_dio.options, _path),
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    final _response = await _dio.request<Object>(
+      _path,
+      data: _bodyData,
+      options: _options,
+      cancelToken: cancelToken,
+      onSendProgress: onSendProgress,
+      onReceiveProgress: onReceiveProgress,
+    );
+
+    CreateAccountRecoveryReplacementChallengeResponse? _responseData;
+
+    try {
+      final rawResponse = _response.data;
+      _responseData = rawResponse == null
+          ? null
+          : _serializers.deserialize(
+                  rawResponse,
+                  specifiedType: const FullType(
+                    CreateAccountRecoveryReplacementChallengeResponse,
+                  ),
+                )
+                as CreateAccountRecoveryReplacementChallengeResponse;
+    } catch (error, stackTrace) {
+      throw DioException(
+        requestOptions: _response.requestOptions,
+        response: _response,
+        type: DioExceptionType.unknown,
+        error: error,
+        stackTrace: stackTrace,
+      );
+    }
+
+    return Response<CreateAccountRecoveryReplacementChallengeResponse>(
       data: _responseData,
       headers: _response.headers,
       isRedirect: _response.isRedirect,

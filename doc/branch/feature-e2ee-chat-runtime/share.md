@@ -95,3 +95,4 @@
 - 非阻塞清理：仓库基线已跟踪 4 个 Android/iOS `build/**` 产物，Issue #93 负责从索引删除并补齐忽略规则；当前 E2EE 提交未新增或修改这些文件。
 - 2026-08-02 继续集成：按 API 自撤销/二阶段恢复 -> App 成员清单与恢复介质 v2/换钥执行器 -> Native 恢复 execution -> 持久明文退役的顺序原子合入；最终 OpenAPI typed adapter、固定向量和 ABI 门禁全部通过前不部署、不访问远端 D1/R2，也不运行可能访问默认安全槽的旧集成测试。
 - 已集成：设备撤销与 data-rekey、二阶段账户恢复 ABI20、恢复介质 v2 及持久明文退役已在同一发布批次完成合并；Native/协议严格 Clippy、Native 格式、Android Workmanager 单测、MCP VM 测试、根项目定向分析与相关 35/130 项回归通过。协议格式仅剩既有 #97 的模块导出顺序，下一步重新生成 OpenAPI 客户端并收敛最终 App/API 契约门禁。
+- 已完成：从 `kelivo-api@b025cb0` 的 OpenAPI SHA-256 `907F0B…E2385F7B` 重建 Dart 客户端；App replacement 提交以强类型联合支持首次 challenge 与独立第二 challenge 授权，checkpoint 硬切 v5 持久化对应材料。注册恢复夹具同步记录域 v2/帧 v3/676 字节恢复介质，聊天 payload 夹具同步 v3 双代次附件字段；CloudSync 211 项、授权与固定向量 39 项、checkpoint 1 项及根分析通过。

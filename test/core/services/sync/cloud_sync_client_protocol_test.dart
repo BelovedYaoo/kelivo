@@ -28,6 +28,7 @@ import 'package:Kelivo/core/services/sync/e2ee_attachment_file_store.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_attachment_upload_coordinator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
+import 'package:Kelivo/core/services/sync/e2ee_first_device_registration_commit_coordinator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_execution_budget.dart';
 import 'package:Kelivo/core/services/sync/e2ee_sync_payload_codec.dart';
@@ -120,7 +121,9 @@ Map<String, Object?> _validMessageAttachment(int index) {
   return <String, Object?>{
     'attachmentId': '80000000-0000-4000-8000-$suffix',
     'uploadId': '90000000-0000-4000-8000-$suffix',
-    'keyEpoch': 7,
+    'chunkKeyEpoch': 7,
+    'manifestKeyEpoch': 7,
+    'manifestRevision': 1,
     'kind': index.isEven ? 'image' : 'file',
     'order': index,
   };
@@ -1377,14 +1380,14 @@ void main() {
       if (await root.exists()) await root.delete(recursive: true);
     });
 
-    final firstPassword = Uint8List.fromList(utf8.encode('password'));
-    final firstResult = firstAuthenticator.registerFirstDevice(
+    var recoveryMediaExportCount = 0;
+    final firstResult = firstAuthenticator.resumeFirstDeviceRegistration(
       loginName: loginName,
-      displayName: 'Recovery User',
-      password: firstPassword,
-      deviceName: 'Android 手机',
-      platform: CloudSyncPlatform.android,
-      clientVersion: '1.2.3',
+      encryptedMediaExporter: (media) async {
+        recoveryMediaExportCount++;
+        expect(media, hasLength(e2eeEncryptedRecoveryMediaBytes));
+        return true;
+      },
     );
     expect(await requests.moveNext(), isTrue);
     final firstRequest = requests.current;
@@ -1396,7 +1399,7 @@ void main() {
     final firstSocket = await firstRequest.response.detachSocket();
     firstSocket.destroy();
     await expectLater(firstResult, throwsA(isA<CloudSyncException>()));
-    expect(firstPassword, everyElement(0));
+    expect(recoveryMediaExportCount, 1);
     expect(
       await store.readPendingRegistrationEnvelope(
         normalizedBaseUrl: baseUrl,
@@ -1433,15 +1436,12 @@ void main() {
       secureCore: core,
     );
     addTearDown(() => secondClient.close(force: true));
-    final secondPassword = Uint8List.fromList(utf8.encode('password'));
-    final secondResultFuture = secondAuthenticator.registerFirstDevice(
-      loginName: loginName,
-      displayName: 'Ignored On Recovery',
-      password: secondPassword,
-      deviceName: 'Android 手机',
-      platform: CloudSyncPlatform.android,
-      clientVersion: '1.2.3',
-    );
+    final secondResultFuture = secondAuthenticator
+        .resumeFirstDeviceRegistration(
+          loginName: loginName,
+          encryptedMediaExporter: (_) async =>
+              throw StateError('已确认导出的恢复介质不应重复导出'),
+        );
     expect(await requests.moveNext(), isTrue);
     final secondRequest = requests.current;
     final secondBody = copyCloudSyncJsonMap(
@@ -1464,7 +1464,7 @@ void main() {
     expect(secondResult.user.id, _userId);
     expect(secondResult.device.id, _deviceId1);
     expect(secondResult.deviceKeyVersion, 1);
-    expect(secondPassword, everyElement(0));
+    expect(recoveryMediaExportCount, 1);
     expect(
       await store.readPendingRegistrationEnvelope(
         normalizedBaseUrl: baseUrl,
@@ -1538,14 +1538,12 @@ void main() {
         if (await root.exists()) await root.delete(recursive: true);
       });
 
-      final password = Uint8List.fromList(utf8.encode('password'));
-      final result = authenticator.registerFirstDevice(
+      final result = authenticator.resumeFirstDeviceRegistration(
         loginName: loginName,
-        displayName: 'Recovery User',
-        password: password,
-        deviceName: 'Android 手机',
-        platform: CloudSyncPlatform.android,
-        clientVersion: '1.2.3',
+        encryptedMediaExporter: (media) async {
+          expect(media, hasLength(e2eeEncryptedRecoveryMediaBytes));
+          return true;
+        },
       );
       final request = await requestFuture;
       await utf8.decoder.bind(request).join();
@@ -1575,7 +1573,6 @@ void main() {
           ),
         ),
       );
-      expect(password, everyElement(0));
       expect(
         await store.readPendingRegistrationEnvelope(
           normalizedBaseUrl: baseUrl,
@@ -2453,6 +2450,16 @@ void main() {
       105,
     );
     final replacementCapsule = _filledBytes(cloudSyncRecoveryCapsuleBytes, 106);
+    final replacementAuthorizationDigest = _filledBytes(32, 108);
+    final replacementChallengeRequestDigest = _filledBytes(32, 109);
+    final replacementChallengeNonceProof = _filledBytes(
+      e2eeAccountRecoveryNonceProofBytes,
+      110,
+    );
+    final replacementChallengeTrustSignature = _filledBytes(
+      e2eeAccountRecoveryTrustSignatureBytes,
+      111,
+    );
     final recoveryToken = CloudSyncAccountRecoveryToken.parse(
       'kelivo_recovery_${_encodedBytes(32, 107)}',
     );
@@ -2500,10 +2507,28 @@ void main() {
           accountKeyEnvelope: replacementEnvelope,
         ),
       ),
+      authorization: E2eeAccountRecoveryReplacementAuthorization.initial(
+        challengeRequestDigest: replacementAuthorizationDigest,
+      ),
       nextRecoveryCapsuleVersion: 3,
       nextRecoveryCapsule: replacementCapsule,
       completionSessionId: _deviceId5,
       completionSessionToken: _otherFullToken,
+    );
+    final replacementWithChallenge = E2eeAccountRecoveryReplacementCommit(
+      attemptId: _attemptId2,
+      membership: replacement.membership,
+      authorization:
+          E2eeAccountRecoveryReplacementAuthorization.replacementChallenge(
+            challengeId: _mutationId7,
+            challengeRequestDigest: replacementChallengeRequestDigest,
+            nonceProof: replacementChallengeNonceProof,
+            trustSignature: replacementChallengeTrustSignature,
+          ),
+      nextRecoveryCapsuleVersion: replacement.nextRecoveryCapsuleVersion,
+      nextRecoveryCapsule: replacement.nextRecoveryCapsule,
+      completionSessionId: replacement.completionSessionId,
+      completionSessionToken: replacement.completionSessionToken,
     );
     final requests = <(String, String, String?, CloudSyncJsonMap)>[];
     final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
@@ -2559,6 +2584,10 @@ void main() {
       recoveryToken: recoveryToken,
       request: replacement,
     );
+    final challengedReplacementReceipt = await client.commitRecoveryReplacement(
+      recoveryToken: recoveryToken,
+      request: replacementWithChallenge,
+    );
 
     expect(resumeReceipt.result, E2eeAccountRecoveryCommitResult.committed);
     expect(resumeReceipt.kind, E2eeAccountRecoveryCommitKind.resume);
@@ -2573,13 +2602,19 @@ void main() {
       E2eeAccountRecoveryNextAction.finishSecondDataRekey,
     );
     expect(
+      challengedReplacementReceipt.nextAction,
+      E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+    );
+    expect(
       requests.map((request) => (request.$1, request.$2)),
       <(String, String)>[
         ('POST', '/api/auth/account-recovery/resume/commit'),
         ('POST', '/api/auth/account-recovery/replacement/commit'),
+        ('POST', '/api/auth/account-recovery/replacement/commit'),
       ],
     );
     expect(requests.map((request) => request.$3), <String?>[
+      'Bearer ${recoveryToken.value}',
       'Bearer ${recoveryToken.value}',
       'Bearer ${recoveryToken.value}',
     ]);
@@ -2602,7 +2637,7 @@ void main() {
       },
       'rekeyOperationId': _mutationId5,
     });
-    expect(requests[1].$4, <String, Object?>{
+    final expectedInitialReplacementRequest = <String, Object?>{
       'protocolVersion': e2eeAccountRecoveryProtocolVersion,
       'expectedGeneration': 7,
       'expectedKeyEpoch': 8,
@@ -2619,10 +2654,27 @@ void main() {
         'keyEpoch': 9,
         'accountKeyEnvelope': _encodedData(replacementEnvelope),
       },
+      'authorization': <String, Object?>{
+        'kind': 'initial',
+        'challengeRequestDigest': _encodedData(replacementAuthorizationDigest),
+      },
       'nextRecoveryCapsuleVersion': 3,
       'nextRecoveryCapsule': _encodedData(replacementCapsule),
       'completionSessionId': _deviceId5,
       'completionSessionToken': _otherFullTokenValue,
+    };
+    expect(requests[1].$4, expectedInitialReplacementRequest);
+    expect(requests[2].$4, <String, Object?>{
+      ...expectedInitialReplacementRequest,
+      'authorization': <String, Object?>{
+        'kind': 'replacement-challenge',
+        'challengeId': _mutationId7,
+        'challengeRequestDigest': _encodedData(
+          replacementChallengeRequestDigest,
+        ),
+        'nonceProof': _encodedData(replacementChallengeNonceProof),
+        'trustSignature': _encodedData(replacementChallengeTrustSignature),
+      },
     });
   });
 
@@ -2695,6 +2747,9 @@ void main() {
       () => E2eeAccountRecoveryReplacementCommit(
         attemptId: _attemptId1,
         membership: wrongReplacementEpochMembership,
+        authorization: E2eeAccountRecoveryReplacementAuthorization.initial(
+          challengeRequestDigest: _filledBytes(32, 114),
+        ),
         nextRecoveryCapsuleVersion: 2,
         nextRecoveryCapsule: _filledBytes(cloudSyncRecoveryCapsuleBytes, 113),
         completionSessionId: _deviceId5,
@@ -6941,7 +6996,7 @@ void main() {
     expect(firstBytes, orderedEquals(secondBytes));
     expect(
       utf8.decode(firstBytes),
-      '{"payload":{"events":[{"a":"value","z":[3,null,true,1.5,{"a":"一","b":"二"}]}],"messageId":"message-1"},"recordType":"tool-event","version":2}',
+      '{"payload":{"events":[{"a":"value","z":[3,null,true,1.5,{"a":"一","b":"二"}]}],"messageId":"message-1"},"recordType":"tool-event","version":3}',
     );
     final decoded = E2eeSyncPayloadCodec.decode(
       entityKey: entityKey,
@@ -13218,6 +13273,10 @@ _seedPendingRegistration({
   final deviceProof = _filledBytes(cloudSyncDeviceProofBytes, 0x53);
   final recoveryPublicKey = _filledBytes(cloudSyncRecoveryPublicKeyBytes, 0x54);
   final recoveryCapsule = _filledBytes(cloudSyncRecoveryCapsuleBytes, 0x55);
+  final encryptedRecoveryMedia = _filledBytes(
+    e2eeEncryptedRecoveryMediaBytes,
+    0x56,
+  );
   final key = await core.createSlot(_authenticatorSlotId(baseUrl, loginName));
   final identity = await core.generateDeviceIdentity();
   final deviceId = _rawUuid(_deviceId1);
@@ -13309,13 +13368,15 @@ _seedPendingRegistration({
       registrationManifestDigestOffset + cloudSyncMembershipManifestDigestBytes;
   const registrationRecoveryCapsuleOffset =
       registrationRecoveryPublicKeyOffset + cloudSyncRecoveryPublicKeyBytes;
-  const registrationFrameLength =
+  const registrationRecoveryMediaOffset =
       registrationRecoveryCapsuleOffset + cloudSyncRecoveryCapsuleBytes;
+  const registrationFrameLength =
+      registrationRecoveryMediaOffset + e2eeEncryptedRecoveryMediaBytes;
   final frame = Uint8List(registrationFrameLength);
-  final magic = ascii.encode('KELVRT02');
+  final magic = ascii.encode('KELVRT03');
   frame.setRange(0, magic.length, magic);
   final fields = ByteData.sublistView(frame);
-  fields.setUint16(8, 2, Endian.big);
+  fields.setUint16(8, 3, Endian.big);
   fields.setUint16(10, 0, Endian.big);
   fields.setUint32(12, 1, Endian.big);
   fields.setUint32(16, 1, Endian.big);
@@ -13365,14 +13426,19 @@ _seedPendingRegistration({
   );
   frame.setRange(
     registrationRecoveryCapsuleOffset,
-    registrationFrameLength,
+    registrationRecoveryMediaOffset,
     genesis.recoveryCapsule,
+  );
+  frame.setRange(
+    registrationRecoveryMediaOffset,
+    registrationFrameLength,
+    encryptedRecoveryMedia,
   );
   final recordId = Uint8List.fromList(
     sha256
         .convert(
           utf8.encode(
-            'kelivo.e2ee.registration-transaction.record.v1\u0000'
+            'kelivo.e2ee.registration-transaction.record.v2\u0000'
             '$baseUrl\u0000$loginName',
           ),
         )
@@ -13381,7 +13447,7 @@ _seedPendingRegistration({
   );
   final associatedData = Uint8List.fromList(
     utf8.encode(
-      'kelivo.e2ee.registration-transaction.aad.v1\u0000'
+      'kelivo.e2ee.registration-transaction.aad.v2\u0000'
       '$baseUrl\u0000$loginName',
     ),
   );
@@ -13412,6 +13478,7 @@ _seedPendingRegistration({
     deviceProof.fillRange(0, deviceProof.length, 0);
     recoveryPublicKey.fillRange(0, recoveryPublicKey.length, 0);
     recoveryCapsule.fillRange(0, recoveryCapsule.length, 0);
+    encryptedRecoveryMedia.fillRange(0, encryptedRecoveryMedia.length, 0);
     recordId.fillRange(0, recordId.length, 0);
     associatedData.fillRange(0, associatedData.length, 0);
     await core.closeAccountRootKey(ark);

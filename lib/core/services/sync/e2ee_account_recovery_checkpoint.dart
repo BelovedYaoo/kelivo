@@ -8,16 +8,16 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_recovery.dart';
 
-const _checkpointVersion = 4;
+const _checkpointVersion = 5;
 const _checkpointRecordEpoch = 1;
 const _checkpointFixedLength = 819;
 const _checkpointTokenLength = 59;
 const _checkpointFullSessionTokenLength = 50;
 const _checkpointCapsuleMaximumLength = 4096;
-const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v4';
+const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v5';
 const _checkpointAssociatedDataDomain =
-    'kelivo.account-recovery.checkpoint.aad.v4';
-final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC4'));
+    'kelivo.account-recovery.checkpoint.aad.v5';
+final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC5'));
 final _canonicalUuidV4Pattern = RegExp(
   r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
 );
@@ -345,8 +345,12 @@ int _preparedCommitFrameLength(E2eeAccountRecoveryPreparedCommit? commit) {
       4 + 4 + 32 + 16 + 4 + 32 + 4 + 4 + cloudSyncAccountKeyEnvelopeBytes;
   final variantLength = switch (commit) {
     E2eeAccountRecoveryResumeCommit() => 16,
-    E2eeAccountRecoveryReplacementCommit(:final nextRecoveryCapsule) =>
-      4 +
+    E2eeAccountRecoveryReplacementCommit(
+      :final authorization,
+      :final nextRecoveryCapsule,
+    ) =>
+      _replacementAuthorizationFrameLength(authorization) +
+          4 +
           4 +
           nextRecoveryCapsule.length +
           16 +
@@ -393,11 +397,18 @@ int _writePreparedCommit(
     case E2eeAccountRecoveryResumeCommit(:final rekeyOperationId):
       return _writeBytes(frame, offset, _uuidBytes(rekeyOperationId));
     case E2eeAccountRecoveryReplacementCommit(
+      :final authorization,
       :final nextRecoveryCapsuleVersion,
       :final nextRecoveryCapsule,
       :final completionSessionId,
       :final completionSessionToken,
     ):
+      offset = _writeReplacementAuthorization(
+        frame,
+        view,
+        offset,
+        authorization,
+      );
       offset = _writeUint32(view, offset, nextRecoveryCapsuleVersion);
       offset = _writeUint32(view, offset, nextRecoveryCapsule.length);
       offset = _writeBytes(frame, offset, nextRecoveryCapsule);
@@ -413,6 +424,98 @@ int _writePreparedCommit(
       } finally {
         _clear(tokenBytes);
       }
+  }
+}
+
+int _replacementAuthorizationFrameLength(
+  E2eeAccountRecoveryReplacementAuthorization authorization,
+) => switch (authorization) {
+  E2eeAccountRecoveryReplacementInitialAuthorization() => 4 + 32,
+  E2eeAccountRecoveryReplacementChallengeAuthorization() =>
+    4 +
+        16 +
+        32 +
+        e2eeAccountRecoveryNonceProofBytes +
+        e2eeAccountRecoveryTrustSignatureBytes,
+};
+
+int _writeReplacementAuthorization(
+  Uint8List frame,
+  ByteData view,
+  int offset,
+  E2eeAccountRecoveryReplacementAuthorization authorization,
+) {
+  switch (authorization) {
+    case E2eeAccountRecoveryReplacementInitialAuthorization(
+      :final challengeRequestDigest,
+    ):
+      offset = _writeUint32(view, offset, 1);
+      return _writeBytes(frame, offset, challengeRequestDigest);
+    case E2eeAccountRecoveryReplacementChallengeAuthorization(
+      :final challengeId,
+      :final challengeRequestDigest,
+      :final nonceProof,
+      :final trustSignature,
+    ):
+      offset = _writeUint32(view, offset, 2);
+      offset = _writeBytes(frame, offset, _uuidBytes(challengeId));
+      offset = _writeBytes(frame, offset, challengeRequestDigest);
+      offset = _writeBytes(frame, offset, nonceProof);
+      return _writeBytes(frame, offset, trustSignature);
+  }
+}
+
+({E2eeAccountRecoveryReplacementAuthorization authorization, int offset})
+_readReplacementAuthorization(Uint8List frame, ByteData view, int offset) {
+  _requireRemaining(frame, offset, 4);
+  final kind = _readUint32(view, offset);
+  offset += 4;
+  switch (kind) {
+    case 1:
+      _requireRemaining(frame, offset, 32);
+      final challengeRequestDigest = _readBytes(frame, offset, 32);
+      offset += 32;
+      return (
+        authorization: E2eeAccountRecoveryReplacementAuthorization.initial(
+          challengeRequestDigest: challengeRequestDigest,
+        ),
+        offset: offset,
+      );
+    case 2:
+      const length =
+          16 +
+          32 +
+          e2eeAccountRecoveryNonceProofBytes +
+          e2eeAccountRecoveryTrustSignatureBytes;
+      _requireRemaining(frame, offset, length);
+      final challengeId = _uuidString(frame, offset);
+      offset += 16;
+      final challengeRequestDigest = _readBytes(frame, offset, 32);
+      offset += 32;
+      final nonceProof = _readBytes(
+        frame,
+        offset,
+        e2eeAccountRecoveryNonceProofBytes,
+      );
+      offset += e2eeAccountRecoveryNonceProofBytes;
+      final trustSignature = _readBytes(
+        frame,
+        offset,
+        e2eeAccountRecoveryTrustSignatureBytes,
+      );
+      offset += e2eeAccountRecoveryTrustSignatureBytes;
+      return (
+        authorization:
+            E2eeAccountRecoveryReplacementAuthorization.replacementChallenge(
+              challengeId: challengeId,
+              challengeRequestDigest: challengeRequestDigest,
+              nonceProof: nonceProof,
+              trustSignature: trustSignature,
+            ),
+        offset: offset,
+      );
+    default:
+      throw const FormatException('账户恢复 checkpoint 替换授权类型无效');
   }
 }
 
@@ -798,6 +901,12 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
     );
   }
 
+  final replacementAuthorization = _readReplacementAuthorization(
+    frame,
+    view,
+    offset,
+  );
+  offset = replacementAuthorization.offset;
   _requireRemaining(frame, offset, 8);
   final nextRecoveryCapsuleVersion = _readUint32(view, offset);
   offset += 4;
@@ -831,6 +940,7 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
       commit: E2eeAccountRecoveryReplacementCommit(
         attemptId: attemptId,
         membership: membership,
+        authorization: replacementAuthorization.authorization,
         nextRecoveryCapsuleVersion: nextRecoveryCapsuleVersion,
         nextRecoveryCapsule: nextRecoveryCapsule,
         completionSessionId: completionSessionId,

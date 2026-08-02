@@ -130,6 +130,10 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
   @override
   final String revokedDeviceId;
   @override
+  final String? selfRevocationMutationId;
+  @override
+  final String? selfRevocationIntentDigest;
+  @override
   final int fromGeneration;
   @override
   final int generation;
@@ -150,6 +154,8 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
     required this.result,
     required this.operationId,
     required this.revokedDeviceId,
+    this.selfRevocationMutationId,
+    this.selfRevocationIntentDigest,
     required this.fromGeneration,
     required this.generation,
     required this.keyEpoch,
@@ -173,6 +179,8 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
         result == other.result &&
         operationId == other.operationId &&
         revokedDeviceId == other.revokedDeviceId &&
+        selfRevocationMutationId == other.selfRevocationMutationId &&
+        selfRevocationIntentDigest == other.selfRevocationIntentDigest &&
         fromGeneration == other.fromGeneration &&
         generation == other.generation &&
         keyEpoch == other.keyEpoch &&
@@ -187,6 +195,8 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
     _$hash = $jc(_$hash, result.hashCode);
     _$hash = $jc(_$hash, operationId.hashCode);
     _$hash = $jc(_$hash, revokedDeviceId.hashCode);
+    _$hash = $jc(_$hash, selfRevocationMutationId.hashCode);
+    _$hash = $jc(_$hash, selfRevocationIntentDigest.hashCode);
     _$hash = $jc(_$hash, fromGeneration.hashCode);
     _$hash = $jc(_$hash, generation.hashCode);
     _$hash = $jc(_$hash, keyEpoch.hashCode);
@@ -203,6 +213,8 @@ class _$CommitDeviceRotationData extends CommitDeviceRotationData {
           ..add('result', result)
           ..add('operationId', operationId)
           ..add('revokedDeviceId', revokedDeviceId)
+          ..add('selfRevocationMutationId', selfRevocationMutationId)
+          ..add('selfRevocationIntentDigest', selfRevocationIntentDigest)
           ..add('fromGeneration', fromGeneration)
           ..add('generation', generation)
           ..add('keyEpoch', keyEpoch)
@@ -231,6 +243,16 @@ class CommitDeviceRotationDataBuilder
   String? get revokedDeviceId => _$this._revokedDeviceId;
   set revokedDeviceId(String? revokedDeviceId) =>
       _$this._revokedDeviceId = revokedDeviceId;
+
+  String? _selfRevocationMutationId;
+  String? get selfRevocationMutationId => _$this._selfRevocationMutationId;
+  set selfRevocationMutationId(String? selfRevocationMutationId) =>
+      _$this._selfRevocationMutationId = selfRevocationMutationId;
+
+  String? _selfRevocationIntentDigest;
+  String? get selfRevocationIntentDigest => _$this._selfRevocationIntentDigest;
+  set selfRevocationIntentDigest(String? selfRevocationIntentDigest) =>
+      _$this._selfRevocationIntentDigest = selfRevocationIntentDigest;
 
   int? _fromGeneration;
   int? get fromGeneration => _$this._fromGeneration;
@@ -271,6 +293,8 @@ class CommitDeviceRotationDataBuilder
       _result = $v.result;
       _operationId = $v.operationId;
       _revokedDeviceId = $v.revokedDeviceId;
+      _selfRevocationMutationId = $v.selfRevocationMutationId;
+      _selfRevocationIntentDigest = $v.selfRevocationIntentDigest;
       _fromGeneration = $v.fromGeneration;
       _generation = $v.generation;
       _keyEpoch = $v.keyEpoch;
@@ -314,6 +338,8 @@ class CommitDeviceRotationDataBuilder
             r'CommitDeviceRotationData',
             'revokedDeviceId',
           ),
+          selfRevocationMutationId: selfRevocationMutationId,
+          selfRevocationIntentDigest: selfRevocationIntentDigest,
           fromGeneration: BuiltValueNullFieldError.checkNotNull(
             fromGeneration,
             r'CommitDeviceRotationData',

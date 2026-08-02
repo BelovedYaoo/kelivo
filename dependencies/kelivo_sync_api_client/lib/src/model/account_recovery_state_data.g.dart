@@ -48,6 +48,11 @@ const AccountRecoveryStateDataNextActionEnum
 _$accountRecoveryStateDataNextActionEnum_finishFirstDataRekey =
     const AccountRecoveryStateDataNextActionEnum._('finishFirstDataRekey');
 const AccountRecoveryStateDataNextActionEnum
+_$accountRecoveryStateDataNextActionEnum_createReplacementChallenge =
+    const AccountRecoveryStateDataNextActionEnum._(
+      'createReplacementChallenge',
+    );
+const AccountRecoveryStateDataNextActionEnum
 _$accountRecoveryStateDataNextActionEnum_recoverReplace =
     const AccountRecoveryStateDataNextActionEnum._('recoverReplace');
 const AccountRecoveryStateDataNextActionEnum
@@ -61,6 +66,8 @@ _$accountRecoveryStateDataNextActionEnumValueOf(String name) {
       return _$accountRecoveryStateDataNextActionEnum_recoverResume;
     case 'finishFirstDataRekey':
       return _$accountRecoveryStateDataNextActionEnum_finishFirstDataRekey;
+    case 'createReplacementChallenge':
+      return _$accountRecoveryStateDataNextActionEnum_createReplacementChallenge;
     case 'recoverReplace':
       return _$accountRecoveryStateDataNextActionEnum_recoverReplace;
     case 'finishSecondDataRekey':
@@ -76,6 +83,7 @@ _$accountRecoveryStateDataNextActionEnumValues =
       const <AccountRecoveryStateDataNextActionEnum>[
         _$accountRecoveryStateDataNextActionEnum_recoverResume,
         _$accountRecoveryStateDataNextActionEnum_finishFirstDataRekey,
+        _$accountRecoveryStateDataNextActionEnum_createReplacementChallenge,
         _$accountRecoveryStateDataNextActionEnum_recoverReplace,
         _$accountRecoveryStateDataNextActionEnum_finishSecondDataRekey,
       ],
@@ -128,12 +136,14 @@ class _$AccountRecoveryStateDataNextActionEnumSerializer
   static const Map<String, Object> _toWire = const <String, Object>{
     'recoverResume': 'recover-resume',
     'finishFirstDataRekey': 'finish-first-data-rekey',
+    'createReplacementChallenge': 'create-replacement-challenge',
     'recoverReplace': 'recover-replace',
     'finishSecondDataRekey': 'finish-second-data-rekey',
   };
   static const Map<Object, String> _fromWire = const <Object, String>{
     'recover-resume': 'recoverResume',
     'finish-first-data-rekey': 'finishFirstDataRekey',
+    'create-replacement-challenge': 'createReplacementChallenge',
     'recover-replace': 'recoverReplace',
     'finish-second-data-rekey': 'finishSecondDataRekey',
   };

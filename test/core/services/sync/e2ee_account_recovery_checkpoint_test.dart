@@ -328,6 +328,16 @@ void main() {
           accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0xa4),
         ),
       ),
+      authorization:
+          E2eeAccountRecoveryReplacementAuthorization.replacementChallenge(
+            challengeId: _uuid(8),
+            challengeRequestDigest: replacementChallenge.requestDigest,
+            nonceProof: _bytes(e2eeAccountRecoveryNonceProofBytes, 0xa7),
+            trustSignature: _bytes(
+              e2eeAccountRecoveryTrustSignatureBytes,
+              0xa8,
+            ),
+          ),
       nextRecoveryCapsuleVersion:
           replacementChallenge.recoveryCapsuleVersion + 1,
       nextRecoveryCapsule: _bytes(cloudSyncRecoveryCapsuleMaximumBytes, 0xa5),
@@ -351,6 +361,16 @@ void main() {
       restoredReplacement.completionSessionToken.value,
       completionSessionToken.value,
     );
+    final restoredAuthorization =
+        restoredReplacement.authorization
+            as E2eeAccountRecoveryReplacementChallengeAuthorization;
+    expect(restoredAuthorization.challengeId, _uuid(8));
+    expect(
+      restoredAuthorization.challengeRequestDigest,
+      replacementChallenge.requestDigest,
+    );
+    expect(restoredAuthorization.nonceProof, everyElement(0xa7));
+    expect(restoredAuthorization.trustSignature, everyElement(0xa8));
     expect(
       restoredReplacementSnapshot
           .checkpoint

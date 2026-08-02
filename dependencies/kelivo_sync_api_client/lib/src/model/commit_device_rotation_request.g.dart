@@ -18,6 +18,10 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
   @override
   final String revokeDeviceId;
   @override
+  final String? selfRevocationMutationId;
+  @override
+  final String? selfRevocationIntentDigest;
+  @override
   final String nextMembershipManifest;
   @override
   final String nextMembershipManifestDigest;
@@ -38,6 +42,8 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
     required this.expectedMembershipManifestDigest,
     required this.operationId,
     required this.revokeDeviceId,
+    this.selfRevocationMutationId,
+    this.selfRevocationIntentDigest,
     required this.nextMembershipManifest,
     required this.nextMembershipManifestDigest,
     required this.nextRecoveryCapsuleVersion,
@@ -63,6 +69,8 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
             other.expectedMembershipManifestDigest &&
         operationId == other.operationId &&
         revokeDeviceId == other.revokeDeviceId &&
+        selfRevocationMutationId == other.selfRevocationMutationId &&
+        selfRevocationIntentDigest == other.selfRevocationIntentDigest &&
         nextMembershipManifest == other.nextMembershipManifest &&
         nextMembershipManifestDigest == other.nextMembershipManifestDigest &&
         nextRecoveryCapsuleVersion == other.nextRecoveryCapsuleVersion &&
@@ -78,6 +86,8 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
     _$hash = $jc(_$hash, expectedMembershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, operationId.hashCode);
     _$hash = $jc(_$hash, revokeDeviceId.hashCode);
+    _$hash = $jc(_$hash, selfRevocationMutationId.hashCode);
+    _$hash = $jc(_$hash, selfRevocationIntentDigest.hashCode);
     _$hash = $jc(_$hash, nextMembershipManifest.hashCode);
     _$hash = $jc(_$hash, nextMembershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, nextRecoveryCapsuleVersion.hashCode);
@@ -98,6 +108,8 @@ class _$CommitDeviceRotationRequest extends CommitDeviceRotationRequest {
           )
           ..add('operationId', operationId)
           ..add('revokeDeviceId', revokeDeviceId)
+          ..add('selfRevocationMutationId', selfRevocationMutationId)
+          ..add('selfRevocationIntentDigest', selfRevocationIntentDigest)
           ..add('nextMembershipManifest', nextMembershipManifest)
           ..add('nextMembershipManifestDigest', nextMembershipManifestDigest)
           ..add('nextRecoveryCapsuleVersion', nextRecoveryCapsuleVersion)
@@ -142,6 +154,16 @@ class CommitDeviceRotationRequestBuilder
   set revokeDeviceId(String? revokeDeviceId) =>
       _$this._revokeDeviceId = revokeDeviceId;
 
+  String? _selfRevocationMutationId;
+  String? get selfRevocationMutationId => _$this._selfRevocationMutationId;
+  set selfRevocationMutationId(String? selfRevocationMutationId) =>
+      _$this._selfRevocationMutationId = selfRevocationMutationId;
+
+  String? _selfRevocationIntentDigest;
+  String? get selfRevocationIntentDigest => _$this._selfRevocationIntentDigest;
+  set selfRevocationIntentDigest(String? selfRevocationIntentDigest) =>
+      _$this._selfRevocationIntentDigest = selfRevocationIntentDigest;
+
   String? _nextMembershipManifest;
   String? get nextMembershipManifest => _$this._nextMembershipManifest;
   set nextMembershipManifest(String? nextMembershipManifest) =>
@@ -181,6 +203,8 @@ class CommitDeviceRotationRequestBuilder
       _expectedMembershipManifestDigest = $v.expectedMembershipManifestDigest;
       _operationId = $v.operationId;
       _revokeDeviceId = $v.revokeDeviceId;
+      _selfRevocationMutationId = $v.selfRevocationMutationId;
+      _selfRevocationIntentDigest = $v.selfRevocationIntentDigest;
       _nextMembershipManifest = $v.nextMembershipManifest;
       _nextMembershipManifestDigest = $v.nextMembershipManifestDigest;
       _nextRecoveryCapsuleVersion = $v.nextRecoveryCapsuleVersion;
@@ -236,6 +260,8 @@ class CommitDeviceRotationRequestBuilder
               r'CommitDeviceRotationRequest',
               'revokeDeviceId',
             ),
+            selfRevocationMutationId: selfRevocationMutationId,
+            selfRevocationIntentDigest: selfRevocationIntentDigest,
             nextMembershipManifest: BuiltValueNullFieldError.checkNotNull(
               nextMembershipManifest,
               r'CommitDeviceRotationRequest',

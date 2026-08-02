@@ -3,6 +3,7 @@
 //
 
 // ignore_for_file: unused_element
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_commit_request_authorization.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_resume_commit_request_envelope.dart';
 import 'package:built_value/built_value.dart';
 import 'package:built_value/serializer.dart';
@@ -20,6 +21,7 @@ part 'account_recovery_replacement_commit_request.g.dart';
 /// * [nextMembershipManifest]
 /// * [nextMembershipManifestDigest]
 /// * [envelope]
+/// * [authorization]
 /// * [nextRecoveryCapsuleVersion]
 /// * [nextRecoveryCapsule]
 /// * [completionSessionId]
@@ -54,6 +56,9 @@ abstract class AccountRecoveryReplacementCommitRequest
 
   @BuiltValueField(wireName: r'envelope')
   AccountRecoveryResumeCommitRequestEnvelope get envelope;
+
+  @BuiltValueField(wireName: r'authorization')
+  AccountRecoveryReplacementCommitRequestAuthorization get authorization;
 
   @BuiltValueField(wireName: r'nextRecoveryCapsuleVersion')
   int get nextRecoveryCapsuleVersion;
@@ -136,6 +141,13 @@ class _$AccountRecoveryReplacementCommitRequestSerializer
     yield serializers.serialize(
       object.envelope,
       specifiedType: const FullType(AccountRecoveryResumeCommitRequestEnvelope),
+    );
+    yield r'authorization';
+    yield serializers.serialize(
+      object.authorization,
+      specifiedType: const FullType(
+        AccountRecoveryReplacementCommitRequestAuthorization,
+      ),
     );
     yield r'nextRecoveryCapsuleVersion';
     yield serializers.serialize(
@@ -248,6 +260,17 @@ class _$AccountRecoveryReplacementCommitRequestSerializer
                   )
                   as AccountRecoveryResumeCommitRequestEnvelope;
           result.envelope.replace(valueDes);
+          break;
+        case r'authorization':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(
+                      AccountRecoveryReplacementCommitRequestAuthorization,
+                    ),
+                  )
+                  as AccountRecoveryReplacementCommitRequestAuthorization;
+          result.authorization.replace(valueDes);
           break;
         case r'nextRecoveryCapsuleVersion':
           final valueDes =

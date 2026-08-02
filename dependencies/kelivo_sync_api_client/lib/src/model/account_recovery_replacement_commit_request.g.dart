@@ -25,6 +25,8 @@ class _$AccountRecoveryReplacementCommitRequest
   @override
   final AccountRecoveryResumeCommitRequestEnvelope envelope;
   @override
+  final AccountRecoveryReplacementCommitRequestAuthorization authorization;
+  @override
   final int nextRecoveryCapsuleVersion;
   @override
   final String nextRecoveryCapsule;
@@ -47,6 +49,7 @@ class _$AccountRecoveryReplacementCommitRequest
     required this.nextMembershipManifest,
     required this.nextMembershipManifestDigest,
     required this.envelope,
+    required this.authorization,
     required this.nextRecoveryCapsuleVersion,
     required this.nextRecoveryCapsule,
     required this.completionSessionId,
@@ -74,6 +77,7 @@ class _$AccountRecoveryReplacementCommitRequest
         nextMembershipManifest == other.nextMembershipManifest &&
         nextMembershipManifestDigest == other.nextMembershipManifestDigest &&
         envelope == other.envelope &&
+        authorization == other.authorization &&
         nextRecoveryCapsuleVersion == other.nextRecoveryCapsuleVersion &&
         nextRecoveryCapsule == other.nextRecoveryCapsule &&
         completionSessionId == other.completionSessionId &&
@@ -91,6 +95,7 @@ class _$AccountRecoveryReplacementCommitRequest
     _$hash = $jc(_$hash, nextMembershipManifest.hashCode);
     _$hash = $jc(_$hash, nextMembershipManifestDigest.hashCode);
     _$hash = $jc(_$hash, envelope.hashCode);
+    _$hash = $jc(_$hash, authorization.hashCode);
     _$hash = $jc(_$hash, nextRecoveryCapsuleVersion.hashCode);
     _$hash = $jc(_$hash, nextRecoveryCapsule.hashCode);
     _$hash = $jc(_$hash, completionSessionId.hashCode);
@@ -115,6 +120,7 @@ class _$AccountRecoveryReplacementCommitRequest
           ..add('nextMembershipManifest', nextMembershipManifest)
           ..add('nextMembershipManifestDigest', nextMembershipManifestDigest)
           ..add('envelope', envelope)
+          ..add('authorization', authorization)
           ..add('nextRecoveryCapsuleVersion', nextRecoveryCapsuleVersion)
           ..add('nextRecoveryCapsule', nextRecoveryCapsule)
           ..add('completionSessionId', completionSessionId)
@@ -175,6 +181,14 @@ class AccountRecoveryReplacementCommitRequestBuilder
   set envelope(AccountRecoveryResumeCommitRequestEnvelopeBuilder? envelope) =>
       _$this._envelope = envelope;
 
+  AccountRecoveryReplacementCommitRequestAuthorizationBuilder? _authorization;
+  AccountRecoveryReplacementCommitRequestAuthorizationBuilder
+  get authorization => _$this._authorization ??=
+      AccountRecoveryReplacementCommitRequestAuthorizationBuilder();
+  set authorization(
+    AccountRecoveryReplacementCommitRequestAuthorizationBuilder? authorization,
+  ) => _$this._authorization = authorization;
+
   int? _nextRecoveryCapsuleVersion;
   int? get nextRecoveryCapsuleVersion => _$this._nextRecoveryCapsuleVersion;
   set nextRecoveryCapsuleVersion(int? nextRecoveryCapsuleVersion) =>
@@ -210,6 +224,7 @@ class AccountRecoveryReplacementCommitRequestBuilder
       _nextMembershipManifest = $v.nextMembershipManifest;
       _nextMembershipManifestDigest = $v.nextMembershipManifestDigest;
       _envelope = $v.envelope.toBuilder();
+      _authorization = $v.authorization.toBuilder();
       _nextRecoveryCapsuleVersion = $v.nextRecoveryCapsuleVersion;
       _nextRecoveryCapsule = $v.nextRecoveryCapsule;
       _completionSessionId = $v.completionSessionId;
@@ -277,6 +292,7 @@ class AccountRecoveryReplacementCommitRequestBuilder
               'nextMembershipManifestDigest',
             ),
             envelope: envelope.build(),
+            authorization: authorization.build(),
             nextRecoveryCapsuleVersion: BuiltValueNullFieldError.checkNotNull(
               nextRecoveryCapsuleVersion,
               r'AccountRecoveryReplacementCommitRequest',
@@ -303,6 +319,8 @@ class AccountRecoveryReplacementCommitRequestBuilder
       try {
         _$failedField = 'envelope';
         envelope.build();
+        _$failedField = 'authorization';
+        authorization.build();
       } catch (e) {
         throw BuiltValueNestedFieldError(
           r'AccountRecoveryReplacementCommitRequest',

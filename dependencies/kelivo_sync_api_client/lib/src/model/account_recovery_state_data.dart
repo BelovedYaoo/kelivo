@@ -38,7 +38,7 @@ abstract class AccountRecoveryStateData
 
   @BuiltValueField(wireName: r'nextAction')
   AccountRecoveryStateDataNextActionEnum get nextAction;
-  // enum nextActionEnum {  recover-resume,  finish-first-data-rekey,  recover-replace,  finish-second-data-rekey,  };
+  // enum nextActionEnum {  recover-resume,  finish-first-data-rekey,  create-replacement-challenge,  recover-replace,  finish-second-data-rekey,  };
 
   @BuiltValueField(wireName: r'authorizedAt')
   DateTime get authorizedAt;
@@ -280,6 +280,10 @@ class AccountRecoveryStateDataNextActionEnum extends EnumClass {
   @BuiltValueEnumConst(wireName: r'finish-first-data-rekey')
   static const AccountRecoveryStateDataNextActionEnum finishFirstDataRekey =
       _$accountRecoveryStateDataNextActionEnum_finishFirstDataRekey;
+  @BuiltValueEnumConst(wireName: r'create-replacement-challenge')
+  static const AccountRecoveryStateDataNextActionEnum
+  createReplacementChallenge =
+      _$accountRecoveryStateDataNextActionEnum_createReplacementChallenge;
   @BuiltValueEnumConst(wireName: r'recover-replace')
   static const AccountRecoveryStateDataNextActionEnum recoverReplace =
       _$accountRecoveryStateDataNextActionEnum_recoverReplace;

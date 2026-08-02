@@ -30,7 +30,34 @@ Serializers _$serializers =
           ..add(AccountRecoveryMembershipCommitDataNextActionEnum.serializer)
           ..add(AccountRecoveryMembershipCommitDataResultEnum.serializer)
           ..add(AccountRecoveryMembershipCommitDataStatusEnum.serializer)
+          ..add(AccountRecoveryReplacementChallengeData.serializer)
+          ..add(AccountRecoveryReplacementChallengeDataDataState.serializer)
+          ..add(
+            AccountRecoveryReplacementChallengeDataDataStatePhaseEnum
+                .serializer,
+          )
+          ..add(AccountRecoveryReplacementChallengeDataDeviceState.serializer)
+          ..add(AccountRecoveryReplacementChallengeDataResultEnum.serializer)
+          ..add(AccountRecoveryReplacementChallengeDataSecurityState.serializer)
+          ..add(AccountRecoveryReplacementChallengeRequest.serializer)
           ..add(AccountRecoveryReplacementCommitRequest.serializer)
+          ..add(AccountRecoveryReplacementCommitRequestAuthorization.serializer)
+          ..add(
+            AccountRecoveryReplacementCommitRequestAuthorizationOneOf
+                .serializer,
+          )
+          ..add(
+            AccountRecoveryReplacementCommitRequestAuthorizationOneOf1
+                .serializer,
+          )
+          ..add(
+            AccountRecoveryReplacementCommitRequestAuthorizationOneOf1KindEnum
+                .serializer,
+          )
+          ..add(
+            AccountRecoveryReplacementCommitRequestAuthorizationOneOfKindEnum
+                .serializer,
+          )
           ..add(AccountRecoveryResumeCommitRequest.serializer)
           ..add(AccountRecoveryResumeCommitRequestEnvelope.serializer)
           ..add(AccountRecoveryStateData.serializer)
@@ -71,6 +98,8 @@ Serializers _$serializers =
           ..add(AttachmentStoredChunkDataStatusEnum.serializer)
           ..add(AttachmentUploadData.serializer)
           ..add(AttachmentUploadDataStatusEnum.serializer)
+          ..add(CancelSelfRevocationRequest.serializer)
+          ..add(CancelSelfRevocationResponse.serializer)
           ..add(ClaimDataRekeyLeaseResponse.serializer)
           ..add(CommitAccountRecoveryReplacementResponse.serializer)
           ..add(CommitAccountRecoveryResumeResponse.serializer)
@@ -80,7 +109,10 @@ Serializers _$serializers =
           ..add(CommitDeviceRotationRequest.serializer)
           ..add(CommitDeviceRotationResponse.serializer)
           ..add(CommitEncryptedAttachmentUploadResponse.serializer)
+          ..add(CreateAccountRecoveryReplacementChallengeResponse.serializer)
           ..add(CreateEncryptedAttachmentUploadResponse.serializer)
+          ..add(CreateSelfRevocationRequest.serializer)
+          ..add(CreateSelfRevocationResponse.serializer)
           ..add(DataRekeyAttachmentStageData.serializer)
           ..add(DataRekeyAttachmentStageDataResultEnum.serializer)
           ..add(DataRekeyAttachmentStageRequest.serializer)
@@ -89,9 +121,10 @@ Serializers _$serializers =
             DataRekeyCompletionProofDataSourceAttachmentCursorEnd.serializer,
           )
           ..add(DataRekeyFinalizeData.serializer)
-          ..add(DataRekeyFinalizeDataResultEnum.serializer)
           ..add(DataRekeyFinalizeRequest.serializer)
           ..add(DataRekeyFinalizeRequestProof.serializer)
+          ..add(DataRekeyFinalizedData.serializer)
+          ..add(DataRekeyFinalizedDataResultEnum.serializer)
           ..add(DataRekeyLeaseClaimData.serializer)
           ..add(DataRekeyLeaseClaimDataPhaseEnum.serializer)
           ..add(DataRekeyLeaseClaimRequest.serializer)
@@ -112,6 +145,9 @@ Serializers _$serializers =
           ..add(DataRekeySourceRecordListDataRecordsInnerKindEnum.serializer)
           ..add(DataRekeySourceRecordListRequest.serializer)
           ..add(DataRekeyStateData.serializer)
+          ..add(DataRekeyVerificationPendingData.serializer)
+          ..add(DataRekeyVerificationPendingDataPhaseEnum.serializer)
+          ..add(DataRekeyVerificationPendingDataResultEnum.serializer)
           ..add(DeleteEncryptedAttachmentResponse.serializer)
           ..add(DevicePairingApproveData.serializer)
           ..add(DevicePairingApproveDataResultEnum.serializer)
@@ -146,6 +182,7 @@ Serializers _$serializers =
           ..add(GetDeviceSecurityStateResponse.serializer)
           ..add(GetEncryptedAttachmentChunkResponse.serializer)
           ..add(GetEncryptedAttachmentManifestResponse.serializer)
+          ..add(GetSelfRevocationStatusResponse.serializer)
           ..add(ListAccountRecoveryHistoryResponse.serializer)
           ..add(ListAccountSecurityStateHistoryData.serializer)
           ..add(ListAccountSecurityStateHistoryRequest.serializer)
@@ -161,6 +198,7 @@ Serializers _$serializers =
           ..add(ListDataRekeySourceAttachmentsResponse.serializer)
           ..add(ListDataRekeySourceRecordsResponse.serializer)
           ..add(ListDeviceSecurityStateHistoryResponse.serializer)
+          ..add(ListSelfRevocationRequestsResponse.serializer)
           ..add(ListTrustedDevicesData.serializer)
           ..add(ListTrustedDevicesRequest.serializer)
           ..add(ListTrustedDevicesRequestStatusEnum.serializer)
@@ -192,6 +230,7 @@ Serializers _$serializers =
           ..add(OpaqueRegistrationStartRequest.serializer)
           ..add(OpaqueRegistrationStartRequestPlatformEnum.serializer)
           ..add(OpaqueRegistrationStartResponse.serializer)
+          ..add(PendingSelfRevocationRequest.serializer)
           ..add(PullEncryptedSyncChangesResponse.serializer)
           ..add(PullEncryptedSyncSnapshotResponse.serializer)
           ..add(PushEncryptedSyncRecordsResponse.serializer)
@@ -199,6 +238,22 @@ Serializers _$serializers =
           ..add(RevokeAdminDeviceData.serializer)
           ..add(RevokeAdminDeviceRequest.serializer)
           ..add(RevokeAdminDeviceResponse.serializer)
+          ..add(SelfRevocationRequestData.serializer)
+          ..add(SelfRevocationRequestDataResultEnum.serializer)
+          ..add(SelfRevocationRequestDataStatusEnum.serializer)
+          ..add(SelfRevocationRequestListData.serializer)
+          ..add(SelfRevocationStatusData.serializer)
+          ..add(SelfRevocationStatusDataOneOf.serializer)
+          ..add(SelfRevocationStatusDataOneOf1.serializer)
+          ..add(SelfRevocationStatusDataOneOf1Receipt.serializer)
+          ..add(SelfRevocationStatusDataOneOf1StatusEnum.serializer)
+          ..add(SelfRevocationStatusDataOneOf2.serializer)
+          ..add(SelfRevocationStatusDataOneOf2StatusEnum.serializer)
+          ..add(SelfRevocationStatusDataOneOf3.serializer)
+          ..add(SelfRevocationStatusDataOneOf3StatusEnum.serializer)
+          ..add(SelfRevocationStatusDataOneOf4.serializer)
+          ..add(SelfRevocationStatusDataOneOf4StatusEnum.serializer)
+          ..add(SelfRevocationStatusDataOneOfStatusEnum.serializer)
           ..add(StageDataRekeyAttachmentResponse.serializer)
           ..add(StageDataRekeyRecordResponse.serializer)
           ..add(StartAccountRecoveryAttemptResponse.serializer)
@@ -260,6 +315,12 @@ Serializers _$serializers =
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [
+              const FullType(AccountSecurityStateHistoryItem),
+            ]),
+            () => ListBuilder<AccountSecurityStateHistoryItem>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
               const FullType(AdminDeviceSummary),
             ]),
             () => ListBuilder<AdminDeviceSummary>(),
@@ -297,6 +358,12 @@ Serializers _$serializers =
               const FullType(DataRekeySourceRecordListDataRecordsInner),
             ]),
             () => ListBuilder<DataRekeySourceRecordListDataRecordsInner>(),
+          )
+          ..addBuilderFactory(
+            const FullType(BuiltList, const [
+              const FullType(PendingSelfRevocationRequest),
+            ]),
+            () => ListBuilder<PendingSelfRevocationRequest>(),
           )
           ..addBuilderFactory(
             const FullType(BuiltList, const [const FullType(SyncChange)]),

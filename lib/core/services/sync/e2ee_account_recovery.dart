@@ -517,11 +517,81 @@ final class E2eeAccountRecoveryResumeCommit
   final String rekeyOperationId;
 }
 
+sealed class E2eeAccountRecoveryReplacementAuthorization {
+  factory E2eeAccountRecoveryReplacementAuthorization.initial({
+    required Uint8List challengeRequestDigest,
+  }) = E2eeAccountRecoveryReplacementInitialAuthorization;
+
+  factory E2eeAccountRecoveryReplacementAuthorization.replacementChallenge({
+    required String challengeId,
+    required Uint8List challengeRequestDigest,
+    required Uint8List nonceProof,
+    required Uint8List trustSignature,
+  }) = E2eeAccountRecoveryReplacementChallengeAuthorization;
+
+  const E2eeAccountRecoveryReplacementAuthorization._();
+
+  Uint8List get challengeRequestDigest;
+}
+
+final class E2eeAccountRecoveryReplacementInitialAuthorization
+    extends E2eeAccountRecoveryReplacementAuthorization {
+  factory E2eeAccountRecoveryReplacementInitialAuthorization({
+    required Uint8List challengeRequestDigest,
+  }) {
+    return E2eeAccountRecoveryReplacementInitialAuthorization._(
+      _fixedBytes(challengeRequestDigest, 32, 'challengeRequestDigest'),
+    );
+  }
+
+  const E2eeAccountRecoveryReplacementInitialAuthorization._(
+    this.challengeRequestDigest,
+  ) : super._();
+
+  @override
+  final Uint8List challengeRequestDigest;
+}
+
+final class E2eeAccountRecoveryReplacementChallengeAuthorization
+    extends E2eeAccountRecoveryReplacementAuthorization {
+  factory E2eeAccountRecoveryReplacementChallengeAuthorization({
+    required String challengeId,
+    required Uint8List challengeRequestDigest,
+    required Uint8List nonceProof,
+    required Uint8List trustSignature,
+  }) {
+    return E2eeAccountRecoveryReplacementChallengeAuthorization._(
+      _canonicalUuid(challengeId, 'challengeId'),
+      _fixedBytes(challengeRequestDigest, 32, 'challengeRequestDigest'),
+      _fixedBytes(nonceProof, e2eeAccountRecoveryNonceProofBytes, 'nonceProof'),
+      _fixedBytes(
+        trustSignature,
+        e2eeAccountRecoveryTrustSignatureBytes,
+        'trustSignature',
+      ),
+    );
+  }
+
+  const E2eeAccountRecoveryReplacementChallengeAuthorization._(
+    this.challengeId,
+    this.challengeRequestDigest,
+    this.nonceProof,
+    this.trustSignature,
+  ) : super._();
+
+  final String challengeId;
+  @override
+  final Uint8List challengeRequestDigest;
+  final Uint8List nonceProof;
+  final Uint8List trustSignature;
+}
+
 final class E2eeAccountRecoveryReplacementCommit
     extends E2eeAccountRecoveryPreparedCommit {
   factory E2eeAccountRecoveryReplacementCommit({
     required String attemptId,
     required E2eeAccountRecoveryMembershipCommit membership,
+    required E2eeAccountRecoveryReplacementAuthorization authorization,
     required int nextRecoveryCapsuleVersion,
     required Uint8List nextRecoveryCapsule,
     required String completionSessionId,
@@ -533,6 +603,7 @@ final class E2eeAccountRecoveryReplacementCommit
     return E2eeAccountRecoveryReplacementCommit._(
       _canonicalUuid(attemptId, 'attemptId'),
       membership,
+      authorization,
       _positiveInt32(nextRecoveryCapsuleVersion, 'nextRecoveryCapsuleVersion'),
       _rangedBytes(
         nextRecoveryCapsule,
@@ -548,6 +619,7 @@ final class E2eeAccountRecoveryReplacementCommit
   const E2eeAccountRecoveryReplacementCommit._(
     this.attemptId,
     this.membership,
+    this.authorization,
     this.nextRecoveryCapsuleVersion,
     this.nextRecoveryCapsule,
     this.completionSessionId,
@@ -562,6 +634,7 @@ final class E2eeAccountRecoveryReplacementCommit
   final String attemptId;
   @override
   final E2eeAccountRecoveryMembershipCommit membership;
+  final E2eeAccountRecoveryReplacementAuthorization authorization;
   final int nextRecoveryCapsuleVersion;
   final Uint8List nextRecoveryCapsule;
   final String completionSessionId;

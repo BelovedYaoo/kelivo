@@ -24,7 +24,15 @@ import 'package:kelivo_sync_api_client/src/model/account_recovery_data_state.dar
 import 'package:kelivo_sync_api_client/src/model/account_recovery_history_list_data.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_history_list_request.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_membership_commit_data.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_challenge_data.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_challenge_data_data_state.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_challenge_data_device_state.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_challenge_data_security_state.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_challenge_request.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_commit_request.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_commit_request_authorization.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_commit_request_authorization_one_of.dart';
+import 'package:kelivo_sync_api_client/src/model/account_recovery_replacement_commit_request_authorization_one_of1.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_resume_commit_request.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_resume_commit_request_envelope.dart';
 import 'package:kelivo_sync_api_client/src/model/account_recovery_state_data.dart';
@@ -48,6 +56,8 @@ import 'package:kelivo_sync_api_client/src/model/attachment_manifest_data.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_put_chunk_request.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_stored_chunk_data.dart';
 import 'package:kelivo_sync_api_client/src/model/attachment_upload_data.dart';
+import 'package:kelivo_sync_api_client/src/model/cancel_self_revocation_request.dart';
+import 'package:kelivo_sync_api_client/src/model/cancel_self_revocation_response.dart';
 import 'package:kelivo_sync_api_client/src/model/claim_data_rekey_lease_response.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_account_recovery_replacement_response.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_account_recovery_resume_response.dart';
@@ -55,7 +65,10 @@ import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_data.dar
 import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_request.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_device_rotation_response.dart';
 import 'package:kelivo_sync_api_client/src/model/commit_encrypted_attachment_upload_response.dart';
+import 'package:kelivo_sync_api_client/src/model/create_account_recovery_replacement_challenge_response.dart';
 import 'package:kelivo_sync_api_client/src/model/create_encrypted_attachment_upload_response.dart';
+import 'package:kelivo_sync_api_client/src/model/create_self_revocation_request.dart';
+import 'package:kelivo_sync_api_client/src/model/create_self_revocation_response.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_attachment_stage_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_attachment_stage_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_data.dart';
@@ -63,6 +76,7 @@ import 'package:kelivo_sync_api_client/src/model/data_rekey_completion_proof_dat
 import 'package:kelivo_sync_api_client/src/model/data_rekey_finalize_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_finalize_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_finalize_request_proof.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_finalized_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_lease_claim_data.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_lease_claim_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_pending_lease_data.dart';
@@ -78,6 +92,7 @@ import 'package:kelivo_sync_api_client/src/model/data_rekey_source_record_list_d
 import 'package:kelivo_sync_api_client/src/model/data_rekey_source_record_list_data_records_inner.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_source_record_list_request.dart';
 import 'package:kelivo_sync_api_client/src/model/data_rekey_state_data.dart';
+import 'package:kelivo_sync_api_client/src/model/data_rekey_verification_pending_data.dart';
 import 'package:kelivo_sync_api_client/src/model/delete_encrypted_attachment_response.dart';
 import 'package:kelivo_sync_api_client/src/model/device_pairing_approve_data.dart';
 import 'package:kelivo_sync_api_client/src/model/device_pairing_approve_request.dart';
@@ -106,6 +121,7 @@ import 'package:kelivo_sync_api_client/src/model/get_data_rekey_state_response.d
 import 'package:kelivo_sync_api_client/src/model/get_device_security_state_response.dart';
 import 'package:kelivo_sync_api_client/src/model/get_encrypted_attachment_chunk_response.dart';
 import 'package:kelivo_sync_api_client/src/model/get_encrypted_attachment_manifest_response.dart';
+import 'package:kelivo_sync_api_client/src/model/get_self_revocation_status_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_account_recovery_history_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_account_security_state_history_data.dart';
 import 'package:kelivo_sync_api_client/src/model/list_account_security_state_history_request.dart';
@@ -118,6 +134,7 @@ import 'package:kelivo_sync_api_client/src/model/list_admin_users_response.dart'
 import 'package:kelivo_sync_api_client/src/model/list_data_rekey_source_attachments_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_data_rekey_source_records_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_device_security_state_history_response.dart';
+import 'package:kelivo_sync_api_client/src/model/list_self_revocation_requests_response.dart';
 import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_data.dart';
 import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_request.dart';
 import 'package:kelivo_sync_api_client/src/model/list_trusted_devices_response.dart';
@@ -138,6 +155,7 @@ import 'package:kelivo_sync_api_client/src/model/opaque_registration_finish_resp
 import 'package:kelivo_sync_api_client/src/model/opaque_registration_start_data.dart';
 import 'package:kelivo_sync_api_client/src/model/opaque_registration_start_request.dart';
 import 'package:kelivo_sync_api_client/src/model/opaque_registration_start_response.dart';
+import 'package:kelivo_sync_api_client/src/model/pending_self_revocation_request.dart';
 import 'package:kelivo_sync_api_client/src/model/pull_encrypted_sync_changes_response.dart';
 import 'package:kelivo_sync_api_client/src/model/pull_encrypted_sync_snapshot_response.dart';
 import 'package:kelivo_sync_api_client/src/model/push_encrypted_sync_records_response.dart';
@@ -145,6 +163,15 @@ import 'package:kelivo_sync_api_client/src/model/put_encrypted_attachment_chunk_
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_data.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_request.dart';
 import 'package:kelivo_sync_api_client/src/model/revoke_admin_device_response.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_request_data.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_request_list_data.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_status_data.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_status_data_one_of.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_status_data_one_of1.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_status_data_one_of1_receipt.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_status_data_one_of2.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_status_data_one_of3.dart';
+import 'package:kelivo_sync_api_client/src/model/self_revocation_status_data_one_of4.dart';
 import 'package:kelivo_sync_api_client/src/model/stage_data_rekey_attachment_response.dart';
 import 'package:kelivo_sync_api_client/src/model/stage_data_rekey_record_response.dart';
 import 'package:kelivo_sync_api_client/src/model/start_account_recovery_attempt_response.dart';
@@ -186,7 +213,15 @@ part 'serializers.g.dart';
   AccountRecoveryHistoryListData,
   AccountRecoveryHistoryListRequest,
   AccountRecoveryMembershipCommitData,
+  AccountRecoveryReplacementChallengeData,
+  AccountRecoveryReplacementChallengeDataDataState,
+  AccountRecoveryReplacementChallengeDataDeviceState,
+  AccountRecoveryReplacementChallengeDataSecurityState,
+  AccountRecoveryReplacementChallengeRequest,
   AccountRecoveryReplacementCommitRequest,
+  AccountRecoveryReplacementCommitRequestAuthorization,
+  AccountRecoveryReplacementCommitRequestAuthorizationOneOf,
+  AccountRecoveryReplacementCommitRequestAuthorizationOneOf1,
   AccountRecoveryResumeCommitRequest,
   AccountRecoveryResumeCommitRequestEnvelope,
   AccountRecoveryStateData,
@@ -210,6 +245,8 @@ part 'serializers.g.dart';
   AttachmentPutChunkRequest,
   AttachmentStoredChunkData,
   AttachmentUploadData,
+  CancelSelfRevocationRequest,
+  CancelSelfRevocationResponse,
   ClaimDataRekeyLeaseResponse,
   CommitAccountRecoveryReplacementResponse,
   CommitAccountRecoveryResumeResponse,
@@ -217,7 +254,10 @@ part 'serializers.g.dart';
   CommitDeviceRotationRequest,
   CommitDeviceRotationResponse,
   CommitEncryptedAttachmentUploadResponse,
+  CreateAccountRecoveryReplacementChallengeResponse,
   CreateEncryptedAttachmentUploadResponse,
+  CreateSelfRevocationRequest,
+  CreateSelfRevocationResponse,
   DataRekeyAttachmentStageData,
   DataRekeyAttachmentStageRequest,
   DataRekeyCompletionProofData,
@@ -225,6 +265,7 @@ part 'serializers.g.dart';
   DataRekeyFinalizeData,
   DataRekeyFinalizeRequest,
   DataRekeyFinalizeRequestProof,
+  DataRekeyFinalizedData,
   DataRekeyLeaseClaimData,
   DataRekeyLeaseClaimRequest,
   DataRekeyPendingLeaseData,
@@ -240,6 +281,7 @@ part 'serializers.g.dart';
   DataRekeySourceRecordListDataRecordsInner,
   DataRekeySourceRecordListRequest,
   DataRekeyStateData,
+  DataRekeyVerificationPendingData,
   DeleteEncryptedAttachmentResponse,
   DevicePairingApproveData,
   DevicePairingApproveRequest,
@@ -268,6 +310,7 @@ part 'serializers.g.dart';
   GetDeviceSecurityStateResponse,
   GetEncryptedAttachmentChunkResponse,
   GetEncryptedAttachmentManifestResponse,
+  GetSelfRevocationStatusResponse,
   ListAccountRecoveryHistoryResponse,
   ListAccountSecurityStateHistoryData,
   ListAccountSecurityStateHistoryRequest,
@@ -280,6 +323,7 @@ part 'serializers.g.dart';
   ListDataRekeySourceAttachmentsResponse,
   ListDataRekeySourceRecordsResponse,
   ListDeviceSecurityStateHistoryResponse,
+  ListSelfRevocationRequestsResponse,
   ListTrustedDevicesData,
   ListTrustedDevicesRequest,
   ListTrustedDevicesResponse,
@@ -300,6 +344,7 @@ part 'serializers.g.dart';
   OpaqueRegistrationStartData,
   OpaqueRegistrationStartRequest,
   OpaqueRegistrationStartResponse,
+  PendingSelfRevocationRequest,
   PullEncryptedSyncChangesResponse,
   PullEncryptedSyncSnapshotResponse,
   PushEncryptedSyncRecordsResponse,
@@ -307,6 +352,15 @@ part 'serializers.g.dart';
   RevokeAdminDeviceData,
   RevokeAdminDeviceRequest,
   RevokeAdminDeviceResponse,
+  SelfRevocationRequestData,
+  SelfRevocationRequestListData,
+  SelfRevocationStatusData,
+  SelfRevocationStatusDataOneOf,
+  SelfRevocationStatusDataOneOf1,
+  SelfRevocationStatusDataOneOf1Receipt,
+  SelfRevocationStatusDataOneOf2,
+  SelfRevocationStatusDataOneOf3,
+  SelfRevocationStatusDataOneOf4,
   StageDataRekeyAttachmentResponse,
   StageDataRekeyRecordResponse,
   StartAccountRecoveryAttemptResponse,

@@ -913,6 +913,9 @@ E2eeAccountRecoveryCheckpoint _preparedReplacementCheckpoint() {
               ),
             ),
           ),
+          authorization: E2eeAccountRecoveryReplacementAuthorization.initial(
+            challengeRequestDigest: fixture.challenge.requestDigest,
+          ),
           nextRecoveryCapsuleVersion:
               fixture.challenge.recoveryCapsuleVersion + 1,
           nextRecoveryCapsule: _bytes(156, 0x93),

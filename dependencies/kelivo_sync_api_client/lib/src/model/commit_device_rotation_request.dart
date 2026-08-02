@@ -18,6 +18,8 @@ part 'commit_device_rotation_request.g.dart';
 /// * [expectedMembershipManifestDigest]
 /// * [operationId]
 /// * [revokeDeviceId]
+/// * [selfRevocationMutationId]
+/// * [selfRevocationIntentDigest]
 /// * [nextMembershipManifest]
 /// * [nextMembershipManifestDigest]
 /// * [nextRecoveryCapsuleVersion]
@@ -41,6 +43,12 @@ abstract class CommitDeviceRotationRequest
 
   @BuiltValueField(wireName: r'revokeDeviceId')
   String get revokeDeviceId;
+
+  @BuiltValueField(wireName: r'selfRevocationMutationId')
+  String? get selfRevocationMutationId;
+
+  @BuiltValueField(wireName: r'selfRevocationIntentDigest')
+  String? get selfRevocationIntentDigest;
 
   @BuiltValueField(wireName: r'nextMembershipManifest')
   String get nextMembershipManifest;
@@ -112,6 +120,20 @@ class _$CommitDeviceRotationRequestSerializer
       object.revokeDeviceId,
       specifiedType: const FullType(String),
     );
+    if (object.selfRevocationMutationId != null) {
+      yield r'selfRevocationMutationId';
+      yield serializers.serialize(
+        object.selfRevocationMutationId,
+        specifiedType: const FullType(String),
+      );
+    }
+    if (object.selfRevocationIntentDigest != null) {
+      yield r'selfRevocationIntentDigest';
+      yield serializers.serialize(
+        object.selfRevocationIntentDigest,
+        specifiedType: const FullType(String),
+      );
+    }
     yield r'nextMembershipManifest';
     yield serializers.serialize(
       object.nextMembershipManifest,
@@ -204,6 +226,24 @@ class _$CommitDeviceRotationRequestSerializer
                   )
                   as String;
           result.revokeDeviceId = valueDes;
+          break;
+        case r'selfRevocationMutationId':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.selfRevocationMutationId = valueDes;
+          break;
+        case r'selfRevocationIntentDigest':
+          final valueDes =
+              serializers.deserialize(
+                    value,
+                    specifiedType: const FullType(String),
+                  )
+                  as String;
+          result.selfRevocationIntentDigest = valueDes;
           break;
         case r'nextMembershipManifest':
           final valueDes =

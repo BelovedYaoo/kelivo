@@ -738,6 +738,62 @@ final class CloudSyncClient
   }) {
     final membership = request.membership;
     return _guard(() async {
+      final generatedAuthorization = switch (request.authorization) {
+        E2eeAccountRecoveryReplacementInitialAuthorization(
+          :final challengeRequestDigest,
+        ) =>
+          api.AccountRecoveryReplacementCommitRequestAuthorization(
+            (builder) => builder.oneOf =
+                OneOf.fromValue2<
+                  api.AccountRecoveryReplacementCommitRequestAuthorizationOneOf,
+                  api.AccountRecoveryReplacementCommitRequestAuthorizationOneOf1
+                >(
+                  value: api.AccountRecoveryReplacementCommitRequestAuthorizationOneOf(
+                    (authorization) => authorization
+                      ..kind = api
+                          .AccountRecoveryReplacementCommitRequestAuthorizationOneOfKindEnum
+                          .initial
+                      ..challengeRequestDigest = _encodeFixedBinaryForRequest(
+                        challengeRequestDigest,
+                        32,
+                      ),
+                  ),
+                ),
+          ),
+        E2eeAccountRecoveryReplacementChallengeAuthorization(
+          :final challengeId,
+          :final challengeRequestDigest,
+          :final nonceProof,
+          :final trustSignature,
+        ) =>
+          api.AccountRecoveryReplacementCommitRequestAuthorization(
+            (builder) => builder.oneOf =
+                OneOf.fromValue2<
+                  api.AccountRecoveryReplacementCommitRequestAuthorizationOneOf,
+                  api.AccountRecoveryReplacementCommitRequestAuthorizationOneOf1
+                >(
+                  value: api.AccountRecoveryReplacementCommitRequestAuthorizationOneOf1(
+                    (authorization) => authorization
+                      ..kind = api
+                          .AccountRecoveryReplacementCommitRequestAuthorizationOneOf1KindEnum
+                          .replacementChallenge
+                      ..challengeId = challengeId
+                      ..challengeRequestDigest = _encodeFixedBinaryForRequest(
+                        challengeRequestDigest,
+                        32,
+                      )
+                      ..nonceProof = _encodeFixedBinaryForRequest(
+                        nonceProof,
+                        e2eeAccountRecoveryNonceProofBytes,
+                      )
+                      ..trustSignature = _encodeFixedBinaryForRequest(
+                        trustSignature,
+                        e2eeAccountRecoveryTrustSignatureBytes,
+                      ),
+                  ),
+                ),
+          ),
+      };
       final generatedRequest = api.AccountRecoveryReplacementCommitRequest((
         builder,
       ) {
@@ -759,6 +815,7 @@ final class CloudSyncClient
           )
           ..completionSessionId = request.completionSessionId
           ..completionSessionToken = request.completionSessionToken.value;
+        builder.authorization.replace(generatedAuthorization);
         builder.envelope
           ..envelopeVersion = membership.envelope.envelopeVersion
           ..keyEpoch = membership.envelope.keyEpoch
