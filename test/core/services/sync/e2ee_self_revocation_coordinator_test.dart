@@ -125,6 +125,63 @@ void main() {
     );
   });
 
+  test('Native 验签重建摘要并拒绝服务端替换摘要或签名', () async {
+    final intent = await fixture.secureCore.createSelfRevocationIntent(
+      fixture.requestingIdentity,
+      userId: _rawUuid(_userId),
+      deviceId: _rawUuid(_requestingDeviceId),
+      mutationId: _rawUuid(_mutationId),
+      operationId: _rawUuid(_rotationOperationId),
+      expectedGeneration: fixture.trustedCurrentHead.securityGeneration,
+      expectedKeyEpoch: fixture.trustedCurrentHead.keyEpoch,
+      expectedMembershipManifestDigest: fixture.trustedCurrentHead.digest,
+      expiresAtMs: _expiresAt.millisecondsSinceEpoch,
+    );
+    final coordinator = E2eeTrustedSelfRevocationCoordinator(
+      intentVerifier: E2eeNativeSelfRevocationIntentVerifier.withSecureCore(
+        fixture.secureCore,
+      ),
+    );
+
+    final verified = await coordinator.verifyPendingRequestList(
+      trustedCurrentHead: fixture.trustedCurrentHead,
+      untrustedList: _pendingList(
+        fixture,
+        intentDigest: intent.intentDigest,
+        intentSignature: intent.intentSignature,
+      ),
+      now: _requestedAt,
+    );
+    expect(verified.single.intentDigest, orderedEquals(intent.intentDigest));
+
+    await expectLater(
+      coordinator.verifyPendingRequestList(
+        trustedCurrentHead: fixture.trustedCurrentHead,
+        untrustedList: _pendingList(
+          fixture,
+          intentDigest: _otherIntentDigest,
+          intentSignature: intent.intentSignature,
+        ),
+        now: _requestedAt,
+      ),
+      _failsWith(E2eeSelfRevocationVerificationFailure.intentInvalid),
+    );
+    final tamperedSignature = Uint8List.fromList(intent.intentSignature);
+    tamperedSignature[0] ^= 0x01;
+    await expectLater(
+      coordinator.verifyPendingRequestList(
+        trustedCurrentHead: fixture.trustedCurrentHead,
+        untrustedList: _pendingList(
+          fixture,
+          intentDigest: intent.intentDigest,
+          intentSignature: tamperedSignature,
+        ),
+        now: _requestedAt,
+      ),
+      _failsWith(E2eeSelfRevocationVerificationFailure.intentInvalid),
+    );
+  });
+
   test('确认回执验证轮换、恢复接续、最终签发者及完成证明', () async {
     final coordinator = E2eeTrustedSelfRevocationCoordinator(
       intentVerifier: _ExpectedIntentVerifier(fixture),
@@ -215,6 +272,7 @@ CloudSyncUntrustedSelfRevocationRequestList _pendingList(
   String deviceId = _requestingDeviceId,
   int? expectedGeneration,
   Uint8List? intentDigest,
+  Uint8List? intentSignature,
   DateTime? parserNow,
 }) {
   return CloudSyncUntrustedSelfRevocationRequestList.fromJson(<String, Object?>{
@@ -231,7 +289,7 @@ CloudSyncUntrustedSelfRevocationRequestList _pendingList(
           fixture.trustedCurrentHead.digest,
         ),
         'intentDigest': _encoded(intentDigest ?? _intentDigest),
-        'intentSignature': _encoded(_intentSignature),
+        'intentSignature': _encoded(intentSignature ?? _intentSignature),
         'requestedAt': _requestedAt.toIso8601String(),
         'expiresAt': _expiresAt.toIso8601String(),
       },

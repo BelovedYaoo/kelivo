@@ -2,6 +2,7 @@ import 'dart:typed_data';
 
 import 'package:crypto/crypto.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
+import 'package:uuid/uuid.dart';
 
 import 'cloud_sync_types.dart';
 import 'e2ee_account_trust_manifest.dart';
@@ -48,6 +49,51 @@ abstract interface class E2eeSelfRevocationIntentVerifier {
     required Uint8List signature,
     required Uint8List signingPublicKey,
   });
+}
+
+final class E2eeNativeSelfRevocationIntentVerifier
+    implements E2eeSelfRevocationIntentVerifier {
+  const E2eeNativeSelfRevocationIntentVerifier()
+    : _secureCore = const KelivoSecureCore();
+
+  const E2eeNativeSelfRevocationIntentVerifier.withSecureCore(this._secureCore);
+
+  final KelivoSecureCore _secureCore;
+
+  @override
+  Future<Uint8List> verifyAndDigest({
+    required String userId,
+    required String deviceId,
+    required String mutationId,
+    required String operationId,
+    required int expectedGeneration,
+    required int expectedKeyEpoch,
+    required Uint8List expectedMembershipManifestDigest,
+    required DateTime expiresAt,
+    required Uint8List signature,
+    required Uint8List signingPublicKey,
+  }) {
+    if (!expiresAt.isUtc ||
+        expiresAt.microsecond != 0 ||
+        expiresAt.millisecondsSinceEpoch < 0) {
+      throw ArgumentError.value(expiresAt, 'expiresAt', '必须为非负整毫秒 UTC 时间');
+    }
+    return _secureCore.verifySelfRevocationIntent(
+      signingPublicKey: signingPublicKey,
+      userId: _canonicalSelfRevocationUuidBytes(userId, 'userId'),
+      deviceId: _canonicalSelfRevocationUuidBytes(deviceId, 'deviceId'),
+      mutationId: _canonicalSelfRevocationUuidBytes(mutationId, 'mutationId'),
+      operationId: _canonicalSelfRevocationUuidBytes(
+        operationId,
+        'operationId',
+      ),
+      expectedGeneration: expectedGeneration,
+      expectedKeyEpoch: expectedKeyEpoch,
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      expiresAtMs: expiresAt.millisecondsSinceEpoch,
+      signature: signature,
+    );
+  }
 }
 
 final class E2eeVerifiedSelfRevocationIntent {
@@ -507,4 +553,20 @@ bool _sameBytes(Uint8List left, Uint8List right) {
     difference |= left[index] ^ right[index];
   }
   return difference == 0;
+}
+
+Uint8List _canonicalSelfRevocationUuidBytes(String value, String field) {
+  late final Uint8List bytes;
+  try {
+    bytes = Uint8List.fromList(Uuid.parseAsByteList(value));
+  } on FormatException {
+    throw ArgumentError.value(value, field, '必须为规范小写 UUIDv4');
+  }
+  if (bytes.length != 16 ||
+      bytes[6] & 0xf0 != 0x40 ||
+      bytes[8] & 0xc0 != 0x80 ||
+      Uuid.unparse(bytes) != value) {
+    throw ArgumentError.value(value, field, '必须为规范小写 UUIDv4');
+  }
+  return bytes;
 }
