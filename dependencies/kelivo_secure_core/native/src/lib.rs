@@ -7,6 +7,7 @@ use std::{
 };
 use zeroize::Zeroizing;
 
+mod account_recovery;
 mod attachment;
 mod database;
 mod device_core;
@@ -17,6 +18,15 @@ mod recovery;
 #[cfg(any(target_os = "android", target_os = "windows"))]
 mod slot_store_name;
 
+pub use account_recovery::{
+    KelivoAccountRecoveryPrepareBinding, KelivoAccountRecoveryPrepareInput,
+    KelivoAccountRecoveryProofBinding, KelivoAccountRecoveryReplacementProofBinding,
+    KelivoAccountRecoveryStateBinding, kelivo_account_recovery_device_state_prune_and_activate,
+    kelivo_account_recovery_device_states_prepare, kelivo_account_recovery_execution_close,
+    kelivo_account_recovery_prepare_commit,
+    kelivo_account_recovery_replacement_challenge_verify_and_prove,
+    kelivo_account_recovery_verify_and_prove,
+};
 pub use attachment::{
     kelivo_attachment_chunk_open, kelivo_attachment_chunk_seal,
     kelivo_attachment_data_key_generate, kelivo_attachment_data_key_handle_close,
@@ -62,7 +72,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 18;
+const ABI_VERSION: u32 = 19;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -70,7 +80,7 @@ const INVALID_KEY_HANDLE: u64 = 0;
 const INVALID_OPAQUE_STATE_HANDLE: u64 = 0;
 // Dart FFI 只稳定往返正 63 位整数；三位类型域让七类秘密句柄互不兼容。
 const HANDLE_TAG_MASK: u64 = 0b111 << 60;
-const HANDLE_SEQUENCE_MASK: u64 = (1_u64 << 60) - 1;
+const HANDLE_SEQUENCE_MASK: u64 = (1_u64 << 59) - 1;
 const HANDLE_RESERVED_MASK: u64 = 1_u64 << 63;
 const KEY_HANDLE_TAG: u64 = 0b001 << 60;
 const OPAQUE_STATE_HANDLE_TAG: u64 = 0b010 << 60;
@@ -111,6 +121,7 @@ const ATTACHMENT_CRYPTO_CAPABILITY: u64 = 1 << 7;
 const ACCOUNT_TRUST_SIGNING_CAPABILITY: u64 = 1 << 8;
 const RECOVERY_MEDIA_CAPABILITY: u64 = 1 << 9;
 const INSTALLATION_ROOT_WIPE_CAPABILITY: u64 = 1 << 10;
+const ACCOUNT_RECOVERY_EXECUTION_CAPABILITY: u64 = 1 << 11;
 const INSTALLATION_ROOT_PATH_MAX_SIZE: usize = 64 * 1024;
 const INSTALLATION_ROOT_ENTRY_NAME_MAX_SIZE: usize = 1024;
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
@@ -213,6 +224,10 @@ pub(crate) enum KelivoStatus {
     RecoveryPassphraseInvalid = 47,
     RecoveryHistoryInvalid = 48,
     RecoveryHistoryAuthenticationFailed = 49,
+    RecoveryChallengeInvalid = 50,
+    RecoveryChallengeAuthenticationFailed = 51,
+    InvalidRecoveryExecutionHandle = 52,
+    RecoveryPrepareInvalid = 53,
     UnsupportedPlatform = 100,
 }
 
@@ -511,7 +526,7 @@ pub unsafe extern "C" fn kelivo_core_get_capabilities(
                 0
             }
             | if cfg!(any(target_os = "android", target_os = "ios")) {
-                RECOVERY_MEDIA_CAPABILITY
+                RECOVERY_MEDIA_CAPABILITY | ACCOUNT_RECOVERY_EXECUTION_CAPABILITY
             } else {
                 0
             }
@@ -1228,7 +1243,8 @@ mod tests {
     #[cfg(target_os = "windows")]
     use core::{ffi::c_char, slice};
     use kelivo_secure_core_protocol::{
-        device_crypto as crypto, recovery_crypto as recovery_protocol,
+        account_recovery as account_recovery_protocol, device_crypto as crypto,
+        recovery_crypto as recovery_protocol,
     };
     use sha2::{Digest, Sha256};
 
@@ -1304,6 +1320,63 @@ mod tests {
             user_id: [0xa5; 16],
             key_epoch: u32::MAX,
             capsule_version: u32::MAX,
+        }
+    }
+
+    fn sentinel_account_recovery_proof_binding() -> KelivoAccountRecoveryProofBinding {
+        KelivoAccountRecoveryProofBinding {
+            struct_size: u32::MAX,
+            data_phase: u32::MAX,
+            execution_handle: u64::MAX,
+            user_id: [0xa5; 16],
+            device_id: [0xa5; 16],
+            security_generation: u32::MAX,
+            key_epoch: u32::MAX,
+            device_key_version: u32::MAX,
+            recovery_capsule_version: u32::MAX,
+            source_data_generation: u32::MAX,
+            source_data_key_epoch: u32::MAX,
+            source_data_rekey_operation_id: [0xa5; 16],
+            operation_authorization_digest: [0xa5; 32],
+        }
+    }
+
+    fn sentinel_account_recovery_replacement_proof_binding()
+    -> KelivoAccountRecoveryReplacementProofBinding {
+        KelivoAccountRecoveryReplacementProofBinding {
+            struct_size: u32::MAX,
+            reserved: u32::MAX,
+            execution_handle: u64::MAX,
+            challenge_id: [0xa5; 16],
+            attempt_id: [0xa5; 16],
+            user_id: [0xa5; 16],
+            device_id: [0xa5; 16],
+            security_generation: u32::MAX,
+            key_epoch: u32::MAX,
+            membership_operation_id: [0xa5; 16],
+            membership_manifest_digest: [0xa5; 32],
+            device_key_version: u32::MAX,
+            recovery_capsule_version: u32::MAX,
+            source_data_rekey_operation_id: [0xa5; 16],
+            ready_data_generation: u32::MAX,
+            ready_data_key_epoch: u32::MAX,
+            completion_proof_digest: [0xa5; 32],
+            request_digest: [0xa5; 32],
+        }
+    }
+
+    fn sentinel_account_recovery_prepare_binding() -> KelivoAccountRecoveryPrepareBinding {
+        KelivoAccountRecoveryPrepareBinding {
+            struct_size: u32::MAX,
+            kind: u32::MAX,
+            expected_generation: u32::MAX,
+            expected_key_epoch: u32::MAX,
+            next_generation: u32::MAX,
+            next_key_epoch: u32::MAX,
+            next_recovery_capsule_version: u32::MAX,
+            reserved: u32::MAX,
+            manifest_digest: [0xa5; 32],
+            request_digest: [0xa5; 32],
         }
     }
 
@@ -1392,7 +1465,7 @@ mod tests {
         let device_id = account_id(0x66);
         let mut genesis = [0_u8; recovery_protocol::RECOVERY_GENESIS_LENGTH];
         genesis[..8].copy_from_slice(b"KELIVOMM");
-        genesis[8..12].copy_from_slice(&1_u32.to_be_bytes());
+        genesis[8..12].copy_from_slice(&2_u32.to_be_bytes());
         genesis[12..28].copy_from_slice(user_id.as_bytes());
         genesis[28..32].copy_from_slice(&1_u32.to_be_bytes());
         genesis[32..36].copy_from_slice(&1_u32.to_be_bytes());
@@ -1405,15 +1478,244 @@ mod tests {
         genesis[176..192].copy_from_slice(&operation_id);
         genesis[192..208].copy_from_slice(&device_id);
         genesis[208..224].copy_from_slice(&device_id);
-        genesis[224..228].copy_from_slice(&1_u32.to_be_bytes());
-        genesis[228..244].copy_from_slice(&device_id);
-        genesis[244..248].copy_from_slice(&1_u32.to_be_bytes());
-        genesis[252..284].copy_from_slice(member_public.signing.as_bytes());
-        genesis[284..316].copy_from_slice(member_public.key_agreement.as_bytes());
-        let signature = crypto::sign_account_trust_payload(&ark, binding, &genesis[..316])
+        genesis[256..260].copy_from_slice(&1_u32.to_be_bytes());
+        genesis[260..276].copy_from_slice(&device_id);
+        genesis[276..280].copy_from_slice(&1_u32.to_be_bytes());
+        genesis[284..316].copy_from_slice(member_public.signing.as_bytes());
+        genesis[316..348].copy_from_slice(member_public.key_agreement.as_bytes());
+        let signature = crypto::sign_account_trust_payload(&ark, binding, &genesis[..348])
             .expect("genesis 应签名");
-        genesis[380..].copy_from_slice(signature.as_bytes());
+        genesis[412..].copy_from_slice(signature.as_bytes());
         genesis
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_test_account_recovery_challenge(
+        attempt_id: [u8; 16],
+        user_id: [u8; 16],
+        device_id: [u8; 16],
+        device_public_keys: crypto::DevicePublicKeys,
+        recovery_public_key: [u8; 32],
+        capsule: &[u8; recovery_protocol::RECOVERY_CAPSULE_LENGTH],
+        history: &[u8],
+        expires_at_ms: u64,
+        request_digest: [u8; 32],
+    ) -> [u8; account_recovery_protocol::ACCOUNT_RECOVERY_CHALLENGE_LENGTH] {
+        let mut challenge = [0_u8; account_recovery_protocol::ACCOUNT_RECOVERY_CHALLENGE_LENGTH];
+        challenge[..8].copy_from_slice(b"KELIVORC");
+        challenge[8..12].copy_from_slice(
+            &account_recovery_protocol::ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes(),
+        );
+        challenge[12..14].copy_from_slice(&0x20_u16.to_be_bytes());
+        challenge[14..16].copy_from_slice(&1_u16.to_be_bytes());
+        challenge[16..18].copy_from_slice(&3_u16.to_be_bytes());
+        challenge[20..36].copy_from_slice(&attempt_id);
+        challenge[36..52].copy_from_slice(&user_id);
+        challenge[52..68].copy_from_slice(&device_id);
+        challenge[68..72].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[72..104].copy_from_slice(device_public_keys.signing.as_bytes());
+        challenge[104..136].copy_from_slice(device_public_keys.key_agreement.as_bytes());
+        challenge[136..140].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[140..144].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[144..176].copy_from_slice(&Sha256::digest(history));
+        challenge[176..180].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[180..212].copy_from_slice(&recovery_public_key);
+        challenge[212..216].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[216..248].copy_from_slice(&Sha256::digest(capsule));
+        challenge[248] = 0;
+        challenge[252..256].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[256..260].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[276..284].copy_from_slice(&expires_at_ms.to_be_bytes());
+        challenge[284..].copy_from_slice(&request_digest);
+        challenge
+    }
+
+    struct TestRecoveryResumeHistory {
+        bytes: Vec<u8>,
+        source_operation_id: [u8; 16],
+        head_operation_id: [u8; 16],
+        head_digest: [u8; 32],
+        operation_authorization_digest: [u8; 32],
+    }
+
+    fn sign_test_recovery_manifest(
+        manifest: &mut [u8],
+        user_id: crypto::UserId,
+        transition: Option<(&crypto::AccountRootKey, u32)>,
+        current: (&crypto::AccountRootKey, u32),
+    ) {
+        let payload_length = manifest.len() - 128;
+        manifest[payload_length..].fill(0);
+        if let Some((ark, key_epoch)) = transition {
+            let signature = crypto::sign_account_trust_payload(
+                ark,
+                crypto::AccountTrustBinding { user_id, key_epoch },
+                &manifest[..payload_length],
+            )
+            .expect("测试历史过渡签名应生成");
+            manifest[payload_length..payload_length + 64].copy_from_slice(signature.as_bytes());
+        }
+        let signature = crypto::sign_account_trust_payload(
+            current.0,
+            crypto::AccountTrustBinding {
+                user_id,
+                key_epoch: current.1,
+            },
+            &manifest[..payload_length],
+        )
+        .expect("测试历史当前签名应生成");
+        manifest[payload_length + 64..].copy_from_slice(signature.as_bytes());
+    }
+
+    fn build_test_recovery_resume_history(
+        genesis: &[u8; recovery_protocol::RECOVERY_GENESIS_LENGTH],
+        user_id: crypto::UserId,
+        epoch_one: &crypto::AccountRootKey,
+        epoch_two: &crypto::AccountRootKey,
+        current_capsule: &recovery_protocol::RecoveryCapsule,
+        target_device_id: [u8; 16],
+        target_public_keys: crypto::DevicePublicKeys,
+    ) -> TestRecoveryResumeHistory {
+        const HEADER_LENGTH: usize = 260;
+        const MEMBER_LENGTH: usize = 88;
+        const SIGNATURE_LENGTH: usize = 128;
+
+        let revoked_device_id = account_id(0x77);
+        let mut rng = kelivo_secure_core_protocol::system_rng().expect("测试随机源应可用");
+        let revoked_identity =
+            crypto::DeviceIdentity::generate(&mut rng).expect("测试撤销设备身份应生成");
+        let revoked_public_keys = revoked_identity.public_keys();
+
+        let add_operation_id = account_id(0x71);
+        let mut add = vec![0_u8; HEADER_LENGTH + 2 * MEMBER_LENGTH + SIGNATURE_LENGTH];
+        add[..HEADER_LENGTH].copy_from_slice(&genesis[..HEADER_LENGTH]);
+        add[28..32].copy_from_slice(&2_u32.to_be_bytes());
+        add[36..68].copy_from_slice(&Sha256::digest(genesis));
+        add[172..176].copy_from_slice(&2_u32.to_be_bytes());
+        add[176..192].copy_from_slice(&add_operation_id);
+        add[192..208].copy_from_slice(&genesis[260..276]);
+        add[208..224].copy_from_slice(&revoked_device_id);
+        add[256..260].copy_from_slice(&2_u32.to_be_bytes());
+        add[260..348].copy_from_slice(&genesis[260..348]);
+        add[348..364].copy_from_slice(&revoked_device_id);
+        add[364..368].copy_from_slice(&1_u32.to_be_bytes());
+        add[368..372].copy_from_slice(&1_u32.to_be_bytes());
+        add[372..404].copy_from_slice(revoked_public_keys.signing.as_bytes());
+        add[404..436].copy_from_slice(revoked_public_keys.key_agreement.as_bytes());
+        sign_test_recovery_manifest(&mut add, user_id, None, (epoch_one, 1));
+
+        let source_operation_id = account_id(0x72);
+        let operation_authorization_digest = [0x51; 32];
+        let mut rotate = vec![0_u8; HEADER_LENGTH + MEMBER_LENGTH + SIGNATURE_LENGTH];
+        rotate[..HEADER_LENGTH].copy_from_slice(&add[..HEADER_LENGTH]);
+        rotate[28..32].copy_from_slice(&3_u32.to_be_bytes());
+        rotate[32..36].copy_from_slice(&2_u32.to_be_bytes());
+        rotate[36..68].copy_from_slice(&Sha256::digest(&add));
+        let trust_public = crypto::derive_account_trust_public_key(
+            epoch_two,
+            crypto::AccountTrustBinding {
+                user_id,
+                key_epoch: 2,
+            },
+        )
+        .expect("测试轮换信任公钥应派生");
+        rotate[68..100].copy_from_slice(trust_public.as_bytes());
+        rotate[136..140].copy_from_slice(&2_u32.to_be_bytes());
+        rotate[140..172].copy_from_slice(&Sha256::digest(current_capsule.as_bytes()));
+        rotate[172..176].copy_from_slice(&3_u32.to_be_bytes());
+        rotate[176..192].copy_from_slice(&source_operation_id);
+        rotate[192..208].copy_from_slice(&genesis[260..276]);
+        rotate[208..224].copy_from_slice(&revoked_device_id);
+        rotate[224..256].copy_from_slice(&operation_authorization_digest);
+        rotate[256..260].copy_from_slice(&1_u32.to_be_bytes());
+        rotate[260..348].copy_from_slice(&genesis[260..348]);
+        sign_test_recovery_manifest(&mut rotate, user_id, Some((epoch_one, 1)), (epoch_two, 2));
+
+        let head_operation_id = account_id(0x73);
+        let mut resume = vec![0_u8; HEADER_LENGTH + 2 * MEMBER_LENGTH + SIGNATURE_LENGTH];
+        resume[..HEADER_LENGTH].copy_from_slice(&rotate[..HEADER_LENGTH]);
+        resume[28..32].copy_from_slice(&4_u32.to_be_bytes());
+        resume[36..68].copy_from_slice(&Sha256::digest(&rotate));
+        resume[172..176].copy_from_slice(&4_u32.to_be_bytes());
+        resume[176..192].copy_from_slice(&head_operation_id);
+        resume[192..208].copy_from_slice(&target_device_id);
+        resume[208..224].copy_from_slice(&target_device_id);
+        resume[224..256].fill(0);
+        resume[256..260].copy_from_slice(&2_u32.to_be_bytes());
+        resume[260..348].copy_from_slice(&rotate[260..348]);
+        resume[348..364].copy_from_slice(&target_device_id);
+        resume[364..368].copy_from_slice(&1_u32.to_be_bytes());
+        resume[368..372].copy_from_slice(&2_u32.to_be_bytes());
+        resume[372..404].copy_from_slice(target_public_keys.signing.as_bytes());
+        resume[404..436].copy_from_slice(target_public_keys.key_agreement.as_bytes());
+        sign_test_recovery_manifest(&mut resume, user_id, None, (epoch_two, 2));
+
+        let head_digest = Sha256::digest(&resume).into();
+        let mut bytes = Vec::with_capacity(genesis.len() + add.len() + rotate.len() + resume.len());
+        bytes.extend_from_slice(genesis);
+        bytes.extend_from_slice(&add);
+        bytes.extend_from_slice(&rotate);
+        bytes.extend_from_slice(&resume);
+        TestRecoveryResumeHistory {
+            bytes,
+            source_operation_id,
+            head_operation_id,
+            head_digest,
+            operation_authorization_digest,
+        }
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn build_test_account_recovery_replacement_challenge(
+        challenge_id: [u8; 16],
+        attempt_id: [u8; 16],
+        user_id: [u8; 16],
+        device_id: [u8; 16],
+        device_public_keys: crypto::DevicePublicKeys,
+        membership_operation_id: [u8; 16],
+        membership_manifest_digest: [u8; 32],
+        recovery_public_key: [u8; 32],
+        current_capsule: &recovery_protocol::RecoveryCapsule,
+        source_data_rekey_operation_id: [u8; 16],
+        completion_proof_digest: [u8; 32],
+        expires_at_ms: u64,
+    ) -> [u8; account_recovery_protocol::ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH] {
+        let mut challenge =
+            [0_u8; account_recovery_protocol::ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_LENGTH];
+        challenge[..8].copy_from_slice(b"KELIVR2C");
+        challenge[8..12].copy_from_slice(
+            &account_recovery_protocol::ACCOUNT_RECOVERY_PROTOCOL_VERSION.to_be_bytes(),
+        );
+        challenge[12..14].copy_from_slice(&0x20_u16.to_be_bytes());
+        challenge[14..16].copy_from_slice(&1_u16.to_be_bytes());
+        challenge[16..18].copy_from_slice(&3_u16.to_be_bytes());
+        challenge[20..36].copy_from_slice(&challenge_id);
+        challenge[36..52].copy_from_slice(&attempt_id);
+        challenge[52..68].copy_from_slice(&user_id);
+        challenge[68..84].copy_from_slice(&device_id);
+        challenge[84..88].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[88..120].copy_from_slice(device_public_keys.signing.as_bytes());
+        challenge[120..152].copy_from_slice(device_public_keys.key_agreement.as_bytes());
+        challenge[152..156].copy_from_slice(&4_u32.to_be_bytes());
+        challenge[156..160].copy_from_slice(&2_u32.to_be_bytes());
+        challenge[160..176].copy_from_slice(&membership_operation_id);
+        challenge[176..208].copy_from_slice(&membership_manifest_digest);
+        challenge[208..212].copy_from_slice(&1_u32.to_be_bytes());
+        challenge[212..244].copy_from_slice(&recovery_public_key);
+        challenge[244..248].copy_from_slice(&2_u32.to_be_bytes());
+        challenge[248..280].copy_from_slice(&Sha256::digest(current_capsule.as_bytes()));
+        challenge[280..296].copy_from_slice(&source_data_rekey_operation_id);
+        challenge[296..300].copy_from_slice(&2_u32.to_be_bytes());
+        challenge[300..304].copy_from_slice(&2_u32.to_be_bytes());
+        challenge[304..336].copy_from_slice(&completion_proof_digest);
+        challenge[336..344].copy_from_slice(&expires_at_ms.to_be_bytes());
+        let request_digest =
+            account_recovery_protocol::account_recovery_replacement_challenge_request_digest(
+                &challenge,
+            )
+            .expect("测试替换挑战请求摘要应派生");
+        challenge[344..].copy_from_slice(&request_digest);
+        challenge
     }
 
     #[test]
@@ -1466,7 +1768,7 @@ mod tests {
                     0
                 }
                 | if cfg!(any(target_os = "android", target_os = "ios")) {
-                    RECOVERY_MEDIA_CAPABILITY
+                    RECOVERY_MEDIA_CAPABILITY | ACCOUNT_RECOVERY_EXECUTION_CAPABILITY
                 } else {
                     0
                 }
@@ -5568,6 +5870,1064 @@ mod tests {
         );
         assert_eq!(
             kelivo_account_root_key_handle_close(source_ark_handle),
+            KelivoStatus::Ok.code()
+        );
+    }
+
+    #[test]
+    fn account_recovery_execution_is_atomic_bound_idempotent_and_secret_owning() {
+        let _guard = recovery_test_guard();
+        assert_eq!(account_recovery::active_execution_handles(), 0);
+
+        let user_id = account_id(0x91);
+        let protocol_user_id = crypto::UserId::new(user_id).expect("测试账户应有效");
+        let ark_bytes = [0x92; 32];
+        let source_ark_handle = device_core::register_ark(
+            protocol_user_id,
+            1,
+            crypto::AccountRootKey::from_bytes(ark_bytes),
+        )
+        .expect("测试 ARK 应注册");
+        let (recovery_handle, recovery_public_key) = generate_test_recovery_identity(&user_id);
+        let capsule =
+            seal_test_recovery_capsule(source_ark_handle, &user_id, 1, 1, &recovery_public_key);
+        let genesis =
+            build_test_recovery_genesis(ark_bytes, user_id, recovery_public_key, &capsule);
+        let export_authority = recovery_media_export_authority(source_ark_handle, capsule);
+        let recovery_passphrase = "独立恢复口令甲乙丙丁戊己庚辛".as_bytes();
+        let origin = [0x93; recovery_protocol::RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH];
+        let mut media = [0_u8; recovery_protocol::RECOVERY_MEDIA_LENGTH];
+        let mut media_length = 0;
+        assert_eq!(
+            unsafe {
+                kelivo_recovery_media_export(
+                    recovery_handle,
+                    &export_authority,
+                    genesis.as_ptr(),
+                    genesis.len(),
+                    recovery_passphrase.as_ptr(),
+                    recovery_passphrase.len(),
+                    origin.as_ptr(),
+                    origin.len(),
+                    media.as_mut_ptr(),
+                    media.len(),
+                    &mut media_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(media_length, media.len());
+        assert_eq!(
+            kelivo_recovery_handle_close(recovery_handle),
+            KelivoStatus::Ok.code()
+        );
+
+        let target_identity_handle = generate_device_identity();
+        let target_public_keys = device_core::identity_for_handle(target_identity_handle)
+            .expect("目标设备身份应存在")
+            .public_keys();
+        let attempt_id = account_id(0x94);
+        let device_id = account_id(0x95);
+        let expires_at_ms = 1_900_000_000_000;
+        let request_digest = [0x97; 32];
+        let challenge = build_test_account_recovery_challenge(
+            attempt_id,
+            user_id,
+            device_id,
+            target_public_keys,
+            recovery_public_key,
+            &capsule,
+            &genesis,
+            expires_at_ms,
+            request_digest,
+        );
+        let nonce = [0x98; account_recovery_protocol::ACCOUNT_RECOVERY_NONCE_LENGTH];
+        let token_digest = [0x99; account_recovery_protocol::ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH];
+        let recovery_public_key =
+            recovery_protocol::RecoveryPublicKey::from_bytes(recovery_public_key)
+                .expect("恢复公钥应有效");
+        let mut rng = kelivo_secure_core_protocol::system_rng().expect("测试随机源应可用");
+        let sealed_nonce = account_recovery_protocol::seal_account_recovery_nonce(
+            &mut rng,
+            recovery_public_key,
+            &challenge,
+            &nonce,
+        )
+        .expect("测试 nonce 应密封");
+
+        let mut tampered_sealed_nonce = sealed_nonce;
+        let last = tampered_sealed_nonce.len() - 1;
+        tampered_sealed_nonce[last] ^= 1;
+        let mut failed_binding = sentinel_account_recovery_proof_binding();
+        let mut failed_nonce_proof =
+            [0xa5; account_recovery_protocol::ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH];
+        let mut failed_nonce_proof_length = usize::MAX;
+        let mut failed_trust_signature = [0xa5; crypto::ACCOUNT_TRUST_SIGNATURE_LENGTH];
+        let mut failed_trust_signature_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_verify_and_prove(
+                    target_identity_handle,
+                    1,
+                    1,
+                    media.as_ptr(),
+                    media.len(),
+                    recovery_passphrase.as_ptr(),
+                    recovery_passphrase.len(),
+                    origin.as_ptr(),
+                    origin.len(),
+                    genesis.as_ptr(),
+                    genesis.len(),
+                    ptr::null(),
+                    0,
+                    capsule.as_ptr(),
+                    capsule.len(),
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    tampered_sealed_nonce.as_ptr(),
+                    tampered_sealed_nonce.len(),
+                    token_digest.as_ptr(),
+                    token_digest.len(),
+                    attempt_id.as_ptr(),
+                    attempt_id.len(),
+                    device_id.as_ptr(),
+                    device_id.len(),
+                    request_digest.as_ptr(),
+                    request_digest.len(),
+                    expires_at_ms,
+                    &mut failed_binding,
+                    failed_nonce_proof.as_mut_ptr(),
+                    failed_nonce_proof.len(),
+                    &mut failed_nonce_proof_length,
+                    failed_trust_signature.as_mut_ptr(),
+                    failed_trust_signature.len(),
+                    &mut failed_trust_signature_length,
+                )
+            },
+            KelivoStatus::RecoveryChallengeAuthenticationFailed.code()
+        );
+        assert_eq!(failed_binding, KelivoAccountRecoveryProofBinding::default());
+        assert_eq!(failed_nonce_proof_length, 0);
+        assert!(failed_nonce_proof.iter().all(|byte| *byte == 0));
+        assert_eq!(failed_trust_signature_length, 0);
+        assert!(failed_trust_signature.iter().all(|byte| *byte == 0));
+        assert_eq!(account_recovery::active_execution_handles(), 0);
+
+        let mut proof_binding = sentinel_account_recovery_proof_binding();
+        let mut nonce_proof =
+            [0xa5; account_recovery_protocol::ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH];
+        let mut nonce_proof_length = usize::MAX;
+        let mut trust_signature = [0xa5; crypto::ACCOUNT_TRUST_SIGNATURE_LENGTH];
+        let mut trust_signature_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_verify_and_prove(
+                    target_identity_handle,
+                    1,
+                    1,
+                    media.as_ptr(),
+                    media.len(),
+                    recovery_passphrase.as_ptr(),
+                    recovery_passphrase.len(),
+                    origin.as_ptr(),
+                    origin.len(),
+                    genesis.as_ptr(),
+                    genesis.len(),
+                    ptr::null(),
+                    0,
+                    capsule.as_ptr(),
+                    capsule.len(),
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    sealed_nonce.as_ptr(),
+                    sealed_nonce.len(),
+                    token_digest.as_ptr(),
+                    token_digest.len(),
+                    attempt_id.as_ptr(),
+                    attempt_id.len(),
+                    device_id.as_ptr(),
+                    device_id.len(),
+                    request_digest.as_ptr(),
+                    request_digest.len(),
+                    expires_at_ms,
+                    &mut proof_binding,
+                    nonce_proof.as_mut_ptr(),
+                    nonce_proof.len(),
+                    &mut nonce_proof_length,
+                    trust_signature.as_mut_ptr(),
+                    trust_signature.len(),
+                    &mut trust_signature_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(nonce_proof_length, nonce_proof.len());
+        assert_eq!(trust_signature_length, trust_signature.len());
+        assert_eq!(
+            proof_binding.struct_size as usize,
+            size_of::<KelivoAccountRecoveryProofBinding>()
+        );
+        assert_eq!(proof_binding.data_phase, 1);
+        assert_eq!(proof_binding.user_id, user_id);
+        assert_eq!(proof_binding.device_id, device_id);
+        assert_eq!(proof_binding.security_generation, 1);
+        assert_eq!(proof_binding.key_epoch, 1);
+        assert_eq!(proof_binding.device_key_version, 1);
+        assert_eq!(proof_binding.recovery_capsule_version, 1);
+        assert_eq!(proof_binding.source_data_generation, 1);
+        assert_eq!(proof_binding.source_data_key_epoch, 1);
+        assert_eq!(proof_binding.source_data_rekey_operation_id, [0; 16]);
+        assert_eq!(proof_binding.operation_authorization_digest, [0; 32]);
+        assert_ne!(proof_binding.execution_handle, 0);
+        assert_eq!(account_recovery::active_execution_handles(), 1);
+
+        let proof_material = account_recovery_protocol::create_account_recovery_proof_material(
+            &challenge,
+            &nonce,
+            &token_digest,
+        )
+        .expect("证明材料应生成");
+        assert_eq!(nonce_proof, proof_material.nonce_proof);
+        let trust_public_key = crypto::derive_account_trust_public_key(
+            &crypto::AccountRootKey::from_bytes(ark_bytes),
+            crypto::AccountTrustBinding {
+                user_id: protocol_user_id,
+                key_epoch: 1,
+            },
+        )
+        .expect("信任公钥应派生");
+        let trust_signature = crypto::AccountTrustSignature::from_bytes(&trust_signature)
+            .expect("信任签名长度应有效");
+        crypto::verify_account_recovery_trust_message(
+            &trust_public_key,
+            &proof_material.trust_signature_message,
+            &trust_signature,
+        )
+        .expect("信任签名应验证");
+
+        let prepare_input = KelivoAccountRecoveryPrepareInput {
+            struct_size: size_of::<KelivoAccountRecoveryPrepareInput>() as u32,
+            kind: 2,
+            operation_id: account_id(0x9a),
+            target_auth_generation: 1,
+            rekey_operation_id: [0; 16],
+            completion_session_id: account_id(0x9b),
+            completion_session_token_digest: [0x9c; 32],
+        };
+        let manifest_capacity = 260 + 256 * 88 + 128;
+        let mut prepare_binding = sentinel_account_recovery_prepare_binding();
+        let mut manifest = vec![0xa5; manifest_capacity];
+        let mut manifest_length = usize::MAX;
+        let mut envelope = [0xa5; crypto::ARK_ENVELOPE_LENGTH];
+        let mut envelope_length = usize::MAX;
+        let mut next_capsule = [0xa5; recovery_protocol::RECOVERY_CAPSULE_LENGTH];
+        let mut next_capsule_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_prepare_commit(
+                    proof_binding.execution_handle,
+                    &prepare_input,
+                    &mut prepare_binding,
+                    manifest.as_mut_ptr(),
+                    manifest.len(),
+                    &mut manifest_length,
+                    envelope.as_mut_ptr(),
+                    envelope.len(),
+                    &mut envelope_length,
+                    next_capsule.as_mut_ptr(),
+                    next_capsule.len(),
+                    &mut next_capsule_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            prepare_binding.struct_size as usize,
+            size_of::<KelivoAccountRecoveryPrepareBinding>()
+        );
+        assert_eq!(prepare_binding.kind, 2);
+        assert_eq!(prepare_binding.expected_generation, 1);
+        assert_eq!(prepare_binding.expected_key_epoch, 1);
+        assert_eq!(prepare_binding.next_generation, 2);
+        assert_eq!(prepare_binding.next_key_epoch, 2);
+        assert_eq!(prepare_binding.next_recovery_capsule_version, 2);
+        assert_eq!(envelope_length, envelope.len());
+        assert_eq!(next_capsule_length, next_capsule.len());
+        assert_eq!(
+            u32::from_be_bytes(manifest[172..176].try_into().expect("操作码切片应有效")),
+            5
+        );
+        assert_eq!(
+            prepare_binding.manifest_digest,
+            Sha256::digest(&manifest[..manifest_length]).as_slice()
+        );
+
+        let expected_binding = prepare_binding;
+        let expected_manifest = manifest[..manifest_length].to_vec();
+        let expected_envelope = envelope;
+        let mut replay_binding = sentinel_account_recovery_prepare_binding();
+        let mut replay_manifest = vec![0xa5; manifest_capacity];
+        let mut replay_manifest_length = usize::MAX;
+        let mut replay_envelope = [0xa5; crypto::ARK_ENVELOPE_LENGTH];
+        let mut replay_envelope_length = usize::MAX;
+        let mut replay_capsule = [0xa5; recovery_protocol::RECOVERY_CAPSULE_LENGTH];
+        let mut replay_capsule_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_prepare_commit(
+                    proof_binding.execution_handle,
+                    &prepare_input,
+                    &mut replay_binding,
+                    replay_manifest.as_mut_ptr(),
+                    replay_manifest.len(),
+                    &mut replay_manifest_length,
+                    replay_envelope.as_mut_ptr(),
+                    replay_envelope.len(),
+                    &mut replay_envelope_length,
+                    replay_capsule.as_mut_ptr(),
+                    replay_capsule.len(),
+                    &mut replay_capsule_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(replay_binding, expected_binding);
+        assert_eq!(
+            &replay_manifest[..replay_manifest_length],
+            expected_manifest
+        );
+        assert_eq!(replay_envelope, expected_envelope);
+        assert_eq!(replay_capsule_length, replay_capsule.len());
+        assert_eq!(replay_capsule, next_capsule);
+
+        let state_key_handle = register_key(Zeroizing::new(
+            vec![0xad; LOCAL_KEY_SIZE].into_boxed_slice(),
+        ))
+        .expect("测试设备状态密钥应注册");
+        let state_binding = KelivoAccountRecoveryStateBinding {
+            struct_size: size_of::<KelivoAccountRecoveryStateBinding>() as u32,
+            kind: 2,
+            data_phase: 1,
+            device_key_version: 1,
+            user_id,
+            device_id,
+            source_key_epoch: 1,
+            target_key_epoch: 2,
+            source_data_generation: 1,
+            target_data_generation: 2,
+            membership_generation: 2,
+            reserved: 0,
+            membership_manifest_digest: prepare_binding.manifest_digest,
+            rekey_operation_id: prepare_input.operation_id,
+            operation_authorization_digest: [0; 32],
+        };
+        let mut unpruned_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut unpruned_state_length = usize::MAX;
+        let mut pruned_candidate = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut pruned_candidate_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_states_prepare(
+                    proof_binding.execution_handle,
+                    state_key_handle,
+                    &state_binding,
+                    unpruned_state.as_mut_ptr(),
+                    unpruned_state.len(),
+                    &mut unpruned_state_length,
+                    pruned_candidate.as_mut_ptr(),
+                    pruned_candidate.len(),
+                    &mut pruned_candidate_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(unpruned_state_length, unpruned_state.len());
+        assert_eq!(pruned_candidate_length, pruned_candidate.len());
+        assert_ne!(unpruned_state, pruned_candidate);
+
+        let mut completion_proof_frame = data_rekey_completion_proof_frame();
+        completion_proof_frame[32..48].copy_from_slice(&prepare_input.operation_id);
+        completion_proof_frame[48..64].copy_from_slice(&user_id);
+        completion_proof_frame[64..80].copy_from_slice(&device_id);
+        completion_proof_frame[80..84].copy_from_slice(&1_u32.to_be_bytes());
+        completion_proof_frame[84..88].copy_from_slice(&2_u32.to_be_bytes());
+        completion_proof_frame[88..92].copy_from_slice(&1_u32.to_be_bytes());
+        completion_proof_frame[92..96].copy_from_slice(&2_u32.to_be_bytes());
+        completion_proof_frame[194..198].copy_from_slice(&2_u32.to_be_bytes());
+        completion_proof_frame[198..230].copy_from_slice(&prepare_binding.manifest_digest);
+        let target_identity = device_core::identity_for_handle(target_identity_handle)
+            .expect("目标设备身份应保持可用");
+        let completion_proof_signature = target_identity
+            .sign_data_rekey_completion_proof(&completion_proof_frame)
+            .expect("测试完成证明应签名");
+        let completion_proof_digest = crypto::data_rekey_completion_proof_digest(
+            &completion_proof_frame,
+            completion_proof_signature.as_bytes(),
+        )
+        .expect("测试完成证明摘要应派生");
+        let rebuilt_pending_execution_handle =
+            account_recovery::rebuild_test_execution_for_committed(
+                proof_binding.execution_handle,
+                state_binding,
+                false,
+            )
+            .expect("提交后 pending 状态应能重建独立 execution");
+        let rebuilt_ready_execution_handle =
+            account_recovery::rebuild_test_execution_for_committed(
+                proof_binding.execution_handle,
+                state_binding,
+                true,
+            )
+            .expect("数据 ready 后应能重建独立 execution");
+
+        let mut rejected_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut rejected_state_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    proof_binding.execution_handle,
+                    state_key_handle,
+                    &state_binding,
+                    unpruned_state.as_ptr(),
+                    unpruned_state.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    completion_proof_signature.as_bytes().as_ptr(),
+                    completion_proof_signature.as_bytes().len(),
+                    completion_proof_digest.as_ptr(),
+                    completion_proof_digest.len(),
+                    rejected_state.as_mut_ptr(),
+                    rejected_state.len(),
+                    &mut rejected_state_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(rejected_state_length, 0);
+        assert!(rejected_state.iter().all(|byte| *byte == 0));
+
+        let mut swapped_candidate = pruned_candidate;
+        swapped_candidate[swapped_candidate.len() - 1] ^= 1;
+        rejected_state.fill(0xa5);
+        rejected_state_length = usize::MAX;
+        assert_ne!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    proof_binding.execution_handle,
+                    state_key_handle,
+                    &state_binding,
+                    swapped_candidate.as_ptr(),
+                    swapped_candidate.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    completion_proof_signature.as_bytes().as_ptr(),
+                    completion_proof_signature.as_bytes().len(),
+                    completion_proof_digest.as_ptr(),
+                    completion_proof_digest.len(),
+                    rejected_state.as_mut_ptr(),
+                    rejected_state.len(),
+                    &mut rejected_state_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(rejected_state_length, 0);
+        assert!(rejected_state.iter().all(|byte| *byte == 0));
+
+        let mut wrong_proof_digest = completion_proof_digest;
+        wrong_proof_digest[0] ^= 1;
+        rejected_state.fill(0xa5);
+        rejected_state_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    proof_binding.execution_handle,
+                    state_key_handle,
+                    &state_binding,
+                    pruned_candidate.as_ptr(),
+                    pruned_candidate.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    completion_proof_signature.as_bytes().as_ptr(),
+                    completion_proof_signature.as_bytes().len(),
+                    wrong_proof_digest.as_ptr(),
+                    wrong_proof_digest.len(),
+                    rejected_state.as_mut_ptr(),
+                    rejected_state.len(),
+                    &mut rejected_state_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(rejected_state_length, 0);
+        assert!(rejected_state.iter().all(|byte| *byte == 0));
+
+        let mut activated_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut activated_state_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    proof_binding.execution_handle,
+                    state_key_handle,
+                    &state_binding,
+                    pruned_candidate.as_ptr(),
+                    pruned_candidate.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    completion_proof_signature.as_bytes().as_ptr(),
+                    completion_proof_signature.as_bytes().len(),
+                    completion_proof_digest.as_ptr(),
+                    completion_proof_digest.len(),
+                    activated_state.as_mut_ptr(),
+                    activated_state.len(),
+                    &mut activated_state_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(activated_state_length, activated_state.len());
+        assert_eq!(activated_state, pruned_candidate);
+
+        let wrong_state_key_handle = register_key(Zeroizing::new(
+            vec![0xae; LOCAL_KEY_SIZE].into_boxed_slice(),
+        ))
+        .expect("错误设备状态密钥应注册");
+        rejected_state.fill(0xa5);
+        rejected_state_length = usize::MAX;
+        assert_ne!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    proof_binding.execution_handle,
+                    wrong_state_key_handle,
+                    &state_binding,
+                    pruned_candidate.as_ptr(),
+                    pruned_candidate.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    completion_proof_signature.as_bytes().as_ptr(),
+                    completion_proof_signature.as_bytes().len(),
+                    completion_proof_digest.as_ptr(),
+                    completion_proof_digest.len(),
+                    rejected_state.as_mut_ptr(),
+                    rejected_state.len(),
+                    &mut rejected_state_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(rejected_state_length, 0);
+        assert!(rejected_state.iter().all(|byte| *byte == 0));
+        assert_eq!(close_key_handle(wrong_state_key_handle), Ok(()));
+
+        let mut replay_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut replay_state_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    proof_binding.execution_handle,
+                    state_key_handle,
+                    &state_binding,
+                    pruned_candidate.as_ptr(),
+                    pruned_candidate.len(),
+                    completion_proof_frame.as_ptr(),
+                    completion_proof_frame.len(),
+                    completion_proof_signature.as_bytes().as_ptr(),
+                    completion_proof_signature.as_bytes().len(),
+                    completion_proof_digest.as_ptr(),
+                    completion_proof_digest.len(),
+                    replay_state.as_mut_ptr(),
+                    replay_state.len(),
+                    &mut replay_state_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(replay_state_length, replay_state.len());
+        assert_eq!(replay_state, pruned_candidate);
+
+        for rebuilt_execution_handle in [
+            rebuilt_pending_execution_handle,
+            rebuilt_ready_execution_handle,
+        ] {
+            let mut rebuilt_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+            let mut rebuilt_state_length = usize::MAX;
+            assert_eq!(
+                unsafe {
+                    kelivo_account_recovery_device_state_prune_and_activate(
+                        rebuilt_execution_handle,
+                        state_key_handle,
+                        &state_binding,
+                        pruned_candidate.as_ptr(),
+                        pruned_candidate.len(),
+                        completion_proof_frame.as_ptr(),
+                        completion_proof_frame.len(),
+                        completion_proof_signature.as_bytes().as_ptr(),
+                        completion_proof_signature.as_bytes().len(),
+                        completion_proof_digest.as_ptr(),
+                        completion_proof_digest.len(),
+                        rebuilt_state.as_mut_ptr(),
+                        rebuilt_state.len(),
+                        &mut rebuilt_state_length,
+                    )
+                },
+                KelivoStatus::Ok.code()
+            );
+            assert_eq!(rebuilt_state_length, rebuilt_state.len());
+            assert_eq!(rebuilt_state, pruned_candidate);
+            assert_eq!(
+                kelivo_account_recovery_execution_close(rebuilt_execution_handle),
+                KelivoStatus::Ok.code()
+            );
+        }
+
+        let borrowed = account_recovery::borrow_test_execution(proof_binding.execution_handle)
+            .expect("测试执行借用应成功");
+        assert_eq!(
+            kelivo_account_recovery_execution_close(proof_binding.execution_handle),
+            KelivoStatus::SlotInUse.code()
+        );
+        drop(borrowed);
+
+        let mismatched_input = KelivoAccountRecoveryPrepareInput {
+            target_auth_generation: 2,
+            ..prepare_input
+        };
+        let mut failed_prepare_binding = sentinel_account_recovery_prepare_binding();
+        let mut failed_manifest = vec![0xa5; manifest_capacity];
+        let mut failed_manifest_length = usize::MAX;
+        let mut failed_envelope = [0xa5; crypto::ARK_ENVELOPE_LENGTH];
+        let mut failed_envelope_length = usize::MAX;
+        let mut failed_capsule = [0xa5; recovery_protocol::RECOVERY_CAPSULE_LENGTH];
+        let mut failed_capsule_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_prepare_commit(
+                    proof_binding.execution_handle,
+                    &mismatched_input,
+                    &mut failed_prepare_binding,
+                    failed_manifest.as_mut_ptr(),
+                    failed_manifest.len(),
+                    &mut failed_manifest_length,
+                    failed_envelope.as_mut_ptr(),
+                    failed_envelope.len(),
+                    &mut failed_envelope_length,
+                    failed_capsule.as_mut_ptr(),
+                    failed_capsule.len(),
+                    &mut failed_capsule_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(
+            failed_prepare_binding,
+            KelivoAccountRecoveryPrepareBinding::default()
+        );
+        assert_eq!(failed_manifest_length, 0);
+        assert!(failed_manifest.iter().all(|byte| *byte == 0));
+        assert_eq!(failed_envelope_length, 0);
+        assert!(failed_envelope.iter().all(|byte| *byte == 0));
+        assert_eq!(failed_capsule_length, 0);
+        assert!(failed_capsule.iter().all(|byte| *byte == 0));
+        assert_eq!(account_recovery::active_execution_handles(), 0);
+        assert_eq!(
+            kelivo_account_recovery_execution_close(proof_binding.execution_handle),
+            KelivoStatus::InvalidRecoveryExecutionHandle.code()
+        );
+        assert_eq!(
+            kelivo_device_identity_handle_close(target_identity_handle),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(close_key_handle(state_key_handle), Ok(()));
+        assert_eq!(
+            kelivo_account_root_key_handle_close(source_ark_handle),
+            KelivoStatus::Ok.code()
+        );
+    }
+
+    #[test]
+    fn replacement_challenge_abi_is_proof_gated_and_replacement_only() {
+        let _guard = recovery_test_guard();
+        assert_eq!(account_recovery::active_execution_handles(), 0);
+
+        let user_id = account_id(0xb1);
+        let protocol_user_id = crypto::UserId::new(user_id).expect("测试账户应有效");
+        let epoch_one = crypto::AccountRootKey::from_bytes([0xb2; 32]);
+        let epoch_two = crypto::AccountRootKey::from_bytes([0xb3; 32]);
+        let mut rng = kelivo_secure_core_protocol::system_rng().expect("测试随机源应可用");
+        let recovery_identity =
+            recovery_protocol::RecoveryIdentity::generate(&mut rng).expect("测试恢复身份应生成");
+        let recovery_public_key = recovery_identity.public_key().expect("测试恢复公钥应派生");
+        let source_capsule = recovery_protocol::seal_recovery_capsule(
+            &mut rng,
+            &epoch_one,
+            protocol_user_id,
+            1,
+            1,
+            1,
+            recovery_public_key,
+        )
+        .expect("测试源 capsule 应密封");
+        let genesis = build_test_recovery_genesis(
+            *epoch_one.as_bytes(),
+            user_id,
+            *recovery_public_key.as_bytes(),
+            source_capsule.as_bytes(),
+        );
+        let passphrase = b"replacement-recovery-passphrase-v2";
+        let origin = [0xb4; recovery_protocol::RECOVERY_SERVICE_ORIGIN_DIGEST_LENGTH];
+        let media = recovery_protocol::seal_recovery_media(
+            &mut rng,
+            &recovery_identity,
+            protocol_user_id,
+            1,
+            recovery_protocol::RecoveryMediaExportAuthority::new(
+                &epoch_one,
+                &source_capsule,
+                &genesis,
+            ),
+            passphrase,
+            &origin,
+        )
+        .expect("测试恢复介质应密封");
+        let current_capsule = recovery_protocol::seal_recovery_capsule(
+            &mut rng,
+            &epoch_two,
+            protocol_user_id,
+            2,
+            1,
+            2,
+            recovery_public_key,
+        )
+        .expect("测试当前 capsule 应密封");
+
+        let target_identity_handle = generate_device_identity();
+        let target_identity = device_core::identity_for_handle(target_identity_handle)
+            .expect("测试目标设备身份应存在");
+        let target_public_keys = target_identity.public_keys();
+        let device_id = account_id(0xc5);
+        let history = build_test_recovery_resume_history(
+            &genesis,
+            protocol_user_id,
+            &epoch_one,
+            &epoch_two,
+            &current_capsule,
+            device_id,
+            target_public_keys,
+        );
+
+        let mut completion_frame = data_rekey_completion_proof_frame();
+        completion_frame[32..48].copy_from_slice(&history.source_operation_id);
+        completion_frame[48..64].copy_from_slice(&user_id);
+        completion_frame[64..80].copy_from_slice(&device_id);
+        completion_frame[80..84].copy_from_slice(&1_u32.to_be_bytes());
+        completion_frame[84..88].copy_from_slice(&2_u32.to_be_bytes());
+        completion_frame[88..92].copy_from_slice(&1_u32.to_be_bytes());
+        completion_frame[92..96].copy_from_slice(&2_u32.to_be_bytes());
+        completion_frame[194..198].copy_from_slice(&4_u32.to_be_bytes());
+        completion_frame[198..230].copy_from_slice(&history.head_digest);
+        let completion_signature = target_identity
+            .sign_data_rekey_completion_proof(&completion_frame)
+            .expect("测试完成证明应签名");
+        let completion_digest = crypto::data_rekey_completion_proof_digest(
+            &completion_frame,
+            completion_signature.as_bytes(),
+        )
+        .expect("测试完成证明摘要应派生");
+
+        let challenge_id = account_id(0xc1);
+        let attempt_id = account_id(0xc2);
+        let expires_at_ms = 1_900_000_000_000;
+        let challenge = build_test_account_recovery_replacement_challenge(
+            challenge_id,
+            attempt_id,
+            user_id,
+            device_id,
+            target_public_keys,
+            history.head_operation_id,
+            history.head_digest,
+            *recovery_public_key.as_bytes(),
+            &current_capsule,
+            history.source_operation_id,
+            completion_digest,
+            expires_at_ms,
+        );
+        let nonce = [0xc3; account_recovery_protocol::ACCOUNT_RECOVERY_NONCE_LENGTH];
+        let sealed_nonce = account_recovery_protocol::seal_account_recovery_replacement_nonce(
+            &mut rng,
+            recovery_public_key,
+            &challenge,
+            &nonce,
+        )
+        .expect("测试第二阶段 nonce 应密封");
+        let token_digest = [0xc4; account_recovery_protocol::ACCOUNT_RECOVERY_TOKEN_DIGEST_LENGTH];
+
+        let mut tampered_nonce = sealed_nonce;
+        let last_nonce_byte = tampered_nonce.len() - 1;
+        tampered_nonce[last_nonce_byte] ^= 1;
+        let mut failed_binding = sentinel_account_recovery_replacement_proof_binding();
+        let mut failed_nonce_proof =
+            [0xa5; account_recovery_protocol::ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH];
+        let mut failed_nonce_proof_length = usize::MAX;
+        let mut failed_trust_signature = [0xa5; crypto::ACCOUNT_TRUST_SIGNATURE_LENGTH];
+        let mut failed_trust_signature_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_replacement_challenge_verify_and_prove(
+                    target_identity_handle,
+                    1,
+                    2,
+                    media.as_bytes().as_ptr(),
+                    media.as_bytes().len(),
+                    passphrase.as_ptr(),
+                    passphrase.len(),
+                    origin.as_ptr(),
+                    origin.len(),
+                    history.bytes.as_ptr(),
+                    history.bytes.len(),
+                    source_capsule.as_bytes().as_ptr(),
+                    source_capsule.as_bytes().len(),
+                    current_capsule.as_bytes().as_ptr(),
+                    current_capsule.as_bytes().len(),
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    tampered_nonce.as_ptr(),
+                    tampered_nonce.len(),
+                    completion_frame.as_ptr(),
+                    completion_frame.len(),
+                    completion_signature.as_bytes().as_ptr(),
+                    completion_signature.as_bytes().len(),
+                    token_digest.as_ptr(),
+                    token_digest.len(),
+                    challenge_id.as_ptr(),
+                    challenge_id.len(),
+                    attempt_id.as_ptr(),
+                    attempt_id.len(),
+                    device_id.as_ptr(),
+                    device_id.len(),
+                    expires_at_ms,
+                    &mut failed_binding,
+                    failed_nonce_proof.as_mut_ptr(),
+                    failed_nonce_proof.len(),
+                    &mut failed_nonce_proof_length,
+                    failed_trust_signature.as_mut_ptr(),
+                    failed_trust_signature.len(),
+                    &mut failed_trust_signature_length,
+                )
+            },
+            KelivoStatus::RecoveryChallengeAuthenticationFailed.code()
+        );
+        assert_eq!(
+            failed_binding,
+            KelivoAccountRecoveryReplacementProofBinding::default()
+        );
+        assert_eq!(failed_nonce_proof_length, 0);
+        assert!(failed_nonce_proof.iter().all(|byte| *byte == 0));
+        assert_eq!(failed_trust_signature_length, 0);
+        assert!(failed_trust_signature.iter().all(|byte| *byte == 0));
+        assert_eq!(account_recovery::active_execution_handles(), 0);
+
+        let mut proof_binding = sentinel_account_recovery_replacement_proof_binding();
+        let mut nonce_proof =
+            [0xa5; account_recovery_protocol::ACCOUNT_RECOVERY_NONCE_PROOF_LENGTH];
+        let mut nonce_proof_length = usize::MAX;
+        let mut trust_signature = [0xa5; crypto::ACCOUNT_TRUST_SIGNATURE_LENGTH];
+        let mut trust_signature_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_replacement_challenge_verify_and_prove(
+                    target_identity_handle,
+                    1,
+                    2,
+                    media.as_bytes().as_ptr(),
+                    media.as_bytes().len(),
+                    passphrase.as_ptr(),
+                    passphrase.len(),
+                    origin.as_ptr(),
+                    origin.len(),
+                    history.bytes.as_ptr(),
+                    history.bytes.len(),
+                    source_capsule.as_bytes().as_ptr(),
+                    source_capsule.as_bytes().len(),
+                    current_capsule.as_bytes().as_ptr(),
+                    current_capsule.as_bytes().len(),
+                    challenge.as_ptr(),
+                    challenge.len(),
+                    sealed_nonce.as_ptr(),
+                    sealed_nonce.len(),
+                    completion_frame.as_ptr(),
+                    completion_frame.len(),
+                    completion_signature.as_bytes().as_ptr(),
+                    completion_signature.as_bytes().len(),
+                    token_digest.as_ptr(),
+                    token_digest.len(),
+                    challenge_id.as_ptr(),
+                    challenge_id.len(),
+                    attempt_id.as_ptr(),
+                    attempt_id.len(),
+                    device_id.as_ptr(),
+                    device_id.len(),
+                    expires_at_ms,
+                    &mut proof_binding,
+                    nonce_proof.as_mut_ptr(),
+                    nonce_proof.len(),
+                    &mut nonce_proof_length,
+                    trust_signature.as_mut_ptr(),
+                    trust_signature.len(),
+                    &mut trust_signature_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(account_recovery::active_execution_handles(), 1);
+        assert_eq!(proof_binding.challenge_id, challenge_id);
+        assert_eq!(proof_binding.attempt_id, attempt_id);
+        assert_eq!(proof_binding.user_id, user_id);
+        assert_eq!(proof_binding.device_id, device_id);
+        assert_eq!(proof_binding.security_generation, 4);
+        assert_eq!(proof_binding.key_epoch, 2);
+        assert_eq!(
+            proof_binding.membership_operation_id,
+            history.head_operation_id
+        );
+        assert_eq!(
+            proof_binding.membership_manifest_digest,
+            history.head_digest
+        );
+        assert_eq!(
+            proof_binding.source_data_rekey_operation_id,
+            history.source_operation_id
+        );
+        assert_eq!(proof_binding.ready_data_generation, 2);
+        assert_eq!(proof_binding.ready_data_key_epoch, 2);
+        assert_eq!(proof_binding.completion_proof_digest, completion_digest);
+        assert_eq!(proof_binding.request_digest, challenge[344..]);
+        assert_eq!(nonce_proof_length, nonce_proof.len());
+        assert_eq!(trust_signature_length, trust_signature.len());
+
+        let proof_material =
+            account_recovery_protocol::create_account_recovery_replacement_proof_material(
+                &challenge,
+                &nonce,
+                &token_digest,
+            )
+            .expect("测试第二阶段证明材料应生成");
+        assert_eq!(nonce_proof, proof_material.nonce_proof);
+        let trust_public_key = crypto::derive_account_trust_public_key(
+            &epoch_two,
+            crypto::AccountTrustBinding {
+                user_id: protocol_user_id,
+                key_epoch: 2,
+            },
+        )
+        .expect("测试当前信任公钥应派生");
+        let trust_signature = crypto::AccountTrustSignature::from_bytes(&trust_signature)
+            .expect("测试信任签名长度应有效");
+        crypto::verify_account_recovery_trust_message(
+            &trust_public_key,
+            &proof_material.trust_signature_message,
+            &trust_signature,
+        )
+        .expect("测试第二阶段信任签名应验证");
+
+        let resume_binding = KelivoAccountRecoveryStateBinding {
+            struct_size: size_of::<KelivoAccountRecoveryStateBinding>() as u32,
+            kind: 1,
+            data_phase: 2,
+            device_key_version: 1,
+            user_id,
+            device_id,
+            source_key_epoch: 1,
+            target_key_epoch: 2,
+            source_data_generation: 1,
+            target_data_generation: 2,
+            membership_generation: 4,
+            reserved: 0,
+            membership_manifest_digest: history.head_digest,
+            rekey_operation_id: history.source_operation_id,
+            operation_authorization_digest: history.operation_authorization_digest,
+        };
+        let invalid_candidate = [0_u8; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut rejected_state = [0xa5; device_core::DEVICE_STATE_BLOB_LENGTH];
+        let mut rejected_state_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_device_state_prune_and_activate(
+                    proof_binding.execution_handle,
+                    0,
+                    &resume_binding,
+                    invalid_candidate.as_ptr(),
+                    invalid_candidate.len(),
+                    completion_frame.as_ptr(),
+                    completion_frame.len(),
+                    completion_signature.as_bytes().as_ptr(),
+                    completion_signature.as_bytes().len(),
+                    completion_digest.as_ptr(),
+                    completion_digest.len(),
+                    rejected_state.as_mut_ptr(),
+                    rejected_state.len(),
+                    &mut rejected_state_length,
+                )
+            },
+            KelivoStatus::RecoveryPrepareInvalid.code()
+        );
+        assert_eq!(rejected_state_length, 0);
+        assert!(rejected_state.iter().all(|byte| *byte == 0));
+
+        let prepare_input = KelivoAccountRecoveryPrepareInput {
+            struct_size: size_of::<KelivoAccountRecoveryPrepareInput>() as u32,
+            kind: 2,
+            operation_id: account_id(0xc6),
+            target_auth_generation: 2,
+            rekey_operation_id: [0; 16],
+            completion_session_id: account_id(0xc7),
+            completion_session_token_digest: [0xc8; 32],
+        };
+        let manifest_capacity = 260 + 256 * 88 + 128;
+        let mut prepare_binding = sentinel_account_recovery_prepare_binding();
+        let mut manifest = vec![0xa5; manifest_capacity];
+        let mut manifest_length = usize::MAX;
+        let mut envelope = [0xa5; crypto::ARK_ENVELOPE_LENGTH];
+        let mut envelope_length = usize::MAX;
+        let mut next_capsule = [0xa5; recovery_protocol::RECOVERY_CAPSULE_LENGTH];
+        let mut next_capsule_length = usize::MAX;
+        assert_eq!(
+            unsafe {
+                kelivo_account_recovery_prepare_commit(
+                    proof_binding.execution_handle,
+                    &prepare_input,
+                    &mut prepare_binding,
+                    manifest.as_mut_ptr(),
+                    manifest.len(),
+                    &mut manifest_length,
+                    envelope.as_mut_ptr(),
+                    envelope.len(),
+                    &mut envelope_length,
+                    next_capsule.as_mut_ptr(),
+                    next_capsule.len(),
+                    &mut next_capsule_length,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(prepare_binding.kind, 2);
+        assert_eq!(prepare_binding.expected_generation, 4);
+        assert_eq!(prepare_binding.expected_key_epoch, 2);
+        assert_eq!(prepare_binding.next_generation, 5);
+        assert_eq!(prepare_binding.next_key_epoch, 3);
+        assert_eq!(envelope_length, envelope.len());
+        assert_eq!(next_capsule_length, next_capsule.len());
+        assert_eq!(
+            u32::from_be_bytes(manifest[172..176].try_into().expect("操作码切片应有效")),
+            5
+        );
+
+        assert_eq!(
+            kelivo_account_recovery_execution_close(proof_binding.execution_handle),
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(account_recovery::active_execution_handles(), 0);
+        assert_eq!(
+            kelivo_device_identity_handle_close(target_identity_handle),
             KelivoStatus::Ok.code()
         );
     }

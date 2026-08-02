@@ -1,10 +1,13 @@
 import 'dart:convert';
+import 'dart:ffi' as ffi;
 import 'dart:io';
 import 'dart:math';
 import 'dart:typed_data';
 
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
+import 'package:kelivo_secure_core/kelivo_secure_core_bindings_generated.dart'
+    as native;
 
 import 'support/secure_core_test_store.dart';
 
@@ -53,10 +56,10 @@ void main() {
     }
   }
 
-  test('能力门禁声明 ABI v18、恢复介质及受支持平台安装根擦除', () async {
+  test('能力门禁声明 ABI v19、账户恢复执行及受支持平台安装根擦除', () async {
     final capabilities = await core.getCapabilities();
 
-    expect(capabilities.abiVersion, 18);
+    expect(capabilities.abiVersion, 19);
     expect(capabilities.supportsOpaqueClient, isTrue);
     expect(
       capabilities.supportsDeviceE2eeCore,
@@ -74,11 +77,83 @@ void main() {
       capabilities.supportsRecoveryMedia,
       Platform.isAndroid || Platform.isIOS,
     );
+    expect(
+      capabilities.supportsAccountRecoveryExecution,
+      Platform.isAndroid || Platform.isIOS,
+    );
     if (Platform.isWindows) {
       expect(capabilities.supportsInstallationRootWipe, isTrue);
     } else if (!Platform.isAndroid) {
       expect(capabilities.supportsInstallationRootWipe, isFalse);
     }
+  });
+
+  test('ABI v19 账户恢复结构体布局与 C header 固定尺寸一致', () {
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryProofBinding>(), 120);
+    expect(
+      ffi.sizeOf<native.KelivoAccountRecoveryReplacementProofBinding>(),
+      232,
+    );
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryPrepareInput>(), 92);
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryPrepareBinding>(), 96);
+    expect(ffi.sizeOf<native.KelivoAccountRecoveryStateBinding>(), 152);
+  });
+
+  test('账户恢复状态绑定防御性复制并拒绝非相邻代次', () {
+    final userId = accountId(0xb1);
+    final deviceId = accountId(0xb2);
+    final manifestDigest = Uint8List(32)..fillRange(0, 32, 0xb3);
+    final operationId = accountId(0xb4);
+    final authorizationDigest = Uint8List(32)..fillRange(0, 32, 0xb5);
+    final expectedUserId = Uint8List.fromList(userId);
+    final expectedDeviceId = Uint8List.fromList(deviceId);
+    final expectedOperationId = Uint8List.fromList(operationId);
+    final binding = KelivoPreparedAccountRecoveryStateBinding(
+      kind: KelivoAccountRecoveryCommitKind.resume,
+      dataPhase: KelivoAccountRecoveryDataPhase.rekeyPending,
+      deviceKeyVersion: 1,
+      userId: userId,
+      deviceId: deviceId,
+      sourceKeyEpoch: 7,
+      targetKeyEpoch: 8,
+      sourceDataGeneration: 11,
+      targetDataGeneration: 12,
+      membershipGeneration: 9,
+      membershipManifestDigest: manifestDigest,
+      rekeyOperationId: operationId,
+      operationAuthorizationDigest: authorizationDigest,
+    );
+
+    userId.fillRange(0, userId.length, 0);
+    deviceId.fillRange(0, deviceId.length, 0);
+    manifestDigest.fillRange(0, manifestDigest.length, 0);
+    operationId.fillRange(0, operationId.length, 0);
+    authorizationDigest.fillRange(0, authorizationDigest.length, 0);
+    expect(binding.userId, orderedEquals(expectedUserId));
+    expect(binding.deviceId, orderedEquals(expectedDeviceId));
+    expect(binding.membershipManifestDigest, everyElement(0xb3));
+    expect(binding.rekeyOperationId, orderedEquals(expectedOperationId));
+    expect(binding.operationAuthorizationDigest, everyElement(0xb5));
+    expect(() => binding.userId[0] = 0, throwsUnsupportedError);
+
+    expect(
+      () => KelivoPreparedAccountRecoveryStateBinding(
+        kind: KelivoAccountRecoveryCommitKind.replacement,
+        dataPhase: KelivoAccountRecoveryDataPhase.ready,
+        deviceKeyVersion: 1,
+        userId: accountId(0xb6),
+        deviceId: accountId(0xb7),
+        sourceKeyEpoch: 7,
+        targetKeyEpoch: 9,
+        sourceDataGeneration: 11,
+        targetDataGeneration: 12,
+        membershipGeneration: 9,
+        membershipManifestDigest: Uint8List(32),
+        rekeyOperationId: accountId(0xb8),
+        operationAuthorizationDigest: Uint8List(32),
+      ),
+      throwsArgumentError,
+    );
   });
 
   test('安装根擦除仅使用显式隔离根并精准保留完成标记', () async {
@@ -146,12 +221,127 @@ void main() {
         media: Uint8List(643),
         passphrase: passphrase,
         serviceOriginSha256: Uint8List(32),
-        membershipHistory: <Uint8List>[Uint8List(444)],
+        membershipHistory: <Uint8List>[Uint8List(476)],
         currentCapsule: Uint8List(156),
       ),
       throwsArgumentError,
     );
     expect(passphrase, everyElement(0));
+  });
+
+  test('账户恢复 challenge 前置校验失败仍消费并清零独立恢复口令', () async {
+    final identity = await core.generateDeviceIdentity();
+    final passphrase = Uint8List.fromList(
+      utf8.encode('account-recovery-passphrase'),
+    );
+    try {
+      await expectLater(
+        core.verifyAccountRecoveryAndCreateProof(
+          identity,
+          expectedDeviceKeyVersion: 1,
+          expectedDeviceAuthGeneration: 1,
+          media: Uint8List(643),
+          passphrase: passphrase,
+          serviceOriginSha256: Uint8List(32),
+          membershipHistory: <Uint8List>[Uint8List(476)],
+          currentCapsule: Uint8List(156),
+          challengeFrame: Uint8List(316),
+          sealedNonce: Uint8List(100),
+          recoveryTokenDigest: Uint8List(32),
+          expectedAttemptId: accountId(0xa1),
+          expectedDeviceId: accountId(0xa2),
+          expectedRequestDigest: Uint8List(32),
+          expectedExpiresAt: DateTime.utc(2026, 8, 1, 2),
+        ),
+        throwsArgumentError,
+      );
+      expect(passphrase, everyElement(0));
+    } finally {
+      await core.closeDeviceIdentity(identity);
+    }
+  });
+
+  test('Windows 账户恢复执行 ABI 明确失败关闭且清零独立恢复口令', () async {
+    if (!Platform.isWindows) return;
+    final identity = await core.generateDeviceIdentity();
+    final passphrase = Uint8List.fromList(
+      utf8.encode('account-recovery-passphrase'),
+    );
+    try {
+      await expectLater(
+        core.verifyAccountRecoveryAndCreateProof(
+          identity,
+          expectedDeviceKeyVersion: 1,
+          expectedDeviceAuthGeneration: 1,
+          media: Uint8List(676),
+          passphrase: passphrase,
+          serviceOriginSha256: Uint8List(32),
+          membershipHistory: <Uint8List>[Uint8List(476)],
+          currentCapsule: Uint8List(156),
+          challengeFrame: Uint8List(316),
+          sealedNonce: Uint8List(100),
+          recoveryTokenDigest: Uint8List(32),
+          expectedAttemptId: accountId(0xa3),
+          expectedDeviceId: accountId(0xa4),
+          expectedRequestDigest: Uint8List(32),
+          expectedExpiresAt: DateTime.utc(2026, 8, 1, 2),
+        ),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.unsupportedPlatform,
+          ),
+        ),
+      );
+      expect(passphrase, everyElement(0));
+    } finally {
+      await core.closeDeviceIdentity(identity);
+    }
+  });
+
+  test('Windows 第二阶段替换 challenge ABI 独立失败关闭并清零恢复口令', () async {
+    if (!Platform.isWindows) return;
+    final identity = await core.generateDeviceIdentity();
+    final passphrase = Uint8List.fromList(
+      utf8.encode('replacement-recovery-passphrase'),
+    );
+    try {
+      await expectLater(
+        core.verifyAccountRecoveryReplacementChallengeAndCreateProof(
+          identity,
+          expectedDeviceKeyVersion: 1,
+          expectedDeviceAuthGeneration: 1,
+          media: Uint8List(676),
+          passphrase: passphrase,
+          serviceOriginSha256: Uint8List(32),
+          membershipHistory: <Uint8List>[Uint8List(476)],
+          currentCapsule: Uint8List(156),
+          sourceCapsule: Uint8List(156),
+          challengeFrame: Uint8List(376),
+          sealedNonce: Uint8List(100),
+          completionProofFrame: Uint8List(270),
+          completionProofSignature: KelivoDataRekeyCompletionProofSignature(
+            Uint8List(64),
+          ),
+          recoveryTokenDigest: Uint8List(32),
+          expectedChallengeId: accountId(0xa5),
+          expectedAttemptId: accountId(0xa6),
+          expectedDeviceId: accountId(0xa7),
+          expectedExpiresAt: DateTime.utc(2026, 8, 1, 2),
+        ),
+        throwsA(
+          isA<KelivoSecureCoreException>().having(
+            (error) => error.status,
+            'status',
+            KelivoSecureCoreStatus.unsupportedPlatform,
+          ),
+        ),
+      );
+      expect(passphrase, everyElement(0));
+    } finally {
+      await core.closeDeviceIdentity(identity);
+    }
   });
 
   test('恢复口令按原始 UTF-8 标量校验且拒绝畸形编码', () async {
@@ -165,10 +355,10 @@ void main() {
 
     await expectLater(
       core.recoverAccountRootKey(
-        media: Uint8List(644),
+        media: Uint8List(676),
         passphrase: malformedPassphrase,
         serviceOriginSha256: Uint8List(32),
-        membershipHistory: <Uint8List>[Uint8List(444)],
+        membershipHistory: <Uint8List>[Uint8List(476)],
         currentCapsule: Uint8List(156),
       ),
       throwsArgumentError,
@@ -180,12 +370,12 @@ void main() {
     final passphrase = Uint8List.fromList(
       utf8.encode('recovery-passphrase-v1'),
     );
-    final maximumManifest = Uint8List(228 + 256 * 88 + 128);
+    final maximumManifest = Uint8List(260 + 256 * 88 + 128);
     final oversizedHistory = List<Uint8List>.filled(734, maximumManifest);
 
     await expectLater(
       core.recoverAccountRootKey(
-        media: Uint8List(644),
+        media: Uint8List(676),
         passphrase: passphrase,
         serviceOriginSha256: Uint8List(32),
         membershipHistory: oversizedHistory,

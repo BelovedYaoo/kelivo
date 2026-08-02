@@ -5,6 +5,8 @@
 #[cfg(feature = "device-crypto")]
 pub mod attachment_crypto;
 #[cfg(feature = "device-crypto")]
+pub mod account_recovery;
+#[cfg(feature = "device-crypto")]
 pub mod device_crypto;
 #[cfg(feature = "device-crypto")]
 pub mod recovery_crypto;

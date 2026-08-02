@@ -1187,6 +1187,262 @@ external int kelivo_recovery_media_import_history_verify_and_capsule_open(
   ffi.Pointer<ffi.Uint64> out_ark_handle,
 );
 
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<KelivoAccountRecoveryProofBinding>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_recovery_verify_and_prove(
+  int device_identity_handle,
+  int expected_device_key_version,
+  int expected_device_auth_generation,
+  ffi.Pointer<ffi.Uint8> media,
+  int media_length,
+  ffi.Pointer<ffi.Uint8> passphrase,
+  int passphrase_length,
+  ffi.Pointer<ffi.Uint8> service_origin_sha256,
+  int service_origin_sha256_length,
+  ffi.Pointer<ffi.Uint8> membership_history,
+  int membership_history_length,
+  ffi.Pointer<ffi.Uint8> source_capsule,
+  int source_capsule_length,
+  ffi.Pointer<ffi.Uint8> current_capsule,
+  int current_capsule_length,
+  ffi.Pointer<ffi.Uint8> challenge_frame,
+  int challenge_frame_length,
+  ffi.Pointer<ffi.Uint8> sealed_nonce,
+  int sealed_nonce_length,
+  ffi.Pointer<ffi.Uint8> recovery_token_digest,
+  int recovery_token_digest_length,
+  ffi.Pointer<ffi.Uint8> expected_attempt_id,
+  int expected_attempt_id_length,
+  ffi.Pointer<ffi.Uint8> expected_device_id,
+  int expected_device_id_length,
+  ffi.Pointer<ffi.Uint8> expected_request_digest,
+  int expected_request_digest_length,
+  int expected_expires_at_ms,
+  ffi.Pointer<KelivoAccountRecoveryProofBinding> out_binding,
+  ffi.Pointer<ffi.Uint8> out_nonce_proof,
+  int out_nonce_proof_capacity,
+  ffi.Pointer<ffi.Size> out_nonce_proof_length,
+  ffi.Pointer<ffi.Uint8> out_trust_signature,
+  int out_trust_signature_capacity,
+  ffi.Pointer<ffi.Size> out_trust_signature_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint32,
+    ffi.Uint32,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Uint64,
+    ffi.Pointer<KelivoAccountRecoveryReplacementProofBinding>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_recovery_replacement_challenge_verify_and_prove(
+  int device_identity_handle,
+  int expected_device_key_version,
+  int expected_device_auth_generation,
+  ffi.Pointer<ffi.Uint8> media,
+  int media_length,
+  ffi.Pointer<ffi.Uint8> passphrase,
+  int passphrase_length,
+  ffi.Pointer<ffi.Uint8> service_origin_sha256,
+  int service_origin_sha256_length,
+  ffi.Pointer<ffi.Uint8> membership_history,
+  int membership_history_length,
+  ffi.Pointer<ffi.Uint8> source_capsule,
+  int source_capsule_length,
+  ffi.Pointer<ffi.Uint8> current_capsule,
+  int current_capsule_length,
+  ffi.Pointer<ffi.Uint8> challenge_frame,
+  int challenge_frame_length,
+  ffi.Pointer<ffi.Uint8> sealed_nonce,
+  int sealed_nonce_length,
+  ffi.Pointer<ffi.Uint8> completion_proof_frame,
+  int completion_proof_frame_length,
+  ffi.Pointer<ffi.Uint8> completion_proof_signature,
+  int completion_proof_signature_length,
+  ffi.Pointer<ffi.Uint8> recovery_token_digest,
+  int recovery_token_digest_length,
+  ffi.Pointer<ffi.Uint8> expected_challenge_id,
+  int expected_challenge_id_length,
+  ffi.Pointer<ffi.Uint8> expected_attempt_id,
+  int expected_attempt_id_length,
+  ffi.Pointer<ffi.Uint8> expected_device_id,
+  int expected_device_id_length,
+  int expected_expires_at_ms,
+  ffi.Pointer<KelivoAccountRecoveryReplacementProofBinding> out_binding,
+  ffi.Pointer<ffi.Uint8> out_nonce_proof,
+  int out_nonce_proof_capacity,
+  ffi.Pointer<ffi.Size> out_nonce_proof_length,
+  ffi.Pointer<ffi.Uint8> out_trust_signature,
+  int out_trust_signature_capacity,
+  ffi.Pointer<ffi.Size> out_trust_signature_length,
+);
+
+@ffi.Native<KelivoStatus Function(ffi.Uint64)>()
+external int kelivo_account_recovery_execution_close(int execution_handle);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Pointer<KelivoAccountRecoveryPrepareInput>,
+    ffi.Pointer<KelivoAccountRecoveryPrepareBinding>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_recovery_prepare_commit(
+  int execution_handle,
+  ffi.Pointer<KelivoAccountRecoveryPrepareInput> input,
+  ffi.Pointer<KelivoAccountRecoveryPrepareBinding> out_binding,
+  ffi.Pointer<ffi.Uint8> out_manifest,
+  int out_manifest_capacity,
+  ffi.Pointer<ffi.Size> out_manifest_length,
+  ffi.Pointer<ffi.Uint8> out_envelope,
+  int out_envelope_capacity,
+  ffi.Pointer<ffi.Size> out_envelope_length,
+  ffi.Pointer<ffi.Uint8> out_capsule,
+  int out_capsule_capacity,
+  ffi.Pointer<ffi.Size> out_capsule_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Pointer<KelivoAccountRecoveryStateBinding>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_recovery_device_states_prepare(
+  int execution_handle,
+  int key_handle,
+  ffi.Pointer<KelivoAccountRecoveryStateBinding> expected,
+  ffi.Pointer<ffi.Uint8> out_unpruned_blob,
+  int out_unpruned_blob_capacity,
+  ffi.Pointer<ffi.Size> out_unpruned_blob_length,
+  ffi.Pointer<ffi.Uint8> out_pruned_candidate,
+  int out_pruned_candidate_capacity,
+  ffi.Pointer<ffi.Size> out_pruned_candidate_length,
+);
+
+@ffi.Native<
+  KelivoStatus Function(
+    ffi.Uint64,
+    ffi.Uint64,
+    ffi.Pointer<KelivoAccountRecoveryStateBinding>,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Uint8>,
+    ffi.Size,
+    ffi.Pointer<ffi.Size>,
+  )
+>()
+external int kelivo_account_recovery_device_state_prune_and_activate(
+  int execution_handle,
+  int key_handle,
+  ffi.Pointer<KelivoAccountRecoveryStateBinding> expected,
+  ffi.Pointer<ffi.Uint8> pruned_candidate,
+  int pruned_candidate_length,
+  ffi.Pointer<ffi.Uint8> completion_proof_frame,
+  int completion_proof_frame_length,
+  ffi.Pointer<ffi.Uint8> completion_proof_signature,
+  int completion_proof_signature_length,
+  ffi.Pointer<ffi.Uint8> expected_completion_proof_digest,
+  int expected_completion_proof_digest_length,
+  ffi.Pointer<ffi.Uint8> out_blob,
+  int out_blob_capacity,
+  ffi.Pointer<ffi.Size> out_blob_length,
+);
+
 typedef KelivoStatus = ffi.Int32;
 typedef DartKelivoStatus = int;
 
@@ -1233,6 +1489,205 @@ final class KelivoRecoveryMediaExportAuthority extends ffi.Struct {
 
   @ffi.Uint64()
   external int local_epoch_one_ark_handle;
+}
+
+final class KelivoAccountRecoveryProofBinding extends ffi.Struct {
+  @ffi.Uint32()
+  external int struct_size;
+
+  @ffi.Uint32()
+  external int data_phase;
+
+  @ffi.Uint64()
+  external int execution_handle;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> user_id;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> device_id;
+
+  @ffi.Uint32()
+  external int security_generation;
+
+  @ffi.Uint32()
+  external int key_epoch;
+
+  @ffi.Uint32()
+  external int device_key_version;
+
+  @ffi.Uint32()
+  external int recovery_capsule_version;
+
+  @ffi.Uint32()
+  external int source_data_generation;
+
+  @ffi.Uint32()
+  external int source_data_key_epoch;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> source_data_rekey_operation_id;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> operation_authorization_digest;
+}
+
+final class KelivoAccountRecoveryReplacementProofBinding extends ffi.Struct {
+  @ffi.Uint32()
+  external int struct_size;
+
+  @ffi.Uint32()
+  external int reserved;
+
+  @ffi.Uint64()
+  external int execution_handle;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> challenge_id;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> attempt_id;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> user_id;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> device_id;
+
+  @ffi.Uint32()
+  external int security_generation;
+
+  @ffi.Uint32()
+  external int key_epoch;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> membership_operation_id;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> membership_manifest_digest;
+
+  @ffi.Uint32()
+  external int device_key_version;
+
+  @ffi.Uint32()
+  external int recovery_capsule_version;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> source_data_rekey_operation_id;
+
+  @ffi.Uint32()
+  external int ready_data_generation;
+
+  @ffi.Uint32()
+  external int ready_data_key_epoch;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> completion_proof_digest;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> request_digest;
+}
+
+final class KelivoAccountRecoveryPrepareInput extends ffi.Struct {
+  @ffi.Uint32()
+  external int struct_size;
+
+  @ffi.Uint32()
+  external int kind;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> operation_id;
+
+  @ffi.Uint32()
+  external int target_auth_generation;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> rekey_operation_id;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> completion_session_id;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> completion_session_token_digest;
+}
+
+final class KelivoAccountRecoveryPrepareBinding extends ffi.Struct {
+  @ffi.Uint32()
+  external int struct_size;
+
+  @ffi.Uint32()
+  external int kind;
+
+  @ffi.Uint32()
+  external int expected_generation;
+
+  @ffi.Uint32()
+  external int expected_key_epoch;
+
+  @ffi.Uint32()
+  external int next_generation;
+
+  @ffi.Uint32()
+  external int next_key_epoch;
+
+  @ffi.Uint32()
+  external int next_recovery_capsule_version;
+
+  @ffi.Uint32()
+  external int reserved;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> manifest_digest;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> request_digest;
+}
+
+final class KelivoAccountRecoveryStateBinding extends ffi.Struct {
+  @ffi.Uint32()
+  external int struct_size;
+
+  @ffi.Uint32()
+  external int kind;
+
+  @ffi.Uint32()
+  external int data_phase;
+
+  @ffi.Uint32()
+  external int device_key_version;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> user_id;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> device_id;
+
+  @ffi.Uint32()
+  external int source_key_epoch;
+
+  @ffi.Uint32()
+  external int target_key_epoch;
+
+  @ffi.Uint32()
+  external int source_data_generation;
+
+  @ffi.Uint32()
+  external int target_data_generation;
+
+  @ffi.Uint32()
+  external int membership_generation;
+
+  @ffi.Uint32()
+  external int reserved;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> membership_manifest_digest;
+
+  @ffi.Array.multi([16])
+  external ffi.Array<ffi.Uint8> rekey_operation_id;
+
+  @ffi.Array.multi([32])
+  external ffi.Array<ffi.Uint8> operation_authorization_digest;
 }
 
 typedef KelivoSqlCipherKeyCallbackFunction =
@@ -1339,7 +1794,7 @@ final class KelivoCoreCapabilities extends ffi.Struct {
   external ffi.Array<ffi.Uint32> reserved;
 }
 
-const int KELIVO_CORE_ABI_VERSION = 18;
+const int KELIVO_CORE_ABI_VERSION = 19;
 
 const int KELIVO_CORE_CAPABILITIES_STRUCT_SIZE = 32;
 
@@ -1453,6 +1908,14 @@ const int KELIVO_STATUS_RECOVERY_HISTORY_INVALID = 48;
 
 const int KELIVO_STATUS_RECOVERY_HISTORY_AUTHENTICATION_FAILED = 49;
 
+const int KELIVO_STATUS_RECOVERY_CHALLENGE_INVALID = 50;
+
+const int KELIVO_STATUS_RECOVERY_CHALLENGE_AUTHENTICATION_FAILED = 51;
+
+const int KELIVO_STATUS_INVALID_RECOVERY_EXECUTION_HANDLE = 52;
+
+const int KELIVO_STATUS_RECOVERY_PREPARE_INVALID = 53;
+
 const int KELIVO_STATUS_UNSUPPORTED_PLATFORM = 100;
 
 const int KELIVO_SECURE_STORAGE_BACKEND_NONE = 0;
@@ -1488,6 +1951,8 @@ const int KELIVO_CAPABILITY_ACCOUNT_TRUST_SIGNING = 256;
 const int KELIVO_CAPABILITY_RECOVERY_MEDIA = 512;
 
 const int KELIVO_CAPABILITY_INSTALLATION_ROOT_WIPE = 1024;
+
+const int KELIVO_CAPABILITY_ACCOUNT_RECOVERY_EXECUTION = 2048;
 
 const int KELIVO_RECORD_ID_SIZE = 16;
 
@@ -1587,9 +2052,9 @@ const int KELIVO_RECOVERY_PUBLIC_KEY_SIZE = 32;
 
 const int KELIVO_RECOVERY_CAPSULE_SIZE = 156;
 
-const int KELIVO_RECOVERY_MEDIA_SIZE = 644;
+const int KELIVO_RECOVERY_MEDIA_SIZE = 676;
 
-const int KELIVO_RECOVERY_GENESIS_SIZE = 444;
+const int KELIVO_RECOVERY_GENESIS_SIZE = 476;
 
 const int KELIVO_RECOVERY_HISTORY_MAX_BYTES = 16777216;
 
@@ -1598,3 +2063,31 @@ const int KELIVO_RECOVERY_SERVICE_ORIGIN_SHA256_SIZE = 32;
 const int KELIVO_RECOVERY_CAPSULE_BINDING_STRUCT_SIZE = 28;
 
 const int KELIVO_RECOVERY_MEDIA_EXPORT_AUTHORITY_STRUCT_SIZE = 168;
+
+const int KELIVO_ACCOUNT_RECOVERY_INVALID_EXECUTION_HANDLE = 0;
+
+const int KELIVO_ACCOUNT_RECOVERY_CHALLENGE_SIZE = 316;
+
+const int KELIVO_ACCOUNT_RECOVERY_REPLACEMENT_CHALLENGE_SIZE = 376;
+
+const int KELIVO_ACCOUNT_RECOVERY_SEALED_NONCE_SIZE = 100;
+
+const int KELIVO_ACCOUNT_RECOVERY_TOKEN_DIGEST_SIZE = 32;
+
+const int KELIVO_ACCOUNT_RECOVERY_NONCE_PROOF_SIZE = 32;
+
+const int KELIVO_ACCOUNT_RECOVERY_PROOF_BINDING_STRUCT_SIZE = 120;
+
+const int KELIVO_ACCOUNT_RECOVERY_REPLACEMENT_PROOF_BINDING_STRUCT_SIZE = 232;
+
+const int KELIVO_ACCOUNT_RECOVERY_PREPARE_INPUT_STRUCT_SIZE = 92;
+
+const int KELIVO_ACCOUNT_RECOVERY_PREPARE_BINDING_STRUCT_SIZE = 96;
+
+const int KELIVO_ACCOUNT_RECOVERY_STATE_BINDING_STRUCT_SIZE = 152;
+
+const int KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_RESUME = 1;
+
+const int KELIVO_ACCOUNT_RECOVERY_PREPARE_KIND_REPLACEMENT = 2;
+
+const int KELIVO_ACCOUNT_RECOVERY_PREPARED_MANIFEST_MAX_SIZE = 22916;
