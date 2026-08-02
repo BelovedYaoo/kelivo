@@ -83,6 +83,39 @@ final class E2eeAttachmentCryptoSession implements E2eeAttachmentCrypto {
   bool _chunkAccountRootKeyClosed = false;
   Future<void>? _closeFuture;
 
+  factory E2eeAttachmentCryptoSession.takeOwnership({
+    required KelivoSecureCore secureCore,
+    required KelivoAccountRootKeyHandle manifestAccountRootKey,
+    required KelivoAccountRootKeyHandle chunkAccountRootKey,
+    required String userId,
+    required int currentKeyEpoch,
+  }) {
+    final canonicalUserId = _canonicalUuidBytes(userId, 'userId');
+    if (currentKeyEpoch <= 0 || currentKeyEpoch > 0xffffffff) {
+      throw const FormatException('附件密码会话当前密钥代次无效');
+    }
+    if (identical(manifestAccountRootKey, chunkAccountRootKey)) {
+      throw const FormatException('附件清单与分块必须使用独立 ARK 句柄');
+    }
+    if (!_sameAttachmentBytes(manifestAccountRootKey.userId, canonicalUserId) ||
+        !_sameAttachmentBytes(chunkAccountRootKey.userId, canonicalUserId)) {
+      throw const FormatException('附件密码会话 ARK 与账户不匹配');
+    }
+    final recordCipher = E2eeAccountRecordCipher.takeOwnership(
+      secureCore: secureCore,
+      accountRootKey: manifestAccountRootKey,
+      userId: userId,
+      currentKeyEpoch: currentKeyEpoch,
+    );
+    return E2eeAttachmentCryptoSession._(
+      secureCore: secureCore,
+      manifestCipher: E2eeAttachmentManifestCipher.takeOwnership(recordCipher),
+      chunkAccountRootKey: chunkAccountRootKey,
+      userId: canonicalUserId,
+      currentKeyEpoch: currentKeyEpoch,
+    );
+  }
+
   static Future<E2eeAttachmentCryptoSession> open({
     required CloudSyncAccountSession session,
     required DeviceStateBlobStore deviceStateStore,
@@ -621,4 +654,13 @@ Uint8List _canonicalUuidBytes(String value, String field) {
   } on FormatException {
     throw FormatException('$field 必须为规范小写 UUID v4');
   }
+}
+
+bool _sameAttachmentBytes(Uint8List left, Uint8List right) {
+  if (left.length != right.length) return false;
+  var difference = 0;
+  for (var index = 0; index < left.length; index++) {
+    difference |= left[index] ^ right[index];
+  }
+  return difference == 0;
 }

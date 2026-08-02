@@ -11,6 +11,7 @@ import 'package:Kelivo/core/services/sync/e2ee_account_record_cipher.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_record_state.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_trust_manifest.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_key_transition.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_key_transition_runner.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_attachment_types.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
@@ -42,6 +43,7 @@ import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:sqlite3/sqlite3.dart' show SqliteException;
 import 'package:uuid/uuid.dart';
 
+import '../../support/secure_core_test_store.dart';
 import 'test_database_cipher.dart';
 
 Matcher throwsRemoteSqliteException() => throwsA(
@@ -3127,7 +3129,7 @@ void main() {
       expect(remote.completeCalls, 2);
     });
 
-    test('ready 后推进成员锚并只发布已裁剪设备状态', () async {
+    test('生产 runner 在 ready 后推进成员锚并只发布已裁剪设备状态', () async {
       const secureCore = KelivoSecureCore();
       const manifestModule = E2eeAccountTrustManifestModule();
       const baseUrl = 'https://kelivo.bemylover.top';
@@ -3148,6 +3150,7 @@ void main() {
       KelivoDeviceIdentityHandle? identity;
       KelivoAccountRootKeyHandle? ark;
       E2eeOpenedDeviceStateHandles? opened;
+      final testStoreScope = SecureCoreTestStoreScope.open();
       addTearDown(() async {
         final openedToClose = opened;
         if (openedToClose != null) {
@@ -3169,6 +3172,7 @@ void main() {
         if (await deviceStateRoot.exists()) {
           await deviceStateRoot.delete(recursive: true);
         }
+        testStoreScope.close();
       });
 
       key = await secureCore.createSlot(slotId);
@@ -3287,14 +3291,6 @@ void main() {
         targetKeyEpoch: replaced.keyEpoch,
         membershipManifestDigest: replaced.digest,
       );
-      final context = E2eeDataRekeyExecutionContext(
-        baseUrl: baseUrl,
-        loginName: loginName,
-        userId: _syncAccountUserId,
-        issuerDeviceId: _syncActorDeviceId,
-        membershipGeneration: replaced.securityGeneration,
-        membershipManifestDigest: replaced.digest,
-      );
       final stageStore = E2eeDataRekeyStageStore(
         installationRoot: await Directory(
           '${directory.path}/device-state-key-transition-stage',
@@ -3316,38 +3312,26 @@ void main() {
       transitionPlan.sourceStateBlob[0] ^= 0xff;
       transitionPlan.unprunedStateBlob[0] ^= 0xff;
       transitionPlan.prunedStateBlob[0] ^= 0xff;
-      final coordinator = E2eeAccountKeyTransitionCoordinator(
-        dataRekeyExecutor: E2eeDataRekeyExecutor(
-          transport: _ZeroSourceDataRekeyTransport(
-            userId: _syncAccountUserId,
-            issuerDeviceId: _syncActorDeviceId,
-            operationId: operationId,
-            sourceKeyEpoch: 1,
-            targetKeyEpoch: 2,
-          ),
-          journal: dataRekeyCommands,
-          stageStore: stageStore,
-          cryptography: _ZeroSourceDataRekeyCryptography(
-            issuerDeviceId: _syncActorDeviceId,
-            targetKeyEpoch: 2,
-          ),
-          clock: () => DateTime.utc(2026, 7, 30, 5),
+      final runner = E2eeAccountKeyTransitionProductionRunner(
+        baseUrl: baseUrl,
+        normalizedLoginName: loginName,
+        deviceStateStore: deviceStateStore,
+        secureCore: secureCore,
+        databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
+        databaseFile: File('${directory.path}/constraints.sqlite'),
+        dataRekeyTransport: _ZeroSourceDataRekeyTransport(
+          userId: _syncAccountUserId,
+          issuerDeviceId: _syncActorDeviceId,
+          operationId: operationId,
+          sourceKeyEpoch: 1,
+          targetKeyEpoch: 2,
         ),
-        remoteCommit: remote,
-        localCommitter: E2eeDeviceStateKeyTransitionCommitter(
-          baseUrl: baseUrl,
-          normalizedLoginName: loginName,
-          plan: transitionPlan,
-          deviceStateStore: deviceStateStore,
-          secureCore: secureCore,
-          databaseGateway: ChatDatabaseGateway(cipher: testDatabaseCipher),
-          databaseFile: File('${directory.path}/constraints.sqlite'),
-          clock: () => DateTime.utc(2026, 7, 30, 5, 1),
-        ),
+        stageStore: stageStore,
+        clock: () => DateTime.utc(2026, 7, 30, 5),
       );
 
-      await coordinator.execute(context: context, binding: binding);
-      await coordinator.execute(context: context, binding: binding);
+      await runner.execute(plan: transitionPlan, remoteCommit: remote);
+      await runner.execute(plan: transitionPlan, remoteCommit: remote);
 
       final current = await deviceStateStore.read(
         normalizedBaseUrl: baseUrl,
@@ -3375,6 +3359,26 @@ void main() {
       expect(await dataRekeyCommands.readActive(), equals(null));
       expect(remote.commitCalls, 2);
       expect(remote.completeCalls, 2);
+    });
+
+    test('附件密码会话拒绝重复接管同一 ARK 句柄', () async {
+      const secureCore = KelivoSecureCore();
+      final ark = await secureCore.generateAccountRootKey(
+        userId: Uuid.parseAsByteList(_syncAccountUserId),
+        keyEpoch: 2,
+      );
+      addTearDown(() => secureCore.closeAccountRootKey(ark));
+
+      expect(
+        () => E2eeAttachmentCryptoSession.takeOwnership(
+          secureCore: secureCore,
+          manifestAccountRootKey: ark,
+          chunkAccountRootKey: ark,
+          userId: _syncAccountUserId,
+          currentKeyEpoch: 2,
+        ),
+        throwsA(isA<FormatException>()),
+      );
     });
   });
 
