@@ -27,10 +27,33 @@ class AppDirectories {
       case TargetPlatform.linux:
         return getApplicationSupportDirectory();
       case TargetPlatform.android:
+        return _canonicalizeInstallationRoot(
+          await getApplicationDocumentsDirectory(),
+        );
       case TargetPlatform.iOS:
       case TargetPlatform.fuchsia:
         return getApplicationDocumentsDirectory();
     }
+  }
+
+  static Future<Directory> _canonicalizeInstallationRoot(
+    Directory directory,
+  ) async {
+    final lexical = Directory(p.normalize(p.absolute(directory.path)));
+    if (await FileSystemEntity.type(lexical.path, followLinks: false) !=
+        FileSystemEntityType.directory) {
+      throw StateError('app_installation_root_unsafe');
+    }
+    // Android SDK 返回的私有目录可能带系统级词法别名。在平台入口收敛为
+    // canonical 根，使后续安全模块仍能拒绝一切非 canonical 业务路径。
+    final canonical = Directory(
+      p.normalize(p.absolute(await lexical.resolveSymbolicLinks())),
+    );
+    if (await FileSystemEntity.type(canonical.path, followLinks: false) !=
+        FileSystemEntityType.directory) {
+      throw StateError('app_installation_root_unsafe');
+    }
+    return canonical;
   }
 
   /// 在任何业务存储初始化前绑定本进程唯一的工作区。

@@ -107,3 +107,4 @@
 - 品牌硬切：Android 标识改为 `top.bemylover.olivia`，iOS/macOS 标识及 Windows/Linux/Web 产品名统一为 Olivia；内部 Dart 包名与 E2EE 协议域保持不变。品牌相关定向分析通过，最终 Android/Windows 构建待并行 Native 编译结束后统一执行。
 - 已接通：可信自撤销协调器产出的已验证意图可直接转换为 op3 换钥绑定；转换继续复用 UUID、代次与 32 字节摘要的强校验，不接收或重算服务端提供的摘要。协调器 6 项隔离安全槽测试与定向分析通过。
 - 已合入：Native ABI23 自撤销验签不再接收服务端 intentDigest，固定帧与 SHA-256 仅在 Rust 重建，验签成功才输出 32 字节摘要；Dart 唯一适配器只转换规范 UUID/UTC 时间。真实签名、替换摘要和篡改签名在协调器 7 项隔离测试中均已覆盖。
+- Android 首次启动门禁 #103：真机确认 SDK 返回的 `/data/user/0` 私有目录会解析为同一目录的 `/data/data` canonical 路径；现于 `AppDirectories` 的 Android 平台入口严格确认最终实体为目录后返回 canonical 安装根，深层 lease 继续拒绝所有非 canonical 路径。临时诊断已全部移除，定向分析、账号工作区绑定及本机擦除相关 58 项测试通过；ARM64 真机覆盖复验由主任务继续。
