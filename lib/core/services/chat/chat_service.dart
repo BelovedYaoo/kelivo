@@ -99,6 +99,13 @@ final class LocalMessageAttachmentInput {
   final String? mediaType;
 }
 
+final class GenerationFinalizationResult {
+  const GenerationFinalizationResult({required this.message, this.run});
+
+  final ChatMessage message;
+  final GenerationRun? run;
+}
+
 typedef _AssetGcQuarantine = ({
   AssetGcQuarantineRecord record,
   File original,
@@ -2080,6 +2087,41 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     return executor.materializeLocalAttachments(result);
   }
 
+  Future<ChatMessage> _prepareTerminalAssistantMedia(
+    ChatMessage message,
+  ) async {
+    if (_syncWriteExecutor is! StructuredAttachmentSyncWriteExecutor ||
+        isTemporaryConversation(message.conversationId) ||
+        message.role != 'assistant' ||
+        !_isTerminalMessage(message)) {
+      return message;
+    }
+    final parsed = parseLocalMarkdownImages(message.content);
+    if (parsed.imagePaths.isEmpty) return message;
+    final attachmentCount =
+        message.attachments.length + parsed.imagePaths.length;
+    if (attachmentCount > ChatMessage.maximumAttachmentCount) {
+      throw RangeError.range(
+        attachmentCount,
+        0,
+        ChatMessage.maximumAttachmentCount,
+        'attachments.length',
+      );
+    }
+    final generatedImages = await _prepareLocalAttachments(
+      parsed.imagePaths.map(
+        (path) => LocalMessageAttachmentInput.image(path: path),
+      ),
+    );
+    return message.copyWith(
+      content: parsed.content,
+      attachments: <ChatMessageAttachment>[
+        ...message.attachments,
+        ...generatedImages,
+      ],
+    );
+  }
+
   static Future<String> _hashAssetFile(File file) {
     final path = file.path;
     return Isolate.run(
@@ -3968,7 +4010,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     errorCode: errorCode,
   );
 
-  Future<GenerationRun?> finalizeGenerationRunSilent({
+  Future<GenerationFinalizationResult> finalizeGenerationRunSilent({
     required ChatMessage message,
     required List<Map<String, dynamic>> toolEvents,
     required String? generationRunId,
@@ -3978,14 +4020,15 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
     int? checkpointSeq,
     String? errorCode,
   }) async {
-    if (!_initialized) return null;
+    if (!_initialized) return GenerationFinalizationResult(message: message);
     if (isTemporaryConversation(message.conversationId)) {
       await updateStreamingCheckpointSilent(message, toolEvents);
-      return null;
+      return GenerationFinalizationResult(message: message);
     }
+    final finalizedMessage = await _prepareTerminalAssistantMedia(message);
     Future<GenerationRun?> write() async {
       if (generationRunId == null) {
-        await updateStreamingCheckpointSilent(message, toolEvents);
+        await updateStreamingCheckpointSilent(finalizedMessage, toolEvents);
         _statisticsRevision++;
         notifyListeners();
         return null;
@@ -3994,7 +4037,7 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         throw StateError('generation_run_cursor_missing');
       }
       final run = await _repo.finalizeGenerationRun(
-        message: message,
+        message: finalizedMessage,
         toolEvents: toolEvents,
         generationRunId: generationRunId,
         expectedState: expectedState,
@@ -4002,20 +4045,26 @@ class ChatService extends ChangeNotifier with BatchedChangeNotifier {
         terminalState: terminalState,
         checkpointSeq: checkpointSeq,
         errorCode: errorCode,
-        geminiThoughtSignature: _geminiThoughtSigsCache[message.id],
+        geminiThoughtSignature: _geminiThoughtSigsCache[finalizedMessage.id],
       );
-      _replaceCachedMessage(message);
-      _toolEventsCache[message.id] = List<Map<String, dynamic>>.of(toolEvents);
+      _replaceCachedMessage(finalizedMessage);
+      _toolEventsCache[finalizedMessage.id] = List<Map<String, dynamic>>.of(
+        toolEvents,
+      );
       _statisticsRevision++;
       notifyListeners();
       return run;
     }
 
-    if (!_isTerminalMessage(message)) return write();
-    return _syncWriteExecutor.runLocalBatch<GenerationRun?>(
-      keys: _messageGraphKeys(message),
-      write: write,
-    );
+    final run = !_isTerminalMessage(finalizedMessage)
+        ? await write()
+        : await _runLocalMessageBatch<GenerationRun?>(
+            keys: _messageGraphKeys(finalizedMessage),
+            targetRevisionId: finalizedMessage.id,
+            attachments: finalizedMessage.attachments,
+            write: write,
+          );
+    return GenerationFinalizationResult(message: finalizedMessage, run: run);
   }
 
   // Tool events persistence (per assistant message)

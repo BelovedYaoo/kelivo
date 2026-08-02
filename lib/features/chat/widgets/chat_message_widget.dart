@@ -1297,10 +1297,13 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
     );
     final showUserActions = settings.showUserMessageActions;
     final showVersionSwitcher = (widget.versionCount ?? 1) > 1;
-    final mediaPreview = _buildUserAttachmentPreview(
+    final mediaPreview = _buildAttachmentPreview(
       context,
-      parsed: parsed,
+      attachments: parsed.attachments,
       isDark: isDark,
+      alignment: Alignment.centerRight,
+      wrapAlignment: WrapAlignment.end,
+      keyPrefix: 'user',
     );
     final textBubble = visualText.isNotEmpty
         ? Container(
@@ -1617,28 +1620,31 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
         : content;
   }
 
-  Widget? _buildUserAttachmentPreview(
+  Widget? _buildAttachmentPreview(
     BuildContext context, {
-    required _ParsedUserContent parsed,
+    required List<_MessageAttachmentRef> attachments,
     required bool isDark,
+    required Alignment alignment,
+    required WrapAlignment wrapAlignment,
+    required String keyPrefix,
   }) {
-    if (parsed.attachments.isEmpty) return null;
+    if (attachments.isEmpty) return null;
 
     final l10n = AppLocalizations.of(context)!;
-    final imageSources = parsed.attachments
-        .whereType<_UserImageRef>()
+    final imageSources = attachments
+        .whereType<_MessageImageRef>()
         .map((attachment) => attachment.source)
         .toList(growable: false);
     final items = <Widget>[];
     var imageIndex = 0;
-    for (var index = 0; index < parsed.attachments.length; index += 1) {
-      final attachment = parsed.attachments[index];
+    for (var index = 0; index < attachments.length; index += 1) {
+      final attachment = attachments[index];
       final key = ValueKey(
-        'user-message-attachment:${widget.message.id}:$index',
+        '$keyPrefix-message-attachment:${widget.message.id}:$index',
       );
-      if (attachment is _UserImageRef) {
+      if (attachment is _MessageImageRef) {
         items.add(
-          _buildUserImageAttachment(
+          _buildImageAttachment(
             context,
             key: key,
             source: attachment.source,
@@ -1648,9 +1654,9 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
           ),
         );
         imageIndex += 1;
-      } else if (attachment is _UserFileRef) {
+      } else if (attachment is _MessageFileRef) {
         items.add(
-          _buildUserFileAttachment(
+          _buildFileAttachment(
             context,
             key: key,
             attachment: attachment,
@@ -1662,11 +1668,13 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
     }
 
     return Align(
-      key: ValueKey('user-message-attachments:${widget.message.id}'),
-      alignment: Alignment.centerRight,
+      key: ValueKey('$keyPrefix-message-attachments:${widget.message.id}'),
+      alignment: alignment,
       child: Wrap(
-        key: ValueKey('user-message-attachment-list:${widget.message.id}'),
-        alignment: WrapAlignment.end,
+        key: ValueKey(
+          '$keyPrefix-message-attachment-list:${widget.message.id}',
+        ),
+        alignment: wrapAlignment,
         spacing: 8,
         runSpacing: 8,
         children: items,
@@ -1674,7 +1682,7 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
     );
   }
 
-  Widget _buildUserImageAttachment(
+  Widget _buildImageAttachment(
     BuildContext context, {
     required Key key,
     required String source,
@@ -1773,10 +1781,10 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
     );
   }
 
-  Widget _buildUserFileAttachment(
+  Widget _buildFileAttachment(
     BuildContext context, {
     required Key key,
-    required _UserFileRef attachment,
+    required _MessageFileRef attachment,
     required bool isDark,
     required AppLocalizations l10n,
   }) {
@@ -1881,19 +1889,25 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
 
   _ParsedUserContent _parseUserContent(ChatMessage message) {
     final inline = parseRemoteInlineImages(message.content);
-    final attachments = <_UserAttachmentRef>[
+    final attachments = <_MessageAttachmentRef>[
+      ..._structuredAttachmentRefs(message),
+      for (final source in inline.imageSources) _MessageImageRef(source),
+    ];
+    return _ParsedUserContent(inline.text, attachments);
+  }
+
+  List<_MessageAttachmentRef> _structuredAttachmentRefs(ChatMessage message) {
+    return <_MessageAttachmentRef>[
       for (final attachment in message.attachments)
         if (attachment.kind == 'image')
-          _UserImageRef(attachment.path)
+          _MessageImageRef(attachment.path)
         else
-          _UserFileRef(
+          _MessageFileRef(
             path: attachment.path,
             fileName: attachment.displayName!,
             mime: attachment.mediaType!,
           ),
-      for (final source in inline.imageSources) _UserImageRef(source),
     ];
-    return _ParsedUserContent(inline.text, attachments);
   }
 
   Widget _buildAssistantTextContent(
@@ -2118,6 +2132,7 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
 
   Widget _buildAssistantMessage() {
     final cs = Theme.of(context).colorScheme;
+    final isDark = Theme.of(context).brightness == Brightness.dark;
     final fg = _chatSurfaceForegroundPalette(context);
     final l10n = AppLocalizations.of(context)!;
     final settings = context.watch<SettingsProvider>();
@@ -2146,6 +2161,14 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
     final bool isTranslating =
         translationText == l10n.chatMessageWidgetTranslating;
     final searchItems = _allSearchItems();
+    final mediaPreview = _buildAttachmentPreview(
+      context,
+      attachments: _structuredAttachmentRefs(widget.message),
+      isDark: isDark,
+      alignment: Alignment.centerLeft,
+      wrapAlignment: WrapAlignment.start,
+      keyPrefix: 'assistant',
+    );
 
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
@@ -2219,6 +2242,10 @@ class _ChatMessageWidgetState extends State<ChatMessageWidget> {
           // File Processing Indicator (inserted before content)
           if (widget.isProcessingFiles) ...[
             const FileProcessingIndicator(),
+            const SizedBox(height: 8),
+          ],
+          if (mediaPreview != null) ...[
+            mediaPreview,
             const SizedBox(height: 8),
           ],
           ...() {
@@ -3339,22 +3366,22 @@ class _StreamingAssistantMessageMotion extends StatelessWidget {
 
 class _ParsedUserContent {
   final String text;
-  final List<_UserAttachmentRef> attachments;
+  final List<_MessageAttachmentRef> attachments;
   _ParsedUserContent(this.text, this.attachments);
 }
 
-sealed class _UserAttachmentRef {
-  const _UserAttachmentRef();
+sealed class _MessageAttachmentRef {
+  const _MessageAttachmentRef();
 }
 
-final class _UserImageRef extends _UserAttachmentRef {
-  const _UserImageRef(this.source);
+final class _MessageImageRef extends _MessageAttachmentRef {
+  const _MessageImageRef(this.source);
 
   final String source;
 }
 
-final class _UserFileRef extends _UserAttachmentRef {
-  const _UserFileRef({
+final class _MessageFileRef extends _MessageAttachmentRef {
+  const _MessageFileRef({
     required this.path,
     required this.fileName,
     required this.mime,

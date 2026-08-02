@@ -10,6 +10,57 @@ final class ParsedRemoteInlineImages {
   final List<String> imageSources;
 }
 
+final class ParsedLocalMarkdownImages {
+  const ParsedLocalMarkdownImages({
+    required this.content,
+    required this.imagePaths,
+  });
+
+  final String content;
+  final List<String> imagePaths;
+}
+
+ParsedLocalMarkdownImages parseLocalMarkdownImages(String raw) {
+  final imagePattern = RegExp(
+    r'!\[[^\]\r\n]*\]\(([^)\r\n]+)\)',
+    multiLine: true,
+  );
+  final imagePaths = <String>[];
+  final content = StringBuffer();
+  var cursor = 0;
+
+  for (final match in imagePattern.allMatches(raw)) {
+    final source = match.group(1)?.trim() ?? '';
+    if (!_isAbsoluteLocalImageSource(source)) continue;
+    content.write(raw.substring(cursor, match.start));
+    imagePaths.add(source);
+    cursor = match.end;
+  }
+  if (imagePaths.isEmpty) {
+    return ParsedLocalMarkdownImages(
+      content: raw,
+      imagePaths: const <String>[],
+    );
+  }
+  content.write(raw.substring(cursor));
+  return ParsedLocalMarkdownImages(
+    content: content.toString().trim(),
+    imagePaths: List<String>.unmodifiable(imagePaths),
+  );
+}
+
+bool _isAbsoluteLocalImageSource(String source) {
+  if (source.isEmpty ||
+      source.contains('\u0000') ||
+      isRemoteInlineImageSource(source)) {
+    return false;
+  }
+  return source.startsWith('/') ||
+      source.startsWith(r'\\') ||
+      RegExp(r'^[a-zA-Z]:[\\/]').hasMatch(source) ||
+      source.startsWith('file:');
+}
+
 ParsedRemoteInlineImages parseRemoteInlineImages(String raw) {
   final imagePattern = RegExp(r'\[image:([^\]]+)\]');
   final images = <String>[];

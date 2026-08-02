@@ -375,7 +375,7 @@ class ChatActions {
     );
   }
 
-  Future<void> _finalizeStreamingCheckpoint(
+  Future<ChatMessage> _finalizeStreamingCheckpoint(
     ChatMessage message, {
     required GenerationRunState terminalState,
     String? errorCode,
@@ -387,8 +387,9 @@ class ChatActions {
         ? null
         : cursor.nextSeq++;
     final toolEvents = _copyToolEvents(message.id);
+    var finalizedMessage = message;
     Future<void> writeFinal() async {
-      await chatService.finalizeGenerationRunSilent(
+      final result = await chatService.finalizeGenerationRunSilent(
         message: message,
         toolEvents: toolEvents,
         generationRunId: cursor?.runId,
@@ -398,6 +399,7 @@ class ChatActions {
         checkpointSeq: checkpointSeq,
         errorCode: errorCode,
       );
+      finalizedMessage = result.message;
     }
 
     var committed = false;
@@ -409,8 +411,9 @@ class ChatActions {
       }
       committed = true;
     } finally {
-      if (committed) _clearGenerationRuntimeState(message);
+      if (committed) _clearGenerationRuntimeState(finalizedMessage);
     }
+    return finalizedMessage;
   }
 
   void _clearGenerationRuntimeState(ChatMessage message) {
@@ -434,15 +437,16 @@ class ChatActions {
     streamController.markStreamingEnded(message.id);
     streamController.cleanupTimers(message.id);
     streamController.removeStreamingNotifier(message.id);
+    var finalizedMessage = message;
     try {
-      await _finalizeStreamingCheckpoint(
+      finalizedMessage = await _finalizeStreamingCheckpoint(
         message,
         terminalState: GenerationRunState.failed,
         errorCode: 'preparation_failed',
       );
     } finally {
-      _clearGenerationRuntimeState(message);
-      if (chatController.publishTerminalMessage(message)) {
+      _clearGenerationRuntimeState(finalizedMessage);
+      if (chatController.publishTerminalMessage(finalizedMessage)) {
         onMessagesChanged?.call();
       }
       _setConversationLoading(conversationId, false);
@@ -1322,13 +1326,13 @@ class ChatActions {
       final latestStreaming = idx == -1 ? streaming : _messages[idx];
 
       streamController.finishReasoningIfNeeded(streaming.id);
-      final finalizedMessage = _messageWithCurrentReasoning(latestStreaming)
+      var finalizedMessage = _messageWithCurrentReasoning(latestStreaming)
           .copyWith(
             isStreaming: false,
             generationStatus: ChatMessage.generationStatusInterrupted,
           );
       try {
-        await _finalizeStreamingCheckpoint(
+        finalizedMessage = await _finalizeStreamingCheckpoint(
           finalizedMessage,
           terminalState: GenerationRunState.interrupted,
         );
@@ -1854,7 +1858,7 @@ class ChatActions {
         await MarkdownMediaSanitizer.replaceInlineBase64Images(
           processedContent,
         );
-    final finalizedMessage = _streamingMessageSnapshot(state).copyWith(
+    var finalizedMessage = _streamingMessageSnapshot(state).copyWith(
       content: sanitizedContent,
       totalTokens: state.totalTokens,
       isStreaming: false,
@@ -1865,7 +1869,7 @@ class ChatActions {
       generationStatus: ChatMessage.generationStatusCompleted,
     );
     try {
-      await _finalizeStreamingCheckpoint(
+      finalizedMessage = await _finalizeStreamingCheckpoint(
         finalizedMessage,
         terminalState: GenerationRunState.completed,
       );
@@ -1912,14 +1916,14 @@ class ChatActions {
     final displayContent = state.fullContentRaw.isEmpty
         ? ''
         : _transformAssistantContent(state, state.fullContentRaw);
-    final errorMessage = _streamingMessageSnapshot(state).copyWith(
+    var errorMessage = _streamingMessageSnapshot(state).copyWith(
       content: displayContent,
       totalTokens: state.totalTokens,
       isStreaming: false,
       generationStatus: ChatMessage.generationStatusFailed,
     );
     try {
-      await _finalizeStreamingCheckpoint(
+      errorMessage = await _finalizeStreamingCheckpoint(
         errorMessage,
         terminalState: GenerationRunState.failed,
         errorCode: 'generation_failed',

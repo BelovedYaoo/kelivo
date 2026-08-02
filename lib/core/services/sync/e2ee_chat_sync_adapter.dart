@@ -590,6 +590,9 @@ DateTime? _parseNullableDateTime(Object? value) =>
     value == null ? null : DateTime.parse(value as String);
 
 String _normalizeInlineMediaForSync(String raw) {
+  if (parseLocalMarkdownImages(raw).imagePaths.isNotEmpty) {
+    _rejectLocalAttachmentMarker();
+  }
   if (!raw.contains('[image:') && !raw.contains('[file:')) return raw;
 
   final normalized = StringBuffer();

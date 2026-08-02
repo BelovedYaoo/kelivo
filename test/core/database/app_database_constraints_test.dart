@@ -5661,6 +5661,30 @@ void main() {
           ),
         ),
       );
+
+      const localMarkdownMessageId = 'local-markdown-media-message';
+      await insertMessage(
+        id: localMarkdownMessageId,
+        conversationId: localConversationId,
+        groupId: 'local-markdown-media-group',
+        messageOrder: 1,
+        content: r'![image](C:\private\generated.png)',
+      );
+      await expectLater(
+        adapter.readSnapshot(
+          const SyncEntityKey(
+            entityType: E2eeSyncChatRecordTypes.message,
+            entityId: localMarkdownMessageId,
+          ),
+        ),
+        throwsA(
+          isA<StateError>().having(
+            (error) => error.message,
+            'message',
+            'sync_message_local_attachment_marker_rejected',
+          ),
+        ),
+      );
     });
 
     test('逆序六实体按依赖提交且只在 checkpoint 提交后发布', () async {

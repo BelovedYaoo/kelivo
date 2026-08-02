@@ -43,6 +43,49 @@ String _allRichTextPlainText(WidgetTester tester) {
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
 
+  testWidgets('助手结构化图片附件显示在正文上方', (tester) async {
+    const messageId = 'assistant-generated-image';
+    await tester.pumpWidget(
+      _buildHarness(
+        child: ChatMessageWidget(
+          message: ChatMessage(
+            id: messageId,
+            role: 'assistant',
+            content: '生成结果',
+            attachments: <ChatMessageAttachment>[
+              ChatMessageAttachment(
+                assetId: 'generated-image',
+                path: 'missing-generated-image.png',
+                contentHash:
+                    'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa',
+                byteSize: 4,
+                kind: 'image',
+              ),
+            ],
+            conversationId: 'conversation-generated-image',
+          ),
+          showModelIcon: false,
+        ),
+      ),
+    );
+    await tester.pump();
+
+    final attachment = find.byKey(
+      const ValueKey('assistant-message-attachments:$messageId'),
+    );
+    final text = find.text('生成结果');
+    expect(attachment, findsOneWidget);
+    expect(
+      find.descendant(of: attachment, matching: find.byType(Image)),
+      findsOneWidget,
+    );
+    expect(text, findsOneWidget);
+    expect(
+      tester.getRect(attachment).bottom,
+      lessThanOrEqualTo(tester.getRect(text).top),
+    );
+  });
+
   testWidgets(
     'ChatMessageWidget keeps a partial streaming table row in table layout',
     (tester) async {

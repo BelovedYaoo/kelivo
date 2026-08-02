@@ -1944,6 +1944,120 @@ void main() {
     expect(aggregate.totals.outputTokens, 9);
   });
 
+  test('E2EE 助手终态把本地 Markdown 图片转换为结构化附件', () async {
+    final executor = _RecordingAttachmentWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    final conversation = await service.createConversation(title: 'Image');
+    final generation = await service.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '生成图片',
+      userAttachments: const <LocalMessageAttachmentInput>[],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    var run = await service.transitionGenerationRun(
+      id: generation.run.id,
+      expectedState: generation.run.state,
+      expectedStateRevision: generation.run.stateRevision,
+      nextState: GenerationRunState.requesting,
+    );
+    run = await service.transitionGenerationRun(
+      id: run.id,
+      expectedState: run.state,
+      expectedStateRevision: run.stateRevision,
+      nextState: GenerationRunState.streaming,
+    );
+    final image = File('${tempDir.path}/images/generated.png');
+    await image.parent.create(recursive: true);
+    await image.writeAsBytes(const <int>[1, 2, 3, 4]);
+    final completed = generation.assistantMessage.copyWith(
+      content: '生成结果\n\n![image](${image.path})',
+      isStreaming: false,
+      generationStatus: ChatMessage.generationStatusCompleted,
+    );
+
+    final result = await service.finalizeGenerationRunSilent(
+      message: completed,
+      toolEvents: const [],
+      generationRunId: run.id,
+      expectedState: run.state,
+      expectedStateRevision: run.stateRevision,
+      terminalState: GenerationRunState.completed,
+    );
+
+    expect(result.message.content, '生成结果');
+    expect(result.message.attachments, hasLength(1));
+    final persisted = (await service.loadMessages(
+      conversation.id,
+    )).singleWhere((message) => message.id == completed.id);
+    expect(persisted.content, '生成结果');
+    expect(persisted.content, isNot(contains(image.path)));
+    expect(persisted.attachments, hasLength(1));
+    expect(persisted.attachments.single.kind, 'image');
+    expect(p.equals(persisted.attachments.single.path, image.path), isTrue);
+    expect(executor.materialized, hasLength(1));
+    expect(executor.attachmentBatches, hasLength(1));
+    expect(executor.attachmentBatches.single.revisionId, completed.id);
+  });
+
+  test('E2EE 助手终态的本地 Markdown 图片失效时不落库', () async {
+    final executor = _RecordingAttachmentWriteExecutor();
+    final service = createService(syncWriteExecutor: executor);
+    await service.init();
+    final conversation = await service.createConversation(title: 'Image');
+    final generation = await service.beginSendGeneration(
+      conversationId: conversation.id,
+      userContent: '生成图片',
+      userAttachments: const <LocalMessageAttachmentInput>[],
+      modelId: 'model',
+      providerId: 'provider',
+    );
+    var run = await service.transitionGenerationRun(
+      id: generation.run.id,
+      expectedState: generation.run.state,
+      expectedStateRevision: generation.run.stateRevision,
+      nextState: GenerationRunState.requesting,
+    );
+    run = await service.transitionGenerationRun(
+      id: run.id,
+      expectedState: run.state,
+      expectedStateRevision: run.stateRevision,
+      nextState: GenerationRunState.streaming,
+    );
+    final missing = File('${tempDir.path}/images/missing.png');
+    final completed = generation.assistantMessage.copyWith(
+      content: '![image](${missing.path})',
+      isStreaming: false,
+      generationStatus: ChatMessage.generationStatusCompleted,
+    );
+
+    await expectLater(
+      service.finalizeGenerationRunSilent(
+        message: completed,
+        toolEvents: const [],
+        generationRunId: run.id,
+        expectedState: run.state,
+        expectedStateRevision: run.stateRevision,
+        terminalState: GenerationRunState.completed,
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'asset_file_unavailable',
+        ),
+      ),
+    );
+
+    final persisted = (await service.loadMessages(
+      conversation.id,
+    )).singleWhere((message) => message.id == completed.id);
+    expect(persisted.isStreaming, isTrue);
+    expect(persisted.attachments, isEmpty);
+    expect(executor.attachmentBatches, isEmpty);
+  });
+
   test('business selection uses linear group versions', () async {
     final service = createService();
     await service.init();
