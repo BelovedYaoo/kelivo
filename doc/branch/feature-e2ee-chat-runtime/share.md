@@ -93,3 +93,4 @@
 - 进行中：#92 以 recovery execution 专用原子 ABI 生成 source、双代状态和未激活 target-only candidate；完成 proof 后认证同一候选才允许裁剪旧 epoch。checkpoint 必须在远端提交前持久化三态并显式推进 candidatePrepared -> proofVerified -> activated。
 - 已验证：`kelivo-api@c2972b2` 消除 D1 256 目标时的大 `IN` 与超 100 bind 语句，独立复审实测整批 34 条 SQL、单条最大 99 bind、250 项测试和类型检查通过；连续接管回执与第二 replacement challenge 仍在实现，未部署。
 - 非阻塞清理：仓库基线已跟踪 4 个 Android/iOS `build/**` 产物，Issue #93 负责从索引删除并补齐忽略规则；当前 E2EE 提交未新增或修改这些文件。
+- 2026-08-02 继续集成：按 API 自撤销/二阶段恢复 -> App 成员清单与恢复介质 v2/换钥执行器 -> Native 恢复 execution -> 持久明文退役的顺序原子合入；最终 OpenAPI typed adapter、固定向量和 ABI 门禁全部通过前不部署、不访问远端 D1/R2，也不运行可能访问默认安全槽的旧集成测试。
