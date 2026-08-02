@@ -6,6 +6,7 @@ import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_trust_manifest.dart';
 import 'e2ee_data_rekey_wire.dart';
+import 'e2ee_self_revocation_rotation_binding.dart';
 
 const _selfRevocationIntentDigestBytes = 32;
 
@@ -74,6 +75,18 @@ final class E2eeVerifiedSelfRevocationIntent {
   final Uint8List expectedMembershipManifestDigest;
   final Uint8List intentDigest;
   final DateTime expiresAt;
+
+  E2eeSelfRevocationRotationBinding toRotationBinding() {
+    return E2eeSelfRevocationRotationBinding(
+      deviceId: deviceId,
+      mutationId: mutationId,
+      operationId: operationId,
+      expectedGeneration: expectedGeneration,
+      expectedKeyEpoch: expectedKeyEpoch,
+      expectedMembershipManifestDigest: expectedMembershipManifestDigest,
+      intentDigest: intentDigest,
+    );
+  }
 }
 
 final class E2eeVerifiedSelfRevocationReceipt {

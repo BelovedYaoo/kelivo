@@ -105,3 +105,4 @@
 - 已合入：账户恢复 continuation、checkpoint v6、生产 data-rekey runner 与当前设备自撤销强类型传输；下一步合入专用 intent 签名 ABI、可信协调器和 op3 强绑定。
 - 生产硬切：`kelivo.bemylover.top` 已只绑定全新 APAC D1/R2 与五项新 E2EE secrets；旧 D1、旧 R2、备份桶、本地 v2 备份和旧部署凭据均已永久删除。
 - 品牌硬切：Android 标识改为 `top.bemylover.olivia`，iOS/macOS 标识及 Windows/Linux/Web 产品名统一为 Olivia；内部 Dart 包名与 E2EE 协议域保持不变。品牌相关定向分析通过，最终 Android/Windows 构建待并行 Native 编译结束后统一执行。
+- 已接通：可信自撤销协调器产出的已验证意图可直接转换为 op3 换钥绑定；转换继续复用 UUID、代次与 32 字节摘要的强校验，不接收或重算服务端提供的摘要。协调器 6 项隔离安全槽测试与定向分析通过。

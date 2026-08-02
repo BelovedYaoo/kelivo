@@ -51,6 +51,23 @@ void main() {
     expect(verified.single.deviceId, _requestingDeviceId);
     expect(verified.single.operationId, _rotationOperationId);
     expect(verified.single.intentDigest, orderedEquals(_intentDigest));
+    final rotationBinding = verified.single.toRotationBinding();
+    expect(rotationBinding.deviceId, _requestingDeviceId);
+    expect(rotationBinding.mutationId, _mutationId);
+    expect(rotationBinding.operationId, _rotationOperationId);
+    expect(
+      rotationBinding.expectedGeneration,
+      fixture.trustedCurrentHead.securityGeneration,
+    );
+    expect(
+      rotationBinding.expectedKeyEpoch,
+      fixture.trustedCurrentHead.keyEpoch,
+    );
+    expect(
+      rotationBinding.expectedMembershipManifestDigest,
+      orderedEquals(fixture.trustedCurrentHead.digest),
+    );
+    expect(rotationBinding.intentDigest, orderedEquals(_intentDigest));
     expect(verifier.calls, 1);
   });
 
