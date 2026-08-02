@@ -54,6 +54,7 @@ import 'package:Kelivo/features/settings/pages/cloud_sync_page.dart'
     hide CloudSyncPage;
 import 'package:Kelivo/features/settings/pages/mobile_account_recovery_page.dart';
 import 'package:Kelivo/l10n/app_localizations.dart';
+import 'package:Kelivo/shared/widgets/ios_checkbox.dart';
 import 'package:Kelivo/shared/widgets/ios_tile_button.dart';
 import 'package:Kelivo/shared/widgets/snackbar.dart';
 import 'package:Kelivo/utils/app_directories.dart';
@@ -4119,6 +4120,88 @@ void main() {
     debugDefaultTargetPlatformOverride = null;
   });
 
+  testWidgets('本次确认恢复介质后的提交错误不弹历史事务对话框', (tester) async {
+    tester.view.physicalSize = const Size(1000, 1800);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.resetPhysicalSize);
+    addTearDown(tester.view.resetDevicePixelRatio);
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final authentication = _FakeE2eeAccountAuthentication(
+      exportRecoveryMediaBeforeFailure: true,
+      registrationFailure: const CloudSyncException(
+        kind: CloudSyncFailureKind.validation,
+        retryable: false,
+        serverCode: 'DEVICE_MEMBERSHIP_MANIFEST_INVALID',
+      ),
+    );
+    final fixture = await tester.runAsync(
+      () => _createSignedOutFixture(authentication: authentication),
+    );
+    if (fixture == null) {
+      throw StateError('registration_submit_failure_fixture_not_created');
+    }
+    addTearDown(() => tester.runAsync(fixture.close));
+    await tester.runAsync(fixture.provider.initialize);
+    await tester.pumpWidget(_cloudSyncTestApp(fixture.provider));
+    await tester.pump();
+
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-register-mode')),
+    );
+    await tester.pump();
+    await _enterCloudSyncField(tester, 'cloud-sync-login-name-field', 'ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-display-name-field', 'Ovo');
+    await _enterCloudSyncField(tester, 'cloud-sync-password-field', 'password');
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(
+      tester,
+      'cloud-sync-recovery-passphrase-confirm-field',
+      'correct horse battery staple',
+    );
+    await _enterCloudSyncField(tester, 'cloud-sync-device-name-field', '安卓手机');
+    await tester.tap(
+      find.byKey(const ValueKey<String>('cloud-sync-authentication-submit')),
+    );
+    await _pumpCloudSyncUntil(
+      tester,
+      () => find
+          .byKey(
+            const ValueKey<String>('mobile-recovery-export-acknowledgement'),
+          )
+          .evaluate()
+          .isNotEmpty,
+    );
+    final acknowledgement = find.byKey(
+      const ValueKey<String>('mobile-recovery-export-acknowledgement'),
+    );
+    tester.widgetList<IosCheckbox>(acknowledgement).last.onChanged?.call(true);
+    await tester.pump();
+    final confirm = find.byKey(
+      const ValueKey<String>('mobile-recovery-export-confirm'),
+    );
+    tester.widgetList<IosTileButton>(confirm).last.onTap.call();
+    final pendingResume = find.byKey(
+      const ValueKey<String>('cloud-sync-pending-registration-resume'),
+    );
+    await _pumpCloudSyncUntil(
+      tester,
+      () =>
+          fixture.provider.lastError != null ||
+          pendingResume.evaluate().isNotEmpty,
+    );
+    await tester.pump();
+
+    expect(pendingResume, findsNothing);
+    await _expectAndDismissCloudSyncToast(tester, '部分同步数据或输入不符合要求。');
+    debugDefaultTargetPlatformOverride = null;
+  });
+
   testWidgets('移动注册失败保持登出并展示账户错误', (tester) async {
     tester.view.physicalSize = const Size(1000, 1600);
     tester.view.devicePixelRatio = 1;
@@ -5292,7 +5375,9 @@ E2eeFirstDeviceSecurityBootstrapPreparer _createTrackingRecoveryBootstrap({
   required E2eeEncryptedRecoveryMediaExporter encryptedMediaExporter,
 }) {
   recoveryPassphrase.fillRange(0, recoveryPassphrase.length, 0);
-  return _TrackingFirstDeviceSecurityBootstrapPreparer();
+  return _TrackingFirstDeviceSecurityBootstrapPreparer(
+    encryptedMediaExporter: encryptedMediaExporter,
+  );
 }
 
 CloudSyncAccountSession _session({
@@ -6754,6 +6839,9 @@ final class _FakeCloudSyncAccountClient implements CloudSyncAccountClient {
 
 final class _TrackingFirstDeviceSecurityBootstrapPreparer
     implements E2eeFirstDeviceSecurityBootstrapPreparer {
+  _TrackingFirstDeviceSecurityBootstrapPreparer({this.encryptedMediaExporter});
+
+  final E2eeEncryptedRecoveryMediaExporter? encryptedMediaExporter;
   bool closed = false;
 
   @override
@@ -6773,8 +6861,12 @@ final class _TrackingFirstDeviceSecurityBootstrapPreparer
 
   @override
   Future<bool> exportEncryptedRecoveryMedia(Uint8List encryptedMedia) async {
-    encryptedMedia.fillRange(0, encryptedMedia.length, 0);
-    return true;
+    try {
+      final exporter = encryptedMediaExporter;
+      return exporter == null ? true : await exporter(encryptedMedia);
+    } finally {
+      encryptedMedia.fillRange(0, encryptedMedia.length, 0);
+    }
   }
 }
 
@@ -6788,6 +6880,7 @@ final class _FakeE2eeAccountAuthentication
     this.registrationFailure,
     this.confirmationFailure,
     this.registrationBarrier,
+    this.exportRecoveryMediaBeforeFailure = false,
   }) : loginResult =
            loginResult ??
            E2eeAccountLoginAuthenticated(_authenticatedSession()),
@@ -6801,6 +6894,7 @@ final class _FakeE2eeAccountAuthentication
   final Object? registrationFailure;
   final Object? confirmationFailure;
   final Future<void>? registrationBarrier;
+  final bool exportRecoveryMediaBeforeFailure;
   final List<String> requestNames = <String>[];
   String? lastLoginName;
   String? lastDisplayName;
@@ -6853,6 +6947,16 @@ final class _FakeE2eeAccountAuthentication
     try {
       final barrier = registrationBarrier;
       if (barrier != null) await barrier;
+      if (exportRecoveryMediaBeforeFailure) {
+        final preparer = lastFirstDeviceBootstrapPreparer;
+        if (preparer == null) {
+          throw StateError('测试注册缺少恢复介质 preparer');
+        }
+        final exported = await preparer.exportEncryptedRecoveryMedia(
+          Uint8List(e2eeEncryptedRecoveryMediaBytes),
+        );
+        if (!exported) throw const E2eeRecoveryMediaExportCancelled();
+      }
       final failure = registrationFailure;
       if (failure != null) throw failure;
       return registrationSession;

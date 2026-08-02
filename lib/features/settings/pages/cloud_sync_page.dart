@@ -753,22 +753,28 @@ class _CloudSyncSettingsContentState extends State<CloudSyncSettingsContent> {
       _passwordController.clear();
       return;
     }
+    if (exportResult == MobileRecoveryMediaExportResult.cancelled) {
+      provider.clearError();
+      return;
+    }
     if (exportResult == MobileRecoveryMediaExportResult.fileSaveFailed) {
+      provider.clearError();
       showAppSnackBar(
         context,
         message: l10n.cloudSyncRecoveryMediaSaveFailed,
         type: NotificationType.error,
       );
+      return;
     }
     final pendingCode = provider.lastError?.serverCode;
     final pendingAwaitingExport =
-        pendingCode == e2eePendingRegistrationExportRequiredCode ||
-        exportResult == MobileRecoveryMediaExportResult.cancelled ||
-        exportResult == MobileRecoveryMediaExportResult.fileSaveFailed;
+        exportResult == null &&
+        pendingCode == e2eePendingRegistrationExportRequiredCode;
     final pendingExportConfirmed =
-        pendingCode == e2eePendingRegistrationSubmitRequiredCode ||
-        exportResult == MobileRecoveryMediaExportResult.confirmed;
+        exportResult == null &&
+        pendingCode == e2eePendingRegistrationSubmitRequiredCode;
     final pendingUnsupported =
+        exportResult == null &&
         pendingCode == e2eePendingRegistrationUnsupportedCode;
     if (pendingAwaitingExport || pendingExportConfirmed || pendingUnsupported) {
       provider.clearError();

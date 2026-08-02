@@ -379,7 +379,7 @@ final class E2eeAccountAuthenticator
       if (bootstrapPreparer == null) {
         throw UnsupportedError('首设备恢复介质与签名 genesis 尚未接入');
       }
-      final operationId = const Uuid().v4();
+      final operationId = start.attemptId;
       final localMember = E2eeMembershipDeviceInput(
         deviceId: context.deviceIdText,
         keyVersion: context.keyVersion,
@@ -1240,6 +1240,9 @@ final class E2eeAccountAuthenticator
     _DeviceContext context,
     _PendingRegistrationTransaction transaction,
   ) async {
+    if (transaction.securityState.operationId != transaction.attemptId) {
+      throw StateError('注册事务的 genesis 未绑定当前注册尝试');
+    }
     if (context.deviceIdText != transaction.deviceId ||
         context.keyVersion != transaction.keyVersion) {
       throw StateError('注册事务与当前设备身份不匹配');

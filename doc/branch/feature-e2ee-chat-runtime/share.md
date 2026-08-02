@@ -108,3 +108,4 @@
 - 已接通：可信自撤销协调器产出的已验证意图可直接转换为 op3 换钥绑定；转换继续复用 UUID、代次与 32 字节摘要的强校验，不接收或重算服务端提供的摘要。协调器 6 项隔离安全槽测试与定向分析通过。
 - 已合入：Native ABI23 自撤销验签不再接收服务端 intentDigest，固定帧与 SHA-256 仅在 Rust 重建，验签成功才输出 32 字节摘要；Dart 唯一适配器只转换规范 UUID/UTC 时间。真实签名、替换摘要和篡改签名在协调器 7 项隔离测试中均已覆盖。
 - Android 首次启动门禁 #103/#106：应用目录完全使用平台 SDK 并规范化，工作区层删除 `/data/user/0` 等 Android 路径特判；ARM/ARM64 按 NDK UAPI 选择 `O_DIRECTORY`、`O_NOFOLLOW`。临时探针已全部移除，125 项定向测试通过，ARM64 Release APK 已完成真机安装和首次启动复验；Cargokit 固定使用预编译原生库。
+- 首设备注册 #109：genesis `operationId` 绑定 registration start 的 `attemptId`，恢复 pending 时在导出与发网前复核同一不变量；本次恢复介质确认后的 finish 错误直接展示，仅明确的历史 pending 错误码才弹恢复对话框。协议与页面红绿回归已通过；OPAQUE 凭据错误映射另记 #108。

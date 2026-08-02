@@ -1675,6 +1675,63 @@ void main() {
     await core.close(key);
   });
 
+  test('首设备注册恢复在发网前拒绝与 attemptId 不一致的 genesis operationId', () async {
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final server = await HttpServer.bind(InternetAddress.loopbackIPv4, 0);
+    var requestCount = 0;
+    final subscription = server.listen((request) async {
+      requestCount++;
+      await request.drain<void>();
+      request.response.statusCode = HttpStatus.internalServerError;
+      await request.response.close();
+    });
+    final baseUrl = 'http://${server.address.address}:${server.port}';
+    const loginName = 'mismatched-registration-operation';
+    final testRoot = Directory(
+      '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
+      '${Platform.pathSeparator}e2ee_authenticator_tests',
+    );
+    await testRoot.create(recursive: true);
+    final root = await testRoot.createTemp('kelivo-e2ee-authenticator-');
+    final store = DeviceStateBlobStore(installationRoot: root);
+    await _seedPendingRegistration(
+      core: core,
+      store: store,
+      baseUrl: baseUrl,
+      loginName: loginName,
+      attemptExpiresAt: DateTime.now().toUtc().add(const Duration(minutes: 5)),
+      operationId: _attemptId2,
+    );
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      await subscription.cancel();
+      await server.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    var exportCount = 0;
+    await expectLater(
+      authenticator.resumeFirstDeviceRegistration(
+        loginName: loginName,
+        encryptedMediaExporter: (_) async {
+          exportCount++;
+          return true;
+        },
+      ),
+      throwsStateError,
+    );
+    expect(exportCount, 0);
+    expect(requestCount, 0);
+  });
+
   test('首设备注册响应丢失后新认证器原样重放且提交确认前保留事务', () async {
     const core = KelivoSecureCore();
     if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
@@ -14728,6 +14785,7 @@ _seedPendingRegistration({
   required String baseUrl,
   required String loginName,
   required DateTime attemptExpiresAt,
+  String operationId = _attemptId1,
 }) async {
   final registrationUpload = _filledBytes(
     cloudSyncOpaqueRegistrationUploadBytes,
@@ -14754,7 +14812,7 @@ _seedPendingRegistration({
     ark: ark,
     change: E2eeInitializeMembershipChange(
       userId: _userId,
-      operationId: _attemptId1,
+      operationId: operationId,
       member: E2eeMembershipDeviceInput(
         deviceId: _deviceId1,
         keyVersion: 1,
