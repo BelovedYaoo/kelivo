@@ -108,7 +108,7 @@ final class E2eeAccountRecoveryLocalTransitionPlan {
     );
   }
 
-  const E2eeAccountRecoveryLocalTransitionPlan._(
+  E2eeAccountRecoveryLocalTransitionPlan._(
     this._sourceStateBlob,
     this._unprunedStateBlob,
     this._prunedStateBlob,
@@ -126,7 +126,7 @@ final class E2eeAccountRecoveryLocalTransitionPlan {
   final String userId;
   final int sourceDataGeneration;
   final Uint8List _operationAuthorizationDigest;
-  final Uint8List _continuation;
+  Uint8List? _continuation;
 
   Uint8List get sourceStateBlob => Uint8List.fromList(_sourceStateBlob);
 
@@ -137,10 +137,18 @@ final class E2eeAccountRecoveryLocalTransitionPlan {
   Uint8List get operationAuthorizationDigest =>
       Uint8List.fromList(_operationAuthorizationDigest);
 
-  Uint8List copyContinuation() => Uint8List.fromList(_continuation);
+  Uint8List copyContinuation() {
+    final continuation = _continuation;
+    if (continuation == null) {
+      throw StateError('账户恢复本地转换计划已清理');
+    }
+    return Uint8List.fromList(continuation);
+  }
 
   void clearContinuation() {
-    _continuation.fillRange(0, _continuation.length, 0);
+    final continuation = _continuation;
+    continuation?.fillRange(0, continuation.length, 0);
+    _continuation = null;
   }
 
   E2eeAccountRecoveryLocalTransitionPlan _copy() {
@@ -152,11 +160,7 @@ final class E2eeAccountRecoveryLocalTransitionPlan {
       userId,
       sourceDataGeneration,
       _operationAuthorizationDigest,
-      _fixedMutableCopy(
-        _continuation,
-        e2eeAccountRecoveryNativeContinuationBytes,
-        'continuation',
-      ),
+      copyContinuation(),
     );
   }
 }
@@ -1377,13 +1381,11 @@ final class E2eeAccountRecoveryPreparedTransition {
   final E2eeAccountRecoveryPreparedCommit commit;
   final E2eeAccountRecoveryLocalTransitionPlan localTransitionPlan;
 
-  E2eeAccountRecoveryPreparedTransition _move() {
-    final moved = E2eeAccountRecoveryPreparedTransition(
+  E2eeAccountRecoveryPreparedTransition _copy() {
+    return E2eeAccountRecoveryPreparedTransition(
       commit: commit,
       localTransitionPlan: localTransitionPlan._copy(),
     );
-    localTransitionPlan.clearContinuation();
-    return moved;
   }
 
   void clearContinuation() {
@@ -1704,6 +1706,108 @@ final class E2eeAccountRecoveryCheckpoint {
 
   E2eeAccountRecoveryCheckpointPhase get phase => progress.phase;
 
+  E2eeAccountRecoveryCheckpoint detachedCopy() {
+    return _copyWithProgress(switch (progress) {
+      E2eeAccountRecoveryResumePreparedProgress(
+        :final authorization,
+        :final transition,
+      ) =>
+        E2eeAccountRecoveryResumePreparedProgress(
+          authorization: authorization,
+          transition: transition._copy(),
+        ),
+      E2eeAccountRecoveryResumeCommittedProgress(
+        :final authorization,
+        :final transition,
+        :final receipt,
+      ) =>
+        E2eeAccountRecoveryResumeCommittedProgress(
+          authorization: authorization,
+          transition: transition._copy(),
+          receipt: receipt,
+        ),
+      E2eeAccountRecoveryFirstRekeyFinalizedProgress(
+        :final authorization,
+        :final transition,
+        :final receipt,
+        :final completion,
+      ) =>
+        E2eeAccountRecoveryFirstRekeyFinalizedProgress(
+          authorization: authorization,
+          transition: transition._copy(),
+          receipt: receipt,
+          completion: completion,
+        ),
+      E2eeAccountRecoveryReplacementPreparedProgress(
+        :final authorization,
+        :final transition,
+        :final reopenBinding,
+      ) =>
+        E2eeAccountRecoveryReplacementPreparedProgress(
+          authorization: authorization,
+          transition: transition._copy(),
+          reopenBinding: reopenBinding,
+        ),
+      E2eeAccountRecoveryReplacementCommittedProgress(
+        :final authorization,
+        :final transition,
+        :final receipt,
+        :final reopenBinding,
+      ) =>
+        E2eeAccountRecoveryReplacementCommittedProgress(
+          authorization: authorization,
+          transition: transition._copy(),
+          receipt: receipt,
+          reopenBinding: reopenBinding,
+        ),
+      E2eeAccountRecoverySecondRekeyFinalizedProgress(
+        :final authorization,
+        :final transition,
+        :final receipt,
+        :final completion,
+        :final reopenBinding,
+      ) =>
+        E2eeAccountRecoverySecondRekeyFinalizedProgress(
+          authorization: authorization,
+          transition: transition._copy(),
+          receipt: receipt,
+          completion: completion,
+          reopenBinding: reopenBinding,
+        ),
+      E2eeAccountRecoveryChallengedProgress() => progress,
+      E2eeAccountRecoveryProofReadyProgress() => progress,
+      E2eeAccountRecoveryAuthorizedProgress() => progress,
+      E2eeAccountRecoveryFirstLocalActivatedProgress() => progress,
+      E2eeAccountRecoveryReplacementChallengeRequestedProgress() => progress,
+      E2eeAccountRecoveryReplacementChallengeReceivedProgress() => progress,
+      E2eeAccountRecoveryReplacementProofReadyProgress() => progress,
+      E2eeAccountRecoverySecondLocalActivatedProgress() => progress,
+      E2eeAccountRecoverySessionVerifiedProgress() => progress,
+    });
+  }
+
+  void clearSensitiveState() {
+    switch (progress) {
+      case E2eeAccountRecoveryResumePreparedProgress(:final transition) ||
+          E2eeAccountRecoveryResumeCommittedProgress(:final transition) ||
+          E2eeAccountRecoveryFirstRekeyFinalizedProgress(:final transition) ||
+          E2eeAccountRecoveryReplacementPreparedProgress(:final transition) ||
+          E2eeAccountRecoveryReplacementCommittedProgress(:final transition) ||
+          E2eeAccountRecoverySecondRekeyFinalizedProgress(:final transition):
+        transition.clearContinuation();
+      case E2eeAccountRecoveryChallengedProgress() ||
+          E2eeAccountRecoveryProofReadyProgress() ||
+          E2eeAccountRecoveryAuthorizedProgress() ||
+          E2eeAccountRecoveryFirstLocalActivatedProgress() ||
+          E2eeAccountRecoveryReplacementChallengeRequestedProgress() ||
+          E2eeAccountRecoveryReplacementChallengeReceivedProgress() ||
+          E2eeAccountRecoveryReplacementProofReadyProgress() ||
+          E2eeAccountRecoverySecondLocalActivatedProgress() ||
+          E2eeAccountRecoverySessionVerifiedProgress():
+        return;
+    }
+  }
+
   E2eeAccountRecoveryReopenBinding? get reopenBinding => switch (progress) {
     E2eeAccountRecoveryFirstLocalActivatedProgress(:final reopenBinding) =>
       reopenBinding,
@@ -1888,7 +1992,7 @@ final class E2eeAccountRecoveryCheckpoint {
         return _copyWithProgress(
           E2eeAccountRecoveryFirstRekeyFinalizedProgress(
             authorization: authorization,
-            transition: transition._move(),
+            transition: transition._copy(),
             receipt: receipt,
             completion: completion,
           ),
@@ -1908,7 +2012,7 @@ final class E2eeAccountRecoveryCheckpoint {
         return _copyWithProgress(
           E2eeAccountRecoverySecondRekeyFinalizedProgress(
             authorization: authorization,
-            transition: transition._move(),
+            transition: transition._copy(),
             receipt: receipt,
             completion: completion,
             reopenBinding: reopenBinding,
@@ -1936,7 +2040,6 @@ final class E2eeAccountRecoveryCheckpoint {
           completion: completion,
           deviceAuthGeneration: deviceAuthGeneration,
         );
-        transition.clearContinuation();
         return _copyWithProgress(
           E2eeAccountRecoveryFirstLocalActivatedProgress(
             authorization: authorization,
@@ -1966,7 +2069,6 @@ final class E2eeAccountRecoveryCheckpoint {
           completion: completion,
           deviceAuthGeneration: deviceAuthGeneration,
         );
-        transition.clearContinuation();
         return _copyWithProgress(
           E2eeAccountRecoverySecondLocalActivatedProgress(
             authorization: authorization,
@@ -2105,7 +2207,7 @@ final class E2eeAccountRecoveryCheckpoint {
     return _copyWithProgress(
       E2eeAccountRecoveryResumeCommittedProgress(
         authorization: authorization,
-        transition: transition._move(),
+        transition: transition._copy(),
         receipt: receipt,
       ),
     );
@@ -2121,7 +2223,7 @@ final class E2eeAccountRecoveryCheckpoint {
     return _copyWithProgress(
       E2eeAccountRecoveryReplacementCommittedProgress(
         authorization: authorization,
-        transition: transition._move(),
+        transition: transition._copy(),
         receipt: receipt,
         reopenBinding: reopenBinding,
       ),
@@ -2953,9 +3055,19 @@ final class E2eeAccountRecoveryCheckpointSnapshot {
 
   final E2eeAccountRecoveryCheckpoint checkpoint;
   final Uint8List envelopeDigest;
+
+  E2eeAccountRecoveryCheckpointSnapshot detachedCopy() {
+    return E2eeAccountRecoveryCheckpointSnapshot(
+      checkpoint: checkpoint.detachedCopy(),
+      envelopeDigest: envelopeDigest,
+    );
+  }
+
+  void clearSensitiveState() => checkpoint.clearSensitiveState();
 }
 
 abstract interface class E2eeAccountRecoveryCheckpointPersistence {
+  /// 返回的快照由调用方独占，丢弃前必须清理其敏感状态。
   Future<E2eeAccountRecoveryCheckpointSnapshot?> read();
 
   Future<E2eeAccountRecoveryCheckpointSnapshot> create(
@@ -3003,58 +3115,74 @@ final class E2eeAccountRecoveryCommitCoordinator {
     if (snapshot == null) {
       throw StateError('账户恢复 checkpoint 不存在');
     }
-    final checkpoint = snapshot.checkpoint;
-    final persistedReceipt = _checkpointCommitReceipt(checkpoint.progress);
-    if (persistedReceipt != null) return persistedReceipt;
-    final prepared = switch (checkpoint.progress) {
-      E2eeAccountRecoveryResumePreparedProgress(:final transition) =>
-        transition.commit,
-      E2eeAccountRecoveryReplacementPreparedProgress(:final transition) =>
-        transition.commit,
-      _ => throw StateError('账户恢复 checkpoint 尚未准备成员提交'),
-    };
-    final authorization = _checkpointAuthorization(checkpoint.progress);
-    if (authorization == null ||
-        !_now().toUtc().isBefore(authorization.recoveryTokenExpiresAt)) {
-      throw const E2eeAccountRecoveryExpired();
-    }
-
-    final E2eeAccountRecoveryCommitReceipt receipt;
-    switch (prepared) {
-      case E2eeAccountRecoveryResumeCommit():
-        receipt = await _transport.commitRecoveryResume(
-          recoveryToken: checkpoint.recoveryToken,
-          request: prepared,
-        );
-      case E2eeAccountRecoveryReplacementCommit():
-        receipt = await _transport.commitRecoveryReplacement(
-          recoveryToken: checkpoint.recoveryToken,
-          request: prepared,
-        );
-    }
-    final committed = checkpoint.withCommitReceipt(receipt);
     try {
-      final advanced = await _checkpointPersistence.advance(
-        expectedEnvelopeDigest: snapshot.envelopeDigest,
-        checkpoint: committed,
-      );
-      final advancedReceipt = _checkpointCommitReceipt(
-        advanced.checkpoint.progress,
-      );
-      if (advancedReceipt == null) {
-        throw StateError('账户恢复成员提交回执未持久化');
+      final checkpoint = snapshot.checkpoint;
+      final persistedReceipt = _checkpointCommitReceipt(checkpoint.progress);
+      if (persistedReceipt != null) return persistedReceipt;
+      final prepared = switch (checkpoint.progress) {
+        E2eeAccountRecoveryResumePreparedProgress(:final transition) =>
+          transition.commit,
+        E2eeAccountRecoveryReplacementPreparedProgress(:final transition) =>
+          transition.commit,
+        _ => throw StateError('账户恢复 checkpoint 尚未准备成员提交'),
+      };
+      final authorization = _checkpointAuthorization(checkpoint.progress);
+      if (authorization == null ||
+          !_now().toUtc().isBefore(authorization.recoveryTokenExpiresAt)) {
+        throw const E2eeAccountRecoveryExpired();
       }
-      return advancedReceipt;
-    } on StateError {
-      final raced = await _checkpointPersistence.read();
-      final racedReceipt = raced == null
-          ? null
-          : _checkpointCommitReceipt(raced.checkpoint.progress);
-      if (racedReceipt != null &&
-          _sameAccountRecoveryCommitEffect(racedReceipt, receipt)) {
-        return racedReceipt;
+
+      final E2eeAccountRecoveryCommitReceipt receipt;
+      switch (prepared) {
+        case E2eeAccountRecoveryResumeCommit():
+          receipt = await _transport.commitRecoveryResume(
+            recoveryToken: checkpoint.recoveryToken,
+            request: prepared,
+          );
+        case E2eeAccountRecoveryReplacementCommit():
+          receipt = await _transport.commitRecoveryReplacement(
+            recoveryToken: checkpoint.recoveryToken,
+            request: prepared,
+          );
       }
-      rethrow;
+      final committed = checkpoint.withCommitReceipt(receipt);
+      E2eeAccountRecoveryCheckpointSnapshot? advanced;
+      try {
+        try {
+          advanced = await _checkpointPersistence.advance(
+            expectedEnvelopeDigest: snapshot.envelopeDigest,
+            checkpoint: committed,
+          );
+          final advancedReceipt = _checkpointCommitReceipt(
+            advanced.checkpoint.progress,
+          );
+          if (advancedReceipt == null) {
+            throw StateError('账户恢复成员提交回执未持久化');
+          }
+          return advancedReceipt;
+        } on StateError {
+          final raced = await _checkpointPersistence.read();
+          try {
+            final racedReceipt = raced == null
+                ? null
+                : _checkpointCommitReceipt(raced.checkpoint.progress);
+            if (racedReceipt != null &&
+                _sameAccountRecoveryCommitEffect(racedReceipt, receipt)) {
+              return racedReceipt;
+            }
+            rethrow;
+          } finally {
+            raced?.clearSensitiveState();
+          }
+        }
+      } finally {
+        advanced?.clearSensitiveState();
+        if (!identical(committed, advanced?.checkpoint)) {
+          committed.clearSensitiveState();
+        }
+      }
+    } finally {
+      snapshot.clearSensitiveState();
     }
   }
 }
@@ -3110,9 +3238,10 @@ final class E2eeAccountRecoveryAuthorizer {
     Uint8List? tokenDigest;
     Uint8List? nonceProof;
     Uint8List? trustSignature;
+    E2eeAccountRecoveryCheckpointSnapshot? checkpointSnapshot;
     var retainLease = false;
     try {
-      var checkpointSnapshot = await _checkpointPersistence.read();
+      checkpointSnapshot = await _checkpointPersistence.read();
       var checkpoint = checkpointSnapshot?.checkpoint;
       if (checkpoint != null && checkpoint.expectedDeviceId != deviceId) {
         throw const FormatException('账户恢复 checkpoint 目标设备不一致');
@@ -3302,6 +3431,7 @@ final class E2eeAccountRecoveryAuthorizer {
       _clear(tokenDigest);
       _clear(nonceProof);
       _clear(trustSignature);
+      checkpointSnapshot?.clearSensitiveState();
       proof?.dispose();
       if (proof != null && !retainLease) {
         await proof.keyLease.close();

@@ -653,6 +653,10 @@ final class _ProductionBackgroundSyncWorkspace
     if (activeSession == null) {
       throw StateError('e2ee_background_sync_session_missing');
     }
+    if (await _hasPendingAccountRecovery(activeSession)) {
+      return const E2eeBackgroundContentBusy();
+    }
+    executionBudget.checkCanContinue();
     final appDataDirectory = _workspaceRuntime.current.dataDirectory;
     late final RestoreBusinessLease accountLease;
     try {
@@ -743,6 +747,30 @@ final class _ProductionBackgroundSyncWorkspace
           ),
         ],
       );
+    }
+  }
+
+  Future<bool> _hasPendingAccountRecovery(
+    CloudSyncAccountSession activeSession,
+  ) async {
+    Uint8List? envelope;
+    try {
+      envelope =
+          await DeviceStateBlobStore(
+            installationRoot: _workspaceRuntime.installationRoot,
+          ).readPendingAccountRecoveryEnvelope(
+            normalizedBaseUrl: activeSession.baseUrl,
+            normalizedLoginName: activeSession.loginName,
+          );
+      return envelope != null;
+    } catch (_) {
+      developer.log(
+        'E2EE_BACKGROUND_ACCOUNT_RECOVERY_GATE_FAILED',
+        name: 'Olivia.E2eeBackgroundSync',
+      );
+      return true;
+    } finally {
+      envelope?.fillRange(0, envelope.length, 0);
     }
   }
 

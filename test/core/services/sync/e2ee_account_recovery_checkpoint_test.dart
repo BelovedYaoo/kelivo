@@ -73,7 +73,7 @@ void main() {
     );
     expect(
       progress.transition.localTransitionPlan.copyContinuation(),
-      everyElement(0),
+      everyElement(0x91),
     );
     final committedProgress =
         committed.progress as E2eeAccountRecoveryReplacementCommittedProgress;
@@ -91,7 +91,7 @@ void main() {
     );
     expect(
       committedProgress.transition.localTransitionPlan.copyContinuation(),
-      everyElement(0),
+      everyElement(0x91),
     );
     final finalizedProgress =
         finalized.progress as E2eeAccountRecoverySecondRekeyFinalizedProgress;
@@ -105,7 +105,20 @@ void main() {
     );
     expect(
       finalizedProgress.transition.localTransitionPlan.copyContinuation(),
-      everyElement(0),
+      everyElement(0x91),
+    );
+    final detachedFinalized = finalized.detachedCopy();
+    finalized.clearSensitiveState();
+    expect(
+      finalizedProgress.transition.localTransitionPlan.copyContinuation,
+      throwsStateError,
+    );
+    final detachedProgress =
+        detachedFinalized.progress
+            as E2eeAccountRecoverySecondRekeyFinalizedProgress;
+    expect(
+      detachedProgress.transition.localTransitionPlan.copyContinuation(),
+      everyElement(0x91),
     );
     expect(
       activated
@@ -129,7 +142,7 @@ void main() {
       ),
       throwsFormatException,
     );
-    expect(invalidCapsulePlan.copyContinuation(), everyElement(0));
+    expect(invalidCapsulePlan.copyContinuation, throwsStateError);
 
     final rejectedPlan = _localTransitionPlan(0xb5);
     expect(
@@ -139,7 +152,7 @@ void main() {
       ),
       throwsFormatException,
     );
-    expect(rejectedPlan.copyContinuation(), everyElement(0));
+    expect(rejectedPlan.copyContinuation, throwsStateError);
     expect(
       () => E2eeAccountRecoveryLocalTransitionPlan(
         sourceStateBlob: _bytes(DeviceStateBlobStore.blobLength, 1),
@@ -153,6 +166,9 @@ void main() {
       ),
       throwsFormatException,
     );
+    prepared.clearSensitiveState();
+    committed.clearSensitiveState();
+    detachedFinalized.clearSensitiveState();
   });
 
   test('resume 完成首轮后裁剪大字段并通过第二 challenge 完成 replacement', () {
@@ -256,7 +272,7 @@ void main() {
       ),
       throwsFormatException,
     );
-    expect(mismatchedSourcePlan.copyContinuation(), everyElement(0));
+    expect(mismatchedSourcePlan.copyContinuation, throwsStateError);
     final replacementPrepared = replacementProofReady.prepareTransition(
       commit: replacementCommit,
       localTransitionPlan: _localTransitionPlan(

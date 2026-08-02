@@ -105,8 +105,16 @@ final class E2eeAccountRecoveryCheckpointStore
   ) async {
     final current = await read();
     if (current != null) {
-      if (_sameCheckpoint(current.checkpoint, checkpoint)) return current;
-      throw StateError('账户恢复 checkpoint 已存在');
+      var retainCurrent = false;
+      try {
+        if (_sameCheckpoint(current.checkpoint, checkpoint)) {
+          retainCurrent = true;
+          return current;
+        }
+        throw StateError('账户恢复 checkpoint 已存在');
+      } finally {
+        if (!retainCurrent) current.clearSensitiveState();
+      }
     }
     final envelope = await _seal(checkpoint);
     try {
@@ -118,13 +126,21 @@ final class E2eeAccountRecoveryCheckpointStore
         );
       } on StateError {
         final raced = await read();
-        if (raced != null && _sameCheckpoint(raced.checkpoint, checkpoint)) {
-          return raced;
+        if (raced != null) {
+          var retainRaced = false;
+          try {
+            if (_sameCheckpoint(raced.checkpoint, checkpoint)) {
+              retainRaced = true;
+              return raced;
+            }
+          } finally {
+            if (!retainRaced) raced.clearSensitiveState();
+          }
         }
         rethrow;
       }
       return E2eeAccountRecoveryCheckpointSnapshot(
-        checkpoint: checkpoint,
+        checkpoint: checkpoint.detachedCopy(),
         envelopeDigest: _digest(envelope),
       );
     } finally {
@@ -144,11 +160,17 @@ final class E2eeAccountRecoveryCheckpointStore
     if (current == null) {
       throw StateError('账户恢复 checkpoint 不存在');
     }
-    if (_sameCheckpoint(current.checkpoint, checkpoint)) {
-      return current;
-    }
-    if (!_sameBytes(current.envelopeDigest, expectedEnvelopeDigest)) {
-      throw StateError('账户恢复 checkpoint 已被并发推进');
+    var retainCurrent = false;
+    try {
+      if (_sameCheckpoint(current.checkpoint, checkpoint)) {
+        retainCurrent = true;
+        return current;
+      }
+      if (!_sameBytes(current.envelopeDigest, expectedEnvelopeDigest)) {
+        throw StateError('账户恢复 checkpoint 已被并发推进');
+      }
+    } finally {
+      if (!retainCurrent) current.clearSensitiveState();
     }
     final envelope = await _seal(checkpoint);
     try {
@@ -161,13 +183,21 @@ final class E2eeAccountRecoveryCheckpointStore
         );
       } on StateError {
         final raced = await read();
-        if (raced != null && _sameCheckpoint(raced.checkpoint, checkpoint)) {
-          return raced;
+        if (raced != null) {
+          var retainRaced = false;
+          try {
+            if (_sameCheckpoint(raced.checkpoint, checkpoint)) {
+              retainRaced = true;
+              return raced;
+            }
+          } finally {
+            if (!retainRaced) raced.clearSensitiveState();
+          }
         }
         rethrow;
       }
       return E2eeAccountRecoveryCheckpointSnapshot(
-        checkpoint: checkpoint,
+        checkpoint: checkpoint.detachedCopy(),
         envelopeDigest: _digest(envelope),
       );
     } finally {

@@ -3229,7 +3229,7 @@ void main() {
     expect(find.byType(SnackBar), findsNothing);
   });
 
-  test('移动账户恢复成功后绑定会话并清理全部提交材料', () async {
+  test('账户恢复需要切换工作区时保留终态 checkpoint', () async {
     debugDefaultTargetPlatformOverride = TargetPlatform.android;
     addTearDown(() => debugDefaultTargetPlatformOverride = null);
     _setCloudSyncPackageInfo();
@@ -3261,13 +3261,7 @@ void main() {
     expect(fixture.provider.accountRecoverySupported, isTrue);
 
     final recovered = await fixture.provider.startAccountRecovery(command);
-    expect(
-      recovered,
-      isTrue,
-      reason:
-          '${fixture.provider.lastError}; ${fixture.provider.status}; '
-          '${fixture.provider.accountRecoveryProgress}',
-    );
+    expect(recovered, isFalse);
 
     expect(runner.loginName, 'ovo');
     expect(runner.deviceName, 'Pixel');
@@ -3278,11 +3272,102 @@ void main() {
     expect(runner.retainedRecoveryPassphrase, everyElement(0));
     expect(runner.retainedRecoveryMedia, everyElement(0));
     expect(runner.closed, isTrue);
+    expect(runner.acknowledgeCalls, 0);
     expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(
+      fixture.provider.accountRecoveryProgress,
+      E2eeAccountRecoveryProgress.completing,
+    );
+  });
+
+  test('账户恢复 runner 首次清理失败后重试成功仍完成登录', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.android;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final runner = _FakeE2eeAccountRecoveryRunner(
+      closeFailuresBeforeSuccess: 1,
+    );
+    final fixture = await _createSignedOutFixture(
+      accountRecoveryRunnerFactory:
+          ({required accountClient, required authentication}) => runner,
+      retainAccountWorkspace: true,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+    final command = E2eeAccountRecoveryCommand(
+      loginName: 'ovo',
+      deviceName: 'Pixel',
+      accountPassword: Uint8List.fromList(utf8.encode('account-password')),
+      recoveryPassphrase: Uint8List.fromList(
+        utf8.encode('correct horse battery staple'),
+      ),
+      encryptedRecoveryMedia: Uint8List(e2eeEncryptedRecoveryMediaBytes),
+    );
+
+    expect(await fixture.provider.startAccountRecovery(command), isTrue);
+
+    expect(runner.acknowledgeCalls, 1);
+    expect(runner.closeCalls, 2);
+    expect(fixture.provider.signedIn, isTrue);
+    expect(fixture.provider.workspaceRestartRequired, isFalse);
     expect(
       fixture.provider.accountRecoveryProgress,
       E2eeAccountRecoveryProgress.completed,
     );
+    expect(fixture.client.closed, isFalse);
+  });
+
+  test('账户恢复 runner 连续清理失败时保留 owner 并阻止新会话', () async {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
+    addTearDown(() => debugDefaultTargetPlatformOverride = null);
+    _setCloudSyncPackageInfo();
+    final runner = _FakeE2eeAccountRecoveryRunner(
+      closeFailure: StateError('fake_persistent_close_failure'),
+    );
+    final fixture = await _createSignedOutFixture(
+      accountRecoveryRunnerFactory:
+          ({required accountClient, required authentication}) => runner,
+      retainAccountWorkspace: true,
+    );
+    addTearDown(fixture.close);
+    await fixture.provider.initialize();
+
+    Future<bool> recover() {
+      return fixture.provider.startAccountRecovery(
+        E2eeAccountRecoveryCommand(
+          loginName: 'ovo',
+          deviceName: 'iPhone',
+          accountPassword: Uint8List.fromList(utf8.encode('account-password')),
+          recoveryPassphrase: Uint8List.fromList(
+            utf8.encode('correct horse battery staple'),
+          ),
+          encryptedRecoveryMedia: Uint8List(e2eeEncryptedRecoveryMediaBytes),
+        ),
+      );
+    }
+
+    expect(await recover(), isFalse);
+
+    expect(runner.acknowledgeCalls, 1);
+    expect(runner.closeCalls, 2);
+    expect(fixture.provider.signedIn, isFalse);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(
+      fixture.provider.status,
+      CloudSyncProviderStatus.workspaceChangePending,
+    );
+    expect(fixture.client.closed, isFalse);
+
+    expect(await recover(), isFalse);
+    expect(runner.recoverCalls, 1);
+    expect(runner.closeCalls, 2);
+
+    final workspaceLease = await fixture.runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: _userId,
+    );
+    addTearDown(workspaceLease.close);
+    await expectLater(fixture.provider.prepareWorkspaceRestart(), completes);
   });
 
   test('账户恢复失败保持登出并清理 runner 已观察的材料', () async {
@@ -3380,6 +3465,11 @@ void main() {
     expect(joined, isNot(contains('account-password-secret')));
     expect(joined, isNot(contains('recovery-passphrase-secret')));
     expect(runner.closed, isTrue);
+    expect(fixture.provider.workspaceRestartRequired, isTrue);
+    expect(
+      fixture.provider.status,
+      CloudSyncProviderStatus.workspaceChangePending,
+    );
   });
 
   test('桌面平台拒绝账户恢复且不构造 runner', () async {
@@ -5247,6 +5337,7 @@ Future<_Fixture> _createSignedOutFixture({
   _FakeE2eeAccountAuthentication? authentication,
   E2eeFirstDeviceRecoveryBootstrapFactory? firstDeviceRecoveryBootstrapFactory,
   E2eeAccountRecoveryRunnerFactory? accountRecoveryRunnerFactory,
+  bool retainAccountWorkspace = false,
 }) async {
   final testRoot = Directory(
     '${Directory.current.path}${Platform.pathSeparator}.dart_tool'
@@ -5254,12 +5345,24 @@ Future<_Fixture> _createSignedOutFixture({
   );
   await testRoot.create(recursive: true);
   final root = await testRoot.createTemp('signed-out-');
-  final runtime = await AccountWorkspaceRuntime.bootstrap(
+  final tokenStore = _MemoryAccountSessionTokenStore();
+  var runtime = await AccountWorkspaceRuntime.bootstrap(
     installationRoot: Directory(
       '${root.path}${Platform.pathSeparator}installation',
     ),
-    sessionTokenStore: _MemoryAccountSessionTokenStore(),
+    sessionTokenStore: tokenStore,
   );
+  if (retainAccountWorkspace) {
+    await runtime.bindAccount(_session());
+    await runtime.close();
+    runtime = await AccountWorkspaceRuntime.bootstrap(
+      installationRoot: Directory(
+        '${root.path}${Platform.pathSeparator}installation',
+      ),
+      sessionTokenStore: tokenStore,
+    );
+    await runtime.signOut();
+  }
   final accountClient = client ?? _FakeCloudSyncAccountClient();
   final accountAuthentication =
       authentication ?? _FakeE2eeAccountAuthentication();
@@ -6932,14 +7035,18 @@ final class _FakeE2eeAccountRecoveryRunner
   _FakeE2eeAccountRecoveryRunner({
     this.failure,
     this.closeFailure,
+    this.closeFailuresBeforeSuccess = 0,
     this.barrier,
   });
 
   final Object? failure;
   final Object? closeFailure;
+  final int closeFailuresBeforeSuccess;
   final Future<void>? barrier;
   bool closed = false;
   int recoverCalls = 0;
+  int acknowledgeCalls = 0;
+  int closeCalls = 0;
   String? loginName;
   String? deviceName;
   String? passwordText;
@@ -6976,10 +7083,19 @@ final class _FakeE2eeAccountRecoveryRunner
   }
 
   @override
+  Future<void> acknowledgeWorkspaceBound() async {
+    acknowledgeCalls++;
+  }
+
+  @override
   Future<void> close() async {
+    closeCalls++;
     closed = true;
     final currentFailure = closeFailure;
     if (currentFailure != null) throw currentFailure;
+    if (closeCalls <= closeFailuresBeforeSuccess) {
+      throw StateError('fake_account_recovery_runner_close_failure');
+    }
   }
 }
 

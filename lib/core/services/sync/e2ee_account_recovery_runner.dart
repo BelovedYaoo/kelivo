@@ -28,6 +28,8 @@ abstract interface class E2eeAccountRecoveryAuthentication {
     required String loginName,
     required E2eeAccountRecoveryCheckpoint checkpoint,
   });
+
+  Future<void> close();
 }
 
 abstract interface class E2eeAccountRecoveryOnboardingLease {
@@ -236,6 +238,8 @@ abstract interface class E2eeAccountRecoveryRunner {
     required String clientVersion,
     required E2eeAccountRecoveryProgressCallback onProgress,
   });
+
+  Future<void> acknowledgeWorkspaceBound();
 
   Future<void> close();
 }

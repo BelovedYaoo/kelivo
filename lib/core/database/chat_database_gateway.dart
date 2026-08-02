@@ -9,12 +9,24 @@ final class ChatDatabaseLease {
 
   final ChatDatabaseRepository repository;
   final ChatDatabaseGateway _gateway;
+  Future<void>? _releaseFuture;
   bool _released = false;
 
-  Future<void> release() async {
-    if (_released) return;
-    _released = true;
-    await _gateway._release(repository);
+  Future<void> release() {
+    if (_released) return Future<void>.value();
+    final existing = _releaseFuture;
+    if (existing != null) return existing;
+    late final Future<void> releasing;
+    releasing = _gateway
+        ._release(repository)
+        .then((_) {
+          _released = true;
+        })
+        .whenComplete(() {
+          if (identical(_releaseFuture, releasing)) _releaseFuture = null;
+        });
+    _releaseFuture = releasing;
+    return releasing;
   }
 }
 
@@ -27,6 +39,7 @@ final class ChatDatabaseGateway {
   Future<void>? _closing;
   String? _databasePath;
   int _leaseCount = 0;
+  bool _closeRetryPending = false;
   final DatabaseCipher cipher;
   final ChatDatabaseObserver _observer;
 
@@ -34,6 +47,9 @@ final class ChatDatabaseGateway {
 
   Future<ChatDatabaseLease> acquire(File databaseFile) async {
     await _closing;
+    if (_closeRetryPending) {
+      throw StateError('database_gateway_close_retry_pending');
+    }
     final requestedPath = databaseFile.absolute.path;
     final activePath = _databasePath;
     if (activePath != null && activePath != requestedPath) {
@@ -85,17 +101,25 @@ final class ChatDatabaseGateway {
     if (!identical(repository, _repository) || _leaseCount <= 0) {
       throw StateError('database_gateway_lease');
     }
-    _leaseCount--;
-    if (_leaseCount != 0) return;
+    if (_leaseCount > 1) {
+      _leaseCount--;
+      return;
+    }
 
-    _repository = null;
-    _databasePath = null;
     final closing = () async {
       await repository.close();
     }();
+    _closeRetryPending = true;
     _closing = closing;
     try {
       await closing;
+      if (!identical(repository, _repository) || _leaseCount != 1) {
+        throw StateError('database_gateway_lease_changed_during_close');
+      }
+      _leaseCount = 0;
+      _repository = null;
+      _databasePath = null;
+      _closeRetryPending = false;
     } finally {
       if (identical(_closing, closing)) _closing = null;
     }

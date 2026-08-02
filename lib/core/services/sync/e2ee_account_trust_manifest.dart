@@ -912,6 +912,56 @@ final class E2eeAccountTrustManifestModule {
     return current;
   }
 
+  Future<E2eeVerifiedMembership> verifyRecoveryHistory({
+    required KelivoAccountRootKeyHandle ark,
+    required List<E2eeMembershipHistoryEntry> entries,
+    required E2eeMembershipServerProjection projection,
+  }) async {
+    if (entries.isEmpty ||
+        entries.length > e2eeAccountTrustManifestMaximumHistoryEntries ||
+        entries.length != projection.securityGeneration) {
+      throw const FormatException('账户恢复成员历史数量无效');
+    }
+    final firstEntry = entries.first;
+    final firstManifest = Uint8List.fromList(firstEntry.manifest);
+    final firstDigest = _sha256(firstManifest);
+    if (!_sameBytes(firstDigest, firstEntry.manifestDigest)) {
+      throw StateError('账户恢复 genesis 摘要不一致');
+    }
+    final parsed = _parseManifest(firstManifest);
+    final data = parsed.data;
+    if (data.operationKind != E2eeMembershipOperationKind.initialize ||
+        data.securityGeneration != 1 ||
+        data.keyEpoch != 1 ||
+        !_allZero(data.previousDigest) ||
+        data.issuerDeviceId != data.subjectDeviceId ||
+        data.members.length != 1 ||
+        data.members.single.deviceId != data.subjectDeviceId ||
+        data.members.single.authGeneration != 0 ||
+        !_allZero(data.operationAuthorizationDigest) ||
+        data.recoveryPublicKeyVersion != 1 ||
+        data.recoveryCapsuleVersion != 1) {
+      throw StateError('账户恢复 genesis 成员清单无效');
+    }
+    _requireZeroTransitionSignature(parsed.transitionSignature);
+    await _verifyCurrentSignatureFromHistory(parsed);
+    await _validatePublicMaterial(data);
+    var current = _verified(
+      data,
+      firstManifest,
+      _initialOperationHistory(data),
+    );
+    for (final entry in entries.skip(1)) {
+      current = await _verifyHistorySuccessor(current, entry);
+    }
+    await verifyCurrentState(
+      ark: ark,
+      historyHead: current,
+      projection: projection,
+    );
+    return current;
+  }
+
   Future<E2eeCurrentSecurityStateVerification> verifyCurrentState({
     required KelivoAccountRootKeyHandle ark,
     required E2eeVerifiedMembership historyHead,
