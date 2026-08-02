@@ -150,6 +150,9 @@ final class AccountWorkspaceRuntime {
 
   Future<Set<String>> registeredPreferencesPrefixes() async {
     _requireOpen();
+    if (_workspaceMutationInProgress) {
+      throw StateError('account_workspace_runtime_busy');
+    }
     await _ensureTrustedInstallationRoot(
       directory: installationRoot,
       createMissing: false,
@@ -218,46 +221,50 @@ final class AccountWorkspaceRuntime {
   Future<void> discardPlaintextLocalState({
     required Future<void> Function() retirePersistentLogs,
   }) async {
-    _requireOpen();
-    await _ensureTrustedInstallationRoot(
-      directory: installationRoot,
-      createMissing: false,
-    );
-    final dataDirectories = await _existingDataDirectories();
-    // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
-    for (final dataDirectory in dataDirectories) {
-      await DatabaseEncryptionCutover.validatePlaintextStateTopology(
-        appDataDirectory: dataDirectory,
+    _beginWorkspaceMutation();
+    try {
+      await _ensureTrustedInstallationRoot(
+        directory: installationRoot,
+        createMissing: false,
       );
-      await CloudSyncStateRetirement.validatePlaintextStateTopology(
-        appDataDirectory: dataDirectory,
+      final dataDirectories = await _existingDataDirectories();
+      // 所有工作区必须先通过拓扑校验，避免后发现歧义时只清掉一部分旧状态。
+      for (final dataDirectory in dataDirectories) {
+        await DatabaseEncryptionCutover.validatePlaintextStateTopology(
+          appDataDirectory: dataDirectory,
+        );
+        await CloudSyncStateRetirement.validatePlaintextStateTopology(
+          appDataDirectory: dataDirectory,
+        );
+      }
+      // 原生会话锚定安装根并统一枚举所有工作区；失败时不得先删除其他明文状态。
+      await retirePersistentLogs();
+      // 拓扑检查与删除之间不能复用旧路径结论，否则运行期重解析替换会越过安装边界。
+      await _ensureTrustedInstallationRoot(
+        directory: installationRoot,
+        createMissing: false,
       );
-    }
-    // 原生会话锚定安装根并统一枚举所有工作区；失败时不得先删除其他旧状态。
-    await retirePersistentLogs();
-    // 拓扑检查与删除之间不能复用旧路径结论，否则运行期重解析替换会越过安装边界。
-    await _ensureTrustedInstallationRoot(
-      directory: installationRoot,
-      createMissing: false,
-    );
-    for (final dataDirectory in dataDirectories) {
-      await DatabaseEncryptionCutover.discardPlaintextState(
-        appDataDirectory: dataDirectory,
+      for (final dataDirectory in dataDirectories) {
+        await DatabaseEncryptionCutover.discardPlaintextState(
+          appDataDirectory: dataDirectory,
+          durability: _durability,
+        );
+        await CloudSyncStateRetirement.discardPlaintextState(
+          appDataDirectory: dataDirectory,
+          durability: _durability,
+        );
+      }
+      await _ensureTrustedInstallationRoot(
+        directory: installationRoot,
+        createMissing: false,
+      );
+      await DatabaseEncryptionCutover.discardLegacyDatabaseFamily(
+        appDataDirectory: installationRoot,
         durability: _durability,
       );
-      await CloudSyncStateRetirement.discardPlaintextState(
-        appDataDirectory: dataDirectory,
-        durability: _durability,
-      );
+    } finally {
+      _endWorkspaceMutation();
     }
-    await _ensureTrustedInstallationRoot(
-      directory: installationRoot,
-      createMissing: false,
-    );
-    await DatabaseEncryptionCutover.discardLegacyDatabaseFamily(
-      appDataDirectory: installationRoot,
-      durability: _durability,
-    );
   }
 
   static Future<AccountWorkspaceRuntime> bootstrap({

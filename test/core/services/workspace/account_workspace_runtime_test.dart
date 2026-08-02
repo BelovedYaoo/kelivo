@@ -2313,6 +2313,20 @@ void main() {
     expect(runtime.current.dataDirectory.path, activeDataDirectory);
     expect(runtime.current.session?.token.value, activeSession.token.value);
     expect(await registrySnapshot(), registryBefore);
+    var persistentLogsRetired = false;
+    await expectLater(
+      runtime.discardPlaintextLocalState(
+        retirePersistentLogs: () async {
+          persistentLogsRetired = true;
+        },
+      ),
+      throwsA(isA<StateError>()),
+    );
+    expect(persistentLogsRetired, isFalse);
+    expect(
+      await runtime.registeredPreferencesPrefixes(),
+      contains('kelivo.account.${lease.context.workspaceKey}.'),
+    );
     await expectLater(runtime.signOut(), throwsA(isA<StateError>()));
     await expectLater(
       runtime.bindAccount(
@@ -2353,6 +2367,46 @@ void main() {
       ),
       isA<AccountWorkspaceRestartRequired>(),
     );
+  });
+
+  test('明文退役进行中拒绝恢复准备且异常后释放占位', () async {
+    final runtime = await bootstrap();
+    final retirementEntered = Completer<void>();
+    final releaseRetirement = Completer<void>();
+    final retirementFailure = StateError('persistent_log_retirement_failed');
+    final retirement = runtime.discardPlaintextLocalState(
+      retirePersistentLogs: () async {
+        retirementEntered.complete();
+        await releaseRetirement.future;
+        throw retirementFailure;
+      },
+    );
+    await retirementEntered.future;
+
+    await expectLater(
+      runtime.prepareAccountWorkspace(
+        canonicalBaseUrl: defaultCloudSyncBaseUrl,
+        userId: '00000000-0000-4000-8000-000000000007',
+      ),
+      throwsA(isA<StateError>()),
+    );
+    await expectLater(
+      runtime.registeredPreferencesPrefixes(),
+      throwsA(isA<StateError>()),
+    );
+
+    final retirementResult = expectLater(
+      retirement,
+      throwsA(same(retirementFailure)),
+    );
+    releaseRetirement.complete();
+    await retirementResult;
+
+    final lease = await runtime.prepareAccountWorkspace(
+      canonicalBaseUrl: defaultCloudSyncBaseUrl,
+      userId: '00000000-0000-4000-8000-000000000007',
+    );
+    await lease.close();
   });
 
   test('恢复准备拒绝非规范身份且失败前不创建账号目录', () async {
