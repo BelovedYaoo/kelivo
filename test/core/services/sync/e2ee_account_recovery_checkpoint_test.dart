@@ -2,13 +2,17 @@ import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
 
+import 'package:Kelivo/core/services/sync/cloud_sync_client.dart';
 import 'package:Kelivo/core/services/sync/cloud_sync_types.dart';
+import 'package:Kelivo/core/services/sync/e2ee_account_authenticator.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery.dart';
 import 'package:Kelivo/core/services/sync/e2ee_account_recovery_checkpoint.dart';
+import 'package:Kelivo/core/services/sync/e2ee_device_state_access.dart';
 import 'package:Kelivo/core/services/workspace/device_state_blob_store.dart';
 import 'package:crypto/crypto.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
+import 'package:uuid/uuid.dart';
 
 import '../../../support/secure_core_test_store.dart';
 
@@ -96,13 +100,22 @@ void main() {
       everyElement(0x91),
     );
 
-    final activated = finalized.markLocalTransitionActivated();
+    final activated = finalized.markLocalTransitionActivated(
+      deviceAuthGeneration: 1,
+    );
     expect(
       finalizedProgress.transition.localTransitionPlan.copyContinuation(),
       everyElement(0),
     );
     expect(
-      activated.markSessionVerified().phase,
+      activated
+          .markSessionVerified(
+            sessionGeneration: 4,
+            tokenExpiresAt: DateTime.now().toUtc().add(
+              const Duration(hours: 1),
+            ),
+          )
+          .phase,
       E2eeAccountRecoveryCheckpointPhase.sessionVerified,
     );
     final invalidCapsulePlan = _localTransitionPlan(0xb1, replacement: true);
@@ -173,7 +186,9 @@ void main() {
       firstFinalized.phase,
       E2eeAccountRecoveryCheckpointPhase.firstRekeyFinalized,
     );
-    final firstActivated = firstFinalized.markLocalTransitionActivated();
+    final firstActivated = firstFinalized.markLocalTransitionActivated(
+      deviceAuthGeneration: 1,
+    );
     expect(
       firstActivated.phase,
       E2eeAccountRecoveryCheckpointPhase.firstLocalActivated,
@@ -183,6 +198,19 @@ void main() {
             as E2eeAccountRecoveryFirstLocalActivatedProgress;
     expect(firstProgress.resumeReceipt, same(resumeReceipt));
     expect(firstProgress.completion.proofDigest, firstCompletion.proofDigest);
+    expect(firstProgress.reopenBinding.userId, _uuid(9));
+    expect(firstProgress.reopenBinding.deviceId, authorized.expectedDeviceId);
+    expect(firstProgress.reopenBinding.deviceKeyVersion, 1);
+    expect(firstProgress.reopenBinding.deviceAuthGeneration, 1);
+    expect(firstProgress.reopenBinding.keyEpoch, resumeReceipt.keyEpoch);
+    expect(
+      firstProgress.reopenBinding.dataGeneration,
+      firstCompletion.targetDataGeneration,
+    );
+    expect(
+      firstProgress.reopenBinding.prunedStateDigest,
+      _digest(_bytes(DeviceStateBlobStore.blobLength, 0x93)),
+    );
 
     final replacementRequest = _replacementChallengeRequest(firstProgress);
     final requested = firstActivated.requestReplacementChallenge(
@@ -204,6 +232,7 @@ void main() {
       challengeReceived.phase,
       E2eeAccountRecoveryCheckpointPhase.replacementChallengeReceived,
     );
+    expect(challengeReceived.reopenBinding, same(firstProgress.reopenBinding));
     final replacementProofReady = challengeReceived.withReplacementProof(
       nonceProof: _bytes(e2eeAccountRecoveryNonceProofBytes, 0xc1),
       trustSignature: _bytes(e2eeAccountRecoveryTrustSignatureBytes, 0xc2),
@@ -215,12 +244,26 @@ void main() {
     final replacementCommit = _replacementCommitForChallenge(
       replacementChallenge,
     );
+    final mismatchedSourcePlan = _localTransitionPlan(
+      0xc3,
+      replacement: true,
+      sourceDataGeneration: replacementChallenge.dataGeneration,
+    );
+    expect(
+      () => replacementProofReady.prepareTransition(
+        commit: replacementCommit,
+        localTransitionPlan: mismatchedSourcePlan,
+      ),
+      throwsFormatException,
+    );
+    expect(mismatchedSourcePlan.copyContinuation(), everyElement(0));
     final replacementPrepared = replacementProofReady.prepareTransition(
       commit: replacementCommit,
       localTransitionPlan: _localTransitionPlan(
         0xc3,
         replacement: true,
         sourceDataGeneration: replacementChallenge.dataGeneration,
+        sourceStateBlob: _bytes(DeviceStateBlobStore.blobLength, 0x93),
       ),
     );
     expect(
@@ -254,16 +297,241 @@ void main() {
       secondFinalized.phase,
       E2eeAccountRecoveryCheckpointPhase.secondRekeyFinalized,
     );
-    final secondActivated = secondFinalized.markLocalTransitionActivated();
+    final secondActivated = secondFinalized.markLocalTransitionActivated(
+      deviceAuthGeneration: 1,
+    );
     expect(
       secondActivated.phase,
       E2eeAccountRecoveryCheckpointPhase.secondLocalActivated,
     );
-    final verified = secondActivated.markSessionVerified();
+    expect(
+      secondActivated.reopenBinding!.prunedStateDigest,
+      _digest(_bytes(DeviceStateBlobStore.blobLength, 0xc5)),
+    );
+    final tokenExpiresAt = DateTime.now().toUtc().add(const Duration(hours: 1));
+    final verified = secondActivated.markSessionVerified(
+      sessionGeneration: 4,
+      tokenExpiresAt: tokenExpiresAt,
+    );
     expect(verified.phase, E2eeAccountRecoveryCheckpointPhase.sessionVerified);
+    final verifiedProgress =
+        verified.progress as E2eeAccountRecoverySessionVerifiedProgress;
+    expect(verifiedProgress.sessionGeneration, 4);
+    expect(
+      verifiedProgress.tokenExpiresAt,
+      DateTime.fromMillisecondsSinceEpoch(
+        tokenExpiresAt.millisecondsSinceEpoch ~/
+            Duration.millisecondsPerSecond *
+            Duration.millisecondsPerSecond,
+        isUtc: true,
+      ),
+    );
+    expect(
+      () => secondActivated.markSessionVerified(
+        sessionGeneration: 0,
+        tokenExpiresAt: tokenExpiresAt,
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => secondActivated.markSessionVerified(
+        sessionGeneration: 0x80000000,
+        tokenExpiresAt: tokenExpiresAt,
+      ),
+      throwsFormatException,
+    );
+    expect(
+      () => secondActivated.markSessionVerified(
+        sessionGeneration: 4,
+        tokenExpiresAt: DateTime.fromMillisecondsSinceEpoch(1, isUtc: true),
+      ),
+      throwsFormatException,
+    );
   });
 
-  test('v6 每个耐久阶段可重开、篡改失败且最大帧不超过 64 KiB', () async {
+  test('账户恢复重开租约绑定精确状态并在关闭前等待唯一活动操作', () async {
+    final testStoreScope = SecureCoreTestStoreScope.open();
+    addTearDown(testStoreScope.close);
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final root = await Directory.systemTemp.createTemp(
+      'olivia-recovery-reopen-lease-',
+    );
+    const baseUrl = 'https://kelivo.bemylover.top';
+    const loginName = 'reopen-user';
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    final stateBlob = await _persistRecoveryDeviceState(
+      core: core,
+      store: store,
+      baseUrl: baseUrl,
+      loginName: loginName,
+      userId: _uuid(9),
+      deviceId: _uuid(5),
+      deviceKeyVersion: 1,
+      keyEpoch: 2,
+    );
+    final checkpoint = _activatedRecoveryCheckpoint(prunedStateBlob: stateBlob);
+    final lease = await authenticator.reopenRecovery(
+      loginName: loginName,
+      checkpoint: checkpoint,
+    );
+    expect(lease.binding.userId, _uuid(9));
+    expect(lease.binding.deviceId, _uuid(5));
+    expect(lease.binding.keyEpoch, 2);
+    expect(lease.proofCore, isA<E2eeAccountRecoveryProofCore>());
+    await expectLater(
+      authenticator.reopenRecovery(
+        loginName: loginName,
+        checkpoint: checkpoint,
+      ),
+      throwsA(
+        isA<CloudSyncException>().having(
+          (error) => error.serverCode,
+          'serverCode',
+          'SYNC_AUTHENTICATION_IN_PROGRESS',
+        ),
+      ),
+    );
+
+    final operation = lease.requireCurrentState();
+    await expectLater(lease.requireCurrentState(), throwsStateError);
+    final closeFuture = lease.close();
+    await operation;
+    await closeFuture;
+    expect(lease.isClosed, isTrue);
+    await lease.close();
+    expect(() => lease.binding, throwsStateError);
+    expect(() => lease.proofCore, throwsStateError);
+    await expectLater(lease.requireCurrentState(), throwsStateError);
+    final reopenedLease = await authenticator.reopenRecovery(
+      loginName: loginName,
+      checkpoint: checkpoint,
+    );
+    await reopenedLease.close();
+  });
+
+  test('账户恢复重开拒绝错误阶段、账户、设备、版本、epoch 与状态摘要', () async {
+    final testStoreScope = SecureCoreTestStoreScope.open();
+    addTearDown(testStoreScope.close);
+    const core = KelivoSecureCore();
+    if (!(await core.getCapabilities()).supportsDeviceE2eeCore) return;
+    final root = await Directory.systemTemp.createTemp(
+      'olivia-recovery-reopen-mismatch-',
+    );
+    const baseUrl = 'https://kelivo.bemylover.top';
+    final store = DeviceStateBlobStore(installationRoot: root);
+    final client = CloudSyncClient.forTesting(baseUrl: baseUrl);
+    final authenticator = E2eeAccountAuthenticator(
+      baseUrl: baseUrl,
+      accountClient: client,
+      deviceStateStore: store,
+      secureCore: core,
+    );
+    addTearDown(() async {
+      client.close(force: true);
+      if (await root.exists()) await root.delete(recursive: true);
+    });
+
+    await expectLater(
+      authenticator.reopenRecovery(
+        loginName: 'missing-binding',
+        checkpoint: _authorizedCheckpoint(_challenge()),
+      ),
+      throwsStateError,
+    );
+
+    final cases =
+        <
+          ({
+            String name,
+            String userId,
+            String deviceId,
+            int deviceKeyVersion,
+            int keyEpoch,
+            bool wrongDigest,
+          })
+        >[
+          (
+            name: 'wrong-account',
+            userId: _uuid(8),
+            deviceId: _uuid(5),
+            deviceKeyVersion: 1,
+            keyEpoch: 2,
+            wrongDigest: false,
+          ),
+          (
+            name: 'wrong-device',
+            userId: _uuid(9),
+            deviceId: _uuid(6),
+            deviceKeyVersion: 1,
+            keyEpoch: 2,
+            wrongDigest: false,
+          ),
+          (
+            name: 'wrong-version',
+            userId: _uuid(9),
+            deviceId: _uuid(5),
+            deviceKeyVersion: 2,
+            keyEpoch: 2,
+            wrongDigest: false,
+          ),
+          (
+            name: 'wrong-epoch',
+            userId: _uuid(9),
+            deviceId: _uuid(5),
+            deviceKeyVersion: 1,
+            keyEpoch: 3,
+            wrongDigest: false,
+          ),
+          (
+            name: 'wrong-digest',
+            userId: _uuid(9),
+            deviceId: _uuid(5),
+            deviceKeyVersion: 1,
+            keyEpoch: 2,
+            wrongDigest: true,
+          ),
+        ];
+    for (final testCase in cases) {
+      final stateBlob = await _persistRecoveryDeviceState(
+        core: core,
+        store: store,
+        baseUrl: baseUrl,
+        loginName: testCase.name,
+        userId: testCase.userId,
+        deviceId: testCase.deviceId,
+        deviceKeyVersion: testCase.deviceKeyVersion,
+        keyEpoch: testCase.keyEpoch,
+      );
+      final checkpoint = _activatedRecoveryCheckpoint(
+        prunedStateBlob: testCase.wrongDigest
+            ? _bytes(DeviceStateBlobStore.blobLength, 0xee)
+            : stateBlob,
+      );
+      await expectLater(
+        authenticator.reopenRecovery(
+          loginName: testCase.name,
+          checkpoint: checkpoint,
+        ),
+        throwsStateError,
+        reason: testCase.name,
+      );
+    }
+  });
+
+  test('v7 每个耐久阶段可重开、篡改失败且最大帧不超过 64 KiB', () async {
     final testStoreScope = SecureCoreTestStoreScope.open();
     addTearDown(testStoreScope.close);
     const core = KelivoSecureCore();
@@ -272,10 +540,10 @@ void main() {
       '${Platform.pathSeparator}e2ee_account_recovery_checkpoint_tests',
     );
     await testRoot.create(recursive: true);
-    final root = await testRoot.createTemp('checkpoint-v6-');
+    final root = await testRoot.createTemp('checkpoint-v7-');
     final slotId = Uint8List.fromList(
       _digest(
-        Uint8List.fromList(utf8.encode('checkpoint-v6-slot')),
+        Uint8List.fromList(utf8.encode('checkpoint-v7-slot')),
       ).sublist(0, 16),
     );
     final key = await core.createSlot(slotId);
@@ -388,7 +656,7 @@ void main() {
     );
     snapshot = await advanceAndReopen(
       snapshot,
-      snapshot.checkpoint.markLocalTransitionActivated(),
+      snapshot.checkpoint.markLocalTransitionActivated(deviceAuthGeneration: 1),
     );
     final firstActivatedEnvelope = await deviceStateStore
         .readPendingAccountRecoveryEnvelope(
@@ -460,6 +728,7 @@ void main() {
           0xc3,
           replacement: true,
           sourceDataGeneration: replacementChallenge.dataGeneration,
+          sourceStateBlob: _bytes(DeviceStateBlobStore.blobLength, 0x93),
         ),
       ),
     );
@@ -483,11 +752,30 @@ void main() {
     );
     snapshot = await advanceAndReopen(
       snapshot,
-      snapshot.checkpoint.markLocalTransitionActivated(),
+      snapshot.checkpoint.markLocalTransitionActivated(deviceAuthGeneration: 1),
+    );
+    final terminalTokenExpiresAt = DateTime.now().toUtc().add(
+      const Duration(hours: 1),
     );
     snapshot = await advanceAndReopen(
       snapshot,
-      snapshot.checkpoint.markSessionVerified(),
+      snapshot.checkpoint.markSessionVerified(
+        sessionGeneration: 4,
+        tokenExpiresAt: terminalTokenExpiresAt,
+      ),
+    );
+    final terminalProgress =
+        snapshot.checkpoint.progress
+            as E2eeAccountRecoverySessionVerifiedProgress;
+    expect(terminalProgress.sessionGeneration, 4);
+    expect(
+      terminalProgress.tokenExpiresAt,
+      DateTime.fromMillisecondsSinceEpoch(
+        terminalTokenExpiresAt.millisecondsSinceEpoch ~/
+            Duration.millisecondsPerSecond *
+            Duration.millisecondsPerSecond,
+        isUtc: true,
+      ),
     );
     expect(await store.delete(snapshot), isTrue);
 
@@ -517,18 +805,18 @@ void main() {
       sha256
           .convert(
             utf8.encode(
-              'kelivo.account-recovery.checkpoint.record.v6\u0000$scope',
+              'kelivo.account-recovery.checkpoint.record.v7\u0000$scope',
             ),
           )
           .bytes
           .sublist(0, 16),
     );
     final associatedData = Uint8List.fromList(
-      utf8.encode('kelivo.account-recovery.checkpoint.aad.v6\u0000$scope'),
+      utf8.encode('kelivo.account-recovery.checkpoint.aad.v7\u0000$scope'),
     );
     final legacyFrame = Uint8List(12);
-    legacyFrame.setRange(0, 8, ascii.encode('KELVARC5'));
-    ByteData.sublistView(legacyFrame).setUint32(8, 5, Endian.big);
+    legacyFrame.setRange(0, 8, ascii.encode('KELVARC6'));
+    ByteData.sublistView(legacyFrame).setUint32(8, 6, Endian.big);
     final legacyEnvelope = await core.sealRecord(
       key,
       recordId: recordId,
@@ -543,6 +831,87 @@ void main() {
     );
     await expectLater(store.read(), throwsFormatException);
   });
+}
+
+Future<Uint8List> _persistRecoveryDeviceState({
+  required KelivoSecureCore core,
+  required DeviceStateBlobStore store,
+  required String baseUrl,
+  required String loginName,
+  required String userId,
+  required String deviceId,
+  required int deviceKeyVersion,
+  required int keyEpoch,
+}) async {
+  final slotId = E2eeDeviceStateAccess.deriveSlotId(
+    normalizedBaseUrl: baseUrl,
+    normalizedLoginName: loginName,
+  );
+  final key = await core.createSlot(slotId);
+  final identity = await core.generateDeviceIdentity();
+  final ark = await core.generateAccountRootKey(
+    userId: Uint8List.fromList(Uuid.parseAsByteList(userId)),
+    keyEpoch: keyEpoch,
+  );
+  try {
+    final stateBlob = await core.sealDeviceState(
+      key,
+      identity,
+      deviceId: Uint8List.fromList(Uuid.parseAsByteList(deviceId)),
+      keyVersion: deviceKeyVersion,
+      ark: ark,
+      account: KelivoDeviceStateAccountBinding(
+        userId: Uint8List.fromList(Uuid.parseAsByteList(userId)),
+        keyEpoch: keyEpoch,
+      ),
+    );
+    await store.compareAndSwap(
+      normalizedBaseUrl: baseUrl,
+      normalizedLoginName: loginName,
+      expectedVersion: null,
+      blob: stateBlob,
+    );
+    return stateBlob;
+  } finally {
+    await core.closeAccountRootKey(ark);
+    await core.closeDeviceIdentity(identity);
+    await core.close(key);
+  }
+}
+
+E2eeAccountRecoveryCheckpoint _activatedRecoveryCheckpoint({
+  required Uint8List prunedStateBlob,
+}) {
+  final challenge = _challenge();
+  final authorized = _authorizedCheckpoint(challenge);
+  final commit = _resumeCommit(challenge);
+  final transition = E2eeAccountRecoveryLocalTransitionPlan(
+    sourceStateBlob: _bytes(DeviceStateBlobStore.blobLength, 0x51),
+    unprunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, 0x52),
+    prunedStateBlob: prunedStateBlob,
+    deviceKeyVersion: 1,
+    userId: _uuid(9),
+    sourceDataGeneration: challenge.dataState.dataGeneration,
+    operationAuthorizationDigest: _bytes(
+      cloudSyncMembershipManifestDigestBytes,
+      0x54,
+    ),
+    continuation: _bytes(e2eeAccountRecoveryNativeContinuationBytes, 0x55),
+  );
+  final committed = authorized
+      .prepareTransition(commit: commit, localTransitionPlan: transition)
+      .withCommitReceipt(
+        _receipt(commit, result: E2eeAccountRecoveryCommitResult.committed),
+      );
+  return committed
+      .withRekeyCompletion(
+        _completionFor(
+          commit: commit,
+          issuerDeviceId: authorized.expectedDeviceId,
+          seed: 0x56,
+        ),
+      )
+      .markLocalTransitionActivated(deviceAuthGeneration: 3);
 }
 
 E2eeAccountRecoveryCheckpoint _authorizedCheckpoint(
@@ -852,11 +1221,13 @@ String _encodedData(Uint8List value) =>
 E2eeAccountRecoveryLocalTransitionPlan _localTransitionPlan(
   int seed, {
   Uint8List? continuation,
+  Uint8List? sourceStateBlob,
   bool replacement = false,
   int sourceDataGeneration = 1,
 }) {
   return E2eeAccountRecoveryLocalTransitionPlan(
-    sourceStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed),
+    sourceStateBlob:
+        sourceStateBlob ?? _bytes(DeviceStateBlobStore.blobLength, seed),
     unprunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed + 1),
     prunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed + 2),
     deviceKeyVersion: 1,

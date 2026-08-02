@@ -23,6 +23,11 @@ abstract interface class E2eeAccountRecoveryAuthentication {
     required CloudSyncPlatform platform,
     required String clientVersion,
   });
+
+  Future<E2eeAccountRecoveryReopenLease> reopenRecovery({
+    required String loginName,
+    required E2eeAccountRecoveryCheckpoint checkpoint,
+  });
 }
 
 abstract interface class E2eeAccountRecoveryOnboardingLease {
@@ -52,6 +57,19 @@ abstract interface class E2eeAccountRecoveryOnboardingLease {
   Uint8List copySourceStateBlob();
 
   E2eeAccountRecoveryProofCore get proofCore;
+
+  bool get isClosed;
+
+  Future<void> close();
+}
+
+abstract interface class E2eeAccountRecoveryReopenLease {
+  E2eeAccountRecoveryReopenBinding get binding;
+
+  E2eeAccountRecoveryProofCore get proofCore;
+
+  /// 必须在恢复工作区变更租约内调用，避免验证后的跨进程状态变更。
+  Future<void> requireCurrentState();
 
   bool get isClosed;
 

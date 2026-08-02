@@ -997,6 +997,58 @@ final class E2eeAccountAuthenticator
     }
   }
 
+  @override
+  Future<E2eeAccountRecoveryReopenLease> reopenRecovery({
+    required String loginName,
+    required E2eeAccountRecoveryCheckpoint checkpoint,
+  }) async {
+    final normalizedLoginName = _normalizeLoginName(loginName);
+    _reserveAccountRecoveryReopen();
+    var leaseCreated = false;
+    try {
+      final binding = checkpoint.reopenBinding;
+      if (binding == null || checkpoint.expectedDeviceId != binding.deviceId) {
+        throw StateError('账户恢复 checkpoint 尚无可信重开绑定');
+      }
+      final opened = await _openVerifiedRecoveryState(
+        normalizedLoginName: normalizedLoginName,
+        checkpoint: checkpoint,
+        binding: binding,
+      );
+      try {
+        await _closeReopenStateHandles(opened, closeIdentity: false);
+        final lease = _E2eeAccountRecoveryReopenLease(
+          binding: binding,
+          proofCoreDelegate: E2eeNativeAccountRecoveryProofCore(
+            secureCore: _secureCore,
+            deviceIdentity: opened.identity,
+            deviceKeyVersion: binding.deviceKeyVersion,
+            targetAuthGeneration: binding.deviceAuthGeneration,
+          ),
+          identity: opened.identity,
+          openState: () => _openVerifiedRecoveryState(
+            normalizedLoginName: normalizedLoginName,
+            checkpoint: checkpoint,
+            binding: binding,
+          ),
+          secureCore: _secureCore,
+          onClosed: () => _accountRecoveryOnboardingReserved = false,
+        );
+        leaseCreated = true;
+        return lease;
+      } catch (error, stackTrace) {
+        await _runCleanupPreservingPrimary(<Future<void> Function()>[
+          () => _secureCore.closeDeviceIdentity(opened.identity),
+        ]);
+        Error.throwWithStackTrace(error, stackTrace);
+      }
+    } finally {
+      if (!leaseCreated) {
+        _accountRecoveryOnboardingReserved = false;
+      }
+    }
+  }
+
   void _reserveAccountRecoveryOnboarding(Uint8List password) {
     if (_authenticationInProgress || _accountRecoveryOnboardingReserved) {
       _clearBytesPreservingFailure(password);
@@ -1007,6 +1059,162 @@ final class E2eeAccountAuthenticator
       );
     }
     _accountRecoveryOnboardingReserved = true;
+  }
+
+  void _reserveAccountRecoveryReopen() {
+    if (_authenticationInProgress || _accountRecoveryOnboardingReserved) {
+      throw const CloudSyncException(
+        kind: CloudSyncFailureKind.conflict,
+        retryable: false,
+        serverCode: 'SYNC_AUTHENTICATION_IN_PROGRESS',
+      );
+    }
+    _accountRecoveryOnboardingReserved = true;
+  }
+
+  Future<E2eeOpenedDeviceStateHandles> _openVerifiedRecoveryState({
+    required String normalizedLoginName,
+    required E2eeAccountRecoveryCheckpoint checkpoint,
+    required E2eeAccountRecoveryReopenBinding binding,
+  }) async {
+    final snapshot = await _deviceStateStore.readVersioned(
+      normalizedBaseUrl: _baseUrl,
+      normalizedLoginName: normalizedLoginName,
+    );
+    if (snapshot == null) {
+      throw StateError('账户恢复重开缺少本地设备状态');
+    }
+    final stateBlob = snapshot.blob;
+    late final int expectedKeyEpoch;
+    try {
+      expectedKeyEpoch = _expectedRecoveryStateKeyEpoch(
+        checkpoint: checkpoint,
+        binding: binding,
+        stateBlob: stateBlob,
+      );
+    } finally {
+      _clearBytes(stateBlob);
+    }
+    final opened = await _deviceStateAccess.openExisting(normalizedLoginName);
+    if (opened == null) {
+      throw StateError('账户恢复重开缺少本地设备状态');
+    }
+    try {
+      final account = opened.binding.account;
+      final ark = opened.ark;
+      final expectedUserId = _uuidBytes(binding.userId);
+      final expectedDeviceId = _uuidBytes(binding.deviceId);
+      try {
+        if (opened.stateVersion != snapshot.version ||
+            account == null ||
+            ark == null ||
+            opened.binding.keyVersion != binding.deviceKeyVersion ||
+            account.keyEpoch != expectedKeyEpoch ||
+            !_sameSecurityBytes(opened.binding.deviceId, expectedDeviceId) ||
+            !_sameSecurityBytes(account.userId, expectedUserId) ||
+            !_sameSecurityBytes(ark.userId, expectedUserId)) {
+          throw StateError('账户恢复本地设备状态与 checkpoint 重开绑定不一致');
+        }
+      } finally {
+        _clearBytes(expectedUserId);
+        _clearBytes(expectedDeviceId);
+      }
+      final confirmed = await _deviceStateStore.readVersioned(
+        normalizedBaseUrl: _baseUrl,
+        normalizedLoginName: normalizedLoginName,
+      );
+      if (confirmed == null) {
+        throw StateError('账户恢复本地设备状态在重开期间丢失');
+      }
+      try {
+        if (confirmed.version != opened.stateVersion) {
+          throw StateError('账户恢复本地设备状态在重开期间已变更');
+        }
+      } finally {
+        _clearBytes(confirmed.blob);
+      }
+      return opened;
+    } catch (error, stackTrace) {
+      try {
+        await _closeReopenStateHandles(opened);
+      } catch (cleanupError, cleanupStackTrace) {
+        _logSuppressedCleanupFailure(cleanupError, cleanupStackTrace);
+      }
+      Error.throwWithStackTrace(error, stackTrace);
+    }
+  }
+
+  int _expectedRecoveryStateKeyEpoch({
+    required E2eeAccountRecoveryCheckpoint checkpoint,
+    required E2eeAccountRecoveryReopenBinding binding,
+    required Uint8List stateBlob,
+  }) {
+    final digest = Uint8List.fromList(sha256.convert(stateBlob).bytes);
+    final expectedDigest = binding.prunedStateDigest;
+    try {
+      if (_sameSecurityBytes(digest, expectedDigest)) {
+        return binding.keyEpoch;
+      }
+    } finally {
+      _clearBytes(digest);
+      _clearBytes(expectedDigest);
+    }
+
+    final transition = switch (checkpoint.progress) {
+      E2eeAccountRecoveryReplacementPreparedProgress(:final transition) ||
+      E2eeAccountRecoveryReplacementCommittedProgress(:final transition) ||
+      E2eeAccountRecoverySecondRekeyFinalizedProgress(
+        :final transition,
+      ) => transition,
+      _ => null,
+    };
+    if (transition == null) {
+      throw StateError('账户恢复本地设备状态不是 checkpoint 的精确 pruned 状态');
+    }
+    final plan = transition.localTransitionPlan;
+    final source = plan.sourceStateBlob;
+    final unpruned = plan.unprunedStateBlob;
+    final pruned = plan.prunedStateBlob;
+    try {
+      if (_sameSecurityBytes(stateBlob, source)) return binding.keyEpoch;
+      if (_sameSecurityBytes(stateBlob, unpruned) ||
+          _sameSecurityBytes(stateBlob, pruned)) {
+        return transition.commit.membership.envelope.keyEpoch;
+      }
+      throw StateError('账户恢复本地设备状态不属于 checkpoint 转换候选');
+    } finally {
+      _clearBytes(source);
+      _clearBytes(unpruned);
+      _clearBytes(pruned);
+    }
+  }
+
+  Future<void> _closeReopenStateHandles(
+    E2eeOpenedDeviceStateHandles opened, {
+    bool closeIdentity = true,
+  }) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> close(Future<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    if (opened.ark != null) {
+      await close(() => _secureCore.closeAccountRootKey(opened.ark!));
+    }
+    if (closeIdentity) {
+      await close(() => _secureCore.closeDeviceIdentity(opened.identity));
+    }
+    await close(() => _secureCore.close(opened.key));
+    if (firstError != null && firstStackTrace != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
   }
 
   Future<E2eeAccountRecoveryOnboardingLease>
@@ -2369,6 +2577,249 @@ final class _LeaseBoundAccountRecoveryProofCore
           recoveryTokenDigest: recoveryTokenDigest,
           expectedDeviceId: expectedDeviceId,
         ),
+      );
+    } finally {
+      E2eeAccountAuthenticator._clearBytesPreservingFailure(recoveryPassphrase);
+    }
+  }
+}
+
+typedef _E2eeRecoveryStateOpener =
+    Future<E2eeOpenedDeviceStateHandles> Function();
+
+final class _E2eeAccountRecoveryReopenLease
+    implements E2eeAccountRecoveryReopenLease {
+  _E2eeAccountRecoveryReopenLease({
+    required E2eeAccountRecoveryReopenBinding binding,
+    required E2eeAccountRecoveryProofCore proofCoreDelegate,
+    required KelivoDeviceIdentityHandle identity,
+    required _E2eeRecoveryStateOpener openState,
+    required KelivoSecureCore secureCore,
+    required void Function() onClosed,
+  }) : _resources = _E2eeRecoveryReopenResources(
+         binding: binding,
+         proofCoreDelegate: proofCoreDelegate,
+         identity: identity,
+         openState: openState,
+         secureCore: secureCore,
+         onClosed: onClosed,
+       ) {
+    _proofCoreView = _ReopenLeaseBoundAccountRecoveryProofCore(this);
+  }
+
+  _E2eeRecoveryReopenResources? _resources;
+  late final _ReopenLeaseBoundAccountRecoveryProofCore _proofCoreView;
+  Future<void>? _closeFuture;
+  Completer<void>? _operationIdle;
+  bool _operationActive = false;
+  bool _closing = false;
+  bool _closed = false;
+
+  T _openValue<T extends Object>(T? value) {
+    if (_closing || _closed || value == null) {
+      throw StateError('账户恢复重开租约已关闭');
+    }
+    return value;
+  }
+
+  _E2eeRecoveryReopenResources _openResources() => _openValue(_resources);
+
+  @override
+  E2eeAccountRecoveryReopenBinding get binding => _openResources().binding;
+
+  @override
+  E2eeAccountRecoveryProofCore get proofCore {
+    _openResources();
+    return _proofCoreView;
+  }
+
+  @override
+  bool get isClosed => _closed;
+
+  Future<T> _runOperation<T>(Future<T> Function() operation) async {
+    if (_closing || _closed) throw StateError('账户恢复重开租约已关闭');
+    if (_operationActive) throw StateError('账户恢复重开租约正在使用');
+    _operationActive = true;
+    try {
+      return await operation();
+    } finally {
+      _operationActive = false;
+      final idle = _operationIdle;
+      _operationIdle = null;
+      idle?.complete();
+    }
+  }
+
+  @override
+  Future<void> requireCurrentState() {
+    return _runOperation(() async {
+      final resources = _openResources();
+      final opened = await resources.openState();
+      try {
+        return;
+      } finally {
+        await _closeOpenedState(opened, resources.secureCore);
+      }
+    });
+  }
+
+  Future<void> _closeOpenedState(
+    E2eeOpenedDeviceStateHandles opened,
+    KelivoSecureCore secureCore,
+  ) async {
+    Object? firstError;
+    StackTrace? firstStackTrace;
+
+    Future<void> close(Future<void> Function() action) async {
+      try {
+        await action();
+      } catch (error, stackTrace) {
+        firstError ??= error;
+        firstStackTrace ??= stackTrace;
+      }
+    }
+
+    if (opened.ark != null) {
+      await close(() => secureCore.closeAccountRootKey(opened.ark!));
+    }
+    await close(() => secureCore.closeDeviceIdentity(opened.identity));
+    await close(() => secureCore.close(opened.key));
+    if (firstError != null && firstStackTrace != null) {
+      Error.throwWithStackTrace(firstError!, firstStackTrace!);
+    }
+  }
+
+  @override
+  Future<void> close() {
+    if (_closed) return Future<void>.value();
+    final existing = _closeFuture;
+    if (existing != null) return existing;
+    late final Future<void> closing;
+    closing = _close().whenComplete(() {
+      if (identical(_closeFuture, closing)) _closeFuture = null;
+    });
+    _closeFuture = closing;
+    return closing;
+  }
+
+  Future<void> _close() async {
+    _closing = true;
+    if (_operationActive) {
+      await (_operationIdle ??= Completer<void>()).future;
+    }
+
+    final resources = _resources;
+    if (resources == null) {
+      throw StateError('账户恢复重开租约能力丢失');
+    }
+    if (!resources.identityClosed) {
+      await resources.secureCore.closeDeviceIdentity(resources.identity);
+      resources.identityClosed = true;
+    }
+    if (!resources.reservationReleased) {
+      resources.onClosed();
+      resources.reservationReleased = true;
+    }
+    _resources = null;
+    _closed = true;
+    _closing = false;
+  }
+}
+
+final class _E2eeRecoveryReopenResources {
+  _E2eeRecoveryReopenResources({
+    required this.binding,
+    required this.proofCoreDelegate,
+    required this.identity,
+    required this.openState,
+    required this.secureCore,
+    required this.onClosed,
+  });
+
+  final E2eeAccountRecoveryReopenBinding binding;
+  final E2eeAccountRecoveryProofCore proofCoreDelegate;
+  final KelivoDeviceIdentityHandle identity;
+  final _E2eeRecoveryStateOpener openState;
+  final KelivoSecureCore secureCore;
+  final void Function() onClosed;
+  bool identityClosed = false;
+  bool reservationReleased = false;
+}
+
+final class _ReopenLeaseBoundAccountRecoveryProofCore
+    implements E2eeAccountRecoveryProofCore {
+  const _ReopenLeaseBoundAccountRecoveryProofCore(this._lease);
+
+  final _E2eeAccountRecoveryReopenLease _lease;
+
+  @override
+  Future<E2eeAccountRecoveryProof> verifyHistoryAndCreateProof({
+    required Uint8List recoveryMedia,
+    required Uint8List recoveryPassphrase,
+    required Uint8List serviceOriginSha256,
+    required List<Uint8List> membershipHistory,
+    required Uint8List currentCapsule,
+    required Uint8List? sourceCapsule,
+    required Uint8List challengeFrame,
+    required Uint8List sealedNonce,
+    required Uint8List recoveryTokenDigest,
+    required String expectedAttemptId,
+    required String expectedDeviceId,
+    required Uint8List expectedRequestDigest,
+    required DateTime expectedExpiresAt,
+  }) async {
+    try {
+      return await _lease._runOperation(
+        () => _lease
+            ._openResources()
+            .proofCoreDelegate
+            .verifyHistoryAndCreateProof(
+              recoveryMedia: recoveryMedia,
+              recoveryPassphrase: recoveryPassphrase,
+              serviceOriginSha256: serviceOriginSha256,
+              membershipHistory: membershipHistory,
+              currentCapsule: currentCapsule,
+              sourceCapsule: sourceCapsule,
+              challengeFrame: challengeFrame,
+              sealedNonce: sealedNonce,
+              recoveryTokenDigest: recoveryTokenDigest,
+              expectedAttemptId: expectedAttemptId,
+              expectedDeviceId: expectedDeviceId,
+              expectedRequestDigest: expectedRequestDigest,
+              expectedExpiresAt: expectedExpiresAt,
+            ),
+      );
+    } finally {
+      E2eeAccountAuthenticator._clearBytesPreservingFailure(recoveryPassphrase);
+    }
+  }
+
+  @override
+  Future<E2eeAccountRecoveryProof> verifyReplacementChallengeAndCreateProof({
+    required Uint8List recoveryMedia,
+    required Uint8List recoveryPassphrase,
+    required Uint8List serviceOriginSha256,
+    required List<Uint8List> membershipHistory,
+    required Uint8List sourceCapsule,
+    required E2eeAccountRecoveryReplacementChallenge challenge,
+    required Uint8List recoveryTokenDigest,
+    required String expectedDeviceId,
+  }) async {
+    try {
+      return await _lease._runOperation(
+        () => _lease
+            ._openResources()
+            .proofCoreDelegate
+            .verifyReplacementChallengeAndCreateProof(
+              recoveryMedia: recoveryMedia,
+              recoveryPassphrase: recoveryPassphrase,
+              serviceOriginSha256: serviceOriginSha256,
+              membershipHistory: membershipHistory,
+              sourceCapsule: sourceCapsule,
+              challenge: challenge,
+              recoveryTokenDigest: recoveryTokenDigest,
+              expectedDeviceId: expectedDeviceId,
+            ),
       );
     } finally {
       E2eeAccountAuthenticator._clearBytesPreservingFailure(recoveryPassphrase);

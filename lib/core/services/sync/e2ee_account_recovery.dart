@@ -161,6 +161,67 @@ final class E2eeAccountRecoveryLocalTransitionPlan {
   }
 }
 
+final class E2eeAccountRecoveryReopenBinding {
+  factory E2eeAccountRecoveryReopenBinding({
+    required String userId,
+    required String deviceId,
+    required int deviceKeyVersion,
+    required int deviceAuthGeneration,
+    required int keyEpoch,
+    required int dataGeneration,
+    required int membershipGeneration,
+    required Uint8List membershipManifestDigest,
+    required String membershipOperationId,
+    required Uint8List prunedStateDigest,
+  }) {
+    return E2eeAccountRecoveryReopenBinding._(
+      _canonicalUuid(userId, 'userId'),
+      _canonicalUuid(deviceId, 'deviceId'),
+      _positiveUint32(deviceKeyVersion, 'deviceKeyVersion'),
+      _positiveInt32(deviceAuthGeneration, 'deviceAuthGeneration'),
+      _positiveUint32(keyEpoch, 'keyEpoch'),
+      _positiveInt32(dataGeneration, 'dataGeneration'),
+      _positiveInt32(membershipGeneration, 'membershipGeneration'),
+      _fixedBytes(
+        membershipManifestDigest,
+        cloudSyncMembershipManifestDigestBytes,
+        'membershipManifestDigest',
+      ),
+      _canonicalUuid(membershipOperationId, 'membershipOperationId'),
+      _fixedBytes(prunedStateDigest, 32, 'prunedStateDigest'),
+    );
+  }
+
+  const E2eeAccountRecoveryReopenBinding._(
+    this.userId,
+    this.deviceId,
+    this.deviceKeyVersion,
+    this.deviceAuthGeneration,
+    this.keyEpoch,
+    this.dataGeneration,
+    this.membershipGeneration,
+    this._membershipManifestDigest,
+    this.membershipOperationId,
+    this._prunedStateDigest,
+  );
+
+  final String userId;
+  final String deviceId;
+  final int deviceKeyVersion;
+  final int deviceAuthGeneration;
+  final int keyEpoch;
+  final int dataGeneration;
+  final int membershipGeneration;
+  final Uint8List _membershipManifestDigest;
+  final String membershipOperationId;
+  final Uint8List _prunedStateDigest;
+
+  Uint8List get membershipManifestDigest =>
+      Uint8List.fromList(_membershipManifestDigest);
+
+  Uint8List get prunedStateDigest => Uint8List.fromList(_prunedStateDigest);
+}
+
 final class CloudSyncAccountRecoveryToken {
   CloudSyncAccountRecoveryToken._(this.value);
 
@@ -1387,11 +1448,13 @@ final class E2eeAccountRecoveryFirstLocalActivatedProgress
     required this.authorization,
     required this.resumeReceipt,
     required this.completion,
+    required this.reopenBinding,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryCommitReceipt resumeReceipt;
   final CloudSyncDataRekeyCompletion completion;
+  final E2eeAccountRecoveryReopenBinding reopenBinding;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1405,12 +1468,14 @@ final class E2eeAccountRecoveryReplacementChallengeRequestedProgress
     required this.resumeReceipt,
     required this.completion,
     required this.request,
+    required this.reopenBinding,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryCommitReceipt resumeReceipt;
   final CloudSyncDataRekeyCompletion completion;
   final E2eeAccountRecoveryReplacementChallengeRequest request;
+  final E2eeAccountRecoveryReopenBinding reopenBinding;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1422,10 +1487,12 @@ final class E2eeAccountRecoveryReplacementChallengeReceivedProgress
   const E2eeAccountRecoveryReplacementChallengeReceivedProgress({
     required this.authorization,
     required this.challenge,
+    required this.reopenBinding,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryReplacementChallenge challenge;
+  final E2eeAccountRecoveryReopenBinding reopenBinding;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1438,11 +1505,13 @@ final class E2eeAccountRecoveryReplacementProofReadyProgress
     required this.authorization,
     required this.challenge,
     required this.proof,
+    required this.reopenBinding,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryReplacementChallenge challenge;
   final E2eeAccountRecoveryCheckpointProof proof;
+  final E2eeAccountRecoveryReopenBinding reopenBinding;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1454,10 +1523,12 @@ final class E2eeAccountRecoveryReplacementPreparedProgress
   const E2eeAccountRecoveryReplacementPreparedProgress({
     required this.authorization,
     required this.transition,
+    required this.reopenBinding,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryPreparedTransition transition;
+  final E2eeAccountRecoveryReopenBinding? reopenBinding;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1470,11 +1541,13 @@ final class E2eeAccountRecoveryReplacementCommittedProgress
     required this.authorization,
     required this.transition,
     required this.receipt,
+    required this.reopenBinding,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryPreparedTransition transition;
   final E2eeAccountRecoveryCommitReceipt receipt;
+  final E2eeAccountRecoveryReopenBinding? reopenBinding;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1488,12 +1561,14 @@ final class E2eeAccountRecoverySecondRekeyFinalizedProgress
     required this.transition,
     required this.receipt,
     required this.completion,
+    required this.reopenBinding,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryPreparedTransition transition;
   final E2eeAccountRecoveryCommitReceipt receipt;
   final CloudSyncDataRekeyCompletion completion;
+  final E2eeAccountRecoveryReopenBinding? reopenBinding;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1517,12 +1592,14 @@ final class E2eeAccountRecoverySecondLocalActivatedProgress
     required this.completionSession,
     required this.replacementReceipt,
     required this.completion,
+    required this.reopenBinding,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryCompletionSession completionSession;
   final E2eeAccountRecoveryCommitReceipt replacementReceipt;
   final CloudSyncDataRekeyCompletion completion;
+  final E2eeAccountRecoveryReopenBinding reopenBinding;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1531,17 +1608,46 @@ final class E2eeAccountRecoverySecondLocalActivatedProgress
 
 final class E2eeAccountRecoverySessionVerifiedProgress
     extends E2eeAccountRecoveryCheckpointProgress {
-  const E2eeAccountRecoverySessionVerifiedProgress({
+  factory E2eeAccountRecoverySessionVerifiedProgress({
+    required E2eeAccountRecoveryCheckpointAuthorization authorization,
+    required E2eeAccountRecoveryCompletionSession completionSession,
+    required E2eeAccountRecoveryCommitReceipt replacementReceipt,
+    required CloudSyncDataRekeyCompletion completion,
+    required E2eeAccountRecoveryReopenBinding reopenBinding,
+    required int sessionGeneration,
+    required DateTime tokenExpiresAt,
+  }) {
+    return E2eeAccountRecoverySessionVerifiedProgress._(
+      authorization: authorization,
+      completionSession: completionSession,
+      replacementReceipt: replacementReceipt,
+      completion: completion,
+      reopenBinding: reopenBinding,
+      sessionGeneration: _positiveInt32(sessionGeneration, 'sessionGeneration'),
+      tokenExpiresAt: _canonicalUtcSecondTimestamp(
+        tokenExpiresAt,
+        'tokenExpiresAt',
+      ),
+    );
+  }
+
+  const E2eeAccountRecoverySessionVerifiedProgress._({
     required this.authorization,
     required this.completionSession,
     required this.replacementReceipt,
     required this.completion,
+    required this.reopenBinding,
+    required this.sessionGeneration,
+    required this.tokenExpiresAt,
   });
 
   final E2eeAccountRecoveryCheckpointAuthorization authorization;
   final E2eeAccountRecoveryCompletionSession completionSession;
   final E2eeAccountRecoveryCommitReceipt replacementReceipt;
   final CloudSyncDataRekeyCompletion completion;
+  final E2eeAccountRecoveryReopenBinding reopenBinding;
+  final int sessionGeneration;
+  final DateTime tokenExpiresAt;
 
   @override
   E2eeAccountRecoveryCheckpointPhase get phase =>
@@ -1597,6 +1703,32 @@ final class E2eeAccountRecoveryCheckpoint {
   String get attemptId => challenge.attemptId;
 
   E2eeAccountRecoveryCheckpointPhase get phase => progress.phase;
+
+  E2eeAccountRecoveryReopenBinding? get reopenBinding => switch (progress) {
+    E2eeAccountRecoveryFirstLocalActivatedProgress(:final reopenBinding) =>
+      reopenBinding,
+    E2eeAccountRecoveryReplacementChallengeRequestedProgress(
+      :final reopenBinding,
+    ) =>
+      reopenBinding,
+    E2eeAccountRecoveryReplacementChallengeReceivedProgress(
+      :final reopenBinding,
+    ) =>
+      reopenBinding,
+    E2eeAccountRecoveryReplacementProofReadyProgress(:final reopenBinding) =>
+      reopenBinding,
+    E2eeAccountRecoveryReplacementPreparedProgress(:final reopenBinding) =>
+      reopenBinding,
+    E2eeAccountRecoveryReplacementCommittedProgress(:final reopenBinding) =>
+      reopenBinding,
+    E2eeAccountRecoverySecondRekeyFinalizedProgress(:final reopenBinding) =>
+      reopenBinding,
+    E2eeAccountRecoverySecondLocalActivatedProgress(:final reopenBinding) =>
+      reopenBinding,
+    E2eeAccountRecoverySessionVerifiedProgress(:final reopenBinding) =>
+      reopenBinding,
+    _ => null,
+  };
 
   E2eeAccountRecoveryCheckpoint withProof({
     required Uint8List nonceProof,
@@ -1683,22 +1815,26 @@ final class E2eeAccountRecoveryCheckpoint {
               E2eeAccountRecoveryReplacementPreparedProgress(
                 authorization: authorization,
                 transition: transition,
+                reopenBinding: null,
               ),
           });
         case E2eeAccountRecoveryReplacementProofReadyProgress(
           :final authorization,
           :final challenge,
           :final proof,
+          :final reopenBinding,
         ):
           _validateReplacementPreparedTransition(
             challenge: challenge,
             proof: proof,
             transition: transition,
           );
+          _validateTransitionSourceReopenBinding(transition, reopenBinding);
           return _copyWithProgress(
             E2eeAccountRecoveryReplacementPreparedProgress(
               authorization: authorization,
               transition: transition,
+              reopenBinding: reopenBinding,
             ),
           );
         default:
@@ -1722,8 +1858,14 @@ final class E2eeAccountRecoveryCheckpoint {
       E2eeAccountRecoveryReplacementPreparedProgress(
         :final authorization,
         :final transition,
+        :final reopenBinding,
       ) =>
-        _commitReplacement(authorization, transition, receipt),
+        _commitReplacement(
+          authorization,
+          transition,
+          receipt,
+          reopenBinding: reopenBinding,
+        ),
       _ => throw StateError('账户恢复 checkpoint 不可写入成员提交回执'),
     };
   }
@@ -1755,6 +1897,7 @@ final class E2eeAccountRecoveryCheckpoint {
         :final authorization,
         :final transition,
         :final receipt,
+        :final reopenBinding,
       ):
         _validateRekeyCompletion(
           expectedDeviceId: expectedDeviceId,
@@ -1768,6 +1911,7 @@ final class E2eeAccountRecoveryCheckpoint {
             transition: transition._move(),
             receipt: receipt,
             completion: completion,
+            reopenBinding: reopenBinding,
           ),
         );
       default:
@@ -1775,7 +1919,9 @@ final class E2eeAccountRecoveryCheckpoint {
     }
   }
 
-  E2eeAccountRecoveryCheckpoint markLocalTransitionActivated() {
+  E2eeAccountRecoveryCheckpoint markLocalTransitionActivated({
+    required int deviceAuthGeneration,
+  }) {
     switch (progress) {
       case E2eeAccountRecoveryFirstRekeyFinalizedProgress(
         :final authorization,
@@ -1783,12 +1929,20 @@ final class E2eeAccountRecoveryCheckpoint {
         :final receipt,
         :final completion,
       ):
+        final reopenBinding = _createRecoveryReopenBinding(
+          expectedDeviceId: expectedDeviceId,
+          transition: transition,
+          receipt: receipt,
+          completion: completion,
+          deviceAuthGeneration: deviceAuthGeneration,
+        );
         transition.clearContinuation();
         return _copyWithProgress(
           E2eeAccountRecoveryFirstLocalActivatedProgress(
             authorization: authorization,
             resumeReceipt: receipt,
             completion: completion,
+            reopenBinding: reopenBinding,
           ),
         );
       case E2eeAccountRecoverySecondRekeyFinalizedProgress(
@@ -1805,6 +1959,13 @@ final class E2eeAccountRecoveryCheckpoint {
           sessionId: commit.completionSessionId,
           token: commit.completionSessionToken,
         );
+        final reopenBinding = _createRecoveryReopenBinding(
+          expectedDeviceId: expectedDeviceId,
+          transition: transition,
+          receipt: receipt,
+          completion: completion,
+          deviceAuthGeneration: deviceAuthGeneration,
+        );
         transition.clearContinuation();
         return _copyWithProgress(
           E2eeAccountRecoverySecondLocalActivatedProgress(
@@ -1812,6 +1973,7 @@ final class E2eeAccountRecoveryCheckpoint {
             completionSession: completionSession,
             replacementReceipt: receipt,
             completion: completion,
+            reopenBinding: reopenBinding,
           ),
         );
       default:
@@ -1837,6 +1999,7 @@ final class E2eeAccountRecoveryCheckpoint {
         resumeReceipt: current.resumeReceipt,
         completion: current.completion,
         request: request,
+        reopenBinding: current.reopenBinding,
       ),
     );
   }
@@ -1858,6 +2021,7 @@ final class E2eeAccountRecoveryCheckpoint {
       E2eeAccountRecoveryReplacementChallengeReceivedProgress(
         authorization: current.authorization,
         challenge: replacementChallenge,
+        reopenBinding: current.reopenBinding,
       ),
     );
   }
@@ -1880,14 +2044,25 @@ final class E2eeAccountRecoveryCheckpoint {
           nonceProof: nonceProof,
           trustSignature: trustSignature,
         ),
+        reopenBinding: current.reopenBinding,
       ),
     );
   }
 
-  E2eeAccountRecoveryCheckpoint markSessionVerified() {
+  E2eeAccountRecoveryCheckpoint markSessionVerified({
+    required int sessionGeneration,
+    required DateTime tokenExpiresAt,
+  }) {
     final current = progress;
     if (current is! E2eeAccountRecoverySecondLocalActivatedProgress) {
       throw StateError('账户恢复 checkpoint 尚不可确认完整会话');
+    }
+    final normalizedTokenExpiresAt = _canonicalUtcSecondTimestamp(
+      tokenExpiresAt,
+      'tokenExpiresAt',
+    );
+    if (!normalizedTokenExpiresAt.isAfter(_utcNow())) {
+      throw const FormatException('账户恢复完整会话已过期');
     }
     return _copyWithProgress(
       E2eeAccountRecoverySessionVerifiedProgress(
@@ -1895,6 +2070,9 @@ final class E2eeAccountRecoveryCheckpoint {
         completionSession: current.completionSession,
         replacementReceipt: current.replacementReceipt,
         completion: current.completion,
+        reopenBinding: current.reopenBinding,
+        sessionGeneration: sessionGeneration,
+        tokenExpiresAt: normalizedTokenExpiresAt,
       ),
     );
   }
@@ -1936,16 +2114,53 @@ final class E2eeAccountRecoveryCheckpoint {
   E2eeAccountRecoveryCheckpoint _commitReplacement(
     E2eeAccountRecoveryCheckpointAuthorization authorization,
     E2eeAccountRecoveryPreparedTransition transition,
-    E2eeAccountRecoveryCommitReceipt receipt,
-  ) {
+    E2eeAccountRecoveryCommitReceipt receipt, {
+    required E2eeAccountRecoveryReopenBinding? reopenBinding,
+  }) {
     _validateCommitReceipt(transition.commit, receipt);
     return _copyWithProgress(
       E2eeAccountRecoveryReplacementCommittedProgress(
         authorization: authorization,
         transition: transition._move(),
         receipt: receipt,
+        reopenBinding: reopenBinding,
       ),
     );
+  }
+}
+
+E2eeAccountRecoveryReopenBinding _createRecoveryReopenBinding({
+  required String expectedDeviceId,
+  required E2eeAccountRecoveryPreparedTransition transition,
+  required E2eeAccountRecoveryCommitReceipt receipt,
+  required CloudSyncDataRekeyCompletion completion,
+  required int deviceAuthGeneration,
+}) {
+  final plan = transition.localTransitionPlan;
+  final prunedState = plan.prunedStateBlob;
+  final manifestDigest =
+      transition.commit.membership.nextMembershipManifestDigest.bytes;
+  try {
+    if (receipt.membershipOperationId !=
+            transition.commit.membership.operationId ||
+        completion.membershipGeneration != receipt.generation ||
+        !_sameBytes(completion.membershipManifestDigest, manifestDigest)) {
+      throw const FormatException('账户恢复重开绑定与完成状态不一致');
+    }
+    return E2eeAccountRecoveryReopenBinding(
+      userId: plan.userId,
+      deviceId: expectedDeviceId,
+      deviceKeyVersion: plan.deviceKeyVersion,
+      deviceAuthGeneration: deviceAuthGeneration,
+      keyEpoch: receipt.keyEpoch,
+      dataGeneration: completion.targetDataGeneration,
+      membershipGeneration: receipt.generation,
+      membershipManifestDigest: manifestDigest,
+      membershipOperationId: receipt.membershipOperationId,
+      prunedStateDigest: Uint8List.fromList(sha256.convert(prunedState).bytes),
+    );
+  } finally {
+    _clear(prunedState);
   }
 }
 
@@ -2097,6 +2312,7 @@ void _validateCheckpointProgress({
       :final authorization,
       :final resumeReceipt,
       :final completion,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(challenge, authorization);
       _validateFirstCompletionSummary(
@@ -2105,11 +2321,18 @@ void _validateCheckpointProgress({
         receipt: resumeReceipt,
         completion: completion,
       );
+      _validateActivatedReopenBinding(
+        expectedDeviceId: expectedDeviceId,
+        receipt: resumeReceipt,
+        completion: completion,
+        binding: reopenBinding,
+      );
     case E2eeAccountRecoveryReplacementChallengeRequestedProgress(
       :final authorization,
       :final resumeReceipt,
       :final completion,
       :final request,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(challenge, authorization);
       _validateFirstCompletionSummary(
@@ -2123,9 +2346,16 @@ void _validateCheckpointProgress({
         completion: completion,
         request: request,
       );
+      _validateActivatedReopenBinding(
+        expectedDeviceId: expectedDeviceId,
+        receipt: resumeReceipt,
+        completion: completion,
+        binding: reopenBinding,
+      );
     case E2eeAccountRecoveryReplacementChallengeReceivedProgress(
       :final authorization,
       challenge: final replacementChallenge,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(
         challenge,
@@ -2136,10 +2366,15 @@ void _validateCheckpointProgress({
         expectedDeviceId: expectedDeviceId,
         initialChallenge: challenge,
         replacementChallenge: replacementChallenge,
+      );
+      _validateReplacementChallengeReopenBinding(
+        replacementChallenge,
+        reopenBinding,
       );
     case E2eeAccountRecoveryReplacementProofReadyProgress(
       :final authorization,
       challenge: final replacementChallenge,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(
         challenge,
@@ -2151,28 +2386,47 @@ void _validateCheckpointProgress({
         initialChallenge: challenge,
         replacementChallenge: replacementChallenge,
       );
+      _validateReplacementChallengeReopenBinding(
+        replacementChallenge,
+        reopenBinding,
+      );
     case E2eeAccountRecoveryReplacementPreparedProgress(
       :final authorization,
       :final transition,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(challenge, authorization);
-      _validateRestoredReplacementTransition(challenge, transition);
+      _validateRestoredReplacementTransition(
+        challenge,
+        transition,
+        reopenBinding: reopenBinding,
+      );
     case E2eeAccountRecoveryReplacementCommittedProgress(
       :final authorization,
       :final transition,
       :final receipt,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(challenge, authorization);
-      _validateRestoredReplacementTransition(challenge, transition);
+      _validateRestoredReplacementTransition(
+        challenge,
+        transition,
+        reopenBinding: reopenBinding,
+      );
       _validateCommitReceipt(transition.commit, receipt);
     case E2eeAccountRecoverySecondRekeyFinalizedProgress(
       :final authorization,
       :final transition,
       :final receipt,
       :final completion,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(challenge, authorization);
-      _validateRestoredReplacementTransition(challenge, transition);
+      _validateRestoredReplacementTransition(
+        challenge,
+        transition,
+        reopenBinding: reopenBinding,
+      );
       _validateCommitReceipt(transition.commit, receipt);
       _validateRekeyCompletion(
         expectedDeviceId: expectedDeviceId,
@@ -2185,6 +2439,7 @@ void _validateCheckpointProgress({
       :final completionSession,
       :final replacementReceipt,
       :final completion,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(challenge, authorization);
       _validateTerminalReplacementSummary(
@@ -2194,11 +2449,18 @@ void _validateCheckpointProgress({
         completion: completion,
         expectedDeviceId: expectedDeviceId,
       );
+      _validateActivatedReopenBinding(
+        expectedDeviceId: expectedDeviceId,
+        receipt: replacementReceipt,
+        completion: completion,
+        binding: reopenBinding,
+      );
     case E2eeAccountRecoverySessionVerifiedProgress(
       :final authorization,
       :final completionSession,
       :final replacementReceipt,
       :final completion,
+      :final reopenBinding,
     ):
       _validateInitialAuthorization(challenge, authorization);
       _validateTerminalReplacementSummary(
@@ -2207,6 +2469,12 @@ void _validateCheckpointProgress({
         receipt: replacementReceipt,
         completion: completion,
         expectedDeviceId: expectedDeviceId,
+      );
+      _validateActivatedReopenBinding(
+        expectedDeviceId: expectedDeviceId,
+        receipt: replacementReceipt,
+        completion: completion,
+        binding: reopenBinding,
       );
   }
 }
@@ -2313,8 +2581,9 @@ void _validateReplacementPreparedTransition({
 
 void _validateRestoredReplacementTransition(
   E2eeAccountRecoveryChallenge initialChallenge,
-  E2eeAccountRecoveryPreparedTransition transition,
-) {
+  E2eeAccountRecoveryPreparedTransition transition, {
+  required E2eeAccountRecoveryReopenBinding? reopenBinding,
+}) {
   final commit = transition.commit;
   if (commit is! E2eeAccountRecoveryReplacementCommit ||
       commit.attemptId != initialChallenge.attemptId) {
@@ -2322,12 +2591,18 @@ void _validateRestoredReplacementTransition(
   }
   final authorization = commit.authorization;
   if (authorization is E2eeAccountRecoveryReplacementInitialAuthorization) {
+    if (reopenBinding != null) {
+      throw const FormatException('direct replacement 不应持有首轮重开绑定');
+    }
     _validateInitialPreparedTransition(
       challenge: initialChallenge,
       transition: transition,
     );
   } else if (authorization
       is E2eeAccountRecoveryReplacementChallengeAuthorization) {
+    if (reopenBinding == null) {
+      throw const FormatException('第二挑战 replacement 缺少首轮重开绑定');
+    }
     final membership = commit.membership;
     final plan = transition.localTransitionPlan;
     if (initialChallenge.dataState.phase !=
@@ -2340,8 +2615,82 @@ void _validateRestoredReplacementTransition(
             initialChallenge.dataState.dataGeneration + 1) {
       throw const FormatException('账户恢复第二挑战 replacement checkpoint 绑定无效');
     }
+    _validateTransitionSourceReopenBinding(transition, reopenBinding);
   } else {
     throw const FormatException('账户恢复 replacement checkpoint 授权无效');
+  }
+}
+
+void _validateActivatedReopenBinding({
+  required String expectedDeviceId,
+  required E2eeAccountRecoveryCommitReceipt receipt,
+  required CloudSyncDataRekeyCompletion completion,
+  required E2eeAccountRecoveryReopenBinding binding,
+}) {
+  final membershipDigest = binding.membershipManifestDigest;
+  try {
+    if (binding.deviceId != expectedDeviceId ||
+        binding.keyEpoch != receipt.keyEpoch ||
+        binding.dataGeneration != completion.targetDataGeneration ||
+        binding.membershipGeneration != receipt.generation ||
+        binding.membershipOperationId != receipt.membershipOperationId ||
+        !_sameBytes(membershipDigest, completion.membershipManifestDigest)) {
+      throw const FormatException('账户恢复 checkpoint 重开绑定与激活摘要不一致');
+    }
+  } finally {
+    _clear(membershipDigest);
+  }
+}
+
+void _validateReplacementChallengeReopenBinding(
+  E2eeAccountRecoveryReplacementChallenge challenge,
+  E2eeAccountRecoveryReopenBinding binding,
+) {
+  final membershipDigest = binding.membershipManifestDigest;
+  try {
+    if (binding.deviceId != challenge.sourceCompletion.issuerDeviceId ||
+        binding.deviceKeyVersion != challenge.deviceKeyVersion ||
+        binding.keyEpoch != challenge.keyEpoch ||
+        binding.dataGeneration != challenge.dataGeneration ||
+        binding.membershipGeneration != challenge.securityGeneration ||
+        binding.membershipOperationId != challenge.membershipOperationId ||
+        !_sameBytes(membershipDigest, challenge.membershipManifestDigest)) {
+      throw const FormatException('账户恢复第二 challenge 与本地重开绑定不一致');
+    }
+  } finally {
+    _clear(membershipDigest);
+  }
+}
+
+void _validateTransitionSourceReopenBinding(
+  E2eeAccountRecoveryPreparedTransition transition,
+  E2eeAccountRecoveryReopenBinding binding,
+) {
+  final plan = transition.localTransitionPlan;
+  final membership = transition.commit.membership;
+  final sourceState = plan.sourceStateBlob;
+  final expectedStateDigest = binding.prunedStateDigest;
+  final membershipDigest = binding.membershipManifestDigest;
+  try {
+    if (plan.userId != binding.userId ||
+        plan.deviceKeyVersion != binding.deviceKeyVersion ||
+        plan.sourceDataGeneration != binding.dataGeneration ||
+        membership.expectedGeneration != binding.membershipGeneration ||
+        membership.expectedKeyEpoch != binding.keyEpoch ||
+        !_sameBytes(
+          membership.expectedMembershipManifestDigest.bytes,
+          membershipDigest,
+        ) ||
+        !_sameBytes(
+          Uint8List.fromList(sha256.convert(sourceState).bytes),
+          expectedStateDigest,
+        )) {
+      throw const FormatException('账户恢复 replacement 源状态与重开绑定不一致');
+    }
+  } finally {
+    _clear(sourceState);
+    _clear(expectedStateDigest);
+    _clear(membershipDigest);
   }
 }
 
@@ -3192,6 +3541,18 @@ int _positiveUint32(int value, String field) {
     throw FormatException('$field 不在正 uint32 范围内');
   }
   return value;
+}
+
+DateTime _canonicalUtcSecondTimestamp(DateTime value, String field) {
+  final utc = value.toUtc();
+  final seconds = utc.millisecondsSinceEpoch ~/ Duration.millisecondsPerSecond;
+  if (seconds <= 0) {
+    throw FormatException('$field 时间戳无效');
+  }
+  return DateTime.fromMillisecondsSinceEpoch(
+    seconds * Duration.millisecondsPerSecond,
+    isUtc: true,
+  );
 }
 
 Uint8List _fixedBytes(Uint8List value, int length, String field) {
