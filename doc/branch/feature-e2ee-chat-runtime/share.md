@@ -100,3 +100,5 @@
 - 已完成：客户端严格接入服务端 `create-replacement-challenge` 恢复动作，首轮换钥完成后只能创建独立第二挑战，不再误判为可直接提交 replacement；协议定向分析与回归通过。
 - 已完成：从 `kelivo-api@fe8e6ab`、OpenAPI SHA-256 `D5693FFD…6BDD0` 重建 typed client，并接入无参数 `GET /api/auth/session/get`；完整 token 逐请求注入，响应必须原样绑定本地 token 后才生成正式会话。生成包与根定向分析、相关 8 项协议测试通过，服务端未部署。
 - 2026-08-02 发布门禁复核：`fix/e2ee-release-gates` 已完成 FFI 漂移、Windows 安全核心测试、Android Workmanager 测试及仅 Windows/Android 发布约束；主代理正在复核并合入，iOS/Linux/macOS 暂仅允许手动验证。
+- 2026-08-02 范围确认：用户决定当前不隐藏业务与流量元数据；公开门槛限定为聊天、配置、供应商密钥、附件和恢复材料的内容 E2EE，#98 仅保留边界说明，不作为本轮阻断。
+- 已合入：恢复专用 OPAQUE onboarding lease 独占本地密钥槽、设备身份与源状态，严格绑定服务端认证代次；关闭时等待在途证明、清零状态副本并释放全部句柄。当前分支定向分析与 CloudSync 协议 177 项回归通过。
