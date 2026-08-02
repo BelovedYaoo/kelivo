@@ -40,6 +40,24 @@ final class PlaintextRemoteBackupRetirement {
     'log_save_output_v1',
     'log_auto_delete_days_v1',
     'log_max_size_mb_v1',
+    // 账号模式只信任 E2EE Vault，旧镜像即使不再读取也必须从介质上移除。
+    'providers_order_v1',
+    'provider_groups_v1',
+    'provider_group_map_v1',
+    'provider_ungrouped_position_v1',
+    'provider_configs_v1',
+    'provider_configs_backup_v1',
+    'search_services_v1',
+    'search_common_v1',
+    'search_selected_v1',
+    'search_enabled_v1',
+    'search_auto_test_on_launch_v1',
+    'tts_services_v1',
+    'tts_selected_v1',
+    'tts_auto_play_assistant_replies_v1',
+    'tts_text_selection_mode_v1',
+    'mcp_servers_v1',
+    'mcp_request_timeout_ms_v1',
   };
 
   static const _localPreferencePrefix = 'flutter.';
