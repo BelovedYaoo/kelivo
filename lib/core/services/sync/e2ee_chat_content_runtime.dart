@@ -583,13 +583,11 @@ final class E2eeChatContentRuntime
     await commands.install(membership: verified, now: _utcNow());
     try {
       await commitHandler(_session);
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
         '成员锚点已安装，但安全 bootstrap 恢复事务清理或会话提交失败',
         name: 'Kelivo.E2eeChatContentRuntime',
         level: 1000,
-        error: error,
-        stackTrace: stackTrace,
       );
       rethrow;
     }
@@ -1289,10 +1287,5 @@ Uint8List _decodeSha256Hex(String value) {
 }
 
 void _logCleanupFailure(String message, Object error, StackTrace stackTrace) {
-  developer.log(
-    message,
-    name: 'Kelivo.E2eeChatContentRuntime',
-    error: error,
-    stackTrace: stackTrace,
-  );
+  developer.log('E2EE 内容运行时资源清理失败', name: 'Kelivo.E2eeChatContentRuntime');
 }

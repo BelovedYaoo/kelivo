@@ -245,7 +245,7 @@ private final class IosBackgroundGenerationHandler {
     do {
       try BGTaskScheduler.shared.submit(refresh)
     } catch {
-      NSLog("Kelivo background refresh schedule failed: \(error)")
+      NSLog("Kelivo background refresh schedule failed")
     }
 
     let processing = BGProcessingTaskRequest(identifier: backgroundProcessingIdentifier)
@@ -255,7 +255,7 @@ private final class IosBackgroundGenerationHandler {
     do {
       try BGTaskScheduler.shared.submit(processing)
     } catch {
-      NSLog("Kelivo background processing schedule failed: \(error)")
+      NSLog("Kelivo background processing schedule failed")
     }
   }
 
@@ -309,7 +309,7 @@ private final class IosBackgroundGenerationHandler {
         }
         startLiveActivityRefreshTimer()
       } catch {
-        NSLog("Kelivo live activity start failed: \(error)")
+        NSLog("Kelivo live activity start failed")
         liveActivity = nil
       }
     }

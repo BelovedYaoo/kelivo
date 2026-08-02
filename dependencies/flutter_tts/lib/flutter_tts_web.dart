@@ -3,6 +3,7 @@ import 'dart:collection';
 import 'dart:js_interop';
 import 'dart:js_interop_unsafe';
 
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:flutter/services.dart';
 import 'package:flutter_web_plugins/flutter_web_plugins.dart';
 
@@ -45,8 +46,8 @@ class FlutterTtsPlugin {
       utterance = SpeechSynthesisUtterance();
       _listeners();
       supported = true;
-    } catch (e) {
-      print('Initialization of TTS failed. Functions are disabled. Error: $e');
+    } catch (_) {
+      debugPrint('[FlutterTts] web initialization failed');
     }
   }
 
@@ -96,7 +97,7 @@ class FlutterTtsPlugin {
         _speechCompleter = null;
       }
       t?.cancel();
-      print(event); // Log the entire event object to get more details
+      debugPrint('[FlutterTts] web speech event failed');
       channel.invokeMethod("speak.onError", event["error"]);
     }.toJS;
 

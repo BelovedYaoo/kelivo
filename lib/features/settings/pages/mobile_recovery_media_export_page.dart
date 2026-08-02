@@ -60,12 +60,11 @@ final class _MobileRecoveryMediaExportPageState
           errorCorrectLevel: QrErrorCorrectLevel.L,
         ),
       );
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
         '生成恢复介质二维码失败',
         name: 'Kelivo.MobileRecoveryMediaExport',
-        error: error.runtimeType,
-        stackTrace: stackTrace,
+        level: 1000,
       );
       // 文件导出仍是显式可见的恢复路径，二维码失败不能伪装成成功。
       _qrImage = null;
@@ -252,12 +251,11 @@ final class _MobileRecoveryMediaExportPageState
     late final bool saved;
     try {
       saved = await widget.fileSaver(widget.encryptedMedia);
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
         '保存恢复介质文件失败',
         name: 'Kelivo.MobileRecoveryMediaExport',
-        error: error.runtimeType,
-        stackTrace: stackTrace,
+        level: 1000,
       );
       saved = false;
     }

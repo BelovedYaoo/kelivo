@@ -38,18 +38,15 @@ class McpToolService extends ChangeNotifier {
     Map<String, dynamic> arguments = const {},
   }) async {
     final selected = chat.getConversationMcpServers(conversationId).toSet();
-    // debugPrint('[MCP/Call/Select] convo=$conversationId tool=$toolName selectedServers=${selected.join(',')}');
     if (selected.isEmpty) return null;
 
     // Find a server that has this tool enabled
     final connected = mcpProvider.connectedServers
         .where((s) => selected.contains(s.id))
         .toList();
-    // debugPrint('[MCP/Call/Select] connectedAndSelected=${connected.map((s)=>s.id).join(',')}');
     for (final s in connected) {
       final has = s.tools.any((t) => t.enabled && t.name == toolName);
       if (has) {
-        // debugPrint('[MCP/Call/Select] using server=${s.id} name=${s.name} transport=${s.transport.name}');
         return await mcpProvider.callTool(s.id, toolName, arguments);
       }
     }
@@ -175,14 +172,12 @@ class McpToolService extends ChangeNotifier {
         ? assistants.getById(assistantId)
         : assistants.currentAssistant;
     final selected = (a?.mcpServerIds ?? const <String>[]).toSet();
-    // debugPrint('[MCP/Call/Select] assistant=${assistantId ?? a?.id ?? '(current)'} tool=$toolName selectedServers=${selected.join(',')}');
     if (selected.isEmpty) return '';
     for (final s in mcpProvider.connectedServers.where(
       (s) => selected.contains(s.id),
     )) {
       final has = s.tools.any((t) => t.enabled && t.name == toolName);
       if (has) {
-        // debugPrint('[MCP/Call/Select] using server=${s.id} name=${s.name} transport=${s.transport.name}');
         final res = await mcpProvider.callTool(s.id, toolName, arguments);
         if (res == null) {
           final errMsg = mcpProvider.errorFor(s.id) ?? 'Unknown error';

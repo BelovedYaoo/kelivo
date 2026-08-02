@@ -184,11 +184,11 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
     if #available(iOS 13.0, *) {
       self.synthesizer.write(utterance) { (buffer: AVAudioBuffer) in
         guard let pcmBuffer = buffer as? AVAudioPCMBuffer else {
-            NSLog("unknow buffer type: \(buffer)")
+            NSLog("FlutterTts encountered an unsupported audio buffer")
             failed = true
             return
         }
-        print(pcmBuffer.format)
+        NSLog("FlutterTts received an audio buffer")
         if pcmBuffer.frameLength == 0 {
             // finished
         } else {
@@ -199,7 +199,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
           } else {
               fileURL = FileManager.default.urls(for: .documentDirectory, in: .userDomainMask).first!.appendingPathComponent(fileName)
           }
-          NSLog("Saving utterance to file: \(fileURL.absoluteString)")
+          NSLog("FlutterTts started saving an utterance")
 
         if output == nil {
           do {
@@ -213,8 +213,8 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
             } else {
               output = try AVAudioFile(forWriting: fileURL, settings: pcmBuffer.format.settings, commonFormat: .pcmFormatFloat32, interleaved: false)
             }
-          } catch {
-              NSLog("Error creating AVAudioFile: \(error.localizedDescription)")
+            } catch {
+              NSLog("FlutterTts failed to create an audio file")
               failed = true
               return
           }
@@ -303,7 +303,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
         }
       result(1)
     } catch {
-      print(error)
+      NSLog("FlutterTts audio category update failed")
       result(0)
     }
   }
@@ -435,7 +435,7 @@ public class SwiftFlutterTtsPlugin: NSObject, FlutterPlugin, AVSpeechSynthesizer
       do {
         try audioSession.setActive(false, options: .notifyOthersOnDeactivation)
       } catch {
-        print(error)
+        NSLog("FlutterTts audio session deactivation failed")
       }
     }
     if self.awaitSpeakCompletion && self.speakResult != nil {

@@ -201,8 +201,7 @@ class ChatActions {
     Object error,
     StackTrace stackTrace,
   ) {
-    debugPrint('[IosBackgroundGeneration] $operation failed: $error');
-    debugPrint('$stackTrace');
+    debugPrint('[IosBackgroundGeneration] operation failed');
   }
 
   Future<void> _startIosBackgroundGeneration(
@@ -1389,8 +1388,7 @@ class ChatActions {
             checkpointSeq: checkpoint.checkpointSeq,
           ),
           onError: (error, stackTrace) {
-            debugPrint('[StreamingCheckpoint] write failed: $error');
-            debugPrint('$stackTrace');
+            debugPrint('[StreamingCheckpoint] write failed');
           },
         );
 

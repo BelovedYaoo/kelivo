@@ -2,12 +2,10 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:kelivo_durable_preferences/kelivo_durable_preferences.dart';
-import 'package:path/path.dart' as p;
+import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:shared_preferences_platform_interface/shared_preferences_platform_interface.dart';
 import 'package:shared_preferences_platform_interface/types.dart';
-
-import '../backup/restore_durability.dart';
 
 abstract interface class DurableSharedPreferencesStore {
   Future<Set<String>> readRawKeys();
@@ -33,9 +31,8 @@ final class PlatformDurableSharedPreferencesStore
     if (platform is KelivoDurablePreferences || Platform.isAndroid) {
       removalProof = const _NativeDurableMutationReceiptRemovalProof();
     } else if (Platform.isWindows || Platform.isLinux) {
-      removalProof = JsonFileSharedPreferencesRemovalProof(
+      removalProof = ManagedRootSharedPreferencesRemovalProof(
         applicationSupportDirectory: getApplicationSupportDirectory,
-        durability: RestorePlatformDurability(),
       );
     } else {
       removalProof = const _UnsupportedSharedPreferencesRemovalProof();
@@ -59,18 +56,53 @@ final class PlatformDurableSharedPreferencesStore
 
   @override
   Future<void> remove(String rawKey) async {
-    if (!await _platform.remove(rawKey)) {
-      throw StateError('durable_shared_preferences_remove_rejected');
+    final session = await _removalProof.beginRemoval(rawKey);
+    (Object, StackTrace)? operationFailure;
+    try {
+      if (!await _platform.remove(rawKey)) {
+        throw StateError('durable_shared_preferences_remove_rejected');
+      }
+      await session.confirmRemoval();
+      if ((await readRawKeys()).contains(rawKey)) {
+        throw StateError('durable_shared_preferences_remove_incomplete');
+      }
+    } catch (error, stackTrace) {
+      operationFailure = (error, stackTrace);
     }
-    await _removalProof.confirmRemoval(rawKey);
-    if ((await readRawKeys()).contains(rawKey)) {
-      throw StateError('durable_shared_preferences_remove_incomplete');
+
+    (Object, StackTrace)? closeFailure;
+    try {
+      await session.close();
+    } catch (error, stackTrace) {
+      closeFailure = (error, stackTrace);
+    }
+
+    if (operationFailure != null && closeFailure != null) {
+      Error.throwWithStackTrace(
+        _DurableSharedPreferencesRemovalFailure(
+          operationFailure: operationFailure.$1,
+          closeFailure: closeFailure.$1,
+        ),
+        operationFailure.$2,
+      );
+    }
+    if (operationFailure != null) {
+      Error.throwWithStackTrace(operationFailure.$1, operationFailure.$2);
+    }
+    if (closeFailure != null) {
+      Error.throwWithStackTrace(closeFailure.$1, closeFailure.$2);
     }
   }
 }
 
 abstract interface class DurableSharedPreferencesRemovalProof {
-  Future<void> confirmRemoval(String rawKey);
+  Future<DurableSharedPreferencesRemovalSession> beginRemoval(String rawKey);
+}
+
+abstract interface class DurableSharedPreferencesRemovalSession {
+  Future<void> confirmRemoval();
+
+  Future<void> close();
 }
 
 final class _NativeDurableMutationReceiptRemovalProof
@@ -78,58 +110,67 @@ final class _NativeDurableMutationReceiptRemovalProof
   const _NativeDurableMutationReceiptRemovalProof();
 
   @override
-  Future<void> confirmRemoval(String rawKey) async {}
+  Future<DurableSharedPreferencesRemovalSession> beginRemoval(
+    String rawKey,
+  ) async => const _AndroidCommitReceiptRemovalSession();
 }
 
-final class JsonFileSharedPreferencesRemovalProof
-    implements DurableSharedPreferencesRemovalProof {
-  JsonFileSharedPreferencesRemovalProof({
-    required Future<Directory> Function() applicationSupportDirectory,
-    required RestoreDurability durability,
-  }) : this._(applicationSupportDirectory, durability);
-
-  JsonFileSharedPreferencesRemovalProof._(
-    this._applicationSupportDirectory,
-    this._durability,
-  );
-
-  static const _preferencesFileName = 'shared_preferences.json';
-
-  final Future<Directory> Function() _applicationSupportDirectory;
-  final RestoreDurability _durability;
+final class _AndroidCommitReceiptRemovalSession
+    implements DurableSharedPreferencesRemovalSession {
+  const _AndroidCommitReceiptRemovalSession();
 
   @override
-  Future<void> confirmRemoval(String rawKey) async {
-    final directory = await _applicationSupportDirectory();
-    if (await FileSystemEntity.type(directory.path, followLinks: false) !=
-        FileSystemEntityType.directory) {
-      throw StateError('durable_shared_preferences_directory_unsafe');
-    }
-    final file = File(p.join(directory.path, _preferencesFileName));
-    final type = await FileSystemEntity.type(file.path, followLinks: false);
-    if (type == FileSystemEntityType.notFound) {
-      await _durability.syncDirectory(directory, fullBarrier: true);
-      return;
-    }
-    if (type != FileSystemEntityType.file) {
-      throw StateError('durable_shared_preferences_file_unsafe');
-    }
+  Future<void> confirmRemoval() async {}
 
-    await _durability.syncFile(file, fullBarrier: true);
-    await _durability.syncDirectory(directory, fullBarrier: true);
-    final bytes = await file.readAsBytes();
-    if (await FileSystemEntity.type(file.path, followLinks: false) !=
-        FileSystemEntityType.file) {
-      throw StateError('durable_shared_preferences_file_changed');
+  @override
+  Future<void> close() async {}
+}
+
+final class ManagedRootSharedPreferencesRemovalProof
+    implements DurableSharedPreferencesRemovalProof {
+  const ManagedRootSharedPreferencesRemovalProof({
+    required Future<Directory> Function() applicationSupportDirectory,
+    KelivoSecureCore secureCore = const KelivoSecureCore(),
+  }) : this._(applicationSupportDirectory, secureCore);
+
+  const ManagedRootSharedPreferencesRemovalProof._(
+    this._applicationSupportDirectory,
+    this._secureCore,
+  );
+
+  final Future<Directory> Function() _applicationSupportDirectory;
+  final KelivoSecureCore _secureCore;
+
+  static const _rawKeyMaxSize = 1024;
+
+  @override
+  Future<DurableSharedPreferencesRemovalSession> beginRemoval(
+    String rawKey,
+  ) async {
+    // 必须在平台删除前匹配原生 ABI 边界，否则会留下无法再次证明的半完成状态。
+    if (rawKey.isEmpty ||
+        rawKey.contains('\u0000') ||
+        utf8.encode(rawKey).length > _rawKeyMaxSize) {
+      throw StateError('durable_shared_preferences_key_unsafe');
     }
-    final decoded = jsonDecode(utf8.decode(bytes, allowMalformed: false));
-    if (decoded is! Map<String, Object?>) {
-      throw const FormatException('durable_shared_preferences_file_json');
-    }
-    if (decoded.containsKey(rawKey)) {
-      throw StateError('durable_shared_preferences_remove_incomplete');
-    }
+    final directory = await _applicationSupportDirectory();
+    final root = await _secureCore.openSharedPreferencesRoot(directory.path);
+    return _ManagedRootSharedPreferencesRemovalSession(root, rawKey);
   }
+}
+
+final class _ManagedRootSharedPreferencesRemovalSession
+    implements DurableSharedPreferencesRemovalSession {
+  _ManagedRootSharedPreferencesRemovalSession(this._root, this._rawKey);
+
+  final KelivoSharedPreferencesRootSession _root;
+  final String _rawKey;
+
+  @override
+  Future<void> confirmRemoval() => _root.confirmRemoval(rawKey: _rawKey);
+
+  @override
+  Future<void> close() => _root.close();
 }
 
 final class _UnsupportedSharedPreferencesRemovalProof
@@ -137,7 +178,20 @@ final class _UnsupportedSharedPreferencesRemovalProof
   const _UnsupportedSharedPreferencesRemovalProof();
 
   @override
-  Future<void> confirmRemoval(String rawKey) {
+  Future<DurableSharedPreferencesRemovalSession> beginRemoval(String rawKey) {
     throw UnsupportedError('durable_shared_preferences_platform');
   }
+}
+
+final class _DurableSharedPreferencesRemovalFailure implements Exception {
+  const _DurableSharedPreferencesRemovalFailure({
+    required this.operationFailure,
+    required this.closeFailure,
+  });
+
+  final Object operationFailure;
+  final Object closeFailure;
+
+  @override
+  String toString() => 'durable_shared_preferences_operation_and_close_failed';
 }

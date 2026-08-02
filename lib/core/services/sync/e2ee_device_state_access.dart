@@ -82,12 +82,10 @@ final class E2eeDeviceStateAccess {
       if (key != null) {
         try {
           await _secureCore.close(key);
-        } catch (cleanupError, cleanupStackTrace) {
+        } catch (_) {
           developer.log(
             'E2EE 设备状态打开失败后的密钥槽清理失败',
             name: 'Kelivo.E2eeDeviceStateAccess',
-            error: cleanupError,
-            stackTrace: cleanupStackTrace,
           );
         }
       }

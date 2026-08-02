@@ -199,7 +199,6 @@
   "storageSpaceSubCompletedRestoreRuns": "已完成的恢复快照",
   "storageSpaceCategoryAssistantData": "助手",
   "storageSpaceCategoryCache": "缓存",
-  "storageSpaceCategoryLogs": "日志",
   "storageSpaceCategoryOther": "应用",
   "storageSpaceFilesCount": "{count} 个文件",
   "@storageSpaceFilesCount": {
@@ -224,9 +223,6 @@
   "storageSpaceSubCacheAvatars": "头像缓存",
   "storageSpaceSubCacheOther": "其他缓存",
   "storageSpaceSubCacheSystem": "系统缓存",
-  "storageSpaceSubLogsFlutter": "运行日志",
-  "storageSpaceSubLogsRequests": "网络日志",
-  "storageSpaceSubLogsOther": "其他日志",
   "storageSpaceClearConfirmTitle": "确认清理",
   "storageSpaceClearConfirmMessage": "确定要清理 {targetName} 吗？",
   "@storageSpaceClearConfirmMessage": {
@@ -255,10 +251,8 @@
   },
   "storageSpaceClearAvatarCacheButton": "清理头像缓存",
   "storageSpaceClearCacheButton": "清理缓存",
-  "storageSpaceClearLogsButton": "清理日志",
   "storageSpaceClearLegacyChatDataButton": "清理旧聊天记录",
   "storageSpaceClearLegacyChatDataConfirmMessage": "确定清理保留的旧聊天文件吗？当前 SQLite 聊天记录不会受到影响。",
-  "storageSpaceViewLogsButton": "查看日志",
   "storageSpaceDeleteConfirmTitle": "确认删除",
   "storageSpaceDeleteUploadsConfirmMessage": "删除 {count} 个项目？删除后聊天记录中的附件可能无法打开。",
   "@storageSpaceDeleteUploadsConfirmMessage": {
@@ -299,7 +293,6 @@
   "settingsPageAbout": "关于",
   "settingsPageStatistics": "统计",
   "settingsPageDocs": "使用文档",
-  "settingsPageLogs": "日志",
   "settingsPageSponsor": "赞助",
   "settingsPageShare": "分享",
   "statsPageTitle": "统计",
@@ -1721,7 +1714,6 @@
   "searchSettingsSheetOpenSearchServicesTooltip": "打开搜索服务设置",
   "searchSettingsSheetNoServicesMessage": "暂无可用服务，请先在\"搜索服务\"中添加",
   "aboutPageEasterEggMessage": "\n（好吧现在还没彩蛋）",
-  "aboutPageEasterEggButton": "好的",
   "aboutPageAppName": "Kelivo",
   "aboutPageAppDescription": "开源AI 助手",
   "aboutPageNoQQGroup": "暂无QQ群",
@@ -2274,62 +2266,6 @@
   },
   "providerDetailPageDeleteAllModelsTooltip": "删除全部模型",
   "providerDetailPageDeleteAllModelsWarning": "此操作不可撤回",
-  "requestLogSettingTitle": "请求日志打印",
-  "requestLogSettingSubtitle": "开启后会将请求/响应详情写入 logs/logs.txt",
-  "flutterLogSettingTitle": "应用日志打印",
-  "flutterLogSettingSubtitle": "开启后会将 Flutter 错误与 print 输出写入 logs/flutter_logs.txt",
-  "logViewerTitle": "请求日志",
-  "logViewerEmpty": "暂无日志",
-  "logViewerCurrentLog": "当前日志",
-  "logViewerExport": "导出",
-  "logViewerOpenFolder": "打开日志目录",
-  "logViewerRequestsCount": "{count} 条请求",
-  "@logViewerRequestsCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logViewerFieldId": "ID",
-  "logViewerFieldMethod": "方法",
-  "logViewerFieldStatus": "状态",
-  "logViewerFieldStarted": "开始",
-  "logViewerFieldEnded": "结束",
-  "logViewerFieldDuration": "耗时",
-  "logViewerSectionSummary": "概览",
-  "logViewerSectionParameters": "参数",
-  "logViewerSectionRequestHeaders": "请求头",
-  "logViewerSectionRequestBody": "请求体",
-  "logViewerSectionResponseHeaders": "响应头",
-  "logViewerSectionResponseBody": "响应体",
-  "logViewerSectionWarnings": "警告",
-  "logViewerErrorTitle": "错误",
-  "logViewerMoreCount": "+{count} 条更多",
-  "@logViewerMoreCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logSettingsTitle": "日志设置",
-  "logSettingsSaveOutput": "保存响应输出",
-  "logSettingsSaveOutputSubtitle": "记录响应体内容（可能占用较多存储空间）",
-  "logSettingsAutoDelete": "自动删除",
-  "logSettingsAutoDeleteSubtitle": "删除超过指定天数的日志",
-  "logSettingsAutoDeleteDisabled": "不启用",
-  "logSettingsAutoDeleteDays": "{count} 天",
-  "@logSettingsAutoDeleteDays": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logSettingsMaxSize": "日志大小上限",
-  "logSettingsMaxSizeSubtitle": "超出后将删除最早的日志",
-  "logSettingsMaxSizeUnlimited": "不限制",
   "assistantEditManageSummariesTitle": "管理摘要",
   "assistantEditSummaryEmpty": "暂无摘要",
   "assistantEditSummaryDialogTitle": "编辑摘要",

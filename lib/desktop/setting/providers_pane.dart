@@ -4727,14 +4727,10 @@ class _DesktopProviderDetailPaneState
           );
         }
       }
-    } catch (e, st) {
-      FlutterLogger.log(
-        '[DesktopProviders] clear assistant model selections failed: $e\n$st',
-        tag: 'Provider',
-      );
+    } catch (_) {
       assert(() {
         debugPrint(
-          '[DesktopProviders] clear assistant model selections failed: $e',
+          '[DesktopProviders] clear assistant model selections failed',
         );
         return true;
       }());

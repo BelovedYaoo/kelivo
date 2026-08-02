@@ -328,7 +328,7 @@ class StreamableHttpClientTransport implements ClientTransport {
         // to wait for the whole tool call to finish.
         await _handleStreamedSseResponse(response, requestId);
       } else {
-        _logger.warning('Unexpected content type: $contentType');
+        _logger.warn('Unexpected content type: $contentType');
         // Try to parse as JSON anyway - read full body
         final responseBody = await response.stream.bytesToString();
         if (responseBody.isNotEmpty) {
@@ -538,10 +538,10 @@ class StreamableHttpClientTransport implements ClientTransport {
       if (response.statusCode == 405) {
         _logger.debug('Server does not allow session termination');
       } else if (response.statusCode != 200 && response.statusCode != 204) {
-        _logger.warning('Session termination failed: ${response.statusCode}');
+        _logger.warn('Session termination failed: ${response.statusCode}');
       }
     } catch (e) {
-      _logger.warning('Session termination failed: $e');
+      _logger.warn('Session termination failed: $e');
     }
   }
 

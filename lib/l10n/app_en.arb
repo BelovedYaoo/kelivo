@@ -199,7 +199,6 @@
   "storageSpaceSubCompletedRestoreRuns": "Completed restore snapshots",
   "storageSpaceCategoryAssistantData": "Assistants",
   "storageSpaceCategoryCache": "Cache",
-  "storageSpaceCategoryLogs": "Logs",
   "storageSpaceCategoryOther": "App",
   "storageSpaceFilesCount": "{count} files",
   "@storageSpaceFilesCount": {
@@ -224,9 +223,6 @@
   "storageSpaceSubCacheAvatars": "Avatar cache",
   "storageSpaceSubCacheOther": "Other cache",
   "storageSpaceSubCacheSystem": "System cache",
-  "storageSpaceSubLogsFlutter": "Flutter logs",
-  "storageSpaceSubLogsRequests": "Network logs",
-  "storageSpaceSubLogsOther": "Other logs",
   "storageSpaceClearConfirmTitle": "Confirm clear",
   "storageSpaceClearConfirmMessage": "Clear {targetName}?",
   "@storageSpaceClearConfirmMessage": {
@@ -255,10 +251,8 @@
   },
   "storageSpaceClearAvatarCacheButton": "Clear Avatar Cache",
   "storageSpaceClearCacheButton": "Clear Cache",
-  "storageSpaceClearLogsButton": "Clear Logs",
   "storageSpaceClearLegacyChatDataButton": "Clear Old Chat Records",
   "storageSpaceClearLegacyChatDataConfirmMessage": "Clear the retained old chat files? Your current SQLite chat records will remain available.",
-  "storageSpaceViewLogsButton": "View Logs",
   "storageSpaceDeleteConfirmTitle": "Confirm deletion",
   "storageSpaceDeleteUploadsConfirmMessage": "Delete {count} items? Attachments in chat history may become unavailable.",
   "@storageSpaceDeleteUploadsConfirmMessage": {
@@ -299,7 +293,6 @@
   "settingsPageAbout": "About",
   "settingsPageStatistics": "Statistics",
   "settingsPageDocs": "Docs",
-  "settingsPageLogs": "Logs",
   "settingsPageSponsor": "Sponsor",
   "settingsPageShare": "Share",
   "statsPageTitle": "Statistics",
@@ -1752,7 +1745,6 @@
   "searchSettingsSheetOpenSearchServicesTooltip": "Open search services",
   "searchSettingsSheetNoServicesMessage": "No services. Add from Search Services.",
   "aboutPageEasterEggMessage": "Thanks for exploring! \n (No egg yet)",
-  "aboutPageEasterEggButton": "Nice!",
   "aboutPageAppName": "Kelivo",
   "aboutPageAppDescription": "Open-source AI Assistant",
   "aboutPageNoQQGroup": "No QQ group yet",
@@ -2274,62 +2266,6 @@
   },
   "providerDetailPageDeleteAllModelsTooltip": "Delete all models",
   "providerDetailPageDeleteAllModelsWarning": "This action cannot be undone.",
-  "requestLogSettingTitle": "Request Logging",
-  "requestLogSettingSubtitle": "When enabled, request/response details are written to logs/logs.txt (rotated daily).",
-  "flutterLogSettingTitle": "Flutter Logging",
-  "flutterLogSettingSubtitle": "When enabled, Flutter errors and print output are written to logs/flutter_logs.txt (rotated daily).",
-  "logViewerTitle": "Request Logs",
-  "logViewerEmpty": "No logs yet",
-  "logViewerCurrentLog": "Current Log",
-  "logViewerExport": "Export",
-  "logViewerOpenFolder": "Open Logs Folder",
-  "logViewerRequestsCount": "{count} requests",
-  "@logViewerRequestsCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logViewerFieldId": "ID",
-  "logViewerFieldMethod": "Method",
-  "logViewerFieldStatus": "Status",
-  "logViewerFieldStarted": "Started",
-  "logViewerFieldEnded": "Ended",
-  "logViewerFieldDuration": "Duration",
-  "logViewerSectionSummary": "Summary",
-  "logViewerSectionParameters": "Parameters",
-  "logViewerSectionRequestHeaders": "Request Headers",
-  "logViewerSectionRequestBody": "Request Body",
-  "logViewerSectionResponseHeaders": "Response Headers",
-  "logViewerSectionResponseBody": "Response Body",
-  "logViewerSectionWarnings": "Warnings",
-  "logViewerErrorTitle": "Error",
-  "logViewerMoreCount": "+{count} more",
-  "@logViewerMoreCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logSettingsTitle": "Log Settings",
-  "logSettingsSaveOutput": "Save Response Output",
-  "logSettingsSaveOutputSubtitle": "Log response body content (may use significant storage)",
-  "logSettingsAutoDelete": "Auto-delete",
-  "logSettingsAutoDeleteSubtitle": "Delete logs older than specified days",
-  "logSettingsAutoDeleteDisabled": "Disabled",
-  "logSettingsAutoDeleteDays": "{count} days",
-  "@logSettingsAutoDeleteDays": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logSettingsMaxSize": "Max Log Size",
-  "logSettingsMaxSizeSubtitle": "Oldest logs deleted when exceeded",
-  "logSettingsMaxSizeUnlimited": "Unlimited",
   "assistantEditManageSummariesTitle": "Manage Summaries",
   "assistantEditSummaryEmpty": "No summaries yet",
   "assistantEditSummaryDialogTitle": "Edit Summary",

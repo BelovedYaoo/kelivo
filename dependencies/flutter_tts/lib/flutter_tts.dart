@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:io' show Platform;
 
 import 'package:flutter/services.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show debugPrint, kIsWeb;
 
 typedef ErrorHandler = void Function(dynamic message);
 typedef ProgressHandler = void Function(
@@ -453,9 +453,8 @@ class FlutterTts {
             options.map((o) => optionsToString[o]).toList(),
         iosAudioModeKey: modeToString[mode],
       });
-    } on PlatformException catch (e) {
-      print(
-          'setIosAudioCategory error, category: $category, mode: $mode, error: ${e.message}');
+    } on PlatformException {
+      debugPrint('[FlutterTts] iOS audio category update failed');
     }
   }
 
@@ -656,7 +655,7 @@ class FlutterTts {
         }
         break;
       default:
-        print('Unknown method ${call.method}');
+        debugPrint('[FlutterTts] unknown platform callback ignored');
     }
   }
 

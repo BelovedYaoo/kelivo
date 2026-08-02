@@ -7,7 +7,6 @@ import '../../../icons/lucide_adapter.dart';
 import 'package:provider/provider.dart';
 import '../../../core/services/chat/chat_service.dart';
 import '../../../core/services/api/chat_api_service.dart';
-import '../../../core/services/logging/flutter_logger.dart';
 import '../../../core/providers/settings_provider.dart';
 import '../../../core/models/chat_item.dart';
 import '../../../core/providers/user_provider.dart';
@@ -683,11 +682,11 @@ class _SideDrawerState extends State<SideDrawer> with TickerProviderStateMixin {
       if (title.isNotEmpty) {
         await chatService.renameConversation(conversationId, title);
       }
-    } catch (e) {
-      FlutterLogger.log(
-        '[SideDrawer] Regenerate title failed: $e',
-        tag: 'SideDrawer',
-      );
+    } catch (_) {
+      assert(() {
+        debugPrint('[SideDrawer] title regeneration failed');
+        return true;
+      }());
     }
   }
 
@@ -2768,7 +2767,6 @@ class _SideDrawerState extends State<SideDrawer> with TickerProviderStateMixin {
                     bool applied = false;
                     for (int i = 0; i < maxTries; i++) {
                       final qq = randomQQ();
-                      // debugPrint(qq);
                       final url =
                           'https://q2.qlogo.cn/headimg_dl?dst_uin=$qq&spec=100';
                       try {

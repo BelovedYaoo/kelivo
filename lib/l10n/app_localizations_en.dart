@@ -555,9 +555,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get storageSpaceCategoryCache => 'Cache';
 
   @override
-  String get storageSpaceCategoryLogs => 'Logs';
-
-  @override
   String get storageSpaceCategoryOther => 'App';
 
   @override
@@ -614,15 +611,6 @@ class AppLocalizationsEn extends AppLocalizations {
   String get storageSpaceSubCacheSystem => 'System cache';
 
   @override
-  String get storageSpaceSubLogsFlutter => 'Flutter logs';
-
-  @override
-  String get storageSpaceSubLogsRequests => 'Network logs';
-
-  @override
-  String get storageSpaceSubLogsOther => 'Other logs';
-
-  @override
   String get storageSpaceClearConfirmTitle => 'Confirm clear';
 
   @override
@@ -650,17 +638,11 @@ class AppLocalizationsEn extends AppLocalizations {
   String get storageSpaceClearCacheButton => 'Clear Cache';
 
   @override
-  String get storageSpaceClearLogsButton => 'Clear Logs';
-
-  @override
   String get storageSpaceClearLegacyChatDataButton => 'Clear Old Chat Records';
 
   @override
   String get storageSpaceClearLegacyChatDataConfirmMessage =>
       'Clear the retained old chat files? Your current SQLite chat records will remain available.';
-
-  @override
-  String get storageSpaceViewLogsButton => 'View Logs';
 
   @override
   String get storageSpaceDeleteConfirmTitle => 'Confirm deletion';
@@ -705,9 +687,6 @@ class AppLocalizationsEn extends AppLocalizations {
 
   @override
   String get settingsPageDocs => 'Docs';
-
-  @override
-  String get settingsPageLogs => 'Logs';
 
   @override
   String get settingsPageSponsor => 'Sponsor';
@@ -4240,9 +4219,6 @@ class AppLocalizationsEn extends AppLocalizations {
       'Thanks for exploring! \n (No egg yet)';
 
   @override
-  String get aboutPageEasterEggButton => 'Nice!';
-
-  @override
   String get aboutPageAppName => 'Kelivo';
 
   @override
@@ -5575,121 +5551,6 @@ class AppLocalizationsEn extends AppLocalizations {
   @override
   String get providerDetailPageDeleteAllModelsWarning =>
       'This action cannot be undone.';
-
-  @override
-  String get requestLogSettingTitle => 'Request Logging';
-
-  @override
-  String get requestLogSettingSubtitle =>
-      'When enabled, request/response details are written to logs/logs.txt (rotated daily).';
-
-  @override
-  String get flutterLogSettingTitle => 'Flutter Logging';
-
-  @override
-  String get flutterLogSettingSubtitle =>
-      'When enabled, Flutter errors and print output are written to logs/flutter_logs.txt (rotated daily).';
-
-  @override
-  String get logViewerTitle => 'Request Logs';
-
-  @override
-  String get logViewerEmpty => 'No logs yet';
-
-  @override
-  String get logViewerCurrentLog => 'Current Log';
-
-  @override
-  String get logViewerExport => 'Export';
-
-  @override
-  String get logViewerOpenFolder => 'Open Logs Folder';
-
-  @override
-  String logViewerRequestsCount(int count) {
-    return '$count requests';
-  }
-
-  @override
-  String get logViewerFieldId => 'ID';
-
-  @override
-  String get logViewerFieldMethod => 'Method';
-
-  @override
-  String get logViewerFieldStatus => 'Status';
-
-  @override
-  String get logViewerFieldStarted => 'Started';
-
-  @override
-  String get logViewerFieldEnded => 'Ended';
-
-  @override
-  String get logViewerFieldDuration => 'Duration';
-
-  @override
-  String get logViewerSectionSummary => 'Summary';
-
-  @override
-  String get logViewerSectionParameters => 'Parameters';
-
-  @override
-  String get logViewerSectionRequestHeaders => 'Request Headers';
-
-  @override
-  String get logViewerSectionRequestBody => 'Request Body';
-
-  @override
-  String get logViewerSectionResponseHeaders => 'Response Headers';
-
-  @override
-  String get logViewerSectionResponseBody => 'Response Body';
-
-  @override
-  String get logViewerSectionWarnings => 'Warnings';
-
-  @override
-  String get logViewerErrorTitle => 'Error';
-
-  @override
-  String logViewerMoreCount(int count) {
-    return '+$count more';
-  }
-
-  @override
-  String get logSettingsTitle => 'Log Settings';
-
-  @override
-  String get logSettingsSaveOutput => 'Save Response Output';
-
-  @override
-  String get logSettingsSaveOutputSubtitle =>
-      'Log response body content (may use significant storage)';
-
-  @override
-  String get logSettingsAutoDelete => 'Auto-delete';
-
-  @override
-  String get logSettingsAutoDeleteSubtitle =>
-      'Delete logs older than specified days';
-
-  @override
-  String get logSettingsAutoDeleteDisabled => 'Disabled';
-
-  @override
-  String logSettingsAutoDeleteDays(int count) {
-    return '$count days';
-  }
-
-  @override
-  String get logSettingsMaxSize => 'Max Log Size';
-
-  @override
-  String get logSettingsMaxSizeSubtitle => 'Oldest logs deleted when exceeded';
-
-  @override
-  String get logSettingsMaxSizeUnlimited => 'Unlimited';
 
   @override
   String get assistantEditManageSummariesTitle => 'Manage Summaries';

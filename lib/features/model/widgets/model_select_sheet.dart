@@ -89,7 +89,6 @@ List<String> _buildDisplayProvidersOrder(
 // Static function for compute - must be top-level
 _ModelProcessingResult _processModelsInBackground(_ModelProcessingData data) {
   if (data.disableResolverPlatformLogging) {
-    ModelOverrideResolver.setPlatformLoggingEnabled(false);
     ModelOverrideResolver.setUnknownValueLoggingEnabled(false);
   }
   final providers = data.limitProviderKey == null

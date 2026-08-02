@@ -9,7 +9,6 @@ import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 import 'desktop/desktop_window_controller.dart';
 import 'desktop/desktop_tray_controller.dart';
-// import 'package:logging/logging.dart' as logging;
 // Theme is now managed in SettingsProvider
 import 'theme/theme_factory.dart';
 import 'theme/palettes.dart';
@@ -43,6 +42,7 @@ import 'core/services/sync/e2ee_device_pairing_membership_commit.dart';
 import 'core/services/sync/e2ee_mobile_background_sync.dart';
 import 'core/services/sync/sync_write_executor.dart';
 import 'core/services/storage/durable_shared_preferences_eraser.dart';
+import 'core/services/static_unhandled_error_boundary.dart';
 import 'core/services/workspace/account_workspace_runtime.dart';
 import 'core/services/workspace/device_state_blob_store.dart';
 import 'core/services/workspace/installation_operation_lease.dart';
@@ -54,7 +54,6 @@ import 'core/services/backup/restore_startup_gate.dart';
 import 'core/services/backup/restore_receipt.dart';
 import 'core/services/backup/plaintext_remote_backup_retirement.dart';
 import 'core/services/mcp/mcp_tool_service.dart';
-import 'core/services/logging/flutter_logger.dart';
 import 'features/home/services/ask_user_interaction_service.dart';
 import 'features/home/services/tool_approval_service.dart';
 import 'utils/platform_utils.dart';
@@ -77,7 +76,6 @@ import 'dart:io'
         stderr; // kept for global override usage inside provider
 import 'core/services/android_background.dart';
 import 'core/services/notification_service.dart';
-import 'package:shared_preferences/shared_preferences.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:kelivo_durable_preferences/kelivo_durable_preferences.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
@@ -143,22 +141,28 @@ final class AssistantDefaultsBootstrap {
 }
 
 Future<void> main() async {
-  await runZoned(
+  const staticUnhandledErrorBoundary = StaticUnhandledErrorBoundary();
+  await runZonedGuarded(
     () async {
       WidgetsFlutterBinding.ensureInitialized();
+      staticUnhandledErrorBoundary.install();
       late final E2eeMobileBackgroundSyncScheduler
       mobileBackgroundSyncScheduler;
       const secureCore = KelivoSecureCore();
       late final Directory installationRoot;
       late final KelivoCoreCapabilities secureCoreCapabilities;
+      late final KelivoInstallationRootSession installationRootSession;
       try {
         await KelivoDurablePreferences.registerForCurrentPlatform();
         mobileBackgroundSyncScheduler =
             E2eeMobileBackgroundSyncScheduler.forCurrentPlatform();
         installationRoot = await AppDirectories.getInstallationRootDirectory();
         secureCoreCapabilities = await secureCore.getCapabilities();
-      } catch (error, stackTrace) {
-        stderr.writeln('[InstallationBootstrap] $error\n$stackTrace');
+        installationRootSession = await secureCore.openInstallationRoot(
+          installationRoot.path,
+        );
+      } catch (error) {
+        stderr.writeln('[InstallationBootstrap] failed');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -169,12 +173,11 @@ Future<void> main() async {
       }
       final localCryptographicWipe = InstallationLocalCryptographicWipe(
         installationRoot: installationRoot,
-        isSupported: secureCoreCapabilities.supportsInstallationRootWipe,
+        isSupported: secureCoreCapabilities.supportsManagedRootRetirement,
         applicationCacheDirectory: getApplicationCacheDirectory,
         deleteAllSecureSlots: secureCore.deleteAllSlots,
-        wipeInstallationRoot: secureCore.wipeInstallationRoot,
+        wipeInstallationRoot: installationRootSession.wipeInstallationRoot,
         clearAllPreferences: _clearAllPreferencesForLocalWipe,
-        shutdownLogging: FlutterLogger.shutdownForLocalCryptographicWipe,
       );
       final installationOperationLease = InstallationOperationLease(
         installationRoot: installationRoot,
@@ -198,8 +201,8 @@ Future<void> main() async {
             runApp(const _RestoreColdRestartApp());
             return;
         }
-      } catch (error, stackTrace) {
-        stderr.writeln('[LocalCryptographicWipe] $error\n$stackTrace');
+      } catch (_) {
+        stderr.writeln('[LocalCryptographicWipe] failed');
         await _initRestoreFailureWindow();
         runApp(
           _LocalCryptographicWipeFailureApp(
@@ -216,8 +219,8 @@ Future<void> main() async {
         workspaceRuntime = await AccountWorkspaceRuntime.bootstrap(
           installationRoot: installationRoot,
         );
-      } catch (error, stackTrace) {
-        stderr.writeln('[AccountWorkspace] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[AccountWorkspace] failed');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -227,17 +230,26 @@ Future<void> main() async {
         return;
       }
       try {
-        await PlaintextRemoteBackupRetirement.retireCurrentInstallation(
+        await PlaintextPersistenceRetirement.retireCurrentInstallation(
           workspaceRuntime: workspaceRuntime,
+          retirePersistentLogs: installationRootSession.retirePersistentLogs,
         );
-      } catch (error, stackTrace) {
-        stderr.writeln('[PlaintextRemoteBackupRetirement] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[PlaintextPersistenceRetirement] failed');
         try {
           await workspaceRuntime.close();
-        } catch (closeError, closeStackTrace) {
-          stderr.writeln(
-            '[AccountWorkspaceClose] $closeError\n$closeStackTrace',
-          );
+        } catch (_) {
+          stderr.writeln('[AccountWorkspaceClose] failed');
+        }
+        try {
+          await installationRootSession.close();
+        } catch (_) {
+          stderr.writeln('[InstallationRootClose] failed');
+        }
+        try {
+          await installationBusinessLease.close();
+        } catch (_) {
+          stderr.writeln('[InstallationBusinessLeaseClose] failed');
         }
         await _initRestoreFailureWindow();
         runApp(
@@ -247,7 +259,6 @@ Future<void> main() async {
         );
         return;
       }
-      FlutterLogger.installGlobalHandlers();
       final appDataDirectory = workspaceRuntime.current.dataDirectory;
       final databaseCipher = SqlCipherDatabaseKey.forWorkspace(
         workspaceRuntime.current.workspaceKey,
@@ -260,7 +271,6 @@ Future<void> main() async {
         final businessLease = await RestoreBusinessLease.acquire(
           appDataDirectory: appDataDirectory,
         );
-        await workspaceRuntime.discardPlaintextLocalState();
         restoreOutcome =
             await RestoreStartupGate.recoverAndRequireBusinessReady(
               appDataDirectory: appDataDirectory,
@@ -271,8 +281,8 @@ Future<void> main() async {
         await _initRestoreFailureWindow();
         runApp(const _RestoreColdRestartApp());
         return;
-      } catch (error, stackTrace) {
-        stderr.writeln('[RestoreStartupGate] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[RestoreStartupGate] failed');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -281,11 +291,6 @@ Future<void> main() async {
         );
         return;
       }
-      try {
-        final prefs = await SharedPreferences.getInstance();
-        final enabled = prefs.getBool('flutter_log_enabled_v1') ?? false;
-        await FlutterLogger.setEnabled(enabled);
-      } catch (_) {}
       // Trim Flutter global image cache to reduce memory pressure from large images
       try {
         PaintingBinding.instance.imageCache.maximumSize = 200;
@@ -295,18 +300,14 @@ Future<void> main() async {
       // Desktop (Windows) window setup: hide native title bar for custom Flutter bar
       await _initDesktopWindow();
       // Avoid preloading all system fonts at launch (huge memory on desktop)
-      // Debug logging and global error handlers were enabled previously for diagnosis.
-      // They are commented out now per request to reduce log noise.
-      // FlutterError.onError = (FlutterErrorDetails details) { ... };
-      // WidgetsBinding.instance.platformDispatcher.onError = (Object error, StackTrace stack) { ... };
-      // logging.Logger.root.level = logging.Level.ALL;
-      // logging.Logger.root.onRecord.listen((rec) { ... });
       // Cache current Documents directory to fix sandboxed absolute paths on iOS
       await SandboxPathResolver.init();
       try {
         final installationReceipt = await DatabaseInstallationGate.ensureReady(
           appDataDirectory: appDataDirectory,
           cipher: databaseCipher,
+          retireAttachmentStaging:
+              installationRootSession.retireAttachmentStaging,
           allowDatabaseIdentityChange:
               restoreOutcome?.selectedComponents.contains(
                 RestoreComponent.database,
@@ -330,13 +331,13 @@ Future<void> main() async {
               atUtc: DateTime.now().toUtc(),
             );
           }
-        } catch (error) {
+        } catch (_) {
           // 本地推出证据仅用于支持和退役元数据。数据库准入结果仍是权威；
           // 台账失败只会禁用旧数据清理，不会阻塞用户。
-          stderr.writeln('[DatabaseV2Rollout] $error');
+          stderr.writeln('[DatabaseV2Rollout] failed');
         }
-      } catch (error, stackTrace) {
-        stderr.writeln('[DatabaseAdmission] $error\n$stackTrace');
+      } catch (error) {
+        stderr.writeln('[DatabaseAdmission] failed');
         await _initRestoreFailureWindow();
         runApp(
           _RestoreFailureApp(
@@ -351,7 +352,6 @@ Future<void> main() async {
         workspaceRuntime: workspaceRuntime,
         databaseGateway: databaseGateway,
       );
-      // Start app (Flutter log capture is toggleable and off by default)
       runApp(
         MyApp(
           workspaceRuntime: workspaceRuntime,
@@ -365,11 +365,10 @@ Future<void> main() async {
         ),
       );
     },
+    staticUnhandledErrorBoundary.handleZoneError,
     zoneSpecification: ZoneSpecification(
-      print: (self, parent, zone, line) {
-        FlutterLogger.logPrint(line);
-        parent.print(zone, line);
-      },
+      // 第三方组件的自由文本无法证明已脱敏，生产 Zone 不向系统日志转发。
+      print: (self, parent, zone, line) {},
     ),
   );
 }
@@ -427,8 +426,8 @@ Future<void> _initRestoreFailureWindow() async {
         await windowManager.focus();
       },
     );
-  } catch (error) {
-    stderr.writeln('[RestoreFailureWindow] $error');
+  } catch (_) {
+    stderr.writeln('[RestoreFailureWindow] failed');
   }
 }
 
@@ -736,16 +735,6 @@ class MyApp extends StatelessWidget {
           }
           return DynamicColorBuilder(
             builder: (lightDynamic, darkDynamic) {
-              // if (lightDynamic != null) {
-              //   debugPrint('[DynamicColor] Light dynamic detected. primary=${lightDynamic.primary.value.toRadixString(16)} surface=${lightDynamic.surface.value.toRadixString(16)}');
-              // } else {
-              //   debugPrint('[DynamicColor] Light dynamic not available');
-              // }
-              // if (darkDynamic != null) {
-              //   debugPrint('[DynamicColor] Dark dynamic detected. primary=${darkDynamic.primary.value.toRadixString(16)} surface=${darkDynamic.surface.value.toRadixString(16)}');
-              // } else {
-              //   debugPrint('[DynamicColor] Dark dynamic not available');
-              // }
               final isAndroid =
                   Theme.of(context).platform == TargetPlatform.android;
               // Update dynamic color capability for settings UI (avoid notify during build)
@@ -873,9 +862,6 @@ class MyApp extends StatelessWidget {
 
               final themedLight = applyAppFont(light);
               final themedDark = applyAppFont(dark);
-              // Log top-level colors likely used by widgets (card/bg/shadow approximations)
-              // debugPrint('[Theme/App] Light scaffoldBg=${light.colorScheme.surface.value.toRadixString(16)} card≈${light.colorScheme.surface.value.toRadixString(16)} shadow=${light.colorScheme.shadow.value.toRadixString(16)}');
-              // debugPrint('[Theme/App] Dark scaffoldBg=${dark.colorScheme.surface.value.toRadixString(16)} card≈${dark.colorScheme.surface.value.toRadixString(16)} shadow=${dark.colorScheme.shadow.value.toRadixString(16)}');
               return MaterialApp(
                 debugShowCheckedModeBanner: false,
                 title: 'Kelivo',

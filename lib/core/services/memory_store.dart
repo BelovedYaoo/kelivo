@@ -34,8 +34,8 @@ class MemoryStore {
             _memoriesKey,
             jsonEncode(memories.map((e) => e.toJson()).toList()),
           );
-        } catch (error) {
-          debugPrint('迁移记忆同步标识失败：$error');
+        } catch (_) {
+          debugPrint('[MemoryStore] sync marker migration failed');
         }
       }
       return memories;

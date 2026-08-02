@@ -4201,8 +4201,8 @@ class _MermaidBlockState extends State<_MermaidBlock> {
         MermaidImageCache.put(cacheKey, bytes);
         _failedBitmapRenderKeys.remove(cacheKey);
       }
-    } catch (e, st) {
-      debugPrint('Mermaid bitmap render failed: $e\n$st');
+    } catch (_) {
+      debugPrint('[Mermaid] bitmap render failed');
     } finally {
       if (mounted && _renderKey == cacheKey) {
         _removeRenderOverlay();

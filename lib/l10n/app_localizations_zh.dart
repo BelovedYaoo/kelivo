@@ -518,9 +518,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get storageSpaceCategoryCache => '缓存';
 
   @override
-  String get storageSpaceCategoryLogs => '日志';
-
-  @override
   String get storageSpaceCategoryOther => '应用';
 
   @override
@@ -575,15 +572,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get storageSpaceSubCacheSystem => '系统缓存';
 
   @override
-  String get storageSpaceSubLogsFlutter => '运行日志';
-
-  @override
-  String get storageSpaceSubLogsRequests => '网络日志';
-
-  @override
-  String get storageSpaceSubLogsOther => '其他日志';
-
-  @override
   String get storageSpaceClearConfirmTitle => '确认清理';
 
   @override
@@ -611,17 +599,11 @@ class AppLocalizationsZh extends AppLocalizations {
   String get storageSpaceClearCacheButton => '清理缓存';
 
   @override
-  String get storageSpaceClearLogsButton => '清理日志';
-
-  @override
   String get storageSpaceClearLegacyChatDataButton => '清理旧聊天记录';
 
   @override
   String get storageSpaceClearLegacyChatDataConfirmMessage =>
       '确定清理保留的旧聊天文件吗？当前 SQLite 聊天记录不会受到影响。';
-
-  @override
-  String get storageSpaceViewLogsButton => '查看日志';
 
   @override
   String get storageSpaceDeleteConfirmTitle => '确认删除';
@@ -666,9 +648,6 @@ class AppLocalizationsZh extends AppLocalizations {
 
   @override
   String get settingsPageDocs => '使用文档';
-
-  @override
-  String get settingsPageLogs => '日志';
 
   @override
   String get settingsPageSponsor => '赞助';
@@ -4068,9 +4047,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get aboutPageEasterEggMessage => '\n（好吧现在还没彩蛋）';
 
   @override
-  String get aboutPageEasterEggButton => '好的';
-
-  @override
   String get aboutPageAppName => 'Kelivo';
 
   @override
@@ -5338,118 +5314,6 @@ class AppLocalizationsZh extends AppLocalizations {
   String get providerDetailPageDeleteAllModelsWarning => '此操作不可撤回';
 
   @override
-  String get requestLogSettingTitle => '请求日志打印';
-
-  @override
-  String get requestLogSettingSubtitle => '开启后会将请求/响应详情写入 logs/logs.txt';
-
-  @override
-  String get flutterLogSettingTitle => '应用日志打印';
-
-  @override
-  String get flutterLogSettingSubtitle =>
-      '开启后会将 Flutter 错误与 print 输出写入 logs/flutter_logs.txt';
-
-  @override
-  String get logViewerTitle => '请求日志';
-
-  @override
-  String get logViewerEmpty => '暂无日志';
-
-  @override
-  String get logViewerCurrentLog => '当前日志';
-
-  @override
-  String get logViewerExport => '导出';
-
-  @override
-  String get logViewerOpenFolder => '打开日志目录';
-
-  @override
-  String logViewerRequestsCount(int count) {
-    return '$count 条请求';
-  }
-
-  @override
-  String get logViewerFieldId => 'ID';
-
-  @override
-  String get logViewerFieldMethod => '方法';
-
-  @override
-  String get logViewerFieldStatus => '状态';
-
-  @override
-  String get logViewerFieldStarted => '开始';
-
-  @override
-  String get logViewerFieldEnded => '结束';
-
-  @override
-  String get logViewerFieldDuration => '耗时';
-
-  @override
-  String get logViewerSectionSummary => '概览';
-
-  @override
-  String get logViewerSectionParameters => '参数';
-
-  @override
-  String get logViewerSectionRequestHeaders => '请求头';
-
-  @override
-  String get logViewerSectionRequestBody => '请求体';
-
-  @override
-  String get logViewerSectionResponseHeaders => '响应头';
-
-  @override
-  String get logViewerSectionResponseBody => '响应体';
-
-  @override
-  String get logViewerSectionWarnings => '警告';
-
-  @override
-  String get logViewerErrorTitle => '错误';
-
-  @override
-  String logViewerMoreCount(int count) {
-    return '+$count 条更多';
-  }
-
-  @override
-  String get logSettingsTitle => '日志设置';
-
-  @override
-  String get logSettingsSaveOutput => '保存响应输出';
-
-  @override
-  String get logSettingsSaveOutputSubtitle => '记录响应体内容（可能占用较多存储空间）';
-
-  @override
-  String get logSettingsAutoDelete => '自动删除';
-
-  @override
-  String get logSettingsAutoDeleteSubtitle => '删除超过指定天数的日志';
-
-  @override
-  String get logSettingsAutoDeleteDisabled => '不启用';
-
-  @override
-  String logSettingsAutoDeleteDays(int count) {
-    return '$count 天';
-  }
-
-  @override
-  String get logSettingsMaxSize => '日志大小上限';
-
-  @override
-  String get logSettingsMaxSizeSubtitle => '超出后将删除最早的日志';
-
-  @override
-  String get logSettingsMaxSizeUnlimited => '不限制';
-
-  @override
   String get assistantEditManageSummariesTitle => '管理摘要';
 
   @override
@@ -6322,9 +6186,6 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get storageSpaceCategoryCache => '缓存';
 
   @override
-  String get storageSpaceCategoryLogs => '日志';
-
-  @override
   String get storageSpaceCategoryOther => '应用';
 
   @override
@@ -6379,15 +6240,6 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get storageSpaceSubCacheSystem => '系统缓存';
 
   @override
-  String get storageSpaceSubLogsFlutter => '运行日志';
-
-  @override
-  String get storageSpaceSubLogsRequests => '网络日志';
-
-  @override
-  String get storageSpaceSubLogsOther => '其他日志';
-
-  @override
   String get storageSpaceClearConfirmTitle => '确认清理';
 
   @override
@@ -6415,17 +6267,11 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get storageSpaceClearCacheButton => '清理缓存';
 
   @override
-  String get storageSpaceClearLogsButton => '清理日志';
-
-  @override
   String get storageSpaceClearLegacyChatDataButton => '清理旧聊天记录';
 
   @override
   String get storageSpaceClearLegacyChatDataConfirmMessage =>
       '确定清理保留的旧聊天文件吗？当前 SQLite 聊天记录不会受到影响。';
-
-  @override
-  String get storageSpaceViewLogsButton => '查看日志';
 
   @override
   String get storageSpaceDeleteConfirmTitle => '确认删除';
@@ -6470,9 +6316,6 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
 
   @override
   String get settingsPageDocs => '使用文档';
-
-  @override
-  String get settingsPageLogs => '日志';
 
   @override
   String get settingsPageSponsor => '赞助';
@@ -9872,9 +9715,6 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get aboutPageEasterEggMessage => '\n（好吧现在还没彩蛋）';
 
   @override
-  String get aboutPageEasterEggButton => '好的';
-
-  @override
   String get aboutPageAppName => 'Kelivo';
 
   @override
@@ -11142,118 +10982,6 @@ class AppLocalizationsZhHans extends AppLocalizationsZh {
   String get providerDetailPageDeleteAllModelsWarning => '此操作不可撤回';
 
   @override
-  String get requestLogSettingTitle => '请求日志打印';
-
-  @override
-  String get requestLogSettingSubtitle => '开启后会将请求/响应详情写入 logs/logs.txt';
-
-  @override
-  String get flutterLogSettingTitle => '应用日志打印';
-
-  @override
-  String get flutterLogSettingSubtitle =>
-      '开启后会将 Flutter 错误与 print 输出写入 logs/flutter_logs.txt';
-
-  @override
-  String get logViewerTitle => '请求日志';
-
-  @override
-  String get logViewerEmpty => '暂无日志';
-
-  @override
-  String get logViewerCurrentLog => '当前日志';
-
-  @override
-  String get logViewerExport => '导出';
-
-  @override
-  String get logViewerOpenFolder => '打开日志目录';
-
-  @override
-  String logViewerRequestsCount(int count) {
-    return '$count 条请求';
-  }
-
-  @override
-  String get logViewerFieldId => 'ID';
-
-  @override
-  String get logViewerFieldMethod => '方法';
-
-  @override
-  String get logViewerFieldStatus => '状态';
-
-  @override
-  String get logViewerFieldStarted => '开始';
-
-  @override
-  String get logViewerFieldEnded => '结束';
-
-  @override
-  String get logViewerFieldDuration => '耗时';
-
-  @override
-  String get logViewerSectionSummary => '概览';
-
-  @override
-  String get logViewerSectionParameters => '参数';
-
-  @override
-  String get logViewerSectionRequestHeaders => '请求头';
-
-  @override
-  String get logViewerSectionRequestBody => '请求体';
-
-  @override
-  String get logViewerSectionResponseHeaders => '响应头';
-
-  @override
-  String get logViewerSectionResponseBody => '响应体';
-
-  @override
-  String get logViewerSectionWarnings => '警告';
-
-  @override
-  String get logViewerErrorTitle => '错误';
-
-  @override
-  String logViewerMoreCount(int count) {
-    return '+$count 条更多';
-  }
-
-  @override
-  String get logSettingsTitle => '日志设置';
-
-  @override
-  String get logSettingsSaveOutput => '保存响应输出';
-
-  @override
-  String get logSettingsSaveOutputSubtitle => '记录响应体内容（可能占用较多存储空间）';
-
-  @override
-  String get logSettingsAutoDelete => '自动删除';
-
-  @override
-  String get logSettingsAutoDeleteSubtitle => '删除超过指定天数的日志';
-
-  @override
-  String get logSettingsAutoDeleteDisabled => '不启用';
-
-  @override
-  String logSettingsAutoDeleteDays(int count) {
-    return '$count 天';
-  }
-
-  @override
-  String get logSettingsMaxSize => '日志大小上限';
-
-  @override
-  String get logSettingsMaxSizeSubtitle => '超出后将删除最早的日志';
-
-  @override
-  String get logSettingsMaxSizeUnlimited => '不限制';
-
-  @override
   String get assistantEditManageSummariesTitle => '管理摘要';
 
   @override
@@ -12127,9 +11855,6 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get storageSpaceCategoryCache => '快取';
 
   @override
-  String get storageSpaceCategoryLogs => '日誌';
-
-  @override
   String get storageSpaceCategoryOther => '應用';
 
   @override
@@ -12184,15 +11909,6 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get storageSpaceSubCacheSystem => '系統快取';
 
   @override
-  String get storageSpaceSubLogsFlutter => '執行日誌';
-
-  @override
-  String get storageSpaceSubLogsRequests => '網路日誌';
-
-  @override
-  String get storageSpaceSubLogsOther => '其他日誌';
-
-  @override
   String get storageSpaceClearConfirmTitle => '確認清理';
 
   @override
@@ -12220,17 +11936,11 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get storageSpaceClearCacheButton => '清理快取';
 
   @override
-  String get storageSpaceClearLogsButton => '清理日誌';
-
-  @override
   String get storageSpaceClearLegacyChatDataButton => '清理舊聊天記錄';
 
   @override
   String get storageSpaceClearLegacyChatDataConfirmMessage =>
       '確定清理保留的舊聊天檔案嗎？目前的 SQLite 聊天記錄不會受到影響。';
-
-  @override
-  String get storageSpaceViewLogsButton => '查看日誌';
 
   @override
   String get storageSpaceDeleteConfirmTitle => '確認刪除';
@@ -12275,9 +11985,6 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get settingsPageDocs => '使用文件';
-
-  @override
-  String get settingsPageLogs => '日誌';
 
   @override
   String get settingsPageSponsor => '贊助';
@@ -15675,9 +15382,6 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
   String get aboutPageEasterEggMessage => '\n（好吧現在還沒彩蛋）';
 
   @override
-  String get aboutPageEasterEggButton => '好的';
-
-  @override
   String get aboutPageAppName => 'Kelivo';
 
   @override
@@ -16945,118 +16649,6 @@ class AppLocalizationsZhHant extends AppLocalizationsZh {
 
   @override
   String get providerDetailPageDeleteAllModelsWarning => '此操作不可撤回';
-
-  @override
-  String get requestLogSettingTitle => '請求日誌列印';
-
-  @override
-  String get requestLogSettingSubtitle => '開啟後會將請求/回應詳細寫入 logs/logs.txt';
-
-  @override
-  String get flutterLogSettingTitle => 'Flutter日誌列印';
-
-  @override
-  String get flutterLogSettingSubtitle =>
-      '開啟後會將 Flutter 錯誤與 print 輸出寫入 logs/flutter_logs.txt';
-
-  @override
-  String get logViewerTitle => '請求日誌';
-
-  @override
-  String get logViewerEmpty => '暫無日誌';
-
-  @override
-  String get logViewerCurrentLog => '目前日誌';
-
-  @override
-  String get logViewerExport => '匯出';
-
-  @override
-  String get logViewerOpenFolder => '開啟日誌目錄';
-
-  @override
-  String logViewerRequestsCount(int count) {
-    return '$count 個請求';
-  }
-
-  @override
-  String get logViewerFieldId => 'ID';
-
-  @override
-  String get logViewerFieldMethod => '方法';
-
-  @override
-  String get logViewerFieldStatus => '狀態';
-
-  @override
-  String get logViewerFieldStarted => '開始';
-
-  @override
-  String get logViewerFieldEnded => '結束';
-
-  @override
-  String get logViewerFieldDuration => '耗時';
-
-  @override
-  String get logViewerSectionSummary => '概覽';
-
-  @override
-  String get logViewerSectionParameters => '參數';
-
-  @override
-  String get logViewerSectionRequestHeaders => '請求標頭';
-
-  @override
-  String get logViewerSectionRequestBody => '請求本文';
-
-  @override
-  String get logViewerSectionResponseHeaders => '回應標頭';
-
-  @override
-  String get logViewerSectionResponseBody => '回應本文';
-
-  @override
-  String get logViewerSectionWarnings => '警告';
-
-  @override
-  String get logViewerErrorTitle => '錯誤';
-
-  @override
-  String logViewerMoreCount(int count) {
-    return '+$count 條更多';
-  }
-
-  @override
-  String get logSettingsTitle => '日誌設定';
-
-  @override
-  String get logSettingsSaveOutput => '保存回應輸出';
-
-  @override
-  String get logSettingsSaveOutputSubtitle => '記錄回應本文內容（可能佔用較多儲存空間）';
-
-  @override
-  String get logSettingsAutoDelete => '自動刪除';
-
-  @override
-  String get logSettingsAutoDeleteSubtitle => '刪除超過指定天數的日誌';
-
-  @override
-  String get logSettingsAutoDeleteDisabled => '不啟用';
-
-  @override
-  String logSettingsAutoDeleteDays(int count) {
-    return '$count 天';
-  }
-
-  @override
-  String get logSettingsMaxSize => '日誌大小上限';
-
-  @override
-  String get logSettingsMaxSizeSubtitle => '超出後將刪除最早的日誌';
-
-  @override
-  String get logSettingsMaxSizeUnlimited => '不限制';
 
   @override
   String get assistantEditManageSummariesTitle => '管理摘要';

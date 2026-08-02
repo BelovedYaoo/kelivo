@@ -23,6 +23,7 @@ void main() {
       await DatabaseInstallationGate.ensureReady(
         appDataDirectory: directory,
         cipher: testDatabaseCipher,
+        retireAttachmentStaging: () async {},
       );
 
       final file = File(p.join(directory.path, AppDatabase.databaseFileName));
@@ -61,6 +62,7 @@ void main() {
         final receipt = await DatabaseInstallationGate.ensureReady(
           appDataDirectory: directory,
           cipher: testDatabaseCipher,
+          retireAttachmentStaging: () async {},
         );
 
         final after = sqlite.sqlite3.open(
@@ -122,6 +124,7 @@ void main() {
       final receipt = await DatabaseInstallationGate.ensureReady(
         appDataDirectory: directory,
         cipher: testDatabaseCipher,
+        retireAttachmentStaging: () async {},
       );
 
       expect(await brokenReceipt.exists(), isFalse);

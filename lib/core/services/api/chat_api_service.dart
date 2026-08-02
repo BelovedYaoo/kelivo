@@ -2,6 +2,7 @@ import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'package:dio/dio.dart';
+import 'package:flutter/foundation.dart' show debugPrint;
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart';
 import '../../providers/settings_provider.dart';
@@ -18,7 +19,6 @@ import '../../../utils/markdown_media_sanitizer.dart';
 import '../../../utils/unicode_sanitizer.dart';
 import 'builtin_tools.dart';
 import 'gemini_tool_config.dart';
-import '../logging/flutter_logger.dart';
 import '../model_override_resolver.dart';
 import '../model_override_payload_parser.dart';
 import 'provider_request_headers.dart';
@@ -176,11 +176,11 @@ class ChatApiService {
     if (ov.isEmpty) return base;
     try {
       return ModelOverrideResolver.applyModelOverride(base, ov);
-    } catch (e, st) {
-      FlutterLogger.log(
-        '[ModelOverride] applyModelOverride failed: $e\n$st',
-        tag: 'ModelOverride',
-      );
+    } catch (_) {
+      assert(() {
+        debugPrint('[ChatApiService] model override application failed');
+        return true;
+      }());
       return base;
     }
   }
@@ -1367,10 +1367,6 @@ class ChatApiService {
       return topP;
     }
     if (topP < 0.95 || topP > 1.0) {
-      FlutterLogger.log(
-        '[ClaudeCompat] Omit top_p=$topP because thinking requires 0.95 <= top_p <= 1.0.',
-        tag: 'ChatApiService',
-      );
       return null;
     }
     return topP;
@@ -1395,10 +1391,8 @@ class ChatApiService {
       props.forEach((key, value) {
         if (value is Map) {
           final propMap = Map<String, dynamic>.from(value);
-          // print('[ChatApi/Schema] Property $key: type=${propMap['type']}, hasItems=${propMap.containsKey('items')}');
           // If type is array but items is missing, add a permissive items schema
           if (propMap['type'] == 'array' && !propMap.containsKey('items')) {
-            // print('[ChatApi/Schema] Adding items to array property: $key');
             propMap['items'] = {'type': 'string'}; // Default to string array
           }
           // Recursively clean nested objects

@@ -72,7 +72,7 @@ mod ios;
 #[cfg(target_os = "ios")]
 use ios as platform;
 
-const ABI_VERSION: u32 = 19;
+const ABI_VERSION: u32 = 20;
 const CAPABILITIES_STRUCT_SIZE: u32 = 32;
 const KEY_SLOT_ID_SIZE: usize = 16;
 const KEY_POLICY_VERSION: u32 = 1;
@@ -120,10 +120,10 @@ const DEVICE_E2EE_CORE_CAPABILITY: u64 = 1 << 6;
 const ATTACHMENT_CRYPTO_CAPABILITY: u64 = 1 << 7;
 const ACCOUNT_TRUST_SIGNING_CAPABILITY: u64 = 1 << 8;
 const RECOVERY_MEDIA_CAPABILITY: u64 = 1 << 9;
-const INSTALLATION_ROOT_WIPE_CAPABILITY: u64 = 1 << 10;
+const MANAGED_ROOT_RETIREMENT_CAPABILITY: u64 = 1 << 10;
 const ACCOUNT_RECOVERY_EXECUTION_CAPABILITY: u64 = 1 << 11;
-const INSTALLATION_ROOT_PATH_MAX_SIZE: usize = 64 * 1024;
-const INSTALLATION_ROOT_ENTRY_NAME_MAX_SIZE: usize = 1024;
+const MANAGED_ROOT_PATH_MAX_SIZE: usize = 64 * 1024;
+const MANAGED_ROOT_ARGUMENT_MAX_SIZE: usize = 1024;
 pub(crate) const LOCAL_KEY_SIZE: usize = 32;
 
 type LocalKey = Zeroizing<Box<[u8]>>;
@@ -228,6 +228,7 @@ pub(crate) enum KelivoStatus {
     RecoveryChallengeAuthenticationFailed = 51,
     InvalidRecoveryExecutionHandle = 52,
     RecoveryPrepareInvalid = 53,
+    InvalidManagedRootHandle = 54,
     UnsupportedPlatform = 100,
 }
 
@@ -531,7 +532,7 @@ pub unsafe extern "C" fn kelivo_core_get_capabilities(
                 0
             }
             | if installation_root_wipe::is_supported() {
-                INSTALLATION_ROOT_WIPE_CAPABILITY
+                MANAGED_ROOT_RETIREMENT_CAPABILITY
             } else {
                 0
             },
@@ -653,37 +654,74 @@ pub extern "C" fn kelivo_key_slots_delete_all() -> i32 {
 
 /// # Safety
 ///
-/// 两个输入指针必须分别覆盖声明的可读字节数；字节必须是有效 UTF-8。
+/// 路径指针必须覆盖声明的可读字节数，且 `out_handle` 必须可写。
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn kelivo_installation_root_wipe(
+pub unsafe extern "C" fn kelivo_managed_root_open(
+    scope: u32,
     root_path_utf8: *const u8,
     root_path_length: usize,
-    preserved_entry_name_utf8: *const u8,
-    preserved_entry_name_length: usize,
+    out_handle: *mut u64,
 ) -> i32 {
+    if let Err(status) = unsafe { write_output(out_handle, 0) } {
+        return status.code();
+    }
     let root_path = match unsafe { read_input(root_path_utf8, root_path_length) } {
         Ok(value) => value,
         Err(status) => return status.code(),
     };
-    let preserved_entry_name =
-        match unsafe { read_input(preserved_entry_name_utf8, preserved_entry_name_length) } {
-            Ok(value) => value,
-            Err(status) => return status.code(),
-        };
-    if root_path.len() > INSTALLATION_ROOT_PATH_MAX_SIZE
-        || preserved_entry_name.len() > INSTALLATION_ROOT_ENTRY_NAME_MAX_SIZE
-    {
+    if root_path.is_empty() {
+        return KelivoStatus::InvalidArgument.code();
+    }
+    if root_path.len() > MANAGED_ROOT_PATH_MAX_SIZE {
         return KelivoStatus::InputTooLarge.code();
     }
     let root_path = match core::str::from_utf8(root_path) {
-        Ok(value) if !value.is_empty() && !value.contains('\0') => value,
+        Ok(value) if !value.contains('\0') => value,
         _ => return KelivoStatus::InvalidArgument.code(),
     };
-    let preserved_entry_name = match core::str::from_utf8(preserved_entry_name) {
-        Ok(value) if !value.is_empty() && !value.contains('\0') => value,
+    let handle = match installation_root_wipe::open(scope, root_path) {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    match unsafe { write_output(out_handle, handle) } {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => {
+            let _ = installation_root_wipe::close(handle);
+            status.code()
+        }
+    }
+}
+
+/// # Safety
+///
+/// 参数指针必须覆盖声明的可读字节数；仅安装根擦除操作接受非空参数。
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn kelivo_managed_root_execute(
+    handle: u64,
+    operation: u32,
+    argument_utf8: *const u8,
+    argument_length: usize,
+) -> i32 {
+    let argument = match unsafe { read_input(argument_utf8, argument_length) } {
+        Ok(value) => value,
+        Err(status) => return status.code(),
+    };
+    if argument.len() > MANAGED_ROOT_ARGUMENT_MAX_SIZE {
+        return KelivoStatus::InputTooLarge.code();
+    }
+    let argument = match core::str::from_utf8(argument) {
+        Ok(value) if !value.contains('\0') => value,
         _ => return KelivoStatus::InvalidArgument.code(),
     };
-    match installation_root_wipe::wipe(root_path, preserved_entry_name) {
+    match installation_root_wipe::execute(handle, operation, argument) {
+        Ok(()) => KelivoStatus::Ok.code(),
+        Err(status) => status.code(),
+    }
+}
+
+#[unsafe(no_mangle)]
+pub extern "C" fn kelivo_managed_root_close(handle: u64) -> i32 {
+    match installation_root_wipe::close(handle) {
         Ok(()) => KelivoStatus::Ok.code(),
         Err(status) => status.code(),
     }
@@ -1773,7 +1811,7 @@ mod tests {
                     0
                 }
                 | if installation_root_wipe::is_supported() {
-                    INSTALLATION_ROOT_WIPE_CAPABILITY
+                    MANAGED_ROOT_RETIREMENT_CAPABILITY
                 } else {
                     0
                 }
@@ -1807,56 +1845,214 @@ mod tests {
                 | DEVICE_E2EE_CORE_CAPABILITY
                 | ATTACHMENT_CRYPTO_CAPABILITY
                 | ACCOUNT_TRUST_SIGNING_CAPABILITY
-                | INSTALLATION_ROOT_WIPE_CAPABILITY
+                | MANAGED_ROOT_RETIREMENT_CAPABILITY
         );
     }
 
     #[test]
-    fn installation_root_wipe_rejects_invalid_ffi_inputs_before_platform_access() {
-        let marker = b"wipe-complete";
+    fn managed_root_session_rejects_invalid_ffi_inputs_before_platform_access() {
+        let path = b"C:\\isolated";
+        let mut handle = 99_u64;
         assert_eq!(
-            unsafe { kelivo_installation_root_wipe(ptr::null(), 1, marker.as_ptr(), marker.len()) },
+            unsafe {
+                kelivo_managed_root_open(
+                    installation_root_wipe::SCOPE_INSTALLATION,
+                    ptr::null(),
+                    1,
+                    &mut handle,
+                )
+            },
             KelivoStatus::NullPointer.code()
         );
+        assert_eq!(handle, 0);
         assert_eq!(
-            unsafe { kelivo_installation_root_wipe(ptr::null(), 0, marker.as_ptr(), marker.len()) },
+            unsafe { kelivo_managed_root_open(0, path.as_ptr(), path.len(), &mut handle) },
             KelivoStatus::InvalidArgument.code()
         );
+        assert_eq!(handle, 0);
         let malformed_utf8 = [0xff_u8];
         assert_eq!(
             unsafe {
-                kelivo_installation_root_wipe(
+                kelivo_managed_root_open(
+                    installation_root_wipe::SCOPE_INSTALLATION,
                     malformed_utf8.as_ptr(),
                     malformed_utf8.len(),
-                    marker.as_ptr(),
-                    marker.len(),
+                    &mut handle,
                 )
             },
             KelivoStatus::InvalidArgument.code()
         );
-        let oversized = vec![b'a'; INSTALLATION_ROOT_PATH_MAX_SIZE + 1];
+        let oversized = vec![b'a'; MANAGED_ROOT_PATH_MAX_SIZE + 1];
         assert_eq!(
             unsafe {
-                kelivo_installation_root_wipe(
+                kelivo_managed_root_open(
+                    installation_root_wipe::SCOPE_INSTALLATION,
                     oversized.as_ptr(),
                     oversized.len(),
-                    marker.as_ptr(),
-                    marker.len(),
+                    &mut handle,
                 )
             },
             KelivoStatus::InputTooLarge.code()
         );
         assert_eq!(
             unsafe {
-                kelivo_installation_root_wipe(
-                    b"C:\\isolated".as_ptr(),
-                    b"C:\\isolated".len(),
+                kelivo_managed_root_open(
+                    installation_root_wipe::SCOPE_INSTALLATION,
+                    path.as_ptr(),
+                    path.len(),
+                    ptr::null_mut(),
+                )
+            },
+            KelivoStatus::NullPointer.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    0,
+                    installation_root_wipe::OPERATION_RETIRE_PLAINTEXT_BACKUPS,
+                    ptr::null(),
+                    0,
+                )
+            },
+            KelivoStatus::InvalidManagedRootHandle.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    0,
+                    installation_root_wipe::OPERATION_RETIRE_PERSISTENT_LOGS,
+                    ptr::null(),
+                    0,
+                )
+            },
+            KelivoStatus::InvalidManagedRootHandle.code()
+        );
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    0,
+                    installation_root_wipe::OPERATION_WIPE_INSTALLATION_ROOT,
                     ptr::null(),
                     1,
                 )
             },
             KelivoStatus::NullPointer.code()
         );
+        let oversized_argument = vec![b'a'; MANAGED_ROOT_ARGUMENT_MAX_SIZE + 1];
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    0,
+                    installation_root_wipe::OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL,
+                    oversized_argument.as_ptr(),
+                    oversized_argument.len(),
+                )
+            },
+            KelivoStatus::InputTooLarge.code()
+        );
+        assert_eq!(
+            kelivo_managed_root_close(0),
+            KelivoStatus::InvalidManagedRootHandle.code()
+        );
+    }
+
+    #[cfg(any(target_os = "linux", target_os = "windows"))]
+    #[test]
+    fn managed_root_ffi_executes_fixed_operation_and_invalidates_closed_handle() {
+        let root = std::env::temp_dir().join(format!(
+            "kelivo-managed-root-ffi-{}-{}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir(&root).unwrap();
+        let retired = root.join("_bk_settings.json");
+        std::fs::write(&retired, b"secret").unwrap();
+        let path = root.to_str().unwrap().as_bytes();
+        let mut handle = 0_u64;
+
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_open(
+                    installation_root_wipe::SCOPE_TEMPORARY,
+                    path.as_ptr(),
+                    path.len(),
+                    &mut handle,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_ne!(handle, 0);
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    handle,
+                    installation_root_wipe::OPERATION_RETIRE_PLAINTEXT_BACKUPS,
+                    ptr::null(),
+                    0,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert!(!retired.exists());
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    handle,
+                    installation_root_wipe::OPERATION_RETIRE_ATTACHMENT_STAGING,
+                    ptr::null(),
+                    0,
+                )
+            },
+            KelivoStatus::InvalidArgument.code()
+        );
+        assert_eq!(kelivo_managed_root_close(handle), KelivoStatus::Ok.code());
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    handle,
+                    installation_root_wipe::OPERATION_RETIRE_PLAINTEXT_BACKUPS,
+                    ptr::null(),
+                    0,
+                )
+            },
+            KelivoStatus::InvalidManagedRootHandle.code()
+        );
+
+        let preferences = root.join("shared_preferences.json");
+        std::fs::write(&preferences, br#"{"flutter.other":"kept"}"#).unwrap();
+        let mut preferences_handle = 0_u64;
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_open(
+                    installation_root_wipe::SCOPE_SHARED_PREFERENCES,
+                    path.as_ptr(),
+                    path.len(),
+                    &mut preferences_handle,
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        let removed_key = b"flutter.removed";
+        assert_eq!(
+            unsafe {
+                kelivo_managed_root_execute(
+                    preferences_handle,
+                    installation_root_wipe::OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL,
+                    removed_key.as_ptr(),
+                    removed_key.len(),
+                )
+            },
+            KelivoStatus::Ok.code()
+        );
+        assert_eq!(
+            kelivo_managed_root_close(preferences_handle),
+            KelivoStatus::Ok.code()
+        );
+        std::fs::remove_file(preferences).unwrap();
+        std::fs::remove_dir(&root).unwrap();
     }
 
     #[cfg(target_os = "ios")]

@@ -19,7 +19,6 @@ import '../widgets/share_provider_sheet.dart';
 import '../widgets/provider_group_picker_sheet.dart';
 import 'package:flutter_slidable/flutter_slidable.dart';
 import '../../../l10n/app_localizations.dart';
-import '../../../core/services/logging/flutter_logger.dart';
 import '../../../core/services/model_override_resolver.dart';
 import '../../../shared/widgets/snackbar.dart';
 import '../../../shared/widgets/model_tag_wrap.dart';
@@ -2963,15 +2962,9 @@ class _ProviderDetailPageState extends State<ProviderDetailPage> {
           );
         }
       }
-    } catch (e, st) {
-      FlutterLogger.log(
-        '[ProviderDetail] clear assistant model selections failed: $e\n$st',
-        tag: 'Provider',
-      );
+    } catch (_) {
       assert(() {
-        debugPrint(
-          '[ProviderDetail] clear assistant model selections failed: $e',
-        );
+        debugPrint('[ProviderDetail] clear assistant model selections failed');
         return true;
       }());
     }
@@ -4383,13 +4376,9 @@ ModelInfo _applyModelOverride(
       ov,
       applyDisplayName: applyDisplayName,
     );
-  } catch (e, st) {
-    FlutterLogger.log(
-      '[ModelOverride] applyModelOverride failed: $e\n$st',
-      tag: 'ModelOverride',
-    );
+  } catch (_) {
     assert(() {
-      debugPrint('[ModelOverride] applyModelOverride failed: $e');
+      debugPrint('[ModelOverride] applyModelOverride failed');
       return true;
     }());
     return base;

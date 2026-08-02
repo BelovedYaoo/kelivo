@@ -349,8 +349,6 @@ final class RestoreCutoverExecutor {
     developer.log(
       'Restore cutover failed; starting rollback.',
       name: 'Kelivo.restore.cutover',
-      error: cutoverError,
-      stackTrace: cutoverStackTrace,
     );
     try {
       return await _beginRollback(
@@ -361,8 +359,6 @@ final class RestoreCutoverExecutor {
       developer.log(
         'Restore rollback failed after cutover failure.',
         name: 'Kelivo.restore.cutover',
-        error: rollbackError,
-        stackTrace: rollbackStackTrace,
       );
       Error.throwWithStackTrace(
         RestoreCutoverRollbackException(

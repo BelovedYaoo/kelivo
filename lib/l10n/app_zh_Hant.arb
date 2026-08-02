@@ -199,7 +199,6 @@
   "storageSpaceSubCompletedRestoreRuns": "已完成的還原快照",
   "storageSpaceCategoryAssistantData": "助理",
   "storageSpaceCategoryCache": "快取",
-  "storageSpaceCategoryLogs": "日誌",
   "storageSpaceCategoryOther": "應用",
   "storageSpaceFilesCount": "{count} 個檔案",
   "@storageSpaceFilesCount": {
@@ -224,9 +223,6 @@
   "storageSpaceSubCacheAvatars": "頭像快取",
   "storageSpaceSubCacheOther": "其他快取",
   "storageSpaceSubCacheSystem": "系統快取",
-  "storageSpaceSubLogsFlutter": "執行日誌",
-  "storageSpaceSubLogsRequests": "網路日誌",
-  "storageSpaceSubLogsOther": "其他日誌",
   "storageSpaceClearConfirmTitle": "確認清理",
   "storageSpaceClearConfirmMessage": "確定要清理 {targetName} 嗎？",
   "@storageSpaceClearConfirmMessage": {
@@ -255,10 +251,8 @@
   },
   "storageSpaceClearAvatarCacheButton": "清理頭像快取",
   "storageSpaceClearCacheButton": "清理快取",
-  "storageSpaceClearLogsButton": "清理日誌",
   "storageSpaceClearLegacyChatDataButton": "清理舊聊天記錄",
   "storageSpaceClearLegacyChatDataConfirmMessage": "確定清理保留的舊聊天檔案嗎？目前的 SQLite 聊天記錄不會受到影響。",
-  "storageSpaceViewLogsButton": "查看日誌",
   "storageSpaceDeleteConfirmTitle": "確認刪除",
   "storageSpaceDeleteUploadsConfirmMessage": "刪除 {count} 個項目？刪除後聊天記錄中的附件可能無法開啟。",
   "@storageSpaceDeleteUploadsConfirmMessage": {
@@ -299,7 +293,6 @@
   "settingsPageAbout": "關於",
   "settingsPageStatistics": "統計",
   "settingsPageDocs": "使用文件",
-  "settingsPageLogs": "日誌",
   "settingsPageSponsor": "贊助",
   "settingsPageShare": "分享",
   "statsPageTitle": "統計",
@@ -1711,7 +1704,6 @@
   "searchSettingsSheetOpenSearchServicesTooltip": "開啟搜尋服務設定",
   "searchSettingsSheetNoServicesMessage": "暫無可用服務，請先在\"搜尋服務\"中新增",
   "aboutPageEasterEggMessage": "\n（好吧現在還沒彩蛋）",
-  "aboutPageEasterEggButton": "好的",
   "aboutPageAppName": "Kelivo",
   "aboutPageAppDescription": "開源 AI 助理",
   "aboutPageNoQQGroup": "暫無QQ群",
@@ -2273,62 +2265,6 @@
   },
   "providerDetailPageDeleteAllModelsTooltip": "刪除全部模型",
   "providerDetailPageDeleteAllModelsWarning": "此操作不可撤回",
-  "requestLogSettingTitle": "請求日誌列印",
-  "requestLogSettingSubtitle": "開啟後會將請求/回應詳細寫入 logs/logs.txt",
-  "flutterLogSettingTitle": "Flutter日誌列印",
-  "flutterLogSettingSubtitle": "開啟後會將 Flutter 錯誤與 print 輸出寫入 logs/flutter_logs.txt",
-  "logViewerTitle": "請求日誌",
-  "logViewerEmpty": "暫無日誌",
-  "logViewerCurrentLog": "目前日誌",
-  "logViewerExport": "匯出",
-  "logViewerOpenFolder": "開啟日誌目錄",
-  "logViewerRequestsCount": "{count} 個請求",
-  "@logViewerRequestsCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logViewerFieldId": "ID",
-  "logViewerFieldMethod": "方法",
-  "logViewerFieldStatus": "狀態",
-  "logViewerFieldStarted": "開始",
-  "logViewerFieldEnded": "結束",
-  "logViewerFieldDuration": "耗時",
-  "logViewerSectionSummary": "概覽",
-  "logViewerSectionParameters": "參數",
-  "logViewerSectionRequestHeaders": "請求標頭",
-  "logViewerSectionRequestBody": "請求本文",
-  "logViewerSectionResponseHeaders": "回應標頭",
-  "logViewerSectionResponseBody": "回應本文",
-  "logViewerSectionWarnings": "警告",
-  "logViewerErrorTitle": "錯誤",
-  "logViewerMoreCount": "+{count} 條更多",
-  "@logViewerMoreCount": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logSettingsTitle": "日誌設定",
-  "logSettingsSaveOutput": "保存回應輸出",
-  "logSettingsSaveOutputSubtitle": "記錄回應本文內容（可能佔用較多儲存空間）",
-  "logSettingsAutoDelete": "自動刪除",
-  "logSettingsAutoDeleteSubtitle": "刪除超過指定天數的日誌",
-  "logSettingsAutoDeleteDisabled": "不啟用",
-  "logSettingsAutoDeleteDays": "{count} 天",
-  "@logSettingsAutoDeleteDays": {
-    "placeholders": {
-      "count": {
-        "type": "int"
-      }
-    }
-  },
-  "logSettingsMaxSize": "日誌大小上限",
-  "logSettingsMaxSizeSubtitle": "超出後將刪除最早的日誌",
-  "logSettingsMaxSizeUnlimited": "不限制",
   "assistantEditManageSummariesTitle": "管理摘要",
   "assistantEditSummaryEmpty": "暫無摘要",
   "assistantEditSummaryDialogTitle": "編輯摘要",

@@ -223,8 +223,8 @@ class AppDirectories {
       final file = File(path);
       await file.writeAsBytes(bytes, flush: true);
       return path;
-    } catch (e) {
-      debugPrint('Failed to save image: $e');
+    } catch (_) {
+      debugPrint('[AppDirectories] image save failed');
       return null;
     }
   }

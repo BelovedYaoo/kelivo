@@ -27,7 +27,7 @@ const _deviceE2eeCoreCapability = 1 << 6;
 const _attachmentCryptoCapability = 1 << 7;
 const _accountTrustSigningCapability = 1 << 8;
 const _recoveryMediaCapability = 1 << 9;
-const _installationRootWipeCapability = 1 << 10;
+const _managedRootRetirementCapability = 1 << 10;
 const _accountRecoveryExecutionCapability = 1 << 11;
 const _secureStorageCapabilityFlags =
     _keySlotsCapability |
@@ -42,7 +42,7 @@ const _knownCapabilityFlags =
     _attachmentCryptoCapability |
     _accountTrustSigningCapability |
     _recoveryMediaCapability |
-    _installationRootWipeCapability |
+    _managedRootRetirementCapability |
     _accountRecoveryExecutionCapability;
 const _recordIdLength = native.KELIVO_RECORD_ID_SIZE;
 const _recordMaxAssociatedDataSize =
@@ -146,6 +146,7 @@ enum KelivoSecureCoreStatus {
   recoveryChallengeAuthenticationFailed(51),
   invalidRecoveryExecutionHandle(52),
   recoveryPrepareInvalid(53),
+  invalidManagedRootHandle(54),
   unsupportedPlatform(100);
 
   const KelivoSecureCoreStatus(this.code);
@@ -174,8 +175,8 @@ final class KelivoCoreCapabilities {
     required this.supportsAttachmentCrypto,
     required this.supportsAccountTrustSigning,
     required this.supportsRecoveryMedia,
-    required this.supportsInstallationRootWipe,
     required this.supportsAccountRecoveryExecution,
+    required this.supportsManagedRootRetirement,
   });
 
   final int abiVersion;
@@ -190,8 +191,8 @@ final class KelivoCoreCapabilities {
   final bool supportsAttachmentCrypto;
   final bool supportsAccountTrustSigning;
   final bool supportsRecoveryMedia;
-  final bool supportsInstallationRootWipe;
   final bool supportsAccountRecoveryExecution;
+  final bool supportsManagedRootRetirement;
 }
 
 typedef KelivoSqlCipherKeyNative =
@@ -279,6 +280,113 @@ final class KelivoKeyHandle {
 }
 
 enum _KelivoKeyHandleState { open, busy, closing, closed }
+
+final class _KelivoManagedRootHandle {
+  _KelivoManagedRootHandle(this.value);
+
+  final int value;
+  _KelivoManagedRootHandleState state = _KelivoManagedRootHandleState.open;
+
+  int beginUse() {
+    if (state != _KelivoManagedRootHandleState.open) {
+      throw StateError('受管根会话已关闭或正在使用');
+    }
+    state = _KelivoManagedRootHandleState.busy;
+    return value;
+  }
+
+  void completeUse() {
+    if (state != _KelivoManagedRootHandleState.busy) {
+      throw StateError('受管根会话生命周期已失配');
+    }
+    state = _KelivoManagedRootHandleState.open;
+  }
+
+  int beginClose() {
+    if (state != _KelivoManagedRootHandleState.open) {
+      throw StateError('受管根会话已关闭或正在使用');
+    }
+    state = _KelivoManagedRootHandleState.closing;
+    return value;
+  }
+
+  void completeClose() {
+    state = _KelivoManagedRootHandleState.closed;
+  }
+
+  void cancelClose() {
+    if (state == _KelivoManagedRootHandleState.closing) {
+      state = _KelivoManagedRootHandleState.open;
+    }
+  }
+}
+
+enum _KelivoManagedRootHandleState { open, busy, closing, closed }
+
+final class KelivoInstallationRootSession {
+  KelivoInstallationRootSession._(int value)
+    : _handle = _KelivoManagedRootHandle(value);
+
+  final _KelivoManagedRootHandle _handle;
+
+  Future<void> retireAttachmentStaging() => _executeManagedRootSessionOperation(
+    _handle,
+    native.KELIVO_MANAGED_ROOT_OPERATION_RETIRE_ATTACHMENT_STAGING,
+  );
+
+  Future<void> retirePersistentLogs() => _executeManagedRootSessionOperation(
+    _handle,
+    native.KELIVO_MANAGED_ROOT_OPERATION_RETIRE_PERSISTENT_LOGS,
+  );
+
+  Future<void> wipeInstallationRoot({required String preservedEntryName}) =>
+      _executeManagedRootSessionOperation(
+        _handle,
+        native.KELIVO_MANAGED_ROOT_OPERATION_WIPE_INSTALLATION_ROOT,
+        argument: preservedEntryName,
+      );
+
+  Future<void> close() => _closeManagedRootSession(_handle);
+
+  @override
+  String toString() => 'KelivoInstallationRootSession(opaque)';
+}
+
+final class KelivoTemporaryRootSession {
+  KelivoTemporaryRootSession._(int value)
+    : _handle = _KelivoManagedRootHandle(value);
+
+  final _KelivoManagedRootHandle _handle;
+
+  Future<void> retirePlaintextBackups() => _executeManagedRootSessionOperation(
+    _handle,
+    native.KELIVO_MANAGED_ROOT_OPERATION_RETIRE_PLAINTEXT_BACKUPS,
+  );
+
+  Future<void> close() => _closeManagedRootSession(_handle);
+
+  @override
+  String toString() => 'KelivoTemporaryRootSession(opaque)';
+}
+
+final class KelivoSharedPreferencesRootSession {
+  KelivoSharedPreferencesRootSession._(int value)
+    : _handle = _KelivoManagedRootHandle(value);
+
+  final _KelivoManagedRootHandle _handle;
+
+  Future<void> confirmRemoval({required String rawKey}) =>
+      _executeManagedRootSessionOperation(
+        _handle,
+        native.KELIVO_MANAGED_ROOT_OPERATION_VERIFY_SHARED_PREFERENCES_REMOVAL,
+        argument: rawKey,
+      );
+
+  Future<void> close() => _closeManagedRootSession(_handle);
+
+  @override
+  String toString() => 'KelivoSharedPreferencesRootSession(opaque)';
+}
 
 final class _KelivoOpaqueStateHandle {
   _KelivoOpaqueStateHandle(this.value);
@@ -463,20 +571,59 @@ final class KelivoSecureCore {
 
   Future<void> deleteAllSlots() => Isolate.run(_deleteAllKeySlots);
 
-  Future<void> wipeInstallationRoot({
-    required String rootPath,
-    required String preservedEntryName,
-  }) async {
+  Future<KelivoInstallationRootSession> openInstallationRoot(
+    String rootPath,
+  ) async {
     final capabilities = await getCapabilities();
-    if (!capabilities.supportsInstallationRootWipe) {
+    if (!capabilities.supportsManagedRootRetirement) {
       throw const KelivoSecureCoreException(
-        operation: 'installation_root_wipe',
+        operation: 'managed_root_open',
         status: KelivoSecureCoreStatus.unsupportedPlatform,
       );
     }
-    await Isolate.run(
-      () => _wipeInstallationRoot(rootPath, preservedEntryName),
+    final handle = await Isolate.run(
+      () => _openManagedRoot(
+        native.KELIVO_MANAGED_ROOT_SCOPE_INSTALLATION,
+        rootPath,
+      ),
     );
+    return KelivoInstallationRootSession._(handle);
+  }
+
+  Future<KelivoTemporaryRootSession> openTemporaryRoot(String rootPath) async {
+    final capabilities = await getCapabilities();
+    if (!capabilities.supportsManagedRootRetirement) {
+      throw const KelivoSecureCoreException(
+        operation: 'managed_root_open',
+        status: KelivoSecureCoreStatus.unsupportedPlatform,
+      );
+    }
+    final handle = await Isolate.run(
+      () => _openManagedRoot(
+        native.KELIVO_MANAGED_ROOT_SCOPE_TEMPORARY,
+        rootPath,
+      ),
+    );
+    return KelivoTemporaryRootSession._(handle);
+  }
+
+  Future<KelivoSharedPreferencesRootSession> openSharedPreferencesRoot(
+    String rootPath,
+  ) async {
+    final capabilities = await getCapabilities();
+    if (!capabilities.supportsManagedRootRetirement) {
+      throw const KelivoSecureCoreException(
+        operation: 'managed_root_open',
+        status: KelivoSecureCoreStatus.unsupportedPlatform,
+      );
+    }
+    final handle = await Isolate.run(
+      () => _openManagedRoot(
+        native.KELIVO_MANAGED_ROOT_SCOPE_SHARED_PREFERENCES,
+        rootPath,
+      ),
+    );
+    return KelivoSharedPreferencesRootSession._(handle);
   }
 
   Future<Uint8List> sealRecord(
@@ -1151,10 +1298,10 @@ KelivoCoreCapabilities _readCapabilities() {
       supportsAccountTrustSigning:
           capabilities.flags & _accountTrustSigningCapability != 0,
       supportsRecoveryMedia: capabilities.flags & _recoveryMediaCapability != 0,
-      supportsInstallationRootWipe:
-          capabilities.flags & _installationRootWipeCapability != 0,
       supportsAccountRecoveryExecution:
           capabilities.flags & _accountRecoveryExecutionCapability != 0,
+      supportsManagedRootRetirement:
+          capabilities.flags & _managedRootRetirementCapability != 0,
     );
   } finally {
     calloc.free(output);
@@ -1273,26 +1420,78 @@ void _deleteAllKeySlots() {
   );
 }
 
-void _wipeInstallationRoot(String rootPath, String preservedEntryName) {
+int _openManagedRoot(int scope, String rootPath) {
   final rootPathBytes = Uint8List.fromList(utf8.encode(rootPath));
-  final preservedEntryNameBytes = Uint8List.fromList(
-    utf8.encode(preservedEntryName),
-  );
   final rootPathPointer = _copyToNative(rootPathBytes);
-  final preservedEntryNamePointer = _copyToNative(preservedEntryNameBytes);
+  final output = calloc<ffi.Uint64>();
   try {
     _throwOnError(
-      operation: 'installation_root_wipe',
-      statusCode: native.kelivo_installation_root_wipe(
+      operation: 'managed_root_open',
+      statusCode: native.kelivo_managed_root_open(
+        scope,
         rootPathPointer,
         rootPathBytes.length,
-        preservedEntryNamePointer,
-        preservedEntryNameBytes.length,
+        output,
+      ),
+    );
+    if (output.value == native.KELIVO_MANAGED_ROOT_INVALID_HANDLE) {
+      throw StateError('安全核心返回了无效受管根句柄');
+    }
+    return output.value;
+  } finally {
+    _clearAndFree(rootPathPointer, rootPathBytes.length);
+    calloc.free(output);
+  }
+}
+
+void _executeManagedRoot(int handle, int operation, String argument) {
+  final argumentBytes = Uint8List.fromList(utf8.encode(argument));
+  final argumentPointer = argumentBytes.isEmpty
+      ? ffi.nullptr.cast<ffi.Uint8>()
+      : _copyToNative(argumentBytes);
+  try {
+    _throwOnError(
+      operation: 'managed_root_execute',
+      statusCode: native.kelivo_managed_root_execute(
+        handle,
+        operation,
+        argumentPointer,
+        argumentBytes.length,
       ),
     );
   } finally {
-    _clearAndFree(rootPathPointer, rootPathBytes.length);
-    _clearAndFree(preservedEntryNamePointer, preservedEntryNameBytes.length);
+    if (argumentBytes.isNotEmpty) {
+      _clearAndFree(argumentPointer, argumentBytes.length);
+    }
+  }
+}
+
+Future<void> _executeManagedRootSessionOperation(
+  _KelivoManagedRootHandle handle,
+  int operation, {
+  String argument = '',
+}) async {
+  final value = handle.beginUse();
+  try {
+    await Isolate.run(() => _executeManagedRoot(value, operation, argument));
+  } finally {
+    handle.completeUse();
+  }
+}
+
+Future<void> _closeManagedRootSession(_KelivoManagedRootHandle handle) async {
+  final value = handle.beginClose();
+  try {
+    await Isolate.run(() {
+      _throwOnError(
+        operation: 'managed_root_close',
+        statusCode: native.kelivo_managed_root_close(value),
+      );
+    });
+    handle.completeClose();
+  } catch (_) {
+    handle.cancelClose();
+    rethrow;
   }
 }
 

@@ -2309,7 +2309,12 @@ void main() {
     expect(sessionTokenStore.tokenCount, 2);
 
     runtime = await bootstrap();
-    await runtime.discardPlaintextLocalState();
+    var retirePersistentLogsCalls = 0;
+    await runtime.discardPlaintextLocalState(
+      retirePersistentLogs: () async {
+        retirePersistentLogsCalls++;
+      },
+    );
 
     for (final artifact in artifacts) {
       expect(await artifact.exists(), isFalse, reason: artifact.path);
@@ -2324,10 +2329,39 @@ void main() {
         reason: databaseArtifact.path,
       );
     }
+    expect(retirePersistentLogsCalls, 1);
     for (final sessionRecord in sessionRecords) {
       expect(await sessionRecord.exists(), isTrue, reason: sessionRecord.path);
     }
     expect(sessionTokenStore.tokenCount, 2);
+  });
+
+  test('原生日志退役失败时不先删除其他明文状态', () async {
+    final runtime = await bootstrap();
+    final legacySyncState = File(
+      p.join(
+        installationRoot.path,
+        '${CloudSyncStateRetirement.legacyBoxName}.hive',
+      ),
+    );
+    await legacySyncState.writeAsString('legacy-plaintext', flush: true);
+
+    await expectLater(
+      runtime.discardPlaintextLocalState(
+        retirePersistentLogs: () async {
+          throw StateError('native_log_retirement_failed');
+        },
+      ),
+      throwsA(
+        isA<StateError>().having(
+          (error) => error.message,
+          'message',
+          'native_log_retirement_failed',
+        ),
+      ),
+    );
+
+    expect(await legacySyncState.readAsString(), 'legacy-plaintext');
   });
 
   test('硬切无条件删除旧安装根数据库族并保留当前密文 Vault', () async {
@@ -2367,7 +2401,9 @@ void main() {
       await file.writeAsBytes([9, 8, 7, 6], flush: true);
     }
 
-    await runtime.discardPlaintextLocalState();
+    await runtime.discardPlaintextLocalState(
+      retirePersistentLogs: _retirePersistentLogs,
+    );
 
     for (final file in legacyDatabaseFamily) {
       expect(await file.exists(), isFalse, reason: file.path);
@@ -2420,7 +2456,9 @@ void main() {
         sessionTokenStore: sessionTokenStore,
       );
       try {
-        await runtime.discardPlaintextLocalState();
+        await runtime.discardPlaintextLocalState(
+          retirePersistentLogs: _retirePersistentLogs,
+        );
       } finally {
         await runtime.close();
       }
@@ -2558,7 +2596,9 @@ void main() {
 
     runtime = await bootstrap();
     await expectLater(
-      runtime.discardPlaintextLocalState(),
+      runtime.discardPlaintextLocalState(
+        retirePersistentLogs: _retirePersistentLogs,
+      ),
       throwsA(isA<StateError>()),
     );
 
@@ -2585,7 +2625,9 @@ void main() {
 
     runtime = await bootstrap();
     await expectLater(
-      runtime.discardPlaintextLocalState(),
+      runtime.discardPlaintextLocalState(
+        retirePersistentLogs: _retirePersistentLogs,
+      ),
       throwsA(
         isA<StateError>().having(
           (error) => error.message,
@@ -2623,7 +2665,9 @@ void main() {
 
     runtime = await bootstrap();
     await expectLater(
-      runtime.discardPlaintextLocalState(),
+      runtime.discardPlaintextLocalState(
+        retirePersistentLogs: _retirePersistentLogs,
+      ),
       throwsA(isA<StateError>()),
     );
 
@@ -2661,7 +2705,9 @@ void main() {
 
     runtime = await bootstrap();
     await expectLater(
-      runtime.discardPlaintextLocalState(),
+      runtime.discardPlaintextLocalState(
+        retirePersistentLogs: _retirePersistentLogs,
+      ),
       throwsA(isA<StateError>()),
     );
 
@@ -5101,6 +5147,8 @@ Future<void> _deleteDirectoryLink(String linkPath) async {
     );
   }
 }
+
+Future<void> _retirePersistentLogs() async {}
 
 bool _containsBytes(List<int> haystack, List<int> needle) {
   if (needle.isEmpty) return true;

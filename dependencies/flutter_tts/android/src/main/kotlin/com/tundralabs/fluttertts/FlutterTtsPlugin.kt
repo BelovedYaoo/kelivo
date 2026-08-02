@@ -97,7 +97,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                         invokeMethod("speak.onContinue", true)
                         isPaused = false
                     } else {
-                        Log.d(tag, "Utterance ID has started: $utteranceId")
+                        Log.d(tag, "Utterance started")
                         invokeMethod("speak.onStart", true)
                     }
                 }
@@ -110,13 +110,13 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 if (utteranceId.startsWith(SILENCE_PREFIX)) return
                 if (utteranceId.startsWith(SYNTHESIZE_TO_FILE_PREFIX)) {
                     closeParcelFileDescriptor(false)
-                    Log.d(tag, "Utterance ID has completed: $utteranceId")
+                    Log.d(tag, "File synthesis completed")
                     if (awaitSynthCompletion) {
                         synthCompletion(1)
                     }
                     invokeMethod("synth.onComplete", true)
                 } else {
-                    Log.d(tag, "Utterance ID has completed: $utteranceId")
+                    Log.d(tag, "Utterance completed")
                     if (awaitSpeakCompletion && queueMode == TextToSpeech.QUEUE_FLUSH) {
                         speakCompletion(1)
                     }
@@ -131,7 +131,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             override fun onStop(utteranceId: String, interrupted: Boolean) {
                 Log.d(
                     tag,
-                    "Utterance ID has been stopped: $utteranceId. Interrupted: $interrupted"
+                    "Utterance stopped"
                 )
                 if (awaitSpeakCompletion) {
                     speaking = false
@@ -233,9 +233,9 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                         tts!!.language = locale
                     }
                 } catch (e: NullPointerException) {
-                    Log.e(tag, "getDefaultLocale: " + e.message)
+                    Log.e(tag, "Default locale unavailable")
                 } catch (e: IllegalArgumentException) {
-                    Log.e(tag, "getDefaultLocale: " + e.message)
+                    Log.e(tag, "Default locale invalid")
                 }
 
                 engineResult!!.success(1)
@@ -264,12 +264,12 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                         tts!!.language = locale
                     }
                 } catch (e: NullPointerException) {
-                    Log.e(tag, "getDefaultLocale: " + e.message)
+                    Log.e(tag, "Default locale unavailable")
                 } catch (e: IllegalArgumentException) {
-                    Log.e(tag, "getDefaultLocale: " + e.message)
+                    Log.e(tag, "Default locale invalid")
                 }
             } else {
-                Log.e(tag, "Failed to initialize TextToSpeech with status: $status")
+                Log.e(tag, "TextToSpeech initialization failed")
             }
         }
 
@@ -521,7 +521,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 return
             }
         }
-        Log.d(tag, "Voice name not found: $voice")
+        Log.d(tag, "Requested voice was not found")
         result.success(0)
     }
 
@@ -535,7 +535,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             bundle!!.putFloat(TextToSpeech.Engine.KEY_PARAM_VOLUME, volume)
             result.success(1)
         } else {
-            Log.d(tag, "Invalid volume $volume value - Range is from 0.0 to 1.0")
+            Log.d(tag, "Invalid volume value")
             result.success(0)
         }
     }
@@ -545,7 +545,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             tts!!.setPitch(pitch)
             result.success(1)
         } else {
-            Log.d(tag, "Invalid pitch $pitch value - Range is from 0.5 to 2.0")
+            Log.d(tag, "Invalid pitch value")
             result.success(0)
         }
     }
@@ -560,7 +560,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             }
             result.success(voices)
         } catch (e: NullPointerException) {
-            Log.d(tag, "getVoices: " + e.message)
+            Log.d(tag, "Voice enumeration failed")
             result.success(null)
         }
     }
@@ -582,9 +582,9 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 }
             }
         } catch (e: MissingResourceException) {
-            Log.d(tag, "getLanguages: " + e.message)
+            Log.d(tag, "Language enumeration failed")
         } catch (e: NullPointerException) {
-            Log.d(tag, "getLanguages: " + e.message)
+            Log.d(tag, "Language enumeration failed")
         }
         result.success(locales)
     }
@@ -596,7 +596,7 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                 engines.add(engineInfo.name)
             }
         } catch (e: Exception) {
-            Log.d(tag, "getEngines: " + e.message)
+            Log.d(tag, "Engine enumeration failed")
         }
         result.success(engines)
     }
@@ -740,9 +740,9 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
             }
 
         if (result == TextToSpeech.SUCCESS) {
-            Log.d(tag, "Successfully created file : $fullPath")
+            Log.d(tag, "Speech file created")
         } else {
-            Log.d(tag, "Failed creating file : $fullPath")
+            Log.d(tag, "Speech file creation failed")
         }
     }
 
@@ -770,11 +770,11 @@ class FlutterTtsPlugin : MethodCallHandler, FlutterPlugin {
                         Log.e(tag, "*******TTS -> mServiceConnection == null*******")
                     }
                 } catch (e: IllegalArgumentException) {
-                    e.printStackTrace()
+                    Log.e(tag, "TextToSpeech connection inspection failed")
                 } catch (e: IllegalAccessException) {
-                    e.printStackTrace()
+                    Log.e(tag, "TextToSpeech connection inspection failed")
                 } catch (e: Exception) {
-                    e.printStackTrace()
+                    Log.e(tag, "TextToSpeech connection inspection failed")
                 }
             }
         }

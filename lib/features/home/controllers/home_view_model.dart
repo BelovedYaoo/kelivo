@@ -9,7 +9,6 @@ import '../../../core/providers/assistant_provider.dart';
 import '../../../core/providers/settings_provider.dart';
 import '../../../core/services/api/chat_api_service.dart';
 import '../../../core/services/chat/chat_service.dart';
-import '../../../core/services/logging/flutter_logger.dart';
 import '../../../l10n/app_localizations.dart';
 import '../../chat/widgets/chat_message_widget.dart' show ToolUIPart;
 import '../services/message_builder_service.dart';
@@ -1169,12 +1168,11 @@ class HomeViewModel extends ChangeNotifier {
           notifyListeners();
         }
       }
-    } catch (e) {
-      FlutterLogger.log(
-        '[TitleGen] Generation failed: $e',
-        tag: 'HomeViewModel',
-      );
-      // Ignore title generation failure silently
+    } catch (_) {
+      assert(() {
+        debugPrint('[HomeViewModel] title generation failed');
+        return true;
+      }());
     }
   }
 
@@ -1369,11 +1367,11 @@ class HomeViewModel extends ChangeNotifier {
         );
         notifyListeners();
       }
-    } catch (e) {
-      FlutterLogger.log(
-        '[SuggestionGen] Generation failed: $e',
-        tag: 'HomeViewModel',
-      );
+    } catch (_) {
+      assert(() {
+        debugPrint('[HomeViewModel] suggestion generation failed');
+        return true;
+      }());
     }
   }
 

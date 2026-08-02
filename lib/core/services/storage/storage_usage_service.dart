@@ -8,8 +8,6 @@ import '../legacy_data_retirement_service.dart';
 import '../backup/restore_trace_service.dart';
 import '../../../utils/app_directories.dart';
 import '../../../utils/avatar_cache.dart';
-import '../logging/flutter_logger.dart';
-import '../network/request_logger.dart';
 
 enum StorageUsageCategoryKey {
   images,
@@ -19,7 +17,6 @@ enum StorageUsageCategoryKey {
   restoreTraces,
   assistantData,
   cache,
-  logs,
   other,
 }
 
@@ -184,12 +181,6 @@ abstract final class StorageUsageService {
       'system_cache': _MutableStats(),
     };
 
-    final logsSubs = <String, _MutableStats>{
-      'flutter_logs': _MutableStats(),
-      'request_logs': _MutableStats(),
-      'other_logs': _MutableStats(),
-    };
-
     int totalBytes = 0;
     int totalFiles = 0;
 
@@ -285,17 +276,6 @@ abstract final class StorageUsageService {
               cacheSubs['other_cache']!.add(bytes);
             }
             break;
-          case 'logs':
-            byCat[StorageUsageCategoryKey.logs]!.add(bytes);
-            final name = parts.last.toLowerCase();
-            if (name.startsWith('flutter_logs')) {
-              logsSubs['flutter_logs']!.add(bytes);
-            } else if (name.startsWith('logs')) {
-              logsSubs['request_logs']!.add(bytes);
-            } else {
-              logsSubs['other_logs']!.add(bytes);
-            }
-            break;
           default:
             byCat[StorageUsageCategoryKey.other]!.add(bytes);
             break;
@@ -309,7 +289,6 @@ abstract final class StorageUsageService {
     final cacheDir = await AppDirectories.getCacheDirectory();
     final systemCacheDir = await AppDirectories.getSystemCacheDirectory();
     final avatarCacheDir = await AppDirectories.getAvatarCacheDirectory();
-    final logsDir = Directory(p.join(root.path, 'logs'));
 
     // Platform cache directory (e.g. Android /data/user/0/<package>/cache).
     try {
@@ -336,12 +315,10 @@ abstract final class StorageUsageService {
     final clearable = StorageUsageStats(
       fileCount:
           byCat[StorageUsageCategoryKey.cache]!.fileCount +
-          byCat[StorageUsageCategoryKey.logs]!.fileCount +
           byCat[StorageUsageCategoryKey.legacyChatData]!.fileCount +
           byCat[StorageUsageCategoryKey.restoreTraces]!.fileCount,
       bytes:
           byCat[StorageUsageCategoryKey.cache]!.bytes +
-          byCat[StorageUsageCategoryKey.logs]!.bytes +
           byCat[StorageUsageCategoryKey.legacyChatData]!.bytes +
           byCat[StorageUsageCategoryKey.restoreTraces]!.bytes,
     );
@@ -428,29 +405,6 @@ abstract final class StorageUsageService {
             ),
         ],
       ),
-      StorageUsageCategory(
-        key: StorageUsageCategoryKey.logs,
-        stats: byCat[StorageUsageCategoryKey.logs]!.toStats(),
-        subcategories: [
-          StorageUsageSubcategory(
-            id: 'flutter_logs',
-            stats: logsSubs['flutter_logs']!.toStats(),
-            path: logsDir.path,
-          ),
-          StorageUsageSubcategory(
-            id: 'request_logs',
-            stats: logsSubs['request_logs']!.toStats(),
-            path: logsDir.path,
-          ),
-          if (logsSubs['other_logs']!.bytes > 0 ||
-              logsSubs['other_logs']!.fileCount > 0)
-            StorageUsageSubcategory(
-              id: 'other_logs',
-              stats: logsSubs['other_logs']!.toStats(),
-              path: logsDir.path,
-            ),
-        ],
-      ),
     ];
 
     // Ensure consistent ordering.
@@ -512,31 +466,6 @@ abstract final class StorageUsageService {
       final dir = await AppDirectories.getSystemCacheDirectory();
       await _deleteDirectoryContents(dir);
     } catch (_) {}
-  }
-
-  static Future<void> clearLogs() async {
-    final flutterOn = FlutterLogger.enabled;
-    final requestOn = RequestLogger.enabled;
-
-    try {
-      if (flutterOn) await FlutterLogger.setEnabled(false);
-    } catch (_) {}
-    try {
-      if (requestOn) await RequestLogger.setEnabled(false);
-    } catch (_) {}
-
-    try {
-      final root = await AppDirectories.getAppDataDirectory();
-      final logsDir = Directory(p.join(root.path, 'logs'));
-      await _deleteDirectoryContents(logsDir);
-    } finally {
-      try {
-        if (flutterOn) await FlutterLogger.setEnabled(true);
-      } catch (_) {}
-      try {
-        if (requestOn) await RequestLogger.setEnabled(true);
-      } catch (_) {}
-    }
   }
 
   static Future<void> clearLegacyChatData() async {
@@ -695,5 +624,4 @@ const List<StorageUsageCategoryKey> _categoryOrder = <StorageUsageCategoryKey>[
   StorageUsageCategoryKey.restoreTraces,
   StorageUsageCategoryKey.assistantData,
   StorageUsageCategoryKey.cache,
-  StorageUsageCategoryKey.logs,
 ];

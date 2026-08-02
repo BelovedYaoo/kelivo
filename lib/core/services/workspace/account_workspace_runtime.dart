@@ -177,7 +177,9 @@ final class AccountWorkspaceRuntime {
     return Set<String>.unmodifiable(prefixes);
   }
 
-  Future<void> discardPlaintextLocalState() async {
+  Future<void> discardPlaintextLocalState({
+    required Future<void> Function() retirePersistentLogs,
+  }) async {
     _requireOpen();
     await _ensureTrustedInstallationRoot(
       directory: installationRoot,
@@ -193,6 +195,8 @@ final class AccountWorkspaceRuntime {
         appDataDirectory: dataDirectory,
       );
     }
+    // 原生会话锚定安装根并统一枚举所有工作区；失败时不得先删除其他旧状态。
+    await retirePersistentLogs();
     // 拓扑检查与删除之间不能复用旧路径结论，否则运行期重解析替换会越过安装边界。
     await _ensureTrustedInstallationRoot(
       directory: installationRoot,
@@ -624,13 +628,11 @@ final class AccountWorkspaceRuntime {
         durability: durability,
       );
       return true;
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
-        '账号会话已提交，令牌清理将在下次启动重试：$operation:$workspaceKey',
+        '账号会话已提交，令牌清理将在下次启动重试',
         name: 'Kelivo.AccountWorkspaceRuntime',
         level: 900,
-        error: error,
-        stackTrace: stackTrace,
       );
       return false;
     }
@@ -668,13 +670,11 @@ final class AccountWorkspaceRuntime {
         keep: stored?.tokenReference,
         durability: durability,
       );
-    } catch (error, stackTrace) {
+    } catch (_) {
       developer.log(
-        '账号令牌待清理项暂时无法恢复，将在下次启动重试：$workspaceKey',
+        '账号令牌待清理项暂时无法恢复，将在下次启动重试',
         name: 'Kelivo.AccountWorkspaceRuntime',
         level: 900,
-        error: error,
-        stackTrace: stackTrace,
       );
       return false;
     }

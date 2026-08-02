@@ -1,8 +1,10 @@
+use super::{SHARED_PREFERENCES_FILE_MAX_SIZE, verify_shared_preferences_document};
 use crate::KelivoStatus;
 use core::mem::size_of;
 use std::{
     ffi::{OsStr, OsString},
     fs::{File, OpenOptions},
+    io::Read,
     os::windows::{
         ffi::{OsStrExt, OsStringExt},
         fs::OpenOptionsExt,
@@ -29,8 +31,9 @@ use windows_sys::{
             BY_HANDLE_FILE_INFORMATION, DELETE, FILE_ATTRIBUTE_DIRECTORY,
             FILE_ATTRIBUTE_REPARSE_POINT, FILE_DISPOSITION_INFO, FILE_FLAG_BACKUP_SEMANTICS,
             FILE_FLAG_OPEN_REPARSE_POINT, FILE_LIST_DIRECTORY, FILE_READ_ATTRIBUTES,
-            FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA, FileDispositionInfo,
-            GetFileInformationByHandle, SYNCHRONIZE, SetFileInformationByHandle,
+            FILE_READ_DATA, FILE_SHARE_READ, FILE_SHARE_WRITE, FILE_TRAVERSE, FILE_WRITE_DATA,
+            FileDispositionInfo, GetFileInformationByHandle, SYNCHRONIZE,
+            SetFileInformationByHandle,
         },
         System::IO::IO_STATUS_BLOCK,
     },
@@ -59,32 +62,191 @@ struct PinnedMarker {
     identity: FileIdentity,
 }
 
+pub(super) struct PinnedRoot {
+    chain: Vec<PinnedDirectory>,
+}
+
+struct PinnedDirectory {
+    file: File,
+    name_from_parent: Option<OsString>,
+    identity: FileIdentity,
+}
+
+pub(super) fn is_supported() -> bool {
+    true
+}
+
+impl PinnedRoot {
+    pub(super) fn open(root_path: &str) -> Result<Self, KelivoStatus> {
+        open_installation_root(root_path)
+    }
+
+    pub(super) fn wipe_preserving(&self, preserved_entry_name: &str) -> Result<(), KelivoStatus> {
+        self.verify_chain()?;
+        let result = wipe_pinned_root(self.root(), preserved_entry_name, || {});
+        let identity_result = self.verify_chain();
+        result?;
+        identity_result
+    }
+
+    pub(super) fn retire_plaintext_backups(&self) -> Result<(), KelivoStatus> {
+        self.guarded(retire_plaintext_backups)
+    }
+
+    pub(super) fn retire_attachment_staging(&self) -> Result<(), KelivoStatus> {
+        self.guarded(|root| retire_workspace_tree(root, &["upload", "e2ee", "staging"]))
+    }
+
+    pub(super) fn retire_persistent_logs(&self) -> Result<(), KelivoStatus> {
+        self.guarded(|root| retire_workspace_tree(root, &["logs"]))
+    }
+
+    pub(super) fn verify_shared_preferences_removal(
+        &self,
+        raw_key: &str,
+    ) -> Result<(), KelivoStatus> {
+        self.guarded(|root| verify_shared_preferences_removal(root, raw_key))
+    }
+
+    fn guarded(
+        &self,
+        operation: impl FnOnce(&File) -> Result<(), KelivoStatus>,
+    ) -> Result<(), KelivoStatus> {
+        self.verify_chain()?;
+        let result = operation(self.root());
+        let identity_result = self.verify_chain();
+        result?;
+        identity_result
+    }
+
+    fn root(&self) -> &File {
+        &self.chain.last().expect("受管根链不得为空").file
+    }
+
+    fn verify_chain(&self) -> Result<(), KelivoStatus> {
+        for index in 1..self.chain.len() {
+            let parent = &self.chain[index - 1].file;
+            let component = &self.chain[index];
+            let name = component
+                .name_from_parent
+                .as_ref()
+                .ok_or(KelivoStatus::InternalState)?;
+            let reopened = match open_relative(
+                parent,
+                name,
+                FILE_READ_ATTRIBUTES | FILE_TRAVERSE | SYNCHRONIZE,
+                FILE_DIRECTORY_FILE,
+            )? {
+                RelativeOpenResult::Opened(value) => value,
+                RelativeOpenResult::Missing => return Err(KelivoStatus::IoFailure),
+            };
+            let metadata = metadata_for(&reopened)?;
+            require_directory(metadata)?;
+            if metadata.identity != component.identity {
+                return Err(KelivoStatus::IoFailure);
+            }
+        }
+        Ok(())
+    }
+}
+
+fn verify_shared_preferences_removal(root: &File, raw_key: &str) -> Result<(), KelivoStatus> {
+    let name = OsStr::new("shared_preferences.json");
+    let Some(entry) = find_exact_entry(root, name)? else {
+        return flush(root);
+    };
+    require_regular_attributes(entry.attributes)?;
+
+    let mut file = match open_relative_with_share(
+        root,
+        name,
+        FILE_READ_DATA | FILE_READ_ATTRIBUTES | FILE_WRITE_DATA | SYNCHRONIZE,
+        FILE_NON_DIRECTORY_FILE,
+        0,
+    )? {
+        RelativeOpenResult::Opened(value) => value,
+        RelativeOpenResult::Missing => return Err(KelivoStatus::IoFailure),
+    };
+    let root_metadata = metadata_for(root)?;
+    let opened = metadata_for(&file)?;
+    require_regular(opened)?;
+    if opened.identity.volume_serial != root_metadata.identity.volume_serial || opened.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    flush(&file)?;
+    flush(root)?;
+
+    if file.metadata().map_err(|_| KelivoStatus::IoFailure)?.len()
+        > u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE)
+            .map_err(|_| KelivoStatus::InternalState)?
+    {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    let mut contents = Vec::new();
+    (&mut file)
+        .take(
+            u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE + 1)
+                .map_err(|_| KelivoStatus::InternalState)?,
+        )
+        .read_to_end(&mut contents)
+        .map_err(|_| KelivoStatus::IoFailure)?;
+    if contents.len() > SHARED_PREFERENCES_FILE_MAX_SIZE {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    verify_shared_preferences_document(&contents, raw_key)?;
+
+    let after = metadata_for(&file)?;
+    require_regular(after)?;
+    if after.identity != opened.identity || after.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    let Some(entry) = find_exact_entry(root, name)? else {
+        return Err(KelivoStatus::IoFailure);
+    };
+    require_regular_attributes(entry.attributes)?;
+    flush(root)
+}
+
+#[cfg(test)]
 pub(super) fn wipe(root_path: &str, preserved_entry_name: &str) -> Result<(), KelivoStatus> {
     wipe_after_marker_pinned(root_path, preserved_entry_name, || {})
 }
 
+#[cfg(test)]
 fn wipe_after_marker_pinned(
     root_path: &str,
     preserved_entry_name: &str,
     after_marker_pinned: impl FnOnce(),
 ) -> Result<(), KelivoStatus> {
-    let preserved_name = validate_preserved_name(preserved_entry_name)?;
     let root = open_installation_root(root_path)?;
-    let root_metadata = metadata_for(&root)?;
+    root.verify_chain()?;
+    let result = wipe_pinned_root(root.root(), preserved_entry_name, after_marker_pinned);
+    let identity_result = root.verify_chain();
+    result?;
+    identity_result
+}
+
+fn wipe_pinned_root(
+    root: &File,
+    preserved_entry_name: &str,
+    after_marker_pinned: impl FnOnce(),
+) -> Result<(), KelivoStatus> {
+    let preserved_name = validate_preserved_name(preserved_entry_name)?;
+    let root_metadata = metadata_for(root)?;
     require_directory(root_metadata)?;
-    let marker = pin_marker(&root, &preserved_name, root_metadata.identity.volume_serial)?;
+    let marker = pin_marker(root, &preserved_name, root_metadata.identity.volume_serial)?;
 
     after_marker_pinned();
     wipe_directory(
-        &root,
+        root,
         &preserved_name,
         root_metadata.identity.volume_serial,
         marker.identity,
         0,
     )?;
-    verify_only_marker(&root, &preserved_name, marker.identity)?;
+    verify_only_marker(root, &preserved_name, marker.identity)?;
 
-    let final_marker = open_preserved_regular_relative(&root, &preserved_name)?;
+    let final_marker = open_preserved_regular_relative(root, &preserved_name)?;
     let final_metadata = metadata_for(&final_marker)?;
     require_regular(final_metadata)?;
     if final_metadata.identity != marker.identity || final_metadata.links != 1 {
@@ -92,7 +254,7 @@ fn wipe_after_marker_pinned(
     }
     flush(&marker.file)?;
     flush(&final_marker)?;
-    flush(&root)
+    flush(root)
 }
 
 fn validate_preserved_name(name: &str) -> Result<OsString, KelivoStatus> {
@@ -110,13 +272,19 @@ fn validate_preserved_name(name: &str) -> Result<OsString, KelivoStatus> {
     Ok(value)
 }
 
-fn open_installation_root(path: &str) -> Result<File, KelivoStatus> {
+fn open_installation_root(path: &str) -> Result<PinnedRoot, KelivoStatus> {
     validate_disk_path_text(path)?;
     let (volume_root, components) = split_disk_path(Path::new(path))?;
     if components.is_empty() {
         return Err(KelivoStatus::InvalidArgument);
     }
-    let mut directory = open_volume_root(&volume_root)?;
+    let volume = open_volume_root(&volume_root)?;
+    let volume_identity = metadata_for(&volume)?.identity;
+    let mut chain = vec![PinnedDirectory {
+        file: volume,
+        name_from_parent: None,
+        identity: volume_identity,
+    }];
     for (index, component) in components.iter().enumerate() {
         let is_installation_root = index + 1 == components.len();
         let desired_access = FILE_LIST_DIRECTORY
@@ -128,14 +296,24 @@ fn open_installation_root(path: &str) -> Result<File, KelivoStatus> {
             } else {
                 0
             };
-        directory = match open_relative(&directory, component, desired_access, FILE_DIRECTORY_FILE)?
-        {
+        let directory = match open_relative(
+            &chain.last().ok_or(KelivoStatus::InternalState)?.file,
+            component,
+            desired_access,
+            FILE_DIRECTORY_FILE,
+        )? {
             RelativeOpenResult::Opened(child) => child,
             RelativeOpenResult::Missing => return Err(KelivoStatus::IoFailure),
         };
-        require_directory(metadata_for(&directory)?)?;
+        let metadata = metadata_for(&directory)?;
+        require_directory(metadata)?;
+        chain.push(PinnedDirectory {
+            file: directory,
+            name_from_parent: Some(component.clone()),
+            identity: metadata.identity,
+        });
     }
-    Ok(directory)
+    Ok(PinnedRoot { chain })
 }
 
 fn validate_disk_path_text(path: &str) -> Result<(), KelivoStatus> {
@@ -206,6 +384,22 @@ fn open_relative(
     desired_access: u32,
     required_type: u32,
 ) -> Result<RelativeOpenResult, KelivoStatus> {
+    open_relative_with_share(
+        parent,
+        name,
+        desired_access,
+        required_type,
+        SHARE_READ_WRITE,
+    )
+}
+
+fn open_relative_with_share(
+    parent: &File,
+    name: &OsStr,
+    desired_access: u32,
+    required_type: u32,
+    share_mode: u32,
+) -> Result<RelativeOpenResult, KelivoStatus> {
     let mut encoded_name = encode_relative_name(name)?;
     let name_length = u16::try_from(encoded_name.len() * size_of::<u16>())
         .map_err(|_| KelivoStatus::InvalidArgument)?;
@@ -233,7 +427,7 @@ fn open_relative(
             &mut io_status,
             ptr::null(),
             0,
-            SHARE_READ_WRITE,
+            share_mode,
             FILE_OPEN,
             required_type | FILE_OPEN_REPARSE_POINT | FILE_SYNCHRONOUS_IO_NONALERT,
             ptr::null(),
@@ -388,6 +582,235 @@ fn wipe_directory(
         }
     }
     Ok(())
+}
+
+fn retire_plaintext_backups(root: &File) -> Result<(), KelivoStatus> {
+    let root_volume = metadata_for(root)?.identity.volume_serial;
+    for entry in enumerate_directory_entries(root)? {
+        let has_backup_prefix = name_starts_with_ascii(&entry.name, "kelivo_backup_");
+        let is_loose_file = [
+            "_bk_settings.json",
+            "_bk_chats.json",
+            "_bk_manifest.json",
+            "_bk_kelivo.db",
+        ]
+        .iter()
+        .any(|name| name_equals_ascii(&entry.name, name));
+        if !has_backup_prefix && !is_loose_file {
+            continue;
+        }
+        if entry.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(KelivoStatus::IoFailure);
+        }
+        if entry.attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+            if !has_backup_prefix {
+                return Err(KelivoStatus::IoFailure);
+            }
+            delete_named_directory(root, &entry.name, root_volume)?;
+        } else if is_loose_file || (has_backup_prefix && name_ends_with_ascii(&entry.name, ".zip"))
+        {
+            delete_named_regular(root, &entry.name, root_volume)?;
+        }
+    }
+    flush(root)
+}
+
+fn retire_workspace_tree(root: &File, relative_segments: &[&str]) -> Result<(), KelivoStatus> {
+    let root_volume = metadata_for(root)?.identity.volume_serial;
+    delete_relative_directory(root, relative_segments, root_volume)?;
+    let Some(workspaces) =
+        open_optional_directory(root, OsStr::new(".kelivo-workspaces"), root_volume)?
+    else {
+        return flush(root);
+    };
+
+    if let Some(local) = open_optional_directory(&workspaces, OsStr::new("local"), root_volume)?
+        && let Some(data) = open_optional_directory(&local, OsStr::new("data"), root_volume)?
+    {
+        delete_relative_directory(&data, relative_segments, root_volume)?;
+    }
+
+    if let Some(accounts) =
+        open_optional_directory(&workspaces, OsStr::new("accounts"), root_volume)?
+    {
+        for entry in enumerate_directory_entries(&accounts)? {
+            if !is_workspace_key(&entry.name)
+                || entry.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+                || entry.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
+            {
+                return Err(KelivoStatus::IoFailure);
+            }
+            let account = open_required_directory(&accounts, &entry.name, root_volume)?;
+            if let Some(data) = open_optional_directory(&account, OsStr::new("data"), root_volume)?
+            {
+                delete_relative_directory(&data, relative_segments, root_volume)?;
+            }
+        }
+    }
+    flush(&workspaces)?;
+    flush(root)
+}
+
+fn delete_relative_directory(
+    root: &File,
+    segments: &[&str],
+    root_volume: u32,
+) -> Result<(), KelivoStatus> {
+    let (target, ancestors) = segments.split_last().ok_or(KelivoStatus::InternalState)?;
+    let mut chain = Vec::with_capacity(ancestors.len());
+    let mut parent = root;
+    for segment in ancestors {
+        let Some(directory) = open_optional_directory(parent, OsStr::new(segment), root_volume)?
+        else {
+            return Ok(());
+        };
+        chain.push(directory);
+        parent = chain.last().ok_or(KelivoStatus::InternalState)?;
+    }
+    let result = delete_optional_named_directory(parent, OsStr::new(target), root_volume);
+    drop(chain);
+    result
+}
+
+fn delete_optional_named_directory(
+    parent: &File,
+    name: &OsStr,
+    root_volume: u32,
+) -> Result<(), KelivoStatus> {
+    let Some(entry) = find_exact_entry(parent, name)? else {
+        return Ok(());
+    };
+    if entry.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0
+        || entry.attributes & FILE_ATTRIBUTE_DIRECTORY == 0
+    {
+        return Err(KelivoStatus::IoFailure);
+    }
+    delete_named_directory(parent, &entry.name, root_volume)
+}
+
+fn delete_named_directory(
+    parent: &File,
+    name: &OsStr,
+    root_volume: u32,
+) -> Result<(), KelivoStatus> {
+    let child = open_required_directory(parent, name, root_volume)?;
+    delete_directory_contents(&child, root_volume, 0)?;
+    flush(&child)?;
+    delete_handle(child)?;
+    flush(parent)
+}
+
+fn delete_directory_contents(
+    directory: &File,
+    root_volume: u32,
+    depth: usize,
+) -> Result<(), KelivoStatus> {
+    if depth >= MAX_DIRECTORY_DEPTH {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    for entry in enumerate_directory_entries(directory)? {
+        if entry.attributes & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+            return Err(KelivoStatus::IoFailure);
+        }
+        if entry.attributes & FILE_ATTRIBUTE_DIRECTORY != 0 {
+            let child = open_required_directory(directory, &entry.name, root_volume)?;
+            delete_directory_contents(&child, root_volume, depth + 1)?;
+            flush(&child)?;
+            delete_handle(child)?;
+            flush(directory)?;
+        } else {
+            delete_named_regular(directory, &entry.name, root_volume)?;
+        }
+    }
+    Ok(())
+}
+
+fn delete_named_regular(parent: &File, name: &OsStr, root_volume: u32) -> Result<(), KelivoStatus> {
+    let file = open_regular_relative(parent, name)?;
+    let metadata = metadata_for(&file)?;
+    if metadata.identity.volume_serial != root_volume || metadata.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    flush(&file)?;
+    delete_handle(file)?;
+    flush(parent)
+}
+
+fn open_optional_directory(
+    parent: &File,
+    name: &OsStr,
+    root_volume: u32,
+) -> Result<Option<File>, KelivoStatus> {
+    if find_exact_entry(parent, name)?.is_none() {
+        return Ok(None);
+    }
+    open_required_directory(parent, name, root_volume).map(Some)
+}
+
+fn open_required_directory(
+    parent: &File,
+    name: &OsStr,
+    root_volume: u32,
+) -> Result<File, KelivoStatus> {
+    let directory = open_directory_relative(parent, name)?;
+    let metadata = metadata_for(&directory)?;
+    if metadata.identity.volume_serial != root_volume {
+        return Err(KelivoStatus::IoFailure);
+    }
+    Ok(directory)
+}
+
+fn find_exact_entry(parent: &File, name: &OsStr) -> Result<Option<DirectoryEntry>, KelivoStatus> {
+    let expected: Vec<u16> = name.encode_wide().collect();
+    let mut exact = None;
+    for entry in enumerate_directory_entries(parent)? {
+        let actual: Vec<u16> = entry.name.encode_wide().collect();
+        if actual == expected {
+            exact = Some(entry);
+            continue;
+        }
+        if actual.len() == expected.len()
+            && actual
+                .iter()
+                .zip(&expected)
+                .all(|(left, right)| ascii_lower(*left) == ascii_lower(*right))
+        {
+            return Err(KelivoStatus::IoFailure);
+        }
+    }
+    Ok(exact)
+}
+
+fn ascii_lower(value: u16) -> u16 {
+    if value >= u16::from(b'A') && value <= u16::from(b'Z') {
+        value + u16::from(b'a' - b'A')
+    } else {
+        value
+    }
+}
+
+fn name_equals_ascii(name: &OsStr, expected: &str) -> bool {
+    name.encode_wide().eq(expected.encode_utf16())
+}
+
+fn name_starts_with_ascii(name: &OsStr, expected: &str) -> bool {
+    let encoded = name.encode_wide().collect::<Vec<_>>();
+    let prefix = expected.encode_utf16().collect::<Vec<_>>();
+    encoded.starts_with(&prefix)
+}
+
+fn name_ends_with_ascii(name: &OsStr, expected: &str) -> bool {
+    let encoded = name.encode_wide().collect::<Vec<_>>();
+    let suffix = expected.encode_utf16().collect::<Vec<_>>();
+    encoded.ends_with(&suffix)
+}
+
+fn is_workspace_key(name: &OsStr) -> bool {
+    let encoded = name.encode_wide().collect::<Vec<_>>();
+    encoded.len() == 64
+        && encoded
+            .iter()
+            .all(|value| matches!(u8::try_from(*value), Ok(b'0'..=b'9' | b'a'..=b'f')))
 }
 
 fn verify_only_marker(
@@ -699,11 +1122,197 @@ mod tests {
     }
 
     #[test]
+    fn managed_root_session_blocks_root_and_ancestor_replacement_before_execute() {
+        let parent = TestRoot::new("session-root");
+        let ancestor = parent.0.join("ancestor");
+        let root = ancestor.join("managed");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("wipe-complete"), b"done").unwrap();
+        fs::write(root.join("secret"), b"secret").unwrap();
+        let session = PinnedRoot::open(root.to_str().unwrap()).unwrap();
+
+        assert!(fs::rename(&root, ancestor.join("replacement")).is_err());
+        assert!(fs::rename(&ancestor, parent.0.join("moved-ancestor")).is_err());
+        session
+            .wipe_preserving("wipe-complete")
+            .expect("固定根未变化时必须完成擦除");
+        assert_eq!(fs::read(root.join("wipe-complete")).unwrap(), b"done");
+    }
+
+    #[test]
+    fn shared_preferences_removal_proof_is_bounded_and_structural() {
+        let root = TestRoot::new("preferences-proof");
+        let preferences = root.0.join("shared_preferences.json");
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("偏好文件不存在时固定根持久屏障必须成功");
+        fs::write(
+            root.0.join("other.json"),
+            br#"{"flutter.removed":"unrelated"}"#,
+        )
+        .unwrap();
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("证明只能读取固定偏好文件名");
+        fs::write(&preferences, br#"{"flutter.other":"kept"}"#).unwrap();
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("结构化对象不含目标键时必须成功");
+
+        fs::write(&preferences, br#"{"flutter.removed":"secret"}"#).unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::write(&preferences, b"[]").unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&preferences)
+            .unwrap()
+            .set_len(u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE + 1).unwrap())
+            .unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::InputTooLarge)
+        );
+    }
+
+    #[test]
+    fn shared_preferences_removal_proof_rejects_links_and_case_aliases() {
+        let root = TestRoot::new("preferences-links");
+        let external = TestRoot::new("preferences-links-external");
+        let sentinel = external.0.join("sentinel");
+        let preferences = root.0.join("shared_preferences.json");
+        fs::write(&sentinel, br#"{"flutter.other":"kept"}"#).unwrap();
+        fs::hard_link(&sentinel, &preferences).unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::remove_file(&preferences).unwrap();
+        fs::write(
+            root.0.join("SHARED_PREFERENCES.JSON"),
+            br#"{"flutter.other":"kept"}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), br#"{"flutter.other":"kept"}"#);
+    }
+
+    #[test]
+    fn temporary_backup_retirement_deletes_only_owned_artifacts_and_unicode_contents() {
+        let root = TestRoot::new("backup-retirement");
+        fs::write(root.0.join("_bk_settings.json"), b"secret").unwrap();
+        fs::write(root.0.join("kelivo_backup_archive.zip"), b"secret").unwrap();
+        let bundle = root.0.join("kelivo_backup_bundle");
+        fs::create_dir(&bundle).unwrap();
+        fs::write(bundle.join("会话.txt"), b"secret").unwrap();
+        fs::write(root.0.join("unrelated.txt"), b"keep").unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        session
+            .retire_plaintext_backups()
+            .expect("受管明文备份必须删除");
+
+        assert!(!root.0.join("_bk_settings.json").exists());
+        assert!(!root.0.join("kelivo_backup_archive.zip").exists());
+        assert!(!bundle.exists());
+        assert_eq!(fs::read(root.0.join("unrelated.txt")).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn temporary_backup_retirement_rejects_junction_and_hard_link_without_external_touch() {
+        let root = TestRoot::new("backup-links");
+        let external = TestRoot::new("backup-links-external");
+        let sentinel = external.0.join("sentinel");
+        fs::write(&sentinel, b"outside").unwrap();
+        let junction = root.0.join("kelivo_backup_link");
+        create_directory_junction(&junction, &external.0);
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        assert_eq!(
+            session.retire_plaintext_backups(),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"outside");
+        fs::remove_dir(&junction).unwrap();
+
+        fs::hard_link(&sentinel, root.0.join("_bk_settings.json")).unwrap();
+        assert_eq!(
+            session.retire_plaintext_backups(),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"outside");
+    }
+
+    #[test]
+    fn workspace_retirement_rejects_case_alias_and_unknown_account_entry() {
+        let case_root = TestRoot::new("workspace-case");
+        fs::create_dir(case_root.0.join("LOGS")).unwrap();
+        let case_session = PinnedRoot::open(case_root.path_text()).unwrap();
+        assert_eq!(
+            case_session.retire_persistent_logs(),
+            Err(KelivoStatus::IoFailure)
+        );
+
+        let account_root = TestRoot::new("workspace-account");
+        fs::create_dir_all(account_root.0.join(".kelivo-workspaces/accounts/not-owned")).unwrap();
+        let account_session = PinnedRoot::open(account_root.path_text()).unwrap();
+        assert_eq!(
+            account_session.retire_persistent_logs(),
+            Err(KelivoStatus::IoFailure)
+        );
+    }
+
+    #[test]
+    fn workspace_retirement_removes_direct_local_and_account_artifacts() {
+        let root = TestRoot::new("workspace-retirement");
+        let account_key = "a".repeat(64);
+        let data_roots = [
+            root.0.clone(),
+            root.0.join(".kelivo-workspaces/local/data"),
+            root.0
+                .join(".kelivo-workspaces/accounts")
+                .join(account_key)
+                .join("data"),
+        ];
+        for data in &data_roots {
+            fs::create_dir_all(data.join("logs")).unwrap();
+            fs::write(data.join("logs/日志.txt"), b"secret").unwrap();
+            fs::create_dir_all(data.join("upload/e2ee/staging")).unwrap();
+            fs::write(data.join("upload/e2ee/staging/plaintext.bin"), b"secret").unwrap();
+            fs::write(data.join("retained.bin"), b"keep").unwrap();
+        }
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        session.retire_persistent_logs().unwrap();
+        session.retire_attachment_staging().unwrap();
+
+        for data in &data_roots {
+            assert!(!data.join("logs").exists());
+            assert!(!data.join("upload/e2ee/staging").exists());
+            assert_eq!(fs::read(data.join("retained.bin")).unwrap(), b"keep");
+        }
+    }
+
+    #[test]
     fn pinned_child_cannot_be_renamed() {
         let root = TestRoot::new("rename-locked");
         fs::create_dir(root.0.join("nested")).unwrap();
         let root_handle = open_installation_root(root.path_text()).unwrap();
-        let child = open_directory_relative(&root_handle, OsStr::new("nested")).unwrap();
+        let child = open_directory_relative(root_handle.root(), OsStr::new("nested")).unwrap();
 
         assert!(fs::rename(root.0.join("nested"), root.0.join("moved")).is_err());
 

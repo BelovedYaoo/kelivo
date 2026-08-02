@@ -66,9 +66,9 @@ func logFault(_ message: String) {
 func log(_ message: String, as type: LogType = .default) {
 
     if #available(iOS 10.0, *) {
-        os_log("%@", type: type.osLogType, message)
+        os_log("Workmanager event", type: type.osLogType)
     } else {
-        NSLog("%@", "\(type.rawValue) log: \(message)")
+        NSLog("Workmanager event: %@", type.rawValue)
     }
 
 }

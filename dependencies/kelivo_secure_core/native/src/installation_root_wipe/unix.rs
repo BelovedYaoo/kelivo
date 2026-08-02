@@ -1,18 +1,24 @@
+use super::{SHARED_PREFERENCES_FILE_MAX_SIZE, verify_shared_preferences_document};
 use crate::KelivoStatus;
 use std::{
     ffi::{CStr, CString},
     fs::File,
+    io::Read,
     os::fd::{AsRawFd, FromRawFd},
 };
 
 const MAX_COMPONENT_BYTES: usize = 255;
 const MAX_DIRECTORY_DEPTH: usize = 128;
-// 当前 libc 版本未在所有 Android 架构导出该常量；437 是这些 Linux UAPI 架构的稳定编号。
+#[cfg(target_os = "linux")]
 const SYS_OPENAT2: libc::c_long = 437;
+#[cfg(target_os = "linux")]
 const RESOLVE_NO_XDEV: u64 = 0x01;
+#[cfg(target_os = "linux")]
 const RESOLVE_NO_SYMLINKS: u64 = 0x04;
+#[cfg(target_os = "linux")]
 const RESOLVE_BENEATH: u64 = 0x08;
 
+#[cfg(target_os = "linux")]
 #[repr(C)]
 struct OpenHow {
     flags: u64,
@@ -33,11 +39,109 @@ struct FileMetadata {
     links: u64,
 }
 
+#[cfg(any(target_os = "android", test))]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum AndroidUserZeroAliasKind {
+    Symlink,
+    BindMount,
+}
+
+#[cfg(any(target_os = "android", test))]
+fn validate_android_user_zero_alias_evidence(
+    alias_entry: FileMetadata,
+    alias_target: FileMetadata,
+    canonical_target: FileMetadata,
+    alias_mount_id: u64,
+    canonical_mount_id: u64,
+) -> Result<AndroidUserZeroAliasKind, KelivoStatus> {
+    if canonical_target.identity.kind != normalized_u32(libc::S_IFDIR)
+        || alias_target.identity != canonical_target.identity
+    {
+        return Err(KelivoStatus::IoFailure);
+    }
+    if alias_entry.identity.kind == normalized_u32(libc::S_IFLNK) && alias_entry.links == 1 {
+        return if alias_mount_id == canonical_mount_id {
+            Ok(AndroidUserZeroAliasKind::Symlink)
+        } else {
+            Err(KelivoStatus::IoFailure)
+        };
+    }
+    if alias_entry.identity == canonical_target.identity && alias_mount_id != canonical_mount_id {
+        return Ok(AndroidUserZeroAliasKind::BindMount);
+    }
+    Err(KelivoStatus::IoFailure)
+}
+
+#[cfg(any(target_os = "android", test))]
+fn parse_android_fd_mount_id(bytes: &[u8]) -> Result<u64, KelivoStatus> {
+    let mut mount_id = None;
+    for line in bytes.split(|byte| *byte == b'\n') {
+        let Some(raw_value) = line.strip_prefix(b"mnt_id:") else {
+            continue;
+        };
+        if mount_id.is_some() {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let digits = raw_value.trim_ascii();
+        if digits.is_empty() || !digits.iter().all(u8::is_ascii_digit) {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let mut parsed = 0_u64;
+        for digit in digits {
+            parsed = parsed
+                .checked_mul(10)
+                .and_then(|value| value.checked_add(u64::from(*digit - b'0')))
+                .ok_or(KelivoStatus::IoFailure)?;
+        }
+        if parsed == 0 {
+            return Err(KelivoStatus::IoFailure);
+        }
+        mount_id = Some(parsed);
+    }
+    mount_id.ok_or(KelivoStatus::IoFailure)
+}
+
+#[cfg(any(target_os = "android", test))]
+fn validate_android_descendant_mount(
+    parent_mount_id: u64,
+    opened_mount_id: u64,
+) -> Result<(), KelivoStatus> {
+    if parent_mount_id == opened_mount_id {
+        Ok(())
+    } else {
+        Err(KelivoStatus::IoFailure)
+    }
+}
+
 struct PinnedMarker {
     file: File,
     identity: FileIdentity,
 }
 
+pub(super) struct PinnedRoot {
+    chain: Vec<PinnedDirectory>,
+    #[cfg(target_os = "android")]
+    android_user_zero_alias: Option<AndroidUserZeroAlias>,
+}
+
+struct PinnedDirectory {
+    file: File,
+    name_from_parent: Option<CString>,
+    identity: FileIdentity,
+}
+
+#[cfg(target_os = "android")]
+struct AndroidUserZeroAlias {
+    user_directory: File,
+    user_identity: FileIdentity,
+    alias_identity: FileIdentity,
+    canonical_target_identity: FileIdentity,
+    kind: AndroidUserZeroAliasKind,
+    alias_mount_id: u64,
+    canonical_mount_id: u64,
+}
+
+#[cfg(target_os = "linux")]
 pub(super) fn is_supported() -> bool {
     open_beneath_no_mount(
         libc::AT_FDCWD,
@@ -48,6 +152,24 @@ pub(super) fn is_supported() -> bool {
     .is_ok()
 }
 
+#[cfg(target_os = "android")]
+pub(super) fn is_supported() -> bool {
+    // Android 应用 seccomp 会直接以 SIGSYS 拒绝 openat2，能力探测不得触发它。
+    let fd = unsafe {
+        libc::openat(
+            libc::AT_FDCWD,
+            c".".as_ptr(),
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return false;
+    }
+    let directory = unsafe { File::from_raw_fd(fd) };
+    android_fd_mount_id(&directory).is_ok()
+}
+
+#[cfg(test)]
 pub(super) fn wipe(root_path: &str, preserved_entry_name: &str) -> Result<(), KelivoStatus> {
     if !is_supported() {
         return Err(KelivoStatus::UnsupportedPlatform);
@@ -55,24 +177,196 @@ pub(super) fn wipe(root_path: &str, preserved_entry_name: &str) -> Result<(), Ke
     wipe_after_marker_pinned(root_path, preserved_entry_name, || {})
 }
 
+impl PinnedRoot {
+    pub(super) fn open(root_path: &str) -> Result<Self, KelivoStatus> {
+        if !is_supported() {
+            return Err(KelivoStatus::UnsupportedPlatform);
+        }
+        validate_absolute_path(root_path)?;
+        open_absolute_directory(root_path)
+    }
+
+    pub(super) fn wipe_preserving(&self, preserved_entry_name: &str) -> Result<(), KelivoStatus> {
+        self.verify_chain()?;
+        let result = wipe_pinned_root(self.root(), preserved_entry_name, || {});
+        let identity_result = self.verify_chain();
+        result?;
+        identity_result
+    }
+
+    pub(super) fn retire_plaintext_backups(&self) -> Result<(), KelivoStatus> {
+        self.guarded(retire_plaintext_backups)
+    }
+
+    pub(super) fn retire_attachment_staging(&self) -> Result<(), KelivoStatus> {
+        self.guarded(|root| retire_workspace_tree(root, &[b"upload", b"e2ee", b"staging"]))
+    }
+
+    pub(super) fn retire_persistent_logs(&self) -> Result<(), KelivoStatus> {
+        self.guarded(|root| retire_workspace_tree(root, &[b"logs"]))
+    }
+
+    pub(super) fn verify_shared_preferences_removal(
+        &self,
+        raw_key: &str,
+    ) -> Result<(), KelivoStatus> {
+        self.guarded(|root| verify_shared_preferences_removal(root, raw_key))
+    }
+
+    fn guarded(
+        &self,
+        operation: impl FnOnce(&File) -> Result<(), KelivoStatus>,
+    ) -> Result<(), KelivoStatus> {
+        self.verify_chain()?;
+        let _root_lock = lock_root_exclusively(self.root())?;
+        self.verify_chain()?;
+        let result = operation(self.root());
+        let identity_result = self.verify_chain();
+        result?;
+        identity_result
+    }
+
+    fn root(&self) -> &File {
+        &self.chain.last().expect("受管根链不得为空").file
+    }
+
+    fn verify_chain(&self) -> Result<(), KelivoStatus> {
+        for index in 1..self.chain.len() {
+            let parent = &self.chain[index - 1].file;
+            let component = &self.chain[index];
+            let name = component
+                .name_from_parent
+                .as_ref()
+                .ok_or(KelivoStatus::InternalState)?;
+            let metadata = metadata_at(parent, name)?;
+            require_directory(metadata)?;
+            if metadata.identity != component.identity {
+                return Err(KelivoStatus::IoFailure);
+            }
+        }
+        #[cfg(target_os = "android")]
+        if let Some(alias) = &self.android_user_zero_alias {
+            self.verify_android_user_zero_alias(alias)?;
+        }
+        Ok(())
+    }
+
+    #[cfg(target_os = "android")]
+    fn verify_android_user_zero_alias(
+        &self,
+        alias: &AndroidUserZeroAlias,
+    ) -> Result<(), KelivoStatus> {
+        let data_directory = self.chain.get(1).ok_or(KelivoStatus::InternalState)?;
+        let user_metadata = metadata_at(&data_directory.file, c"user")?;
+        if user_metadata.identity != alias.user_identity {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let alias_metadata = metadata_at(&alias.user_directory, c"0")?;
+        if alias_metadata.identity != alias.alias_identity {
+            return Err(KelivoStatus::IoFailure);
+        }
+        let canonical_data = self.chain.get(2).ok_or(KelivoStatus::InternalState)?;
+        let canonical_metadata = metadata_for(&canonical_data.file)?;
+        let canonical_mount_id = android_fd_mount_id(&canonical_data.file)?;
+        let target = open_android_system_alias(&alias.user_directory, c"0")?;
+        let target_metadata = metadata_for(&target)?;
+        let alias_mount_id = android_fd_mount_id(&target)?;
+        let kind = validate_android_user_zero_alias_evidence(
+            alias_metadata,
+            target_metadata,
+            canonical_metadata,
+            alias_mount_id,
+            canonical_mount_id,
+        )?;
+        if target_metadata.identity != alias.canonical_target_identity
+            || kind != alias.kind
+            || alias_mount_id != alias.alias_mount_id
+            || canonical_mount_id != alias.canonical_mount_id
+        {
+            return Err(KelivoStatus::IoFailure);
+        }
+        Ok(())
+    }
+}
+
+fn verify_shared_preferences_removal(root: &File, raw_key: &str) -> Result<(), KelivoStatus> {
+    let name = c"shared_preferences.json";
+    let Some(before) = metadata_at_optional(root, name)? else {
+        return root.sync_all().map_err(|_| KelivoStatus::IoFailure);
+    };
+    require_regular(before)?;
+    if before.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+
+    let mut file = open_regular_relative(root, name)?;
+    let opened = metadata_for(&file)?;
+    if opened.identity != before.identity || opened.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    file.sync_all().map_err(|_| KelivoStatus::IoFailure)?;
+    root.sync_all().map_err(|_| KelivoStatus::IoFailure)?;
+
+    if file.metadata().map_err(|_| KelivoStatus::IoFailure)?.len()
+        > u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE)
+            .map_err(|_| KelivoStatus::InternalState)?
+    {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    let mut contents = Vec::new();
+    (&mut file)
+        .take(
+            u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE + 1)
+                .map_err(|_| KelivoStatus::InternalState)?,
+        )
+        .read_to_end(&mut contents)
+        .map_err(|_| KelivoStatus::IoFailure)?;
+    if contents.len() > SHARED_PREFERENCES_FILE_MAX_SIZE {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    verify_shared_preferences_document(&contents, raw_key)?;
+    let after = metadata_for(&file)?;
+    if after.identity != opened.identity || after.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    let named = metadata_at(root, name)?;
+    if named.identity != opened.identity || named.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    root.sync_all().map_err(|_| KelivoStatus::IoFailure)
+}
+
+#[cfg(test)]
 fn wipe_after_marker_pinned(
     root_path: &str,
     preserved_entry_name: &str,
     after_marker_pinned: impl FnOnce(),
 ) -> Result<(), KelivoStatus> {
     validate_absolute_path(root_path)?;
-    let preserved_name = validate_entry_name(preserved_entry_name)?;
     let root = open_absolute_directory(root_path)?;
-    let root_metadata = metadata_for(&root)?;
+    root.verify_chain()?;
+    let result = wipe_pinned_root(root.root(), preserved_entry_name, after_marker_pinned);
+    let identity_result = root.verify_chain();
+    result?;
+    identity_result
+}
+
+fn wipe_pinned_root(
+    root: &File,
+    preserved_entry_name: &str,
+    after_marker_pinned: impl FnOnce(),
+) -> Result<(), KelivoStatus> {
+    let preserved_name = validate_entry_name(preserved_entry_name)?;
+    let root_metadata = metadata_for(root)?;
     require_directory(root_metadata)?;
-    lock_root_exclusively(&root)?;
-    let marker = pin_marker(&root, &preserved_name, root_metadata.identity.device)?;
+    let _root_lock = lock_root_exclusively(root)?;
+    let marker = pin_marker(root, &preserved_name, root_metadata.identity.device)?;
 
     after_marker_pinned();
-    wipe_directory(&root, root_metadata.identity.device, marker.identity, 0)?;
-    verify_only_marker(&root, &preserved_name, marker.identity)?;
+    wipe_directory(root, root_metadata.identity.device, marker.identity, 0)?;
+    verify_only_marker(root, &preserved_name, marker.identity)?;
 
-    let final_marker = open_regular_relative(&root, &preserved_name)?;
+    let final_marker = open_regular_relative(root, &preserved_name)?;
     let final_metadata = metadata_for(&final_marker)?;
     require_regular(final_metadata)?;
     if final_metadata.identity != marker.identity || final_metadata.links != 1 {
@@ -88,10 +382,18 @@ fn wipe_after_marker_pinned(
     root.sync_all().map_err(|_| KelivoStatus::IoFailure)
 }
 
-fn lock_root_exclusively(root: &File) -> Result<(), KelivoStatus> {
+struct RootLock<'a>(&'a File);
+
+impl Drop for RootLock<'_> {
+    fn drop(&mut self) {
+        unsafe { libc::flock(self.0.as_raw_fd(), libc::LOCK_UN) };
+    }
+}
+
+fn lock_root_exclusively(root: &File) -> Result<RootLock<'_>, KelivoStatus> {
     // Android 可能存在同 UID 多进程，根目录锁把所有遵守安装级协议的写者排除在擦除窗口外。
     if unsafe { libc::flock(root.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } == 0 {
-        Ok(())
+        Ok(RootLock(root))
     } else {
         Err(KelivoStatus::IoFailure)
     }
@@ -127,30 +429,110 @@ fn validate_entry_name(name: &str) -> Result<CString, KelivoStatus> {
     CString::new(bytes).map_err(|_| KelivoStatus::InvalidArgument)
 }
 
-fn open_absolute_directory(path: &str) -> Result<File, KelivoStatus> {
+fn open_absolute_directory(path: &str) -> Result<PinnedRoot, KelivoStatus> {
     let root_fd = unsafe {
         libc::open(
             c"/".as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         )
     };
     if root_fd < 0 {
         return Err(KelivoStatus::IoFailure);
     }
-    let mut directory = unsafe { File::from_raw_fd(root_fd) };
-    for component in path.as_bytes()[1..].split(|byte| *byte == b'/') {
-        let component = CString::new(component).map_err(|_| KelivoStatus::InvalidArgument)?;
-        directory = open_root_component_relative(&directory, &component)?;
+    let root = unsafe { File::from_raw_fd(root_fd) };
+    let root_identity = metadata_for(&root)?.identity;
+    let mut chain = vec![PinnedDirectory {
+        file: root,
+        name_from_parent: None,
+        identity: root_identity,
+    }];
+    let raw_components = path.as_bytes()[1..]
+        .split(|byte| *byte == b'/')
+        .collect::<Vec<_>>();
+    #[cfg(target_os = "android")]
+    let uses_android_user_zero_alias = raw_components.len() >= 4
+        && raw_components[0] == b"data"
+        && raw_components[1] == b"user"
+        && raw_components[2] == b"0";
+    #[cfg(target_os = "android")]
+    let components = if uses_android_user_zero_alias {
+        let mut canonical = Vec::with_capacity(raw_components.len() - 1);
+        canonical.push(b"data".as_slice());
+        canonical.push(b"data".as_slice());
+        canonical.extend_from_slice(&raw_components[3..]);
+        canonical
+    } else {
+        raw_components
+    };
+    #[cfg(not(target_os = "android"))]
+    let components = raw_components;
+    for (index, component) in components.iter().enumerate() {
+        let component = CString::new(*component).map_err(|_| KelivoStatus::InvalidArgument)?;
+        let directory = open_root_component_relative(
+            &chain.last().ok_or(KelivoStatus::InternalState)?.file,
+            &component,
+            index + 1 == components.len(),
+        )?;
+        let metadata = metadata_for(&directory)?;
+        chain.push(PinnedDirectory {
+            file: directory,
+            name_from_parent: Some(component),
+            identity: metadata.identity,
+        });
     }
-    Ok(directory)
+    #[cfg(target_os = "android")]
+    let android_user_zero_alias = if uses_android_user_zero_alias {
+        let data_directory = chain.get(1).ok_or(KelivoStatus::InternalState)?;
+        let canonical_data = chain.get(2).ok_or(KelivoStatus::InternalState)?;
+        let user_directory = open_root_component_relative(&data_directory.file, c"user", false)?;
+        let user_identity = metadata_for(&user_directory)?.identity;
+        let alias_metadata = metadata_at(&user_directory, c"0")?;
+        let target = open_android_system_alias(&user_directory, c"0")?;
+        let target_metadata = metadata_for(&target)?;
+        let canonical_metadata = metadata_for(&canonical_data.file)?;
+        let alias_mount_id = android_fd_mount_id(&target)?;
+        let canonical_mount_id = android_fd_mount_id(&canonical_data.file)?;
+        let kind = validate_android_user_zero_alias_evidence(
+            alias_metadata,
+            target_metadata,
+            canonical_metadata,
+            alias_mount_id,
+            canonical_mount_id,
+        )?;
+        Some(AndroidUserZeroAlias {
+            user_directory,
+            user_identity,
+            alias_identity: alias_metadata.identity,
+            canonical_target_identity: target_metadata.identity,
+            kind,
+            alias_mount_id,
+            canonical_mount_id,
+        })
+    } else {
+        None
+    };
+    Ok(PinnedRoot {
+        chain,
+        #[cfg(target_os = "android")]
+        android_user_zero_alias,
+    })
 }
 
-fn open_root_component_relative(parent: &File, name: &CStr) -> Result<File, KelivoStatus> {
+fn open_root_component_relative(
+    parent: &File,
+    name: &CStr,
+    is_final: bool,
+) -> Result<File, KelivoStatus> {
+    let access = if is_final {
+        libc::O_RDONLY
+    } else {
+        libc::O_PATH
+    };
     let fd = unsafe {
         libc::openat(
             parent.as_raw_fd(),
             name.as_ptr(),
-            libc::O_RDONLY | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+            access | libc::O_DIRECTORY | libc::O_CLOEXEC | libc::O_NOFOLLOW,
         )
     };
     if fd < 0 {
@@ -187,6 +569,7 @@ fn open_regular_relative(parent: &File, name: &CStr) -> Result<File, KelivoStatu
     Ok(file)
 }
 
+#[cfg(target_os = "linux")]
 fn open_beneath_no_mount(
     parent_fd: libc::c_int,
     name: &CStr,
@@ -212,6 +595,29 @@ fn open_beneath_no_mount(
     }
     let fd = libc::c_int::try_from(raw_fd).map_err(|_| KelivoStatus::InternalState)?;
     Ok(unsafe { File::from_raw_fd(fd) })
+}
+
+#[cfg(target_os = "android")]
+fn open_beneath_no_mount(
+    parent_fd: libc::c_int,
+    name: &CStr,
+    flags: libc::c_int,
+) -> Result<File, KelivoStatus> {
+    // 每级必须与父 FD 同挂载，连续成立即把整条后代链约束在已钉住的根挂载内。
+    let parent_mount_id = android_raw_fd_mount_id(parent_fd)?;
+    let fd = unsafe {
+        libc::openat(
+            parent_fd,
+            name.as_ptr(),
+            flags | libc::O_CLOEXEC | libc::O_NOFOLLOW,
+        )
+    };
+    if fd < 0 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    let opened = unsafe { File::from_raw_fd(fd) };
+    validate_android_descendant_mount(parent_mount_id, android_fd_mount_id(&opened)?)?;
+    Ok(opened)
 }
 
 fn pin_marker(root: &File, name: &CStr, root_device: u64) -> Result<PinnedMarker, KelivoStatus> {
@@ -278,6 +684,238 @@ fn wipe_directory(
     Ok(())
 }
 
+#[cfg(target_os = "android")]
+fn open_android_system_alias(parent: &File, name: &CStr) -> Result<File, KelivoStatus> {
+    let fd = unsafe {
+        libc::openat(
+            parent.as_raw_fd(),
+            name.as_ptr(),
+            libc::O_PATH | libc::O_DIRECTORY | libc::O_CLOEXEC,
+        )
+    };
+    if fd < 0 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    let directory = unsafe { File::from_raw_fd(fd) };
+    require_directory(metadata_for(&directory)?)?;
+    Ok(directory)
+}
+
+#[cfg(target_os = "android")]
+fn android_fd_mount_id(file: &File) -> Result<u64, KelivoStatus> {
+    android_raw_fd_mount_id(file.as_raw_fd())
+}
+
+#[cfg(target_os = "android")]
+fn android_raw_fd_mount_id(fd: libc::c_int) -> Result<u64, KelivoStatus> {
+    const MAX_FDINFO_SIZE: u64 = 4096;
+    let path = format!("/proc/self/fdinfo/{fd}");
+    let mut bytes = Vec::with_capacity(512);
+    File::open(path)
+        .map_err(|_| KelivoStatus::IoFailure)?
+        .take(MAX_FDINFO_SIZE + 1)
+        .read_to_end(&mut bytes)
+        .map_err(|_| KelivoStatus::IoFailure)?;
+    if u64::try_from(bytes.len()).map_err(|_| KelivoStatus::IoFailure)? > MAX_FDINFO_SIZE {
+        return Err(KelivoStatus::IoFailure);
+    }
+    parse_android_fd_mount_id(&bytes)
+}
+
+fn retire_plaintext_backups(root: &File) -> Result<(), KelivoStatus> {
+    let root_device = metadata_for(root)?.identity.device;
+    for name in directory_entry_names(root)? {
+        let bytes = name.to_bytes();
+        let has_backup_prefix = bytes.starts_with(b"kelivo_backup_");
+        let is_loose_file = [
+            b"_bk_settings.json".as_slice(),
+            b"_bk_chats.json".as_slice(),
+            b"_bk_manifest.json".as_slice(),
+            b"_bk_kelivo.db".as_slice(),
+        ]
+        .contains(&bytes);
+        if !has_backup_prefix && !is_loose_file {
+            continue;
+        }
+        let metadata = metadata_at(root, &name)?;
+        if metadata.identity.kind == normalized_u32(libc::S_IFDIR) {
+            if !has_backup_prefix {
+                return Err(KelivoStatus::IoFailure);
+            }
+            delete_named_directory(root, &name, root_device)?;
+        } else if metadata.identity.kind == normalized_u32(libc::S_IFREG)
+            && (is_loose_file || (has_backup_prefix && bytes.ends_with(b".zip")))
+        {
+            delete_named_regular(root, &name, root_device)?;
+        } else {
+            return Err(KelivoStatus::IoFailure);
+        }
+    }
+    root.sync_all().map_err(|_| KelivoStatus::IoFailure)
+}
+
+fn retire_workspace_tree(root: &File, relative_segments: &[&[u8]]) -> Result<(), KelivoStatus> {
+    let root_device = metadata_for(root)?.identity.device;
+    delete_relative_directory(root, relative_segments, root_device)?;
+    let workspaces_name = c".kelivo-workspaces";
+    let Some(workspaces) = open_optional_directory(root, workspaces_name, root_device)? else {
+        return root.sync_all().map_err(|_| KelivoStatus::IoFailure);
+    };
+
+    if let Some(local) = open_optional_directory(&workspaces, c"local", root_device)?
+        && let Some(data) = open_optional_directory(&local, c"data", root_device)?
+    {
+        delete_relative_directory(&data, relative_segments, root_device)?;
+    }
+
+    if let Some(accounts) = open_optional_directory(&workspaces, c"accounts", root_device)? {
+        for name in directory_entry_names(&accounts)? {
+            if !is_workspace_key(name.to_bytes()) {
+                return Err(KelivoStatus::IoFailure);
+            }
+            let metadata = metadata_at(&accounts, &name)?;
+            require_directory(metadata)?;
+            let account = open_required_directory(&accounts, &name, root_device)?;
+            if let Some(data) = open_optional_directory(&account, c"data", root_device)? {
+                delete_relative_directory(&data, relative_segments, root_device)?;
+            }
+        }
+    }
+    workspaces.sync_all().map_err(|_| KelivoStatus::IoFailure)?;
+    root.sync_all().map_err(|_| KelivoStatus::IoFailure)
+}
+
+fn delete_relative_directory(
+    root: &File,
+    segments: &[&[u8]],
+    root_device: u64,
+) -> Result<(), KelivoStatus> {
+    let (target, ancestors) = segments.split_last().ok_or(KelivoStatus::InternalState)?;
+    let mut chain = Vec::with_capacity(ancestors.len());
+    let mut parent = root;
+    for segment in ancestors {
+        let name = CString::new(*segment).map_err(|_| KelivoStatus::InternalState)?;
+        let Some(directory) = open_optional_directory(parent, &name, root_device)? else {
+            return Ok(());
+        };
+        chain.push(directory);
+        parent = chain.last().ok_or(KelivoStatus::InternalState)?;
+    }
+    let target = CString::new(*target).map_err(|_| KelivoStatus::InternalState)?;
+    let result = delete_optional_named_directory(parent, &target, root_device);
+    drop(chain);
+    result
+}
+
+fn delete_optional_named_directory(
+    parent: &File,
+    name: &CStr,
+    root_device: u64,
+) -> Result<(), KelivoStatus> {
+    let Some(metadata) = metadata_at_optional(parent, name)? else {
+        return Ok(());
+    };
+    require_directory(metadata)?;
+    delete_named_directory(parent, name, root_device)
+}
+
+fn delete_named_directory(
+    parent: &File,
+    name: &CStr,
+    root_device: u64,
+) -> Result<(), KelivoStatus> {
+    let child = open_required_directory(parent, name, root_device)?;
+    let identity = metadata_for(&child)?.identity;
+    delete_directory_contents(&child, root_device, 0)?;
+    child.sync_all().map_err(|_| KelivoStatus::IoFailure)?;
+    ensure_named_identity(parent, name, identity)?;
+    if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) } != 0 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    parent.sync_all().map_err(|_| KelivoStatus::IoFailure)
+}
+
+fn delete_directory_contents(
+    directory: &File,
+    root_device: u64,
+    depth: usize,
+) -> Result<(), KelivoStatus> {
+    if depth >= MAX_DIRECTORY_DEPTH {
+        return Err(KelivoStatus::InputTooLarge);
+    }
+    for name in directory_entry_names(directory)? {
+        let metadata = metadata_at(directory, &name)?;
+        if metadata.identity.device != root_device {
+            return Err(KelivoStatus::IoFailure);
+        }
+        if metadata.identity.kind == normalized_u32(libc::S_IFREG) {
+            delete_named_regular(directory, &name, root_device)?;
+        } else if metadata.identity.kind == normalized_u32(libc::S_IFDIR) {
+            let child = open_required_directory(directory, &name, root_device)?;
+            let identity = metadata_for(&child)?.identity;
+            delete_directory_contents(&child, root_device, depth + 1)?;
+            child.sync_all().map_err(|_| KelivoStatus::IoFailure)?;
+            ensure_named_identity(directory, &name, identity)?;
+            if unsafe { libc::unlinkat(directory.as_raw_fd(), name.as_ptr(), libc::AT_REMOVEDIR) }
+                != 0
+            {
+                return Err(KelivoStatus::IoFailure);
+            }
+            directory.sync_all().map_err(|_| KelivoStatus::IoFailure)?;
+        } else {
+            return Err(KelivoStatus::IoFailure);
+        }
+    }
+    Ok(())
+}
+
+fn delete_named_regular(parent: &File, name: &CStr, root_device: u64) -> Result<(), KelivoStatus> {
+    let file = open_regular_relative(parent, name)?;
+    let metadata = metadata_for(&file)?;
+    if metadata.identity.device != root_device || metadata.links != 1 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    file.sync_all().map_err(|_| KelivoStatus::IoFailure)?;
+    ensure_named_identity(parent, name, metadata.identity)?;
+    if unsafe { libc::unlinkat(parent.as_raw_fd(), name.as_ptr(), 0) } != 0 {
+        return Err(KelivoStatus::IoFailure);
+    }
+    parent.sync_all().map_err(|_| KelivoStatus::IoFailure)
+}
+
+fn open_optional_directory(
+    parent: &File,
+    name: &CStr,
+    root_device: u64,
+) -> Result<Option<File>, KelivoStatus> {
+    if metadata_at_optional(parent, name)?.is_none() {
+        return Ok(None);
+    }
+    open_required_directory(parent, name, root_device).map(Some)
+}
+
+fn open_required_directory(
+    parent: &File,
+    name: &CStr,
+    root_device: u64,
+) -> Result<File, KelivoStatus> {
+    let before = metadata_at(parent, name)?;
+    require_directory(before)?;
+    let directory = open_directory_relative(parent, name)?;
+    let opened = metadata_for(&directory)?;
+    if before.identity != opened.identity || opened.identity.device != root_device {
+        return Err(KelivoStatus::IoFailure);
+    }
+    Ok(directory)
+}
+
+fn is_workspace_key(value: &[u8]) -> bool {
+    value.len() == 64
+        && value
+            .iter()
+            .all(|byte| byte.is_ascii_digit() || matches!(byte, b'a'..=b'f'))
+}
+
 fn verify_only_marker(
     root: &File,
     preserved_name: &CStr,
@@ -317,6 +955,13 @@ fn metadata_for(file: &File) -> Result<FileMetadata, KelivoStatus> {
 }
 
 fn metadata_at(directory: &File, name: &CStr) -> Result<FileMetadata, KelivoStatus> {
+    metadata_at_optional(directory, name)?.ok_or(KelivoStatus::IoFailure)
+}
+
+fn metadata_at_optional(
+    directory: &File,
+    name: &CStr,
+) -> Result<Option<FileMetadata>, KelivoStatus> {
     let mut output = std::mem::MaybeUninit::<libc::stat>::zeroed();
     if unsafe {
         libc::fstatat(
@@ -327,9 +972,13 @@ fn metadata_at(directory: &File, name: &CStr) -> Result<FileMetadata, KelivoStat
         )
     } != 0
     {
-        return Err(KelivoStatus::IoFailure);
+        return if current_errno() == libc::ENOENT {
+            Ok(None)
+        } else {
+            Err(KelivoStatus::IoFailure)
+        };
     }
-    Ok(metadata_from_stat(unsafe { output.assume_init() }))
+    Ok(Some(metadata_from_stat(unsafe { output.assume_init() })))
 }
 
 fn metadata_from_stat(value: libc::stat) -> FileMetadata {
@@ -432,6 +1081,8 @@ fn current_errno() -> libc::c_int {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(target_os = "linux")]
+    use std::os::unix::fs::PermissionsExt;
     use std::{
         fs,
         os::unix::{ffi::OsStrExt, fs::symlink},
@@ -540,6 +1191,223 @@ mod tests {
     }
 
     #[test]
+    fn managed_root_session_rejects_root_replacement_without_external_touch() {
+        let parent = TestRoot::new("session-root");
+        let root = parent.0.join("managed");
+        let moved = parent.0.join("original");
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("wipe-complete"), b"done").unwrap();
+        fs::write(root.join("secret"), b"secret").unwrap();
+        let session = PinnedRoot::open(root.to_str().unwrap()).unwrap();
+        fs::rename(&root, &moved).unwrap();
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("sentinel"), b"outside").unwrap();
+
+        assert_eq!(
+            session.wipe_preserving("wipe-complete"),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(root.join("sentinel")).unwrap(), b"outside");
+        assert_eq!(fs::read(moved.join("secret")).unwrap(), b"secret");
+    }
+
+    #[test]
+    fn managed_root_session_rejects_ancestor_replacement_without_external_touch() {
+        let parent = TestRoot::new("session-ancestor");
+        let ancestor = parent.0.join("ancestor");
+        let root = ancestor.join("managed");
+        let moved = parent.0.join("original-ancestor");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("wipe-complete"), b"done").unwrap();
+        fs::write(root.join("secret"), b"secret").unwrap();
+        let session = PinnedRoot::open(root.to_str().unwrap()).unwrap();
+        fs::rename(&ancestor, &moved).unwrap();
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("sentinel"), b"outside").unwrap();
+
+        assert_eq!(
+            session.wipe_preserving("wipe-complete"),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(root.join("sentinel")).unwrap(), b"outside");
+        assert_eq!(fs::read(moved.join("managed/secret")).unwrap(), b"secret");
+    }
+
+    #[test]
+    fn shared_preferences_removal_proof_is_bounded_and_structural() {
+        let root = TestRoot::new("preferences-proof");
+        let preferences = root.0.join("shared_preferences.json");
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("偏好文件不存在时固定根持久屏障必须成功");
+        fs::write(
+            root.0.join("other.json"),
+            br#"{"flutter.removed":"unrelated"}"#,
+        )
+        .unwrap();
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("证明只能读取固定偏好文件名");
+        fs::write(&preferences, br#"{"flutter.other":"kept"}"#).unwrap();
+        session
+            .verify_shared_preferences_removal("flutter.removed")
+            .expect("结构化对象不含目标键时必须成功");
+
+        fs::write(&preferences, br#"{"flutter.removed":"secret"}"#).unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::write(&preferences, b"[]").unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::OpenOptions::new()
+            .write(true)
+            .truncate(true)
+            .open(&preferences)
+            .unwrap()
+            .set_len(u64::try_from(SHARED_PREFERENCES_FILE_MAX_SIZE + 1).unwrap())
+            .unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::InputTooLarge)
+        );
+    }
+
+    #[test]
+    fn shared_preferences_removal_proof_rejects_links() {
+        let root = TestRoot::new("preferences-links");
+        let external = TestRoot::new("preferences-links-external");
+        let sentinel = external.0.join("sentinel");
+        let preferences = root.0.join("shared_preferences.json");
+        fs::write(&sentinel, br#"{"flutter.other":"kept"}"#).unwrap();
+        symlink(&sentinel, &preferences).unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        fs::remove_file(&preferences).unwrap();
+        fs::hard_link(&sentinel, &preferences).unwrap();
+        assert_eq!(
+            session.verify_shared_preferences_removal("flutter.removed"),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), br#"{"flutter.other":"kept"}"#);
+    }
+
+    #[test]
+    fn temporary_backup_retirement_deletes_only_owned_artifacts_and_unicode_contents() {
+        let root = TestRoot::new("backup-retirement");
+        fs::write(root.0.join("_bk_settings.json"), b"secret").unwrap();
+        fs::write(root.0.join("kelivo_backup_archive.zip"), b"secret").unwrap();
+        let bundle = root.0.join("kelivo_backup_bundle");
+        fs::create_dir(&bundle).unwrap();
+        fs::write(bundle.join("会话.txt"), b"secret").unwrap();
+        fs::write(root.0.join("unrelated.txt"), b"keep").unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        session.retire_plaintext_backups().unwrap();
+
+        assert!(!root.0.join("_bk_settings.json").exists());
+        assert!(!root.0.join("kelivo_backup_archive.zip").exists());
+        assert!(!bundle.exists());
+        assert_eq!(fs::read(root.0.join("unrelated.txt")).unwrap(), b"keep");
+    }
+
+    #[test]
+    fn temporary_backup_retirement_rejects_symlink_and_hard_link_without_external_touch() {
+        let root = TestRoot::new("backup-links");
+        let external = TestRoot::new("backup-links-external");
+        let sentinel = external.0.join("sentinel");
+        fs::write(&sentinel, b"outside").unwrap();
+        symlink(&external.0, root.0.join("kelivo_backup_link")).unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        assert_eq!(
+            session.retire_plaintext_backups(),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"outside");
+        fs::remove_file(root.0.join("kelivo_backup_link")).unwrap();
+
+        fs::hard_link(&sentinel, root.0.join("_bk_settings.json")).unwrap();
+        assert_eq!(
+            session.retire_plaintext_backups(),
+            Err(KelivoStatus::IoFailure)
+        );
+        assert_eq!(fs::read(&sentinel).unwrap(), b"outside");
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn temporary_backup_retirement_reports_permission_boundary() {
+        // root 可绕过目录权限；实际边界由非特权容器用例覆盖。
+        if unsafe { libc::geteuid() } == 0 {
+            return;
+        }
+        let root = TestRoot::new("backup-permission");
+        let blocked = root.0.join("kelivo_backup_blocked");
+        fs::create_dir(&blocked).unwrap();
+        fs::write(blocked.join("secret"), b"secret").unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o000)).unwrap();
+
+        let result = session.retire_plaintext_backups();
+
+        fs::set_permissions(&blocked, fs::Permissions::from_mode(0o700)).unwrap();
+        assert_eq!(result, Err(KelivoStatus::IoFailure));
+        assert_eq!(fs::read(blocked.join("secret")).unwrap(), b"secret");
+    }
+
+    #[test]
+    fn workspace_retirement_rejects_unknown_account_entry() {
+        let root = TestRoot::new("workspace-account");
+        fs::create_dir_all(root.0.join(".kelivo-workspaces/accounts/not-owned")).unwrap();
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+        assert_eq!(
+            session.retire_persistent_logs(),
+            Err(KelivoStatus::IoFailure)
+        );
+    }
+
+    #[test]
+    fn workspace_retirement_removes_direct_local_and_account_artifacts() {
+        let root = TestRoot::new("workspace-retirement");
+        let account_key = "a".repeat(64);
+        let data_roots = [
+            root.0.clone(),
+            root.0.join(".kelivo-workspaces/local/data"),
+            root.0
+                .join(".kelivo-workspaces/accounts")
+                .join(account_key)
+                .join("data"),
+        ];
+        for data in &data_roots {
+            fs::create_dir_all(data.join("logs")).unwrap();
+            fs::write(data.join("logs/日志.txt"), b"secret").unwrap();
+            fs::create_dir_all(data.join("upload/e2ee/staging")).unwrap();
+            fs::write(data.join("upload/e2ee/staging/plaintext.bin"), b"secret").unwrap();
+            fs::write(data.join("retained.bin"), b"keep").unwrap();
+        }
+        let session = PinnedRoot::open(root.path_text()).unwrap();
+
+        session.retire_persistent_logs().unwrap();
+        session.retire_attachment_staging().unwrap();
+
+        for data in &data_roots {
+            assert!(!data.join("logs").exists());
+            assert!(!data.join("upload/e2ee/staging").exists());
+            assert_eq!(fs::read(data.join("retained.bin")).unwrap(), b"keep");
+        }
+    }
+
+    #[test]
     fn failed_wipe_can_be_retried_idempotently() {
         let root = TestRoot::new("retry");
         fs::write(root.0.join("wipe-complete"), b"done").unwrap();
@@ -561,12 +1429,13 @@ mod tests {
         let root = TestRoot::new("exclusive-lock");
         fs::write(root.0.join("wipe-complete"), b"done").unwrap();
         let locked_root = open_absolute_directory(root.path_text()).unwrap();
-        lock_root_exclusively(&locked_root).unwrap();
+        let _lock = lock_root_exclusively(locked_root.root()).unwrap();
 
         assert_eq!(
             wipe(root.path_text(), "wipe-complete"),
             Err(KelivoStatus::IoFailure)
         );
+        drop(_lock);
         drop(locked_root);
         wipe(root.path_text(), "wipe-complete").expect("独占锁释放后必须可重试");
     }
@@ -635,6 +1504,132 @@ mod tests {
         assert_eq!(
             unsafe { libc::umount2(target.as_ptr(), libc::MNT_DETACH) },
             0
+        );
+    }
+
+    #[test]
+    fn android_user_zero_bind_mount_requires_same_object_on_distinct_mount() {
+        let canonical = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 42,
+                kind: normalized_u32(libc::S_IFDIR),
+            },
+            links: 3,
+        };
+
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(canonical, canonical, canonical, 101, 202,),
+            Ok(AndroidUserZeroAliasKind::BindMount),
+        );
+    }
+
+    #[test]
+    fn android_user_zero_legacy_symlink_requires_exact_canonical_target() {
+        let alias = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 99,
+                kind: normalized_u32(libc::S_IFLNK),
+            },
+            links: 1,
+        };
+        let canonical = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 42,
+                kind: normalized_u32(libc::S_IFDIR),
+            },
+            links: 3,
+        };
+
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(alias, canonical, canonical, 101, 101,),
+            Ok(AndroidUserZeroAliasKind::Symlink),
+        );
+    }
+
+    #[test]
+    fn android_user_zero_alias_rejects_replaceable_or_wrong_mount_evidence() {
+        let canonical = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 42,
+                kind: normalized_u32(libc::S_IFDIR),
+            },
+            links: 3,
+        };
+        let ordinary_directory = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 43,
+                kind: normalized_u32(libc::S_IFDIR),
+            },
+            links: 2,
+        };
+        let linked_symlink = FileMetadata {
+            identity: FileIdentity {
+                device: 7,
+                inode: 99,
+                kind: normalized_u32(libc::S_IFLNK),
+            },
+            links: 2,
+        };
+
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(
+                ordinary_directory,
+                ordinary_directory,
+                canonical,
+                101,
+                101,
+            ),
+            Err(KelivoStatus::IoFailure),
+        );
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(
+                ordinary_directory,
+                ordinary_directory,
+                canonical,
+                202,
+                101,
+            ),
+            Err(KelivoStatus::IoFailure),
+        );
+        assert_eq!(
+            validate_android_user_zero_alias_evidence(
+                linked_symlink,
+                canonical,
+                canonical,
+                101,
+                101,
+            ),
+            Err(KelivoStatus::IoFailure),
+        );
+    }
+
+    #[test]
+    fn android_mount_identity_parser_accepts_one_kernel_mount_id_only() {
+        assert_eq!(
+            parse_android_fd_mount_id(b"pos:\t0\nflags:\t0100000\nmnt_id:\t202\n"),
+            Ok(202),
+        );
+        assert_eq!(
+            parse_android_fd_mount_id(b"mnt_id:\t202\nmnt_id:\t203\n"),
+            Err(KelivoStatus::IoFailure),
+        );
+        assert_eq!(
+            parse_android_fd_mount_id(b"pos:\t0\nflags:\t0100000\n"),
+            Err(KelivoStatus::IoFailure),
+        );
+    }
+
+    #[test]
+    fn android_descendant_mount_guard_rejects_same_device_bind_mount() {
+        assert_eq!(validate_android_descendant_mount(202, 202), Ok(()));
+        assert_eq!(
+            validate_android_descendant_mount(202, 303),
+            Err(KelivoStatus::IoFailure),
         );
     }
 

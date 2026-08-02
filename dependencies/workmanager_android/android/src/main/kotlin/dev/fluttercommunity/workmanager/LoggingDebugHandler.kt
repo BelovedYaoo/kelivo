@@ -19,20 +19,13 @@ class LoggingDebugHandler : WorkmanagerDebug() {
         result: TaskResult?,
     ) {
         when (status) {
-            TaskStatus.SCHEDULED -> Log.d(TAG, "Task scheduled: ${taskInfo.taskName}")
-            TaskStatus.STARTED -> Log.d(TAG, "Task started: ${taskInfo.taskName}, callbackHandle: ${taskInfo.callbackHandle}")
-            TaskStatus.COMPLETED -> {
-                val success = result?.success ?: false
-                val duration = result?.duration ?: 0
-                Log.d(TAG, "Task completed: ${taskInfo.taskName}, success: $success, duration: ${duration}ms")
-            }
-            TaskStatus.FAILED -> {
-                val error = result?.error ?: "Unknown error"
-                Log.e(TAG, "Task failed: ${taskInfo.taskName}, error: $error")
-            }
-            TaskStatus.CANCELLED -> Log.w(TAG, "Task cancelled: ${taskInfo.taskName}")
-            TaskStatus.RETRYING -> Log.w(TAG, "Task retrying: ${taskInfo.taskName}")
-            TaskStatus.RESCHEDULED -> Log.w(TAG, "Task rescheduled: ${taskInfo.taskName}")
+            TaskStatus.SCHEDULED -> Log.d(TAG, "Task scheduled")
+            TaskStatus.STARTED -> Log.d(TAG, "Task started")
+            TaskStatus.COMPLETED -> Log.d(TAG, "Task completed")
+            TaskStatus.FAILED -> Log.e(TAG, "Task failed")
+            TaskStatus.CANCELLED -> Log.w(TAG, "Task cancelled")
+            TaskStatus.RETRYING -> Log.w(TAG, "Task retrying")
+            TaskStatus.RESCHEDULED -> Log.w(TAG, "Task rescheduled")
         }
     }
 
@@ -41,7 +34,6 @@ class LoggingDebugHandler : WorkmanagerDebug() {
         taskInfo: TaskDebugInfo?,
         exception: Throwable,
     ) {
-        val taskName = taskInfo?.taskName ?: "unknown"
-        Log.e(TAG, "Exception in task: $taskName", exception)
+        Log.e(TAG, "Task exception")
     }
 }

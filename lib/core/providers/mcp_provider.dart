@@ -891,19 +891,6 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
     notifyListeners();
 
     try {
-      // Log connect intent and parameters
-      // debugPrint('[MCP/Connect] id=$id name=${server.name} transport=${server.transport.name}');
-      // debugPrint('[MCP/Connect] url=${server.url}');
-      // if (server.headers.isNotEmpty) {
-      //   debugPrint('[MCP/Headers] ${server.headers.length} headers:');
-      //   server.headers.forEach((k, v) {
-      //     final masked = _maskIfSensitive(k, v);
-      //     debugPrint('  - $k: $masked');
-      //   });
-      // } else {
-      //   debugPrint('[MCP/Headers] (none)');
-      // }
-
       final clientConfig = mcp.McpClient.simpleConfig(
         name: 'Kelivo MCP',
         version: '1.0.0',
@@ -970,7 +957,6 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         }
       }();
 
-      // debugPrint('[MCP/Connect] creating client (enableDebugLogging=true) ...');
       final clientResult = await mcp.McpClient.createAndConnect(
         config: clientConfig,
         transportConfig: transportConfig,
@@ -980,19 +966,14 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
       _clients[id] = client;
       _status[id] = McpStatus.connected;
       _errors.remove(id);
-      // debugPrint('[MCP/Connected] id=$id (${server.name})');
       notifyListeners();
 
       // Try to refresh tools once connected
-      // debugPrint('[MCP/Tools] refreshing tools for id=$id ...');
       await refreshTools(id);
-      // debugPrint('[MCP/Tools] refresh done for id=$id');
 
       // Start/refresh heartbeat for this connection
       _startHeartbeat(id);
     } catch (e) {
-      // debugPrint('[MCP/Error] connect failed for id=$id (${server.name})');
-      // _logMcpException('connect', serverId: id, error: e, stack: st);
       _status[id] = McpStatus.error;
       _errors[id] = e.toString();
       notifyListeners();
@@ -1036,13 +1017,8 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
   Future<void> disconnect(String id) async {
     final client = _clients.remove(id);
     try {
-      // debugPrint('[MCP/Disconnect] id=$id ...');
       client?.disconnect();
-      // debugPrint('[MCP/Disconnect] id=$id done');
-    } catch (e) {
-      // debugPrint('[MCP/Error] disconnect failed for id=$id');
-      // _logMcpException('disconnect', serverId: id, error: e, stack: st);
-    }
+    } catch (_) {}
     _status[id] = McpStatus.idle;
     _errors.remove(id);
     _stopHeartbeat(id);
@@ -1087,7 +1063,6 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         // Add a soft timeout to avoid piling up
         await fut.timeout(const Duration(seconds: 6));
       } catch (e) {
-        // debugPrint('[MCP/Heartbeat] liveness check failed id=$id');
         // Consider connection lost; mark error and try auto-reconnect
         _status[id] = McpStatus.error;
         _errors[id] = e.toString();
@@ -1501,23 +1476,15 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
       if (client == null) return null;
       // Normalize arguments based on tool schema (best-effort)
       final normalized = _normalizeArgsForTool(serverId, toolName, args);
-      // if (normalized != args) {
-      //   debugPrint('[MCP/Call] serverId=$serverId tool=$toolName args(normalized)=${jsonEncode(normalized)}');
-      // } else {
-      //   debugPrint('[MCP/Call] serverId=$serverId tool=$toolName args=${jsonEncode(args)}');
-      // }
       final result = await client.callTool(toolName, normalized);
       // Detailed call timing/content logging disabled
       return result;
     } catch (e) {
-      // debugPrint('[MCP/Call/Error] serverId=$serverId tool=$toolName');
-
       // If this is a parameter validation error from the server, do NOT disconnect.
       try {
         if (e is mcp.McpError && (e.code == -32602)) {
           // Keep connection healthy status; surface error to caller via null
           _errors[serverId] = e.toString();
-          // debugPrint('[MCP/Call] invalid arguments; skipping reconnect');
           return null;
         }
       } catch (_) {}
@@ -1531,7 +1498,6 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         if (!isConnected(serverId)) return null;
         final client = _clients[serverId];
         if (client == null) return null;
-        // debugPrint('[MCP/Call] retry serverId=$serverId tool=$toolName');
         final normalized = _normalizeArgsForTool(serverId, toolName, args);
         final result = await client.callTool(toolName, normalized);
         // Detailed retry logging disabled
@@ -1540,8 +1506,7 @@ class McpProvider extends ChangeNotifier with BatchedChangeNotifier {
         _errors.remove(serverId);
         notifyListeners();
         return result;
-      } catch (e2) {
-        // debugPrint('[MCP/Call/RetryError] serverId=$serverId tool=$toolName');
+      } catch (_) {
         // Keep error state; give up
         return null;
       }

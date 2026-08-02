@@ -75,8 +75,8 @@ class InstructionInjectionProvider with ChangeNotifier, BatchedChangeNotifier {
       _activeIdsByAssistant =
           await InstructionInjectionStore.getActiveIdsByAssistant();
       notifyListeners();
-    } catch (e) {
-      debugPrint('Failed to load instruction injections: $e');
+    } catch (_) {
+      debugPrint('[InstructionInjectionProvider] load failed');
       _items = const <InstructionInjection>[];
       _activeIdsByAssistant = const <String, List<String>>{};
       notifyListeners();

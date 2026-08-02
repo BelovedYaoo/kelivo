@@ -8,10 +8,8 @@ import '../../../icons/lucide_adapter.dart';
 import 'package:provider/provider.dart';
 import '../../../core/providers/settings_provider.dart';
 import '../../../l10n/app_localizations.dart';
-import '../../../shared/widgets/ios_switch.dart';
 import '../../../core/services/haptics.dart';
 import 'debug_page.dart';
-import 'log_viewer_page.dart';
 
 class AboutPage extends StatefulWidget {
   const AboutPage({super.key});
@@ -24,8 +22,6 @@ class _AboutPageState extends State<AboutPage> {
   String _version = '';
   String _buildNumber = '';
   String _systemInfo = '';
-  int _versionTapCount = 0;
-  DateTime? _lastVersionTap;
 
   @override
   void initState() {
@@ -54,221 +50,6 @@ class _AboutPageState extends State<AboutPage> {
       _buildNumber = pkg.buildNumber;
       _systemInfo = sys;
     });
-  }
-
-  void _onVersionTap() {
-    final now = DateTime.now();
-    // Reset the counter if taps are spaced too far apart
-    if (_lastVersionTap == null ||
-        now.difference(_lastVersionTap!) > const Duration(seconds: 2)) {
-      _versionTapCount = 0;
-    }
-    _lastVersionTap = now;
-    _versionTapCount++;
-
-    const threshold = 7;
-    if (_versionTapCount < threshold) return;
-
-    _versionTapCount = 0; // reset after unlock
-    _showEasterEgg();
-  }
-
-  void _showEasterEgg() {
-    final cs = Theme.of(context).colorScheme;
-    final l10n = AppLocalizations.of(context)!;
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      useSafeArea: true,
-      constraints: BoxConstraints(
-        minWidth: MediaQuery.of(context).size.width,
-        maxWidth: MediaQuery.of(context).size.width,
-      ),
-      backgroundColor: Theme.of(context).colorScheme.surface,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
-      ),
-      builder: (ctx) {
-        return StatefulBuilder(
-          builder: (dialogContext, dialogSetState) {
-            return SafeArea(
-              child: FractionallySizedBox(
-                heightFactor: 0.7,
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.center,
-                    children: [
-                      Icon(Lucide.Sparkles, size: 28, color: cs.primary),
-                      const SizedBox(height: 16),
-                      Expanded(
-                        child: SingleChildScrollView(
-                          child: Column(
-                            children: [
-                              if (Platform.isAndroid || Platform.isIOS) ...[
-                                const SizedBox(height: 24),
-                                const Divider(),
-                                const SizedBox(height: 16),
-                                Material(
-                                  color: Colors.transparent,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 6,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            l10n.requestLogSettingTitle,
-                                            style: TextStyle(
-                                              color: cs.onSurface.withValues(
-                                                alpha: 0.9,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        InkWell(
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                          onTap: () {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    const LogViewerPage(
-                                                      initialTab: 0,
-                                                    ),
-                                              ),
-                                            );
-                                          },
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(6),
-                                            child: Icon(
-                                              Lucide.FolderOpen,
-                                              size: 20,
-                                              color: cs.primary,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        IosSwitch(
-                                          value: dialogContext
-                                              .watch<SettingsProvider>()
-                                              .requestLogEnabled,
-                                          onChanged: (v) => dialogContext
-                                              .read<SettingsProvider>()
-                                              .setRequestLogEnabled(v),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    l10n.requestLogSettingSubtitle,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: cs.onSurface.withValues(
-                                        alpha: 0.65,
-                                      ),
-                                      height: 1.25,
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 12),
-                                Material(
-                                  color: Colors.transparent,
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                      horizontal: 4,
-                                      vertical: 6,
-                                    ),
-                                    child: Row(
-                                      children: [
-                                        Expanded(
-                                          child: Text(
-                                            l10n.flutterLogSettingTitle,
-                                            style: TextStyle(
-                                              color: cs.onSurface.withValues(
-                                                alpha: 0.9,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                        InkWell(
-                                          borderRadius: BorderRadius.circular(
-                                            6,
-                                          ),
-                                          onTap: () {
-                                            Navigator.of(context).push(
-                                              MaterialPageRoute(
-                                                builder: (_) =>
-                                                    const LogViewerPage(
-                                                      initialTab: 1,
-                                                    ),
-                                              ),
-                                            );
-                                          },
-                                          child: Padding(
-                                            padding: const EdgeInsets.all(6),
-                                            child: Icon(
-                                              Lucide.FolderOpen,
-                                              size: 20,
-                                              color: cs.primary,
-                                            ),
-                                          ),
-                                        ),
-                                        const SizedBox(width: 8),
-                                        IosSwitch(
-                                          value: dialogContext
-                                              .watch<SettingsProvider>()
-                                              .flutterLogEnabled,
-                                          onChanged: (v) => dialogContext
-                                              .read<SettingsProvider>()
-                                              .setFlutterLogEnabled(v),
-                                        ),
-                                      ],
-                                    ),
-                                  ),
-                                ),
-                                const SizedBox(height: 6),
-                                Align(
-                                  alignment: Alignment.centerLeft,
-                                  child: Text(
-                                    l10n.flutterLogSettingSubtitle,
-                                    style: TextStyle(
-                                      fontSize: 12,
-                                      color: cs.onSurface.withValues(
-                                        alpha: 0.65,
-                                      ),
-                                      height: 1.25,
-                                    ),
-                                  ),
-                                ),
-                              ],
-                              const SizedBox(height: 24),
-                              const Divider(),
-                            ],
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      FilledButton(
-                        onPressed: () => Navigator.of(ctx).maybePop(),
-                        child: Text(l10n.aboutPageEasterEggButton),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            );
-          },
-        );
-      },
-    );
   }
 
   void _openDebugPage() {
@@ -364,7 +145,7 @@ class _AboutPageState extends State<AboutPage> {
           // iOS-style list card
           _iosSectionCard(
             children: [
-              // Version (tap 7x to unlock easter egg) — logic unchanged
+              // Version
               _iosNavRow(
                 context,
                 icon: Lucide.Code,
@@ -372,7 +153,7 @@ class _AboutPageState extends State<AboutPage> {
                 detailBuilder: (_) => Text(
                   _version.isEmpty ? '...' : '$_version / $_buildNumber',
                 ),
-                onTap: _onVersionTap,
+                onTap: null,
               ),
               _iosDivider(context),
               _iosNavRow(

@@ -28,8 +28,8 @@ class MemoryProvider extends ChangeNotifier with BatchedChangeNotifier {
     try {
       _memories = await MemoryStore.getAll();
       notifyListeners();
-    } catch (e) {
-      debugPrint('Failed to load memories: $e');
+    } catch (_) {
+      debugPrint('[MemoryProvider] load failed');
       _memories = <AssistantMemory>[];
       notifyListeners();
     }

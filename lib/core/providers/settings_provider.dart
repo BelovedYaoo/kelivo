@@ -12,8 +12,6 @@ import 'package:path/path.dart' as p;
 import '../services/search/search_service.dart';
 import '../services/tts/network_tts.dart';
 import '../services/tts/tts_text_selection.dart';
-import '../services/network/request_logger.dart';
-import '../services/logging/flutter_logger.dart';
 import '../models/api_keys.dart';
 import '../models/provider_group.dart';
 import '../services/haptics.dart';
@@ -250,14 +248,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       'mobile_assistant_edit_tab_hidden_v1';
   static const String _mobileAssistantDetailOutlineEnabledKey =
       'mobile_assistant_detail_outline_enabled_v1';
-  // Network request logging (debug)
-  static const String _requestLogEnabledKey = 'request_log_enabled_v1';
-  // Flutter runtime logging (debug)
-  static const String _flutterLogEnabledKey = 'flutter_log_enabled_v1';
-  // Log settings: save response output, auto-delete, max size
-  static const String _logSaveOutputKey = 'log_save_output_v1';
-  static const String _logAutoDeleteDaysKey = 'log_auto_delete_days_v1';
-  static const String _logMaxSizeMBKey = 'log_max_size_mb_v1';
   static const String _appLaunchCountKey = 'app_launch_count_v1';
   // Desktop topic panel placement + right sidebar open state
   static const String _desktopTopicPositionKey = 'desktop_topic_position_v1';
@@ -877,8 +867,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     SharedPreferences prefs,
   ) async {
     Map<String, ProviderConfig>? nextProviderConfigs;
-    int providersChanged = 0;
-    int modelsChanged = 0;
 
     for (final entry in _providerConfigs.entries) {
       final providerKey = entry.key;
@@ -908,7 +896,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
           m.remove(k);
         }
         nextOverrides[modelKey] = m;
-        modelsChanged++;
       }
 
       if (nextOverrides == null) continue;
@@ -918,7 +905,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       nextProviderConfigs[providerKey] = cfg.copyWith(
         modelOverrides: nextOverrides,
       );
-      providersChanged++;
     }
 
     if (nextProviderConfigs == null) return _MigrationResult.noChange;
@@ -927,12 +913,11 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       final encoded = jsonEncode(map);
       final persisted = await prefs.setString(_providerConfigsKey, encoded);
       if (!persisted) return _MigrationResult.failed;
-    } catch (e, st) {
+    } catch (_) {
       assert(() {
         debugPrint(
-          '[SettingsProvider] provider configs migration persist failed: $e',
+          '[SettingsProvider] provider configs migration persist failed',
         );
-        debugPrint('$st');
         return true;
       }());
       return _MigrationResult.failed;
@@ -940,9 +925,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
 
     _providerConfigs = nextProviderConfigs;
     assert(() {
-      debugPrint(
-        '[SettingsProvider] embedding overrides migration: providers=$providersChanged, models=$modelsChanged',
-      );
+      debugPrint('[SettingsProvider] embedding overrides migration applied');
       return true;
     }());
     return _MigrationResult.applied;
@@ -989,10 +972,9 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
               MapEntry(k, ProviderConfig.fromJson(v as Map<String, dynamic>)),
         );
         providerConfigsLoaded = true;
-      } catch (e, st) {
+      } catch (_) {
         assert(() {
-          debugPrint('[SettingsProvider] providerConfigs decode failed: $e');
-          debugPrint('$st');
+          debugPrint('[SettingsProvider] provider configs decode failed');
           return true;
         }());
       }
@@ -1003,13 +985,6 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
       final migrationVersion = prefs.getInt(_migrationsVersionKey) ?? 0;
       if (providerConfigsLoaded &&
           migrationVersion < _embeddingOverridesMigrationVersion) {
-        try {
-          FlutterLogger.log(
-            '[SettingsProvider] provider modelOverrides migration start',
-            tag: 'Migration',
-          );
-        } catch (_) {}
-
         var backupOk = true;
         if (!prefs.containsKey(_providerConfigsBackupKey)) {
           final backup = _providerConfigs.map(
@@ -1051,26 +1026,13 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
             }
             return true;
           }());
-          try {
-            FlutterLogger.log(
-              '[SettingsProvider] provider modelOverrides migration done (result=$result)',
-              tag: 'Migration',
-            );
-          } catch (_) {}
         }
       }
-    } catch (e, st) {
-      try {
-        FlutterLogger.log(
-          '[SettingsProvider] provider modelOverrides migration failed: $e\n$st',
-          tag: 'Migration',
-        );
-      } catch (_) {}
+    } catch (_) {
       assert(() {
         debugPrint(
-          '[SettingsProvider] provider modelOverrides migration failed: $e',
+          '[SettingsProvider] provider modelOverrides migration failed',
         );
-        debugPrint('$st');
         return true;
       }());
     }
@@ -1301,20 +1263,7 @@ class SettingsProvider extends ChangeNotifier with BatchedChangeNotifier {
     _keepAssistantListExpandedOnSidebarClose =
         prefs.getBool(_displayKeepAssistantListExpandedOnSidebarCloseKey) ??
         false;
-    _requestLogEnabled = prefs.getBool(_requestLogEnabledKey) ?? false;
-    await RequestLogger.setEnabled(_requestLogEnabled);
-    _flutterLogEnabled = prefs.getBool(_flutterLogEnabledKey) ?? false;
-    await FlutterLogger.setEnabled(_flutterLogEnabled);
-    _logSaveOutput = prefs.getBool(_logSaveOutputKey) ?? true;
-    RequestLogger.saveOutput = _logSaveOutput;
-    _logAutoDeleteDays = prefs.getInt(_logAutoDeleteDaysKey) ?? 0;
-    _logMaxSizeMB = prefs.getInt(_logMaxSizeMBKey) ?? 0;
     _appLaunchCount = prefs.getInt(_appLaunchCountKey) ?? 0;
-    // Run log cleanup based on current settings
-    RequestLogger.cleanupLogs(
-      autoDeleteDays: _logAutoDeleteDays,
-      maxSizeMB: _logMaxSizeMB,
-    );
     _newChatOnLaunch = prefs.getBool(_displayNewChatOnLaunchKey) ?? true;
     _newChatOnAssistantSwitch =
         prefs.getBool(_displayNewChatOnAssistantSwitchKey) ?? false;
@@ -4876,72 +4825,12 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
     await prefs.setBool(_displayKeepAssistantListExpandedOnSidebarCloseKey, v);
   }
 
-  // Network: request logging (debug)
-  bool _requestLogEnabled = false;
-  bool get requestLogEnabled => _requestLogEnabled;
-  Future<void> setRequestLogEnabled(bool v) async {
-    if (_requestLogEnabled == v) return;
-    _requestLogEnabled = v;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_requestLogEnabledKey, v);
-    await RequestLogger.setEnabled(v);
-  }
-
-  // Flutter: runtime logging (debug)
-  bool _flutterLogEnabled = false;
-  bool get flutterLogEnabled => _flutterLogEnabled;
-  Future<void> setFlutterLogEnabled(bool v) async {
-    if (_flutterLogEnabled == v) return;
-    _flutterLogEnabled = v;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_flutterLogEnabledKey, v);
-    await FlutterLogger.setEnabled(v);
-  }
-
   Future<void> incrementAppLaunchCount() async {
     final prefs = await SharedPreferences.getInstance();
     final next = (prefs.getInt(_appLaunchCountKey) ?? _appLaunchCount) + 1;
     _appLaunchCount = next;
     await prefs.setInt(_appLaunchCountKey, next);
     notifyListeners();
-  }
-
-  // Log settings: save output
-  bool _logSaveOutput = true;
-  bool get logSaveOutput => _logSaveOutput;
-  Future<void> setLogSaveOutput(bool v) async {
-    if (_logSaveOutput == v) return;
-    _logSaveOutput = v;
-    RequestLogger.saveOutput = v;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setBool(_logSaveOutputKey, v);
-  }
-
-  // Log settings: auto-delete (days)
-  int _logAutoDeleteDays = 0;
-  int get logAutoDeleteDays => _logAutoDeleteDays;
-  Future<void> setLogAutoDeleteDays(int v) async {
-    if (_logAutoDeleteDays == v) return;
-    _logAutoDeleteDays = v;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_logAutoDeleteDaysKey, v);
-    RequestLogger.cleanupLogs(autoDeleteDays: v, maxSizeMB: _logMaxSizeMB);
-  }
-
-  // Log settings: max log size (MB)
-  int _logMaxSizeMB = 0;
-  int get logMaxSizeMB => _logMaxSizeMB;
-  Future<void> setLogMaxSizeMB(int v) async {
-    if (_logMaxSizeMB == v) return;
-    _logMaxSizeMB = v;
-    notifyListeners();
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setInt(_logMaxSizeMBKey, v);
-    RequestLogger.cleanupLogs(autoDeleteDays: _logAutoDeleteDays, maxSizeMB: v);
   }
 
   // Search service settings
@@ -5149,11 +5038,6 @@ DO NOT GIVE ANSWERS OR DO HOMEWORK FOR THE USER. If the user asks a math or logi
     copy._keepSidebarOpenOnTopicTap = _keepSidebarOpenOnTopicTap;
     copy._keepAssistantListExpandedOnSidebarClose =
         _keepAssistantListExpandedOnSidebarClose;
-    copy._requestLogEnabled = _requestLogEnabled;
-    copy._flutterLogEnabled = _flutterLogEnabled;
-    copy._logSaveOutput = _logSaveOutput;
-    copy._logAutoDeleteDays = _logAutoDeleteDays;
-    copy._logMaxSizeMB = _logMaxSizeMB;
     copy._appLaunchCount = _appLaunchCount;
     copy._newChatOnLaunch = _newChatOnLaunch;
     copy._newChatOnAssistantSwitch = _newChatOnAssistantSwitch;

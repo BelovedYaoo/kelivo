@@ -32,8 +32,8 @@ class QuickPhraseProvider with ChangeNotifier, BatchedChangeNotifier {
     try {
       _phrases = await QuickPhraseStore.getAll();
       notifyListeners();
-    } catch (e) {
-      debugPrint('Failed to load quick phrases: $e');
+    } catch (_) {
+      debugPrint('[QuickPhraseProvider] load failed');
       _phrases = [];
       notifyListeners();
     }
