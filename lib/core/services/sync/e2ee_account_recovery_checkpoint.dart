@@ -8,19 +8,15 @@ import '../workspace/device_state_blob_store.dart';
 import 'cloud_sync_types.dart';
 import 'e2ee_account_recovery.dart';
 
-const _checkpointVersion = 5;
+const _checkpointVersion = 6;
 const _checkpointRecordEpoch = 1;
-const _checkpointFixedLength = 819;
 const _checkpointTokenLength = 59;
 const _checkpointFullSessionTokenLength = 50;
 const _checkpointCapsuleMaximumLength = 4096;
-const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v5';
+const _checkpointRecordDomain = 'kelivo.account-recovery.checkpoint.record.v6';
 const _checkpointAssociatedDataDomain =
-    'kelivo.account-recovery.checkpoint.aad.v5';
-final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC5'));
-final _canonicalUuidV4Pattern = RegExp(
-  r'^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$',
-);
+    'kelivo.account-recovery.checkpoint.aad.v6';
+final _checkpointMagic = Uint8List.fromList(ascii.encode('KELVARC6'));
 
 final class E2eeAccountRecoveryCheckpointStore
     implements E2eeAccountRecoveryCheckpointPersistence {
@@ -225,177 +221,492 @@ bool _sameCheckpoint(
 }
 
 Uint8List _encodeCheckpoint(E2eeAccountRecoveryCheckpoint checkpoint) {
-  final challenge = checkpoint.challenge;
-  final capsule = challenge.recoveryCapsule;
-  if (capsule.isEmpty || capsule.length > _checkpointCapsuleMaximumLength) {
-    throw const FormatException('账户恢复 checkpoint capsule 长度无效');
+  final writer = _CheckpointWriter();
+  writer.bytes(_checkpointMagic);
+  writer.uint32(_checkpointVersion);
+  writer.uint32(_phaseCode(checkpoint.phase));
+  writer.uuid(checkpoint.expectedDeviceId);
+  writer.fixedAscii(checkpoint.recoveryToken.value, _checkpointTokenLength);
+  _writeChallenge(writer, checkpoint.challenge);
+  _writeProgress(writer, checkpoint.progress);
+  return writer.takeBytes();
+}
+
+E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
+  final reader = _CheckpointReader(frame);
+  if (!_sameBytes(reader.bytes(_checkpointMagic.length), _checkpointMagic)) {
+    throw const FormatException('账户恢复 checkpoint magic 无效');
   }
-  final tokenBytes = Uint8List.fromList(
-    ascii.encode(checkpoint.recoveryToken.value),
+  if (reader.uint32() != _checkpointVersion) {
+    throw const FormatException('账户恢复 checkpoint 版本无效');
+  }
+  final phase = _parsePhase(reader.uint32());
+  final expectedDeviceId = reader.uuid();
+  final recoveryToken = CloudSyncAccountRecoveryToken.parse(
+    reader.fixedAscii(_checkpointTokenLength),
   );
-  Uint8List? nonceProof;
-  Uint8List? trustSignature;
+  final challenge = _readChallenge(reader);
+  E2eeAccountRecoveryCheckpointProgress? progress;
   try {
-    if (tokenBytes.length != _checkpointTokenLength) {
-      throw const FormatException('账户恢复 checkpoint token 长度无效');
-    }
-    if (checkpoint.stage != E2eeAccountRecoveryStage.challenged) {
-      nonceProof = checkpoint.copyNonceProof();
-      trustSignature = checkpoint.copyTrustSignature();
-    }
-    final frame = Uint8List(
-      _checkpointFixedLength +
-          capsule.length +
-          _preparedCommitFrameLength(checkpoint.preparedCommit) +
-          _localTransitionPlanFrameLength(checkpoint.localTransitionPlan) +
-          _commitReceiptFrameLength(checkpoint.commitReceipt),
+    progress = _readProgress(reader, phase, attemptId: challenge.attemptId);
+    reader.requireEnd();
+    return E2eeAccountRecoveryCheckpoint.restore(
+      expectedDeviceId: expectedDeviceId,
+      recoveryToken: recoveryToken,
+      challenge: challenge,
+      progress: progress,
     );
-    final view = ByteData.sublistView(frame);
-    var offset = 0;
-    offset = _writeBytes(frame, offset, _checkpointMagic);
-    offset = _writeUint32(view, offset, _checkpointVersion);
-    offset = _writeUint32(view, offset, _stageCode(checkpoint.stage));
-    offset = _writeBytes(
-      frame,
-      offset,
-      _uuidBytes(checkpoint.expectedDeviceId),
+  } catch (_) {
+    _clearProgressContinuation(progress);
+    rethrow;
+  }
+}
+
+void _writeChallenge(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryChallenge challenge,
+) {
+  writer.uuid(challenge.attemptId);
+  writer.bytes(challenge.requestDigest);
+  writer.bytes(challenge.challengeFrame);
+  writer.bytes(challenge.sealedNonce);
+  writer.uint32(challenge.securityGeneration);
+  writer.uint32(challenge.keyEpoch);
+  writer.bytes(challenge.membershipManifestDigest);
+  writer.uint32(challenge.recoveryPublicKeyVersion);
+  writer.bytes(challenge.recoveryPublicKey);
+  writer.uint32(challenge.recoveryCapsuleVersion);
+  writer.variableBytes(
+    challenge.recoveryCapsule,
+    maximum: _checkpointCapsuleMaximumLength,
+  );
+  writer.bytes(challenge.recoveryCapsuleDigest);
+  switch (challenge.dataState.phase) {
+    case E2eeAccountRecoveryDataPhase.ready:
+      writer.uint32(1);
+      writer.uint32(challenge.dataState.dataGeneration);
+      writer.uint32(challenge.dataState.dataKeyEpoch);
+    case E2eeAccountRecoveryDataPhase.rekeyPending:
+      writer.uint32(2);
+      writer.uint32(challenge.dataState.dataGeneration);
+      writer.uint32(challenge.dataState.dataKeyEpoch);
+      writer.uuid(challenge.dataState.operationId!);
+      writer.uint32(challenge.dataState.targetKeyEpoch!);
+  }
+  writer.timestamp(challenge.expiresAt);
+}
+
+E2eeAccountRecoveryChallenge _readChallenge(_CheckpointReader reader) {
+  final attemptId = reader.uuid();
+  final requestDigest = reader.bytes(32);
+  final challengeFrame = reader.bytes(e2eeAccountRecoveryChallengeFrameBytes);
+  final sealedNonce = reader.bytes(e2eeAccountRecoverySealedNonceBytes);
+  final securityGeneration = reader.uint32();
+  final keyEpoch = reader.uint32();
+  final membershipManifestDigest = reader.bytes(32);
+  final recoveryPublicKeyVersion = reader.uint32();
+  final recoveryPublicKey = reader.bytes(cloudSyncRecoveryPublicKeyBytes);
+  final recoveryCapsuleVersion = reader.uint32();
+  final recoveryCapsule = reader.variableBytes(
+    minimum: 1,
+    maximum: _checkpointCapsuleMaximumLength,
+  );
+  final recoveryCapsuleDigest = reader.bytes(32);
+  final dataPhase = reader.uint32();
+  final dataGeneration = reader.uint32();
+  final dataKeyEpoch = reader.uint32();
+  final dataState = switch (dataPhase) {
+    1 => E2eeAccountRecoveryDataState.ready(
+      dataGeneration: dataGeneration,
+      dataKeyEpoch: dataKeyEpoch,
+    ),
+    2 => E2eeAccountRecoveryDataState.rekeyPending(
+      dataGeneration: dataGeneration,
+      dataKeyEpoch: dataKeyEpoch,
+      operationId: reader.uuid(),
+      targetKeyEpoch: reader.uint32(),
+    ),
+    _ => throw const FormatException('账户恢复 checkpoint 数据阶段无效'),
+  };
+  final expiresAt = reader.timestamp();
+  try {
+    return E2eeAccountRecoveryChallenge(
+      attemptId: attemptId,
+      requestDigest: requestDigest,
+      challengeFrame: challengeFrame,
+      sealedNonce: sealedNonce,
+      securityGeneration: securityGeneration,
+      keyEpoch: keyEpoch,
+      membershipManifestDigest: membershipManifestDigest,
+      recoveryPublicKeyVersion: recoveryPublicKeyVersion,
+      recoveryPublicKey: recoveryPublicKey,
+      recoveryCapsuleVersion: recoveryCapsuleVersion,
+      recoveryCapsule: recoveryCapsule,
+      recoveryCapsuleDigest: recoveryCapsuleDigest,
+      dataState: dataState,
+      expiresAt: expiresAt,
     );
-    offset = _writeBytes(frame, offset, _uuidBytes(challenge.attemptId));
-    offset = _writeBytes(frame, offset, challenge.requestDigest);
-    offset = _writeBytes(frame, offset, challenge.challengeFrame);
-    offset = _writeBytes(frame, offset, challenge.sealedNonce);
-    offset = _writeUint32(view, offset, challenge.securityGeneration);
-    offset = _writeUint32(view, offset, challenge.keyEpoch);
-    offset = _writeBytes(frame, offset, challenge.membershipManifestDigest);
-    offset = _writeUint32(view, offset, challenge.recoveryPublicKeyVersion);
-    offset = _writeBytes(frame, offset, challenge.recoveryPublicKey);
-    offset = _writeUint32(view, offset, challenge.recoveryCapsuleVersion);
-    offset = _writeUint32(view, offset, capsule.length);
-    offset = _writeBytes(frame, offset, capsule);
-    offset = _writeBytes(frame, offset, challenge.recoveryCapsuleDigest);
-    offset = _writeUint32(
-      view,
-      offset,
-      challenge.dataState.phase == E2eeAccountRecoveryDataPhase.ready ? 1 : 2,
-    );
-    offset = _writeUint32(view, offset, challenge.dataState.dataGeneration);
-    offset = _writeUint32(view, offset, challenge.dataState.dataKeyEpoch);
-    offset = _writeBytes(
-      frame,
-      offset,
-      challenge.dataState.operationId == null
-          ? Uint8List(16)
-          : _uuidBytes(challenge.dataState.operationId!),
-    );
-    offset = _writeUint32(
-      view,
-      offset,
-      challenge.dataState.targetKeyEpoch ?? 0,
-    );
-    offset = _writeUint64(
-      view,
-      offset,
-      challenge.expiresAt.millisecondsSinceEpoch,
-    );
-    offset = _writeBytes(frame, offset, tokenBytes);
-    offset = _writeBytes(
-      frame,
-      offset,
-      nonceProof ?? Uint8List(e2eeAccountRecoveryNonceProofBytes),
-    );
-    offset = _writeBytes(
-      frame,
-      offset,
-      trustSignature ?? Uint8List(e2eeAccountRecoveryTrustSignatureBytes),
-    );
-    offset = _writeUint64(
-      view,
-      offset,
-      checkpoint.recoveryTokenExpiresAt?.millisecondsSinceEpoch ?? 0,
-    );
-    offset = _writeUint32(view, offset, _nextActionCode(checkpoint.nextAction));
-    offset = _writePreparedCommit(
-      frame,
-      view,
-      offset,
-      checkpoint.preparedCommit,
-    );
-    offset = _writeLocalTransitionPlan(
-      frame,
-      view,
-      offset,
-      checkpoint.localTransitionPlan,
-    );
-    offset = _writeCommitReceipt(frame, view, offset, checkpoint.commitReceipt);
-    if (offset != frame.length) {
-      frame.fillRange(0, frame.length, 0);
-      throw StateError('账户恢复 checkpoint 编码长度不一致');
-    }
-    return frame;
   } finally {
-    _clear(tokenBytes);
+    _clear(requestDigest);
+    _clear(challengeFrame);
+    _clear(sealedNonce);
+    _clear(membershipManifestDigest);
+    _clear(recoveryPublicKey);
+    _clear(recoveryCapsule);
+    _clear(recoveryCapsuleDigest);
+  }
+}
+
+void _writeProgress(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryCheckpointProgress progress,
+) {
+  switch (progress) {
+    case E2eeAccountRecoveryChallengedProgress():
+      return;
+    case E2eeAccountRecoveryProofReadyProgress(:final proof):
+      _writeProof(writer, proof);
+    case E2eeAccountRecoveryAuthorizedProgress(:final authorization):
+      _writeAuthorization(writer, authorization);
+    case E2eeAccountRecoveryResumePreparedProgress(
+      :final authorization,
+      :final transition,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeTransition(writer, transition);
+    case E2eeAccountRecoveryResumeCommittedProgress(
+      :final authorization,
+      :final transition,
+      :final receipt,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeTransition(writer, transition);
+      _writeReceipt(writer, receipt);
+    case E2eeAccountRecoveryFirstRekeyFinalizedProgress(
+      :final authorization,
+      :final transition,
+      :final receipt,
+      :final completion,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeTransition(writer, transition);
+      _writeReceipt(writer, receipt);
+      _writeCompletion(writer, completion);
+    case E2eeAccountRecoveryFirstLocalActivatedProgress(
+      :final authorization,
+      :final resumeReceipt,
+      :final completion,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeReceipt(writer, resumeReceipt);
+      _writeCompletion(writer, completion);
+    case E2eeAccountRecoveryReplacementChallengeRequestedProgress(
+      :final authorization,
+      :final resumeReceipt,
+      :final completion,
+      :final request,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeReceipt(writer, resumeReceipt);
+      _writeCompletion(writer, completion);
+      _writeReplacementChallengeRequest(writer, request);
+    case E2eeAccountRecoveryReplacementChallengeReceivedProgress(
+      :final authorization,
+      :final challenge,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeReplacementChallenge(writer, challenge);
+    case E2eeAccountRecoveryReplacementProofReadyProgress(
+      :final authorization,
+      :final challenge,
+      :final proof,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeReplacementChallenge(writer, challenge);
+      _writeProof(writer, proof);
+    case E2eeAccountRecoveryReplacementPreparedProgress(
+      :final authorization,
+      :final transition,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeTransition(writer, transition);
+    case E2eeAccountRecoveryReplacementCommittedProgress(
+      :final authorization,
+      :final transition,
+      :final receipt,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeTransition(writer, transition);
+      _writeReceipt(writer, receipt);
+    case E2eeAccountRecoverySecondRekeyFinalizedProgress(
+      :final authorization,
+      :final transition,
+      :final receipt,
+      :final completion,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeTransition(writer, transition);
+      _writeReceipt(writer, receipt);
+      _writeCompletion(writer, completion);
+    case E2eeAccountRecoverySecondLocalActivatedProgress(
+      :final authorization,
+      :final completionSession,
+      :final replacementReceipt,
+      :final completion,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeCompletionSession(writer, completionSession);
+      _writeReceipt(writer, replacementReceipt);
+      _writeCompletion(writer, completion);
+    case E2eeAccountRecoverySessionVerifiedProgress(
+      :final authorization,
+      :final completionSession,
+      :final replacementReceipt,
+      :final completion,
+    ):
+      _writeAuthorization(writer, authorization);
+      _writeCompletionSession(writer, completionSession);
+      _writeReceipt(writer, replacementReceipt);
+      _writeCompletion(writer, completion);
+  }
+}
+
+E2eeAccountRecoveryCheckpointProgress _readProgress(
+  _CheckpointReader reader,
+  E2eeAccountRecoveryCheckpointPhase phase, {
+  required String attemptId,
+}) {
+  switch (phase) {
+    case E2eeAccountRecoveryCheckpointPhase.challenged:
+      return const E2eeAccountRecoveryChallengedProgress();
+    case E2eeAccountRecoveryCheckpointPhase.proofReady:
+      return E2eeAccountRecoveryProofReadyProgress(_readProof(reader));
+    case E2eeAccountRecoveryCheckpointPhase.authorized:
+      return E2eeAccountRecoveryAuthorizedProgress(_readAuthorization(reader));
+    case E2eeAccountRecoveryCheckpointPhase.resumePrepared:
+      final authorization = _readAuthorization(reader);
+      final transition = _readTransition(reader, attemptId: attemptId);
+      return _finishReadingTransition(
+        transition,
+        () => E2eeAccountRecoveryResumePreparedProgress(
+          authorization: authorization,
+          transition: transition,
+        ),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.resumeCommitted:
+      final authorization = _readAuthorization(reader);
+      final transition = _readTransition(reader, attemptId: attemptId);
+      return _finishReadingTransition(
+        transition,
+        () => E2eeAccountRecoveryResumeCommittedProgress(
+          authorization: authorization,
+          transition: transition,
+          receipt: _readReceipt(reader),
+        ),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.firstRekeyFinalized:
+      final authorization = _readAuthorization(reader);
+      final transition = _readTransition(reader, attemptId: attemptId);
+      return _finishReadingTransition(
+        transition,
+        () => E2eeAccountRecoveryFirstRekeyFinalizedProgress(
+          authorization: authorization,
+          transition: transition,
+          receipt: _readReceipt(reader),
+          completion: _readCompletion(reader),
+        ),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.firstLocalActivated:
+      return E2eeAccountRecoveryFirstLocalActivatedProgress(
+        authorization: _readAuthorization(reader),
+        resumeReceipt: _readReceipt(reader),
+        completion: _readCompletion(reader),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.replacementChallengeRequested:
+      return E2eeAccountRecoveryReplacementChallengeRequestedProgress(
+        authorization: _readAuthorization(reader),
+        resumeReceipt: _readReceipt(reader),
+        completion: _readCompletion(reader),
+        request: _readReplacementChallengeRequest(reader),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.replacementChallengeReceived:
+      return E2eeAccountRecoveryReplacementChallengeReceivedProgress(
+        authorization: _readAuthorization(reader),
+        challenge: _readReplacementChallenge(reader),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.replacementProofReady:
+      return E2eeAccountRecoveryReplacementProofReadyProgress(
+        authorization: _readAuthorization(reader),
+        challenge: _readReplacementChallenge(reader),
+        proof: _readProof(reader),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.replacementPrepared:
+      final authorization = _readAuthorization(reader);
+      final transition = _readTransition(reader, attemptId: attemptId);
+      return _finishReadingTransition(
+        transition,
+        () => E2eeAccountRecoveryReplacementPreparedProgress(
+          authorization: authorization,
+          transition: transition,
+        ),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.replacementCommitted:
+      final authorization = _readAuthorization(reader);
+      final transition = _readTransition(reader, attemptId: attemptId);
+      return _finishReadingTransition(
+        transition,
+        () => E2eeAccountRecoveryReplacementCommittedProgress(
+          authorization: authorization,
+          transition: transition,
+          receipt: _readReceipt(reader),
+        ),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.secondRekeyFinalized:
+      final authorization = _readAuthorization(reader);
+      final transition = _readTransition(reader, attemptId: attemptId);
+      return _finishReadingTransition(
+        transition,
+        () => E2eeAccountRecoverySecondRekeyFinalizedProgress(
+          authorization: authorization,
+          transition: transition,
+          receipt: _readReceipt(reader),
+          completion: _readCompletion(reader),
+        ),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.secondLocalActivated:
+      return E2eeAccountRecoverySecondLocalActivatedProgress(
+        authorization: _readAuthorization(reader),
+        completionSession: _readCompletionSession(reader),
+        replacementReceipt: _readReceipt(reader),
+        completion: _readCompletion(reader),
+      );
+    case E2eeAccountRecoveryCheckpointPhase.sessionVerified:
+      return E2eeAccountRecoverySessionVerifiedProgress(
+        authorization: _readAuthorization(reader),
+        completionSession: _readCompletionSession(reader),
+        replacementReceipt: _readReceipt(reader),
+        completion: _readCompletion(reader),
+      );
+  }
+}
+
+void _writeProof(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryCheckpointProof proof,
+) {
+  final nonceProof = proof.copyNonceProof();
+  final trustSignature = proof.copyTrustSignature();
+  try {
+    writer.bytes(nonceProof);
+    writer.bytes(trustSignature);
+  } finally {
     _clear(nonceProof);
     _clear(trustSignature);
   }
 }
 
-int _preparedCommitFrameLength(E2eeAccountRecoveryPreparedCommit? commit) {
-  if (commit == null) return 4;
-  const commonFixedLength =
-      4 + 4 + 32 + 16 + 4 + 32 + 4 + 4 + cloudSyncAccountKeyEnvelopeBytes;
-  final variantLength = switch (commit) {
-    E2eeAccountRecoveryResumeCommit() => 16,
-    E2eeAccountRecoveryReplacementCommit(
-      :final authorization,
-      :final nextRecoveryCapsule,
-    ) =>
-      _replacementAuthorizationFrameLength(authorization) +
-          4 +
-          4 +
-          nextRecoveryCapsule.length +
-          16 +
-          _checkpointFullSessionTokenLength,
-  };
-  return 4 +
-      commonFixedLength +
-      commit.membership.nextMembershipManifest.length +
-      variantLength;
+E2eeAccountRecoveryCheckpointProof _readProof(_CheckpointReader reader) {
+  return E2eeAccountRecoveryCheckpointProof.take(
+    nonceProof: reader.bytes(e2eeAccountRecoveryNonceProofBytes),
+    trustSignature: reader.bytes(e2eeAccountRecoveryTrustSignatureBytes),
+  );
 }
 
-int _writePreparedCommit(
-  Uint8List frame,
-  ByteData view,
-  int offset,
-  E2eeAccountRecoveryPreparedCommit? commit,
+void _writeAuthorization(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryCheckpointAuthorization authorization,
 ) {
-  if (commit == null) return _writeUint32(view, offset, 0);
-  offset = _writeUint32(
-    view,
-    offset,
-    commit.kind == E2eeAccountRecoveryCommitKind.resume ? 1 : 2,
+  _writeProof(writer, authorization.proof);
+  writer.timestamp(authorization.recoveryTokenExpiresAt);
+  writer.uint32(_nextActionCode(authorization.nextAction));
+}
+
+E2eeAccountRecoveryCheckpointAuthorization _readAuthorization(
+  _CheckpointReader reader,
+) {
+  return E2eeAccountRecoveryCheckpointAuthorization(
+    proof: _readProof(reader),
+    recoveryTokenExpiresAt: reader.timestamp(),
+    nextAction: _parseNextAction(reader.uint32()),
   );
+}
+
+void _writeTransition(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryPreparedTransition transition,
+) {
+  _writePreparedCommit(writer, transition.commit);
+  _writeLocalTransitionPlan(writer, transition.localTransitionPlan);
+}
+
+E2eeAccountRecoveryPreparedTransition _readTransition(
+  _CheckpointReader reader, {
+  required String attemptId,
+}) {
+  final commit = _readPreparedCommit(reader, attemptId: attemptId);
+  E2eeAccountRecoveryLocalTransitionPlan? plan;
+  try {
+    plan = _readLocalTransitionPlan(reader);
+    return E2eeAccountRecoveryPreparedTransition(
+      commit: commit,
+      localTransitionPlan: plan,
+    );
+  } catch (_) {
+    plan?.clearContinuation();
+    rethrow;
+  }
+}
+
+T _finishReadingTransition<T>(
+  E2eeAccountRecoveryPreparedTransition transition,
+  T Function() readTail,
+) {
+  try {
+    return readTail();
+  } catch (_) {
+    transition.clearContinuation();
+    rethrow;
+  }
+}
+
+void _clearProgressContinuation(
+  E2eeAccountRecoveryCheckpointProgress? progress,
+) {
+  switch (progress) {
+    case E2eeAccountRecoveryResumePreparedProgress(:final transition):
+    case E2eeAccountRecoveryResumeCommittedProgress(:final transition):
+    case E2eeAccountRecoveryFirstRekeyFinalizedProgress(:final transition):
+    case E2eeAccountRecoveryReplacementPreparedProgress(:final transition):
+    case E2eeAccountRecoveryReplacementCommittedProgress(:final transition):
+    case E2eeAccountRecoverySecondRekeyFinalizedProgress(:final transition):
+      transition.clearContinuation();
+    default:
+      return;
+  }
+}
+
+void _writePreparedCommit(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryPreparedCommit commit,
+) {
+  writer.uint32(commit.kind == E2eeAccountRecoveryCommitKind.resume ? 1 : 2);
   final membership = commit.membership;
-  offset = _writeUint32(view, offset, membership.expectedGeneration);
-  offset = _writeUint32(view, offset, membership.expectedKeyEpoch);
-  offset = _writeBytes(
-    frame,
-    offset,
-    membership.expectedMembershipManifestDigest.bytes,
+  writer.uint32(membership.expectedGeneration);
+  writer.uint32(membership.expectedKeyEpoch);
+  writer.bytes(membership.expectedMembershipManifestDigest.bytes);
+  writer.uuid(membership.operationId);
+  writer.variableBytes(
+    membership.nextMembershipManifest,
+    minimum: cloudSyncMembershipManifestMinimumBytes,
+    maximum: cloudSyncMembershipManifestMaximumBytes,
   );
-  offset = _writeBytes(frame, offset, _uuidBytes(membership.operationId));
-  offset = _writeUint32(view, offset, membership.nextMembershipManifest.length);
-  offset = _writeBytes(frame, offset, membership.nextMembershipManifest);
-  offset = _writeBytes(
-    frame,
-    offset,
-    membership.nextMembershipManifestDigest.bytes,
-  );
-  offset = _writeUint32(view, offset, membership.envelope.envelopeVersion);
-  offset = _writeUint32(view, offset, membership.envelope.keyEpoch);
-  offset = _writeBytes(frame, offset, membership.envelope.accountKeyEnvelope);
+  writer.bytes(membership.nextMembershipManifestDigest.bytes);
+  writer.uint32(membership.envelope.envelopeVersion);
+  writer.uint32(membership.envelope.keyEpoch);
+  writer.bytes(membership.envelope.accountKeyEnvelope);
   switch (commit) {
     case E2eeAccountRecoveryResumeCommit(:final rekeyOperationId):
-      return _writeBytes(frame, offset, _uuidBytes(rekeyOperationId));
+      writer.uuid(rekeyOperationId);
     case E2eeAccountRecoveryReplacementCommit(
       :final authorization,
       :final nextRecoveryCapsuleVersion,
@@ -403,483 +714,50 @@ int _writePreparedCommit(
       :final completionSessionId,
       :final completionSessionToken,
     ):
-      offset = _writeReplacementAuthorization(
-        frame,
-        view,
-        offset,
-        authorization,
+      _writeReplacementAuthorization(writer, authorization);
+      writer.uint32(nextRecoveryCapsuleVersion);
+      writer.variableBytes(
+        nextRecoveryCapsule,
+        minimum: 1,
+        maximum: cloudSyncRecoveryCapsuleMaximumBytes,
       );
-      offset = _writeUint32(view, offset, nextRecoveryCapsuleVersion);
-      offset = _writeUint32(view, offset, nextRecoveryCapsule.length);
-      offset = _writeBytes(frame, offset, nextRecoveryCapsule);
-      offset = _writeBytes(frame, offset, _uuidBytes(completionSessionId));
-      final tokenBytes = Uint8List.fromList(
-        ascii.encode(completionSessionToken.value),
+      writer.uuid(completionSessionId);
+      writer.fixedAscii(
+        completionSessionToken.value,
+        _checkpointFullSessionTokenLength,
       );
-      try {
-        if (tokenBytes.length != _checkpointFullSessionTokenLength) {
-          throw const FormatException('账户恢复完整会话 token 长度无效');
-        }
-        return _writeBytes(frame, offset, tokenBytes);
-      } finally {
-        _clear(tokenBytes);
-      }
   }
 }
 
-int _replacementAuthorizationFrameLength(
-  E2eeAccountRecoveryReplacementAuthorization authorization,
-) => switch (authorization) {
-  E2eeAccountRecoveryReplacementInitialAuthorization() => 4 + 32,
-  E2eeAccountRecoveryReplacementChallengeAuthorization() =>
-    4 +
-        16 +
-        32 +
-        e2eeAccountRecoveryNonceProofBytes +
-        e2eeAccountRecoveryTrustSignatureBytes,
-};
-
-int _writeReplacementAuthorization(
-  Uint8List frame,
-  ByteData view,
-  int offset,
-  E2eeAccountRecoveryReplacementAuthorization authorization,
-) {
-  switch (authorization) {
-    case E2eeAccountRecoveryReplacementInitialAuthorization(
-      :final challengeRequestDigest,
-    ):
-      offset = _writeUint32(view, offset, 1);
-      return _writeBytes(frame, offset, challengeRequestDigest);
-    case E2eeAccountRecoveryReplacementChallengeAuthorization(
-      :final challengeId,
-      :final challengeRequestDigest,
-      :final nonceProof,
-      :final trustSignature,
-    ):
-      offset = _writeUint32(view, offset, 2);
-      offset = _writeBytes(frame, offset, _uuidBytes(challengeId));
-      offset = _writeBytes(frame, offset, challengeRequestDigest);
-      offset = _writeBytes(frame, offset, nonceProof);
-      return _writeBytes(frame, offset, trustSignature);
-  }
-}
-
-({E2eeAccountRecoveryReplacementAuthorization authorization, int offset})
-_readReplacementAuthorization(Uint8List frame, ByteData view, int offset) {
-  _requireRemaining(frame, offset, 4);
-  final kind = _readUint32(view, offset);
-  offset += 4;
-  switch (kind) {
-    case 1:
-      _requireRemaining(frame, offset, 32);
-      final challengeRequestDigest = _readBytes(frame, offset, 32);
-      offset += 32;
-      return (
-        authorization: E2eeAccountRecoveryReplacementAuthorization.initial(
-          challengeRequestDigest: challengeRequestDigest,
-        ),
-        offset: offset,
-      );
-    case 2:
-      const length =
-          16 +
-          32 +
-          e2eeAccountRecoveryNonceProofBytes +
-          e2eeAccountRecoveryTrustSignatureBytes;
-      _requireRemaining(frame, offset, length);
-      final challengeId = _uuidString(frame, offset);
-      offset += 16;
-      final challengeRequestDigest = _readBytes(frame, offset, 32);
-      offset += 32;
-      final nonceProof = _readBytes(
-        frame,
-        offset,
-        e2eeAccountRecoveryNonceProofBytes,
-      );
-      offset += e2eeAccountRecoveryNonceProofBytes;
-      final trustSignature = _readBytes(
-        frame,
-        offset,
-        e2eeAccountRecoveryTrustSignatureBytes,
-      );
-      offset += e2eeAccountRecoveryTrustSignatureBytes;
-      return (
-        authorization:
-            E2eeAccountRecoveryReplacementAuthorization.replacementChallenge(
-              challengeId: challengeId,
-              challengeRequestDigest: challengeRequestDigest,
-              nonceProof: nonceProof,
-              trustSignature: trustSignature,
-            ),
-        offset: offset,
-      );
-    default:
-      throw const FormatException('账户恢复 checkpoint 替换授权类型无效');
-  }
-}
-
-int _localTransitionPlanFrameLength(
-  E2eeAccountRecoveryLocalTransitionPlan? plan,
-) => plan == null ? 4 : 4 + DeviceStateBlobStore.blobLength * 3;
-
-int _writeLocalTransitionPlan(
-  Uint8List frame,
-  ByteData view,
-  int offset,
-  E2eeAccountRecoveryLocalTransitionPlan? plan,
-) {
-  if (plan == null) return _writeUint32(view, offset, 0);
-  offset = _writeUint32(view, offset, switch (plan.phase) {
-    E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared => 1,
-    E2eeAccountRecoveryLocalTransitionPhase.proofVerified => 2,
-    E2eeAccountRecoveryLocalTransitionPhase.activated => 3,
-  });
-  final source = plan.sourceStateBlob;
-  final unpruned = plan.unprunedStateBlob;
-  final pruned = plan.prunedStateBlob;
-  try {
-    offset = _writeBytes(frame, offset, source);
-    offset = _writeBytes(frame, offset, unpruned);
-    return _writeBytes(frame, offset, pruned);
-  } finally {
-    _clear(source);
-    _clear(unpruned);
-    _clear(pruned);
-  }
-}
-
-int _commitReceiptFrameLength(E2eeAccountRecoveryCommitReceipt? receipt) =>
-    receipt == null ? 4 : 72;
-
-int _writeCommitReceipt(
-  Uint8List frame,
-  ByteData view,
-  int offset,
-  E2eeAccountRecoveryCommitReceipt? receipt,
-) {
-  if (receipt == null) return _writeUint32(view, offset, 0);
-  offset = _writeUint32(view, offset, 1);
-  offset = _writeUint32(
-    view,
-    offset,
-    receipt.result == E2eeAccountRecoveryCommitResult.committed ? 1 : 2,
-  );
-  offset = _writeUint32(
-    view,
-    offset,
-    receipt.kind == E2eeAccountRecoveryCommitKind.resume ? 1 : 2,
-  );
-  offset = _writeBytes(frame, offset, _uuidBytes(receipt.attemptId));
-  offset = _writeBytes(
-    frame,
-    offset,
-    _uuidBytes(receipt.membershipOperationId),
-  );
-  offset = _writeBytes(frame, offset, _uuidBytes(receipt.rekeyOperationId));
-  offset = _writeUint32(view, offset, receipt.generation);
-  offset = _writeUint32(view, offset, receipt.keyEpoch);
-  return _writeUint32(view, offset, _nextActionCode(receipt.nextAction));
-}
-
-E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
-  if (frame.length < _checkpointFixedLength + 12 ||
-      !_startsWith(frame, _checkpointMagic)) {
-    throw const FormatException('账户恢复 checkpoint 帧无效');
-  }
-  final view = ByteData.sublistView(frame);
-  var offset = _checkpointMagic.length;
-  if (_readUint32(view, offset) != _checkpointVersion) {
-    throw const FormatException('账户恢复 checkpoint 版本无效');
-  }
-  offset += 4;
-  final stage = _parseStage(_readUint32(view, offset));
-  offset += 4;
-  final expectedDeviceId = _uuidString(frame, offset);
-  offset += 16;
-  final attemptId = _uuidString(frame, offset);
-  offset += 16;
-  final requestDigest = _readBytes(frame, offset, 32);
-  offset += 32;
-  final challengeFrame = _readBytes(
-    frame,
-    offset,
-    e2eeAccountRecoveryChallengeFrameBytes,
-  );
-  offset += e2eeAccountRecoveryChallengeFrameBytes;
-  final sealedNonce = _readBytes(
-    frame,
-    offset,
-    e2eeAccountRecoverySealedNonceBytes,
-  );
-  offset += e2eeAccountRecoverySealedNonceBytes;
-  final securityGeneration = _readUint32(view, offset);
-  offset += 4;
-  final keyEpoch = _readUint32(view, offset);
-  offset += 4;
-  final membershipManifestDigest = _readBytes(frame, offset, 32);
-  offset += 32;
-  final recoveryPublicKeyVersion = _readUint32(view, offset);
-  offset += 4;
-  final recoveryPublicKey = _readBytes(frame, offset, 32);
-  offset += 32;
-  final recoveryCapsuleVersion = _readUint32(view, offset);
-  offset += 4;
-  final capsuleLength = _readUint32(view, offset);
-  offset += 4;
-  if (capsuleLength <= 0 ||
-      capsuleLength > _checkpointCapsuleMaximumLength ||
-      frame.length < _checkpointFixedLength + capsuleLength + 12) {
-    throw const FormatException('账户恢复 checkpoint capsule 边界无效');
-  }
-  final recoveryCapsule = _readBytes(frame, offset, capsuleLength);
-  offset += capsuleLength;
-  final recoveryCapsuleDigest = _readBytes(frame, offset, 32);
-  offset += 32;
-  final dataPhaseCode = _readUint32(view, offset);
-  offset += 4;
-  final dataGeneration = _readUint32(view, offset);
-  offset += 4;
-  final dataKeyEpoch = _readUint32(view, offset);
-  offset += 4;
-  final operationIdBytes = _readBytes(frame, offset, 16);
-  offset += 16;
-  final targetKeyEpoch = _readUint32(view, offset);
-  offset += 4;
-  final expiresAtMs = _readUint64(view, offset);
-  offset += 8;
-  final tokenBytes = _readBytes(frame, offset, _checkpointTokenLength);
-  offset += _checkpointTokenLength;
-  final nonceProof = _readBytes(
-    frame,
-    offset,
-    e2eeAccountRecoveryNonceProofBytes,
-  );
-  offset += e2eeAccountRecoveryNonceProofBytes;
-  final trustSignature = _readBytes(
-    frame,
-    offset,
-    e2eeAccountRecoveryTrustSignatureBytes,
-  );
-  offset += e2eeAccountRecoveryTrustSignatureBytes;
-  final recoveryTokenExpiresAtMs = _readUint64(view, offset);
-  offset += 8;
-  final nextActionCode = _readUint32(view, offset);
-  offset += 4;
-  final prepared = _readPreparedCommit(
-    frame,
-    view,
-    offset,
-    attemptId: attemptId,
-  );
-  offset = prepared.offset;
-  final localTransition = _readLocalTransitionPlan(frame, view, offset);
-  offset = localTransition.offset;
-  final receipt = _readCommitReceipt(frame, view, offset);
-  offset = receipt.offset;
-  if (offset != frame.length || expiresAtMs <= 0) {
-    throw const FormatException('账户恢复 checkpoint 尾部状态无效');
-  }
-  final dataState = switch (dataPhaseCode) {
-    1 when _allZero(operationIdBytes) && targetKeyEpoch == 0 =>
-      E2eeAccountRecoveryDataState.ready(
-        dataGeneration: dataGeneration,
-        dataKeyEpoch: dataKeyEpoch,
-      ),
-    2 when !_allZero(operationIdBytes) && targetKeyEpoch > 0 =>
-      E2eeAccountRecoveryDataState.rekeyPending(
-        dataGeneration: dataGeneration,
-        dataKeyEpoch: dataKeyEpoch,
-        operationId: _uuidStringFromBytes(operationIdBytes),
-        targetKeyEpoch: targetKeyEpoch,
-      ),
-    _ => throw const FormatException('账户恢复 checkpoint 数据换钥状态无效'),
-  };
-  final challenge = E2eeAccountRecoveryChallenge(
-    attemptId: attemptId,
-    requestDigest: requestDigest,
-    challengeFrame: challengeFrame,
-    sealedNonce: sealedNonce,
-    securityGeneration: securityGeneration,
-    keyEpoch: keyEpoch,
-    membershipManifestDigest: membershipManifestDigest,
-    recoveryPublicKeyVersion: recoveryPublicKeyVersion,
-    recoveryPublicKey: recoveryPublicKey,
-    recoveryCapsuleVersion: recoveryCapsuleVersion,
-    recoveryCapsule: recoveryCapsule,
-    recoveryCapsuleDigest: recoveryCapsuleDigest,
-    dataState: dataState,
-    expiresAt: DateTime.fromMillisecondsSinceEpoch(expiresAtMs, isUtc: true),
-  );
-  final CloudSyncAccountRecoveryToken recoveryToken;
-  try {
-    recoveryToken = CloudSyncAccountRecoveryToken.parse(
-      ascii.decode(tokenBytes),
-    );
-  } finally {
-    _clear(tokenBytes);
-  }
-  switch (stage) {
-    case E2eeAccountRecoveryStage.challenged:
-      if (!_allZero(nonceProof) ||
-          !_allZero(trustSignature) ||
-          recoveryTokenExpiresAtMs != 0 ||
-          nextActionCode != 0 ||
-          prepared.commit != null ||
-          localTransition.plan != null ||
-          receipt.receipt != null) {
-        throw const FormatException('账户恢复 challenge checkpoint 状态无效');
-      }
-      return E2eeAccountRecoveryCheckpoint.challenged(
-        expectedDeviceId: expectedDeviceId,
-        recoveryToken: recoveryToken,
-        challenge: challenge,
-      );
-    case E2eeAccountRecoveryStage.proofReady:
-      if (_allZero(nonceProof) ||
-          _allZero(trustSignature) ||
-          recoveryTokenExpiresAtMs != 0 ||
-          nextActionCode != 0 ||
-          prepared.commit != null ||
-          localTransition.plan != null ||
-          receipt.receipt != null) {
-        throw const FormatException('账户恢复 proof checkpoint 状态无效');
-      }
-      return E2eeAccountRecoveryCheckpoint.challenged(
-        expectedDeviceId: expectedDeviceId,
-        recoveryToken: recoveryToken,
-        challenge: challenge,
-      ).withProof(nonceProof: nonceProof, trustSignature: trustSignature);
-    case E2eeAccountRecoveryStage.authorized:
-      if (_allZero(nonceProof) ||
-          _allZero(trustSignature) ||
-          recoveryTokenExpiresAtMs <= 0 ||
-          nextActionCode == 0) {
-        throw const FormatException('账户恢复授权 checkpoint 状态无效');
-      }
-      final persistedNextAction = _parseNextAction(nextActionCode);
-      final preparedCommit = prepared.commit;
-      final localTransitionPlan = localTransition.plan;
-      final commitReceipt = receipt.receipt;
-      if ((localTransitionPlan != null && preparedCommit == null) ||
-          (localTransition.phase != null &&
-              localTransition.phase !=
-                  E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared &&
-              commitReceipt == null) ||
-          (commitReceipt != null &&
-              (preparedCommit == null ||
-                  localTransitionPlan == null ||
-                  commitReceipt.nextAction != persistedNextAction))) {
-        throw const FormatException('账户恢复 checkpoint 回执状态不一致');
-      }
-      final initialNextAction = commitReceipt == null
-          ? persistedNextAction
-          : switch (preparedCommit!) {
-              E2eeAccountRecoveryResumeCommit() =>
-                E2eeAccountRecoveryNextAction.recoverResume,
-              E2eeAccountRecoveryReplacementCommit() =>
-                E2eeAccountRecoveryNextAction.recoverReplace,
-            };
-      final authorized =
-          E2eeAccountRecoveryCheckpoint.challenged(
-                expectedDeviceId: expectedDeviceId,
-                recoveryToken: recoveryToken,
-                challenge: challenge,
-              )
-              .withProof(nonceProof: nonceProof, trustSignature: trustSignature)
-              .authorized(
-                recoveryTokenExpiresAt: DateTime.fromMillisecondsSinceEpoch(
-                  recoveryTokenExpiresAtMs,
-                  isUtc: true,
-                ),
-                nextAction: initialNextAction,
-              );
-      if (preparedCommit == null) return authorized;
-      var preparedCheckpoint = authorized.withPreparedCommit(preparedCommit);
-      if (localTransitionPlan != null) {
-        preparedCheckpoint = preparedCheckpoint.withLocalTransitionPlan(
-          localTransitionPlan,
-        );
-      }
-      if (commitReceipt == null) return preparedCheckpoint;
-      var committedCheckpoint = preparedCheckpoint.withCommitReceipt(
-        commitReceipt,
-      );
-      if (localTransition.phase ==
-              E2eeAccountRecoveryLocalTransitionPhase.proofVerified ||
-          localTransition.phase ==
-              E2eeAccountRecoveryLocalTransitionPhase.activated) {
-        committedCheckpoint = committedCheckpoint
-            .markLocalTransitionProofVerified();
-      }
-      if (localTransition.phase ==
-          E2eeAccountRecoveryLocalTransitionPhase.activated) {
-        committedCheckpoint = committedCheckpoint
-            .markLocalTransitionActivated();
-      }
-      return committedCheckpoint;
-  }
-}
-
-({E2eeAccountRecoveryPreparedCommit? commit, int offset}) _readPreparedCommit(
-  Uint8List frame,
-  ByteData view,
-  int offset, {
+E2eeAccountRecoveryPreparedCommit _readPreparedCommit(
+  _CheckpointReader reader, {
   required String attemptId,
 }) {
-  _requireRemaining(frame, offset, 4);
-  final kind = _readUint32(view, offset);
-  offset += 4;
-  if (kind == 0) return (commit: null, offset: offset);
+  final kind = reader.uint32();
   if (kind != 1 && kind != 2) {
-    throw const FormatException('账户恢复 checkpoint 待提交类型无效');
+    throw const FormatException('账户恢复 checkpoint 提交类型无效');
   }
-
-  _requireRemaining(frame, offset, 60);
-  final expectedGeneration = _readUint32(view, offset);
-  offset += 4;
-  final expectedKeyEpoch = _readUint32(view, offset);
-  offset += 4;
-  final expectedMembershipManifestDigest = _readBytes(frame, offset, 32);
-  offset += 32;
-  final operationId = _uuidString(frame, offset);
-  offset += 16;
-  final manifestLength = _readUint32(view, offset);
-  offset += 4;
-  if (manifestLength < cloudSyncMembershipManifestMinimumBytes ||
-      manifestLength > cloudSyncMembershipManifestMaximumBytes) {
-    throw const FormatException('账户恢复 checkpoint 成员清单长度无效');
-  }
-  _requireRemaining(
-    frame,
-    offset,
-    manifestLength + 32 + 4 + 4 + cloudSyncAccountKeyEnvelopeBytes,
+  final expectedGeneration = reader.uint32();
+  final expectedKeyEpoch = reader.uint32();
+  final expectedManifestDigest = reader.bytes(32);
+  final operationId = reader.uuid();
+  final nextManifest = reader.variableBytes(
+    minimum: cloudSyncMembershipManifestMinimumBytes,
+    maximum: cloudSyncMembershipManifestMaximumBytes,
   );
-  final nextMembershipManifest = _readBytes(frame, offset, manifestLength);
-  offset += manifestLength;
-  final nextMembershipManifestDigest = _readBytes(frame, offset, 32);
-  offset += 32;
-  final envelopeVersion = _readUint32(view, offset);
-  offset += 4;
-  final envelopeKeyEpoch = _readUint32(view, offset);
-  offset += 4;
-  final accountKeyEnvelope = _readBytes(
-    frame,
-    offset,
-    cloudSyncAccountKeyEnvelopeBytes,
-  );
-  offset += cloudSyncAccountKeyEnvelopeBytes;
+  final nextManifestDigest = reader.bytes(32);
+  final envelopeVersion = reader.uint32();
+  final envelopeKeyEpoch = reader.uint32();
+  final accountKeyEnvelope = reader.bytes(cloudSyncAccountKeyEnvelopeBytes);
   final membership = E2eeAccountRecoveryMembershipCommit(
     expectedGeneration: expectedGeneration,
     expectedKeyEpoch: expectedKeyEpoch,
     expectedMembershipManifestDigest:
-        CloudSyncMembershipManifestDigest.fromBytes(
-          expectedMembershipManifestDigest,
-        ),
+        CloudSyncMembershipManifestDigest.fromBytes(expectedManifestDigest),
     operationId: operationId,
-    nextMembershipManifest: nextMembershipManifest,
+    nextMembershipManifest: nextManifest,
     nextMembershipManifestDigest: CloudSyncMembershipManifestDigest.fromBytes(
-      nextMembershipManifestDigest,
+      nextManifestDigest,
     ),
     envelope: E2eeAccountRecoveryEnvelope(
       envelopeVersion: envelopeVersion,
@@ -887,190 +765,452 @@ E2eeAccountRecoveryCheckpoint _decodeCheckpoint(Uint8List frame) {
       accountKeyEnvelope: accountKeyEnvelope,
     ),
   );
-  if (kind == 1) {
-    _requireRemaining(frame, offset, 16);
-    final rekeyOperationId = _uuidString(frame, offset);
-    offset += 16;
-    return (
-      commit: E2eeAccountRecoveryResumeCommit(
-        attemptId: attemptId,
-        membership: membership,
-        rekeyOperationId: rekeyOperationId,
-      ),
-      offset: offset,
-    );
-  }
-
-  final replacementAuthorization = _readReplacementAuthorization(
-    frame,
-    view,
-    offset,
-  );
-  offset = replacementAuthorization.offset;
-  _requireRemaining(frame, offset, 8);
-  final nextRecoveryCapsuleVersion = _readUint32(view, offset);
-  offset += 4;
-  final nextRecoveryCapsuleLength = _readUint32(view, offset);
-  offset += 4;
-  if (nextRecoveryCapsuleLength <= 0 ||
-      nextRecoveryCapsuleLength > cloudSyncRecoveryCapsuleMaximumBytes) {
-    throw const FormatException('账户恢复 checkpoint 新 capsule 长度无效');
-  }
-  _requireRemaining(
-    frame,
-    offset,
-    nextRecoveryCapsuleLength + 16 + _checkpointFullSessionTokenLength,
-  );
-  final nextRecoveryCapsule = _readBytes(
-    frame,
-    offset,
-    nextRecoveryCapsuleLength,
-  );
-  offset += nextRecoveryCapsuleLength;
-  final completionSessionId = _uuidString(frame, offset);
-  offset += 16;
-  final completionSessionTokenBytes = _readBytes(
-    frame,
-    offset,
-    _checkpointFullSessionTokenLength,
-  );
-  offset += _checkpointFullSessionTokenLength;
   try {
-    return (
-      commit: E2eeAccountRecoveryReplacementCommit(
+    if (kind == 1) {
+      return E2eeAccountRecoveryResumeCommit(
         attemptId: attemptId,
         membership: membership,
-        authorization: replacementAuthorization.authorization,
-        nextRecoveryCapsuleVersion: nextRecoveryCapsuleVersion,
-        nextRecoveryCapsule: nextRecoveryCapsule,
-        completionSessionId: completionSessionId,
-        completionSessionToken: CloudSyncFullSessionToken.parse(
-          ascii.decode(completionSessionTokenBytes),
-        ),
+        rekeyOperationId: reader.uuid(),
+      );
+    }
+    return E2eeAccountRecoveryReplacementCommit(
+      attemptId: attemptId,
+      membership: membership,
+      authorization: _readReplacementAuthorization(reader),
+      nextRecoveryCapsuleVersion: reader.uint32(),
+      nextRecoveryCapsule: reader.variableBytes(
+        minimum: 1,
+        maximum: cloudSyncRecoveryCapsuleMaximumBytes,
       ),
-      offset: offset,
+      completionSessionId: reader.uuid(),
+      completionSessionToken: CloudSyncFullSessionToken.parse(
+        reader.fixedAscii(_checkpointFullSessionTokenLength),
+      ),
     );
   } finally {
-    _clear(completionSessionTokenBytes);
+    _clear(expectedManifestDigest);
+    _clear(nextManifest);
+    _clear(nextManifestDigest);
+    _clear(accountKeyEnvelope);
   }
 }
 
-({
-  E2eeAccountRecoveryLocalTransitionPlan? plan,
-  E2eeAccountRecoveryLocalTransitionPhase? phase,
-  int offset,
-})
-_readLocalTransitionPlan(Uint8List frame, ByteData view, int offset) {
-  _requireRemaining(frame, offset, 4);
-  final marker = _readUint32(view, offset);
-  offset += 4;
-  if (marker == 0) return (plan: null, phase: null, offset: offset);
-  final phase = switch (marker) {
-    1 => E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared,
-    2 => E2eeAccountRecoveryLocalTransitionPhase.proofVerified,
-    3 => E2eeAccountRecoveryLocalTransitionPhase.activated,
-    _ => null,
-  };
-  if (phase == null) {
-    throw const FormatException('账户恢复 checkpoint 本地提交计划标记无效');
+void _writeReplacementAuthorization(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryReplacementAuthorization authorization,
+) {
+  switch (authorization) {
+    case E2eeAccountRecoveryReplacementInitialAuthorization(
+      :final challengeRequestDigest,
+    ):
+      writer.uint32(1);
+      writer.bytes(challengeRequestDigest);
+    case E2eeAccountRecoveryReplacementChallengeAuthorization(
+      :final challengeId,
+      :final challengeRequestDigest,
+      :final nonceProof,
+      :final trustSignature,
+    ):
+      writer.uint32(2);
+      writer.uuid(challengeId);
+      writer.bytes(challengeRequestDigest);
+      writer.bytes(nonceProof);
+      writer.bytes(trustSignature);
   }
-  _requireRemaining(frame, offset, DeviceStateBlobStore.blobLength * 3);
-  final source = _readBytes(frame, offset, DeviceStateBlobStore.blobLength);
-  offset += DeviceStateBlobStore.blobLength;
-  final unpruned = _readBytes(frame, offset, DeviceStateBlobStore.blobLength);
-  offset += DeviceStateBlobStore.blobLength;
-  final pruned = _readBytes(frame, offset, DeviceStateBlobStore.blobLength);
-  offset += DeviceStateBlobStore.blobLength;
+}
+
+E2eeAccountRecoveryReplacementAuthorization _readReplacementAuthorization(
+  _CheckpointReader reader,
+) {
+  return switch (reader.uint32()) {
+    1 => E2eeAccountRecoveryReplacementAuthorization.initial(
+      challengeRequestDigest: reader.bytes(32),
+    ),
+    2 => E2eeAccountRecoveryReplacementAuthorization.replacementChallenge(
+      challengeId: reader.uuid(),
+      challengeRequestDigest: reader.bytes(32),
+      nonceProof: reader.bytes(e2eeAccountRecoveryNonceProofBytes),
+      trustSignature: reader.bytes(e2eeAccountRecoveryTrustSignatureBytes),
+    ),
+    _ => throw const FormatException('账户恢复 checkpoint replacement 授权无效'),
+  };
+}
+
+void _writeLocalTransitionPlan(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryLocalTransitionPlan plan,
+) {
+  final source = plan.sourceStateBlob;
+  final unpruned = plan.unprunedStateBlob;
+  final pruned = plan.prunedStateBlob;
+  final authorizationDigest = plan.operationAuthorizationDigest;
+  final continuation = plan.copyContinuation();
   try {
-    return (
-      plan: E2eeAccountRecoveryLocalTransitionPlan(
-        sourceStateBlob: source,
-        unprunedStateBlob: unpruned,
-        prunedStateBlob: pruned,
-      ),
-      phase: phase,
-      offset: offset,
+    writer.bytes(source);
+    writer.bytes(unpruned);
+    writer.bytes(pruned);
+    writer.uint32(plan.deviceKeyVersion);
+    writer.uuid(plan.userId);
+    writer.uint32(plan.sourceDataGeneration);
+    writer.bytes(authorizationDigest);
+    writer.bytes(continuation);
+  } finally {
+    _clear(source);
+    _clear(unpruned);
+    _clear(pruned);
+    _clear(authorizationDigest);
+    _clear(continuation);
+  }
+}
+
+E2eeAccountRecoveryLocalTransitionPlan _readLocalTransitionPlan(
+  _CheckpointReader reader,
+) {
+  final source = reader.bytes(DeviceStateBlobStore.blobLength);
+  final unpruned = reader.bytes(DeviceStateBlobStore.blobLength);
+  final pruned = reader.bytes(DeviceStateBlobStore.blobLength);
+  final deviceKeyVersion = reader.uint32();
+  final userId = reader.uuid();
+  final sourceDataGeneration = reader.uint32();
+  final authorizationDigest = reader.bytes(
+    cloudSyncMembershipManifestDigestBytes,
+  );
+  final continuation = reader.bytes(e2eeAccountRecoveryNativeContinuationBytes);
+  try {
+    return E2eeAccountRecoveryLocalTransitionPlan(
+      sourceStateBlob: source,
+      unprunedStateBlob: unpruned,
+      prunedStateBlob: pruned,
+      deviceKeyVersion: deviceKeyVersion,
+      userId: userId,
+      sourceDataGeneration: sourceDataGeneration,
+      operationAuthorizationDigest: authorizationDigest,
+      continuation: continuation,
     );
   } finally {
     _clear(source);
     _clear(unpruned);
     _clear(pruned);
+    _clear(authorizationDigest);
+    _clear(continuation);
   }
 }
 
-({E2eeAccountRecoveryCommitReceipt? receipt, int offset}) _readCommitReceipt(
-  Uint8List frame,
-  ByteData view,
-  int offset,
+void _writeReceipt(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryCommitReceipt receipt,
 ) {
-  _requireRemaining(frame, offset, 4);
-  final marker = _readUint32(view, offset);
-  offset += 4;
-  if (marker == 0) return (receipt: null, offset: offset);
-  if (marker != 1) {
-    throw const FormatException('账户恢复 checkpoint 回执标记无效');
-  }
-  _requireRemaining(frame, offset, 68);
-  final result = switch (_readUint32(view, offset)) {
+  writer.uint32(
+    receipt.result == E2eeAccountRecoveryCommitResult.committed ? 1 : 2,
+  );
+  writer.uint32(receipt.kind == E2eeAccountRecoveryCommitKind.resume ? 1 : 2);
+  writer.uuid(receipt.attemptId);
+  writer.uuid(receipt.membershipOperationId);
+  writer.uuid(receipt.rekeyOperationId);
+  writer.uint32(receipt.generation);
+  writer.uint32(receipt.keyEpoch);
+  writer.uint32(_nextActionCode(receipt.nextAction));
+}
+
+E2eeAccountRecoveryCommitReceipt _readReceipt(_CheckpointReader reader) {
+  final result = switch (reader.uint32()) {
     1 => E2eeAccountRecoveryCommitResult.committed,
     2 => E2eeAccountRecoveryCommitResult.replayed,
     _ => throw const FormatException('账户恢复 checkpoint 回执结果无效'),
   };
-  offset += 4;
-  final kind = switch (_readUint32(view, offset)) {
+  final kind = switch (reader.uint32()) {
     1 => E2eeAccountRecoveryCommitKind.resume,
     2 => E2eeAccountRecoveryCommitKind.replacement,
     _ => throw const FormatException('账户恢复 checkpoint 回执类型无效'),
   };
-  offset += 4;
-  final attemptId = _uuidString(frame, offset);
-  offset += 16;
-  final membershipOperationId = _uuidString(frame, offset);
-  offset += 16;
-  final rekeyOperationId = _uuidString(frame, offset);
-  offset += 16;
-  final generation = _readUint32(view, offset);
-  offset += 4;
-  final keyEpoch = _readUint32(view, offset);
-  offset += 4;
-  final nextAction = _parseNextAction(_readUint32(view, offset));
-  offset += 4;
-  return (
-    receipt: E2eeAccountRecoveryCommitReceipt(
-      result: result,
-      kind: kind,
-      attemptId: attemptId,
-      membershipOperationId: membershipOperationId,
-      rekeyOperationId: rekeyOperationId,
-      generation: generation,
-      keyEpoch: keyEpoch,
-      nextAction: nextAction,
-    ),
-    offset: offset,
+  return E2eeAccountRecoveryCommitReceipt(
+    result: result,
+    kind: kind,
+    attemptId: reader.uuid(),
+    membershipOperationId: reader.uuid(),
+    rekeyOperationId: reader.uuid(),
+    generation: reader.uint32(),
+    keyEpoch: reader.uint32(),
+    nextAction: _parseNextAction(reader.uint32()),
   );
 }
 
-void _requireRemaining(Uint8List frame, int offset, int length) {
-  if (offset < 0 || length < 0 || offset + length > frame.length) {
-    throw const FormatException('账户恢复 checkpoint 变长字段越界');
+void _writeCompletion(
+  _CheckpointWriter writer,
+  CloudSyncDataRekeyCompletion completion,
+) {
+  writer.uint32(completion.proofVersion);
+  writer.uuid(completion.operationId);
+  writer.uuid(completion.issuerDeviceId);
+  writer.uint32(completion.sourceDataGeneration);
+  writer.uint32(completion.targetDataGeneration);
+  writer.uint32(completion.sourceKeyEpoch);
+  writer.uint32(completion.targetKeyEpoch);
+  writer.bytes(completion.sourceSnapshotRoot);
+  writer.uint32(completion.sourceRecordCount);
+  writer.uint32(completion.sourceAttachmentCount);
+  writer.uint64(completion.sourceMaximumChangeSeq);
+  writer.optionalUuid(completion.sourceRecordCursorEnd);
+  final attachmentCursor = completion.sourceAttachmentCursorEnd;
+  writer.uint32(attachmentCursor == null ? 0 : 1);
+  if (attachmentCursor != null) {
+    writer.uuid(attachmentCursor.attachmentId);
+    writer.uuid(attachmentCursor.uploadId);
+  }
+  writer.uint32(completion.membershipGeneration);
+  writer.bytes(completion.membershipManifestDigest);
+  writer.uint32(completion.stagedRecordCount);
+  writer.uint32(completion.stagedAttachmentCount);
+  writer.bytes(completion.stagedCiphertextSetDigest);
+  writer.bytes(completion.proofFrame);
+  writer.bytes(completion.proofDigest);
+  writer.bytes(completion.signature);
+  writer.timestamp(completion.finalizedAt);
+}
+
+CloudSyncDataRekeyCompletion _readCompletion(_CheckpointReader reader) {
+  final proofVersion = reader.uint32();
+  final operationId = reader.uuid();
+  final issuerDeviceId = reader.uuid();
+  final sourceDataGeneration = reader.uint32();
+  final targetDataGeneration = reader.uint32();
+  final sourceKeyEpoch = reader.uint32();
+  final targetKeyEpoch = reader.uint32();
+  final sourceSnapshotRoot = reader.bytes(cloudSyncDataRekeyDigestBytes);
+  final sourceRecordCount = reader.uint32();
+  final sourceAttachmentCount = reader.uint32();
+  final sourceMaximumChangeSeq = reader.uint64();
+  final sourceRecordCursorEnd = reader.optionalUuid();
+  final attachmentMarker = reader.uint32();
+  final CloudSyncJsonMap? sourceAttachmentCursorEnd;
+  if (attachmentMarker == 0) {
+    sourceAttachmentCursorEnd = null;
+  } else if (attachmentMarker == 1) {
+    sourceAttachmentCursorEnd = <String, Object?>{
+      'attachmentId': reader.uuid(),
+      'uploadId': reader.uuid(),
+    };
+  } else {
+    throw const FormatException('账户恢复 checkpoint 附件游标标记无效');
+  }
+  final membershipGeneration = reader.uint32();
+  final membershipManifestDigest = reader.bytes(cloudSyncDataRekeyDigestBytes);
+  final stagedRecordCount = reader.uint32();
+  final stagedAttachmentCount = reader.uint32();
+  final stagedCiphertextSetDigest = reader.bytes(cloudSyncDataRekeyDigestBytes);
+  final proofFrame = reader.bytes(cloudSyncDataRekeyProofFrameBytes);
+  final proofDigest = reader.bytes(cloudSyncDataRekeyDigestBytes);
+  final signature = reader.bytes(cloudSyncDeviceProofBytes);
+  final finalizedAt = reader.timestamp();
+  try {
+    return CloudSyncDataRekeyCompletion.fromJson(<String, Object?>{
+      'proofVersion': proofVersion,
+      'operationId': operationId,
+      'issuerDeviceId': issuerDeviceId,
+      'sourceDataGeneration': sourceDataGeneration,
+      'targetDataGeneration': targetDataGeneration,
+      'sourceKeyEpoch': sourceKeyEpoch,
+      'targetKeyEpoch': targetKeyEpoch,
+      'sourceSnapshotRoot': _encodedData(sourceSnapshotRoot),
+      'sourceRecordCount': sourceRecordCount,
+      'sourceAttachmentCount': sourceAttachmentCount,
+      'sourceMaximumChangeSeq': sourceMaximumChangeSeq,
+      'sourceRecordCursorEnd': sourceRecordCursorEnd,
+      'sourceAttachmentCursorEnd': sourceAttachmentCursorEnd,
+      'membershipGeneration': membershipGeneration,
+      'membershipManifestDigest': _encodedData(membershipManifestDigest),
+      'stagedRecordCount': stagedRecordCount,
+      'stagedAttachmentCount': stagedAttachmentCount,
+      'stagedCiphertextSetDigest': _encodedData(stagedCiphertextSetDigest),
+      'proofFrame': _encodedData(proofFrame),
+      'proofDigest': _encodedData(proofDigest),
+      'signature': _encodedData(signature),
+      'finalizedAt': finalizedAt.toIso8601String(),
+    });
+  } finally {
+    _clear(sourceSnapshotRoot);
+    _clear(membershipManifestDigest);
+    _clear(stagedCiphertextSetDigest);
+    _clear(proofFrame);
+    _clear(proofDigest);
+    _clear(signature);
   }
 }
 
-int _stageCode(E2eeAccountRecoveryStage stage) => switch (stage) {
-  E2eeAccountRecoveryStage.challenged => 1,
-  E2eeAccountRecoveryStage.proofReady => 2,
-  E2eeAccountRecoveryStage.authorized => 3,
+void _writeReplacementChallengeRequest(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryReplacementChallengeRequest request,
+) {
+  writer.uuid(request.challengeId);
+  writer.uint32(request.expectedGeneration);
+  writer.uint32(request.expectedKeyEpoch);
+  writer.bytes(request.expectedMembershipManifestDigest);
+  writer.uuid(request.expectedMembershipOperationId);
+  writer.uint32(request.dataGeneration);
+  writer.uint32(request.dataKeyEpoch);
+  writer.uuid(request.sourceRekeyOperationId);
+  writer.bytes(request.sourceCompletionProofDigest);
+}
+
+E2eeAccountRecoveryReplacementChallengeRequest _readReplacementChallengeRequest(
+  _CheckpointReader reader,
+) {
+  return E2eeAccountRecoveryReplacementChallengeRequest(
+    challengeId: reader.uuid(),
+    expectedGeneration: reader.uint32(),
+    expectedKeyEpoch: reader.uint32(),
+    expectedMembershipManifestDigest: reader.bytes(32),
+    expectedMembershipOperationId: reader.uuid(),
+    dataGeneration: reader.uint32(),
+    dataKeyEpoch: reader.uint32(),
+    sourceRekeyOperationId: reader.uuid(),
+    sourceCompletionProofDigest: reader.bytes(32),
+  );
+}
+
+void _writeReplacementChallenge(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryReplacementChallenge challenge,
+) {
+  writer.uint32(
+    challenge.result == E2eeAccountRecoveryReplacementChallengeResult.created
+        ? 1
+        : 2,
+  );
+  writer.uuid(challenge.challengeId);
+  writer.uuid(challenge.attemptId);
+  writer.bytes(challenge.requestDigest);
+  writer.bytes(challenge.challengeFrame);
+  writer.bytes(challenge.sealedNonce);
+  writer.uint32(challenge.deviceKeyVersion);
+  writer.bytes(challenge.deviceSigningPublicKey);
+  writer.bytes(challenge.deviceKeyAgreementPublicKey);
+  writer.uint32(challenge.securityGeneration);
+  writer.uint32(challenge.keyEpoch);
+  writer.variableBytes(
+    challenge.membershipManifest,
+    minimum: cloudSyncMembershipManifestMinimumBytes,
+    maximum: cloudSyncMembershipManifestMaximumBytes,
+  );
+  writer.bytes(challenge.membershipManifestDigest);
+  writer.uuid(challenge.membershipOperationId);
+  writer.uint32(challenge.recoveryPublicKeyVersion);
+  writer.bytes(challenge.recoveryPublicKey);
+  writer.uint32(challenge.recoveryCapsuleVersion);
+  writer.variableBytes(
+    challenge.recoveryCapsule,
+    minimum: 1,
+    maximum: cloudSyncRecoveryCapsuleMaximumBytes,
+  );
+  writer.bytes(challenge.recoveryCapsuleDigest);
+  writer.uint32(challenge.dataGeneration);
+  writer.uint32(challenge.dataKeyEpoch);
+  writer.uuid(challenge.sourceRekeyOperationId);
+  _writeCompletion(writer, challenge.sourceCompletion);
+  writer.timestamp(challenge.expiresAt);
+}
+
+E2eeAccountRecoveryReplacementChallenge _readReplacementChallenge(
+  _CheckpointReader reader,
+) {
+  final result = switch (reader.uint32()) {
+    1 => E2eeAccountRecoveryReplacementChallengeResult.created,
+    2 => E2eeAccountRecoveryReplacementChallengeResult.replayed,
+    _ => throw const FormatException('账户恢复 checkpoint 第二 challenge 结果无效'),
+  };
+  return E2eeAccountRecoveryReplacementChallenge(
+    result: result,
+    challengeId: reader.uuid(),
+    attemptId: reader.uuid(),
+    requestDigest: reader.bytes(32),
+    challengeFrame: reader.bytes(
+      e2eeAccountRecoveryReplacementChallengeFrameBytes,
+    ),
+    sealedNonce: reader.bytes(e2eeAccountRecoverySealedNonceBytes),
+    deviceKeyVersion: reader.uint32(),
+    deviceSigningPublicKey: reader.bytes(cloudSyncDevicePublicKeyBytes),
+    deviceKeyAgreementPublicKey: reader.bytes(cloudSyncDevicePublicKeyBytes),
+    securityGeneration: reader.uint32(),
+    keyEpoch: reader.uint32(),
+    membershipManifest: reader.variableBytes(
+      minimum: cloudSyncMembershipManifestMinimumBytes,
+      maximum: cloudSyncMembershipManifestMaximumBytes,
+    ),
+    membershipManifestDigest: reader.bytes(32),
+    membershipOperationId: reader.uuid(),
+    recoveryPublicKeyVersion: reader.uint32(),
+    recoveryPublicKey: reader.bytes(cloudSyncRecoveryPublicKeyBytes),
+    recoveryCapsuleVersion: reader.uint32(),
+    recoveryCapsule: reader.variableBytes(
+      minimum: 1,
+      maximum: cloudSyncRecoveryCapsuleMaximumBytes,
+    ),
+    recoveryCapsuleDigest: reader.bytes(32),
+    dataGeneration: reader.uint32(),
+    dataKeyEpoch: reader.uint32(),
+    sourceRekeyOperationId: reader.uuid(),
+    sourceCompletion: _readCompletion(reader),
+    expiresAt: reader.timestamp(),
+  );
+}
+
+void _writeCompletionSession(
+  _CheckpointWriter writer,
+  E2eeAccountRecoveryCompletionSession session,
+) {
+  writer.uuid(session.sessionId);
+  writer.fixedAscii(session.token.value, _checkpointFullSessionTokenLength);
+}
+
+E2eeAccountRecoveryCompletionSession _readCompletionSession(
+  _CheckpointReader reader,
+) {
+  return E2eeAccountRecoveryCompletionSession(
+    sessionId: reader.uuid(),
+    token: CloudSyncFullSessionToken.parse(
+      reader.fixedAscii(_checkpointFullSessionTokenLength),
+    ),
+  );
+}
+
+int _phaseCode(E2eeAccountRecoveryCheckpointPhase phase) => switch (phase) {
+  E2eeAccountRecoveryCheckpointPhase.challenged => 1,
+  E2eeAccountRecoveryCheckpointPhase.proofReady => 2,
+  E2eeAccountRecoveryCheckpointPhase.authorized => 3,
+  E2eeAccountRecoveryCheckpointPhase.resumePrepared => 4,
+  E2eeAccountRecoveryCheckpointPhase.resumeCommitted => 5,
+  E2eeAccountRecoveryCheckpointPhase.firstRekeyFinalized => 6,
+  E2eeAccountRecoveryCheckpointPhase.firstLocalActivated => 7,
+  E2eeAccountRecoveryCheckpointPhase.replacementChallengeRequested => 8,
+  E2eeAccountRecoveryCheckpointPhase.replacementChallengeReceived => 9,
+  E2eeAccountRecoveryCheckpointPhase.replacementProofReady => 10,
+  E2eeAccountRecoveryCheckpointPhase.replacementPrepared => 11,
+  E2eeAccountRecoveryCheckpointPhase.replacementCommitted => 12,
+  E2eeAccountRecoveryCheckpointPhase.secondRekeyFinalized => 13,
+  E2eeAccountRecoveryCheckpointPhase.secondLocalActivated => 14,
+  E2eeAccountRecoveryCheckpointPhase.sessionVerified => 15,
 };
 
-E2eeAccountRecoveryStage _parseStage(int value) => switch (value) {
-  1 => E2eeAccountRecoveryStage.challenged,
-  2 => E2eeAccountRecoveryStage.proofReady,
-  3 => E2eeAccountRecoveryStage.authorized,
+E2eeAccountRecoveryCheckpointPhase _parsePhase(int value) => switch (value) {
+  1 => E2eeAccountRecoveryCheckpointPhase.challenged,
+  2 => E2eeAccountRecoveryCheckpointPhase.proofReady,
+  3 => E2eeAccountRecoveryCheckpointPhase.authorized,
+  4 => E2eeAccountRecoveryCheckpointPhase.resumePrepared,
+  5 => E2eeAccountRecoveryCheckpointPhase.resumeCommitted,
+  6 => E2eeAccountRecoveryCheckpointPhase.firstRekeyFinalized,
+  7 => E2eeAccountRecoveryCheckpointPhase.firstLocalActivated,
+  8 => E2eeAccountRecoveryCheckpointPhase.replacementChallengeRequested,
+  9 => E2eeAccountRecoveryCheckpointPhase.replacementChallengeReceived,
+  10 => E2eeAccountRecoveryCheckpointPhase.replacementProofReady,
+  11 => E2eeAccountRecoveryCheckpointPhase.replacementPrepared,
+  12 => E2eeAccountRecoveryCheckpointPhase.replacementCommitted,
+  13 => E2eeAccountRecoveryCheckpointPhase.secondRekeyFinalized,
+  14 => E2eeAccountRecoveryCheckpointPhase.secondLocalActivated,
+  15 => E2eeAccountRecoveryCheckpointPhase.sessionVerified,
   _ => throw const FormatException('账户恢复 checkpoint 阶段无效'),
 };
 
-int _nextActionCode(E2eeAccountRecoveryNextAction? action) => switch (action) {
-  null => 0,
+int _nextActionCode(E2eeAccountRecoveryNextAction action) => switch (action) {
   E2eeAccountRecoveryNextAction.recoverResume => 1,
   E2eeAccountRecoveryNextAction.recoverReplace => 2,
   E2eeAccountRecoveryNextAction.finishFirstDataRekey => 3,
@@ -1087,117 +1227,181 @@ E2eeAccountRecoveryNextAction _parseNextAction(int value) => switch (value) {
   _ => throw const FormatException('账户恢复 checkpoint 下一步无效'),
 };
 
-int _writeBytes(Uint8List target, int offset, Uint8List value) {
-  target.setRange(offset, offset + value.length, value);
-  return offset + value.length;
-}
+final class _CheckpointWriter {
+  final BytesBuilder _builder = BytesBuilder(copy: true);
 
-int _writeUint32(ByteData view, int offset, int value) {
-  if (value < 0 || value > 0xffffffff) {
-    throw const FormatException('账户恢复 checkpoint uint32 越界');
+  void bytes(Uint8List value) {
+    _builder.add(value);
   }
-  view.setUint32(offset, value, Endian.big);
-  return offset + 4;
-}
 
-int _writeUint64(ByteData view, int offset, int value) {
-  if (value < 0) {
-    throw const FormatException('账户恢复 checkpoint uint64 越界');
-  }
-  view.setUint64(offset, value, Endian.big);
-  return offset + 8;
-}
-
-int _readUint32(ByteData view, int offset) {
-  if (offset < 0 || offset + 4 > view.lengthInBytes) {
-    throw const FormatException('账户恢复 checkpoint uint32 截断');
-  }
-  return view.getUint32(offset, Endian.big);
-}
-
-int _readUint64(ByteData view, int offset) {
-  if (offset < 0 || offset + 8 > view.lengthInBytes) {
-    throw const FormatException('账户恢复 checkpoint uint64 截断');
-  }
-  return view.getUint64(offset, Endian.big);
-}
-
-Uint8List _readBytes(Uint8List frame, int offset, int length) {
-  if (offset < 0 || length < 0 || offset + length > frame.length) {
-    throw const FormatException('账户恢复 checkpoint 字段截断');
-  }
-  return Uint8List.fromList(frame.sublist(offset, offset + length));
-}
-
-Uint8List _uuidBytes(String value) {
-  final compact = value.replaceAll('-', '');
-  if (compact.length != 32) {
-    throw const FormatException('账户恢复 checkpoint UUID 长度无效');
-  }
-  final bytes = Uint8List(16);
-  for (var index = 0; index < bytes.length; index++) {
-    final byte = int.tryParse(
-      compact.substring(index * 2, index * 2 + 2),
-      radix: 16,
-    );
-    if (byte == null) {
-      throw const FormatException('账户恢复 checkpoint UUID 字节无效');
+  void uint32(int value) {
+    if (value < 0 || value > 0xffffffff) {
+      throw const FormatException('账户恢复 checkpoint uint32 越界');
     }
-    bytes[index] = byte;
+    final bytes = Uint8List(4);
+    ByteData.sublistView(bytes).setUint32(0, value, Endian.big);
+    _builder.add(bytes);
   }
-  return bytes;
+
+  void uint64(int value) {
+    if (value < 0) {
+      throw const FormatException('账户恢复 checkpoint uint64 越界');
+    }
+    final bytes = Uint8List(8);
+    ByteData.sublistView(bytes).setUint64(0, value, Endian.big);
+    _builder.add(bytes);
+  }
+
+  void timestamp(DateTime value) {
+    uint64(value.toUtc().millisecondsSinceEpoch);
+  }
+
+  void uuid(String value) {
+    final compact = value.replaceAll('-', '');
+    if (compact.length != 32) {
+      throw const FormatException('账户恢复 checkpoint UUID 长度无效');
+    }
+    final result = Uint8List(16);
+    for (var index = 0; index < result.length; index++) {
+      final byte = int.tryParse(
+        compact.substring(index * 2, index * 2 + 2),
+        radix: 16,
+      );
+      if (byte == null) {
+        throw const FormatException('账户恢复 checkpoint UUID 字节无效');
+      }
+      result[index] = byte;
+    }
+    _builder.add(result);
+  }
+
+  void optionalUuid(String? value) {
+    uint32(value == null ? 0 : 1);
+    if (value != null) uuid(value);
+  }
+
+  void fixedAscii(String value, int length) {
+    final encoded = Uint8List.fromList(ascii.encode(value));
+    try {
+      if (encoded.length != length) {
+        throw const FormatException('账户恢复 checkpoint ASCII 字段长度无效');
+      }
+      _builder.add(encoded);
+    } finally {
+      _clear(encoded);
+    }
+  }
+
+  void variableBytes(Uint8List value, {int minimum = 0, required int maximum}) {
+    if (value.length < minimum || value.length > maximum) {
+      throw const FormatException('账户恢复 checkpoint 变长字段长度无效');
+    }
+    uint32(value.length);
+    _builder.add(value);
+  }
+
+  Uint8List takeBytes() => _builder.takeBytes();
 }
 
-String _uuidString(Uint8List frame, int offset) {
-  return _uuidStringFromBytes(_readBytes(frame, offset, 16));
-}
+final class _CheckpointReader {
+  _CheckpointReader(this._frame) : _view = ByteData.sublistView(_frame);
 
-String _uuidStringFromBytes(Uint8List bytes) {
-  if (bytes.length != 16) {
-    throw const FormatException('账户恢复 checkpoint UUID 字节数无效');
+  final Uint8List _frame;
+  final ByteData _view;
+  int _offset = 0;
+
+  Uint8List bytes(int length) {
+    _require(length);
+    final result = Uint8List.fromList(
+      _frame.sublist(_offset, _offset + length),
+    );
+    _offset += length;
+    return result;
   }
-  final hex = bytes
-      .map((value) => value.toRadixString(16).padLeft(2, '0'))
-      .join();
-  return _canonicalUuid(
-    '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
+
+  int uint32() {
+    _require(4);
+    final value = _view.getUint32(_offset, Endian.big);
+    _offset += 4;
+    return value;
+  }
+
+  int uint64() {
+    _require(8);
+    final value = _view.getUint64(_offset, Endian.big);
+    _offset += 8;
+    return value;
+  }
+
+  DateTime timestamp() {
+    final milliseconds = uint64();
+    if (milliseconds <= 0) {
+      throw const FormatException('账户恢复 checkpoint 时间戳无效');
+    }
+    return DateTime.fromMillisecondsSinceEpoch(milliseconds, isUtc: true);
+  }
+
+  String uuid() {
+    final value = bytes(16);
+    final hex = value
+        .map((byte) => byte.toRadixString(16).padLeft(2, '0'))
+        .join();
+    return '${hex.substring(0, 8)}-${hex.substring(8, 12)}-'
         '${hex.substring(12, 16)}-${hex.substring(16, 20)}-'
-        '${hex.substring(20)}',
-    'uuid',
-  );
+        '${hex.substring(20)}';
+  }
+
+  String? optionalUuid() {
+    return switch (uint32()) {
+      0 => null,
+      1 => uuid(),
+      _ => throw const FormatException('账户恢复 checkpoint UUID 标记无效'),
+    };
+  }
+
+  String fixedAscii(int length) {
+    final value = bytes(length);
+    try {
+      return ascii.decode(value);
+    } on FormatException {
+      throw const FormatException('账户恢复 checkpoint ASCII 字段无效');
+    } finally {
+      _clear(value);
+    }
+  }
+
+  Uint8List variableBytes({int minimum = 0, required int maximum}) {
+    final length = uint32();
+    if (length < minimum || length > maximum) {
+      throw const FormatException('账户恢复 checkpoint 变长字段长度无效');
+    }
+    return bytes(length);
+  }
+
+  void requireEnd() {
+    if (_offset != _frame.length) {
+      throw const FormatException('账户恢复 checkpoint 存在尾随数据');
+    }
+  }
+
+  void _require(int length) {
+    if (length < 0 || _offset + length > _frame.length) {
+      throw const FormatException('账户恢复 checkpoint 字段截断');
+    }
+  }
 }
 
-String _canonicalUuid(String value, String field) {
-  if (!_canonicalUuidV4Pattern.hasMatch(value)) {
-    throw FormatException('$field 不是规范 UUID v4');
-  }
-  return value;
-}
+String _encodedData(Uint8List value) =>
+    base64Url.encode(value).replaceAll('=', '');
 
 Uint8List _digest(Uint8List value) =>
     Uint8List.fromList(sha256.convert(value).bytes);
-
-bool _startsWith(Uint8List value, Uint8List prefix) {
-  if (value.length < prefix.length) return false;
-  for (var index = 0; index < prefix.length; index++) {
-    if (value[index] != prefix[index]) return false;
-  }
-  return true;
-}
 
 bool _sameBytes(Uint8List left, Uint8List right) {
   if (left.length != right.length) return false;
   var difference = 0;
   for (var index = 0; index < left.length; index++) {
     difference |= left[index] ^ right[index];
-  }
-  return difference == 0;
-}
-
-bool _allZero(Uint8List value) {
-  var difference = 0;
-  for (final byte in value) {
-    difference |= byte;
   }
   return difference == 0;
 }

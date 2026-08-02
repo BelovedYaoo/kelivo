@@ -13,6 +13,7 @@ const e2eeAccountRecoveryReplacementChallengeFrameBytes = 376;
 const e2eeAccountRecoverySealedNonceBytes = 100;
 const e2eeAccountRecoveryNonceProofBytes = 32;
 const e2eeAccountRecoveryTrustSignatureBytes = 64;
+const e2eeAccountRecoveryNativeContinuationBytes = 260;
 const e2eeAccountRecoveryMaximumHistoryEntries = 4096;
 const e2eeAccountRecoveryHistoryPageSize = 100;
 
@@ -45,17 +46,16 @@ enum E2eeAccountRecoveryCommitResult { committed, replayed }
 
 enum E2eeAccountRecoveryCommitKind { resume, replacement }
 
-enum E2eeAccountRecoveryLocalTransitionPhase {
-  candidatePrepared,
-  proofVerified,
-  activated,
-}
-
 final class E2eeAccountRecoveryLocalTransitionPlan {
   factory E2eeAccountRecoveryLocalTransitionPlan({
     required Uint8List sourceStateBlob,
     required Uint8List unprunedStateBlob,
     required Uint8List prunedStateBlob,
+    required int deviceKeyVersion,
+    required String userId,
+    required int sourceDataGeneration,
+    required Uint8List operationAuthorizationDigest,
+    required Uint8List continuation,
   }) {
     final source = _fixedBytes(
       sourceStateBlob,
@@ -72,16 +72,39 @@ final class E2eeAccountRecoveryLocalTransitionPlan {
       DeviceStateBlobStore.blobLength,
       'prunedStateBlob',
     );
+    final authorizationDigest = _fixedBytes(
+      operationAuthorizationDigest,
+      cloudSyncMembershipManifestDigestBytes,
+      'operationAuthorizationDigest',
+    );
     if (_sameBytes(source, unpruned) ||
         _sameBytes(source, pruned) ||
         _sameBytes(unpruned, pruned)) {
       throw const FormatException('账户恢复本地提交必须持有三个不同设备状态');
     }
+    final checkedDeviceKeyVersion = _positiveUint32(
+      deviceKeyVersion,
+      'deviceKeyVersion',
+    );
+    final checkedUserId = _canonicalUuid(userId, 'userId');
+    final checkedSourceDataGeneration = _positiveInt32(
+      sourceDataGeneration,
+      'sourceDataGeneration',
+    );
+    final ownedContinuation = _fixedMutableCopy(
+      continuation,
+      e2eeAccountRecoveryNativeContinuationBytes,
+      'continuation',
+    );
     return E2eeAccountRecoveryLocalTransitionPlan._(
       source,
       unpruned,
       pruned,
-      E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared,
+      checkedDeviceKeyVersion,
+      checkedUserId,
+      checkedSourceDataGeneration,
+      authorizationDigest,
+      ownedContinuation,
     );
   }
 
@@ -89,13 +112,21 @@ final class E2eeAccountRecoveryLocalTransitionPlan {
     this._sourceStateBlob,
     this._unprunedStateBlob,
     this._prunedStateBlob,
-    this.phase,
+    this.deviceKeyVersion,
+    this.userId,
+    this.sourceDataGeneration,
+    this._operationAuthorizationDigest,
+    this._continuation,
   );
 
   final Uint8List _sourceStateBlob;
   final Uint8List _unprunedStateBlob;
   final Uint8List _prunedStateBlob;
-  final E2eeAccountRecoveryLocalTransitionPhase phase;
+  final int deviceKeyVersion;
+  final String userId;
+  final int sourceDataGeneration;
+  final Uint8List _operationAuthorizationDigest;
+  final Uint8List _continuation;
 
   Uint8List get sourceStateBlob => Uint8List.fromList(_sourceStateBlob);
 
@@ -103,27 +134,29 @@ final class E2eeAccountRecoveryLocalTransitionPlan {
 
   Uint8List get prunedStateBlob => Uint8List.fromList(_prunedStateBlob);
 
-  E2eeAccountRecoveryLocalTransitionPlan _markProofVerified() {
-    if (phase != E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared) {
-      throw StateError('账户恢复本地候选不处于待验证阶段');
-    }
-    return E2eeAccountRecoveryLocalTransitionPlan._(
-      _sourceStateBlob,
-      _unprunedStateBlob,
-      _prunedStateBlob,
-      E2eeAccountRecoveryLocalTransitionPhase.proofVerified,
-    );
+  Uint8List get operationAuthorizationDigest =>
+      Uint8List.fromList(_operationAuthorizationDigest);
+
+  Uint8List copyContinuation() => Uint8List.fromList(_continuation);
+
+  void clearContinuation() {
+    _continuation.fillRange(0, _continuation.length, 0);
   }
 
-  E2eeAccountRecoveryLocalTransitionPlan _markActivated() {
-    if (phase != E2eeAccountRecoveryLocalTransitionPhase.proofVerified) {
-      throw StateError('账户恢复本地候选尚未通过完成证明验证');
-    }
+  E2eeAccountRecoveryLocalTransitionPlan _copy() {
     return E2eeAccountRecoveryLocalTransitionPlan._(
       _sourceStateBlob,
       _unprunedStateBlob,
       _prunedStateBlob,
-      E2eeAccountRecoveryLocalTransitionPhase.activated,
+      deviceKeyVersion,
+      userId,
+      sourceDataGeneration,
+      _operationAuthorizationDigest,
+      _fixedMutableCopy(
+        _continuation,
+        e2eeAccountRecoveryNativeContinuationBytes,
+        'continuation',
+      ),
     );
   }
 }
@@ -1141,66 +1174,44 @@ final class E2eeAuthorizedAccountRecovery {
   final E2eeAccountRecoveryKeyLease keyLease;
 }
 
-enum E2eeAccountRecoveryStage { challenged, proofReady, authorized }
+enum E2eeAccountRecoveryCheckpointPhase {
+  challenged,
+  proofReady,
+  authorized,
+  resumePrepared,
+  resumeCommitted,
+  firstRekeyFinalized,
+  firstLocalActivated,
+  replacementChallengeRequested,
+  replacementChallengeReceived,
+  replacementProofReady,
+  replacementPrepared,
+  replacementCommitted,
+  secondRekeyFinalized,
+  secondLocalActivated,
+  sessionVerified,
+}
 
-final class E2eeAccountRecoveryCheckpoint {
-  factory E2eeAccountRecoveryCheckpoint.challenged({
-    required String expectedDeviceId,
-    required CloudSyncAccountRecoveryToken recoveryToken,
-    required E2eeAccountRecoveryChallenge challenge,
-  }) {
-    return E2eeAccountRecoveryCheckpoint._(
-      E2eeAccountRecoveryStage.challenged,
-      _canonicalUuid(expectedDeviceId, 'expectedDeviceId'),
-      recoveryToken,
-      challenge,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-      null,
-    );
-  }
+sealed class E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryCheckpointProgress();
 
-  E2eeAccountRecoveryCheckpoint._(
-    this.stage,
-    this.expectedDeviceId,
-    this.recoveryToken,
-    this.challenge,
-    this._nonceProof,
-    this._trustSignature,
-    this.recoveryTokenExpiresAt,
-    this.nextAction,
-    this.preparedCommit,
-    this.localTransitionPlan,
-    this.commitReceipt,
-  );
+  E2eeAccountRecoveryCheckpointPhase get phase;
+}
 
-  final E2eeAccountRecoveryStage stage;
-  final String expectedDeviceId;
-  final CloudSyncAccountRecoveryToken recoveryToken;
-  final E2eeAccountRecoveryChallenge challenge;
-  final Uint8List? _nonceProof;
-  final Uint8List? _trustSignature;
-  final DateTime? recoveryTokenExpiresAt;
-  final E2eeAccountRecoveryNextAction? nextAction;
-  final E2eeAccountRecoveryPreparedCommit? preparedCommit;
-  final E2eeAccountRecoveryLocalTransitionPlan? localTransitionPlan;
-  final E2eeAccountRecoveryCommitReceipt? commitReceipt;
+final class E2eeAccountRecoveryChallengedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryChallengedProgress();
 
-  String get attemptId => challenge.attemptId;
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.challenged;
+}
 
-  E2eeAccountRecoveryCheckpoint withProof({
+final class E2eeAccountRecoveryCheckpointProof {
+  factory E2eeAccountRecoveryCheckpointProof.take({
     required Uint8List nonceProof,
     required Uint8List trustSignature,
   }) {
-    if (stage != E2eeAccountRecoveryStage.challenged) {
-      nonceProof.fillRange(0, nonceProof.length, 0);
-      trustSignature.fillRange(0, trustSignature.length, 0);
-      throw StateError('账户恢复 checkpoint 不处于 challenge 阶段');
-    }
     Uint8List? ownedNonceProof;
     Uint8List? ownedTrustSignature;
     try {
@@ -1214,18 +1225,9 @@ final class E2eeAccountRecoveryCheckpoint {
         e2eeAccountRecoveryTrustSignatureBytes,
         'trustSignature',
       );
-      return E2eeAccountRecoveryCheckpoint._(
-        E2eeAccountRecoveryStage.proofReady,
-        expectedDeviceId,
-        recoveryToken,
-        challenge,
+      return E2eeAccountRecoveryCheckpointProof._(
         ownedNonceProof.asUnmodifiableView(),
         ownedTrustSignature.asUnmodifiableView(),
-        null,
-        null,
-        null,
-        null,
-        null,
       );
     } catch (_) {
       _clear(ownedNonceProof);
@@ -1234,11 +1236,393 @@ final class E2eeAccountRecoveryCheckpoint {
     }
   }
 
+  const E2eeAccountRecoveryCheckpointProof._(
+    this._nonceProof,
+    this._trustSignature,
+  );
+
+  final Uint8List _nonceProof;
+  final Uint8List _trustSignature;
+
+  Uint8List copyNonceProof() => Uint8List.fromList(_nonceProof);
+
+  Uint8List copyTrustSignature() => Uint8List.fromList(_trustSignature);
+}
+
+final class E2eeAccountRecoveryProofReadyProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryProofReadyProgress(this.proof);
+
+  final E2eeAccountRecoveryCheckpointProof proof;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.proofReady;
+}
+
+final class E2eeAccountRecoveryCheckpointAuthorization {
+  E2eeAccountRecoveryCheckpointAuthorization({
+    required this.proof,
+    required DateTime recoveryTokenExpiresAt,
+    required this.nextAction,
+  }) : recoveryTokenExpiresAt = recoveryTokenExpiresAt.toUtc() {
+    if (this.recoveryTokenExpiresAt.millisecondsSinceEpoch <= 0) {
+      throw const FormatException('账户恢复 token 过期时间无效');
+    }
+    if (nextAction != E2eeAccountRecoveryNextAction.recoverResume &&
+        nextAction != E2eeAccountRecoveryNextAction.recoverReplace) {
+      throw const FormatException('账户恢复 checkpoint 授权下一步无效');
+    }
+  }
+
+  final E2eeAccountRecoveryCheckpointProof proof;
+  final DateTime recoveryTokenExpiresAt;
+  final E2eeAccountRecoveryNextAction nextAction;
+}
+
+final class E2eeAccountRecoveryAuthorizedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryAuthorizedProgress(this.authorization);
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.authorized;
+}
+
+final class E2eeAccountRecoveryPreparedTransition {
+  E2eeAccountRecoveryPreparedTransition({
+    required this.commit,
+    required this.localTransitionPlan,
+  }) {
+    try {
+      final authorizationDigest =
+          localTransitionPlan.operationAuthorizationDigest;
+      try {
+        if (commit.kind == E2eeAccountRecoveryCommitKind.replacement &&
+            !_allZeroBytes(authorizationDigest)) {
+          throw const FormatException('账户恢复 replacement 本地绑定必须使用零授权摘要');
+        }
+      } finally {
+        _clear(authorizationDigest);
+      }
+    } catch (_) {
+      localTransitionPlan.clearContinuation();
+      rethrow;
+    }
+  }
+
+  final E2eeAccountRecoveryPreparedCommit commit;
+  final E2eeAccountRecoveryLocalTransitionPlan localTransitionPlan;
+
+  E2eeAccountRecoveryPreparedTransition _move() {
+    final moved = E2eeAccountRecoveryPreparedTransition(
+      commit: commit,
+      localTransitionPlan: localTransitionPlan._copy(),
+    );
+    localTransitionPlan.clearContinuation();
+    return moved;
+  }
+
+  void clearContinuation() {
+    localTransitionPlan.clearContinuation();
+  }
+}
+
+final class E2eeAccountRecoveryResumePreparedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryResumePreparedProgress({
+    required this.authorization,
+    required this.transition,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryPreparedTransition transition;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.resumePrepared;
+}
+
+final class E2eeAccountRecoveryResumeCommittedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryResumeCommittedProgress({
+    required this.authorization,
+    required this.transition,
+    required this.receipt,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryPreparedTransition transition;
+  final E2eeAccountRecoveryCommitReceipt receipt;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.resumeCommitted;
+}
+
+final class E2eeAccountRecoveryFirstRekeyFinalizedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryFirstRekeyFinalizedProgress({
+    required this.authorization,
+    required this.transition,
+    required this.receipt,
+    required this.completion,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryPreparedTransition transition;
+  final E2eeAccountRecoveryCommitReceipt receipt;
+  final CloudSyncDataRekeyCompletion completion;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.firstRekeyFinalized;
+}
+
+final class E2eeAccountRecoveryFirstLocalActivatedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryFirstLocalActivatedProgress({
+    required this.authorization,
+    required this.resumeReceipt,
+    required this.completion,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryCommitReceipt resumeReceipt;
+  final CloudSyncDataRekeyCompletion completion;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.firstLocalActivated;
+}
+
+final class E2eeAccountRecoveryReplacementChallengeRequestedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryReplacementChallengeRequestedProgress({
+    required this.authorization,
+    required this.resumeReceipt,
+    required this.completion,
+    required this.request,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryCommitReceipt resumeReceipt;
+  final CloudSyncDataRekeyCompletion completion;
+  final E2eeAccountRecoveryReplacementChallengeRequest request;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.replacementChallengeRequested;
+}
+
+final class E2eeAccountRecoveryReplacementChallengeReceivedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryReplacementChallengeReceivedProgress({
+    required this.authorization,
+    required this.challenge,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryReplacementChallenge challenge;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.replacementChallengeReceived;
+}
+
+final class E2eeAccountRecoveryReplacementProofReadyProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryReplacementProofReadyProgress({
+    required this.authorization,
+    required this.challenge,
+    required this.proof,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryReplacementChallenge challenge;
+  final E2eeAccountRecoveryCheckpointProof proof;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.replacementProofReady;
+}
+
+final class E2eeAccountRecoveryReplacementPreparedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryReplacementPreparedProgress({
+    required this.authorization,
+    required this.transition,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryPreparedTransition transition;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.replacementPrepared;
+}
+
+final class E2eeAccountRecoveryReplacementCommittedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoveryReplacementCommittedProgress({
+    required this.authorization,
+    required this.transition,
+    required this.receipt,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryPreparedTransition transition;
+  final E2eeAccountRecoveryCommitReceipt receipt;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.replacementCommitted;
+}
+
+final class E2eeAccountRecoverySecondRekeyFinalizedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoverySecondRekeyFinalizedProgress({
+    required this.authorization,
+    required this.transition,
+    required this.receipt,
+    required this.completion,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryPreparedTransition transition;
+  final E2eeAccountRecoveryCommitReceipt receipt;
+  final CloudSyncDataRekeyCompletion completion;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.secondRekeyFinalized;
+}
+
+final class E2eeAccountRecoveryCompletionSession {
+  E2eeAccountRecoveryCompletionSession({
+    required String sessionId,
+    required this.token,
+  }) : sessionId = _canonicalUuid(sessionId, 'sessionId');
+
+  final String sessionId;
+  final CloudSyncFullSessionToken token;
+}
+
+final class E2eeAccountRecoverySecondLocalActivatedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoverySecondLocalActivatedProgress({
+    required this.authorization,
+    required this.completionSession,
+    required this.replacementReceipt,
+    required this.completion,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryCompletionSession completionSession;
+  final E2eeAccountRecoveryCommitReceipt replacementReceipt;
+  final CloudSyncDataRekeyCompletion completion;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.secondLocalActivated;
+}
+
+final class E2eeAccountRecoverySessionVerifiedProgress
+    extends E2eeAccountRecoveryCheckpointProgress {
+  const E2eeAccountRecoverySessionVerifiedProgress({
+    required this.authorization,
+    required this.completionSession,
+    required this.replacementReceipt,
+    required this.completion,
+  });
+
+  final E2eeAccountRecoveryCheckpointAuthorization authorization;
+  final E2eeAccountRecoveryCompletionSession completionSession;
+  final E2eeAccountRecoveryCommitReceipt replacementReceipt;
+  final CloudSyncDataRekeyCompletion completion;
+
+  @override
+  E2eeAccountRecoveryCheckpointPhase get phase =>
+      E2eeAccountRecoveryCheckpointPhase.sessionVerified;
+}
+
+final class E2eeAccountRecoveryCheckpoint {
+  factory E2eeAccountRecoveryCheckpoint.challenged({
+    required String expectedDeviceId,
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryChallenge challenge,
+  }) {
+    return E2eeAccountRecoveryCheckpoint._(
+      _canonicalUuid(expectedDeviceId, 'expectedDeviceId'),
+      recoveryToken,
+      challenge,
+      const E2eeAccountRecoveryChallengedProgress(),
+    );
+  }
+
+  factory E2eeAccountRecoveryCheckpoint.restore({
+    required String expectedDeviceId,
+    required CloudSyncAccountRecoveryToken recoveryToken,
+    required E2eeAccountRecoveryChallenge challenge,
+    required E2eeAccountRecoveryCheckpointProgress progress,
+  }) {
+    final deviceId = _canonicalUuid(expectedDeviceId, 'expectedDeviceId');
+    _validateCheckpointProgress(
+      expectedDeviceId: deviceId,
+      challenge: challenge,
+      progress: progress,
+    );
+    return E2eeAccountRecoveryCheckpoint._(
+      deviceId,
+      recoveryToken,
+      challenge,
+      progress,
+    );
+  }
+
+  const E2eeAccountRecoveryCheckpoint._(
+    this.expectedDeviceId,
+    this.recoveryToken,
+    this.challenge,
+    this.progress,
+  );
+
+  final String expectedDeviceId;
+  final CloudSyncAccountRecoveryToken recoveryToken;
+  final E2eeAccountRecoveryChallenge challenge;
+  final E2eeAccountRecoveryCheckpointProgress progress;
+
+  String get attemptId => challenge.attemptId;
+
+  E2eeAccountRecoveryCheckpointPhase get phase => progress.phase;
+
+  E2eeAccountRecoveryCheckpoint withProof({
+    required Uint8List nonceProof,
+    required Uint8List trustSignature,
+  }) {
+    if (progress is! E2eeAccountRecoveryChallengedProgress) {
+      nonceProof.fillRange(0, nonceProof.length, 0);
+      trustSignature.fillRange(0, trustSignature.length, 0);
+      throw StateError('账户恢复 checkpoint 不处于 challenge 阶段');
+    }
+    return _copyWithProgress(
+      E2eeAccountRecoveryProofReadyProgress(
+        E2eeAccountRecoveryCheckpointProof.take(
+          nonceProof: nonceProof,
+          trustSignature: trustSignature,
+        ),
+      ),
+    );
+  }
+
   E2eeAccountRecoveryCheckpoint authorized({
     required DateTime recoveryTokenExpiresAt,
     required E2eeAccountRecoveryNextAction nextAction,
   }) {
-    if (stage != E2eeAccountRecoveryStage.proofReady) {
+    final current = progress;
+    if (current is! E2eeAccountRecoveryProofReadyProgress) {
       throw StateError('账户恢复 checkpoint 尚未生成 proof');
     }
     if (nextAction != E2eeAccountRecoveryNextAction.recoverResume &&
@@ -1252,197 +1636,954 @@ final class E2eeAccountRecoveryCheckpoint {
     if (nextAction != expectedNextAction) {
       throw const FormatException('账户恢复 checkpoint 授权动作与 challenge 不一致');
     }
-    final expiresAt = recoveryTokenExpiresAt.toUtc();
-    if (expiresAt.millisecondsSinceEpoch <= 0) {
-      throw const FormatException('账户恢复 token 过期时间无效');
-    }
-    return E2eeAccountRecoveryCheckpoint._(
-      E2eeAccountRecoveryStage.authorized,
-      expectedDeviceId,
-      recoveryToken,
-      challenge,
-      _nonceProof,
-      _trustSignature,
-      expiresAt,
-      nextAction,
-      null,
-      null,
-      null,
+    return _copyWithProgress(
+      E2eeAccountRecoveryAuthorizedProgress(
+        E2eeAccountRecoveryCheckpointAuthorization(
+          proof: current.proof,
+          recoveryTokenExpiresAt: recoveryTokenExpiresAt,
+          nextAction: nextAction,
+        ),
+      ),
     );
   }
 
-  E2eeAccountRecoveryCheckpoint withPreparedCommit(
-    E2eeAccountRecoveryPreparedCommit commit,
-  ) {
-    if (stage != E2eeAccountRecoveryStage.authorized ||
-        preparedCommit != null) {
-      throw StateError('账户恢复 checkpoint 不可写入待提交请求');
-    }
-    final expectedKind = switch (nextAction) {
-      E2eeAccountRecoveryNextAction.recoverResume =>
-        E2eeAccountRecoveryCommitKind.resume,
-      E2eeAccountRecoveryNextAction.recoverReplace =>
-        E2eeAccountRecoveryCommitKind.replacement,
-      _ => throw StateError('账户恢复 checkpoint 当前不应准备成员提交'),
-    };
-    if (commit.attemptId != attemptId || commit.kind != expectedKind) {
-      throw const FormatException('账户恢复待提交请求未绑定当前 checkpoint');
-    }
-    return E2eeAccountRecoveryCheckpoint._(
-      stage,
-      expectedDeviceId,
-      recoveryToken,
-      challenge,
-      _nonceProof,
-      _trustSignature,
-      recoveryTokenExpiresAt,
-      nextAction,
-      commit,
-      null,
-      null,
+  E2eeAccountRecoveryCheckpoint prepareTransition({
+    required E2eeAccountRecoveryPreparedCommit commit,
+    required E2eeAccountRecoveryLocalTransitionPlan localTransitionPlan,
+  }) {
+    final current = progress;
+    final transition = E2eeAccountRecoveryPreparedTransition(
+      commit: commit,
+      localTransitionPlan: localTransitionPlan,
     );
-  }
-
-  E2eeAccountRecoveryCheckpoint withLocalTransitionPlan(
-    E2eeAccountRecoveryLocalTransitionPlan plan,
-  ) {
-    if (stage != E2eeAccountRecoveryStage.authorized ||
-        preparedCommit == null ||
-        plan.phase !=
-            E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared ||
-        localTransitionPlan != null ||
-        commitReceipt != null) {
-      throw StateError('账户恢复 checkpoint 不可写入本地提交计划');
+    try {
+      switch (current) {
+        case E2eeAccountRecoveryAuthorizedProgress(:final authorization):
+          final expectedKind = switch (authorization.nextAction) {
+            E2eeAccountRecoveryNextAction.recoverResume =>
+              E2eeAccountRecoveryCommitKind.resume,
+            E2eeAccountRecoveryNextAction.recoverReplace =>
+              E2eeAccountRecoveryCommitKind.replacement,
+            _ => throw StateError('账户恢复 checkpoint 当前不应准备成员提交'),
+          };
+          if (commit.kind != expectedKind) {
+            throw const FormatException('账户恢复待提交类型与授权动作不一致');
+          }
+          _validateInitialPreparedTransition(
+            challenge: challenge,
+            transition: transition,
+          );
+          return _copyWithProgress(switch (commit) {
+            E2eeAccountRecoveryResumeCommit() =>
+              E2eeAccountRecoveryResumePreparedProgress(
+                authorization: authorization,
+                transition: transition,
+              ),
+            E2eeAccountRecoveryReplacementCommit() =>
+              E2eeAccountRecoveryReplacementPreparedProgress(
+                authorization: authorization,
+                transition: transition,
+              ),
+          });
+        case E2eeAccountRecoveryReplacementProofReadyProgress(
+          :final authorization,
+          :final challenge,
+          :final proof,
+        ):
+          _validateReplacementPreparedTransition(
+            challenge: challenge,
+            proof: proof,
+            transition: transition,
+          );
+          return _copyWithProgress(
+            E2eeAccountRecoveryReplacementPreparedProgress(
+              authorization: authorization,
+              transition: transition,
+            ),
+          );
+        default:
+          throw StateError('账户恢复 checkpoint 当前不可准备成员提交');
+      }
+    } catch (_) {
+      transition.clearContinuation();
+      rethrow;
     }
-    return E2eeAccountRecoveryCheckpoint._(
-      stage,
-      expectedDeviceId,
-      recoveryToken,
-      challenge,
-      _nonceProof,
-      _trustSignature,
-      recoveryTokenExpiresAt,
-      nextAction,
-      preparedCommit,
-      plan,
-      null,
-    );
   }
 
   E2eeAccountRecoveryCheckpoint withCommitReceipt(
     E2eeAccountRecoveryCommitReceipt receipt,
   ) {
-    final prepared = preparedCommit;
-    final localPlan = localTransitionPlan;
-    if (stage != E2eeAccountRecoveryStage.authorized ||
-        prepared == null ||
-        localPlan == null ||
-        localPlan.phase !=
-            E2eeAccountRecoveryLocalTransitionPhase.candidatePrepared ||
-        commitReceipt != null) {
-      throw StateError('账户恢复 checkpoint 不可写入成员提交回执');
-    }
-    final membership = prepared.membership;
-    final expectedRekeyOperationId = switch (prepared) {
-      E2eeAccountRecoveryResumeCommit(:final rekeyOperationId) =>
-        rekeyOperationId,
-      E2eeAccountRecoveryReplacementCommit() => membership.operationId,
+    return switch (progress) {
+      E2eeAccountRecoveryResumePreparedProgress(
+        :final authorization,
+        :final transition,
+      ) =>
+        _commitResume(authorization, transition, receipt),
+      E2eeAccountRecoveryReplacementPreparedProgress(
+        :final authorization,
+        :final transition,
+      ) =>
+        _commitReplacement(authorization, transition, receipt),
+      _ => throw StateError('账户恢复 checkpoint 不可写入成员提交回执'),
     };
-    final expectedKeyEpoch = switch (prepared) {
-      E2eeAccountRecoveryResumeCommit() => membership.expectedKeyEpoch,
-      E2eeAccountRecoveryReplacementCommit() => membership.expectedKeyEpoch + 1,
-    };
-    final expectedNextAction = switch (prepared) {
-      E2eeAccountRecoveryResumeCommit() =>
-        E2eeAccountRecoveryNextAction.finishFirstDataRekey,
-      E2eeAccountRecoveryReplacementCommit() =>
-        E2eeAccountRecoveryNextAction.finishSecondDataRekey,
-    };
-    if (receipt.kind != prepared.kind ||
-        receipt.attemptId != attemptId ||
-        receipt.membershipOperationId != membership.operationId ||
-        receipt.rekeyOperationId != expectedRekeyOperationId ||
-        receipt.generation != membership.expectedGeneration + 1 ||
-        receipt.keyEpoch != expectedKeyEpoch ||
-        receipt.nextAction != expectedNextAction) {
-      throw const FormatException('账户恢复成员提交回执未绑定待提交请求');
-    }
-    return E2eeAccountRecoveryCheckpoint._(
-      stage,
-      expectedDeviceId,
-      recoveryToken,
-      challenge,
-      _nonceProof,
-      _trustSignature,
-      recoveryTokenExpiresAt,
-      receipt.nextAction,
-      prepared,
-      localPlan,
-      receipt,
-    );
   }
 
-  E2eeAccountRecoveryCheckpoint markLocalTransitionProofVerified() {
-    final plan = localTransitionPlan;
-    if (stage != E2eeAccountRecoveryStage.authorized ||
-        preparedCommit == null ||
-        commitReceipt == null ||
-        plan == null) {
-      throw StateError('账户恢复 checkpoint 不可确认本地候选证明');
+  E2eeAccountRecoveryCheckpoint withRekeyCompletion(
+    CloudSyncDataRekeyCompletion completion,
+  ) {
+    switch (progress) {
+      case E2eeAccountRecoveryResumeCommittedProgress(
+        :final authorization,
+        :final transition,
+        :final receipt,
+      ):
+        _validateRekeyCompletion(
+          expectedDeviceId: expectedDeviceId,
+          transition: transition,
+          receipt: receipt,
+          completion: completion,
+        );
+        return _copyWithProgress(
+          E2eeAccountRecoveryFirstRekeyFinalizedProgress(
+            authorization: authorization,
+            transition: transition._move(),
+            receipt: receipt,
+            completion: completion,
+          ),
+        );
+      case E2eeAccountRecoveryReplacementCommittedProgress(
+        :final authorization,
+        :final transition,
+        :final receipt,
+      ):
+        _validateRekeyCompletion(
+          expectedDeviceId: expectedDeviceId,
+          transition: transition,
+          receipt: receipt,
+          completion: completion,
+        );
+        return _copyWithProgress(
+          E2eeAccountRecoverySecondRekeyFinalizedProgress(
+            authorization: authorization,
+            transition: transition._move(),
+            receipt: receipt,
+            completion: completion,
+          ),
+        );
+      default:
+        throw StateError('账户恢复 checkpoint 不可写入 data-rekey 完成证明');
     }
-    return E2eeAccountRecoveryCheckpoint._(
-      stage,
-      expectedDeviceId,
-      recoveryToken,
-      challenge,
-      _nonceProof,
-      _trustSignature,
-      recoveryTokenExpiresAt,
-      nextAction,
-      preparedCommit,
-      plan._markProofVerified(),
-      commitReceipt,
-    );
   }
 
   E2eeAccountRecoveryCheckpoint markLocalTransitionActivated() {
-    final plan = localTransitionPlan;
-    if (stage != E2eeAccountRecoveryStage.authorized ||
-        preparedCommit == null ||
-        commitReceipt == null ||
-        plan == null) {
-      throw StateError('账户恢复 checkpoint 不可激活本地候选');
+    switch (progress) {
+      case E2eeAccountRecoveryFirstRekeyFinalizedProgress(
+        :final authorization,
+        :final transition,
+        :final receipt,
+        :final completion,
+      ):
+        transition.clearContinuation();
+        return _copyWithProgress(
+          E2eeAccountRecoveryFirstLocalActivatedProgress(
+            authorization: authorization,
+            resumeReceipt: receipt,
+            completion: completion,
+          ),
+        );
+      case E2eeAccountRecoverySecondRekeyFinalizedProgress(
+        :final authorization,
+        :final transition,
+        :final receipt,
+        :final completion,
+      ):
+        final commit = transition.commit;
+        if (commit is! E2eeAccountRecoveryReplacementCommit) {
+          throw StateError('账户恢复第二轮提交类型无效');
+        }
+        final completionSession = E2eeAccountRecoveryCompletionSession(
+          sessionId: commit.completionSessionId,
+          token: commit.completionSessionToken,
+        );
+        transition.clearContinuation();
+        return _copyWithProgress(
+          E2eeAccountRecoverySecondLocalActivatedProgress(
+            authorization: authorization,
+            completionSession: completionSession,
+            replacementReceipt: receipt,
+            completion: completion,
+          ),
+        );
+      default:
+        throw StateError('账户恢复 checkpoint 不可激活本地候选');
     }
-    return E2eeAccountRecoveryCheckpoint._(
-      stage,
-      expectedDeviceId,
-      recoveryToken,
-      challenge,
-      _nonceProof,
-      _trustSignature,
-      recoveryTokenExpiresAt,
-      nextAction,
-      preparedCommit,
-      plan._markActivated(),
-      commitReceipt,
+  }
+
+  E2eeAccountRecoveryCheckpoint requestReplacementChallenge(
+    E2eeAccountRecoveryReplacementChallengeRequest request,
+  ) {
+    final current = progress;
+    if (current is! E2eeAccountRecoveryFirstLocalActivatedProgress) {
+      throw StateError('账户恢复 checkpoint 不可请求 replacement challenge');
+    }
+    _validateReplacementChallengeRequest(
+      receipt: current.resumeReceipt,
+      completion: current.completion,
+      request: request,
+    );
+    return _copyWithProgress(
+      E2eeAccountRecoveryReplacementChallengeRequestedProgress(
+        authorization: current.authorization,
+        resumeReceipt: current.resumeReceipt,
+        completion: current.completion,
+        request: request,
+      ),
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint withReplacementChallenge(
+    E2eeAccountRecoveryReplacementChallenge replacementChallenge,
+  ) {
+    final current = progress;
+    if (current is! E2eeAccountRecoveryReplacementChallengeRequestedProgress) {
+      throw StateError('账户恢复 checkpoint 不可写入 replacement challenge');
+    }
+    _validateReplacementChallengeResponse(
+      attemptId: attemptId,
+      request: current.request,
+      completion: current.completion,
+      challenge: replacementChallenge,
+    );
+    return _copyWithProgress(
+      E2eeAccountRecoveryReplacementChallengeReceivedProgress(
+        authorization: current.authorization,
+        challenge: replacementChallenge,
+      ),
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint withReplacementProof({
+    required Uint8List nonceProof,
+    required Uint8List trustSignature,
+  }) {
+    final current = progress;
+    if (current is! E2eeAccountRecoveryReplacementChallengeReceivedProgress) {
+      nonceProof.fillRange(0, nonceProof.length, 0);
+      trustSignature.fillRange(0, trustSignature.length, 0);
+      throw StateError('账户恢复 checkpoint 不可写入 replacement proof');
+    }
+    return _copyWithProgress(
+      E2eeAccountRecoveryReplacementProofReadyProgress(
+        authorization: current.authorization,
+        challenge: current.challenge,
+        proof: E2eeAccountRecoveryCheckpointProof.take(
+          nonceProof: nonceProof,
+          trustSignature: trustSignature,
+        ),
+      ),
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint markSessionVerified() {
+    final current = progress;
+    if (current is! E2eeAccountRecoverySecondLocalActivatedProgress) {
+      throw StateError('账户恢复 checkpoint 尚不可确认完整会话');
+    }
+    return _copyWithProgress(
+      E2eeAccountRecoverySessionVerifiedProgress(
+        authorization: current.authorization,
+        completionSession: current.completionSession,
+        replacementReceipt: current.replacementReceipt,
+        completion: current.completion,
+      ),
     );
   }
 
   Uint8List copyNonceProof() {
-    final value = _nonceProof;
-    if (stage == E2eeAccountRecoveryStage.challenged || value == null) {
-      throw StateError('账户恢复 checkpoint 不含 nonce proof');
-    }
-    return Uint8List.fromList(value);
+    return _checkpointProof(progress).copyNonceProof();
   }
 
   Uint8List copyTrustSignature() {
-    final value = _trustSignature;
-    if (stage == E2eeAccountRecoveryStage.challenged || value == null) {
-      throw StateError('账户恢复 checkpoint 不含信任签名');
-    }
-    return Uint8List.fromList(value);
+    return _checkpointProof(progress).copyTrustSignature();
   }
+
+  E2eeAccountRecoveryCheckpoint _copyWithProgress(
+    E2eeAccountRecoveryCheckpointProgress nextProgress,
+  ) {
+    return E2eeAccountRecoveryCheckpoint._(
+      expectedDeviceId,
+      recoveryToken,
+      challenge,
+      nextProgress,
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint _commitResume(
+    E2eeAccountRecoveryCheckpointAuthorization authorization,
+    E2eeAccountRecoveryPreparedTransition transition,
+    E2eeAccountRecoveryCommitReceipt receipt,
+  ) {
+    _validateCommitReceipt(transition.commit, receipt);
+    return _copyWithProgress(
+      E2eeAccountRecoveryResumeCommittedProgress(
+        authorization: authorization,
+        transition: transition._move(),
+        receipt: receipt,
+      ),
+    );
+  }
+
+  E2eeAccountRecoveryCheckpoint _commitReplacement(
+    E2eeAccountRecoveryCheckpointAuthorization authorization,
+    E2eeAccountRecoveryPreparedTransition transition,
+    E2eeAccountRecoveryCommitReceipt receipt,
+  ) {
+    _validateCommitReceipt(transition.commit, receipt);
+    return _copyWithProgress(
+      E2eeAccountRecoveryReplacementCommittedProgress(
+        authorization: authorization,
+        transition: transition._move(),
+        receipt: receipt,
+      ),
+    );
+  }
+}
+
+E2eeAccountRecoveryCheckpointProof _checkpointProof(
+  E2eeAccountRecoveryCheckpointProgress progress,
+) => switch (progress) {
+  E2eeAccountRecoveryProofReadyProgress(:final proof) => proof,
+  E2eeAccountRecoveryAuthorizedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoveryResumePreparedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoveryResumeCommittedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoveryFirstRekeyFinalizedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoveryFirstLocalActivatedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoveryReplacementChallengeRequestedProgress(
+    :final authorization,
+  ) =>
+    authorization.proof,
+  E2eeAccountRecoveryReplacementChallengeReceivedProgress(
+    :final authorization,
+  ) =>
+    authorization.proof,
+  E2eeAccountRecoveryReplacementProofReadyProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoveryReplacementPreparedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoveryReplacementCommittedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoverySecondRekeyFinalizedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoverySecondLocalActivatedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoverySessionVerifiedProgress(:final authorization) =>
+    authorization.proof,
+  E2eeAccountRecoveryChallengedProgress() => throw StateError(
+    '账户恢复 checkpoint 不含 proof',
+  ),
+};
+
+E2eeAccountRecoveryCheckpointAuthorization? _checkpointAuthorization(
+  E2eeAccountRecoveryCheckpointProgress progress,
+) => switch (progress) {
+  E2eeAccountRecoveryAuthorizedProgress(:final authorization) => authorization,
+  E2eeAccountRecoveryResumePreparedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoveryResumeCommittedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoveryFirstRekeyFinalizedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoveryFirstLocalActivatedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoveryReplacementChallengeRequestedProgress(
+    :final authorization,
+  ) =>
+    authorization,
+  E2eeAccountRecoveryReplacementChallengeReceivedProgress(
+    :final authorization,
+  ) =>
+    authorization,
+  E2eeAccountRecoveryReplacementProofReadyProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoveryReplacementPreparedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoveryReplacementCommittedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoverySecondRekeyFinalizedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoverySecondLocalActivatedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoverySessionVerifiedProgress(:final authorization) =>
+    authorization,
+  E2eeAccountRecoveryChallengedProgress() ||
+  E2eeAccountRecoveryProofReadyProgress() => null,
+};
+
+E2eeAccountRecoveryCommitReceipt? _checkpointCommitReceipt(
+  E2eeAccountRecoveryCheckpointProgress progress,
+) => switch (progress) {
+  E2eeAccountRecoveryResumeCommittedProgress(:final receipt) => receipt,
+  E2eeAccountRecoveryFirstRekeyFinalizedProgress(:final receipt) => receipt,
+  E2eeAccountRecoveryFirstLocalActivatedProgress(:final resumeReceipt) =>
+    resumeReceipt,
+  E2eeAccountRecoveryReplacementChallengeRequestedProgress(
+    :final resumeReceipt,
+  ) =>
+    resumeReceipt,
+  E2eeAccountRecoveryReplacementCommittedProgress(:final receipt) => receipt,
+  E2eeAccountRecoverySecondRekeyFinalizedProgress(:final receipt) => receipt,
+  E2eeAccountRecoverySecondLocalActivatedProgress(:final replacementReceipt) =>
+    replacementReceipt,
+  E2eeAccountRecoverySessionVerifiedProgress(:final replacementReceipt) =>
+    replacementReceipt,
+  _ => null,
+};
+
+void _validateCheckpointProgress({
+  required String expectedDeviceId,
+  required E2eeAccountRecoveryChallenge challenge,
+  required E2eeAccountRecoveryCheckpointProgress progress,
+}) {
+  switch (progress) {
+    case E2eeAccountRecoveryChallengedProgress() ||
+        E2eeAccountRecoveryProofReadyProgress():
+      return;
+    case E2eeAccountRecoveryAuthorizedProgress(:final authorization):
+      _validateInitialAuthorization(challenge, authorization);
+    case E2eeAccountRecoveryResumePreparedProgress(
+      :final authorization,
+      :final transition,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateInitialPreparedTransition(
+        challenge: challenge,
+        transition: transition,
+      );
+    case E2eeAccountRecoveryResumeCommittedProgress(
+      :final authorization,
+      :final transition,
+      :final receipt,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateInitialPreparedTransition(
+        challenge: challenge,
+        transition: transition,
+      );
+      _validateCommitReceipt(transition.commit, receipt);
+    case E2eeAccountRecoveryFirstRekeyFinalizedProgress(
+      :final authorization,
+      :final transition,
+      :final receipt,
+      :final completion,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateInitialPreparedTransition(
+        challenge: challenge,
+        transition: transition,
+      );
+      _validateCommitReceipt(transition.commit, receipt);
+      _validateRekeyCompletion(
+        expectedDeviceId: expectedDeviceId,
+        transition: transition,
+        receipt: receipt,
+        completion: completion,
+      );
+    case E2eeAccountRecoveryFirstLocalActivatedProgress(
+      :final authorization,
+      :final resumeReceipt,
+      :final completion,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateFirstCompletionSummary(
+        expectedDeviceId: expectedDeviceId,
+        challenge: challenge,
+        receipt: resumeReceipt,
+        completion: completion,
+      );
+    case E2eeAccountRecoveryReplacementChallengeRequestedProgress(
+      :final authorization,
+      :final resumeReceipt,
+      :final completion,
+      :final request,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateFirstCompletionSummary(
+        expectedDeviceId: expectedDeviceId,
+        challenge: challenge,
+        receipt: resumeReceipt,
+        completion: completion,
+      );
+      _validateReplacementChallengeRequest(
+        receipt: resumeReceipt,
+        completion: completion,
+        request: request,
+      );
+    case E2eeAccountRecoveryReplacementChallengeReceivedProgress(
+      :final authorization,
+      challenge: final replacementChallenge,
+    ):
+      _validateInitialAuthorization(
+        challenge,
+        authorization,
+        expectedAction: E2eeAccountRecoveryNextAction.recoverResume,
+      );
+      _validateReplacementChallengeSummary(
+        expectedDeviceId: expectedDeviceId,
+        initialChallenge: challenge,
+        replacementChallenge: replacementChallenge,
+      );
+    case E2eeAccountRecoveryReplacementProofReadyProgress(
+      :final authorization,
+      challenge: final replacementChallenge,
+    ):
+      _validateInitialAuthorization(
+        challenge,
+        authorization,
+        expectedAction: E2eeAccountRecoveryNextAction.recoverResume,
+      );
+      _validateReplacementChallengeSummary(
+        expectedDeviceId: expectedDeviceId,
+        initialChallenge: challenge,
+        replacementChallenge: replacementChallenge,
+      );
+    case E2eeAccountRecoveryReplacementPreparedProgress(
+      :final authorization,
+      :final transition,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateRestoredReplacementTransition(challenge, transition);
+    case E2eeAccountRecoveryReplacementCommittedProgress(
+      :final authorization,
+      :final transition,
+      :final receipt,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateRestoredReplacementTransition(challenge, transition);
+      _validateCommitReceipt(transition.commit, receipt);
+    case E2eeAccountRecoverySecondRekeyFinalizedProgress(
+      :final authorization,
+      :final transition,
+      :final receipt,
+      :final completion,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateRestoredReplacementTransition(challenge, transition);
+      _validateCommitReceipt(transition.commit, receipt);
+      _validateRekeyCompletion(
+        expectedDeviceId: expectedDeviceId,
+        transition: transition,
+        receipt: receipt,
+        completion: completion,
+      );
+    case E2eeAccountRecoverySecondLocalActivatedProgress(
+      :final authorization,
+      :final completionSession,
+      :final replacementReceipt,
+      :final completion,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateTerminalReplacementSummary(
+        initialChallenge: challenge,
+        completionSession: completionSession,
+        receipt: replacementReceipt,
+        completion: completion,
+        expectedDeviceId: expectedDeviceId,
+      );
+    case E2eeAccountRecoverySessionVerifiedProgress(
+      :final authorization,
+      :final completionSession,
+      :final replacementReceipt,
+      :final completion,
+    ):
+      _validateInitialAuthorization(challenge, authorization);
+      _validateTerminalReplacementSummary(
+        initialChallenge: challenge,
+        completionSession: completionSession,
+        receipt: replacementReceipt,
+        completion: completion,
+        expectedDeviceId: expectedDeviceId,
+      );
+  }
+}
+
+void _validateInitialAuthorization(
+  E2eeAccountRecoveryChallenge challenge,
+  E2eeAccountRecoveryCheckpointAuthorization authorization, {
+  E2eeAccountRecoveryNextAction? expectedAction,
+}) {
+  final expected =
+      expectedAction ??
+      (challenge.dataState.phase == E2eeAccountRecoveryDataPhase.ready
+          ? E2eeAccountRecoveryNextAction.recoverReplace
+          : E2eeAccountRecoveryNextAction.recoverResume);
+  if (authorization.nextAction != expected) {
+    throw const FormatException('账户恢复授权动作与初始 challenge 不一致');
+  }
+}
+
+void _validateInitialPreparedTransition({
+  required E2eeAccountRecoveryChallenge challenge,
+  required E2eeAccountRecoveryPreparedTransition transition,
+}) {
+  final commit = transition.commit;
+  final membership = commit.membership;
+  final plan = transition.localTransitionPlan;
+  if (commit.attemptId != challenge.attemptId ||
+      membership.expectedGeneration != challenge.securityGeneration ||
+      membership.expectedKeyEpoch != challenge.keyEpoch ||
+      !_sameBytes(
+        membership.expectedMembershipManifestDigest.bytes,
+        challenge.membershipManifestDigest,
+      ) ||
+      plan.sourceDataGeneration != challenge.dataState.dataGeneration) {
+    throw const FormatException('账户恢复待提交请求未绑定初始 challenge');
+  }
+  switch (commit) {
+    case E2eeAccountRecoveryResumeCommit(:final rekeyOperationId):
+      if (challenge.dataState.phase !=
+              E2eeAccountRecoveryDataPhase.rekeyPending ||
+          rekeyOperationId != challenge.dataState.operationId ||
+          membership.envelope.keyEpoch != challenge.keyEpoch) {
+        throw const FormatException('账户恢复 resume 提交绑定无效');
+      }
+    case E2eeAccountRecoveryReplacementCommit(:final authorization):
+      if (challenge.dataState.phase != E2eeAccountRecoveryDataPhase.ready ||
+          membership.envelope.keyEpoch != challenge.keyEpoch + 1 ||
+          commit.nextRecoveryCapsuleVersion !=
+              challenge.recoveryCapsuleVersion + 1 ||
+          authorization
+              is! E2eeAccountRecoveryReplacementInitialAuthorization ||
+          !_sameBytes(
+            authorization.challengeRequestDigest,
+            challenge.requestDigest,
+          )) {
+        throw const FormatException('账户恢复 direct replacement 提交绑定无效');
+      }
+  }
+}
+
+void _validateReplacementPreparedTransition({
+  required E2eeAccountRecoveryReplacementChallenge challenge,
+  required E2eeAccountRecoveryCheckpointProof proof,
+  required E2eeAccountRecoveryPreparedTransition transition,
+}) {
+  final commit = transition.commit;
+  if (commit is! E2eeAccountRecoveryReplacementCommit) {
+    throw const FormatException('账户恢复第二挑战只能准备 replacement 提交');
+  }
+  final authorization = commit.authorization;
+  final membership = commit.membership;
+  final plan = transition.localTransitionPlan;
+  final nonceProof = proof.copyNonceProof();
+  final trustSignature = proof.copyTrustSignature();
+  try {
+    if (authorization
+            is! E2eeAccountRecoveryReplacementChallengeAuthorization ||
+        commit.attemptId != challenge.attemptId ||
+        authorization.challengeId != challenge.challengeId ||
+        !_sameBytes(
+          authorization.challengeRequestDigest,
+          challenge.requestDigest,
+        ) ||
+        !_sameBytes(authorization.nonceProof, nonceProof) ||
+        !_sameBytes(authorization.trustSignature, trustSignature) ||
+        membership.expectedGeneration != challenge.securityGeneration ||
+        membership.expectedKeyEpoch != challenge.keyEpoch ||
+        !_sameBytes(
+          membership.expectedMembershipManifestDigest.bytes,
+          challenge.membershipManifestDigest,
+        ) ||
+        membership.envelope.keyEpoch != challenge.keyEpoch + 1 ||
+        commit.nextRecoveryCapsuleVersion !=
+            challenge.recoveryCapsuleVersion + 1 ||
+        plan.deviceKeyVersion != challenge.deviceKeyVersion ||
+        plan.sourceDataGeneration != challenge.dataGeneration) {
+      throw const FormatException('账户恢复 replacement 提交未绑定第二 challenge');
+    }
+  } finally {
+    _clear(nonceProof);
+    _clear(trustSignature);
+  }
+}
+
+void _validateRestoredReplacementTransition(
+  E2eeAccountRecoveryChallenge initialChallenge,
+  E2eeAccountRecoveryPreparedTransition transition,
+) {
+  final commit = transition.commit;
+  if (commit is! E2eeAccountRecoveryReplacementCommit ||
+      commit.attemptId != initialChallenge.attemptId) {
+    throw const FormatException('账户恢复 replacement checkpoint 提交无效');
+  }
+  final authorization = commit.authorization;
+  if (authorization is E2eeAccountRecoveryReplacementInitialAuthorization) {
+    _validateInitialPreparedTransition(
+      challenge: initialChallenge,
+      transition: transition,
+    );
+  } else if (authorization
+      is E2eeAccountRecoveryReplacementChallengeAuthorization) {
+    final membership = commit.membership;
+    final plan = transition.localTransitionPlan;
+    if (initialChallenge.dataState.phase !=
+            E2eeAccountRecoveryDataPhase.rekeyPending ||
+        membership.expectedGeneration !=
+            initialChallenge.securityGeneration + 1 ||
+        membership.expectedKeyEpoch != initialChallenge.keyEpoch ||
+        membership.envelope.keyEpoch != initialChallenge.keyEpoch + 1 ||
+        plan.sourceDataGeneration !=
+            initialChallenge.dataState.dataGeneration + 1) {
+      throw const FormatException('账户恢复第二挑战 replacement checkpoint 绑定无效');
+    }
+  } else {
+    throw const FormatException('账户恢复 replacement checkpoint 授权无效');
+  }
+}
+
+void _validateReplacementChallengeSummary({
+  required String expectedDeviceId,
+  required E2eeAccountRecoveryChallenge initialChallenge,
+  required E2eeAccountRecoveryReplacementChallenge replacementChallenge,
+}) {
+  final initialDataState = initialChallenge.dataState;
+  final sourceCompletion = replacementChallenge.sourceCompletion;
+  if (initialDataState.phase != E2eeAccountRecoveryDataPhase.rekeyPending ||
+      replacementChallenge.attemptId != initialChallenge.attemptId ||
+      replacementChallenge.securityGeneration !=
+          initialChallenge.securityGeneration + 1 ||
+      replacementChallenge.keyEpoch != initialChallenge.keyEpoch ||
+      replacementChallenge.dataGeneration !=
+          initialDataState.dataGeneration + 1 ||
+      replacementChallenge.dataKeyEpoch != initialChallenge.keyEpoch ||
+      replacementChallenge.sourceRekeyOperationId !=
+          initialDataState.operationId ||
+      sourceCompletion.operationId != initialDataState.operationId ||
+      sourceCompletion.issuerDeviceId != expectedDeviceId ||
+      sourceCompletion.sourceDataGeneration !=
+          initialDataState.dataGeneration ||
+      sourceCompletion.targetDataGeneration !=
+          initialDataState.dataGeneration + 1 ||
+      sourceCompletion.sourceKeyEpoch != initialDataState.dataKeyEpoch ||
+      sourceCompletion.targetKeyEpoch != initialChallenge.keyEpoch ||
+      sourceCompletion.membershipGeneration !=
+          initialChallenge.securityGeneration + 1) {
+    throw const FormatException('账户恢复 replacement challenge 摘要无效');
+  }
+}
+
+void _validateCommitReceipt(
+  E2eeAccountRecoveryPreparedCommit prepared,
+  E2eeAccountRecoveryCommitReceipt receipt,
+) {
+  final membership = prepared.membership;
+  final expectedRekeyOperationId = switch (prepared) {
+    E2eeAccountRecoveryResumeCommit(:final rekeyOperationId) =>
+      rekeyOperationId,
+    E2eeAccountRecoveryReplacementCommit() => membership.operationId,
+  };
+  final expectedKeyEpoch = switch (prepared) {
+    E2eeAccountRecoveryResumeCommit() => membership.expectedKeyEpoch,
+    E2eeAccountRecoveryReplacementCommit() => membership.expectedKeyEpoch + 1,
+  };
+  final expectedNextAction = switch (prepared) {
+    E2eeAccountRecoveryResumeCommit() =>
+      E2eeAccountRecoveryNextAction.finishFirstDataRekey,
+    E2eeAccountRecoveryReplacementCommit() =>
+      E2eeAccountRecoveryNextAction.finishSecondDataRekey,
+  };
+  if (receipt.kind != prepared.kind ||
+      receipt.attemptId != prepared.attemptId ||
+      receipt.membershipOperationId != membership.operationId ||
+      receipt.rekeyOperationId != expectedRekeyOperationId ||
+      receipt.generation != membership.expectedGeneration + 1 ||
+      receipt.keyEpoch != expectedKeyEpoch ||
+      receipt.nextAction != expectedNextAction) {
+    throw const FormatException('账户恢复成员提交回执未绑定待提交请求');
+  }
+}
+
+void _validateRekeyCompletion({
+  required String expectedDeviceId,
+  required E2eeAccountRecoveryPreparedTransition transition,
+  required E2eeAccountRecoveryCommitReceipt receipt,
+  required CloudSyncDataRekeyCompletion completion,
+}) {
+  final commit = transition.commit;
+  final membership = commit.membership;
+  final plan = transition.localTransitionPlan;
+  final expectedSourceKeyEpoch = switch (commit) {
+    E2eeAccountRecoveryResumeCommit() => membership.expectedKeyEpoch - 1,
+    E2eeAccountRecoveryReplacementCommit() => membership.expectedKeyEpoch,
+  };
+  if (completion.operationId != receipt.rekeyOperationId ||
+      completion.issuerDeviceId != expectedDeviceId ||
+      completion.sourceDataGeneration != plan.sourceDataGeneration ||
+      completion.targetDataGeneration != plan.sourceDataGeneration + 1 ||
+      completion.sourceKeyEpoch != expectedSourceKeyEpoch ||
+      completion.targetKeyEpoch != receipt.keyEpoch ||
+      completion.membershipGeneration != receipt.generation ||
+      !_sameBytes(
+        completion.membershipManifestDigest,
+        membership.nextMembershipManifestDigest.bytes,
+      )) {
+    throw const FormatException('账户恢复 data-rekey 完成证明未绑定当前提交');
+  }
+}
+
+void _validateFirstCompletionSummary({
+  required String expectedDeviceId,
+  required E2eeAccountRecoveryChallenge challenge,
+  required E2eeAccountRecoveryCommitReceipt receipt,
+  required CloudSyncDataRekeyCompletion completion,
+}) {
+  if (receipt.kind != E2eeAccountRecoveryCommitKind.resume ||
+      receipt.attemptId != challenge.attemptId ||
+      receipt.nextAction !=
+          E2eeAccountRecoveryNextAction.finishFirstDataRekey ||
+      completion.operationId != receipt.rekeyOperationId ||
+      completion.issuerDeviceId != expectedDeviceId ||
+      completion.sourceDataGeneration != challenge.dataState.dataGeneration ||
+      completion.targetDataGeneration !=
+          challenge.dataState.dataGeneration + 1 ||
+      completion.sourceKeyEpoch != challenge.dataState.dataKeyEpoch ||
+      completion.targetKeyEpoch != receipt.keyEpoch ||
+      completion.membershipGeneration != receipt.generation) {
+    throw const FormatException('账户恢复首轮完成摘要无效');
+  }
+}
+
+void _validateReplacementChallengeRequest({
+  required E2eeAccountRecoveryCommitReceipt receipt,
+  required CloudSyncDataRekeyCompletion completion,
+  required E2eeAccountRecoveryReplacementChallengeRequest request,
+}) {
+  if (request.expectedGeneration != receipt.generation ||
+      request.expectedKeyEpoch != receipt.keyEpoch ||
+      !_sameBytes(
+        request.expectedMembershipManifestDigest,
+        completion.membershipManifestDigest,
+      ) ||
+      request.expectedMembershipOperationId != receipt.membershipOperationId ||
+      request.dataGeneration != completion.targetDataGeneration ||
+      request.dataKeyEpoch != completion.targetKeyEpoch ||
+      request.sourceRekeyOperationId != completion.operationId ||
+      !_sameBytes(
+        request.sourceCompletionProofDigest,
+        completion.proofDigest,
+      )) {
+    throw const FormatException('账户恢复 replacement challenge 请求未绑定首轮完成');
+  }
+}
+
+void _validateReplacementChallengeResponse({
+  required String attemptId,
+  required E2eeAccountRecoveryReplacementChallengeRequest request,
+  required CloudSyncDataRekeyCompletion completion,
+  required E2eeAccountRecoveryReplacementChallenge challenge,
+}) {
+  if (challenge.challengeId != request.challengeId ||
+      challenge.attemptId != attemptId ||
+      challenge.securityGeneration != request.expectedGeneration ||
+      challenge.keyEpoch != request.expectedKeyEpoch ||
+      !_sameBytes(
+        challenge.membershipManifestDigest,
+        request.expectedMembershipManifestDigest,
+      ) ||
+      challenge.membershipOperationId !=
+          request.expectedMembershipOperationId ||
+      challenge.dataGeneration != request.dataGeneration ||
+      challenge.dataKeyEpoch != request.dataKeyEpoch ||
+      challenge.sourceRekeyOperationId != request.sourceRekeyOperationId ||
+      !_sameBytes(
+        challenge.sourceCompletion.proofDigest,
+        request.sourceCompletionProofDigest,
+      ) ||
+      !_sameDataRekeyCompletion(challenge.sourceCompletion, completion)) {
+    throw const FormatException('账户恢复 replacement challenge 响应未绑定请求');
+  }
+}
+
+void _validateTerminalReplacementSummary({
+  required E2eeAccountRecoveryChallenge initialChallenge,
+  required E2eeAccountRecoveryCompletionSession completionSession,
+  required E2eeAccountRecoveryCommitReceipt receipt,
+  required CloudSyncDataRekeyCompletion completion,
+  required String expectedDeviceId,
+}) {
+  final resumed =
+      initialChallenge.dataState.phase ==
+      E2eeAccountRecoveryDataPhase.rekeyPending;
+  final expectedGeneration =
+      initialChallenge.securityGeneration + (resumed ? 2 : 1);
+  final expectedSourceDataGeneration =
+      initialChallenge.dataState.dataGeneration + (resumed ? 1 : 0);
+  if (completionSession.sessionId.isEmpty ||
+      receipt.kind != E2eeAccountRecoveryCommitKind.replacement ||
+      receipt.attemptId != initialChallenge.attemptId ||
+      receipt.generation != expectedGeneration ||
+      receipt.keyEpoch != initialChallenge.keyEpoch + 1 ||
+      receipt.nextAction !=
+          E2eeAccountRecoveryNextAction.finishSecondDataRekey ||
+      completion.operationId != receipt.rekeyOperationId ||
+      completion.issuerDeviceId != expectedDeviceId ||
+      completion.sourceDataGeneration != expectedSourceDataGeneration ||
+      completion.targetDataGeneration != expectedSourceDataGeneration + 1 ||
+      completion.sourceKeyEpoch != initialChallenge.keyEpoch ||
+      completion.membershipGeneration != receipt.generation ||
+      completion.targetKeyEpoch != receipt.keyEpoch) {
+    throw const FormatException('账户恢复第二轮完成摘要无效');
+  }
+}
+
+bool _sameDataRekeyCompletion(
+  CloudSyncDataRekeyCompletion left,
+  CloudSyncDataRekeyCompletion right,
+) {
+  final leftAttachmentCursor = left.sourceAttachmentCursorEnd;
+  final rightAttachmentCursor = right.sourceAttachmentCursorEnd;
+  return left.proofVersion == right.proofVersion &&
+      left.operationId == right.operationId &&
+      left.issuerDeviceId == right.issuerDeviceId &&
+      left.sourceDataGeneration == right.sourceDataGeneration &&
+      left.targetDataGeneration == right.targetDataGeneration &&
+      left.sourceKeyEpoch == right.sourceKeyEpoch &&
+      left.targetKeyEpoch == right.targetKeyEpoch &&
+      _sameBytes(left.sourceSnapshotRoot, right.sourceSnapshotRoot) &&
+      left.sourceRecordCount == right.sourceRecordCount &&
+      left.sourceAttachmentCount == right.sourceAttachmentCount &&
+      left.sourceMaximumChangeSeq == right.sourceMaximumChangeSeq &&
+      left.sourceRecordCursorEnd == right.sourceRecordCursorEnd &&
+      leftAttachmentCursor?.attachmentId ==
+          rightAttachmentCursor?.attachmentId &&
+      leftAttachmentCursor?.uploadId == rightAttachmentCursor?.uploadId &&
+      left.membershipGeneration == right.membershipGeneration &&
+      _sameBytes(
+        left.membershipManifestDigest,
+        right.membershipManifestDigest,
+      ) &&
+      left.stagedRecordCount == right.stagedRecordCount &&
+      left.stagedAttachmentCount == right.stagedAttachmentCount &&
+      _sameBytes(
+        left.stagedCiphertextSetDigest,
+        right.stagedCiphertextSetDigest,
+      ) &&
+      _sameBytes(left.proofFrame, right.proofFrame) &&
+      _sameBytes(left.proofDigest, right.proofDigest) &&
+      _sameBytes(left.signature, right.signature) &&
+      left.finalizedAt == right.finalizedAt;
+}
+
+bool _allZeroBytes(Uint8List value) {
+  var difference = 0;
+  for (final byte in value) {
+    difference |= byte;
+  }
+  return difference == 0;
 }
 
 final class E2eeAccountRecoveryCheckpointSnapshot {
@@ -1514,20 +2655,18 @@ final class E2eeAccountRecoveryCommitCoordinator {
       throw StateError('账户恢复 checkpoint 不存在');
     }
     final checkpoint = snapshot.checkpoint;
-    if (checkpoint.stage != E2eeAccountRecoveryStage.authorized) {
-      throw StateError('账户恢复 checkpoint 尚未授权');
-    }
-    final persistedReceipt = checkpoint.commitReceipt;
+    final persistedReceipt = _checkpointCommitReceipt(checkpoint.progress);
     if (persistedReceipt != null) return persistedReceipt;
-    final prepared = checkpoint.preparedCommit;
-    if (prepared == null) {
-      throw StateError('账户恢复 checkpoint 尚未准备成员提交');
-    }
-    if (checkpoint.localTransitionPlan == null) {
-      throw StateError('账户恢复 checkpoint 尚未准备本地提交计划');
-    }
-    final expiresAt = checkpoint.recoveryTokenExpiresAt;
-    if (expiresAt == null || !_now().toUtc().isBefore(expiresAt)) {
+    final prepared = switch (checkpoint.progress) {
+      E2eeAccountRecoveryResumePreparedProgress(:final transition) =>
+        transition.commit,
+      E2eeAccountRecoveryReplacementPreparedProgress(:final transition) =>
+        transition.commit,
+      _ => throw StateError('账户恢复 checkpoint 尚未准备成员提交'),
+    };
+    final authorization = _checkpointAuthorization(checkpoint.progress);
+    if (authorization == null ||
+        !_now().toUtc().isBefore(authorization.recoveryTokenExpiresAt)) {
       throw const E2eeAccountRecoveryExpired();
     }
 
@@ -1550,10 +2689,18 @@ final class E2eeAccountRecoveryCommitCoordinator {
         expectedEnvelopeDigest: snapshot.envelopeDigest,
         checkpoint: committed,
       );
-      return advanced.checkpoint.commitReceipt!;
+      final advancedReceipt = _checkpointCommitReceipt(
+        advanced.checkpoint.progress,
+      );
+      if (advancedReceipt == null) {
+        throw StateError('账户恢复成员提交回执未持久化');
+      }
+      return advancedReceipt;
     } on StateError {
       final raced = await _checkpointPersistence.read();
-      final racedReceipt = raced?.checkpoint.commitReceipt;
+      final racedReceipt = raced == null
+          ? null
+          : _checkpointCommitReceipt(raced.checkpoint.progress);
       if (racedReceipt != null &&
           _sameAccountRecoveryCommitEffect(racedReceipt, receipt)) {
         return racedReceipt;
@@ -1642,7 +2789,7 @@ final class E2eeAccountRecoveryAuthorizer {
         );
         checkpointSnapshot = await _checkpointPersistence.create(checkpoint);
         checkpoint = checkpointSnapshot.checkpoint;
-      } else if (checkpoint.stage == E2eeAccountRecoveryStage.proofReady) {
+      } else if (checkpoint.progress is E2eeAccountRecoveryProofReadyProgress) {
         E2eeAccountRecoveryAuthorizedState? authorizedState;
         try {
           authorizedState = await _transport.getAuthorizedState(
@@ -1670,9 +2817,11 @@ final class E2eeAccountRecoveryAuthorizer {
           checkpoint = checkpointSnapshot.checkpoint;
         }
       }
-      if (checkpoint.stage == E2eeAccountRecoveryStage.authorized) {
-        final expiresAt = checkpoint.recoveryTokenExpiresAt;
-        if (expiresAt == null || !now.isBefore(expiresAt)) {
+      final durableAuthorization = _checkpointAuthorization(
+        checkpoint.progress,
+      );
+      if (durableAuthorization != null) {
+        if (!now.isBefore(durableAuthorization.recoveryTokenExpiresAt)) {
           throw const E2eeAccountRecoveryExpired();
         }
       } else if (!now.isBefore(checkpoint.challenge.expiresAt)) {
@@ -1681,8 +2830,7 @@ final class E2eeAccountRecoveryAuthorizer {
 
       final challenge = checkpoint.challenge;
       final attemptId = checkpoint.attemptId;
-      final authorization =
-          checkpoint.stage == E2eeAccountRecoveryStage.authorized
+      final authorization = durableAuthorization != null
           ? E2eeAccountRecoveryBearer.recovery(checkpoint.recoveryToken)
           : E2eeAccountRecoveryBearer.onboarding(onboardingToken);
       final history = await _readFrozenHistory(
@@ -1715,7 +2863,7 @@ final class E2eeAccountRecoveryAuthorizer {
       }
       nonceProof = proof.takeNonceProof();
       trustSignature = proof.takeTrustSignature();
-      if (checkpoint.stage == E2eeAccountRecoveryStage.challenged) {
+      if (checkpoint.progress is E2eeAccountRecoveryChallengedProgress) {
         final proofReady = checkpoint.withProof(
           nonceProof: nonceProof,
           trustSignature: trustSignature,
@@ -1749,13 +2897,16 @@ final class E2eeAccountRecoveryAuthorizer {
         }
       }
 
-      if (checkpoint.stage == E2eeAccountRecoveryStage.authorized) {
+      final persistedAuthorization = _checkpointAuthorization(
+        checkpoint.progress,
+      );
+      if (persistedAuthorization != null) {
         retainLease = true;
         return E2eeAuthorizedAccountRecovery._(
           attemptId: attemptId,
           recoveryToken: recoveryToken,
-          recoveryTokenExpiresAt: checkpoint.recoveryTokenExpiresAt!,
-          nextAction: checkpoint.nextAction!,
+          recoveryTokenExpiresAt: persistedAuthorization.recoveryTokenExpiresAt,
+          nextAction: persistedAuthorization.nextAction,
           challenge: challenge,
           keyLease: proof.keyLease,
         );
@@ -2058,6 +3209,13 @@ Uint8List _fixedMutableBytes(Uint8List value, int length, String field) {
   final copy = Uint8List.fromList(value);
   value.fillRange(0, value.length, 0);
   return copy;
+}
+
+Uint8List _fixedMutableCopy(Uint8List value, int length, String field) {
+  if (value.length != length) {
+    throw FormatException('$field 长度必须为 $length 字节');
+  }
+  return Uint8List.fromList(value);
 }
 
 Uint8List _rangedBytes(

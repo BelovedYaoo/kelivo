@@ -467,8 +467,8 @@ void main() {
     expect(transport.receivedRecoveryToken?.value, recoveryToken.value);
     expect(authorized.recoveryToken.value, recoveryToken.value);
     expect(
-      checkpointPersistence.current?.stage,
-      E2eeAccountRecoveryStage.authorized,
+      checkpointPersistence.current?.phase,
+      E2eeAccountRecoveryCheckpointPhase.authorized,
     );
     expect(passphrase, everyElement(0));
   });
@@ -522,8 +522,8 @@ void main() {
     ]);
     expect(proofCore.lastLease?.closed, isTrue);
     expect(
-      checkpointPersistence.current?.stage,
-      E2eeAccountRecoveryStage.proofReady,
+      checkpointPersistence.current?.phase,
+      E2eeAccountRecoveryCheckpointPhase.proofReady,
     );
     expect(passphrase, everyElement(0));
   });
@@ -588,8 +588,8 @@ void main() {
     expect(transport.receivedRecoveryToken, isNull);
     expect(authorized.recoveryToken.value, recoveryToken.value);
     expect(
-      checkpointPersistence.current?.stage,
-      E2eeAccountRecoveryStage.authorized,
+      checkpointPersistence.current?.phase,
+      E2eeAccountRecoveryCheckpointPhase.authorized,
     );
   });
 
@@ -597,7 +597,7 @@ void main() {
     final callOrder = <String>[];
     final prepared = _preparedReplacementCheckpoint();
     final request =
-        prepared.preparedCommit as E2eeAccountRecoveryReplacementCommit;
+        _preparedCommit(prepared) as E2eeAccountRecoveryReplacementCommit;
     final receipt = _replacementReceipt(
       request,
       E2eeAccountRecoveryCommitResult.committed,
@@ -623,21 +623,25 @@ void main() {
     expect(callOrder, <String>[
       'checkpoint:read',
       'commit:replacement',
-      'checkpoint:authorized',
+      'checkpoint:replacementCommitted',
     ]);
     expect(transport.receivedReplacementRequest, same(request));
     expect(committed.membershipOperationId, request.membership.operationId);
+    final committedProgress =
+        persistence.current!.progress
+            as E2eeAccountRecoveryReplacementCommittedProgress;
     expect(
-      persistence.current?.nextAction,
+      committedProgress.receipt.nextAction,
       E2eeAccountRecoveryNextAction.finishSecondDataRekey,
     );
-    expect(persistence.current?.commitReceipt?.result, committed.result);
+    expect(committedProgress.receipt.result, committed.result);
   });
 
   test('成员提交协调器使用持久化 rekeyOperationId 提交 resume', () async {
     final callOrder = <String>[];
     final prepared = _preparedResumeCheckpoint();
-    final request = prepared.preparedCommit as E2eeAccountRecoveryResumeCommit;
+    final request =
+        _preparedCommit(prepared) as E2eeAccountRecoveryResumeCommit;
     final receipt = _resumeReceipt(request);
     final persistence = _MemoryCheckpointPersistence(
       callOrder,
@@ -660,12 +664,15 @@ void main() {
     expect(callOrder, <String>[
       'checkpoint:read',
       'commit:resume',
-      'checkpoint:authorized',
+      'checkpoint:resumeCommitted',
     ]);
     expect(transport.receivedResumeRequest, same(request));
     expect(committed.rekeyOperationId, request.rekeyOperationId);
     expect(
-      persistence.current?.nextAction,
+      (persistence.current!.progress
+              as E2eeAccountRecoveryResumeCommittedProgress)
+          .receipt
+          .nextAction,
       E2eeAccountRecoveryNextAction.finishFirstDataRekey,
     );
   });
@@ -674,7 +681,7 @@ void main() {
     final callOrder = <String>[];
     final prepared = _preparedReplacementCheckpoint();
     final request =
-        prepared.preparedCommit as E2eeAccountRecoveryReplacementCommit;
+        _preparedCommit(prepared) as E2eeAccountRecoveryReplacementCommit;
     final receipt = _replacementReceipt(
       request,
       E2eeAccountRecoveryCommitResult.replayed,
@@ -725,8 +732,14 @@ void main() {
     );
 
     expect(callOrder, <String>['checkpoint:read']);
-    expect(persistence.current?.preparedCommit, same(prepared.preparedCommit));
-    expect(persistence.current?.commitReceipt, isNull);
+    expect(
+      _preparedCommit(persistence.current!),
+      same(_preparedCommit(prepared)),
+    );
+    expect(
+      persistence.current!.phase,
+      E2eeAccountRecoveryCheckpointPhase.replacementPrepared,
+    );
     expect(transport.receivedReplacementRequest, isNull);
   });
 
@@ -753,15 +766,21 @@ void main() {
     await expectLater(coordinator.commitPrepared(), throwsA(same(failure)));
 
     expect(callOrder, <String>['checkpoint:read', 'commit:replacement']);
-    expect(persistence.current?.preparedCommit, same(prepared.preparedCommit));
-    expect(persistence.current?.commitReceipt, isNull);
+    expect(
+      _preparedCommit(persistence.current!),
+      same(_preparedCommit(prepared)),
+    );
+    expect(
+      persistence.current!.phase,
+      E2eeAccountRecoveryCheckpointPhase.replacementPrepared,
+    );
   });
 
   test('成员提交 CAS 竞争时接受同效 replayed 回执', () async {
     final callOrder = <String>[];
     final prepared = _preparedReplacementCheckpoint();
     final request =
-        prepared.preparedCommit as E2eeAccountRecoveryReplacementCommit;
+        _preparedCommit(prepared) as E2eeAccountRecoveryReplacementCommit;
     final committedReceipt = _replacementReceipt(
       request,
       E2eeAccountRecoveryCommitResult.committed,
@@ -792,11 +811,17 @@ void main() {
     expect(callOrder, <String>[
       'checkpoint:read',
       'commit:replacement',
-      'checkpoint:authorized',
+      'checkpoint:replacementCommitted',
       'checkpoint:read',
     ]);
     expect(committed.result, E2eeAccountRecoveryCommitResult.replayed);
-    expect(persistence.current?.commitReceipt?.result, committed.result);
+    expect(
+      (persistence.current!.progress
+              as E2eeAccountRecoveryReplacementCommittedProgress)
+          .receipt
+          .result,
+      committed.result,
+    );
   });
 }
 
@@ -838,36 +863,33 @@ E2eeAccountRecoveryCheckpoint _preparedResumeCheckpoint() {
             nextAction: E2eeAccountRecoveryNextAction.recoverResume,
           );
   final nextManifest = _bytes(476, 0x73);
-  return authorized
-      .withPreparedCommit(
-        E2eeAccountRecoveryResumeCommit(
-          attemptId: challenge.attemptId,
-          membership: E2eeAccountRecoveryMembershipCommit(
-            expectedGeneration: challenge.securityGeneration,
-            expectedKeyEpoch: challenge.keyEpoch,
-            expectedMembershipManifestDigest:
-                CloudSyncMembershipManifestDigest.fromBytes(
-                  challenge.membershipManifestDigest,
-                ),
-            operationId: _uuid(9),
-            nextMembershipManifest: nextManifest,
-            nextMembershipManifestDigest:
-                CloudSyncMembershipManifestDigest.fromBytes(
-                  _digest(nextManifest),
-                ),
-            envelope: E2eeAccountRecoveryEnvelope(
-              envelopeVersion: 1,
-              keyEpoch: challenge.keyEpoch,
-              accountKeyEnvelope: _bytes(
-                cloudSyncAccountKeyEnvelopeBytes,
-                0x74,
-              ),
+  return authorized.prepareTransition(
+    commit: E2eeAccountRecoveryResumeCommit(
+      attemptId: challenge.attemptId,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: challenge.securityGeneration,
+        expectedKeyEpoch: challenge.keyEpoch,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              challenge.membershipManifestDigest,
             ),
-          ),
-          rekeyOperationId: challenge.dataState.operationId!,
+        operationId: _uuid(9),
+        nextMembershipManifest: nextManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(_digest(nextManifest)),
+        envelope: E2eeAccountRecoveryEnvelope(
+          envelopeVersion: 1,
+          keyEpoch: challenge.keyEpoch,
+          accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0x74),
         ),
-      )
-      .withLocalTransitionPlan(_localTransitionPlan(0x75));
+      ),
+      rekeyOperationId: challenge.dataState.operationId!,
+    ),
+    localTransitionPlan: _localTransitionPlan(
+      0x75,
+      sourceDataGeneration: challenge.dataState.dataGeneration,
+    ),
+  );
 }
 
 E2eeAccountRecoveryCheckpoint _preparedReplacementCheckpoint() {
@@ -887,43 +909,40 @@ E2eeAccountRecoveryCheckpoint _preparedReplacementCheckpoint() {
             nextAction: E2eeAccountRecoveryNextAction.recoverReplace,
           );
   final nextManifest = _bytes(476, 0x91);
-  return authorized
-      .withPreparedCommit(
-        E2eeAccountRecoveryReplacementCommit(
-          attemptId: fixture.challenge.attemptId,
-          membership: E2eeAccountRecoveryMembershipCommit(
-            expectedGeneration: fixture.challenge.securityGeneration,
-            expectedKeyEpoch: fixture.challenge.keyEpoch,
-            expectedMembershipManifestDigest:
-                CloudSyncMembershipManifestDigest.fromBytes(
-                  fixture.challenge.membershipManifestDigest,
-                ),
-            operationId: _uuid(6),
-            nextMembershipManifest: nextManifest,
-            nextMembershipManifestDigest:
-                CloudSyncMembershipManifestDigest.fromBytes(
-                  _digest(nextManifest),
-                ),
-            envelope: E2eeAccountRecoveryEnvelope(
-              envelopeVersion: 1,
-              keyEpoch: fixture.challenge.keyEpoch + 1,
-              accountKeyEnvelope: _bytes(
-                cloudSyncAccountKeyEnvelopeBytes,
-                0x92,
-              ),
+  return authorized.prepareTransition(
+    commit: E2eeAccountRecoveryReplacementCommit(
+      attemptId: fixture.challenge.attemptId,
+      membership: E2eeAccountRecoveryMembershipCommit(
+        expectedGeneration: fixture.challenge.securityGeneration,
+        expectedKeyEpoch: fixture.challenge.keyEpoch,
+        expectedMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(
+              fixture.challenge.membershipManifestDigest,
             ),
-          ),
-          authorization: E2eeAccountRecoveryReplacementAuthorization.initial(
-            challengeRequestDigest: fixture.challenge.requestDigest,
-          ),
-          nextRecoveryCapsuleVersion:
-              fixture.challenge.recoveryCapsuleVersion + 1,
-          nextRecoveryCapsule: _bytes(156, 0x93),
-          completionSessionId: _uuid(7),
-          completionSessionToken: CloudSyncFullSessionToken.generate(),
+        operationId: _uuid(6),
+        nextMembershipManifest: nextManifest,
+        nextMembershipManifestDigest:
+            CloudSyncMembershipManifestDigest.fromBytes(_digest(nextManifest)),
+        envelope: E2eeAccountRecoveryEnvelope(
+          envelopeVersion: 1,
+          keyEpoch: fixture.challenge.keyEpoch + 1,
+          accountKeyEnvelope: _bytes(cloudSyncAccountKeyEnvelopeBytes, 0x92),
         ),
-      )
-      .withLocalTransitionPlan(_localTransitionPlan(0x95));
+      ),
+      authorization: E2eeAccountRecoveryReplacementAuthorization.initial(
+        challengeRequestDigest: fixture.challenge.requestDigest,
+      ),
+      nextRecoveryCapsuleVersion: fixture.challenge.recoveryCapsuleVersion + 1,
+      nextRecoveryCapsule: _bytes(156, 0x93),
+      completionSessionId: _uuid(7),
+      completionSessionToken: CloudSyncFullSessionToken.generate(),
+    ),
+    localTransitionPlan: _localTransitionPlan(
+      0x95,
+      replacement: true,
+      sourceDataGeneration: fixture.challenge.dataState.dataGeneration,
+    ),
+  );
 }
 
 E2eeAccountRecoveryCommitReceipt _replacementReceipt(
@@ -1415,7 +1434,7 @@ final class _MemoryCheckpointPersistence
     required Uint8List expectedEnvelopeDigest,
     required E2eeAccountRecoveryCheckpoint checkpoint,
   }) async {
-    callOrder.add('checkpoint:${checkpoint.stage.name}');
+    callOrder.add('checkpoint:${checkpoint.phase.name}');
     final concurrent = concurrentAdvanceCheckpoint;
     if (concurrent != null) {
       _snapshot = E2eeAccountRecoveryCheckpointSnapshot(
@@ -1428,7 +1447,9 @@ final class _MemoryCheckpointPersistence
       checkpoint: checkpoint,
       envelopeDigest: _bytes(
         32,
-        checkpoint.stage == E2eeAccountRecoveryStage.proofReady ? 0x92 : 0x93,
+        checkpoint.phase == E2eeAccountRecoveryCheckpointPhase.proofReady
+            ? 0x92
+            : 0x93,
       ),
     );
     _snapshot = snapshot;
@@ -1442,11 +1463,34 @@ final class _MemoryCheckpointPersistence
   }
 }
 
-E2eeAccountRecoveryLocalTransitionPlan _localTransitionPlan(int seed) {
+E2eeAccountRecoveryPreparedCommit _preparedCommit(
+  E2eeAccountRecoveryCheckpoint checkpoint,
+) {
+  return switch (checkpoint.progress) {
+    E2eeAccountRecoveryResumePreparedProgress(:final transition) =>
+      transition.commit,
+    E2eeAccountRecoveryReplacementPreparedProgress(:final transition) =>
+      transition.commit,
+    _ => throw StateError('测试 checkpoint 不处于 prepared 阶段'),
+  };
+}
+
+E2eeAccountRecoveryLocalTransitionPlan _localTransitionPlan(
+  int seed, {
+  bool replacement = false,
+  int sourceDataGeneration = 1,
+}) {
   return E2eeAccountRecoveryLocalTransitionPlan(
     sourceStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed),
     unprunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed + 1),
     prunedStateBlob: _bytes(DeviceStateBlobStore.blobLength, seed + 2),
+    deviceKeyVersion: 1,
+    userId: _uuid(4),
+    sourceDataGeneration: sourceDataGeneration,
+    operationAuthorizationDigest: replacement
+        ? Uint8List(cloudSyncMembershipManifestDigestBytes)
+        : _bytes(cloudSyncMembershipManifestDigestBytes, seed + 3),
+    continuation: _bytes(e2eeAccountRecoveryNativeContinuationBytes, seed + 4),
   );
 }
 
