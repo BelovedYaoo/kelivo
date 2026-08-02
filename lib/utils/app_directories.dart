@@ -111,11 +111,11 @@ class AppDirectories {
     return _getManagedDirectory(const <String>['cache']);
   }
 
-  /// Gets the platform-provided application cache directory.
+  /// 获取平台提供的应用缓存目录。
   ///
-  /// - Android: /data/user/0/`<package>`/cache
-  /// - iOS/macOS: Caches directory
-  /// - Windows/Linux: platform cache directory (app-specific on Linux via XDG)
+  /// - Android：平台 SDK 返回的应用缓存目录
+  /// - iOS/macOS：Caches 目录
+  /// - Windows/Linux：平台缓存目录，Linux 使用应用专属 XDG 路径
   static Future<Directory> getSystemCacheDirectory() async {
     if (_accountWorkspace) {
       return _getManagedDirectory(const <String>['cache', 'system']);

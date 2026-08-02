@@ -91,8 +91,6 @@ final class AccountWorkspaceRuntime {
   static const _sessionRecordName = 'session-v2';
   static const _localPreferencesPrefix = 'flutter.';
   static const _accountPreferencesPrefix = 'kelivo.account.';
-  static const _androidUserZeroAlias = '/data/user/0';
-  static const _androidUserZeroCanonical = '/data/data';
 
   final Directory installationRoot;
   final Directory _workspaceRoot;
@@ -1115,31 +1113,20 @@ final class AccountWorkspaceRuntime {
   }) async {
     var current = p.normalize(p.absolute(path));
     var missingTailAllowed = allowMissingTail;
-    final androidUserZeroAliasActive = await _hasTrustedAndroidUserZeroAlias(
-      current,
-    );
     while (true) {
       final type = await FileSystemEntity.type(current, followLinks: false);
       if (type == FileSystemEntityType.notFound) {
         if (!missingTailAllowed) throw StateError('${errorCode}_missing');
       } else {
         missingTailAllowed = false;
-        final isAndroidUserZeroAlias =
-            androidUserZeroAliasActive &&
-            p.equals(current, _androidUserZeroAlias);
-        if (type != FileSystemEntityType.directory &&
-            !(isAndroidUserZeroAlias && type == FileSystemEntityType.link)) {
+        if (type != FileSystemEntityType.directory) {
           throw StateError(errorCode);
         }
         try {
           final canonical = p.normalize(
             await Directory(current).resolveSymbolicLinks(),
           );
-          final expectedCanonical = _expectedInstallationCanonicalPath(
-            current,
-            androidUserZeroAliasActive: androidUserZeroAliasActive,
-          );
-          if (!p.equals(canonical, expectedCanonical)) {
+          if (!p.equals(canonical, current)) {
             throw StateError(errorCode);
           }
         } on FileSystemException {
@@ -1150,46 +1137,6 @@ final class AccountWorkspaceRuntime {
       if (p.equals(parent, current)) return;
       current = parent;
     }
-  }
-
-  static Future<bool> _hasTrustedAndroidUserZeroAlias(String path) async {
-    if (!Platform.isAndroid ||
-        (!p.equals(path, _androidUserZeroAlias) &&
-            !p.isWithin(_androidUserZeroAlias, path))) {
-      return false;
-    }
-    final type = await FileSystemEntity.type(
-      _androidUserZeroAlias,
-      followLinks: false,
-    );
-    if (type != FileSystemEntityType.link) return false;
-    try {
-      final canonical = p.normalize(
-        await Directory(_androidUserZeroAlias).resolveSymbolicLinks(),
-      );
-      return p.equals(canonical, _androidUserZeroCanonical);
-    } on FileSystemException {
-      return false;
-    }
-  }
-
-  static String _expectedInstallationCanonicalPath(
-    String path, {
-    required bool androidUserZeroAliasActive,
-  }) {
-    if (!androidUserZeroAliasActive) return path;
-    if (p.equals(path, _androidUserZeroAlias)) {
-      return _androidUserZeroCanonical;
-    }
-    if (p.isWithin(_androidUserZeroAlias, path)) {
-      return p.normalize(
-        p.join(
-          _androidUserZeroCanonical,
-          p.relative(path, from: _androidUserZeroAlias),
-        ),
-      );
-    }
-    return path;
   }
 
   static String _workspaceKey(String accountScope) {
