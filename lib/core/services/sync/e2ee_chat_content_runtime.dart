@@ -1,7 +1,9 @@
 import 'dart:async';
 import 'dart:developer' as developer;
 import 'dart:io';
+import 'dart:isolate';
 
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:kelivo_secure_core/kelivo_secure_core.dart';
 import 'package:path/path.dart' as p;
@@ -87,6 +89,7 @@ final class E2eeChatContentRuntime
     implements
         CloudSyncContentRuntime,
         E2eeConfigVaultWriteExecutor,
+        ConfigAssetSyncWriteExecutor,
         StructuredAttachmentSyncWriteExecutor {
   factory E2eeChatContentRuntime.takeOwnership({
     required CloudSyncAccountSession session,
@@ -827,6 +830,81 @@ final class E2eeChatContentRuntime
   }
 
   @override
+  Future<List<MaterializedConfigAsset>> materializeLocalConfigAssets(
+    Iterable<LocalConfigAssetInput> assets,
+  ) async {
+    final inputs = List<LocalConfigAssetInput>.unmodifiable(assets);
+    if (inputs.isEmpty) return const <MaterializedConfigAsset>[];
+    await initialize();
+    _requireReadyForLocalOperation();
+    _activeLocalWrites++;
+    try {
+      final fileStore = _attachmentFileStore;
+      if (fileStore == null) {
+        throw StateError('E2EE 内容运行时缺少配置资产文件存储');
+      }
+      final keys = <E2eeConfigAssetKey>{};
+      final materialized = <MaterializedConfigAsset>[];
+      for (final input in inputs) {
+        if (!keys.add(input.key)) {
+          throw StateError('配置资产物化不得包含重复目标');
+        }
+        _validateLocalConfigAssetInput(input);
+        final sourcePath = SandboxPathResolver.resolveUserSelectedSource(
+          input.sourcePath,
+        );
+        final source = File(sourcePath);
+        if (await FileSystemEntity.type(source.path, followLinks: false) !=
+            FileSystemEntityType.file) {
+          throw StateError('配置资产源文件不可用');
+        }
+        final before = await source.stat();
+        if (before.size < 0 ||
+            before.size > KelivoAttachmentLimits.maxTotalPlaintextBytes) {
+          throw const FormatException('配置资产文件长度超出限制');
+        }
+        final measured = await _measureConfigAssetFile(source.path);
+        if (await FileSystemEntity.type(source.path, followLinks: false) !=
+            FileSystemEntityType.file) {
+          throw StateError('配置资产源文件在摘要期间被替换');
+        }
+        final after = await source.stat();
+        if (before.size != after.size ||
+            before.modified != after.modified ||
+            measured.bytes != after.size) {
+          throw StateError('配置资产源文件在摘要期间发生变化');
+        }
+        final contentSha256 = _decodeSha256Hex(measured.contentHash);
+        final stored = await fileStore.publish(
+          location: E2eeAttachmentFileLocation.content(
+            contentSha256: contentSha256,
+          ),
+          source: source.openRead(),
+        );
+        if (stored.bytes != measured.bytes ||
+            _sha256Hex(stored.sha256) != measured.contentHash) {
+          throw StateError('配置资产内容寻址落盘结果不一致');
+        }
+        materialized.add(
+          MaterializedConfigAsset(
+            key: input.key,
+            assetId: 'asset_${measured.contentHash}',
+            path: stored.storagePath,
+            contentHash: measured.contentHash,
+            byteSize: measured.bytes,
+            kind: input.kind,
+            displayName: input.displayName,
+            mediaType: input.mediaType,
+          ),
+        );
+      }
+      return List<MaterializedConfigAsset>.unmodifiable(materialized);
+    } finally {
+      _finishLocalOperation();
+    }
+  }
+
+  @override
   Future<T> runLocalBatchWithMessageAttachments<T>({
     required Iterable<SyncEntityKey> keys,
     required Iterable<StructuredMessageAttachmentSyncTarget> targets,
@@ -917,7 +995,7 @@ final class E2eeChatContentRuntime
       );
       if (persistedTarget) {
         _markAttachmentUploadWork();
-        if (retirements.isNotEmpty) _scheduleMaterializedSourceRetirement();
+        if (retirements.isNotEmpty) _scheduleAssetMaintenance();
       }
       if (_state == E2eeChatContentRuntimeState.ready) {
         _scheduler?.wake();
@@ -929,6 +1007,100 @@ final class E2eeChatContentRuntime
           _materializedSourceRetirements[attachment] = null;
         }
       }
+      _finishLocalOperation();
+    }
+  }
+
+  @override
+  Future<T> runLocalBatchWithConfigAssets<T>({
+    required Iterable<SyncEntityKey> keys,
+    required Iterable<ConfigAssetSyncTarget> targets,
+    required bool Function(T result) targetWasPersisted,
+    required Future<T> Function() write,
+  }) async {
+    final inputs = List<ConfigAssetSyncTarget>.unmodifiable(targets);
+    if (inputs.isEmpty) return runLocalBatch<T>(keys: keys, write: write);
+    final targetKeys = <E2eeConfigAssetKey>{};
+    for (final input in inputs) {
+      if (!targetKeys.add(input.key) ||
+          (input.asset != null && input.asset!.key != input.key)) {
+        throw StateError('配置资产事务目标重复或身份不匹配');
+      }
+    }
+    await initialize();
+    _requireReadyForLocalOperation();
+    _activeLocalWrites++;
+    try {
+      final uploads = _attachmentUploads;
+      final uploadCommands = _attachmentUploadCommands;
+      final repository = _databaseLease?.repository;
+      if (uploads == null || uploadCommands == null || repository == null) {
+        throw StateError('E2EE 内容运行时缺少配置资产上传组件');
+      }
+      final drafts = <E2eeConfigAssetKey, E2eeAttachmentUploadDraft>{};
+      for (final input in inputs) {
+        final asset = input.asset;
+        if (asset == null) continue;
+        drafts[input.key] = await uploads.prepareDraft(
+          localAssetId: asset.assetId,
+          target: E2eeConfigAssetUploadTarget(input.key),
+          sourcePath: asset.path,
+          kind: E2eeAttachmentKind.values.byName(asset.kind),
+          totalPlaintextBytes: asset.byteSize,
+          contentSha256: _decodeSha256Hex(asset.contentHash),
+          displayName: asset.displayName,
+          mediaType: asset.mediaType,
+        );
+      }
+
+      var persistedTarget = false;
+      var mayHaveOrphanedAssets = false;
+      final now = _utcNow().toUtc();
+      final result = await _runLocalBatchCore<T>(
+        keys: keys,
+        write: () async {
+          final value = await write();
+          persistedTarget = targetWasPersisted(value);
+          if (!persistedTarget) return value;
+          for (final input in inputs) {
+            final asset = input.asset;
+            if (asset == null) {
+              mayHaveOrphanedAssets |= await repository.e2eeConfigAssetCommands
+                  .remove(input.key);
+              continue;
+            }
+            mayHaveOrphanedAssets |= await repository.e2eeConfigAssetCommands
+                .replace(
+                  key: input.key,
+                  asset: MessageAssetRegistration(
+                    assetId: asset.assetId,
+                    contentHash: asset.contentHash,
+                    path: asset.path,
+                    byteSize: asset.byteSize,
+                    kind: asset.kind,
+                    displayName: asset.displayName,
+                    mediaType: asset.mediaType,
+                  ),
+                  now: now,
+                );
+            final draft = drafts[input.key];
+            if (draft == null) {
+              throw StateError('E2EE 配置资产上传草稿缺失');
+            }
+            await uploadCommands.create(draft: draft, now: now);
+          }
+          return value;
+        },
+      );
+      if (persistedTarget) {
+        if (drafts.isNotEmpty) _markAttachmentUploadWork();
+        if (mayHaveOrphanedAssets) _scheduleAssetMaintenance();
+      }
+      if (_state == E2eeChatContentRuntimeState.ready) {
+        _scheduler?.wake();
+      }
+      return result;
+    } finally {
       _finishLocalOperation();
     }
   }
@@ -1091,7 +1263,7 @@ final class E2eeChatContentRuntime
     );
   }
 
-  void _scheduleMaterializedSourceRetirement() {
+  void _scheduleAssetMaintenance() {
     final chatService = _chatService;
     if (chatService == null) return;
     unawaited(() async {
@@ -1105,7 +1277,7 @@ final class E2eeChatContentRuntime
             exception: error,
             stack: stackTrace,
             library: 'e2ee_chat_content_runtime',
-            context: ErrorDescription('收尾 E2EE 附件受管明文源文件失败'),
+            context: ErrorDescription('收尾 E2EE 受管资产失败'),
           ),
         );
       }
@@ -1357,6 +1529,43 @@ DateTime _defaultUtcNow() => DateTime.now().toUtc();
 Future<bool> _defaultAttachmentUploadWorkScanner(
   E2eeAttachmentUploadCommands commands,
 ) => commands.hasRetryableWork();
+
+void _validateLocalConfigAssetInput(LocalConfigAssetInput input) {
+  final expectedKind = switch (input.key.slot) {
+    E2eeConfigAssetSlot.avatar ||
+    E2eeConfigAssetSlot.background => E2eeAttachmentKind.image,
+    E2eeConfigAssetSlot.appFont ||
+    E2eeConfigAssetSlot.codeFont => E2eeAttachmentKind.file,
+  };
+  if (input.sourcePath.trim().isEmpty || input.kind != expectedKind.name) {
+    throw const FormatException('配置资产物化输入无效');
+  }
+  if (expectedKind == E2eeAttachmentKind.image) {
+    if (input.displayName != null || input.mediaType != null) {
+      throw const FormatException('配置图片资产不得携带文件元数据');
+    }
+    return;
+  }
+  if ((input.displayName ?? '').trim().isEmpty ||
+      (input.mediaType ?? '').trim().isEmpty) {
+    throw const FormatException('配置文件资产缺少显示名称或媒体类型');
+  }
+}
+
+Future<({String contentHash, int bytes})> _measureConfigAssetFile(String path) {
+  return Isolate.run(() async {
+    final file = File(path);
+    final digest = await sha256.bind(file.openRead()).first;
+    final bytes = await file.length();
+    if (bytes < 0 || bytes > KelivoAttachmentLimits.maxTotalPlaintextBytes) {
+      throw const FormatException('配置资产文件长度超出限制');
+    }
+    return (contentHash: digest.toString(), bytes: bytes);
+  });
+}
+
+String _sha256Hex(Uint8List value) =>
+    value.map((byte) => byte.toRadixString(16).padLeft(2, '0')).join();
 
 Uint8List _decodeSha256Hex(String value) {
   if (!RegExp(r'^[0-9a-f]{64}$').hasMatch(value)) {

@@ -86,7 +86,11 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       if (_initialized) throw StateError('E2EE 配置 Provider 桥接不能重复初始化');
       _commands = commands;
       _assetCommands = assetCommands;
-      _adapter = E2eeConfigSyncAdapter(commands: commands, now: _utcNow);
+      _adapter = E2eeConfigSyncAdapter(
+        commands: commands,
+        assetCommands: assetCommands,
+        now: _utcNow,
+      );
       try {
         await Future.wait<void>(<Future<void>>[
           _settings.ready,
@@ -302,14 +306,14 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     final assistant = _assistants.getById(id);
     if (assistant == null) return null;
     final entityKey = ConfigSyncKeys.assistant(id);
-    final avatarIdentity = await _exportAssistantAsset(
+    final avatarAsset = await _exportAssistantAsset(
       E2eeConfigAssetKey(
         entityKey: entityKey,
         slot: E2eeConfigAssetSlot.avatar,
       ),
       assistant.avatar,
     );
-    final backgroundIdentity = await _exportAssistantAsset(
+    final backgroundAsset = await _exportAssistantAsset(
       E2eeConfigAssetKey(
         entityKey: entityKey,
         slot: E2eeConfigAssetSlot.background,
@@ -320,30 +324,24 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     payload['_position'] = _assistants.assistants.indexWhere(
       (candidate) => candidate.id == id,
     );
-    payload['avatarAsset'] = avatarIdentity?.toPayload();
-    payload['backgroundAsset'] = backgroundIdentity?.toPayload();
-    if (avatarIdentity != null) payload['avatar'] = null;
-    if (backgroundIdentity != null) payload['background'] = null;
+    payload['avatarAsset'] = avatarAsset.identity?.toPayload();
+    payload['backgroundAsset'] = backgroundAsset.identity?.toPayload();
+    if (avatarAsset.managed) payload['avatar'] = null;
+    if (backgroundAsset.managed) payload['background'] = null;
     return payload;
   }
 
-  Future<E2eeConfigAssetRemoteIdentity?> _exportAssistantAsset(
+  Future<_AssistantAssetExport> _exportAssistantAsset(
     E2eeConfigAssetKey key,
     String? value,
   ) async {
-    if (!_isLocalPath(value)) return null;
+    if (!_isLocalPath(value)) return const _AssistantAssetExport.unmanaged();
     final record = await _assetCommands!.read(key);
     if (record == null ||
-        !p.equals(p.normalize(value!.trim()), record.asset.path)) {
+        !p.equals(p.normalize(value!.trim()), p.normalize(record.asset.path))) {
       throw StateError('E2EE 助手本地资产缺少匹配的受管引用');
     }
-    final identity = record.remoteIdentity;
-    if (identity == null) {
-      throw const E2eeSyncOutboxBlocked(
-        E2eeSyncOutboxBlockReason.attachmentPending,
-      );
-    }
-    return identity;
+    return _AssistantAssetExport.managed(record.remoteIdentity);
   }
 
   Map<String, Object?>? _exportMemory(String id) {
@@ -561,12 +559,18 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
     Object? payloadIdentity,
     String? portableValue,
   ) async {
-    if (payloadIdentity == null) return portableValue;
+    final record = await _assetCommands!.read(key);
+    if (payloadIdentity == null) {
+      if (record == null) return portableValue;
+      if (portableValue != null) {
+        throw StateError('E2EE 助手配置资产与可移植值冲突');
+      }
+      return record.asset.path;
+    }
     final expected = E2eeConfigAssetRemoteIdentity.fromPayload(
       payloadIdentity,
       expectedKind: E2eeAttachmentKind.image,
     );
-    final record = await _assetCommands!.read(key);
     final actual = record?.remoteIdentity;
     if (record == null ||
         actual == null ||
@@ -719,6 +723,15 @@ final class E2eeConfigProviderBinding implements E2eeConfigSyncBinding {
       throw StateError('E2EE 配置 Provider 桥接尚未就绪');
     }
   }
+}
+
+final class _AssistantAssetExport {
+  const _AssistantAssetExport.unmanaged() : managed = false, identity = null;
+
+  const _AssistantAssetExport.managed(this.identity) : managed = true;
+
+  final bool managed;
+  final E2eeConfigAssetRemoteIdentity? identity;
 }
 
 bool _sameAssetIdentity(

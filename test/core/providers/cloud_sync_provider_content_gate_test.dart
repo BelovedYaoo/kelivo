@@ -5150,6 +5150,39 @@ void main() {
     );
   });
 
+  test('E2EE 配置桥接恢复待上传头像且快照保持阻塞', () async {
+    const assistantId = 'assistant-pending-avatar';
+    final harness = await _E2eeConfigBindingHarness.create(
+      initialProfileName: 'Vault 用户',
+      initialAssistant: const Assistant(id: assistantId, name: '待上传助手'),
+      assistantAvatarAsset: const MessageAssetRegistration(
+        assetId:
+            'asset_bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        contentHash:
+            'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb',
+        path: r'D:\managed\pending-assistant-avatar.png',
+        byteSize: 8,
+        kind: 'image',
+      ),
+    );
+    addTearDown(harness.close);
+
+    expect(
+      harness.providers.assistants.getById(assistantId)?.avatar,
+      r'D:\managed\pending-assistant-avatar.png',
+    );
+    await expectLater(
+      harness.binding.readSnapshot(ConfigSyncKeys.assistant(assistantId)),
+      throwsA(
+        isA<E2eeSyncOutboxBlocked>().having(
+          (error) => error.reason,
+          'reason',
+          E2eeSyncOutboxBlockReason.attachmentPending,
+        ),
+      ),
+    );
+  });
+
   test('E2EE 生产运行时配置写入与 outbox 原子提交并触发发送', () async {
     final harness = await _E2eeRuntimeHarness.create();
     addTearDown(harness.close);
@@ -5161,6 +5194,141 @@ void main() {
 
     await _waitUntil(() => instance.records.pushCalls == 1);
     expect(instance.records.mutationCount, 1);
+    await instance.runtime.close();
+  });
+
+  test('E2EE 助手本地头像先加密上传再发送配置密文', () async {
+    final harness = await _E2eeRuntimeHarness.create();
+    addTearDown(harness.close);
+    final instance = harness.createInstance(withConfigProviders: true);
+    await instance.runtime.initialize().timeout(const Duration(seconds: 15));
+    await _waitUntil(() => instance.pull.pullCalls >= 2);
+
+    final assistants = instance.configProviders!.assistants;
+    final assistantId = await assistants.addAssistant(name: '头像助手');
+    await _waitUntil(() => instance.records.pushCalls >= 1);
+    final pushCallsBeforeAvatar = instance.records.pushCalls;
+    final uploadsBeforeMissingSource = instance.attachments.createCalls;
+    await expectLater(
+      assistants.updateAssistant(
+        assistants
+            .getById(assistantId)!
+            .copyWith(avatar: p.join(harness.root.path, 'missing-avatar.png')),
+      ),
+      throwsStateError,
+    );
+    expect(assistants.getById(assistantId)!.avatar, equals(null));
+    expect(instance.attachments.createCalls, uploadsBeforeMissingSource);
+    expect(instance.records.pushCalls, pushCallsBeforeAvatar);
+    final eventStart = instance.transportEvents.length;
+    final source = File(p.join(harness.root.path, 'selected-avatar.png'));
+    await source.writeAsBytes(<int>[1, 2, 3, 4, 5], flush: true);
+    final current = assistants.getById(assistantId)!;
+
+    await assistants.updateAssistant(current.copyWith(avatar: source.path));
+    await _waitUntil(
+      () =>
+          instance.attachments.commitCalls >= 1 &&
+          instance.records.pushCalls > pushCallsBeforeAvatar,
+    );
+
+    final managedPath = assistants.getById(assistantId)!.avatar!;
+    expect(p.equals(managedPath, source.path), isFalse);
+    expect(managedPath, contains('${p.separator}e2ee${p.separator}content'));
+    expect(await File(managedPath).exists(), isTrue);
+    expect(instance.transportEvents.skip(eventStart).take(4), <String>[
+      'attachment-create',
+      'attachment-chunk',
+      'attachment-commit',
+      'push',
+    ]);
+
+    final lease = await harness._databaseGateway.acquire(harness._databaseFile);
+    try {
+      final record = await lease.repository.e2eeConfigAssetCommands.read(
+        E2eeConfigAssetKey(
+          entityKey: ConfigSyncKeys.assistant(assistantId),
+          slot: E2eeConfigAssetSlot.avatar,
+        ),
+      );
+      expect(record, isNotNull);
+      expect(record!.asset.path, managedPath);
+      expect(record.remoteIdentity, isNotNull);
+    } finally {
+      await lease.release();
+    }
+
+    final pushCallsBeforeDuplicate = instance.records.pushCalls;
+    final commitsBeforeDuplicate = instance.attachments.commitCalls;
+    final duplicateId = await assistants.duplicateAssistant(assistantId);
+    expect(duplicateId, isNotNull);
+    await _waitUntil(
+      () =>
+          instance.attachments.commitCalls > commitsBeforeDuplicate &&
+          instance.records.pushCalls > pushCallsBeforeDuplicate,
+    );
+    expect(assistants.getById(duplicateId!)!.avatar, managedPath);
+    final duplicateLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      expect(
+        (await duplicateLease.repository.e2eeConfigAssetCommands.read(
+          E2eeConfigAssetKey(
+            entityKey: ConfigSyncKeys.assistant(duplicateId),
+            slot: E2eeConfigAssetSlot.avatar,
+          ),
+        ))?.remoteIdentity,
+        isNotNull,
+      );
+    } finally {
+      await duplicateLease.release();
+    }
+
+    final pushCallsBeforeDelete = instance.records.pushCalls;
+    expect(await assistants.deleteAssistant(duplicateId), isTrue);
+    await _waitUntil(() => instance.records.pushCalls > pushCallsBeforeDelete);
+    final deleteLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      expect(
+        await deleteLease.repository.e2eeConfigAssetCommands.read(
+          E2eeConfigAssetKey(
+            entityKey: ConfigSyncKeys.assistant(duplicateId),
+            slot: E2eeConfigAssetSlot.avatar,
+          ),
+        ),
+        equals(null),
+      );
+    } finally {
+      await deleteLease.release();
+    }
+
+    final pushCallsBeforeClear = instance.records.pushCalls;
+    final uploadCallsBeforeClear = instance.attachments.createCalls;
+    await assistants.updateAssistant(
+      assistants.getById(assistantId)!.copyWith(clearAvatar: true),
+    );
+    await _waitUntil(() => instance.records.pushCalls > pushCallsBeforeClear);
+    expect(assistants.getById(assistantId)!.avatar, equals(null));
+    expect(instance.attachments.createCalls, uploadCallsBeforeClear);
+    final clearLease = await harness._databaseGateway.acquire(
+      harness._databaseFile,
+    );
+    try {
+      expect(
+        await clearLease.repository.e2eeConfigAssetCommands.read(
+          E2eeConfigAssetKey(
+            entityKey: ConfigSyncKeys.assistant(assistantId),
+            slot: E2eeConfigAssetSlot.avatar,
+          ),
+        ),
+        equals(null),
+      );
+    } finally {
+      await clearLease.release();
+    }
     await instance.runtime.close();
   });
 }
@@ -5619,19 +5787,21 @@ final class _E2eeConfigBindingHarness {
       if (initialAssistant != null) {
         final key = ConfigSyncKeys.assistant(initialAssistant.id);
         final avatarAsset = assistantAvatarAsset;
+        final remoteIdentity = avatarAsset?.attachmentId == null
+            ? null
+            : E2eeConfigAssetRemoteIdentity(
+                attachmentId: avatarAsset!.attachmentId!,
+                uploadId: avatarAsset.uploadId!,
+                chunkKeyEpoch: avatarAsset.chunkKeyEpoch!,
+                manifestKeyEpoch: avatarAsset.manifestKeyEpoch!,
+                manifestRevision: avatarAsset.manifestRevision!,
+                kind: E2eeAttachmentKind.image,
+              );
         final assistantPayload =
             Map<String, Object?>.from(initialAssistant.toJson())
               ..['_position'] = 0
-              ..['avatarAsset'] = avatarAsset == null
-                  ? null
-                  : E2eeConfigAssetRemoteIdentity(
-                      attachmentId: avatarAsset.attachmentId!,
-                      uploadId: avatarAsset.uploadId!,
-                      chunkKeyEpoch: avatarAsset.chunkKeyEpoch!,
-                      manifestKeyEpoch: avatarAsset.manifestKeyEpoch!,
-                      manifestRevision: avatarAsset.manifestRevision!,
-                      kind: E2eeAttachmentKind.image,
-                    ).toPayload()
+              ..['avatar'] = null
+              ..['avatarAsset'] = remoteIdentity?.toPayload()
               ..['backgroundAsset'] = null;
         final encodedAssistant = E2eeSyncPayloadCodec.encode(
           entityKey: key,

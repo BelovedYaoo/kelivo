@@ -15,6 +15,7 @@ import '../../l10n/app_localizations.dart';
 import '../../utils/avatar_cache.dart';
 import '../../utils/app_directories.dart';
 import '../services/sync/config_sync_keys.dart';
+import '../services/sync/e2ee_config_asset_types.dart';
 import '../services/sync/sync_codec.dart';
 import '../services/sync/sync_write_executor.dart';
 import '../utils/batched_change_notifier.dart';
@@ -699,12 +700,24 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
         if (index == -1) return null;
         return (
           index: index,
+          source: _assistants[index],
           assistantIds: _assistants
               .map((assistant) => assistant.id)
               .toList(growable: false),
         );
       });
       if (snapshot == null) return null;
+      final configAssetExecutor = _syncWrites;
+      if (configAssetExecutor is ConfigAssetSyncWriteExecutor) {
+        return _duplicateAssistantWithConfigAssets(
+          id: id,
+          source: snapshot.source,
+          sourceIndex: snapshot.index,
+          assistantIds: snapshot.assistantIds,
+          executor: configAssetExecutor,
+          l10n: l10n,
+        );
+      }
       final newId = const Uuid().v4();
       final keys = <SyncEntityKey>[
         ConfigSyncKeys.assistant(newId),
@@ -740,36 +753,12 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
               isAvatar: false,
               newId: newId,
             );
-            final copy = source.copyWith(
-              id: newId,
+            final copy = _buildDuplicateAssistant(
+              source,
+              newId: newId,
               name: _buildCopyName(source, l10n),
               avatar: avatarCopy.value,
               background: backgroundCopy.value,
-              mcpServerIds: List<String>.of(source.mcpServerIds),
-              localToolIds: List<String>.of(source.localToolIds),
-              customHeaders: source.customHeaders
-                  .map((e) => Map<String, String>.from(e))
-                  .toList(),
-              customBody: source.customBody
-                  .map((e) => Map<String, String>.from(e))
-                  .toList(),
-              presetMessages: source.presetMessages
-                  .map((m) => PresetMessage(role: m.role, content: m.content))
-                  .toList(),
-              regexRules: source.regexRules
-                  .map(
-                    (r) => AssistantRegex(
-                      id: const Uuid().v4(),
-                      name: r.name,
-                      pattern: r.pattern,
-                      replacement: r.replacement,
-                      scopes: List<AssistantRegexScope>.of(r.scopes),
-                      visualOnly: r.visualOnly,
-                      replaceOnly: r.replaceOnly,
-                      enabled: r.enabled,
-                    ),
-                  )
-                  .toList(),
             );
             final nextAssistants = List<Assistant>.of(_assistants)
               ..insert(currentIndex + 1, copy);
@@ -787,8 +776,141 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
     });
   }
 
+  Future<String?> _duplicateAssistantWithConfigAssets({
+    required String id,
+    required Assistant source,
+    required int sourceIndex,
+    required List<String> assistantIds,
+    required ConfigAssetSyncWriteExecutor executor,
+    required AppLocalizations? l10n,
+  }) async {
+    final newId = const Uuid().v4();
+    final entityKey = ConfigSyncKeys.assistant(newId);
+    final avatarKey = E2eeConfigAssetKey(
+      entityKey: entityKey,
+      slot: E2eeConfigAssetSlot.avatar,
+    );
+    final backgroundKey = E2eeConfigAssetKey(
+      entityKey: entityKey,
+      slot: E2eeConfigAssetSlot.background,
+    );
+    final inputs = <LocalConfigAssetInput>[
+      if (_isLocalAssistantAssetPath(source.avatar))
+        LocalConfigAssetInput(
+          key: avatarKey,
+          sourcePath: source.avatar!.trim(),
+          kind: 'image',
+        ),
+      if (_isLocalAssistantAssetPath(source.background))
+        LocalConfigAssetInput(
+          key: backgroundKey,
+          sourcePath: source.background!.trim(),
+          kind: 'image',
+        ),
+    ];
+    final materialized = <E2eeConfigAssetKey, MaterializedConfigAsset>{
+      for (final asset in await executor.materializeLocalConfigAssets(inputs))
+        asset.key: asset,
+    };
+    if (materialized.length != inputs.length) {
+      throw StateError('E2EE 复制助手配置资产物化结果不完整');
+    }
+    final avatarAsset = materialized[avatarKey];
+    final backgroundAsset = materialized[backgroundKey];
+    final keys = <SyncEntityKey>[
+      entityKey,
+      ...assistantIds.skip(sourceIndex + 1).map(ConfigSyncKeys.assistant),
+    ];
+    return executor.runLocalBatchWithConfigAssets<String?>(
+      keys: keys,
+      targets: <ConfigAssetSyncTarget>[
+        if (avatarAsset != null)
+          ConfigAssetSyncTarget(key: avatarKey, asset: avatarAsset),
+        if (backgroundAsset != null)
+          ConfigAssetSyncTarget(key: backgroundKey, asset: backgroundAsset),
+      ],
+      targetWasPersisted: (result) => result != null,
+      write: () => _mutations.run(() async {
+        final currentIds = _assistants
+            .map((assistant) => assistant.id)
+            .toList(growable: false);
+        if (!listEquals(currentIds, assistantIds)) {
+          throw StateError('助手列表在配置资产物化期间已发生变化');
+        }
+        final currentIndex = _assistants.indexWhere(
+          (assistant) => assistant.id == id,
+        );
+        if (currentIndex < 0) return null;
+        if (!identical(_assistants[currentIndex], source)) {
+          throw StateError('助手在配置资产物化期间已发生变化');
+        }
+        final copy = _buildDuplicateAssistant(
+          source,
+          newId: newId,
+          name: _buildCopyName(source, l10n),
+          avatar: avatarAsset?.path ?? source.avatar,
+          background: backgroundAsset?.path ?? source.background,
+        );
+        final nextAssistants = List<Assistant>.of(_assistants)
+          ..insert(currentIndex + 1, copy);
+        await _commitAndPublish(_currentState(assistants: nextAssistants));
+        return copy.id;
+      }),
+    );
+  }
+
+  Assistant _buildDuplicateAssistant(
+    Assistant source, {
+    required String newId,
+    required String name,
+    required String? avatar,
+    required String? background,
+  }) {
+    return source.copyWith(
+      id: newId,
+      name: name,
+      avatar: avatar,
+      background: background,
+      clearAvatar: avatar == null,
+      clearBackground: background == null,
+      mcpServerIds: List<String>.of(source.mcpServerIds),
+      localToolIds: List<String>.of(source.localToolIds),
+      customHeaders: source.customHeaders
+          .map((entry) => Map<String, String>.from(entry))
+          .toList(),
+      customBody: source.customBody
+          .map((entry) => Map<String, String>.from(entry))
+          .toList(),
+      presetMessages: source.presetMessages
+          .map(
+            (message) =>
+                PresetMessage(role: message.role, content: message.content),
+          )
+          .toList(),
+      regexRules: source.regexRules
+          .map(
+            (rule) => AssistantRegex(
+              id: const Uuid().v4(),
+              name: rule.name,
+              pattern: rule.pattern,
+              replacement: rule.replacement,
+              scopes: List<AssistantRegexScope>.of(rule.scopes),
+              visualOnly: rule.visualOnly,
+              replaceOnly: rule.replaceOnly,
+              enabled: rule.enabled,
+            ),
+          )
+          .toList(),
+    );
+  }
+
   Future<void> updateAssistant(Assistant updated) async {
     await ready;
+    final configAssetExecutor = _syncWrites;
+    if (configAssetExecutor is ConfigAssetSyncWriteExecutor) {
+      await _updateAssistantWithConfigAssets(updated, configAssetExecutor);
+      return;
+    }
     await _localOperations.run(() async {
       await _syncWrites.runLocal<void>(
         key: ConfigSyncKeys.assistant(updated.id),
@@ -901,6 +1023,131 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
           }
         }),
       );
+    });
+  }
+
+  Future<void> _updateAssistantWithConfigAssets(
+    Assistant updated,
+    ConfigAssetSyncWriteExecutor executor,
+  ) async {
+    await _localOperations.run(() async {
+      final previous = await _mutations.run(() async {
+        final index = _assistants.indexWhere(
+          (assistant) => assistant.id == updated.id,
+        );
+        return index < 0 ? null : _assistants[index];
+      });
+      if (previous == null) return;
+
+      final rawAvatar = (updated.avatar ?? '').trim();
+      final previousAvatar = (previous.avatar ?? '').trim();
+      final avatarChanged = rawAvatar != previousAvatar;
+      final rawBackground = (updated.background ?? '').trim();
+      final previousBackground = (previous.background ?? '').trim();
+      final backgroundChanged = rawBackground != previousBackground;
+      final entityKey = ConfigSyncKeys.assistant(updated.id);
+      final avatarKey = E2eeConfigAssetKey(
+        entityKey: entityKey,
+        slot: E2eeConfigAssetSlot.avatar,
+      );
+      final backgroundKey = E2eeConfigAssetKey(
+        entityKey: entityKey,
+        slot: E2eeConfigAssetSlot.background,
+      );
+      final localInputs = <LocalConfigAssetInput>[
+        if (avatarChanged && _isLocalAssistantAssetPath(updated.avatar))
+          LocalConfigAssetInput(
+            key: avatarKey,
+            sourcePath: rawAvatar,
+            kind: 'image',
+          ),
+        if (backgroundChanged && _isLocalAssistantAssetPath(updated.background))
+          LocalConfigAssetInput(
+            key: backgroundKey,
+            sourcePath: rawBackground,
+            kind: 'image',
+          ),
+      ];
+      final materialized = <E2eeConfigAssetKey, MaterializedConfigAsset>{
+        for (final asset in await executor.materializeLocalConfigAssets(
+          localInputs,
+        ))
+          asset.key: asset,
+      };
+      final avatarAsset = materialized[avatarKey];
+      final backgroundAsset = materialized[backgroundKey];
+      if (localInputs.length != materialized.length ||
+          (avatarChanged &&
+              _isLocalAssistantAssetPath(updated.avatar) &&
+              avatarAsset == null) ||
+          (backgroundChanged &&
+              _isLocalAssistantAssetPath(updated.background) &&
+              backgroundAsset == null)) {
+        throw StateError('E2EE 助手配置资产物化结果不完整');
+      }
+      final nextAvatar = avatarAsset?.path ?? updated.avatar;
+      final nextBackground = backgroundAsset?.path ?? updated.background;
+      final targets = <ConfigAssetSyncTarget>[
+        if (avatarChanged)
+          ConfigAssetSyncTarget(key: avatarKey, asset: avatarAsset),
+        if (backgroundChanged)
+          ConfigAssetSyncTarget(key: backgroundKey, asset: backgroundAsset),
+      ];
+
+      final committed = await executor.runLocalBatchWithConfigAssets<bool>(
+        keys: <SyncEntityKey>[entityKey],
+        targets: targets,
+        targetWasPersisted: (result) => result,
+        write: () => _mutations.run(() async {
+          final index = _assistants.indexWhere(
+            (assistant) => assistant.id == updated.id,
+          );
+          if (index < 0) return false;
+          if (!identical(_assistants[index], previous)) {
+            throw StateError('助手在配置资产物化期间已发生变化');
+          }
+          final next = updated.copyWith(
+            avatar: nextAvatar,
+            background: nextBackground,
+            clearAvatar: nextAvatar == null,
+            clearBackground: nextBackground == null,
+          );
+          final nextAssistants = List<Assistant>.of(_assistants);
+          nextAssistants[index] = next;
+          await _commitAndPublish(_currentState(assistants: nextAssistants));
+          return true;
+        }),
+      );
+      if (!committed) return;
+
+      if (avatarChanged) {
+        await _deleteManagedFileIfUnreferenced(
+          previousAvatar,
+          directoryAsync: AppDirectories.getAvatarsDirectory,
+          filenamePrefix: 'assistant',
+        );
+      }
+      if (backgroundChanged) {
+        await _deleteManagedFileIfUnreferenced(
+          previousBackground,
+          directoryAsync: AppDirectories.getImagesDirectory,
+          filenamePrefix: 'background',
+        );
+      }
+      if (avatarChanged && rawAvatar.startsWith('http')) {
+        try {
+          await AvatarCache.getPath(rawAvatar);
+        } catch (error, stackTrace) {
+          FlutterError.reportError(
+            FlutterErrorDetails(
+              exception: error,
+              stack: stackTrace,
+              library: 'assistant_provider',
+              context: ErrorDescription('预取助手头像失败'),
+            ),
+          );
+        }
+      }
     });
   }
 
@@ -1065,9 +1312,8 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
         ConfigSyncKeys.assistantSelection,
       ];
       await chatService?.deleteConversationsForAssistant(id);
-      return _syncWrites.runLocalBatch(
-        keys: keys,
-        write: () => _mutations.run(() async {
+      Future<bool> commitDeletion({required bool cleanupManagedFiles}) {
+        return _mutations.run(() async {
           final latestIndex = _assistants.indexWhere(
             (assistant) => assistant.id == id,
           );
@@ -1084,18 +1330,50 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
               currentAssistantId: nextCurrentId,
             ),
           );
-          await _deleteManagedFileIfUnreferenced(
-            removed.avatar,
-            directoryAsync: AppDirectories.getAvatarsDirectory,
-            filenamePrefix: 'assistant',
-          );
-          await _deleteManagedFileIfUnreferenced(
-            removed.background,
-            directoryAsync: AppDirectories.getImagesDirectory,
-            filenamePrefix: 'background',
-          );
+          if (cleanupManagedFiles) {
+            await _deleteManagedFileIfUnreferenced(
+              removed.avatar,
+              directoryAsync: AppDirectories.getAvatarsDirectory,
+              filenamePrefix: 'assistant',
+            );
+            await _deleteManagedFileIfUnreferenced(
+              removed.background,
+              directoryAsync: AppDirectories.getImagesDirectory,
+              filenamePrefix: 'background',
+            );
+          }
           return true;
-        }),
+        });
+      }
+
+      final configAssetExecutor = _syncWrites;
+      if (configAssetExecutor is ConfigAssetSyncWriteExecutor) {
+        final entityKey = ConfigSyncKeys.assistant(id);
+        return configAssetExecutor.runLocalBatchWithConfigAssets<bool>(
+          keys: keys,
+          targets: <ConfigAssetSyncTarget>[
+            ConfigAssetSyncTarget(
+              key: E2eeConfigAssetKey(
+                entityKey: entityKey,
+                slot: E2eeConfigAssetSlot.avatar,
+              ),
+              asset: null,
+            ),
+            ConfigAssetSyncTarget(
+              key: E2eeConfigAssetKey(
+                entityKey: entityKey,
+                slot: E2eeConfigAssetSlot.background,
+              ),
+              asset: null,
+            ),
+          ],
+          targetWasPersisted: (result) => result,
+          write: () => commitDeletion(cleanupManagedFiles: false),
+        );
+      }
+      return _syncWrites.runLocalBatch(
+        keys: keys,
+        write: () => commitDeletion(cleanupManagedFiles: true),
       );
     });
   }
@@ -1211,6 +1489,17 @@ class AssistantProvider extends ChangeNotifier with BatchedChangeNotifier {
       );
     });
   }
+}
+
+bool _isLocalAssistantAssetPath(String? value) {
+  final normalized = value?.trim() ?? '';
+  if (normalized.isEmpty ||
+      normalized.startsWith('http://') ||
+      normalized.startsWith('https://') ||
+      normalized.startsWith('data:')) {
+    return false;
+  }
+  return p.isAbsolute(normalized);
 }
 
 final class _AssistantMutationLock {

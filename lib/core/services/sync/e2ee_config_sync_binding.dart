@@ -36,7 +36,10 @@ final class E2eeHeadlessConfigSyncBinding implements E2eeConfigSyncBinding {
     if (_adapter != null) {
       throw StateError('E2EE 后台配置桥接不能重复初始化');
     }
-    _adapter = E2eeConfigSyncAdapter(commands: commands);
+    _adapter = E2eeConfigSyncAdapter(
+      commands: commands,
+      assetCommands: assetCommands,
+    );
   }
 
   @override

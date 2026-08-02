@@ -6970,6 +6970,7 @@ void main() {
       var clockTick = 0;
       final adapter = E2eeConfigSyncAdapter(
         commands: configVault,
+        assetCommands: configAssets,
         now: () => DateTime.utc(2026, 7, 29, 0, 0, clockTick++),
       );
       final initial = await pullCommands.readOrCreate(
@@ -7123,6 +7124,7 @@ void main() {
       );
       final adapter = E2eeConfigSyncAdapter(
         commands: configVault,
+        assetCommands: configAssets,
         now: () => DateTime.utc(2026, 7, 29, 0, 1),
       );
 
